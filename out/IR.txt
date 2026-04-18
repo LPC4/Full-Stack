@@ -1,0 +1,36 @@
+type Node = {i32, Node*}
+
+define i32 @main() {
+@entry:
+	; local var: ptr
+	$ptr = alloc i32*
+	$0 = heap_alloc i32
+	store i32* $0 -> $ptr
+	; local var: x
+	$x = alloc i32
+	store i32 5 -> $x
+	; local var: addr
+	$addr = alloc i32*
+	store i32* $x -> $addr
+	; assignment
+	$1 = load i32* $addr
+	$2 = load i32 $1
+	$3 = math add i32 $2, 10
+	store i32 $3 -> $ptr
+	; defer: register cleanup logic
+	; if condition
+	$4 = load i32* $ptr
+	$5 = load i32 $4
+	$6 = cmp sgt i32 $5, 10
+	branch $6 ? @label_0 : @label_2
+@label_0:
+	; executing deferred cleanup before return
+	$7 = load i32* $ptr
+	$8 = call @free($7)
+	ret 1
+@label_2:
+	; executing deferred cleanup before return
+	$9 = load i32* $ptr
+	$10 = call @free($9)
+	ret 0
+}

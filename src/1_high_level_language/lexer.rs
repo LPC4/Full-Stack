@@ -50,7 +50,25 @@ impl<'a> Lexer<'a> {
             '/' => Token::Slash,
             '%' => Token::Percent,
             '@' => Token::At,
-            '&' => Token::Ampersand,
+            '&' => {
+                if self.peek_is('&') {
+                    self.advance();
+                    Token::And
+                } else {
+                    Token::Ampersand
+                }
+            }
+            '|' => {
+                if self.peek_is('|') {
+                    self.advance();
+                    Token::Or
+                } else {
+                    Token::Error(format!(
+                        "Unexpected character: {} at position {}",
+                        c, self.pos
+                    ))
+                }
+            }
             '(' => Token::LParen,
             ')' => Token::RParen,
             '{' => Token::LBrace,
@@ -97,7 +115,10 @@ impl<'a> Lexer<'a> {
             '0'..='9' => self.read_number(start),
             'a'..='z' | 'A'..='Z' | '_' => self.read_identifier(start),
 
-            _ => panic!("Unexpected character: {} at position {}", c, self.pos),
+            _ => Token::Error(format!(
+                "Unexpected character: {} at position {}",
+                c, self.pos
+            )),
         }
     }
 
@@ -195,7 +216,7 @@ impl<'a> Lexer<'a> {
             }
             self.advance();
         }
-        panic!("Unterminated string literal");
+        Token::Error("Unterminated string literal".to_string())
     }
 
     fn skip_whitespace_except_newline(&mut self) {
@@ -372,5 +393,32 @@ mod tests {
         assert_eq!(lexer.next_token(), Token::Type);
         assert_eq!(lexer.next_token(), Token::Const);
         assert_eq!(lexer.next_token(), Token::Eof);
+    }
+
+    #[test]
+    fn test_logical_operator_symbols() {
+        let input = "a && b || c & d | e";
+        let mut lexer = Lexer::new(input);
+
+        assert_eq!(lexer.next_token(), Token::Ident("a"));
+        assert_eq!(lexer.next_token(), Token::And);
+        assert_eq!(lexer.next_token(), Token::Ident("b"));
+        assert_eq!(lexer.next_token(), Token::Or);
+        assert_eq!(lexer.next_token(), Token::Ident("c"));
+        assert_eq!(lexer.next_token(), Token::Ampersand);
+        assert_eq!(lexer.next_token(), Token::Ident("d"));
+        assert_eq!(
+            lexer.next_token(),
+            Token::Error("Unexpected character: | at position 17".to_string())
+        );
+    }
+
+    #[test]
+    fn test_single_pipe_is_invalid() {
+        let mut lexer = Lexer::new("|");
+        assert_eq!(
+            lexer.next_token(),
+            Token::Error("Unexpected character: | at position 1".to_string())
+        );
     }
 }

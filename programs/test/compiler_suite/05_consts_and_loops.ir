@@ -1,0 +1,36 @@
+define i32 @main() {
+@entry:
+	; local var: c
+	$c = alloc i32
+	$0 = math add i32 10, 20
+	store i32 $0 -> $c
+	jump @label_0
+@label_0:
+	; while condition
+	$1 = load i32 $c
+	$2 = cmp slt i32 $1, 50
+	branch $2 ? @label_1 : @label_2
+@label_1:
+	; assignment
+	$3 = load i32 $c
+	$4 = math add i32 $3, 1
+	store i32 $4 -> $c
+	; if condition
+	$5 = load i32 $c
+	$6 = cmp eq i32 $5, 40
+	branch $6 ? @label_3 : @label_5
+@label_3:
+	jump @label_2
+@label_5:
+	; if condition
+	$7 = load i32 $c
+	$8 = cmp eq i32 $7, 35
+	branch $8 ? @label_6 : @label_8
+@label_6:
+	jump @label_0
+@label_8:
+	jump @label_0
+@label_2:
+	$9 = load i32 $c
+	ret $9
+}

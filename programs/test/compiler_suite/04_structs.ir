@@ -1,0 +1,20 @@
+type Point = {f32, f32}
+
+define f32 @calc_offset(Point* $p, f32 $shift) {
+@entry:
+	; bind parameter: p
+	$p_ptr = alloc Point*
+	store Point* $p -> $p_ptr
+	; bind parameter: shift
+	$shift_ptr = alloc f32
+	store f32 $shift -> $shift_ptr
+	; assignment
+	$0 = load Point* $p_ptr
+	$1 = load Point $0
+	; assignment
+	$2 = load Point* $p_ptr
+	$3 = load Point $2
+	$4 = load Point* $p_ptr
+	$5 = load Point $4
+	ret
+}

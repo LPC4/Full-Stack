@@ -1,0 +1,12 @@
+pointers: (val: i32) -> i32 {
+    ptr: &i32 = new(i32)
+    @ptr = val
+
+    val_ref: &i32 = &val
+    @val_ref = @ptr + 10
+
+    defer free(ptr)
+
+    return val
+}
+

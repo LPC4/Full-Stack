@@ -1,7 +1,6 @@
 # Kryon Language Specification v1.0
 
 **Version:** 1.0  
-**Date:** November 30, 2025  
 **Design Philosophy:** Consistency-First Memory Model  
 **Target Domain:** Systems Programming
 

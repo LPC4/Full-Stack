@@ -1,0 +1,19 @@
+control_suite: (param: i32) -> i32 {
+    sum: i32 = 0
+
+    while param > 0 {
+        if param == 5 {
+            sum = sum + 10
+        } else {
+            sum = sum + 1
+        }
+        param = param - 1
+    }
+
+    if sum > 0 {
+        return sum
+    }
+
+    return 0
+}
+

@@ -1,0 +1,27 @@
+define i32 @pointers(i32 $val) {
+@entry:
+	; bind parameter: val
+	$val_ptr = alloc i32
+	store i32 $val -> $val_ptr
+	; local var: ptr
+	$ptr = alloc i32*
+	$0 = heap_alloc i32
+	store i32* $0 -> $ptr
+	; assignment
+	$1 = load i32 $val_ptr
+	store i32 $1 -> $ptr
+	; local var: val_ref
+	$val_ref = alloc i32*
+	store i32* $val_ptr -> $val_ref
+	; assignment
+	$2 = load i32* $ptr
+	$3 = load i32 $2
+	$4 = math add i32 $3, 10
+	store i32 $4 -> $val_ref
+	; defer: register cleanup logic
+	$5 = load i32 $val_ptr
+	; executing deferred cleanup before return
+	$6 = load i32* $ptr
+	$7 = call @free($6)
+	ret $5
+}

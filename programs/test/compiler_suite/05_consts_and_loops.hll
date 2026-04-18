@@ -1,0 +1,18 @@
+const A = 10
+const B = 20
+
+main: () -> i32 {
+    c: i32 = A + B
+    while c < 50 {
+        c = c + 1
+        if c == 40 {
+            break
+        }
+        if c == 35 {
+            continue
+        }
+    }
+    return c
+}
+
+

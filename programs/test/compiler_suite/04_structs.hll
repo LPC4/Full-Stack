@@ -1,0 +1,13 @@
+type Point {
+    x: f32
+    y: f32
+}
+
+calc_offset: (p: Point*, shift: f32) -> f32 {
+    @p.x = @p.x + shift
+    @p.y = @p.y + shift
+
+    return @p.x * @p.y
+}
+
+

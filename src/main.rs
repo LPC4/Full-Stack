@@ -1,39 +1,109 @@
 #![allow(clippy::all)]
 #![warn(rust_2018_idioms)]
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
+#![windows_subsystem = "windows"] // hide console window on Windows
+
+use std::fs;
+use std::path::Path;
+
+/// Compilation pipeline: HLL -> Lexer -> Parser -> Compiler -> IR
+fn compile_hll_file(input_file: &str, output_file: &str) -> Result<(), Box<dyn std::error::Error>> {
+    log::info!("Reading HLL file: {}", input_file);
+    let content = fs::read_to_string(input_file)?;
+
+    log::info!("Lexing source code...");
+    let mut lexer = full_stack::high_level_language::lexer::Lexer::new(&content);
+    let mut tokens = Vec::new();
+    loop {
+        let token = lexer.next_token();
+        if let full_stack::high_level_language::token::Token::Error(ref msg) = token {
+            return Err(format!("Lexer error: {}", msg).into());
+        }
+        let is_eof = matches!(token, full_stack::high_level_language::token::Token::Eof);
+        tokens.push(token);
+        if is_eof {
+            break;
+        }
+    }
+    log::info!("Lexed {} tokens", tokens.len());
+
+    log::info!("Parsing tokens to AST...");
+    let mut parser = full_stack::high_level_language::parser::Parser::new(tokens);
+    let program = parser
+        .parse_program()
+        .map_err(|e| format!("Parse error at {}: {}", e.pos, e.message))?;
+    log::info!(
+        "Parsed program with {} declarations",
+        program.declarations.len()
+    );
+
+    log::info!("Compiling to intermediate representation...");
+    let mut compiler = full_stack::high_level_language::compiler::HighLevelCompiler::new();
+    let ir_program = compiler
+        .compile_program(&program)
+        .map_err(|e| format!("Compiler error: {:?}", e))?;
+    log::info!("Compiled to IR successfully");
+
+    let diagnostics = compiler.diagnostics();
+    let mut has_errors = false;
+    if !diagnostics.is_empty() {
+        log::warn!("Compilation diagnostics: {} items", diagnostics.len());
+        for diag in diagnostics {
+            if matches!(
+                diag.level,
+                full_stack::high_level_language::compiler::DiagnosticLevel::Error
+            ) {
+                log::error!("  - Error: {}", diag.message);
+                has_errors = true;
+            } else {
+                log::warn!("  - Warning: {}", diag.message);
+            }
+        }
+    }
+
+    if has_errors {
+        return Err("Compilation failed due to semantic errors".into());
+    }
+
+    let ir_text = format!("{}", ir_program);
+
+    // Create output directory if needed
+    if let Some(parent) = Path::new(output_file).parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent)?;
+        }
+    }
+
+    log::info!("Writing IR to file: {}", output_file);
+    fs::write(output_file, ir_text.clone())?;
+    log::info!("Successfully wrote IR output to {}", output_file);
+
+    log::info!("=== GENERATED IR ===\n{}", ir_text);
+
+    Ok(())
+}
 
 // When compiling natively:
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .format_timestamp(None)
+        .init();
 
-    // Read and log test2.hll
-    if let Ok(content) = std::fs::read_to_string("programs/test/high_level_language/test2.hll") {
-        log::info!("Read test2.hll successfully.");
+    eprintln!("\n=== Starting Compilation Pipeline ===\n");
 
-        let mut lexer = full_stack::high_level_language::lexer::Lexer::new(&content);
-        let mut tokens = Vec::new();
-        loop {
-            let token = lexer.next_token();
-            let is_eof = matches!(token, full_stack::high_level_language::token::Token::Eof);
-            tokens.push(token);
-            if is_eof {
-                break;
-            }
+    // Compilation pipeline
+    let input_file = "programs/debug/debug.hll";
+    let output_file = "out/IR.txt";
+
+    match compile_hll_file(input_file, output_file) {
+        Ok(()) => {
+            log::info!("Pipeline completed successfully!");
+            eprintln!("\n=== Pipeline completed successfully! ===\n");
         }
-        log::info!("Lexed Tokens:\n{:#?}", tokens);
-
-        let mut parser = full_stack::high_level_language::parser::Parser::new(tokens);
-        match parser.parse_program() {
-            Ok(ast) => {
-                log::info!("Parsed AST:\n{:#?}", ast);
-            }
-            Err(e) => {
-                log::error!("Parser Error at pos {}: {}", e.pos, e.message);
-            }
+        Err(e) => {
+            log::error!("Pipeline failed: {}", e);
+            eprintln!("\n!!! Pipeline failed: {} !!!\n", e);
         }
-    } else {
-        log::error!("Failed to read programs/test/high_level_language/test2.hll");
     }
 
     let native_options = eframe::NativeOptions {

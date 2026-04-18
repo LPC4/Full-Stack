@@ -50,6 +50,9 @@ pub enum Token<'a> {
     Star,
     Slash,
     Percent,
+
+    // Add Error token variant
+    Error(String),
     Eq,
     Neq,
     Lt,

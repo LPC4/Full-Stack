@@ -3,6 +3,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use full_stack::high_level_language::compiler::HighLevelCompiler;
 use full_stack::high_level_language::{lexer::Lexer, parser::Parser, token::Token};
 
 fn fixture_root() -> PathBuf {
@@ -303,4 +304,130 @@ fn test4_hll_parser_success_and_ast_validation() {
         }
         _ => panic!("Expected Function start declaration"),
     }
+}
+
+#[test]
+fn test1_hll_compiles_to_ir_with_arithmetic() {
+    let path = fixture_root().join("test1.hll");
+    let source = fs::read_to_string(&path)
+        .unwrap_or_else(|err| panic!("failed to read fixture {path:?}: {err}"));
+    let source: &'static str = Box::leak(source.into_boxed_str());
+
+    let tokens = lex_source(source);
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse_program().expect("failed to parse test1.hll");
+
+    let mut compiler = HighLevelCompiler::new();
+    let ir_program = compiler
+        .compile_program(&program)
+        .expect("failed to compile test1.hll");
+
+    let ir_text = format!("{}", ir_program);
+
+    // test1.hll contains only variable declarations (no functions)
+    // so the IR program will be minimal but should compile successfully
+    // Just verify that compilation didn't panic and IR text can be generated
+    println!(
+        "=== test1.hll IR OUTPUT ===\n{}",
+        if ir_text.is_empty() {
+            "(empty - only declarations)"
+        } else {
+            &ir_text
+        }
+    );
+}
+
+#[test]
+fn test2_hll_compiles_to_ir_with_pointers_and_structs() {
+    let path = fixture_root().join("test2.hll");
+    let source = fs::read_to_string(&path)
+        .unwrap_or_else(|err| panic!("failed to read fixture {path:?}: {err}"));
+    let source: &'static str = Box::leak(source.into_boxed_str());
+
+    let tokens = lex_source(source);
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse_program().expect("failed to parse test2.hll");
+
+    let mut compiler = HighLevelCompiler::new();
+    let ir_program = compiler
+        .compile_program(&program)
+        .expect("failed to compile test2.hll");
+
+    let ir_text = format!("{}", ir_program);
+
+    // Verify IR contains the main function and pointer/struct operations
+    assert!(ir_text.contains("@main"), "IR should contain main function");
+    // The test has pointer types and field accesses, so we should see them in IR
+    assert!(
+        ir_text.contains("*") || ir_text.contains("Node"),
+        "IR should contain pointer types or struct references"
+    );
+
+    // Snapshot the IR output
+    println!("=== test2.hll IR OUTPUT ===\n{}", ir_text);
+}
+
+#[test]
+fn test3_hll_compiles_to_ir_with_control_flow() {
+    let path = fixture_root().join("test3.hll");
+    let source = fs::read_to_string(&path)
+        .unwrap_or_else(|err| panic!("failed to read fixture {path:?}: {err}"));
+    let source: &'static str = Box::leak(source.into_boxed_str());
+
+    let tokens = lex_source(source);
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse_program().expect("failed to parse test3.hll");
+
+    let mut compiler = HighLevelCompiler::new();
+    let ir_program = compiler
+        .compile_program(&program)
+        .expect("failed to compile test3.hll");
+
+    let ir_text = format!("{}", ir_program);
+
+    // Verify IR contains control flow elements
+    assert!(
+        ir_text.contains("@stress_test"),
+        "IR should contain stress_test function"
+    );
+    // While loops are scaffolded to use Jump
+    assert!(
+        ir_text.contains("jump") || ir_text.contains("branch"),
+        "IR should contain control flow instructions"
+    );
+
+    // Snapshot the IR output
+    println!("=== test3.hll IR OUTPUT ===\n{}", ir_text);
+}
+
+#[test]
+fn test4_hll_compiles_to_ir_with_multiple_returns() {
+    let path = fixture_root().join("test4.hll");
+    let source = fs::read_to_string(&path)
+        .unwrap_or_else(|err| panic!("failed to read fixture {path:?}: {err}"));
+    let source: &'static str = Box::leak(source.into_boxed_str());
+
+    let tokens = lex_source(source);
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse_program().expect("failed to parse test4.hll");
+
+    let mut compiler = HighLevelCompiler::new();
+    let ir_program = compiler
+        .compile_program(&program)
+        .expect("failed to compile test4.hll");
+
+    let ir_text = format!("{}", ir_program);
+
+    // Verify IR contains both functions
+    assert!(
+        ir_text.contains("@divide"),
+        "IR should contain divide function"
+    );
+    assert!(
+        ir_text.contains("@start"),
+        "IR should contain start function"
+    );
+
+    // Snapshot the IR output
+    println!("=== test4.hll IR OUTPUT ===\n{}", ir_text);
 }
