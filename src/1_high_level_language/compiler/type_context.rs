@@ -1,4 +1,4 @@
-use crate::high_level_language::ast::{Expression, Type, BinaryOp, UnaryOp};
+use crate::high_level_language::ast::{BinaryOp, UnaryOp};
 use crate::intermediate_language::IrType;
 use std::collections::HashMap;
 
@@ -45,8 +45,11 @@ impl TypeContext {
         lhs_type: &str,
         rhs_type: &str,
     ) -> Result<String, TypeCheckError> {
+        let lhs_unknown = self.is_unknown_like(lhs_type);
+        let rhs_unknown = self.is_unknown_like(rhs_type);
+
         // Both operands must be same type
-        if lhs_type != rhs_type {
+        if lhs_type != rhs_type && !lhs_unknown && !rhs_unknown {
             return Err(TypeCheckError::TypeMismatch {
                 expected: lhs_type.to_string(),
                 found: rhs_type.to_string(),
@@ -56,19 +59,24 @@ impl TypeContext {
         match op {
             // Arithmetic operations require numeric types
             BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod => {
-                if !self.is_numeric(lhs_type) {
+                let effective_type = if lhs_unknown { rhs_type } else { lhs_type };
+                if !self.is_numeric(effective_type) && !self.is_unknown_like(effective_type) {
                     return Err(TypeCheckError::InvalidOperation {
                         op: format!("{:?}", op),
                         lhs: lhs_type.to_string(),
                         rhs: rhs_type.to_string(),
                     });
                 }
-                Ok(lhs_type.to_string())
+                Ok(effective_type.to_string())
             }
 
             // Logical operations work on bools
             BinaryOp::And | BinaryOp::Or => {
-                if lhs_type != "i1" && lhs_type != "bool" {
+                let effective_type = if lhs_unknown { rhs_type } else { lhs_type };
+                if effective_type != "i1"
+                    && effective_type != "bool"
+                    && !self.is_unknown_like(effective_type)
+                {
                     return Err(TypeCheckError::InvalidOperation {
                         op: format!("{:?}", op),
                         lhs: lhs_type.to_string(),
@@ -125,6 +133,10 @@ impl TypeContext {
         )
     }
 
+    fn is_unknown_like(&self, ty: &str) -> bool {
+        ty == "unknown" || ty == "*unknown"
+    }
+
     pub fn get_type_name(&self, ty: &IrType) -> String {
         match ty {
             IrType::Void => "void".to_string(),
@@ -136,7 +148,7 @@ impl TypeContext {
             }
             IrType::Aggregate(fields) => {
                 let field_strs: Vec<String> =
-                    fields.iter().map(|f| self.get_type_name(f)).collect();
+                    fields.iter().map(|(_name, f)| self.get_type_name(f)).collect();
                 format!("{{ {} }}", field_strs.join(", "))
             }
             IrType::Named(name) => name.clone(),

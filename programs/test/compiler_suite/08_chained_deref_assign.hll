@@ -1,0 +1,11 @@
+chained_deref_assign: (val: i32) -> i32 {
+    ptr: i32* = new(i32)
+    pp: i32** = &ptr
+
+    @@pp = val + 1
+
+    defer free(ptr)
+
+    return @ptr
+}
+

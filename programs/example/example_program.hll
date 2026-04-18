@@ -1,22 +1,42 @@
-type Node {
+type Box {
     val: i32
-    next: Node*
+    ptr: i32*
 }
 
 main: () -> i32 {
-    ; 'new' returns a pointer
-    ptr: i32* = new(i32)
+    ; 1. Basic heap allocation & dereference write
+    a: i32* = new(i32)
+    @a = 10
 
-    ; Address-of and Dereference
+    ; 2. Address-of & stack pointer write
     x: i32 = 5
-    addr: i32* = &x
-    @ptr = @addr + 10
+    px: i32* = &x
+    @px = 20 ; x becomes 20
 
-    ; Defer: Cleanup logic
-    defer free(ptr)
+    ; 3. Struct allocation & field assignment via pointer
+    b: Box* = new(Box)
+    @b.val = 30
+    @b.ptr = a
 
-    if @ptr > 10 {
-        return 1
+    ; 4. Array allocation & index assignment
+    arr: i32* = new(i32, 4)
+    @arr[0] = @a + @px      ; 10 + 20 = 30
+    @arr[1] = @b.val        ; 30
+    @arr[2] = 0
+    @arr[3] = 42
+
+    ; 5. Nested pointer/array access & write
+    @b.ptr = arr            ; b.ptr now points to arr
+    @arr[0] = @b.ptr[1] + 5 ; arr[0] = arr[1] + 5 = 35
+
+    ; 6. Defer cleanup (LIFO order, args captured at declaration)
+    defer free(arr)
+    defer free(b)
+    defer free(a)
+
+    ; 7. Control flow & return
+    if @arr[0] > 30 {
+        return @arr[0] ; Should return 35
     }
 
     return 0

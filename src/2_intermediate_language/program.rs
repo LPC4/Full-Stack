@@ -133,8 +133,8 @@ mod tests {
         program.push_type_alias(IrTypeAlias {
             name: "Point".to_owned(),
             ty: IrType::Aggregate(vec![
-                IrType::Float(FloatWidth::F32),
-                IrType::Float(FloatWidth::F32),
+                ("x".to_owned(), IrType::Float(FloatWidth::F32)),
+                ("y".to_owned(), IrType::Float(FloatWidth::F32)),
             ]),
         });
 

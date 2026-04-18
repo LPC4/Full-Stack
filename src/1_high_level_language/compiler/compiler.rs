@@ -21,6 +21,12 @@ struct LoweredValue {
     ty: IrType,
 }
 
+#[derive(Debug, Clone)]
+enum DeferredAction {
+    Call { function: String, args: Vec<IrValue> },
+    Expr(Expression),
+}
+
 #[derive(Debug, Default)]
 pub struct HighLevelCompiler {
     context: LoweringContext,
@@ -28,7 +34,7 @@ pub struct HighLevelCompiler {
     next_label: u32,
     current_blocks: Vec<IrBlock>,
     current_block: Option<IrBlock>,
-    defers: Vec<Expression>,
+    defers: Vec<DeferredAction>,
     compile_time_consts: std::collections::HashMap<String, Literal>,
     loop_labels: Vec<(IrLabel, IrLabel)>,
 }
@@ -230,8 +236,8 @@ impl HighLevelCompiler {
                                 "executing deferred cleanup before return".to_string(),
                             ));
                         }
-                        for defer_expr in defers.into_iter().rev() {
-                            let _ = self.lower_expression(&defer_expr);
+                        for action in defers.into_iter().rev() {
+                            self.emit_deferred_action(action);
                         }
 
                         let mut final_b = self.current_block.take().unwrap();
@@ -324,7 +330,18 @@ impl HighLevelCompiler {
         match return_type {
             Some(ReturnType::Single(ty)) => self.lower_type(ty),
             Some(ReturnType::Tuple(fields)) => {
-                IrType::Aggregate(fields.iter().map(|f| self.lower_type(&f.ty)).collect())
+                IrType::Aggregate(
+                    fields
+                        .iter()
+                        .enumerate()
+                        .map(|(idx, f)| {
+                            (
+                                f.name.clone().unwrap_or_else(|| idx.to_string()),
+                                self.lower_type(&f.ty),
+                            )
+                        })
+                        .collect(),
+                )
             }
             None => IrType::Void,
         }
@@ -339,7 +356,12 @@ impl HighLevelCompiler {
                 element: Box::new(self.lower_type(inner)),
             },
             Type::Struct(fields) => {
-                IrType::Aggregate(fields.iter().map(|f| self.lower_type(&f.ty)).collect())
+                IrType::Aggregate(
+                    fields
+                        .iter()
+                        .map(|f| (f.name.clone(), self.lower_type(&f.ty)))
+                        .collect(),
+                )
             }
             Type::Named { name, args } => {
                 if !args.is_empty() {
@@ -405,8 +427,8 @@ impl HighLevelCompiler {
                         "executing deferred cleanup before return".to_string(),
                     ));
                 }
-                for defer_expr in defers.into_iter().rev() {
-                    let _ = self.lower_expression(&defer_expr);
+                for action in defers.into_iter().rev() {
+                    self.emit_deferred_action(action);
                 }
 
                 self.set_terminator(IrTerminator::Return(value));
@@ -471,11 +493,44 @@ impl HighLevelCompiler {
                 }
             }
             Statement::Defer(expr) => {
-                // Record the cleanup logic instead of emitting here
-                self.push_instruction(IrInstruction::Comment(
-                    "defer: register cleanup logic".to_string(),
-                ));
-                self.defers.push(expr.clone());
+                if let Expression::Primary(
+                    crate::high_level_language::ast::PrimaryExpr::FunctionCall { name, arguments },
+                ) = expr
+                {
+                    let mut captured_args = Vec::new();
+                    for arg in arguments {
+                        let lowered = match self.lower_expression(arg) {
+                            Some(v) => v,
+                            None => {
+                                self.context.diagnostics.error(format!(
+                                    "failed to capture defer argument `{}` for call `{}`",
+                                    self.format_expression(arg),
+                                    name
+                                ));
+                                return;
+                            }
+                        };
+                        captured_args.push(lowered.value);
+                    }
+
+                    self.push_instruction(IrInstruction::Comment(format!(
+                        "defer: captured call @{} with {} args",
+                        name,
+                        captured_args.len()
+                    )));
+                    self.defers.push(DeferredAction::Call {
+                        function: name.clone(),
+                        args: captured_args,
+                    });
+                } else {
+                    self.push_instruction(IrInstruction::Comment(
+                        "defer: register cleanup logic".to_string(),
+                    ));
+                    self.context.diagnostics.warn(
+                        "defer on non-call expression is not capture-safe yet; evaluating at exit"
+                    );
+                    self.defers.push(DeferredAction::Expr(expr.clone()));
+                }
             }
         }
     }
@@ -487,7 +542,10 @@ impl HighLevelCompiler {
             None => {
                 self.context
                     .diagnostics
-                    .error("failed to lower if condition".to_string());
+                    .error(format!(
+                        "failed to lower if condition `{}` (see previous diagnostics for root cause)",
+                        self.format_expression(cond)
+                    ));
                 IrValue::Bool(false)
             }
         };
@@ -577,7 +635,10 @@ impl HighLevelCompiler {
             None => {
                 self.context
                     .diagnostics
-                    .error("failed to lower while condition".to_string());
+                    .error(format!(
+                        "failed to lower while condition `{}` (see previous diagnostics for root cause)",
+                        self.format_expression(cond)
+                    ));
                 IrValue::Bool(false)
             }
         };
@@ -631,7 +692,7 @@ impl HighLevelCompiler {
                     let info = self.context.symbols.lookup(name).cloned();
                     if let Some(info) = info {
                         if let IrType::Pointer(ref inner_ty) = info.ty {
-                            // If it's a pointer to local variable, we need to load its value!
+                            // Locals are stack slots (`T*`) in the symbol table; expressions use loaded `T`.
                             let dest = self.new_temp();
                             if let IrValue::Register(ptr_reg) = info.value {
                                 self.push_instruction(IrInstruction::Load {
@@ -647,10 +708,10 @@ impl HighLevelCompiler {
                             }
                         }
 
-                        Some(LoweredValue {
+                        return Some(LoweredValue {
                             value: info.value,
                             ty: info.ty,
-                        })
+                        });
                     } else if let Some(const_val) = self.compile_time_consts.get(name) {
                         Some(self.lower_literal(const_val))
                     } else {
@@ -664,21 +725,117 @@ impl HighLevelCompiler {
                     Some(self.lower_literal(literal))
                 }
                 crate::high_level_language::ast::PrimaryExpr::FieldAccess { expr, field } => {
+                    // Parser commonly represents `@ptr.field` as `FieldAccess(expr = Dereference(ptr), ...)`.
+                    // Lower from the pointer base directly so we don't try to load fields from aggregate values.
+                    if let Expression::Unary {
+                        op: UnaryOp::Dereference,
+                        expr: inner,
+                    } = &**expr
+                    {
+                        let base_ptr = self.lower_expression(inner)?;
+                        return self.lower_field_access(&base_ptr, field);
+                    }
+
                     let base = self.lower_expression(expr)?;
                     self.lower_field_access(&base, field)
                 }
                 crate::high_level_language::ast::PrimaryExpr::ArrayIndex { expr, index } => {
-                    let base = self.lower_expression(expr)?;
+                    // Parser currently represents `@arr[i]` as `ArrayIndex(expr = Dereference(arr), ...)`.
+                    // Normalize that form here so it lowers as "index through pointer then load value".
+                    if let Expression::Unary {
+                        op: UnaryOp::Dereference,
+                        expr: inner,
+                    } = &**expr
+                    {
+                        let base_ptr = self.lower_expression(inner)?;
+                        let idx = self.lower_expression(index)?;
+                        let element_ptr = self.lower_array_index(&base_ptr, &idx)?;
+                        if let IrType::Pointer(ref element_ty) = element_ptr.ty {
+                            if let IrValue::Register(ptr_reg) = element_ptr.value {
+                                let dest = self.new_temp();
+                                self.push_instruction(IrInstruction::Load {
+                                    dest: dest.clone(),
+                                    ty: *element_ty.clone(),
+                                    ptr: ptr_reg,
+                                    offset: None,
+                                });
+                                return Some(LoweredValue {
+                                    value: IrValue::Register(dest),
+                                    ty: *element_ty.clone(),
+                                });
+                            }
+                        }
+                        return Some(element_ptr);
+                    }
+
+                    let should_load_indexed_value = self.is_deref_based_index_expr(expr);
+                    let base = match &**expr {
+                        Expression::Unary {
+                            op: UnaryOp::Dereference,
+                            expr: inner,
+                        } => self.lower_expression(inner)?,
+                        _ => self.lower_expression(expr)?,
+                    };
                     let idx = self.lower_expression(index)?;
-                    self.lower_array_index(&base, &idx)
+                    let element_ptr = self.lower_array_index(&base, &idx)?;
+
+                    if should_load_indexed_value {
+                        if let (IrType::Pointer(element_ty), IrValue::Register(ptr_reg)) =
+                            (&element_ptr.ty, &element_ptr.value)
+                        {
+                            let dest = self.new_temp();
+                            self.push_instruction(IrInstruction::Load {
+                                dest: dest.clone(),
+                                ty: *element_ty.clone(),
+                                ptr: ptr_reg.clone(),
+                                offset: None,
+                            });
+                            return Some(LoweredValue {
+                                value: IrValue::Register(dest),
+                                ty: *element_ty.clone(),
+                            });
+                        }
+                    }
+
+                    Some(element_ptr)
                 }
-                crate::high_level_language::ast::PrimaryExpr::New { ty, args: _ } => {
+                crate::high_level_language::ast::PrimaryExpr::New { ty, args } => {
                     let dest = self.new_temp();
                     let lowered_ty = self.lower_type(ty);
+                    let count = match args.len() {
+                        0 => None,
+                        1 => match &args[0] {
+                            Expression::Primary(
+                                crate::high_level_language::ast::PrimaryExpr::Literal(
+                                    Literal::Integer(v),
+                                ),
+                            )
+                            | Expression::Primary(
+                                crate::high_level_language::ast::PrimaryExpr::Literal(
+                                    Literal::HexInteger(v),
+                                ),
+                            ) if *v > 0 => Some(*v as usize),
+                            other => {
+                                self.context.diagnostics.error(format!(
+                                    "new({}, count) requires a positive integer literal count; got `{}`",
+                                    lowered_ty,
+                                    self.format_expression(other)
+                                ));
+                                return None;
+                            }
+                        },
+                        n => {
+                            self.context.diagnostics.error(format!(
+                                "new({}, ...) expects at most one count argument, got {}",
+                                lowered_ty, n
+                            ));
+                            return None;
+                        }
+                    };
                     self.push_instruction(IrInstruction::HeapAlloc {
                         dest: dest.clone(),
                         ty: lowered_ty.clone(),
-                        count: None,
+                        count,
                     });
                     Some(LoweredValue {
                         value: IrValue::Register(dest),
@@ -796,8 +953,12 @@ impl HighLevelCompiler {
                 }
 
                 // Create aggregate type and allocate space for tuple
-                let field_types: Vec<IrType> = lowered_fields.iter().map(|f| f.ty.clone()).collect();
-                let tuple_ty = IrType::Aggregate(field_types);
+                let tuple_fields: Vec<(String, IrType)> = lowered_fields
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, f)| (idx.to_string(), f.ty.clone()))
+                    .collect();
+                let tuple_ty = IrType::Aggregate(tuple_fields);
                 let dest = self.new_temp();
 
                 self.push_instruction(IrInstruction::Alloc {
@@ -939,26 +1100,36 @@ impl HighLevelCompiler {
                 })
             }
             UnaryOp::Dereference => {
+                let pointee_ty = match &input.ty {
+                    IrType::Pointer(inner) => *inner.clone(),
+                    other => {
+                        self.context.diagnostics.error(format!(
+                            "cannot dereference expression of non-pointer type `{}`",
+                            other
+                        ));
+                        return None;
+                    }
+                };
+
                 let dest = self.new_temp();
                 let ptr_reg = match input.value {
                     IrValue::Register(reg) => reg,
-                    _ => self.new_temp(),
+                    _ => {
+                        self.context
+                            .diagnostics
+                            .error("cannot dereference non-register value".to_string());
+                        return None;
+                    }
                 };
                 self.push_instruction(IrInstruction::Load {
                     dest: dest.clone(),
-                    ty: match &input.ty {
-                        IrType::Pointer(inner) => *inner.clone(),
-                        other => other.clone(),
-                    },
+                    ty: pointee_ty.clone(),
                     ptr: ptr_reg,
                     offset: None,
                 });
                 Some(LoweredValue {
                     value: IrValue::Register(dest),
-                    ty: match input.ty {
-                        IrType::Pointer(inner) => *inner,
-                        _ => IrType::Named("unknown".to_owned()),
-                    },
+                    ty: pointee_ty,
                 })
             }
             UnaryOp::AddressOf => match input.value {
@@ -977,36 +1148,40 @@ impl HighLevelCompiler {
     }
 
     fn lower_field_access(&mut self, base: &LoweredValue, field: &str) -> Option<LoweredValue> {
-        match &base.ty {
+        let resolved_base_ty = self.resolve_named_type(&base.ty);
+        let (aggregate_ptr_reg, fields) = match &resolved_base_ty {
             IrType::Aggregate(fields) => {
-                if let IrValue::Register(ptr_reg) = &base.value {
-                    let mut offset = 0i64;
-                    let mut found_type = None;
-                    for (idx, field_ty) in fields.iter().enumerate() {
-                        if idx.to_string() == field {
-                            found_type = Some(field_ty.clone());
-                            break;
-                        }
-                        offset += 8;
-                    }
-                    if let Some(ty) = found_type {
-                        let dest = self.new_temp();
-                        self.push_instruction(IrInstruction::Load {
-                            dest: dest.clone(),
-                            ty: ty.clone(),
-                            ptr: ptr_reg.clone(),
-                            offset: Some(offset),
-                        });
-                        return Some(LoweredValue {
-                            value: IrValue::Register(dest),
-                            ty,
-                        });
-                    }
-                }
-                None
+                let ptr_reg = match &base.value {
+                    IrValue::Register(reg) => reg.clone(),
+                    _ => return None,
+                };
+                (ptr_reg, fields.clone())
             }
-            _ => None,
-        }
+            IrType::Pointer(inner) => match inner.as_ref() {
+                IrType::Aggregate(fields) => {
+                    let ptr_reg = match &base.value {
+                        IrValue::Register(reg) => reg.clone(),
+                        _ => return None,
+                    };
+                    (ptr_reg, fields.clone())
+                }
+                _ => return None,
+            },
+            _ => return None,
+        };
+
+        let (offset, ty) = self.aggregate_field_offset_and_type(&fields, field)?;
+        let dest = self.new_temp();
+        self.push_instruction(IrInstruction::Load {
+            dest: dest.clone(),
+            ty: ty.clone(),
+            ptr: aggregate_ptr_reg,
+            offset: Some(offset),
+        });
+        Some(LoweredValue {
+            value: IrValue::Register(dest),
+            ty,
+        })
     }
 
     fn lower_array_index(
@@ -1017,23 +1192,30 @@ impl HighLevelCompiler {
         match &base.ty {
             IrType::Array { element, .. } | IrType::Pointer(element) => {
                 if let IrValue::Register(ptr_reg) = &base.value {
+                    // Multiply index by element size to get byte offset
+                    let size = self.type_size_in_bytes(element);
+                    let byte_offset_reg = self.new_temp();
+                    self.push_instruction(IrInstruction::Math {
+                        dest: byte_offset_reg.clone(),
+                        op: IrMathOp::Mul,
+                        ty: IrType::Integer(IntWidth::I64),
+                        lhs: index.value.clone(),
+                        rhs: IrValue::Integer(size as i64),
+                    });
+
                     let dest = self.new_temp();
                     self.push_instruction(IrInstruction::Offset {
                         dest: dest.clone(),
-                        ty: element.as_ref().clone(),
+                        ty: *element.clone(),
                         ptr: ptr_reg.clone(),
-                        bytes: index.value.clone(),
+                        bytes: IrValue::Register(byte_offset_reg),
                     });
-                    let result = self.new_temp();
-                    self.push_instruction(IrInstruction::Load {
-                        dest: result.clone(),
-                        ty: element.as_ref().clone(),
-                        ptr: dest,
-                        offset: None,
-                    });
+
+                    // Return the POINTER, not the loaded value.
+                    // The `@` operator in the AST will handle the actual load.
                     return Some(LoweredValue {
-                        value: IrValue::Register(result),
-                        ty: element.as_ref().clone(),
+                        value: IrValue::Register(dest),
+                        ty: IrType::Pointer(element.clone()),
                     });
                 }
                 None
@@ -1047,47 +1229,293 @@ impl HighLevelCompiler {
         target: &AssignTarget,
         value: &LoweredValue,
     ) -> Option<LoweredValue> {
+        let (pointee_ptr_reg, pointee_ty) = self.resolve_deref_lvalue(target)?;
+        self.push_instruction(IrInstruction::Store {
+            ty: pointee_ty,
+            value: value.value.clone(),
+            ptr: pointee_ptr_reg,
+            offset: None,
+        });
+        Some(value.clone())
+    }
+
+    fn resolve_deref_lvalue(&mut self, target: &AssignTarget) -> Option<(IrRegister, IrType)> {
         match target {
-            AssignTarget::Identifier(name) => {
-                let ptr_info = self.context.symbols.lookup(name)?;
-                if let IrValue::Register(ptr_reg) = &ptr_info.value {
-                    self.push_instruction(IrInstruction::Store {
-                        ty: value.ty.clone(),
-                        value: value.value.clone(),
-                        ptr: ptr_reg.clone(),
-                        offset: None,
-                    });
-                    return Some(value.clone());
-                }
+            // `@x = v` where x is a pointer variable stored in a stack slot.
+            AssignTarget::Identifier(_) => {
+                let (base_ptr_reg, base_ty) = self.resolve_assign_lvalue(target)?;
+                let pointee_ty = match &base_ty {
+                    IrType::Pointer(inner) => *inner.clone(),
+                    _ => {
+                        self.context
+                            .diagnostics
+                            .error(format!(
+                                "cannot dereference assignment target `{}` of type `{}`",
+                                self.format_assign_target(target),
+                                base_ty
+                            ));
+                        return None;
+                    }
+                };
+
+                let pointee_ptr_reg = self.new_temp();
+                self.push_instruction(IrInstruction::Load {
+                    dest: pointee_ptr_reg.clone(),
+                    ty: base_ty,
+                    ptr: base_ptr_reg,
+                    offset: None,
+                });
+
+                Some((pointee_ptr_reg, pointee_ty))
+            }
+            // `@obj.field = v` / `@arr[idx] = v` resolve directly to the destination address.
+            AssignTarget::FieldAccess { .. } | AssignTarget::ArrayIndex { .. } => {
+                self.resolve_assign_lvalue(target)
+            }
+            // Chained dereference (e.g. @@pp = v)
+            AssignTarget::Dereference(inner) => {
+                let (base_ptr_reg, base_ty) = self.resolve_deref_lvalue(inner)?;
+                let pointee_ty = match &base_ty {
+                    IrType::Pointer(inner_ty) => *inner_ty.clone(),
+                    _ => {
+                        self.context
+                            .diagnostics
+                            .error(format!(
+                                "cannot dereference assignment target `{}` of type `{}`",
+                                self.format_assign_target(target),
+                                base_ty
+                            ));
+                        return None;
+                    }
+                };
+
+                let pointee_ptr_reg = self.new_temp();
+                self.push_instruction(IrInstruction::Load {
+                    dest: pointee_ptr_reg.clone(),
+                    ty: base_ty,
+                    ptr: base_ptr_reg,
+                    offset: None,
+                });
+
+                Some((pointee_ptr_reg, pointee_ty))
+            }
+            AssignTarget::Tuple(_) => {
+                self.context
+                    .diagnostics
+                    .error(format!(
+                        "tuple target `{}` is not supported for dereference assignment",
+                        self.format_assign_target(target)
+                    ));
                 None
             }
-            AssignTarget::Dereference(inner) => self.lower_deref_assign(inner, value),
-            _ => None,
         }
+    }
+
+    fn resolve_assign_lvalue(&mut self, target: &AssignTarget) -> Option<(IrRegister, IrType)> {
+        match target {
+            AssignTarget::Identifier(name) => {
+                let ptr_info = self.context.symbols.lookup(name).cloned()?;
+                let value_ty = match ptr_info.ty {
+                    IrType::Pointer(inner) => *inner,
+                    _ => {
+                        self.context
+                            .diagnostics
+                            .error(format!("cannot assign to non-lvalue target `{name}`"));
+                        return None;
+                    }
+                };
+                let slot_ptr_reg = match ptr_info.value {
+                    IrValue::Register(reg) => reg,
+                    _ => {
+                        self.context.diagnostics.error(format!(
+                            "assignment target `{}` does not resolve to a register-backed lvalue",
+                            self.format_assign_target(target)
+                        ));
+                        return None;
+                    }
+                };
+                Some((slot_ptr_reg, value_ty))
+            }
+            AssignTarget::Dereference(inner) => {
+                let (base_ptr_reg, base_value_ty) = self.resolve_assign_lvalue(inner)?;
+                let next_pointee_ty = match &base_value_ty {
+                    IrType::Pointer(inner_ty) => *inner_ty.clone(),
+                    _ => {
+                        self.context.diagnostics.error(format!(
+                            "cannot dereference assignment target `{}` because resolved type is `{}`",
+                            self.format_assign_target(inner),
+                            base_value_ty
+                        ));
+                        return None;
+                    }
+                };
+                let next_ptr_reg = self.new_temp();
+                self.push_instruction(IrInstruction::Load {
+                    dest: next_ptr_reg.clone(),
+                    ty: base_value_ty,
+                    ptr: base_ptr_reg,
+                    offset: None,
+                });
+                Some((next_ptr_reg, next_pointee_ty))
+            }
+            AssignTarget::FieldAccess { expr, field } => {
+                let (base_ptr_reg, base_value_ty) = self.resolve_assign_lvalue(expr)?;
+                let resolved_base_ty = self.resolve_named_type(&base_value_ty);
+
+                // Handle both direct aggregates and pointers to aggregates
+                let (agg_ptr_reg, fields) = match &resolved_base_ty {
+                    IrType::Aggregate(fields) => (base_ptr_reg, fields.clone()),
+                    IrType::Pointer(inner) => match inner.as_ref() {
+                        IrType::Aggregate(fields) => {
+                            // Load the heap address from the stack slot first
+                            let loaded_ptr = self.new_temp();
+                            self.push_instruction(IrInstruction::Load {
+                                dest: loaded_ptr.clone(),
+                                ty: resolved_base_ty.clone(),
+                                ptr: base_ptr_reg,
+                                offset: None,
+                            });
+                            (loaded_ptr, fields.clone())
+                        }
+                        _ => {
+                            self.context.diagnostics.error(format!(
+                                "field assignment target `{}` is not an aggregate (resolved base type: `{}`)",
+                                self.format_assign_target(target),
+                                resolved_base_ty
+                            ));
+                            return None;
+                        }
+                    },
+                    _ => {
+                        self.context.diagnostics.error(format!(
+                            "field assignment target `{}` is not an aggregate (resolved base type: `{}`)",
+                            self.format_assign_target(target),
+                            resolved_base_ty
+                        ));
+                        return None;
+                    }
+                };
+
+                let (offset, field_ty) = match self.aggregate_field_offset_and_type(&fields, field) {
+                    Some(v) => v,
+                    None => {
+                        let known_fields = fields
+                            .iter()
+                            .map(|(name, _)| name.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        self.context.diagnostics.error(format!(
+                            "unknown field `{}` in assignment target `{}`. Known fields: [{}]",
+                            field,
+                            self.format_assign_target(target),
+                            known_fields
+                        ));
+                        return None;
+                    }
+                };
+                let field_ptr_reg = self.new_temp();
+                self.push_instruction(IrInstruction::Offset {
+                    dest: field_ptr_reg.clone(),
+                    ty: field_ty.clone(),
+                    ptr: agg_ptr_reg,
+                    bytes: IrValue::Integer(offset),
+                });
+                Some((field_ptr_reg, field_ty))
+            }
+            AssignTarget::ArrayIndex { expr, index } => {
+                let normalized_expr: &AssignTarget = match expr.as_ref() {
+                    AssignTarget::Dereference(inner) => inner.as_ref(),
+                    other => other,
+                };
+                let (base_ptr_reg, base_value_ty) = self.resolve_assign_lvalue(normalized_expr)?;
+                let resolved_base_ty = self.resolve_named_type(&base_value_ty);
+
+                // Handle both direct arrays and pointers to arrays/elements
+                let (indexable_ptr_reg, element_ty) = match &resolved_base_ty {
+                    IrType::Array { element, .. } => (base_ptr_reg, element.as_ref().clone()),
+                    IrType::Pointer(element) => {
+                        // Load the pointer value first
+                        let loaded_ptr = self.new_temp();
+                        self.push_instruction(IrInstruction::Load {
+                            dest: loaded_ptr.clone(),
+                            ty: resolved_base_ty.clone(),
+                            ptr: base_ptr_reg,
+                            offset: None,
+                        });
+                        (loaded_ptr, element.as_ref().clone())
+                    }
+                    _ => {
+                        self.context.diagnostics.error(format!(
+                            "array assignment target `{}` is not indexable (resolved base type: `{}`)",
+                            self.format_assign_target(target),
+                            resolved_base_ty
+                        ));
+                        return None;
+                    }
+                };
+
+                let idx = self.lower_expression(index)?;
+                // Multiply index by element size
+                let size = self.type_size_in_bytes(&element_ty);
+                let byte_offset_reg = self.new_temp();
+                self.push_instruction(IrInstruction::Math {
+                    dest: byte_offset_reg.clone(),
+                    op: IrMathOp::Mul,
+                    ty: IrType::Integer(IntWidth::I64),
+                    lhs: idx.value,
+                    rhs: IrValue::Integer(size as i64),
+                });
+
+                let element_ptr_reg = self.new_temp();
+                self.push_instruction(IrInstruction::Offset {
+                    dest: element_ptr_reg.clone(),
+                    ty: element_ty.clone(),
+                    ptr: indexable_ptr_reg,
+                    bytes: IrValue::Register(byte_offset_reg),
+                });
+                Some((element_ptr_reg, element_ty))
+            }
+            AssignTarget::Tuple(_) => {
+                self.context.diagnostics.error(format!(
+                    "tuple assignment target `{}` is not supported in this lowering path",
+                    self.format_assign_target(target)
+                ));
+                None
+            }
+        }
+    }
+
+    fn aggregate_field_offset_and_type(
+        &self,
+        fields: &[(String, IrType)],
+        field: &str,
+    ) -> Option<(i64, IrType)> {
+        for (idx, (name, field_ty)) in fields.iter().enumerate() {
+            if name == field || idx.to_string() == field {
+                return Some(((idx as i64) * 8, field_ty.clone()));
+            }
+        }
+        None
     }
 
     fn lower_field_assign(
         &mut self,
         expr: &AssignTarget,
-        _field: &str,
+        field: &str,
         value: &LoweredValue,
     ) -> Option<LoweredValue> {
-        match expr {
-            AssignTarget::Identifier(name) => {
-                let base_reg = self.context.symbols.lookup(name)?.value.clone();
-                if let IrValue::Register(base_reg_val) = base_reg {
-                    self.push_instruction(IrInstruction::Store {
-                        ty: value.ty.clone(),
-                        value: value.value.clone(),
-                        ptr: base_reg_val,
-                        offset: Some(0),
-                    });
-                    return Some(value.clone());
-                }
-                None
-            }
-            _ => None,
-        }
+        let target = AssignTarget::FieldAccess {
+            expr: Box::new(expr.clone()),
+            field: field.to_string(),
+        };
+        let (field_ptr_reg, _field_ty) = self.resolve_assign_lvalue(&target)?;
+        self.push_instruction(IrInstruction::Store {
+            ty: value.ty.clone(),
+            value: value.value.clone(),
+            ptr: field_ptr_reg,
+            offset: None,
+        });
+        Some(value.clone())
     }
 
     fn lower_array_index_assign(
@@ -1096,30 +1524,18 @@ impl HighLevelCompiler {
         index: &Expression,
         value: &LoweredValue,
     ) -> Option<LoweredValue> {
-        match expr {
-            AssignTarget::Identifier(name) => {
-                let idx = self.lower_expression(index)?;
-                let base_reg = self.context.symbols.lookup(name)?.value.clone();
-                if let IrValue::Register(base_reg_val) = base_reg {
-                    let offset_reg = self.new_temp();
-                    self.push_instruction(IrInstruction::Offset {
-                        dest: offset_reg.clone(),
-                        ty: value.ty.clone(),
-                        ptr: base_reg_val,
-                        bytes: idx.value,
-                    });
-                    self.push_instruction(IrInstruction::Store {
-                        ty: value.ty.clone(),
-                        value: value.value.clone(),
-                        ptr: offset_reg,
-                        offset: None,
-                    });
-                    return Some(value.clone());
-                }
-                None
-            }
-            _ => None,
-        }
+        let target = AssignTarget::ArrayIndex {
+            expr: Box::new(expr.clone()),
+            index: Box::new(index.clone()),
+        };
+        let (element_ptr_reg, _element_ty) = self.resolve_assign_lvalue(&target)?;
+        self.push_instruction(IrInstruction::Store {
+            ty: value.ty.clone(),
+            value: value.value.clone(),
+            ptr: element_ptr_reg,
+            offset: None,
+        });
+        Some(value.clone())
     }
 
     fn new_label(&mut self) -> IrLabel {
@@ -1153,8 +1569,8 @@ impl HighLevelCompiler {
         // and assign to corresponding target
 
         // Extract field types from the aggregate
-        let field_types = match &tuple_value.ty {
-            IrType::Aggregate(fields) => fields.clone(),
+        let field_types: Vec<IrType> = match &tuple_value.ty {
+            IrType::Aggregate(fields) => fields.iter().map(|(_name, ty)| ty.clone()).collect(),
             _ => {
                 self.context.diagnostics.error(
                     "tuple destructuring requires aggregate type".to_string()
@@ -1249,6 +1665,107 @@ impl HighLevelCompiler {
                     "nested tuple destructuring not supported".to_string()
                 );
                 None
+            }
+        }
+    }
+
+    fn type_size_in_bytes(&self, ty: &IrType) -> usize {
+        match &self.resolve_named_type(ty) {
+            IrType::Integer(width) => match width {
+                IntWidth::I1 | IntWidth::I8 => 1,
+                IntWidth::I16 => 2,
+                IntWidth::I32 => 4,
+                IntWidth::I64 => 8,
+            },
+            IrType::Float(width) => match width {
+                FloatWidth::F32 => 4,
+                FloatWidth::F64 => 8,
+            },
+            IrType::Pointer(_) => 8, // 64-bit ABI
+            IrType::Array { len, element } => len * self.type_size_in_bytes(element),
+            IrType::Aggregate(fields) => fields.iter().map(|(_, t)| self.type_size_in_bytes(t)).sum(),
+            _ => 0,
+        }
+    }
+
+    fn resolve_named_type(&self, ty: &IrType) -> IrType {
+        match ty {
+            IrType::Named(name) => self
+                .context
+                .types
+                .resolve(name)
+                .cloned()
+                .unwrap_or_else(|| IrType::Named(name.clone())),
+            IrType::Pointer(inner) => IrType::Pointer(Box::new(self.resolve_named_type(inner))),
+            IrType::Array { len, element } => IrType::Array {
+                len: *len,
+                element: Box::new(self.resolve_named_type(element)),
+            },
+            IrType::Aggregate(fields) => IrType::Aggregate(
+                fields
+                    .iter()
+                    .map(|(name, ty)| (name.clone(), self.resolve_named_type(ty)))
+                    .collect(),
+            ),
+            other => other.clone(),
+        }
+    }
+
+    fn format_assign_target(&self, target: &AssignTarget) -> String {
+        match target {
+            AssignTarget::Identifier(name) => name.clone(),
+            AssignTarget::Dereference(inner) => format!("@{}", self.format_assign_target(inner)),
+            AssignTarget::FieldAccess { expr, field } => {
+                format!("{}.{}", self.format_assign_target(expr), field)
+            }
+            AssignTarget::ArrayIndex { expr, index } => {
+                format!("{}[{}]", self.format_assign_target(expr), self.format_expression(index))
+            }
+            AssignTarget::Tuple(targets) => {
+                let items = targets
+                    .iter()
+                    .map(|t| self.format_assign_target(t))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("{{{}}}", items)
+            }
+        }
+    }
+
+    fn format_expression(&self, expr: &Expression) -> String {
+        format!("{expr:?}")
+    }
+
+    fn is_deref_based_index_expr(&self, expr: &Expression) -> bool {
+        match expr {
+            Expression::Unary {
+                op: UnaryOp::Dereference,
+                ..
+            } => true,
+            Expression::Primary(crate::high_level_language::ast::PrimaryExpr::FieldAccess {
+                expr,
+                ..
+            }) => self.is_deref_based_index_expr(expr),
+            Expression::Primary(crate::high_level_language::ast::PrimaryExpr::ArrayIndex {
+                expr,
+                ..
+            }) => self.is_deref_based_index_expr(expr),
+            _ => false,
+        }
+    }
+
+    fn emit_deferred_action(&mut self, action: DeferredAction) {
+        match action {
+            DeferredAction::Call { function, args } => {
+                let dest = self.new_temp();
+                self.push_instruction(IrInstruction::Call {
+                    dest: Some(dest),
+                    function,
+                    args,
+                });
+            }
+            DeferredAction::Expr(expr) => {
+                let _ = self.lower_expression(&expr);
             }
         }
     }

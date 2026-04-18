@@ -80,7 +80,7 @@ impl fmt::Display for IrInstruction {
         match self {
             Self::Comment(message) => write!(f, "; {message}"),
             Self::Alloc { dest, ty, count } => {
-                write!(f, "{dest} = alloc {ty}")?;
+                write!(f, "{dest} = stack_alloc {ty}")?;
                 if let Some(count) = count {
                     write!(f, " {count}")?;
                 }

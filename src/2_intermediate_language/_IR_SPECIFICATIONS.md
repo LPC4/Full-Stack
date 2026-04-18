@@ -66,7 +66,7 @@ Memory instructions in This IR are "Fat" — they optionally bake in byte offset
 
 | Instruction | Syntax | Description |
 |-------------|--------|-------------|
-| **`alloc`** | `$dest = alloc <type> [count]` | Allocates space on the stack. If `count` is provided, allocates an array. Returns `type*`. |
+| **`stack_alloc`** | `$dest = stack_alloc <type> [count]` | Allocates space on the stack. If `count` is provided, allocates an array. Returns `type*`. |
 | **`heap_alloc`** | `$dest = heap_alloc <type> [count]` | Allocates heap memory. Returns `type*`. Mirrors HLL `new(...)`. |
 | **`heap_free`** | `heap_free $ptr` | Frees heap memory previously returned by `heap_alloc` (or runtime allocator wrappers). |
 | **`load`** | `$dest = load <type> $ptr [+ offset]` | Dereferences memory. `offset` is an immediate byte offset. |
@@ -126,7 +126,7 @@ define {i32, i32} @divide(i32 $a, i32 $b) {
     $1 = math mod i32 $a, $b
     
     ; Allocate tuple struct on the stack
-    $tuple = alloc {i32, i32}
+    $tuple = stack_alloc {i32, i32}
     
     ; Store values into struct memory using baked-in offsets
     store i32 $0 -> $tuple + 0
@@ -216,10 +216,10 @@ basic_block  = label ":" { instruction } terminator;
 
 program      = { type_decl } { function_def };
 
-instruction  = alloc_inst | heap_alloc_inst | heap_free_inst | load_inst | store_inst | offset_inst 
+instruction  = alloc_inst | heap_alloc_inst | heap_free_inst | load_inst | store_inst | offset_inst
              | math_inst | unary_inst | cmp_inst | cast_inst | call_inst;
 
-alloc_inst   = register "=" "alloc" type [ integer ];
+alloc_inst   = register "=" "stack_alloc" type [ integer ];
 heap_alloc_inst = register "=" "heap_alloc" type [ integer ];
 heap_free_inst  = "heap_free" register;
 load_inst    = register "=" "load" type register [ "+" integer ];

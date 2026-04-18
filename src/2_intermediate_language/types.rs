@@ -44,7 +44,7 @@ pub enum IrType {
     Integer(IntWidth),
     Float(FloatWidth),
     Pointer(Box<IrType>),
-    Aggregate(Vec<IrType>),
+    Aggregate(Vec<(String, IrType)>),
     Array { len: usize, element: Box<IrType> },
     Named(String),
 }
@@ -58,11 +58,11 @@ impl fmt::Display for IrType {
             Self::Pointer(inner) => write!(f, "{inner}*"),
             Self::Aggregate(fields) => {
                 write!(f, "{{")?;
-                for (index, field) in fields.iter().enumerate() {
+                for (index, (_name, field_ty)) in fields.iter().enumerate() {
                     if index > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{field}")?;
+                    write!(f, "{field_ty}")?;
                 }
                 write!(f, "}}")
             }

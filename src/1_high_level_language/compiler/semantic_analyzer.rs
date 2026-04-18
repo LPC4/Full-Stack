@@ -265,7 +265,7 @@ impl SemanticAnalyzer {
                     }
                 }
             }
-            Expression::Assignment { target, rvalue } => {
+            Expression::Assignment { target: _, rvalue } => {
                 let rvalue_type = self.infer_expression_type(rvalue)?;
                 // Assignment returns the type of the right side
                 Ok(rvalue_type)
@@ -292,8 +292,10 @@ impl SemanticAnalyzer {
                 element: Box::new(self.ast_type_to_ir_type(inner)),
             },
             Type::Struct(fields) => {
-                let field_types: Vec<IrType> =
-                    fields.iter().map(|f| self.ast_type_to_ir_type(&f.ty)).collect();
+                let field_types: Vec<(String, IrType)> = fields
+                    .iter()
+                    .map(|f| (f.name.clone(), self.ast_type_to_ir_type(&f.ty)))
+                    .collect();
                 IrType::Aggregate(field_types)
             }
             Type::Named { name, .. } => IrType::Named(name.clone()),

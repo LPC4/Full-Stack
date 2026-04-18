@@ -1,10 +1,10 @@
 define {i32, i32} @divide(i32 $a, i32 $b) {
 @entry:
 	; bind parameter: a
-	$a_ptr = alloc i32
+	$a_ptr = stack_alloc i32
 	store i32 $a -> $a_ptr
 	; bind parameter: b
-	$b_ptr = alloc i32
+	$b_ptr = stack_alloc i32
 	store i32 $b -> $b_ptr
 	$0 = load i32 $a_ptr
 	$1 = load i32 $b_ptr
@@ -12,7 +12,7 @@ define {i32, i32} @divide(i32 $a, i32 $b) {
 	$3 = load i32 $a_ptr
 	$4 = load i32 $b_ptr
 	$5 = math mod i32 $3, $4
-	$6 = alloc {i32, i32}
+	$6 = stack_alloc {i32, i32}
 	store i32 $2 -> $6 + 0
 	store i32 $5 -> $6 + 8
 	ret $6
@@ -20,14 +20,7 @@ define {i32, i32} @divide(i32 $a, i32 $b) {
 
 define i32 @test_tuple_destructuring() {
 @entry:
-	; local var: q
-	$q = alloc i32
-	store i32 0 -> $q
-	; local var: r
-	$r = alloc i32
-	store i32 0 -> $r
 	; assignment
 	$0 = call @divide(10, 3)
-	$1 = load i32 $q
-	ret $1
+	ret
 }

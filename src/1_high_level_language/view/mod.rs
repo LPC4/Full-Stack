@@ -298,7 +298,7 @@ fn highlight_ir(theme: &egui::Style, code: &str) -> LayoutJob {
         "call",
         "load",
         "store",
-        "alloc",
+        "stack_alloc",
         "heap_alloc",
         "offset",
         "math",

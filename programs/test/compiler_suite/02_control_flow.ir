@@ -1,10 +1,10 @@
 define i32 @control_suite(i32 $param) {
 @entry:
 	; bind parameter: param
-	$param_ptr = alloc i32
+	$param_ptr = stack_alloc i32
 	store i32 $param -> $param_ptr
 	; local var: sum
-	$sum = alloc i32
+	$sum = stack_alloc i32
 	store i32 0 -> $sum
 	jump @label_0
 @label_0:

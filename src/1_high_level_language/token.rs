@@ -51,8 +51,10 @@ pub enum Token<'a> {
     Slash,
     Percent,
 
-    // Add Error token variant
+    // Error
     Error(String),
+
+    // Comparison
     Eq,
     Neq,
     Lt,
@@ -60,6 +62,8 @@ pub enum Token<'a> {
     Gt,
     Gte,
     Not,
+
+    // Operators
     Ampersand,
     At,
     LParen,

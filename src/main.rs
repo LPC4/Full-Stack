@@ -9,6 +9,7 @@ use std::path::Path;
 
 /// Compilation pipeline: HLL -> Lexer -> Parser -> Compiler -> IR
 #[cfg(not(target_arch = "wasm32"))]
+#[allow(dead_code)]
 fn compile_hll_file(input_file: &str, output_file: &str) -> Result<(), Box<dyn std::error::Error>> {
     log::info!("Reading HLL file: {}", input_file);
     let content = fs::read_to_string(input_file)?;
