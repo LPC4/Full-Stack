@@ -10,10 +10,7 @@ pub enum Type {
     Pointer(Box<Type>),
     Array(usize, Box<Type>),
     Struct(Vec<FieldDecl>),
-    Named {
-        name: String,
-        args: Vec<Type>,
-    },
+    Named { name: String, args: Vec<Type> },
 }
 
 #[derive(Debug, Clone, PartialEq)]

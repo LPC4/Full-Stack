@@ -78,7 +78,9 @@ impl<'a> Parser<'a> {
                         }
                     }
                     _ => {
-                        return Err(self.error("expected `(` for function or `:` for variable declaration"));
+                        return Err(
+                            self.error("expected `(` for function or `:` for variable declaration")
+                        );
                     }
                 }
             }
@@ -256,7 +258,9 @@ impl<'a> Parser<'a> {
             }
 
             loop {
-                let (name, ty) = if matches!(self.peek(), Some(Token::Ident(_))) && self.peek_n(1) == Some(&Token::Colon) {
+                let (name, ty) = if matches!(self.peek(), Some(Token::Ident(_)))
+                    && self.peek_n(1) == Some(&Token::Colon)
+                {
                     let name = self.expect_ident()?;
                     self.expect_colon()?;
                     (Some(name), self.parse_type()?)
@@ -454,7 +458,6 @@ impl<'a> Parser<'a> {
         Ok(expr)
     }
 
-
     fn parse_additive(&mut self) -> Result<Expression, ParserError> {
         let mut expr = self.parse_multiplicative()?;
         loop {
@@ -576,22 +579,39 @@ impl<'a> Parser<'a> {
 
     fn parse_primary(&mut self) -> Result<Expression, ParserError> {
         let expr = match self.peek() {
-            Some(Token::Integer(_)) => Expression::Primary(PrimaryExpr::Literal(Literal::Integer(self.expect_integer()?))),
-            Some(Token::HexInteger(_)) => Expression::Primary(PrimaryExpr::Literal(Literal::HexInteger(self.expect_hex_integer()?))),
-            Some(Token::Float(_)) => Expression::Primary(PrimaryExpr::Literal(Literal::Float(self.expect_float()?))),
-            Some(Token::StringLit(_)) => Expression::Primary(PrimaryExpr::Literal(Literal::StringLit(self.expect_string()?))),
-            Some(Token::True) => { self.advance(); Expression::Primary(PrimaryExpr::Literal(Literal::Boolean(true))) },
-            Some(Token::False) => { self.advance(); Expression::Primary(PrimaryExpr::Literal(Literal::Boolean(false))) },
-            Some(Token::Null) => { self.advance(); Expression::Primary(PrimaryExpr::Literal(Literal::Null)) },
+            Some(Token::Integer(_)) => Expression::Primary(PrimaryExpr::Literal(Literal::Integer(
+                self.expect_integer()?,
+            ))),
+            Some(Token::HexInteger(_)) => Expression::Primary(PrimaryExpr::Literal(
+                Literal::HexInteger(self.expect_hex_integer()?),
+            )),
+            Some(Token::Float(_)) => {
+                Expression::Primary(PrimaryExpr::Literal(Literal::Float(self.expect_float()?)))
+            }
+            Some(Token::StringLit(_)) => Expression::Primary(PrimaryExpr::Literal(
+                Literal::StringLit(self.expect_string()?),
+            )),
+            Some(Token::True) => {
+                self.advance();
+                Expression::Primary(PrimaryExpr::Literal(Literal::Boolean(true)))
+            }
+            Some(Token::False) => {
+                self.advance();
+                Expression::Primary(PrimaryExpr::Literal(Literal::Boolean(false)))
+            }
+            Some(Token::Null) => {
+                self.advance();
+                Expression::Primary(PrimaryExpr::Literal(Literal::Null))
+            }
             Some(Token::Ident(name)) => {
                 let id = name.to_string();
                 self.advance();
                 Expression::Primary(PrimaryExpr::Identifier(id))
-            },
+            }
             Some(Token::Free) => {
                 self.advance();
                 Expression::Primary(PrimaryExpr::Identifier("free".to_string()))
-            },
+            }
             Some(Token::LParen) => {
                 self.advance();
                 let expr = self.parse_expression()?;
@@ -599,7 +619,9 @@ impl<'a> Parser<'a> {
                     let mut elements = vec![expr];
                     while !self.check_rparen() {
                         elements.push(self.parse_expression()?);
-                        if !self.match_comma() { break; }
+                        if !self.match_comma() {
+                            break;
+                        }
                     }
                     self.expect_rparen()?;
                     Expression::Primary(PrimaryExpr::TupleLiteral(elements))
@@ -607,7 +629,7 @@ impl<'a> Parser<'a> {
                     self.expect_rparen()?;
                     expr
                 }
-            },
+            }
             Some(Token::LBracket) => {
                 self.advance();
                 let mut elements = Vec::new();
@@ -615,7 +637,9 @@ impl<'a> Parser<'a> {
                     loop {
                         elements.push(self.parse_expression()?);
                         if self.match_comma() {
-                            if self.check_rbracket() { break; }
+                            if self.check_rbracket() {
+                                break;
+                            }
                             continue;
                         }
                         break;
@@ -623,14 +647,15 @@ impl<'a> Parser<'a> {
                 }
                 self.expect_rbracket()?;
                 Expression::Primary(PrimaryExpr::ArrayLiteral(elements))
-            },
+            }
             Some(Token::LBrace) => {
                 self.advance();
                 let mut fields = Vec::new();
                 if !self.check_rbrace() {
                     loop {
                         // A field init can be `name: expr` or just `expr`
-                        let has_name = matches!(self.peek(), Some(Token::Ident(_))) && self.peek_n(1) == Some(&Token::Colon);
+                        let has_name = matches!(self.peek(), Some(Token::Ident(_)))
+                            && self.peek_n(1) == Some(&Token::Colon);
 
                         let name = if has_name {
                             let n = self.expect_ident()?;
@@ -644,7 +669,9 @@ impl<'a> Parser<'a> {
                         fields.push(FieldInit { name, expr });
 
                         if self.match_comma() {
-                            if self.check_rbrace() { break; }
+                            if self.check_rbrace() {
+                                break;
+                            }
                             continue;
                         }
                         break;
@@ -652,7 +679,7 @@ impl<'a> Parser<'a> {
                 }
                 self.expect_rbrace()?;
                 Expression::Primary(PrimaryExpr::StructLiteral(fields))
-            },
+            }
             Some(Token::New) => {
                 self.advance();
                 self.expect_lparen()?;
@@ -663,7 +690,9 @@ impl<'a> Parser<'a> {
                         loop {
                             args.push(self.parse_expression()?);
                             if self.match_comma() {
-                                if self.check_rparen() { break; }
+                                if self.check_rparen() {
+                                    break;
+                                }
                                 continue;
                             }
                             break;
@@ -672,8 +701,10 @@ impl<'a> Parser<'a> {
                 }
                 self.expect_rparen()?;
                 Expression::Primary(PrimaryExpr::New { ty, args })
-            },
-            Some(tok) => return Err(self.error_with_token("unexpected token in primary expression", tok)),
+            }
+            Some(tok) => {
+                return Err(self.error_with_token("unexpected token in primary expression", tok))
+            }
             None => return Err(self.error("unexpected end of input")),
         };
         Ok(expr)
@@ -692,8 +723,8 @@ impl<'a> Parser<'a> {
                     } else {
                         break;
                     }
-                },
-                Err(_) => return Ok(None)
+                }
+                Err(_) => return Ok(None),
             }
         }
 
@@ -895,7 +926,9 @@ impl<'a> Parser<'a> {
 
     fn parse_assign_target(&mut self) -> Result<AssignTarget, ParserError> {
         if self.match_at() {
-            return Ok(AssignTarget::Dereference(Box::new(self.parse_assign_target()?)));
+            return Ok(AssignTarget::Dereference(Box::new(
+                self.parse_assign_target()?,
+            )));
         }
 
         let name = self.expect_ident()?;
@@ -929,19 +962,27 @@ impl<'a> Parser<'a> {
 
     fn expression_to_target(&self, expr: Expression) -> Result<AssignTarget, ParserError> {
         match expr {
-            Expression::Primary(PrimaryExpr::Identifier(name)) => Ok(AssignTarget::Identifier(name)),
+            Expression::Primary(PrimaryExpr::Identifier(name)) => {
+                Ok(AssignTarget::Identifier(name))
+            }
             Expression::Unary {
                 op: UnaryOp::Dereference,
                 expr,
-            } => Ok(AssignTarget::Dereference(Box::new(self.expression_to_target(*expr)?))),
-            Expression::Primary(PrimaryExpr::FieldAccess { expr, field }) => Ok(AssignTarget::FieldAccess {
-                expr: Box::new(self.expression_to_target(*expr)?),
-                field,
-            }),
-            Expression::Primary(PrimaryExpr::ArrayIndex { expr, index }) => Ok(AssignTarget::ArrayIndex {
-                expr: Box::new(self.expression_to_target(*expr)?),
-                index,
-            }),
+            } => Ok(AssignTarget::Dereference(Box::new(
+                self.expression_to_target(*expr)?,
+            ))),
+            Expression::Primary(PrimaryExpr::FieldAccess { expr, field }) => {
+                Ok(AssignTarget::FieldAccess {
+                    expr: Box::new(self.expression_to_target(*expr)?),
+                    field,
+                })
+            }
+            Expression::Primary(PrimaryExpr::ArrayIndex { expr, index }) => {
+                Ok(AssignTarget::ArrayIndex {
+                    expr: Box::new(self.expression_to_target(*expr)?),
+                    index,
+                })
+            }
             _ => Err(self.error("left side of assignment is not assignable")),
         }
     }
@@ -953,7 +994,9 @@ impl<'a> Parser<'a> {
     fn parse_usize_literal(&mut self) -> Result<usize, ParserError> {
         match self.peek() {
             Some(Token::Integer(text)) => {
-                let value = text.parse::<usize>().map_err(|_| self.error("invalid array size"))?;
+                let value = text
+                    .parse::<usize>()
+                    .map_err(|_| self.error("invalid array size"))?;
                 self.advance();
                 Ok(value)
             }
@@ -977,7 +1020,9 @@ impl<'a> Parser<'a> {
     fn expect_integer(&mut self) -> Result<i64, ParserError> {
         match self.peek() {
             Some(Token::Integer(text)) => {
-                let value = text.parse::<i64>().map_err(|_| self.error("invalid integer literal"))?;
+                let value = text
+                    .parse::<i64>()
+                    .map_err(|_| self.error("invalid integer literal"))?;
                 self.advance();
                 Ok(value)
             }
@@ -990,7 +1035,8 @@ impl<'a> Parser<'a> {
         match self.peek() {
             Some(Token::HexInteger(text)) => {
                 let trimmed = text.trim_start_matches("0x").trim_start_matches("0X");
-                let value = i64::from_str_radix(trimmed, 16).map_err(|_| self.error("invalid hex literal"))?;
+                let value = i64::from_str_radix(trimmed, 16)
+                    .map_err(|_| self.error("invalid hex literal"))?;
                 self.advance();
                 Ok(value)
             }
@@ -1002,7 +1048,9 @@ impl<'a> Parser<'a> {
     fn expect_float(&mut self) -> Result<f64, ParserError> {
         match self.peek() {
             Some(Token::Float(text)) => {
-                let value = text.parse::<f64>().map_err(|_| self.error("invalid float literal"))?;
+                let value = text
+                    .parse::<f64>()
+                    .map_err(|_| self.error("invalid float literal"))?;
                 self.advance();
                 Ok(value)
             }
@@ -1140,16 +1188,18 @@ impl<'a> Parser<'a> {
             Some(Token::Const | Token::ConstKeyword)
             | Some(Token::Type | Token::TypeKeyword)
             | Some(Token::External) => true,
-            Some(Token::Ident(_)) => matches!(
-                self.peek_n(1),
-                Some(Token::Colon) | Some(Token::LParen)
-            ),
+            Some(Token::Ident(_)) => {
+                matches!(self.peek_n(1), Some(Token::Colon) | Some(Token::LParen))
+            }
             _ => false,
         }
     }
 
     fn is_expression_terminator(&self) -> bool {
-        matches!(self.peek(), Some(Token::StatementTerminator | Token::RBrace | Token::Eof))
+        matches!(
+            self.peek(),
+            Some(Token::StatementTerminator | Token::RBrace | Token::Eof)
+        )
     }
 
     fn match_assign(&mut self) -> bool {
@@ -1417,7 +1467,9 @@ mod tests {
         let program = parser.parse_program().unwrap();
 
         match &program.declarations[0].decl {
-            DeclNode::Function { is_extern, body, .. } => {
+            DeclNode::Function {
+                is_extern, body, ..
+            } => {
                 assert!(*is_extern);
                 assert!(body.is_none());
             }
@@ -1576,11 +1628,11 @@ mod tests {
             DeclNode::Type { name, generics, ty } => {
                 assert_eq!(name, "Vector");
                 assert_eq!(generics, &vec!["T".to_string()]);
-                assert!(matches!(ty, Type::Named { name, args } if name == "Vector" && args.len() == 1));
+                assert!(
+                    matches!(ty, Type::Named { name, args } if name == "Vector" && args.len() == 1)
+                );
             }
             other => panic!("unexpected declaration: {other:?}"),
         }
     }
 }
-
-

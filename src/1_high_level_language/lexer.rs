@@ -1,6 +1,6 @@
+use crate::high_level_language::token::Token;
 use std::iter::Peekable;
 use std::str::Chars;
-use crate::high_level_language::token::Token;
 
 pub struct Lexer<'a> {
     input: &'a str,
@@ -59,10 +59,38 @@ impl<'a> Lexer<'a> {
             ']' => Token::RBracket,
 
             // Lookahead Operators
-            '=' => if self.peek_is('=') { self.advance(); Token::Eq } else { Token::Assign },
-            '!' => if self.peek_is('=') { self.advance(); Token::Neq } else { Token::Not },
-            '<' => if self.peek_is('=') { self.advance(); Token::Lte } else { Token::Lt },
-            '>' => if self.peek_is('=') { self.advance(); Token::Gte } else { Token::Gt },
+            '=' => {
+                if self.peek_is('=') {
+                    self.advance();
+                    Token::Eq
+                } else {
+                    Token::Assign
+                }
+            }
+            '!' => {
+                if self.peek_is('=') {
+                    self.advance();
+                    Token::Neq
+                } else {
+                    Token::Not
+                }
+            }
+            '<' => {
+                if self.peek_is('=') {
+                    self.advance();
+                    Token::Lte
+                } else {
+                    Token::Lt
+                }
+            }
+            '>' => {
+                if self.peek_is('=') {
+                    self.advance();
+                    Token::Gte
+                } else {
+                    Token::Gt
+                }
+            }
 
             // Literals & Keywords
             '"' => self.read_string(),
@@ -102,10 +130,18 @@ impl<'a> Lexer<'a> {
             "false" => Token::False,
             "null" => Token::Null,
             // Types
-            "i8" => Token::I8, "i16" => Token::I16, "i32" => Token::I32, "i64" => Token::I64,
-            "u8" => Token::U8, "u16" => Token::U16, "u32" => Token::U32, "u64" => Token::U64,
-            "f32" => Token::F32, "f64" => Token::F64,
-            "bool" => Token::Bool, "Str" => Token::Str,
+            "i8" => Token::I8,
+            "i16" => Token::I16,
+            "i32" => Token::I32,
+            "i64" => Token::I64,
+            "u8" => Token::U8,
+            "u16" => Token::U16,
+            "u32" => Token::U32,
+            "u64" => Token::U64,
+            "f32" => Token::F32,
+            "f64" => Token::F64,
+            "bool" => Token::Bool,
+            "Str" => Token::Str,
             _ => Token::Ident(text),
         }
     }
@@ -119,7 +155,11 @@ impl<'a> Lexer<'a> {
             self.advance(); // consume 'x'
             is_hex = true;
             while let Some(&c) = self.chars.peek() {
-                if c.is_ascii_hexdigit() { self.advance(); } else { break; }
+                if c.is_ascii_hexdigit() {
+                    self.advance();
+                } else {
+                    break;
+                }
             }
         } else {
             // Standard integer or float
@@ -136,9 +176,13 @@ impl<'a> Lexer<'a> {
         }
 
         let text = &self.input[start..self.pos];
-        if is_hex { Token::HexInteger(text) }
-        else if is_float { Token::Float(text) }
-        else { Token::Integer(text) }
+        if is_hex {
+            Token::HexInteger(text)
+        } else if is_float {
+            Token::Float(text)
+        } else {
+            Token::Integer(text)
+        }
     }
 
     fn read_string(&mut self) -> Token<'a> {
@@ -166,7 +210,9 @@ impl<'a> Lexer<'a> {
 
     fn skip_comment(&mut self) {
         while let Some(&c) = self.chars.peek() {
-            if c == '\n' { break; }
+            if c == '\n' {
+                break;
+            }
             self.advance();
         }
     }
