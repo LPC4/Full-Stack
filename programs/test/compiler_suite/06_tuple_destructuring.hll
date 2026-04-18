@@ -1,0 +1,14 @@
+; Test tuple returns and destructuring
+divide: (a: i32, b: i32) -> (i32, i32) {
+    return a / b, a % b
+}
+
+test_tuple_destructuring: () -> i32 {
+    q: i32 = 0
+    r: i32 = 0
+    q, r = divide(10, 3)
+    return q
+}
+
+
+

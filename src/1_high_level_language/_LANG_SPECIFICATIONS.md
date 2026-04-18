@@ -1,4 +1,4 @@
-# Kryon Language Specification v1.0
+# Language Specification v1.0
 
 **Version:** 1.0  
 **Design Philosophy:** Consistency-First Memory Model  
@@ -8,7 +8,7 @@
 
 ## 1. Core Design Principles
 
-Kryon enforces a 100% consistent pointer model. Memory operations are context-independent, explicit, and deterministic. The language eliminates implicit conversions, context-dependent dereferencing, and hidden ownership semantics.
+HLL enforces a 100% consistent pointer model. Memory operations are context-independent, explicit, and deterministic. The language eliminates implicit conversions, context-dependent dereferencing, and hidden ownership semantics.
 
 ### 1.1 The Four Golden Rules
 1. **Pointers are always pointers.** If a type contains `*`, it is a pointer type. No implicit conversions between `T` and `T*`.
@@ -31,7 +31,7 @@ Kryon enforces a 100% consistent pointer model. Memory operations are context-in
 | Type Casting | Prefix syntax: `target_type(value)` |
 
 ### 2.1 Syntax Examples
-```kryon
+```HLL
 x: i32 = 42
 y: f64 = 3.1415
 z: i32 = 42; // Allowed trailing comment
@@ -59,7 +59,7 @@ int_val: i32 = i32(ptr)
 | `Str` | String type | Implementation-defined | `null` |
 
 ### 3.2 Declaration & Initialization
-```kryon
+```HLL
 ; Initialized stack variable
 count: i32 = 10
 
@@ -105,7 +105,7 @@ const MAX_SIZE = 100
 
 ### 5.1 Arrays
 Array indexing **always returns a pointer** (`T*`), never a value.
-```kryon
+```HLL
 local_arr: i32[5]
 @local_arr[0] = 10          ; Write
 first: i32 = @local_arr[0]  ; Read
@@ -126,7 +126,7 @@ x_val: f32 = @points[0].x
 - Stack arrays cannot decay to pointers. Use `&arr[0]` to obtain a pointer.
 
 ### 5.2 Structs
-```kryon
+```HLL
 type Point = {
     x: f32,
     y: f32
@@ -153,7 +153,7 @@ p2_ptr: Point* = new(Point)
 - Returning stack addresses (`return &x`) is a compile-time error.
 - Multiple returns use tuple destructuring.
 
-```kryon
+```HLL
 increment(x_ptr: i32*) {
     @x_ptr = @x_ptr + 1
 }
@@ -185,7 +185,7 @@ main() {
 - Arguments are evaluated at declaration, not at execution.
 - Cannot contain `return` statements.
 
-```kryon
+```HLL
 process_data() {
     file: File* = open("data.bin")
     defer close(file)
@@ -209,7 +209,7 @@ process_data() {
 - Cannot use `defer`, `new`, or `free`.
 - Only operate on compile-time known values.
 
-```kryon
+```HLL
 const FACTORIAL_10 = compute_factorial(10)
 compute_factorial(n: i32): i32 {
     if n <= 1 { return 1 }
@@ -223,7 +223,7 @@ compute_factorial(n: i32): i32 {
 - Ignored error values trigger compiler warnings.
 - Explicit handling required at each call site.
 
-```kryon
+```HLL
 open_file(path: Str): (File*, Str) {
     if invalid_path(path) { return {null, "Invalid path"} }
     return {new(File), null}
@@ -304,7 +304,7 @@ array_index    = expression "[" expression "]";
 - **No Implicit Conversions:** Type system strictly separates `T` and `T*`. Casting requires explicit syntax.
 
 ### 10.2 Error Prevention Matrix
-| Error | Traditional Cause | Kryon Prevention |
+| Error | Traditional Cause | HLL Prevention |
 |-------|------------------|------------------|
 | Null Dereference | Implicit assumptions | Explicit `@`, compile-time null tracking |
 | Use-After-Free | Hidden ownership | Mandatory `free()`, compiler lifetime tracking |
@@ -320,7 +320,7 @@ array_index    = expression "[" expression "]";
 ## 11. Standard Library Reference
 
 ### 11.1 Vector
-```kryon
+```HLL
 type Vector<T> = {
     data: T*,
     length: u64,
@@ -352,7 +352,7 @@ free_vector<T>(vec: Vector<T>*) {
 - **Pool:** `new_pool<T>(count)`, `acquire<T>(pool)`, `release<T>(pool, obj)`. Fixed-size object recycling.
 
 ### 11.3 I/O Abstraction
-```kryon
+```HLL
 type File = { handle: u64, buffer: u8*, buffer_size: u64, buffer_pos: u64, buffer_end: u64 }
 open_file(path: Str): (File*, Str)
 read_byte(f: File*): (u8, bool)
@@ -365,7 +365,7 @@ close_file(f: File*)
 ## 12. Interoperability & FFI
 
 ### 12.1 C ABI Compatibility
-| Kryon | C |
+| HLL | C |
 |-------|---|
 | `i32` / `u32` | `int` / `unsigned int` |
 | `f32` / `f64` | `float` / `double` |
@@ -374,13 +374,13 @@ close_file(f: File*)
 | Function pointers | Function pointers |
 
 ### 12.2 Ownership Transfer Protocols
-1. **Caller Retains Ownership:** C reads/writes but does not free. Kryon calls `free()` later.
-2. **Transfer to C:** Kryon passes pointer, C assumes ownership. Kryon must not call `free()`.
-3. **Transfer from C:** C allocates, returns pointer. Kryon assumes ownership and must call `free()`.
+1. **Caller Retains Ownership:** C reads/writes but does not free. HLL calls `free()` later.
+2. **Transfer to C:** HLL passes pointer, C assumes ownership. HLL must not call `free()`.
+3. **Transfer from C:** C allocates, returns pointer. HLL assumes ownership and must call `free()`.
 4. **Shared Reference Counting:** Both sides follow `atomic_increment`/`atomic_decrement` protocol. Last owner frees memory.
 
 ### 12.3 FFI Wrapper Pattern
-```kryon
+```HLL
 external external_compute_sum(values: f32*, count: i32): f32
 
 compute_sum_wrapper(values: f32*, count: i32): f32 {

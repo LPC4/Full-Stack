@@ -68,6 +68,11 @@ pub enum IrInstruction {
         function: String,
         args: Vec<IrValue>,
     },
+    Phi {
+        dest: IrRegister,
+        ty: IrType,
+        incoming: Vec<(IrValue, IrLabel)>,
+    },
 }
 
 impl fmt::Display for IrInstruction {
@@ -161,6 +166,16 @@ impl fmt::Display for IrInstruction {
                     write!(f, "{arg}")?;
                 }
                 write!(f, ")")
+            }
+            Self::Phi { dest, ty, incoming } => {
+                write!(f, "{dest} = phi {ty} ")?;
+                for (index, (value, label)) in incoming.iter().enumerate() {
+                    if index > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "[ {value}, {label} ]")?;
+                }
+                Ok(())
             }
         }
     }

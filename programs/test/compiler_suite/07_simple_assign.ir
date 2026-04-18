@@ -1,0 +1,13 @@
+define i32 @test_simple() {
+@entry:
+	; local var: q
+	$q = alloc i32
+	store i32 0 -> $q
+	; local var: r
+	$r = alloc i32
+	store i32 0 -> $r
+	; assignment
+	store i32 5 -> $q
+	$0 = load i32 $q
+	ret $0
+}

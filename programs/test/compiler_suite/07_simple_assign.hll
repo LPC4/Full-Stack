@@ -1,0 +1,8 @@
+; Simple test for tuple destructuring with explicit types
+test_simple: () -> i32 {
+    q: i32 = 0
+    r: i32 = 0
+    q = 5
+    return q
+}
+

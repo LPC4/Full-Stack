@@ -8,19 +8,19 @@
 
 ## 1. Core Design Principles
 
-KIR is the translation layer between the Kryon high-level frontend and the machine-code backend. It bridges Kryon's strict, explicit memory model with a machine-agnostic, easily optimizable format. 
+This IR is the translation layer between the HLL frontend and the machine-code backend. It bridges HLL's strict, explicit memory model with a machine-agnostic, easily optimizable format. 
 
 ### 1.1 The Architecture Pillars
 1. **Static Single Assignment (SSA):** Every virtual register is assigned exactly once. This guarantees unhindered data-flow analysis and trivial Dead Code Elimination (DCE).
-2. **Infinite Virtual Registers:** KIR assumes infinite registers using the `$` prefix. Register allocation is deferred entirely to the target-specific backend.
-3. **"Fat" Instruction Set:** KIR utilizes highly expressive, polymorphic instructions (e.g., baked-in pointer offsets, generic `math` operations). This keeps the IR concise, readable, and semantically rich for high-level optimizations.
-4. **Explicit Load/Store:** Virtual registers hold values; memory operations (stack/heap) require explicit `load` and `store` instructions. This translates Kryon's `@` operator 1:1.
+2. **Infinite Virtual Registers:** This IR assumes infinite registers using the `$` prefix. Register allocation is deferred entirely to the target-specific backend.
+3. **"Fat" Instruction Set:** This IR utilizes highly expressive, polymorphic instructions (e.g., baked-in pointer offsets, generic `math` operations). This keeps the IR concise, readable, and semantically rich for high-level optimizations.
+4. **Explicit Load/Store:** Virtual registers hold values; memory operations (stack/heap) require explicit `load` and `store` instructions. This translates HLL's `@` operator 1:1.
 
 ---
 
 ## 2. Syntax & Lexical Conventions
 
-KIR uses a simple, unambiguous text format designed for both ultra-fast parsing and human readability.
+This IR uses a simple, unambiguous text format designed for both ultra-fast parsing and human readability.
 
 | Entity | Syntax | Example |
 |--------|--------|---------|
@@ -38,18 +38,18 @@ To prevent naming collisions during lowering, the frontend maps user-defined var
 
 ## 3. Type System
 
-KIR maps Kryon's frontend types to basic IR types.
+This IR maps HLL's frontend types to basic IR types.
 
-| KIR Type | Description |
+| This IR Type | Description |
 |----------|-------------|
 | `i1`, `i8`, `i16`, `i32`, `i64` | Integers (i1 is boolean). Signedness is handled by opcodes, not types. |
 | `f32`, `f64` | IEEE 754 Floating point. |
 | `T*` | Pointer to type `T`. |
-| `{T1, T2, ...}` | Aggregate/Struct types (used for Kryon structs and tuples). |
+| `{T1, T2, ...}` | Aggregate/Struct types (used for HLL structs and tuples). |
 | `[N x T]` | Fixed-size array. |
 | `Name` | Named type alias emitted by the frontend (e.g., `Point`). |
 
-KIR supports optional named type declarations for readability and stable layout reuse:
+This IR supports optional named type declarations for readability and stable layout reuse:
 
 ```text
 type Point = {f32, f32}
@@ -62,12 +62,12 @@ Backends may canonicalize named aliases to structural types during lowering.
 ## 4. Instruction Set Architecture (ISA)
 
 ### 4.1 Memory & State Management
-Memory instructions in KIR are "Fat" — they optionally bake in byte offsets to prevent emitting chains of trivial pointer-arithmetic instructions.
+Memory instructions in This IR are "Fat" — they optionally bake in byte offsets to prevent emitting chains of trivial pointer-arithmetic instructions.
 
 | Instruction | Syntax | Description |
 |-------------|--------|-------------|
 | **`alloc`** | `$dest = alloc <type> [count]` | Allocates space on the stack. If `count` is provided, allocates an array. Returns `type*`. |
-| **`heap_alloc`** | `$dest = heap_alloc <type> [count]` | Allocates heap memory. Returns `type*`. Mirrors Kryon `new(...)`. |
+| **`heap_alloc`** | `$dest = heap_alloc <type> [count]` | Allocates heap memory. Returns `type*`. Mirrors HLL `new(...)`. |
 | **`heap_free`** | `heap_free $ptr` | Frees heap memory previously returned by `heap_alloc` (or runtime allocator wrappers). |
 | **`load`** | `$dest = load <type> $ptr [+ offset]` | Dereferences memory. `offset` is an immediate byte offset. |
 | **`store`** | `store <type> <value> -> $ptr [+ offset]`| Writes `<value>` to memory at `$ptr` + `offset` bytes. |
@@ -97,13 +97,13 @@ Control flow operates strictly between labeled Basic Blocks.
 
 ## 5. Aggregates: Structs & Tuples
 
-In KIR, both Kryon Structs and Tuples are represented as **Structs in Memory** (`{T1, T2, ...}`). 
+In This IR, both HLL Structs and Tuples are represented as **Structs in Memory** (`{T1, T2, ...}`). 
 
-Because KIR is a high-level IR, it does not force tuple destructuring into multiple independent virtual registers for function returns. Instead, tuples are allocated on the stack and passed by pointer, or returned as aggregate values.
+Because This IR is a high-level IR, it does not force tuple destructuring into multiple independent virtual registers for function returns. Instead, tuples are allocated on the stack and passed by pointer, or returned as aggregate values.
 
 ### 5.1 Tuple Lowering Example
-**Kryon Source:**
-```kryon
+**HLL Source:**
+```HLL
 divide(a: i32, b: i32): (i32, i32) {
     return {a / b, a % b}
 }
@@ -111,13 +111,13 @@ divide(a: i32, b: i32): (i32, i32) {
 
 ### 5.2 Nulls and Error-Flow Conventions
 
-KIR supports explicit `null` pointer literals in value positions.
+This IR supports explicit `null` pointer literals in value positions.
 
 - Pointer-returning failure paths lower to `ret null` (or aggregate forms containing `null`).
-- HLL `(value, error)` tuples lower to KIR aggregates where error channels are explicit fields.
+- HLL `(value, error)` tuples lower to This IR aggregates where error channels are explicit fields.
 - Backends must not assume non-null pointers unless proven by analysis.
 
-**KIR Representation:**
+**This IR Representation:**
 ```text
 ; Tuples are mapped to anonymous structs {i32, i32}
 define {i32, i32} @divide(i32 $a, i32 $b) {
@@ -142,12 +142,12 @@ define {i32, i32} @divide(i32 $a, i32 $b) {
 
 ## 6. Generics & Monomorphization
 
-KIR **does not support generic types**. All generic resolution occurs in the Kryon frontend prior to IR generation.
+This IR **does not support generic types**. All generic resolution occurs in the HLL frontend prior to IR generation.
 
-When a generic struct or function is used in Kryon code, the frontend performs **monomorphization**:
+When a generic struct or function is used in HLL code, the frontend performs **monomorphization**:
 1. It duplicates the generic template for the specific concrete type used (e.g., `i32`, `Point`).
 2. It mangles the name to ensure uniqueness (e.g., `@Vector_push_i32`).
-3. It emits concrete KIR types and instructions.
+3. It emits concrete This IR types and instructions.
 
 This guarantees zero runtime overhead for generic dispatch and allows the backend to perform highly specific optimizations (like vectorization) based on the exact memory layouts of the concrete types.
 
@@ -155,10 +155,10 @@ This guarantees zero runtime overhead for generic dispatch and allows the backen
 
 ## 7. Full Translation Example
 
-This demonstrates how Kryon's explicit `@` (dereference) and `&` (address-of) map beautifully to KIR's "Fat" memory instructions.
+This demonstrates how HLL's explicit `@` (dereference) and `&` (address-of) map beautifully to This IR's "Fat" memory instructions.
 
-### Kryon Source
-```kryon
+### HLL Source
+```HLL
 type Point = { x: f32, y: f32 }
 
 offset_point(points: Point*, index: i32) {
@@ -166,7 +166,7 @@ offset_point(points: Point*, index: i32) {
 }
 ```
 
-### KIR Output
+### This IR Output
 ```text
 type Point = {f32, f32}
 
@@ -193,7 +193,7 @@ define void @offset_point(Point* $points, i32 $index) {
 
 ---
 
-## 8. Formal Grammar (EBNF) for KIR
+## 8. Formal Grammar (EBNF) for This IR
 
 ### 8.1 Lexical Elements
 ```ebnf
@@ -251,7 +251,7 @@ ret_inst     = "ret" [ value ];
 
 ## Appendix: Compiler Lowering Notes
 
-1. **Defer Statements:** `defer` from Kryon does not exist in KIR. The frontend must inject explicit `call` instructions to cleanup routines at every `ret` point.
-2. **Compile-Time Functions:** Resolved purely in the Kryon frontend. KIR only sees the computed constant literals.
-3. **Heap Lifecycle:** Kryon `new`/`free` lower to `heap_alloc`/`heap_free` (or runtime allocator wrapper calls with equivalent semantics).
+1. **Defer Statements:** `defer` from HLL does not exist in This IR. The frontend must inject explicit `call` instructions to cleanup routines at every `ret` point.
+2. **Compile-Time Functions:** Resolved purely in the HLL frontend. This IR only sees the computed constant literals.
+3. **Heap Lifecycle:** HLL `new`/`free` lower to `heap_alloc`/`heap_free` (or runtime allocator wrapper calls with equivalent semantics).
 4. **Register Allocation:** Target-specific. Backends (e.g., x86_64, ARM, Wasm) will map `$` virtual registers to physical registers and insert stack spills where `$` count exceeds physical limits.

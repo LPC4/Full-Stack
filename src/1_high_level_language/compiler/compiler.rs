@@ -3,6 +3,7 @@ use crate::high_level_language::ast::{
     Statement, Type, UnaryOp,
 };
 use crate::high_level_language::compiler::lowering_context::LoweringContext;
+use crate::high_level_language::compiler::SemanticAnalyzer;
 use crate::intermediate_language::{
     FloatWidth, IntWidth, IrBlock, IrCmpOp, IrFunction, IrInstruction, IrLabel, IrMathOp, IrParam,
     IrProgram, IrRegister, IrTerminator, IrType, IrTypeAlias, IrUnaryOp, IrValue,
@@ -78,6 +79,13 @@ impl HighLevelCompiler {
             "Starting IR compilation for {} declarations",
             program.declarations.len()
         );
+
+        // Phase 0: Semantic Analysis (type checking) - warnings only for now
+        let mut semantic_analyzer = SemanticAnalyzer::new();
+        if let Err(_) = semantic_analyzer.analyze_program(program) {
+            log::warn!("Semantic analysis found issues, but continuing with compilation");
+        }
+
         self.context.reset_for_program();
         self.next_temp = 0;
         self.next_label = 0;
@@ -488,6 +496,9 @@ impl HighLevelCompiler {
         let else_label = self.new_label();
         let merge_label = self.new_label();
 
+        // Snapshot environment before branching
+        let merge_env = self.context.snapshot_env();
+
         let branch_else = if else_branch.is_some() {
             else_label.clone()
         } else {
@@ -500,23 +511,62 @@ impl HighLevelCompiler {
             else_label: branch_else.clone(),
         });
 
-        self.start_new_block(then_label.0);
+        // Lower then branch
+        self.start_new_block(then_label.0.clone());
+        self.context.restore_env(merge_env.clone());
         self.lower_block(then_block);
+        let then_exit_env = self.context.snapshot_env();
+        self.context.save_block_exit_values(then_label.clone());
         self.set_terminator(IrTerminator::Jump(merge_label.clone()));
 
-        if let Some(else_stmt) = else_branch {
-            self.start_new_block(else_label.0);
+        // Lower else branch
+        let else_exit_env = if let Some(else_stmt) = else_branch {
+            self.start_new_block(else_label.0.clone());
+            self.context.restore_env(merge_env.clone());
             self.lower_statement(else_stmt);
+            let env = self.context.snapshot_env();
+            self.context.save_block_exit_values(else_label.clone());
             self.set_terminator(IrTerminator::Jump(merge_label.clone()));
-        }
+            env
+        } else {
+            merge_env.clone()
+        };
 
-        self.start_new_block(merge_label.0);
+        // Start merge block and emit phi nodes for diverging variables
+        self.start_new_block(merge_label.0.clone());
+        self.context.restore_env(merge_env.clone());
+
+        for (var_name, then_value) in &then_exit_env {
+            if let Some(else_value) = else_exit_env.get(var_name) {
+                if then_value != else_value {
+                    // Emit phi node to merge diverging values
+                    let phi_dest = self.new_temp();
+                    let ty = self.infer_type_from_value(then_value);
+                    self.push_instruction(IrInstruction::Phi {
+                        dest: phi_dest.clone(),
+                        ty,
+                        incoming: vec![
+                            (then_value.clone(), then_label.clone()),
+                            (else_value.clone(), else_label.clone()),
+                        ],
+                    });
+                    self.context.ssa_env.insert(var_name.clone(), IrValue::Register(phi_dest));
+                } else {
+                    self.context.ssa_env.insert(var_name.clone(), then_value.clone());
+                }
+            } else {
+                self.context.ssa_env.insert(var_name.clone(), then_value.clone());
+            }
+        }
     }
 
     fn lower_while(&mut self, cond: &Expression, body: &Block) {
         let cond_label = self.new_label();
         let body_label = self.new_label();
         let exit_label = self.new_label();
+
+        // Snapshot environment before loop
+        let pre_loop_env = self.context.snapshot_env();
 
         self.set_terminator(IrTerminator::Jump(cond_label.clone()));
 
@@ -538,14 +588,40 @@ impl HighLevelCompiler {
             else_label: exit_label.clone(),
         });
 
-        self.start_new_block(body_label.0);
+        self.start_new_block(body_label.0.clone());
+        self.context.restore_env(pre_loop_env.clone());
         self.loop_labels
             .push((cond_label.clone(), exit_label.clone()));
         self.lower_block(body);
+        let loop_exit_env = self.context.snapshot_env();
+        self.context.save_block_exit_values(body_label.clone());
         self.loop_labels.pop();
         self.set_terminator(IrTerminator::Jump(cond_label.clone()));
 
-        self.start_new_block(exit_label.0);
+        self.start_new_block(exit_label.0.clone());
+
+        // Emit phi nodes for variables that changed in the loop
+        for (var_name, pre_loop_value) in &pre_loop_env {
+            if let Some(post_loop_value) = loop_exit_env.get(var_name) {
+                if pre_loop_value != post_loop_value {
+                    let phi_dest = self.new_temp();
+                    let ty = self.infer_type_from_value(pre_loop_value);
+                    self.push_instruction(IrInstruction::Phi {
+                        dest: phi_dest.clone(),
+                        ty,
+                        incoming: vec![
+                            (pre_loop_value.clone(), cond_label.clone()),
+                            (post_loop_value.clone(), body_label.clone()),
+                        ],
+                    });
+                    self.context.ssa_env.insert(var_name.clone(), IrValue::Register(phi_dest));
+                } else {
+                    self.context.ssa_env.insert(var_name.clone(), pre_loop_value.clone());
+                }
+            } else {
+                self.context.ssa_env.insert(var_name.clone(), pre_loop_value.clone());
+            }
+        }
     }
 
     fn lower_expression(&mut self, expression: &Expression) -> Option<LoweredValue> {
@@ -699,19 +775,53 @@ impl HighLevelCompiler {
                     AssignTarget::ArrayIndex { expr, index } => {
                         self.lower_array_index_assign(expr, index, &lowered)
                     }
-                    unsupported => {
-                        self.context.diagnostics.error(format!(
-                            "assignment target lowering not implemented: {unsupported:?}"
-                        ));
-                        None
+                    AssignTarget::Tuple(targets) => {
+                        // Tuple destructuring: load each field from the aggregate and assign
+                        self.lower_tuple_destructuring(targets, &lowered)
                     }
                 }
             }
-            Expression::Tuple(_) => {
-                self.context
-                    .diagnostics
-                    .error(format!("tuple expression lowering not implemented"));
-                None
+            Expression::Tuple(elements) => {
+                let mut lowered_fields = Vec::new();
+                for elem in elements {
+                    match self.lower_expression(elem) {
+                        Some(lowered) => lowered_fields.push(lowered),
+                        None => {
+                            self.context
+                                .diagnostics
+                                .error("failed to lower tuple element".to_string());
+                            return None;
+                        }
+                    }
+                }
+
+                // Create aggregate type and allocate space for tuple
+                let field_types: Vec<IrType> = lowered_fields.iter().map(|f| f.ty.clone()).collect();
+                let tuple_ty = IrType::Aggregate(field_types);
+                let dest = self.new_temp();
+
+                self.push_instruction(IrInstruction::Alloc {
+                    dest: dest.clone(),
+                    ty: tuple_ty.clone(),
+                    count: None,
+                });
+
+                // Store each element in the tuple
+                let mut offset = 0i64;
+                for field in lowered_fields {
+                    self.push_instruction(IrInstruction::Store {
+                        ty: field.ty.clone(),
+                        value: field.value,
+                        ptr: dest.clone(),
+                        offset: Some(offset),
+                    });
+                    offset += 8; // Simplified: assume 8 bytes per field
+                }
+
+                Some(LoweredValue {
+                    value: IrValue::Register(dest),
+                    ty: tuple_ty,
+                })
             }
         }
     }
@@ -1022,5 +1132,124 @@ impl HighLevelCompiler {
         let current = self.next_temp;
         self.next_temp = self.next_temp.saturating_add(1);
         IrRegister::Temp(current)
+    }
+
+    fn infer_type_from_value(&self, value: &IrValue) -> IrType {
+        match value {
+            IrValue::Integer(_) => IrType::Integer(IntWidth::I32),
+            IrValue::Float(_) => IrType::Float(FloatWidth::F64),
+            IrValue::Bool(_) => IrType::Integer(IntWidth::I1),
+            IrValue::Register(_) => IrType::Void, // Default fallback
+            IrValue::Null => IrType::Pointer(Box::new(IrType::Named("unknown".to_string()))),
+        }
+    }
+
+    fn lower_tuple_destructuring(
+        &mut self,
+        targets: &[AssignTarget],
+        tuple_value: &LoweredValue,
+    ) -> Option<LoweredValue> {
+        // Tuple destructuring: extract each field from the aggregate value
+        // and assign to corresponding target
+
+        // Extract field types from the aggregate
+        let field_types = match &tuple_value.ty {
+            IrType::Aggregate(fields) => fields.clone(),
+            _ => {
+                self.context.diagnostics.error(
+                    "tuple destructuring requires aggregate type".to_string()
+                );
+                return None;
+            }
+        };
+
+        // Check that target count matches field count
+        if targets.len() != field_types.len() {
+            self.context.diagnostics.error(format!(
+                "tuple destructuring: expected {} targets, got {}",
+                field_types.len(),
+                targets.len()
+            ));
+            return None;
+        }
+
+        // The tuple_value.value should be a register pointing to the aggregate
+        let tuple_ptr = match &tuple_value.value {
+            IrValue::Register(reg) => reg.clone(),
+            _ => {
+                self.context.diagnostics.error(
+                    "tuple destructuring requires register value".to_string()
+                );
+                return None;
+            }
+        };
+
+        // For each target, load the corresponding field and assign
+        let mut offset = 0i64;
+        for (target, field_ty) in targets.iter().zip(field_types.iter()) {
+            // Load field value from tuple
+            let field_reg = self.new_temp();
+            self.push_instruction(IrInstruction::Load {
+                dest: field_reg.clone(),
+                ty: field_ty.clone(),
+                ptr: tuple_ptr.clone(),
+                offset: Some(offset),
+            });
+
+            // Create a LoweredValue for this field
+            let field_value = LoweredValue {
+                value: IrValue::Register(field_reg),
+                ty: field_ty.clone(),
+            };
+
+            // Recursively assign to the target
+            self.lower_assign_target(target, &field_value)?;
+
+            offset += 8; // Simplified: assume 8 bytes per field
+        }
+
+        // Return the tuple value
+        Some(tuple_value.clone())
+    }
+
+    fn lower_assign_target(
+        &mut self,
+        target: &AssignTarget,
+        value: &LoweredValue,
+    ) -> Option<LoweredValue> {
+        // Helper to assign a single value to a target
+        match target {
+            AssignTarget::Identifier(name) => {
+                let ptr_info = self.context.symbols.lookup(name)?;
+                if let IrType::Pointer(inner_ty) = &ptr_info.ty {
+                    if let IrValue::Register(ptr_reg) = &ptr_info.value {
+                        self.push_instruction(IrInstruction::Store {
+                            ty: *inner_ty.clone(),
+                            value: value.value.clone(),
+                            ptr: ptr_reg.clone(),
+                            offset: None,
+                        });
+                        return Some(value.clone());
+                    }
+                }
+                self.context
+                    .diagnostics
+                    .error(format!("cannot assign to non-pointer target `{name}`"));
+                None
+            }
+            AssignTarget::Dereference(target) => self.lower_deref_assign(target, value),
+            AssignTarget::FieldAccess { expr, field } => {
+                self.lower_field_assign(expr, field, value)
+            }
+            AssignTarget::ArrayIndex { expr, index } => {
+                self.lower_array_index_assign(expr, index, value)
+            }
+            AssignTarget::Tuple(_) => {
+                self.context.diagnostics.error(
+                    "nested tuple destructuring not supported".to_string()
+                );
+                None
+            }
+        }
     }
 }
