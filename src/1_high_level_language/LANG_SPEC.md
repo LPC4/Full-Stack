@@ -415,7 +415,7 @@ compute_sum_wrapper(values: f32*, count: i32): f32 {
 
 ---
 
-## Appendix: AI Implementation Checklist
+## Appendix: Implementation Checklist
 
 1. **Pointer Typing:** `T*` is strictly a pointer. Never auto-dereference.
 2. **Dereference Syntax:** All value access requires `@`. `@ptr.field`, `@arr[i]`, `@ptr`.
