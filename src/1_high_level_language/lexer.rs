@@ -269,15 +269,15 @@ mod tests {
 
     #[test]
     fn test_pointer_rules() {
-        // @ for deref, & for address-of
-        let input = "ptr: &i32 = &x\nval: i32 = @ptr\n";
+        // @ for deref, & for address-of, * for pointer type
+        let input = "ptr: i32* = &x\nval: i32 = @ptr\n";
         let mut lexer = Lexer::new(input);
 
-        // ptr: &i32 = &x
+        // ptr: i32* = &x
         assert_eq!(lexer.next_token(), Token::Ident("ptr"));
         assert_eq!(lexer.next_token(), Token::Colon);
-        assert_eq!(lexer.next_token(), Token::Ampersand);
         assert_eq!(lexer.next_token(), Token::I32);
+        assert_eq!(lexer.next_token(), Token::Star);
         assert_eq!(lexer.next_token(), Token::Assign);
         assert_eq!(lexer.next_token(), Token::Ampersand);
         assert_eq!(lexer.next_token(), Token::Ident("x"));

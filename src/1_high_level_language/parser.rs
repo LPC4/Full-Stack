@@ -146,10 +146,6 @@ impl<'a> Parser<'a> {
     }
 
     pub fn parse_type(&mut self) -> Result<Type, ParserError> {
-        if self.match_ampersand() {
-            let ty = self.parse_type()?;
-            return Ok(Type::Pointer(Box::new(ty)));
-        }
 
         if self.match_lbracket() {
             let size = self.parse_usize_literal()?;

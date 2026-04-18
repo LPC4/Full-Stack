@@ -705,7 +705,6 @@ impl HighLevelLanguageView {
                                     ui.available_size(),
                                     egui::TextEdit::multiline(&mut self.tokens_output)
                                         .font(egui::TextStyle::Monospace)
-                                        .interactive(false)
                                         .layouter(&mut layouter),
                                 );
                             }
@@ -723,7 +722,6 @@ impl HighLevelLanguageView {
                                     ui.available_size(),
                                     egui::TextEdit::multiline(&mut self.ast_output)
                                         .font(egui::TextStyle::Monospace)
-                                        .interactive(false)
                                         .layouter(&mut layouter),
                                 );
                             }
@@ -741,7 +739,6 @@ impl HighLevelLanguageView {
                                     ui.available_size(),
                                     egui::TextEdit::multiline(&mut self.ir_output)
                                         .font(egui::TextStyle::Monospace)
-                                        .interactive(false)
                                         .layouter(&mut layouter),
                                 );
                             }

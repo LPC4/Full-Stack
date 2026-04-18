@@ -1,15 +1,15 @@
 type Node {
     val: i32
-    next: &Node
+    next: Node*
 }
 
 main: () -> i32 {
     ; 'new' returns a pointer
-    ptr: &i32 = new(i32)
+    ptr: i32* = new(i32)
 
     ; Address-of and Dereference
     x: i32 = 5
-    addr: &i32 = &x
+    addr: i32* = &x
     @ptr = @addr + 10
 
     ; Defer: Cleanup logic
