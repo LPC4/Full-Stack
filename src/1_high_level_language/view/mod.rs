@@ -29,8 +29,12 @@ pub struct HighLevelLanguageView {
 
 impl Default for HighLevelLanguageView {
     fn default() -> Self {
-        let default_source = std::fs::read_to_string("programs/test/high_level_language/test2.hll")
-            .unwrap_or_else(|_| "foo: i32 = 42\n".to_owned());
+        // Embed the startup example so web builds don't depend on runtime filesystem access.
+        let default_source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/programs/test/high_level_language/test2.hll"
+        ))
+        .to_owned();
 
         Self {
             source_code: default_source,
