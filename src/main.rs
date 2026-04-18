@@ -2,10 +2,13 @@
 #![warn(rust_2018_idioms)]
 #![windows_subsystem = "windows"] // hide console window on Windows
 
+#[cfg(not(target_arch = "wasm32"))]
 use std::fs;
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
 
 /// Compilation pipeline: HLL -> Lexer -> Parser -> Compiler -> IR
+#[cfg(not(target_arch = "wasm32"))]
 fn compile_hll_file(input_file: &str, output_file: &str) -> Result<(), Box<dyn std::error::Error>> {
     log::info!("Reading HLL file: {}", input_file);
     let content = fs::read_to_string(input_file)?;

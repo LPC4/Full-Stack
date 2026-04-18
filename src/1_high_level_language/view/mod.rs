@@ -4,7 +4,6 @@ use crate::high_level_language::parser::Parser;
 use crate::high_level_language::token::Token;
 use egui::Color32;
 use egui::text::LayoutJob;
-use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy)]
 enum ViewType {
@@ -38,7 +37,9 @@ pub struct HighLevelLanguageView {
     #[serde(skip)]
     compile_error: Option<String>,
     #[serde(skip)]
-    compile_success_until: Option<Instant>,
+    just_compiled_successfully: bool,
+    #[serde(skip)]
+    compile_success_until: Option<f64>,
 }
 
 impl Default for HighLevelLanguageView {
@@ -60,6 +61,7 @@ impl Default for HighLevelLanguageView {
             ast_output: String::new(),
             ir_output: String::new(),
             compile_error: None,
+            just_compiled_successfully: false,
             compile_success_until: None,
         }
     }
@@ -492,8 +494,7 @@ impl HighLevelLanguageView {
 
                         if errors.is_empty() {
                             self.compile_error = None;
-                            self.compile_success_until =
-                                Some(Instant::now() + Duration::from_secs(2));
+                            self.just_compiled_successfully = true;
                         } else {
                             self.ir_output.push_str(&format!(
                                 "\n\nSEMANTIC ERRORS:\n- {}",
@@ -502,12 +503,14 @@ impl HighLevelLanguageView {
                             self.compile_error =
                                 Some(format!("Semantic errors:\n- {}", errors.join("\n- ")));
                             self.compile_success_until = None;
+                            self.just_compiled_successfully = false;
                         }
                     }
                     Err(e) => {
                         self.ir_output = format!("Compiler internal error: {:?}", e);
                         self.compile_error = Some(format!("Compiler error: {:?}", e));
                         self.compile_success_until = None;
+                        self.just_compiled_successfully = false;
                     }
                 }
             }
@@ -516,6 +519,7 @@ impl HighLevelLanguageView {
                 self.ir_output = String::from("Did not compile due to parser error.");
                 self.compile_error = Some(format!("Parser error at pos {}: {}", e.pos, e.message));
                 self.compile_success_until = None;
+                self.just_compiled_successfully = false;
             }
         }
     }
@@ -524,6 +528,11 @@ impl HighLevelLanguageView {
         // Trigger compile on Ctrl+S
         if ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::S)) {
             self.compile();
+        }
+
+        if self.just_compiled_successfully {
+            self.just_compiled_successfully = false;
+            self.compile_success_until = Some(ui.input(|i| i.time) + 2.0);
         }
 
         egui::Panel::top("high_level_language_top_panel").show_inside(ui, |ui| {
@@ -541,14 +550,14 @@ impl HighLevelLanguageView {
                 }
 
                 if let Some(until) = self.compile_success_until {
-                    let now = Instant::now();
+                    let now = ui.input(|i| i.time);
                     if now < until {
                         ui.colored_label(
                             egui::Color32::from_rgb(80, 200, 120),
                             "Compiled successfully",
                         );
-                        ui.ctx()
-                            .request_repaint_after(until.saturating_duration_since(now));
+                        let duration = std::time::Duration::from_secs_f64(until - now);
+                        ui.ctx().request_repaint_after(duration);
                     } else {
                         self.compile_success_until = None;
                     }
