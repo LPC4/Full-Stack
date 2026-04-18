@@ -53,10 +53,16 @@ fn highlight_code(theme: &egui::Style, code: &str) -> LayoutJob {
         "f32", "f64", "bool", "Str",
     ];
 
-    for line in code.split('\n') {
+    for segment in code.split_inclusive('\n') {
+        let (line, has_newline) = if let Some(without_newline) = segment.strip_suffix('\n') {
+            (without_newline, true)
+        } else {
+            (segment, false)
+        };
+
         if line.trim_start().starts_with(';') {
             job.append(
-                &format!("{line}\n"),
+                line,
                 0.0,
                 egui::TextFormat {
                     font_id: font_id.clone(),
@@ -64,6 +70,16 @@ fn highlight_code(theme: &egui::Style, code: &str) -> LayoutJob {
                     ..Default::default()
                 },
             );
+            if has_newline {
+                job.append(
+                    "\n",
+                    0.0,
+                    egui::TextFormat {
+                        font_id: font_id.clone(),
+                        ..Default::default()
+                    },
+                );
+            }
             continue;
         }
 
@@ -122,7 +138,7 @@ fn highlight_code(theme: &egui::Style, code: &str) -> LayoutJob {
             }
             start = end;
         }
-        if !line.is_empty() {
+        if has_newline {
             job.append(
                 "\n",
                 0.0,
