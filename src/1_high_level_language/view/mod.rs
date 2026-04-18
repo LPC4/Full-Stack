@@ -1,8 +1,8 @@
 use crate::high_level_language::lexer::Lexer;
 use crate::high_level_language::parser::Parser;
 use crate::high_level_language::token::Token;
-use egui::text::LayoutJob;
 use egui::Color32;
+use egui::text::LayoutJob;
 
 #[derive(serde::Deserialize, serde::Serialize, PartialEq)]
 enum Tab {

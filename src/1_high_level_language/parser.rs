@@ -703,7 +703,7 @@ impl<'a> Parser<'a> {
                 Expression::Primary(PrimaryExpr::New { ty, args })
             }
             Some(tok) => {
-                return Err(self.error_with_token("unexpected token in primary expression", tok))
+                return Err(self.error_with_token("unexpected token in primary expression", tok));
             }
             None => return Err(self.error("unexpected end of input")),
         };
