@@ -504,8 +504,10 @@ impl HighLevelLanguageView {
                                         "\n\nSEMANTIC ERRORS:\n- {}",
                                         errors.join("\n- ")
                                     ));
-                                    self.compile_error =
-                                        Some(format!("Semantic errors:\n- {}", errors.join("\n- ")));
+                                    self.compile_error = Some(format!(
+                                        "Semantic errors:\n- {}",
+                                        errors.join("\n- ")
+                                    ));
                                     self.compile_success_until = None;
                                     self.just_compiled_successfully = false;
                                 }
@@ -526,8 +528,10 @@ impl HighLevelLanguageView {
                             .map(|d| d.message.clone())
                             .collect();
                         self.ir_output = format!("Did not compile due to semantic errors.");
-                        self.compile_error =
-                            Some(format!("Semantic analysis failed:\n- {}", semantic_errors.join("\n- ")));
+                        self.compile_error = Some(format!(
+                            "Semantic analysis failed:\n- {}",
+                            semantic_errors.join("\n- ")
+                        ));
                         self.compile_success_until = None;
                         self.just_compiled_successfully = false;
                     }

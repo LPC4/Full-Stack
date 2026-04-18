@@ -11,5 +11,3 @@ pub use lowering_context::LoweringContext;
 pub use semantic_analyzer::SemanticAnalyzer;
 pub use symbol_table::{SymbolInfo, SymbolTable};
 pub use type_context::TypeContext;
-
-

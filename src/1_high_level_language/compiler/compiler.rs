@@ -2,8 +2,8 @@ use crate::high_level_language::ast::{
     AssignTarget, BinaryOp, Block, DeclNode, Declaration, Expression, Literal, Program, ReturnType,
     Statement, Type, UnaryOp,
 };
-use crate::high_level_language::compiler::lowering_context::LoweringContext;
 use crate::high_level_language::compiler::SemanticAnalyzer;
+use crate::high_level_language::compiler::lowering_context::LoweringContext;
 use crate::intermediate_language::{
     FloatWidth, IntWidth, IrBlock, IrCmpOp, IrFunction, IrInstruction, IrLabel, IrMathOp, IrParam,
     IrProgram, IrRegister, IrTerminator, IrType, IrTypeAlias, IrUnaryOp, IrValue,
@@ -23,7 +23,10 @@ struct LoweredValue {
 
 #[derive(Debug, Clone)]
 enum DeferredAction {
-    Call { function: String, args: Vec<IrValue> },
+    Call {
+        function: String,
+        args: Vec<IrValue>,
+    },
     Expr(Expression),
 }
 
@@ -329,20 +332,18 @@ impl HighLevelCompiler {
     fn lower_return_type(&mut self, return_type: Option<&ReturnType>) -> IrType {
         match return_type {
             Some(ReturnType::Single(ty)) => self.lower_type(ty),
-            Some(ReturnType::Tuple(fields)) => {
-                IrType::Aggregate(
-                    fields
-                        .iter()
-                        .enumerate()
-                        .map(|(idx, f)| {
-                            (
-                                f.name.clone().unwrap_or_else(|| idx.to_string()),
-                                self.lower_type(&f.ty),
-                            )
-                        })
-                        .collect(),
-                )
-            }
+            Some(ReturnType::Tuple(fields)) => IrType::Aggregate(
+                fields
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, f)| {
+                        (
+                            f.name.clone().unwrap_or_else(|| idx.to_string()),
+                            self.lower_type(&f.ty),
+                        )
+                    })
+                    .collect(),
+            ),
             None => IrType::Void,
         }
     }
@@ -355,14 +356,12 @@ impl HighLevelCompiler {
                 len: *len,
                 element: Box::new(self.lower_type(inner)),
             },
-            Type::Struct(fields) => {
-                IrType::Aggregate(
-                    fields
-                        .iter()
-                        .map(|f| (f.name.clone(), self.lower_type(&f.ty)))
-                        .collect(),
-                )
-            }
+            Type::Struct(fields) => IrType::Aggregate(
+                fields
+                    .iter()
+                    .map(|f| (f.name.clone(), self.lower_type(&f.ty)))
+                    .collect(),
+            ),
             Type::Named { name, args } => {
                 if !args.is_empty() {
                     let mut mangled_name = name.clone();
@@ -527,7 +526,7 @@ impl HighLevelCompiler {
                         "defer: register cleanup logic".to_string(),
                     ));
                     self.context.diagnostics.warn(
-                        "defer on non-call expression is not capture-safe yet; evaluating at exit"
+                        "defer on non-call expression is not capture-safe yet; evaluating at exit",
                     );
                     self.defers.push(DeferredAction::Expr(expr.clone()));
                 }
@@ -540,12 +539,10 @@ impl HighLevelCompiler {
         let cond_value = match self.lower_expression(cond) {
             Some(lowered) => lowered.value,
             None => {
-                self.context
-                    .diagnostics
-                    .error(format!(
-                        "failed to lower if condition `{}` (see previous diagnostics for root cause)",
-                        self.format_expression(cond)
-                    ));
+                self.context.diagnostics.error(format!(
+                    "failed to lower if condition `{}` (see previous diagnostics for root cause)",
+                    self.format_expression(cond)
+                ));
                 IrValue::Bool(false)
             }
         };
@@ -608,12 +605,18 @@ impl HighLevelCompiler {
                             (else_value.clone(), else_label.clone()),
                         ],
                     });
-                    self.context.ssa_env.insert(var_name.clone(), IrValue::Register(phi_dest));
+                    self.context
+                        .ssa_env
+                        .insert(var_name.clone(), IrValue::Register(phi_dest));
                 } else {
-                    self.context.ssa_env.insert(var_name.clone(), then_value.clone());
+                    self.context
+                        .ssa_env
+                        .insert(var_name.clone(), then_value.clone());
                 }
             } else {
-                self.context.ssa_env.insert(var_name.clone(), then_value.clone());
+                self.context
+                    .ssa_env
+                    .insert(var_name.clone(), then_value.clone());
             }
         }
     }
@@ -675,12 +678,18 @@ impl HighLevelCompiler {
                             (post_loop_value.clone(), body_label.clone()),
                         ],
                     });
-                    self.context.ssa_env.insert(var_name.clone(), IrValue::Register(phi_dest));
+                    self.context
+                        .ssa_env
+                        .insert(var_name.clone(), IrValue::Register(phi_dest));
                 } else {
-                    self.context.ssa_env.insert(var_name.clone(), pre_loop_value.clone());
+                    self.context
+                        .ssa_env
+                        .insert(var_name.clone(), pre_loop_value.clone());
                 }
             } else {
-                self.context.ssa_env.insert(var_name.clone(), pre_loop_value.clone());
+                self.context
+                    .ssa_env
+                    .insert(var_name.clone(), pre_loop_value.clone());
             }
         }
     }
@@ -1247,13 +1256,11 @@ impl HighLevelCompiler {
                 let pointee_ty = match &base_ty {
                     IrType::Pointer(inner) => *inner.clone(),
                     _ => {
-                        self.context
-                            .diagnostics
-                            .error(format!(
-                                "cannot dereference assignment target `{}` of type `{}`",
-                                self.format_assign_target(target),
-                                base_ty
-                            ));
+                        self.context.diagnostics.error(format!(
+                            "cannot dereference assignment target `{}` of type `{}`",
+                            self.format_assign_target(target),
+                            base_ty
+                        ));
                         return None;
                     }
                 };
@@ -1278,13 +1285,11 @@ impl HighLevelCompiler {
                 let pointee_ty = match &base_ty {
                     IrType::Pointer(inner_ty) => *inner_ty.clone(),
                     _ => {
-                        self.context
-                            .diagnostics
-                            .error(format!(
-                                "cannot dereference assignment target `{}` of type `{}`",
-                                self.format_assign_target(target),
-                                base_ty
-                            ));
+                        self.context.diagnostics.error(format!(
+                            "cannot dereference assignment target `{}` of type `{}`",
+                            self.format_assign_target(target),
+                            base_ty
+                        ));
                         return None;
                     }
                 };
@@ -1300,12 +1305,10 @@ impl HighLevelCompiler {
                 Some((pointee_ptr_reg, pointee_ty))
             }
             AssignTarget::Tuple(_) => {
-                self.context
-                    .diagnostics
-                    .error(format!(
-                        "tuple target `{}` is not supported for dereference assignment",
-                        self.format_assign_target(target)
-                    ));
+                self.context.diagnostics.error(format!(
+                    "tuple target `{}` is not supported for dereference assignment",
+                    self.format_assign_target(target)
+                ));
                 None
             }
         }
@@ -1396,7 +1399,8 @@ impl HighLevelCompiler {
                     }
                 };
 
-                let (offset, field_ty) = match self.aggregate_field_offset_and_type(&fields, field) {
+                let (offset, field_ty) = match self.aggregate_field_offset_and_type(&fields, field)
+                {
                     Some(v) => v,
                     None => {
                         let known_fields = fields
@@ -1572,9 +1576,9 @@ impl HighLevelCompiler {
         let field_types: Vec<IrType> = match &tuple_value.ty {
             IrType::Aggregate(fields) => fields.iter().map(|(_name, ty)| ty.clone()).collect(),
             _ => {
-                self.context.diagnostics.error(
-                    "tuple destructuring requires aggregate type".to_string()
-                );
+                self.context
+                    .diagnostics
+                    .error("tuple destructuring requires aggregate type".to_string());
                 return None;
             }
         };
@@ -1593,9 +1597,9 @@ impl HighLevelCompiler {
         let tuple_ptr = match &tuple_value.value {
             IrValue::Register(reg) => reg.clone(),
             _ => {
-                self.context.diagnostics.error(
-                    "tuple destructuring requires register value".to_string()
-                );
+                self.context
+                    .diagnostics
+                    .error("tuple destructuring requires register value".to_string());
                 return None;
             }
         };
@@ -1661,9 +1665,9 @@ impl HighLevelCompiler {
                 self.lower_array_index_assign(expr, index, value)
             }
             AssignTarget::Tuple(_) => {
-                self.context.diagnostics.error(
-                    "nested tuple destructuring not supported".to_string()
-                );
+                self.context
+                    .diagnostics
+                    .error("nested tuple destructuring not supported".to_string());
                 None
             }
         }
@@ -1683,7 +1687,9 @@ impl HighLevelCompiler {
             },
             IrType::Pointer(_) => 8, // 64-bit ABI
             IrType::Array { len, element } => len * self.type_size_in_bytes(element),
-            IrType::Aggregate(fields) => fields.iter().map(|(_, t)| self.type_size_in_bytes(t)).sum(),
+            IrType::Aggregate(fields) => {
+                fields.iter().map(|(_, t)| self.type_size_in_bytes(t)).sum()
+            }
             _ => 0,
         }
     }
@@ -1719,7 +1725,11 @@ impl HighLevelCompiler {
                 format!("{}.{}", self.format_assign_target(expr), field)
             }
             AssignTarget::ArrayIndex { expr, index } => {
-                format!("{}[{}]", self.format_assign_target(expr), self.format_expression(index))
+                format!(
+                    "{}[{}]",
+                    self.format_assign_target(expr),
+                    self.format_expression(index)
+                )
             }
             AssignTarget::Tuple(targets) => {
                 let items = targets

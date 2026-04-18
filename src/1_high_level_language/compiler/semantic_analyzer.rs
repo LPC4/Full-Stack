@@ -1,5 +1,5 @@
 use crate::high_level_language::ast::{
-    Program, Statement, Declaration, DeclNode, Expression, Type,
+    DeclNode, Declaration, Expression, Program, Statement, Type,
 };
 use crate::high_level_language::compiler::diagnostics::Diagnostics;
 use crate::high_level_language::compiler::symbol_table::SymbolTable;
@@ -27,7 +27,10 @@ impl SemanticAnalyzer {
     }
 
     pub fn analyze_program(&mut self, program: &Program) -> Result<(), ()> {
-        log::info!("Starting semantic analysis for {} declarations", program.declarations.len());
+        log::info!(
+            "Starting semantic analysis for {} declarations",
+            program.declarations.len()
+        );
 
         // First pass: register all type declarations
         for declaration in &program.declarations {
@@ -65,11 +68,7 @@ impl SemanticAnalyzer {
 
     fn check_declaration(&mut self, decl: &Declaration) -> Result<(), ()> {
         match &decl.decl {
-            DeclNode::Function {
-                params,
-                body,
-                ..
-            } => {
+            DeclNode::Function { params, body, .. } => {
                 self.symbols.enter_scope();
 
                 // Register parameters
@@ -148,10 +147,8 @@ impl SemanticAnalyzer {
             } => {
                 let cond_ty = self.infer_expression_type(cond)?;
                 if cond_ty != "i1" && cond_ty != "bool" {
-                    self.diagnostics.error(format!(
-                        "If condition must be bool, found {}",
-                        cond_ty
-                    ));
+                    self.diagnostics
+                        .error(format!("If condition must be bool, found {}", cond_ty));
                     return Err(());
                 }
 
@@ -169,10 +166,8 @@ impl SemanticAnalyzer {
             Statement::While { cond, body } => {
                 let cond_ty = self.infer_expression_type(cond)?;
                 if cond_ty != "i1" && cond_ty != "bool" {
-                    self.diagnostics.error(format!(
-                        "While condition must be bool, found {}",
-                        cond_ty
-                    ));
+                    self.diagnostics
+                        .error(format!("While condition must be bool, found {}", cond_ty));
                     return Err(());
                 }
 
@@ -209,28 +204,24 @@ impl SemanticAnalyzer {
                         Err(())
                     }
                 }
-                crate::high_level_language::ast::PrimaryExpr::Literal(lit) => {
-                    match lit {
-                        crate::high_level_language::ast::Literal::Integer(_)
-                        | crate::high_level_language::ast::Literal::HexInteger(_) => {
-                            Ok("i32".to_string())
-                        }
-                        crate::high_level_language::ast::Literal::Float(_) => Ok("f64".to_string()),
-                        crate::high_level_language::ast::Literal::Boolean(_) => Ok("i1".to_string()),
-                        crate::high_level_language::ast::Literal::Null => {
-                            Ok("*unknown".to_string())
-                        }
-                        crate::high_level_language::ast::Literal::StringLit(_) => {
-                            Ok("Str".to_string())
-                        }
+                crate::high_level_language::ast::PrimaryExpr::Literal(lit) => match lit {
+                    crate::high_level_language::ast::Literal::Integer(_)
+                    | crate::high_level_language::ast::Literal::HexInteger(_) => {
+                        Ok("i32".to_string())
                     }
-                }
+                    crate::high_level_language::ast::Literal::Float(_) => Ok("f64".to_string()),
+                    crate::high_level_language::ast::Literal::Boolean(_) => Ok("i1".to_string()),
+                    crate::high_level_language::ast::Literal::Null => Ok("*unknown".to_string()),
+                    crate::high_level_language::ast::Literal::StringLit(_) => Ok("Str".to_string()),
+                },
                 crate::high_level_language::ast::PrimaryExpr::New { ty, .. } => {
                     let ir_ty = self.ast_type_to_ir_type(ty);
                     let inner_name = self.context.get_type_name(&ir_ty);
                     Ok(format!("*{}", inner_name))
                 }
-                crate::high_level_language::ast::PrimaryExpr::FunctionCall { arguments, .. } => {
+                crate::high_level_language::ast::PrimaryExpr::FunctionCall {
+                    arguments, ..
+                } => {
                     // Type check arguments
                     for arg in arguments {
                         let _ = self.infer_expression_type(arg)?;
@@ -284,9 +275,7 @@ impl SemanticAnalyzer {
     fn ast_type_to_ir_type(&self, ty: &Type) -> IrType {
         match ty {
             Type::Primitive(name) => self.primitive_to_ir(name),
-            Type::Pointer(inner) => {
-                IrType::Pointer(Box::new(self.ast_type_to_ir_type(inner)))
-            }
+            Type::Pointer(inner) => IrType::Pointer(Box::new(self.ast_type_to_ir_type(inner))),
             Type::Array(len, inner) => IrType::Array {
                 len: *len,
                 element: Box::new(self.ast_type_to_ir_type(inner)),
@@ -329,9 +318,3 @@ impl Default for SemanticAnalyzer {
         Self::new()
     }
 }
-
-
-
-
-
-

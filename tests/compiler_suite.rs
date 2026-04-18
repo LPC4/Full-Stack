@@ -1,7 +1,7 @@
 use full_stack::high_level_language::compiler::HighLevelCompiler;
 use full_stack::high_level_language::{lexer::Lexer, parser::Parser, token::Token};
 use std::fs;
-use std::path::{PathBuf};
+use std::path::PathBuf;
 
 fn suite_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("programs/test/compiler_suite")

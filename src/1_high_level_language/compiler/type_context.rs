@@ -4,11 +4,24 @@ use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeCheckError {
-    TypeMismatch { expected: String, found: String },
+    TypeMismatch {
+        expected: String,
+        found: String,
+    },
     UndefinedType(String),
-    InvalidOperation { op: String, lhs: String, rhs: String },
-    InvalidUnaryOp { op: String, ty: String },
-    InvalidCast { from: String, to: String },
+    InvalidOperation {
+        op: String,
+        lhs: String,
+        rhs: String,
+    },
+    InvalidUnaryOp {
+        op: String,
+        ty: String,
+    },
+    InvalidCast {
+        from: String,
+        to: String,
+    },
 }
 
 #[derive(Debug, Default)]
@@ -147,8 +160,10 @@ impl TypeContext {
                 format!("[{}; {}]", self.get_type_name(element), len)
             }
             IrType::Aggregate(fields) => {
-                let field_strs: Vec<String> =
-                    fields.iter().map(|(_name, f)| self.get_type_name(f)).collect();
+                let field_strs: Vec<String> = fields
+                    .iter()
+                    .map(|(_name, f)| self.get_type_name(f))
+                    .collect();
                 format!("{{ {} }}", field_strs.join(", "))
             }
             IrType::Named(name) => name.clone(),
