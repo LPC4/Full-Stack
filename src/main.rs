@@ -4,12 +4,41 @@
 // When compiling natively:
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result {
-    env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+
+    // Read and log test2.hll
+    if let Ok(content) = std::fs::read_to_string("programs/test/high_level_language/test2.hll") {
+        log::info!("Read test2.hll successfully.");
+
+        let mut lexer = full_stack::high_level_language::lexer::Lexer::new(&content);
+        let mut tokens = Vec::new();
+        loop {
+            let token = lexer.next_token();
+            let is_eof = matches!(token, full_stack::high_level_language::token::Token::Eof);
+            tokens.push(token);
+            if is_eof {
+                break;
+            }
+        }
+        log::info!("Lexed Tokens:\n{:#?}", tokens);
+
+        let mut parser = full_stack::high_level_language::parser::Parser::new(tokens);
+        match parser.parse_program() {
+            Ok(ast) => {
+                log::info!("Parsed AST:\n{:#?}", ast);
+            }
+            Err(e) => {
+                log::error!("Parser Error at pos {}: {}", e.pos, e.message);
+            }
+        }
+    } else {
+        log::error!("Failed to read programs/test/high_level_language/test2.hll");
+    }
 
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([400.0, 300.0])
-            .with_min_inner_size([300.0, 220.0])
+            .with_inner_size([1100.0, 860.0])
+            .with_min_inner_size([900.0, 680.0])
             .with_icon(
                 // NOTE: Adding an icon is optional
                 eframe::icon_data::from_png_bytes(
@@ -20,7 +49,7 @@ fn main() -> eframe::Result {
         ..Default::default()
     };
     eframe::run_native(
-        "Full Stack",
+        "Compiler",
         native_options,
         Box::new(|cc| Ok(Box::new(full_stack::TemplateApp::new(cc)))),
     )

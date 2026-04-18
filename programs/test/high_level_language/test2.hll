@@ -1,0 +1,23 @@
+type Node {
+    val: i32
+    next: &Node
+}
+
+main: () -> i32 {
+    ; Rule 1: 'new' returns a pointer
+    ptr: &i32 = new(i32)
+
+    ; Rule 2 & 3: Address-of and Dereference
+    x: i32 = 5
+    addr: &i32 = &x
+    @ptr = @addr + 10
+
+    ; Rule 4 & Defer: Cleanup logic
+    defer free(ptr)
+
+    if @ptr > 10 {
+        return 1
+    }
+
+    return 0
+}

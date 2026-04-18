@@ -1,0 +1,16 @@
+; Function returning two values
+divide: (a: i32, b: i32) -> (i32, bool) {
+    if b == 0 {
+        return 0, false
+    }
+    return a / b, true
+}
+
+start: () -> () {
+    ; Parsing challenge: Handling the comma-separated l-values
+    result, success = divide(10, 2)
+
+    if success {
+        print(result)
+    }
+}

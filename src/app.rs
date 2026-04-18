@@ -1,36 +1,277 @@
+use crate::high_level_language::lexer::Lexer;
+use crate::high_level_language::parser::Parser;
+use crate::high_level_language::token::Token;
+use std::fs;
+use egui::text::LayoutJob;
+use egui::Color32;
+
+#[derive(serde::Deserialize, serde::Serialize, PartialEq)]
+enum Tab {
+    Source,
+    Tokens,
+    AST,
+}
+
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)] // if we add new fields, give them default values when deserializing old state
 pub struct TemplateApp {
-    // Example stuff:
-    label: String,
+    // Placeholder for when you add visualization views for compilation
+    source_code: String,
 
-    #[serde(skip)] // This how you opt-out of serialization of a field
-    value: f32,
+    #[serde(skip)]
+    current_tab: Tab,
+    #[serde(skip)]
+    tokens_output: String,
+    #[serde(skip)]
+    ast_output: String,
+    #[serde(skip)]
+    compile_error: Option<String>,
 }
 
 impl Default for TemplateApp {
     fn default() -> Self {
+        let default_source = fs::read_to_string("programs/test/high_level_language/test2.hll")
+            .unwrap_or_else(|_| "foo: i32 = 42\n".to_string());
+
         Self {
-            // Example stuff:
-            label: "Hello World!".to_owned(),
-            value: 2.7,
+            source_code: default_source,
+            current_tab: Tab::Source,
+            tokens_output: String::new(),
+            ast_output: String::new(),
+            compile_error: None,
         }
     }
 }
 
+
+// Helper to add simple syntax highlighting
+fn highlight_code(theme: &egui::Style, code: &str) -> LayoutJob {
+    let mut job = LayoutJob::default();
+    let font_id = egui::TextStyle::Monospace.resolve(theme);
+
+    let keywords = [
+        "type", "const", "if", "else", "while", "return", "defer", "new", "free",
+        "and", "or", "true", "false", "null", "main",
+        "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64", "bool", "Str"
+    ];
+
+    for line in code.split('\n') {
+        if line.trim_start().starts_with(';') {
+            job.append(
+                &format!("{}\n", line),
+                0.0,
+                egui::TextFormat {
+                    font_id: font_id.clone(),
+                    color: Color32::from_rgb(100, 150, 100),
+                    ..Default::default()
+                },
+            );
+            continue;
+        }
+
+        let mut start = 0;
+        let bytes = line.as_bytes();
+        let len = bytes.len();
+
+        while start < len {
+            let mut end = start;
+            if bytes[start].is_ascii_alphabetic() || bytes[start] == b'_' {
+                while end < len && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_') {
+                    end += 1;
+                }
+                let word = &line[start..end];
+                let color = if keywords.contains(&word) {
+                    Color32::from_rgb(200, 100, 200) // matched keywords (purple)
+                } else {
+                    theme.visuals.text_color() // generic
+                };
+
+                job.append(
+                    word,
+                    0.0,
+                    egui::TextFormat {
+                        font_id: font_id.clone(),
+                        color,
+                        ..Default::default()
+                    },
+                );
+            } else if bytes[start].is_ascii_digit() {
+                while end < len && bytes[end].is_ascii_digit() {
+                    end += 1;
+                }
+                job.append(
+                    &line[start..end],
+                    0.0,
+                    egui::TextFormat {
+                        font_id: font_id.clone(),
+                        color: Color32::from_rgb(100, 150, 200), // numbers (blue)
+                        ..Default::default()
+                    },
+                );
+            } else {
+                while end < len && !bytes[end].is_ascii_alphanumeric() && bytes[end] != b'_' {
+                    end += 1;
+                }
+                job.append(
+                    &line[start..end],
+                    0.0,
+                    egui::TextFormat {
+                        font_id: font_id.clone(),
+                        color: theme.visuals.text_color(),
+                        ..Default::default()
+                    },
+                );
+            }
+            start = end;
+        }
+        if !line.is_empty() {
+            job.append("\n", 0.0, egui::TextFormat { font_id: font_id.clone(), ..Default::default() });
+        }
+    }
+    job
+}
+
+// Helper for AST and token highlighting
+fn highlight_ast(theme: &egui::Style, code: &str) -> LayoutJob {
+    let mut job = LayoutJob::default();
+    let font_id = egui::TextStyle::Monospace.resolve(theme);
+
+    let mut start = 0;
+    let bytes = code.as_bytes();
+    let len = bytes.len();
+
+    while start < len {
+        let mut end = start;
+        let c = bytes[start];
+
+        if c.is_ascii_alphabetic() || c == b'_' {
+            // Identifiers/Types/Enums
+            while end < len && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_') {
+                end += 1;
+            }
+            job.append(
+                &code[start..end],
+                0.0,
+                egui::TextFormat {
+                    font_id: font_id.clone(),
+                    color: Color32::from_rgb(180, 220, 180), // pale green
+                    ..Default::default()
+                },
+            );
+        } else if c.is_ascii_digit() {
+            // Numbers
+            while end < len && bytes[end].is_ascii_digit() {
+                end += 1;
+            }
+            job.append(
+                &code[start..end],
+                0.0,
+                egui::TextFormat {
+                    font_id: font_id.clone(),
+                    color: Color32::from_rgb(100, 150, 200), // blue
+                    ..Default::default()
+                },
+            );
+        } else if c == b'{' || c == b'}' || c == b'[' || c == b']' || c == b'(' || c == b')' {
+            // Brackets
+            end += 1;
+            job.append(
+                &code[start..end],
+                0.0,
+                egui::TextFormat {
+                    font_id: font_id.clone(),
+                    color: Color32::from_rgb(220, 200, 100), // yellow
+                    ..Default::default()
+                },
+            );
+        } else if c == b'"' || c == b'\'' {
+            // Strings
+            end += 1;
+            while end < len && bytes[end] != c {
+                if bytes[end] == b'\\' && end + 1 < len {
+                    end += 2;
+                } else {
+                    end += 1;
+                }
+            }
+            if end < len {
+                end += 1;
+            }
+            job.append(
+                &code[start..end],
+                0.0,
+                egui::TextFormat {
+                    font_id: font_id.clone(),
+                    color: Color32::from_rgb(200, 150, 100), // orange
+                    ..Default::default()
+                },
+            );
+        } else {
+            // Symbols/Spaces
+            while end < len
+                && !bytes[end].is_ascii_alphanumeric()
+                && bytes[end] != b'_'
+                && bytes[end] != b'{'
+                && bytes[end] != b'}'
+                && bytes[end] != b'['
+                && bytes[end] != b']'
+                && bytes[end] != b'('
+                && bytes[end] != b')'
+                && bytes[end] != b'"'
+                && bytes[end] != b'\''
+            {
+                end += 1;
+            }
+            job.append(
+                &code[start..end],
+                0.0,
+                egui::TextFormat {
+                    font_id: font_id.clone(),
+                    color: theme.visuals.text_color(),
+                    ..Default::default()
+                },
+            );
+        }
+        start = end;
+    }
+    job
+}
+
 impl TemplateApp {
     /// Called once before the first frame.
-    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        // This is also where you can customize the look and feel of egui using
-        // `cc.egui_ctx.set_visuals` and `cc.egui_ctx.set_fonts`.
+    pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
+        // Load default app unconditionally to not restore old persisted dummy string
+        let mut app = TemplateApp::default();
+        app.compile();
 
-        // Load previous app state (if any).
-        // Note that you must enable the `persistence` feature for this to work.
-        if let Some(storage) = cc.storage {
-            eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default()
-        } else {
-            Default::default()
+        app
+    }
+
+    fn compile(&mut self) {
+        let mut lexer = Lexer::new(&self.source_code);
+        let mut tokens = Vec::new();
+        loop {
+            let token = lexer.next_token();
+            let is_eof = matches!(token, Token::Eof);
+            tokens.push(token);
+            if is_eof {
+                break;
+            }
+        }
+        self.tokens_output = format!("{:#?}", tokens);
+
+        // Remove trailing EOF and newlines if they're handled inside?
+        let mut parser = Parser::new(tokens);
+        match parser.parse_program() {
+            Ok(ast) => {
+                self.ast_output = format!("{:#?}", ast);
+                self.compile_error = None;
+            }
+            Err(e) => {
+                self.ast_output = String::new();
+                self.compile_error = Some(format!("Parser error at pos {}: {}", e.pos, e.message));
+            }
         }
     }
 }
@@ -43,64 +284,79 @@ impl eframe::App for TemplateApp {
 
     /// Called each time the UI needs repainting, which may be many times per second.
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        // Put your widgets into a `SidePanel`, `TopBottomPanel`, `CentralPanel`, `Window` or `Area`.
-        // For inspiration and more examples, go to https://emilk.github.io/egui
-
-        egui::Panel::top("top_panel").show_inside(ui, |ui| {
-            // The top panel is often a good place for a menu bar:
-
+        egui::TopBottomPanel::top("top_panel").show_inside(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
-                // NOTE: no File->Quit on web pages!
-                let is_web = cfg!(target_arch = "wasm32");
-                if !is_web {
-                    ui.menu_button("File", |ui| {
-                        if ui.button("Quit").clicked() {
-                            ui.send_viewport_cmd(egui::ViewportCommand::Close);
-                        }
-                    });
-                    ui.add_space(16.0);
-                }
+                ui.label("Compiler Visualization");
+            });
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut self.current_tab, Tab::Source, "Source Code");
+                ui.selectable_value(&mut self.current_tab, Tab::Tokens, "Lexer Tokens");
+                ui.selectable_value(&mut self.current_tab, Tab::AST, "Parser AST");
 
-                egui::widgets::global_theme_preference_buttons(ui);
+                if ui.button("Compile").clicked() {
+                    self.compile();
+                }
             });
         });
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
-            // The central panel the region left after adding TopPanel's and SidePanel's
-            ui.heading("Full Stack");
-
-            ui.horizontal(|ui| {
-                ui.label("Write something: ");
-                ui.text_edit_singleline(&mut self.label);
-            });
-
-            ui.add(egui::Slider::new(&mut self.value, 0.0..=10.0).text("value"));
-            if ui.button("Increment").clicked() {
-                self.value += 1.0;
+            if let Some(err) = &self.compile_error {
+                ui.colored_label(egui::Color32::RED, err);
             }
 
-            ui.separator();
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                match self.current_tab {
+                    Tab::Source => {
+                        let mut layouter = |ui: &egui::Ui, string: &dyn egui::TextBuffer, wrap_width: f32| {
+                            let mut layout_job = highlight_code(ui.style(), string.as_str());
+                            layout_job.wrap.max_width = wrap_width;
+                            ui.ctx().fonts_mut(|f| f.layout_job(layout_job))
+                        };
 
-            ui.label("Full Stack app");
+                        ui.add(
+                            egui::TextEdit::multiline(&mut self.source_code)
+                                .font(egui::TextStyle::Monospace) // for cursor height
+                                .code_editor()
+                                .desired_rows(30)
+                                .lock_focus(true)
+                                .desired_width(f32::INFINITY)
+                                .layouter(&mut layouter)
+                        );
+                    }
+                    Tab::Tokens => {
+                        let mut layouter = |ui: &egui::Ui, string: &dyn egui::TextBuffer, wrap_width: f32| {
+                            let mut layout_job = highlight_ast(ui.style(), string.as_str());
+                            layout_job.wrap.max_width = wrap_width;
+                            ui.ctx().fonts_mut(|f| f.layout_job(layout_job))
+                        };
 
-            ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-                powered_by_egui_and_eframe(ui);
-                egui::warn_if_debug_build(ui);
+                        ui.add(
+                            egui::TextEdit::multiline(&mut self.tokens_output)
+                                .font(egui::TextStyle::Monospace)
+                                .desired_width(f32::INFINITY)
+                                .interactive(false)
+                                .layouter(&mut layouter)
+                        );
+                    }
+                    Tab::AST => {
+                        let mut layouter = |ui: &egui::Ui, string: &dyn egui::TextBuffer, wrap_width: f32| {
+                            let mut layout_job = highlight_ast(ui.style(), string.as_str());
+                            layout_job.wrap.max_width = wrap_width;
+                            ui.ctx().fonts_mut(|f| f.layout_job(layout_job))
+                        };
+
+                        ui.add(
+                            egui::TextEdit::multiline(&mut self.ast_output)
+                                .font(egui::TextStyle::Monospace)
+                                .desired_width(f32::INFINITY)
+                                .interactive(false)
+                                .layouter(&mut layouter)
+                        );
+                    }
+                }
             });
         });
     }
 }
 
-fn powered_by_egui_and_eframe(ui: &mut egui::Ui) {
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 0.0;
-        ui.label("Powered by ");
-        ui.hyperlink_to("egui", "https://github.com/emilk/egui");
-        ui.label(" and ");
-        ui.hyperlink_to(
-            "eframe",
-            "https://github.com/emilk/egui/tree/master/crates/eframe",
-        );
-        ui.label(".");
-    });
-}
+
