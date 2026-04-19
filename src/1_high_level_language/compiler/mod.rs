@@ -1,13 +1,8 @@
 pub mod compiler;
-pub mod diagnostics;
-pub mod lowering_context;
-pub mod semantic_analyzer;
-pub mod symbol_table;
-pub mod type_context;
+pub mod utility;
 
 pub use compiler::{CompilerError, HighLevelCompiler};
-pub use diagnostics::{Diagnostic, DiagnosticLevel, Diagnostics};
-pub use lowering_context::LoweringContext;
-pub use semantic_analyzer::SemanticAnalyzer;
-pub use symbol_table::{SymbolInfo, SymbolTable};
-pub use type_context::TypeContext;
+pub use utility::{
+    Diagnostic, DiagnosticLevel, Diagnostics, LoweringContext, SemanticAnalyzer, SymbolInfo,
+    SymbolTable, TypeContext,
+};

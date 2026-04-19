@@ -1,9 +1,9 @@
 use crate::high_level_language::ast::{
     DeclNode, Declaration, Expression, Program, ReturnType, Statement, Type, UnaryOp,
 };
-use crate::high_level_language::compiler::diagnostics::Diagnostics;
-use crate::high_level_language::compiler::symbol_table::SymbolTable;
-use crate::high_level_language::compiler::type_context::TypeContext;
+use crate::high_level_language::compiler::utility::diagnostics::Diagnostics;
+use crate::high_level_language::compiler::utility::symbol_table::SymbolTable;
+use crate::high_level_language::compiler::utility::type_context::TypeContext;
 use crate::intermediate_language::IrType;
 use std::collections::HashMap;
 
