@@ -335,7 +335,7 @@ impl SemanticAnalyzer {
                 let rvalue_type = self.infer_expression_type(rvalue)?;
 
                 // Handle tuple destructuring
-                if let crate::high_level_language::ast::AssignTarget::Tuple(targets) =
+                if let crate::high_level_language::ast::AssignTarget::Tuple(fields) =
                     target.as_ref()
                 {
                     // Parse the tuple type string to extract field types
@@ -350,18 +350,27 @@ impl SemanticAnalyzer {
                         }
                     };
 
-                    if targets.len() != field_types.len() {
+                    if fields.len() != field_types.len() {
                         self.diagnostics.error(format!(
                             "Tuple destructuring mismatch: expected {} fields, got {}",
                             field_types.len(),
-                            targets.len()
+                            fields.len()
                         ));
                         return Err(());
                     }
 
                     // Register each target with its corresponding type
-                    for (target, field_ty) in targets.iter().zip(field_types.iter()) {
-                        self.register_assign_target(target, field_ty)?;
+                    for (field, field_ty) in fields.iter().zip(field_types.iter()) {
+                        // If type annotation is provided, use it; otherwise use inferred type
+                        let ty_to_use = if let Some(ref annotated_ty) = field.ty {
+                            let ir_ty = self.ast_type_to_ir_type(annotated_ty);
+                            self.context.get_type_name(&ir_ty)
+                        } else {
+                            field_ty.clone()
+                        };
+                        
+                        let target = crate::high_level_language::ast::AssignTarget::Identifier(field.name.clone());
+                        self.register_assign_target(&target, &ty_to_use)?;
                     }
                 } else {
                     // Regular assignment - check target exists

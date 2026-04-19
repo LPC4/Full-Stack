@@ -355,11 +355,16 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_assignment(&mut self) -> Result<Expression, ParserError> {
-        // Only brace-delimited tuple assignments are supported
-        if self.check_lbrace() {
+        // Only parenthesis-delimited tuple assignments are supported
+        if matches!(self.peek(), Some(Token::LParen)) {
+            let saved_pos = self.pos;
             let mut trial = self.clone();
+            
+            // Try to parse as tuple destructuring
             if let Ok(target) = trial.parse_tuple_assign_target() {
+                // Check if followed by assignment operator
                 if trial.match_assign() {
+                    // Commit to this parse
                     *self = trial;
                     let rvalue = self.parse_assignment()?;
                     return Ok(Expression::Assignment {
@@ -368,6 +373,9 @@ impl<'a> Parser<'a> {
                     });
                 }
             }
+            
+            // Not a tuple destructuring, restore position and continue with normal parsing
+            self.pos = saved_pos;
         }
 
         let left = self.parse_or()?;
@@ -916,17 +924,17 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_tuple_assign_target(&mut self) -> Result<AssignTarget, ParserError> {
-        self.expect_lbrace()?;
-        let mut targets = Vec::new();
+        self.expect_lparen()?;
+        let mut fields = Vec::new();
 
-        if self.check_rbrace() {
+        if self.check_rparen() {
             return Err(self.error("empty tuple destructuring is not allowed"));
         }
 
         loop {
-            targets.push(self.parse_assign_target()?);
+            fields.push(self.parse_tuple_destructure_field()?);
             if self.match_comma() {
-                if self.check_rbrace() {
+                if self.check_rparen() {
                     break;
                 }
                 continue;
@@ -934,44 +942,21 @@ impl<'a> Parser<'a> {
             break;
         }
 
-        self.expect_rbrace()?;
-        Ok(AssignTarget::Tuple(targets))
+        self.expect_rparen()?;
+        Ok(AssignTarget::Tuple(fields))
     }
 
-    fn parse_assign_target(&mut self) -> Result<AssignTarget, ParserError> {
-        if self.match_at() {
-            return Ok(AssignTarget::Dereference(Box::new(
-                self.parse_assign_target()?,
-            )));
-        }
-
+    fn parse_tuple_destructure_field(&mut self) -> Result<TupleDestructureField, ParserError> {
         let name = self.expect_ident()?;
-        let mut target = AssignTarget::Identifier(name);
+        
+        // Check for optional type annotation
+        let ty = if self.match_colon() {
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
 
-        loop {
-            if self.match_dot() {
-                let field = self.expect_ident()?;
-                target = AssignTarget::FieldAccess {
-                    expr: Box::new(target),
-                    field,
-                };
-                continue;
-            }
-
-            if self.match_lbracket() {
-                let index = self.parse_expression()?;
-                self.expect_rbracket()?;
-                target = AssignTarget::ArrayIndex {
-                    expr: Box::new(target),
-                    index: Box::new(index),
-                };
-                continue;
-            }
-
-            break;
-        }
-
-        Ok(target)
+        Ok(TupleDestructureField { name, ty })
     }
 
     fn expression_to_target(&self, expr: Expression) -> Result<AssignTarget, ParserError> {
@@ -1596,11 +1581,11 @@ mod tests {
     #[test]
     fn parses_tuple_destructuring_assignment() {
         let tokens = vec![
-            Token::LBrace,
+            Token::LParen,
             Token::Ident("q"),
             Token::Comma,
             Token::Ident("r"),
-            Token::RBrace,
+            Token::RParen,
             Token::Assign,
             Token::Ident("divide"),
             Token::LParen,
@@ -1614,10 +1599,50 @@ mod tests {
         let mut parser = Parser::new(tokens);
         match parser.parse_expression().unwrap() {
             Expression::Assignment { target, .. } => match *target {
-                AssignTarget::Tuple(items) => {
-                    assert_eq!(items.len(), 2);
-                    assert!(matches!(items[0], AssignTarget::Identifier(_)));
-                    assert!(matches!(items[1], AssignTarget::Identifier(_)));
+                AssignTarget::Tuple(fields) => {
+                    assert_eq!(fields.len(), 2);
+                    assert_eq!(fields[0].name, "q");
+                    assert_eq!(fields[1].name, "r");
+                    assert!(fields[0].ty.is_none());
+                    assert!(fields[1].ty.is_none());
+                }
+                other => panic!("unexpected assignment target: {other:?}"),
+            },
+            other => panic!("unexpected expression: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_tuple_destructuring_with_types() {
+        let tokens = vec![
+            Token::LParen,
+            Token::Ident("q"),
+            Token::Colon,
+            Token::I32,
+            Token::Comma,
+            Token::Ident("r"),
+            Token::Colon,
+            Token::I32,
+            Token::RParen,
+            Token::Assign,
+            Token::Ident("divide"),
+            Token::LParen,
+            Token::Integer("10"),
+            Token::Comma,
+            Token::Integer("3"),
+            Token::RParen,
+            Token::Eof,
+        ];
+
+        let mut parser = Parser::new(tokens);
+        match parser.parse_expression().unwrap() {
+            Expression::Assignment { target, .. } => match *target {
+                AssignTarget::Tuple(fields) => {
+                    assert_eq!(fields.len(), 2);
+                    assert_eq!(fields[0].name, "q");
+                    assert!(matches!(&fields[0].ty, Some(Type::Primitive(name)) if name == "i32"));
+                    assert_eq!(fields[1].name, "r");
+                    assert!(matches!(&fields[1].ty, Some(Type::Primitive(name)) if name == "i32"));
                 }
                 other => panic!("unexpected assignment target: {other:?}"),
             },

@@ -16,7 +16,7 @@ main: () -> i32 {
     ; Tuple return + destructuring
     base: i32 = 12
     delta: i32 = 4
-    {sum, diff} = sum_and_diff(base, delta)
+    (sum, diff) = sum_and_diff(base, delta)
 
     ; Heap allocation + dereference write
     a: i32* = new(i32)

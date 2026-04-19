@@ -8,7 +8,7 @@ divide: (a: i32, b: i32) -> (i32, bool) {
 
 start: () -> () {
     ; Parsing challenge: Handling the comma-separated l-values
-    {result, success} = divide(10, 2)
+    (result, success) = divide(10, 2)
 
     if success {
         print(result)

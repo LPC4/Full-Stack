@@ -347,9 +347,13 @@ impl HighLevelCompiler {
                     AssignTarget::ArrayIndex { expr, index } => {
                         self.lower_array_index_assign(expr, index, &lowered)
                     }
-                    AssignTarget::Tuple(targets) => {
+                    AssignTarget::Tuple(fields) => {
                         // Tuple destructuring: load each field from the aggregate and assign
-                        self.lower_tuple_destructuring(targets, &lowered)
+                        let targets: Vec<AssignTarget> = fields
+                            .iter()
+                            .map(|f| AssignTarget::Identifier(f.name.clone()))
+                            .collect();
+                        self.lower_tuple_destructuring(&targets, &lowered)
                     }
                 }
             }

@@ -4,7 +4,7 @@ divide: (a: i32, b: i32) -> (i32, i32) {
 }
 
 test_tuple_destructuring: () -> i32 {
-    {q, r} = divide(10, 3)
+    (q, r) = divide(10, 3)
     return q
 }
 

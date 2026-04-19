@@ -55,7 +55,7 @@ impl Default for HighLevelLanguageView {
             show_source: true,
             show_tokens: false,
             show_ast: false,
-            show_ir: false,
+            show_ir: true,
             tokens_output: String::new(),
             ast_output: String::new(),
             ir_output: String::new(),

@@ -96,13 +96,13 @@ impl HighLevelCompiler {
                     self.format_expression(index)
                 )
             }
-            AssignTarget::Tuple(targets) => {
-                let items = targets
+            AssignTarget::Tuple(fields) => {
+                let items = fields
                     .iter()
-                    .map(|t| self.format_assign_target(t))
+                    .map(|f| f.name.clone())
                     .collect::<Vec<_>>()
                     .join(", ");
-                format!("{{{}}}", items)
+                format!("({})", items)
             }
         }
     }

@@ -1,6 +1,6 @@
-# Language Specification v1.2
+# Language Specification v1.3
 
-**Version:** 1.2
+**Version:** 1.3
 **Design Philosophy:** Consistency-First Memory Model  
 **Target Domain:** Systems Programming
 
@@ -144,7 +144,7 @@ p2_ptr: Point* = new(Point)
 - Heap/Stack pointer to struct: `@ptr.field`
 
 ### 5.3 Tuple Literals
-Tuples are anonymous, ordered collections of values. They use **brace syntax** with comma-separated expressions (no field names).
+Tuples are anonymous, ordered collections of values. They use **parentheses syntax** with comma-separated expressions (no field names).
 
 ```HLL
 ; Tuple literal in return statement
@@ -155,28 +155,33 @@ get_coordinates(): (f32, f32) {
 ; Tuple literal in variable initialization
 pair: (i32, bool) = {42, true}
 
-; Tuple destructuring assignment
-{x, y} = get_coordinates()
-{value, success} = try_operation()
+; Tuple destructuring assignment (with optional type annotations)
+(x, y) = get_coordinates()
+(value: i32, success: bool) = try_operation()
 ```
 
 **Tuple vs Struct Syntax:**
 - **Tuple literal**: `{expr1, expr2, ...}` - No field names, just expressions
 - **Struct literal**: `{field: value, ...}` - Named fields with colons
-- **Empty braces**: `{}` is invalid for tuples (use for empty structs only)
+- **Empty tuples**: `()` represents an empty tuple
 
 **Type Annotations:**
 - Tuple types use parentheses: `(i32, f32, bool)`
 - Struct types use named type: `Point`, `Vector<T>`, etc.
 
+**Destructuring Syntax:**
+- **Tuple destructuring**: `(name[:type], name2[:type])` - Parentheses with optional type annotations
+- Type annotations align with variable declaration syntax for consistency
+- All fields can have types, some fields, or no fields
+
 **Key Differences:**
-| Feature | Tuple | Struct |
-|---------|-------|--------|
-| Syntax | `{expr1, expr2}` | `{field: value}` |
-| Field Names | None (positional) | Required |
-| Type Notation | `(T1, T2)` | `TypeName` |
-| Access | Destructuring only | `.field_name` |
-| Use Case | Multiple returns, temporary groups | Named data structures |
+| Feature | Tuple Literal | Tuple Destructuring | Struct |
+|---------|--------------|-------------------|--------|
+| Syntax | `{expr1, expr2}` | `(name[:type], name2[:type])` | `{field: value}` |
+| Field Names | None (positional) | Required (with optional types) | Required |
+| Type Notation | `(T1, T2)` | N/A | `TypeName` |
+| Access | Destructuring only | Creates variables | `.field_name` |
+| Use Case | Multiple returns, temporary groups | Unpacking multiple returns | Named data structures |
 
 ---
 
@@ -199,11 +204,11 @@ main: () -> () {
 }
 
 divide: (a: i32, b: i32) -> (quotient: i32, remainder: i32) {
-    return {a / b, a % b}
+    return (a / b, a % b)
 }
 
 main: () -> () {
-    {q, r} = divide(10, 3)
+    (q, r) = divide(10, 3)
 }
 ```
 
@@ -260,8 +265,8 @@ compute_factorial(n: i32): i32 {
 
 ```HLL
 open_file(path: Str): (File*, Str) {
-    if invalid_path(path) { return {null, "Invalid path"} }
-    return {new(File), null}
+    if invalid_path(path) { return (null, "Invalid path") }
+    return (new(File), null)
 }
 ```
 
@@ -307,7 +312,7 @@ defer_stmt     = "defer" expression;
 expression     = assignment | binary_expr | unary_expr | primary_expr;
 assignment     = lvalue "=" expression;
 lvalue         = tuple_destructure | dereference | field_access | array_index | identifier;
-tuple_destructure = "{" identifier { "," identifier } "}";
+tuple_destructure = "(" identifier [":" type] { "," identifier [":" type] } ")";
 unary_expr     = unary_op expression;
 unary_op       = "-" | "!" | "&" | "@";
 primary_expr   = identifier | literal | "(" expression ")" | function_call | array_literal | tuple_literal | struct_literal;

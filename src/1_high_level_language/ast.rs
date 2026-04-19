@@ -129,7 +129,13 @@ pub enum AssignTarget {
         expr: Box<AssignTarget>,
         index: Box<Expression>,
     },
-    Tuple(Vec<AssignTarget>),
+    Tuple(Vec<TupleDestructureField>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TupleDestructureField {
+    pub name: String,
+    pub ty: Option<Type>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
