@@ -6,21 +6,33 @@ fn suite_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("programs/test/compiler_suite")
 }
 
+/// Recursively collect all .hll files from a directory tree
+fn collect_hll_files(dir: &PathBuf, files: &mut Vec<PathBuf>) {
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.filter_map(Result::ok) {
+            let path = entry.path();
+            if path.is_dir() {
+                collect_hll_files(&path, files);
+            } else if path.extension().and_then(|e| e.to_str()) == Some("hll") {
+                files.push(path);
+            }
+        }
+    }
+}
+
 #[test]
 fn execute_compiler_test_suite() {
     let root = suite_root();
-    let mut entries: Vec<_> = fs::read_dir(&root)
-        .expect("failed to read test directory")
-        .filter_map(Result::ok)
-        .collect();
-
-    entries.sort_by_key(|e| e.path());
+    let mut hll_files = Vec::new();
+    collect_hll_files(&root, &mut hll_files);
+    
+    // Sort for consistent test execution order
+    hll_files.sort();
 
     let mut tests_run = 0;
     let pipeline = CompilationPipeline::new();
 
-    for entry in entries {
-        let path = entry.path();
+    for path in hll_files {
         if path.extension().and_then(|e| e.to_str()) == Some("hll") {
             let source = fs::read_to_string(&path)
                 .unwrap_or_else(|err| panic!("failed to read fixture {path:?}: {err}"));
@@ -68,7 +80,7 @@ fn execute_compiler_test_suite() {
 
     assert!(tests_run > 0, "No tests found in compiler_suite");
     println!(
-        "Successfully ran {} golden master compilation tests",
+        "\n✅ Successfully ran {} golden master compilation tests across all categories",
         tests_run
     );
 }

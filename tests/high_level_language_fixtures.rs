@@ -7,7 +7,7 @@ use full_stack::high_level_language::compiler::HighLevelCompiler;
 use full_stack::high_level_language::{lexer::Lexer, parser::Parser, token::Token};
 
 fn fixture_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("programs/test/high_level_language")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("programs/test/fixtures")
 }
 
 fn collect_hll_fixtures(root: &Path) -> Vec<PathBuf> {
@@ -103,7 +103,7 @@ fn all_high_level_language_fixtures_lex_to_eof() {
 
 #[test]
 fn test1_hll_lexes_comments_newlines_and_return() {
-    let tokens = lex_fixture("test1.hll");
+    let tokens = lex_fixture("lexer/01_comments_and_newlines.hll");
 
     assert!(contains_token(&tokens, |t| matches!(t, Token::Ident("x"))));
     assert!(contains_token(&tokens, |t| matches!(t, Token::Ident("y"))));
@@ -121,7 +121,7 @@ fn test1_hll_lexes_comments_newlines_and_return() {
 
 #[test]
 fn test2_hll_lexes_struct_and_pointer_syntax() {
-    let tokens = lex_fixture("test2.hll");
+    let tokens = lex_fixture("parser/02_structs_and_pointers.hll");
 
     assert!(contains_token(&tokens, |t| matches!(t, Token::Type)));
     assert!(contains_token(&tokens, |t| matches!(t, Token::LBrace)));
@@ -134,7 +134,7 @@ fn test2_hll_lexes_struct_and_pointer_syntax() {
 
 #[test]
 fn test3_hll_lexes_nested_access_and_control_flow() {
-    let tokens = lex_fixture("test3.hll");
+    let tokens = lex_fixture("parser/03_nested_access_and_control_flow.hll");
 
     assert!(contains_token(&tokens, |t| matches!(t, Token::Type)));
     assert!(contains_token(&tokens, |t| matches!(t, Token::While)));
@@ -147,7 +147,7 @@ fn test3_hll_lexes_nested_access_and_control_flow() {
 
 #[test]
 fn test4_hll_lexes_multi_return_and_destructuring() {
-    let tokens = lex_fixture("test4.hll");
+    let tokens = lex_fixture("parser/04_tuple_returns.hll");
 
     assert!(contains_token(&tokens, |t| matches!(
         t,
@@ -163,7 +163,7 @@ fn test4_hll_lexes_multi_return_and_destructuring() {
 
 #[test]
 fn test1_hll_parser_success_and_ast_validation() {
-    let program = parse_fixture("test1.hll").expect("failed to parse test1.hll");
+    let program = parse_fixture("lexer/01_comments_and_newlines.hll").expect("failed to parse test1.hll");
 
     // x, y, z are declarations, return is a statement
     assert_eq!(
@@ -216,7 +216,7 @@ fn test1_hll_parser_success_and_ast_validation() {
 
 #[test]
 fn test2_hll_parser_success_and_ast_validation() {
-    let program = parse_fixture("test2.hll").expect("failed to parse test2.hll");
+    let program = parse_fixture("parser/02_structs_and_pointers.hll").expect("failed to parse test2.hll");
 
     assert_eq!(
         program.declarations.len(),
@@ -245,7 +245,7 @@ fn test2_hll_parser_success_and_ast_validation() {
 
 #[test]
 fn test3_hll_parser_success_and_ast_validation() {
-    let program = parse_fixture("test3.hll").expect("failed to parse test3.hll");
+    let program = parse_fixture("parser/03_nested_access_and_control_flow.hll").expect("failed to parse test3.hll");
 
     assert_eq!(
         program.declarations.len(),
@@ -270,7 +270,7 @@ fn test3_hll_parser_success_and_ast_validation() {
 
 #[test]
 fn test4_hll_parser_success_and_ast_validation() {
-    let program = parse_fixture("test4.hll").expect("failed to parse test4.hll");
+    let program = parse_fixture("parser/04_tuple_returns.hll").expect("failed to parse test4.hll");
 
     assert_eq!(program.declarations.len(), 2, "Expected divide, start");
 
@@ -308,7 +308,7 @@ fn test4_hll_parser_success_and_ast_validation() {
 
 #[test]
 fn test1_hll_compiles_to_ir_with_arithmetic() {
-    let path = fixture_root().join("test1.hll");
+    let path = fixture_root().join("lexer/01_comments_and_newlines.hll");
     let source = fs::read_to_string(&path)
         .unwrap_or_else(|err| panic!("failed to read fixture {path:?}: {err}"));
     let source: &'static str = Box::leak(source.into_boxed_str());
@@ -339,7 +339,7 @@ fn test1_hll_compiles_to_ir_with_arithmetic() {
 
 #[test]
 fn test2_hll_compiles_to_ir_with_pointers_and_structs() {
-    let path = fixture_root().join("test2.hll");
+    let path = fixture_root().join("parser/02_structs_and_pointers.hll");
     let source = fs::read_to_string(&path)
         .unwrap_or_else(|err| panic!("failed to read fixture {path:?}: {err}"));
     let source: &'static str = Box::leak(source.into_boxed_str());
@@ -369,7 +369,7 @@ fn test2_hll_compiles_to_ir_with_pointers_and_structs() {
 
 #[test]
 fn test3_hll_compiles_to_ir_with_control_flow() {
-    let path = fixture_root().join("test3.hll");
+    let path = fixture_root().join("parser/03_nested_access_and_control_flow.hll");
     let source = fs::read_to_string(&path)
         .unwrap_or_else(|err| panic!("failed to read fixture {path:?}: {err}"));
     let source: &'static str = Box::leak(source.into_boxed_str());
@@ -402,7 +402,7 @@ fn test3_hll_compiles_to_ir_with_control_flow() {
 
 #[test]
 fn test4_hll_compiles_to_ir_with_multiple_returns() {
-    let path = fixture_root().join("test4.hll");
+    let path = fixture_root().join("parser/04_tuple_returns.hll");
     let source = fs::read_to_string(&path)
         .unwrap_or_else(|err| panic!("failed to read fixture {path:?}: {err}"));
     let source: &'static str = Box::leak(source.into_boxed_str());

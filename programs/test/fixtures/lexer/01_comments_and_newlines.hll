@@ -1,0 +1,12 @@
+; This is a comment and should be ignored
+x: i32 = 42
+y: i32 = 100 ; Inline comments are allowed
+
+; Testing significant newlines
+z: i32 = x +
+    y
+
+; The line above should be parsed as one expression because
+; it ends with an operator (+), making the newline non-terminating.
+return z
+
