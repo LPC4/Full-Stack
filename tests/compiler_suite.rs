@@ -27,7 +27,11 @@ fn execute_compiler_test_suite() {
 
             // Compile using shared pipeline
             let result = pipeline.compile(&source).unwrap_or_else(|e| {
-                panic!("Compilation error in {:?}: {}", path.file_name().unwrap(), e)
+                panic!(
+                    "Compilation error in {:?}: {}",
+                    path.file_name().unwrap(),
+                    e
+                )
             });
 
             let actual_ir = format!("{}", result.ir_program)

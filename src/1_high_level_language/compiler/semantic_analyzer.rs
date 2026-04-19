@@ -65,10 +65,13 @@ impl SemanticAnalyzer {
                     self.type_mapping.insert(name.clone(), ty_name);
                 } else {
                     // If we can't infer, default to unknown
-                    self.type_mapping.insert(name.clone(), "unknown".to_string());
+                    self.type_mapping
+                        .insert(name.clone(), "unknown".to_string());
                 }
             }
-            DeclNode::Function { name, return_type, .. } => {
+            DeclNode::Function {
+                name, return_type, ..
+            } => {
                 self.type_mapping.insert(name.clone(), "fn".to_string());
                 // Store the return type for function calls
                 let return_ty_str = match return_type {
@@ -252,7 +255,9 @@ impl SemanticAnalyzer {
                     Ok(format!("*{}", inner_name))
                 }
                 crate::high_level_language::ast::PrimaryExpr::FunctionCall {
-                    name, arguments, ..
+                    name,
+                    arguments,
+                    ..
                 } => {
                     // Type check arguments
                     for arg in arguments {
@@ -286,14 +291,18 @@ impl SemanticAnalyzer {
                     UnaryOp::AddressOf => {
                         // Special case for AddressOf: we need the pointer type of the operand,
                         // not the dereferenced value type
-                        if let Expression::Primary(crate::high_level_language::ast::PrimaryExpr::Identifier(name)) = inner.as_ref() {
+                        if let Expression::Primary(
+                            crate::high_level_language::ast::PrimaryExpr::Identifier(name),
+                        ) = inner.as_ref()
+                        {
                             if let Some(info) = self.symbols.lookup(name) {
                                 // Get the actual stored type (which includes the pointer)
                                 let ty_name = self.context.get_type_name(&info.ty);
                                 // AddressOf adds another level of pointer, so we prefix with '*'
                                 Ok(format!("*{}", ty_name))
                             } else {
-                                self.diagnostics.error(format!("Undefined identifier: {}", name));
+                                self.diagnostics
+                                    .error(format!("Undefined identifier: {}", name));
                                 Err(())
                             }
                         } else {
@@ -302,7 +311,8 @@ impl SemanticAnalyzer {
                             match self.context.check_unary_op(op, &inner_type) {
                                 Ok(result_type) => Ok(result_type),
                                 Err(err) => {
-                                    self.diagnostics.error(format!("Type error in unary operation: {:?}", err));
+                                    self.diagnostics
+                                        .error(format!("Type error in unary operation: {:?}", err));
                                     Err(())
                                 }
                             }
@@ -313,7 +323,8 @@ impl SemanticAnalyzer {
                         match self.context.check_unary_op(op, &inner_type) {
                             Ok(result_type) => Ok(result_type),
                             Err(err) => {
-                                self.diagnostics.error(format!("Type error in unary operation: {:?}", err));
+                                self.diagnostics
+                                    .error(format!("Type error in unary operation: {:?}", err));
                                 Err(())
                             }
                         }
@@ -322,9 +333,11 @@ impl SemanticAnalyzer {
             }
             Expression::Assignment { target, rvalue } => {
                 let rvalue_type = self.infer_expression_type(rvalue)?;
-                
+
                 // Handle tuple destructuring
-                if let crate::high_level_language::ast::AssignTarget::Tuple(targets) = target.as_ref() {
+                if let crate::high_level_language::ast::AssignTarget::Tuple(targets) =
+                    target.as_ref()
+                {
                     // Parse the tuple type string to extract field types
                     let field_types = match self.parse_tuple_type(&rvalue_type) {
                         Ok(types) => types,
@@ -336,7 +349,7 @@ impl SemanticAnalyzer {
                             return Err(());
                         }
                     };
-                    
+
                     if targets.len() != field_types.len() {
                         self.diagnostics.error(format!(
                             "Tuple destructuring mismatch: expected {} fields, got {}",
@@ -345,7 +358,7 @@ impl SemanticAnalyzer {
                         ));
                         return Err(());
                     }
-                    
+
                     // Register each target with its corresponding type
                     for (target, field_ty) in targets.iter().zip(field_types.iter()) {
                         self.register_assign_target(target, field_ty)?;
@@ -354,7 +367,7 @@ impl SemanticAnalyzer {
                     // Regular assignment - check target exists
                     self.check_assign_target(target)?;
                 }
-                
+
                 // Assignment returns the type of the right side
                 Ok(rvalue_type)
             }
@@ -411,19 +424,23 @@ impl SemanticAnalyzer {
         if !trimmed.starts_with('(') || !trimmed.ends_with(')') {
             return Err(());
         }
-        
-        let inner = &trimmed[1..trimmed.len()-1];
+
+        let inner = &trimmed[1..trimmed.len() - 1];
         if inner.is_empty() {
             return Ok(Vec::new());
         }
-        
+
         // Simple split by comma - this works for simple types
         let types: Vec<String> = inner.split(',').map(|s| s.trim().to_string()).collect();
         Ok(types)
     }
 
     /// Register an assignment target (for tuple destructuring)
-    fn register_assign_target(&mut self, target: &crate::high_level_language::ast::AssignTarget, ty: &str) -> Result<(), ()> {
+    fn register_assign_target(
+        &mut self,
+        target: &crate::high_level_language::ast::AssignTarget,
+        ty: &str,
+    ) -> Result<(), ()> {
         match target {
             crate::high_level_language::ast::AssignTarget::Identifier(name) => {
                 // Check if already defined
@@ -453,24 +470,30 @@ impl SemanticAnalyzer {
                 // For @x, check that x is a pointer
                 self.check_assign_target(inner)
             }
-            crate::high_level_language::ast::AssignTarget::FieldAccess { .. } 
+            crate::high_level_language::ast::AssignTarget::FieldAccess { .. }
             | crate::high_level_language::ast::AssignTarget::ArrayIndex { .. } => {
                 // These should already exist
                 self.check_assign_target(target)
             }
             crate::high_level_language::ast::AssignTarget::Tuple(_) => {
-                self.diagnostics.error("Nested tuple destructuring not supported in semantic analysis".to_string());
+                self.diagnostics.error(
+                    "Nested tuple destructuring not supported in semantic analysis".to_string(),
+                );
                 Err(())
             }
         }
     }
 
     /// Check that an assignment target is valid (exists and is assignable)
-    fn check_assign_target(&mut self, target: &crate::high_level_language::ast::AssignTarget) -> Result<(), ()> {
+    fn check_assign_target(
+        &mut self,
+        target: &crate::high_level_language::ast::AssignTarget,
+    ) -> Result<(), ()> {
         match target {
             crate::high_level_language::ast::AssignTarget::Identifier(name) => {
                 if self.symbols.lookup(name).is_none() {
-                    self.diagnostics.error(format!("Undefined identifier: {}", name));
+                    self.diagnostics
+                        .error(format!("Undefined identifier: {}", name));
                     return Err(());
                 }
                 Ok(())
@@ -487,7 +510,8 @@ impl SemanticAnalyzer {
                 Ok(())
             }
             crate::high_level_language::ast::AssignTarget::Tuple(_) => {
-                self.diagnostics.error("Nested tuple destructuring not supported".to_string());
+                self.diagnostics
+                    .error("Nested tuple destructuring not supported".to_string());
                 Err(())
             }
         }

@@ -113,7 +113,9 @@ impl HighLevelCompiler {
             for diagnostic in semantic_analyzer.diagnostics() {
                 self.context.diagnostics.error(diagnostic.message.clone());
             }
-            log::warn!("Semantic analysis found errors, continuing with compilation for diagnostics");
+            log::warn!(
+                "Semantic analysis found errors, continuing with compilation for diagnostics"
+            );
         }
 
         self.context.reset_for_program();
@@ -145,7 +147,11 @@ impl HighLevelCompiler {
                             ty: ty.clone(),
                         },
                     );
-                    log::debug!("Registered generic type `{}` with {} params", name, generics.len());
+                    log::debug!(
+                        "Registered generic type `{}` with {} params",
+                        name,
+                        generics.len()
+                    );
                     Ok(())
                 } else {
                     // Non-generic type, lower directly
@@ -218,7 +224,8 @@ impl HighLevelCompiler {
 
                 // Store the function's return type for later lookup during calls
                 let return_ty = self.lower_return_type(return_type.as_ref());
-                self.function_return_types.insert(final_name.clone(), return_ty);
+                self.function_return_types
+                    .insert(final_name.clone(), return_ty);
 
                 self.start_new_block("entry");
 
@@ -399,8 +406,9 @@ impl HighLevelCompiler {
                 if !args.is_empty() {
                     // This is a generic type instantiation, specialize it
                     // First, lower all type arguments
-                    let lowered_args: Vec<IrType> = args.iter().map(|a| self.lower_type(a)).collect();
-                    
+                    let lowered_args: Vec<IrType> =
+                        args.iter().map(|a| self.lower_type(a)).collect();
+
                     // Check if this is a known generic type
                     if self.generic_type_defs.contains_key(name) {
                         // We need ir_program to specialize, so we'll handle this differently
@@ -442,9 +450,9 @@ impl HighLevelCompiler {
     ) -> Result<IrType, CompilerError> {
         match ty {
             Type::Primitive(name) => Ok(self.lower_primitive_type(name)),
-            Type::Pointer(inner) => {
-                Ok(IrType::Pointer(Box::new(self.lower_type_with_program(ir_program, inner)?)))
-            }
+            Type::Pointer(inner) => Ok(IrType::Pointer(Box::new(
+                self.lower_type_with_program(ir_program, inner)?,
+            ))),
             Type::Array(len, inner) => Ok(IrType::Array {
                 len: *len,
                 element: Box::new(self.lower_type_with_program(ir_program, inner)?),
@@ -548,7 +556,10 @@ impl HighLevelCompiler {
                     })
                     .collect(),
             ),
-            Type::Named { name, args: type_args } => {
+            Type::Named {
+                name,
+                args: type_args,
+            } => {
                 // Check if this name is a generic parameter
                 if let Some(idx) = params.iter().position(|p| p == name) {
                     if idx < args.len() {
@@ -623,10 +634,9 @@ impl HighLevelCompiler {
         }
 
         // Get the generic type definition
-        let generic_def = self
-            .generic_type_defs
-            .get(name)
-            .ok_or_else(|| CompilerError::UnsupportedDeclaration(format!("Unknown generic type `{}`", name)))?;
+        let generic_def = self.generic_type_defs.get(name).ok_or_else(|| {
+            CompilerError::UnsupportedDeclaration(format!("Unknown generic type `{}`", name))
+        })?;
 
         // Validate argument count
         if generic_def.params.len() != type_args.len() {
@@ -829,7 +839,13 @@ impl HighLevelCompiler {
         }
     }
 
-    fn lower_if(&mut self, ir_program: &mut IrProgram, cond: &Expression, then_block: &Block, else_branch: Option<&Statement>) {
+    fn lower_if(
+        &mut self,
+        ir_program: &mut IrProgram,
+        cond: &Expression,
+        then_block: &Block,
+        else_branch: Option<&Statement>,
+    ) {
         self.push_instruction(IrInstruction::Comment("if condition".to_string()));
         let cond_value = match self.lower_expression(cond) {
             Some(lowered) => lowered.value,
@@ -1164,12 +1180,14 @@ impl HighLevelCompiler {
                         function: name.clone(),
                         args: arg_values,
                     });
-                    
+
                     // Look up the function's return type
-                    let return_ty = self.function_return_types.get(name)
+                    let return_ty = self
+                        .function_return_types
+                        .get(name)
                         .cloned()
                         .unwrap_or(IrType::Void);
-                    
+
                     Some(LoweredValue {
                         value: IrValue::Register(dest),
                         ty: return_ty,
@@ -1227,9 +1245,10 @@ impl HighLevelCompiler {
                     let mut lowered_fields = Vec::new();
                     for field_init in fields {
                         let field_value = self.lower_expression(&field_init.expr)?;
-                        let field_name = field_init.name.clone().unwrap_or_else(|| {
-                            format!("field_{}", lowered_fields.len())
-                        });
+                        let field_name = field_init
+                            .name
+                            .clone()
+                            .unwrap_or_else(|| format!("field_{}", lowered_fields.len()));
                         lowered_fields.push((field_name, field_value));
                     }
 
@@ -2040,24 +2059,27 @@ impl HighLevelCompiler {
                     // Variable doesn't exist - declare it as a new local variable
                     let lowered_ty = value.ty.clone();
                     let ptr_reg = IrRegister::Named(name.clone());
-                    
-                    self.push_instruction(IrInstruction::Comment(format!("local var (from tuple destructure): {}", name)));
+
+                    self.push_instruction(IrInstruction::Comment(format!(
+                        "local var (from tuple destructure): {}",
+                        name
+                    )));
                     self.push_instruction(IrInstruction::Alloc {
                         dest: ptr_reg.clone(),
                         ty: lowered_ty.clone(),
                         count: None,
                     });
-                    
+
                     let ptr_type = IrType::Pointer(Box::new(lowered_ty));
                     self.context.symbols.insert(
                         name.clone(),
                         ptr_type.clone(),
                         IrValue::Register(ptr_reg.clone()),
                     );
-                    
+
                     (ptr_type, IrValue::Register(ptr_reg))
                 };
-                
+
                 if let IrType::Pointer(inner_ty) = &ptr_type {
                     if let IrValue::Register(ptr_reg) = &ptr_reg {
                         self.push_instruction(IrInstruction::Store {

@@ -1,5 +1,7 @@
 use crate::high_level_language::ast::Program;
-use crate::high_level_language::compiler::{CompilerError, Diagnostic, HighLevelCompiler, SemanticAnalyzer};
+use crate::high_level_language::compiler::{
+    CompilerError, Diagnostic, HighLevelCompiler, SemanticAnalyzer,
+};
 use crate::high_level_language::lexer::Lexer;
 use crate::high_level_language::parser::{Parser, ParserError};
 use crate::high_level_language::token::Token;
@@ -116,9 +118,7 @@ impl CompilationPipeline {
 
     pub fn parse(&self, tokens: Vec<Token<'_>>) -> Result<Program, CompilationError> {
         let mut parser = Parser::new(tokens);
-        parser
-            .parse_program()
-            .map_err(CompilationError::ParseError)
+        parser.parse_program().map_err(CompilationError::ParseError)
     }
 
     pub fn semantic_analysis(&self, ast: &Program) -> Result<(), CompilationError> {
@@ -202,7 +202,7 @@ mod tests {
         let mut pipeline = CompilationPipeline::new();
         // Disable semantic analysis to isolate parsing/compilation issues
         pipeline.run_semantic_analysis = false;
-        
+
         let source = r#"
 main: () -> i32 {
     return 42;
@@ -223,6 +223,9 @@ main: () -> i32 {
 
         let result = pipeline.compile(source);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), CompilationError::LexerError(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            CompilationError::LexerError(_)
+        ));
     }
 }

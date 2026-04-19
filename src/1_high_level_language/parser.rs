@@ -121,16 +121,16 @@ impl<'a> Parser<'a> {
                 // Look ahead to see if this is {ident, ident, ...} = expr
                 let saved_pos = self.pos;
                 self.advance(); // consume LBrace
-                
+
                 let is_tuple_destructure = if matches!(self.peek(), Some(Token::Ident(_))) {
                     // Check if next is comma (tuple) or colon (block with var decl) or other
                     matches!(self.peek_n(1), Some(Token::Comma))
                 } else {
                     false
                 };
-                
+
                 self.pos = saved_pos;
-                
+
                 if is_tuple_destructure {
                     // Parse as expression (which will handle tuple destructuring assignment)
                     Ok(Statement::Expression(self.parse_expression()?))
@@ -213,12 +213,12 @@ impl<'a> Parser<'a> {
     fn parse_function_decl(&mut self, is_extern: bool) -> Result<DeclNode, ParserError> {
         let name = self.expect_ident()?;
         let generics = self.parse_generic_params()?;
-        
+
         // Expect colon before parameters
         self.expect_colon()?;
-        
+
         let params = self.parse_param_list()?;
-        
+
         // Expect arrow for return type
         let return_type = if self.match_arrow() {
             Some(self.parse_return_type()?)
@@ -656,12 +656,12 @@ impl<'a> Parser<'a> {
             Some(Token::LBrace) => {
                 // Save position for potential backtracking
                 let saved_parser = self.clone();
-                
+
                 // Try to parse as tuple literal first (no field names)
                 self.advance();
                 let mut elements = Vec::new();
                 let mut parse_failed = false;
-                
+
                 if !self.check_rbrace() {
                     loop {
                         match self.parse_expression() {
@@ -682,18 +682,18 @@ impl<'a> Parser<'a> {
                         }
                     }
                 }
-                
+
                 // If we successfully parsed at least one element and found closing brace, it's a tuple
                 if !parse_failed && !elements.is_empty() && self.check_rbrace() {
                     self.expect_rbrace()?;
                     return Ok(Expression::Primary(PrimaryExpr::TupleLiteral(elements)));
                 }
-                
+
                 // Otherwise, backtrack and try as struct literal
                 *self = saved_parser;
                 self.advance(); // consume LBrace again
                 let mut fields = Vec::new();
-                
+
                 if !self.check_rbrace() {
                     loop {
                         // A field init can be `name: expr` or just `expr`
@@ -720,7 +720,7 @@ impl<'a> Parser<'a> {
                         break;
                     }
                 }
-                
+
                 self.expect_rbrace()?;
                 Expression::Primary(PrimaryExpr::StructLiteral(fields))
             }
@@ -753,7 +753,6 @@ impl<'a> Parser<'a> {
         };
         Ok(expr)
     }
-
 
     fn parse_type_atom(&mut self) -> Result<Type, ParserError> {
         match self.peek() {

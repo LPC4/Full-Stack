@@ -446,7 +446,7 @@ fn highlight_ir(theme: &egui::Style, code: &str) -> LayoutJob {
 impl HighLevelLanguageView {
     pub fn compile(&mut self) {
         let pipeline = CompilationPipeline::new();
-        
+
         // First, tokenize for display
         let mut lexer = Lexer::new(&self.source_code);
         let mut tokens = Vec::new();
@@ -468,29 +468,33 @@ impl HighLevelLanguageView {
             }
         }
         self.tokens_output = format!("{:#?}", tokens);
-        
+
         // Then compile full pipeline
         match pipeline.compile(&self.source_code) {
             Ok(result) => {
                 // Update outputs
                 self.ast_output = format!("{:#?}", result.ast);
                 self.ir_output = format!("{}", result.ir_program);
-                
+
                 // Check for diagnostics
-                let errors: Vec<_> = result.diagnostics
+                let errors: Vec<_> = result
+                    .diagnostics
                     .iter()
-                    .filter(|d| matches!(d.level, crate::high_level_language::compiler::DiagnosticLevel::Error))
+                    .filter(|d| {
+                        matches!(
+                            d.level,
+                            crate::high_level_language::compiler::DiagnosticLevel::Error
+                        )
+                    })
                     .map(|d| d.message.clone())
                     .collect();
-                
+
                 if errors.is_empty() {
                     self.compile_error = None;
                     self.just_compiled_successfully = true;
                 } else {
-                    self.compile_error = Some(format!(
-                        "Semantic errors:\n- {}",
-                        errors.join("\n- ")
-                    ));
+                    self.compile_error =
+                        Some(format!("Semantic errors:\n- {}", errors.join("\n- ")));
                     self.compile_success_until = None;
                     self.just_compiled_successfully = false;
                 }
@@ -499,7 +503,10 @@ impl HighLevelLanguageView {
                 // Handle compilation errors (excluding lexer which we handled above)
                 match &err {
                     CompilationError::ParseError(parse_err) => {
-                        self.ast_output = format!("Parser Error at pos {}: {}", parse_err.pos, parse_err.message);
+                        self.ast_output = format!(
+                            "Parser Error at pos {}: {}",
+                            parse_err.pos, parse_err.message
+                        );
                         self.ir_output = String::from("Did not compile due to parser error.");
                     }
                     CompilationError::CompilerError(compiler_err) => {
