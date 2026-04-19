@@ -14,6 +14,7 @@ impl HighLevelCompiler {
             generic_type_cache: std::collections::HashMap::new(),
             generic_type_defs: std::collections::HashMap::new(),
             function_return_types: std::collections::HashMap::new(),
+            pending_global_strings: Vec::new(),
         }
     }
 
@@ -41,10 +42,16 @@ impl HighLevelCompiler {
         self.context.reset_for_program();
         self.next_temp = 0;
         self.next_label = 0;
+        self.pending_global_strings.clear();
         let mut ir_program = IrProgram::new("kryon_module");
 
         for declaration in &program.declarations {
             self.lower_declaration(&mut ir_program, declaration)?;
+        }
+        
+        // Add all pending global strings to the IR program
+        for global_string in self.pending_global_strings.drain(..) {
+            ir_program.push_global_string(global_string);
         }
 
         Ok(ir_program)

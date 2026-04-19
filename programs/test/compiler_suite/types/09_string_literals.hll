@@ -1,0 +1,15 @@
+; Test string literal compilation to tuples
+; String literals should compile to (u8*, i64) tuples
+
+main: () -> i32 {
+    ; Declare variables with type annotations and assign string literals
+    str1: (u8*, i64) = "Hello World"
+
+    ; String with escape sequences
+    str2: (u8*, i64) = "Line 1\nLine 2\tTabbed"
+
+    ; Empty string
+    str3: (u8*, i64) = ""
+
+    return 0;
+}

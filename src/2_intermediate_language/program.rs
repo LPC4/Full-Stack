@@ -16,6 +16,21 @@ impl fmt::Display for IrTypeAlias {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct IrGlobalString {
+    pub name: String,
+    pub content: String,
+}
+
+impl fmt::Display for IrGlobalString {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Escape the string content for IR output
+        let escaped = self.content.replace('\\', "\\\\").replace('"', "\\\"")
+            .replace('\n', "\\n").replace('\t', "\\t").replace('\r', "\\r");
+        write!(f, "@{} = constant [{} x i8] c\"{}\"", self.name, self.content.len(), escaped)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct IrParam {
     pub ty: IrType,
     pub register: IrRegister,
@@ -77,6 +92,7 @@ impl fmt::Display for IrFunction {
 pub struct IrProgram {
     pub module_name: String,
     pub type_aliases: Vec<IrTypeAlias>,
+    pub global_strings: Vec<IrGlobalString>,
     pub functions: Vec<IrFunction>,
 }
 
@@ -85,12 +101,17 @@ impl IrProgram {
         Self {
             module_name: module_name.into(),
             type_aliases: Vec::new(),
+            global_strings: Vec::new(),
             functions: Vec::new(),
         }
     }
 
     pub fn push_type_alias(&mut self, alias: IrTypeAlias) {
         self.type_aliases.push(alias);
+    }
+
+    pub fn push_global_string(&mut self, global_string: IrGlobalString) {
+        self.global_strings.push(global_string);
     }
 
     pub fn push_function(&mut self, function: IrFunction) {
@@ -104,7 +125,15 @@ impl fmt::Display for IrProgram {
             writeln!(f, "{alias}")?;
         }
 
-        if !self.type_aliases.is_empty() && !self.functions.is_empty() {
+        if !self.type_aliases.is_empty() && (!self.global_strings.is_empty() || !self.functions.is_empty()) {
+            writeln!(f)?;
+        }
+
+        for global_string in &self.global_strings {
+            writeln!(f, "{global_string}")?;
+        }
+
+        if !self.global_strings.is_empty() && !self.functions.is_empty() {
             writeln!(f)?;
         }
 

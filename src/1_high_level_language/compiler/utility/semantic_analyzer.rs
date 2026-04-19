@@ -247,6 +247,16 @@ impl SemanticAnalyzer {
                     crate::high_level_language::ast::Literal::Float(_) => Ok("f64".to_string()),
                     crate::high_level_language::ast::Literal::Boolean(_) => Ok("i1".to_string()),
                     crate::high_level_language::ast::Literal::Null => Ok("*unknown".to_string()),
+                    crate::high_level_language::ast::Literal::String(_) => {
+                        // String literals are modeled as (u8*, i64) at the source level.
+                        // IR integer width does not encode signedness, so this is lowered via i8.
+                        let tuple_fields = vec![
+                            ("0".to_string(), IrType::Pointer(Box::new(IrType::Integer(crate::intermediate_language::IntWidth::I8)))),
+                            ("1".to_string(), IrType::Integer(crate::intermediate_language::IntWidth::I64)),
+                        ];
+                        let tuple_ty = IrType::Aggregate(tuple_fields);
+                        Ok(self.context.get_type_name(&tuple_ty))
+                    }
                 },
                 crate::high_level_language::ast::PrimaryExpr::New { ty, .. } => {
                     let ir_ty = self.ast_type_to_ir_type(ty);
@@ -407,6 +417,14 @@ impl SemanticAnalyzer {
                 let field_types: Vec<(String, IrType)> = fields
                     .iter()
                     .map(|f| (f.name.clone(), self.ast_type_to_ir_type(&f.ty)))
+                    .collect();
+                IrType::Aggregate(field_types)
+            }
+            Type::Tuple(types) => {
+                let field_types: Vec<(String, IrType)> = types
+                    .iter()
+                    .enumerate()
+                    .map(|(i, t)| (i.to_string(), self.ast_type_to_ir_type(t)))
                     .collect();
                 IrType::Aggregate(field_types)
             }

@@ -28,8 +28,8 @@ impl HighLevelCompiler {
                             value: info.value,
                             ty: info.ty,
                         });
-                    } else if let Some(const_val) = self.compile_time_consts.get(name) {
-                        Some(self.lower_literal(const_val))
+                    } else if let Some(const_val) = self.compile_time_consts.get(name).cloned() {
+                        Some(self.lower_literal(&const_val))
                     } else {
                         self.context
                             .diagnostics
@@ -410,7 +410,7 @@ impl HighLevelCompiler {
         }
     }
 
-    pub(super) fn lower_literal(&self, literal: &Literal) -> LoweredValue {
+    pub(super) fn lower_literal(&mut self, literal: &Literal) -> LoweredValue {
         match literal {
             Literal::Integer(value) | Literal::HexInteger(value) => LoweredValue {
                 value: IrValue::Integer(*value),
@@ -428,6 +428,52 @@ impl HighLevelCompiler {
                 value: IrValue::Null,
                 ty: IrType::Pointer(Box::new(IrType::Named("unknown".to_owned()))),
             },
+            Literal::String(content) => {
+                // Create a global string constant and add it to pending list
+                let string_name = format!("str_{}", self.pending_global_strings.len());
+                self.pending_global_strings.push(IrGlobalString {
+                    name: string_name.clone(),
+                    content: content.clone(),
+                });
+                let content_len = content.len();
+
+                // Create a tuple (u8*, i64) to represent the string.
+                // IR uses i8 for byte pointers because integer signedness is not encoded.
+                let tuple_fields = vec![
+                    ("0".to_string(), IrType::Pointer(Box::new(IrType::Integer(IntWidth::I8)))),
+                    ("1".to_string(), IrType::Integer(IntWidth::I64)),
+                ];
+                let tuple_ty = IrType::Aggregate(tuple_fields);
+                
+                // Allocate space for the tuple on the stack
+                let dest = self.new_temp();
+                self.push_instruction(IrInstruction::Alloc {
+                    dest: dest.clone(),
+                    ty: tuple_ty.clone(),
+                    count: None,
+                });
+
+                // Store the pointer to the global string (field 0)
+                self.push_instruction(IrInstruction::Store {
+                    ty: IrType::Pointer(Box::new(IrType::Integer(IntWidth::I8))),
+                    value: IrValue::GlobalString(string_name),
+                    ptr: dest.clone(),
+                    offset: Some(0),
+                });
+
+                // Store the length (field 1)
+                self.push_instruction(IrInstruction::Store {
+                    ty: IrType::Integer(IntWidth::I64),
+                    value: IrValue::Integer(content_len as i64),
+                    ptr: dest.clone(),
+                    offset: Some(8), // byte pointers are 8 bytes
+                });
+
+                LoweredValue {
+                    value: IrValue::Register(dest),
+                    ty: tuple_ty,
+                }
+            }
         }
     }
 

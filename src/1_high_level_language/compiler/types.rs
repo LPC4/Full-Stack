@@ -34,6 +34,13 @@ impl HighLevelCompiler {
                     .map(|f| (f.name.clone(), self.lower_type(&f.ty)))
                     .collect(),
             ),
+            Type::Tuple(types) => IrType::Aggregate(
+                types
+                    .iter()
+                    .enumerate()
+                    .map(|(i, t)| (i.to_string(), self.lower_type(t)))
+                    .collect(),
+            ),
             Type::Named { name, args } => {
                 if !args.is_empty() {
                     // This is a generic type instantiation, specialize it
@@ -96,6 +103,16 @@ impl HighLevelCompiler {
                     })
                     .collect::<Result<Vec<_>, _>>()?,
             )),
+            Type::Tuple(types) => Ok(IrType::Aggregate(
+                types
+                    .iter()
+                    .enumerate()
+                    .map(|(i, t)| {
+                        self.lower_type_with_program(ir_program, t)
+                            .map(|lowered_ty| (i.to_string(), lowered_ty))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+            )),
             Type::Named { name, args } => {
                 if !args.is_empty() {
                     // Lower all type arguments first
@@ -146,7 +163,7 @@ impl HighLevelCompiler {
         args: &[IrType],
     ) -> Type {
         match ty {
-            Type::Primitive(_) | Type::Pointer(_) | Type::Array(_, _) | Type::Struct(_) => {
+            Type::Primitive(_) | Type::Pointer(_) | Type::Array(_, _) | Type::Struct(_) | Type::Tuple(_) => {
                 // Recursively substitute in nested types
                 self.substitute_in_type(ty, params, args)
             }
@@ -186,6 +203,12 @@ impl HighLevelCompiler {
                         ty: self.substitute_generic_type(&f.ty, params, args),
                         init: f.init.clone(), // Expressions not substituted yet
                     })
+                    .collect(),
+            ),
+            Type::Tuple(types) => Type::Tuple(
+                types
+                    .iter()
+                    .map(|t| self.substitute_generic_type(t, params, args))
                     .collect(),
             ),
             Type::Named {
@@ -233,16 +256,32 @@ impl HighLevelCompiler {
             IrType::Array { len, element } => {
                 Type::Array(*len, Box::new(self.ir_type_to_type(element)))
             }
-            IrType::Aggregate(fields) => Type::Struct(
-                fields
-                    .iter()
-                    .map(|(name, ty)| crate::high_level_language::ast::FieldDecl {
-                        name: name.clone(),
-                        ty: self.ir_type_to_type(ty),
-                        init: None,
-                    })
-                    .collect(),
-            ),
+            IrType::Aggregate(fields) => {
+                // Check if this is a tuple (all field names are numeric) or a struct
+                let is_tuple = fields.iter().all(|(name, _)| name.parse::<usize>().is_ok());
+                
+                if is_tuple {
+                    // Convert to tuple type
+                    Type::Tuple(
+                        fields
+                            .iter()
+                            .map(|(_, ty)| self.ir_type_to_type(ty))
+                            .collect(),
+                    )
+                } else {
+                    // Convert to struct type
+                    Type::Struct(
+                        fields
+                            .iter()
+                            .map(|(name, ty)| crate::high_level_language::ast::FieldDecl {
+                                name: name.clone(),
+                                ty: self.ir_type_to_type(ty),
+                                init: None,
+                            })
+                            .collect(),
+                    )
+                }
+            }
             IrType::Named(name) => Type::Named {
                 name: name.clone(),
                 args: Vec::new(),

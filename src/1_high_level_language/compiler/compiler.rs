@@ -7,7 +7,7 @@ use crate::high_level_language::ast::{
 use crate::high_level_language::compiler::SemanticAnalyzer;
 use crate::high_level_language::compiler::utility::LoweringContext;
 use crate::intermediate_language::{
-    FloatWidth, IntWidth, IrBlock, IrCmpOp, IrFunction, IrInstruction, IrLabel, IrMathOp, IrParam,
+    FloatWidth, IntWidth, IrBlock, IrCmpOp, IrFunction, IrGlobalString, IrInstruction, IrLabel, IrMathOp, IrParam,
     IrProgram, IrRegister, IrTerminator, IrType, IrTypeAlias, IrUnaryOp, IrValue,
 };
 
@@ -57,6 +57,8 @@ pub struct HighLevelCompiler {
     generic_type_defs: std::collections::HashMap<String, GenericTypeDef>,
     /// Map of function names to their return types
     function_return_types: std::collections::HashMap<String, IrType>,
+    /// Pending global strings to be added to the IR program
+    pending_global_strings: Vec<IrGlobalString>,
 }
 
 #[path = "assignments.rs"]

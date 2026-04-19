@@ -111,6 +111,7 @@ impl<'a> Lexer<'a> {
             }
 
             // Literals & Keywords
+            '"' => self.read_string(start),
             '0'..='9' => self.read_number(start),
             'a'..='z' | 'A'..='Z' | '_' => self.read_identifier(start),
 
@@ -202,6 +203,35 @@ impl<'a> Lexer<'a> {
         } else {
             Token::Integer(text)
         }
+    }
+
+    fn read_string(&mut self, start: usize) -> Token<'a> {
+        // Consume characters until closing quote
+        loop {
+            match self.chars.next() {
+                Some('"') => {
+                    self.pos += 1;
+                    break;
+                }
+                Some('\\') => {
+                    // Skip escape sequence (consume next char)
+                    self.pos += 1; // for backslash
+                    if let Some(c) = self.chars.next() {
+                        self.pos += c.len_utf8();
+                    }
+                }
+                Some(c) => {
+                    self.pos += c.len_utf8();
+                }
+                None => {
+                    return Token::Error("Unterminated string literal".to_string());
+                }
+            }
+        }
+
+        // Extract the string content (including quotes)
+        let text = &self.input[start..self.pos];
+        Token::String(text)
     }
 
     fn skip_whitespace_except_newline(&mut self) {

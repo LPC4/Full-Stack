@@ -22,6 +22,7 @@ pub enum IrValue {
     Float(f64),
     Bool(bool),
     Null,
+    GlobalString(String), // Reference to a global string constant
 }
 
 impl fmt::Display for IrValue {
@@ -32,6 +33,7 @@ impl fmt::Display for IrValue {
             Self::Float(value) => write!(f, "{value}"),
             Self::Bool(value) => write!(f, "{}", if *value { "true" } else { "false" }),
             Self::Null => write!(f, "null"),
+            Self::GlobalString(name) => write!(f, "@{name}"),
         }
     }
 }

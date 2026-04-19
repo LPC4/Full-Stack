@@ -140,24 +140,17 @@ impl<'a> Parser<'a> {
                 }
             }
             Some(Token::Ident(_)) if self.peek_n(1) == Some(&Token::Colon) => {
-                // Could be variable declaration or function call
-                // Check if it's a function by looking further ahead
-                if self.peek_n(2) == Some(&Token::LParen) {
-                    // This is actually a function declaration, shouldn't happen in statement context
-                    // Fall through to expression parsing
-                    Ok(Statement::Expression(self.parse_expression()?))
+                // This is a variable declaration: ident : type = expr
+                let name = self.expect_ident()?;
+                self.expect_colon()?;
+                let ty = self.parse_type()?;
+                let init = if self.match_assign() {
+                    Some(self.parse_expression()?)
                 } else {
-                    let name = self.expect_ident()?;
-                    self.expect_colon()?;
-                    let ty = self.parse_type()?;
-                    let init = if self.match_assign() {
-                        Some(self.parse_expression()?)
-                    } else {
-                        None
-                    };
+                    None
+                };
 
-                    Ok(Statement::VariableDecl { name, ty, init })
-                }
+                Ok(Statement::VariableDecl { name, ty, init })
             }
             Some(_) => Ok(Statement::Expression(self.parse_expression()?)),
             None => Err(self.error("unexpected end of input while parsing statement")),
@@ -613,6 +606,13 @@ impl<'a> Parser<'a> {
                 self.advance();
                 Expression::Primary(PrimaryExpr::Literal(Literal::Null))
             }
+            Some(Token::String(text)) => {
+                // Remove quotes and process escape sequences
+                let content = &text[1..text.len() - 1]; // Remove surrounding quotes
+                let processed = self.process_string_escapes(content);
+                self.advance();
+                Expression::Primary(PrimaryExpr::Literal(Literal::String(processed)))
+            }
             Some(Token::Ident(name)) => {
                 let id = name.to_string();
                 self.advance();
@@ -830,6 +830,7 @@ impl<'a> Parser<'a> {
                 Ok(Type::Named { name, args })
             }
             Some(Token::LBrace) => self.parse_struct_type(),
+            Some(Token::LParen) => self.parse_tuple_type(),
             Some(tok) => Err(self.error_with_token("expected type", tok)),
             None => Err(self.error("unexpected end of input while parsing type")),
         }
@@ -870,6 +871,29 @@ impl<'a> Parser<'a> {
 
         self.expect_rbrace()?;
         Ok(Type::Struct(fields))
+    }
+
+    fn parse_tuple_type(&mut self) -> Result<Type, ParserError> {
+        self.expect_lparen()?;
+        let mut types = Vec::new();
+
+        if self.check_rparen() {
+            return Err(self.error("empty tuple type is not allowed"));
+        }
+
+        loop {
+            types.push(self.parse_type()?);
+            if self.match_comma() {
+                if self.check_rparen() {
+                    break;
+                }
+                continue;
+            }
+            break;
+        }
+
+        self.expect_rparen()?;
+        Ok(Type::Tuple(types))
     }
 
     fn parse_generic_params(&mut self) -> Result<Vec<String>, ParserError> {
@@ -987,6 +1011,32 @@ impl<'a> Parser<'a> {
 
     fn consume_terminators(&mut self) {
         while self.match_statement_terminator() {}
+    }
+
+    fn process_string_escapes(&self, input: &str) -> String {
+        let mut result = String::with_capacity(input.len());
+        let mut chars = input.chars();
+        
+        while let Some(c) = chars.next() {
+            if c == '\\' {
+                match chars.next() {
+                    Some('n') => result.push('\n'),
+                    Some('t') => result.push('\t'),
+                    Some('r') => result.push('\r'),
+                    Some('\\') => result.push('\\'),
+                    Some('"') => result.push('"'),
+                    Some(other) => {
+                        result.push('\\');
+                        result.push(other);
+                    }
+                    None => result.push('\\'),
+                }
+            } else {
+                result.push(c);
+            }
+        }
+        
+        result
     }
 
     fn parse_usize_literal(&mut self) -> Result<usize, ParserError> {

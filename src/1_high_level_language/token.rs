@@ -4,6 +4,7 @@ pub enum Token<'a> {
     Integer(&'a str),
     HexInteger(&'a str),
     Float(&'a str),
+    String(&'a str),
 
     // Keywords
     TypeKeyword,

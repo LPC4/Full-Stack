@@ -160,11 +160,19 @@ impl TypeContext {
                 format!("[{}; {}]", self.get_type_name(element), len)
             }
             IrType::Aggregate(fields) => {
+                // Check if this is a tuple (all field names are numeric) or a struct
+                let is_tuple = fields.iter().all(|(name, _)| name.parse::<usize>().is_ok());
+                
                 let field_strs: Vec<String> = fields
                     .iter()
                     .map(|(_name, f)| self.get_type_name(f))
                     .collect();
-                format!("{{ {} }}", field_strs.join(", "))
+                
+                if is_tuple {
+                    format!("({})", field_strs.join(", "))
+                } else {
+                    format!("{{ {} }}", field_strs.join(", "))
+                }
             }
             IrType::Named(name) => name.clone(),
         }

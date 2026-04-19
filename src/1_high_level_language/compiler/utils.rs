@@ -43,6 +43,7 @@ impl HighLevelCompiler {
             IrValue::Bool(_) => IrType::Integer(IntWidth::I1),
             IrValue::Register(_) => IrType::Void, // Default fallback
             IrValue::Null => IrType::Pointer(Box::new(IrType::Named("unknown".to_string()))),
+            IrValue::GlobalString(_) => IrType::Pointer(Box::new(IrType::Integer(IntWidth::I8))),
         }
     }
 

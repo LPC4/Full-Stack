@@ -57,7 +57,7 @@ int_val: i32 = i32(ptr)
 | `f32`, `f64` | IEEE 754 floats | 4, 8 bytes | `0.0` |
 | `bool` | Boolean | 1 byte | `false` |
 
-**Note:** `Str` is **not** a primitive type. It is defined in the Standard Library as a struct containing a byte pointer and length (`data: u8*`, `length: u64`). String literals have type `u8*`.
+**Note:** `Str` is **not** a primitive type. It is defined in the Standard Library as a struct containing a byte pointer and length (`data: u8*`, `length: u64`). String literals (e.g., `"text"`) evaluate to a compile-time tuple `(u8*, u64)` representing the read-only data pointer and its pre-calculated length.
 
 ### 3.2 Declaration & Initialization
 ```HLL
@@ -385,6 +385,14 @@ array_index    = expression "[" expression "]";
 type Str = {
     data: u8*,
     length: u64
+}
+
+; String literals like "Hello World" evaluate to tuples: (u8*, u64)
+make_str: (raw_str: (u8*, u64)) -> Str* {
+    (ptr, len) = raw_str
+    str_ptr: Str* = new(Str)
+    @str_ptr = { data: ptr, length: len }
+    return str_ptr
 }
 ```
 

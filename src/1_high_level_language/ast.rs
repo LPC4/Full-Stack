@@ -10,6 +10,7 @@ pub enum Type {
     Pointer(Box<Type>),
     Array(usize, Box<Type>),
     Struct(Vec<FieldDecl>),
+    Tuple(Vec<Type>),
     Named { name: String, args: Vec<Type> },
 }
 
@@ -195,6 +196,7 @@ pub enum Literal {
     Float(f64),
     Boolean(bool),
     Null,
+    String(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
