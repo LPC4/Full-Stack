@@ -1,0 +1,8 @@
+; Test new function syntax
+test_func: (x: i32) -> i32 {
+    return x
+}
+
+main: () -> () {
+    {a, b} = test_func(5)
+}

@@ -67,21 +67,14 @@ impl<'a> Parser<'a> {
                 self.parse_function_decl(true)?
             }
             Some(Token::Ident(_)) => {
-                let lookahead = self.peek_n(1);
-                match lookahead {
-                    Some(Token::LParen) => self.parse_function_decl(false)?,
-                    Some(Token::Colon) => {
-                        if self.peek_n(2) == Some(&Token::LParen) {
-                            self.parse_function_decl(false)?
-                        } else {
-                            self.parse_variable_decl()?
-                        }
-                    }
-                    _ => {
-                        return Err(
-                            self.error("expected `(` for function or `:` for variable declaration")
-                        );
-                    }
+                // Look ahead to determine if this is a function or variable declaration
+                // Function=    identifier : ( params ) -> return_type { }
+                // Variable=    identifier : type [= expr]
+                // After "identifier:", if next is LParen, it's a function
+                if self.peek_n(1) == Some(&Token::Colon) && self.peek_n(2) == Some(&Token::LParen) {
+                    self.parse_function_decl(false)?
+                } else {
+                    self.parse_variable_decl()?
                 }
             }
             Some(tok) => {
@@ -123,18 +116,48 @@ impl<'a> Parser<'a> {
                 self.advance();
                 Ok(Statement::Continue)
             }
-            Some(Token::LBrace) => Ok(Statement::Block(self.parse_block()?)),
-            Some(Token::Ident(_)) if self.peek_n(1) == Some(&Token::Colon) => {
-                let name = self.expect_ident()?;
-                self.expect_colon()?;
-                let ty = self.parse_type()?;
-                let init = if self.match_assign() {
-                    Some(self.parse_expression()?)
+            Some(Token::LBrace) => {
+                // Need to distinguish between block and tuple destructuring assignment
+                // Look ahead to see if this is {ident, ident, ...} = expr
+                let saved_pos = self.pos;
+                self.advance(); // consume LBrace
+                
+                let is_tuple_destructure = if matches!(self.peek(), Some(Token::Ident(_))) {
+                    // Check if next is comma (tuple) or colon (block with var decl) or other
+                    matches!(self.peek_n(1), Some(Token::Comma))
                 } else {
-                    None
+                    false
                 };
+                
+                self.pos = saved_pos;
+                
+                if is_tuple_destructure {
+                    // Parse as expression (which will handle tuple destructuring assignment)
+                    Ok(Statement::Expression(self.parse_expression()?))
+                } else {
+                    // Parse as block
+                    Ok(Statement::Block(self.parse_block()?))
+                }
+            }
+            Some(Token::Ident(_)) if self.peek_n(1) == Some(&Token::Colon) => {
+                // Could be variable declaration or function call
+                // Check if it's a function by looking further ahead
+                if self.peek_n(2) == Some(&Token::LParen) {
+                    // This is actually a function declaration, shouldn't happen in statement context
+                    // Fall through to expression parsing
+                    Ok(Statement::Expression(self.parse_expression()?))
+                } else {
+                    let name = self.expect_ident()?;
+                    self.expect_colon()?;
+                    let ty = self.parse_type()?;
+                    let init = if self.match_assign() {
+                        Some(self.parse_expression()?)
+                    } else {
+                        None
+                    };
 
-                Ok(Statement::VariableDecl { name, ty, init })
+                    Ok(Statement::VariableDecl { name, ty, init })
+                }
             }
             Some(_) => Ok(Statement::Expression(self.parse_expression()?)),
             None => Err(self.error("unexpected end of input while parsing statement")),
@@ -190,9 +213,14 @@ impl<'a> Parser<'a> {
     fn parse_function_decl(&mut self, is_extern: bool) -> Result<DeclNode, ParserError> {
         let name = self.expect_ident()?;
         let generics = self.parse_generic_params()?;
-        let _fixture_style = self.match_colon();
+        
+        // Expect colon before parameters
+        self.expect_colon()?;
+        
         let params = self.parse_param_list()?;
-        let return_type = if self.match_colon() || self.match_arrow() {
+        
+        // Expect arrow for return type
+        let return_type = if self.match_arrow() {
             Some(self.parse_return_type()?)
         } else {
             None
@@ -315,18 +343,9 @@ impl<'a> Parser<'a> {
         if self.is_expression_terminator() || self.check_rbrace() || self.is_eof() {
             Ok(Statement::Return(None))
         } else {
-            let first = self.parse_expression()?;
-            let mut values = vec![first];
-
-            while self.match_comma() {
-                values.push(self.parse_expression()?);
-            }
-
-            if values.len() == 1 {
-                Ok(Statement::Return(Some(values.remove(0))))
-            } else {
-                Ok(Statement::Return(Some(Expression::Tuple(values))))
-            }
+            // Parse a single expression (which can be a tuple literal with braces)
+            let expr = self.parse_expression()?;
+            Ok(Statement::Return(Some(expr)))
         }
     }
 
@@ -336,6 +355,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_assignment(&mut self) -> Result<Expression, ParserError> {
+        // Only brace-delimited tuple assignments are supported
         if self.check_lbrace() {
             let mut trial = self.clone();
             if let Ok(target) = trial.parse_tuple_assign_target() {
@@ -347,16 +367,6 @@ impl<'a> Parser<'a> {
                         rvalue: Box::new(rvalue),
                     });
                 }
-            }
-        }
-
-        if let Some(target) = self.try_parse_bare_tuple_assign_target()? {
-            if self.match_assign() {
-                let rvalue = self.parse_assignment()?;
-                return Ok(Expression::Assignment {
-                    target: Box::new(target),
-                    rvalue: Box::new(rvalue),
-                });
             }
         }
 
@@ -644,8 +654,46 @@ impl<'a> Parser<'a> {
                 Expression::Primary(PrimaryExpr::ArrayLiteral(elements))
             }
             Some(Token::LBrace) => {
+                // Save position for potential backtracking
+                let saved_parser = self.clone();
+                
+                // Try to parse as tuple literal first (no field names)
                 self.advance();
+                let mut elements = Vec::new();
+                let mut parse_failed = false;
+                
+                if !self.check_rbrace() {
+                    loop {
+                        match self.parse_expression() {
+                            Ok(expr) => {
+                                elements.push(expr);
+                                if self.match_comma() {
+                                    if self.check_rbrace() {
+                                        break;
+                                    }
+                                    continue;
+                                }
+                                break;
+                            }
+                            Err(_) => {
+                                parse_failed = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+                
+                // If we successfully parsed at least one element and found closing brace, it's a tuple
+                if !parse_failed && !elements.is_empty() && self.check_rbrace() {
+                    self.expect_rbrace()?;
+                    return Ok(Expression::Primary(PrimaryExpr::TupleLiteral(elements)));
+                }
+                
+                // Otherwise, backtrack and try as struct literal
+                *self = saved_parser;
+                self.advance(); // consume LBrace again
                 let mut fields = Vec::new();
+                
                 if !self.check_rbrace() {
                     loop {
                         // A field init can be `name: expr` or just `expr`
@@ -672,6 +720,7 @@ impl<'a> Parser<'a> {
                         break;
                     }
                 }
+                
                 self.expect_rbrace()?;
                 Expression::Primary(PrimaryExpr::StructLiteral(fields))
             }
@@ -705,35 +754,6 @@ impl<'a> Parser<'a> {
         Ok(expr)
     }
 
-    fn try_parse_bare_tuple_assign_target(&mut self) -> Result<Option<AssignTarget>, ParserError> {
-        let mut trial = self.clone();
-        let mut targets = Vec::new();
-
-        loop {
-            match trial.parse_assign_target() {
-                Ok(target) => {
-                    targets.push(target);
-                    if trial.match_comma() {
-                        continue;
-                    } else {
-                        break;
-                    }
-                }
-                Err(_) => return Ok(None),
-            }
-        }
-
-        if targets.len() > 1 && trial.check_assign() {
-            *self = trial;
-            Ok(Some(AssignTarget::Tuple(targets)))
-        } else {
-            Ok(None)
-        }
-    }
-
-    fn check_assign(&self) -> bool {
-        matches!(self.peek(), Some(Token::Assign))
-    }
 
     fn parse_type_atom(&mut self) -> Result<Type, ParserError> {
         match self.peek() {
@@ -1184,7 +1204,8 @@ impl<'a> Parser<'a> {
             | Some(Token::Type | Token::TypeKeyword)
             | Some(Token::External) => true,
             Some(Token::Ident(_)) => {
-                matches!(self.peek_n(1), Some(Token::Colon) | Some(Token::LParen))
+                // Check for function: identifier ":" "(" or variable: identifier ":" type
+                matches!(self.peek_n(1), Some(Token::Colon))
             }
             _ => false,
         }
@@ -1421,6 +1442,7 @@ mod tests {
     fn parses_function_declaration() {
         let tokens = vec![
             Token::Ident("main"),
+            Token::Colon,
             Token::LParen,
             Token::RParen,
             Token::LBrace,
@@ -1448,12 +1470,14 @@ mod tests {
         let tokens = vec![
             Token::External,
             Token::Ident("print"),
+            Token::Colon,
             Token::LParen,
             Token::Ident("value"),
             Token::Colon,
             Token::I32,
             Token::RParen,
-            Token::Colon,
+            Token::Minus,
+            Token::Gt,
             Token::I32,
             Token::Eof,
         ];
@@ -1476,6 +1500,7 @@ mod tests {
     fn parses_tuple_return_function_signature() {
         let tokens = vec![
             Token::Ident("divide"),
+            Token::Colon,
             Token::LParen,
             Token::Ident("a"),
             Token::Colon,
@@ -1485,7 +1510,8 @@ mod tests {
             Token::Colon,
             Token::I32,
             Token::RParen,
-            Token::Colon,
+            Token::Minus,
+            Token::Gt,
             Token::LParen,
             Token::Ident("quotient"),
             Token::Colon,

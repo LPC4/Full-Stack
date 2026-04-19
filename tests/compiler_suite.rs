@@ -1,5 +1,4 @@
-use full_stack::high_level_language::compiler::HighLevelCompiler;
-use full_stack::high_level_language::{lexer::Lexer, parser::Parser, token::Token};
+use full_stack::high_level_language::compilation_pipeline::CompilationPipeline;
 use std::fs;
 use std::path::PathBuf;
 
@@ -18,6 +17,7 @@ fn execute_compiler_test_suite() {
     entries.sort_by_key(|e| e.path());
 
     let mut tests_run = 0;
+    let pipeline = CompilationPipeline::new();
 
     for entry in entries {
         let path = entry.path();
@@ -25,36 +25,12 @@ fn execute_compiler_test_suite() {
             let source = fs::read_to_string(&path)
                 .unwrap_or_else(|err| panic!("failed to read fixture {path:?}: {err}"));
 
-            // Lex
-            let mut lexer = Lexer::new(&source);
-            let mut tokens = Vec::new();
-            loop {
-                let token = lexer.next_token();
-                let is_eof = matches!(token, Token::Eof);
-                tokens.push(token);
-                if is_eof {
-                    break;
-                }
-            }
-
-            // Parse
-            let mut parser = Parser::new(tokens);
-            let ast = parser.parse_program().unwrap_or_else(|e| {
-                panic!(
-                    "Parse error in {:?} at pos {}: {}",
-                    path.file_name().unwrap(),
-                    e.pos,
-                    e.message
-                )
+            // Compile using shared pipeline
+            let result = pipeline.compile(&source).unwrap_or_else(|e| {
+                panic!("Compilation error in {:?}: {}", path.file_name().unwrap(), e)
             });
 
-            // Compile
-            let mut compiler = HighLevelCompiler::new();
-            let ir_program = compiler.compile_program(&ast).unwrap_or_else(|e| {
-                panic!("Compile error in {:?}: {:?}", path.file_name().unwrap(), e)
-            });
-
-            let actual_ir = format!("{}", ir_program)
+            let actual_ir = format!("{}", result.ir_program)
                 .replace("\r\n", "\n")
                 .trim()
                 .to_string();

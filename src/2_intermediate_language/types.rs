@@ -1,6 +1,6 @@
 use std::fmt;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum IntWidth {
     I1,
     I8,
@@ -22,7 +22,7 @@ impl fmt::Display for IntWidth {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FloatWidth {
     F32,
     F64,
@@ -38,7 +38,7 @@ impl fmt::Display for FloatWidth {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum IrType {
     Void,
     Integer(IntWidth),

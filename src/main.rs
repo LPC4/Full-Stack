@@ -11,64 +11,20 @@ use std::path::Path;
 #[cfg(not(target_arch = "wasm32"))]
 #[allow(dead_code)]
 fn compile_hll_file(input_file: &str, output_file: &str) -> Result<(), Box<dyn std::error::Error>> {
+    use full_stack::high_level_language::compilation_pipeline::CompilationPipeline;
+
     log::info!("Reading HLL file: {}", input_file);
     let content = fs::read_to_string(input_file)?;
 
-    log::info!("Lexing source code...");
-    let mut lexer = full_stack::high_level_language::lexer::Lexer::new(&content);
-    let mut tokens = Vec::new();
-    loop {
-        let token = lexer.next_token();
-        if let full_stack::high_level_language::token::Token::Error(ref msg) = token {
-            return Err(format!("Lexer error: {}", msg).into());
-        }
-        let is_eof = matches!(token, full_stack::high_level_language::token::Token::Eof);
-        tokens.push(token);
-        if is_eof {
-            break;
-        }
-    }
-    log::info!("Lexed {} tokens", tokens.len());
+    log::info!("Starting compilation pipeline");
+    let pipeline = CompilationPipeline::new();
+    let result = pipeline.compile(&content)?;
 
-    log::info!("Parsing tokens to AST...");
-    let mut parser = full_stack::high_level_language::parser::Parser::new(tokens);
-    let program = parser
-        .parse_program()
-        .map_err(|e| format!("Parse error at {}: {}", e.pos, e.message))?;
-    log::info!(
-        "Parsed program with {} declarations",
-        program.declarations.len()
-    );
+    log::info!("Compilation successful!");
+    log::info!("  Declarations: {}", result.ast.declarations.len());
+    log::info!("  Diagnostics: {}", result.diagnostics.len());
 
-    log::info!("Compiling to intermediate representation...");
-    let mut compiler = full_stack::high_level_language::compiler::HighLevelCompiler::new();
-    let ir_program = compiler
-        .compile_program(&program)
-        .map_err(|e| format!("Compiler error: {:?}", e))?;
-    log::info!("Compiled to IR successfully");
-
-    let diagnostics = compiler.diagnostics();
-    let mut has_errors = false;
-    if !diagnostics.is_empty() {
-        log::warn!("Compilation diagnostics: {} items", diagnostics.len());
-        for diag in diagnostics {
-            if matches!(
-                diag.level,
-                full_stack::high_level_language::compiler::DiagnosticLevel::Error
-            ) {
-                log::error!("  - Error: {}", diag.message);
-                has_errors = true;
-            } else {
-                log::warn!("  - Warning: {}", diag.message);
-            }
-        }
-    }
-
-    if has_errors {
-        return Err("Compilation failed due to semantic errors".into());
-    }
-
-    let ir_text = format!("{}", ir_program);
+    let ir_text = format!("{}", result.ir_program);
 
     // Create output directory if needed
     if let Some(parent) = Path::new(output_file).parent() {

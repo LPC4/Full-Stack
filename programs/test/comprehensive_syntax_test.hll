@@ -1,0 +1,31 @@
+; Comprehensive test of new function syntax and tuple destructuring
+
+; Simple function with no return type
+noop: () -> () {
+}
+
+; Function with single return value
+identity: (x: i32) -> i32 {
+    return x
+}
+
+; Function with tuple return
+divide: (a: i32, b: i32) -> (i32, i32) {
+    return {a / b, a % b}
+}
+
+; Function with named tuple return
+divide_named: (a: i32, b: i32) -> (quotient: i32, remainder: i32) {
+    return {a / b, a % b}
+}
+
+; Main function using tuple destructuring
+main: () -> i32 {
+    ; Tuple destructuring assignment
+    {q, r} = divide(10, 3)
+    
+    ; Another tuple destructuring
+    {q2, r2} = divide_named(20, 7)
+    
+    return q
+}

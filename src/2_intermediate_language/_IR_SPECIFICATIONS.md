@@ -1,6 +1,6 @@
-# Intermediate Representation Specification v1.1
+# Intermediate Representation Specification v1.2
 
-**Version:** 1.1  
+**Version:** 1.2
 **Design Philosophy:** Strongly-Typed, Static Single Assignment (SSA), "Fat" High-Level IR  
 **Target Domain:** Compiler Backends & Middle-End Optimization
 
@@ -216,12 +216,12 @@ basic_block  = label ":" { instruction } terminator;
 
 program      = { type_decl } { function_def };
 
-instruction  = alloc_inst | heap_alloc_inst | heap_free_inst | load_inst | store_inst | offset_inst
+instruction  = alloc_inst | heap_alloc_inst | free_inst | load_inst | store_inst | offset_inst
              | math_inst | unary_inst | cmp_inst | cast_inst | call_inst;
 
 alloc_inst   = register "=" "stack_alloc" type [ integer ];
 heap_alloc_inst = register "=" "heap_alloc" type [ integer ];
-heap_free_inst  = "heap_free" register;
+free_inst  = "free" register;
 load_inst    = register "=" "load" type register [ "+" integer ];
 store_inst   = "store" type value "->" register [ "+" integer ];
 offset_inst  = register "=" "offset" type register "," value;
@@ -253,5 +253,5 @@ ret_inst     = "ret" [ value ];
 
 1. **Defer Statements:** `defer` from HLL does not exist in This IR. The frontend must inject explicit `call` instructions to cleanup routines at every `ret` point.
 2. **Compile-Time Functions:** Resolved purely in the HLL frontend. This IR only sees the computed constant literals.
-3. **Heap Lifecycle:** HLL `new`/`free` lower to `heap_alloc`/`heap_free` (or runtime allocator wrapper calls with equivalent semantics).
+3. **Heap Lifecycle:** HLL `new`/`free` lower to `heap_alloc`/`free` (or runtime allocator wrapper calls with equivalent semantics).
 4. **Register Allocation:** Target-specific. Backends (e.g., x86_64, ARM, Wasm) will map `$` virtual registers to physical registers and insert stack spills where `$` count exceeds physical limits.

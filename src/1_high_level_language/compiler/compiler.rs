@@ -9,6 +9,12 @@ use crate::intermediate_language::{
     IrProgram, IrRegister, IrTerminator, IrType, IrTypeAlias, IrUnaryOp, IrValue,
 };
 
+#[derive(Debug, Clone)]
+struct GenericTypeDef {
+    params: Vec<String>,
+    ty: Type,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum CompilerError {
     UnsupportedDeclaration(String),
@@ -37,9 +43,18 @@ pub struct HighLevelCompiler {
     next_label: u32,
     current_blocks: Vec<IrBlock>,
     current_block: Option<IrBlock>,
+    /// Stack of deferred actions to execute at the end of the current function/block
     defers: Vec<DeferredAction>,
+    /// Map of compile-time constant names to their evaluated literal values
     compile_time_consts: std::collections::HashMap<String, Literal>,
+    /// Stack of (continue_label, break_label) for nested loops
     loop_labels: Vec<(IrLabel, IrLabel)>,
+    /// Cache of specialized generic types: (original_name, type_args) -> specialized_name
+    generic_type_cache: std::collections::HashMap<(String, Vec<IrType>), String>,
+    /// Store generic type definitions for later specialization
+    generic_type_defs: std::collections::HashMap<String, GenericTypeDef>,
+    /// Map of function names to their return types
+    function_return_types: std::collections::HashMap<String, IrType>,
 }
 
 impl HighLevelCompiler {
@@ -53,6 +68,9 @@ impl HighLevelCompiler {
             defers: Vec::new(),
             compile_time_consts: std::collections::HashMap::new(),
             loop_labels: Vec::new(),
+            generic_type_cache: std::collections::HashMap::new(),
+            generic_type_defs: std::collections::HashMap::new(),
+            function_return_types: std::collections::HashMap::new(),
         }
     }
 
@@ -89,10 +107,13 @@ impl HighLevelCompiler {
             program.declarations.len()
         );
 
-        // Phase 0: Semantic Analysis (type checking) - warnings only for now
         let mut semantic_analyzer = SemanticAnalyzer::new();
         if let Err(_) = semantic_analyzer.analyze_program(program) {
-            log::warn!("Semantic analysis found issues, but continuing with compilation");
+            // Collect semantic errors and emit them as diagnostics
+            for diagnostic in semantic_analyzer.diagnostics() {
+                self.context.diagnostics.error(diagnostic.message.clone());
+            }
+            log::warn!("Semantic analysis found errors, continuing with compilation for diagnostics");
         }
 
         self.context.reset_for_program();
@@ -115,21 +136,29 @@ impl HighLevelCompiler {
         log::debug!("lowering declaration: {:?}", declaration.decl);
         match &declaration.decl {
             DeclNode::Type { name, ty, generics } => {
-                let mut final_name = name.clone();
                 if !generics.is_empty() {
-                    for _ in generics {
-                        final_name.push_str("_gen");
-                    }
+                    // This is a generic type definition, store it for later specialization
+                    self.generic_type_defs.insert(
+                        name.clone(),
+                        GenericTypeDef {
+                            params: generics.clone(),
+                            ty: ty.clone(),
+                        },
+                    );
+                    log::debug!("Registered generic type `{}` with {} params", name, generics.len());
+                    Ok(())
+                } else {
+                    // Non-generic type, lower directly
+                    let lowered = self.lower_type(ty);
+                    self.context
+                        .types
+                        .register_type(name.clone(), lowered.clone());
+                    ir_program.push_type_alias(IrTypeAlias {
+                        name: name.clone(),
+                        ty: lowered,
+                    });
+                    Ok(())
                 }
-                let lowered = self.lower_type(ty);
-                self.context
-                    .types
-                    .register_type(final_name.clone(), lowered.clone());
-                ir_program.push_type_alias(IrTypeAlias {
-                    name: final_name.clone(),
-                    ty: lowered,
-                });
-                Ok(())
             }
             DeclNode::Variable {
                 name,
@@ -187,6 +216,10 @@ impl HighLevelCompiler {
                     self.lower_return_type(return_type.as_ref()),
                 );
 
+                // Store the function's return type for later lookup during calls
+                let return_ty = self.lower_return_type(return_type.as_ref());
+                self.function_return_types.insert(final_name.clone(), return_ty);
+
                 self.start_new_block("entry");
 
                 for param in params {
@@ -221,7 +254,7 @@ impl HighLevelCompiler {
                 }
 
                 match body {
-                    Some(body) => self.lower_block(body),
+                    Some(body) => self.lower_block(ir_program, body),
                     None => {
                         self.push_instruction(IrInstruction::Comment(format!(
                             "no body for function `{name}`"
@@ -290,7 +323,7 @@ impl HighLevelCompiler {
                     (crate::high_level_language::ast::UnaryOp::Not, Literal::Boolean(b)) => {
                         Ok(Literal::Boolean(!b))
                     }
-                    _ => Err(format!("Unsupported compile-time unary operation")),
+                    _ => Err("Unsupported compile-time unary operation".to_string()),
                 }
             }
             Expression::Binary { op, left, right } => {
@@ -364,13 +397,89 @@ impl HighLevelCompiler {
             ),
             Type::Named { name, args } => {
                 if !args.is_empty() {
-                    let mut mangled_name = name.clone();
-                    for _ in args {
-                        mangled_name.push_str("_gen"); // generic type mangling
+                    // This is a generic type instantiation, specialize it
+                    // First, lower all type arguments
+                    let lowered_args: Vec<IrType> = args.iter().map(|a| self.lower_type(a)).collect();
+                    
+                    // Check if this is a known generic type
+                    if self.generic_type_defs.contains_key(name) {
+                        // We need ir_program to specialize, so we'll handle this differently
+                        // For now, create a mangled name and lower the type directly
+                        let specialized_name = self.create_specialized_name(name, &lowered_args);
+                        return IrType::Named(specialized_name);
+                    } else {
+                        // Not a generic type, just mangle the name
+                        let mut mangled_name = name.clone();
+                        for _ in args {
+                            mangled_name.push_str("_gen");
+                        }
+                        return IrType::Named(mangled_name);
                     }
-                    return IrType::Named(mangled_name);
                 }
                 IrType::Named(name.clone())
+            }
+        }
+    }
+
+    /// Create a specialized type name from base name and type arguments
+    fn create_specialized_name(&self, name: &str, type_args: &[IrType]) -> String {
+        format!(
+            "{}_{}",
+            name,
+            type_args
+                .iter()
+                .map(|t| format!("{}", t).replace([' ', '<', '>', '*'], "_"))
+                .collect::<Vec<_>>()
+                .join("_")
+        )
+    }
+
+    /// Lower a type, specializing generics if needed. Requires ir_program for specialization.
+    fn lower_type_with_program(
+        &mut self,
+        ir_program: &mut IrProgram,
+        ty: &Type,
+    ) -> Result<IrType, CompilerError> {
+        match ty {
+            Type::Primitive(name) => Ok(self.lower_primitive_type(name)),
+            Type::Pointer(inner) => {
+                Ok(IrType::Pointer(Box::new(self.lower_type_with_program(ir_program, inner)?)))
+            }
+            Type::Array(len, inner) => Ok(IrType::Array {
+                len: *len,
+                element: Box::new(self.lower_type_with_program(ir_program, inner)?),
+            }),
+            Type::Struct(fields) => Ok(IrType::Aggregate(
+                fields
+                    .iter()
+                    .map(|f| {
+                        self.lower_type_with_program(ir_program, &f.ty)
+                            .map(|lowered_ty| (f.name.clone(), lowered_ty))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+            )),
+            Type::Named { name, args } => {
+                if !args.is_empty() {
+                    // Lower all type arguments first
+                    let lowered_args: Vec<IrType> = args
+                        .iter()
+                        .map(|a| self.lower_type_with_program(ir_program, a))
+                        .collect::<Result<Vec<_>, _>>()?;
+
+                    // Check if this is a known generic type
+                    if self.generic_type_defs.contains_key(name.as_str()) {
+                        // Specialize the generic type
+                        let specialized_name =
+                            self.specialize_generic_type(ir_program, name, &lowered_args)?;
+                        Ok(IrType::Named(specialized_name))
+                    } else {
+                        // Not a generic definition, just mangle
+                        let mangled = self.create_specialized_name(name, &lowered_args);
+                        Ok(IrType::Named(mangled))
+                    }
+                } else {
+                    Ok(IrType::Named(name.clone()))
+                }
             }
         }
     }
@@ -393,7 +502,184 @@ impl HighLevelCompiler {
         }
     }
 
-    fn lower_block(&mut self, block: &Block) {
+    /// Substitute generic parameters with concrete types in a type definition
+    fn substitute_generic_type(&self, ty: &Type, params: &[String], args: &[IrType]) -> Type {
+        match ty {
+            Type::Primitive(_) | Type::Pointer(_) | Type::Array(_, _) | Type::Struct(_) => {
+                // Recursively substitute in nested types
+                self.substitute_in_type(ty, params, args)
+            }
+            Type::Named { name, args: _args } => {
+                // Check if this is a generic parameter
+                if let Some(idx) = params.iter().position(|p| p == name) {
+                    if idx < args.len() {
+                        // Replace with the concrete type argument
+                        // Convert IrType back to Type for substitution
+                        self.ir_type_to_type(&args[idx])
+                    } else {
+                        ty.clone()
+                    }
+                } else {
+                    // Not a generic parameter, recursively substitute
+                    self.substitute_in_type(ty, params, args)
+                }
+            }
+        }
+    }
+
+    /// Helper to recursively substitute in complex types
+    fn substitute_in_type(&self, ty: &Type, params: &[String], args: &[IrType]) -> Type {
+        match ty {
+            Type::Primitive(_) => ty.clone(),
+            Type::Pointer(inner) => {
+                Type::Pointer(Box::new(self.substitute_generic_type(inner, params, args)))
+            }
+            Type::Array(len, inner) => Type::Array(
+                *len,
+                Box::new(self.substitute_generic_type(inner, params, args)),
+            ),
+            Type::Struct(fields) => Type::Struct(
+                fields
+                    .iter()
+                    .map(|f| crate::high_level_language::ast::FieldDecl {
+                        name: f.name.clone(),
+                        ty: self.substitute_generic_type(&f.ty, params, args),
+                        init: f.init.clone(), // Expressions not substituted yet
+                    })
+                    .collect(),
+            ),
+            Type::Named { name, args: type_args } => {
+                // Check if this name is a generic parameter
+                if let Some(idx) = params.iter().position(|p| p == name) {
+                    if idx < args.len() {
+                        return self.ir_type_to_type(&args[idx]);
+                    }
+                }
+                // Otherwise recursively substitute in type arguments
+                Type::Named {
+                    name: name.clone(),
+                    args: type_args
+                        .iter()
+                        .map(|ta| self.substitute_generic_type(ta, params, args))
+                        .collect(),
+                }
+            }
+        }
+    }
+
+    /// Convert IrType back to Type for substitution purposes
+    fn ir_type_to_type(&self, ir_ty: &IrType) -> Type {
+        match ir_ty {
+            IrType::Integer(width) => {
+                let name = match width {
+                    IntWidth::I1 => "bool",
+                    IntWidth::I8 => "i8",
+                    IntWidth::I16 => "i16",
+                    IntWidth::I32 => "i32",
+                    IntWidth::I64 => "i64",
+                };
+                Type::Primitive(name.to_string())
+            }
+            IrType::Float(width) => {
+                let name = match width {
+                    FloatWidth::F32 => "f32",
+                    FloatWidth::F64 => "f64",
+                };
+                Type::Primitive(name.to_string())
+            }
+            IrType::Pointer(inner) => Type::Pointer(Box::new(self.ir_type_to_type(inner))),
+            IrType::Array { len, element } => {
+                Type::Array(*len, Box::new(self.ir_type_to_type(element)))
+            }
+            IrType::Aggregate(fields) => Type::Struct(
+                fields
+                    .iter()
+                    .map(|(name, ty)| crate::high_level_language::ast::FieldDecl {
+                        name: name.clone(),
+                        ty: self.ir_type_to_type(ty),
+                        init: None,
+                    })
+                    .collect(),
+            ),
+            IrType::Named(name) => Type::Named {
+                name: name.clone(),
+                args: Vec::new(),
+            },
+            IrType::Void => Type::Primitive("void".to_string()),
+        }
+    }
+
+    /// Specialize a generic type with concrete type arguments
+    fn specialize_generic_type(
+        &mut self,
+        ir_program: &mut IrProgram,
+        name: &str,
+        type_args: &[IrType],
+    ) -> Result<String, CompilerError> {
+        // Check cache first
+        let cache_key = (name.to_string(), type_args.to_vec());
+        if let Some(specialized_name) = self.generic_type_cache.get(&cache_key) {
+            return Ok(specialized_name.clone());
+        }
+
+        // Get the generic type definition
+        let generic_def = self
+            .generic_type_defs
+            .get(name)
+            .ok_or_else(|| CompilerError::UnsupportedDeclaration(format!("Unknown generic type `{}`", name)))?;
+
+        // Validate argument count
+        if generic_def.params.len() != type_args.len() {
+            return Err(CompilerError::UnsupportedDeclaration(format!(
+                "Generic type `{}` expects {} type arguments, got {}",
+                name,
+                generic_def.params.len(),
+                type_args.len()
+            )));
+        }
+
+        // Create specialized type name
+        let specialized_name = format!(
+            "{}_{}",
+            name,
+            type_args
+                .iter()
+                .map(|t| format!("{}", t).replace([' ', '<', '>', '*'], "_"))
+                .collect::<Vec<_>>()
+                .join("_")
+        );
+
+        log::debug!(
+            "Specializing generic type `{}` as `{}` with args: {:?}",
+            name,
+            specialized_name,
+            type_args
+        );
+
+        // Substitute generic parameters with concrete types
+        let specialized_ty =
+            self.substitute_generic_type(&generic_def.ty, &generic_def.params, type_args);
+
+        // Lower the specialized type
+        let lowered_ty = self.lower_type(&specialized_ty);
+
+        // Register and emit the specialized type
+        self.context
+            .types
+            .register_type(specialized_name.clone(), lowered_ty.clone());
+        ir_program.push_type_alias(IrTypeAlias {
+            name: specialized_name.clone(),
+            ty: lowered_ty,
+        });
+
+        // Cache the result
+        self.generic_type_cache
+            .insert(cache_key, specialized_name.clone());
+
+        Ok(specialized_name)
+    }
+
+    fn lower_block(&mut self, ir_program: &mut IrProgram, block: &Block) {
         for statement in &block.statements {
             if let Some(b) = &self.current_block {
                 if b.terminator.is_some() {
@@ -403,11 +689,11 @@ impl HighLevelCompiler {
                     break;
                 }
             }
-            self.lower_statement(statement);
+            self.lower_statement(ir_program, statement);
         }
     }
 
-    fn lower_statement(&mut self, statement: &Statement) {
+    fn lower_statement(&mut self, ir_program: &mut IrProgram, statement: &Statement) {
         log::trace!("Lowering statement: {:?}", statement);
         match statement {
             Statement::Expression(expr) => {
@@ -434,7 +720,16 @@ impl HighLevelCompiler {
             }
             Statement::VariableDecl { name, ty, init } => {
                 self.push_instruction(IrInstruction::Comment(format!("local var: {}", name)));
-                let lowered_ty = self.lower_type(ty);
+                let lowered_ty = match self.lower_type_with_program(ir_program, ty) {
+                    Ok(ty) => ty,
+                    Err(e) => {
+                        self.context.diagnostics.error(format!(
+                            "failed to lower type for variable `{}`: {:?}",
+                            name, e
+                        ));
+                        return;
+                    }
+                };
                 let ptr_reg = IrRegister::Named(name.clone());
 
                 self.push_instruction(IrInstruction::Alloc {
@@ -461,17 +756,17 @@ impl HighLevelCompiler {
                 );
             }
             Statement::Block(block) => {
-                self.lower_block(block);
+                self.lower_block(ir_program, block);
             }
             Statement::If {
                 cond,
                 then_block,
                 else_branch,
             } => {
-                self.lower_if(cond, then_block, else_branch.as_deref());
+                self.lower_if(ir_program, cond, then_block, else_branch.as_deref());
             }
             Statement::While { cond, body } => {
-                self.lower_while(cond, body);
+                self.lower_while(ir_program, cond, body);
             }
             Statement::Break => {
                 if let Some((_, break_label)) = self.loop_labels.last() {
@@ -534,7 +829,7 @@ impl HighLevelCompiler {
         }
     }
 
-    fn lower_if(&mut self, cond: &Expression, then_block: &Block, else_branch: Option<&Statement>) {
+    fn lower_if(&mut self, ir_program: &mut IrProgram, cond: &Expression, then_block: &Block, else_branch: Option<&Statement>) {
         self.push_instruction(IrInstruction::Comment("if condition".to_string()));
         let cond_value = match self.lower_expression(cond) {
             Some(lowered) => lowered.value,
@@ -569,7 +864,7 @@ impl HighLevelCompiler {
         // Lower then branch
         self.start_new_block(then_label.0.clone());
         self.context.restore_env(merge_env.clone());
-        self.lower_block(then_block);
+        self.lower_block(ir_program, then_block);
         let then_exit_env = self.context.snapshot_env();
         self.context.save_block_exit_values(then_label.clone());
         self.set_terminator(IrTerminator::Jump(merge_label.clone()));
@@ -578,7 +873,7 @@ impl HighLevelCompiler {
         let else_exit_env = if let Some(else_stmt) = else_branch {
             self.start_new_block(else_label.0.clone());
             self.context.restore_env(merge_env.clone());
-            self.lower_statement(else_stmt);
+            self.lower_statement(ir_program, else_stmt);
             let env = self.context.snapshot_env();
             self.context.save_block_exit_values(else_label.clone());
             self.set_terminator(IrTerminator::Jump(merge_label.clone()));
@@ -621,7 +916,7 @@ impl HighLevelCompiler {
         }
     }
 
-    fn lower_while(&mut self, cond: &Expression, body: &Block) {
+    fn lower_while(&mut self, ir_program: &mut IrProgram, cond: &Expression, body: &Block) {
         let cond_label = self.new_label();
         let body_label = self.new_label();
         let exit_label = self.new_label();
@@ -656,7 +951,7 @@ impl HighLevelCompiler {
         self.context.restore_env(pre_loop_env.clone());
         self.loop_labels
             .push((cond_label.clone(), exit_label.clone()));
-        self.lower_block(body);
+        self.lower_block(ir_program, body);
         let loop_exit_env = self.context.snapshot_env();
         self.context.save_block_exit_values(body_label.clone());
         self.loop_labels.pop();
@@ -869,10 +1164,106 @@ impl HighLevelCompiler {
                         function: name.clone(),
                         args: arg_values,
                     });
+                    
+                    // Look up the function's return type
+                    let return_ty = self.function_return_types.get(name)
+                        .cloned()
+                        .unwrap_or(IrType::Void);
+                    
                     Some(LoweredValue {
                         value: IrValue::Register(dest),
-                        ty: IrType::Void,
-                    }) // Simplified void
+                        ty: return_ty,
+                    })
+                }
+                crate::high_level_language::ast::PrimaryExpr::TupleLiteral(elements) => {
+                    // Lower tuple literal similar to Expression::Tuple
+                    let mut lowered_fields = Vec::new();
+                    for elem in elements {
+                        match self.lower_expression(elem) {
+                            Some(lowered) => lowered_fields.push(lowered),
+                            None => {
+                                self.context
+                                    .diagnostics
+                                    .error("failed to lower tuple element".to_string());
+                                return None;
+                            }
+                        }
+                    }
+
+                    // Create aggregate type and allocate space for tuple
+                    let tuple_fields: Vec<(String, IrType)> = lowered_fields
+                        .iter()
+                        .enumerate()
+                        .map(|(idx, f)| (idx.to_string(), f.ty.clone()))
+                        .collect();
+                    let tuple_ty = IrType::Aggregate(tuple_fields);
+                    let dest = self.new_temp();
+
+                    self.push_instruction(IrInstruction::Alloc {
+                        dest: dest.clone(),
+                        ty: tuple_ty.clone(),
+                        count: None,
+                    });
+
+                    // Store each element in the tuple
+                    let mut offset = 0i64;
+                    for field in lowered_fields {
+                        self.push_instruction(IrInstruction::Store {
+                            ty: field.ty.clone(),
+                            value: field.value,
+                            ptr: dest.clone(),
+                            offset: Some(offset),
+                        });
+                        offset += self.type_size_in_bytes(&field.ty) as i64;
+                    }
+
+                    Some(LoweredValue {
+                        value: IrValue::Register(dest),
+                        ty: tuple_ty,
+                    })
+                }
+                crate::high_level_language::ast::PrimaryExpr::StructLiteral(fields) => {
+                    // Lower struct literal
+                    let mut lowered_fields = Vec::new();
+                    for field_init in fields {
+                        let field_value = self.lower_expression(&field_init.expr)?;
+                        let field_name = field_init.name.clone().unwrap_or_else(|| {
+                            format!("field_{}", lowered_fields.len())
+                        });
+                        lowered_fields.push((field_name, field_value));
+                    }
+
+                    // Create aggregate type
+                    let struct_fields: Vec<(String, IrType)> = lowered_fields
+                        .iter()
+                        .map(|(name, val)| (name.clone(), val.ty.clone()))
+                        .collect();
+                    let struct_ty = IrType::Aggregate(struct_fields);
+                    let dest = self.new_temp();
+
+                    self.push_instruction(IrInstruction::Alloc {
+                        dest: dest.clone(),
+                        ty: struct_ty.clone(),
+                        count: None,
+                    });
+
+                    // Store each field
+                    let mut offset = 0i64;
+                    for (_, field_value) in lowered_fields {
+                        self.push_instruction(IrInstruction::Store {
+                            ty: field_value.ty.clone(),
+                            value: field_value.value,
+                            ptr: dest.clone(),
+                            offset: Some(offset),
+                        });
+                        // Use actual type size for offset calculation
+                        offset += self.type_size_in_bytes(&field_value.ty) as i64;
+                    }
+
+                    Some(LoweredValue {
+                        value: IrValue::Register(dest),
+                        ty: struct_ty,
+                    })
                 }
                 unsupported => {
                     self.context.diagnostics.error(format!(
@@ -985,7 +1376,8 @@ impl HighLevelCompiler {
                         ptr: dest.clone(),
                         offset: Some(offset),
                     });
-                    offset += 8; // Simplified: assume 8 bytes per field
+                    // Use actual type size for offset calculation
+                    offset += self.type_size_in_bytes(&field.ty) as i64;
                 }
 
                 Some(LoweredValue {
@@ -1625,7 +2017,8 @@ impl HighLevelCompiler {
             // Recursively assign to the target
             self.lower_assign_target(target, &field_value)?;
 
-            offset += 8; // Simplified: assume 8 bytes per field
+            // Use actual type size for offset calculation
+            offset += self.type_size_in_bytes(field_ty) as i64;
         }
 
         // Return the tuple value
@@ -1640,9 +2033,33 @@ impl HighLevelCompiler {
         // Helper to assign a single value to a target
         match target {
             AssignTarget::Identifier(name) => {
-                let ptr_info = self.context.symbols.lookup(name)?;
-                if let IrType::Pointer(inner_ty) = &ptr_info.ty {
-                    if let IrValue::Register(ptr_reg) = &ptr_info.value {
+                // Check if variable exists; if not, declare it as a new local
+                let (ptr_type, ptr_reg) = if let Some(info) = self.context.symbols.lookup(name) {
+                    (info.ty.clone(), info.value.clone())
+                } else {
+                    // Variable doesn't exist - declare it as a new local variable
+                    let lowered_ty = value.ty.clone();
+                    let ptr_reg = IrRegister::Named(name.clone());
+                    
+                    self.push_instruction(IrInstruction::Comment(format!("local var (from tuple destructure): {}", name)));
+                    self.push_instruction(IrInstruction::Alloc {
+                        dest: ptr_reg.clone(),
+                        ty: lowered_ty.clone(),
+                        count: None,
+                    });
+                    
+                    let ptr_type = IrType::Pointer(Box::new(lowered_ty));
+                    self.context.symbols.insert(
+                        name.clone(),
+                        ptr_type.clone(),
+                        IrValue::Register(ptr_reg.clone()),
+                    );
+                    
+                    (ptr_type, IrValue::Register(ptr_reg))
+                };
+                
+                if let IrType::Pointer(inner_ty) = &ptr_type {
+                    if let IrValue::Register(ptr_reg) = &ptr_reg {
                         self.push_instruction(IrInstruction::Store {
                             ty: *inner_ty.clone(),
                             value: value.value.clone(),

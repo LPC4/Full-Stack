@@ -1,6 +1,5 @@
-use crate::high_level_language::compiler::{HighLevelCompiler, SemanticAnalyzer};
+use crate::high_level_language::compilation_pipeline::{CompilationError, CompilationPipeline};
 use crate::high_level_language::lexer::Lexer;
-use crate::high_level_language::parser::Parser;
 use crate::high_level_language::token::Token;
 use egui::Color32;
 use egui::text::LayoutJob;
@@ -446,18 +445,20 @@ fn highlight_ir(theme: &egui::Style, code: &str) -> LayoutJob {
 
 impl HighLevelLanguageView {
     pub fn compile(&mut self) {
+        let pipeline = CompilationPipeline::new();
+        
+        // First, tokenize for display
         let mut lexer = Lexer::new(&self.source_code);
         let mut tokens = Vec::new();
         loop {
             let token = lexer.next_token();
             if let Token::Error(ref msg) = token {
-                let error_msg = msg.clone();
-                tokens.push(token);
-                self.tokens_output = format!("{:#?}\n\nLEXER ERROR: {}", tokens, error_msg);
+                self.tokens_output = format!("LEXER ERROR: {}", msg);
                 self.ast_output = String::from("Did not parse due to lexer error.");
                 self.ir_output = String::from("Did not compile due to lexer error.");
-                self.compile_error = Some(format!("Lexer error: {}", error_msg));
+                self.compile_error = Some(format!("Lexer error: {}", msg));
                 self.compile_success_until = None;
+                self.just_compiled_successfully = false;
                 return;
             }
             let is_eof = matches!(token, Token::Eof);
@@ -466,81 +467,53 @@ impl HighLevelLanguageView {
                 break;
             }
         }
-        self.tokens_output = format!("{tokens:#?}");
-
-        let mut parser = Parser::new(tokens);
-        match parser.parse_program() {
-            Ok(ast) => {
-                self.ast_output = format!("{ast:#?}");
-
-                // Semantic analysis pass
-                let mut semantic_analyzer = SemanticAnalyzer::new();
-                match semantic_analyzer.analyze_program(&ast) {
-                    Ok(_) => {
-                        // Compile to IR
-                        let mut compiler = HighLevelCompiler::new();
-                        match compiler.compile_program(&ast) {
-                            Ok(ir_program) => {
-                                // Check diagnostics for any semantic errors
-                                let errors: Vec<_> = compiler
-                                    .diagnostics()
-                                    .iter()
-                                    .filter(|d| {
-                                        matches!(
-                                            d.level,
-                                            crate::high_level_language::compiler::DiagnosticLevel::Error
-                                        )
-                                    })
-                                    .map(|d| d.message.clone())
-                                    .collect();
-
-                                self.ir_output = format!("{}", ir_program);
-
-                                if errors.is_empty() {
-                                    self.compile_error = None;
-                                    self.just_compiled_successfully = true;
-                                } else {
-                                    self.ir_output.push_str(&format!(
-                                        "\n\nSEMANTIC ERRORS:\n- {}",
-                                        errors.join("\n- ")
-                                    ));
-                                    self.compile_error = Some(format!(
-                                        "Semantic errors:\n- {}",
-                                        errors.join("\n- ")
-                                    ));
-                                    self.compile_success_until = None;
-                                    self.just_compiled_successfully = false;
-                                }
-                            }
-                            Err(e) => {
-                                self.ir_output = format!("Compiler internal error: {:?}", e);
-                                self.compile_error = Some(format!("Compiler error: {:?}", e));
-                                self.compile_success_until = None;
-                                self.just_compiled_successfully = false;
-                            }
-                        }
-                    }
-                    Err(_) => {
-                        // Semantic analysis failed
-                        let semantic_errors: Vec<_> = semantic_analyzer
-                            .diagnostics()
-                            .iter()
-                            .map(|d| d.message.clone())
-                            .collect();
-                        self.ir_output = format!("Did not compile due to semantic errors.");
-                        self.compile_error = Some(format!(
-                            "Semantic analysis failed:\n- {}",
-                            semantic_errors.join("\n- ")
-                        ));
-                        self.compile_success_until = None;
-                        self.just_compiled_successfully = false;
-                    }
+        self.tokens_output = format!("{:#?}", tokens);
+        
+        // Then compile full pipeline
+        match pipeline.compile(&self.source_code) {
+            Ok(result) => {
+                // Update outputs
+                self.ast_output = format!("{:#?}", result.ast);
+                self.ir_output = format!("{}", result.ir_program);
+                
+                // Check for diagnostics
+                let errors: Vec<_> = result.diagnostics
+                    .iter()
+                    .filter(|d| matches!(d.level, crate::high_level_language::compiler::DiagnosticLevel::Error))
+                    .map(|d| d.message.clone())
+                    .collect();
+                
+                if errors.is_empty() {
+                    self.compile_error = None;
+                    self.just_compiled_successfully = true;
+                } else {
+                    self.compile_error = Some(format!(
+                        "Semantic errors:\n- {}",
+                        errors.join("\n- ")
+                    ));
+                    self.compile_success_until = None;
+                    self.just_compiled_successfully = false;
                 }
             }
-            Err(e) => {
-                self.ast_output = format!("Parser Error at pos {}: {}", e.pos, e.message);
-                self.ir_output = String::from("Did not compile due to parser error.");
-                self.compile_error = Some(format!("Parser error at pos {}: {}", e.pos, e.message));
+            Err(err) => {
+                // Handle compilation errors (excluding lexer which we handled above)
+                match &err {
+                    CompilationError::ParseError(parse_err) => {
+                        self.ast_output = format!("Parser Error at pos {}: {}", parse_err.pos, parse_err.message);
+                        self.ir_output = String::from("Did not compile due to parser error.");
+                    }
+                    CompilationError::CompilerError(compiler_err) => {
+                        self.ir_output = format!("Compiler internal error: {:?}", compiler_err);
+                    }
+                    CompilationError::SemanticErrors(errors) => {
+                        self.ir_output = format!(
+                            "Did not compile due to semantic errors.\n\nSEMANTIC ERRORS:\n- {}",
+                            errors.join("\n- ")
+                        );
+                    }
+                    _ => unreachable!("Lexer errors already handled"),
+                }
+                self.compile_error = Some(format!("{}", err));
                 self.compile_success_until = None;
                 self.just_compiled_successfully = false;
             }

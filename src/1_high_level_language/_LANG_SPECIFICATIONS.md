@@ -1,6 +1,6 @@
-# Language Specification v1.0
+# Language Specification v1.2
 
-**Version:** 1.0  
+**Version:** 1.2
 **Design Philosophy:** Consistency-First Memory Model  
 **Target Domain:** Systems Programming
 
@@ -143,6 +143,41 @@ p2_ptr: Point* = new(Point)
 - Stack struct: `struct.field`
 - Heap/Stack pointer to struct: `@ptr.field`
 
+### 5.3 Tuple Literals
+Tuples are anonymous, ordered collections of values. They use **brace syntax** with comma-separated expressions (no field names).
+
+```HLL
+; Tuple literal in return statement
+get_coordinates(): (f32, f32) {
+    return {3.5, 7.2}
+}
+
+; Tuple literal in variable initialization
+pair: (i32, bool) = {42, true}
+
+; Tuple destructuring assignment
+{x, y} = get_coordinates()
+{value, success} = try_operation()
+```
+
+**Tuple vs Struct Syntax:**
+- **Tuple literal**: `{expr1, expr2, ...}` - No field names, just expressions
+- **Struct literal**: `{field: value, ...}` - Named fields with colons
+- **Empty braces**: `{}` is invalid for tuples (use for empty structs only)
+
+**Type Annotations:**
+- Tuple types use parentheses: `(i32, f32, bool)`
+- Struct types use named type: `Point`, `Vector<T>`, etc.
+
+**Key Differences:**
+| Feature | Tuple | Struct |
+|---------|-------|--------|
+| Syntax | `{expr1, expr2}` | `{field: value}` |
+| Field Names | None (positional) | Required |
+| Type Notation | `(T1, T2)` | `TypeName` |
+| Access | Destructuring only | `.field_name` |
+| Use Case | Multiple returns, temporary groups | Named data structures |
+
 ---
 
 ## 6. Function Semantics
@@ -154,20 +189,20 @@ p2_ptr: Point* = new(Point)
 - Multiple returns use tuple destructuring.
 
 ```HLL
-increment(x_ptr: i32*) {
+increment: (x_ptr: i32*) -> () {
     @x_ptr = @x_ptr + 1
 }
 
-main() {
+main: () -> () {
     x: i32 = 5
     increment(&x)
 }
 
-divide(a: i32, b: i32): (quotient: i32, remainder: i32) {
+divide: (a: i32, b: i32) -> (quotient: i32, remainder: i32) {
     return {a / b, a % b}
 }
 
-main() {
+main: () -> () {
     {q, r} = divide(10, 3)
 }
 ```
@@ -254,11 +289,12 @@ type_decl      = "type" identifier "=" type_def;
 const_decl     = "const" identifier "=" expression;
 type_def       = struct_def | array_def | primitive_type | pointer_type;
 struct_def     = "{" { field_decl "," } "}";
+field_decl     = identifier ":" type;
 array_def      = "[" integer "]" type;
 pointer_type   = type "*";
 primitive_type = "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64"
                | "f32" | "f64" | "bool" | "Str";
-function_decl  = identifier "(" [ param_list ] ")" [ ":" return_type ] block;
+function_decl  = identifier ":" "(" [ param_list ] ")" "->" return_type block;
 param_list     = parameter { "," parameter };
 parameter      = identifier ":" type;
 return_type    = type | "(" { identifier ":" type "," } ")";
@@ -270,10 +306,14 @@ return_stmt    = "return" [ expression ];
 defer_stmt     = "defer" expression;
 expression     = assignment | binary_expr | unary_expr | primary_expr;
 assignment     = lvalue "=" expression;
-lvalue         = dereference | field_access | array_index | identifier;
+lvalue         = tuple_destructure | dereference | field_access | array_index | identifier;
+tuple_destructure = "{" identifier { "," identifier } "}";
 unary_expr     = unary_op expression;
 unary_op       = "-" | "!" | "&" | "@";
-primary_expr   = identifier | literal | "(" expression ")" | function_call | array_literal | struct_literal;
+primary_expr   = identifier | literal | "(" expression ")" | function_call | array_literal | tuple_literal | struct_literal;
+tuple_literal  = "{" expression { "," expression } "}";
+struct_literal = "{" field_init { "," field_init } "}";
+field_init     = identifier ":" expression | expression;
 dereference    = "@" expression;
 field_access   = expression "." identifier;
 array_index    = expression "[" expression "]";
@@ -327,7 +367,7 @@ type Vector<T> = {
     capacity: u64
 }
 
-new_vector<T>(initial_capacity: u64): Vector<T>* {
+new_vector: <T>(initial_capacity: u64) -> Vector<T>* {
     vec: Vector<T>* = new(Vector<T>)
     @vec.length = 0
     @vec.capacity = initial_capacity
@@ -335,13 +375,13 @@ new_vector<T>(initial_capacity: u64): Vector<T>* {
     return vec
 }
 
-push<T>(vec: Vector<T>*, value: T) {
+push: <T>(vec: Vector<T>*, value: T) -> () {
     if @vec.length >= @vec.capacity { resize_vector(vec, @vec.capacity * 2) }
     @vec.data[@vec.length] = value
     @vec.length = @vec.length + 1
 }
 
-free_vector<T>(vec: Vector<T>*) {
+free_vector: <T>(vec: Vector<T>*) -> () {
     free(@vec.data)
     free(vec)
 }
@@ -354,9 +394,9 @@ free_vector<T>(vec: Vector<T>*) {
 ### 11.3 I/O Abstraction
 ```HLL
 type File = { handle: u64, buffer: u8*, buffer_size: u64, buffer_pos: u64, buffer_end: u64 }
-open_file(path: Str): (File*, Str)
-read_byte(f: File*): (u8, bool)
-close_file(f: File*)
+open_file: (path: Str) -> (File*, Str)
+read_byte: (f: File*) -> (u8, bool)
+close_file: (f: File*) -> ()
 ```
 **Rule:** All resource-allocating functions return cleanup routines. Use `defer` for guaranteed release.
 
@@ -381,9 +421,9 @@ close_file(f: File*)
 
 ### 12.3 FFI Wrapper Pattern
 ```HLL
-external external_compute_sum(values: f32*, count: i32): f32
+external external_compute_sum: (values: f32*, count: i32) -> f32
 
-compute_sum_wrapper(values: f32*, count: i32): f32 {
+compute_sum_wrapper: (values: f32*, count: i32) -> f32 {
     return external_compute_sum(values, count)
 }
 ```
