@@ -74,7 +74,7 @@ fn highlight_code(theme: &egui::Style, code: &str) -> LayoutJob {
     let keywords = [
         "type", "const", "if", "else", "while", "return", "defer", "new", "free", "and", "or",
         "true", "false", "null", "main", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64",
-        "f32", "f64", "bool", "Str",
+        "f32", "f64", "bool",
     ];
 
     for segment in code.split_inclusive('\n') {

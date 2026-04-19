@@ -111,7 +111,6 @@ impl<'a> Lexer<'a> {
             }
 
             // Literals & Keywords
-            '"' => self.read_string(),
             '0'..='9' => self.read_number(start),
             'a'..='z' | 'A'..='Z' | '_' => self.read_identifier(start),
 
@@ -162,7 +161,6 @@ impl<'a> Lexer<'a> {
             "f32" => Token::F32,
             "f64" => Token::F64,
             "bool" => Token::Bool,
-            "Str" => Token::Str,
             _ => Token::Ident(text),
         }
     }
@@ -204,19 +202,6 @@ impl<'a> Lexer<'a> {
         } else {
             Token::Integer(text)
         }
-    }
-
-    fn read_string(&mut self) -> Token<'a> {
-        let start = self.pos; // Exclude the opening quote
-        while let Some(&c) = self.chars.peek() {
-            if c == '"' {
-                let text = &self.input[start..self.pos];
-                self.advance(); // consume closing quote
-                return Token::StringLit(text);
-            }
-            self.advance();
-        }
-        Token::Error("Unterminated string literal".to_string())
     }
 
     fn skip_whitespace_except_newline(&mut self) {
@@ -380,11 +365,10 @@ mod tests {
     }
 
     #[test]
-    fn test_keywords_and_literals() {
-        let input = "\"hello world\" true false null and or type const";
+    fn test_keywords() {
+        let input = "true false null and or type const";
         let mut lexer = Lexer::new(input);
 
-        assert_eq!(lexer.next_token(), Token::StringLit("hello world"));
         assert_eq!(lexer.next_token(), Token::True);
         assert_eq!(lexer.next_token(), Token::False);
         assert_eq!(lexer.next_token(), Token::Null);

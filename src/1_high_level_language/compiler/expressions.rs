@@ -351,7 +351,10 @@ impl HighLevelCompiler {
                         // Tuple destructuring: load each field from the aggregate and assign
                         let targets: Vec<AssignTarget> = fields
                             .iter()
-                            .map(|f| AssignTarget::Identifier(f.name.clone()))
+                            .filter_map(|f| {
+                                // Skip discard fields (_)
+                                f.name.as_ref().map(|name| AssignTarget::Identifier(name.clone()))
+                            })
                             .collect();
                         self.lower_tuple_destructuring(&targets, &lowered)
                     }
@@ -424,10 +427,6 @@ impl HighLevelCompiler {
             Literal::Null => LoweredValue {
                 value: IrValue::Null,
                 ty: IrType::Pointer(Box::new(IrType::Named("unknown".to_owned()))),
-            },
-            Literal::StringLit(text) => LoweredValue {
-                value: IrValue::Register(IrRegister::Named(format!("str_{}", text.len()))),
-                ty: IrType::Named("Str".to_owned()),
             },
         }
     }

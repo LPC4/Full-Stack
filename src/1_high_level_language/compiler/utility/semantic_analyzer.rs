@@ -247,7 +247,6 @@ impl SemanticAnalyzer {
                     crate::high_level_language::ast::Literal::Float(_) => Ok("f64".to_string()),
                     crate::high_level_language::ast::Literal::Boolean(_) => Ok("i1".to_string()),
                     crate::high_level_language::ast::Literal::Null => Ok("*unknown".to_string()),
-                    crate::high_level_language::ast::Literal::StringLit(_) => Ok("Str".to_string()),
                 },
                 crate::high_level_language::ast::PrimaryExpr::New { ty, .. } => {
                     let ir_ty = self.ast_type_to_ir_type(ty);
@@ -361,6 +360,11 @@ impl SemanticAnalyzer {
 
                     // Register each target with its corresponding type
                     for (field, field_ty) in fields.iter().zip(field_types.iter()) {
+                        // Skip discard fields (_)
+                        if field.name.is_none() {
+                            continue;
+                        }
+                                
                         // If type annotation is provided, use it; otherwise use inferred type
                         let ty_to_use = if let Some(ref annotated_ty) = field.ty {
                             let ir_ty = self.ast_type_to_ir_type(annotated_ty);
@@ -368,8 +372,8 @@ impl SemanticAnalyzer {
                         } else {
                             field_ty.clone()
                         };
-                        
-                        let target = crate::high_level_language::ast::AssignTarget::Identifier(field.name.clone());
+                                
+                        let target = crate::high_level_language::ast::AssignTarget::Identifier(field.name.as_ref().unwrap().clone());
                         self.register_assign_target(&target, &ty_to_use)?;
                     }
                 } else {

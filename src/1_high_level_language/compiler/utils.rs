@@ -99,7 +99,7 @@ impl HighLevelCompiler {
             AssignTarget::Tuple(fields) => {
                 let items = fields
                     .iter()
-                    .map(|f| f.name.clone())
+                    .map(|f| f.name.as_deref().unwrap_or("_").to_string())
                     .collect::<Vec<_>>()
                     .join(", ");
                 format!("({})", items)

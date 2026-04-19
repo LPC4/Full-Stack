@@ -134,7 +134,7 @@ pub enum AssignTarget {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TupleDestructureField {
-    pub name: String,
+    pub name: Option<String>, // None for discard (_)
     pub ty: Option<Type>,
 }
 
@@ -193,7 +193,6 @@ pub enum Literal {
     Integer(i64),
     HexInteger(i64),
     Float(f64),
-    StringLit(String),
     Boolean(bool),
     Null,
 }

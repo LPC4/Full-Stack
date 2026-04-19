@@ -1,6 +1,6 @@
-# Language Specification v1.3
+# Language Specification v1.4
 
-**Version:** 1.3
+**Version:** 1.4
 **Design Philosophy:** Consistency-First Memory Model  
 **Target Domain:** Systems Programming
 
@@ -56,7 +56,8 @@ int_val: i32 = i32(ptr)
 | `u8`, `u16`, `u32`, `u64` | Unsigned integers | 1, 2, 4, 8 bytes | `0` |
 | `f32`, `f64` | IEEE 754 floats | 4, 8 bytes | `0.0` |
 | `bool` | Boolean | 1 byte | `false` |
-| `Str` | String type | Implementation-defined | `null` |
+
+**Note:** `Str` is **not** a primitive type. It is defined in the Standard Library as a struct containing a byte pointer and length (`data: u8*`, `length: u64`). String literals have type `u8*`.
 
 ### 3.2 Declaration & Initialization
 ```HLL
@@ -94,8 +95,9 @@ const MAX_SIZE = 100
 | Cast | `TargetType(val)` | `S → T` | `u8*(ptr)` |
 
 ### 4.2 Pointer Arithmetic Constraints
-- Offsets are **always in bytes**.
+- Offsets using `+` are **always strictly in bytes**.
 - Only addition is permitted for dereferencing: `@(ptr + offset)`.
+- The array index operator `[]` is the **only** operator that performs type-scaled offsets.
 - Pointer subtraction is invalid.
 - Pointer-to-pointer arithmetic is invalid.
 
@@ -120,8 +122,9 @@ points: Point* = new(Point, 5)
 x_val: f32 = @points[0].x
 ```
 **Rules:**
-- `arr[index]` yields `T*`.
-- Explicit `@` required for value operations.
+- `arr[index]` yields `T*`. It is syntactic sugar for a type-scaled offset. (e.g., it scales by `sizeof(T)`).
+- Explicit `@` required for value operations (`@arr[index]`).
+- Raw pointer arithmetic `(ptr + offset)` is strictly byte-scaled.
 - Stack arrays: compile-time bounds checking. Heap arrays: no runtime bounds checking.
 - Stack arrays cannot decay to pointers. Use `&arr[0]` to obtain a pointer.
 
@@ -149,11 +152,11 @@ Tuples are anonymous, ordered collections of values. They use **parentheses synt
 ```HLL
 ; Tuple literal in return statement
 get_coordinates(): (f32, f32) {
-    return {3.5, 7.2}
+    return (3.5, 7.2)
 }
 
 ; Tuple literal in variable initialization
-pair: (i32, bool) = {42, true}
+pair: (i32, bool) = (42, true)
 
 ; Tuple destructuring assignment (with optional type annotations)
 (x, y) = get_coordinates()
@@ -161,7 +164,7 @@ pair: (i32, bool) = {42, true}
 ```
 
 **Tuple vs Struct Syntax:**
-- **Tuple literal**: `{expr1, expr2, ...}` - No field names, just expressions
+- **Tuple literal**: `(expr1, expr2, ...)` - No field names, just expressions
 - **Struct literal**: `{field: value, ...}` - Named fields with colons
 - **Empty tuples**: `()` represents an empty tuple
 
@@ -171,13 +174,15 @@ pair: (i32, bool) = {42, true}
 
 **Destructuring Syntax:**
 - **Tuple destructuring**: `(name[:type], name2[:type])` - Parentheses with optional type annotations
+- The blank identifier `_` can be used to discard unwanted values without triggering "unused variable" warnings: `(val, _)`
 - Type annotations align with variable declaration syntax for consistency
 - All fields can have types, some fields, or no fields
+- Discard operator example: `(file_descriptor, _) = open_file(path)`
 
 **Key Differences:**
 | Feature | Tuple Literal | Tuple Destructuring | Struct |
 |---------|--------------|-------------------|--------|
-| Syntax | `{expr1, expr2}` | `(name[:type], name2[:type])` | `{field: value}` |
+| Syntax | `(expr1, expr2)` | `(name[:type], name2[:type])` | `{field: value}` |
 | Field Names | None (positional) | Required (with optional types) | Required |
 | Type Notation | `(T1, T2)` | N/A | `TypeName` |
 | Access | Destructuring only | Creates variables | `.field_name` |
@@ -260,13 +265,24 @@ compute_factorial(n: i32): i32 {
 ### 8.2 Error Handling
 - No exceptions. Errors are returned as tuples `(value, error)`.
 - `null` indicates failure for pointer-returning functions.
-- Ignored error values trigger compiler warnings.
+- Ignored error values trigger compiler warnings unless explicitly discarded using `_`.
 - Explicit handling required at each call site.
 
 ```HLL
-open_file(path: Str): (File*, Str) {
-    if invalid_path(path) { return (null, "Invalid path") }
+open_file(path: Str*): (File*, Str*) {
+    if invalid_path(path) { return (null, make_str("Invalid path")) }
     return (new(File), null)
+}
+
+main: () -> () {
+    path: Str* = make_str("data.txt")
+    
+    ; Discard the error string using '_' if we only care about success
+    (file, _) = open_file(path)
+    
+    if file == null {
+        ; Handle failure
+    }
 }
 ```
 
@@ -298,7 +314,7 @@ field_decl     = identifier ":" type;
 array_def      = "[" integer "]" type;
 pointer_type   = type "*";
 primitive_type = "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64"
-               | "f32" | "f64" | "bool" | "Str";
+               | "f32" | "f64" | "bool";
 function_decl  = identifier ":" "(" [ param_list ] ")" "->" return_type block;
 param_list     = parameter { "," parameter };
 parameter      = identifier ":" type;
@@ -312,11 +328,11 @@ defer_stmt     = "defer" expression;
 expression     = assignment | binary_expr | unary_expr | primary_expr;
 assignment     = lvalue "=" expression;
 lvalue         = tuple_destructure | dereference | field_access | array_index | identifier;
-tuple_destructure = "(" identifier [":" type] { "," identifier [":" type] } ")";
+tuple_destructure = "(" (identifier | "_") [":" type] { "," (identifier | "_") [":" type] } ")";
 unary_expr     = unary_op expression;
 unary_op       = "-" | "!" | "&" | "@";
 primary_expr   = identifier | literal | "(" expression ")" | function_call | array_literal | tuple_literal | struct_literal;
-tuple_literal  = "{" expression { "," expression } "}";
+tuple_literal  = "(" expression { "," expression } ")";
 struct_literal = "{" field_init { "," field_init } "}";
 field_init     = identifier ":" expression | expression;
 dereference    = "@" expression;
@@ -364,7 +380,15 @@ array_index    = expression "[" expression "]";
 
 ## 11. Standard Library Reference
 
-### 11.1 Vector
+### 11.1 Strings
+```HLL
+type Str = {
+    data: u8*,
+    length: u64
+}
+```
+
+### 11.2 Vector
 ```HLL
 type Vector<T> = {
     data: T*,
@@ -392,14 +416,14 @@ free_vector: <T>(vec: Vector<T>*) -> () {
 }
 ```
 
-### 11.2 Memory Allocators
+### 11.3 Memory Allocators
 - **Arena:** `new_arena(size)`, `alloc_in_arena(arena, size)`, `free_arena(arena)`. Batch deallocation.
 - **Pool:** `new_pool<T>(count)`, `acquire<T>(pool)`, `release<T>(pool, obj)`. Fixed-size object recycling.
 
-### 11.3 I/O Abstraction
+### 11.4 I/O Abstraction
 ```HLL
 type File = { handle: u64, buffer: u8*, buffer_size: u64, buffer_pos: u64, buffer_end: u64 }
-open_file: (path: Str) -> (File*, Str)
+open_file: (path: Str*) -> (File*, Str*)
 read_byte: (f: File*) -> (u8, bool)
 close_file: (f: File*) -> ()
 ```

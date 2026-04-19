@@ -4,7 +4,6 @@ pub enum Token<'a> {
     Integer(&'a str),
     HexInteger(&'a str),
     Float(&'a str),
-    StringLit(&'a str),
 
     // Keywords
     TypeKeyword,
@@ -37,7 +36,6 @@ pub enum Token<'a> {
     F32,
     F64,
     Bool,
-    Str,
 
     // Punctuation and Operators
     Colon,

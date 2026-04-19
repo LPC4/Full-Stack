@@ -601,9 +601,6 @@ impl<'a> Parser<'a> {
             Some(Token::Float(_)) => {
                 Expression::Primary(PrimaryExpr::Literal(Literal::Float(self.expect_float()?)))
             }
-            Some(Token::StringLit(_)) => Expression::Primary(PrimaryExpr::Literal(
-                Literal::StringLit(self.expect_string()?),
-            )),
             Some(Token::True) => {
                 self.advance();
                 Expression::Primary(PrimaryExpr::Literal(Literal::Boolean(true)))
@@ -808,10 +805,6 @@ impl<'a> Parser<'a> {
                 self.advance();
                 Ok(Type::Primitive("bool".into()))
             }
-            Some(Token::Str) => {
-                self.advance();
-                Ok(Type::Primitive("Str".into()))
-            }
             Some(Token::Ident(_)) => {
                 let name = self.expect_ident()?;
                 let args = if self.match_lt() {
@@ -947,7 +940,13 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_tuple_destructure_field(&mut self) -> Result<TupleDestructureField, ParserError> {
-        let name = self.expect_ident()?;
+        // Check for discard operator (_)
+        let name = if matches!(self.peek(), Some(Token::Ident("_"))) {
+            self.advance();
+            None // Discard operator
+        } else {
+            Some(self.expect_ident()?)
+        };
         
         // Check for optional type annotation
         let ty = if self.match_colon() {
@@ -1054,18 +1053,6 @@ impl<'a> Parser<'a> {
                 Ok(value)
             }
             Some(tok) => Err(self.error_with_token("expected float literal", tok)),
-            None => Err(self.error("unexpected end of input")),
-        }
-    }
-
-    fn expect_string(&mut self) -> Result<String, ParserError> {
-        match self.peek() {
-            Some(Token::StringLit(text)) => {
-                let out = (*text).to_string();
-                self.advance();
-                Ok(out)
-            }
-            Some(tok) => Err(self.error_with_token("expected string literal", tok)),
             None => Err(self.error("unexpected end of input")),
         }
     }
@@ -1601,8 +1588,8 @@ mod tests {
             Expression::Assignment { target, .. } => match *target {
                 AssignTarget::Tuple(fields) => {
                     assert_eq!(fields.len(), 2);
-                    assert_eq!(fields[0].name, "q");
-                    assert_eq!(fields[1].name, "r");
+                    assert_eq!(fields[0].name, Some("q".to_string()));
+                    assert_eq!(fields[1].name, Some("r".to_string()));
                     assert!(fields[0].ty.is_none());
                     assert!(fields[1].ty.is_none());
                 }
@@ -1639,10 +1626,40 @@ mod tests {
             Expression::Assignment { target, .. } => match *target {
                 AssignTarget::Tuple(fields) => {
                     assert_eq!(fields.len(), 2);
-                    assert_eq!(fields[0].name, "q");
+                    assert_eq!(fields[0].name, Some("q".to_string()));
                     assert!(matches!(&fields[0].ty, Some(Type::Primitive(name)) if name == "i32"));
-                    assert_eq!(fields[1].name, "r");
+                    assert_eq!(fields[1].name, Some("r".to_string()));
                     assert!(matches!(&fields[1].ty, Some(Type::Primitive(name)) if name == "i32"));
+                }
+                other => panic!("unexpected assignment target: {other:?}"),
+            },
+            other => panic!("unexpected expression: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_tuple_destructuring_with_discard() {
+        let tokens = vec![
+            Token::LParen,
+            Token::Ident("file"),
+            Token::Comma,
+            Token::Ident("_"),
+            Token::RParen,
+            Token::Assign,
+            Token::Ident("open_file"),
+            Token::LParen,
+            Token::Ident("path"),
+            Token::RParen,
+            Token::Eof,
+        ];
+
+        let mut parser = Parser::new(tokens);
+        match parser.parse_expression().unwrap() {
+            Expression::Assignment { target, .. } => match *target {
+                AssignTarget::Tuple(fields) => {
+                    assert_eq!(fields.len(), 2);
+                    assert_eq!(fields[0].name, Some("file".to_string()));
+                    assert_eq!(fields[1].name, None); // Discard operator
                 }
                 other => panic!("unexpected assignment target: {other:?}"),
             },

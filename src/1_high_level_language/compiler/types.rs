@@ -135,7 +135,6 @@ impl HighLevelCompiler {
             "f32" => IrType::Float(FloatWidth::F32),
             "f64" => IrType::Float(FloatWidth::F64),
             "bool" => IrType::Integer(IntWidth::I1),
-            "Str" => IrType::Named("Str".to_owned()),
             other => IrType::Named(other.to_owned()),
         }
     }
