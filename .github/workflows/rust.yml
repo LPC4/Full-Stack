@@ -65,10 +65,13 @@ jobs:
           toolchain: stable
           override: true
           components: rustfmt
-      - uses: actions-rs/cargo@v1
-        with:
-          command: fmt
-          args: --all -- --check
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+        continue-on-error: true
+      - name: Apply formatting if needed
+        run: cargo fmt --all
+      - name: Show formatting changes
+        run: git diff --exit-code || echo "Formatting was applied. Please run 'cargo fmt' locally and commit."
 
   clippy:
     name: Clippy

@@ -25,7 +25,7 @@ fn execute_compiler_test_suite() {
     let root = suite_root();
     let mut hll_files = Vec::new();
     collect_hll_files(&root, &mut hll_files);
-    
+
     // Sort for consistent test execution order
     hll_files.sort();
 

@@ -163,7 +163,8 @@ fn test4_hll_lexes_multi_return_and_destructuring() {
 
 #[test]
 fn test1_hll_parser_success_and_ast_validation() {
-    let program = parse_fixture("lexer/01_comments_and_newlines.hll").expect("failed to parse test1.hll");
+    let program =
+        parse_fixture("lexer/01_comments_and_newlines.hll").expect("failed to parse test1.hll");
 
     // x, y, z are declarations, return is a statement
     assert_eq!(
@@ -216,7 +217,8 @@ fn test1_hll_parser_success_and_ast_validation() {
 
 #[test]
 fn test2_hll_parser_success_and_ast_validation() {
-    let program = parse_fixture("parser/02_structs_and_pointers.hll").expect("failed to parse test2.hll");
+    let program =
+        parse_fixture("parser/02_structs_and_pointers.hll").expect("failed to parse test2.hll");
 
     assert_eq!(
         program.declarations.len(),
@@ -245,7 +247,8 @@ fn test2_hll_parser_success_and_ast_validation() {
 
 #[test]
 fn test3_hll_parser_success_and_ast_validation() {
-    let program = parse_fixture("parser/03_nested_access_and_control_flow.hll").expect("failed to parse test3.hll");
+    let program = parse_fixture("parser/03_nested_access_and_control_flow.hll")
+        .expect("failed to parse test3.hll");
 
     assert_eq!(
         program.declarations.len(),
