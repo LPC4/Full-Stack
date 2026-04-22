@@ -295,10 +295,12 @@ fn highlight_ir(theme: &egui::Style, code: &str) -> LayoutJob {
         "jump",
         "ret",
         "call",
-        "load",
-        "store",
+        "read",
+        "write",
+        "index",
         "stack_alloc",
         "heap_alloc",
+        "heap_free",
         "offset",
         "math",
         "cmp",
@@ -346,7 +348,13 @@ fn highlight_ir(theme: &egui::Style, code: &str) -> LayoutJob {
             if bytes[start].is_ascii_alphabetic() || bytes[start] == b'_' || bytes[start] == b'@' {
                 if bytes[start] == b'@' {
                     end += 1;
-                    while end < len && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_') {
+                    while end < len
+                        && (bytes[end].is_ascii_alphanumeric()
+                            || bytes[end] == b'_'
+                            || bytes[end] == b'.'
+                            || bytes[end] == b'<'
+                            || bytes[end] == b'>')
+                    {
                         end += 1;
                     }
                     // Labels/functions
@@ -644,17 +652,17 @@ impl HighLevelLanguageView {
                 child_ui.set_clip_rect(padded_rect);
 
                 let id_salt = match view_type {
-                    ViewType::Source => "source_id",
-                    ViewType::Tokens => "tokens_id",
-                    ViewType::AST => "ast_id",
-                    ViewType::IR => "ir_id",
+                    ViewType::Source => ui.id().with("source_view"),
+                    ViewType::Tokens => ui.id().with("tokens_view"),
+                    ViewType::AST => ui.id().with("ast_view"),
+                    ViewType::IR => ui.id().with("ir_view"),
                 };
 
                 egui::Frame::window(child_ui.style()).show(&mut child_ui, |ui| {
                     // Make the frame clickable to optionally grab focus
                     let response = ui.interact(
                         ui.max_rect(),
-                        ui.id().with("frame_interact"),
+                        id_salt.with("frame_interact"),
                         egui::Sense::click(),
                     );
                     if response.clicked() {
@@ -685,14 +693,16 @@ impl HighLevelLanguageView {
                                         layout_job.wrap.max_width = f32::INFINITY;
                                         ctx.fonts_mut(|f| f.layout_job(layout_job))
                                     };
-                                ui.add_sized(
-                                    ui.available_size(),
-                                    egui::TextEdit::multiline(&mut self.source_code)
-                                        .font(egui::TextStyle::Monospace)
-                                        .code_editor()
-                                        .lock_focus(true)
-                                        .layouter(&mut layouter),
-                                );
+                                ui.push_id(id_salt.with("source_editor"), |ui| {
+                                    ui.add_sized(
+                                        ui.available_size(),
+                                        egui::TextEdit::multiline(&mut self.source_code)
+                                            .font(egui::TextStyle::Monospace)
+                                            .code_editor()
+                                            .lock_focus(true)
+                                            .layouter(&mut layouter),
+                                    );
+                                });
                             }
                             ViewType::Tokens => {
                                 let mut layouter =
@@ -704,12 +714,14 @@ impl HighLevelLanguageView {
                                         layout_job.wrap.max_width = f32::INFINITY;
                                         ctx.fonts_mut(|f| f.layout_job(layout_job))
                                     };
-                                ui.add_sized(
-                                    ui.available_size(),
-                                    egui::TextEdit::multiline(&mut self.tokens_output)
-                                        .font(egui::TextStyle::Monospace)
-                                        .layouter(&mut layouter),
-                                );
+                                ui.push_id(id_salt.with("tokens_editor"), |ui| {
+                                    ui.add_sized(
+                                        ui.available_size(),
+                                        egui::TextEdit::multiline(&mut self.tokens_output)
+                                            .font(egui::TextStyle::Monospace)
+                                            .layouter(&mut layouter),
+                                    );
+                                });
                             }
                             ViewType::AST => {
                                 let mut layouter =
@@ -721,12 +733,14 @@ impl HighLevelLanguageView {
                                         layout_job.wrap.max_width = f32::INFINITY;
                                         ctx.fonts_mut(|f| f.layout_job(layout_job))
                                     };
-                                ui.add_sized(
-                                    ui.available_size(),
-                                    egui::TextEdit::multiline(&mut self.ast_output)
-                                        .font(egui::TextStyle::Monospace)
-                                        .layouter(&mut layouter),
-                                );
+                                ui.push_id(id_salt.with("ast_editor"), |ui| {
+                                    ui.add_sized(
+                                        ui.available_size(),
+                                        egui::TextEdit::multiline(&mut self.ast_output)
+                                            .font(egui::TextStyle::Monospace)
+                                            .layouter(&mut layouter),
+                                    );
+                                });
                             }
                             ViewType::IR => {
                                 let mut layouter =
@@ -738,12 +752,14 @@ impl HighLevelLanguageView {
                                         layout_job.wrap.max_width = f32::INFINITY;
                                         ctx.fonts_mut(|f| f.layout_job(layout_job))
                                     };
-                                ui.add_sized(
-                                    ui.available_size(),
-                                    egui::TextEdit::multiline(&mut self.ir_output)
-                                        .font(egui::TextStyle::Monospace)
-                                        .layouter(&mut layouter),
-                                );
+                                ui.push_id(id_salt.with("ir_editor"), |ui| {
+                                    ui.add_sized(
+                                        ui.available_size(),
+                                        egui::TextEdit::multiline(&mut self.ir_output)
+                                            .font(egui::TextStyle::Monospace)
+                                            .layouter(&mut layouter),
+                                    );
+                                });
                             }
                         });
                 });

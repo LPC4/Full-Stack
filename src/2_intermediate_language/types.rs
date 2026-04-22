@@ -66,7 +66,7 @@ impl fmt::Display for IrType {
                 }
                 write!(f, "}}")
             }
-            Self::Array { len, element } => write!(f, "[{len} x {element}]"),
+            Self::Array { len, element } => write!(f, "{element}[{len}]"),
             Self::Named(name) => write!(f, "{name}"),
         }
     }

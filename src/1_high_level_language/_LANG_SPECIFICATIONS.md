@@ -1,3 +1,7 @@
+Here is the revised Language Specification v1.4. All tuple semantics have been completely removed and replaced with inline structs and struct destructuring, aligning perfectly with your Consistency-First philosophy.
+
+***
+
 # Language Specification v1.4
 
 **Version:** 1.4
@@ -57,7 +61,7 @@ int_val: i32 = i32(ptr)
 | `f32`, `f64` | IEEE 754 floats | 4, 8 bytes | `0.0` |
 | `bool` | Boolean | 1 byte | `false` |
 
-**Note:** `Str` is **not** a primitive type. It is defined in the Standard Library as a struct containing a byte pointer and length (`data: u8*`, `length: u64`). String literals (e.g., `"text"`) evaluate to a compile-time tuple `(u8*, u64)` representing the read-only data pointer and its pre-calculated length.
+**Note:** `Str` is **not** a primitive type. It is defined in the Standard Library as a struct containing a byte pointer and length (`data: u8*`, `length: u64`). String literals (e.g., `"text"`) evaluate to a compile-time inline struct `{ data: u8*, length: u64 }` representing the read-only data pointer and its pre-calculated length.
 
 ### 3.2 Declaration & Initialization
 ```HLL
@@ -118,7 +122,7 @@ value: i32 = @heap_arr[3]
 
 ; Array of structs
 points: Point* = new(Point, 5)
-@points[0] = {1.0, 2.0}
+@points[0] = { x: 1.0, y: 2.0 }
 x_val: f32 = @points[0].x
 ```
 **Rules:**
@@ -135,58 +139,45 @@ type Point = {
     y: f32
 }
 
-p1: Point = {1.0, 2.0}
+p1: Point = { x: 1.0, y: 2.0 }
 p1.x = 3.0                  ; Stack: direct access
 
 p2_ptr: Point* = new(Point)
-@p2_ptr = {3.0, 4.0}        ; Heap: full struct write
+@p2_ptr = { x: 3.0, y: 4.0 } ; Heap: full struct write
 @p2_ptr.x = 5.0             ; Heap: field write (requires @)
 ```
 **Field Access Rules:**
 - Stack struct: `struct.field`
 - Heap/Stack pointer to struct: `@ptr.field`
 
-### 5.3 Tuple Literals
-Tuples are anonymous, ordered collections of values. They use **parentheses syntax** with comma-separated expressions (no field names).
+### 5.3 Inline Structs & Destructuring
+HLL uses inline structs for grouping multiple values (such as multiple returns). Structs can be assigned directly to variables or unpacked using explicit destructuring.
 
 ```HLL
-; Tuple literal in return statement
-get_coordinates(): (f32, f32) {
-    return (3.5, 7.2)
+; Inline struct return type
+get_coordinates: () -> { x: f32, y: f32 } {
+    return { x: 3.5, y: 7.2 }
 }
 
-; Tuple literal in variable initialization
-pair: (i32, bool) = (42, true)
+main: () -> () {
+    ; Option 1: Direct Assignment
+    coords = get_coordinates()
+    print(coords.x)
+    print(coords.y)
 
-; Tuple destructuring assignment (with optional type annotations)
-(x, y) = get_coordinates()
-(value: i32, success: bool) = try_operation()
+    ; Option 2: Struct Destructuring (Typed Punning)
+    ; Variables are created matching the exact field names and types of the struct
+    { x: f32, y: f32 } = get_coordinates()
+    print(x)
+}
 ```
 
-**Tuple vs Struct Syntax:**
-- **Tuple literal**: `(expr1, expr2, ...)` - No field names, just expressions
-- **Struct literal**: `{field: value, ...}` - Named fields with colons
-- **Empty tuples**: `()` represents an empty tuple
-
-**Type Annotations:**
-- Tuple types use parentheses: `(i32, f32, bool)`
-- Struct types use named type: `Point`, `Vector<T>`, etc.
-
-**Destructuring Syntax:**
-- **Tuple destructuring**: `(name[:type], name2[:type])` - Parentheses with optional type annotations
-- The blank identifier `_` can be used to discard unwanted values without triggering "unused variable" warnings: `(val, _)`
-- Type annotations align with variable declaration syntax for consistency
-- All fields can have types, some fields, or no fields
-- Discard operator example: `(file_descriptor, _) = open_file(path)`
-
-**Key Differences:**
-| Feature | Tuple Literal | Tuple Destructuring | Struct |
-|---------|--------------|-------------------|--------|
-| Syntax | `(expr1, expr2)` | `(name[:type], name2[:type])` | `{field: value}` |
-| Field Names | None (positional) | Required (with optional types) | Required |
-| Type Notation | `(T1, T2)` | N/A | `TypeName` |
-| Access | Destructuring only | Creates variables | `.field_name` |
-| Use Case | Multiple returns, temporary groups | Unpacking multiple returns | Named data structures |
+**Partial Destructuring (Discarding Data):**
+If you only need specific fields from a struct, you can omit the unwanted fields from the destructuring braces.
+```HLL
+; Extracts 'value', implicitly discards 'success'
+{ value: i32 } = try_operation() 
+```
 
 ---
 
@@ -196,7 +187,7 @@ pair: (i32, bool) = (42, true)
 - All parameters are pass-by-value.
 - Mutability requires `T*` parameters and `&` at call site.
 - Returning stack addresses (`return &x`) is a compile-time error.
-- Multiple returns use tuple destructuring.
+- Multiple returns use struct syntax.
 
 ```HLL
 increment: (x_ptr: i32*) -> () {
@@ -208,12 +199,17 @@ main: () -> () {
     increment(&x)
 }
 
-divide: (a: i32, b: i32) -> (quotient: i32, remainder: i32) {
-    return (a / b, a % b)
+divide: (a: i32, b: i32) -> { quotient: i32, remainder: i32 } {
+    return { quotient: a / b, remainder: a % b }
 }
 
 main: () -> () {
-    (q, r) = divide(10, 3)
+    ; Direct assignment
+    s = divide(10, 3)
+    print(s.quotient)
+
+    ; Struct destructuring
+    { quotient: i32, remainder: i32 } = divide(10, 3)
 }
 ```
 
@@ -263,22 +259,23 @@ compute_factorial(n: i32): i32 {
 ```
 
 ### 8.2 Error Handling
-- No exceptions. Errors are returned as tuples `(value, error)`.
+- No exceptions. Errors are returned as structs `{ value: T, error: E }`.
 - `null` indicates failure for pointer-returning functions.
-- Ignored error values trigger compiler warnings unless explicitly discarded using `_`.
-- Explicit handling required at each call site.
+- Explicit handling required at each call site. Unwanted error objects can be ignored via partial destructuring.
 
 ```HLL
-open_file(path: Str*): (File*, Str*) {
-    if invalid_path(path) { return (null, make_str("Invalid path")) }
-    return (new(File), null)
+open_file(path: Str*): { file: File*, error: Str* } {
+    if invalid_path(path) { 
+        return { file: null, error: make_str("Invalid path") } 
+    }
+    return { file: new(File), error: null }
 }
 
 main: () -> () {
     path: Str* = make_str("data.txt")
     
-    ; Discard the error string using '_' if we only care about success
-    (file, _) = open_file(path)
+    ; We omit 'error' from the destructuring to implicitly discard it
+    { file: File* } = open_file(path)
     
     if file == null {
         ; Handle failure
@@ -305,7 +302,7 @@ newline     = "\n" | "\r\n";
 ```ebnf
 program        = { declaration };
 declaration    = variable_decl | function_decl | type_decl | const_decl;
-variable_decl  = identifier ":" type ["=" expression];
+variable_decl  = identifier [ ":" type ] [ "=" expression ];
 type_decl      = "type" identifier "=" type_def;
 const_decl     = "const" identifier "=" expression;
 type_def       = struct_def | array_def | primitive_type | pointer_type;
@@ -318,7 +315,7 @@ primitive_type = "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64"
 function_decl  = identifier ":" "(" [ param_list ] ")" "->" return_type block;
 param_list     = parameter { "," parameter };
 parameter      = identifier ":" type;
-return_type    = type | "(" { identifier ":" type "," } ")";
+return_type    = type | struct_def;
 block          = "{" { statement } "}";
 statement      = expression ";" | if_stmt | while_stmt | return_stmt | defer_stmt | variable_decl ";";
 if_stmt        = "if" expression block [ "else" ( if_stmt | block ) ];
@@ -327,14 +324,13 @@ return_stmt    = "return" [ expression ];
 defer_stmt     = "defer" expression;
 expression     = assignment | binary_expr | unary_expr | primary_expr;
 assignment     = lvalue "=" expression;
-lvalue         = tuple_destructure | dereference | field_access | array_index | identifier;
-tuple_destructure = "(" (identifier | "_") [":" type] { "," (identifier | "_") [":" type] } ")";
+lvalue         = struct_destructure | dereference | field_access | array_index | identifier;
+struct_destructure = "{" identifier ":" type { "," identifier ":" type } "}";
 unary_expr     = unary_op expression;
 unary_op       = "-" | "!" | "&" | "@";
-primary_expr   = identifier | literal | "(" expression ")" | function_call | array_literal | tuple_literal | struct_literal;
-tuple_literal  = "(" expression { "," expression } ")";
+primary_expr   = identifier | literal | "(" expression ")" | function_call | array_literal | struct_literal;
 struct_literal = "{" field_init { "," field_init } "}";
-field_init     = identifier ":" expression | expression;
+field_init     = identifier ":" expression;
 dereference    = "@" expression;
 field_access   = expression "." identifier;
 array_index    = expression "[" expression "]";
@@ -387,11 +383,11 @@ type Str = {
     length: u64
 }
 
-; String literals like "Hello World" evaluate to tuples: (u8*, u64)
-make_str: (raw_str: (u8*, u64)) -> Str* {
-    (ptr, len) = raw_str
+; String literals like "Hello World" evaluate to inline structs: { data: u8*, length: u64 }
+make_str: (raw_str: { data: u8*, length: u64 }) -> Str* {
+    { data: u8*, length: u64 } = raw_str
     str_ptr: Str* = new(Str)
-    @str_ptr = { data: ptr, length: len }
+    @str_ptr = { data: data, length: length }
     return str_ptr
 }
 ```
@@ -431,8 +427,8 @@ free_vector: <T>(vec: Vector<T>*) -> () {
 ### 11.4 I/O Abstraction
 ```HLL
 type File = { handle: u64, buffer: u8*, buffer_size: u64, buffer_pos: u64, buffer_end: u64 }
-open_file: (path: Str*) -> (File*, Str*)
-read_byte: (f: File*) -> (u8, bool)
+open_file: (path: Str*) -> { file: File*, error: Str* }
+read_byte: (f: File*) -> { byte: u8, eof: bool }
 close_file: (f: File*) -> ()
 ```
 **Rule:** All resource-allocating functions return cleanup routines. Use `defer` for guaranteed release.
@@ -499,7 +495,7 @@ compute_sum_wrapper: (values: f32*, count: i32) -> f32 {
 4. **Indexing:** `arr[i]` evaluates to `T*`. Read/write requires `@arr[i]`.
 5. **Mutability:** Parameters are immutable copies. Use `T*` and `&` for mutation.
 6. **Resource Lifecycle:** `new()` requires `free()` or `defer free()`. No GC.
-7. **Error Flow:** Functions return `(value, error)` tuples. Handle explicitly.
+7. **Error Flow:** Functions return `{ value, error }` structs. Handle explicitly.
 8. **Precedence:** Parenthesize ambiguous expressions. Compiler rejects implicit precedence.
 9. **FFI Boundaries:** Document ownership transfer. Compiler safety does not cross language boundaries.
 10. **Compile-Time Functions:** Pure, deterministic, no memory allocation.

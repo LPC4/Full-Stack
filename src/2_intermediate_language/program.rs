@@ -26,7 +26,7 @@ impl fmt::Display for IrGlobalString {
         // Escape the string content for IR output
         let escaped = self.content.replace('\\', "\\\\").replace('"', "\\\"")
             .replace('\n', "\\n").replace('\t', "\\t").replace('\r', "\\r");
-        write!(f, "@{} = constant [{} x i8] c\"{}\"", self.name, self.content.len(), escaped)
+        write!(f, "@{} = constant i8[{}] c\"{}\"", self.name, self.content.len(), escaped)
     }
 }
 

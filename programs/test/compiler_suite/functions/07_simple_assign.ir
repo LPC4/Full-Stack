@@ -2,12 +2,12 @@ define i32 @test_simple() {
 @entry:
 	; local var: q
 	$q = stack_alloc i32
-	store i32 0 -> $q
+	write i32 0 @ $q
 	; local var: r
 	$r = stack_alloc i32
-	store i32 0 -> $r
+	write i32 0 @ $r
 	; assignment
-	store i32 5 -> $q
-	$0 = load i32 $q
+	write i32 5 @ $q
+	$0 = read i32 @ $q
 	ret $0
 }

@@ -50,23 +50,12 @@ impl HighLevelCompiler {
         match &base.ty {
             IrType::Array { element, .. } | IrType::Pointer(element) => {
                 if let IrValue::Register(ptr_reg) = &base.value {
-                    // Multiply index by element size to get byte offset
-                    let size = self.type_size_in_bytes(element);
-                    let byte_offset_reg = self.new_temp();
-                    self.push_instruction(IrInstruction::Math {
-                        dest: byte_offset_reg.clone(),
-                        op: IrMathOp::Mul,
-                        ty: IrType::Integer(IntWidth::I64),
-                        lhs: index.value.clone(),
-                        rhs: IrValue::Integer(size as i64),
-                    });
-
                     let dest = self.new_temp();
-                    self.push_instruction(IrInstruction::Offset {
+                    self.push_instruction(IrInstruction::Index {
                         dest: dest.clone(),
                         ty: *element.clone(),
-                        ptr: ptr_reg.clone(),
-                        bytes: IrValue::Register(byte_offset_reg),
+                        base_ptr: ptr_reg.clone(),
+                        idx: index.value.clone(),
                     });
 
                     // Return the POINTER, not the loaded value.
@@ -314,23 +303,12 @@ impl HighLevelCompiler {
                 };
 
                 let idx = self.lower_expression(index)?;
-                // Multiply index by element size
-                let size = self.type_size_in_bytes(&element_ty);
-                let byte_offset_reg = self.new_temp();
-                self.push_instruction(IrInstruction::Math {
-                    dest: byte_offset_reg.clone(),
-                    op: IrMathOp::Mul,
-                    ty: IrType::Integer(IntWidth::I64),
-                    lhs: idx.value,
-                    rhs: IrValue::Integer(size as i64),
-                });
-
                 let element_ptr_reg = self.new_temp();
-                self.push_instruction(IrInstruction::Offset {
+                self.push_instruction(IrInstruction::Index {
                     dest: element_ptr_reg.clone(),
                     ty: element_ty.clone(),
-                    ptr: indexable_ptr_reg,
-                    bytes: IrValue::Register(byte_offset_reg),
+                    base_ptr: indexable_ptr_reg,
+                    idx: idx.value,
                 });
                 Some((element_ptr_reg, element_ty))
             }

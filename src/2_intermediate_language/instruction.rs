@@ -37,6 +37,12 @@ pub enum IrInstruction {
         ptr: IrRegister,
         bytes: IrValue,
     },
+    Index {
+        dest: IrRegister,
+        ty: IrType,
+        base_ptr: IrRegister,
+        idx: IrValue,
+    },
     Math {
         dest: IrRegister,
         op: IrMathOp,
@@ -100,7 +106,7 @@ impl fmt::Display for IrInstruction {
                 ptr,
                 offset,
             } => {
-                write!(f, "{dest} = load {ty} {ptr}")?;
+                write!(f, "{dest} = read {ty} @ {ptr}")?;
                 if let Some(offset) = offset {
                     write!(f, " + {offset}")?;
                 }
@@ -112,7 +118,7 @@ impl fmt::Display for IrInstruction {
                 ptr,
                 offset,
             } => {
-                write!(f, "store {ty} {value} -> {ptr}")?;
+                write!(f, "write {ty} {value} @ {ptr}")?;
                 if let Some(offset) = offset {
                     write!(f, " + {offset}")?;
                 }
@@ -124,6 +130,12 @@ impl fmt::Display for IrInstruction {
                 ptr,
                 bytes,
             } => write!(f, "{dest} = offset {ty} {ptr}, {bytes}"),
+            Self::Index {
+                dest,
+                ty,
+                base_ptr,
+                idx,
+            } => write!(f, "{dest} = index {ty} {base_ptr}, {idx}"),
             Self::Math {
                 dest,
                 op,

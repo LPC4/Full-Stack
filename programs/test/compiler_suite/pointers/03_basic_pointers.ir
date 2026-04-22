@@ -2,27 +2,27 @@ define i32 @pointers(i32 $val) {
 @entry:
 	; bind parameter: val
 	$val_ptr = stack_alloc i32
-	store i32 $val -> $val_ptr
+	write i32 $val @ $val_ptr
 	; local var: ptr
 	$ptr = stack_alloc i32*
 	$0 = heap_alloc i32
-	store i32* $0 -> $ptr
+	write i32* $0 @ $ptr
 	; assignment
-	$1 = load i32 $val_ptr
-	$2 = load i32* $ptr
-	store i32 $1 -> $2
+	$1 = read i32 @ $val_ptr
+	$2 = read i32* @ $ptr
+	write i32 $1 @ $2
 	; local var: val_ref
 	$val_ref = stack_alloc i32*
-	store i32* $val_ptr -> $val_ref
+	write i32* $val_ptr @ $val_ref
 	; assignment
-	$3 = load i32* $ptr
-	$4 = load i32 $3
+	$3 = read i32* @ $ptr
+	$4 = read i32 @ $3
 	$5 = math add i32 $4, 10
-	$6 = load i32* $val_ref
-	store i32 $5 -> $6
-	$7 = load i32* $ptr
+	$6 = read i32* @ $val_ref
+	write i32 $5 @ $6
+	$7 = read i32* @ $ptr
 	; defer: captured call @free with 1 args
-	$8 = load i32 $val_ptr
+	$8 = read i32 @ $val_ptr
 	; executing deferred cleanup before return
 	$9 = call @free($7)
 	ret $8
