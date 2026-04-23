@@ -40,6 +40,9 @@ impl HighLevelCompiler {
                 crate::high_level_language::ast::PrimaryExpr::Literal(literal) => {
                     Some(self.lower_literal(literal))
                 }
+                crate::high_level_language::ast::PrimaryExpr::Grouped(expr) => {
+                    self.lower_expression(expr)
+                }
                 crate::high_level_language::ast::PrimaryExpr::FieldAccess { expr, field } => {
                     // Parser commonly represents `@ptr.field` as `FieldAccess(expr = Dereference(ptr), ...)`.
                     // Lower from the pointer base directly so we don't try to load fields from aggregate values.
@@ -408,6 +411,9 @@ impl HighLevelCompiler {
         match expr {
             Expression::Primary(crate::high_level_language::ast::PrimaryExpr::Identifier(name)) => {
                 Some(AssignTarget::Identifier(name.clone()))
+            }
+            Expression::Primary(crate::high_level_language::ast::PrimaryExpr::Grouped(expr)) => {
+                self.expression_to_assign_target(expr)
             }
             Expression::Unary {
                 op: UnaryOp::Dereference,

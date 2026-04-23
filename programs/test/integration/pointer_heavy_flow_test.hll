@@ -1,0 +1,23 @@
+type Node = {
+    value: i32,
+    next: Node*
+}
+
+main: () -> i32 {
+    x: i32 = 5
+    px: i32* = &x
+
+    head: Node* = new(Node)
+    tail: Node* = new(Node)
+
+    @head.value = @px
+    @head.next = tail
+    @head.next.value = @head.value + 1
+
+    arr: i32* = new(i32, 2)
+    @arr[0] = @head.value
+    @arr[1] = @head.next.value
+
+    return @arr[0] + @arr[1]
+}
+

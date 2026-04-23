@@ -31,7 +31,7 @@ fn execute_compiler_test_suite() {
 
     let mut tests_run = 0;
     let pipeline = CompilationPipeline::new();
-    let ci_mode = std::env::var_os("CI").is_some();
+    let update_goldens = std::env::var_os("UPDATE_GOLDENS").is_some();
 
     for path in hll_files {
         if path.extension().and_then(|e| e.to_str()) == Some("hll") {
@@ -69,9 +69,9 @@ fn execute_compiler_test_suite() {
                 );
                 tests_run += 1;
             } else {
-                if ci_mode {
+                if !update_goldens {
                     panic!(
-                        "Missing golden IR file for {:?} while CI mode is enabled",
+                        "Missing golden IR file for {:?}; rerun with UPDATE_GOLDENS=1 to bootstrap it",
                         path.file_name().unwrap()
                     );
                 }

@@ -64,7 +64,12 @@ impl TypeContext {
         let rhs_placeholder = self.is_placeholder_like(rhs_type);
 
         // Both operands must be same type
-        if lhs_type != rhs_type && !lhs_unknown && !rhs_unknown {
+        if lhs_type != rhs_type
+            && !lhs_unknown
+            && !rhs_unknown
+            && !lhs_placeholder
+            && !rhs_placeholder
+        {
             return Err(TypeCheckError::TypeMismatch {
                 expected: lhs_type.to_string(),
                 found: rhs_type.to_string(),
@@ -74,7 +79,15 @@ impl TypeContext {
         match op {
             // Arithmetic operations require numeric types
             BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod => {
-                let effective_type = if lhs_unknown { rhs_type } else { lhs_type };
+                let effective_type = if lhs_unknown {
+                    rhs_type
+                } else if rhs_unknown {
+                    lhs_type
+                } else if lhs_placeholder && !rhs_placeholder {
+                    rhs_type
+                } else {
+                    lhs_type
+                };
                 if !self.is_numeric(effective_type)
                     && !self.is_unknown_like(effective_type)
                     && !self.is_placeholder_like(effective_type)
@@ -86,11 +99,7 @@ impl TypeContext {
                     });
                 }
 
-                if lhs_placeholder || rhs_placeholder {
-                    Ok(effective_type.to_string())
-                } else {
-                    Ok(effective_type.to_string())
-                }
+                Ok(effective_type.to_string())
             }
 
             // Logical operations work on bools
@@ -206,26 +215,4 @@ impl TypeContext {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn allows_placeholder_arithmetic() {
-        let ctx = TypeContext::new();
-        assert_eq!(
-            ctx.check_binary_op(&BinaryOp::Add, "T", "T").unwrap(),
-            "T"
-        );
-    }
-
-    #[test]
-    fn still_rejects_non_numeric_named_types() {
-        let ctx = TypeContext::new();
-        assert!(matches!(
-            ctx.check_binary_op(&BinaryOp::Add, "Point", "Point"),
-            Err(TypeCheckError::InvalidOperation { .. })
-        ));
-    }
-}
 

@@ -3,6 +3,112 @@ use crate::high_level_language::lexer::Lexer;
 use crate::high_level_language::token::Token;
 use egui::Color32;
 use egui::text::LayoutJob;
+use egui::RichText;
+
+#[derive(Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+enum ProgramKind {
+    Example,
+    Custom,
+}
+
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
+struct ProgramFile {
+    id: String,
+    name: String,
+    kind: ProgramKind,
+    source: String,
+    #[serde(skip)]
+    description: String,
+}
+
+impl ProgramFile {
+    fn example(id: &str, name: &str, description: &str, source: &str) -> Self {
+        Self {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            kind: ProgramKind::Example,
+            source: source.to_owned(),
+            description: description.to_owned(),
+        }
+    }
+
+    fn custom(id: String, name: String, source: String) -> Self {
+        Self {
+            id,
+            name,
+            kind: ProgramKind::Custom,
+            source,
+            description: String::from("Your personal in-memory program."),
+        }
+    }
+
+    fn is_custom(&self) -> bool {
+        matches!(self.kind, ProgramKind::Custom)
+    }
+}
+
+fn built_in_programs() -> Vec<ProgramFile> {
+    vec![
+        ProgramFile::example(
+            "example-showcase",
+            "Showcase",
+            "A full tour of structs, arrays, pointers, loops, and defer.",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/programs/example/example_program.hll"
+            )),
+        ),
+        ProgramFile::example(
+            "example-debug-pointers",
+            "Debug Pointers",
+            "A compact pointer and cleanup demo.",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/programs/debug/debug.hll"
+            )),
+        ),
+        ProgramFile::example(
+            "example-struct-destructuring",
+            "Struct Destructuring",
+            "Nested records and destructuring assignments.",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/programs/test/integration/struct_destructuring_test.hll"
+            )),
+        ),
+        ProgramFile::example(
+            "example-generic-types",
+            "Generic Types",
+            "A generic record specialized with multiple concrete types.",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/programs/test/integration/generic_types_test.hll"
+            )),
+        ),
+        ProgramFile::example(
+            "example-pointer-flow",
+            "Pointer Flow",
+            "Chained pointer and array writes in a small program.",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/programs/test/integration/pointer_heavy_flow_test.hll"
+            )),
+        ),
+        ProgramFile::example(
+            "example-function-syntax",
+            "Function Syntax",
+            "A minimal function example showing the current declaration style.",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/programs/test/integration/new_function_syntax_test.hll"
+            )),
+        ),
+    ]
+}
+
+fn blank_custom_program_source() -> String {
+    ["main: () -> i32 {", "    return 0", "}", ""].join("\n")
+}
 
 #[derive(Clone, Copy)]
 enum ViewType {
@@ -16,6 +122,11 @@ enum ViewType {
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)]
 pub struct HighLevelLanguageView {
+    programs: Vec<ProgramFile>,
+    selected_program_id: String,
+    next_custom_program_id: u32,
+
+    #[serde(skip)]
     source_code: String,
 
     #[serde(skip)]
@@ -43,15 +154,21 @@ pub struct HighLevelLanguageView {
 
 impl Default for HighLevelLanguageView {
     fn default() -> Self {
-        // Embed the startup example so web builds don't depend on runtime filesystem access.
-        let default_source = include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/programs/example/example_program.hll"
-        ))
-        .to_owned();
+        let programs = built_in_programs();
+        let selected_program_id = programs
+            .first()
+            .map(|program| program.id.clone())
+            .unwrap_or_default();
+        let source_code = programs
+            .first()
+            .map(|program| program.source.clone())
+            .unwrap_or_default();
 
         Self {
-            source_code: default_source,
+            programs,
+            selected_program_id,
+            next_custom_program_id: 1,
+            source_code,
             show_source: true,
             show_tokens: false,
             show_ast: false,
@@ -452,7 +569,251 @@ fn highlight_ir(theme: &egui::Style, code: &str) -> LayoutJob {
 }
 
 impl HighLevelLanguageView {
+    fn ensure_program_catalog(&mut self) {
+        let mut merged_programs = Vec::with_capacity(self.programs.len().max(1) + 8);
+
+        for built_in in built_in_programs() {
+            if let Some(existing) = self.programs.iter().find(|program| program.id == built_in.id) {
+                let mut updated = existing.clone();
+                updated.name = built_in.name;
+                updated.kind = ProgramKind::Example;
+                updated.description = built_in.description;
+                merged_programs.push(updated);
+            } else {
+                merged_programs.push(built_in);
+            }
+        }
+
+        merged_programs.extend(
+            self.programs
+                .iter()
+                .filter(|program| program.is_custom())
+                .cloned(),
+        );
+
+        self.programs = merged_programs;
+
+        if self.next_custom_program_id == 0 {
+            self.next_custom_program_id = 1;
+        }
+
+        if self.selected_program_id.is_empty()
+            || !self
+                .programs
+                .iter()
+                .any(|program| program.id == self.selected_program_id)
+        {
+            self.selected_program_id = self
+                .programs
+                .first()
+                .map(|program| program.id.clone())
+                .unwrap_or_default();
+        }
+    }
+
+    fn current_program_index(&self) -> Option<usize> {
+        self.programs
+            .iter()
+            .position(|program| program.id == self.selected_program_id)
+    }
+
+    fn current_program(&self) -> Option<&ProgramFile> {
+        self.current_program_index().map(|index| &self.programs[index])
+    }
+
+    fn current_program_mut(&mut self) -> Option<&mut ProgramFile> {
+        let index = self.current_program_index()?;
+        self.programs.get_mut(index)
+    }
+
+    fn sync_current_program_source(&mut self) {
+        let source = self.source_code.clone();
+
+        if let Some(program) = self.current_program_mut() {
+            program.source = source;
+        }
+    }
+
+    fn load_selected_program_source(&mut self) {
+        if let Some(source) = self.current_program().map(|program| program.source.clone()) {
+            self.source_code = source;
+        }
+    }
+
+    pub fn post_load(&mut self) {
+        self.ensure_program_catalog();
+        self.load_selected_program_source();
+    }
+
+    pub fn prepare_for_save(&mut self) {
+        self.sync_current_program_source();
+    }
+
+    fn select_program(&mut self, program_id: &str) {
+        if self.selected_program_id == program_id {
+            return;
+        }
+
+        self.sync_current_program_source();
+        self.selected_program_id = program_id.to_owned();
+        self.load_selected_program_source();
+        self.compile();
+    }
+
+    fn create_custom_program(&mut self, source: String, name: String) {
+        self.sync_current_program_source();
+
+        let program_id = format!("custom-{}", self.next_custom_program_id);
+        self.next_custom_program_id = self
+            .next_custom_program_id
+            .checked_add(1)
+            .unwrap_or(self.next_custom_program_id);
+
+        self.programs.push(ProgramFile::custom(
+            program_id.clone(),
+            name,
+            source.clone(),
+        ));
+        self.selected_program_id = program_id;
+        self.source_code = source;
+        self.compile();
+    }
+
+    fn create_blank_program(&mut self) {
+        let name = format!("Untitled {}", self.next_custom_program_id);
+        self.create_custom_program(blank_custom_program_source(), name);
+    }
+
+    fn duplicate_current_program(&mut self) {
+        let duplicate_name = self
+            .current_program()
+            .map(|program| format!("Copy of {}", program.name))
+            .unwrap_or_else(|| String::from("Copy of current file"));
+
+        self.create_custom_program(self.source_code.clone(), duplicate_name);
+    }
+
+    fn delete_current_custom_program(&mut self) {
+        let Some(current) = self.current_program().cloned() else {
+            return;
+        };
+
+        if !current.is_custom() {
+            return;
+        }
+
+        self.programs.retain(|program| program.id != current.id);
+
+        if let Some(next_program) = self.programs.first() {
+            self.selected_program_id = next_program.id.clone();
+            self.load_selected_program_source();
+            self.compile();
+        } else {
+            self.selected_program_id.clear();
+            self.source_code = blank_custom_program_source();
+        }
+    }
+
+    fn render_program_section(&mut self, ui: &mut egui::Ui, kind: ProgramKind, title: &str) {
+        let entries: Vec<_> = self
+            .programs
+            .iter()
+            .filter(|program| program.kind == kind)
+            .map(|program| {
+                (
+                    program.id.clone(),
+                    program.name.clone(),
+                    program.description.clone(),
+                    program.id == self.selected_program_id,
+                )
+            })
+            .collect();
+
+        egui::CollapsingHeader::new(title)
+            .default_open(true)
+            .show(ui, |ui| {
+                if entries.is_empty() {
+                    ui.weak("No files yet.");
+                    return;
+                }
+
+                for (id, name, description, selected) in entries {
+                    ui.horizontal(|ui| {
+                        ui.label("O"); // placeholder for potential icon
+
+                        let response = ui.selectable_label(selected, name);
+                        let response = if description.is_empty() {
+                            response
+                        } else {
+                            response.on_hover_text(description)
+                        };
+
+                        if response.clicked() {
+                            self.select_program(&id);
+                        }
+                    });
+                }
+            });
+    }
+
+    fn render_sidebar(&mut self, ui: &mut egui::Ui) {
+        ui.vertical(|ui| {
+            ui.horizontal(|ui| {
+                ui.heading("Files");
+            });
+
+            ui.add_space(6.0);
+            ui.small("Examples are embedded in the app; your own files stay in memory and app storage.");
+            ui.add_space(8.0);
+
+            ui.horizontal(|ui| {
+                if ui.button("New File").clicked() {
+                    self.create_blank_program();
+                }
+
+                if ui.button("Duplicate").clicked() {
+                    self.duplicate_current_program();
+                }
+            });
+
+            ui.add_space(8.0);
+            self.render_program_section(ui, ProgramKind::Example, "Examples");
+            ui.separator();
+            self.render_program_section(ui, ProgramKind::Custom, "Your programs");
+
+            ui.separator();
+            if let Some(program) = self.current_program() {
+                ui.label(RichText::new(format!("Current file: {}", program.name)).strong());
+                ui.small(match program.kind {
+                    ProgramKind::Example => "Embedded example program.",
+                    ProgramKind::Custom => "Your personal in-memory program.",
+                });
+
+                if program.kind == ProgramKind::Example {
+                    ui.small("Duplicate it if you want to keep a personal copy.");
+                }
+            }
+
+            if let Some(program) = self.current_program_mut() {
+                if program.is_custom() {
+                    ui.add_space(8.0);
+                    ui.label("Rename file:");
+                    ui.text_edit_singleline(&mut program.name);
+
+                    if ui.button("Delete file").clicked() {
+                        self.delete_current_custom_program();
+                    }
+                }
+            }
+        });
+    }
+}
+
+impl HighLevelLanguageView {
     pub fn compile(&mut self) {
+        self.ensure_program_catalog();
+        self.sync_current_program_source();
+
         let pipeline = CompilationPipeline::new();
 
         // First, tokenize for display
@@ -536,6 +897,8 @@ impl HighLevelLanguageView {
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.ensure_program_catalog();
+
         // Trigger compile on Ctrl+S
         if ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::S)) {
             self.compile();
@@ -545,6 +908,13 @@ impl HighLevelLanguageView {
             self.just_compiled_successfully = false;
             self.compile_success_until = Some(ui.input(|i| i.time) + 2.0);
         }
+
+        egui::Panel::left("high_level_language_files_panel")
+            .resizable(true)
+            .size_range(220.0..=320.0)
+            .show_inside(ui, |ui| {
+                self.render_sidebar(ui);
+            });
 
         egui::Panel::top("high_level_language_top_panel").show_inside(ui, |ui| {
             ui.horizontal(|ui| {

@@ -311,6 +311,50 @@ fn test4_hll_parser_success_and_ast_validation() {
 }
 
 #[test]
+fn test5_hll_parser_reordered_and_partial_struct_destructuring() {
+    let program = parse_fixture("parser/05_destructuring_order_and_partial_binding.hll")
+        .expect("failed to parse test5.hll");
+
+    assert_eq!(program.declarations.len(), 3, "Expected Pair, pair, main");
+
+    use full_stack::high_level_language::ast::*;
+
+    match &program.declarations[2].decl {
+        DeclNode::Function { name, body, .. } => {
+            assert_eq!(name, "main");
+            let block = body.as_ref().expect("main should have a body");
+            assert_eq!(block.statements.len(), 3, "Expected two destructures and a return");
+
+            let first_assign = match &block.statements[0] {
+                Statement::Expression(Expression::Assignment { target, .. }) => target,
+                other => panic!("expected first destructuring assignment, got {other:?}"),
+            };
+            match first_assign.as_ref() {
+                AssignTarget::StructDestructure(fields) => {
+                    assert_eq!(fields.len(), 2);
+                    assert_eq!(fields[0].name, Some("second".to_string()));
+                    assert_eq!(fields[1].name, Some("first".to_string()));
+                }
+                other => panic!("unexpected first destructuring target: {other:?}"),
+            }
+
+            let second_assign = match &block.statements[1] {
+                Statement::Expression(Expression::Assignment { target, .. }) => target,
+                other => panic!("expected second destructuring assignment, got {other:?}"),
+            };
+            match second_assign.as_ref() {
+                AssignTarget::StructDestructure(fields) => {
+                    assert_eq!(fields.len(), 1);
+                    assert_eq!(fields[0].name, Some("first".to_string()));
+                }
+                other => panic!("unexpected second destructuring target: {other:?}"),
+            }
+        }
+        _ => panic!("Expected Function main declaration"),
+    }
+}
+
+#[test]
 fn test1_hll_compiles_to_ir_with_arithmetic() {
     let path = fixture_root().join("lexer/01_comments_and_newlines.hll");
     let source = fs::read_to_string(&path)

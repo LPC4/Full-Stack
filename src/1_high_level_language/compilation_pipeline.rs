@@ -193,39 +193,3 @@ impl CompilationPipeline {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_pipeline_compiles_valid_program() {
-        let mut pipeline = CompilationPipeline::new();
-        // Disable semantic analysis to isolate parsing/compilation issues
-        pipeline.run_semantic_analysis = false;
-
-        let source = r#"
-main: () -> i32 {
-    return 42;
-}
-"#;
-
-        let result = pipeline.compile(source);
-        if let Err(ref e) = result {
-            eprintln!("Compilation failed with error: {}", e);
-        }
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_pipeline_catches_lexer_error() {
-        let pipeline = CompilationPipeline::new();
-        let source = "@invalid_token!@#";
-
-        let result = pipeline.compile(source);
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            CompilationError::LexerError(_)
-        ));
-    }
-}

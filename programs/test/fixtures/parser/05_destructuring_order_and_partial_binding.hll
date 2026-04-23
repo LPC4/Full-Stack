@@ -1,0 +1,15 @@
+type Pair = {
+    first: i32,
+    second: i32
+}
+
+pair: () -> Pair {
+    return { .first = 1, .second = 2 }
+}
+
+main: () -> i32 {
+    { second: i32, first: i32 } = pair()
+    { first: i32 } = pair()
+    return first + second
+}
+

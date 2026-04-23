@@ -159,6 +159,7 @@ pub enum UnaryOp {
 pub enum PrimaryExpr {
     Identifier(String),
     Literal(Literal),
+    Grouped(Box<Expression>),
     FunctionCall {
         name: String,
         arguments: Vec<Expression>,

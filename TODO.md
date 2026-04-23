@@ -14,15 +14,14 @@ Prioritized backlog for the compiler, specs, and project hygiene.
 
 ## HLL implementation / compilation issues
 
-- [P0] Fix the duplicate parser test symbol in `src/1_high_level_language/parser.rs` so the test suite builds again.
-- [P0] Fix struct destructuring lowering in `src/1_high_level_language/compiler/expressions.rs` so fields are matched by name, not by position.
-- [P0] Implement precise address-of handling in the compiler: support valid lvalues such as `&arr[index]` and reject `&@ptr` with a targeted diagnostic.
-- [P0] Keep semantic analysis from collapsing pointer identity too aggressively for identifiers; do not strip a pointer level unless the expression is actually dereferenced.
-- [P0] Keep generic-placeholder arithmetic permissive for now, but isolate it so real named types still fail where appropriate.
-- [P1] Audit `src/1_high_level_language/compiler/utility/semantic_analyzer.rs` for any other places where `@`, field access, or indexing produce the wrong rvalue type.
-- [P1] Rename or descope legacy tuple-related code paths in `ast.rs`, `parser.rs`, and `compiler/assignments.rs` so the implementation terminology matches the spec.
-- [P1] Add negative tests for the v1.4 invariants: `&@ptr`, returning stack addresses, ambiguous precedence rejection, and invalid pointer arithmetic.
-- [P2] Expand fixture coverage for destructuring order/partial binding and pointer-heavy flows.
+- [x] ~~Fix the duplicate parser test symbol in `src/1_high_level_language/parser.rs` so the test suite builds again.~~
+- [x] ~~Fix struct destructuring lowering in `src/1_high_level_language/compiler/expressions.rs` so fields are matched by name, not by position.~~
+- [x] ~~Implement precise address-of handling in the compiler: support valid lvalues such as `&arr[index]` and reject `&@ptr` with a targeted diagnostic.~~
+- [x] ~~Keep generic-placeholder arithmetic permissive for now, but isolate it so real named types still fail where appropriate.~~
+- [x] ~~Audit `src/1_high_level_language/compiler/utility/semantic_analyzer.rs` for any other places where `@`, field access, or indexing produce the wrong rvalue type.~~
+- [x] ~~Rename or descope legacy tuple-related code paths in `ast.rs`, `parser.rs`, and `compiler/assignments.rs` so the implementation terminology matches the spec.~~
+- [x] ~~Add negative tests for the v1.4 invariants: `&@ptr`, returning stack addresses, ambiguous precedence rejection, and invalid pointer arithmetic.~~
+- [x] ~~Expand fixture coverage for destructuring order/partial binding and pointer-heavy flows.~~
 
 ## IR spec — structural issues
 
@@ -40,10 +39,10 @@ Prioritized backlog for the compiler, specs, and project hygiene.
 
 ## Other project issues
 
-- [P0] Update the fixture/test process so missing golden `.ir` files do not auto-write in CI mode.
+- [x] ~~Update the fixture/test process so missing golden `.ir` files do not auto-write in CI mode.~~
 - [P0] Add Rust tests that actually execute the integration `.hll` programs under `programs/test/integration/`.
-- [P1] Separate bootstrap snapshot generation from normal test runs so regressions cannot be silently blessed.
-- [P1] Clean up any outdated fixture syntax still drifting from the current HLL grammar.
+- [x] ~~Separate bootstrap snapshot generation from normal test runs so regressions cannot be silently blessed.~~
+- [x] ~~Clean up any outdated fixture syntax still drifting from the current HLL grammar.~~
 - [P2] Reduce warning noise from dead legacy code paths once the new semantics are settled.
 
 ## Suggested order of work
