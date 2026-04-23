@@ -23,13 +23,11 @@ define i32 @test_tuple_destructuring() {
 	; assignment
 	$0 = call @divide(10, 3)
 	$1 = read i32 @ $0 + 0
-	; local var (from tuple destructure): q
-	$q = stack_alloc i32
-	write i32 $1 @ $q
+	$quotient = stack_alloc i32
+	write i32 $1 @ $quotient
 	$2 = read i32 @ $0 + 4
-	; local var (from tuple destructure): r
-	$r = stack_alloc i32
-	write i32 $2 @ $r
-	$3 = read i32 @ $q
+	$remainder = stack_alloc i32
+	write i32 $2 @ $remainder
+	$3 = read i32 @ $quotient
 	ret $3
 }

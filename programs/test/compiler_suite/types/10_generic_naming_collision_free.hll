@@ -1,15 +1,16 @@
 ; Ensure generic specializations use collision-free names in IR.
-type Box<T> {
+type Box<T> = {
     value: T
 }
 
-type Box_i32 {
+type Box_i32 = {
     value: i32
 }
 
 main: () -> i32 {
     boxed: Box<i32>
     legacy: Box_i32
+    double: Box<Box<i32>>
     return 0
 }
 

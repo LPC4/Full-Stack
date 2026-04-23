@@ -1,0 +1,55 @@
+# TODO.md
+
+Prioritized backlog for the compiler, specs, and project hygiene.
+
+## HLL spec — structural issues
+
+- [P0] Document the canonical struct type syntax as `type X = { ... }` everywhere in the HLL spec.
+- [P0] Document inline struct literals with shorthand fields, e.g. `{ .field = expr }`, alongside the explicit typed form if both remain supported.
+- [P0] Clarify that commas are required between fields in struct type definitions.
+- [P0] Clarify destructuring semantics for named fields, partial destructuring, and reordered fields.
+- [P1] Clarify the exact `&` rules in the spec: allow `&identifier` and stack-safe lvalues like `&arr[index]`, reject `&@ptr`.
+- [P1] Remove or rename remaining “tuple” terminology in HLL spec text so it consistently says “struct destructuring” / “inline struct”.
+- [P2] Review precedence examples and grammar notes so they do not rely on ambiguous parsing the spec intends to reject.
+
+## HLL implementation / compilation issues
+
+- [P0] Fix the duplicate parser test symbol in `src/1_high_level_language/parser.rs` so the test suite builds again.
+- [P0] Fix struct destructuring lowering in `src/1_high_level_language/compiler/expressions.rs` so fields are matched by name, not by position.
+- [P0] Implement precise address-of handling in the compiler: support valid lvalues such as `&arr[index]` and reject `&@ptr` with a targeted diagnostic.
+- [P0] Keep semantic analysis from collapsing pointer identity too aggressively for identifiers; do not strip a pointer level unless the expression is actually dereferenced.
+- [P0] Keep generic-placeholder arithmetic permissive for now, but isolate it so real named types still fail where appropriate.
+- [P1] Audit `src/1_high_level_language/compiler/utility/semantic_analyzer.rs` for any other places where `@`, field access, or indexing produce the wrong rvalue type.
+- [P1] Rename or descope legacy tuple-related code paths in `ast.rs`, `parser.rs`, and `compiler/assignments.rs` so the implementation terminology matches the spec.
+- [P1] Add negative tests for the v1.4 invariants: `&@ptr`, returning stack addresses, ambiguous precedence rejection, and invalid pointer arithmetic.
+- [P2] Expand fixture coverage for destructuring order/partial binding and pointer-heavy flows.
+
+## IR spec — structural issues
+
+- [P1] Audit the IR spec for consistency with the current aggregate-format output used by the compiler.
+- [P1] Ensure the IR spec examples match the current named-aggregate formatting used by `Display` implementations.
+- [P2] Check whether any IR wording still implies tuple-style terminology instead of aggregate/struct terminology.
+- [P2] Add a short source-to-IR mapping note for aggregate types and pointer-rich examples so the spec matches current compiler behavior.
+
+## IR implementation / compilation issues
+
+- [P1] Verify that IR lowering for aggregates, pointers, and field access still matches the current HLL semantics after the HLL fixes.
+- [P1] Re-check any IR emission paths that depend on destructuring order, pointer depth, or field offsets.
+- [P2] Add regression coverage for IR output on the updated showcase program once the HLL side is fully stable.
+- [P2] Keep IR snapshot output deterministic across platforms.
+
+## Other project issues
+
+- [P0] Update the fixture/test process so missing golden `.ir` files do not auto-write in CI mode.
+- [P0] Add Rust tests that actually execute the integration `.hll` programs under `programs/test/integration/`.
+- [P1] Separate bootstrap snapshot generation from normal test runs so regressions cannot be silently blessed.
+- [P1] Clean up any outdated fixture syntax still drifting from the current HLL grammar.
+- [P2] Reduce warning noise from dead legacy code paths once the new semantics are settled.
+
+## Suggested order of work
+
+1. P0 build blockers and semantic correctness issues.
+2. HLL spec/implementation alignment.
+3. IR spec/implementation alignment.
+4. Test coverage and process hardening.
+5. Legacy cleanup and terminology normalization.

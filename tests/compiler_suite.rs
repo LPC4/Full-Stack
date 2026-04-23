@@ -31,6 +31,7 @@ fn execute_compiler_test_suite() {
 
     let mut tests_run = 0;
     let pipeline = CompilationPipeline::new();
+    let ci_mode = std::env::var_os("CI").is_some();
 
     for path in hll_files {
         if path.extension().and_then(|e| e.to_str()) == Some("hll") {
@@ -68,6 +69,13 @@ fn execute_compiler_test_suite() {
                 );
                 tests_run += 1;
             } else {
+                if ci_mode {
+                    panic!(
+                        "Missing golden IR file for {:?} while CI mode is enabled",
+                        path.file_name().unwrap()
+                    );
+                }
+
                 fs::write(&ir_path, actual_ir).expect("Failed to write golden ir file");
                 println!(
                     "Created new golden IR file for {:?}",

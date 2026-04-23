@@ -99,7 +99,7 @@ impl HighLevelCompiler {
                     self.format_expression(index)
                 )
             }
-            AssignTarget::Tuple(fields) => {
+            AssignTarget::StructDestructure(fields) => {
                 let items = fields
                     .iter()
                     .map(|f| f.name.as_deref().unwrap_or("_").to_string())

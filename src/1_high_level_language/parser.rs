@@ -53,13 +53,8 @@ impl<'a> Parser<'a> {
                 self.advance();
                 let name = self.expect_ident()?;
                 let generics = self.parse_generic_params()?;
-                let ty = if self.match_assign() {
-                    self.parse_type()?
-                } else if self.check_lbrace() {
-                    self.parse_struct_type()?
-                } else {
-                    return Err(self.error("expected `=` or `{` after type declaration name"));
-                };
+                self.expect_assign()?;
+                let ty = self.parse_type()?;
                 DeclNode::Type { name, generics, ty }
             }
             Some(Token::External) => {
@@ -118,7 +113,7 @@ impl<'a> Parser<'a> {
             }
             Some(Token::LBrace) => {
                 let mut trial = self.clone();
-                if let Ok(target) = trial.parse_tuple_assign_target() {
+                if let Ok(target) = trial.parse_struct_destructure_target() {
                     if trial.match_assign() {
                         *self = trial;
                         let rvalue = self.parse_assignment()?;
@@ -311,7 +306,7 @@ impl<'a> Parser<'a> {
             let saved_pos = self.pos;
             let mut trial = self.clone();
 
-            if let Ok(target) = trial.parse_tuple_assign_target() {
+            if let Ok(target) = trial.parse_struct_destructure_target() {
                 if trial.match_assign() {
                     *self = trial;
                     let rvalue = self.parse_assignment()?;
@@ -643,7 +638,7 @@ impl<'a> Parser<'a> {
                 if self.check_rbrace() {
                     break;
                 }
-                continue;
+                return Err(self.error("expected `,` between struct type fields"));
             }
         }
 
@@ -704,7 +699,7 @@ impl<'a> Parser<'a> {
         Ok(args)
     }
 
-    fn parse_tuple_assign_target(&mut self) -> Result<AssignTarget, ParserError> {
+    fn parse_struct_destructure_target(&mut self) -> Result<AssignTarget, ParserError> {
         self.expect_lbrace()?;
         let mut fields = Vec::new();
 
@@ -713,7 +708,7 @@ impl<'a> Parser<'a> {
         }
 
         loop {
-            fields.push(self.parse_tuple_destructure_field()?);
+            fields.push(self.parse_struct_destructure_field()?);
             if self.match_comma() {
                 if self.check_rbrace() {
                     break;
@@ -724,26 +719,19 @@ impl<'a> Parser<'a> {
         }
 
         self.expect_rbrace()?;
-        Ok(AssignTarget::Tuple(fields))
+        Ok(AssignTarget::StructDestructure(fields))
     }
 
-    fn parse_tuple_destructure_field(&mut self) -> Result<TupleDestructureField, ParserError> {
-        // Check for discard operator (_)
-        let name = if matches!(self.peek(), Some(Token::Ident("_"))) {
-            self.advance();
-            None // Discard operator
-        } else {
-            Some(self.expect_ident()?)
-        };
-        
-        // Check for optional type annotation
-        let ty = if self.match_colon() {
-            Some(self.parse_type()?)
-        } else {
-            None
-        };
+    fn parse_struct_destructure_field(&mut self) -> Result<StructDestructureField, ParserError> {
+        // Per spec v1.4: struct destructuring requires explicit type annotations
+        let name = self.expect_ident()?;
+        self.expect_colon()?;
+        let ty = self.parse_type()?;
 
-        Ok(TupleDestructureField { name, ty })
+        Ok(StructDestructureField {
+            name: Some(name),
+            ty: Some(ty),
+        })
     }
 
     fn expression_to_target(&self, expr: Expression) -> Result<AssignTarget, ParserError> {
@@ -1084,11 +1072,20 @@ impl<'a> Parser<'a> {
                 let mut fields = Vec::new();
                 if !self.check_rbrace() {
                     loop {
-                        let name = self.expect_ident()?;
-                        self.expect_colon()?;
+                        let (name, ty) = if self.match_dot() {
+                            let name = self.expect_ident()?;
+                            (name, None)
+                        } else {
+                            let name = self.expect_ident()?;
+                            self.expect_colon()?;
+                            let ty = self.parse_type()?;
+                            (name, Some(ty))
+                        };
+                        self.expect_assign()?;
                         let expr = self.parse_expression()?;
                         fields.push(FieldInit {
-                            name: Some(name),
+                            name,
+                            ty,
                             expr,
                         });
 
@@ -1431,12 +1428,16 @@ mod tests {
             Token::LBrace,
             Token::Ident("quotient"),
             Token::Colon,
+            Token::I32,
+            Token::Assign,
             Token::Ident("a"),
             Token::Slash,
             Token::Ident("b"),
             Token::Comma,
             Token::Ident("remainder"),
             Token::Colon,
+            Token::I32,
+            Token::Assign,
             Token::Ident("a"),
             Token::Percent,
             Token::Ident("b"),
@@ -1528,7 +1529,7 @@ mod tests {
         let mut parser = Parser::new(tokens);
         match parser.parse_expression().unwrap() {
             Expression::Assignment { target, .. } => match *target {
-                AssignTarget::Tuple(fields) => {
+                AssignTarget::StructDestructure(fields) => {
                     assert_eq!(fields.len(), 2);
                     assert_eq!(fields[0].name, Some("q".to_string()));
                     assert_eq!(fields[1].name, Some("r".to_string()));
@@ -1566,7 +1567,7 @@ mod tests {
         let mut parser = Parser::new(tokens);
         match parser.parse_expression().unwrap() {
             Expression::Assignment { target, .. } => match *target {
-                AssignTarget::Tuple(fields) => {
+                AssignTarget::StructDestructure(fields) => {
                     assert_eq!(fields.len(), 2);
                     assert_eq!(fields[0].name, Some("q".to_string()));
                     assert!(matches!(&fields[0].ty, Some(Type::Primitive(name)) if name == "i32"));
@@ -1580,12 +1581,16 @@ mod tests {
     }
 
     #[test]
-    fn parses_struct_destructuring_with_discard() {
+    fn parses_struct_destructuring_with_named_types() {
         let tokens = vec![
             Token::LBrace,
             Token::Ident("file"),
+            Token::Colon,
+            Token::Ident("FileHandle"),
             Token::Comma,
-            Token::Ident("_"),
+            Token::Ident("error"),
+            Token::Colon,
+            Token::Ident("i32"),
             Token::RBrace,
             Token::Assign,
             Token::Ident("open_file"),
@@ -1598,10 +1603,12 @@ mod tests {
         let mut parser = Parser::new(tokens);
         match parser.parse_expression().unwrap() {
             Expression::Assignment { target, .. } => match *target {
-                AssignTarget::Tuple(fields) => {
+                AssignTarget::StructDestructure(fields) => {
                     assert_eq!(fields.len(), 2);
                     assert_eq!(fields[0].name, Some("file".to_string()));
-                    assert_eq!(fields[1].name, None); // Discard operator
+                    assert!(fields[0].ty.is_some()); // Type annotation required
+                    assert_eq!(fields[1].name, Some("error".to_string()));
+                    assert!(fields[1].ty.is_some()); // Type annotation required
                 }
                 other => panic!("unexpected assignment target: {other:?}"),
             },

@@ -145,9 +145,9 @@ impl HighLevelCompiler {
 
                 Some((pointee_ptr_reg, pointee_ty))
             }
-            AssignTarget::Tuple(_) => {
+            AssignTarget::StructDestructure(_) => {
                 self.context.diagnostics.error(format!(
-                    "tuple target `{}` is not supported for dereference assignment",
+                    "struct-destructure target `{}` is not supported for dereference assignment",
                     self.format_assign_target(target)
                 ));
                 None
@@ -312,9 +312,9 @@ impl HighLevelCompiler {
                 });
                 Some((element_ptr_reg, element_ty))
             }
-            AssignTarget::Tuple(_) => {
+            AssignTarget::StructDestructure(_) => {
                 self.context.diagnostics.error(format!(
-                    "tuple assignment target `{}` is not supported in this lowering path",
+                    "struct-destructure assignment target `{}` is not supported in this lowering path",
                     self.format_assign_target(target)
                 ));
                 None
@@ -362,21 +362,22 @@ impl HighLevelCompiler {
         Some(value.clone())
     }
 
-    pub(super) fn lower_tuple_destructuring(
+    pub(super) fn lower_struct_destructuring_legacy(
         &mut self,
         targets: &[AssignTarget],
-        tuple_value: &LoweredValue,
+        struct_value: &LoweredValue,
     ) -> Option<LoweredValue> {
-        // Tuple destructuring: extract each field from the aggregate value
+        // Legacy helper kept for backwards compatibility with older lowering call-sites.
+        // Struct destructuring: extract each field from the aggregate value
         // and assign to corresponding target
 
         // Extract field types from the aggregate
-        let field_types: Vec<IrType> = match &tuple_value.ty {
+        let field_types: Vec<IrType> = match &struct_value.ty {
             IrType::Aggregate(fields) => fields.iter().map(|(_name, ty)| ty.clone()).collect(),
             _ => {
                 self.context
                     .diagnostics
-                    .error("tuple destructuring requires aggregate type".to_string());
+                    .error("struct destructuring requires aggregate type".to_string());
                 return None;
             }
         };
@@ -384,20 +385,20 @@ impl HighLevelCompiler {
         // Check that target count matches field count
         if targets.len() != field_types.len() {
             self.context.diagnostics.error(format!(
-                "tuple destructuring: expected {} targets, got {}",
+                "struct destructuring: expected {} targets, got {}",
                 field_types.len(),
                 targets.len()
             ));
             return None;
         }
 
-        // The tuple_value.value should be a register pointing to the aggregate
-        let tuple_ptr = match &tuple_value.value {
+        // The struct_value.value should be a register pointing to the aggregate
+        let struct_ptr = match &struct_value.value {
             IrValue::Register(reg) => reg.clone(),
             _ => {
                 self.context
                     .diagnostics
-                    .error("tuple destructuring requires register value".to_string());
+                    .error("struct destructuring requires register value".to_string());
                 return None;
             }
         };
@@ -405,12 +406,12 @@ impl HighLevelCompiler {
         // For each target, load the corresponding field and assign
         let mut offset = 0i64;
         for (target, field_ty) in targets.iter().zip(field_types.iter()) {
-            // Load field value from tuple
+            // Load field value from the aggregate
             let field_reg = self.new_temp();
             self.push_instruction(IrInstruction::Load {
                 dest: field_reg.clone(),
                 ty: field_ty.clone(),
-                ptr: tuple_ptr.clone(),
+                ptr: struct_ptr.clone(),
                 offset: Some(offset),
             });
 
@@ -427,8 +428,8 @@ impl HighLevelCompiler {
             offset += self.type_size_in_bytes(field_ty) as i64;
         }
 
-        // Return the tuple value
-        Some(tuple_value.clone())
+        // Return the aggregate value
+        Some(struct_value.clone())
     }
 
     pub(super) fn lower_assign_target(
@@ -448,7 +449,7 @@ impl HighLevelCompiler {
                     let ptr_reg = IrRegister::Named(name.clone());
 
                     self.push_instruction(IrInstruction::Comment(format!(
-                        "local var (from tuple destructure): {}",
+                        "local var (from struct destructure): {}",
                         name
                     )));
                     self.push_instruction(IrInstruction::Alloc {
@@ -490,10 +491,10 @@ impl HighLevelCompiler {
             AssignTarget::ArrayIndex { expr, index } => {
                 self.lower_array_index_assign(expr, index, value)
             }
-            AssignTarget::Tuple(_) => {
+            AssignTarget::StructDestructure(_) => {
                 self.context
                     .diagnostics
-                    .error("nested tuple destructuring not supported".to_string());
+                    .error("nested struct destructuring not supported".to_string());
                 None
             }
         }

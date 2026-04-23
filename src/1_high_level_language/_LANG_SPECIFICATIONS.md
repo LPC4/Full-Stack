@@ -139,11 +139,11 @@ type Point = {
     y: f32
 }
 
-p1: Point = { x: 1.0, y: 2.0 }
+p1: Point = { .x = 1.0, .y = 2.0 }
 p1.x = 3.0                  ; Stack: direct access
 
 p2_ptr: Point* = new(Point)
-@p2_ptr = { x: 3.0, y: 4.0 } ; Heap: full struct write
+@p2_ptr = { .x = 3.0, .y = 4.0 } ; Heap: full struct write
 @p2_ptr.x = 5.0             ; Heap: field write (requires @)
 ```
 **Field Access Rules:**
@@ -156,7 +156,7 @@ HLL uses inline structs for grouping multiple values (such as multiple returns).
 ```HLL
 ; Inline struct return type
 get_coordinates: () -> { x: f32, y: f32 } {
-    return { x: 3.5, y: 7.2 }
+    return { .x = 3.5, .y = 7.2 }
 }
 
 main: () -> () {

@@ -60,6 +60,8 @@ impl TypeContext {
     ) -> Result<String, TypeCheckError> {
         let lhs_unknown = self.is_unknown_like(lhs_type);
         let rhs_unknown = self.is_unknown_like(rhs_type);
+        let lhs_placeholder = self.is_placeholder_like(lhs_type);
+        let rhs_placeholder = self.is_placeholder_like(rhs_type);
 
         // Both operands must be same type
         if lhs_type != rhs_type && !lhs_unknown && !rhs_unknown {
@@ -73,14 +75,22 @@ impl TypeContext {
             // Arithmetic operations require numeric types
             BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod => {
                 let effective_type = if lhs_unknown { rhs_type } else { lhs_type };
-                if !self.is_numeric(effective_type) && !self.is_unknown_like(effective_type) {
+                if !self.is_numeric(effective_type)
+                    && !self.is_unknown_like(effective_type)
+                    && !self.is_placeholder_like(effective_type)
+                {
                     return Err(TypeCheckError::InvalidOperation {
                         op: format!("{:?}", op),
                         lhs: lhs_type.to_string(),
                         rhs: rhs_type.to_string(),
                     });
                 }
-                Ok(effective_type.to_string())
+
+                if lhs_placeholder || rhs_placeholder {
+                    Ok(effective_type.to_string())
+                } else {
+                    Ok(effective_type.to_string())
+                }
             }
 
             // Logical operations work on bools
@@ -134,7 +144,18 @@ impl TypeContext {
                 }
                 Ok("i1".to_string())
             }
-            UnaryOp::Dereference => Ok(operand_type.to_string()),
+            UnaryOp::Dereference => {
+                if let Some(inner) = operand_type.strip_prefix('*') {
+                    Ok(inner.to_string())
+                } else if self.is_unknown_like(operand_type) {
+                    Ok("unknown".to_string())
+                } else {
+                    Err(TypeCheckError::InvalidUnaryOp {
+                        op: "dereference".to_string(),
+                        ty: operand_type.to_string(),
+                    })
+                }
+            }
             UnaryOp::AddressOf => Ok(format!("*{}", operand_type)),
         }
     }
@@ -148,6 +169,20 @@ impl TypeContext {
 
     fn is_unknown_like(&self, ty: &str) -> bool {
         ty == "unknown" || ty == "*unknown"
+    }
+
+    fn is_placeholder_like(&self, ty: &str) -> bool {
+        if self.is_unknown_like(ty) {
+            return true;
+        }
+
+        let trimmed = ty.trim();
+        let core = trimmed.strip_prefix('*').unwrap_or(trimmed);
+        if core.is_empty() {
+            return false;
+        }
+
+        core.chars().all(|c| c.is_ascii_uppercase() || c == '_')
     }
 
     pub fn get_type_name(&self, ty: &IrType) -> String {
@@ -170,3 +205,27 @@ impl TypeContext {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn allows_placeholder_arithmetic() {
+        let ctx = TypeContext::new();
+        assert_eq!(
+            ctx.check_binary_op(&BinaryOp::Add, "T", "T").unwrap(),
+            "T"
+        );
+    }
+
+    #[test]
+    fn still_rejects_non_numeric_named_types() {
+        let ctx = TypeContext::new();
+        assert!(matches!(
+            ctx.check_binary_op(&BinaryOp::Add, "Point", "Point"),
+            Err(TypeCheckError::InvalidOperation { .. })
+        ));
+    }
+}
+

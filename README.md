@@ -11,12 +11,6 @@ This project is an interactive learning site that walks through the computer sta
 
 The goal is to make each layer visual and connected so users can see how high-level code eventually becomes low-level machine behavior.
 
-## Project metadata
-
-- Crate name: `full_stack`
-- Author: `Liam De Koster`
-- Rust edition: `2024`
-
 ## Run locally (Windows)
 
 ```powershell

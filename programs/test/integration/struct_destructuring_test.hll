@@ -1,0 +1,44 @@
+; Test for struct destructuring with explicit type annotations
+type Result = {
+    value: i32,
+    success: bool
+}
+
+get_result: () -> Result {
+    return { .value = 42, .success = true }
+}
+
+type Outer = {
+    inner: Result,
+    count: i32
+}
+
+get_outer: () -> Outer {
+    return { .inner = { .value = 100, .success = true }, .count = 5 }
+}
+
+main: () -> i32 {
+    ; Test 1: Full struct destructuring with all fields
+    { value: i32, success: bool } = get_result()
+    
+    if success {
+        print(value)
+    }
+    
+    ; Test 2: Partial destructuring (only need some fields)
+    { value: i32 } = get_result()
+    print(value)
+    
+    ; Test 3: Nested struct destructuring
+
+    { inner: Result, count: i32 } = get_outer()
+    print(count)
+    
+    ; Test 4: Destructure nested struct fields
+    { inner: Result } = get_outer()
+    { value: i32, success: bool } = inner
+    print(value)
+    
+    return value
+}
+

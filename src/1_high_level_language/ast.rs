@@ -10,7 +10,6 @@ pub enum Type {
     Pointer(Box<Type>),
     Array(usize, Box<Type>),
     Struct(Vec<FieldDecl>),
-    Tuple(Vec<Type>),
     Named { name: String, args: Vec<Type> },
 }
 
@@ -59,15 +58,8 @@ pub struct Parameter {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ReturnField {
-    pub name: Option<String>,
-    pub ty: Type,
-}
-
-#[derive(Debug, Clone, PartialEq)]
 pub enum ReturnType {
     Single(Type),
-    Tuple(Vec<ReturnField>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -105,7 +97,6 @@ pub enum Expression {
         target: Box<AssignTarget>,
         rvalue: Box<Expression>,
     },
-    Tuple(Vec<Expression>),
     Binary {
         op: BinaryOp,
         left: Box<Expression>,
@@ -130,11 +121,11 @@ pub enum AssignTarget {
         expr: Box<AssignTarget>,
         index: Box<Expression>,
     },
-    Tuple(Vec<TupleDestructureField>),
+    StructDestructure(Vec<StructDestructureField>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct TupleDestructureField {
+pub struct StructDestructureField {
     pub name: Option<String>, // None for discard (_)
     pub ty: Option<Type>,
 }
@@ -173,7 +164,6 @@ pub enum PrimaryExpr {
         arguments: Vec<Expression>,
     },
     ArrayLiteral(Vec<Expression>),
-    TupleLiteral(Vec<Expression>),
     StructLiteral(Vec<FieldInit>),
     FieldAccess {
         expr: Box<Expression>,
@@ -201,6 +191,7 @@ pub enum Literal {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FieldInit {
-    pub name: Option<String>,
+    pub name: String,
+    pub ty: Option<Type>,
     pub expr: Expression,
 }

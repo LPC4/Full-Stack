@@ -1,5 +1,5 @@
-type Point {
-    x: f32
+type Point = {
+    x: f32,
     y: f32
 }
 

@@ -1,7 +1,7 @@
 [package]
 name = "full_stack"
 version = "0.1.0"
-authors = ["Liam De Koster"]
+authors = ["Liam DK"]
 edition = "2024"
 license = "MIT OR Apache-2.0"
 include = ["LICENSE-APACHE", "LICENSE-MIT", "**/*.rs", "Cargo.toml"]

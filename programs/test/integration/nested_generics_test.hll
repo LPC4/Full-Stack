@@ -1,0 +1,24 @@
+; Test for nested generic types: Box<Box<i32>>
+type Box<T> = {
+    value: T
+}
+
+main: () -> i32 {
+    ; Create inner box with i32
+    inner: Box<i32>* = new(Box<i32>)
+    @inner.value = 42
+    
+    ; Create outer box containing the inner box
+    outer: Box<Box<i32>>* = new(Box<Box<i32>>)
+    @outer.value = @inner
+    
+    ; Access nested value through double dereference
+    result: i32 = @(@outer.value).value
+    
+    ; Cleanup
+    free(inner)
+    free(outer)
+    
+    return result
+}
+

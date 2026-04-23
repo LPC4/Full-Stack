@@ -80,18 +80,6 @@ impl SemanticAnalyzer {
                             let ir_ty = self.ast_type_to_ir_type(ty);
                             self.context.get_type_name(&ir_ty)
                         }
-                        ReturnType::Tuple(fields) => {
-                            // Convert tuple fields to a tuple type string like "(i32, i32)"
-                            let field_types: Vec<String> = fields
-                                .iter()
-                                .map(|f| {
-                                    let ir_ty = self.ast_type_to_ir_type(&f.ty);
-                                    self.context.get_type_name(&ir_ty)
-                                })
-                                .collect();
-                            // Use parentheses format for tuples to distinguish from aggregates
-                            format!("({})", field_types.join(", "))
-                        }
                     },
                     None => "void".to_string(),
                 };
@@ -143,6 +131,25 @@ impl SemanticAnalyzer {
                 Ok(())
             }
             Statement::Return(Some(expr)) => {
+                if let Expression::Unary {
+                    op: UnaryOp::AddressOf,
+                    expr: inner,
+                } = expr
+                {
+                    if let Expression::Primary(
+                        crate::high_level_language::ast::PrimaryExpr::Identifier(name),
+                    ) = inner.as_ref()
+                    {
+                        if self.symbols.lookup(name).is_some() {
+                            self.diagnostics.error(format!(
+                                "Returning address of local `{}` is not allowed",
+                                name
+                            ));
+                            return Err(());
+                        }
+                    }
+                }
+
                 let _ = self.infer_expression_type(expr)?;
                 Ok(())
             }
@@ -224,13 +231,7 @@ impl SemanticAnalyzer {
             Expression::Primary(primary) => match primary {
                 crate::high_level_language::ast::PrimaryExpr::Identifier(name) => {
                     if let Some(info) = self.symbols.lookup(name) {
-                        // Variables are stored as pointers in memory, so dereference them
-                        let ty_name = self.context.get_type_name(&info.ty);
-                        if let Some(inner_ty_str) = ty_name.strip_prefix('*') {
-                            Ok(inner_ty_str.to_string())
-                        } else {
-                            Ok(ty_name)
-                        }
+                        Ok(self.context.get_type_name(&info.ty))
                     } else if let Some(ty_name) = self.type_mapping.get(name) {
                         Ok(ty_name.clone())
                     } else {
@@ -249,7 +250,7 @@ impl SemanticAnalyzer {
                     crate::high_level_language::ast::Literal::Null => Ok("*unknown".to_string()),
                     crate::high_level_language::ast::Literal::String(_) => {
                         // String literals are modeled as `{ data: u8*, length: u64 }` at the source level.
-                        let tuple_fields = vec![
+                        let struct_fields = vec![
                             (
                                 "data".to_string(),
                                 IrType::Pointer(Box::new(IrType::Integer(
@@ -261,8 +262,8 @@ impl SemanticAnalyzer {
                                 IrType::Integer(crate::intermediate_language::IntWidth::I64),
                             ),
                         ];
-                        let tuple_ty = IrType::Aggregate(tuple_fields);
-                        Ok(self.context.get_type_name(&tuple_ty))
+                        let struct_ty = IrType::Aggregate(struct_fields);
+                        Ok(self.context.get_type_name(&struct_ty))
                     }
                 },
                 crate::high_level_language::ast::PrimaryExpr::New { ty, .. } => {
@@ -286,6 +287,41 @@ impl SemanticAnalyzer {
                         // Unknown function, return unknown
                         Ok("unknown".to_string())
                     }
+                }
+                crate::high_level_language::ast::PrimaryExpr::FieldAccess { expr, field } => {
+                    let base_ty = self.infer_expression_type(expr)?;
+                    self.infer_field_access_type(&base_ty, field)
+                }
+                crate::high_level_language::ast::PrimaryExpr::ArrayIndex { expr, index } => {
+                    let _ = self.infer_expression_type(index)?;
+                    let base_ty = self.infer_expression_type(expr)?;
+                    self.infer_index_element_type(&base_ty)
+                }
+                crate::high_level_language::ast::PrimaryExpr::StructLiteral(fields) => {
+                    let mut field_types = Vec::new();
+                    for field in fields {
+                        let expr_ty = self.infer_expression_type(&field.expr)?;
+                        let inferred_ir = if let Some(ref annotated_ty) = field.ty {
+                            let annotated_ir = self.ast_type_to_ir_type(annotated_ty);
+                            let annotated_name = self.context.get_type_name(&annotated_ir);
+                            if expr_ty != annotated_name
+                                && expr_ty != "unknown"
+                                && expr_ty != "*unknown"
+                            {
+                                self.diagnostics.error(format!(
+                                    "Type mismatch in struct literal field `{}`: expected {}, found {}",
+                                    field.name, annotated_name, expr_ty
+                                ));
+                                return Err(());
+                            }
+                            annotated_ir
+                        } else {
+                            self.parse_type_string(&expr_ty)
+                        }
+                        ;
+                        field_types.push((field.name.clone(), inferred_ir));
+                    }
+                    Ok(self.context.get_type_name(&IrType::Aggregate(field_types)))
                 }
                 _ => Ok("unknown".to_string()),
             },
@@ -351,7 +387,7 @@ impl SemanticAnalyzer {
                 let rvalue_type = self.infer_expression_type(rvalue)?;
 
                 // Handle brace-based struct destructuring.
-                if let crate::high_level_language::ast::AssignTarget::Tuple(fields) =
+                if let crate::high_level_language::ast::AssignTarget::StructDestructure(fields) =
                     target.as_ref()
                 {
                     // Parse the aggregate type string to extract field names and types.
@@ -366,29 +402,56 @@ impl SemanticAnalyzer {
                         }
                     };
 
-                    let mut positional_index = 0usize;
+                    // Per spec v1.4: all fields must have explicit type annotations
                     for field in fields.iter() {
                         let Some(name) = field.name.as_ref() else {
-                            continue;
+                            self.diagnostics.error("Struct destructuring requires explicit variable names".to_string());
+                            return Err(());
                         };
 
+                        // Type annotation is required per spec
+                        let Some(ref annotated_ty) = field.ty else {
+                            self.diagnostics.error(format!(
+                                "Struct destructuring field `{}` requires explicit type annotation",
+                                name
+                            ));
+                            return Err(());
+                        };
+
+                        let ty_to_use = {
+                            let ir_ty = self.ast_type_to_ir_type(annotated_ty);
+                            self.context.get_type_name(&ir_ty)
+                        };
+
+                        // Verify the annotated type matches the inferred type from the struct
                         let inferred_ty = field_types
                             .iter()
                             .find(|(field_name, _)| field_name.as_deref() == Some(name.as_str()))
                             .map(|(_, ty)| ty.clone())
-                            .or_else(|| {
-                                let ty = field_types.get(positional_index).map(|(_, ty)| ty.clone());
-                                positional_index = positional_index.saturating_add(1);
-                                ty
-                            })
                             .unwrap_or_else(|| "unknown".to_string());
 
-                        let ty_to_use = if let Some(ref annotated_ty) = field.ty {
-                            let ir_ty = self.ast_type_to_ir_type(annotated_ty);
-                            self.context.get_type_name(&ir_ty)
-                        } else {
-                            inferred_ty
-                        };
+                        if inferred_ty == "unknown" {
+                            self.diagnostics.error(format!(
+                                "Field `{}` not found in struct type `{}`. Available fields: {}",
+                                name,
+                                rvalue_type,
+                                field_types
+                                    .iter()
+                                    .filter_map(|(n, _)| n.as_ref())
+                                    .cloned()
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            ));
+                            return Err(());
+                        }
+
+                        if ty_to_use != inferred_ty && inferred_ty != "unknown" {
+                            self.diagnostics.error(format!(
+                                "Type mismatch in struct destructuring field `{}`: expected {}, found {}",
+                                name, inferred_ty, ty_to_use
+                            ));
+                            return Err(());
+                        }
 
                         let target = crate::high_level_language::ast::AssignTarget::Identifier(
                             name.clone(),
@@ -402,14 +465,6 @@ impl SemanticAnalyzer {
 
                 // Assignment returns the type of the right side
                 Ok(rvalue_type)
-            }
-            Expression::Tuple(elements) => {
-                let mut field_types = Vec::new();
-                for elem in elements {
-                    let elem_type = self.infer_expression_type(elem)?;
-                    field_types.push(elem_type);
-                }
-                Ok(format!("({})", field_types.join(", ")))
             }
         }
     }
@@ -426,14 +481,6 @@ impl SemanticAnalyzer {
                 let field_types: Vec<(String, IrType)> = fields
                     .iter()
                     .map(|f| (f.name.clone(), self.ast_type_to_ir_type(&f.ty)))
-                    .collect();
-                IrType::Aggregate(field_types)
-            }
-            Type::Tuple(types) => {
-                let field_types: Vec<(String, IrType)> = types
-                    .iter()
-                    .enumerate()
-                    .map(|(i, t)| (i.to_string(), self.ast_type_to_ir_type(t)))
                     .collect();
                 IrType::Aggregate(field_types)
             }
@@ -463,8 +510,6 @@ impl SemanticAnalyzer {
         let trimmed = type_str.trim();
         let (inner, named) = if trimmed.starts_with('{') && trimmed.ends_with('}') {
             (&trimmed[1..trimmed.len() - 1], true)
-        } else if trimmed.starts_with('(') && trimmed.ends_with(')') {
-            (&trimmed[1..trimmed.len() - 1], false)
         } else {
             return Err(());
         };
@@ -506,7 +551,80 @@ impl SemanticAnalyzer {
         Ok(fields)
     }
 
-    /// Register an assignment target (for tuple destructuring)
+    fn infer_field_access_type(&mut self, base_type: &str, field: &str) -> Result<String, ()> {
+        if base_type == "unknown" || base_type == "*unknown" {
+            return Ok("unknown".to_string());
+        }
+
+        let parsed = self.parse_type_string(base_type);
+        let resolved = match parsed {
+            IrType::Named(name) => self
+                .context
+                .resolve(&name)
+                .cloned()
+                .unwrap_or(IrType::Named(name)),
+            IrType::Pointer(inner) => match inner.as_ref() {
+                IrType::Named(name) => self
+                    .context
+                    .resolve(name)
+                    .cloned()
+                    .map(|ty| IrType::Pointer(Box::new(ty)))
+                    .unwrap_or(IrType::Pointer(inner)),
+                _ => IrType::Pointer(inner),
+            },
+            other => other,
+        };
+
+        let fields = match resolved {
+            IrType::Aggregate(fields) => fields,
+            IrType::Pointer(inner) => match *inner {
+                IrType::Aggregate(fields) => fields,
+                _ => {
+                    self.diagnostics.error(format!(
+                        "field access on non-aggregate type `{}`",
+                        base_type
+                    ));
+                    return Err(());
+                }
+            },
+            _ => {
+                self.diagnostics
+                    .error(format!("field access on non-aggregate type `{}`", base_type));
+                return Err(());
+            }
+        };
+
+        if let Some((_, field_ty)) = fields.iter().find(|(name, _)| name == field) {
+            Ok(self.context.get_type_name(field_ty))
+        } else {
+            self.diagnostics.error(format!(
+                "unknown field `{}` for type `{}`",
+                field, base_type
+            ));
+            Err(())
+        }
+    }
+
+    fn infer_index_element_type(&mut self, base_type: &str) -> Result<String, ()> {
+        if base_type == "unknown" || base_type == "*unknown" {
+            return Ok("*unknown".to_string());
+        }
+
+        if let Some(inner) = base_type.strip_prefix('*') {
+            let _ = inner;
+            return Ok(base_type.to_string());
+        }
+
+        if let Some((element, _rest)) = base_type.split_once('[') {
+            return Ok(format!("*{}", element));
+        }
+
+        self.diagnostics
+            .error(format!("indexing non-indexable type `{}`", base_type));
+        Err(())
+    }
+
+    /// Register an assignment target (for struct destructuring)
     fn register_assign_target(
         &mut self,
         target: &crate::high_level_language::ast::AssignTarget,
@@ -546,9 +664,9 @@ impl SemanticAnalyzer {
                 // These should already exist
                 self.check_assign_target(target)
             }
-            crate::high_level_language::ast::AssignTarget::Tuple(_) => {
+            crate::high_level_language::ast::AssignTarget::StructDestructure(_) => {
                 self.diagnostics.error(
-                    "Nested tuple destructuring not supported in semantic analysis".to_string(),
+                    "Nested struct destructuring not supported in semantic analysis".to_string(),
                 );
                 Err(())
             }
@@ -580,9 +698,9 @@ impl SemanticAnalyzer {
                 let _ = self.infer_expression_type(index)?;
                 Ok(())
             }
-            crate::high_level_language::ast::AssignTarget::Tuple(_) => {
+            crate::high_level_language::ast::AssignTarget::StructDestructure(_) => {
                 self.diagnostics
-                    .error("Nested tuple destructuring not supported".to_string());
+                    .error("Nested struct destructuring not supported".to_string());
                 Err(())
             }
         }
@@ -590,7 +708,24 @@ impl SemanticAnalyzer {
 
     /// Parse a type string back into an IrType
     fn parse_type_string(&self, ty_str: &str) -> IrType {
-        match ty_str {
+        let trimmed = ty_str.trim();
+        if trimmed.starts_with('{') && trimmed.ends_with('}') {
+            if let Ok(fields) = self.parse_aggregate_type(trimmed) {
+                return IrType::Aggregate(
+                    fields
+                        .into_iter()
+                        .map(|(name, field_ty)| {
+                            (
+                                name.unwrap_or_default(),
+                                self.parse_type_string(&field_ty),
+                            )
+                        })
+                        .collect(),
+                );
+            }
+        }
+
+        match trimmed {
             "i1" => IrType::Integer(crate::intermediate_language::IntWidth::I1),
             "i8" => IrType::Integer(crate::intermediate_language::IntWidth::I8),
             "i16" => IrType::Integer(crate::intermediate_language::IntWidth::I16),

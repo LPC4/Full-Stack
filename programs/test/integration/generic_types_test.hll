@@ -1,5 +1,5 @@
-type Box<T> {
-    val: T
+type Box<T> = {
+    val: T,
     ptr: T*
 }
 

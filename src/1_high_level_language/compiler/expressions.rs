@@ -189,63 +189,31 @@ impl HighLevelCompiler {
                         ty: return_ty,
                     })
                 }
-                crate::high_level_language::ast::PrimaryExpr::TupleLiteral(elements) => {
-                    // Lower tuple literal similar to Expression::Tuple
-                    let mut lowered_fields = Vec::new();
-                    for elem in elements {
-                        match self.lower_expression(elem) {
-                            Some(lowered) => lowered_fields.push(lowered),
-                            None => {
-                                self.context
-                                    .diagnostics
-                                    .error("failed to lower tuple element".to_string());
-                                return None;
-                            }
-                        }
-                    }
-
-                    // Create aggregate type and allocate space for tuple
-                    let tuple_fields: Vec<(String, IrType)> = lowered_fields
-                        .iter()
-                        .enumerate()
-                        .map(|(idx, f)| (idx.to_string(), f.ty.clone()))
-                        .collect();
-                    let tuple_ty = IrType::Aggregate(tuple_fields);
-                    let dest = self.new_temp();
-
-                    self.push_instruction(IrInstruction::Alloc {
-                        dest: dest.clone(),
-                        ty: tuple_ty.clone(),
-                        count: None,
-                    });
-
-                    // Store each element in the tuple
-                    let mut offset = 0i64;
-                    for field in lowered_fields {
-                        self.push_instruction(IrInstruction::Store {
-                            ty: field.ty.clone(),
-                            value: field.value,
-                            ptr: dest.clone(),
-                            offset: Some(offset),
-                        });
-                        offset += self.type_size_in_bytes(&field.ty) as i64;
-                    }
-
-                    Some(LoweredValue {
-                        value: IrValue::Register(dest),
-                        ty: tuple_ty,
-                    })
-                }
                 crate::high_level_language::ast::PrimaryExpr::StructLiteral(fields) => {
                     // Lower struct literal
                     let mut lowered_fields = Vec::new();
                     for field_init in fields {
                         let field_value = self.lower_expression(&field_init.expr)?;
-                        let field_name = field_init
-                            .name
-                            .clone()
-                            .unwrap_or_else(|| format!("field_{}", lowered_fields.len()));
-                        lowered_fields.push((field_name, field_value));
+                        let expected_ty = field_init
+                            .ty
+                            .as_ref()
+                            .map(|ty| self.lower_type(ty))
+                            .unwrap_or_else(|| field_value.ty.clone());
+                        let expected_resolved = self.resolve_named_type(&expected_ty);
+                        let actual_resolved = self.resolve_named_type(&field_value.ty);
+                        if actual_resolved != expected_resolved {
+                            let declared_ty = field_init
+                                .ty
+                                .as_ref()
+                                .map(|ty| self.lower_type(ty).to_string())
+                                .unwrap_or_else(|| field_value.ty.to_string());
+                            self.context.diagnostics.error(format!(
+                                "struct literal field `{}` type mismatch: declared `{}`, got `{}`",
+                                field_init.name, declared_ty, field_value.ty
+                            ));
+                            return None;
+                        }
+                        lowered_fields.push((field_init.name.clone(), field_value));
                     }
 
                     // Create aggregate type
@@ -295,21 +263,32 @@ impl HighLevelCompiler {
             Expression::Unary { op, expr } => {
                 match op {
                     UnaryOp::AddressOf => {
-                        // Address of specifically bypasses the load for identifiers
-                        if let Expression::Primary(
-                            crate::high_level_language::ast::PrimaryExpr::Identifier(name),
-                        ) = &**expr
-                        {
-                            if let Some(info) = self.context.symbols.lookup(name) {
+                        // `&` accepts l-values like identifiers and array elements, but never `&@ptr`.
+                        if matches!(
+                            &**expr,
+                            Expression::Unary {
+                                op: UnaryOp::Dereference,
+                                ..
+                            }
+                        ) {
+                            self.context
+                                .diagnostics
+                                .error("cannot take address of a dereference expression (`&@...` is invalid)".to_string());
+                            return None;
+                        }
+
+                        if let Some(target) = self.expression_to_assign_target(expr) {
+                            if let Some((ptr_reg, value_ty)) = self.resolve_assign_lvalue(&target) {
                                 return Some(LoweredValue {
-                                    value: info.value.clone(),
-                                    ty: info.ty.clone(),
+                                    value: IrValue::Register(ptr_reg),
+                                    ty: IrType::Pointer(Box::new(value_ty)),
                                 });
                             }
                         }
+
                         self.context
                             .diagnostics
-                            .error(format!("address-of requires an identifier l-value"));
+                            .error("address-of requires an assignable l-value (identifier or array element)".to_string());
                         None
                     }
                     _ => {
@@ -347,65 +326,11 @@ impl HighLevelCompiler {
                     AssignTarget::ArrayIndex { expr, index } => {
                         self.lower_array_index_assign(expr, index, &lowered)
                     }
-                    AssignTarget::Tuple(fields) => {
-                        // Tuple destructuring: load each field from the aggregate and assign
-                        let targets: Vec<AssignTarget> = fields
-                            .iter()
-                            .filter_map(|f| {
-                                // Skip discard fields (_)
-                                f.name.as_ref().map(|name| AssignTarget::Identifier(name.clone()))
-                            })
-                            .collect();
-                        self.lower_tuple_destructuring(&targets, &lowered)
+                    AssignTarget::StructDestructure(fields) => {
+                        // Struct destructuring: extract each field from the aggregate value
+                        self.lower_struct_destructuring(fields, &lowered)
                     }
                 }
-            }
-            Expression::Tuple(elements) => {
-                let mut lowered_fields = Vec::new();
-                for elem in elements {
-                    match self.lower_expression(elem) {
-                        Some(lowered) => lowered_fields.push(lowered),
-                        None => {
-                            self.context
-                                .diagnostics
-                                .error("failed to lower tuple element".to_string());
-                            return None;
-                        }
-                    }
-                }
-
-                // Create aggregate type and allocate space for tuple
-                let tuple_fields: Vec<(String, IrType)> = lowered_fields
-                    .iter()
-                    .enumerate()
-                    .map(|(idx, f)| (idx.to_string(), f.ty.clone()))
-                    .collect();
-                let tuple_ty = IrType::Aggregate(tuple_fields);
-                let dest = self.new_temp();
-
-                self.push_instruction(IrInstruction::Alloc {
-                    dest: dest.clone(),
-                    ty: tuple_ty.clone(),
-                    count: None,
-                });
-
-                // Store each element in the tuple
-                let mut offset = 0i64;
-                for field in lowered_fields {
-                    self.push_instruction(IrInstruction::Store {
-                        ty: field.ty.clone(),
-                        value: field.value,
-                        ptr: dest.clone(),
-                        offset: Some(offset),
-                    });
-                    // Use actual type size for offset calculation
-                    offset += self.type_size_in_bytes(&field.ty) as i64;
-                }
-
-                Some(LoweredValue {
-                    value: IrValue::Register(dest),
-                    ty: tuple_ty,
-                })
             }
         }
     }
@@ -438,20 +363,20 @@ impl HighLevelCompiler {
                 let content_len = content.len();
 
                 // Represent strings as an inline struct `{ data: u8*, length: u64 }`.
-                let tuple_fields = vec![
+                let struct_fields = vec![
                     (
                         "data".to_string(),
                         IrType::Pointer(Box::new(IrType::Integer(IntWidth::I8))),
                     ),
                     ("length".to_string(), IrType::Integer(IntWidth::I64)),
                 ];
-                let tuple_ty = IrType::Aggregate(tuple_fields);
-                
-                // Allocate space for the tuple on the stack
+                let struct_ty = IrType::Aggregate(struct_fields);
+
+                // Allocate space for the inline struct on the stack.
                 let dest = self.new_temp();
                 self.push_instruction(IrInstruction::Alloc {
                     dest: dest.clone(),
-                    ty: tuple_ty.clone(),
+                    ty: struct_ty.clone(),
                     count: None,
                 });
 
@@ -473,9 +398,36 @@ impl HighLevelCompiler {
 
                 LoweredValue {
                     value: IrValue::Register(dest),
-                    ty: tuple_ty,
+                    ty: struct_ty,
                 }
             }
+        }
+    }
+
+    fn expression_to_assign_target(&self, expr: &Expression) -> Option<AssignTarget> {
+        match expr {
+            Expression::Primary(crate::high_level_language::ast::PrimaryExpr::Identifier(name)) => {
+                Some(AssignTarget::Identifier(name.clone()))
+            }
+            Expression::Unary {
+                op: UnaryOp::Dereference,
+                expr,
+            } => Some(AssignTarget::Dereference(Box::new(
+                self.expression_to_assign_target(expr)?,
+            ))),
+            Expression::Primary(crate::high_level_language::ast::PrimaryExpr::FieldAccess { expr, field }) => {
+                Some(AssignTarget::FieldAccess {
+                    expr: Box::new(self.expression_to_assign_target(expr)?),
+                    field: field.clone(),
+                })
+            }
+            Expression::Primary(crate::high_level_language::ast::PrimaryExpr::ArrayIndex { expr, index }) => {
+                Some(AssignTarget::ArrayIndex {
+                    expr: Box::new(self.expression_to_assign_target(expr)?),
+                    index: index.clone(),
+                })
+            }
+            _ => None,
         }
     }
 
@@ -616,5 +568,103 @@ impl HighLevelCompiler {
                 }
             },
         }
+    }
+
+    pub(super) fn lower_struct_destructuring(
+        &mut self,
+        fields: &[crate::high_level_language::ast::StructDestructureField],
+        value: &LoweredValue,
+    ) -> Option<LoweredValue> {
+        // Get the aggregate type fields
+        let resolved_value_ty = self.resolve_named_type(&value.ty);
+        let agg_fields = match &resolved_value_ty {
+            IrType::Aggregate(fields) => fields.clone(),
+            IrType::Pointer(inner) => match inner.as_ref() {
+                IrType::Aggregate(fields) => fields.clone(),
+                _ => {
+                    self.context.diagnostics.error("struct destructuring requires an aggregate type".to_string());
+                    return None;
+                }
+            },
+            _ => {
+                self.context.diagnostics.error("struct destructuring requires an aggregate type".to_string());
+                return None;
+            }
+        };
+
+        // Base pointer for the aggregate
+        let base_ptr = match &value.value {
+            IrValue::Register(reg) => reg.clone(),
+            _ => {
+                self.context.diagnostics.error("struct destructuring requires a register value".to_string());
+                return None;
+            }
+        };
+
+        // Build lookup by field name so partial/reordered destructuring follows source names.
+        let mut field_offsets: std::collections::HashMap<&str, (i64, IrType)> =
+            std::collections::HashMap::new();
+        let mut running_offset = 0i64;
+        for (name, ty) in &agg_fields {
+            field_offsets.insert(name.as_str(), (running_offset, ty.clone()));
+            running_offset += self.type_size_in_bytes(ty) as i64;
+        }
+
+        // Extract each requested field and assign to target variables.
+        for field in fields.iter() {
+            if let Some(ref name) = field.name {
+                let Some((field_offset, field_ty)) = field_offsets.get(name.as_str()).cloned() else {
+                    self.context.diagnostics.error(format!(
+                        "struct destructuring field `{}` not found in aggregate type",
+                        name
+                    ));
+                    return None;
+                };
+
+                let dest = self.new_temp();
+                self.push_instruction(IrInstruction::Load {
+                    dest: dest.clone(),
+                    ty: field_ty.clone(),
+                    ptr: base_ptr.clone(),
+                    offset: Some(field_offset),
+                });
+
+                let target_ptr = if let Some(var_info) = self.context.symbols.lookup(name) {
+                    match &var_info.value {
+                        IrValue::Register(var_ptr) => var_ptr.clone(),
+                        _ => {
+                            self.context.diagnostics.error(format!(
+                                "struct destructuring target `{}` is not register-backed",
+                                name
+                            ));
+                            return None;
+                        }
+                    }
+                } else {
+                    let var_ptr = IrRegister::Named(name.clone());
+                    self.push_instruction(IrInstruction::Alloc {
+                        dest: var_ptr.clone(),
+                        ty: field_ty.clone(),
+                        count: None,
+                    });
+                    self.context.symbols.insert(
+                        name.clone(),
+                        IrType::Pointer(Box::new(field_ty.clone())),
+                        IrValue::Register(var_ptr.clone()),
+                    );
+                    var_ptr
+                };
+
+                self.push_instruction(IrInstruction::Store {
+                    ty: field_ty,
+                    value: IrValue::Register(dest),
+                    ptr: target_ptr,
+                    offset: None,
+                });
+            }
+        }
+
+
+        Some(value.clone())
     }
 }

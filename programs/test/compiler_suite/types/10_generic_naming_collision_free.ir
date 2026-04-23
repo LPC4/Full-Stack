@@ -1,5 +1,6 @@
 type Box_i32 = {i32}
 type Box<i32> = {i32}
+type Box<Box<i32>> = {Box<i32>}
 
 define i32 @main() {
 @entry:
@@ -7,5 +8,7 @@ define i32 @main() {
 	$boxed = stack_alloc Box<i32>
 	; local var: legacy
 	$legacy = stack_alloc Box_i32
+	; local var: double
+	$double = stack_alloc Box<Box<i32>>
 	ret 0
 }

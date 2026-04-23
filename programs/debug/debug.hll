@@ -1,5 +1,5 @@
-type Node {
-    val: i32
+type Node = {
+    val: i32,
     next: Node*
 }
 

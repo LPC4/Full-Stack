@@ -1,11 +1,11 @@
 ; Test inline struct returns and destructuring
 divide: (a: i32, b: i32) -> { quotient: i32, remainder: i32 } {
-    return { quotient: a / b, remainder: a % b }
+    return { .quotient = a / b, .remainder = a % b }
 }
 
 test_tuple_destructuring: () -> i32 {
-    { q: i32, r: i32 } = divide(10, 3)
-    return q
+    { quotient: i32, remainder: i32 } = divide(10, 3)
+    return quotient
 }
 
 

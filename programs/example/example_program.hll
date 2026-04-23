@@ -3,13 +3,13 @@
 ; pointers, address-of/dereference, field access, array indexing,
 ; loops, conditionals, and defer cleanup.
 
-type Box<T> {
-    val: T
+type Box<T> = {
+    val: T,
     ptr: T*
 }
 
 sum_and_diff: (a: i32, b: i32) -> { sum: i32, diff: i32 } {
-    return { sum: a + b, diff: a - b }
+    return { .sum = a + b, .diff = a - b }
 }
 
 main: () -> i32 {
@@ -39,14 +39,14 @@ main: () -> i32 {
 
     ; Pointer field retargeting + chained indexed writes/reads
     @b.ptr = arr
-    @b.ptr[2] = @b.ptr[0] + @b.ptr[1]
+    @b.ptr[2] = @(b.ptr[0]) + @(b.ptr[1])
     @arr[3] = 7
 
     ; Loop + control flow
     i: i32 = 0
     total: i32 = 0
     while i < 3 {
-        total = total + @arr[i]
+        total = total + @(arr[i])
         i = i + 1
     }
 
@@ -54,7 +54,7 @@ main: () -> i32 {
     if total > 20 {
         result = total
     } else {
-        result = @arr[3]
+        result = @(arr[3])
     }
 
     ; Deferred cleanup (LIFO)
