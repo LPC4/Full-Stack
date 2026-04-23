@@ -1,14 +1,14 @@
-; Function returning two values
-divide: (a: i32, b: i32) -> (i32, bool) {
+; Function returning two values via inline struct
+divide: (a: i32, b: i32) -> { result: i32, success: bool } {
     if b == 0 {
-        return {0, false}
+        return { result: 0, success: false }
     }
-    return {a / b, true}
+    return { result: a / b, success: true }
 }
 
 start: () -> () {
-    ; Parsing challenge: Handling the comma-separated l-values
-    (result, success) = divide(10, 2)
+    ; Parsing challenge: Handling brace-based typed destructuring
+    { result: i32, success: bool } = divide(10, 2)
 
     if success {
         print(result)

@@ -1,15 +1,15 @@
-; Test string literal compilation to tuples
-; String literals should compile to (u8*, i64) tuples
+; Test string literal compilation to inline structs
+; String literals should compile to { data: u8*, length: u64 } structs
 
 main: () -> i32 {
     ; Declare variables with type annotations and assign string literals
-    str1: (u8*, i64) = "Hello World"
+    str1: { data: u8*, length: u64 } = "Hello World"
 
     ; String with escape sequences
-    str2: (u8*, i64) = "Line 1\nLine 2\tTabbed"
+    str2: { data: u8*, length: u64 } = "Line 1\nLine 2\tTabbed"
 
     ; Empty string
-    str3: (u8*, i64) = ""
+    str3: { data: u8*, length: u64 } = ""
 
     return 0;
 }

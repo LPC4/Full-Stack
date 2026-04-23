@@ -125,12 +125,11 @@ impl HighLevelCompiler {
                 is_extern,
                 ..
             } => {
-                let mut final_name = name.clone();
-                if !generics.is_empty() {
-                    for _ in generics {
-                        final_name.push_str("_gen");
-                    }
-                }
+                let final_name = if generics.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{}<{}>", name, generics.join(", "))
+                };
                 if *is_extern {
                     self.context.diagnostics.warn(format!(
                         "extern function `{}` lowered as placeholder",
@@ -153,6 +152,11 @@ impl HighLevelCompiler {
                 let return_ty = self.lower_return_type(return_type.as_ref());
                 self.function_return_types
                     .insert(final_name.clone(), return_ty);
+                if final_name != *name {
+                    // Keep source-name lookup working at call-sites until full function monomorphization is added.
+                    let return_ty = self.lower_return_type(return_type.as_ref());
+                    self.function_return_types.insert(name.clone(), return_ty);
+                }
 
                 self.start_new_block("entry");
 

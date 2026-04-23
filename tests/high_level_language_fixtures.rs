@@ -154,8 +154,9 @@ fn test4_hll_lexes_multi_return_and_destructuring() {
         Token::Ident("divide")
     )));
     assert!(contains_token(&tokens, |t| matches!(t, Token::Comma)));
-    assert!(contains_token(&tokens, |t| matches!(t, Token::LParen)));
-    assert!(contains_token(&tokens, |t| matches!(t, Token::RParen)));
+    assert!(contains_token(&tokens, |t| matches!(t, Token::LBrace)));
+    assert!(contains_token(&tokens, |t| matches!(t, Token::RBrace)));
+    assert!(contains_token(&tokens, |t| matches!(t, Token::Colon)));
     assert!(contains_token(&tokens, |t| matches!(t, Token::If)));
     assert!(contains_token(&tokens, |t| matches!(t, Token::Return)));
     assert!(matches!(tokens.last(), Some(Token::Eof)));
@@ -285,8 +286,8 @@ fn test4_hll_parser_success_and_ast_validation() {
         } => {
             assert_eq!(name, "divide");
             assert!(
-                matches!(return_type, Some(ReturnType::Tuple(_))),
-                "divide should return a tuple"
+                matches!(return_type, Some(ReturnType::Single(Type::Struct(_)))),
+                "divide should return an inline struct"
             );
         }
         _ => panic!("Expected Function divide declaration"),

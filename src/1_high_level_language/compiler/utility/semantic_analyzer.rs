@@ -248,11 +248,18 @@ impl SemanticAnalyzer {
                     crate::high_level_language::ast::Literal::Boolean(_) => Ok("i1".to_string()),
                     crate::high_level_language::ast::Literal::Null => Ok("*unknown".to_string()),
                     crate::high_level_language::ast::Literal::String(_) => {
-                        // String literals are modeled as (u8*, i64) at the source level.
-                        // IR integer width does not encode signedness, so this is lowered via i8.
+                        // String literals are modeled as `{ data: u8*, length: u64 }` at the source level.
                         let tuple_fields = vec![
-                            ("0".to_string(), IrType::Pointer(Box::new(IrType::Integer(crate::intermediate_language::IntWidth::I8)))),
-                            ("1".to_string(), IrType::Integer(crate::intermediate_language::IntWidth::I64)),
+                            (
+                                "data".to_string(),
+                                IrType::Pointer(Box::new(IrType::Integer(
+                                    crate::intermediate_language::IntWidth::I8,
+                                ))),
+                            ),
+                            (
+                                "length".to_string(),
+                                IrType::Integer(crate::intermediate_language::IntWidth::I64),
+                            ),
                         ];
                         let tuple_ty = IrType::Aggregate(tuple_fields);
                         Ok(self.context.get_type_name(&tuple_ty))
@@ -343,47 +350,49 @@ impl SemanticAnalyzer {
             Expression::Assignment { target, rvalue } => {
                 let rvalue_type = self.infer_expression_type(rvalue)?;
 
-                // Handle tuple destructuring
+                // Handle brace-based struct destructuring.
                 if let crate::high_level_language::ast::AssignTarget::Tuple(fields) =
                     target.as_ref()
                 {
-                    // Parse the tuple type string to extract field types
-                    let field_types = match self.parse_tuple_type(&rvalue_type) {
+                    // Parse the aggregate type string to extract field names and types.
+                    let field_types = match self.parse_aggregate_type(&rvalue_type) {
                         Ok(types) => types,
                         Err(_) => {
                             self.diagnostics.error(format!(
-                                "Expected tuple type for destructuring, got: {}",
+                                "Expected struct type for destructuring, got: {}",
                                 rvalue_type
                             ));
                             return Err(());
                         }
                     };
 
-                    if fields.len() != field_types.len() {
-                        self.diagnostics.error(format!(
-                            "Tuple destructuring mismatch: expected {} fields, got {}",
-                            field_types.len(),
-                            fields.len()
-                        ));
-                        return Err(());
-                    }
-
-                    // Register each target with its corresponding type
-                    for (field, field_ty) in fields.iter().zip(field_types.iter()) {
-                        // Skip discard fields (_)
-                        if field.name.is_none() {
+                    let mut positional_index = 0usize;
+                    for field in fields.iter() {
+                        let Some(name) = field.name.as_ref() else {
                             continue;
-                        }
-                                
-                        // If type annotation is provided, use it; otherwise use inferred type
+                        };
+
+                        let inferred_ty = field_types
+                            .iter()
+                            .find(|(field_name, _)| field_name.as_deref() == Some(name.as_str()))
+                            .map(|(_, ty)| ty.clone())
+                            .or_else(|| {
+                                let ty = field_types.get(positional_index).map(|(_, ty)| ty.clone());
+                                positional_index = positional_index.saturating_add(1);
+                                ty
+                            })
+                            .unwrap_or_else(|| "unknown".to_string());
+
                         let ty_to_use = if let Some(ref annotated_ty) = field.ty {
                             let ir_ty = self.ast_type_to_ir_type(annotated_ty);
                             self.context.get_type_name(&ir_ty)
                         } else {
-                            field_ty.clone()
+                            inferred_ty
                         };
-                                
-                        let target = crate::high_level_language::ast::AssignTarget::Identifier(field.name.as_ref().unwrap().clone());
+
+                        let target = crate::high_level_language::ast::AssignTarget::Identifier(
+                            name.clone(),
+                        );
                         self.register_assign_target(&target, &ty_to_use)?;
                     }
                 } else {
@@ -449,21 +458,52 @@ impl SemanticAnalyzer {
         }
     }
 
-    /// Parse a tuple type string like "(i32, i32)" into a vector of field types
-    fn parse_tuple_type(&self, type_str: &str) -> Result<Vec<String>, ()> {
+    /// Parse an aggregate type string like `{ a: i32, b: i32 }` into field names and types.
+    fn parse_aggregate_type(&self, type_str: &str) -> Result<Vec<(Option<String>, String)>, ()> {
         let trimmed = type_str.trim();
-        if !trimmed.starts_with('(') || !trimmed.ends_with(')') {
+        let (inner, named) = if trimmed.starts_with('{') && trimmed.ends_with('}') {
+            (&trimmed[1..trimmed.len() - 1], true)
+        } else if trimmed.starts_with('(') && trimmed.ends_with(')') {
+            (&trimmed[1..trimmed.len() - 1], false)
+        } else {
             return Err(());
-        }
+        };
 
-        let inner = &trimmed[1..trimmed.len() - 1];
-        if inner.is_empty() {
+        if inner.trim().is_empty() {
             return Ok(Vec::new());
         }
 
-        // Simple split by comma - this works for simple types
-        let types: Vec<String> = inner.split(',').map(|s| s.trim().to_string()).collect();
-        Ok(types)
+        let mut parts = Vec::new();
+        let mut depth = 0i32;
+        let mut start = 0usize;
+
+        for (idx, ch) in inner.char_indices() {
+            match ch {
+                '{' | '(' | '[' | '<' => depth += 1,
+                '}' | ')' | ']' | '>' => depth = depth.saturating_sub(1),
+                ',' if depth == 0 => {
+                    parts.push(inner[start..idx].trim().to_string());
+                    start = idx + ch.len_utf8();
+                }
+                _ => {}
+            }
+        }
+        parts.push(inner[start..].trim().to_string());
+
+        let mut fields = Vec::new();
+        for part in parts {
+            if named {
+                if let Some((name, ty)) = part.split_once(':') {
+                    fields.push((Some(name.trim().to_string()), ty.trim().to_string()));
+                } else {
+                    fields.push((None, part));
+                }
+            } else {
+                fields.push((None, part));
+            }
+        }
+
+        Ok(fields)
     }
 
     /// Register an assignment target (for tuple destructuring)

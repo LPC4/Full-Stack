@@ -52,10 +52,12 @@ impl HighLevelCompiler {
         fields: &[(String, IrType)],
         field: &str,
     ) -> Option<(i64, IrType)> {
+        let mut offset = 0i64;
         for (idx, (name, field_ty)) in fields.iter().enumerate() {
             if name == field || idx.to_string() == field {
-                return Some(((idx as i64) * 8, field_ty.clone()));
+                return Some((offset, field_ty.clone()));
             }
+            offset += self.type_size_in_bytes(field_ty) as i64;
         }
         None
     }

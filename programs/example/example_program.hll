@@ -1,5 +1,5 @@
 ; Showcase program for the HLL compiler.
-; Demonstrates: type aliases, functions, tuple return/destructure,
+; Demonstrates: type aliases, functions, inline struct return/destructure,
 ; pointers, address-of/dereference, field access, array indexing,
 ; loops, conditionals, and defer cleanup.
 
@@ -8,15 +8,15 @@ type Box<T> {
     ptr: T*
 }
 
-sum_and_diff: (a: i32, b: i32) -> (sum: i32, diff: i32) {
-    return {a + b, a - b}
+sum_and_diff: (a: i32, b: i32) -> { sum: i32, diff: i32 } {
+    return { sum: a + b, diff: a - b }
 }
 
 main: () -> i32 {
-    ; Tuple return + destructuring
+    ; Inline struct return + destructuring
     base: i32 = 12
     delta: i32 = 4
-    (sum, diff) = sum_and_diff(base, delta)
+    { sum: i32, diff: i32 } = sum_and_diff(base, delta)
 
     ; Heap allocation + dereference write
     a: i32* = new(i32)

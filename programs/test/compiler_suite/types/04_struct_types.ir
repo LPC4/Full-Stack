@@ -18,16 +18,16 @@ define f32 @calc_offset(Point* $p, f32 $shift) {
 	write f32 $3 @ $5
 	; assignment
 	$6 = read Point* @ $p_ptr
-	$7 = read f32 @ $6 + 8
+	$7 = read f32 @ $6 + 4
 	$8 = read f32 @ $shift_ptr
 	$9 = math add f32 $7, $8
 	$10 = read Point* @ $p_ptr
-	$11 = offset f32 $10, 8
+	$11 = offset f32 $10, 4
 	write f32 $9 @ $11
 	$12 = read Point* @ $p_ptr
 	$13 = read f32 @ $12 + 0
 	$14 = read Point* @ $p_ptr
-	$15 = read f32 @ $14 + 8
+	$15 = read f32 @ $14 + 4
 	$16 = math mul f32 $13, $15
 	ret $16
 }

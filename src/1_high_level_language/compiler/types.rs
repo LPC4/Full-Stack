@@ -43,24 +43,13 @@ impl HighLevelCompiler {
             ),
             Type::Named { name, args } => {
                 if !args.is_empty() {
-                    // This is a generic type instantiation, specialize it
-                    // First, lower all type arguments
                     let lowered_args: Vec<IrType> =
                         args.iter().map(|a| self.lower_type(a)).collect();
-
-                    // Check if this is a known generic type
                     if self.generic_type_defs.contains_key(name) {
-                        // We need ir_program to specialize, so we'll handle this differently
-                        // For now, create a mangled name and lower the type directly
                         let specialized_name = self.create_specialized_name(name, &lowered_args);
                         return IrType::Named(specialized_name);
                     } else {
-                        // Not a generic type, just mangle the name
-                        let mut mangled_name = name.clone();
-                        for _ in args {
-                            mangled_name.push_str("_gen");
-                        }
-                        return IrType::Named(mangled_name);
+                        return IrType::Named(self.create_specialized_name(name, &lowered_args));
                     }
                 }
                 IrType::Named(name.clone())
@@ -69,15 +58,12 @@ impl HighLevelCompiler {
     }
 
     pub(super) fn create_specialized_name(&self, name: &str, type_args: &[IrType]) -> String {
-        format!(
-            "{}_{}",
-            name,
-            type_args
-                .iter()
-                .map(|t| format!("{}", t).replace([' ', '<', '>', '*'], "_"))
-                .collect::<Vec<_>>()
-                .join("_")
-        )
+        let args = type_args
+            .iter()
+            .map(|t| t.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("{}<{}>", name, args)
     }
 
     pub(super) fn lower_type_with_program(
@@ -317,16 +303,8 @@ impl HighLevelCompiler {
             )));
         }
 
-        // Create specialized type name
-        let specialized_name = format!(
-            "{}_{}",
-            name,
-            type_args
-                .iter()
-                .map(|t| format!("{}", t).replace([' ', '<', '>', '*'], "_"))
-                .collect::<Vec<_>>()
-                .join("_")
-        );
+        // Use canonical angle-bracket naming so generic instances cannot collide with user identifiers.
+        let specialized_name = self.create_specialized_name(name, type_args);
 
         log::debug!(
             "Specializing generic type `{}` as `{}` with args: {:?}",

@@ -117,27 +117,19 @@ impl<'a> Parser<'a> {
                 Ok(Statement::Continue)
             }
             Some(Token::LBrace) => {
-                // Need to distinguish between block and tuple destructuring assignment
-                // Look ahead to see if this is {ident, ident, ...} = expr
-                let saved_pos = self.pos;
-                self.advance(); // consume LBrace
-
-                let is_tuple_destructure = if matches!(self.peek(), Some(Token::Ident(_))) {
-                    // Check if next is comma (tuple) or colon (block with var decl) or other
-                    matches!(self.peek_n(1), Some(Token::Comma))
-                } else {
-                    false
-                };
-
-                self.pos = saved_pos;
-
-                if is_tuple_destructure {
-                    // Parse as expression (which will handle tuple destructuring assignment)
-                    Ok(Statement::Expression(self.parse_expression()?))
-                } else {
-                    // Parse as block
-                    Ok(Statement::Block(self.parse_block()?))
+                let mut trial = self.clone();
+                if let Ok(target) = trial.parse_tuple_assign_target() {
+                    if trial.match_assign() {
+                        *self = trial;
+                        let rvalue = self.parse_assignment()?;
+                        return Ok(Statement::Expression(Expression::Assignment {
+                            target: Box::new(target),
+                            rvalue: Box::new(rvalue),
+                        }));
+                    }
                 }
+
+                Ok(Statement::Block(self.parse_block()?))
             }
             Some(Token::Ident(_)) if self.peek_n(1) == Some(&Token::Colon) => {
                 // This is a variable declaration: ident : type = expr
@@ -266,40 +258,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_return_type(&mut self) -> Result<ReturnType, ParserError> {
-        if self.match_lparen() {
-            let mut fields = Vec::new();
-
-            if self.match_rparen() {
-                return Ok(ReturnType::Tuple(fields));
-            }
-
-            loop {
-                let (name, ty) = if matches!(self.peek(), Some(Token::Ident(_)))
-                    && self.peek_n(1) == Some(&Token::Colon)
-                {
-                    let name = self.expect_ident()?;
-                    self.expect_colon()?;
-                    (Some(name), self.parse_type()?)
-                } else {
-                    (None, self.parse_type()?)
-                };
-                fields.push(ReturnField { name, ty });
-
-                if self.match_comma() {
-                    if self.check_rparen() {
-                        break;
-                    }
-                    continue;
-                }
-
-                break;
-            }
-
-            self.expect_rparen()?;
-            Ok(ReturnType::Tuple(fields))
-        } else {
-            Ok(ReturnType::Single(self.parse_type()?))
-        }
+        Ok(ReturnType::Single(self.parse_type()?))
     }
 
     fn parse_if_statement(&mut self) -> Result<Statement, ParserError> {
@@ -336,7 +295,7 @@ impl<'a> Parser<'a> {
         if self.is_expression_terminator() || self.check_rbrace() || self.is_eof() {
             Ok(Statement::Return(None))
         } else {
-            // Parse a single expression (which can be a tuple literal with braces)
+            // Parse a single expression (including inline struct literals)
             let expr = self.parse_expression()?;
             Ok(Statement::Return(Some(expr)))
         }
@@ -348,16 +307,12 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_assignment(&mut self) -> Result<Expression, ParserError> {
-        // Only parenthesis-delimited tuple assignments are supported
-        if matches!(self.peek(), Some(Token::LParen)) {
+        if matches!(self.peek(), Some(Token::LBrace)) {
             let saved_pos = self.pos;
             let mut trial = self.clone();
-            
-            // Try to parse as tuple destructuring
+
             if let Ok(target) = trial.parse_tuple_assign_target() {
-                // Check if followed by assignment operator
                 if trial.match_assign() {
-                    // Commit to this parse
                     *self = trial;
                     let rvalue = self.parse_assignment()?;
                     return Ok(Expression::Assignment {
@@ -366,8 +321,7 @@ impl<'a> Parser<'a> {
                     });
                 }
             }
-            
-            // Not a tuple destructuring, restore position and continue with normal parsing
+
             self.pos = saved_pos;
         }
 
@@ -583,182 +537,6 @@ impl<'a> Parser<'a> {
         Ok(expr)
     }
 
-    fn parse_primary(&mut self) -> Result<Expression, ParserError> {
-        let expr = match self.peek() {
-            Some(Token::Integer(_)) => Expression::Primary(PrimaryExpr::Literal(Literal::Integer(
-                self.expect_integer()?,
-            ))),
-            Some(Token::HexInteger(_)) => Expression::Primary(PrimaryExpr::Literal(
-                Literal::HexInteger(self.expect_hex_integer()?),
-            )),
-            Some(Token::Float(_)) => {
-                Expression::Primary(PrimaryExpr::Literal(Literal::Float(self.expect_float()?)))
-            }
-            Some(Token::True) => {
-                self.advance();
-                Expression::Primary(PrimaryExpr::Literal(Literal::Boolean(true)))
-            }
-            Some(Token::False) => {
-                self.advance();
-                Expression::Primary(PrimaryExpr::Literal(Literal::Boolean(false)))
-            }
-            Some(Token::Null) => {
-                self.advance();
-                Expression::Primary(PrimaryExpr::Literal(Literal::Null))
-            }
-            Some(Token::String(text)) => {
-                // Remove quotes and process escape sequences
-                let content = &text[1..text.len() - 1]; // Remove surrounding quotes
-                let processed = self.process_string_escapes(content);
-                self.advance();
-                Expression::Primary(PrimaryExpr::Literal(Literal::String(processed)))
-            }
-            Some(Token::Ident(name)) => {
-                let id = name.to_string();
-                self.advance();
-                Expression::Primary(PrimaryExpr::Identifier(id))
-            }
-            Some(Token::Free) => {
-                self.advance();
-                Expression::Primary(PrimaryExpr::Identifier("free".to_string()))
-            }
-            Some(Token::LParen) => {
-                self.advance();
-                let expr = self.parse_expression()?;
-                if self.match_comma() {
-                    let mut elements = vec![expr];
-                    while !self.check_rparen() {
-                        elements.push(self.parse_expression()?);
-                        if !self.match_comma() {
-                            break;
-                        }
-                    }
-                    self.expect_rparen()?;
-                    Expression::Primary(PrimaryExpr::TupleLiteral(elements))
-                } else {
-                    self.expect_rparen()?;
-                    expr
-                }
-            }
-            Some(Token::LBracket) => {
-                self.advance();
-                let mut elements = Vec::new();
-                if !self.check_rbracket() {
-                    loop {
-                        elements.push(self.parse_expression()?);
-                        if self.match_comma() {
-                            if self.check_rbracket() {
-                                break;
-                            }
-                            continue;
-                        }
-                        break;
-                    }
-                }
-                self.expect_rbracket()?;
-                Expression::Primary(PrimaryExpr::ArrayLiteral(elements))
-            }
-            Some(Token::LBrace) => {
-                // Save position for potential backtracking
-                let saved_parser = self.clone();
-
-                // Try to parse as tuple literal first (no field names)
-                self.advance();
-                let mut elements = Vec::new();
-                let mut parse_failed = false;
-
-                if !self.check_rbrace() {
-                    loop {
-                        match self.parse_expression() {
-                            Ok(expr) => {
-                                elements.push(expr);
-                                if self.match_comma() {
-                                    if self.check_rbrace() {
-                                        break;
-                                    }
-                                    continue;
-                                }
-                                break;
-                            }
-                            Err(_) => {
-                                parse_failed = true;
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                // If we successfully parsed at least one element and found closing brace, it's a tuple
-                if !parse_failed && !elements.is_empty() && self.check_rbrace() {
-                    self.expect_rbrace()?;
-                    return Ok(Expression::Primary(PrimaryExpr::TupleLiteral(elements)));
-                }
-
-                // Otherwise, backtrack and try as struct literal
-                *self = saved_parser;
-                self.advance(); // consume LBrace again
-                let mut fields = Vec::new();
-
-                if !self.check_rbrace() {
-                    loop {
-                        // A field init can be `name: expr` or just `expr`
-                        let has_name = matches!(self.peek(), Some(Token::Ident(_)))
-                            && self.peek_n(1) == Some(&Token::Colon);
-
-                        let name = if has_name {
-                            let n = self.expect_ident()?;
-                            self.expect_colon()?;
-                            Some(n)
-                        } else {
-                            None
-                        };
-
-                        let expr = self.parse_expression()?;
-                        fields.push(FieldInit { name, expr });
-
-                        if self.match_comma() {
-                            if self.check_rbrace() {
-                                break;
-                            }
-                            continue;
-                        }
-                        break;
-                    }
-                }
-
-                self.expect_rbrace()?;
-                Expression::Primary(PrimaryExpr::StructLiteral(fields))
-            }
-            Some(Token::New) => {
-                self.advance();
-                self.expect_lparen()?;
-                let ty = self.parse_type()?;
-                let mut args = Vec::new();
-                if self.match_comma() {
-                    if !self.check_rparen() {
-                        loop {
-                            args.push(self.parse_expression()?);
-                            if self.match_comma() {
-                                if self.check_rparen() {
-                                    break;
-                                }
-                                continue;
-                            }
-                            break;
-                        }
-                    }
-                }
-                self.expect_rparen()?;
-                Expression::Primary(PrimaryExpr::New { ty, args })
-            }
-            Some(tok) => {
-                return Err(self.error_with_token("unexpected token in primary expression", tok));
-            }
-            None => return Err(self.error("unexpected end of input")),
-        };
-        Ok(expr)
-    }
-
     fn parse_type_atom(&mut self) -> Result<Type, ParserError> {
         match self.peek() {
             Some(Token::I8) => {
@@ -875,25 +653,11 @@ impl<'a> Parser<'a> {
 
     fn parse_tuple_type(&mut self) -> Result<Type, ParserError> {
         self.expect_lparen()?;
-        let mut types = Vec::new();
-
-        if self.check_rparen() {
-            return Err(self.error("empty tuple type is not allowed"));
+        if self.match_rparen() {
+            return Ok(Type::Primitive("void".to_string()));
         }
 
-        loop {
-            types.push(self.parse_type()?);
-            if self.match_comma() {
-                if self.check_rparen() {
-                    break;
-                }
-                continue;
-            }
-            break;
-        }
-
-        self.expect_rparen()?;
-        Ok(Type::Tuple(types))
+        Err(self.error("tuple types are not supported; use inline struct types with `{ ... }`"))
     }
 
     fn parse_generic_params(&mut self) -> Result<Vec<String>, ParserError> {
@@ -941,17 +705,17 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_tuple_assign_target(&mut self) -> Result<AssignTarget, ParserError> {
-        self.expect_lparen()?;
+        self.expect_lbrace()?;
         let mut fields = Vec::new();
 
-        if self.check_rparen() {
-            return Err(self.error("empty tuple destructuring is not allowed"));
+        if self.check_rbrace() {
+            return Err(self.error("empty struct destructuring is not allowed"));
         }
 
         loop {
             fields.push(self.parse_tuple_destructure_field()?);
             if self.match_comma() {
-                if self.check_rparen() {
+                if self.check_rbrace() {
                     break;
                 }
                 continue;
@@ -959,7 +723,7 @@ impl<'a> Parser<'a> {
             break;
         }
 
-        self.expect_rparen()?;
+        self.expect_rbrace()?;
         Ok(AssignTarget::Tuple(fields))
     }
 
@@ -1195,6 +959,32 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn is_declaration_start(&self) -> bool {
+        match self.peek() {
+            Some(Token::Const)
+            | Some(Token::ConstKeyword)
+            | Some(Token::Type)
+            | Some(Token::TypeKeyword)
+            | Some(Token::External) => true,
+            Some(Token::Ident(_)) => {
+                if self.peek_n(1) != Some(&Token::Colon) {
+                    return false;
+                }
+                // `name: (` is function decl syntax; `name: type` is variable decl.
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn is_expression_terminator(&self) -> bool {
+        matches!(self.peek(), Some(Token::StatementTerminator) | Some(Token::Eof) | None)
+    }
+
+    fn check_if(&self) -> bool {
+        matches!(self.peek(), Some(Token::If))
+    }
+
     fn check_lbrace(&self) -> bool {
         matches!(self.peek(), Some(Token::LBrace))
     }
@@ -1215,30 +1005,6 @@ impl<'a> Parser<'a> {
         matches!(self.peek(), Some(Token::Gt))
     }
 
-    fn check_if(&self) -> bool {
-        matches!(self.peek(), Some(Token::If))
-    }
-
-    fn is_declaration_start(&self) -> bool {
-        match self.peek() {
-            Some(Token::Const | Token::ConstKeyword)
-            | Some(Token::Type | Token::TypeKeyword)
-            | Some(Token::External) => true,
-            Some(Token::Ident(_)) => {
-                // Check for function: identifier ":" "(" or variable: identifier ":" type
-                matches!(self.peek_n(1), Some(Token::Colon))
-            }
-            _ => false,
-        }
-    }
-
-    fn is_expression_terminator(&self) -> bool {
-        matches!(
-            self.peek(),
-            Some(Token::StatementTerminator | Token::RBrace | Token::Eof)
-        )
-    }
-
     fn match_assign(&mut self) -> bool {
         self.match_variant(|t| matches!(t, Token::Assign))
     }
@@ -1249,6 +1015,124 @@ impl<'a> Parser<'a> {
 
     fn match_lparen(&mut self) -> bool {
         self.match_variant(|t| matches!(t, Token::LParen))
+    }
+
+    fn parse_primary(&mut self) -> Result<Expression, ParserError> {
+        let expr = match self.peek() {
+            Some(Token::Integer(_)) => Expression::Primary(PrimaryExpr::Literal(Literal::Integer(
+                self.expect_integer()?,
+            ))),
+            Some(Token::HexInteger(_)) => Expression::Primary(PrimaryExpr::Literal(
+                Literal::HexInteger(self.expect_hex_integer()?),
+            )),
+            Some(Token::Float(_)) => {
+                Expression::Primary(PrimaryExpr::Literal(Literal::Float(self.expect_float()?)))
+            }
+            Some(Token::True) => {
+                self.advance();
+                Expression::Primary(PrimaryExpr::Literal(Literal::Boolean(true)))
+            }
+            Some(Token::False) => {
+                self.advance();
+                Expression::Primary(PrimaryExpr::Literal(Literal::Boolean(false)))
+            }
+            Some(Token::Null) => {
+                self.advance();
+                Expression::Primary(PrimaryExpr::Literal(Literal::Null))
+            }
+            Some(Token::String(text)) => {
+                let content = &text[1..text.len() - 1];
+                let processed = self.process_string_escapes(content);
+                self.advance();
+                Expression::Primary(PrimaryExpr::Literal(Literal::String(processed)))
+            }
+            Some(Token::Ident(name)) => {
+                let id = name.to_string();
+                self.advance();
+                Expression::Primary(PrimaryExpr::Identifier(id))
+            }
+            Some(Token::Free) => {
+                self.advance();
+                Expression::Primary(PrimaryExpr::Identifier("free".to_string()))
+            }
+            Some(Token::LParen) => {
+                self.advance();
+                let expr = self.parse_expression()?;
+                self.expect_rparen()?;
+                expr
+            }
+            Some(Token::LBracket) => {
+                self.advance();
+                let mut elements = Vec::new();
+                if !self.check_rbracket() {
+                    loop {
+                        elements.push(self.parse_expression()?);
+                        if self.match_comma() {
+                            if self.check_rbracket() {
+                                break;
+                            }
+                            continue;
+                        }
+                        break;
+                    }
+                }
+                self.expect_rbracket()?;
+                Expression::Primary(PrimaryExpr::ArrayLiteral(elements))
+            }
+            Some(Token::LBrace) => {
+                self.advance();
+                let mut fields = Vec::new();
+                if !self.check_rbrace() {
+                    loop {
+                        let name = self.expect_ident()?;
+                        self.expect_colon()?;
+                        let expr = self.parse_expression()?;
+                        fields.push(FieldInit {
+                            name: Some(name),
+                            expr,
+                        });
+
+                        if self.match_comma() {
+                            if self.check_rbrace() {
+                                break;
+                            }
+                            continue;
+                        }
+                        break;
+                    }
+                }
+
+                self.expect_rbrace()?;
+                Expression::Primary(PrimaryExpr::StructLiteral(fields))
+            }
+            Some(Token::New) => {
+                self.advance();
+                self.expect_lparen()?;
+                let ty = self.parse_type()?;
+                let mut args = Vec::new();
+                if self.match_comma() {
+                    if !self.check_rparen() {
+                        loop {
+                            args.push(self.parse_expression()?);
+                            if self.match_comma() {
+                                if self.check_rparen() {
+                                    break;
+                                }
+                                continue;
+                            }
+                            break;
+                        }
+                    }
+                }
+                self.expect_rparen()?;
+                Expression::Primary(PrimaryExpr::New { ty, args })
+            }
+            Some(tok) => {
+                return Err(self.error_with_token("unexpected token in primary expression", tok));
+            }
+            None => return Err(self.error("unexpected end of input")),
+        };
+        Ok(expr)
     }
 
     fn match_rparen(&mut self) -> bool {
@@ -1518,7 +1402,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_tuple_return_function_signature() {
+    fn parses_struct_return_function_signature() {
         let tokens = vec![
             Token::Ident("divide"),
             Token::Colon,
@@ -1533,7 +1417,7 @@ mod tests {
             Token::RParen,
             Token::Minus,
             Token::Gt,
-            Token::LParen,
+            Token::LBrace,
             Token::Ident("quotient"),
             Token::Colon,
             Token::I32,
@@ -1541,14 +1425,18 @@ mod tests {
             Token::Ident("remainder"),
             Token::Colon,
             Token::I32,
-            Token::RParen,
+            Token::RBrace,
             Token::LBrace,
             Token::Return,
             Token::LBrace,
+            Token::Ident("quotient"),
+            Token::Colon,
             Token::Ident("a"),
             Token::Slash,
             Token::Ident("b"),
             Token::Comma,
+            Token::Ident("remainder"),
+            Token::Colon,
             Token::Ident("a"),
             Token::Percent,
             Token::Ident("b"),
@@ -1563,10 +1451,10 @@ mod tests {
 
         match &program.declarations[0].decl {
             DeclNode::Function { return_type, .. } => match return_type {
-                Some(ReturnType::Tuple(fields)) => {
+                Some(ReturnType::Single(Type::Struct(fields))) => {
                     assert_eq!(fields.len(), 2);
-                    assert_eq!(fields[0].name.as_deref(), Some("quotient"));
-                    assert_eq!(fields[1].name.as_deref(), Some("remainder"));
+                    assert_eq!(fields[0].name, "quotient");
+                    assert_eq!(fields[1].name, "remainder");
                 }
                 other => panic!("unexpected return type: {other:?}"),
             },
@@ -1616,13 +1504,17 @@ mod tests {
     }
 
     #[test]
-    fn parses_tuple_destructuring_assignment() {
+    fn parses_struct_destructuring_assignment() {
         let tokens = vec![
-            Token::LParen,
+            Token::LBrace,
             Token::Ident("q"),
+            Token::Colon,
+            Token::I32,
             Token::Comma,
             Token::Ident("r"),
-            Token::RParen,
+            Token::Colon,
+            Token::I32,
+            Token::RBrace,
             Token::Assign,
             Token::Ident("divide"),
             Token::LParen,
@@ -1640,8 +1532,8 @@ mod tests {
                     assert_eq!(fields.len(), 2);
                     assert_eq!(fields[0].name, Some("q".to_string()));
                     assert_eq!(fields[1].name, Some("r".to_string()));
-                    assert!(fields[0].ty.is_none());
-                    assert!(fields[1].ty.is_none());
+                    assert!(matches!(&fields[0].ty, Some(Type::Primitive(name)) if name == "i32"));
+                    assert!(matches!(&fields[1].ty, Some(Type::Primitive(name)) if name == "i32"));
                 }
                 other => panic!("unexpected assignment target: {other:?}"),
             },
@@ -1650,9 +1542,9 @@ mod tests {
     }
 
     #[test]
-    fn parses_tuple_destructuring_with_types() {
+    fn parses_struct_destructuring_with_types() {
         let tokens = vec![
-            Token::LParen,
+            Token::LBrace,
             Token::Ident("q"),
             Token::Colon,
             Token::I32,
@@ -1660,7 +1552,7 @@ mod tests {
             Token::Ident("r"),
             Token::Colon,
             Token::I32,
-            Token::RParen,
+            Token::RBrace,
             Token::Assign,
             Token::Ident("divide"),
             Token::LParen,
@@ -1688,13 +1580,13 @@ mod tests {
     }
 
     #[test]
-    fn parses_tuple_destructuring_with_discard() {
+    fn parses_struct_destructuring_with_discard() {
         let tokens = vec![
-            Token::LParen,
+            Token::LBrace,
             Token::Ident("file"),
             Token::Comma,
             Token::Ident("_"),
-            Token::RParen,
+            Token::RBrace,
             Token::Assign,
             Token::Ident("open_file"),
             Token::LParen,

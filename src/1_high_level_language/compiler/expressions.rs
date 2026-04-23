@@ -437,11 +437,13 @@ impl HighLevelCompiler {
                 });
                 let content_len = content.len();
 
-                // Create a tuple (u8*, i64) to represent the string.
-                // IR uses i8 for byte pointers because integer signedness is not encoded.
+                // Represent strings as an inline struct `{ data: u8*, length: u64 }`.
                 let tuple_fields = vec![
-                    ("0".to_string(), IrType::Pointer(Box::new(IrType::Integer(IntWidth::I8)))),
-                    ("1".to_string(), IrType::Integer(IntWidth::I64)),
+                    (
+                        "data".to_string(),
+                        IrType::Pointer(Box::new(IrType::Integer(IntWidth::I8))),
+                    ),
+                    ("length".to_string(), IrType::Integer(IntWidth::I64)),
                 ];
                 let tuple_ty = IrType::Aggregate(tuple_fields);
                 
