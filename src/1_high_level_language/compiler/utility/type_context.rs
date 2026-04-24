@@ -2,7 +2,7 @@ use crate::high_level_language::ast::{BinaryOp, UnaryOp};
 use crate::intermediate_language::IrType;
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TypeCheckError {
     TypeMismatch {
         expected: String,
@@ -42,7 +42,7 @@ impl TypeContext {
 
     pub fn register_type(&mut self, name: impl Into<String>, ty: IrType) {
         let name_str = name.into();
-        let ty_str = format!("{:?}", ty);
+        let ty_str = format!("{ty:?}");
         self.type_cache.insert(name_str.clone(), ty_str);
         self.named_types.insert(name_str, ty);
     }
@@ -71,8 +71,8 @@ impl TypeContext {
             && !rhs_placeholder
         {
             return Err(TypeCheckError::TypeMismatch {
-                expected: lhs_type.to_string(),
-                found: rhs_type.to_string(),
+                expected: lhs_type.to_owned(),
+                found: rhs_type.to_owned(),
             });
         }
 
@@ -93,13 +93,13 @@ impl TypeContext {
                     && !self.is_placeholder_like(effective_type)
                 {
                     return Err(TypeCheckError::InvalidOperation {
-                        op: format!("{:?}", op),
-                        lhs: lhs_type.to_string(),
-                        rhs: rhs_type.to_string(),
+                        op: format!("{op:?}"),
+                        lhs: lhs_type.to_owned(),
+                        rhs: rhs_type.to_owned(),
                     });
                 }
 
-                Ok(effective_type.to_string())
+                Ok(effective_type.to_owned())
             }
 
             // Logical operations work on bools
@@ -110,12 +110,12 @@ impl TypeContext {
                     && !self.is_unknown_like(effective_type)
                 {
                     return Err(TypeCheckError::InvalidOperation {
-                        op: format!("{:?}", op),
-                        lhs: lhs_type.to_string(),
-                        rhs: rhs_type.to_string(),
+                        op: format!("{op:?}"),
+                        lhs: lhs_type.to_owned(),
+                        rhs: rhs_type.to_owned(),
                     });
                 }
-                Ok("i1".to_string())
+                Ok("i1".to_owned())
             }
 
             // Comparisons return bool
@@ -124,7 +124,7 @@ impl TypeContext {
             | BinaryOp::Lt
             | BinaryOp::Lte
             | BinaryOp::Gt
-            | BinaryOp::Gte => Ok("i1".to_string()),
+            | BinaryOp::Gte => Ok("i1".to_owned()),
         }
     }
 
@@ -138,34 +138,34 @@ impl TypeContext {
             UnaryOp::Negate => {
                 if !self.is_numeric(operand_type) {
                     return Err(TypeCheckError::InvalidUnaryOp {
-                        op: "negate".to_string(),
-                        ty: operand_type.to_string(),
+                        op: "negate".to_owned(),
+                        ty: operand_type.to_owned(),
                     });
                 }
-                Ok(operand_type.to_string())
+                Ok(operand_type.to_owned())
             }
             UnaryOp::Not => {
                 if operand_type != "i1" && operand_type != "bool" {
                     return Err(TypeCheckError::InvalidUnaryOp {
-                        op: "not".to_string(),
-                        ty: operand_type.to_string(),
+                        op: "not".to_owned(),
+                        ty: operand_type.to_owned(),
                     });
                 }
-                Ok("i1".to_string())
+                Ok("i1".to_owned())
             }
             UnaryOp::Dereference => {
                 if let Some(inner) = operand_type.strip_prefix('*') {
-                    Ok(inner.to_string())
+                    Ok(inner.to_owned())
                 } else if self.is_unknown_like(operand_type) {
-                    Ok("unknown".to_string())
+                    Ok("unknown".to_owned())
                 } else {
                     Err(TypeCheckError::InvalidUnaryOp {
-                        op: "dereference".to_string(),
-                        ty: operand_type.to_string(),
+                        op: "dereference".to_owned(),
+                        ty: operand_type.to_owned(),
                     })
                 }
             }
-            UnaryOp::AddressOf => Ok(format!("*{}", operand_type)),
+            UnaryOp::AddressOf => Ok(format!("*{operand_type}")),
         }
     }
 
@@ -196,9 +196,9 @@ impl TypeContext {
 
     pub fn get_type_name(&self, ty: &IrType) -> String {
         match ty {
-            IrType::Void => "void".to_string(),
-            IrType::Integer(width) => format!("{:?}", width).to_lowercase(),
-            IrType::Float(width) => format!("{:?}", width).to_lowercase(),
+            IrType::Void => "void".to_owned(),
+            IrType::Integer(width) => format!("{width:?}").to_lowercase(),
+            IrType::Float(width) => format!("{width:?}").to_lowercase(),
             IrType::Pointer(inner) => format!("*{}", self.get_type_name(inner)),
             IrType::Array { element, len } => {
                 format!("{}[{}]", self.get_type_name(element), len)

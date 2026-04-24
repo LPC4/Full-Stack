@@ -1,4 +1,4 @@
-use super::*;
+use super::{HighLevelCompiler, Expression, LoweredValue, IrType, IrValue, IrInstruction, UnaryOp, Literal, AssignTarget, IntWidth, FloatWidth, IrGlobalString, BinaryOp, IrMathOp, IrCmpOp, IrUnaryOp, IrRegister};
 
 impl HighLevelCompiler {
     pub(super) fn lower_expression(&mut self, expression: &Expression) -> Option<LoweredValue> {
@@ -124,16 +124,8 @@ impl HighLevelCompiler {
                     let count = match args.len() {
                         0 => None,
                         1 => match &args[0] {
-                            Expression::Primary(
-                                crate::high_level_language::ast::PrimaryExpr::Literal(
-                                    Literal::Integer(v),
-                                ),
-                            )
-                            | Expression::Primary(
-                                crate::high_level_language::ast::PrimaryExpr::Literal(
-                                    Literal::HexInteger(v),
-                                ),
-                            ) if *v > 0 => Some(*v as usize),
+                            Expression::Primary(crate::high_level_language::ast::PrimaryExpr::Literal(Literal::Integer(v)
+| Literal::HexInteger(v))) if *v > 0 => Some(*v as usize),
                             other => {
                                 self.context.diagnostics.error(format!(
                                         "new({}, count) requires a positive integer literal count; got `{}`",
@@ -145,8 +137,7 @@ impl HighLevelCompiler {
                         },
                         n => {
                             self.context.diagnostics.error(format!(
-                                "new({}, ...) expects at most one count argument, got {}",
-                                lowered_ty, n
+                                "new({lowered_ty}, ...) expects at most one count argument, got {n}"
                             ));
                             return None;
                         }
@@ -169,7 +160,7 @@ impl HighLevelCompiler {
                         } else {
                             self.context
                                 .diagnostics
-                                .error(format!("failed to lower argument for call to {}", name));
+                                .error(format!("failed to lower argument for call to {name}"));
                             return None;
                         }
                     }
@@ -264,44 +255,41 @@ impl HighLevelCompiler {
                 self.lower_binary(op, lhs, rhs)
             }
             Expression::Unary { op, expr } => {
-                match op {
-                    UnaryOp::AddressOf => {
-                        // `&` accepts l-values like identifiers and array elements, but never `&@ptr`.
-                        if matches!(
-                            &**expr,
-                            Expression::Unary {
-                                op: UnaryOp::Dereference,
-                                ..
-                            }
-                        ) {
-                            self.context
-                                .diagnostics
-                                .error("cannot take address of a dereference expression (`&@...` is invalid)".to_string());
-                            return None;
+                if op == &UnaryOp::AddressOf {
+                    // `&` accepts l-values like identifiers and array elements, but never `&@ptr`.
+                    if matches!(
+                        &**expr,
+                        Expression::Unary {
+                            op: UnaryOp::Dereference,
+                            ..
                         }
-
-                        if let Some(target) = self.expression_to_assign_target(expr) {
-                            if let Some((ptr_reg, value_ty)) = self.resolve_assign_lvalue(&target) {
-                                return Some(LoweredValue {
-                                    value: IrValue::Register(ptr_reg),
-                                    ty: IrType::Pointer(Box::new(value_ty)),
-                                });
-                            }
-                        }
-
+                    ) {
                         self.context
                             .diagnostics
-                            .error("address-of requires an assignable l-value (identifier or array element)".to_string());
-                        None
+                            .error("cannot take address of a dereference expression (`&@...` is invalid)".to_owned());
+                        return None;
                     }
-                    _ => {
-                        let input = self.lower_expression(expr)?;
-                        self.lower_unary(op, input)
+
+                    if let Some(target) = self.expression_to_assign_target(expr) {
+                        if let Some((ptr_reg, value_ty)) = self.resolve_assign_lvalue(&target) {
+                            return Some(LoweredValue {
+                                value: IrValue::Register(ptr_reg),
+                                ty: IrType::Pointer(Box::new(value_ty)),
+                            });
+                        }
                     }
+
+                    self.context
+                        .diagnostics
+                        .error("address-of requires an assignable l-value (identifier or array element)".to_owned());
+                    None
+                } else {
+                    let input = self.lower_expression(expr)?;
+                    self.lower_unary(op, input)
                 }
             }
             Expression::Assignment { target, rvalue } => {
-                self.push_instruction(IrInstruction::Comment("assignment".to_string()));
+                self.push_instruction(IrInstruction::Comment("assignment".to_owned()));
                 let lowered = self.lower_expression(rvalue)?;
                 match &**target {
                     AssignTarget::Identifier(name) => {
@@ -368,10 +356,10 @@ impl HighLevelCompiler {
                 // Represent strings as an inline struct `{ data: u8*, length: u64 }`.
                 let struct_fields = vec![
                     (
-                        "data".to_string(),
+                        "data".to_owned(),
                         IrType::Pointer(Box::new(IrType::Integer(IntWidth::I8))),
                     ),
-                    ("length".to_string(), IrType::Integer(IntWidth::I64)),
+                    ("length".to_owned(), IrType::Integer(IntWidth::I64)),
                 ];
                 let struct_ty = IrType::Aggregate(struct_fields);
 
@@ -535,22 +523,18 @@ impl HighLevelCompiler {
                     IrType::Pointer(inner) => *inner.clone(),
                     other => {
                         self.context.diagnostics.error(format!(
-                            "cannot dereference expression of non-pointer type `{}`",
-                            other
+                            "cannot dereference expression of non-pointer type `{other}`"
                         ));
                         return None;
                     }
                 };
 
                 let dest = self.new_temp();
-                let ptr_reg = match input.value {
-                    IrValue::Register(reg) => reg,
-                    _ => {
-                        self.context
-                            .diagnostics
-                            .error("cannot dereference non-register value".to_string());
-                        return None;
-                    }
+                let ptr_reg = if let IrValue::Register(reg) = input.value { reg } else {
+                    self.context
+                        .diagnostics
+                        .error("cannot dereference non-register value".to_owned());
+                    return None;
                 };
                 self.push_instruction(IrInstruction::Load {
                     dest: dest.clone(),
@@ -563,17 +547,14 @@ impl HighLevelCompiler {
                     ty: pointee_ty,
                 })
             }
-            UnaryOp::AddressOf => match input.value {
-                IrValue::Register(reg) => Some(LoweredValue {
-                    value: IrValue::Register(reg),
-                    ty: IrType::Pointer(Box::new(input.ty)),
-                }),
-                _ => {
-                    self.context
-                        .diagnostics
-                        .error("cannot take address of non-register".to_string());
-                    None
-                }
+            UnaryOp::AddressOf => if let IrValue::Register(reg) = input.value { Some(LoweredValue {
+                value: IrValue::Register(reg),
+                ty: IrType::Pointer(Box::new(input.ty)),
+            }) } else {
+                self.context
+                    .diagnostics
+                    .error("cannot take address of non-register".to_owned());
+                None
             },
         }
     }
@@ -587,32 +568,26 @@ impl HighLevelCompiler {
         let resolved_value_ty = self.resolve_named_type(&value.ty);
         let agg_fields = match &resolved_value_ty {
             IrType::Aggregate(fields) => fields.clone(),
-            IrType::Pointer(inner) => match inner.as_ref() {
-                IrType::Aggregate(fields) => fields.clone(),
-                _ => {
-                    self.context
-                        .diagnostics
-                        .error("struct destructuring requires an aggregate type".to_string());
-                    return None;
-                }
+            IrType::Pointer(inner) => if let IrType::Aggregate(fields) = inner.as_ref() { fields.clone() } else {
+                self.context
+                    .diagnostics
+                    .error("struct destructuring requires an aggregate type".to_owned());
+                return None;
             },
             _ => {
                 self.context
                     .diagnostics
-                    .error("struct destructuring requires an aggregate type".to_string());
+                    .error("struct destructuring requires an aggregate type".to_owned());
                 return None;
             }
         };
 
         // Base pointer for the aggregate
-        let base_ptr = match &value.value {
-            IrValue::Register(reg) => reg.clone(),
-            _ => {
-                self.context
-                    .diagnostics
-                    .error("struct destructuring requires a register value".to_string());
-                return None;
-            }
+        let base_ptr = if let IrValue::Register(reg) = &value.value { reg.clone() } else {
+            self.context
+                .diagnostics
+                .error("struct destructuring requires a register value".to_owned());
+            return None;
         };
 
         // Build lookup by field name so partial/reordered destructuring follows source names.
@@ -625,13 +600,12 @@ impl HighLevelCompiler {
         }
 
         // Extract each requested field and assign to target variables.
-        for field in fields.iter() {
+        for field in fields {
             if let Some(ref name) = field.name {
                 let Some((field_offset, field_ty)) = field_offsets.get(name.as_str()).cloned()
                 else {
                     self.context.diagnostics.error(format!(
-                        "struct destructuring field `{}` not found in aggregate type",
-                        name
+                        "struct destructuring field `{name}` not found in aggregate type"
                     ));
                     return None;
                 };
@@ -645,15 +619,11 @@ impl HighLevelCompiler {
                 });
 
                 let target_ptr = if let Some(var_info) = self.context.symbols.lookup(name) {
-                    match &var_info.value {
-                        IrValue::Register(var_ptr) => var_ptr.clone(),
-                        _ => {
-                            self.context.diagnostics.error(format!(
-                                "struct destructuring target `{}` is not register-backed",
-                                name
-                            ));
-                            return None;
-                        }
+                    if let IrValue::Register(var_ptr) = &var_info.value { var_ptr.clone() } else {
+                        self.context.diagnostics.error(format!(
+                            "struct destructuring target `{name}` is not register-backed"
+                        ));
+                        return None;
                     }
                 } else {
                     let var_ptr = IrRegister::Named(name.clone());

@@ -1,4 +1,4 @@
-use super::*;
+use super::{HighLevelCompiler, LoweringContext, Program, IrProgram, CompilerError, SemanticAnalyzer, Declaration, DeclNode, GenericTypeDef, IrTypeAlias, IrFunction, IrRegister, IrParam, IrInstruction, IrValue, IrType, IrTerminator, Expression, Literal};
 
 impl HighLevelCompiler {
     pub fn new() -> Self {
@@ -111,7 +111,7 @@ impl HighLevelCompiler {
                     Err(err) => {
                         self.context
                             .diagnostics
-                            .error(format!("const `{name}` initialization failed: {}", err));
+                            .error(format!("const `{name}` initialization failed: {err}"));
                     }
                 }
                 Ok(())
@@ -132,8 +132,7 @@ impl HighLevelCompiler {
                 };
                 if *is_extern {
                     self.context.diagnostics.warn(format!(
-                        "extern function `{}` lowered as placeholder",
-                        final_name
+                        "extern function `{final_name}` lowered as placeholder"
                     ));
                 }
 
@@ -207,7 +206,7 @@ impl HighLevelCompiler {
                         let defers = std::mem::take(&mut self.defers);
                         if !defers.is_empty() {
                             self.push_instruction(IrInstruction::Comment(
-                                "executing deferred cleanup before return".to_string(),
+                                "executing deferred cleanup before return".to_owned(),
                             ));
                         }
                         for action in defers.into_iter().rev() {
@@ -261,7 +260,7 @@ impl HighLevelCompiler {
                     (crate::high_level_language::ast::UnaryOp::Not, Literal::Boolean(b)) => {
                         Ok(Literal::Boolean(!b))
                     }
-                    _ => Err("Unsupported compile-time unary operation".to_string()),
+                    _ => Err("Unsupported compile-time unary operation".to_owned()),
                 }
             }
             Expression::Binary { op, left, right } => {
@@ -293,10 +292,10 @@ impl HighLevelCompiler {
                         Literal::Integer(a),
                         Literal::Integer(b),
                     ) => Ok(Literal::Integer(a % b)),
-                    _ => Err("Unsupported compile-time binary operation".to_string()),
+                    _ => Err("Unsupported compile-time binary operation".to_owned()),
                 }
             }
-            _ => Err("Expression is not a valid compile-time constant".to_string()),
+            _ => Err("Expression is not a valid compile-time constant".to_owned()),
         }
     }
 }

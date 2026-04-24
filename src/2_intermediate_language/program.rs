@@ -3,7 +3,7 @@ use crate::intermediate_language::types::IrType;
 use crate::intermediate_language::values::IrRegister;
 use std::fmt;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IrTypeAlias {
     pub name: String,
     pub ty: IrType,
@@ -15,7 +15,7 @@ impl fmt::Display for IrTypeAlias {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IrGlobalString {
     pub name: String,
     pub content: String,
@@ -35,7 +35,7 @@ impl fmt::Display for IrGlobalString {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IrParam {
     pub ty: IrType,
     pub register: IrRegister,

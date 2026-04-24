@@ -1,4 +1,4 @@
-use super::*;
+use super::{HighLevelCompiler, IrProgram, Block, Statement, IrInstruction, IrTerminator, IrRegister, IrType, IrValue, Expression, DeferredAction};
 
 impl HighLevelCompiler {
     pub(super) fn lower_block(&mut self, ir_program: &mut IrProgram, block: &Block) {
@@ -16,7 +16,7 @@ impl HighLevelCompiler {
     }
 
     pub(super) fn lower_statement(&mut self, ir_program: &mut IrProgram, statement: &Statement) {
-        log::trace!("Lowering statement: {:?}", statement);
+        log::trace!("Lowering statement: {statement:?}");
         match statement {
             Statement::Expression(expr) => {
                 let _ = self.lower_expression(expr);
@@ -31,7 +31,7 @@ impl HighLevelCompiler {
                 let defers = self.defers.clone();
                 if !defers.is_empty() {
                     self.push_instruction(IrInstruction::Comment(
-                        "executing deferred cleanup before return".to_string(),
+                        "executing deferred cleanup before return".to_owned(),
                     ));
                 }
                 for action in defers.into_iter().rev() {
@@ -41,13 +41,12 @@ impl HighLevelCompiler {
                 self.set_terminator(IrTerminator::Return(value));
             }
             Statement::VariableDecl { name, ty, init } => {
-                self.push_instruction(IrInstruction::Comment(format!("local var: {}", name)));
+                self.push_instruction(IrInstruction::Comment(format!("local var: {name}")));
                 let lowered_ty = match self.lower_type_with_program(ir_program, ty) {
                     Ok(ty) => ty,
                     Err(e) => {
                         self.context.diagnostics.error(format!(
-                            "failed to lower type for variable `{}`: {:?}",
-                            name, e
+                            "failed to lower type for variable `{name}`: {e:?}"
                         ));
                         return;
                     }
@@ -96,7 +95,7 @@ impl HighLevelCompiler {
                 } else {
                     self.context
                         .diagnostics
-                        .error("break outside of loop".to_string());
+                        .error("break outside of loop".to_owned());
                 }
             }
             Statement::Continue => {
@@ -105,7 +104,7 @@ impl HighLevelCompiler {
                 } else {
                     self.context
                         .diagnostics
-                        .error("continue outside of loop".to_string());
+                        .error("continue outside of loop".to_owned());
                 }
             }
             Statement::Defer(expr) => {
@@ -115,16 +114,13 @@ impl HighLevelCompiler {
                 {
                     let mut captured_args = Vec::new();
                     for arg in arguments {
-                        let lowered = match self.lower_expression(arg) {
-                            Some(v) => v,
-                            None => {
-                                self.context.diagnostics.error(format!(
-                                    "failed to capture defer argument `{}` for call `{}`",
-                                    self.format_expression(arg),
-                                    name
-                                ));
-                                return;
-                            }
+                        let lowered = if let Some(v) = self.lower_expression(arg) { v } else {
+                            self.context.diagnostics.error(format!(
+                                "failed to capture defer argument `{}` for call `{}`",
+                                self.format_expression(arg),
+                                name
+                            ));
+                            return;
                         };
                         captured_args.push(lowered.value);
                     }
@@ -140,7 +136,7 @@ impl HighLevelCompiler {
                     });
                 } else {
                     self.push_instruction(IrInstruction::Comment(
-                        "defer: register cleanup logic".to_string(),
+                        "defer: register cleanup logic".to_owned(),
                     ));
                     self.context.diagnostics.warn(
                         "defer on non-call expression is not capture-safe yet; evaluating at exit",
@@ -158,16 +154,13 @@ impl HighLevelCompiler {
         then_block: &Block,
         else_branch: Option<&Statement>,
     ) {
-        self.push_instruction(IrInstruction::Comment("if condition".to_string()));
-        let cond_value = match self.lower_expression(cond) {
-            Some(lowered) => lowered.value,
-            None => {
-                self.context.diagnostics.error(format!(
-                    "failed to lower if condition `{}` (see previous diagnostics for root cause)",
-                    self.format_expression(cond)
-                ));
-                IrValue::Bool(false)
-            }
+        self.push_instruction(IrInstruction::Comment("if condition".to_owned()));
+        let cond_value = if let Some(lowered) = self.lower_expression(cond) { lowered.value } else {
+            self.context.diagnostics.error(format!(
+                "failed to lower if condition `{}` (see previous diagnostics for root cause)",
+                self.format_expression(cond)
+            ));
+            IrValue::Bool(false)
         };
 
         let then_label = self.new_label();
@@ -260,18 +253,15 @@ impl HighLevelCompiler {
         self.set_terminator(IrTerminator::Jump(cond_label.clone()));
 
         self.start_new_block(cond_label.0.clone());
-        self.push_instruction(IrInstruction::Comment("while condition".to_string()));
-        let cond_value = match self.lower_expression(cond) {
-            Some(lowered) => lowered.value,
-            None => {
-                self.context
-                        .diagnostics
-                        .error(format!(
-                            "failed to lower while condition `{}` (see previous diagnostics for root cause)",
-                            self.format_expression(cond)
-                        ));
-                IrValue::Bool(false)
-            }
+        self.push_instruction(IrInstruction::Comment("while condition".to_owned()));
+        let cond_value = if let Some(lowered) = self.lower_expression(cond) { lowered.value } else {
+            self.context
+                    .diagnostics
+                    .error(format!(
+                        "failed to lower while condition `{}` (see previous diagnostics for root cause)",
+                        self.format_expression(cond)
+                    ));
+            IrValue::Bool(false)
         };
 
         self.set_terminator(IrTerminator::Branch {

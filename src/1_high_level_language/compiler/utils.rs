@@ -1,4 +1,4 @@
-use super::*;
+use super::{HighLevelCompiler, IrBlock, IrInstruction, IrTerminator, IrLabel, IrRegister, IrValue, IrType, IntWidth, FloatWidth, AssignTarget, Expression, UnaryOp};
 
 impl HighLevelCompiler {
     pub(super) fn start_new_block(&mut self, label: impl Into<String>) {
@@ -12,7 +12,7 @@ impl HighLevelCompiler {
         if let Some(b) = self.current_block.as_mut() {
             b.push_instruction(inst);
         } else {
-            log::warn!("Instruction pushed without active block: {:?}", inst);
+            log::warn!("Instruction pushed without active block: {inst:?}");
         }
     }
 
@@ -27,7 +27,7 @@ impl HighLevelCompiler {
     pub(super) fn new_label(&mut self) -> IrLabel {
         let current = self.next_label;
         self.next_label = self.next_label.saturating_add(1);
-        IrLabel::new(format!("label_{}", current))
+        IrLabel::new(format!("label_{current}"))
     }
 
     pub(super) fn new_temp(&mut self) -> IrRegister {
@@ -42,7 +42,7 @@ impl HighLevelCompiler {
             IrValue::Float(_) => IrType::Float(FloatWidth::F64),
             IrValue::Bool(_) => IrType::Integer(IntWidth::I1),
             IrValue::Register(_) => IrType::Void, // Default fallback
-            IrValue::Null => IrType::Pointer(Box::new(IrType::Named("unknown".to_string()))),
+            IrValue::Null => IrType::Pointer(Box::new(IrType::Named("unknown".to_owned()))),
             IrValue::GlobalString(_) => IrType::Pointer(Box::new(IrType::Integer(IntWidth::I8))),
         }
     }
@@ -102,10 +102,10 @@ impl HighLevelCompiler {
             AssignTarget::StructDestructure(fields) => {
                 let items = fields
                     .iter()
-                    .map(|f| f.name.as_deref().unwrap_or("_").to_string())
+                    .map(|f| f.name.as_deref().unwrap_or("_").to_owned())
                     .collect::<Vec<_>>()
                     .join(", ");
-                format!("({})", items)
+                format!("({items})")
             }
         }
     }

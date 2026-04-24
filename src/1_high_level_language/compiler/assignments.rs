@@ -1,4 +1,4 @@
-use super::*;
+use super::{HighLevelCompiler, LoweredValue, IrType, IrValue, IrInstruction, AssignTarget, IrRegister, Expression};
 
 impl HighLevelCompiler {
     pub(super) fn lower_field_access(
@@ -94,16 +94,13 @@ impl HighLevelCompiler {
             // `@x = v` where x is a pointer variable stored in a stack slot.
             AssignTarget::Identifier(_) => {
                 let (base_ptr_reg, base_ty) = self.resolve_assign_lvalue(target)?;
-                let pointee_ty = match &base_ty {
-                    IrType::Pointer(inner) => *inner.clone(),
-                    _ => {
-                        self.context.diagnostics.error(format!(
-                            "cannot dereference assignment target `{}` of type `{}`",
-                            self.format_assign_target(target),
-                            base_ty
-                        ));
-                        return None;
-                    }
+                let pointee_ty = if let IrType::Pointer(inner) = &base_ty { *inner.clone() } else {
+                    self.context.diagnostics.error(format!(
+                        "cannot dereference assignment target `{}` of type `{}`",
+                        self.format_assign_target(target),
+                        base_ty
+                    ));
+                    return None;
                 };
 
                 let pointee_ptr_reg = self.new_temp();
@@ -123,16 +120,13 @@ impl HighLevelCompiler {
             // Chained dereference (e.g. @@pp = v)
             AssignTarget::Dereference(inner) => {
                 let (base_ptr_reg, base_ty) = self.resolve_deref_lvalue(inner)?;
-                let pointee_ty = match &base_ty {
-                    IrType::Pointer(inner_ty) => *inner_ty.clone(),
-                    _ => {
-                        self.context.diagnostics.error(format!(
-                            "cannot dereference assignment target `{}` of type `{}`",
-                            self.format_assign_target(target),
-                            base_ty
-                        ));
-                        return None;
-                    }
+                let pointee_ty = if let IrType::Pointer(inner_ty) = &base_ty { *inner_ty.clone() } else {
+                    self.context.diagnostics.error(format!(
+                        "cannot dereference assignment target `{}` of type `{}`",
+                        self.format_assign_target(target),
+                        base_ty
+                    ));
+                    return None;
                 };
 
                 let pointee_ptr_reg = self.new_temp();
@@ -162,39 +156,30 @@ impl HighLevelCompiler {
         match target {
             AssignTarget::Identifier(name) => {
                 let ptr_info = self.context.symbols.lookup(name).cloned()?;
-                let value_ty = match ptr_info.ty {
-                    IrType::Pointer(inner) => *inner,
-                    _ => {
-                        self.context
-                            .diagnostics
-                            .error(format!("cannot assign to non-lvalue target `{name}`"));
-                        return None;
-                    }
+                let value_ty = if let IrType::Pointer(inner) = ptr_info.ty { *inner } else {
+                    self.context
+                        .diagnostics
+                        .error(format!("cannot assign to non-lvalue target `{name}`"));
+                    return None;
                 };
-                let slot_ptr_reg = match ptr_info.value {
-                    IrValue::Register(reg) => reg,
-                    _ => {
-                        self.context.diagnostics.error(format!(
-                            "assignment target `{}` does not resolve to a register-backed lvalue",
-                            self.format_assign_target(target)
-                        ));
-                        return None;
-                    }
+                let slot_ptr_reg = if let IrValue::Register(reg) = ptr_info.value { reg } else {
+                    self.context.diagnostics.error(format!(
+                        "assignment target `{}` does not resolve to a register-backed lvalue",
+                        self.format_assign_target(target)
+                    ));
+                    return None;
                 };
                 Some((slot_ptr_reg, value_ty))
             }
             AssignTarget::Dereference(inner) => {
                 let (base_ptr_reg, base_value_ty) = self.resolve_assign_lvalue(inner)?;
-                let next_pointee_ty = match &base_value_ty {
-                    IrType::Pointer(inner_ty) => *inner_ty.clone(),
-                    _ => {
-                        self.context.diagnostics.error(format!(
-                                "cannot dereference assignment target `{}` because resolved type is `{}`",
-                                self.format_assign_target(inner),
-                                base_value_ty
-                            ));
-                        return None;
-                    }
+                let next_pointee_ty = if let IrType::Pointer(inner_ty) = &base_value_ty { *inner_ty.clone() } else {
+                    self.context.diagnostics.error(format!(
+                            "cannot dereference assignment target `{}` because resolved type is `{}`",
+                            self.format_assign_target(inner),
+                            base_value_ty
+                        ));
+                    return None;
                 };
                 let next_ptr_reg = self.new_temp();
                 self.push_instruction(IrInstruction::Load {
@@ -212,26 +197,23 @@ impl HighLevelCompiler {
                 // Handle both direct aggregates and pointers to aggregates
                 let (agg_ptr_reg, fields) = match &resolved_base_ty {
                     IrType::Aggregate(fields) => (base_ptr_reg, fields.clone()),
-                    IrType::Pointer(inner) => match inner.as_ref() {
-                        IrType::Aggregate(fields) => {
-                            // Load the heap address from the stack slot first
-                            let loaded_ptr = self.new_temp();
-                            self.push_instruction(IrInstruction::Load {
-                                dest: loaded_ptr.clone(),
-                                ty: resolved_base_ty.clone(),
-                                ptr: base_ptr_reg,
-                                offset: None,
-                            });
-                            (loaded_ptr, fields.clone())
-                        }
-                        _ => {
-                            self.context.diagnostics.error(format!(
-                                    "field assignment target `{}` is not an aggregate (resolved base type: `{}`)",
-                                    self.format_assign_target(target),
-                                    resolved_base_ty
-                                ));
-                            return None;
-                        }
+                    IrType::Pointer(inner) => if let IrType::Aggregate(fields) = inner.as_ref() {
+                        // Load the heap address from the stack slot first
+                        let loaded_ptr = self.new_temp();
+                        self.push_instruction(IrInstruction::Load {
+                            dest: loaded_ptr.clone(),
+                            ty: resolved_base_ty.clone(),
+                            ptr: base_ptr_reg,
+                            offset: None,
+                        });
+                        (loaded_ptr, fields.clone())
+                    } else {
+                        self.context.diagnostics.error(format!(
+                                "field assignment target `{}` is not an aggregate (resolved base type: `{}`)",
+                                self.format_assign_target(target),
+                                resolved_base_ty
+                            ));
+                        return None;
                     },
                     _ => {
                         self.context.diagnostics.error(format!(
@@ -243,23 +225,19 @@ impl HighLevelCompiler {
                     }
                 };
 
-                let (offset, field_ty) = match self.aggregate_field_offset_and_type(&fields, field)
-                {
-                    Some(v) => v,
-                    None => {
-                        let known_fields = fields
-                            .iter()
-                            .map(|(name, _)| name.as_str())
-                            .collect::<Vec<_>>()
-                            .join(", ");
-                        self.context.diagnostics.error(format!(
-                            "unknown field `{}` in assignment target `{}`. Known fields: [{}]",
-                            field,
-                            self.format_assign_target(target),
-                            known_fields
-                        ));
-                        return None;
-                    }
+                let (offset, field_ty) = if let Some(v) = self.aggregate_field_offset_and_type(&fields, field) { v } else {
+                    let known_fields = fields
+                        .iter()
+                        .map(|(name, _)| name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    self.context.diagnostics.error(format!(
+                        "unknown field `{}` in assignment target `{}`. Known fields: [{}]",
+                        field,
+                        self.format_assign_target(target),
+                        known_fields
+                    ));
+                    return None;
                 };
                 let field_ptr_reg = self.new_temp();
                 self.push_instruction(IrInstruction::Offset {
@@ -338,7 +316,7 @@ impl HighLevelCompiler {
     ) -> Option<LoweredValue> {
         let target = AssignTarget::FieldAccess {
             expr: Box::new(expr.clone()),
-            field: field.to_string(),
+            field: field.to_owned(),
         };
         let (field_ptr_reg, _field_ty) = self.resolve_assign_lvalue(&target)?;
         self.push_instruction(IrInstruction::Store {
