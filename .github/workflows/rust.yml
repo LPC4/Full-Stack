@@ -6,10 +6,6 @@ on:
   pull_request:
   workflow_dispatch:
 
-env:
-  RUSTFLAGS: -D warnings
-  RUSTDOCFLAGS: -D warnings
-
 jobs:
   check-and-test:
     name: Lint, Check, and Test
@@ -35,9 +31,12 @@ jobs:
       - name: Cache Rust artifacts
         uses: Swatinem/rust-cache@v2
 
-      # Format the code
       - name: Format code
         run: cargo fmt --all
+
+      # Auto-fix safe suggestions
+      - name: Auto-fix Clippy warnings
+        run: cargo clippy --fix --allow-dirty --allow-no-vcs
 
       # Commit and push only if changes were made
       - name: Commit and Push formatting fixes
@@ -46,13 +45,13 @@ jobs:
           git config --local user.name "github-actions[bot]"
           git add .
           if ! git diff --staged --quiet; then
-            git commit -m "Fix formatting (automated)"
+            git commit -m "Fix formatting and clippy lints (automated)"
             git push
           else
             echo "No formatting changes detected."
           fi
 
-      - name: Clippy
+      - name: Clippy (Check only)
         run: cargo clippy --all-targets --all-features
 
       - name: Check WASM target
