@@ -24,4 +24,3 @@ entry:
 	$8 = call free($5)
 	ret $7
 }
-

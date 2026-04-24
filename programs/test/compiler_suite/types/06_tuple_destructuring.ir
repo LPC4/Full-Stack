@@ -1,4 +1,4 @@
-define {i32, i32} divide(i32 $a, i32 $b) {
+define {quotient: i32, remainder: i32} divide(i32 $a, i32 $b) {
 entry:
 	; bind parameter: a
 	$a_ptr = stack_alloc i32
@@ -12,7 +12,7 @@ entry:
 	$3 = read i32 @ $a_ptr
 	$4 = read i32 @ $b_ptr
 	$5 = math mod i32 $3, $4
-	$6 = stack_alloc {i32, i32}
+	$6 = stack_alloc {quotient: i32, remainder: i32}
 	write i32 $2 @ $6 + 0
 	write i32 $5 @ $6 + 4
 	ret $6
@@ -31,4 +31,3 @@ entry:
 	$3 = read i32 @ $quotient
 	ret $3
 }
-

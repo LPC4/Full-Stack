@@ -46,14 +46,14 @@ impl<'a> Parser<'a> {
         self.consume_terminators();
 
         let decl = match self.peek() {
-            Some(Token::Const | Token::ConstKeyword) => {
+            Some(Token::Const) => {
                 self.advance();
                 let name = self.expect_ident()?;
                 self.expect_assign()?;
                 let init = self.parse_expression()?;
                 DeclNode::Const { name, init }
             }
-            Some(Token::Type | Token::TypeKeyword) => {
+            Some(Token::Type) => {
                 self.advance();
                 let name = self.expect_ident()?;
                 let generics = self.parse_generic_params()?;
@@ -957,9 +957,7 @@ impl<'a> Parser<'a> {
         match self.peek() {
             Some(
                 Token::Const
-                | Token::ConstKeyword
                 | Token::Type
-                | Token::TypeKeyword
                 | Token::External,
             ) => true,
             Some(Token::Ident(_)) => {
@@ -1040,6 +1038,9 @@ impl<'a> Parser<'a> {
                 Expression::Primary(PrimaryExpr::Literal(Literal::Null))
             }
             Some(Token::String(text)) => {
+                if text.len() < 2 || !text.starts_with('"') || !text.ends_with('"') {
+                    return Err(self.error("invalid string token"));
+                }
                 let content = &text[1..text.len() - 1];
                 let processed = self.process_string_escapes(content);
                 self.advance();

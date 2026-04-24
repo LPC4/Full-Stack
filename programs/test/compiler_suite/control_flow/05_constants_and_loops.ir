@@ -34,4 +34,3 @@ label_2:
 	$9 = read i32 @ $c
 	ret $9
 }
-

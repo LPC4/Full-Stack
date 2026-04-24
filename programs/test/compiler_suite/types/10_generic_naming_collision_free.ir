@@ -1,6 +1,6 @@
-type Box_i32 = {i32}
-type Box<i32> = {i32}
-type Box<Box<i32>> = {Box<i32>}
+type Box_i32 = {value: i32}
+type Box<i32> = {value: i32}
+type Box<Box<i32>> = {value: Box<i32>}
 
 define i32 main() {
 entry:

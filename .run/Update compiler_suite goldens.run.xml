@@ -1,9 +1,10 @@
 <component name="ProjectRunConfigurationManager">
-  <configuration default="false" name="Trunk serve (wasm)" type="CargoCommandRunConfiguration" factoryName="Cargo Command">
-    <option name="buildProfileId" value="dev" />
-    <option name="command" value="trunk serve --open" />
+  <configuration default="false" name="Update compiler_suite goldens" type="CargoCommandRunConfiguration" factoryName="Cargo Command">
+    <option name="buildProfileId" value="test" />
+    <option name="command" value="test --test all execute_compiler_test_suite -- --nocapture" />
     <option name="workingDirectory" value="file://$PROJECT_DIR$" />
     <envs>
+      <env name="UPDATE_GOLDENS" value="1" />
       <env name="RUST_LOG" value="info" />
     </envs>
     <option name="emulateTerminal" value="false" />

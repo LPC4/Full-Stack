@@ -7,8 +7,6 @@ pub enum Token<'a> {
     String(&'a str),
 
     // Keywords
-    TypeKeyword,
-    ConstKeyword,
     External,
     If,
     Else,

@@ -49,6 +49,10 @@ impl SemanticAnalyzer {
             return Err(());
         }
 
+        // Post-resolution check for unresolved types (optional strict mode)
+        // Uncomment if you want to enforce full type resolution:
+        // self.check_for_unresolved_unknowns(program)?;
+
         Ok(())
     }
 
@@ -663,30 +667,56 @@ impl SemanticAnalyzer {
     }
 
     fn infer_index_element_type(&mut self, base_type: &str) -> Result<String, ()> {
+        // Allow unknown types to propagate only if they're genuinely unresolved
         if base_type == "unknown" || base_type == "*unknown" {
+            self.diagnostics.warn(format!(
+                "indexing operation on unresolved type `{base_type}`; ensure type is resolved before codegen"
+            ));
             return Ok("*unknown".to_owned());
         }
 
+        // Handle pointer-to-array: *T[N] → *T
         if let Some(inner) = base_type.strip_prefix('*') {
             if let Some((element, _len)) = inner.split_once('[') {
                 return Ok(format!("*{element}"));
             }
-
+            // Pointer to non-array: *T → *T (indexing through pointer returns pointer to element)
             return Ok(format!("*{inner}"));
         }
 
+        // Handle direct array: T[N] → *T
         if let Some((element, _rest)) = base_type.split_once('[') {
             return Ok(format!("*{element}"));
         }
 
-        match self.resolve_type_string(base_type) {
-            IrType::Pointer(inner) => Ok(format!("*{}", self.context.get_type_name(&inner))),
+        // Resolve named types and check the underlying structure
+        let resolved = self.resolve_type_string(base_type);
+        match &resolved {
+            IrType::Pointer(inner) => {
+                let inner_name = self.context.get_type_name(inner);
+                // Check if the pointed-to type is itself indexable
+                if inner_name == "unknown" || inner_name == "*unknown" {
+                    self.diagnostics.warn(format!(
+                        "indexing through pointer to unresolved type `{inner_name}`"
+                    ));
+                    return Ok("*unknown".to_owned());
+                }
+                Ok(format!("*{inner_name}"))
+            }
             IrType::Array { element, .. } => {
-                Ok(format!("*{}", self.context.get_type_name(&element)))
+                let element_name = self.context.get_type_name(element);
+                Ok(format!("*{element_name}"))
+            }
+            IrType::Named(name) if name == "unknown" => {
+                self.diagnostics.warn(format!(
+                    "indexing operation on unresolved named type `{name}`"
+                ));
+                Ok("*unknown".to_owned())
             }
             _ => {
-                self.diagnostics
-                    .error(format!("indexing non-indexable type `{base_type}`"));
+                self.diagnostics.error(format!(
+                    "indexing non-indexable type `{base_type}` (resolved: `{resolved:?}`)"
+                ));
                 Err(())
             }
         }
@@ -866,6 +896,43 @@ impl SemanticAnalyzer {
 
     pub fn diagnostics(&self) -> &[crate::high_level_language::compiler::Diagnostic] {
         self.diagnostics.entries()
+    }
+
+    fn check_for_unresolved_unknowns(&mut self, program: &Program) -> Result<(), ()> {
+        // Scan all declarations for any remaining "unknown" type references
+        // Just a quick placeholder
+        // TODO: make this better
+        let mut has_unresolved = false;
+
+        for decl in &program.declarations {
+            if let DeclNode::Variable { ty, .. } = &decl.decl {
+                if self.type_contains_unknown(ty) {
+                    has_unresolved = true;
+                    self.diagnostics.error(format!(
+                        "variable declaration contains unresolved type: `{}`",
+                        self.context.get_type_name(&self.ast_type_to_ir_type(ty))
+                    ));
+                }
+            }
+        }
+
+        if has_unresolved {
+            Err(())
+        } else {
+            Ok(())
+        }
+    }
+
+    fn type_contains_unknown(&self, ty: &Type) -> bool {
+        match ty {
+            Type::Primitive(name) => name == "unknown",
+            Type::Pointer(inner) => self.type_contains_unknown(inner),
+            Type::Array(_, inner) => self.type_contains_unknown(inner),
+            Type::Struct(fields) => fields.iter().any(|f| self.type_contains_unknown(&f.ty)),
+            Type::Named { name, args } => {
+                name == "unknown" || args.iter().any(|a| self.type_contains_unknown(a))
+            }
+        }
     }
 }
 

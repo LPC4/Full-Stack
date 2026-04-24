@@ -30,4 +30,3 @@ entry:
 	$12 = read i32 @ $e
 	ret $12
 }
-

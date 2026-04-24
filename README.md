@@ -3,21 +3,87 @@
 [![Live Site](https://img.shields.io/badge/Live%20Site-GitHub%20Pages-2ea44f?logo=github)](https://lpc4.github.io/Full-Stack/)
 [![Deploy Pages](https://github.com/LPC4/Full-Stack/actions/workflows/pages.yml/badge.svg)](https://github.com/LPC4/Full-Stack/actions/workflows/pages.yml)
 
-Desktop and web UI app built with `eframe` + `egui`.
+An interactive Rust project that explores the stack from high-level language features down through IR, assembly, and eventually machine execution.
 
-## Description
+It ships as a desktop/web UI built with `eframe` + `egui`, plus a growing compiler pipeline with fixtures and golden tests.
 
-This project is an interactive learning site that walks through the computer stack from first principles: logic gates, combinational/sequential circuits, simple CPU architecture, assembly language, and compiler basics.
+## What’s in here
 
-The goal is to make each layer visual and connected so users can see how high-level code eventually becomes low-level machine behavior.
+- **High-level language front end**: lexer, parser, AST, semantic analysis, and HLL-to-IR lowering.
+- **Intermediate language**: a textual IR with aggregate types, pointers, control flow, and snapshot tests.
+- **Assembly direction**: the current bridge toward a minimal RISC-V backend.
+- **UI + documentation**: a small app for exploring the project plus checked-in examples and fixtures.
 
-## Run locally (Windows)
+## Examples
+
+### 1) Simple HLL program
+
+`programs/example/core_syntax.hll`
+
+```hll
+const ZERO = 0
+const FIVE = 5
+
+identity: (value: i32) -> i32 {
+    return value
+}
+
+main: () -> i32 {
+    start: i32 = ZERO
+    next: i32 = identity(FIVE)
+    return start + next
+}
+```
+
+### 2) Pointer-heavy example with generated IR
+
+`programs/debug/debug.hll`
+
+```hll
+type Node = {
+    val: i32,
+    next: Node*
+}
+
+main: () -> i32 {
+    ptr: i32* = new(i32)
+    x: i32 = 5
+    addr: i32* = &x
+    @ptr = @addr + 10
+    defer free(ptr)
+    if @ptr > 10 {
+        return 1
+    }
+    return 0
+}
+```
+
+`programs/debug/debug.ir`
+
+```ir
+type Node = {i32, Node*}
+
+define i32 main() {
+entry:
+    $x = stack_alloc i32
+    write i32 5 @ $x
+    $addr = stack_alloc i32*
+    write i32* $x @ $addr
+    $1 = read i32* @ $addr
+    $2 = read i32 @ $1
+    $3 = math add i32 $2, 10
+}
+```
+
+## Quick start
+
+### Run locally
 
 ```powershell
 cargo run --release
 ```
 
-## Run on the web (WASM)
+### Run in the browser
 
 ```powershell
 rustup target add wasm32-unknown-unknown
@@ -25,36 +91,21 @@ cargo install --locked trunk
 trunk serve
 ```
 
-Open `http://127.0.0.1:8080/index.html#dev`.
+Open `http://127.0.0.1:8080/index.html#dev` to bypass service-worker caching during development.
 
-Using `#dev` bypasses service worker caching so you always load the newest build during development.
-
-## Build release web assets
+### Build a release web bundle
 
 ```powershell
 trunk build --release
 ```
 
-## Deploy to GitHub Pages
+## Deployment
 
-This repo includes a workflow at `.github/workflows/pages.yml` that builds with Trunk and deploys via official GitHub Pages actions.
+This repo deploys through `.github/workflows/pages.yml` with GitHub Actions + GitHub Pages.
 
-1. In GitHub, open your repository `Settings` -> `Pages`.
-2. Set `Source` to `GitHub Actions`.
-3. Push to your deploy branch (currently `main`) to trigger deployment.
-4. Check the `Actions` tab for the `Deploy Pages` workflow run.
+1. Set GitHub Pages source to **GitHub Actions**.
+2. Push to the configured deployment branch.
+3. Check the workflow run in the **Actions** tab.
 
-If your default branch is not `main`, update `.github/workflows/pages.yml`:
+If your default branch changes, update the branch list in `.github/workflows/pages.yml`.
 
-```yml
-on:
-  push:
-    branches:
-      - <your-branch>
-```
-
-### Optional local release build before pushing
-
-```powershell
-trunk build --release
-```

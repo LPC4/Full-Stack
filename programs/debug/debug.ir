@@ -1,4 +1,4 @@
-type Node = {i32, Node*}
+type Node = {val: i32, next: Node*}
 
 define i32 main() {
 entry:

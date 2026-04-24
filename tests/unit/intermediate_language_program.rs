@@ -44,7 +44,7 @@ fn pretty_print_program_has_registers_labels_and_tabs() {
     program.push_function(function);
 
     let output = format!("{program}");
-    assert!(output.contains("type Point = {f32, f32}"));
+    assert!(output.contains("type Point = {x: f32, y: f32}"));
     assert!(output.contains("const hello = c\"hi\""));
     assert!(output.contains("define i32 add_one(i32 $value) {"));
     assert!(output.contains("entry:"));

@@ -11,4 +11,3 @@ entry:
 	$0 = read i32 @ $q
 	ret $0
 }
-

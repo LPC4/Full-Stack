@@ -53,7 +53,14 @@ fn execute_compiler_test_suite() {
                 .to_string();
 
             let ir_path = path.with_extension("ir");
-            if ir_path.exists() {
+            if update_goldens {
+                fs::write(&ir_path, &actual_ir).expect("Failed to write golden ir file");
+                println!(
+                    "Updated golden IR file for {:?}",
+                    path.file_name().unwrap()
+                );
+                tests_run += 1;
+            } else if ir_path.exists() {
                 let expected_ir = fs::read_to_string(&ir_path)
                     .unwrap()
                     .replace("\r\n", "\n")
@@ -69,19 +76,10 @@ fn execute_compiler_test_suite() {
                 );
                 tests_run += 1;
             } else {
-                if !update_goldens {
-                    panic!(
-                        "Missing golden IR file for {:?}; rerun with UPDATE_GOLDENS=1 to bootstrap it",
-                        path.file_name().unwrap()
-                    );
-                }
-
-                fs::write(&ir_path, actual_ir).expect("Failed to write golden ir file");
-                println!(
-                    "Created new golden IR file for {:?}",
+                panic!(
+                    "Missing golden IR file for {:?}; rerun with UPDATE_GOLDENS=1 to bootstrap it",
                     path.file_name().unwrap()
                 );
-                tests_run += 1;
             }
         }
     }

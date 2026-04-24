@@ -49,6 +49,7 @@ pub enum IrType {
     Named(String),
 }
 
+// AFTER:
 impl fmt::Display for IrType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -58,11 +59,16 @@ impl fmt::Display for IrType {
             Self::Pointer(inner) => write!(f, "{inner}*"),
             Self::Aggregate(fields) => {
                 write!(f, "{{")?;
-                for (index, (_name, field_ty)) in fields.iter().enumerate() {
+                for (index, (name, field_ty)) in fields.iter().enumerate() {
                     if index > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{field_ty}")?;
+                    // Print named fields as "name: type", unnamed as just "type"
+                    if !name.is_empty() {
+                        write!(f, "{name}: {field_ty}")?;
+                    } else {
+                        write!(f, "{field_ty}")?;
+                    }
                 }
                 write!(f, "}}")
             }

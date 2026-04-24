@@ -1,4 +1,4 @@
-type Point = {f32, f32}
+type Point = {x: f32, y: f32}
 
 define f32 calc_offset(Point* $p, f32 $shift) {
 entry:
@@ -31,4 +31,3 @@ entry:
 	$16 = math mul f32 $13, $15
 	ret $16
 }
-

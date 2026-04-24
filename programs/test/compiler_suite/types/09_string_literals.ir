@@ -5,23 +5,22 @@ const str_2 = c""
 define i32 main() {
 entry:
 	; local var: str1
-	$str1 = stack_alloc {i8*, i64}
-	$0 = stack_alloc {i8*, i64}
+	$str1 = stack_alloc {data: i8*, length: i64}
+	$0 = stack_alloc {data: i8*, length: i64}
 	write i8* str_0 @ $0 + 0
 	write i64 11 @ $0 + 8
-	write {i8*, i64} $0 @ $str1
+	write {data: i8*, length: i64} $0 @ $str1
 	; local var: str2
-	$str2 = stack_alloc {i8*, i64}
-	$1 = stack_alloc {i8*, i64}
+	$str2 = stack_alloc {data: i8*, length: i64}
+	$1 = stack_alloc {data: i8*, length: i64}
 	write i8* str_1 @ $1 + 0
 	write i64 20 @ $1 + 8
-	write {i8*, i64} $1 @ $str2
+	write {data: i8*, length: i64} $1 @ $str2
 	; local var: str3
-	$str3 = stack_alloc {i8*, i64}
-	$2 = stack_alloc {i8*, i64}
+	$str3 = stack_alloc {data: i8*, length: i64}
+	$2 = stack_alloc {data: i8*, length: i64}
 	write i8* str_2 @ $2 + 0
 	write i64 0 @ $2 + 8
-	write {i8*, i64} $2 @ $str3
+	write {data: i8*, length: i64} $2 @ $str3
 	ret 0
 }
-
