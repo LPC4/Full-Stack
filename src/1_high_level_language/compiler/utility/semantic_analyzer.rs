@@ -921,11 +921,7 @@ impl SemanticAnalyzer {
             }
         }
 
-        if has_unresolved {
-            Err(())
-        } else {
-            Ok(())
-        }
+        if has_unresolved { Err(()) } else { Ok(()) }
     }
 
     fn type_contains_unknown(&self, ty: &Type) -> bool {
