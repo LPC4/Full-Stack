@@ -121,7 +121,11 @@ main: () -> bool {
 "#,
     );
 
-    assert!(result.is_ok(), "expected mixed boolean precedence to compile successfully: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "expected mixed boolean precedence to compile successfully: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -137,4 +141,3 @@ main: () -> i32* {
         "Type error in binary operation",
     );
 }
-

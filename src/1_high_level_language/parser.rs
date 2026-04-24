@@ -652,9 +652,8 @@ impl<'a> Parser<'a> {
             return Ok(Type::Primitive("void".to_string()));
         }
 
-        Err(self.error(
-            "parenthesized types are not supported; use inline struct types with `{ ... }`",
-        ))
+        Err(self
+            .error("parenthesized types are not supported; use inline struct types with `{ ... }`"))
     }
 
     fn parse_generic_params(&mut self) -> Result<Vec<String>, ParserError> {
@@ -771,7 +770,7 @@ impl<'a> Parser<'a> {
     fn process_string_escapes(&self, input: &str) -> String {
         let mut result = String::with_capacity(input.len());
         let mut chars = input.chars();
-        
+
         while let Some(c) = chars.next() {
             if c == '\\' {
                 match chars.next() {
@@ -790,7 +789,7 @@ impl<'a> Parser<'a> {
                 result.push(c);
             }
         }
-        
+
         result
     }
 
@@ -969,7 +968,10 @@ impl<'a> Parser<'a> {
     }
 
     fn is_expression_terminator(&self) -> bool {
-        matches!(self.peek(), Some(Token::StatementTerminator) | Some(Token::Eof) | None)
+        matches!(
+            self.peek(),
+            Some(Token::StatementTerminator) | Some(Token::Eof) | None
+        )
     }
 
     fn check_if(&self) -> bool {
@@ -1086,11 +1088,7 @@ impl<'a> Parser<'a> {
                         };
                         self.expect_assign()?;
                         let expr = self.parse_expression()?;
-                        fields.push(FieldInit {
-                            name,
-                            ty,
-                            expr,
-                        });
+                        fields.push(FieldInit { name, ty, expr });
 
                         if self.match_comma() {
                             if self.check_rbrace() {

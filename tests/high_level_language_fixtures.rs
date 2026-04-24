@@ -323,7 +323,11 @@ fn test5_hll_parser_reordered_and_partial_struct_destructuring() {
         DeclNode::Function { name, body, .. } => {
             assert_eq!(name, "main");
             let block = body.as_ref().expect("main should have a body");
-            assert_eq!(block.statements.len(), 3, "Expected two destructures and a return");
+            assert_eq!(
+                block.statements.len(),
+                3,
+                "Expected two destructures and a return"
+            );
 
             let first_assign = match &block.statements[0] {
                 Statement::Expression(Expression::Assignment { target, .. }) => target,

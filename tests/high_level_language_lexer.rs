@@ -163,4 +163,3 @@ fn test_single_pipe_is_invalid() {
         Token::Error("Unexpected character: | at position 1".to_string())
     );
 }
-

@@ -19,7 +19,10 @@ fn integration_hll_fixtures_compile() {
         .collect();
 
     fixtures.sort();
-    assert!(!fixtures.is_empty(), "expected at least one integration fixture");
+    assert!(
+        !fixtures.is_empty(),
+        "expected at least one integration fixture"
+    );
 
     let mut pipeline = CompilationPipeline::new();
     // Integration fixtures exercise parser/lowering breadth; semantic generic resolution is still incomplete.
@@ -29,10 +32,11 @@ fn integration_hll_fixtures_compile() {
         let source = fs::read_to_string(&fixture)
             .unwrap_or_else(|err| panic!("failed to read fixture {fixture:?}: {err}"));
 
-        pipeline
-            .compile(&source)
-            .unwrap_or_else(|err| panic!("integration fixture {:?} failed to compile: {err}", fixture.file_name().unwrap()));
+        pipeline.compile(&source).unwrap_or_else(|err| {
+            panic!(
+                "integration fixture {:?} failed to compile: {err}",
+                fixture.file_name().unwrap()
+            )
+        });
     }
 }
-
-

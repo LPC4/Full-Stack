@@ -192,4 +192,3 @@ impl CompilationPipeline {
         Ok(result.ir_program)
     }
 }
-

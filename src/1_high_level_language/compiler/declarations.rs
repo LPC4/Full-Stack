@@ -48,7 +48,7 @@ impl HighLevelCompiler {
         for declaration in &program.declarations {
             self.lower_declaration(&mut ir_program, declaration)?;
         }
-        
+
         // Add all pending global strings to the IR program
         for global_string in self.pending_global_strings.drain(..) {
             ir_program.push_global_string(global_string);
