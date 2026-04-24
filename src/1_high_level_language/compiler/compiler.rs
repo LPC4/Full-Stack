@@ -18,7 +18,7 @@ struct GenericTypeDef {
     ty: Type,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CompilerError {
     UnsupportedDeclaration(String),
     UnsupportedFeature(&'static str),
@@ -50,9 +50,9 @@ pub struct HighLevelCompiler {
     defers: Vec<DeferredAction>,
     /// Map of compile-time constant names to their evaluated literal values
     compile_time_consts: std::collections::HashMap<String, Literal>,
-    /// Stack of (continue_label, break_label) for nested loops
+    /// Stack of (`continue_label`, `break_label`) for nested loops
     loop_labels: Vec<(IrLabel, IrLabel)>,
-    /// Cache of specialized generic types: (original_name, type_args) -> specialized_name
+    /// Cache of specialized generic types: (`original_name`, `type_args`) -> `specialized_name`
     generic_type_cache: std::collections::HashMap<(String, Vec<IrType>), String>,
     /// Store generic type definitions for later specialization
     generic_type_defs: std::collections::HashMap<String, GenericTypeDef>,

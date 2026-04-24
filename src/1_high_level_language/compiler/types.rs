@@ -1,4 +1,4 @@
-use super::*;
+use super::{HighLevelCompiler, ReturnType, IrType, Type, IrProgram, CompilerError, IntWidth, FloatWidth, IrTypeAlias};
 
 impl HighLevelCompiler {
     pub(super) fn lower_return_type(&mut self, return_type: Option<&ReturnType>) -> IrType {
@@ -44,7 +44,7 @@ impl HighLevelCompiler {
             .map(|t| t.to_string())
             .collect::<Vec<_>>()
             .join(", ");
-        format!("{}<{}>", name, args)
+        format!("{name}<{args}>")
     }
 
     pub(super) fn lower_type_with_program(
@@ -194,14 +194,14 @@ impl HighLevelCompiler {
                     IntWidth::I32 => "i32",
                     IntWidth::I64 => "i64",
                 };
-                Type::Primitive(name.to_string())
+                Type::Primitive(name.to_owned())
             }
             IrType::Float(width) => {
                 let name = match width {
                     FloatWidth::F32 => "f32",
                     FloatWidth::F64 => "f64",
                 };
-                Type::Primitive(name.to_string())
+                Type::Primitive(name.to_owned())
             }
             IrType::Pointer(inner) => Type::Pointer(Box::new(self.ir_type_to_type(inner))),
             IrType::Array { len, element } => {
@@ -224,7 +224,7 @@ impl HighLevelCompiler {
                 name: name.clone(),
                 args: Vec::new(),
             },
-            IrType::Void => Type::Primitive("void".to_string()),
+            IrType::Void => Type::Primitive("void".to_owned()),
         }
     }
 
@@ -235,14 +235,14 @@ impl HighLevelCompiler {
         type_args: &[IrType],
     ) -> Result<String, CompilerError> {
         // Check cache first
-        let cache_key = (name.to_string(), type_args.to_vec());
+        let cache_key = (name.to_owned(), type_args.to_vec());
         if let Some(specialized_name) = self.generic_type_cache.get(&cache_key) {
             return Ok(specialized_name.clone());
         }
 
         // Get the generic type definition
         let generic_def = self.generic_type_defs.get(name).ok_or_else(|| {
-            CompilerError::UnsupportedDeclaration(format!("Unknown generic type `{}`", name))
+            CompilerError::UnsupportedDeclaration(format!("Unknown generic type `{name}`"))
         })?;
 
         // Validate argument count
@@ -259,10 +259,7 @@ impl HighLevelCompiler {
         let specialized_name = self.create_specialized_name(name, type_args);
 
         log::debug!(
-            "Specializing generic type `{}` as `{}` with args: {:?}",
-            name,
-            specialized_name,
-            type_args
+            "Specializing generic type `{name}` as `{specialized_name}` with args: {type_args:?}"
         );
 
         // Substitute generic parameters with concrete types

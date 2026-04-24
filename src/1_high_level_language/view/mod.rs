@@ -829,10 +829,10 @@ impl HighLevelLanguageView {
         loop {
             let token = lexer.next_token();
             if let Token::Error(ref msg) = token {
-                self.tokens_output = format!("LEXER ERROR: {}", msg);
+                self.tokens_output = format!("LEXER ERROR: {msg}");
                 self.ast_output = String::from("Did not parse due to lexer error.");
                 self.ir_output = String::from("Did not compile due to lexer error.");
-                self.compile_error = Some(format!("Lexer error: {}", msg));
+                self.compile_error = Some(format!("Lexer error: {msg}"));
                 self.compile_success_until = None;
                 self.just_compiled_successfully = false;
                 return;
@@ -843,7 +843,7 @@ impl HighLevelLanguageView {
                 break;
             }
         }
-        self.tokens_output = format!("{:#?}", tokens);
+        self.tokens_output = format!("{tokens:#?}");
 
         // Then compile full pipeline
         match pipeline.compile(&self.source_code) {
@@ -886,7 +886,7 @@ impl HighLevelLanguageView {
                         self.ir_output = String::from("Did not compile due to parser error.");
                     }
                     CompilationError::CompilerError(compiler_err) => {
-                        self.ir_output = format!("Compiler internal error: {:?}", compiler_err);
+                        self.ir_output = format!("Compiler internal error: {compiler_err:?}");
                     }
                     CompilationError::SemanticErrors(errors) => {
                         self.ir_output = format!(
@@ -896,7 +896,7 @@ impl HighLevelLanguageView {
                     }
                     _ => unreachable!("Lexer errors already handled"),
                 }
-                self.compile_error = Some(format!("{}", err));
+                self.compile_error = Some(format!("{err}"));
                 self.compile_success_until = None;
                 self.just_compiled_successfully = false;
             }

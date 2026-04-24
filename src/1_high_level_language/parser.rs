@@ -1,4 +1,4 @@
-use super::ast::*;
+use super::ast::{Program, Declaration, DeclNode, Block, Statement, Expression, Type, Parameter, ReturnType, BinaryOp, UnaryOp, PrimaryExpr, FieldDecl, AssignTarget, StructDestructureField, Literal, FieldInit};
 use super::token::Token;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -649,7 +649,7 @@ impl<'a> Parser<'a> {
     fn parse_parenthesized_type(&mut self) -> Result<Type, ParserError> {
         self.expect_lparen()?;
         if self.match_rparen() {
-            return Ok(Type::Primitive("void".to_string()));
+            return Ok(Type::Primitive("void".to_owned()));
         }
 
         Err(self
@@ -810,7 +810,7 @@ impl<'a> Parser<'a> {
     fn expect_ident(&mut self) -> Result<String, ParserError> {
         match self.peek() {
             Some(Token::Ident(name)) => {
-                let out = (*name).to_string();
+                let out = (*name).to_owned();
                 self.advance();
                 Ok(out)
             }
@@ -951,11 +951,8 @@ impl<'a> Parser<'a> {
 
     fn is_declaration_start(&self) -> bool {
         match self.peek() {
-            Some(Token::Const)
-            | Some(Token::ConstKeyword)
-            | Some(Token::Type)
-            | Some(Token::TypeKeyword)
-            | Some(Token::External) => true,
+            Some(Token::Const | Token::ConstKeyword | Token::Type | Token::TypeKeyword |
+Token::External) => true,
             Some(Token::Ident(_)) => {
                 if self.peek_n(1) != Some(&Token::Colon) {
                     return false;
@@ -970,7 +967,7 @@ impl<'a> Parser<'a> {
     fn is_expression_terminator(&self) -> bool {
         matches!(
             self.peek(),
-            Some(Token::StatementTerminator) | Some(Token::Eof) | None
+            Some(Token::StatementTerminator | Token::Eof) | None
         )
     }
 
@@ -1046,7 +1043,7 @@ impl<'a> Parser<'a> {
             }
             Some(Token::Free) => {
                 self.advance();
-                Expression::Primary(PrimaryExpr::Identifier("free".to_string()))
+                Expression::Primary(PrimaryExpr::Identifier("free".to_owned()))
             }
             Some(Token::LParen) => {
                 self.advance();
@@ -1302,7 +1299,7 @@ impl<'a> Parser<'a> {
 
     fn error(&self, message: &str) -> ParserError {
         ParserError {
-            message: message.to_string(),
+            message: message.to_owned(),
             pos: self.pos,
         }
     }

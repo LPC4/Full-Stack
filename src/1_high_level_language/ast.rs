@@ -7,10 +7,10 @@ pub struct Program {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
     Primitive(String),
-    Pointer(Box<Type>),
-    Array(usize, Box<Type>),
+    Pointer(Box<Self>),
+    Array(usize, Box<Self>),
     Struct(Vec<FieldDecl>),
-    Named { name: String, args: Vec<Type> },
+    Named { name: String, args: Vec<Self> },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -74,7 +74,7 @@ pub enum Statement {
     If {
         cond: Expression,
         then_block: Block,
-        else_branch: Option<Box<Statement>>,
+        else_branch: Option<Box<Self>>,
     },
     While {
         cond: Expression,
@@ -95,16 +95,16 @@ pub enum Statement {
 pub enum Expression {
     Assignment {
         target: Box<AssignTarget>,
-        rvalue: Box<Expression>,
+        rvalue: Box<Self>,
     },
     Binary {
         op: BinaryOp,
-        left: Box<Expression>,
-        right: Box<Expression>,
+        left: Box<Self>,
+        right: Box<Self>,
     },
     Unary {
         op: UnaryOp,
-        expr: Box<Expression>,
+        expr: Box<Self>,
     },
     Primary(PrimaryExpr),
 }
@@ -112,13 +112,13 @@ pub enum Expression {
 #[derive(Debug, Clone, PartialEq)]
 pub enum AssignTarget {
     Identifier(String),
-    Dereference(Box<AssignTarget>),
+    Dereference(Box<Self>),
     FieldAccess {
-        expr: Box<AssignTarget>,
+        expr: Box<Self>,
         field: String,
     },
     ArrayIndex {
-        expr: Box<AssignTarget>,
+        expr: Box<Self>,
         index: Box<Expression>,
     },
     StructDestructure(Vec<StructDestructureField>),
@@ -130,7 +130,7 @@ pub struct StructDestructureField {
     pub ty: Option<Type>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BinaryOp {
     Add,
     Sub,
@@ -147,7 +147,7 @@ pub enum BinaryOp {
     Or,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UnaryOp {
     Negate,
     Not,

@@ -43,9 +43,9 @@ pub enum IrType {
     Void,
     Integer(IntWidth),
     Float(FloatWidth),
-    Pointer(Box<IrType>),
-    Aggregate(Vec<(String, IrType)>),
-    Array { len: usize, element: Box<IrType> },
+    Pointer(Box<Self>),
+    Aggregate(Vec<(String, Self)>),
+    Array { len: usize, element: Box<Self> },
     Named(String),
 }
 

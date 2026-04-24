@@ -224,7 +224,7 @@ impl<'a> Lexer<'a> {
                     self.pos += c.len_utf8();
                 }
                 None => {
-                    return Token::Error("Unterminated string literal".to_string());
+                    return Token::Error("Unterminated string literal".to_owned());
                 }
             }
         }

@@ -9,11 +9,11 @@ use std::path::Path;
 
 /// Compilation pipeline: HLL -> Lexer -> Parser -> Compiler -> IR
 #[cfg(not(target_arch = "wasm32"))]
-#[allow(dead_code)]
+#[expect(dead_code)]
 fn compile_hll_file(input_file: &str, output_file: &str) -> Result<(), Box<dyn std::error::Error>> {
     use full_stack::high_level_language::compilation_pipeline::CompilationPipeline;
 
-    log::info!("Reading HLL file: {}", input_file);
+    log::info!("Reading HLL file: {input_file}");
     let content = fs::read_to_string(input_file)?;
 
     log::info!("Starting compilation pipeline");
@@ -33,11 +33,11 @@ fn compile_hll_file(input_file: &str, output_file: &str) -> Result<(), Box<dyn s
         }
     }
 
-    log::info!("Writing IR to file: {}", output_file);
+    log::info!("Writing IR to file: {output_file}");
     fs::write(output_file, ir_text.clone())?;
-    log::info!("Successfully wrote IR output to {}", output_file);
+    log::info!("Successfully wrote IR output to {output_file}");
 
-    log::info!("=== GENERATED IR ===\n{}", ir_text);
+    log::info!("=== GENERATED IR ===\n{ir_text}");
 
     Ok(())
 }
@@ -61,8 +61,8 @@ fn main() -> eframe::Result {
             eprintln!("\n=== Pipeline completed successfully! ===\n");
         }
         Err(e) => {
-            log::error!("Pipeline failed: {}", e);
-            eprintln!("\n!!! Pipeline failed: {} !!!\n", e);
+            log::error!("Pipeline failed: {e}");
+            eprintln!("\n!!! Pipeline failed: {e} !!!\n");
         }
     }
 

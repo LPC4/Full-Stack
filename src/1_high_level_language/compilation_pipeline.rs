@@ -18,15 +18,15 @@ pub enum CompilationError {
 impl std::fmt::Display for CompilationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            CompilationError::LexerError(msg) => write!(f, "Lexer error: {}", msg),
-            CompilationError::ParseError(err) => {
+            Self::LexerError(msg) => write!(f, "Lexer error: {msg}"),
+            Self::ParseError(err) => {
                 write!(f, "Parse error at pos {}: {}", err.pos, err.message)
             }
-            CompilationError::CompilerError(err) => write!(f, "Compiler error: {:?}", err),
-            CompilationError::SemanticErrors(errors) => {
+            Self::CompilerError(err) => write!(f, "Compiler error: {err:?}"),
+            Self::SemanticErrors(errors) => {
                 writeln!(f, "Semantic errors:")?;
                 for error in errors {
-                    writeln!(f, "  - {}", error)?;
+                    writeln!(f, "  - {error}")?;
                 }
                 Ok(())
             }
@@ -124,35 +124,32 @@ impl CompilationPipeline {
     pub fn semantic_analysis(&self, ast: &Program) -> Result<(), CompilationError> {
         let mut semantic_analyzer = SemanticAnalyzer::new();
 
-        match semantic_analyzer.analyze_program(ast) {
-            Ok(_) => {
-                // Check if there are any errors in diagnostics
-                let errors: Vec<_> = semantic_analyzer
-                    .diagnostics()
-                    .iter()
-                    .filter(|d| {
-                        matches!(
-                            d.level,
-                            crate::high_level_language::compiler::DiagnosticLevel::Error
-                        )
-                    })
-                    .map(|d| d.message.clone())
-                    .collect();
+        if let Ok(_) = semantic_analyzer.analyze_program(ast) {
+            // Check if there are any errors in diagnostics
+            let errors: Vec<_> = semantic_analyzer
+                .diagnostics()
+                .iter()
+                .filter(|d| {
+                    matches!(
+                        d.level,
+                        crate::high_level_language::compiler::DiagnosticLevel::Error
+                    )
+                })
+                .map(|d| d.message.clone())
+                .collect();
 
-                if !errors.is_empty() {
-                    return Err(CompilationError::SemanticErrors(errors));
-                }
-                Ok(())
+            if !errors.is_empty() {
+                return Err(CompilationError::SemanticErrors(errors));
             }
-            Err(_) => {
-                // Semantic analysis failed completely
-                let errors: Vec<_> = semantic_analyzer
-                    .diagnostics()
-                    .iter()
-                    .map(|d| d.message.clone())
-                    .collect();
-                Err(CompilationError::SemanticErrors(errors))
-            }
+            Ok(())
+        } else {
+            // Semantic analysis failed completely
+            let errors: Vec<_> = semantic_analyzer
+                .diagnostics()
+                .iter()
+                .map(|d| d.message.clone())
+                .collect();
+            Err(CompilationError::SemanticErrors(errors))
         }
     }
 
