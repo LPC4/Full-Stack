@@ -57,7 +57,7 @@ impl SemanticAnalyzer {
             DeclNode::Type { name, ty, .. } => {
                 let ir_ty = self.ast_type_to_ir_type(ty);
                 self.context.register_type(name.clone(), ir_ty);
-                self.type_mapping.insert(name.clone(), format!("{:?}", ty));
+                self.type_mapping.insert(name.clone(), format!("{ty:?}"));
             }
             DeclNode::Const { name, init } => {
                 // Infer the type from the initializer expression
@@ -66,13 +66,13 @@ impl SemanticAnalyzer {
                 } else {
                     // If we can't infer, default to unknown
                     self.type_mapping
-                        .insert(name.clone(), "unknown".to_string());
+                        .insert(name.clone(), "unknown".to_owned());
                 }
             }
             DeclNode::Function {
                 name, return_type, ..
             } => {
-                self.type_mapping.insert(name.clone(), "fn".to_string());
+                self.type_mapping.insert(name.clone(), "fn".to_owned());
                 // Store the return type for function calls
                 let return_ty_str = match return_type {
                     Some(rt) => match rt {
@@ -81,7 +81,7 @@ impl SemanticAnalyzer {
                             self.context.get_type_name(&ir_ty)
                         }
                     },
-                    None => "void".to_string(),
+                    None => "void".to_owned(),
                 };
                 self.function_signatures.insert(name.clone(), return_ty_str);
             }
@@ -133,8 +133,7 @@ impl SemanticAnalyzer {
             Statement::Return(Some(expr)) => {
                 if let Some(name) = self.returning_local_address_name(expr) {
                     self.diagnostics.error(format!(
-                        "Returning address of local `{}` is not allowed",
-                        name
+                        "Returning address of local `{name}` is not allowed"
                     ));
                     return Err(());
                 }
@@ -148,7 +147,8 @@ impl SemanticAnalyzer {
 
                 if let Some(init_expr) = init {
                     let init_ty = self.infer_expression_type(init_expr)?;
-                    let resolved_decl_ty = self.resolve_type_string(&self.context.get_type_name(&ir_ty));
+                    let resolved_decl_ty =
+                        self.resolve_type_string(&self.context.get_type_name(&ir_ty));
                     let resolved_init_ty = self.resolve_type_string(&init_ty);
                     if resolved_decl_ty != resolved_init_ty {
                         self.diagnostics.error(format!(
@@ -181,7 +181,7 @@ impl SemanticAnalyzer {
                 let cond_ty = self.infer_expression_type(cond)?;
                 if cond_ty != "i1" && cond_ty != "bool" {
                     self.diagnostics
-                        .error(format!("If condition must be bool, found {}", cond_ty));
+                        .error(format!("If condition must be bool, found {cond_ty}"));
                     return Err(());
                 }
 
@@ -200,7 +200,7 @@ impl SemanticAnalyzer {
                 let cond_ty = self.infer_expression_type(cond)?;
                 if cond_ty != "i1" && cond_ty != "bool" {
                     self.diagnostics
-                        .error(format!("While condition must be bool, found {}", cond_ty));
+                        .error(format!("While condition must be bool, found {cond_ty}"));
                     return Err(());
                 }
 
@@ -227,20 +227,20 @@ impl SemanticAnalyzer {
                         Ok(ty_name.clone())
                     } else {
                         self.diagnostics
-                            .error(format!("Undefined identifier: {}", name));
+                            .error(format!("Undefined identifier: {name}"));
                         Err(())
                     }
                 }
                 crate::high_level_language::ast::PrimaryExpr::Literal(lit) => match lit {
                     crate::high_level_language::ast::Literal::Integer(_)
                     | crate::high_level_language::ast::Literal::HexInteger(_) => {
-                        Ok("i32".to_string())
+                        Ok("i32".to_owned())
                     }
-                    crate::high_level_language::ast::Literal::Float(_) => Ok("f64".to_string()),
-                    crate::high_level_language::ast::Literal::Boolean(_) => Ok("i1".to_string()),
-                    crate::high_level_language::ast::Literal::Null => Ok("*unknown".to_string()),
+                    crate::high_level_language::ast::Literal::Float(_) => Ok("f64".to_owned()),
+                    crate::high_level_language::ast::Literal::Boolean(_) => Ok("i1".to_owned()),
+                    crate::high_level_language::ast::Literal::Null => Ok("*unknown".to_owned()),
                     crate::high_level_language::ast::Literal::String(_) => {
-                        Ok("{ data: u8*, length: u64 }".to_string())
+                        Ok("{ data: u8*, length: u64 }".to_owned())
                     }
                 },
                 crate::high_level_language::ast::PrimaryExpr::Grouped(expr) => {
@@ -249,7 +249,7 @@ impl SemanticAnalyzer {
                 crate::high_level_language::ast::PrimaryExpr::New { ty, .. } => {
                     let ir_ty = self.ast_type_to_ir_type(ty);
                     let inner_name = self.context.get_type_name(&ir_ty);
-                    Ok(format!("*{}", inner_name))
+                    Ok(format!("*{inner_name}"))
                 }
                 crate::high_level_language::ast::PrimaryExpr::FunctionCall {
                     name,
@@ -265,7 +265,7 @@ impl SemanticAnalyzer {
                         Ok(return_ty.clone())
                     } else {
                         // Unknown function, return unknown
-                        Ok("unknown".to_string())
+                        Ok("unknown".to_owned())
                     }
                 }
                 crate::high_level_language::ast::PrimaryExpr::FieldAccess { expr, field } => {
@@ -321,7 +321,7 @@ impl SemanticAnalyzer {
                     }
                     Ok(self.context.get_type_name(&IrType::Aggregate(field_types)))
                 }
-                _ => Ok("unknown".to_string()),
+                _ => Ok("unknown".to_owned()),
             },
             Expression::Binary { op, left, right } => {
                 let lhs_type = self.infer_expression_type(left)?;
@@ -331,67 +331,60 @@ impl SemanticAnalyzer {
                     Ok(result_type) => Ok(result_type),
                     Err(err) => {
                         self.diagnostics
-                            .error(format!("Type error in binary operation: {:?}", err));
+                            .error(format!("Type error in binary operation: {err:?}"));
                         Err(())
                     }
                 }
             }
             Expression::Unary { op, expr: inner } => {
-                match op {
-                    UnaryOp::AddressOf => {
-                        if self.contains_dereference(inner) {
-                            self.diagnostics.error(
-                                "cannot take address of a dereference expression (`&@...` is invalid)"
-                                    .to_string(),
-                            );
+                if op == &UnaryOp::AddressOf {
+                    if self.contains_dereference(inner) {
+                        self.diagnostics.error(
+                            "cannot take address of a dereference expression (`&@...` is invalid)".to_owned(),
+                        );
+                        return Err(());
+                    }
+
+                    if self.stack_address_root_name(inner).is_some() {
+                        // Special case for AddressOf: we need the pointer type of the operand,
+                        // not the dereferenced value type.
+                        if let Expression::Primary(
+                            crate::high_level_language::ast::PrimaryExpr::Identifier(name),
+                        ) = inner.as_ref()
+                        {
+                            if let Some(info) = self.symbols.lookup(name) {
+                                let ty_name = self.context.get_type_name(&info.ty);
+                                return Ok(format!("*{ty_name}"));
+                            }
+
+                            self.diagnostics
+                                .error(format!("Undefined identifier: {name}"));
                             return Err(());
                         }
 
-                        if self.stack_address_root_name(inner).is_some() {
-                            // Special case for AddressOf: we need the pointer type of the operand,
-                            // not the dereferenced value type.
-                            if let Expression::Primary(
-                                crate::high_level_language::ast::PrimaryExpr::Identifier(name),
-                            ) = inner.as_ref()
-                            {
-                                if let Some(info) = self.symbols.lookup(name) {
-                                    let ty_name = self.context.get_type_name(&info.ty);
-                                    return Ok(format!("*{}", ty_name));
-                                }
-
-                                self.diagnostics
-                                    .error(format!("Undefined identifier: {}", name));
-                                return Err(());
-                            }
-
-                            let inner_type = self.infer_expression_type(inner)?;
-                            return match self.context.check_unary_op(op, &inner_type) {
-                                Ok(result_type) => Ok(result_type),
-                                Err(err) => {
-                                    self.diagnostics.error(format!(
-                                        "Type error in unary operation: {:?}",
-                                        err
-                                    ));
-                                    Err(())
-                                }
-                            };
-                        } else {
-                            self.diagnostics.error(
-                                "address-of requires an assignable l-value (identifier, field access, or array element)"
-                                    .to_string(),
-                            );
-                            Err(())
-                        }
-                    }
-                    _ => {
                         let inner_type = self.infer_expression_type(inner)?;
-                        match self.context.check_unary_op(op, &inner_type) {
+                        return match self.context.check_unary_op(op, &inner_type) {
                             Ok(result_type) => Ok(result_type),
                             Err(err) => {
                                 self.diagnostics
-                                    .error(format!("Type error in unary operation: {:?}", err));
+                                    .error(format!("Type error in unary operation: {err:?}"));
                                 Err(())
                             }
+                        };
+                    } else {
+                        self.diagnostics.error(
+                            "address-of requires an assignable l-value (identifier, field access, or array element)".to_owned(),
+                        );
+                        Err(())
+                    }
+                } else {
+                    let inner_type = self.infer_expression_type(inner)?;
+                    match self.context.check_unary_op(op, &inner_type) {
+                        Ok(result_type) => Ok(result_type),
+                        Err(err) => {
+                            self.diagnostics
+                                .error(format!("Type error in unary operation: {err:?}"));
+                            Err(())
                         }
                     }
                 }
@@ -406,30 +399,25 @@ impl SemanticAnalyzer {
                     let resolved_rvalue = self.resolve_type_string(&rvalue_type);
                     let field_types = match resolved_rvalue {
                         IrType::Aggregate(types) => types,
-                        IrType::Pointer(inner) => match *inner {
-                            IrType::Aggregate(types) => types,
-                            _ => {
-                                self.diagnostics.error(format!(
-                                    "Expected struct type for destructuring, got: {}",
-                                    rvalue_type
-                                ));
-                                return Err(());
-                            }
+                        IrType::Pointer(inner) => if let IrType::Aggregate(types) = *inner { types } else {
+                            self.diagnostics.error(format!(
+                                "Expected struct type for destructuring, got: {rvalue_type}"
+                            ));
+                            return Err(());
                         },
                         _ => {
                             self.diagnostics.error(format!(
-                                "Expected struct type for destructuring, got: {}",
-                                rvalue_type
+                                "Expected struct type for destructuring, got: {rvalue_type}"
                             ));
                             return Err(());
                         }
                     };
 
                     // Per spec v1.4.1: all fields must have explicit type annotations
-                    for field in fields.iter() {
+                    for field in fields {
                         let Some(name) = field.name.as_ref() else {
                             self.diagnostics.error(
-                                "Struct destructuring requires explicit variable names".to_string(),
+                                "Struct destructuring requires explicit variable names".to_owned(),
                             );
                             return Err(());
                         };
@@ -437,8 +425,7 @@ impl SemanticAnalyzer {
                         // Type annotation is required per spec
                         let Some(ref annotated_ty) = field.ty else {
                             self.diagnostics.error(format!(
-                                "Struct destructuring field `{}` requires explicit type annotation",
-                                name
+                                "Struct destructuring field `{name}` requires explicit type annotation"
                             ));
                             return Err(());
                         };
@@ -452,7 +439,7 @@ impl SemanticAnalyzer {
                             .iter()
                             .find(|(field_name, _)| field_name == name)
                             .map(|(_, ty)| self.context.get_type_name(ty))
-                            .unwrap_or_else(|| "unknown".to_string());
+                            .unwrap_or_else(|| "unknown".to_owned());
 
                         if inferred_ty == "unknown" {
                             self.diagnostics.error(format!(
@@ -473,8 +460,7 @@ impl SemanticAnalyzer {
 
                         if resolved_ty_to_use != resolved_inferred_ty && inferred_ty != "unknown" {
                             self.diagnostics.error(format!(
-                                "Type mismatch in struct destructuring field `{}`: expected {}, found {}",
-                                name, inferred_ty, ty_to_use
+                                "Type mismatch in struct destructuring field `{name}`: expected {inferred_ty}, found {ty_to_use}"
                             ));
                             return Err(());
                         }
@@ -554,7 +540,9 @@ impl SemanticAnalyzer {
             }) => arguments.iter().any(|arg| self.contains_dereference(arg)),
             Expression::Primary(crate::high_level_language::ast::PrimaryExpr::StructLiteral(
                 fields,
-            )) => fields.iter().any(|field| self.contains_dereference(&field.expr)),
+            )) => fields
+                .iter()
+                .any(|field| self.contains_dereference(&field.expr)),
             _ => false,
         }
     }
@@ -591,7 +579,7 @@ impl SemanticAnalyzer {
             "f32" => IrType::Float(crate::intermediate_language::FloatWidth::F32),
             "f64" => IrType::Float(crate::intermediate_language::FloatWidth::F64),
             "bool" => IrType::Integer(crate::intermediate_language::IntWidth::I1),
-            other => IrType::Named(other.to_string()),
+            other => IrType::Named(other.to_owned()),
         }
     }
 
@@ -617,19 +605,19 @@ impl SemanticAnalyzer {
                 '{' | '(' | '[' | '<' => depth += 1,
                 '}' | ')' | ']' | '>' => depth = depth.saturating_sub(1),
                 ',' if depth == 0 => {
-                    parts.push(inner[start..idx].trim().to_string());
+                    parts.push(inner[start..idx].trim().to_owned());
                     start = idx + ch.len_utf8();
                 }
                 _ => {}
             }
         }
-        parts.push(inner[start..].trim().to_string());
+        parts.push(inner[start..].trim().to_owned());
 
         let mut fields = Vec::new();
         for part in parts {
             if named {
                 if let Some((name, ty)) = part.split_once(':') {
-                    fields.push((Some(name.trim().to_string()), ty.trim().to_string()));
+                    fields.push((Some(name.trim().to_owned()), ty.trim().to_owned()));
                 } else {
                     fields.push((None, part));
                 }
@@ -643,27 +631,22 @@ impl SemanticAnalyzer {
 
     fn infer_field_access_type(&mut self, base_type: &str, field: &str) -> Result<String, ()> {
         if base_type == "unknown" || base_type == "*unknown" {
-            return Ok("unknown".to_string());
+            return Ok("unknown".to_owned());
         }
 
         let resolved = self.resolve_type_string(base_type);
 
         let fields = match resolved {
             IrType::Aggregate(fields) => fields,
-            IrType::Pointer(inner) => match *inner {
-                IrType::Aggregate(fields) => fields,
-                _ => {
-                    self.diagnostics.error(format!(
-                        "field access on non-aggregate type `{}`",
-                        base_type
-                    ));
-                    return Err(());
-                }
+            IrType::Pointer(inner) => if let IrType::Aggregate(fields) = *inner { fields } else {
+                self.diagnostics.error(format!(
+                    "field access on non-aggregate type `{base_type}`"
+                ));
+                return Err(());
             },
             _ => {
                 self.diagnostics.error(format!(
-                    "field access on non-aggregate type `{}`",
-                    base_type
+                    "field access on non-aggregate type `{base_type}`"
                 ));
                 return Err(());
             }
@@ -673,8 +656,7 @@ impl SemanticAnalyzer {
             Ok(self.context.get_type_name(field_ty))
         } else {
             self.diagnostics.error(format!(
-                "unknown field `{}` for type `{}`",
-                field, base_type
+                "unknown field `{field}` for type `{base_type}`"
             ));
             Err(())
         }
@@ -682,19 +664,19 @@ impl SemanticAnalyzer {
 
     fn infer_index_element_type(&mut self, base_type: &str) -> Result<String, ()> {
         if base_type == "unknown" || base_type == "*unknown" {
-            return Ok("*unknown".to_string());
+            return Ok("*unknown".to_owned());
         }
 
         if let Some(inner) = base_type.strip_prefix('*') {
             if let Some((element, _len)) = inner.split_once('[') {
-                return Ok(format!("*{}", element));
+                return Ok(format!("*{element}"));
             }
 
-            return Ok(format!("*{}", inner));
+            return Ok(format!("*{inner}"));
         }
 
         if let Some((element, _rest)) = base_type.split_once('[') {
-            return Ok(format!("*{}", element));
+            return Ok(format!("*{element}"));
         }
 
         match self.resolve_type_string(base_type) {
@@ -704,7 +686,7 @@ impl SemanticAnalyzer {
             }
             _ => {
                 self.diagnostics
-                    .error(format!("indexing non-indexable type `{}`", base_type));
+                    .error(format!("indexing non-indexable type `{base_type}`"));
                 Err(())
             }
         }
@@ -725,8 +707,7 @@ impl SemanticAnalyzer {
                     let existing_ty = self.context.get_type_name(&info.ty);
                     if existing_ty != ty {
                         self.diagnostics.error(format!(
-                            "Type mismatch in reassignment of `{}`: expected {}, found {}",
-                            name, existing_ty, ty
+                            "Type mismatch in reassignment of `{name}`: expected {existing_ty}, found {ty}"
                         ));
                         return Err(());
                     }
@@ -752,7 +733,7 @@ impl SemanticAnalyzer {
             }
             crate::high_level_language::ast::AssignTarget::StructDestructure(_) => {
                 self.diagnostics.error(
-                    "Nested struct destructuring not supported in semantic analysis".to_string(),
+                    "Nested struct destructuring not supported in semantic analysis".to_owned(),
                 );
                 Err(())
             }
@@ -768,7 +749,7 @@ impl SemanticAnalyzer {
             crate::high_level_language::ast::AssignTarget::Identifier(name) => {
                 if self.symbols.lookup(name).is_none() {
                     self.diagnostics
-                        .error(format!("Undefined identifier: {}", name));
+                        .error(format!("Undefined identifier: {name}"));
                     return Err(());
                 }
                 Ok(())
@@ -786,13 +767,13 @@ impl SemanticAnalyzer {
             }
             crate::high_level_language::ast::AssignTarget::StructDestructure(_) => {
                 self.diagnostics
-                    .error("Nested struct destructuring not supported".to_string());
+                    .error("Nested struct destructuring not supported".to_owned());
                 Err(())
             }
         }
     }
 
-    /// Parse a type string back into an IrType
+    /// Parse a type string back into an `IrType`
     fn parse_type_string(&self, ty_str: &str) -> IrType {
         let trimmed = ty_str.trim();
         if trimmed.starts_with('{') && trimmed.ends_with('}') {
@@ -831,7 +812,7 @@ impl SemanticAnalyzer {
                 if let Some(inner) = other.strip_prefix('*') {
                     IrType::Pointer(Box::new(self.parse_type_string(inner)))
                 } else {
-                    IrType::Named(other.to_string())
+                    IrType::Named(other.to_owned())
                 }
             }
         }

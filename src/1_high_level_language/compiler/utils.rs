@@ -1,4 +1,7 @@
-use super::{HighLevelCompiler, IrBlock, IrInstruction, IrTerminator, IrLabel, IrRegister, IrValue, IrType, IntWidth, FloatWidth, AssignTarget, Expression, UnaryOp};
+use super::{
+    AssignTarget, Expression, FloatWidth, HighLevelCompiler, IntWidth, IrBlock, IrInstruction,
+    IrLabel, IrRegister, IrTerminator, IrType, IrValue, UnaryOp,
+};
 
 impl HighLevelCompiler {
     pub(super) fn start_new_block(&mut self, label: impl Into<String>) {

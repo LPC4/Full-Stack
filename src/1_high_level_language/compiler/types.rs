@@ -1,4 +1,7 @@
-use super::{HighLevelCompiler, ReturnType, IrType, Type, IrProgram, CompilerError, IntWidth, FloatWidth, IrTypeAlias};
+use super::{
+    CompilerError, FloatWidth, HighLevelCompiler, IntWidth, IrProgram, IrType, IrTypeAlias,
+    ReturnType, Type,
+};
 
 impl HighLevelCompiler {
     pub(super) fn lower_return_type(&mut self, return_type: Option<&ReturnType>) -> IrType {

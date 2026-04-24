@@ -1,4 +1,8 @@
-use super::ast::{Program, Declaration, DeclNode, Block, Statement, Expression, Type, Parameter, ReturnType, BinaryOp, UnaryOp, PrimaryExpr, FieldDecl, AssignTarget, StructDestructureField, Literal, FieldInit};
+use super::ast::{
+    AssignTarget, BinaryOp, Block, DeclNode, Declaration, Expression, FieldDecl, FieldInit,
+    Literal, Parameter, PrimaryExpr, Program, ReturnType, Statement, StructDestructureField, Type,
+    UnaryOp,
+};
 use super::token::Token;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -951,8 +955,13 @@ impl<'a> Parser<'a> {
 
     fn is_declaration_start(&self) -> bool {
         match self.peek() {
-            Some(Token::Const | Token::ConstKeyword | Token::Type | Token::TypeKeyword |
-Token::External) => true,
+            Some(
+                Token::Const
+                | Token::ConstKeyword
+                | Token::Type
+                | Token::TypeKeyword
+                | Token::External,
+            ) => true,
             Some(Token::Ident(_)) => {
                 if self.peek_n(1) != Some(&Token::Colon) {
                     return false;

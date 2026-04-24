@@ -1,4 +1,8 @@
-use super::{HighLevelCompiler, LoweringContext, Program, IrProgram, CompilerError, SemanticAnalyzer, Declaration, DeclNode, GenericTypeDef, IrTypeAlias, IrFunction, IrRegister, IrParam, IrInstruction, IrValue, IrType, IrTerminator, Expression, Literal};
+use super::{
+    CompilerError, DeclNode, Declaration, Expression, GenericTypeDef, HighLevelCompiler,
+    IrFunction, IrInstruction, IrParam, IrProgram, IrRegister, IrTerminator, IrType, IrTypeAlias,
+    IrValue, Literal, LoweringContext, Program, SemanticAnalyzer,
+};
 
 impl HighLevelCompiler {
     pub fn new() -> Self {

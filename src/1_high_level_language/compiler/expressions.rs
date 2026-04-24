@@ -1,4 +1,8 @@
-use super::{HighLevelCompiler, Expression, LoweredValue, IrType, IrValue, IrInstruction, UnaryOp, Literal, AssignTarget, IntWidth, FloatWidth, IrGlobalString, BinaryOp, IrMathOp, IrCmpOp, IrUnaryOp, IrRegister};
+use super::{
+    AssignTarget, BinaryOp, Expression, FloatWidth, HighLevelCompiler, IntWidth, IrCmpOp,
+    IrGlobalString, IrInstruction, IrMathOp, IrRegister, IrType, IrUnaryOp, IrValue, Literal,
+    LoweredValue, UnaryOp,
+};
 
 impl HighLevelCompiler {
     pub(super) fn lower_expression(&mut self, expression: &Expression) -> Option<LoweredValue> {
@@ -124,8 +128,11 @@ impl HighLevelCompiler {
                     let count = match args.len() {
                         0 => None,
                         1 => match &args[0] {
-                            Expression::Primary(crate::high_level_language::ast::PrimaryExpr::Literal(Literal::Integer(v)
-| Literal::HexInteger(v))) if *v > 0 => Some(*v as usize),
+                            Expression::Primary(
+                                crate::high_level_language::ast::PrimaryExpr::Literal(
+                                    Literal::Integer(v) | Literal::HexInteger(v),
+                                ),
+                            ) if *v > 0 => Some(*v as usize),
                             other => {
                                 self.context.diagnostics.error(format!(
                                         "new({}, count) requires a positive integer literal count; got `{}`",
@@ -264,9 +271,10 @@ impl HighLevelCompiler {
                             ..
                         }
                     ) {
-                        self.context
-                            .diagnostics
-                            .error("cannot take address of a dereference expression (`&@...` is invalid)".to_owned());
+                        self.context.diagnostics.error(
+                            "cannot take address of a dereference expression (`&@...` is invalid)"
+                                .to_owned(),
+                        );
                         return None;
                     }
 
@@ -279,9 +287,10 @@ impl HighLevelCompiler {
                         }
                     }
 
-                    self.context
-                        .diagnostics
-                        .error("address-of requires an assignable l-value (identifier or array element)".to_owned());
+                    self.context.diagnostics.error(
+                        "address-of requires an assignable l-value (identifier or array element)"
+                            .to_owned(),
+                    );
                     None
                 } else {
                     let input = self.lower_expression(expr)?;
@@ -530,7 +539,9 @@ impl HighLevelCompiler {
                 };
 
                 let dest = self.new_temp();
-                let ptr_reg = if let IrValue::Register(reg) = input.value { reg } else {
+                let ptr_reg = if let IrValue::Register(reg) = input.value {
+                    reg
+                } else {
                     self.context
                         .diagnostics
                         .error("cannot dereference non-register value".to_owned());
@@ -547,15 +558,19 @@ impl HighLevelCompiler {
                     ty: pointee_ty,
                 })
             }
-            UnaryOp::AddressOf => if let IrValue::Register(reg) = input.value { Some(LoweredValue {
-                value: IrValue::Register(reg),
-                ty: IrType::Pointer(Box::new(input.ty)),
-            }) } else {
-                self.context
-                    .diagnostics
-                    .error("cannot take address of non-register".to_owned());
-                None
-            },
+            UnaryOp::AddressOf => {
+                if let IrValue::Register(reg) = input.value {
+                    Some(LoweredValue {
+                        value: IrValue::Register(reg),
+                        ty: IrType::Pointer(Box::new(input.ty)),
+                    })
+                } else {
+                    self.context
+                        .diagnostics
+                        .error("cannot take address of non-register".to_owned());
+                    None
+                }
+            }
         }
     }
 
@@ -568,12 +583,16 @@ impl HighLevelCompiler {
         let resolved_value_ty = self.resolve_named_type(&value.ty);
         let agg_fields = match &resolved_value_ty {
             IrType::Aggregate(fields) => fields.clone(),
-            IrType::Pointer(inner) => if let IrType::Aggregate(fields) = inner.as_ref() { fields.clone() } else {
-                self.context
-                    .diagnostics
-                    .error("struct destructuring requires an aggregate type".to_owned());
-                return None;
-            },
+            IrType::Pointer(inner) => {
+                if let IrType::Aggregate(fields) = inner.as_ref() {
+                    fields.clone()
+                } else {
+                    self.context
+                        .diagnostics
+                        .error("struct destructuring requires an aggregate type".to_owned());
+                    return None;
+                }
+            }
             _ => {
                 self.context
                     .diagnostics
@@ -583,7 +602,9 @@ impl HighLevelCompiler {
         };
 
         // Base pointer for the aggregate
-        let base_ptr = if let IrValue::Register(reg) = &value.value { reg.clone() } else {
+        let base_ptr = if let IrValue::Register(reg) = &value.value {
+            reg.clone()
+        } else {
             self.context
                 .diagnostics
                 .error("struct destructuring requires a register value".to_owned());
@@ -619,7 +640,9 @@ impl HighLevelCompiler {
                 });
 
                 let target_ptr = if let Some(var_info) = self.context.symbols.lookup(name) {
-                    if let IrValue::Register(var_ptr) = &var_info.value { var_ptr.clone() } else {
+                    if let IrValue::Register(var_ptr) = &var_info.value {
+                        var_ptr.clone()
+                    } else {
                         self.context.diagnostics.error(format!(
                             "struct destructuring target `{name}` is not register-backed"
                         ));

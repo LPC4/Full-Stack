@@ -1,4 +1,7 @@
-use super::{HighLevelCompiler, IrProgram, Block, Statement, IrInstruction, IrTerminator, IrRegister, IrType, IrValue, Expression, DeferredAction};
+use super::{
+    Block, DeferredAction, Expression, HighLevelCompiler, IrInstruction, IrProgram, IrRegister,
+    IrTerminator, IrType, IrValue, Statement,
+};
 
 impl HighLevelCompiler {
     pub(super) fn lower_block(&mut self, ir_program: &mut IrProgram, block: &Block) {
@@ -45,9 +48,9 @@ impl HighLevelCompiler {
                 let lowered_ty = match self.lower_type_with_program(ir_program, ty) {
                     Ok(ty) => ty,
                     Err(e) => {
-                        self.context.diagnostics.error(format!(
-                            "failed to lower type for variable `{name}`: {e:?}"
-                        ));
+                        self.context
+                            .diagnostics
+                            .error(format!("failed to lower type for variable `{name}`: {e:?}"));
                         return;
                     }
                 };
@@ -114,7 +117,9 @@ impl HighLevelCompiler {
                 {
                     let mut captured_args = Vec::new();
                     for arg in arguments {
-                        let lowered = if let Some(v) = self.lower_expression(arg) { v } else {
+                        let lowered = if let Some(v) = self.lower_expression(arg) {
+                            v
+                        } else {
                             self.context.diagnostics.error(format!(
                                 "failed to capture defer argument `{}` for call `{}`",
                                 self.format_expression(arg),
@@ -155,7 +160,9 @@ impl HighLevelCompiler {
         else_branch: Option<&Statement>,
     ) {
         self.push_instruction(IrInstruction::Comment("if condition".to_owned()));
-        let cond_value = if let Some(lowered) = self.lower_expression(cond) { lowered.value } else {
+        let cond_value = if let Some(lowered) = self.lower_expression(cond) {
+            lowered.value
+        } else {
             self.context.diagnostics.error(format!(
                 "failed to lower if condition `{}` (see previous diagnostics for root cause)",
                 self.format_expression(cond)
@@ -254,13 +261,13 @@ impl HighLevelCompiler {
 
         self.start_new_block(cond_label.0.clone());
         self.push_instruction(IrInstruction::Comment("while condition".to_owned()));
-        let cond_value = if let Some(lowered) = self.lower_expression(cond) { lowered.value } else {
-            self.context
-                    .diagnostics
-                    .error(format!(
-                        "failed to lower while condition `{}` (see previous diagnostics for root cause)",
-                        self.format_expression(cond)
-                    ));
+        let cond_value = if let Some(lowered) = self.lower_expression(cond) {
+            lowered.value
+        } else {
+            self.context.diagnostics.error(format!(
+                "failed to lower while condition `{}` (see previous diagnostics for root cause)",
+                self.format_expression(cond)
+            ));
             IrValue::Bool(false)
         };
 
