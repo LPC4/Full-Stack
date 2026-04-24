@@ -1,0 +1,23 @@
+; Generics, strings, and constants example.
+type Box<T> = {
+    value: T,
+    next: Box<T>*
+}
+
+type Text = {
+    data: u8*,
+    length: u64
+}
+
+const ANSWER = 42
+
+main: () -> i32 {
+    greeting: Text = "hello"
+    box: Box<i32>* = new(Box<i32>)
+
+    @box.value = ANSWER
+    @box.next = null
+
+    return @box.value
+}
+

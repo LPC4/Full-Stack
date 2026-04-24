@@ -282,15 +282,23 @@ impl HighLevelCompiler {
                 let (indexable_ptr_reg, element_ty) = match &resolved_base_ty {
                     IrType::Array { element, .. } => (base_ptr_reg, element.as_ref().clone()),
                     IrType::Pointer(element) => {
-                        // Load the pointer value first
-                        let loaded_ptr = self.new_temp();
-                        self.push_instruction(IrInstruction::Load {
-                            dest: loaded_ptr.clone(),
-                            ty: resolved_base_ty.clone(),
-                            ptr: base_ptr_reg,
-                            offset: None,
-                        });
-                        (loaded_ptr, element.as_ref().clone())
+                        match element.as_ref() {
+                            IrType::Array { element, .. } => {
+                                // Load the array pointer value first, then index its elements.
+                                let loaded_ptr = self.new_temp();
+                                self.push_instruction(IrInstruction::Load {
+                                    dest: loaded_ptr.clone(),
+                                    ty: resolved_base_ty.clone(),
+                                    ptr: base_ptr_reg,
+                                    offset: None,
+                                });
+                                (loaded_ptr, element.as_ref().clone())
+                            }
+                            other => {
+                                // Pointer-to-element already points at the underlying item.
+                                (base_ptr_reg, other.clone())
+                            }
+                        }
                     }
                     _ => {
                         self.context.diagnostics.error(format!(

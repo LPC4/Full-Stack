@@ -145,14 +145,16 @@ impl SemanticAnalyzer {
             Statement::Return(None) => Ok(()),
             Statement::VariableDecl { name, ty, init } => {
                 let ir_ty = self.ast_type_to_ir_type(ty);
-                let ty_name = self.context.get_type_name(&ir_ty);
 
                 if let Some(init_expr) = init {
                     let init_ty = self.infer_expression_type(init_expr)?;
-                    if init_ty != ty_name {
+                    let resolved_decl_ty = self.resolve_type_string(&self.context.get_type_name(&ir_ty));
+                    let resolved_init_ty = self.resolve_type_string(&init_ty);
+                    if resolved_decl_ty != resolved_init_ty {
                         self.diagnostics.error(format!(
                             "Type mismatch in variable initialization: expected {}, found {}",
-                            ty_name, init_ty
+                            self.context.get_type_name(&ir_ty),
+                            init_ty
                         ));
                         return Err(());
                     }
@@ -238,21 +240,7 @@ impl SemanticAnalyzer {
                     crate::high_level_language::ast::Literal::Boolean(_) => Ok("i1".to_string()),
                     crate::high_level_language::ast::Literal::Null => Ok("*unknown".to_string()),
                     crate::high_level_language::ast::Literal::String(_) => {
-                        // String literals are modeled as `{ data: u8*, length: u64 }` at the source level.
-                        let struct_fields = vec![
-                            (
-                                "data".to_string(),
-                                IrType::Pointer(Box::new(IrType::Integer(
-                                    crate::intermediate_language::IntWidth::I8,
-                                ))),
-                            ),
-                            (
-                                "length".to_string(),
-                                IrType::Integer(crate::intermediate_language::IntWidth::I64),
-                            ),
-                        ];
-                        let struct_ty = IrType::Aggregate(struct_fields);
-                        Ok(self.context.get_type_name(&struct_ty))
+                        Ok("{ data: u8*, length: u64 }".to_string())
                     }
                 },
                 crate::high_level_language::ast::PrimaryExpr::Grouped(expr) => {
@@ -351,33 +339,48 @@ impl SemanticAnalyzer {
             Expression::Unary { op, expr: inner } => {
                 match op {
                     UnaryOp::AddressOf => {
-                        // Special case for AddressOf: we need the pointer type of the operand,
-                        // not the dereferenced value type
-                        if let Expression::Primary(
-                            crate::high_level_language::ast::PrimaryExpr::Identifier(name),
-                        ) = inner.as_ref()
-                        {
-                            if let Some(info) = self.symbols.lookup(name) {
-                                // Get the actual stored type (which includes the pointer)
-                                let ty_name = self.context.get_type_name(&info.ty);
-                                // AddressOf adds another level of pointer, so we prefix with '*'
-                                Ok(format!("*{}", ty_name))
-                            } else {
+                        if self.contains_dereference(inner) {
+                            self.diagnostics.error(
+                                "cannot take address of a dereference expression (`&@...` is invalid)"
+                                    .to_string(),
+                            );
+                            return Err(());
+                        }
+
+                        if self.stack_address_root_name(inner).is_some() {
+                            // Special case for AddressOf: we need the pointer type of the operand,
+                            // not the dereferenced value type.
+                            if let Expression::Primary(
+                                crate::high_level_language::ast::PrimaryExpr::Identifier(name),
+                            ) = inner.as_ref()
+                            {
+                                if let Some(info) = self.symbols.lookup(name) {
+                                    let ty_name = self.context.get_type_name(&info.ty);
+                                    return Ok(format!("*{}", ty_name));
+                                }
+
                                 self.diagnostics
                                     .error(format!("Undefined identifier: {}", name));
-                                Err(())
+                                return Err(());
                             }
-                        } else {
-                            // For non-identifiers, use normal inference
+
                             let inner_type = self.infer_expression_type(inner)?;
-                            match self.context.check_unary_op(op, &inner_type) {
+                            return match self.context.check_unary_op(op, &inner_type) {
                                 Ok(result_type) => Ok(result_type),
                                 Err(err) => {
-                                    self.diagnostics
-                                        .error(format!("Type error in unary operation: {:?}", err));
+                                    self.diagnostics.error(format!(
+                                        "Type error in unary operation: {:?}",
+                                        err
+                                    ));
                                     Err(())
                                 }
-                            }
+                            };
+                        } else {
+                            self.diagnostics.error(
+                                "address-of requires an assignable l-value (identifier, field access, or array element)"
+                                    .to_string(),
+                            );
+                            Err(())
                         }
                     }
                     _ => {
@@ -524,6 +527,38 @@ impl SemanticAnalyzer {
         }
     }
 
+    fn contains_dereference(&self, expr: &Expression) -> bool {
+        match expr {
+            Expression::Unary {
+                op: UnaryOp::Dereference,
+                ..
+            } => true,
+            Expression::Unary { expr, .. } => self.contains_dereference(expr),
+            Expression::Binary { left, right, .. } => {
+                self.contains_dereference(left) || self.contains_dereference(right)
+            }
+            Expression::Primary(crate::high_level_language::ast::PrimaryExpr::Grouped(inner)) => {
+                self.contains_dereference(inner)
+            }
+            Expression::Primary(crate::high_level_language::ast::PrimaryExpr::FieldAccess {
+                expr,
+                ..
+            }) => self.contains_dereference(expr),
+            Expression::Primary(crate::high_level_language::ast::PrimaryExpr::ArrayIndex {
+                expr,
+                index,
+            }) => self.contains_dereference(expr) || self.contains_dereference(index),
+            Expression::Primary(crate::high_level_language::ast::PrimaryExpr::FunctionCall {
+                arguments,
+                ..
+            }) => arguments.iter().any(|arg| self.contains_dereference(arg)),
+            Expression::Primary(crate::high_level_language::ast::PrimaryExpr::StructLiteral(
+                fields,
+            )) => fields.iter().any(|field| self.contains_dereference(&field.expr)),
+            _ => false,
+        }
+    }
+
     fn ast_type_to_ir_type(&self, ty: &Type) -> IrType {
         match ty {
             Type::Primitive(name) => self.primitive_to_ir(name),
@@ -651,6 +686,10 @@ impl SemanticAnalyzer {
         }
 
         if let Some(inner) = base_type.strip_prefix('*') {
+            if let Some((element, _len)) = inner.split_once('[') {
+                return Ok(format!("*{}", element));
+            }
+
             return Ok(format!("*{}", inner));
         }
 
@@ -769,12 +808,22 @@ impl SemanticAnalyzer {
             }
         }
 
+        if let Some(inner) = trimmed.strip_suffix('*') {
+            if !inner.is_empty() {
+                return IrType::Pointer(Box::new(self.parse_type_string(inner)));
+            }
+        }
+
         match trimmed {
             "i1" => IrType::Integer(crate::intermediate_language::IntWidth::I1),
             "i8" => IrType::Integer(crate::intermediate_language::IntWidth::I8),
             "i16" => IrType::Integer(crate::intermediate_language::IntWidth::I16),
             "i32" => IrType::Integer(crate::intermediate_language::IntWidth::I32),
             "i64" => IrType::Integer(crate::intermediate_language::IntWidth::I64),
+            "u8" => IrType::Integer(crate::intermediate_language::IntWidth::I8),
+            "u16" => IrType::Integer(crate::intermediate_language::IntWidth::I16),
+            "u32" => IrType::Integer(crate::intermediate_language::IntWidth::I32),
+            "u64" => IrType::Integer(crate::intermediate_language::IntWidth::I64),
             "f32" => IrType::Float(crate::intermediate_language::FloatWidth::F32),
             "f64" => IrType::Float(crate::intermediate_language::FloatWidth::F64),
             "bool" => IrType::Integer(crate::intermediate_language::IntWidth::I1),

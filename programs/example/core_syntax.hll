@@ -1,0 +1,14 @@
+; Core syntax example: declarations, constants, primitives, and simple functions.
+const ZERO = 0
+const FIVE = 5
+
+identity: (value: i32) -> i32 {
+    return value
+}
+
+main: () -> i32 {
+    start: i32 = ZERO
+    next: i32 = identity(FIVE)
+    return start + next
+}
+

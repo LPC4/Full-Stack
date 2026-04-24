@@ -4,13 +4,13 @@ Prioritized backlog for the compiler, specs, and project hygiene.
 
 ## HLL spec — structural issues
 
-- [P0] Document the canonical struct type syntax as `type X = { ... }` everywhere in the HLL spec.
-- [P0] Document inline struct literals with shorthand fields, e.g. `{ .field = expr }`, alongside the explicit typed form if both remain supported.
-- [P0] Clarify that commas are required between fields in struct type definitions.
-- [P0] Clarify destructuring semantics for named fields, partial destructuring, and reordered fields.
-- [P1] Clarify the exact `&` rules in the spec: allow `&identifier` and stack-safe lvalues like `&arr[index]`, reject `&@ptr`.
-- [P1] Remove or rename remaining “tuple” terminology in HLL spec text so it consistently says “struct destructuring” / “inline struct”.
-- [P2] Review precedence examples and grammar notes so they do not rely on ambiguous parsing the spec intends to reject.
+- [x] ~~[P0] Document the canonical struct type syntax as `type X = { ... }` everywhere in the HLL spec.~~
+- [x] ~~[P0] Document inline struct literals with shorthand fields, e.g. `{ .field = expr }`, alongside the explicit typed form if both remain supported.~~
+- [x] ~~[P0] Clarify that commas are required between fields in struct type definitions.~~
+- [x] ~~[P0] Clarify destructuring semantics for named fields, partial destructuring, and reordered fields.~~
+- [x] ~~[P1] Clarify the exact `&` rules in the spec: allow `&identifier` and stack-safe lvalues like `&arr[index]`, reject `&@ptr`.~~
+- [x] ~~[P1] Remove or rename remaining “tuple” terminology in HLL spec text so it consistently says “struct destructuring” / “inline struct”.~~
+- [x] ~~[P2] Review precedence examples and grammar notes so they do not rely on ambiguous parsing the spec intends to reject.~~
 
 ## HLL implementation / compilation issues
 

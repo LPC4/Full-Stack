@@ -1,4 +1,4 @@
-## Language Specification v1.4.2
+## Language Specification v1.4.3
 
 **Design Philosophy:** Consistency-First Memory Model  
 **Target Domain:** Systems Programming
@@ -12,10 +12,10 @@ HLL enforces a 100% consistent pointer model. Memory operations are context-inde
 ### 1.1 The Four Golden Rules
 1. **Pointers are always pointers.** If a type contains `*`, it is a pointer type. No implicit conversions between `T` and `T*`.
 2. **Explicit dereferencing with `@`.** `@ptr` reads the value. `@ptr = value` writes the value. Field access requires `@ptr.field`. Array indexing returns pointers.
-3. **Explicit address-of with `&`.** `&value` obtains a pointer to a stack variable or array element. `&@ptr` is invalid.
+3. **Explicit address-of with `&`.** `&identifier` obtains a pointer to a stack variable, and stack-safe lvalues such as `&arr[index]` are also valid. `&@ptr` is invalid.
 4. **No mutable primitive parameters.** All parameters are pass-by-value. Mutation requires explicit pointer parameters (`T*`).
 
-**Duality Principle:** `@(&x) ≡ x` and `&(@ptr) ≡ ptr` (when `ptr` is a valid stack pointer).
+**Duality Principle:** `@(&x) ≡ x` when `x` is a stack-safe lvalue. The reverse form is not a blanket identity; `&@ptr` is rejected.
 
 ---
 
@@ -54,7 +54,7 @@ HLL enforces a 100% consistent pointer model. Memory operations are context-inde
 | `f32`, `f64` | IEEE 754 floats | 4, 8 bytes | `0.0` |
 | `bool` | Boolean | 1 byte | `false` |
 
-**Note:** `Str` is **not** a primitive type. It is defined in the Standard Library as a struct containing a byte pointer and length (`data: u8*`, `length: u64`). String literals (e.g., `"text"`) evaluate to a compile-time inline struct `{ data: u8*, length: u64 }` representing the read-only data pointer and its pre-calculated length.
+**Note:** `Str` is **not** a primitive type. It is defined in the Standard Library as a struct containing a byte pointer and length (`data: u8*`, `length: u64`). String literals (e.g., `"text"`) evaluate to a compile-time anonymous inline struct with the exact shape `{ data: u8*, length: u64 }`, representing the read-only data pointer and its pre-calculated length. Anonymous inline structs are allowed anywhere a struct type is accepted.
 
 ### 3.2 Declaration & Initialization
 <pre style="background:#282c34;color:#abb2bf;padding:12px;border-radius:6px;overflow-x:auto;font-family:monospace;font-size:14px;line-height:1.5;"><code><span style="color:#7f848e;font-style:italic">; Initialized stack variable</span>
@@ -133,16 +133,20 @@ Array indexing **always returns a pointer** (`T*`), never a value.
 <span style="color:#abb2bf">p2_ptr</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">Point</span><span style="color:#56b6c2">*</span> <span style="color:#56b6c2">=</span> <span style="color:#c678dd">new</span><span style="color:#56b6c2">(</span><span style="color:#e5c07b">Point</span><span style="color:#56b6c2">)</span>
 <span style="color:#56b6c2">@</span><span style="color:#abb2bf">p2_ptr</span> <span style="color:#56b6c2">=</span> <span style="color:#56b6c2">{</span> <span style="color:#56b6c2">.</span><span style="color:#abb2bf">x</span> <span style="color:#56b6c2">=</span> <span style="color:#98c379">3.0</span><span style="color:#56b6c2">,</span> <span style="color:#56b6c2">.</span><span style="color:#abb2bf">y</span> <span style="color:#56b6c2">=</span> <span style="color:#98c379">4.0</span> <span style="color:#56b6c2">}</span> <span style="color:#7f848e;font-style:italic">; Heap: full struct write</span>
 <span style="color:#56b6c2">@</span><span style="color:#abb2bf">p2_ptr</span><span style="color:#56b6c2">.</span><span style="color:#abb2bf">x</span> <span style="color:#56b6c2">=</span> <span style="color:#98c379">5.0</span>             <span style="color:#7f848e;font-style:italic">; Heap: field write (requires @)</span></code></pre>
+**Struct Type Rule:** Struct type fields are comma-separated. Commas are required between fields; trailing commas are allowed for multiline definitions.
+
+**Struct Literal Rule:** Anonymous inline structs may be used anywhere a struct type is accepted. Struct literals support shorthand field initialization with `{ .field = expr }` and, where an explicit annotation is useful, the typed form `{ field: Type = expr }`.
+
 **Field Access Rules:**
 - Stack struct: `struct.field`
 - Heap/Stack pointer to struct: `@ptr.field`
 
 ### 5.3 Inline Structs & Destructuring
-HLL uses inline structs for grouping multiple values, including multiple returns. Inline structs can be assigned directly to variables or unpacked using explicit destructuring.
+HLL uses anonymous inline structs for grouping multiple values, including multiple returns. Anonymous inline structs are allowed anywhere a struct type is accepted: variable declarations, parameters, return types, type aliases, and intermediate expressions. Inline structs can be assigned directly to variables or unpacked using explicit destructuring.
 
 <pre style="background:#282c34;color:#abb2bf;padding:12px;border-radius:6px;overflow-x:auto;font-family:monospace;font-size:14px;line-height:1.5;"><code><span style="color:#7f848e;font-style:italic">; Inline struct return type</span>
 <span style="color:#61afef">get_coordinates</span><span style="color:#56b6c2">:</span> <span style="color:#56b6c2">(</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">-&gt;</span> <span style="color:#56b6c2">{</span> <span style="color:#abb2bf">x</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">f32</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">y</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">f32</span> <span style="color:#56b6c2">}</span> <span style="color:#56b6c2">{</span>
-    <span style="color:#c678dd">return</span> <span style="color:#56b6c2">{</span> <span style="color:#56b6c2">.</span><span style="color:#abb2bf">x</span> <span style="color:#56b6c2">=</span> <span style="color:#98c379">3.5</span><span style="color:#56b6c2">,</span> <span style="color:#56b6c2">.</span><span style="color:#abb2bf">y</span> <span style="color:#56b6c2">=</span> <span style="color:#98c379">7.2</span> <span style="color:#56b6c2">}</span>
+    <span style="color:#c678dd">return</span> <span style="color:#56b6c2">{</span> <span style="color:#56b6c2">.</span><span style="color:#abb2bf">y</span> <span style="color:#56b6c2">=</span> <span style="color:#98c379">7.2</span><span style="color:#56b6c2">,</span> <span style="color:#56b6c2">.</span><span style="color:#abb2bf">x</span> <span style="color:#56b6c2">=</span> <span style="color:#98c379">3.5</span> <span style="color:#56b6c2">}</span>
 <span style="color:#56b6c2">}</span>
 
 <span style="color:#61afef">main</span><span style="color:#56b6c2">:</span> <span style="color:#56b6c2">(</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">-&gt;</span> <span style="color:#56b6c2">(</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">{</span>
@@ -151,14 +155,14 @@ HLL uses inline structs for grouping multiple values, including multiple returns
     <span style="color:#61afef">print</span><span style="color:#56b6c2">(</span><span style="color:#abb2bf">coords</span><span style="color:#56b6c2">.</span><span style="color:#abb2bf">x</span><span style="color:#56b6c2">)</span>
     <span style="color:#61afef">print</span><span style="color:#56b6c2">(</span><span style="color:#abb2bf">coords</span><span style="color:#56b6c2">.</span><span style="color:#abb2bf">y</span><span style="color:#56b6c2">)</span>
 
-    <span style="color:#7f848e;font-style:italic">; Option 2: Struct Destructuring (Typed Punning)</span>
-    <span style="color:#7f848e;font-style:italic">; Variables are created matching the exact field names and types of the struct</span>
-    <span style="color:#56b6c2">{</span> <span style="color:#abb2bf">x</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">f32</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">y</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">f32</span> <span style="color:#56b6c2">}</span> <span style="color:#56b6c2">=</span> <span style="color:#61afef">get_coordinates</span><span style="color:#56b6c2">()</span>
+    <span style="color:#7f848e;font-style:italic">; Option 2: Struct Destructuring (typed pattern)</span>
+    <span style="color:#7f848e;font-style:italic">; Field names are matched by name, not position, so the order may differ from the source struct</span>
+    <span style="color:#56b6c2">{</span> <span style="color:#abb2bf">y</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">f32</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">x</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">f32</span> <span style="color:#56b6c2">}</span> <span style="color:#56b6c2">=</span> <span style="color:#61afef">get_coordinates</span><span style="color:#56b6c2">()</span>
     <span style="color:#61afef">print</span><span style="color:#56b6c2">(</span><span style="color:#abb2bf">x</span><span style="color:#56b6c2">)</span>
 <span style="color:#56b6c2">}</span></code></pre>
 
 **Partial Destructuring (Discarding Data)**
-If you only need specific fields from a struct, you can omit the unwanted fields from the destructuring braces.
+If you only need specific fields from a struct, you can omit the unwanted fields from the destructuring braces. Omitted fields are discarded, and the listed field order does not need to match the source struct.
 <pre style="background:#282c34;color:#abb2bf;padding:12px;border-radius:6px;overflow-x:auto;font-family:monospace;font-size:14px;line-height:1.5;"><code><span style="color:#7f848e;font-style:italic">; Extracts 'value', implicitly discards 'success'</span>
 <span style="color:#56b6c2">{</span> <span style="color:#abb2bf">value</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span> <span style="color:#56b6c2">}</span> <span style="color:#56b6c2">=</span> <span style="color:#61afef">try_operation</span><span style="color:#56b6c2">()</span></code></pre>
 
@@ -170,7 +174,7 @@ If you only need specific fields from a struct, you can omit the unwanted fields
 - All parameters are pass-by-value.
 - Mutability requires `T*` parameters and `&` at call site.
 - Returning stack addresses (`return &x`) is a compile-time error.
-- Multiple returns use struct syntax.
+- Multiple returns use anonymous inline struct syntax.
 
 <pre style="background:#282c34;color:#abb2bf;padding:12px;border-radius:6px;overflow-x:auto;font-family:monospace;font-size:14px;line-height:1.5;"><code><span style="color:#61afef">increment</span><span style="color:#56b6c2">:</span> <span style="color:#56b6c2">(</span><span style="color:#abb2bf">x_ptr</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span><span style="color:#56b6c2">*</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">-&gt;</span> <span style="color:#56b6c2">(</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">{</span>
     <span style="color:#56b6c2">@</span><span style="color:#abb2bf">x_ptr</span> <span style="color:#56b6c2">=</span> <span style="color:#56b6c2">@</span><span style="color:#abb2bf">x_ptr</span> <span style="color:#56b6c2">+</span> <span style="color:#98c379">1</span>
@@ -182,7 +186,7 @@ If you only need specific fields from a struct, you can omit the unwanted fields
 <span style="color:#56b6c2">}</span>
 
 <span style="color:#61afef">divide</span><span style="color:#56b6c2">:</span> <span style="color:#56b6c2">(</span><span style="color:#abb2bf">a</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">b</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">-&gt;</span> <span style="color:#56b6c2">{</span> <span style="color:#abb2bf">quotient</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">remainder</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span> <span style="color:#56b6c2">}</span> <span style="color:#56b6c2">{</span>
-    <span style="color:#c678dd">return</span> <span style="color:#56b6c2">{</span> <span style="color:#abb2bf">quotient</span><span style="color:#56b6c2">:</span> <span style="color:#abb2bf">a</span> <span style="color:#56b6c2">/</span> <span style="color:#abb2bf">b</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">remainder</span><span style="color:#56b6c2">:</span> <span style="color:#abb2bf">a</span> <span style="color:#56b6c2">%</span> <span style="color:#abb2bf">b</span> <span style="color:#56b6c2">}</span>
+    <span style="color:#c678dd">return</span> <span style="color:#56b6c2">{</span> <span style="color:#abb2bf">remainder</span><span style="color:#56b6c2">:</span> <span style="color:#abb2bf">a</span> <span style="color:#56b6c2">%</span> <span style="color:#abb2bf">b</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">quotient</span><span style="color:#56b6c2">:</span> <span style="color:#abb2bf">a</span> <span style="color:#56b6c2">/</span> <span style="color:#abb2bf">b</span> <span style="color:#56b6c2">}</span>
 <span style="color:#56b6c2">}</span>
 
 <span style="color:#61afef">main</span><span style="color:#56b6c2">:</span> <span style="color:#56b6c2">(</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">-&gt;</span> <span style="color:#56b6c2">(</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">{</span>
@@ -190,8 +194,8 @@ If you only need specific fields from a struct, you can omit the unwanted fields
     <span style="color:#abb2bf">s</span> <span style="color:#56b6c2">=</span> <span style="color:#61afef">divide</span><span style="color:#56b6c2">(</span><span style="color:#98c379">10</span><span style="color:#56b6c2">,</span> <span style="color:#98c379">3</span><span style="color:#56b6c2">)</span>
     <span style="color:#61afef">print</span><span style="color:#56b6c2">(</span><span style="color:#abb2bf">s</span><span style="color:#56b6c2">.</span><span style="color:#abb2bf">quotient</span><span style="color:#56b6c2">)</span>
 
-    <span style="color:#7f848e;font-style:italic">; Struct destructuring</span>
-    <span style="color:#56b6c2">{</span> <span style="color:#abb2bf">quotient</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">remainder</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span> <span style="color:#56b6c2">}</span> <span style="color:#56b6c2">=</span> <span style="color:#61afef">divide</span><span style="color:#56b6c2">(</span><span style="color:#98c379">10</span><span style="color:#56b6c2">,</span> <span style="color:#98c379">3</span><span style="color:#56b6c2">)</span>
+    <span style="color:#7f848e;font-style:italic">; Struct destructuring by name, with fields listed in any order</span>
+    <span style="color:#56b6c2">{</span> <span style="color:#abb2bf">remainder</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">quotient</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span> <span style="color:#56b6c2">}</span> <span style="color:#56b6c2">=</span> <span style="color:#61afef">divide</span><span style="color:#56b6c2">(</span><span style="color:#98c379">10</span><span style="color:#56b6c2">,</span> <span style="color:#98c379">3</span><span style="color:#56b6c2">)</span>
 <span style="color:#56b6c2">}</span></code></pre>
 
 ---
@@ -238,7 +242,7 @@ If you only need specific fields from a struct, you can omit the unwanted fields
 ### 8.2 Error Handling
 - No exceptions. Errors are returned as structs `{ value: T, error: E }`.
 - `null` indicates failure for pointer-returning functions.
-- Explicit handling required at each call site. Unwanted fields can be ignored via partial destructuring.
+- Explicit handling required at each call site. Unwanted fields can be ignored via partial destructuring, and destructuring matches fields by name rather than position.
 
 <pre style="background:#282c34;color:#abb2bf;padding:12px;border-radius:6px;overflow-x:auto;font-family:monospace;font-size:14px;line-height:1.5;"><code><span style="color:#61afef">open_file</span><span style="color:#56b6c2">(</span><span style="color:#abb2bf">path</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">Str</span><span style="color:#56b6c2">*):</span> <span style="color:#56b6c2">{</span> <span style="color:#abb2bf">file</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">File</span><span style="color:#56b6c2">*</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">error</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">Str</span><span style="color:#56b6c2">*</span> <span style="color:#56b6c2">}</span> <span style="color:#56b6c2">{</span>
     <span style="color:#c678dd">if</span> <span style="color:#61afef">invalid_path</span><span style="color:#56b6c2">(</span><span style="color:#abb2bf">path</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">{</span> 
@@ -278,10 +282,10 @@ newline     = "\n" | "\r\n";
 program        = { declaration };
 declaration    = variable_decl | function_decl | type_decl | const_decl;
 variable_decl  = identifier [ ":" type ] [ "=" expression ];
-type_decl      = "type" identifier "=" type_def;
+type_decl      = "type" identifier "=" type;
 const_decl     = "const" identifier "=" expression;
-type_def       = struct_def | array_def | primitive_type | pointer_type;
-struct_def     = "{" { field_decl "," } "}";
+type           = primitive_type | identifier | struct_def | array_def | pointer_type;
+struct_def     = "{" [ field_decl { "," field_decl } [ "," ] ] "}";
 field_decl     = identifier ":" type;
 array_def      = "[" integer "]" type;
 pointer_type   = type "*";
@@ -290,7 +294,7 @@ primitive_type = "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64"
 function_decl  = identifier ":" "(" [ param_list ] ")" "->" return_type block;
 param_list     = parameter { "," parameter };
 parameter      = identifier ":" type;
-return_type    = type | struct_def;
+return_type    = type;
 block          = "{" { statement } "}";
 statement      = expression ";" | if_stmt | while_stmt | return_stmt | defer_stmt | variable_decl ";";
 if_stmt        = "if" expression block [ "else" ( if_stmt | block ) ];
@@ -300,12 +304,14 @@ defer_stmt     = "defer" expression;
 expression     = assignment | binary_expr | unary_expr | primary_expr;
 assignment     = lvalue "=" expression;
 lvalue         = struct_destructure | dereference | field_access | array_index | identifier;
-struct_destructure = "{" identifier ":" type { "," identifier ":" type } "}";
+struct_destructure = "{" [ identifier ":" type { "," identifier ":" type } [ "," ] ] "}";
 unary_expr     = unary_op expression;
 unary_op       = "-" | "!" | "&" | "@";
 primary_expr   = identifier | literal | "(" expression ")" | function_call | array_literal | struct_literal;
-struct_literal = "{" field_init { "," field_init } "}";
-field_init     = identifier ":" expression;
+struct_literal = "{" [ field_init { "," field_init } [ "," ] ] "}";
+field_init     = shorthand_field_init | typed_field_init;
+shorthand_field_init = "." identifier "=" expression;
+typed_field_init = identifier ":" type "=" expression;
 dereference    = "@" expression;
 field_access   = expression "." identifier;
 array_index    = expression "[" expression "]";
@@ -324,7 +330,7 @@ array_index    = expression "[" expression "]";
 | 8 | `or` | Left |
 | 9 | `=` | Right |
 
-**Validation Rule:** Boolean expressions follow standard operator precedence: `and` binds tighter than `or`.
+**Validation Rule:** Boolean expressions follow standard operator precedence: `and` binds tighter than `or`. If an expression would only be understood by relying on ambiguous parse recovery, it must be parenthesized; the parser rejects ambiguous precedence instead of guessing.
 
 ---
 
@@ -357,7 +363,7 @@ array_index    = expression "[" expression "]";
     <span style="color:#abb2bf">length</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">u64</span>
 <span style="color:#56b6c2">}</span>
 
-<span style="color:#7f848e;font-style:italic">; String literals like "Hello World" evaluate to inline structs: { data: u8*, length: u64 }</span>
+<span style="color:#7f848e;font-style:italic">; String literals like "Hello World" evaluate to compile-time anonymous inline structs with the exact shape: { data: u8*, length: u64 }</span>
 <span style="color:#61afef">make_str</span><span style="color:#56b6c2">:(</span><span style="color:#abb2bf">raw_str</span><span style="color:#56b6c2">:</span> <span style="color:#56b6c2">{</span> <span style="color:#abb2bf">data</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">u8</span><span style="color:#56b6c2">*</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">length</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">u64</span> <span style="color:#56b6c2">})</span> <span style="color:#56b6c2">-&gt;</span> <span style="color:#e5c07b">Str</span><span style="color:#56b6c2">*</span> <span style="color:#56b6c2">{</span>
     <span style="color:#56b6c2">{</span> <span style="color:#abb2bf">data</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">u8</span><span style="color:#56b6c2">*</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">length</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">u64</span> <span style="color:#56b6c2">}</span> <span style="color:#56b6c2">=</span> <span style="color:#abb2bf">raw_str</span>
     <span style="color:#abb2bf">str_ptr</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">Str</span><span style="color:#56b6c2">*</span> <span style="color:#56b6c2">=</span> <span style="color:#c678dd">new</span><span style="color:#56b6c2">(</span><span style="color:#e5c07b">Str</span><span style="color:#56b6c2">)</span>
@@ -463,6 +469,6 @@ array_index    = expression "[" expression "]";
 5. **Mutability:** Parameters are immutable copies. Use `T*` and `&` for mutation.
 6. **Resource Lifecycle:** `new()` requires `free()` or `defer free()`. No GC.
 7. **Error Flow:** Functions return `{ value, error }` structs. Handle explicitly.
-8. **Precedence:** Parenthesize ambiguous expressions. Compiler rejects implicit precedence.
+8. **Precedence:** Parenthesize ambiguous expressions. The compiler rejects ambiguous precedence rather than inferring it.
 9. **FFI Boundaries:** Document ownership transfer. Compiler safety does not cross language boundaries.
 10. **Compile-Time Functions:** Pure, deterministic, no memory allocation.

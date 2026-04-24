@@ -1,0 +1,20 @@
+; Pointer and array example: stack arrays, heap arrays, address-of, dereference, and indexing.
+main: () -> i32 {
+    x: i32 = 10
+    px: i32* = &x
+    @px = @px + 2
+
+    values: i32[3]
+    @values[0] = @px
+    @values[1] = 20
+    @values[2] = @values[0] + @values[1]
+
+    heap: i32[2]* = new([2]i32)
+    defer free(heap)
+
+    @heap[0] = @values[0]
+    @heap[1] = @values[2]
+
+    return @heap[0] + @heap[1]
+}
+

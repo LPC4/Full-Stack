@@ -1,0 +1,24 @@
+; Structs and destructuring example: named types, reordered fields, and partial binding.
+type Point = {
+    x: i32,
+    y: i32
+}
+
+make_point: (x: i32, y: i32) -> Point {
+    return { .x = x, .y = y }
+}
+
+sum_pair: (pair: Point) -> i32 {
+    return pair.x + pair.y
+}
+
+main: () -> i32 {
+    p: Point = make_point(3, 4)
+
+    { y: i32, x: i32 } = p
+    pair: Point = make_point(x, y)
+
+    { y: i32 } = pair
+    return sum_pair(pair) + x + y
+}
+

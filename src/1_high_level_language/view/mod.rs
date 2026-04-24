@@ -50,57 +50,48 @@ impl ProgramFile {
 fn built_in_programs() -> Vec<ProgramFile> {
     vec![
         ProgramFile::example(
-            "example-showcase",
-            "Showcase",
-            "A full tour of structs, arrays, pointers, loops, and defer.",
+            "example-core-syntax",
+            "Core Syntax",
+            "Basic declarations, constants, functions, and primitive values.",
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/programs/example/example_program.hll"
+                "/programs/example/core_syntax.hll"
             )),
         ),
         ProgramFile::example(
-            "example-debug-pointers",
-            "Debug Pointers",
-            "A compact pointer and cleanup demo.",
+            "example-pointers-arrays",
+            "Pointers & Arrays",
+            "Address-of, dereference, array indexing, and heap cleanup.",
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/programs/debug/debug.hll"
+                "/programs/example/pointers_arrays.hll"
             )),
         ),
         ProgramFile::example(
-            "example-struct-destructuring",
-            "Struct Destructuring",
-            "Nested records and destructuring assignments.",
+            "example-structs-destructuring",
+            "Structs & Destructuring",
+            "Named structs, shorthand literals, and reordered/partial destructuring.",
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/programs/test/integration/struct_destructuring_test.hll"
+                "/programs/example/structs_destructuring.hll"
             )),
         ),
         ProgramFile::example(
-            "example-generic-types",
-            "Generic Types",
-            "A generic record specialized with multiple concrete types.",
+            "example-control-flow-functions",
+            "Control Flow & Functions",
+            "Function calls, loops, branching, and defer-based cleanup.",
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/programs/test/integration/generic_types_test.hll"
+                "/programs/example/control_flow_functions.hll"
             )),
         ),
         ProgramFile::example(
-            "example-pointer-flow",
-            "Pointer Flow",
-            "Chained pointer and array writes in a small program.",
+            "example-generics-strings-consts",
+            "Generics, Strings & Consts",
+            "Generic types, string literals, and compile-time constants.",
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/programs/test/integration/pointer_heavy_flow_test.hll"
-            )),
-        ),
-        ProgramFile::example(
-            "example-function-syntax",
-            "Function Syntax",
-            "A minimal function example showing the current declaration style.",
-            include_str!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/programs/test/integration/new_function_syntax_test.hll"
+                "/programs/example/generics_strings_consts.hll"
             )),
         ),
     ]
@@ -744,8 +735,7 @@ impl HighLevelLanguageView {
 
                 for (id, name, description, selected) in entries {
                     ui.horizontal(|ui| {
-                        ui.label("O"); // placeholder for potential icon
-
+                        // TODO add icons or something
                         let response = ui.selectable_label(selected, name);
                         let response = if description.is_empty() {
                             response
@@ -925,8 +915,6 @@ impl HighLevelLanguageView {
 
         egui::Panel::top("high_level_language_top_panel").show_inside(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.strong("Compiler:");
-                ui.separator();
                 ui.toggle_value(&mut self.show_source, "Source Code");
                 ui.toggle_value(&mut self.show_tokens, "Lexer Tokens");
                 ui.toggle_value(&mut self.show_ast, "Parser AST");

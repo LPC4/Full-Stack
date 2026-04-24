@@ -37,6 +37,52 @@ main: () -> i32 {
 }
 
 #[test]
+fn allows_anonymous_inline_structs_everywhere() {
+    let source = r#"
+sum_pair: (pair: { left: i32, right: i32 }) -> i32 {
+    return pair.left + pair.right
+}
+
+make_pair: (left: i32, right: i32) -> { left: i32, right: i32 } {
+    return { left: i32 = left, right: i32 = right }
+}
+
+main: () -> i32 {
+    pair: { left: i32, right: i32 } = make_pair(2, 3)
+    other: { left: i32, right: i32 }* = new({ left: i32, right: i32 })
+    @other = { .left = 4, .right = 5 }
+    return sum_pair(pair) + @other.left + @other.right
+}
+"#;
+
+    let pipeline = CompilationPipeline::new();
+    let result = pipeline.compile(source);
+    assert!(
+        result.is_ok(),
+        "expected anonymous inline structs in all type positions to compile successfully: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn allows_typed_struct_literals() {
+    let source = r#"
+main: () -> i32 {
+    value: { left: i32, right: i32 } = { left: i32 = 7, right: i32 = 11 }
+    return value.left + value.right
+}
+"#;
+
+    let pipeline = CompilationPipeline::new();
+    let result = pipeline.compile(source);
+    assert!(
+        result.is_ok(),
+        "expected typed struct literals to compile successfully: {:?}",
+        result.err()
+    );
+}
+
+#[test]
 fn allows_shorthand_struct_literals() {
     let source = r#"
 divide: (a: i32, b: i32) -> { quotient: i32, remainder: i32 } {
@@ -129,6 +175,108 @@ main: () -> i32 {
         "expected `@arr[0]` to compile successfully: {:?}",
         result.err()
     );
+}
+
+#[test]
+fn allows_stack_and_heap_arrays() {
+    let source = r#"
+main: () -> i32 {
+    stack: i32[3]
+    @stack[0] = 1
+    @stack[1] = 2
+    @stack[2] = @stack[0] + @stack[1]
+
+    heap: i32[2]* = new([2]i32)
+    defer free(heap)
+    @heap[0] = @stack[2]
+    @heap[1] = 4
+
+    return @heap[0] + @heap[1]
+}
+"#;
+
+    let pipeline = CompilationPipeline::new();
+    let result = pipeline.compile(source);
+    assert!(
+        result.is_ok(),
+        "expected stack and heap arrays to compile successfully: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn allows_string_literals_against_text_alias() {
+    let source = r#"
+type Text = {
+    data: u8*,
+    length: u64
+}
+
+main: () -> i32 {
+    greeting: Text = "hello"
+    return 0
+}
+"#;
+
+    let pipeline = CompilationPipeline::new();
+    let result = pipeline.compile(source);
+    assert!(
+        result.is_ok(),
+        "expected string literals to compile against `Text` aliases: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn all_launch_examples_compile() {
+    let examples = [
+        (
+            "core_syntax",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/programs/example/core_syntax.hll"
+            )),
+        ),
+        (
+            "pointers_arrays",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/programs/example/pointers_arrays.hll"
+            )),
+        ),
+        (
+            "structs_destructuring",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/programs/example/structs_destructuring.hll"
+            )),
+        ),
+        (
+            "control_flow_functions",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/programs/example/control_flow_functions.hll"
+            )),
+        ),
+        (
+            "generics_strings_consts",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/programs/example/generics_strings_consts.hll"
+            )),
+        ),
+    ];
+
+    let pipeline = CompilationPipeline::new();
+    for (name, source) in examples {
+        let result = pipeline.compile(source);
+        assert!(
+            result.is_ok(),
+            "expected launch example `{}` to compile successfully: {:?}",
+            name,
+            result.err()
+        );
+    }
 }
 
 #[test]
