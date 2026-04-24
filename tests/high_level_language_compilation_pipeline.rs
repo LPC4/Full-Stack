@@ -111,15 +111,17 @@ main: () -> i32* {
 }
 
 #[test]
-fn rejects_ambiguous_boolean_precedence() {
-    assert_semantic_error_contains(
+fn allows_mixed_boolean_precedence() {
+    let pipeline = CompilationPipeline::new();
+    let result = pipeline.compile(
         r#"
 main: () -> bool {
     return true or false and true
 }
 "#,
-        "ambiguous boolean precedence must be parenthesized",
     );
+
+    assert!(result.is_ok(), "expected mixed boolean precedence to compile successfully: {:?}", result.err());
 }
 
 #[test]

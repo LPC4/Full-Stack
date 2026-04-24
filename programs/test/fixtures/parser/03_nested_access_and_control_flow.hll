@@ -8,8 +8,8 @@ stress_test: (c: Container*) -> i32 {
     ; This should read: dereference ( (index 0 of (field items of (dereference c))) )
     val: i32 = @@c.items[0]
 
-    ; Test: Explicit precedence (spec v1.4 rejects ambiguous precedence assumptions)
-    check: bool = true or (false and (not true))
+    ; Test: Explicit precedence (spec v1.4.1 follows normal operator precedence)
+    check: bool = true or false and not true
 
     ; Test: Empty blocks and semicolons at end of line
     while check {

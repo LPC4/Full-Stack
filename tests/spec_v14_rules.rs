@@ -141,20 +141,20 @@ main: () -> i32 {
 }
 
 #[test]
-fn rejects_ambiguous_boolean_precedence() {
+fn allows_mixed_boolean_precedence() {
     let source = r#"
 main: () -> i32 {
     x: bool = true or false and not true
+    if x {
+        return 1
+    }
     return 0
 }
 "#;
 
     let pipeline = CompilationPipeline::new();
     let result = pipeline.compile(source);
-    assert!(
-        result.is_err(),
-        "expected ambiguous boolean precedence to be rejected"
-    );
+    assert!(result.is_ok(), "expected mixed boolean precedence to compile successfully: {:?}", result.err());
 }
 
 #[test]

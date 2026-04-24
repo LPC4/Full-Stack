@@ -20,7 +20,7 @@ Prioritized backlog for the compiler, specs, and project hygiene.
 - [x] ~~Keep generic-placeholder arithmetic permissive for now, but isolate it so real named types still fail where appropriate.~~
 - [x] ~~Audit `src/1_high_level_language/compiler/utility/semantic_analyzer.rs` for any other places where `@`, field access, or indexing produce the wrong rvalue type.~~
 - [x] ~~Rename or descope legacy tuple-related code paths in `ast.rs`, `parser.rs`, and `compiler/assignments.rs` so the implementation terminology matches the spec.~~
-- [x] ~~Add negative tests for the v1.4 invariants: `&@ptr`, returning stack addresses, ambiguous precedence rejection, and invalid pointer arithmetic.~~
+- [x] ~~Add negative tests for the v1.4.1 invariants: `&@ptr`, returning stack addresses, ambiguous precedence rejection, and invalid pointer arithmetic.~~
 - [x] ~~Expand fixture coverage for destructuring order/partial binding and pointer-heavy flows.~~
 
 ## IR spec — structural issues

@@ -1,5 +1,5 @@
 use crate::high_level_language::ast::{
-    BinaryOp, DeclNode, Declaration, Expression, Program, ReturnType, Statement, Type, UnaryOp,
+    DeclNode, Declaration, Expression, Program, ReturnType, Statement, Type, UnaryOp,
 };
 use crate::high_level_language::compiler::utility::diagnostics::Diagnostics;
 use crate::high_level_language::compiler::utility::symbol_table::SymbolTable;
@@ -331,10 +331,6 @@ impl SemanticAnalyzer {
                 _ => Ok("unknown".to_string()),
             },
             Expression::Binary { op, left, right } => {
-                if matches!(op, BinaryOp::And | BinaryOp::Or) {
-                    self.validate_boolean_precedence(expr, false)?;
-                }
-
                 let lhs_type = self.infer_expression_type(left)?;
                 let rhs_type = self.infer_expression_type(right)?;
 
@@ -421,7 +417,7 @@ impl SemanticAnalyzer {
                         }
                     };
 
-                    // Per spec v1.4: all fields must have explicit type annotations
+                    // Per spec v1.4.1: all fields must have explicit type annotations
                     for field in fields.iter() {
                         let Some(name) = field.name.as_ref() else {
                             self.diagnostics.error("Struct destructuring requires explicit variable names".to_string());
@@ -489,43 +485,6 @@ impl SemanticAnalyzer {
         }
     }
 
-    fn validate_boolean_precedence(&mut self, expr: &Expression, grouped: bool) -> Result<Option<BinaryOp>, ()> {
-        match expr {
-            Expression::Primary(crate::high_level_language::ast::PrimaryExpr::Grouped(inner)) => {
-                self.validate_boolean_precedence(inner, true).map(|_| None)
-            }
-            Expression::Binary { op, left, right } => {
-                let left_op = self.validate_boolean_precedence(left, grouped)?;
-                let right_op = self.validate_boolean_precedence(right, grouped)?;
-
-                if matches!(op, BinaryOp::And | BinaryOp::Or) {
-                    if !grouped {
-                        if let Some(child_op) = left_op {
-                            if child_op != *op {
-                                self.diagnostics.error(
-                                    "ambiguous boolean precedence must be parenthesized".to_string(),
-                                );
-                                return Err(());
-                            }
-                        }
-                        if let Some(child_op) = right_op {
-                            if child_op != *op {
-                                self.diagnostics.error(
-                                    "ambiguous boolean precedence must be parenthesized".to_string(),
-                                );
-                                return Err(());
-                            }
-                        }
-                    }
-                    Ok(Some(op.clone()))
-                } else {
-                    Ok(None)
-                }
-            }
-            Expression::Unary { expr: inner, .. } => self.validate_boolean_precedence(inner, grouped).map(|_| None),
-            _ => Ok(None),
-        }
-    }
 
     fn returning_local_address_name(&self, expr: &Expression) -> Option<String> {
         match expr {

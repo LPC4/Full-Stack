@@ -14,9 +14,17 @@ jobs:
   check-and-test:
     name: Lint, Check, and Test
     runs-on: self-hosted
+
+    # REQUIRED: Gives the runner permission to push code back to your branch
+    permissions:
+      contents: write
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Ensures the checkout uses the token with write permissions
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -27,11 +35,22 @@ jobs:
       - name: Cache Rust artifacts
         uses: Swatinem/rust-cache@v2
 
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev
+      # 1. Format the code (removed the --check flag so it actually fixes it)
+      - name: Format code
+        run: cargo fmt --all
 
-      - name: Check formatting
-        run: cargo fmt --all -- --check
+      # 2. Commit and push only if changes were made
+      - name: Commit and Push formatting fixes
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "github-actions[bot]"
+          git add .
+          if ! git diff --staged --quiet; then
+            git commit -m "Fix formatting (automated)"
+            git push
+          else
+            echo "No formatting changes detected."
+          fi
 
       - name: Clippy
         run: cargo clippy --all-targets --all-features

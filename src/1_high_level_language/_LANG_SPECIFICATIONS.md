@@ -1,10 +1,6 @@
-Here is the revised Language Specification v1.4. All tuple semantics have been completely removed and replaced with inline structs and struct destructuring, aligning perfectly with your Consistency-First philosophy.
+# Language Specification v1.4.1
 
-***
-
-# Language Specification v1.4
-
-**Version:** 1.4
+**Version:** 1.4.1
 **Design Philosophy:** Consistency-First Memory Model  
 **Target Domain:** Systems Programming
 
@@ -28,7 +24,7 @@ HLL enforces a 100% consistent pointer model. Memory operations are context-inde
 
 | Feature | Rule |
 |---------|------|
-| Comments | Semicolon `;` (line-only) |
+| Comments | Semicolon `;` (line comment; consumes the rest of the line) |
 | Statement Termination | Significant newlines (one statement per line) |
 | Whitespace | Insufficient except as token separator |
 | Type Annotations | `name: Type = value` |
@@ -38,7 +34,7 @@ HLL enforces a 100% consistent pointer model. Memory operations are context-inde
 ```HLL
 x: i32 = 42
 y: f64 = 3.1415
-z: i32 = 42; // Allowed trailing comment
+z: i32 = 42 ; Allowed trailing comment
 
 ; Multi-line expression continuation
 w: i32 = 1 + 2
@@ -151,7 +147,7 @@ p2_ptr: Point* = new(Point)
 - Heap/Stack pointer to struct: `@ptr.field`
 
 ### 5.3 Inline Structs & Destructuring
-HLL uses inline structs for grouping multiple values (such as multiple returns). Structs can be assigned directly to variables or unpacked using explicit destructuring.
+HLL uses inline structs for grouping multiple values, including multiple returns. Inline structs can be assigned directly to variables or unpacked using explicit destructuring.
 
 ```HLL
 ; Inline struct return type
@@ -172,7 +168,7 @@ main: () -> () {
 }
 ```
 
-**Partial Destructuring (Discarding Data):**
+**Partial Destructuring (Discarding Data)**
 If you only need specific fields from a struct, you can omit the unwanted fields from the destructuring braces.
 ```HLL
 ; Extracts 'value', implicitly discards 'success'
@@ -261,7 +257,7 @@ compute_factorial(n: i32): i32 {
 ### 8.2 Error Handling
 - No exceptions. Errors are returned as structs `{ value: T, error: E }`.
 - `null` indicates failure for pointer-returning functions.
-- Explicit handling required at each call site. Unwanted error objects can be ignored via partial destructuring.
+- Explicit handling required at each call site. Unwanted fields can be ignored via partial destructuring.
 
 ```HLL
 open_file(path: Str*): { file: File*, error: Str* } {
@@ -349,7 +345,7 @@ array_index    = expression "[" expression "]";
 | 8 | `or` | Left |
 | 9 | `=` | Right |
 
-**Validation Rule:** Ambiguous expressions require explicit parentheses. The compiler rejects implicit precedence assumptions.
+**Validation Rule:** Boolean expressions follow standard operator precedence: `and` binds tighter than `or`.
 
 ---
 

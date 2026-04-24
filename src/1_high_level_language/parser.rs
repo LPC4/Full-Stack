@@ -725,7 +725,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_struct_destructure_field(&mut self) -> Result<StructDestructureField, ParserError> {
-        // Per spec v1.4: struct destructuring requires explicit type annotations
+        // Per spec v1.4.1: struct destructuring requires explicit type annotations
         let name = self.expect_ident()?;
         self.expect_colon()?;
         let ty = self.parse_type()?;
