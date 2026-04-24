@@ -31,12 +31,7 @@ impl fmt::Display for IrGlobalString {
             .replace('\n', "\\n")
             .replace('\t', "\\t")
             .replace('\r', "\\r");
-        write!(
-            f,
-            "const {} = c\"{}\"",
-            self.name,
-            escaped
-        )
+        write!(f, "const {} = c\"{}\"", self.name, escaped)
     }
 }
 
