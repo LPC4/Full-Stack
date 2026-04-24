@@ -421,18 +421,20 @@ impl HighLevelCompiler {
             } => Some(AssignTarget::Dereference(Box::new(
                 self.expression_to_assign_target(expr)?,
             ))),
-            Expression::Primary(crate::high_level_language::ast::PrimaryExpr::FieldAccess { expr, field }) => {
-                Some(AssignTarget::FieldAccess {
-                    expr: Box::new(self.expression_to_assign_target(expr)?),
-                    field: field.clone(),
-                })
-            }
-            Expression::Primary(crate::high_level_language::ast::PrimaryExpr::ArrayIndex { expr, index }) => {
-                Some(AssignTarget::ArrayIndex {
-                    expr: Box::new(self.expression_to_assign_target(expr)?),
-                    index: index.clone(),
-                })
-            }
+            Expression::Primary(crate::high_level_language::ast::PrimaryExpr::FieldAccess {
+                expr,
+                field,
+            }) => Some(AssignTarget::FieldAccess {
+                expr: Box::new(self.expression_to_assign_target(expr)?),
+                field: field.clone(),
+            }),
+            Expression::Primary(crate::high_level_language::ast::PrimaryExpr::ArrayIndex {
+                expr,
+                index,
+            }) => Some(AssignTarget::ArrayIndex {
+                expr: Box::new(self.expression_to_assign_target(expr)?),
+                index: index.clone(),
+            }),
             _ => None,
         }
     }
@@ -588,12 +590,16 @@ impl HighLevelCompiler {
             IrType::Pointer(inner) => match inner.as_ref() {
                 IrType::Aggregate(fields) => fields.clone(),
                 _ => {
-                    self.context.diagnostics.error("struct destructuring requires an aggregate type".to_string());
+                    self.context
+                        .diagnostics
+                        .error("struct destructuring requires an aggregate type".to_string());
                     return None;
                 }
             },
             _ => {
-                self.context.diagnostics.error("struct destructuring requires an aggregate type".to_string());
+                self.context
+                    .diagnostics
+                    .error("struct destructuring requires an aggregate type".to_string());
                 return None;
             }
         };
@@ -602,7 +608,9 @@ impl HighLevelCompiler {
         let base_ptr = match &value.value {
             IrValue::Register(reg) => reg.clone(),
             _ => {
-                self.context.diagnostics.error("struct destructuring requires a register value".to_string());
+                self.context
+                    .diagnostics
+                    .error("struct destructuring requires a register value".to_string());
                 return None;
             }
         };
@@ -619,7 +627,8 @@ impl HighLevelCompiler {
         // Extract each requested field and assign to target variables.
         for field in fields.iter() {
             if let Some(ref name) = field.name {
-                let Some((field_offset, field_ty)) = field_offsets.get(name.as_str()).cloned() else {
+                let Some((field_offset, field_ty)) = field_offsets.get(name.as_str()).cloned()
+                else {
                     self.context.diagnostics.error(format!(
                         "struct destructuring field `{}` not found in aggregate type",
                         name
@@ -669,7 +678,6 @@ impl HighLevelCompiler {
                 });
             }
         }
-
 
         Some(value.clone())
     }

@@ -1,5 +1,5 @@
-define i32 @test_simple() {
-@entry:
+define i32 test_simple() {
+entry:
 	; local var: q
 	$q = stack_alloc i32
 	write i32 0 @ $q
@@ -11,3 +11,4 @@ define i32 @test_simple() {
 	$0 = read i32 @ $q
 	ret $0
 }
+

@@ -1,7 +1,9 @@
 use full_stack::intermediate_language::block::IrBlock;
 use full_stack::intermediate_language::instruction::{IrInstruction, IrTerminator};
 use full_stack::intermediate_language::ops::IrMathOp;
-use full_stack::intermediate_language::program::{IrFunction, IrGlobalString, IrParam, IrProgram, IrTypeAlias};
+use full_stack::intermediate_language::program::{
+    IrFunction, IrGlobalString, IrParam, IrProgram, IrTypeAlias,
+};
 use full_stack::intermediate_language::types::{FloatWidth, IntWidth, IrType};
 use full_stack::intermediate_language::values::{IrRegister, IrValue};
 
@@ -43,10 +45,9 @@ fn pretty_print_program_has_registers_labels_and_tabs() {
 
     let output = format!("{program}");
     assert!(output.contains("type Point = {f32, f32}"));
-    assert!(output.contains("@hello = constant i8[2] c\"hi\""));
-    assert!(output.contains("define i32 @add_one(i32 $value) {"));
-    assert!(output.contains("@entry:"));
+    assert!(output.contains("const hello = c\"hi\""));
+    assert!(output.contains("define i32 add_one(i32 $value) {"));
+    assert!(output.contains("entry:"));
     assert!(output.contains("\t$0 = math add i32 $value, 1"));
     assert!(output.contains("\tret $0"));
 }
-

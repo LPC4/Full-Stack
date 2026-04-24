@@ -15,7 +15,7 @@ jobs:
     name: Lint, Check, and Test
     runs-on: self-hosted
 
-    # REQUIRED: Gives the runner permission to push code back to your branch
+    # Gives the runner permission to push code
     permissions:
       contents: write
 
@@ -35,11 +35,11 @@ jobs:
       - name: Cache Rust artifacts
         uses: Swatinem/rust-cache@v2
 
-      # 1. Format the code (removed the --check flag so it actually fixes it)
+      # Format the code
       - name: Format code
         run: cargo fmt --all
 
-      # 2. Commit and push only if changes were made
+      # Commit and push only if changes were made
       - name: Commit and Push formatting fixes
         run: |
           git config --local user.email "action@github.com"

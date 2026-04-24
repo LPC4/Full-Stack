@@ -2,8 +2,8 @@ use crate::high_level_language::compilation_pipeline::{CompilationError, Compila
 use crate::high_level_language::lexer::Lexer;
 use crate::high_level_language::token::Token;
 use egui::Color32;
-use egui::text::LayoutJob;
 use egui::RichText;
+use egui::text::LayoutJob;
 
 #[derive(Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 enum ProgramKind {
@@ -573,7 +573,11 @@ impl HighLevelLanguageView {
         let mut merged_programs = Vec::with_capacity(self.programs.len().max(1) + 8);
 
         for built_in in built_in_programs() {
-            if let Some(existing) = self.programs.iter().find(|program| program.id == built_in.id) {
+            if let Some(existing) = self
+                .programs
+                .iter()
+                .find(|program| program.id == built_in.id)
+            {
                 let mut updated = existing.clone();
                 updated.name = built_in.name;
                 updated.kind = ProgramKind::Example;
@@ -618,7 +622,8 @@ impl HighLevelLanguageView {
     }
 
     fn current_program(&self) -> Option<&ProgramFile> {
-        self.current_program_index().map(|index| &self.programs[index])
+        self.current_program_index()
+            .map(|index| &self.programs[index])
     }
 
     fn current_program_mut(&mut self) -> Option<&mut ProgramFile> {
@@ -763,7 +768,9 @@ impl HighLevelLanguageView {
             });
 
             ui.add_space(6.0);
-            ui.small("Examples are embedded in the app; your own files stay in memory and app storage.");
+            ui.small(
+                "Examples are embedded in the app; your own files stay in memory and app storage.",
+            );
             ui.add_space(8.0);
 
             ui.horizontal(|ui| {

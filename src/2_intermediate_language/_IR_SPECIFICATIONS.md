@@ -1,6 +1,6 @@
-# Intermediate Representation Specification v1.4
+# Intermediate Representation Specification v1.4.1
 
-**Version:** 1.4  
+**Version:** 1.4.1  
 **Design Philosophy:** Strongly-Typed, Static Single Assignment (SSA), "Fat" High-Level IR  
 **Target Domain:** Compiler Backends & Middle-End Optimization
 
@@ -14,7 +14,7 @@ This IR is the translation layer between the HLL frontend and the machine-code b
 1. **Static Single Assignment (SSA):** Every virtual register is assigned exactly once. This guarantees unhindered data-flow analysis and trivial Dead Code Elimination (DCE).
 2. **Infinite Virtual Registers:** This IR assumes infinite registers using the `$` prefix. Register allocation is deferred entirely to the target-specific backend.
 3. **"Fat" Instruction Set:** This IR utilizes highly expressive, polymorphic instructions. This keeps the IR concise, readable, and semantically rich for high-level optimizations.
-4. **Explicit Read/Write:** Virtual registers hold values; memory operations (stack/heap) require explicit `read` and `write` instructions, mirroring HLL's explicit `@` duality principle.
+4. **Explicit Read/Write:** Virtual registers hold values; memory operations (stack/heap) require explicit `read` and `write` instructions. The `@` sigil is reserved exclusively for memory access.
 
 ---
 
@@ -25,8 +25,9 @@ This IR uses a simple, unambiguous text format designed for both ultra-fast pars
 | Entity | Syntax | Example |
 |--------|--------|---------|
 | Virtual Register | `$` prefix | `$1`, `$base_ptr`, `$t0` |
-| Basic Block | `@` prefix | `@entry:`, `@loop_header:` |
-| Function | `@` prefix | `@compute_sum` |
+| Basic Block | Bare label + `:` | `entry:`, `loop_header:` |
+| Function | Bare name after `define` / `call` | `define i32 compute_sum(...)`, `call compute_sum(...)` |
+| Global String | `const` declaration | `const hello = c"hi"` |
 | Temporary Reg | Numeric | `$0`, `$1`, `$2` (Compiler generated) |
 | Named Reg | Alphanumeric | `$count`, `$value` (Frontend mapped) |
 | Comments | Semicolon `;` | `; Calculate offset` |
@@ -81,13 +82,13 @@ Compute instructions are strongly typed but polymorphic in operation.
 | **`cast`** | `$dest = cast <mode> <value> -> <type>` | `<mode>`: `trunc`, `zext`, `sext`, `bitcast`, `f2i`, `i2f`. |
 
 ### 4.3 Control Flow & Basic Blocks
-Control flow operates strictly between labeled Basic Blocks.
+Control flow operates strictly between labeled basic blocks.
 
 | Instruction | Syntax | Description |
 |-------------|--------|-------------|
-| **`jump`** | `jump @label` | Unconditional jump to a basic block. |
-| **`branch`**| `branch $cond ? @true_lbl : @false_lbl`| Conditional branch based on an `i1` register. |
-| **`call`** | `[$res =] call @func(<value>, ...)` | Invokes a function. |
+| **`jump`** | `jump label` | Unconditional jump to a basic block. |
+| **`branch`**| `branch $cond ? true_lbl : false_lbl`| Conditional branch based on an `i1` register. |
+| **`call`** | `[$res =] call func(<value>, ...)` | Invokes a function. |
 | **`ret`** | `ret [$val]` | Returns control to the caller. |
 
 ---
@@ -100,8 +101,8 @@ Since tuples do not exist in the language, multiple returns are handled via expl
 ```text
 type DivideResult = {i32, i32}
 
-define DivideResult @divide(i32 $a, i32 $b) {
-@entry:
+define DivideResult divide(i32 $a, i32 $b) {
+entry:
     $0 = math sdiv i32 $a, $b
     $1 = math mod i32 $a, $b
     
@@ -129,7 +130,7 @@ Because `< >` characters are inherently illegal in standard HLL identifier names
 ; Clean, collision-free IR mangling
 type Vector<i32> = {i32*, u64, u64}
 
-define void @Vector<i32>.push(Vector<i32>* $vec, i32 $val) {
+define void Vector<i32>.push(Vector<i32>* $vec, i32 $val) {
     ; Implementation
 }
 ```
@@ -153,8 +154,8 @@ offset_point(points: Point[10]*, idx: i32) {
 ```text
 type Point = {f32, f32}
 
-define void @offset_point(Point[10]* $points, i32 $idx) {
-@entry:
+define void offset_point(Point[10]* $points, i32 $idx) {
+entry:
     ; Use 'index' for array traversal (scales by sizeof(Point) automatically)
     $1 = index Point $points, $idx
     
@@ -178,23 +179,25 @@ define void @offset_point(Point[10]* $points, i32 $idx) {
 ### 8.1 Lexical Elements
 ```ebnf
 register    = "$" ( letter { letter | digit | "_" } | digit { digit } );
-label       = "@" letter { letter | digit | "_" | "." | "<" | ">" };
 identifier  = letter { letter | digit | "_" | "." | "<" | ">" };
+label       = identifier;
 type        = "i1" | "i8" | "i16" | "i32" | "i64" | "f32" | "f64" | identifier
             | type "*" | type "[" integer "]";
 integer     = [ "-" ] digit { digit };
 float       = [ "-" ] digit { digit } "." digit { digit };
-value       = register | integer | float | "true" | "false" | "null";
+value       = register | identifier | integer | float | "true" | "false" | "null";
 ```
 
 ### 8.2 Instructions
 ```ebnf
 type_decl    = "type" identifier "=" "{" type { "," type } "}";
-function_def = "define" type label "(" [ param_list ] ")" "{" { basic_block } "}";
+function_def = "define" type identifier "(" [ param_list ] ")" "{" { basic_block } "}";
 param_list   = type register { "," type register };
 basic_block  = label ":" { instruction } terminator;
 
-program      = { type_decl } { function_def };
+global_string = "const" identifier "=" "c\"" { any_char - '"' } "\"";
+
+program      = { type_decl } { global_string } { function_def };
 
 instruction  = alloc_inst | heap_alloc_inst | free_inst | read_inst | write_inst 
              | index_inst | offset_inst | math_inst | unary_inst | cmp_inst | cast_inst | call_inst;
@@ -221,7 +224,7 @@ cmp_op       = "eq" | "ne" | "slt" | "ult" | "sle" | "ule" | "sgt" | "ugt" | "sg
 cast_inst    = register "=" "cast" cast_mode value "->" type;
 cast_mode    = "trunc" | "zext" | "sext" | "bitcast" | "f2i" | "i2f";
 
-call_inst    = [ register "=" ] "call" label "(" [ arg_list ] ")";
+call_inst    = [ register "=" ] "call" identifier "(" [ arg_list ] ")";
 arg_list     = value { "," value };
 
 terminator   = jump_inst | branch_inst | ret_inst;

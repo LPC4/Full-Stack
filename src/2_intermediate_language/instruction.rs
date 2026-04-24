@@ -170,7 +170,7 @@ impl fmt::Display for IrInstruction {
                 if let Some(dest) = dest {
                     write!(f, "{dest} = ")?;
                 }
-                write!(f, "call @{function}(")?;
+                write!(f, "call {function}(")?;
                 for (index, arg) in args.iter().enumerate() {
                     if index > 0 {
                         write!(f, ", ")?;

@@ -1,6 +1,5 @@
-# Language Specification v1.4.1
+## Language Specification v1.4.2
 
-**Version:** 1.4.1
 **Design Philosophy:** Consistency-First Memory Model  
 **Target Domain:** Systems Programming
 
@@ -31,19 +30,17 @@ HLL enforces a 100% consistent pointer model. Memory operations are context-inde
 | Type Casting | Prefix syntax: `target_type(value)` |
 
 ### 2.1 Syntax Examples
-```HLL
-x: i32 = 42
-y: f64 = 3.1415
-z: i32 = 42 ; Allowed trailing comment
+<pre style="background:#282c34;color:#abb2bf;padding:12px;border-radius:6px;overflow-x:auto;font-family:monospace;font-size:14px;line-height:1.5;"><code><span style="color:#abb2bf">x</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span> <span style="color:#56b6c2">=</span> <span style="color:#98c379">42</span>
+<span style="color:#abb2bf">y</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">f64</span> <span style="color:#56b6c2">=</span> <span style="color:#98c379">3.1415</span>
+<span style="color:#abb2bf">z</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span> <span style="color:#56b6c2">=</span> <span style="color:#98c379">42</span> <span style="color:#7f848e;font-style:italic">; Allowed trailing comment</span>
 
-; Multi-line expression continuation
-w: i32 = 1 + 2
-    + 3
+<span style="color:#7f848e;font-style:italic">; Multi-line expression continuation</span>
+<span style="color:#abb2bf">w</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span> <span style="color:#56b6c2">=</span> <span style="color:#98c379">1</span> <span style="color:#56b6c2">+</span> <span style="color:#98c379">2</span>
+    <span style="color:#56b6c2">+</span> <span style="color:#98c379">3</span>
 
-; Explicit casting
-ptr: i32* = i32*(1000)
-int_val: i32 = i32(ptr)
-```
+<span style="color:#7f848e;font-style:italic">; Explicit casting</span>
+<span style="color:#abb2bf">ptr</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span><span style="color:#56b6c2">*</span> <span style="color:#56b6c2">=</span> <span style="color:#e5c07b">i32</span><span style="color:#56b6c2">*(</span><span style="color:#98c379">1000</span><span style="color:#56b6c2">)</span>
+<span style="color:#abb2bf">int_val</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span> <span style="color:#56b6c2">=</span> <span style="color:#e5c07b">i32</span><span style="color:#56b6c2">(</span><span style="color:#abb2bf">ptr</span><span style="color:#56b6c2">)</span></code></pre>
 
 ---
 
@@ -60,20 +57,18 @@ int_val: i32 = i32(ptr)
 **Note:** `Str` is **not** a primitive type. It is defined in the Standard Library as a struct containing a byte pointer and length (`data: u8*`, `length: u64`). String literals (e.g., `"text"`) evaluate to a compile-time inline struct `{ data: u8*, length: u64 }` representing the read-only data pointer and its pre-calculated length.
 
 ### 3.2 Declaration & Initialization
-```HLL
-; Initialized stack variable
-count: i32 = 10
+<pre style="background:#282c34;color:#abb2bf;padding:12px;border-radius:6px;overflow-x:auto;font-family:monospace;font-size:14px;line-height:1.5;"><code><span style="color:#7f848e;font-style:italic">; Initialized stack variable</span>
+<span style="color:#abb2bf">count</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span> <span style="color:#56b6c2">=</span> <span style="color:#98c379">10</span>
 
-; Uninitialized stack array (contains undefined data)
-buffer: u8[1024]
+<span style="color:#7f848e;font-style:italic">; Uninitialized stack array (contains undefined data)</span>
+<span style="color:#abb2bf">buffer</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">u8</span><span style="color:#56b6c2">[</span><span style="color:#98c379">1024</span><span style="color:#56b6c2">]</span>
 
-; Heap allocation (zero-initialized)
-data_ptr: i32* = new(i32)
-array_ptr: i32[10]* = new([10]i32)
+<span style="color:#7f848e;font-style:italic">; Heap allocation (zero-initialized)</span>
+<span style="color:#abb2bf">data_ptr</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span><span style="color:#56b6c2">*</span> <span style="color:#56b6c2">=</span> <span style="color:#c678dd">new</span><span style="color:#56b6c2">(</span><span style="color:#e5c07b">i32</span><span style="color:#56b6c2">)</span>
+<span style="color:#abb2bf">array_ptr</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span><span style="color:#56b6c2">[</span><span style="color:#98c379">10</span><span style="color:#56b6c2">]*</span> <span style="color:#56b6c2">=</span> <span style="color:#c678dd">new</span><span style="color:#56b6c2">([</span><span style="color:#98c379">10</span><span style="color:#56b6c2">]</span><span style="color:#e5c07b">i32</span><span style="color:#56b6c2">)</span>
 
-; Compile-time constant
-const MAX_SIZE = 100
-```
+<span style="color:#7f848e;font-style:italic">; Compile-time constant</span>
+<span style="color:#c678dd">const</span> <span style="color:#abb2bf">MAX_SIZE</span> <span style="color:#56b6c2">=</span> <span style="color:#98c379">100</span></code></pre>
 **Initialization Rules:**
 - Stack variables must be initialized unless explicitly declared as uninitialized buffers.
 - Heap allocations via `new(T)` are zero-initialized.
@@ -107,20 +102,18 @@ const MAX_SIZE = 100
 
 ### 5.1 Arrays
 Array indexing **always returns a pointer** (`T*`), never a value.
-```HLL
-local_arr: i32[5]
-@local_arr[0] = 10          ; Write
-first: i32 = @local_arr[0]  ; Read
+<pre style="background:#282c34;color:#abb2bf;padding:12px;border-radius:6px;overflow-x:auto;font-family:monospace;font-size:14px;line-height:1.5;"><code><span style="color:#abb2bf">local_arr</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span><span style="color:#56b6c2">[</span><span style="color:#98c379">5</span><span style="color:#56b6c2">]</span>
+<span style="color:#56b6c2">@</span><span style="color:#abb2bf">local_arr</span><span style="color:#56b6c2">[</span><span style="color:#98c379">0</span><span style="color:#56b6c2">]</span> <span style="color:#56b6c2">=</span> <span style="color:#98c379">10</span>          <span style="color:#7f848e;font-style:italic">; Write</span>
+<span style="color:#abb2bf">first</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span> <span style="color:#56b6c2">=</span> <span style="color:#56b6c2">@</span><span style="color:#abb2bf">local_arr</span><span style="color:#56b6c2">[</span><span style="color:#98c379">0</span><span style="color:#56b6c2">]</span>  <span style="color:#7f848e;font-style:italic">; Read</span>
 
-heap_arr: i32* = new(i32, 10)
-@heap_arr[3] = 42
-value: i32 = @heap_arr[3]
+<span style="color:#abb2bf">heap_arr</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span><span style="color:#56b6c2">*</span> <span style="color:#56b6c2">=</span> <span style="color:#c678dd">new</span><span style="color:#56b6c2">(</span><span style="color:#e5c07b">i32</span><span style="color:#56b6c2">,</span> <span style="color:#98c379">10</span><span style="color:#56b6c2">)</span>
+<span style="color:#56b6c2">@</span><span style="color:#abb2bf">heap_arr</span><span style="color:#56b6c2">[</span><span style="color:#98c379">3</span><span style="color:#56b6c2">]</span> <span style="color:#56b6c2">=</span> <span style="color:#98c379">42</span>
+<span style="color:#abb2bf">value</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span> <span style="color:#56b6c2">=</span> <span style="color:#56b6c2">@</span><span style="color:#abb2bf">heap_arr</span><span style="color:#56b6c2">[</span><span style="color:#98c379">3</span><span style="color:#56b6c2">]</span>
 
-; Array of structs
-points: Point* = new(Point, 5)
-@points[0] = { x: 1.0, y: 2.0 }
-x_val: f32 = @points[0].x
-```
+<span style="color:#7f848e;font-style:italic">; Array of structs</span>
+<span style="color:#abb2bf">points</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">Point</span><span style="color:#56b6c2">*</span> <span style="color:#56b6c2">=</span> <span style="color:#c678dd">new</span><span style="color:#56b6c2">(</span><span style="color:#e5c07b">Point</span><span style="color:#56b6c2">,</span> <span style="color:#98c379">5</span><span style="color:#56b6c2">)</span>
+<span style="color:#56b6c2">@</span><span style="color:#abb2bf">points</span><span style="color:#56b6c2">[</span><span style="color:#98c379">0</span><span style="color:#56b6c2">]</span> <span style="color:#56b6c2">=</span> <span style="color:#56b6c2">{</span> <span style="color:#abb2bf">x</span><span style="color:#56b6c2">:</span> <span style="color:#98c379">1.0</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">y</span><span style="color:#56b6c2">:</span> <span style="color:#98c379">2.0</span> <span style="color:#56b6c2">}</span>
+<span style="color:#abb2bf">x_val</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">f32</span> <span style="color:#56b6c2">=</span> <span style="color:#56b6c2">@</span><span style="color:#abb2bf">points</span><span style="color:#56b6c2">[</span><span style="color:#98c379">0</span><span style="color:#56b6c2">].</span><span style="color:#abb2bf">x</span></code></pre>
 **Rules:**
 - `arr[index]` yields `T*`. It is syntactic sugar for a type-scaled offset. (e.g., it scales by `sizeof(T)`).
 - Explicit `@` required for value operations (`@arr[index]`).
@@ -129,19 +122,17 @@ x_val: f32 = @points[0].x
 - Stack arrays cannot decay to pointers. Use `&arr[0]` to obtain a pointer.
 
 ### 5.2 Structs
-```HLL
-type Point = {
-    x: f32,
-    y: f32
-}
+<pre style="background:#282c34;color:#abb2bf;padding:12px;border-radius:6px;overflow-x:auto;font-family:monospace;font-size:14px;line-height:1.5;"><code><span style="color:#c678dd">type</span> <span style="color:#e5c07b">Point</span> <span style="color:#56b6c2">=</span> <span style="color:#56b6c2">{</span>
+    <span style="color:#abb2bf">x</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">f32</span><span style="color:#56b6c2">,</span>
+    <span style="color:#abb2bf">y</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">f32</span>
+<span style="color:#56b6c2">}</span>
 
-p1: Point = { .x = 1.0, .y = 2.0 }
-p1.x = 3.0                  ; Stack: direct access
+<span style="color:#abb2bf">p1</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">Point</span> <span style="color:#56b6c2">=</span> <span style="color:#56b6c2">{</span> <span style="color:#56b6c2">.</span><span style="color:#abb2bf">x</span> <span style="color:#56b6c2">=</span> <span style="color:#98c379">1.0</span><span style="color:#56b6c2">,</span> <span style="color:#56b6c2">.</span><span style="color:#abb2bf">y</span> <span style="color:#56b6c2">=</span> <span style="color:#98c379">2.0</span> <span style="color:#56b6c2">}</span>
+<span style="color:#abb2bf">p1</span><span style="color:#56b6c2">.</span><span style="color:#abb2bf">x</span> <span style="color:#56b6c2">=</span> <span style="color:#98c379">3.0</span>                  <span style="color:#7f848e;font-style:italic">; Stack: direct access</span>
 
-p2_ptr: Point* = new(Point)
-@p2_ptr = { .x = 3.0, .y = 4.0 } ; Heap: full struct write
-@p2_ptr.x = 5.0             ; Heap: field write (requires @)
-```
+<span style="color:#abb2bf">p2_ptr</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">Point</span><span style="color:#56b6c2">*</span> <span style="color:#56b6c2">=</span> <span style="color:#c678dd">new</span><span style="color:#56b6c2">(</span><span style="color:#e5c07b">Point</span><span style="color:#56b6c2">)</span>
+<span style="color:#56b6c2">@</span><span style="color:#abb2bf">p2_ptr</span> <span style="color:#56b6c2">=</span> <span style="color:#56b6c2">{</span> <span style="color:#56b6c2">.</span><span style="color:#abb2bf">x</span> <span style="color:#56b6c2">=</span> <span style="color:#98c379">3.0</span><span style="color:#56b6c2">,</span> <span style="color:#56b6c2">.</span><span style="color:#abb2bf">y</span> <span style="color:#56b6c2">=</span> <span style="color:#98c379">4.0</span> <span style="color:#56b6c2">}</span> <span style="color:#7f848e;font-style:italic">; Heap: full struct write</span>
+<span style="color:#56b6c2">@</span><span style="color:#abb2bf">p2_ptr</span><span style="color:#56b6c2">.</span><span style="color:#abb2bf">x</span> <span style="color:#56b6c2">=</span> <span style="color:#98c379">5.0</span>             <span style="color:#7f848e;font-style:italic">; Heap: field write (requires @)</span></code></pre>
 **Field Access Rules:**
 - Stack struct: `struct.field`
 - Heap/Stack pointer to struct: `@ptr.field`
@@ -149,31 +140,27 @@ p2_ptr: Point* = new(Point)
 ### 5.3 Inline Structs & Destructuring
 HLL uses inline structs for grouping multiple values, including multiple returns. Inline structs can be assigned directly to variables or unpacked using explicit destructuring.
 
-```HLL
-; Inline struct return type
-get_coordinates: () -> { x: f32, y: f32 } {
-    return { .x = 3.5, .y = 7.2 }
-}
+<pre style="background:#282c34;color:#abb2bf;padding:12px;border-radius:6px;overflow-x:auto;font-family:monospace;font-size:14px;line-height:1.5;"><code><span style="color:#7f848e;font-style:italic">; Inline struct return type</span>
+<span style="color:#61afef">get_coordinates</span><span style="color:#56b6c2">:</span> <span style="color:#56b6c2">(</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">-&gt;</span> <span style="color:#56b6c2">{</span> <span style="color:#abb2bf">x</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">f32</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">y</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">f32</span> <span style="color:#56b6c2">}</span> <span style="color:#56b6c2">{</span>
+    <span style="color:#c678dd">return</span> <span style="color:#56b6c2">{</span> <span style="color:#56b6c2">.</span><span style="color:#abb2bf">x</span> <span style="color:#56b6c2">=</span> <span style="color:#98c379">3.5</span><span style="color:#56b6c2">,</span> <span style="color:#56b6c2">.</span><span style="color:#abb2bf">y</span> <span style="color:#56b6c2">=</span> <span style="color:#98c379">7.2</span> <span style="color:#56b6c2">}</span>
+<span style="color:#56b6c2">}</span>
 
-main: () -> () {
-    ; Option 1: Direct Assignment
-    coords = get_coordinates()
-    print(coords.x)
-    print(coords.y)
+<span style="color:#61afef">main</span><span style="color:#56b6c2">:</span> <span style="color:#56b6c2">(</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">-&gt;</span> <span style="color:#56b6c2">(</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">{</span>
+    <span style="color:#7f848e;font-style:italic">; Option 1: Direct Assignment</span>
+    <span style="color:#abb2bf">coords</span> <span style="color:#56b6c2">=</span> <span style="color:#61afef">get_coordinates</span><span style="color:#56b6c2">()</span>
+    <span style="color:#61afef">print</span><span style="color:#56b6c2">(</span><span style="color:#abb2bf">coords</span><span style="color:#56b6c2">.</span><span style="color:#abb2bf">x</span><span style="color:#56b6c2">)</span>
+    <span style="color:#61afef">print</span><span style="color:#56b6c2">(</span><span style="color:#abb2bf">coords</span><span style="color:#56b6c2">.</span><span style="color:#abb2bf">y</span><span style="color:#56b6c2">)</span>
 
-    ; Option 2: Struct Destructuring (Typed Punning)
-    ; Variables are created matching the exact field names and types of the struct
-    { x: f32, y: f32 } = get_coordinates()
-    print(x)
-}
-```
+    <span style="color:#7f848e;font-style:italic">; Option 2: Struct Destructuring (Typed Punning)</span>
+    <span style="color:#7f848e;font-style:italic">; Variables are created matching the exact field names and types of the struct</span>
+    <span style="color:#56b6c2">{</span> <span style="color:#abb2bf">x</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">f32</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">y</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">f32</span> <span style="color:#56b6c2">}</span> <span style="color:#56b6c2">=</span> <span style="color:#61afef">get_coordinates</span><span style="color:#56b6c2">()</span>
+    <span style="color:#61afef">print</span><span style="color:#56b6c2">(</span><span style="color:#abb2bf">x</span><span style="color:#56b6c2">)</span>
+<span style="color:#56b6c2">}</span></code></pre>
 
 **Partial Destructuring (Discarding Data)**
 If you only need specific fields from a struct, you can omit the unwanted fields from the destructuring braces.
-```HLL
-; Extracts 'value', implicitly discards 'success'
-{ value: i32 } = try_operation() 
-```
+<pre style="background:#282c34;color:#abb2bf;padding:12px;border-radius:6px;overflow-x:auto;font-family:monospace;font-size:14px;line-height:1.5;"><code><span style="color:#7f848e;font-style:italic">; Extracts 'value', implicitly discards 'success'</span>
+<span style="color:#56b6c2">{</span> <span style="color:#abb2bf">value</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span> <span style="color:#56b6c2">}</span> <span style="color:#56b6c2">=</span> <span style="color:#61afef">try_operation</span><span style="color:#56b6c2">()</span></code></pre>
 
 ---
 
@@ -185,29 +172,27 @@ If you only need specific fields from a struct, you can omit the unwanted fields
 - Returning stack addresses (`return &x`) is a compile-time error.
 - Multiple returns use struct syntax.
 
-```HLL
-increment: (x_ptr: i32*) -> () {
-    @x_ptr = @x_ptr + 1
-}
+<pre style="background:#282c34;color:#abb2bf;padding:12px;border-radius:6px;overflow-x:auto;font-family:monospace;font-size:14px;line-height:1.5;"><code><span style="color:#61afef">increment</span><span style="color:#56b6c2">:</span> <span style="color:#56b6c2">(</span><span style="color:#abb2bf">x_ptr</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span><span style="color:#56b6c2">*</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">-&gt;</span> <span style="color:#56b6c2">(</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">{</span>
+    <span style="color:#56b6c2">@</span><span style="color:#abb2bf">x_ptr</span> <span style="color:#56b6c2">=</span> <span style="color:#56b6c2">@</span><span style="color:#abb2bf">x_ptr</span> <span style="color:#56b6c2">+</span> <span style="color:#98c379">1</span>
+<span style="color:#56b6c2">}</span>
 
-main: () -> () {
-    x: i32 = 5
-    increment(&x)
-}
+<span style="color:#61afef">main</span><span style="color:#56b6c2">:</span> <span style="color:#56b6c2">(</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">-&gt;</span> <span style="color:#56b6c2">(</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">{</span>
+    <span style="color:#abb2bf">x</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span> <span style="color:#56b6c2">=</span> <span style="color:#98c379">5</span>
+    <span style="color:#61afef">increment</span><span style="color:#56b6c2">(&</span><span style="color:#abb2bf">x</span><span style="color:#56b6c2">)</span>
+<span style="color:#56b6c2">}</span>
 
-divide: (a: i32, b: i32) -> { quotient: i32, remainder: i32 } {
-    return { quotient: a / b, remainder: a % b }
-}
+<span style="color:#61afef">divide</span><span style="color:#56b6c2">:</span> <span style="color:#56b6c2">(</span><span style="color:#abb2bf">a</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">b</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">-&gt;</span> <span style="color:#56b6c2">{</span> <span style="color:#abb2bf">quotient</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">remainder</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span> <span style="color:#56b6c2">}</span> <span style="color:#56b6c2">{</span>
+    <span style="color:#c678dd">return</span> <span style="color:#56b6c2">{</span> <span style="color:#abb2bf">quotient</span><span style="color:#56b6c2">:</span> <span style="color:#abb2bf">a</span> <span style="color:#56b6c2">/</span> <span style="color:#abb2bf">b</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">remainder</span><span style="color:#56b6c2">:</span> <span style="color:#abb2bf">a</span> <span style="color:#56b6c2">%</span> <span style="color:#abb2bf">b</span> <span style="color:#56b6c2">}</span>
+<span style="color:#56b6c2">}</span>
 
-main: () -> () {
-    ; Direct assignment
-    s = divide(10, 3)
-    print(s.quotient)
+<span style="color:#61afef">main</span><span style="color:#56b6c2">:</span> <span style="color:#56b6c2">(</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">-&gt;</span> <span style="color:#56b6c2">(</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">{</span>
+    <span style="color:#7f848e;font-style:italic">; Direct assignment</span>
+    <span style="color:#abb2bf">s</span> <span style="color:#56b6c2">=</span> <span style="color:#61afef">divide</span><span style="color:#56b6c2">(</span><span style="color:#98c379">10</span><span style="color:#56b6c2">,</span> <span style="color:#98c379">3</span><span style="color:#56b6c2">)</span>
+    <span style="color:#61afef">print</span><span style="color:#56b6c2">(</span><span style="color:#abb2bf">s</span><span style="color:#56b6c2">.</span><span style="color:#abb2bf">quotient</span><span style="color:#56b6c2">)</span>
 
-    ; Struct destructuring
-    { quotient: i32, remainder: i32 } = divide(10, 3)
-}
-```
+    <span style="color:#7f848e;font-style:italic">; Struct destructuring</span>
+    <span style="color:#56b6c2">{</span> <span style="color:#abb2bf">quotient</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">remainder</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span> <span style="color:#56b6c2">}</span> <span style="color:#56b6c2">=</span> <span style="color:#61afef">divide</span><span style="color:#56b6c2">(</span><span style="color:#98c379">10</span><span style="color:#56b6c2">,</span> <span style="color:#98c379">3</span><span style="color:#56b6c2">)</span>
+<span style="color:#56b6c2">}</span></code></pre>
 
 ---
 
@@ -222,19 +207,17 @@ main: () -> () {
 - Arguments are evaluated at declaration, not at execution.
 - Cannot contain `return` statements.
 
-```HLL
-process_data() {
-    file: File* = open("data.bin")
-    defer close(file)
+<pre style="background:#282c34;color:#abb2bf;padding:12px;border-radius:6px;overflow-x:auto;font-family:monospace;font-size:14px;line-height:1.5;"><code><span style="color:#61afef">process_data</span><span style="color:#56b6c2">()</span> <span style="color:#56b6c2">{</span>
+    <span style="color:#abb2bf">file</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">File</span><span style="color:#56b6c2">*</span> <span style="color:#56b6c2">=</span> <span style="color:#61afef">open</span><span style="color:#56b6c2">(</span><span style="color:#98c379">"data.bin"</span><span style="color:#56b6c2">)</span>
+    <span style="color:#c678dd">defer</span> <span style="color:#61afef">close</span><span style="color:#56b6c2">(</span><span style="color:#abb2bf">file</span><span style="color:#56b6c2">)</span>
 
-    buffer: u8[1024]
-    while !eof(file) {
-        read(file, buffer, 1024)
-        if error_occurred { return }
-        process(buffer)
-    }
-}
-```
+    <span style="color:#abb2bf">buffer</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">u8</span><span style="color:#56b6c2">[</span><span style="color:#98c379">1024</span><span style="color:#56b6c2">]</span>
+    <span style="color:#c678dd">while</span> <span style="color:#56b6c2">!</span><span style="color:#61afef">eof</span><span style="color:#56b6c2">(</span><span style="color:#abb2bf">file</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">{</span>
+        <span style="color:#61afef">read</span><span style="color:#56b6c2">(</span><span style="color:#abb2bf">file</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">buffer</span><span style="color:#56b6c2">,</span> <span style="color:#98c379">1024</span><span style="color:#56b6c2">)</span>
+        <span style="color:#c678dd">if</span> <span style="color:#abb2bf">error_occurred</span> <span style="color:#56b6c2">{</span> <span style="color:#c678dd">return</span> <span style="color:#56b6c2">}</span>
+        <span style="color:#61afef">process</span><span style="color:#56b6c2">(</span><span style="color:#abb2bf">buffer</span><span style="color:#56b6c2">)</span>
+    <span style="color:#56b6c2">}</span>
+<span style="color:#56b6c2">}</span></code></pre>
 **Resource Rule:** All heap allocations require matching `free()` or `defer free()`. No garbage collection.
 
 ---
@@ -246,38 +229,34 @@ process_data() {
 - Cannot use `defer`, `new`, or `free`.
 - Only operate on compile-time known values.
 
-```HLL
-const FACTORIAL_10 = compute_factorial(10)
-compute_factorial(n: i32): i32 {
-    if n <= 1 { return 1 }
-    return n * compute_factorial(n - 1)
-}
-```
+<pre style="background:#282c34;color:#abb2bf;padding:12px;border-radius:6px;overflow-x:auto;font-family:monospace;font-size:14px;line-height:1.5;"><code><span style="color:#c678dd">const</span> <span style="color:#abb2bf">FACTORIAL_10</span> <span style="color:#56b6c2">=</span> <span style="color:#61afef">compute_factorial</span><span style="color:#56b6c2">(</span><span style="color:#98c379">10</span><span style="color:#56b6c2">)</span>
+<span style="color:#61afef">compute_factorial</span><span style="color:#56b6c2">(</span><span style="color:#abb2bf">n</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span><span style="color:#56b6c2">):</span> <span style="color:#e5c07b">i32</span> <span style="color:#56b6c2">{</span>
+    <span style="color:#c678dd">if</span> <span style="color:#abb2bf">n</span> <span style="color:#56b6c2">&lt;=</span> <span style="color:#98c379">1</span> <span style="color:#56b6c2">{</span> <span style="color:#c678dd">return</span> <span style="color:#98c379">1</span> <span style="color:#56b6c2">}</span>
+    <span style="color:#c678dd">return</span> <span style="color:#abb2bf">n</span> <span style="color:#56b6c2">*</span> <span style="color:#61afef">compute_factorial</span><span style="color:#56b6c2">(</span><span style="color:#abb2bf">n</span> <span style="color:#56b6c2">-</span> <span style="color:#98c379">1</span><span style="color:#56b6c2">)</span>
+<span style="color:#56b6c2">}</span></code></pre>
 
 ### 8.2 Error Handling
 - No exceptions. Errors are returned as structs `{ value: T, error: E }`.
 - `null` indicates failure for pointer-returning functions.
 - Explicit handling required at each call site. Unwanted fields can be ignored via partial destructuring.
 
-```HLL
-open_file(path: Str*): { file: File*, error: Str* } {
-    if invalid_path(path) { 
-        return { file: null, error: make_str("Invalid path") } 
-    }
-    return { file: new(File), error: null }
-}
+<pre style="background:#282c34;color:#abb2bf;padding:12px;border-radius:6px;overflow-x:auto;font-family:monospace;font-size:14px;line-height:1.5;"><code><span style="color:#61afef">open_file</span><span style="color:#56b6c2">(</span><span style="color:#abb2bf">path</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">Str</span><span style="color:#56b6c2">*):</span> <span style="color:#56b6c2">{</span> <span style="color:#abb2bf">file</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">File</span><span style="color:#56b6c2">*</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">error</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">Str</span><span style="color:#56b6c2">*</span> <span style="color:#56b6c2">}</span> <span style="color:#56b6c2">{</span>
+    <span style="color:#c678dd">if</span> <span style="color:#61afef">invalid_path</span><span style="color:#56b6c2">(</span><span style="color:#abb2bf">path</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">{</span> 
+        <span style="color:#c678dd">return</span> <span style="color:#56b6c2">{</span> <span style="color:#abb2bf">file</span><span style="color:#56b6c2">:</span> <span style="color:#98c379">null</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">error</span><span style="color:#56b6c2">:</span> <span style="color:#61afef">make_str</span><span style="color:#56b6c2">(</span><span style="color:#98c379">"Invalid path"</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">}</span> 
+    <span style="color:#56b6c2">}</span>
+    <span style="color:#c678dd">return</span> <span style="color:#56b6c2">{</span> <span style="color:#abb2bf">file</span><span style="color:#56b6c2">:</span> <span style="color:#c678dd">new</span><span style="color:#56b6c2">(</span><span style="color:#e5c07b">File</span><span style="color:#56b6c2">),</span> <span style="color:#abb2bf">error</span><span style="color:#56b6c2">:</span> <span style="color:#98c379">null</span> <span style="color:#56b6c2">}</span>
+<span style="color:#56b6c2">}</span>
 
-main: () -> () {
-    path: Str* = make_str("data.txt")
+<span style="color:#61afef">main</span><span style="color:#56b6c2">:</span> <span style="color:#56b6c2">(</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">-&gt;</span> <span style="color:#56b6c2">(</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">{</span>
+    <span style="color:#abb2bf">path</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">Str</span><span style="color:#56b6c2">*</span> <span style="color:#56b6c2">=</span> <span style="color:#61afef">make_str</span><span style="color:#56b6c2">(</span><span style="color:#98c379">"data.txt"</span><span style="color:#56b6c2">)</span>
     
-    ; We omit 'error' from the destructuring to implicitly discard it
-    { file: File* } = open_file(path)
+    <span style="color:#7f848e;font-style:italic">; We omit 'error' from the destructuring to implicitly discard it</span>
+    <span style="color:#56b6c2">{</span> <span style="color:#abb2bf">file</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">File</span><span style="color:#56b6c2">*</span> <span style="color:#56b6c2">}</span> <span style="color:#56b6c2">=</span> <span style="color:#61afef">open_file</span><span style="color:#56b6c2">(</span><span style="color:#abb2bf">path</span><span style="color:#56b6c2">)</span>
     
-    if file == null {
-        ; Handle failure
-    }
-}
-```
+    <span style="color:#c678dd">if</span> <span style="color:#abb2bf">file</span> <span style="color:#56b6c2">==</span> <span style="color:#98c379">null</span> <span style="color:#56b6c2">{</span>
+        <span style="color:#7f848e;font-style:italic">; Handle failure</span>
+    <span style="color:#56b6c2">}</span>
+<span style="color:#56b6c2">}</span></code></pre>
 
 ---
 
@@ -373,60 +352,54 @@ array_index    = expression "[" expression "]";
 ## 11. Standard Library Reference
 
 ### 11.1 Strings
-```HLL
-type Str = {
-    data: u8*,
-    length: u64
-}
+<pre style="background:#282c34;color:#abb2bf;padding:12px;border-radius:6px;overflow-x:auto;font-family:monospace;font-size:14px;line-height:1.5;"><code><span style="color:#c678dd">type</span> <span style="color:#e5c07b">Str</span> <span style="color:#56b6c2">=</span> <span style="color:#56b6c2">{</span>
+    <span style="color:#abb2bf">data</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">u8</span><span style="color:#56b6c2">*</span><span style="color:#56b6c2">,</span>
+    <span style="color:#abb2bf">length</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">u64</span>
+<span style="color:#56b6c2">}</span>
 
-; String literals like "Hello World" evaluate to inline structs: { data: u8*, length: u64 }
-make_str: (raw_str: { data: u8*, length: u64 }) -> Str* {
-    { data: u8*, length: u64 } = raw_str
-    str_ptr: Str* = new(Str)
-    @str_ptr = { data: data, length: length }
-    return str_ptr
-}
-```
+<span style="color:#7f848e;font-style:italic">; String literals like "Hello World" evaluate to inline structs: { data: u8*, length: u64 }</span>
+<span style="color:#61afef">make_str</span><span style="color:#56b6c2">:(</span><span style="color:#abb2bf">raw_str</span><span style="color:#56b6c2">:</span> <span style="color:#56b6c2">{</span> <span style="color:#abb2bf">data</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">u8</span><span style="color:#56b6c2">*</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">length</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">u64</span> <span style="color:#56b6c2">})</span> <span style="color:#56b6c2">-&gt;</span> <span style="color:#e5c07b">Str</span><span style="color:#56b6c2">*</span> <span style="color:#56b6c2">{</span>
+    <span style="color:#56b6c2">{</span> <span style="color:#abb2bf">data</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">u8</span><span style="color:#56b6c2">*</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">length</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">u64</span> <span style="color:#56b6c2">}</span> <span style="color:#56b6c2">=</span> <span style="color:#abb2bf">raw_str</span>
+    <span style="color:#abb2bf">str_ptr</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">Str</span><span style="color:#56b6c2">*</span> <span style="color:#56b6c2">=</span> <span style="color:#c678dd">new</span><span style="color:#56b6c2">(</span><span style="color:#e5c07b">Str</span><span style="color:#56b6c2">)</span>
+    <span style="color:#56b6c2">@</span><span style="color:#abb2bf">str_ptr</span> <span style="color:#56b6c2">=</span> <span style="color:#56b6c2">{</span> <span style="color:#abb2bf">data</span><span style="color:#56b6c2">:</span> <span style="color:#abb2bf">data</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">length</span><span style="color:#56b6c2">:</span> <span style="color:#abb2bf">length</span> <span style="color:#56b6c2">}</span>
+    <span style="color:#c678dd">return</span> <span style="color:#abb2bf">str_ptr</span>
+<span style="color:#56b6c2">}</span></code></pre>
 
 ### 11.2 Vector
-```HLL
-type Vector<T> = {
-    data: T*,
-    length: u64,
-    capacity: u64
-}
+<pre style="background:#282c34;color:#abb2bf;padding:12px;border-radius:6px;overflow-x:auto;font-family:monospace;font-size:14px;line-height:1.5;"><code><span style="color:#c678dd">type</span> <span style="color:#e5c07b">Vector</span><span style="color:#56b6c2">&lt;</span><span style="color:#abb2bf">T</span><span style="color:#56b6c2">&gt;</span> <span style="color:#56b6c2">=</span> <span style="color:#56b6c2">{</span>
+    <span style="color:#abb2bf">data</span><span style="color:#56b6c2">:</span> <span style="color:#abb2bf">T</span><span style="color:#56b6c2">*</span><span style="color:#56b6c2">,</span>
+    <span style="color:#abb2bf">length</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">u64</span><span style="color:#56b6c2">,</span>
+    <span style="color:#abb2bf">capacity</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">u64</span>
+<span style="color:#56b6c2">}</span>
 
-new_vector: <T>(initial_capacity: u64) -> Vector<T>* {
-    vec: Vector<T>* = new(Vector<T>)
-    @vec.length = 0
-    @vec.capacity = initial_capacity
-    @vec.data = new(T, initial_capacity)
-    return vec
-}
+<span style="color:#61afef">new_vector</span><span style="color:#56b6c2">:</span> <span style="color:#56b6c2">&lt;</span><span style="color:#abb2bf">T</span><span style="color:#56b6c2">&gt;(</span><span style="color:#abb2bf">initial_capacity</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">u64</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">-&gt;</span> <span style="color:#e5c07b">Vector</span><span style="color:#56b6c2">&lt;</span><span style="color:#abb2bf">T</span><span style="color:#56b6c2">&gt;*</span> <span style="color:#56b6c2">{</span>
+    <span style="color:#abb2bf">vec</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">Vector</span><span style="color:#56b6c2">&lt;</span><span style="color:#abb2bf">T</span><span style="color:#56b6c2">&gt;*</span> <span style="color:#56b6c2">=</span> <span style="color:#c678dd">new</span><span style="color:#56b6c2">(</span><span style="color:#e5c07b">Vector</span><span style="color:#56b6c2">&lt;</span><span style="color:#abb2bf">T</span><span style="color:#56b6c2">&gt;)</span>
+    <span style="color:#56b6c2">@</span><span style="color:#abb2bf">vec</span><span style="color:#56b6c2">.</span><span style="color:#abb2bf">length</span> <span style="color:#56b6c2">=</span> <span style="color:#98c379">0</span>
+    <span style="color:#56b6c2">@</span><span style="color:#abb2bf">vec</span><span style="color:#56b6c2">.</span><span style="color:#abb2bf">capacity</span> <span style="color:#56b6c2">=</span> <span style="color:#abb2bf">initial_capacity</span>
+    <span style="color:#56b6c2">@</span><span style="color:#abb2bf">vec</span><span style="color:#56b6c2">.</span><span style="color:#abb2bf">data</span> <span style="color:#56b6c2">=</span> <span style="color:#c678dd">new</span><span style="color:#56b6c2">(</span><span style="color:#abb2bf">T</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">initial_capacity</span><span style="color:#56b6c2">)</span>
+    <span style="color:#c678dd">return</span> <span style="color:#abb2bf">vec</span>
+<span style="color:#56b6c2">}</span>
 
-push: <T>(vec: Vector<T>*, value: T) -> () {
-    if @vec.length >= @vec.capacity { resize_vector(vec, @vec.capacity * 2) }
-    @vec.data[@vec.length] = value
-    @vec.length = @vec.length + 1
-}
+<span style="color:#61afef">push</span><span style="color:#56b6c2">:</span> <span style="color:#56b6c2">&lt;</span><span style="color:#abb2bf">T</span><span style="color:#56b6c2">&gt;(</span><span style="color:#abb2bf">vec</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">Vector</span><span style="color:#56b6c2">&lt;</span><span style="color:#abb2bf">T</span><span style="color:#56b6c2">&gt;*</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">value</span><span style="color:#56b6c2">:</span> <span style="color:#abb2bf">T</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">-&gt;</span> <span style="color:#56b6c2">(</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">{</span>
+    <span style="color:#c678dd">if</span> <span style="color:#56b6c2">@</span><span style="color:#abb2bf">vec</span><span style="color:#56b6c2">.</span><span style="color:#abb2bf">length</span> <span style="color:#56b6c2">&gt;=</span> <span style="color:#56b6c2">@</span><span style="color:#abb2bf">vec</span><span style="color:#56b6c2">.</span><span style="color:#abb2bf">capacity</span> <span style="color:#56b6c2">{</span> <span style="color:#61afef">resize_vector</span><span style="color:#56b6c2">(</span><span style="color:#abb2bf">vec</span><span style="color:#56b6c2">,</span> <span style="color:#56b6c2">@</span><span style="color:#abb2bf">vec</span><span style="color:#56b6c2">.</span><span style="color:#abb2bf">capacity</span> <span style="color:#56b6c2">*</span> <span style="color:#98c379">2</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">}</span>
+    <span style="color:#56b6c2">@</span><span style="color:#abb2bf">vec</span><span style="color:#56b6c2">.</span><span style="color:#abb2bf">data</span><span style="color:#56b6c2">[</span><span style="color:#56b6c2">@</span><span style="color:#abb2bf">vec</span><span style="color:#56b6c2">.</span><span style="color:#abb2bf">length</span><span style="color:#56b6c2">]</span> <span style="color:#56b6c2">=</span> <span style="color:#abb2bf">value</span>
+    <span style="color:#56b6c2">@</span><span style="color:#abb2bf">vec</span><span style="color:#56b6c2">.</span><span style="color:#abb2bf">length</span> <span style="color:#56b6c2">=</span> <span style="color:#56b6c2">@</span><span style="color:#abb2bf">vec</span><span style="color:#56b6c2">.</span><span style="color:#abb2bf">length</span> <span style="color:#56b6c2">+</span> <span style="color:#98c379">1</span>
+<span style="color:#56b6c2">}</span>
 
-free_vector: <T>(vec: Vector<T>*) -> () {
-    free(@vec.data)
-    free(vec)
-}
-```
+<span style="color:#61afef">free_vector</span><span style="color:#56b6c2">:</span> <span style="color:#56b6c2">&lt;</span><span style="color:#abb2bf">T</span><span style="color:#56b6c2">&gt;(</span><span style="color:#abb2bf">vec</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">Vector</span><span style="color:#56b6c2">&lt;</span><span style="color:#abb2bf">T</span><span style="color:#56b6c2">&gt;*</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">-&gt;</span> <span style="color:#56b6c2">(</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">{</span>
+    <span style="color:#c678dd">free</span><span style="color:#56b6c2">(@</span><span style="color:#abb2bf">vec</span><span style="color:#56b6c2">.</span><span style="color:#abb2bf">data</span><span style="color:#56b6c2">)</span>
+    <span style="color:#c678dd">free</span><span style="color:#56b6c2">(</span><span style="color:#abb2bf">vec</span><span style="color:#56b6c2">)</span>
+<span style="color:#56b6c2">}</span></code></pre>
 
 ### 11.3 Memory Allocators
 - **Arena:** `new_arena(size)`, `alloc_in_arena(arena, size)`, `free_arena(arena)`. Batch deallocation.
 - **Pool:** `new_pool<T>(count)`, `acquire<T>(pool)`, `release<T>(pool, obj)`. Fixed-size object recycling.
 
 ### 11.4 I/O Abstraction
-```HLL
-type File = { handle: u64, buffer: u8*, buffer_size: u64, buffer_pos: u64, buffer_end: u64 }
-open_file: (path: Str*) -> { file: File*, error: Str* }
-read_byte: (f: File*) -> { byte: u8, eof: bool }
-close_file: (f: File*) -> ()
-```
+<pre style="background:#282c34;color:#abb2bf;padding:12px;border-radius:6px;overflow-x:auto;font-family:monospace;font-size:14px;line-height:1.5;"><code><span style="color:#c678dd">type</span> <span style="color:#e5c07b">File</span> <span style="color:#56b6c2">=</span> <span style="color:#56b6c2">{</span> <span style="color:#abb2bf">handle</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">u64</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">buffer</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">u8</span><span style="color:#56b6c2">*</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">buffer_size</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">u64</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">buffer_pos</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">u64</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">buffer_end</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">u64</span> <span style="color:#56b6c2">}</span>
+<span style="color:#61afef">open_file</span><span style="color:#56b6c2">:(</span><span style="color:#abb2bf">path</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">Str</span><span style="color:#56b6c2">*:</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">-&gt;</span> <span style="color:#56b6c2">{</span> <span style="color:#abb2bf">file</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">File</span><span style="color:#56b6c2">*</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">error</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">Str</span><span style="color:#56b6c2">*</span> <span style="color:#56b6c2">}</span>
+<span style="color:#61afef">read_byte</span><span style="color:#56b6c2">:(</span><span style="color:#abb2bf">f</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">File</span><span style="color:#56b6c2">*:</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">-&gt;</span> <span style="color:#56b6c2">{</span> <span style="color:#abb2bf">byte</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">u8</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">eof</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">bool</span> <span style="color:#56b6c2">}</span>
+<span style="color:#61afef">close_file</span><span style="color:#56b6c2">:(</span><span style="color:#abb2bf">f</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">File</span><span style="color:#56b6c2">*:</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">-&gt;</span> <span style="color:#56b6c2">(</span><span style="color:#56b6c2">)</span></code></pre>
 **Rule:** All resource-allocating functions return cleanup routines. Use `defer` for guaranteed release.
 
 ---
@@ -449,13 +422,11 @@ close_file: (f: File*) -> ()
 4. **Shared Reference Counting:** Both sides follow `atomic_increment`/`atomic_decrement` protocol. Last owner frees memory.
 
 ### 12.3 FFI Wrapper Pattern
-```HLL
-external external_compute_sum: (values: f32*, count: i32) -> f32
+<pre style="background:#282c34;color:#abb2bf;padding:12px;border-radius:6px;overflow-x:auto;font-family:monospace;font-size:14px;line-height:1.5;"><code><span style="color:#c678dd">external</span> <span style="color:#61afef">external_compute_sum</span><span style="color:#56b6c2">:(</span><span style="color:#abb2bf">values</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">f32</span><span style="color:#56b6c2">*</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">count</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">-&gt;</span> <span style="color:#e5c07b">f32</span>
 
-compute_sum_wrapper: (values: f32*, count: i32) -> f32 {
-    return external_compute_sum(values, count)
-}
-```
+<span style="color:#61afef">compute_sum_wrapper</span><span style="color:#56b6c2">:(</span><span style="color:#abb2bf">values</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">f32</span><span style="color:#56b6c2">*</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">count</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">-&gt;</span> <span style="color:#e5c07b">f32</span> <span style="color:#56b6c2">{</span>
+    <span style="color:#c678dd">return</span> <span style="color:#61afef">external_compute_sum</span><span style="color:#56b6c2">(</span><span style="color:#abb2bf">values</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">count</span><span style="color:#56b6c2">)</span>
+<span style="color:#56b6c2">}</span></code></pre>
 **Rule:** Cross-boundary ownership must be explicitly documented. Compiler guarantees do not apply across FFI boundaries.
 
 ---

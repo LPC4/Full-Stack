@@ -1,5 +1,5 @@
-define i32 @chained_deref_assign(i32 $val) {
-@entry:
+define i32 chained_deref_assign(i32 $val) {
+entry:
 	; bind parameter: val
 	$val_ptr = stack_alloc i32
 	write i32 $val @ $val_ptr
@@ -17,10 +17,11 @@ define i32 @chained_deref_assign(i32 $val) {
 	$4 = read i32* @ $3
 	write i32 $2 @ $4
 	$5 = read i32* @ $ptr
-	; defer: captured call @free with 1 args
+	; defer: captured call free with 1 args
 	$6 = read i32* @ $ptr
 	$7 = read i32 @ $6
 	; executing deferred cleanup before return
-	$8 = call @free($5)
+	$8 = call free($5)
 	ret $7
 }
+

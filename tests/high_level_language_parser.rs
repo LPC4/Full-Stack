@@ -325,9 +325,10 @@ fn parses_generic_type_declaration() {
         DeclNode::Type { name, generics, ty } => {
             assert_eq!(name, "Vector");
             assert_eq!(generics, &vec!["T".to_string()]);
-            assert!(matches!(ty, Type::Named { name, args } if name == "Vector" && args.len() == 1));
+            assert!(
+                matches!(ty, Type::Named { name, args } if name == "Vector" && args.len() == 1)
+            );
         }
         other => panic!("unexpected declaration: {other:?}"),
     }
 }
-

@@ -130,7 +130,7 @@ impl HighLevelCompiler {
                     }
 
                     self.push_instruction(IrInstruction::Comment(format!(
-                        "defer: captured call @{} with {} args",
+                        "defer: captured call {} with {} args",
                         name,
                         captured_args.len()
                     )));

@@ -1,5 +1,5 @@
-define i32 @pointers(i32 $val) {
-@entry:
+define i32 pointers(i32 $val) {
+entry:
 	; bind parameter: val
 	$val_ptr = stack_alloc i32
 	write i32 $val @ $val_ptr
@@ -21,9 +21,10 @@ define i32 @pointers(i32 $val) {
 	$6 = read i32* @ $val_ref
 	write i32 $5 @ $6
 	$7 = read i32* @ $ptr
-	; defer: captured call @free with 1 args
+	; defer: captured call free with 1 args
 	$8 = read i32 @ $val_ptr
 	; executing deferred cleanup before return
-	$9 = call @free($7)
+	$9 = call free($7)
 	ret $8
 }
+

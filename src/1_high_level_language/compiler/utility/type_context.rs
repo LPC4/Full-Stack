@@ -214,5 +214,3 @@ impl TypeContext {
         }
     }
 }
-
-

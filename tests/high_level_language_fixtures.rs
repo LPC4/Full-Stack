@@ -323,7 +323,11 @@ fn test5_hll_parser_reordered_and_partial_struct_destructuring() {
         DeclNode::Function { name, body, .. } => {
             assert_eq!(name, "main");
             let block = body.as_ref().expect("main should have a body");
-            assert_eq!(block.statements.len(), 3, "Expected two destructures and a return");
+            assert_eq!(
+                block.statements.len(),
+                3,
+                "Expected two destructures and a return"
+            );
 
             let first_assign = match &block.statements[0] {
                 Statement::Expression(Expression::Assignment { target, .. }) => target,
@@ -404,7 +408,10 @@ fn test2_hll_compiles_to_ir_with_pointers_and_structs() {
     let ir_text = format!("{}", ir_program);
 
     // Verify IR contains the main function and pointer/struct operations
-    assert!(ir_text.contains("@main"), "IR should contain main function");
+    assert!(
+        ir_text.contains("define i32 main("),
+        "IR should contain main function"
+    );
     // The test has pointer types and field accesses, so we should see them in IR
     assert!(
         ir_text.contains("*") || ir_text.contains("Node"),
@@ -435,7 +442,7 @@ fn test3_hll_compiles_to_ir_with_control_flow() {
 
     // Verify IR contains control flow elements
     assert!(
-        ir_text.contains("@stress_test"),
+        ir_text.contains("define i32 stress_test("),
         "IR should contain stress_test function"
     );
     // While loops are scaffolded to use Jump
@@ -468,11 +475,11 @@ fn test4_hll_compiles_to_ir_with_multiple_returns() {
 
     // Verify IR contains both functions
     assert!(
-        ir_text.contains("@divide"),
+        ir_text.contains(" divide("),
         "IR should contain divide function"
     );
     assert!(
-        ir_text.contains("@start"),
+        ir_text.contains("define void start("),
         "IR should contain start function"
     );
 

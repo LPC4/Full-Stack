@@ -81,7 +81,11 @@ main: () -> i32 {
 
     let pipeline = CompilationPipeline::new();
     let result = pipeline.compile(source);
-    assert!(result.is_ok(), "expected `Result` destructuring to compile successfully: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "expected `Result` destructuring to compile successfully: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -101,7 +105,11 @@ main: () -> i32 {
 
     let pipeline = CompilationPipeline::new();
     let result = pipeline.compile(source);
-    assert!(result.is_ok(), "expected generic placeholder arithmetic to compile successfully: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "expected generic placeholder arithmetic to compile successfully: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -116,7 +124,11 @@ main: () -> i32 {
 
     let pipeline = CompilationPipeline::new();
     let result = pipeline.compile(source);
-    assert!(result.is_ok(), "expected `@arr[0]` to compile successfully: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "expected `@arr[0]` to compile successfully: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -154,7 +166,11 @@ main: () -> i32 {
 
     let pipeline = CompilationPipeline::new();
     let result = pipeline.compile(source);
-    assert!(result.is_ok(), "expected mixed boolean precedence to compile successfully: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "expected mixed boolean precedence to compile successfully: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -212,7 +228,3 @@ leak: () -> i32* {
         "expected returning the address of a local array element to be rejected"
     );
 }
-
-
-
-

@@ -7,8 +7,9 @@ use crate::high_level_language::ast::{
 use crate::high_level_language::compiler::SemanticAnalyzer;
 use crate::high_level_language::compiler::utility::LoweringContext;
 use crate::intermediate_language::{
-    FloatWidth, IntWidth, IrBlock, IrCmpOp, IrFunction, IrGlobalString, IrInstruction, IrLabel, IrMathOp, IrParam,
-    IrProgram, IrRegister, IrTerminator, IrType, IrTypeAlias, IrUnaryOp, IrValue,
+    FloatWidth, IntWidth, IrBlock, IrCmpOp, IrFunction, IrGlobalString, IrInstruction, IrLabel,
+    IrMathOp, IrParam, IrProgram, IrRegister, IrTerminator, IrType, IrTypeAlias, IrUnaryOp,
+    IrValue,
 };
 
 #[derive(Debug, Clone)]

@@ -1,5 +1,5 @@
-define {i32, i32} @divide(i32 $a, i32 $b) {
-@entry:
+define {i32, i32} divide(i32 $a, i32 $b) {
+entry:
 	; bind parameter: a
 	$a_ptr = stack_alloc i32
 	write i32 $a @ $a_ptr
@@ -18,10 +18,10 @@ define {i32, i32} @divide(i32 $a, i32 $b) {
 	ret $6
 }
 
-define i32 @test_tuple_destructuring() {
-@entry:
+define i32 test_tuple_destructuring() {
+entry:
 	; assignment
-	$0 = call @divide(10, 3)
+	$0 = call divide(10, 3)
 	$1 = read i32 @ $0 + 0
 	$quotient = stack_alloc i32
 	write i32 $1 @ $quotient
@@ -31,3 +31,4 @@ define i32 @test_tuple_destructuring() {
 	$3 = read i32 @ $quotient
 	ret $3
 }
+

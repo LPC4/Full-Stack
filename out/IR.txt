@@ -1,7 +1,7 @@
 type Node = {i32, Node*}
 
-define i32 @main() {
-@entry:
+define i32 main() {
+entry:
 	; local var: ptr
 	$ptr = stack_alloc i32*
 	$0 = heap_alloc i32
@@ -19,18 +19,18 @@ define i32 @main() {
 	$4 = read i32* @ $ptr
 	write i32 $3 @ $4
 	$5 = read i32* @ $ptr
-	; defer: captured call @free with 1 args
+	; defer: captured call free with 1 args
 	; if condition
 	$6 = read i32* @ $ptr
 	$7 = read i32 @ $6
 	$8 = cmp sgt i32 $7, 10
-	branch $8 ? @label_0 : @label_2
-@label_0:
+	branch $8 ? label_0 : label_2
+label_0:
 	; executing deferred cleanup before return
-	$9 = call @free($5)
+	$9 = call free($5)
 	ret 1
-@label_2:
+label_2:
 	; executing deferred cleanup before return
-	$10 = call @free($5)
+	$10 = call free($5)
 	ret 0
 }

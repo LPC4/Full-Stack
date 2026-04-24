@@ -2,8 +2,8 @@ type Box_i32 = {i32}
 type Box<i32> = {i32}
 type Box<Box<i32>> = {Box<i32>}
 
-define i32 @main() {
-@entry:
+define i32 main() {
+entry:
 	; local var: boxed
 	$boxed = stack_alloc Box<i32>
 	; local var: legacy

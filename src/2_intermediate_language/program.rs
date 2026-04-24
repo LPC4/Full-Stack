@@ -24,9 +24,19 @@ pub struct IrGlobalString {
 impl fmt::Display for IrGlobalString {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Escape the string content for IR output
-        let escaped = self.content.replace('\\', "\\\\").replace('"', "\\\"")
-            .replace('\n', "\\n").replace('\t', "\\t").replace('\r', "\\r");
-        write!(f, "@{} = constant i8[{}] c\"{}\"", self.name, self.content.len(), escaped)
+        let escaped = self
+            .content
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('\n', "\\n")
+            .replace('\t', "\\t")
+            .replace('\r', "\\r");
+        write!(
+            f,
+            "const {} = c\"{}\"",
+            self.name,
+            escaped
+        )
     }
 }
 
@@ -71,7 +81,7 @@ impl IrFunction {
 
 impl fmt::Display for IrFunction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "define {} @{}(", self.return_type, self.name)?;
+        write!(f, "define {} {}(", self.return_type, self.name)?;
         for (index, param) in self.params.iter().enumerate() {
             if index > 0 {
                 write!(f, ", ")?;
@@ -125,7 +135,9 @@ impl fmt::Display for IrProgram {
             writeln!(f, "{alias}")?;
         }
 
-        if !self.type_aliases.is_empty() && (!self.global_strings.is_empty() || !self.functions.is_empty()) {
+        if !self.type_aliases.is_empty()
+            && (!self.global_strings.is_empty() || !self.functions.is_empty())
+        {
             writeln!(f)?;
         }
 
@@ -147,4 +159,3 @@ impl fmt::Display for IrProgram {
         Ok(())
     }
 }
-

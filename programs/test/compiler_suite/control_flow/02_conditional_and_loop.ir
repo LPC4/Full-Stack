@@ -1,48 +1,49 @@
-define i32 @control_suite(i32 $param) {
-@entry:
+define i32 control_suite(i32 $param) {
+entry:
 	; bind parameter: param
 	$param_ptr = stack_alloc i32
 	write i32 $param @ $param_ptr
 	; local var: sum
 	$sum = stack_alloc i32
 	write i32 0 @ $sum
-	jump @label_0
-@label_0:
+	jump label_0
+label_0:
 	; while condition
 	$0 = read i32 @ $param_ptr
 	$1 = cmp sgt i32 $0, 0
-	branch $1 ? @label_1 : @label_2
-@label_1:
+	branch $1 ? label_1 : label_2
+label_1:
 	; if condition
 	$2 = read i32 @ $param_ptr
 	$3 = cmp eq i32 $2, 5
-	branch $3 ? @label_3 : @label_4
-@label_3:
+	branch $3 ? label_3 : label_4
+label_3:
 	; assignment
 	$4 = read i32 @ $sum
 	$5 = math add i32 $4, 10
 	write i32 $5 @ $sum
-	jump @label_5
-@label_4:
+	jump label_5
+label_4:
 	; assignment
 	$6 = read i32 @ $sum
 	$7 = math add i32 $6, 1
 	write i32 $7 @ $sum
-	jump @label_5
-@label_5:
+	jump label_5
+label_5:
 	; assignment
 	$8 = read i32 @ $param_ptr
 	$9 = math sub i32 $8, 1
 	write i32 $9 @ $param_ptr
-	jump @label_0
-@label_2:
+	jump label_0
+label_2:
 	; if condition
 	$10 = read i32 @ $sum
 	$11 = cmp sgt i32 $10, 0
-	branch $11 ? @label_6 : @label_8
-@label_6:
+	branch $11 ? label_6 : label_8
+label_6:
 	$12 = read i32 @ $sum
 	ret $12
-@label_8:
+label_8:
 	ret 0
 }
+

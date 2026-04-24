@@ -33,7 +33,7 @@ impl fmt::Display for IrValue {
             Self::Float(value) => write!(f, "{value}"),
             Self::Bool(value) => write!(f, "{}", if *value { "true" } else { "false" }),
             Self::Null => write!(f, "null"),
-            Self::GlobalString(name) => write!(f, "@{name}"),
+            Self::GlobalString(name) => write!(f, "{name}"),
         }
     }
 }
@@ -49,6 +49,6 @@ impl IrLabel {
 
 impl fmt::Display for IrLabel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "@{}", self.0)
+        write!(f, "{}", self.0)
     }
 }

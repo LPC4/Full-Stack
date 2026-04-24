@@ -263,4 +263,3 @@ impl<'a> Lexer<'a> {
         self.chars.peek() == Some(&expected)
     }
 }
-

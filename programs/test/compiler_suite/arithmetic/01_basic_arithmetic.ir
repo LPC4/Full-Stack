@@ -1,5 +1,5 @@
-define i32 @main() {
-@entry:
+define i32 main() {
+entry:
 	; local var: a
 	$a = stack_alloc i32
 	write i32 10 @ $a
@@ -30,3 +30,4 @@ define i32 @main() {
 	$12 = read i32 @ $e
 	ret $12
 }
+

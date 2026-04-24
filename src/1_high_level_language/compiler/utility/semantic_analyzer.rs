@@ -293,7 +293,13 @@ impl SemanticAnalyzer {
                         } => self.infer_expression_type(inner)?,
                         _ => self.infer_expression_type(expr)?,
                     };
-                    if matches!(expr.as_ref(), Expression::Unary { op: UnaryOp::Dereference, .. }) {
+                    if matches!(
+                        expr.as_ref(),
+                        Expression::Unary {
+                            op: UnaryOp::Dereference,
+                            ..
+                        }
+                    ) {
                         let indexed_ty = self.infer_index_element_type(&base_ty)?;
                         Ok(indexed_ty
                             .strip_prefix('*')
@@ -322,8 +328,7 @@ impl SemanticAnalyzer {
                             annotated_ir
                         } else {
                             self.parse_type_string(&expr_ty)
-                        }
-                        ;
+                        };
                         field_types.push((field.name.clone(), inferred_ir));
                     }
                     Ok(self.context.get_type_name(&IrType::Aggregate(field_types)))
@@ -420,7 +425,9 @@ impl SemanticAnalyzer {
                     // Per spec v1.4.1: all fields must have explicit type annotations
                     for field in fields.iter() {
                         let Some(name) = field.name.as_ref() else {
-                            self.diagnostics.error("Struct destructuring requires explicit variable names".to_string());
+                            self.diagnostics.error(
+                                "Struct destructuring requires explicit variable names".to_string(),
+                            );
                             return Err(());
                         };
 
@@ -469,9 +476,8 @@ impl SemanticAnalyzer {
                             return Err(());
                         }
 
-                        let target = crate::high_level_language::ast::AssignTarget::Identifier(
-                            name.clone(),
-                        );
+                        let target =
+                            crate::high_level_language::ast::AssignTarget::Identifier(name.clone());
                         self.register_assign_target(&target, &ty_to_use)?;
                     }
                 } else {
@@ -484,7 +490,6 @@ impl SemanticAnalyzer {
             }
         }
     }
-
 
     fn returning_local_address_name(&self, expr: &Expression) -> Option<String> {
         match expr {
@@ -507,12 +512,14 @@ impl SemanticAnalyzer {
             Expression::Primary(crate::high_level_language::ast::PrimaryExpr::Grouped(inner)) => {
                 self.stack_address_root_name(inner)
             }
-            Expression::Primary(crate::high_level_language::ast::PrimaryExpr::FieldAccess { expr, .. }) => {
-                self.stack_address_root_name(expr)
-            }
-            Expression::Primary(crate::high_level_language::ast::PrimaryExpr::ArrayIndex { expr, .. }) => {
-                self.stack_address_root_name(expr)
-            }
+            Expression::Primary(crate::high_level_language::ast::PrimaryExpr::FieldAccess {
+                expr,
+                ..
+            }) => self.stack_address_root_name(expr),
+            Expression::Primary(crate::high_level_language::ast::PrimaryExpr::ArrayIndex {
+                expr,
+                ..
+            }) => self.stack_address_root_name(expr),
             _ => None,
         }
     }
@@ -619,8 +626,10 @@ impl SemanticAnalyzer {
                 }
             },
             _ => {
-                self.diagnostics
-                    .error(format!("field access on non-aggregate type `{}`", base_type));
+                self.diagnostics.error(format!(
+                    "field access on non-aggregate type `{}`",
+                    base_type
+                ));
                 return Err(());
             }
         };
@@ -651,7 +660,9 @@ impl SemanticAnalyzer {
 
         match self.resolve_type_string(base_type) {
             IrType::Pointer(inner) => Ok(format!("*{}", self.context.get_type_name(&inner))),
-            IrType::Array { element, .. } => Ok(format!("*{}", self.context.get_type_name(&element))),
+            IrType::Array { element, .. } => {
+                Ok(format!("*{}", self.context.get_type_name(&element)))
+            }
             _ => {
                 self.diagnostics
                     .error(format!("indexing non-indexable type `{}`", base_type));
@@ -751,10 +762,7 @@ impl SemanticAnalyzer {
                     fields
                         .into_iter()
                         .map(|(name, field_ty)| {
-                            (
-                                name.unwrap_or_default(),
-                                self.parse_type_string(&field_ty),
-                            )
+                            (name.unwrap_or_default(), self.parse_type_string(&field_ty))
                         })
                         .collect(),
                 );
@@ -811,7 +819,10 @@ impl SemanticAnalyzer {
                 fields
                     .iter()
                     .map(|(name, field_ty)| {
-                        (name.clone(), self.resolve_named_ir_type_inner(field_ty, seen))
+                        (
+                            name.clone(),
+                            self.resolve_named_ir_type_inner(field_ty, seen),
+                        )
                     })
                     .collect(),
             ),

@@ -29,6 +29,10 @@ Prioritized backlog for the compiler, specs, and project hygiene.
 - [P1] Ensure the IR spec examples match the current named-aggregate formatting used by `Display` implementations.
 - [P2] Check whether any IR wording still implies tuple-style terminology instead of aggregate/struct terminology.
 - [P2] Add a short source-to-IR mapping note for aggregate types and pointer-rich examples so the spec matches current compiler behavior.
+- [P1] Decide whether IR aggregate types are canonical with field names or anonymous only: `IrType::Display` currently drops names, but `TypeContext::get_type_name` and aggregate parsing preserve them.
+- [P1] Reconcile the spec’s `type Point = {f32, f32}`-style examples with the compiler’s named-field aggregate representation (`{ x: f32, y: f32 }`) so HLL and IR use one consistent story.
+- [P2] Clarify whether anonymous inline structs are actually forbidden in IR, because the frontend lowers HLL inline structs into aggregates even when they are not introduced by top-level IR `type` aliases.
+- [P2] Review the IR grammar/examples for any other spots where the textual syntax (`@label`, `@ func`, aggregate printing, `call`/`branch` forms) diverges from the current pretty-printer output.
 
 ## IR implementation / compilation issues
 
