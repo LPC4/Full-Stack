@@ -69,8 +69,7 @@ impl SemanticAnalyzer {
                     self.type_mapping.insert(name.clone(), ty_name);
                 } else {
                     // If we can't infer, default to unknown
-                    self.type_mapping
-                        .insert(name.clone(), "unknown".to_owned());
+                    self.type_mapping.insert(name.clone(), "unknown".to_owned());
                 }
             }
             DeclNode::Function {
@@ -344,7 +343,8 @@ impl SemanticAnalyzer {
                 if op == &UnaryOp::AddressOf {
                     if self.contains_dereference(inner) {
                         self.diagnostics.error(
-                            "cannot take address of a dereference expression (`&@...` is invalid)".to_owned(),
+                            "cannot take address of a dereference expression (`&@...` is invalid)"
+                                .to_owned(),
                         );
                         return Err(());
                     }
@@ -403,12 +403,16 @@ impl SemanticAnalyzer {
                     let resolved_rvalue = self.resolve_type_string(&rvalue_type);
                     let field_types = match resolved_rvalue {
                         IrType::Aggregate(types) => types,
-                        IrType::Pointer(inner) => if let IrType::Aggregate(types) = *inner { types } else {
-                            self.diagnostics.error(format!(
-                                "Expected struct type for destructuring, got: {rvalue_type}"
-                            ));
-                            return Err(());
-                        },
+                        IrType::Pointer(inner) => {
+                            if let IrType::Aggregate(types) = *inner {
+                                types
+                            } else {
+                                self.diagnostics.error(format!(
+                                    "Expected struct type for destructuring, got: {rvalue_type}"
+                                ));
+                                return Err(());
+                            }
+                        }
                         _ => {
                             self.diagnostics.error(format!(
                                 "Expected struct type for destructuring, got: {rvalue_type}"
@@ -642,16 +646,18 @@ impl SemanticAnalyzer {
 
         let fields = match resolved {
             IrType::Aggregate(fields) => fields,
-            IrType::Pointer(inner) => if let IrType::Aggregate(fields) = *inner { fields } else {
-                self.diagnostics.error(format!(
-                    "field access on non-aggregate type `{base_type}`"
-                ));
-                return Err(());
-            },
+            IrType::Pointer(inner) => {
+                if let IrType::Aggregate(fields) = *inner {
+                    fields
+                } else {
+                    self.diagnostics
+                        .error(format!("field access on non-aggregate type `{base_type}`"));
+                    return Err(());
+                }
+            }
             _ => {
-                self.diagnostics.error(format!(
-                    "field access on non-aggregate type `{base_type}`"
-                ));
+                self.diagnostics
+                    .error(format!("field access on non-aggregate type `{base_type}`"));
                 return Err(());
             }
         };
@@ -659,9 +665,8 @@ impl SemanticAnalyzer {
         if let Some((_, field_ty)) = fields.iter().find(|(name, _)| name == field) {
             Ok(self.context.get_type_name(field_ty))
         } else {
-            self.diagnostics.error(format!(
-                "unknown field `{field}` for type `{base_type}`"
-            ));
+            self.diagnostics
+                .error(format!("unknown field `{field}` for type `{base_type}`"));
             Err(())
         }
     }
