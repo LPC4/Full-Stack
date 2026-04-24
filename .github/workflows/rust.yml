@@ -19,7 +19,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          # Ensures the checkout uses the token with write permissions
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Rust
@@ -34,11 +33,9 @@ jobs:
       - name: Format code
         run: cargo fmt --all
 
-      # Auto-fix safe suggestions
       - name: Auto-fix Clippy warnings
         run: cargo clippy --fix --allow-dirty --allow-no-vcs
 
-      # Commit and push only if changes were made
       - name: Commit and Push formatting fixes
         run: |
           git config --local user.email "action@github.com"

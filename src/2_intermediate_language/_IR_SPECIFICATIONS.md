@@ -16,6 +16,15 @@ This IR is the translation layer between the HLL frontend and the machine-code b
 3. **"Fat" Instruction Set:** This IR utilizes highly expressive, polymorphic instructions. This keeps the IR concise, readable, and semantically rich for high-level optimizations.
 4. **Explicit Read/Write:** Virtual registers hold values; memory operations (stack/heap) require explicit `read` and `write` instructions. The `@` sigil is reserved exclusively for memory access.
 
+### 1.2 Aggregate Type Representation
+HLL programs define structs with named fields (e.g., `type Point = { x: f32, y: f32 }`). When lowered to IR, these structs are represented as **anonymous inline aggregates** (`{f32, f32}`) because the IR operates on byte offsets rather than field names. Named type aliases may be introduced at the IR level for clarity or to enable certain optimizations, but the canonical IR form is anonymous and field-name-agnostic.
+
+### 1.3 Signedness in Integer Operations
+The IR does not distinguish signed from unsigned integer types; all integers are represented by their width (`i8`, `i16`, `i32`, `i64`). Signedness is encoded in the **operation itself**:
+- **Division:** `div` performs unsigned division; `sdiv` performs signed division.
+- **Comparison:** Each comparison is prefixed with `s` (signed) or `u` (unsigned): `slt` vs `ult`, etc.
+- **Type Casting:** `sext` (sign-extend) and `zext` (zero-extend) both cast to a wider type but interpret the source signedness differently.
+
 ---
 
 ## 2. Syntax & Lexical Conventions
@@ -40,19 +49,31 @@ This IR heavily mirrors HLL's frontend types to minimize the semantic gap.
 
 | This IR Type | Description |
 |----------|-------------|
-| `i1`, `i8`, `i16`, `i32`, `i64` | Integers (i1 is boolean). Signedness handled by opcodes. |
+| `i1`, `i8`, `i16`, `i32`, `i64` | Integers (i1 is boolean). Signedness is encoded in opcodes, not in the type itself. |
 | `f32`, `f64` | IEEE 754 Floating point. |
 | `T*` | Pointer to type `T`. |
 | `T[N]` | Fixed-size array (e.g., `i32[10]`). |
-| `Name` | Explicitly named type definitions. |
+| `{T1, T2, ...}` | Aggregate (struct) type with anonymous inline fields or named alias. |
+| `Name` | Explicitly named type definitions or aliases. |
 
-### 3.1 Named Struct Definitions
-Anonymous inline structs are not permitted. All structs must be explicitly named at the top level of the IR module, matching HLL definitions.
+### 3.1 Aggregate Types
+Aggregate types (structs) in this IR can be represented in two ways:
+- **Named type aliases** at the module level for reusable struct definitions
+- **Anonymous inline aggregates** in type expressions (allocations, parameters, returns)
+
+Both forms are equivalent at runtime; the distinction is purely stylistic. Named aliases improve readability for frequently-used types, while inline aggregates are more concise for one-off struct types.
 
 ```text
+; Named alias (reusable)
 type Point = {f32, f32}
 type DivideResult = {i32, i32}
+
+; Anonymous inline aggregates (common in function signatures and allocations)
+define {i32, i32} divide(i32 $a, i32 $b) { ... }
+$ptr = stack_alloc {i32, i32}
 ```
+
+All field information is stored in the aggregate definition or at the memory-access site via byte offsets; field **names are not preserved** in the IR's type representation to keep the IR lightweight.
 
 ---
 
@@ -76,10 +97,10 @@ Compute instructions are strongly typed but polymorphic in operation.
 
 | Instruction | Syntax | Description |
 |-------------|--------|-------------|
-| **`math`** | `$dest = math <op> <type> <lhs>, <rhs>` | `<op>`: `add, sub, mul, div, sdiv, mod, shl, shr, and, or, xor`. |
+| **`math`** | `$dest = math <op> <type> <lhs>, <rhs>` | `<op>`: `add, sub, mul, div, sdiv, mod, shl, shr, and, or, xor`. Most ops are bitwise identical for signed and unsigned; only `div` (unsigned) vs `sdiv` (signed) differ. |
 | **`unary`** | `$dest = unary <op> <type> <value>` | `<op>`: `neg`, `not`. |
-| **`cmp`** | `$dest = cmp <cond> <type> <lhs>, <rhs>`| Returns `i1`. `<cond>`: `eq, ne, lt, le, gt, ge` (with `u` or `s` prefixes). |
-| **`cast`** | `$dest = cast <mode> <value> -> <type>` | `<mode>`: `trunc`, `zext`, `sext`, `bitcast`, `f2i`, `i2f`. |
+| **`cmp`** | `$dest = cmp <cond> <type> <lhs>, <rhs>`| Returns `i1`. Signedness is explicit in the condition: `slt, sle, sgt, sge` (signed) or `ult, ule, ugt, uge` (unsigned); `eq, ne, lt, le, gt, ge` are deprecated in favor of signed/unsigned variants. |
+| **`cast`** | `$dest = cast <mode> <value> -> <type>` | `<mode>`: `trunc, zext, sext, bitcast, f2i, i2f`. Sign/zero-extend modes explicitly specify signedness intent. |
 
 ### 4.3 Control Flow & Basic Blocks
 Control flow operates strictly between labeled basic blocks.
@@ -95,27 +116,47 @@ Control flow operates strictly between labeled basic blocks.
 
 ## 5. Structs & Multiple Returns
 
-Since tuples do not exist in the language, multiple returns are handled via explicitly named structs. Structs are allocated on the stack and manipulated via pointers.
+Since tuples do not exist in the language, multiple returns are handled via explicitly named structs. Structs are allocated on the stack and manipulated via pointers or embedded in function signatures.
 
 **This IR Representation:**
+
+In the canonical form, aggregate types are represented as anonymous inline structs:
+
 ```text
+; Option 1: inline aggregate in return type
+define {i32, i32} divide(i32 $a, i32 $b) {
+entry:
+    $0 = math sdiv i32 $a, $b
+    $1 = math mod i32 $a, $b
+    
+    ; Allocate an unnamed struct on the stack
+    $result_ptr = stack_alloc {i32, i32}
+    
+    ; Write values into struct memory using baked-in byte offsets
+    write i32 $0 @ $result_ptr + 0
+    write i32 $1 @ $result_ptr + 4
+    
+    ret $result_ptr
+}
+
+; Option 2: named type alias (equivalent)
 type DivideResult = {i32, i32}
 
-define DivideResult divide(i32 $a, i32 $b) {
+define DivideResult divide_alt(i32 $a, i32 $b) {
 entry:
     $0 = math sdiv i32 $a, $b
     $1 = math mod i32 $a, $b
     
     $result_ptr = stack_alloc DivideResult
     
-    ; Write values into struct memory using baked-in byte offsets
     write i32 $0 @ $result_ptr + 0
     write i32 $1 @ $result_ptr + 4
     
-    $2 = read DivideResult @ $result_ptr
-    ret $2
+    ret $result_ptr
 }
 ```
+
+Field **names are not preserved** in the IR's aggregate type representation; field access relies on **byte offsets** computed at lowering time.
 
 ---
 
@@ -128,7 +169,7 @@ Because `< >` characters are inherently illegal in standard HLL identifier names
 **Example Monomorphization:**
 ```text
 ; Clean, collision-free IR mangling
-type Vector<i32> = {i32*, u64, u64}
+type Vector<i32> = {i32*, i64, i64}
 
 define void Vector<i32>.push(Vector<i32>* $vec, i32 $val) {
     ; Implementation
@@ -181,7 +222,9 @@ entry:
 register    = "$" ( letter { letter | digit | "_" } | digit { digit } );
 identifier  = letter { letter | digit | "_" | "." | "<" | ">" };
 label       = identifier;
-type        = "i1" | "i8" | "i16" | "i32" | "i64" | "f32" | "f64" | identifier
+aggregate   = "{" type { "," type } "}";
+type        = "i1" | "i8" | "i16" | "i32" | "i64" | "f32" | "f64" 
+            | identifier | aggregate
             | type "*" | type "[" integer "]";
 integer     = [ "-" ] digit { digit };
 float       = [ "-" ] digit { digit } "." digit { digit };

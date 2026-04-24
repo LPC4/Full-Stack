@@ -9,7 +9,6 @@ use std::path::Path;
 
 /// Compilation pipeline: HLL -> Lexer -> Parser -> Compiler -> IR
 #[cfg(not(target_arch = "wasm32"))]
-#[expect(dead_code)]
 fn compile_hll_file(input_file: &str, output_file: &str) -> Result<(), Box<dyn std::error::Error>> {
     use full_stack::high_level_language::compilation_pipeline::CompilationPipeline;
 

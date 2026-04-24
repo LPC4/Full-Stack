@@ -12,11 +12,16 @@ type Text = {
 const ANSWER = 42
 
 main: () -> i32 {
-    greeting: Text = "hello"
-    box: Box<i32>* = new(Box<i32>)
+    greeting1: { data: u8*, length: u64 } = "hello"
+    greeting2: Text = "hello"
 
+    box: Box<i32>* = new(Box<i32>)
     @box.value = ANSWER
     @box.next = null
+
+    double_box: Box<Box<i32>*>* = new(Box<Box<i32>*>)
+    @double_box.value = box
+    @double_box.next = null
 
     return @box.value
 }
