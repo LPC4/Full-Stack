@@ -43,7 +43,6 @@ const MAX_VAL = max_value(42, 17)
 const NESTED = factorial(fibonacci(6))
 
 main: () -> () {
-    ; These should all be evaluated at compile-time
     print(FACT_5)      ; Should be 120
     print(FACT_10)     ; Should be 3628800
     print(FIB_10)      ; Should be 55

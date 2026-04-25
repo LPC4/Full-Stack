@@ -286,7 +286,6 @@ impl HighLevelCompiler {
         env: &std::collections::HashMap<String, Literal>,
         context: &mut ConstEvalContext,
     ) -> Result<Literal, String> {
-        // Check recursion depth
         if context.current_depth >= context.max_depth {
             return Err("Const evaluation exceeded maximum recursion depth".to_owned());
         }
@@ -657,21 +656,31 @@ impl HighLevelCompiler {
                     let cond_value = self.eval_const_expr_with_env_and_context(cond, mutable_env, context)?;
                     match cond_value {
                         Literal::Boolean(true) => {
-                            // Execute loop body
+                            // Execute loop body statements
+                            let mut should_break = false;
                             for stmt in &body.statements {
                                 match stmt {
                                     Statement::Break => {
-                                        return Ok(Some(Literal::Integer(0)));
+                                        should_break = true;
+                                        break;
                                     }
                                     Statement::Continue => {
                                         // Continue to next iteration
                                         break;
                                     }
                                     _ => {
-                                        // Evaluate other statements
-                                        // For now, simplified - would need full statement evaluation
+                                        // Evaluate other statements recursively
+                                        if let Some(_return_value) = self.eval_const_statement(stmt, mutable_env, context)? {
+                                            // If a statement returns a value (like Return), exit the loop
+                                            should_break = true;
+                                            break;
+                                        }
                                     }
                                 }
+                            }
+                            
+                            if should_break {
+                                break;
                             }
                             iterations += 1;
                         }
@@ -685,9 +694,25 @@ impl HighLevelCompiler {
                 Ok(None) // While loop doesn't return a value
             }
             Statement::Expression(expr) => {
-                // Evaluate expression (side effects ignored in const eval)
-                let _ = self.eval_const_expr_with_env_and_context(expr, mutable_env, context)?;
-                Ok(None) // Expression statement doesn't return a value
+                if let Expression::Assignment { target, rvalue } = expr {
+                    // Evaluate the right-hand side
+                    let value = self.eval_const_expr_with_env_and_context(rvalue, mutable_env, context)?;
+                    
+                    // Update the variable in the environment
+                    match &**target {
+                        crate::high_level_language::ast::AssignTarget::Identifier(name) => {
+                            mutable_env.insert(name.clone(), value);
+                        }
+                        _ => {
+                            return Err("Only simple variable assignments are supported in compile-time evaluation".to_owned());
+                        }
+                    }
+                    Ok(None)
+                } else {
+                    // For non-assignment expressions, just evaluate them (side effects ignored)
+                    let _ = self.eval_const_expr_with_env_and_context(expr, mutable_env, context)?;
+                    Ok(None)
+                }
             }
             _ => Err(format!("Statement type {:?} not supported in compile-time evaluation", stmt)),
         }

@@ -86,7 +86,7 @@ fn execute_compiler_test_suite() {
 
     assert!(tests_run > 0, "No tests found in compiler_suite");
     println!(
-        "\n✅ Successfully ran {} golden master compilation tests across all categories",
+        "\nSuccessfully ran {} golden master compilation tests across all categories",
         tests_run
     );
 }
