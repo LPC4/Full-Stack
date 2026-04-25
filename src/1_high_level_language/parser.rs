@@ -955,11 +955,7 @@ impl<'a> Parser<'a> {
 
     fn is_declaration_start(&self) -> bool {
         match self.peek() {
-            Some(
-                Token::Const
-                | Token::Type
-                | Token::External,
-            ) => true,
+            Some(Token::Const | Token::Type | Token::External) => true,
             Some(Token::Ident(_)) => {
                 if self.peek_n(1) != Some(&Token::Colon) {
                     return false;
