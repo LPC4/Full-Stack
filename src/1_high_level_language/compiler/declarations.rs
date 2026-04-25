@@ -1,8 +1,23 @@
 use super::{
-    CompilerError, DeclNode, Declaration, Expression, GenericTypeDef, HighLevelCompiler,
+    CompilerError, DeclNode, Declaration, Expression, FunctionDecl, GenericTypeDef, HighLevelCompiler,
     IrFunction, IrInstruction, IrParam, IrProgram, IrRegister, IrTerminator, IrType, IrTypeAlias,
-    IrValue, Literal, LoweringContext, Program, SemanticAnalyzer,
+    IrValue, Literal, LoweringContext, Program, SemanticAnalyzer, Block, Statement,
 };
+
+#[derive(Debug, Clone)]
+pub struct ConstEvalContext {
+    pub max_depth: usize,
+    pub current_depth: usize,
+}
+
+impl Default for ConstEvalContext {
+    fn default() -> Self {
+        Self {
+            max_depth: 128,
+            current_depth: 0,
+        }
+    }
+}
 
 impl HighLevelCompiler {
     pub fn new() -> Self {
@@ -18,6 +33,7 @@ impl HighLevelCompiler {
             generic_type_cache: std::collections::HashMap::new(),
             generic_type_defs: std::collections::HashMap::new(),
             function_return_types: std::collections::HashMap::new(),
+            function_declarations: std::collections::HashMap::new(),
             pending_global_strings: Vec::new(),
         }
     }
@@ -47,7 +63,7 @@ impl HighLevelCompiler {
         self.next_temp = 0;
         self.next_label = 0;
         self.pending_global_strings.clear();
-        let mut ir_program = IrProgram::new("kryon_module");
+        let mut ir_program = IrProgram::new("ir_program");
 
         for declaration in &program.declarations {
             self.lower_declaration(&mut ir_program, declaration)?;
@@ -138,6 +154,21 @@ impl HighLevelCompiler {
                     self.context.diagnostics.warn(format!(
                         "extern function `{final_name}` lowered as placeholder"
                     ));
+                }
+
+                // Store function declaration for compile-time evaluation
+                if body.is_some() && generics.is_empty() {
+                    self.function_declarations.insert(
+                        name.clone(),
+                        FunctionDecl {
+                            name: name.clone(),
+                            generics: generics.clone(),
+                            params: params.clone(),
+                            return_type: return_type.clone(),
+                            body: body.clone(),
+                        },
+                    );
+                    log::debug!("Stored function `{}` for compile-time evaluation", name);
                 }
 
                 self.context.begin_function();
@@ -237,6 +268,41 @@ impl HighLevelCompiler {
     }
 
     pub(super) fn eval_const_expr(&self, expr: &Expression) -> Result<Literal, String> {
+        self.eval_const_expr_with_env(expr, &std::collections::HashMap::new())
+    }
+
+    // Unified evaluation engine that accepts an optional environment
+    fn eval_const_expr_with_env(
+        &self,
+        expr: &Expression,
+        env: &std::collections::HashMap<String, Literal>,
+    ) -> Result<Literal, String> {
+        self.eval_const_expr_with_env_and_context(expr, env, &mut ConstEvalContext::default())
+    }
+
+    fn eval_const_expr_with_env_and_context(
+        &self,
+        expr: &Expression,
+        env: &std::collections::HashMap<String, Literal>,
+        context: &mut ConstEvalContext,
+    ) -> Result<Literal, String> {
+        // Check recursion depth
+        if context.current_depth >= context.max_depth {
+            return Err("Const evaluation exceeded maximum recursion depth".to_owned());
+        }
+        context.current_depth += 1;
+
+        let result = self.eval_const_expr_inner_with_env(expr, env, context);
+        context.current_depth -= 1;
+        result
+    }
+
+    fn eval_const_expr_inner_with_env(
+        &self,
+        expr: &Expression,
+        env: &std::collections::HashMap<String, Literal>,
+        context: &mut ConstEvalContext,
+    ) -> Result<Literal, String> {
         match expr {
             Expression::Primary(crate::high_level_language::ast::PrimaryExpr::Literal(lit)) => {
                 Ok(lit.clone())
@@ -244,7 +310,10 @@ impl HighLevelCompiler {
             Expression::Primary(crate::high_level_language::ast::PrimaryExpr::Identifier(
                 ident,
             )) => {
-                if let Some(lit) = self.compile_time_consts.get(ident) {
+                // First check env, then compile_time_consts
+                if let Some(lit) = env.get(ident) {
+                    Ok(lit.clone())
+                } else if let Some(lit) = self.compile_time_consts.get(ident) {
                     Ok(lit.clone())
                 } else {
                     Err(format!(
@@ -253,7 +322,7 @@ impl HighLevelCompiler {
                 }
             }
             Expression::Unary { op, expr: inner } => {
-                let lit = self.eval_const_expr(inner)?;
+                let lit = self.eval_const_expr_with_env_and_context(inner, env, context)?;
                 match (op, lit) {
                     (crate::high_level_language::ast::UnaryOp::Negate, Literal::Integer(i)) => {
                         Ok(Literal::Integer(-i))
@@ -268,8 +337,8 @@ impl HighLevelCompiler {
                 }
             }
             Expression::Binary { op, left, right } => {
-                let l = self.eval_const_expr(left)?;
-                let r = self.eval_const_expr(right)?;
+                let l = self.eval_const_expr_with_env_and_context(left, env, context)?;
+                let r = self.eval_const_expr_with_env_and_context(right, env, context)?;
                 match (op, l, r) {
                     (
                         crate::high_level_language::ast::BinaryOp::Add,
@@ -290,16 +359,337 @@ impl HighLevelCompiler {
                         crate::high_level_language::ast::BinaryOp::Div,
                         Literal::Integer(a),
                         Literal::Integer(b),
-                    ) => Ok(Literal::Integer(a / b)),
+                    ) => {
+                        if b == 0 {
+                            Err("Division by zero in compile-time evaluation".to_owned())
+                        } else {
+                            Ok(Literal::Integer(a / b))
+                        }
+                    }
                     (
                         crate::high_level_language::ast::BinaryOp::Mod,
                         Literal::Integer(a),
                         Literal::Integer(b),
-                    ) => Ok(Literal::Integer(a % b)),
+                    ) => {
+                        if b == 0 {
+                            Err("Modulo by zero in compile-time evaluation".to_owned())
+                        } else {
+                            Ok(Literal::Integer(a % b))
+                        }
+                    }
+                    // Comparison operators for integers
+                    (
+                        crate::high_level_language::ast::BinaryOp::Eq,
+                        Literal::Integer(a),
+                        Literal::Integer(b),
+                    ) => Ok(Literal::Boolean(a == b)),
+                    (
+                        crate::high_level_language::ast::BinaryOp::Neq,
+                        Literal::Integer(a),
+                        Literal::Integer(b),
+                    ) => Ok(Literal::Boolean(a != b)),
+                    (
+                        crate::high_level_language::ast::BinaryOp::Lt,
+                        Literal::Integer(a),
+                        Literal::Integer(b),
+                    ) => Ok(Literal::Boolean(a < b)),
+                    (
+                        crate::high_level_language::ast::BinaryOp::Lte,
+                        Literal::Integer(a),
+                        Literal::Integer(b),
+                    ) => Ok(Literal::Boolean(a <= b)),
+                    (
+                        crate::high_level_language::ast::BinaryOp::Gt,
+                        Literal::Integer(a),
+                        Literal::Integer(b),
+                    ) => Ok(Literal::Boolean(a > b)),
+                    (
+                        crate::high_level_language::ast::BinaryOp::Gte,
+                        Literal::Integer(a),
+                        Literal::Integer(b),
+                    ) => Ok(Literal::Boolean(a >= b)),
+                    // Float comparisons
+                    (
+                        crate::high_level_language::ast::BinaryOp::Eq,
+                        Literal::Float(a),
+                        Literal::Float(b),
+                    ) => Ok(Literal::Boolean((a - b).abs() < f64::EPSILON)),
+                    (
+                        crate::high_level_language::ast::BinaryOp::Neq,
+                        Literal::Float(a),
+                        Literal::Float(b),
+                    ) => Ok(Literal::Boolean((a - b).abs() >= f64::EPSILON)),
+                    (
+                        crate::high_level_language::ast::BinaryOp::Lt,
+                        Literal::Float(a),
+                        Literal::Float(b),
+                    ) => Ok(Literal::Boolean(a < b)),
+                    (
+                        crate::high_level_language::ast::BinaryOp::Lte,
+                        Literal::Float(a),
+                        Literal::Float(b),
+                    ) => Ok(Literal::Boolean(a <= b)),
+                    (
+                        crate::high_level_language::ast::BinaryOp::Gt,
+                        Literal::Float(a),
+                        Literal::Float(b),
+                    ) => Ok(Literal::Boolean(a > b)),
+                    (
+                        crate::high_level_language::ast::BinaryOp::Gte,
+                        Literal::Float(a),
+                        Literal::Float(b),
+                    ) => Ok(Literal::Boolean(a >= b)),
+                    // Boolean operations
+                    (
+                        crate::high_level_language::ast::BinaryOp::And,
+                        Literal::Boolean(a),
+                        Literal::Boolean(b),
+                    ) => Ok(Literal::Boolean(a && b)),
+                    (
+                        crate::high_level_language::ast::BinaryOp::Or,
+                        Literal::Boolean(a),
+                        Literal::Boolean(b),
+                    ) => Ok(Literal::Boolean(a || b)),
+                    // Float arithmetic
+                    (
+                        crate::high_level_language::ast::BinaryOp::Add,
+                        Literal::Float(a),
+                        Literal::Float(b),
+                    ) => Ok(Literal::Float(a + b)),
+                    (
+                        crate::high_level_language::ast::BinaryOp::Sub,
+                        Literal::Float(a),
+                        Literal::Float(b),
+                    ) => Ok(Literal::Float(a - b)),
+                    (
+                        crate::high_level_language::ast::BinaryOp::Mul,
+                        Literal::Float(a),
+                        Literal::Float(b),
+                    ) => Ok(Literal::Float(a * b)),
+                    (
+                        crate::high_level_language::ast::BinaryOp::Div,
+                        Literal::Float(a),
+                        Literal::Float(b),
+                    ) => {
+                        if b.abs() < f64::EPSILON {
+                            Err("Division by zero in compile-time evaluation".to_owned())
+                        } else {
+                            Ok(Literal::Float(a / b))
+                        }
+                    }
                     _ => Err("Unsupported compile-time binary operation".to_owned()),
                 }
             }
+            Expression::Primary(crate::high_level_language::ast::PrimaryExpr::Grouped(inner)) => {
+                self.eval_const_expr_with_env_and_context(inner, env, context)
+            }
+            Expression::Primary(crate::high_level_language::ast::PrimaryExpr::FunctionCall {
+                name,
+                arguments,
+            }) => self.eval_const_function_call(name, arguments, env, context),
+            Expression::Primary(crate::high_level_language::ast::PrimaryExpr::FieldAccess {
+                expr: inner,
+                field,
+            }) => self.eval_const_field_access(inner, field, env, context),
+            Expression::Assignment { target: _, rvalue } => {
+                // For const eval, we only care about the value being assigned
+                self.eval_const_expr_with_env_and_context(rvalue, env, context)
+            }
             _ => Err("Expression is not a valid compile-time constant".to_owned()),
+        }
+    }
+
+    fn eval_const_function_call(
+        &self,
+        name: &str,
+        arguments: &[Expression],
+        env: &std::collections::HashMap<String, Literal>,
+        context: &mut ConstEvalContext,
+    ) -> Result<Literal, String> {
+        // Evaluate all arguments first
+        let mut arg_values = Vec::new();
+        for arg in arguments {
+            arg_values.push(self.eval_const_expr_with_env_and_context(arg, env, context)?);
+        }
+
+        // Look up the function declaration
+        let func_decl = self.function_declarations.get(name)
+            .ok_or_else(|| format!("Function `{}` not found for compile-time evaluation", name))?;
+
+        // Check that the function has a body
+        let body = func_decl.body.as_ref()
+            .ok_or_else(|| format!("Function `{}` has no body for compile-time evaluation", name))?;
+
+        // Verify parameter count matches
+        if func_decl.params.len() != arg_values.len() {
+            return Err(format!(
+                "Function `{}` expects {} arguments but got {}",
+                name,
+                func_decl.params.len(),
+                arg_values.len()
+            ));
+        }
+
+        log::debug!("Evaluating function `{}` with {} args at compile-time", name, arg_values.len());
+
+        // Create a local scope for function evaluation
+        let mut local_consts = self.compile_time_consts.clone();
+        
+        // Bind parameters to argument values
+        for (param, value) in func_decl.params.iter().zip(arg_values.iter()) {
+            log::debug!("  Binding param `{}` = {:?}", param.name, value);
+            local_consts.insert(param.name.clone(), value.clone());
+        }
+
+        // Evaluate the function body
+        let result = self.eval_const_block(body, &local_consts, context);
+        log::debug!("Function `{}` returned: {:?}", name, result);
+        result
+    }
+
+    fn eval_const_field_access(
+        &self,
+        expr: &Expression,
+        field: &str,
+        env: &std::collections::HashMap<String, Literal>,
+        context: &mut ConstEvalContext,
+    ) -> Result<Literal, String> {
+        // Evaluate the base expression
+        let _base = self.eval_const_expr_with_env_and_context(expr, env, context)?;
+        
+        // For struct literals, we'd extract the field value
+        // This would require storing struct literal information during const eval
+        Err(format!(
+            "Field access `.{}` on compile-time values is not yet supported",
+            field
+        ))
+    }
+
+    fn eval_const_block(
+        &self,
+        block: &Block,
+        env: &std::collections::HashMap<String, Literal>,
+        context: &mut ConstEvalContext,
+    ) -> Result<Literal, String> {
+        // Evaluate statements in the block sequentially
+        let mut result = None;
+        let mut mutable_env = env.clone();
+        
+        for stmt in &block.statements {
+            if let Some(value) = self.eval_const_statement(stmt, &mut mutable_env, context)? {
+                result = Some(value);
+                break; // Statement returned a value, exit block
+            }
+        }
+        
+        result.ok_or_else(|| "Block did not return a value".to_owned())
+    }
+
+    // Evaluate a single statement, returning Some(value) if it produces a return value
+    fn eval_const_statement(
+        &self,
+        stmt: &Statement,
+        mutable_env: &mut std::collections::HashMap<String, Literal>,
+        context: &mut ConstEvalContext,
+    ) -> Result<Option<Literal>, String> {
+        match stmt {
+            Statement::VariableDecl { name, ty: _, init } => {
+                // Evaluate and bind the variable
+                if let Some(init_expr) = init {
+                    let value = self.eval_const_expr_with_env_and_context(init_expr, mutable_env, context)?;
+                    mutable_env.insert(name.clone(), value);
+                }
+                Ok(None) // Variable declaration doesn't return a value
+            }
+            Statement::Return(expr) => {
+                // Return the evaluated expression
+                if let Some(return_expr) = expr {
+                    let value = self.eval_const_expr_with_env_and_context(return_expr, mutable_env, context)?;
+                    Ok(Some(value))
+                } else {
+                    Ok(Some(Literal::Integer(0))) // void return
+                }
+            }
+            Statement::If { cond, then_block, else_branch } => {
+                // Evaluate condition
+                let cond_value = self.eval_const_expr_with_env_and_context(cond, mutable_env, context)?;
+                match cond_value {
+                    Literal::Boolean(true) => {
+                        // Evaluate then block
+                        let block_result = self.eval_const_block(then_block, mutable_env, context)?;
+                        Ok(Some(block_result))
+                    }
+                    Literal::Boolean(false) => {
+                        // Evaluate else branch if present
+                        if let Some(else_branch) = else_branch {
+                            match &**else_branch {
+                                Statement::Block(else_block) => {
+                                    let block_result = self.eval_const_block(else_block, mutable_env, context)?;
+                                    Ok(Some(block_result))
+                                }
+                                Statement::If { .. } => {
+                                    // Nested if (else-if) - evaluate it
+                                    self.eval_const_statement(else_branch, mutable_env, context)
+                                }
+                                _ => {
+                                    // Unknown else branch type
+                                    Ok(None)
+                                }
+                            }
+                        } else {
+                            // No else branch - continue to next statement
+                            Ok(None)
+                        }
+                    }
+                    _ => Err("Condition must evaluate to boolean".to_owned()),
+                }
+            }
+            Statement::While { cond, body } => {
+                // Evaluate while loop at compile time
+                let mut iterations = 0;
+                let max_iterations = 1000; // Prevent infinite loops
+                
+                loop {
+                    if iterations >= max_iterations {
+                        return Err("Compile-time while loop exceeded maximum iterations".to_owned());
+                    }
+                    
+                    let cond_value = self.eval_const_expr_with_env_and_context(cond, mutable_env, context)?;
+                    match cond_value {
+                        Literal::Boolean(true) => {
+                            // Execute loop body
+                            for stmt in &body.statements {
+                                match stmt {
+                                    Statement::Break => {
+                                        return Ok(Some(Literal::Integer(0)));
+                                    }
+                                    Statement::Continue => {
+                                        // Continue to next iteration
+                                        break;
+                                    }
+                                    _ => {
+                                        // Evaluate other statements
+                                        // For now, simplified - would need full statement evaluation
+                                    }
+                                }
+                            }
+                            iterations += 1;
+                        }
+                        Literal::Boolean(false) => {
+                            // Exit loop
+                            break;
+                        }
+                        _ => return Err("While condition must evaluate to boolean".to_owned()),
+                    }
+                }
+                Ok(None) // While loop doesn't return a value
+            }
+            Statement::Expression(expr) => {
+                // Evaluate expression (side effects ignored in const eval)
+                let _ = self.eval_const_expr_with_env_and_context(expr, mutable_env, context)?;
+                Ok(None) // Expression statement doesn't return a value
+            }
+            _ => Err(format!("Statement type {:?} not supported in compile-time evaluation", stmt)),
         }
     }
 }

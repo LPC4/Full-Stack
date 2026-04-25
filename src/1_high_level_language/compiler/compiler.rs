@@ -18,6 +18,15 @@ struct GenericTypeDef {
     ty: Type,
 }
 
+#[derive(Debug, Clone)]
+pub struct FunctionDecl {
+    pub name: String,
+    pub generics: Vec<String>,
+    pub params: Vec<crate::high_level_language::ast::Parameter>,
+    pub return_type: Option<ReturnType>,
+    pub body: Option<Block>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CompilerError {
     UnsupportedDeclaration(String),
@@ -58,6 +67,8 @@ pub struct HighLevelCompiler {
     generic_type_defs: std::collections::HashMap<String, GenericTypeDef>,
     /// Map of function names to their return types
     function_return_types: std::collections::HashMap<String, IrType>,
+    /// Store function declarations for compile-time evaluation
+    function_declarations: std::collections::HashMap<String, FunctionDecl>,
     /// Pending global strings to be added to the IR program
     pending_global_strings: Vec<IrGlobalString>,
 }

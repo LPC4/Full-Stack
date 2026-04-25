@@ -1,0 +1,53 @@
+; Test compile-time evaluation with pure functions
+
+; Simple pure function
+factorial: (n: i32) -> i32 {
+    if n <= 1 {
+        return 1
+    }
+    return n * factorial(n - 1)
+}
+
+; Recursive Fibonacci
+fibonacci: (n: i32) -> i32 {
+    if n <= 0 {
+        return 0
+    }
+    if n == 1 {
+        return 1
+    }
+    return fibonacci(n - 1) + fibonacci(n - 2)
+}
+
+; Function with multiple parameters
+add_multiply: (a: i32, b: i32, c: i32) -> i32 {
+    return (a + b) * c
+}
+
+; Function using comparison operators
+max_value: (a: i32, b: i32) -> i32 {
+    if a > b {
+        return a
+    }
+    return b
+}
+
+; Compile-time constants using pure functions
+const FACT_5 = factorial(5)
+const FACT_10 = factorial(10)
+const FIB_10 = fibonacci(10)
+const COMPLEX = add_multiply(2, 3, 4)
+const MAX_VAL = max_value(42, 17)
+
+; Nested function calls
+const NESTED = factorial(fibonacci(6))
+
+main: () -> () {
+    ; These should all be evaluated at compile-time
+    print(FACT_5)      ; Should be 120
+    print(FACT_10)     ; Should be 3628800
+    print(FIB_10)      ; Should be 55
+    print(COMPLEX)     ; Should be 20
+    print(MAX_VAL)     ; Should be 42
+    print(NESTED)      ; Should be factorial(8) = 40320
+}

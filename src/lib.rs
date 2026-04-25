@@ -12,4 +12,7 @@ pub mod intermediate_language;
 #[path = "3_assembly_language/mod.rs"]
 pub mod assembly_language;
 
+#[path = "4_virtual_machine/mod.rs"]
+pub mod virtual_machine;
+
 pub use app::TemplateApp;

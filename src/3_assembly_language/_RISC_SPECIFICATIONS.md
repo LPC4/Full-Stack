@@ -226,6 +226,7 @@ All R-type. Non-W instructions: opcode `0x33`, `funct7=0x01`. W instructions: op
 
 #### 32-bit Word Operations (opcode `0x3B`)
 *Operate on lower 32 bits; result sign-extended to 64 bits.*
+
 | Mnemonic | funct3 | Semantics |
 |----------|--------|-----------|
 | `mulw` | `0` | `rd = sext32((rs1[31:0] × rs2[31:0])[31:0])` |
@@ -260,8 +261,7 @@ All R-type. Non-W instructions: opcode `0x33`, `funct7=0x01`. W instructions: op
 | `amomaxu.w/d` | `11100` | `0x1C` | `t=M[rs1]; rd=t; M[rs1]=max(t, rs2)` (unsigned) |
 
 **Critical notes:**
-- `lr` and `sc` were previously listed with funct5 `01000`/`01001` - this was **wrong** and would alias with `amoor`. Correct values: `lr`=`00010`, `sc`=`00011`.
-- AMO semantics: `rs1` holds the **address**. The loaded value is captured into a temp, returned in `rd`, and the result of the operation is stored back. `rs1` itself is never used as an arithmetic operand.
+-  AMO semantics: `rs1` holds the **address**. The loaded value is captured into a temp, returned in `rd`, and the result of the operation is stored back. `rs1` itself is never used as an arithmetic operand.
 - `sc` with `rd=x0` is valid; success/failure status is discarded.
 - `aq`/`rl` default to `0`. Assembler syntax supports `.aq`, `.rl`, `.aqrl` suffixes.
 - `lr`/`sc` addresses must be naturally aligned: 4 bytes for `.w`, 8 bytes for `.d`.

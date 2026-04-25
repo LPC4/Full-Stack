@@ -1,111 +1,148 @@
-# Full Stack
+<div align="center">
 
-[![Live Site](https://img.shields.io/badge/Live%20Site-GitHub%20Pages-2ea44f?logo=github)](https://lpc4.github.io/Full-Stack/)
+# Full-Stack
+
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-GitHub%20Pages-2ea44f?logo=github)](https://lpc4.github.io/Full-Stack/)
 [![Deploy Pages](https://github.com/LPC4/Full-Stack/actions/workflows/pages.yml/badge.svg)](https://github.com/LPC4/Full-Stack/actions/workflows/pages.yml)
+[![Rust](https://img.shields.io/badge/Rust-1.75+-orange?logo=rust)](https://www.rust-lang.org)
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-An interactive Rust project that explores the stack from high-level language features down through IR, assembly, and eventually machine execution.
+</div>
 
-It ships as a desktop/web UI built with `eframe` + `egui`, plus a growing compiler pipeline with fixtures and golden tests.
+<div align="center">
 
-## What’s in here
+### An interactive compiler pipeline explorer
+*From high-level language semantics down to IR, assembly, and machine execution*
 
-- **High-level language front end**: lexer, parser, AST, semantic analysis, and HLL-to-IR lowering.
-- **Intermediate language**: a textual IR with aggregate types, pointers, control flow, and snapshot tests.
-- **Assembly direction**: the current bridge toward a minimal RISC-V backend.
-- **UI + documentation**: a small app for exploring the project plus checked-in examples and fixtures.
+**[🌐 Live Demo](https://lpc4.github.io/Full-Stack/)**
+
+</div>
+
+---
+
+## Overview
+
+This project implements a complete compilation pipeline for HLL, a systems programming language with a consistency-first memory model and explicit pointer semantics. The pipeline includes:
+
+- **High-Level Language Frontend**: Lexer, recursive-descent parser, AST, semantic analysis, and HLL→IR lowering.
+- **Intermediate Representation**: Strongly-typed, SSA-form IR with aggregate types, control flow, and snapshot-tested code generation.
+- **Assembly Backend**: Growing RISC-V RV64IMAFD backend with full instruction encoding specifications.
+- **Interactive UI**: Desktop and web application for live editing, compilation, and step-through visualization of each pipeline stage.
+- **Test Infrastructure**: Golden tests, fixture programs, and reproducible compilation pipelines.
+
+---
 
 ## Examples
 
-### 1) Simple HLL program
+All example programs, IR outputs, and interactive demonstrations are available in the live GitHub Pages deployment:
 
-`programs/example/core_syntax.hll`
+<div align="center">
 
-```hll
-const ZERO = 0
-const FIVE = 5
+**[https://lpc4.github.io/Full-Stack/](https://lpc4.github.io/Full-Stack/)**
 
-identity: (value: i32) -> i32 {
-    return value
-}
+</div>
 
-main: () -> i32 {
-    start: i32 = ZERO
-    next: i32 = identity(FIVE)
-    return start + next
-}
-```
+---
 
-### 2) Pointer-heavy example with generated IR
+## Quick Start
 
-`programs/debug/debug.hll`
+### Run Locally (Desktop)
 
-```hll
-type Node = {
-    val: i32,
-    next: Node*
-}
-
-main: () -> i32 {
-    ptr: i32* = new(i32)
-    x: i32 = 5
-    addr: i32* = &x
-    @ptr = @addr + 10
-    defer free(ptr)
-    if @ptr > 10 {
-        return 1
-    }
-    return 0
-}
-```
-
-`programs/debug/debug.ir`
-
-```ir
-type Node = {i32, Node*}
-
-define i32 main() {
-entry:
-    $x = stack_alloc i32
-    write i32 5 @ $x
-    $addr = stack_alloc i32*
-    write i32* $x @ $addr
-    $1 = read i32* @ $addr
-    $2 = read i32 @ $1
-    $3 = math add i32 $2, 10
-}
-```
-
-## Quick start
-
-### Run locally
-
-```powershell
+```bash
 cargo run --release
 ```
 
-### Run in the browser
+### Run in Browser (WASM)
 
-```powershell
+```bash
+# Install prerequisites
 rustup target add wasm32-unknown-unknown
 cargo install --locked trunk
+
+# Serve with hot-reload
 trunk serve
 ```
 
-Open `http://127.0.0.1:8080/index.html#dev` to bypass service-worker caching during development.
+Open `http://127.0.0.1:8080` in your browser. Append `#dev` to bypass service-worker caching during development: `http://127.0.0.1:8080/#dev`
 
-### Build a release web bundle
+### Build Release Bundle
 
-```powershell
+```bash
 trunk build --release
+# Output: dist/
 ```
 
-## Deployment
+---
 
-This repo deploys through `.github/workflows/pages.yml` with GitHub Actions + GitHub Pages.
+## Testing
 
-1. Set GitHub Pages source to **GitHub Actions**.
-2. Push to the configured deployment branch.
-3. Check the workflow run in the **Actions** tab.
+```bash
+# Run all tests
+cargo test
 
-If your default branch changes, update the branch list in `.github/workflows/pages.yml`.
+# Run with output capture
+cargo test -- --nocapture
 
+# Test specific module
+cargo test -p full_stack intermediate_language
+```
+
+Golden tests reside in `tests/` and compare generated IR against expected outputs.
+
+---
+
+## Development
+
+### Prerequisites
+- Rust 1.75+ (via `rustup`)
+- `trunk` (for WASM builds)
+- A modern browser (for web target)
+
+### Useful Commands
+
+```bash
+# Format code
+cargo fmt --all
+
+# Lint
+cargo clippy --all-targets --all-features -- -D warnings
+
+# Check WASM build
+cargo check --target wasm32-unknown-unknown
+
+# Profile compilation
+cargo build --release --timings
+```
+
+---
+
+## Documentation
+
+- **Language Specification**: [`src/1_high_level_language/_LANG_SPECIFICATIONS.md`](src/1_high_level_language/_LANG_SPECIFICATIONS.md)
+- **IR Specification**: [`src/2_intermediate_language/_IR_SPECIFICATIONS.md`](src/2_intermediate_language/_IR_SPECIFICATIONS.md)
+- **RISC-V Backend**: [`src/3_assembly_language/_RISC_SPECIFICATIONS.md`](src/3_assembly_language/_RISC_SPECIFICATIONS.md)
+
+---
+
+## Contributing
+
+Contributions are welcome. Please:
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feat/your-feature`)
+3. Commit changes with clear, descriptive messages
+4. Open a Pull Request with a summary of changes
+
+For significant changes, please open an issue first to discuss your approach.
+
+---
+
+<div align="center">
+
+## License
+
+MIT License — see [LICENSE](LICENSE) for details.
+
+*Built with Rust, eframe, and egui.*
+
+</div>
