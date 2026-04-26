@@ -1,6 +1,6 @@
 use std::fmt;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum IrRegister {
     Temp(u32),
     Named(String),
@@ -38,7 +38,7 @@ impl fmt::Display for IrValue {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct IrLabel(pub String);
 
 impl IrLabel {

@@ -6,6 +6,7 @@ use crate::high_level_language::lexer::Lexer;
 use crate::high_level_language::parser::{Parser, ParserError};
 use crate::high_level_language::token::Token;
 use crate::intermediate_language::IrProgram;
+use crate::intermediate_language::asm_compiler::compiler_rv64::CompilerRv64;
 
 #[derive(Debug, Clone)]
 pub enum CompilationError {
@@ -187,5 +188,11 @@ impl CompilationPipeline {
     pub fn compile_to_ir_only(&self, source: &str) -> Result<IrProgram, CompilationError> {
         let result = self.compile(source)?;
         Ok(result.ir_program)
+    }
+
+    /// Compile an IR program to RISC‑V assembly text.
+    pub fn compile_ir_to_assembly(&self, ir: &IrProgram) -> String {
+        let mut compiler = CompilerRv64::new();
+        compiler.compile(ir)
     }
 }

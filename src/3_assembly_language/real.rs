@@ -1,8 +1,25 @@
-use super::riscv::rv64a::{Lr, Sc, AmoaddW, AmoswapW, AmoxorW, AmoandW, AmoorW, AmominW, AmomaxW, AmominuW, AmomaxuW, AmoaddD, AmoswapD, AmoxorD, AmoandD, AmoorD, AmominD, AmomaxD, AmominuD, AmomaxuD};
-use super::riscv::rv64fd::{Flw, Fld, Fsw, Fsd, Fadd, Fsub, Fmul, Fdiv, FsqrtS, Fsgnj, Fsgnjn, Fsgnjx, Fmin, Fmax, FaddD, FsubD, FmulD, FdivD, FsqrtD, FsgnjD, FsgnjnD, FsgnjxD, FminD, FmaxD, FeqS, FltS, FleqS, FeqD, FltD, FleqD, FclassS, FclassD, FmvXW, FmvWX, FmvXD, FmvDX, FcvtWS, FcvtWUS, FcvtLS, FcvtLUS, FcvtWD, FcvtWUD, FcvtLD, FcvtLUD, FcvtSW, FcvtSWU, FcvtSL, FcvtSLU, FcvtDW, FcvtDWU, FcvtDL, FcvtDLU, FcvtSD, FcvtDS, FmaddS, FmaddD, FmsubS, FmsubD, FnmsubS, FnmsubD, FnmaddS, FnmaddD};
-use super::riscv::rv64i::{Add, Sub, Sll, Slt, Sltu, Xor, Srl, Sra, Or, And, Addw, Subw, Sllw, Srlw, Sraw, Addi, Slti, Sltiu, Xori, Ori, Andi, Slli, Srli, Srai, Addiw, Slliw, Srliw, Sraiw, Lb, Lh, Lw, Ld, Lbu, Lhu, Lwu, Sb, Sh, Sw, Sd, Beq, Bne, Blt, Bge, Bltu, Bgeu, Lui, Auipc, Jal, Jalr, Ecall, Ebreak, Fence, FenceI};
-use super::riscv::rv64m::{Mul, Mulh, Mulhsu, Mulhu, Div, Divu, Rem, Remu, Mulw, Divw, Divuw, Remw, Remuw};
-use super::riscv::rv64zicsr::{Csrrw, Csrrs, Csrrc, Csrrwi, Csrrsi, Csrrci};
+use super::riscv::rv64a::{
+    AmoaddD, AmoaddW, AmoandD, AmoandW, AmomaxD, AmomaxW, AmomaxuD, AmomaxuW, AmominD, AmominW,
+    AmominuD, AmominuW, AmoorD, AmoorW, AmoswapD, AmoswapW, AmoxorD, AmoxorW, Lr, Sc,
+};
+use super::riscv::rv64fd::{
+    Fadd, FaddD, FclassD, FclassS, FcvtDL, FcvtDLU, FcvtDS, FcvtDW, FcvtDWU, FcvtLD, FcvtLS,
+    FcvtLUD, FcvtLUS, FcvtSD, FcvtSL, FcvtSLU, FcvtSW, FcvtSWU, FcvtWD, FcvtWS, FcvtWUD, FcvtWUS,
+    Fdiv, FdivD, FeqD, FeqS, Fld, FleqD, FleqS, FltD, FltS, Flw, FmaddD, FmaddS, Fmax, FmaxD, Fmin,
+    FminD, FmsubD, FmsubS, Fmul, FmulD, FmvDX, FmvWX, FmvXD, FmvXW, FnmaddD, FnmaddS, FnmsubD,
+    FnmsubS, Fsd, Fsgnj, FsgnjD, Fsgnjn, FsgnjnD, Fsgnjx, FsgnjxD, FsqrtD, FsqrtS, Fsub, FsubD,
+    Fsw,
+};
+use super::riscv::rv64i::{
+    Add, Addi, Addiw, Addw, And, Andi, Auipc, Beq, Bge, Bgeu, Blt, Bltu, Bne, Ebreak, Ecall, Fence,
+    FenceI, Jal, Jalr, Lb, Lbu, Ld, Lh, Lhu, Lui, Lw, Lwu, Or, Ori, Sb, Sd, Sh, Sll, Slli, Slliw,
+    Sllw, Slt, Slti, Sltiu, Sltu, Sra, Srai, Sraiw, Sraw, Srl, Srli, Srliw, Srlw, Sub, Subw, Sw,
+    Xor, Xori,
+};
+use super::riscv::rv64m::{
+    Div, Divu, Divuw, Divw, Mul, Mulh, Mulhsu, Mulhu, Mulw, Rem, Remu, Remuw, Remw,
+};
+use super::riscv::rv64zicsr::{Csrrc, Csrrci, Csrrs, Csrrsi, Csrrw, Csrrwi};
 use super::traits::Instruction as _;
 
 /// Every encodable RISC-V instruction in one enum.

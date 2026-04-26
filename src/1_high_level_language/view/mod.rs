@@ -107,6 +107,7 @@ enum ViewType {
     Tokens,
     AST,
     IR,
+    Assembly,
 }
 
 /// High-level language visualization state and UI.
@@ -141,6 +142,10 @@ pub struct HighLevelLanguageView {
     just_compiled_successfully: bool,
     #[serde(skip)]
     compile_success_until: Option<f64>,
+    #[serde(skip)]
+    show_asm: bool,
+    #[serde(skip)]
+    asm_output: String,
 }
 
 impl Default for HighLevelLanguageView {
@@ -170,6 +175,8 @@ impl Default for HighLevelLanguageView {
             compile_error: None,
             just_compiled_successfully: false,
             compile_success_until: None,
+            show_asm: false,
+            asm_output: String::new(),
         }
     }
 }
@@ -841,6 +848,7 @@ impl HighLevelLanguageView {
                 // Update outputs
                 self.ast_output = format!("{:#?}", result.ast);
                 self.ir_output = format!("{}", result.ir_program);
+                self.asm_output = pipeline.compile_ir_to_assembly(&result.ir_program);
 
                 // Check for diagnostics
                 let errors: Vec<_> = result
@@ -919,6 +927,7 @@ impl HighLevelLanguageView {
                 ui.toggle_value(&mut self.show_tokens, "Lexer Tokens");
                 ui.toggle_value(&mut self.show_ast, "Parser AST");
                 ui.toggle_value(&mut self.show_ir, "Intermediate Repr.");
+                ui.toggle_value(&mut self.show_asm, "Assembly");
                 ui.separator();
 
                 if ui.button("Compile").clicked() {
@@ -962,6 +971,9 @@ impl HighLevelLanguageView {
             }
             if self.show_ir {
                 active_views.push(ViewType::IR);
+            }
+            if self.show_asm {
+                active_views.push(ViewType::Assembly);
             }
 
             if active_views.is_empty() {
@@ -1021,6 +1033,7 @@ impl HighLevelLanguageView {
                     ViewType::Tokens => ui.id().with("tokens_view"),
                     ViewType::AST => ui.id().with("ast_view"),
                     ViewType::IR => ui.id().with("ir_view"),
+                    ViewType::Assembly => ui.id().with("assembly_view"),
                 };
 
                 egui::Frame::window(child_ui.style()).show(&mut child_ui, |ui| {
@@ -1040,6 +1053,7 @@ impl HighLevelLanguageView {
                             ViewType::Tokens => ui.strong("Lexer Tokens"),
                             ViewType::AST => ui.strong("Parser AST"),
                             ViewType::IR => ui.strong("Intermediate Repr."),
+                            ViewType::Assembly => ui.strong("Assembly Code"),
                         };
                     });
                     ui.separator();
@@ -1121,6 +1135,21 @@ impl HighLevelLanguageView {
                                     ui.add_sized(
                                         ui.available_size(),
                                         egui::TextEdit::multiline(&mut self.ir_output)
+                                            .font(egui::TextStyle::Monospace)
+                                            .layouter(&mut layouter),
+                                    );
+                                });
+                            }
+                            ViewType::Assembly => {
+                                let mut layouter = |ui: &egui::Ui, string: &dyn egui::TextBuffer, _wrap_width: f32| {
+                                    let mut layout_job = highlight_ir(ui.style(), string.as_str());
+                                    layout_job.wrap.max_width = f32::INFINITY;
+                                    ctx.fonts_mut(|f| f.layout_job(layout_job))
+                                };
+                                ui.push_id(id_salt.with("asm_editor"), |ui| {
+                                    ui.add_sized(
+                                        ui.available_size(),
+                                        egui::TextEdit::multiline(&mut self.asm_output)
                                             .font(egui::TextStyle::Monospace)
                                             .layouter(&mut layouter),
                                     );

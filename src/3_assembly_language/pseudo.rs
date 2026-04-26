@@ -7,7 +7,10 @@
 //! live in the `rv64fd` module alongside the FP real instructions they expand to.
 
 use super::real::RealInstruction;
-use super::riscv::rv64i::{Addi, Xori, Sub, Addiw, Sltiu, Sltu, Slt, Beq, Bne, Bge, Blt, Bltu, Bgeu, Jal, Jalr, Auipc, Lui, Slli, Srli, Or};
+use super::riscv::rv64i::{
+    Addi, Addiw, Auipc, Beq, Bge, Bgeu, Blt, Bltu, Bne, Jal, Jalr, Lui, Or, Slli, Slt, Sltiu, Sltu,
+    Srli, Sub, Xori,
+};
 use crate::assembly_language::encode_decode::Reg;
 use crate::assembly_language::riscv::rv64fd;
 use crate::assembly_language::utils::reg_name;

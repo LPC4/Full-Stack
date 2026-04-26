@@ -518,11 +518,10 @@ impl HighLevelCompiler {
             .ok_or_else(|| format!("Function `{name}` not found for compile-time evaluation"))?;
 
         // Check that the function has a body
-        let body = func_decl.body.as_ref().ok_or_else(|| {
-            format!(
-                "Function `{name}` has no body for compile-time evaluation"
-            )
-        })?;
+        let body = func_decl
+            .body
+            .as_ref()
+            .ok_or_else(|| format!("Function `{name}` has no body for compile-time evaluation"))?;
 
         // Verify parameter count matches
         if func_decl.params.len() != arg_values.len() {

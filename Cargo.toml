@@ -16,6 +16,7 @@ targets = ["x86_64-unknown-linux-gnu", "wasm32-unknown-unknown"]
 egui = "0.34.1"
 eframe = { version = "0.34.1", features = ["persistence"] }
 log = "0.4.27"
+rfd = "0.15"
 
 # You only need serde if you want app persistence:
 serde = { version = "1.0.219", features = ["derive"] }
