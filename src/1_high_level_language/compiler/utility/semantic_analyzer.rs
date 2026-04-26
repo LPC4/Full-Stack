@@ -902,39 +902,6 @@ impl SemanticAnalyzer {
     pub fn diagnostics(&self) -> &[crate::high_level_language::compiler::Diagnostic] {
         self.diagnostics.entries()
     }
-
-    fn check_for_unresolved_unknowns(&mut self, program: &Program) -> Result<(), ()> {
-        // Scan all declarations for any remaining "unknown" type references
-        // Just a quick placeholder
-        // TODO: make this better
-        let mut has_unresolved = false;
-
-        for decl in &program.declarations {
-            if let DeclNode::Variable { ty, .. } = &decl.decl {
-                if self.type_contains_unknown(ty) {
-                    has_unresolved = true;
-                    self.diagnostics.error(format!(
-                        "variable declaration contains unresolved type: `{}`",
-                        self.context.get_type_name(&self.ast_type_to_ir_type(ty))
-                    ));
-                }
-            }
-        }
-
-        if has_unresolved { Err(()) } else { Ok(()) }
-    }
-
-    fn type_contains_unknown(&self, ty: &Type) -> bool {
-        match ty {
-            Type::Primitive(name) => name == "unknown",
-            Type::Pointer(inner) => self.type_contains_unknown(inner),
-            Type::Array(_, inner) => self.type_contains_unknown(inner),
-            Type::Struct(fields) => fields.iter().any(|f| self.type_contains_unknown(&f.ty)),
-            Type::Named { name, args } => {
-                name == "unknown" || args.iter().any(|a| self.type_contains_unknown(a))
-            }
-        }
-    }
 }
 
 impl Default for SemanticAnalyzer {

@@ -1,0 +1,420 @@
+use super::rv64a::*;
+use super::rv64fd::*;
+use super::rv64i::*;
+use super::rv64m::*;
+use super::rv64zicsr::*;
+use super::traits::Instruction;
+
+/// Every encodable RISC-V instruction in one enum.
+#[derive(Debug, Clone)]
+pub enum RealInstruction {
+    // -------------------------------------------------------------------
+    // RV64I - R-type
+    // -------------------------------------------------------------------
+    Add(Add),
+    Sub(Sub),
+    Sll(Sll),
+    Slt(Slt),
+    Sltu(Sltu),
+    Xor(Xor),
+    Srl(Srl),
+    Sra(Sra),
+    Or(Or),
+    And(And),
+    // RV64I word R-type
+    Addw(Addw),
+    Subw(Subw),
+    Sllw(Sllw),
+    Srlw(Srlw),
+    Sraw(Sraw),
+
+    // -------------------------------------------------------------------
+    // RV64I - I-type immediate ALU
+    // -------------------------------------------------------------------
+    Addi(Addi),
+    Slti(Slti),
+    Sltiu(Sltiu),
+    Xori(Xori),
+    Ori(Ori),
+    Andi(Andi),
+    Slli(Slli),
+    Srli(Srli),
+    Srai(Srai),
+    // RV64I word I-type
+    Addiw(Addiw),
+    Slliw(Slliw),
+    Srliw(Srliw),
+    Sraiw(Sraiw),
+
+    // -------------------------------------------------------------------
+    // RV64I - loads
+    // -------------------------------------------------------------------
+    Lb(Lb),
+    Lh(Lh),
+    Lw(Lw),
+    Ld(Ld),
+    Lbu(Lbu),
+    Lhu(Lhu),
+    Lwu(Lwu),
+
+    // -------------------------------------------------------------------
+    // RV64I - stores
+    // -------------------------------------------------------------------
+    Sb(Sb),
+    Sh(Sh),
+    Sw(Sw),
+    Sd(Sd),
+
+    // -------------------------------------------------------------------
+    // RV64I - branches
+    // -------------------------------------------------------------------
+    Beq(Beq),
+    Bne(Bne),
+    Blt(Blt),
+    Bge(Bge),
+    Bltu(Bltu),
+    Bgeu(Bgeu),
+
+    // -------------------------------------------------------------------
+    // RV64I - upper immediate / jump
+    // -------------------------------------------------------------------
+    Lui(Lui),
+    Auipc(Auipc),
+    Jal(Jal),
+    Jalr(Jalr),
+
+    // -------------------------------------------------------------------
+    // RV64I - system
+    // -------------------------------------------------------------------
+    Ecall(Ecall),
+    Ebreak(Ebreak),
+    Fence(Fence),
+    FenceI(FenceI),
+
+    // -------------------------------------------------------------------
+    // RV64M - multiply / divide
+    // -------------------------------------------------------------------
+    Mul(Mul),
+    Mulh(Mulh),
+    Mulhsu(Mulhsu),
+    Mulhu(Mulhu),
+    Div(Div),
+    Divu(Divu),
+    Rem(Rem),
+    Remu(Remu),
+    Mulw(Mulw),
+    Divw(Divw),
+    Divuw(Divuw),
+    Remw(Remw),
+    Remuw(Remuw),
+
+    // -------------------------------------------------------------------
+    // RV64A - atomics
+    // -------------------------------------------------------------------
+    Lr(Lr),
+    Sc(Sc),
+    AmoaddW(AmoaddW),
+    AmoswapW(AmoswapW),
+    AmoxorW(AmoxorW),
+    AmoandW(AmoandW),
+    AmoorW(AmoorW),
+    AmominW(AmominW),
+    AmomaxW(AmomaxW),
+    AmominuW(AmominuW),
+    AmomaxuW(AmomaxuW),
+    AmoaddD(AmoaddD),
+    AmoswapD(AmoswapD),
+    AmoxorD(AmoxorD),
+    AmoandD(AmoandD),
+    AmoorD(AmoorD),
+    AmominD(AmominD),
+    AmomaxD(AmomaxD),
+    AmominuD(AmominuD),
+    AmomaxuD(AmomaxuD),
+
+    // -------------------------------------------------------------------
+    // RV64FD - floating‑point loads / stores
+    // -------------------------------------------------------------------
+    Flw(Flw),
+    Fld(Fld),
+    Fsw(Fsw),
+    Fsd(Fsd),
+
+    // -------------------------------------------------------------------
+    // RV64FD - FP ALU single‑precision
+    // -------------------------------------------------------------------
+    Fadd(Fadd),
+    Fsub(Fsub),
+    Fmul(Fmul),
+    Fdiv(Fdiv),
+    FsqrtS(FsqrtS),
+    Fsgnj(Fsgnj),
+    Fsgnjn(Fsgnjn),
+    Fsgnjx(Fsgnjx),
+    Fmin(Fmin),
+    Fmax(Fmax),
+
+    // -------------------------------------------------------------------
+    // RV64FD - FP ALU double‑precision
+    // -------------------------------------------------------------------
+    FaddD(FaddD),
+    FsubD(FsubD),
+    FmulD(FmulD),
+    FdivD(FdivD),
+    FsqrtD(FsqrtD),
+    FsgnjD(FsgnjD),
+    FsgnjnD(FsgnjnD),
+    FsgnjxD(FsgnjxD),
+    FminD(FminD),
+    FmaxD(FmaxD),
+
+    // -------------------------------------------------------------------
+    // RV64FD - FP compare (single/double)
+    // -------------------------------------------------------------------
+    FeqS(FeqS),
+    FltS(FltS),
+    FleqS(FleqS),
+    FeqD(FeqD),
+    FltD(FltD),
+    FleqD(FleqD),
+
+    // -------------------------------------------------------------------
+    // RV64FD - FP classify
+    // -------------------------------------------------------------------
+    FclassS(FclassS),
+    FclassD(FclassD),
+
+    // -------------------------------------------------------------------
+    // RV64FD - FP move (bitwise)
+    // -------------------------------------------------------------------
+    FmvXW(FmvXW),
+    FmvWX(FmvWX),
+    FmvXD(FmvXD),
+    FmvDX(FmvDX),
+
+    // -------------------------------------------------------------------
+    // RV64FD - FP → integer conversions
+    // -------------------------------------------------------------------
+    FcvtWS(FcvtWS),
+    FcvtWUS(FcvtWUS),
+    FcvtLS(FcvtLS),
+    FcvtLUS(FcvtLUS),
+    FcvtWD(FcvtWD),
+    FcvtWUD(FcvtWUD),
+    FcvtLD(FcvtLD),
+    FcvtLUD(FcvtLUD),
+
+    // -------------------------------------------------------------------
+    // RV64FD - integer → FP conversions
+    // -------------------------------------------------------------------
+    FcvtSW(FcvtSW),
+    FcvtSWU(FcvtSWU),
+    FcvtSL(FcvtSL),
+    FcvtSLU(FcvtSLU),
+    FcvtDW(FcvtDW),
+    FcvtDWU(FcvtDWU),
+    FcvtDL(FcvtDL),
+    FcvtDLU(FcvtDLU),
+
+    // -------------------------------------------------------------------
+    // RV64FD - FP ↔ FP conversions
+    // -------------------------------------------------------------------
+    FcvtSD(FcvtSD),
+    FcvtDS(FcvtDS),
+
+    // -------------------------------------------------------------------
+    // RV64FD - FMAC (fused multiply‑add/sub)
+    // -------------------------------------------------------------------
+    FmaddS(FmaddS),
+    FmaddD(FmaddD),
+    FmsubS(FmsubS),
+    FmsubD(FmsubD),
+    FnmsubS(FnmsubS),
+    FnmsubD(FnmsubD),
+    FnmaddS(FnmaddS),
+    FnmaddD(FnmaddD),
+
+    // -------------------------------------------------------------------
+    // RV64ZICSR - CSR instructions
+    // -------------------------------------------------------------------
+    Csrrw(Csrrw),
+    Csrrs(Csrrs),
+    Csrrc(Csrrc),
+    Csrrwi(Csrrwi),
+    Csrrsi(Csrrsi),
+    Csrrci(Csrrci),
+}
+
+// Blanket delegation to the inner type's Instruction impl
+macro_rules! delegate {
+    ($self:expr, $method:ident $(, $arg:expr)*) => {
+        match $self {
+            Self::Add(i)       => i.$method($($arg),*),
+            Self::Sub(i)       => i.$method($($arg),*),
+            Self::Sll(i)       => i.$method($($arg),*),
+            Self::Slt(i)       => i.$method($($arg),*),
+            Self::Sltu(i)      => i.$method($($arg),*),
+            Self::Xor(i)       => i.$method($($arg),*),
+            Self::Srl(i)       => i.$method($($arg),*),
+            Self::Sra(i)       => i.$method($($arg),*),
+            Self::Or(i)        => i.$method($($arg),*),
+            Self::And(i)       => i.$method($($arg),*),
+            Self::Addw(i)      => i.$method($($arg),*),
+            Self::Subw(i)      => i.$method($($arg),*),
+            Self::Sllw(i)      => i.$method($($arg),*),
+            Self::Srlw(i)      => i.$method($($arg),*),
+            Self::Sraw(i)      => i.$method($($arg),*),
+            Self::Addi(i)      => i.$method($($arg),*),
+            Self::Slti(i)      => i.$method($($arg),*),
+            Self::Sltiu(i)     => i.$method($($arg),*),
+            Self::Xori(i)      => i.$method($($arg),*),
+            Self::Ori(i)       => i.$method($($arg),*),
+            Self::Andi(i)      => i.$method($($arg),*),
+            Self::Slli(i)      => i.$method($($arg),*),
+            Self::Srli(i)      => i.$method($($arg),*),
+            Self::Srai(i)      => i.$method($($arg),*),
+            Self::Addiw(i)     => i.$method($($arg),*),
+            Self::Slliw(i)     => i.$method($($arg),*),
+            Self::Srliw(i)     => i.$method($($arg),*),
+            Self::Sraiw(i)     => i.$method($($arg),*),
+            Self::Lb(i)        => i.$method($($arg),*),
+            Self::Lh(i)        => i.$method($($arg),*),
+            Self::Lw(i)        => i.$method($($arg),*),
+            Self::Ld(i)        => i.$method($($arg),*),
+            Self::Lbu(i)       => i.$method($($arg),*),
+            Self::Lhu(i)       => i.$method($($arg),*),
+            Self::Lwu(i)       => i.$method($($arg),*),
+            Self::Sb(i)        => i.$method($($arg),*),
+            Self::Sh(i)        => i.$method($($arg),*),
+            Self::Sw(i)        => i.$method($($arg),*),
+            Self::Sd(i)        => i.$method($($arg),*),
+            Self::Beq(i)       => i.$method($($arg),*),
+            Self::Bne(i)       => i.$method($($arg),*),
+            Self::Blt(i)       => i.$method($($arg),*),
+            Self::Bge(i)       => i.$method($($arg),*),
+            Self::Bltu(i)      => i.$method($($arg),*),
+            Self::Bgeu(i)      => i.$method($($arg),*),
+            Self::Lui(i)       => i.$method($($arg),*),
+            Self::Auipc(i)     => i.$method($($arg),*),
+            Self::Jal(i)       => i.$method($($arg),*),
+            Self::Jalr(i)      => i.$method($($arg),*),
+            Self::Ecall(i)     => i.$method($($arg),*),
+            Self::Ebreak(i)    => i.$method($($arg),*),
+            Self::Fence(i)     => i.$method($($arg),*),
+            Self::FenceI(i)    => i.$method($($arg),*),
+            Self::Mul(i)       => i.$method($($arg),*),
+            Self::Mulh(i)      => i.$method($($arg),*),
+            Self::Mulhsu(i)    => i.$method($($arg),*),
+            Self::Mulhu(i)     => i.$method($($arg),*),
+            Self::Div(i)       => i.$method($($arg),*),
+            Self::Divu(i)      => i.$method($($arg),*),
+            Self::Rem(i)       => i.$method($($arg),*),
+            Self::Remu(i)      => i.$method($($arg),*),
+            Self::Mulw(i)      => i.$method($($arg),*),
+            Self::Divw(i)      => i.$method($($arg),*),
+            Self::Divuw(i)     => i.$method($($arg),*),
+            Self::Remw(i)      => i.$method($($arg),*),
+            Self::Remuw(i)     => i.$method($($arg),*),
+            Self::Lr(i)        => i.$method($($arg),*),
+            Self::Sc(i)        => i.$method($($arg),*),
+            Self::AmoaddW(i)   => i.$method($($arg),*),
+            Self::AmoswapW(i)  => i.$method($($arg),*),
+            Self::AmoxorW(i)   => i.$method($($arg),*),
+            Self::AmoandW(i)   => i.$method($($arg),*),
+            Self::AmoorW(i)    => i.$method($($arg),*),
+            Self::AmominW(i)   => i.$method($($arg),*),
+            Self::AmomaxW(i)   => i.$method($($arg),*),
+            Self::AmominuW(i)  => i.$method($($arg),*),
+            Self::AmomaxuW(i)  => i.$method($($arg),*),
+            Self::AmoaddD(i)   => i.$method($($arg),*),
+            Self::AmoswapD(i)  => i.$method($($arg),*),
+            Self::AmoxorD(i)   => i.$method($($arg),*),
+            Self::AmoandD(i)   => i.$method($($arg),*),
+            Self::AmoorD(i)    => i.$method($($arg),*),
+            Self::AmominD(i)   => i.$method($($arg),*),
+            Self::AmomaxD(i)   => i.$method($($arg),*),
+            Self::AmominuD(i)  => i.$method($($arg),*),
+            Self::AmomaxuD(i)  => i.$method($($arg),*),
+            Self::Flw(i)        => i.$method($($arg),*),
+            Self::Fld(i)        => i.$method($($arg),*),
+            Self::Fsw(i)        => i.$method($($arg),*),
+            Self::Fsd(i)        => i.$method($($arg),*),
+            Self::Fadd(i)       => i.$method($($arg),*),
+            Self::Fsub(i)       => i.$method($($arg),*),
+            Self::Fmul(i)       => i.$method($($arg),*),
+            Self::Fdiv(i)       => i.$method($($arg),*),
+            Self::FsqrtS(i)     => i.$method($($arg),*),
+            Self::Fsgnj(i)      => i.$method($($arg),*),
+            Self::Fsgnjn(i)     => i.$method($($arg),*),
+            Self::Fsgnjx(i)     => i.$method($($arg),*),
+            Self::Fmin(i)       => i.$method($($arg),*),
+            Self::Fmax(i)       => i.$method($($arg),*),
+            Self::FaddD(i)      => i.$method($($arg),*),
+            Self::FsubD(i)      => i.$method($($arg),*),
+            Self::FmulD(i)      => i.$method($($arg),*),
+            Self::FdivD(i)      => i.$method($($arg),*),
+            Self::FsqrtD(i)     => i.$method($($arg),*),
+            Self::FsgnjD(i)     => i.$method($($arg),*),
+            Self::FsgnjnD(i)    => i.$method($($arg),*),
+            Self::FsgnjxD(i)    => i.$method($($arg),*),
+            Self::FminD(i)      => i.$method($($arg),*),
+            Self::FmaxD(i)      => i.$method($($arg),*),
+            Self::FeqS(i)       => i.$method($($arg),*),
+            Self::FltS(i)       => i.$method($($arg),*),
+            Self::FleqS(i)      => i.$method($($arg),*),
+            Self::FeqD(i)       => i.$method($($arg),*),
+            Self::FltD(i)       => i.$method($($arg),*),
+            Self::FleqD(i)      => i.$method($($arg),*),
+            Self::FclassS(i)    => i.$method($($arg),*),
+            Self::FclassD(i)    => i.$method($($arg),*),
+            Self::FmvXW(i)      => i.$method($($arg),*),
+            Self::FmvWX(i)      => i.$method($($arg),*),
+            Self::FmvXD(i)      => i.$method($($arg),*),
+            Self::FmvDX(i)      => i.$method($($arg),*),
+            Self::FcvtWS(i)     => i.$method($($arg),*),
+            Self::FcvtWUS(i)    => i.$method($($arg),*),
+            Self::FcvtLS(i)     => i.$method($($arg),*),
+            Self::FcvtLUS(i)    => i.$method($($arg),*),
+            Self::FcvtWD(i)     => i.$method($($arg),*),
+            Self::FcvtWUD(i)    => i.$method($($arg),*),
+            Self::FcvtLD(i)     => i.$method($($arg),*),
+            Self::FcvtLUD(i)    => i.$method($($arg),*),
+            Self::FcvtSW(i)     => i.$method($($arg),*),
+            Self::FcvtSWU(i)    => i.$method($($arg),*),
+            Self::FcvtSL(i)     => i.$method($($arg),*),
+            Self::FcvtSLU(i)    => i.$method($($arg),*),
+            Self::FcvtDW(i)     => i.$method($($arg),*),
+            Self::FcvtDWU(i)    => i.$method($($arg),*),
+            Self::FcvtDL(i)     => i.$method($($arg),*),
+            Self::FcvtDLU(i)    => i.$method($($arg),*),
+            Self::FcvtSD(i)     => i.$method($($arg),*),
+            Self::FcvtDS(i)     => i.$method($($arg),*),
+            Self::FmaddS(i)     => i.$method($($arg),*),
+            Self::FmaddD(i)     => i.$method($($arg),*),
+            Self::FmsubS(i)     => i.$method($($arg),*),
+            Self::FmsubD(i)     => i.$method($($arg),*),
+            Self::FnmsubS(i)    => i.$method($($arg),*),
+            Self::FnmsubD(i)    => i.$method($($arg),*),
+            Self::FnmaddS(i)    => i.$method($($arg),*),
+            Self::FnmaddD(i)    => i.$method($($arg),*),
+            Self::Csrrw(i)      => i.$method($($arg),*),
+            Self::Csrrs(i)      => i.$method($($arg),*),
+            Self::Csrrc(i)      => i.$method($($arg),*),
+            Self::Csrrwi(i)     => i.$method($($arg),*),
+            Self::Csrrsi(i)     => i.$method($($arg),*),
+            Self::Csrrci(i)     => i.$method($($arg),*),
+        }
+    };
+}
+
+impl RealInstruction {
+    pub fn encode(&self) -> u32 {
+        delegate!(self, encode)
+    }
+    pub fn to_asm(&self) -> String {
+        delegate!(self, to_asm)
+    }
+    pub fn mnemonic(&self) -> &'static str {
+        delegate!(self, mnemonic)
+    }
+}

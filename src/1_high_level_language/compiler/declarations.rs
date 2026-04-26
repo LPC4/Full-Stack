@@ -1,7 +1,7 @@
 use super::{
-    CompilerError, DeclNode, Declaration, Expression, FunctionDecl, GenericTypeDef, HighLevelCompiler,
-    IrFunction, IrInstruction, IrParam, IrProgram, IrRegister, IrTerminator, IrType, IrTypeAlias,
-    IrValue, Literal, LoweringContext, Program, SemanticAnalyzer, Block, Statement,
+    Block, CompilerError, DeclNode, Declaration, Expression, FunctionDecl, GenericTypeDef,
+    HighLevelCompiler, IrFunction, IrInstruction, IrParam, IrProgram, IrRegister, IrTerminator,
+    IrType, IrTypeAlias, IrValue, Literal, LoweringContext, Program, SemanticAnalyzer, Statement,
 };
 
 #[derive(Debug, Clone)]
@@ -512,12 +512,18 @@ impl HighLevelCompiler {
         }
 
         // Look up the function declaration
-        let func_decl = self.function_declarations.get(name)
+        let func_decl = self
+            .function_declarations
+            .get(name)
             .ok_or_else(|| format!("Function `{}` not found for compile-time evaluation", name))?;
 
         // Check that the function has a body
-        let body = func_decl.body.as_ref()
-            .ok_or_else(|| format!("Function `{}` has no body for compile-time evaluation", name))?;
+        let body = func_decl.body.as_ref().ok_or_else(|| {
+            format!(
+                "Function `{}` has no body for compile-time evaluation",
+                name
+            )
+        })?;
 
         // Verify parameter count matches
         if func_decl.params.len() != arg_values.len() {
@@ -529,11 +535,15 @@ impl HighLevelCompiler {
             ));
         }
 
-        log::debug!("Evaluating function `{}` with {} args at compile-time", name, arg_values.len());
+        log::debug!(
+            "Evaluating function `{}` with {} args at compile-time",
+            name,
+            arg_values.len()
+        );
 
         // Create a local scope for function evaluation
         let mut local_consts = self.compile_time_consts.clone();
-        
+
         // Bind parameters to argument values
         for (param, value) in func_decl.params.iter().zip(arg_values.iter()) {
             log::debug!("  Binding param `{}` = {:?}", param.name, value);
@@ -555,7 +565,7 @@ impl HighLevelCompiler {
     ) -> Result<Literal, String> {
         // Evaluate the base expression
         let _base = self.eval_const_expr_with_env_and_context(expr, env, context)?;
-        
+
         // For struct literals, we'd extract the field value
         // This would require storing struct literal information during const eval
         Err(format!(
@@ -573,14 +583,14 @@ impl HighLevelCompiler {
         // Evaluate statements in the block sequentially
         let mut result = None;
         let mut mutable_env = env.clone();
-        
+
         for stmt in &block.statements {
             if let Some(value) = self.eval_const_statement(stmt, &mut mutable_env, context)? {
                 result = Some(value);
                 break; // Statement returned a value, exit block
             }
         }
-        
+
         result.ok_or_else(|| "Block did not return a value".to_owned())
     }
 
@@ -595,7 +605,8 @@ impl HighLevelCompiler {
             Statement::VariableDecl { name, ty: _, init } => {
                 // Evaluate and bind the variable
                 if let Some(init_expr) = init {
-                    let value = self.eval_const_expr_with_env_and_context(init_expr, mutable_env, context)?;
+                    let value =
+                        self.eval_const_expr_with_env_and_context(init_expr, mutable_env, context)?;
                     mutable_env.insert(name.clone(), value);
                 }
                 Ok(None) // Variable declaration doesn't return a value
@@ -603,19 +614,29 @@ impl HighLevelCompiler {
             Statement::Return(expr) => {
                 // Return the evaluated expression
                 if let Some(return_expr) = expr {
-                    let value = self.eval_const_expr_with_env_and_context(return_expr, mutable_env, context)?;
+                    let value = self.eval_const_expr_with_env_and_context(
+                        return_expr,
+                        mutable_env,
+                        context,
+                    )?;
                     Ok(Some(value))
                 } else {
                     Ok(Some(Literal::Integer(0))) // void return
                 }
             }
-            Statement::If { cond, then_block, else_branch } => {
+            Statement::If {
+                cond,
+                then_block,
+                else_branch,
+            } => {
                 // Evaluate condition
-                let cond_value = self.eval_const_expr_with_env_and_context(cond, mutable_env, context)?;
+                let cond_value =
+                    self.eval_const_expr_with_env_and_context(cond, mutable_env, context)?;
                 match cond_value {
                     Literal::Boolean(true) => {
                         // Evaluate then block
-                        let block_result = self.eval_const_block(then_block, mutable_env, context)?;
+                        let block_result =
+                            self.eval_const_block(then_block, mutable_env, context)?;
                         Ok(Some(block_result))
                     }
                     Literal::Boolean(false) => {
@@ -623,7 +644,8 @@ impl HighLevelCompiler {
                         if let Some(else_branch) = else_branch {
                             match &**else_branch {
                                 Statement::Block(else_block) => {
-                                    let block_result = self.eval_const_block(else_block, mutable_env, context)?;
+                                    let block_result =
+                                        self.eval_const_block(else_block, mutable_env, context)?;
                                     Ok(Some(block_result))
                                 }
                                 Statement::If { .. } => {
@@ -647,13 +669,16 @@ impl HighLevelCompiler {
                 // Evaluate while loop at compile time
                 let mut iterations = 0;
                 let max_iterations = 1000; // Prevent infinite loops
-                
+
                 loop {
                     if iterations >= max_iterations {
-                        return Err("Compile-time while loop exceeded maximum iterations".to_owned());
+                        return Err(
+                            "Compile-time while loop exceeded maximum iterations".to_owned()
+                        );
                     }
-                    
-                    let cond_value = self.eval_const_expr_with_env_and_context(cond, mutable_env, context)?;
+
+                    let cond_value =
+                        self.eval_const_expr_with_env_and_context(cond, mutable_env, context)?;
                     match cond_value {
                         Literal::Boolean(true) => {
                             // Execute loop body statements
@@ -670,7 +695,9 @@ impl HighLevelCompiler {
                                     }
                                     _ => {
                                         // Evaluate other statements recursively
-                                        if let Some(_return_value) = self.eval_const_statement(stmt, mutable_env, context)? {
+                                        if let Some(_return_value) =
+                                            self.eval_const_statement(stmt, mutable_env, context)?
+                                        {
                                             // If a statement returns a value (like Return), exit the loop
                                             should_break = true;
                                             break;
@@ -678,7 +705,7 @@ impl HighLevelCompiler {
                                     }
                                 }
                             }
-                            
+
                             if should_break {
                                 break;
                             }
@@ -696,8 +723,9 @@ impl HighLevelCompiler {
             Statement::Expression(expr) => {
                 if let Expression::Assignment { target, rvalue } = expr {
                     // Evaluate the right-hand side
-                    let value = self.eval_const_expr_with_env_and_context(rvalue, mutable_env, context)?;
-                    
+                    let value =
+                        self.eval_const_expr_with_env_and_context(rvalue, mutable_env, context)?;
+
                     // Update the variable in the environment
                     match &**target {
                         crate::high_level_language::ast::AssignTarget::Identifier(name) => {
@@ -710,11 +738,15 @@ impl HighLevelCompiler {
                     Ok(None)
                 } else {
                     // For non-assignment expressions, just evaluate them (side effects ignored)
-                    let _ = self.eval_const_expr_with_env_and_context(expr, mutable_env, context)?;
+                    let _ =
+                        self.eval_const_expr_with_env_and_context(expr, mutable_env, context)?;
                     Ok(None)
                 }
             }
-            _ => Err(format!("Statement type {:?} not supported in compile-time evaluation", stmt)),
+            _ => Err(format!(
+                "Statement type {:?} not supported in compile-time evaluation",
+                stmt
+            )),
         }
     }
 }

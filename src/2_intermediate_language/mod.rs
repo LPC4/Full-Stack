@@ -1,3 +1,4 @@
+pub mod asm_compiler;
 pub mod block;
 pub mod instruction;
 pub mod ops;
