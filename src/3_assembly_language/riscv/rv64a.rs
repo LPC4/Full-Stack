@@ -4,7 +4,7 @@
 //! Width is selected by `funct3`: `2` = `.w` (32-bit), `3` = `.d` (64-bit).
 //! `aq` (acquire) and `rl` (release) ordering bits can be independently set.
 
-use super::traits::Instruction;
+use super::super::traits::Instruction;
 use crate::assembly_language::encode_decode::{AtomicType, Reg, RiscvFormat};
 use crate::assembly_language::utils::reg_name;
 

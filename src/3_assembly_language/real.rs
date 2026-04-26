@@ -1,8 +1,8 @@
-use super::rv64a::*;
-use super::rv64fd::*;
-use super::rv64i::*;
-use super::rv64m::*;
-use super::rv64zicsr::*;
+use super::riscv::rv64a::*;
+use super::riscv::rv64fd::*;
+use super::riscv::rv64i::*;
+use super::riscv::rv64m::*;
+use super::riscv::rv64zicsr::*;
 use super::traits::Instruction;
 
 /// Every encodable RISC-V instruction in one enum.

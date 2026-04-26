@@ -7,9 +7,9 @@
 //! live in the `rv64fd` module alongside the FP real instructions they expand to.
 
 use super::real::RealInstruction;
-use super::rv64i::*;
+use super::riscv::rv64i::*;
 use crate::assembly_language::encode_decode::Reg;
-use crate::assembly_language::rv64fd;
+use crate::assembly_language::riscv::rv64fd;
 use crate::assembly_language::utils::reg_name;
 
 #[derive(Debug, Clone)]
@@ -223,7 +223,7 @@ impl PseudoInstruction {
             Self::Neg { rd, rs } => vec![RealInstruction::Sub(Sub::new(*rd, X0, *rs))],
 
             Self::Negw { rd, rs } => {
-                use super::rv64i::Subw;
+                use super::riscv::rv64i::Subw;
                 vec![RealInstruction::Subw(Subw::new(*rd, X0, *rs))]
             }
 

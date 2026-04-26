@@ -4,11 +4,11 @@ use full_stack::assembly_language::*;
 use full_stack::assembly_language::encode_decode::*;
 use full_stack::assembly_language::pseudo::PseudoInstruction;
 use full_stack::assembly_language::real::RealInstruction;
-use full_stack::assembly_language::rv64a::*;
-use full_stack::assembly_language::rv64fd::*;
-use full_stack::assembly_language::rv64i::*;
-use full_stack::assembly_language::rv64m::*;
-use full_stack::assembly_language::rv64zicsr::*;
+use full_stack::assembly_language::riscv::rv64a::*;
+use full_stack::assembly_language::riscv::rv64fd::*;
+use full_stack::assembly_language::riscv::rv64i::*;
+use full_stack::assembly_language::riscv::rv64m::*;
+use full_stack::assembly_language::riscv::rv64zicsr::*;
 use full_stack::assembly_language::utils::reg_name;
 
 macro_rules! assert_enc {
