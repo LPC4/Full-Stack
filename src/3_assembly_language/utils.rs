@@ -36,7 +36,7 @@ pub fn reg_name(r: Reg, fp: bool) -> String {
             29 => "ft9".into(),
             30 => "ft10".into(),
             31 => "ft11".into(),
-            _ => format!("f{}", r),
+            _ => format!("f{r}"),
         }
     } else {
         // Integer: x0–x31 with ABI aliases
@@ -73,7 +73,7 @@ pub fn reg_name(r: Reg, fp: bool) -> String {
             29 => "t4".into(),
             30 => "t5".into(),
             31 => "t6".into(),
-            _ => format!("x{}", r),
+            _ => format!("x{r}"),
         }
     }
 }

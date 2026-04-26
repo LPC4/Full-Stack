@@ -43,9 +43,9 @@ impl fmt::Display for RvInstruction {
         match self {
             Self::Real(r) => write!(f, "\t{}", r.to_asm()),
             Self::Pseudo(p) => write!(f, "\t{}", p.to_asm()),
-            Self::Label(l) => write!(f, "{}:", l),
-            Self::Comment(c) => write!(f, "; {}", c),
-            Self::Directive(d) => write!(f, "{}", d),
+            Self::Label(l) => write!(f, "{l}:"),
+            Self::Comment(c) => write!(f, "; {c}"),
+            Self::Directive(d) => write!(f, "{d}"),
         }
     }
 }

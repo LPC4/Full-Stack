@@ -5,7 +5,7 @@
 //! invoke them to generate the RV64I instruction set and add the few special
 //! cases that need custom encoding.
 
-use crate::assembly_language::encode_decode::{IType, Reg, RiscvFormat};
+use crate::assembly_language::encode_decode::{IType, Reg, RiscvFormat as _};
 use crate::assembly_language::traits::Instruction;
 use crate::assembly_language::utils::reg_name;
 use std::fmt::Debug;
@@ -179,8 +179,7 @@ impl Slli {
     pub fn new(rd: Reg, rs1: Reg, shamt: u8) -> Self {
         assert!(
             shamt <= 63,
-            "slli: shift amount {} out of range [0, 63]",
-            shamt
+            "slli: shift amount {shamt} out of range [0, 63]"
         );
         Self { rd, rs1, shamt }
     }
@@ -221,8 +220,7 @@ impl Srli {
     pub fn new(rd: Reg, rs1: Reg, shamt: u8) -> Self {
         assert!(
             shamt <= 63,
-            "srli: shift amount {} out of range [0, 63]",
-            shamt
+            "srli: shift amount {shamt} out of range [0, 63]"
         );
         Self { rd, rs1, shamt }
     }
@@ -262,8 +260,7 @@ impl Srai {
     pub fn new(rd: Reg, rs1: Reg, shamt: u8) -> Self {
         assert!(
             shamt <= 63,
-            "srai: shift amount {} out of range [0, 63]",
-            shamt
+            "srai: shift amount {shamt} out of range [0, 63]"
         );
         Self { rd, rs1, shamt }
     }
@@ -304,8 +301,7 @@ impl Slliw {
     pub fn new(rd: Reg, rs1: Reg, shamt: u8) -> Self {
         assert!(
             shamt <= 31,
-            "slliw: shift amount {} out of range [0, 31]",
-            shamt
+            "slliw: shift amount {shamt} out of range [0, 31]"
         );
         Self { rd, rs1, shamt }
     }
@@ -346,8 +342,7 @@ impl Srliw {
     pub fn new(rd: Reg, rs1: Reg, shamt: u8) -> Self {
         assert!(
             shamt <= 31,
-            "srliw: shift amount {} out of range [0, 31]",
-            shamt
+            "srliw: shift amount {shamt} out of range [0, 31]"
         );
         Self { rd, rs1, shamt }
     }
@@ -387,8 +382,7 @@ impl Sraiw {
     pub fn new(rd: Reg, rs1: Reg, shamt: u8) -> Self {
         assert!(
             shamt <= 31,
-            "sraiw: shift amount {} out of range [0, 31]",
-            shamt
+            "sraiw: shift amount {shamt} out of range [0, 31]"
         );
         Self { rd, rs1, shamt }
     }

@@ -6,7 +6,7 @@
 //! register is `rs1`. For immediate variants (CSRRWI, CSRRSI, CSRRCI)
 //! the 5‑bit unsigned immediate is placed in the `rs1` field bits.
 
-use crate::assembly_language::encode_decode::{IType, Reg, RiscvFormat};
+use crate::assembly_language::encode_decode::{IType, Reg, RiscvFormat as _};
 use crate::assembly_language::traits::Instruction;
 use crate::assembly_language::utils::reg_name;
 

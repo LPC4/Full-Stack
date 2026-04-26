@@ -5,7 +5,7 @@
 //! `aq` (acquire) and `rl` (release) ordering bits can be independently set.
 
 use super::super::traits::Instruction;
-use crate::assembly_language::encode_decode::{AtomicType, Reg, RiscvFormat};
+use crate::assembly_language::encode_decode::{AtomicType, Reg, RiscvFormat as _};
 use crate::assembly_language::utils::reg_name;
 
 const AMO_OPCODE: u8 = 0x2F;

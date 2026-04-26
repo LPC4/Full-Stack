@@ -1,9 +1,9 @@
-use super::riscv::rv64a::*;
-use super::riscv::rv64fd::*;
-use super::riscv::rv64i::*;
-use super::riscv::rv64m::*;
-use super::riscv::rv64zicsr::*;
-use super::traits::Instruction;
+use super::riscv::rv64a::{Lr, Sc, AmoaddW, AmoswapW, AmoxorW, AmoandW, AmoorW, AmominW, AmomaxW, AmominuW, AmomaxuW, AmoaddD, AmoswapD, AmoxorD, AmoandD, AmoorD, AmominD, AmomaxD, AmominuD, AmomaxuD};
+use super::riscv::rv64fd::{Flw, Fld, Fsw, Fsd, Fadd, Fsub, Fmul, Fdiv, FsqrtS, Fsgnj, Fsgnjn, Fsgnjx, Fmin, Fmax, FaddD, FsubD, FmulD, FdivD, FsqrtD, FsgnjD, FsgnjnD, FsgnjxD, FminD, FmaxD, FeqS, FltS, FleqS, FeqD, FltD, FleqD, FclassS, FclassD, FmvXW, FmvWX, FmvXD, FmvDX, FcvtWS, FcvtWUS, FcvtLS, FcvtLUS, FcvtWD, FcvtWUD, FcvtLD, FcvtLUD, FcvtSW, FcvtSWU, FcvtSL, FcvtSLU, FcvtDW, FcvtDWU, FcvtDL, FcvtDLU, FcvtSD, FcvtDS, FmaddS, FmaddD, FmsubS, FmsubD, FnmsubS, FnmsubD, FnmaddS, FnmaddD};
+use super::riscv::rv64i::{Add, Sub, Sll, Slt, Sltu, Xor, Srl, Sra, Or, And, Addw, Subw, Sllw, Srlw, Sraw, Addi, Slti, Sltiu, Xori, Ori, Andi, Slli, Srli, Srai, Addiw, Slliw, Srliw, Sraiw, Lb, Lh, Lw, Ld, Lbu, Lhu, Lwu, Sb, Sh, Sw, Sd, Beq, Bne, Blt, Bge, Bltu, Bgeu, Lui, Auipc, Jal, Jalr, Ecall, Ebreak, Fence, FenceI};
+use super::riscv::rv64m::{Mul, Mulh, Mulhsu, Mulhu, Div, Divu, Rem, Remu, Mulw, Divw, Divuw, Remw, Remuw};
+use super::riscv::rv64zicsr::{Csrrw, Csrrs, Csrrc, Csrrwi, Csrrsi, Csrrci};
+use super::traits::Instruction as _;
 
 /// Every encodable RISC-V instruction in one enum.
 #[derive(Debug, Clone)]

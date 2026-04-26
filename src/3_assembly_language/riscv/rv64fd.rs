@@ -5,7 +5,7 @@
 //! methods; they are also available through `PseudoInstruction` in `pseudo.rs`
 //! for the top‑level assembler.
 
-use crate::assembly_language::encode_decode::{IType, R4Type, RType, Reg, RiscvFormat, SType};
+use crate::assembly_language::encode_decode::{IType, R4Type, RType, Reg, RiscvFormat as _, SType};
 use crate::assembly_language::traits::Instruction;
 use crate::assembly_language::utils::reg_name;
 

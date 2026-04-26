@@ -7,7 +7,7 @@
 //! live in the `rv64fd` module alongside the FP real instructions they expand to.
 
 use super::real::RealInstruction;
-use super::riscv::rv64i::*;
+use super::riscv::rv64i::{Addi, Xori, Sub, Addiw, Sltiu, Sltu, Slt, Beq, Bne, Bge, Blt, Bltu, Bgeu, Jal, Jalr, Auipc, Lui, Slli, Srli, Or};
 use crate::assembly_language::encode_decode::Reg;
 use crate::assembly_language::riscv::rv64fd;
 use crate::assembly_language::utils::reg_name;
@@ -361,11 +361,11 @@ impl PseudoInstruction {
                 reg_name(*rs2, false),
                 offset
             ),
-            Self::J { offset } => format!("j      {}", offset),
+            Self::J { offset } => format!("j      {offset}"),
             Self::Jr { rs } => format!("jr     {}", reg_name(*rs, false)),
             Self::Ret => "ret".into(),
-            Self::Call { symbol } => format!("call   {}", symbol),
-            Self::Tail { symbol } => format!("tail   {}", symbol),
+            Self::Call { symbol } => format!("call   {symbol}"),
+            Self::Tail { symbol } => format!("tail   {symbol}"),
             Self::La { rd, symbol } => format!("la     {}, {}", reg_name(*rd, false), symbol),
             Self::FmvS { fd, fs } => {
                 format!("fmv.s  {}, {}", reg_name(*fd, true), reg_name(*fs, true))

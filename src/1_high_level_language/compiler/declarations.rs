@@ -168,7 +168,7 @@ impl HighLevelCompiler {
                             body: body.clone(),
                         },
                     );
-                    log::debug!("Stored function `{}` for compile-time evaluation", name);
+                    log::debug!("Stored function `{name}` for compile-time evaluation");
                 }
 
                 self.context.begin_function();
@@ -515,13 +515,12 @@ impl HighLevelCompiler {
         let func_decl = self
             .function_declarations
             .get(name)
-            .ok_or_else(|| format!("Function `{}` not found for compile-time evaluation", name))?;
+            .ok_or_else(|| format!("Function `{name}` not found for compile-time evaluation"))?;
 
         // Check that the function has a body
         let body = func_decl.body.as_ref().ok_or_else(|| {
             format!(
-                "Function `{}` has no body for compile-time evaluation",
-                name
+                "Function `{name}` has no body for compile-time evaluation"
             )
         })?;
 
@@ -552,7 +551,7 @@ impl HighLevelCompiler {
 
         // Evaluate the function body
         let result = self.eval_const_block(body, &local_consts, context);
-        log::debug!("Function `{}` returned: {:?}", name, result);
+        log::debug!("Function `{name}` returned: {result:?}");
         result
     }
 
@@ -569,8 +568,7 @@ impl HighLevelCompiler {
         // For struct literals, we'd extract the field value
         // This would require storing struct literal information during const eval
         Err(format!(
-            "Field access `.{}` on compile-time values is not yet supported",
-            field
+            "Field access `.{field}` on compile-time values is not yet supported"
         ))
     }
 
@@ -744,8 +742,7 @@ impl HighLevelCompiler {
                 }
             }
             _ => Err(format!(
-                "Statement type {:?} not supported in compile-time evaluation",
-                stmt
+                "Statement type {stmt:?} not supported in compile-time evaluation"
             )),
         }
     }
