@@ -156,6 +156,12 @@ macro_rules! fp_alu_inst {
                 }
             }
             pub fn with_rm(mut self, rm: u8) -> Self {
+                assert!(
+                    rm <= 4 || rm == 7,
+                    "{}: invalid rounding mode {} (must be 0-4 or 7)",
+                    $mnem,
+                    rm
+                );
                 self.rm = rm;
                 self
             }
@@ -233,6 +239,12 @@ macro_rules! fsqrt_inst {
                 Self { rd, rs1, rm: RNE }
             }
             pub fn with_rm(mut self, rm: u8) -> Self {
+                assert!(
+                    rm <= 4 || rm == 7,
+                    "{}: invalid rounding mode {} (must be 0-4 or 7)",
+                    $mnem,
+                    rm
+                );
                 self.rm = rm;
                 self
             }
@@ -461,6 +473,12 @@ macro_rules! fcvt_f2i {
                 Self { rd, rs1, rm: RNE }
             }
             pub fn with_rm(mut self, rm: u8) -> Self {
+                assert!(
+                    rm <= 4 || rm == 7,
+                    "{}: invalid rounding mode {} (must be 0-4 or 7)",
+                    $mnem,
+                    rm
+                );
                 self.rm = rm;
                 self
             }
@@ -510,6 +528,12 @@ macro_rules! fcvt_i2f {
                 Self { rd, rs1, rm: RNE }
             }
             pub fn with_rm(mut self, rm: u8) -> Self {
+                assert!(
+                    rm <= 4 || rm == 7,
+                    "{}: invalid rounding mode {} (must be 0-4 or 7)",
+                    $mnem,
+                    rm
+                );
                 self.rm = rm;
                 self
             }
@@ -559,6 +583,12 @@ macro_rules! fcvt_f2f {
                 Self { rd, rs1, rm: RNE }
             }
             pub fn with_rm(mut self, rm: u8) -> Self {
+                assert!(
+                    rm <= 4 || rm == 7,
+                    "{}: invalid rounding mode {} (must be 0-4 or 7)",
+                    $mnem,
+                    rm
+                );
                 self.rm = rm;
                 self
             }
@@ -645,6 +675,12 @@ macro_rules! fmac_inst {
                 }
             }
             pub fn with_rm(mut self, rm: u8) -> Self {
+                assert!(
+                    rm <= 4 || rm == 7,
+                    "{}: invalid rounding mode {} (must be 0-4 or 7)",
+                    $mnem,
+                    rm
+                );
                 self.rm = rm;
                 self
             }

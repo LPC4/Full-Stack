@@ -49,6 +49,12 @@ macro_rules! csr_reg_inst {
 
         impl $name {
             pub fn new(rd: Reg, csr: u16, rs1: Reg) -> Self {
+                assert!(
+                    csr <= 0xFFF,
+                    "{}: CSR address {:#x} out of range [0x000, 0xFFF]",
+                    $mnem,
+                    csr
+                );
                 Self { rd, csr, rs1 }
             }
         }
@@ -104,6 +110,12 @@ macro_rules! csr_imm_inst {
 
         impl $name {
             pub fn new(rd: Reg, csr: u16, uimm: u8) -> Self {
+                assert!(
+                    csr <= 0xFFF,
+                    "{}: CSR address {:#x} out of range [0x000, 0xFFF]",
+                    $mnem,
+                    csr
+                );
                 Self { rd, csr, uimm }
             }
         }

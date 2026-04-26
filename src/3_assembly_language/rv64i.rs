@@ -177,12 +177,17 @@ pub struct Slli {
 }
 impl Slli {
     pub fn new(rd: Reg, rs1: Reg, shamt: u8) -> Self {
+        assert!(
+            shamt <= 63,
+            "slli: shift amount {} out of range [0, 63]",
+            shamt
+        );
         Self { rd, rs1, shamt }
     }
 }
 impl Instruction for Slli {
     fn encode(&self) -> u32 {
-        let imm = ((self.shamt as i32) & 0x3F)        // shamt[5:0]
+        let imm = (self.shamt as i32)        // shamt already validated to be 0..63
             | (0x00i32 << 5); // funct7 = 0x00
         IType {
             opcode: 0x13,
@@ -214,12 +219,17 @@ pub struct Srli {
 }
 impl Srli {
     pub fn new(rd: Reg, rs1: Reg, shamt: u8) -> Self {
+        assert!(
+            shamt <= 63,
+            "srli: shift amount {} out of range [0, 63]",
+            shamt
+        );
         Self { rd, rs1, shamt }
     }
 }
 impl Instruction for Srli {
     fn encode(&self) -> u32 {
-        let imm = ((self.shamt as i32) & 0x3F) | (0x00i32 << 5);
+        let imm = (self.shamt as i32) | (0x00i32 << 5);
         IType {
             opcode: 0x13,
             rd: self.rd,
@@ -250,12 +260,17 @@ pub struct Srai {
 }
 impl Srai {
     pub fn new(rd: Reg, rs1: Reg, shamt: u8) -> Self {
+        assert!(
+            shamt <= 63,
+            "srai: shift amount {} out of range [0, 63]",
+            shamt
+        );
         Self { rd, rs1, shamt }
     }
 }
 impl Instruction for Srai {
     fn encode(&self) -> u32 {
-        let imm = ((self.shamt as i32) & 0x3F) | (0x20i32 << 5); // funct7 = 0x20
+        let imm = (self.shamt as i32) | (0x20i32 << 5); // funct7 = 0x20
         IType {
             opcode: 0x13,
             rd: self.rd,
@@ -287,12 +302,17 @@ pub struct Slliw {
 }
 impl Slliw {
     pub fn new(rd: Reg, rs1: Reg, shamt: u8) -> Self {
+        assert!(
+            shamt <= 31,
+            "slliw: shift amount {} out of range [0, 31]",
+            shamt
+        );
         Self { rd, rs1, shamt }
     }
 }
 impl Instruction for Slliw {
     fn encode(&self) -> u32 {
-        let imm = ((self.shamt as i32) & 0x1F)        // shamt[4:0]
+        let imm = (self.shamt as i32)        // shamt already validated to be 0..31
             | (0x00i32 << 5); // funct7 = 0x00
         IType {
             opcode: 0x1B,
@@ -324,12 +344,17 @@ pub struct Srliw {
 }
 impl Srliw {
     pub fn new(rd: Reg, rs1: Reg, shamt: u8) -> Self {
+        assert!(
+            shamt <= 31,
+            "srliw: shift amount {} out of range [0, 31]",
+            shamt
+        );
         Self { rd, rs1, shamt }
     }
 }
 impl Instruction for Srliw {
     fn encode(&self) -> u32 {
-        let imm = ((self.shamt as i32) & 0x1F) | (0x00i32 << 5);
+        let imm = (self.shamt as i32) | (0x00i32 << 5);
         IType {
             opcode: 0x1B,
             rd: self.rd,
@@ -360,12 +385,17 @@ pub struct Sraiw {
 }
 impl Sraiw {
     pub fn new(rd: Reg, rs1: Reg, shamt: u8) -> Self {
+        assert!(
+            shamt <= 31,
+            "sraiw: shift amount {} out of range [0, 31]",
+            shamt
+        );
         Self { rd, rs1, shamt }
     }
 }
 impl Instruction for Sraiw {
     fn encode(&self) -> u32 {
-        let imm = ((self.shamt as i32) & 0x1F) | (0x20i32 << 5); // funct7 = 0x20
+        let imm = (self.shamt as i32) | (0x20i32 << 5); // funct7 = 0x20
         IType {
             opcode: 0x1B,
             rd: self.rd,

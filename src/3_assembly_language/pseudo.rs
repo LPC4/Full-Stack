@@ -7,14 +7,11 @@
 //! live in the `rv64fd` module alongside the FP real instructions they expand to.
 
 use super::real::RealInstruction;
-use super::rv64i::{
-    Addi, Addiw, Auipc, Beq, Bge, Bgeu, Blt, Bltu, Bne, Jal, Jalr, Lui, Slt, Sltiu, Sltu, Sub, Xori,
-};
+use super::rv64i::*;
 use crate::assembly_language::encode_decode::Reg;
 use crate::assembly_language::rv64fd;
 use crate::assembly_language::utils::reg_name;
 
-/// A standard RISC-V pseudo-instruction.
 #[derive(Debug, Clone)]
 pub enum PseudoInstruction {
     /// `nop` → `addi x0, x0, 0`
@@ -394,35 +391,58 @@ impl PseudoInstruction {
 
 /// Expands `li rd, imm` into the minimal real instruction sequence.
 fn expand_li(rd: Reg, imm: i64) -> Vec<RealInstruction> {
-    // 12-bit sign-extended case: addi rd, x0, imm
+    // 12‑bit sign‑extended case: addi rd, x0, imm
     if (-2048..=2047).contains(&imm) {
         return vec![RealInstruction::Addi(Addi::new(rd, 0, imm as i32))];
     }
 
-    // 32-bit case: lui + addi
-    // If bit 11 of the low 12 bits is set, add 1 to upper to compensate sign extension.
-    let lo = (imm as i32) & 0xFFF;
-    let lo_signed = if lo >= 0x800 { lo - 0x1000 } else { lo };
-    let hi = imm - lo_signed as i64 + if lo >= 0x800 { 0x1000_i64 } else { 0 };
-
-    if imm == hi + lo_signed as i64 && (-2_147_483_648..=2_147_483_647).contains(&imm) {
-        let hi = hi as i32;
-        let mut out = vec![RealInstruction::Lui(Lui::new(rd, hi))];
-        if lo_signed != 0 {
-            out.push(RealInstruction::Addi(Addi::new(rd, rd, lo_signed)));
+    // 32‑bit case: the value must fit into a signed 32‑bit word.
+    // If so, we can use lui + addi.
+    let fits_i32 = (-2_147_483_648..=2_147_483_647).contains(&imm);
+    if fits_i32 {
+        let imm32 = imm as i32;
+        let lo12 = imm32 & 0xFFF; // unsigned lower 12 bits
+        let lo12_signed = if lo12 >= 0x800 { lo12 - 0x1000 } else { lo12 };
+        // hi20_val is the value whose upper 20 bits are the lui immediate.
+        let hi20_val = imm32.wrapping_sub(lo12_signed); // hi20_val is a multiple of 0x1000
+        let mut out = vec![RealInstruction::Lui(Lui::new(rd, hi20_val))];
+        if lo12_signed != 0 {
+            out.push(RealInstruction::Addi(Addi::new(rd, rd, lo12_signed)));
         }
         return out;
     }
 
-    // 64-bit: caller must use a multi-instruction sequence (emit as series of shifts + or).
-    let lo32 = imm as i32;
-    let lo12 = lo32 & 0xFFF;
-    let lo12_signed = if lo12 >= 0x800 { lo12 - 0x1000 } else { lo12 };
-    let hi20 = lo32.wrapping_sub(lo12_signed);
-    let mut out = vec![RealInstruction::Lui(Lui::new(rd, hi20))];
-    if lo12_signed != 0 {
-        out.push(RealInstruction::Addi(Addi::new(rd, rd, lo12_signed)));
+    // 64‑bit case: construct the value from two 32‑bit halves.
+    // The expansion uses t1 (x6) as a temporary - it is caller‑saved
+    // and therefore safe for the assembler’s own pseudo‑instruction.
+    let low32 = (imm & 0xFFFF_FFFF) as i32; // as 32‑bit signed
+    let high32 = ((imm >> 32) & 0xFFFF_FFFF) as i32; // as 32‑bit signed
+
+    // Helper to produce the lui+addi sequence for a 32‑bit constant
+    fn load32(rd: Reg, val32: i32) -> Vec<RealInstruction> {
+        let lo12 = val32 & 0xFFF;
+        let lo12_signed = if lo12 >= 0x800 { lo12 - 0x1000 } else { lo12 };
+        let hi20 = val32.wrapping_sub(lo12_signed);
+        let mut seq = vec![RealInstruction::Lui(Lui::new(rd, hi20))];
+        if lo12_signed != 0 {
+            seq.push(RealInstruction::Addi(Addi::new(rd, rd, lo12_signed)));
+        }
+        seq
     }
-    // TODO: emit upper-32 construction with additional shift+or for full 64-bit values
-    out
+
+    let mut seq = Vec::new();
+
+    // Load the high 32 bits into t1 and shift them left by 32.
+    seq.append(&mut load32(T1, high32)); // T1 = sign_ext(high32)
+    seq.push(RealInstruction::Slli(Slli::new(T1, T1, 32))); // T1 = high32 << 32
+
+    // Load the low 32 bits into rd, then zero‑extend to 64 bits.
+    seq.append(&mut load32(rd, low32)); // rd = sign_ext(low32)
+    seq.push(RealInstruction::Slli(Slli::new(rd, rd, 32))); // clear upper 32 bits
+    seq.push(RealInstruction::Srli(Srli::new(rd, rd, 32))); // rd = zero_ext(low32)
+
+    // Combine: rd = zero_ext(low32) | (high32 << 32)
+    seq.push(RealInstruction::Or(Or::new(rd, rd, T1)));
+
+    seq
 }

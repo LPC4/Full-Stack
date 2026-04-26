@@ -80,6 +80,12 @@ macro_rules! i_imm_inst {
                 rs1: crate::assembly_language::encode_decode::Reg,
                 imm: i32,
             ) -> Self {
+                assert!(
+                    (-2048..=2047).contains(&imm),
+                    "{}: immediate {} out of range [-2048, 2047]",
+                    $mnemonic,
+                    imm
+                );
                 Self { rd, rs1, imm }
             }
         }
@@ -139,6 +145,12 @@ macro_rules! i_load_inst {
                 base: crate::assembly_language::encode_decode::Reg,
                 offset: i32,
             ) -> Self {
+                assert!(
+                    (-2048..=2047).contains(&offset),
+                    "{}: offset {} out of range [-2048, 2047]",
+                    $mnemonic,
+                    offset
+                );
                 Self { rd, base, offset }
             }
         }
@@ -198,6 +210,12 @@ macro_rules! s_inst {
                 src: crate::assembly_language::encode_decode::Reg,
                 offset: i32,
             ) -> Self {
+                assert!(
+                    (-2048..=2047).contains(&offset),
+                    "{}: offset {} out of range [-2048, 2047]",
+                    $mnemonic,
+                    offset
+                );
                 Self { base, src, offset }
             }
         }
@@ -255,6 +273,18 @@ macro_rules! b_inst {
                 rs2: crate::assembly_language::encode_decode::Reg,
                 offset: i32,
             ) -> Self {
+                assert!(
+                    (offset & 1) == 0,
+                    "{}: offset {} must be even",
+                    $mnemonic,
+                    offset
+                );
+                assert!(
+                    (-4096..=4094).contains(&offset),
+                    "{}: offset {} out of range [-4096, 4094]",
+                    $mnemonic,
+                    offset
+                );
                 Self { rs1, rs2, offset }
             }
         }
@@ -356,6 +386,18 @@ macro_rules! j_inst {
 
         impl $name {
             pub fn new(rd: crate::assembly_language::encode_decode::Reg, offset: i32) -> Self {
+                assert!(
+                    (offset & 1) == 0,
+                    "{}: offset {} must be even",
+                    $mnemonic,
+                    offset
+                );
+                assert!(
+                    (-1048576..=1048574).contains(&offset),
+                    "{}: offset {} out of range [-1048576, 1048574]",
+                    $mnemonic,
+                    offset
+                );
                 Self { rd, offset }
             }
         }
