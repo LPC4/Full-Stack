@@ -1,11 +1,11 @@
-use crate::view::{CompilerView, CompilationState};
+use crate::view::{CompilerView, CompilationState, ProgramCatalog};
 use crate::view::highlight_ast;
 
 pub struct TokensView;
 
 impl CompilerView for TokensView {
     fn title(&self) -> &'static str { "Tokens" }
-    fn ui(&mut self, ui: &mut egui::Ui, _ctx: &egui::Context, state: &mut CompilationState) {
+    fn ui(&mut self, ui: &mut egui::Ui, _ctx: &egui::Context, state: &mut CompilationState, _catalog: &mut ProgramCatalog) {
         let mut job = highlight_ast(ui.style(), &state.tokens);
         job.wrap.max_width = f32::INFINITY;
         let galley = ui.fonts_mut(|f| f.layout_job(job));

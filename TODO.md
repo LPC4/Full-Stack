@@ -6,15 +6,11 @@
 
 All files in `src/2_intermediate_language/asm_compiler/` are empty.
 
-- [ ] Implement `compiler_rv64.rs` – main IR to assembly translation
-    - [ ] Translate IR instructions (stack_alloc, heap_alloc, read, write, math, cmp, call, ...) to RISC-V
-    - [ ] Handle function prologue/epilogue (stack frame, sp adjustment, saved registers)
-    - [ ] Emit assembly text
-- [ ] Implement `register_allocator.rs` – map infinite virtual registers to physical registers
-    - [ ] Spilling to stack when needed
-- [ ] Implement `frame_context.rs` – stack frame layout (locals, spill slots, return address)
-- [ ] Implement `function_context.rs` – per‑function bookkeeping
-- [ ] Implement `pseudo_instructions.rs` – expand IR pseudo‑ops (e.g., stack_alloc) to real RISC-V insts
+- [x] Implement `compiler_rv64.rs` – main IR to assembly translation
+- [x] Implement `register_allocator.rs` – map infinite virtual registers to physical registers
+- [x] Implement `frame_context.rs` – stack frame layout (locals, spill slots, return address)
+- [x] Implement `function_context.rs` – per‑function bookkeeping
+- [x] Implement `pseudo_instructions.rs` – expand IR pseudo‑ops (e.g., stack_alloc) to real RISC-V insts
 
 ---
 
@@ -52,8 +48,8 @@ All files in `src/2_intermediate_language/asm_compiler/` are empty.
 
 ## 6. UI / Visualisation
 
-- [ ] Implement `AssemblyLanguageView::_ui` to show generated assembly
-- [ ] Implement `IntermediateLanguageView::_ui` to show IR side‑by‑side
+- [x] Implement `AssemblyLanguageView` to show generated assembly
+- [x] Implement `IntermediateLanguageView` to show IR side‑by‑side
 
 ---
 

@@ -1,11 +1,14 @@
-use crate::view::{CompilerView, CompilationState};
+// Apply this exact signature change to ir_view.rs, tokens_view.rs, and assembly_view.rs as well
+// file: src/view/ast_view.rs
+use crate::view::{CompilerView, CompilationState, ProgramCatalog};
 use crate::view::highlight_ast;
 
 pub struct AstView;
 
 impl CompilerView for AstView {
     fn title(&self) -> &'static str { "AST" }
-    fn ui(&mut self, ui: &mut egui::Ui, _ctx: &egui::Context, state: &mut CompilationState) {
+
+    fn ui(&mut self, ui: &mut egui::Ui, _ctx: &egui::Context, state: &mut CompilationState, _catalog: &mut ProgramCatalog) {
         let mut job = highlight_ast(ui.style(), &state.ast);
         job.wrap.max_width = f32::INFINITY;
         let galley = ui.fonts_mut(|f| f.layout_job(job));
