@@ -190,6 +190,9 @@ impl HighLevelCompiler {
                         ty: return_ty,
                     })
                 }
+                crate::high_level_language::ast::PrimaryExpr::ArrayLiteral(elements) => {
+                    self.lower_array_literal(elements)
+                }
                 crate::high_level_language::ast::PrimaryExpr::StructLiteral(fields) => {
                     // Lower struct literal
                     let mut lowered_fields = Vec::new();
@@ -248,12 +251,6 @@ impl HighLevelCompiler {
                         value: IrValue::Register(dest),
                         ty: struct_ty,
                     })
-                }
-                unsupported => {
-                    self.context.diagnostics.error(format!(
-                        "primary expression lowering not implemented: {unsupported:?}"
-                    ));
-                    None
                 }
             },
             Expression::Binary { op, left, right } => {
@@ -402,6 +399,64 @@ impl HighLevelCompiler {
                 }
             }
         }
+    }
+
+    pub(super) fn lower_array_literal(
+        &mut self,
+        elements: &[Expression],
+    ) -> Option<LoweredValue> {
+        if elements.is_empty() {
+            self.context
+                .diagnostics
+                .error("empty array literals are not supported yet".to_owned());
+            return None;
+        }
+
+        let mut lowered_elements = Vec::with_capacity(elements.len());
+        for element in elements {
+            lowered_elements.push(self.lower_expression(element)?);
+        }
+
+        let element_ty = lowered_elements[0].ty.clone();
+        for (index, lowered) in lowered_elements.iter().enumerate().skip(1) {
+            if self.resolve_named_type(&lowered.ty) != self.resolve_named_type(&element_ty) {
+                self.context.diagnostics.error(format!(
+                    "array literal element {} has type `{}`, but expected `{}`",
+                    index,
+                    lowered.ty,
+                    element_ty
+                ));
+                return None;
+            }
+        }
+
+        let array_ty = IrType::Array {
+            len: lowered_elements.len(),
+            element: Box::new(element_ty.clone()),
+        };
+        let dest = self.new_temp();
+        self.push_instruction(IrInstruction::Alloc {
+            dest: dest.clone(),
+            ty: array_ty.clone(),
+            count: None,
+        });
+
+        let mut offset = 0i64;
+        for lowered in lowered_elements {
+            let element_size = self.type_size_in_bytes(&lowered.ty) as i64;
+            self.push_instruction(IrInstruction::Store {
+                ty: lowered.ty.clone(),
+                value: lowered.value,
+                ptr: dest.clone(),
+                offset: Some(offset),
+            });
+            offset += element_size;
+        }
+
+        Some(LoweredValue {
+            value: IrValue::Register(dest),
+            ty: array_ty,
+        })
     }
 
     fn expression_to_assign_target(&self, expr: &Expression) -> Option<AssignTarget> {

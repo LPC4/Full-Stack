@@ -44,7 +44,7 @@ impl DataSection {
         self.bss.push(format!("\t.space {}", size));
     }
 
-    pub fn add_data_symbol(&mut self, name: &str, size: usize, align: usize, init: &[u8]) {
+    pub fn add_data_symbol(&mut self, name: &str, _size: usize, align: usize, init: &[u8]) {
         self.data.push(format!(".globl {}", name));
         self.data.push(format!(".balign {}", align));
         self.data.push(format!("{}:", name));

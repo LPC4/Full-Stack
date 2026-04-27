@@ -271,6 +271,34 @@ impl SemanticAnalyzer {
                         Ok("unknown".to_owned())
                     }
                 }
+                crate::high_level_language::ast::PrimaryExpr::ArrayLiteral(elements) => {
+                    if elements.is_empty() {
+                        self.diagnostics
+                            .error("empty array literals are not supported yet".to_owned());
+                        return Err(());
+                    }
+
+                    let mut inferred_element_ty: Option<String> = None;
+                    for element in elements {
+                        let element_ty = self.infer_expression_type(element)?;
+                        if let Some(expected_ty) = &inferred_element_ty {
+                            let resolved_expected = self.resolve_type_string(expected_ty);
+                            let resolved_actual = self.resolve_type_string(&element_ty);
+                            if resolved_expected != resolved_actual {
+                                self.diagnostics.error(format!(
+                                    "array literal element type mismatch: expected {}, found {}",
+                                    expected_ty, element_ty
+                                ));
+                                return Err(());
+                            }
+                        } else {
+                            inferred_element_ty = Some(element_ty);
+                        }
+                    }
+
+                    let element_ty = inferred_element_ty.unwrap();
+                    Ok(format!("{}[{}]", element_ty, elements.len()))
+                }
                 crate::high_level_language::ast::PrimaryExpr::FieldAccess { expr, field } => {
                     let base_ty = self.infer_expression_type(expr)?;
                     self.infer_field_access_type(&base_ty, field)
@@ -324,7 +352,6 @@ impl SemanticAnalyzer {
                     }
                     Ok(self.context.get_type_name(&IrType::Aggregate(field_types)))
                 }
-                _ => Ok("unknown".to_owned()),
             },
             Expression::Binary { op, left, right } => {
                 let lhs_type = self.infer_expression_type(left)?;

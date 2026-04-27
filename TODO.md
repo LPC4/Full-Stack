@@ -52,8 +52,8 @@ All files in `src/2_intermediate_language/asm_compiler/` are empty.
 
 ## 6. UI / Visualisation
 
-- [ ] Implement `AssemblyLanguageView::ui` to show generated assembly
-- [ ] Implement `IntermediateLanguageView::ui` to show IR side‑by‑side
+- [ ] Implement `AssemblyLanguageView::_ui` to show generated assembly
+- [ ] Implement `IntermediateLanguageView::_ui` to show IR side‑by‑side
 
 ---
 

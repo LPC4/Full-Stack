@@ -3,7 +3,7 @@
 
 use super::function_context::FunctionContext;
 use crate::intermediate_language::{
-    IrFunction, IrInstruction, IrRegister, IrTerminator, IrType, IrValue,
+    IrFunction, IrInstruction, IrTerminator, IrType, IrValue,
 };
 
 pub struct RegisterAllocator;

@@ -2,6 +2,7 @@
 #![warn(rust_2018_idioms)]
 
 mod app;
+pub mod view;
 
 #[path = "1_high_level_language/mod.rs"]
 pub mod high_level_language;

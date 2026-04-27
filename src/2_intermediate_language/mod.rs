@@ -5,7 +5,6 @@ pub mod ops;
 pub mod program;
 pub mod types;
 pub mod values;
-pub mod view;
 
 pub use block::IrBlock;
 pub use instruction::{IrInstruction, IrTerminator};

@@ -205,6 +205,76 @@ main: () -> i32 {
 }
 
 #[test]
+fn allows_array_literals_through_assembly() {
+    let source = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/programs/example/array_literals.hll"
+    ));
+
+    let pipeline = CompilationPipeline::new();
+    let result = pipeline
+        .compile(source)
+        .expect("array literal example should compile to IR");
+
+    let asm = pipeline.compile_ir_to_assembly(&result.ir_program);
+    assert!(
+        asm.contains("array_literals") || asm.contains("main"),
+        "expected assembly output to be generated for the array literal example"
+    );
+}
+
+#[test]
+fn allows_named_struct_alias_through_assembly() {
+    let source = r#"
+type Point = {
+    x: i32,
+    y: i32
+}
+
+main: () -> i32 {
+    p: Point = { .x = 1, .y = 2 }
+    return p.x + p.y
+}
+"#;
+
+    let pipeline = CompilationPipeline::new();
+    let result = pipeline
+        .compile(source)
+        .expect("named struct alias example should compile to IR");
+
+    let asm = pipeline.compile_ir_to_assembly(&result.ir_program);
+    assert!(
+        !asm.is_empty(),
+        "expected assembly output to be generated for the named struct alias example"
+    );
+}
+
+#[test]
+fn allows_signed_comparisons_through_assembly() {
+    let source = r#"
+main: () -> i32 {
+    x: i32 = 10
+    y: i32 = 5
+    if x > y {
+        return 1
+    }
+    return 0
+}
+"#;
+
+    let pipeline = CompilationPipeline::new();
+    let result = pipeline
+        .compile(source)
+        .expect("signed comparison example should compile to IR");
+
+    let asm = pipeline.compile_ir_to_assembly(&result.ir_program);
+    assert!(
+        !asm.is_empty(),
+        "expected assembly output to be generated for the signed comparison example"
+    );
+}
+
+#[test]
 fn allows_string_literals_against_text_alias() {
     let source = r#"
 type Text = {
@@ -242,6 +312,13 @@ fn all_launch_examples_compile() {
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
                 "/programs/example/pointers_arrays.hll"
+            )),
+        ),
+        (
+            "array_literals",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/programs/example/array_literals.hll"
             )),
         ),
         (

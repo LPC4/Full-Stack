@@ -7,9 +7,12 @@ use crate::assembly_language::real::RealInstruction;
 use crate::assembly_language::riscv::rv64fd::*;
 use crate::assembly_language::riscv::rv64i::*;
 use crate::assembly_language::riscv::rv64m::*;
+use crate::assembly_language::utils::reg_name;
 use crate::intermediate_language::{
-    IrCmpOp, IrInstruction, IrMathOp, IrProgram, IrTerminator, IrType, IrUnaryOp, IrValue,
+    IrCastMode, IrCmpOp, IrInstruction, IrMathOp, IrProgram, IrTerminator, IrType, IrUnaryOp,
+    IrValue,
 };
+use std::collections::{HashMap, HashSet};
 
 const ZERO: Reg = 0;
 const RA: Reg = 1;
@@ -27,6 +30,7 @@ pub struct CompilerRv64 {
     emitter: AssemblyEmitter,
     data: DataSection,
     temp_counter: usize,
+    type_aliases: HashMap<String, IrType>,
 }
 
 impl CompilerRv64 {
@@ -35,17 +39,20 @@ impl CompilerRv64 {
             emitter: AssemblyEmitter::new(),
             data: DataSection::new(),
             temp_counter: 0,
+            type_aliases: HashMap::new(),
         }
     }
 
     pub fn compile(&mut self, program: &IrProgram) -> String {
         self.emitter.reset();
         self.data.reset();
+        self.type_aliases.clear();
 
         for s in &program.global_strings {
             self.data.add_global_string(s);
         }
         for alias in &program.type_aliases {
+            self.type_aliases.insert(alias.name.clone(), alias.ty.clone());
             self.data.add_type_alias(alias);
         }
 
@@ -61,7 +68,7 @@ impl CompilerRv64 {
     }
 
     fn compile_function(&mut self, func: &crate::intermediate_language::IrFunction) {
-        let mut ctx = FunctionContext::new(&func.name);
+        let mut ctx = FunctionContext::new(&func.name, &self.type_aliases);
         let mut alloc = RegisterAllocator::new();
         alloc.allocate_slots(func, &mut ctx);
         ctx.finalize();
@@ -141,7 +148,17 @@ impl CompilerRv64 {
                 } else {
                     ptr_tmp
                 };
-                self.emit_load_to_slot(dest_slot, addr_tmp, ty, 0);
+                let resolved_ty = self.resolve_ir_type(ty);
+                if matches!(resolved_ty, IrType::Array { .. } | IrType::Aggregate(_)) {
+                    self.copy_bytes_from_addr_to_slot(
+                        dest_slot,
+                        addr_tmp,
+                        0,
+                        self.type_size(&resolved_ty),
+                    );
+                } else {
+                    self.emit_load_to_slot(dest_slot, addr_tmp, &resolved_ty, 0);
+                }
             }
             Store {
                 ty,
@@ -159,27 +176,26 @@ impl CompilerRv64 {
                 } else {
                     ptr_tmp
                 };
-                let val_tmp = self.alloc_temp_reg();
-                match value {
-                    IrValue::Register(reg) => {
-                        let val_slot = ctx.slot_for_reg(reg).expect("value slot");
-                        self.emit_ld(val_tmp, SP, val_slot as i32);
-                    }
-                    IrValue::Integer(i) => self.emit_li(val_tmp, *i),
-                    IrValue::Bool(b) => self.emit_li(val_tmp, if *b { 1 } else { 0 }),
-                    IrValue::Float(f) => {
-                        let int_tmp = self.alloc_temp_reg();
-                        self.emit_li(int_tmp, f.to_bits() as i64);
-                        self.emit_fmv_w_x(val_tmp, int_tmp);
-                    }
-                    IrValue::Null => self.emit_li(val_tmp, 0),
-                    IrValue::GlobalString(_) => unimplemented!("global string storage"),
+                let resolved_ty = self.resolve_ir_type(ty);
+                if matches!(resolved_ty, IrType::Array { .. } | IrType::Aggregate(_)) {
+                    let IrValue::Register(reg) = value else {
+                        unimplemented!("composite stores require a register source")
+                    };
+                    let val_slot = ctx.slot_for_reg(reg).expect("value slot");
+                    self.copy_bytes_from_slot_to_addr(
+                        val_slot,
+                        addr_tmp,
+                        0,
+                        self.type_size(&resolved_ty),
+                    );
+                } else {
+                    let val_tmp = self.load_value_to_temp(value, ctx);
+                    self.emit_store_from_tmp(addr_tmp, val_tmp, &resolved_ty, 0);
                 }
-                self.emit_store_from_tmp(addr_tmp, val_tmp, ty, 0);
             }
             Offset {
                 dest,
-                ty,
+                ty: _,
                 ptr,
                 bytes,
             } => {
@@ -187,12 +203,9 @@ impl CompilerRv64 {
                 let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
                 let ptr_tmp = self.alloc_temp_reg();
                 self.emit_ld(ptr_tmp, SP, ptr_slot as i32);
-                let byte_val = match bytes {
-                    IrValue::Integer(i) => *i,
-                    _ => unimplemented!(),
-                };
+                let byte_val_reg = self.load_value_to_temp(bytes, ctx);
                 let off_tmp = self.alloc_temp_reg();
-                self.emit_li(off_tmp, byte_val);
+                self.emit_mv(off_tmp, byte_val_reg);
                 let result_tmp = self.alloc_temp_reg();
                 self.emit_add(result_tmp, ptr_tmp, off_tmp);
                 self.emit_sd(SP, result_tmp, dest_slot as i32);
@@ -207,16 +220,8 @@ impl CompilerRv64 {
                 let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
                 let base_tmp = self.alloc_temp_reg();
                 self.emit_ld(base_tmp, SP, base_slot as i32);
-                let idx_tmp = self.alloc_temp_reg();
-                match idx {
-                    IrValue::Register(reg) => {
-                        let idx_slot = ctx.slot_for_reg(reg).expect("idx slot");
-                        self.emit_ld(idx_tmp, SP, idx_slot as i32);
-                    }
-                    IrValue::Integer(i) => self.emit_li(idx_tmp, *i),
-                    _ => unimplemented!(),
-                }
-                let scale = type_size(ty);
+                let idx_tmp = self.load_value_to_temp(idx, ctx);
+                let scale = self.type_size(ty);
                 let scaled_tmp = self.alloc_temp_reg();
                 if scale == 1 {
                     self.emit_mv(scaled_tmp, idx_tmp);
@@ -245,10 +250,11 @@ impl CompilerRv64 {
                     IrMathOp::Div => self.emit_div(result_tmp, lhs_tmp, rhs_tmp),
                     IrMathOp::SDiv => self.emit_div(result_tmp, lhs_tmp, rhs_tmp),
                     IrMathOp::Mod => self.emit_rem(result_tmp, lhs_tmp, rhs_tmp),
+                    IrMathOp::Shl => self.emit_sll(result_tmp, lhs_tmp, rhs_tmp),
+                    IrMathOp::Shr => self.emit_srl(result_tmp, lhs_tmp, rhs_tmp),
                     IrMathOp::And => self.emit_and(result_tmp, lhs_tmp, rhs_tmp),
                     IrMathOp::Or => self.emit_or(result_tmp, lhs_tmp, rhs_tmp),
                     IrMathOp::Xor => self.emit_xor(result_tmp, lhs_tmp, rhs_tmp),
-                    _ => unimplemented!("math op {:?}", op),
                 }
                 self.emit_sd(SP, result_tmp, dest_slot as i32);
             }
@@ -283,11 +289,22 @@ impl CompilerRv64 {
                     IrCmpOp::Ne => self.emit_sne(result_tmp, lhs_tmp, rhs_tmp),
                     IrCmpOp::Slt => self.emit_slt(result_tmp, lhs_tmp, rhs_tmp),
                     IrCmpOp::Ult => self.emit_sltu(result_tmp, lhs_tmp, rhs_tmp),
-                    _ => unimplemented!("cmp op {:?}", op),
+                    IrCmpOp::Sle => self.emit_cmp_sle(result_tmp, lhs_tmp, rhs_tmp),
+                    IrCmpOp::Ule => self.emit_cmp_ule(result_tmp, lhs_tmp, rhs_tmp),
+                    IrCmpOp::Sgt => self.emit_slt(result_tmp, rhs_tmp, lhs_tmp),
+                    IrCmpOp::Ugt => self.emit_sltu(result_tmp, rhs_tmp, lhs_tmp),
+                    IrCmpOp::Sge => self.emit_cmp_sge(result_tmp, lhs_tmp, rhs_tmp),
+                    IrCmpOp::Uge => self.emit_cmp_uge(result_tmp, lhs_tmp, rhs_tmp),
                 }
                 self.emit_sd(SP, result_tmp, dest_slot as i32);
             }
-            Cast { .. } => unimplemented!("cast"),
+            Cast { dest, mode, value, ty } => {
+                let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
+                let src_tmp = self.load_value_to_temp(value, ctx);
+                let result_tmp = self.alloc_temp_reg();
+                self.lower_cast(result_tmp, src_tmp, *mode, ty);
+                self.emit_sd(SP, result_tmp, dest_slot as i32);
+            }
             Call {
                 dest,
                 function,
@@ -307,8 +324,22 @@ impl CompilerRv64 {
                 }
             }
             Phi { .. } => {}
-            HeapAlloc { .. } => unimplemented!("heap_alloc"),
-            HeapFree { .. } => unimplemented!("heap_free"),
+            HeapAlloc { dest, ty, count } => {
+                let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
+                let elem_count = count.unwrap_or(1);
+                let bytes = self.type_size(ty).saturating_mul(elem_count);
+
+                self.emit_li(A0, bytes as i64);
+                self.emitter.emit_raw("\tcall malloc");
+                self.emit_sd(SP, A0, dest_slot as i32);
+            }
+            HeapFree { ptr } => {
+                let ptr_slot = ctx.slot_for_reg(ptr).expect("ptr slot");
+                let ptr_tmp = self.alloc_temp_reg();
+                self.emit_ld(ptr_tmp, SP, ptr_slot as i32);
+                self.emit_mv(A0, ptr_tmp);
+                self.emitter.emit_raw("\tcall free");
+            }
         }
     }
 
@@ -356,6 +387,10 @@ impl CompilerRv64 {
     fn emit_add(&mut self, rd: Reg, rs1: Reg, rs2: Reg) {
         self.emitter
             .emit_inst(RealInstruction::Add(Add::new(rd, rs1, rs2)));
+    }
+    fn emit_addiw(&mut self, rd: Reg, rs1: Reg, imm: i32) {
+        self.emitter
+            .emit_inst(RealInstruction::Addiw(Addiw::new(rd, rs1, imm)));
     }
     fn emit_sub(&mut self, rd: Reg, rs1: Reg, rs2: Reg) {
         self.emitter
@@ -446,11 +481,11 @@ impl CompilerRv64 {
         self.emitter
             .emit_inst(RealInstruction::Slt(Slt::new(rd, rs1, rs2)));
     }
-    fn emit_bne(&mut self, rs1: Reg, rs2: Reg, target: &str) {
+    fn emit_bne(&mut self, rs1: Reg, rs2: Reg, _target: &str) {
         self.emitter
             .emit_inst(RealInstruction::Bne(Bne::new(rs1, rs2, 0)));
     }
-    fn emit_jal(&mut self, rd: Reg, target: &str) {
+    fn emit_jal(&mut self, rd: Reg, _target: &str) {
         self.emitter
             .emit_inst(RealInstruction::Jal(Jal::new(rd, 0)));
     }
@@ -461,6 +496,41 @@ impl CompilerRv64 {
     fn emit_fmv_w_x(&mut self, fd: Reg, rs: Reg) {
         self.emitter
             .emit_inst(RealInstruction::FmvWX(FmvWX::new(fd, rs)));
+    }
+
+    fn copy_bytes_from_addr_to_slot(&mut self, slot: usize, addr_reg: Reg, offset: i32, size: usize) {
+        for i in 0..size {
+            let tmp = self.alloc_temp_reg();
+            self.emitter.emit_inst(RealInstruction::Lb(Lb::new(
+                tmp,
+                addr_reg,
+                offset + i as i32,
+            )));
+            self.emitter
+                .emit_inst(RealInstruction::Sb(Sb::new(SP, tmp, slot as i32 + i as i32)));
+        }
+    }
+
+    fn copy_bytes_from_slot_to_addr(
+        &mut self,
+        slot: usize,
+        addr_reg: Reg,
+        offset: i32,
+        size: usize,
+    ) {
+        for i in 0..size {
+            let tmp = self.alloc_temp_reg();
+            self.emitter.emit_inst(RealInstruction::Lb(Lb::new(
+                tmp,
+                SP,
+                slot as i32 + i as i32,
+            )));
+            self.emitter.emit_inst(RealInstruction::Sb(Sb::new(
+                addr_reg,
+                tmp,
+                offset + i as i32,
+            )));
+        }
     }
 
     // Load a value into a temporary register
@@ -479,7 +549,10 @@ impl CompilerRv64 {
                 self.emit_fmv_w_x(temp, int_tmp);
             }
             IrValue::Null => self.emit_li(temp, 0),
-            IrValue::GlobalString(_) => unimplemented!(),
+            IrValue::GlobalString(symbol) => {
+                self.emitter
+                    .emit_raw(&format!("\tla {}, {}", reg_name(temp, false), symbol));
+            }
         }
         temp
     }
@@ -520,7 +593,14 @@ impl CompilerRv64 {
                 self.emitter
                     .emit_inst(RealInstruction::Ld(Ld::new(tmp, addr_reg, offset)));
             }
-            _ => unimplemented!("load type {:?}", ty),
+            IrType::Named(_) => {
+                self.emitter
+                    .emit_inst(RealInstruction::Ld(Ld::new(tmp, addr_reg, offset)));
+            }
+            _ => {
+                self.emitter
+                    .emit_inst(RealInstruction::Ld(Ld::new(tmp, addr_reg, offset)));
+            }
         }
         self.emit_sd(SP, tmp, slot as i32);
     }
@@ -560,8 +640,88 @@ impl CompilerRv64 {
                 self.emitter
                     .emit_inst(RealInstruction::Sd(Sd::new(addr_reg, val_reg, offset)));
             }
-            _ => unimplemented!("store type {:?}", ty),
+            IrType::Named(_) => {
+                self.emitter
+                    .emit_inst(RealInstruction::Sd(Sd::new(addr_reg, val_reg, offset)));
+            }
+            _ => {
+                self.emitter
+                    .emit_inst(RealInstruction::Sd(Sd::new(addr_reg, val_reg, offset)));
+            }
         }
+    }
+
+    fn emit_sll(&mut self, rd: Reg, rs1: Reg, rs2: Reg) {
+        self.emitter
+            .emit_inst(RealInstruction::Sll(Sll::new(rd, rs1, rs2)));
+    }
+
+    fn emit_srl(&mut self, rd: Reg, rs1: Reg, rs2: Reg) {
+        self.emitter
+            .emit_inst(RealInstruction::Srl(Srl::new(rd, rs1, rs2)));
+    }
+
+    fn emit_cmp_sle(&mut self, rd: Reg, lhs: Reg, rhs: Reg) {
+        let tmp = self.alloc_temp_reg();
+        self.emit_slt(tmp, rhs, lhs);
+        self.emit_seqz(rd, tmp);
+    }
+
+    fn emit_cmp_sge(&mut self, rd: Reg, lhs: Reg, rhs: Reg) {
+        let tmp = self.alloc_temp_reg();
+        self.emit_slt(tmp, lhs, rhs);
+        self.emit_seqz(rd, tmp);
+    }
+
+    fn emit_cmp_ule(&mut self, rd: Reg, lhs: Reg, rhs: Reg) {
+        let tmp = self.alloc_temp_reg();
+        self.emit_sltu(tmp, rhs, lhs);
+        self.emit_seqz(rd, tmp);
+    }
+
+    fn emit_cmp_uge(&mut self, rd: Reg, lhs: Reg, rhs: Reg) {
+        let tmp = self.alloc_temp_reg();
+        self.emit_sltu(tmp, lhs, rhs);
+        self.emit_seqz(rd, tmp);
+    }
+
+    fn emit_seqz(&mut self, rd: Reg, rs: Reg) {
+        self.emit_sltiu(rd, rs, 1);
+    }
+
+    fn lower_cast(&mut self, rd: Reg, rs: Reg, mode: IrCastMode, ty: &IrType) {
+        match mode {
+            IrCastMode::Bitcast | IrCastMode::Trunc | IrCastMode::Zext => {
+                self.emit_mv(rd, rs);
+            }
+            IrCastMode::Sext => match ty {
+                IrType::Integer(crate::intermediate_language::IntWidth::I32) => {
+                    self.emit_addiw(rd, rs, 0)
+                }
+                IrType::Integer(crate::intermediate_language::IntWidth::I64)
+                | IrType::Pointer(_) => self.emit_mv(rd, rs),
+                IrType::Integer(crate::intermediate_language::IntWidth::I16) => {
+                    self.emit_slli(rd, rs, 48);
+                    self.emit_srai(rd, rd, 48);
+                }
+                IrType::Integer(crate::intermediate_language::IntWidth::I8) => {
+                    self.emit_slli(rd, rs, 56);
+                    self.emit_srai(rd, rd, 56);
+                }
+                _ => self.emit_mv(rd, rs),
+            },
+            IrCastMode::F2i | IrCastMode::I2f => self.emit_mv(rd, rs),
+        }
+    }
+
+    fn emit_slli(&mut self, rd: Reg, rs1: Reg, shamt: u8) {
+        self.emitter
+            .emit_inst(RealInstruction::Slli(Slli::new(rd, rs1, shamt)));
+    }
+
+    fn emit_srai(&mut self, rd: Reg, rs1: Reg, shamt: u8) {
+        self.emitter
+            .emit_inst(RealInstruction::Srai(Srai::new(rd, rs1, shamt)));
     }
 
     fn alloc_temp_reg(&mut self) -> Reg {
@@ -570,26 +730,65 @@ impl CompilerRv64 {
         self.temp_counter += 1;
         reg
     }
-}
 
-fn type_size(ty: &IrType) -> usize {
-    match ty {
-        IrType::Integer(w) => match w {
-            crate::intermediate_language::IntWidth::I1 => 1,
-            crate::intermediate_language::IntWidth::I8 => 1,
-            crate::intermediate_language::IntWidth::I16 => 2,
-            crate::intermediate_language::IntWidth::I32 => 4,
-            crate::intermediate_language::IntWidth::I64 => 8,
-        },
-        IrType::Float(w) => match w {
-            crate::intermediate_language::FloatWidth::F32 => 4,
-            crate::intermediate_language::FloatWidth::F64 => 8,
-        },
-        IrType::Pointer(_) => 8,
-        IrType::Array { len, element } => len * type_size(element),
-        IrType::Aggregate(fields) => fields.iter().map(|(_, t)| type_size(t)).sum(),
-        IrType::Named(_) => 8,
-        IrType::Void => 0,
+    fn resolve_ir_type(&self, ty: &IrType) -> IrType {
+        self.resolve_ir_type_inner(ty, &mut HashSet::new())
+    }
+
+    fn resolve_ir_type_inner(&self, ty: &IrType, seen: &mut HashSet<String>) -> IrType {
+        match ty {
+            IrType::Named(name) => self
+                .type_aliases
+                .get(name)
+                .cloned()
+                .map(|resolved| {
+                    if !seen.insert(name.clone()) {
+                        IrType::Named(name.clone())
+                    } else {
+                        let out = self.resolve_ir_type_inner(&resolved, seen);
+                        seen.remove(name);
+                        out
+                    }
+                })
+                .unwrap_or_else(|| IrType::Named(name.clone())),
+            IrType::Pointer(inner) => {
+                IrType::Pointer(Box::new(self.resolve_ir_type_inner(inner, seen)))
+            }
+            IrType::Array { len, element } => IrType::Array {
+                len: *len,
+                element: Box::new(self.resolve_ir_type_inner(element, seen)),
+            },
+            IrType::Aggregate(fields) => IrType::Aggregate(
+                fields
+                    .iter()
+                    .map(|(name, field_ty)| {
+                        (name.clone(), self.resolve_ir_type_inner(field_ty, seen))
+                    })
+                    .collect(),
+            ),
+            other => other.clone(),
+        }
+    }
+
+    fn type_size(&self, ty: &IrType) -> usize {
+        match self.resolve_ir_type(ty) {
+            IrType::Void => 0,
+            IrType::Integer(w) => match w {
+                crate::intermediate_language::IntWidth::I1 => 1,
+                crate::intermediate_language::IntWidth::I8 => 1,
+                crate::intermediate_language::IntWidth::I16 => 2,
+                crate::intermediate_language::IntWidth::I32 => 4,
+                crate::intermediate_language::IntWidth::I64 => 8,
+            },
+            IrType::Float(w) => match w {
+                crate::intermediate_language::FloatWidth::F32 => 4,
+                crate::intermediate_language::FloatWidth::F64 => 8,
+            },
+            IrType::Pointer(_) => 8,
+            IrType::Array { len, element } => len * self.type_size(&element),
+            IrType::Aggregate(fields) => fields.iter().map(|(_, t)| self.type_size(t)).sum(),
+            IrType::Named(_) => 8,
+        }
     }
 }
 
