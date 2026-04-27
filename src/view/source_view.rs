@@ -1,4 +1,3 @@
-// file: src/view/source_view.rs
 use crate::view::{CompilerView, CompilationState, ProgramCatalog};
 use crate::view::highlight_code;
 use egui::{Frame, TextEdit, TextStyle};
@@ -27,19 +26,16 @@ impl CompilerView for SourceView {
             egui::ScrollArea::both()
                 .auto_shrink([false; 2])
                 .show(ui, |ui| {
-                    // Force the TextEdit to fill the entire visible ScrollArea
-                    // so clicking anywhere in the dead space focuses the editor.
-                    let response = ui.add_sized(
-                        ui.available_size(),
+                    let response = ui.add(
                         TextEdit::multiline(&mut source_code)
                             .font(TextStyle::Monospace)
                             .frame(Frame::NONE)
                             .lock_focus(true)
                             .desired_width(f32::INFINITY)
+                            .min_size(ui.available_size())
                             .layouter(&mut layouter)
                     );
 
-                    // If the user typed something, sync it back to the central catalog
                     if response.changed() {
                         catalog.set_selected_source(source_code);
                     }
