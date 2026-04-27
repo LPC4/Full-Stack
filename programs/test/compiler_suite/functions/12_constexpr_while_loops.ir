@@ -68,7 +68,7 @@ label_5:
 
 define void main() {
 entry:
-	$0 = call print(55)
-	$1 = call print(5040)
+	call print(55)
+	call print(5040)
 	ret
 }

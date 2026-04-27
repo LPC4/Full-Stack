@@ -1,13 +1,36 @@
 use super::frame_context::FrameContext;
-use crate::intermediate_language::{IrLabel, IrRegister, IrType};
+use crate::assembly_language::encode_decode::Reg;
+use crate::intermediate_language::{IrFunction, IrLabel, IrRegister, IrType};
 use std::collections::{HashMap, HashSet};
 
+// RISC‑V register numbers used in prologue/epilogue.
+const SP: Reg = 2;   // stack pointer
+const RA: Reg = 1;   // return address
+const S0: Reg = 8;   // callee‑saved frame pointer (used as temp in prologue)
+
+/// Narrow backend interface for prologue/epilogue and parameter spills.
+pub trait Rv64Backend {
+    fn emit_add_imm(&mut self, rd: Reg, rs: Reg, imm: i64);
+    fn emit_sd(&mut self, base: Reg, src: Reg, offset: i32);
+    fn emit_ld(&mut self, rd: Reg, base: Reg, offset: i32);
+    fn emit_mv(&mut self, rd: Reg, rs: Reg);
+    fn emit_jalr(&mut self, rd: Reg, rs1: Reg, imm: i32);
+    fn emit_li(&mut self, rd: Reg, imm: i64);
+    fn emit_store_from_tmp(&mut self, addr_reg: Reg, val_reg: Reg, ty: &IrType, offset: i32);
+    fn emit_load_to_slot(&mut self, slot: usize, addr_reg: Reg, ty: &IrType, offset: i32);
+}
+
+/// Function‑level context that owns prologue/epilogue emission and frame layout.
 pub struct FunctionContext {
     pub name: String,
     pub frame: FrameContext,
     type_aliases: HashMap<String, IrType>,
     /// Maps virtual registers to stack offsets.
     reg_slots: HashMap<IrRegister, usize>,
+    /// Records the IR type associated with each virtual register.
+    reg_types: HashMap<IrRegister, IrType>,
+    /// Registers whose value is the address of their own stack slot.
+    stack_address_regs: HashSet<IrRegister>,
     /// Maps IR labels to emitted assembly labels.
     label_map: HashMap<IrLabel, String>,
 }
@@ -19,15 +42,18 @@ impl FunctionContext {
             frame: FrameContext::new(),
             type_aliases: type_aliases.clone(),
             reg_slots: HashMap::new(),
+            reg_types: HashMap::new(),
+            stack_address_regs: HashSet::new(),
             label_map: HashMap::new(),
         }
     }
 
     /// Allocate a stack slot for a virtual register.
     pub fn alloc_slot_for_reg(&mut self, reg: &IrRegister, ty: &IrType) -> usize {
-        let size = self.type_size(ty);
+        let size = self.frame.type_size(ty, &self.type_aliases);
         let slot = self.frame.alloc_slot(size);
         self.reg_slots.insert(reg.clone(), slot);
+        self.reg_types.insert(reg.clone(), ty.clone());
         slot
     }
 
@@ -39,6 +65,23 @@ impl FunctionContext {
     /// Record that a virtual register is a function parameter (already has a stack slot).
     pub fn set_param_slot(&mut self, reg: &IrRegister, slot: usize) {
         self.reg_slots.insert(reg.clone(), slot);
+    }
+
+    pub fn set_reg_type(&mut self, reg: &IrRegister, ty: IrType) {
+        self.reg_types.insert(reg.clone(), ty);
+    }
+
+    pub fn type_for_reg(&self, reg: &IrRegister) -> Option<IrType> {
+        self.reg_types.get(reg).cloned()
+    }
+
+    /// Mark that a register's value should be computed as `sp + slot`.
+    pub fn mark_stack_address(&mut self, reg: &IrRegister) {
+        self.stack_address_regs.insert(reg.clone());
+    }
+
+    pub fn is_stack_address(&self, reg: &IrRegister) -> bool {
+        self.stack_address_regs.contains(reg)
     }
 
     /// Map an IR label to an assembly label string.
@@ -54,29 +97,66 @@ impl FunctionContext {
         self.frame.finalize();
     }
 
-    pub fn resolve_type(&self, ty: &IrType) -> IrType {
-        self.resolve_type_inner(ty, &mut HashSet::new())
+    /// Emit the function prologue using the given backend.
+    pub fn emit_prologue(&self, backend: &mut impl Rv64Backend) {
+        let frame_size = self.frame.frame_size();
+        backend.emit_add_imm(SP, SP, -(frame_size as i64));
+        if let Some(offset) = self.frame.ra_offset() {
+            backend.emit_sd(SP, RA, offset as i32);
+        }
+        for (reg, offset) in self.frame.saved_regs() {
+            backend.emit_sd(SP, *reg, *offset as i32);
+        }
+        backend.emit_mv(S0, SP);
     }
 
-    pub fn type_size(&self, ty: &IrType) -> usize {
-        match self.resolve_type(ty) {
-            IrType::Void => 0,
-            IrType::Integer(w) => match w {
-                crate::intermediate_language::IntWidth::I1 => 1,
-                crate::intermediate_language::IntWidth::I8 => 1,
-                crate::intermediate_language::IntWidth::I16 => 2,
-                crate::intermediate_language::IntWidth::I32 => 4,
-                crate::intermediate_language::IntWidth::I64 => 8,
-            },
-            IrType::Float(w) => match w {
-                crate::intermediate_language::FloatWidth::F32 => 4,
-                crate::intermediate_language::FloatWidth::F64 => 8,
-            },
-            IrType::Pointer(_) => 8,
-            IrType::Array { len, element } => len * self.type_size(&element),
-            IrType::Aggregate(fields) => fields.iter().map(|(_, t)| self.type_size(t)).sum(),
-            IrType::Named(_) => 8,
+    /// Emit the function epilogue using the given backend.
+    pub fn emit_epilogue(&self, backend: &mut impl Rv64Backend) {
+        for (reg, offset) in self.frame.saved_regs().iter().rev() {
+            backend.emit_ld(*reg, SP, *offset as i32);
         }
+        if let Some(offset) = self.frame.ra_offset() {
+            backend.emit_ld(RA, SP, offset as i32);
+        }
+        let frame_size = self.frame.frame_size();
+        backend.emit_add_imm(SP, SP, frame_size as i64);
+        backend.emit_jalr(0, RA, 0);
+    }
+
+    /// Emit spills for function parameters that arrive in registers or on the stack.
+    pub fn emit_parameter_spills(
+        &self,
+        backend: &mut impl Rv64Backend,
+        func: &IrFunction,
+    ) {
+        if func.params.is_empty() {
+            return;
+        }
+
+        let frame_size = self.frame.frame_size() as i64;
+        let caller_sp = self.alloc_temp_reg(backend);
+        backend.emit_add_imm(caller_sp, S0, frame_size);
+
+        for (index, param) in func.params.iter().enumerate() {
+            let slot = self.slot_for_reg(&param.register).expect("param slot");
+            let ty = self.resolve_type(&param.ty); // use local resolve (still needed)
+            if index < 8 {
+                backend.emit_store_from_tmp(SP, arg_reg(index), &ty, slot as i32);
+            } else {
+                let offset = ((index - 8) * 8) as i32;
+                backend.emit_load_to_slot(slot, caller_sp, &ty, offset);
+            }
+        }
+    }
+
+    fn alloc_temp_reg(&self, _backend: &mut impl Rv64Backend) -> Reg {
+        // T0 = 5
+        5
+    }
+
+    /// Resolve a type using the context's type aliases.
+    fn resolve_type(&self, ty: &IrType) -> IrType {
+        self.resolve_type_inner(ty, &mut HashSet::new())
     }
 
     fn resolve_type_inner(&self, ty: &IrType, seen: &mut HashSet<String>) -> IrType {
@@ -95,7 +175,9 @@ impl FunctionContext {
                     }
                 })
                 .unwrap_or_else(|| IrType::Named(name.clone())),
-            IrType::Pointer(inner) => IrType::Pointer(Box::new(self.resolve_type_inner(inner, seen))),
+            IrType::Pointer(inner) => {
+                IrType::Pointer(Box::new(self.resolve_type_inner(inner, seen)))
+            }
             IrType::Array { len, element } => IrType::Array {
                 len: *len,
                 element: Box::new(self.resolve_type_inner(element, seen)),
@@ -111,3 +193,17 @@ impl FunctionContext {
     }
 }
 
+/// Return the argument register for the given index (a0–a7).
+fn arg_reg(i: usize) -> Reg {
+    match i {
+        0 => 10,
+        1 => 11,
+        2 => 12,
+        3 => 13,
+        4 => 14,
+        5 => 15,
+        6 => 16,
+        7 => 17,
+        _ => 0,
+    }
+}

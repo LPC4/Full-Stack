@@ -171,12 +171,6 @@ impl HighLevelCompiler {
                             return None;
                         }
                     }
-                    let dest = self.new_temp();
-                    self.push_instruction(IrInstruction::Call {
-                        dest: Some(dest.clone()),
-                        function: name.clone(),
-                        args: arg_values,
-                    });
 
                     // Look up the function's return type
                     let return_ty = self
@@ -185,8 +179,20 @@ impl HighLevelCompiler {
                         .cloned()
                         .unwrap_or(IrType::Void);
 
+                    let dest = if return_ty == IrType::Void {
+                        None
+                    } else {
+                        Some(self.new_temp())
+                    };
+
+                    self.push_instruction(IrInstruction::Call {
+                        dest: dest.clone(),
+                        function: name.clone(),
+                        args: arg_values,
+                    });
+
                     Some(LoweredValue {
-                        value: IrValue::Register(dest),
+                        value: dest.map(IrValue::Register).unwrap_or(IrValue::Null),
                         ty: return_ty,
                     })
                 }

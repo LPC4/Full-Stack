@@ -27,10 +27,10 @@ entry:
 	branch $8 ? label_0 : label_2
 label_0:
 	; executing deferred cleanup before return
-	$9 = call free($5)
+	call free($5)
 	ret 1
 label_2:
 	; executing deferred cleanup before return
-	$10 = call free($5)
+	call free($5)
 	ret 0
 }

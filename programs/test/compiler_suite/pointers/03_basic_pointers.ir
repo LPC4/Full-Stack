@@ -24,6 +24,6 @@ entry:
 	; defer: captured call free with 1 args
 	$8 = read i32 @ $val_ptr
 	; executing deferred cleanup before return
-	$9 = call free($7)
+	call free($7)
 	ret $8
 }

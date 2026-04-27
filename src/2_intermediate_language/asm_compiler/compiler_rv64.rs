@@ -1,6 +1,7 @@
 use super::{
     assembly_emitter::AssemblyEmitter, data_section::DataSection,
-    function_context::FunctionContext, register_allocator::RegisterAllocator,
+    function_context::{FunctionContext, Rv64Backend},
+    register_allocator::RegisterAllocator,
 };
 use crate::assembly_language::encode_decode::Reg;
 use crate::assembly_language::real::RealInstruction;
@@ -17,6 +18,7 @@ use std::collections::{HashMap, HashSet};
 const ZERO: Reg = 0;
 const RA: Reg = 1;
 const SP: Reg = 2;
+const S0: Reg = 8;
 const T0: Reg = 5;
 const T1: Reg = 6;
 const T2: Reg = 7;
@@ -31,6 +33,34 @@ pub struct CompilerRv64 {
     data: DataSection,
     temp_counter: usize,
     type_aliases: HashMap<String, IrType>,
+    function_return_types: HashMap<String, IrType>,
+}
+
+impl Rv64Backend for CompilerRv64 {
+    fn emit_add_imm(&mut self, rd: Reg, rs: Reg, imm: i64) {
+        self.emit_add_imm(rd, rs, imm);
+    }
+    fn emit_sd(&mut self, base: Reg, src: Reg, offset: i32) {
+        self.emit_sd(base, src, offset);
+    }
+    fn emit_ld(&mut self, rd: Reg, base: Reg, offset: i32) {
+        self.emit_ld(rd, base, offset);
+    }
+    fn emit_mv(&mut self, rd: Reg, rs: Reg) {
+        self.emit_mv(rd, rs);
+    }
+    fn emit_jalr(&mut self, rd: Reg, rs1: Reg, imm: i32) {
+        self.emit_jalr(rd, rs1, imm);
+    }
+    fn emit_li(&mut self, rd: Reg, imm: i64) {
+        self.emit_li(rd, imm);
+    }
+    fn emit_store_from_tmp(&mut self, addr_reg: Reg, val_reg: Reg, ty: &IrType, offset: i32) {
+        self.emit_store_from_tmp(addr_reg, val_reg, ty, offset);
+    }
+    fn emit_load_to_slot(&mut self, slot: usize, addr_reg: Reg, ty: &IrType, offset: i32) {
+        self.emit_load_to_slot(slot, addr_reg, ty, offset);
+    }
 }
 
 impl CompilerRv64 {
@@ -40,6 +70,7 @@ impl CompilerRv64 {
             data: DataSection::new(),
             temp_counter: 0,
             type_aliases: HashMap::new(),
+            function_return_types: HashMap::new(),
         }
     }
 
@@ -47,6 +78,7 @@ impl CompilerRv64 {
         self.emitter.reset();
         self.data.reset();
         self.type_aliases.clear();
+        self.function_return_types.clear();
 
         for s in &program.global_strings {
             self.data.add_global_string(s);
@@ -54,6 +86,10 @@ impl CompilerRv64 {
         for alias in &program.type_aliases {
             self.type_aliases.insert(alias.name.clone(), alias.ty.clone());
             self.data.add_type_alias(alias);
+        }
+        for func in &program.functions {
+            self.function_return_types
+                .insert(func.name.clone(), func.return_type.clone());
         }
 
         for func in &program.functions {
@@ -70,15 +106,18 @@ impl CompilerRv64 {
     fn compile_function(&mut self, func: &crate::intermediate_language::IrFunction) {
         let mut ctx = FunctionContext::new(&func.name, &self.type_aliases);
         let mut alloc = RegisterAllocator::new();
-        alloc.allocate_slots(func, &mut ctx);
+        alloc.allocate_slots(func, &mut ctx, &self.function_return_types);
+        ctx.frame.save_ra();
+        ctx.frame.save_reg(S0);
         ctx.finalize();
 
         for block in &func.blocks {
-            ctx.map_label(&block.label, block.label.0.clone());
+            ctx.map_label(&block.label, format!("{}__{}", func.name, block.label.0));
         }
 
         self.emitter.start_function(&func.name);
-        self.emit_prologue(&mut ctx);
+        ctx.emit_prologue(self);
+        ctx.emit_parameter_spills(self, func);
 
         for block in &func.blocks {
             let label = ctx.get_label(&block.label).unwrap();
@@ -91,40 +130,10 @@ impl CompilerRv64 {
             }
         }
 
-        self.emit_epilogue(&mut ctx);
+        ctx.emit_epilogue(self);
         self.emitter.end_function();
     }
 
-    fn emit_prologue(&mut self, ctx: &mut FunctionContext) {
-        let frame_size = ctx.frame.frame_size();
-        if frame_size > 0 {
-            self.emit_addi(SP, SP, -(frame_size as i32));
-        }
-        if let Some(offset) = ctx.frame.ra_offset() {
-            self.emit_sd(SP, RA, offset as i32);
-        }
-        for (reg, offset) in ctx.frame.saved_regs() {
-            self.emit_sd(SP, *reg, *offset as i32);
-        }
-    }
-
-    fn emit_epilogue(&mut self, ctx: &mut FunctionContext) {
-        for (reg, offset) in ctx.frame.saved_regs() {
-            self.emit_ld(*reg, SP, *offset as i32);
-        }
-        if let Some(offset) = ctx.frame.ra_offset() {
-            self.emit_ld(RA, SP, offset as i32);
-        }
-        let frame_size = ctx.frame.frame_size();
-        if frame_size > 0 {
-            self.emit_addi(SP, SP, frame_size as i32);
-        }
-        self.emit_jalr(ZERO, RA, 0);
-    }
-
-    // -------------------------------------------------------------------------
-    // Lowering helpers
-    // -------------------------------------------------------------------------
 
     fn lower_instruction(&mut self, inst: &IrInstruction, ctx: &mut FunctionContext) {
         use IrInstruction::*;
@@ -370,7 +379,7 @@ impl CompilerRv64 {
     }
 
     // -------------------------------------------------------------------------
-    // RISC‑V instruction emission helpers
+    // RISC‑V instruction emission helpers (unchanged)
     // -------------------------------------------------------------------------
     fn emit_addi(&mut self, rd: Reg, rs1: Reg, imm: i32) {
         self.emitter
@@ -383,6 +392,26 @@ impl CompilerRv64 {
     fn emit_ld(&mut self, rd: Reg, base: Reg, offset: i32) {
         self.emitter
             .emit_inst(RealInstruction::Ld(Ld::new(rd, base, offset)));
+    }
+    fn emit_lw(&mut self, rd: Reg, base: Reg, offset: i32) {
+        self.emitter
+            .emit_inst(RealInstruction::Lw(Lw::new(rd, base, offset)));
+    }
+    fn emit_lh(&mut self, rd: Reg, base: Reg, offset: i32) {
+        self.emitter
+            .emit_inst(RealInstruction::Lh(Lh::new(rd, base, offset)));
+    }
+    fn emit_lb(&mut self, rd: Reg, base: Reg, offset: i32) {
+        self.emitter
+            .emit_inst(RealInstruction::Lb(Lb::new(rd, base, offset)));
+    }
+    fn emit_flw(&mut self, rd: Reg, base: Reg, offset: i32) {
+        self.emitter
+            .emit_inst(RealInstruction::Flw(Flw::new(rd, base, offset)));
+    }
+    fn emit_fld(&mut self, rd: Reg, base: Reg, offset: i32) {
+        self.emitter
+            .emit_inst(RealInstruction::Fld(Fld::new(rd, base, offset)));
     }
     fn emit_add(&mut self, rd: Reg, rs1: Reg, rs2: Reg) {
         self.emitter
@@ -482,12 +511,20 @@ impl CompilerRv64 {
             .emit_inst(RealInstruction::Slt(Slt::new(rd, rs1, rs2)));
     }
     fn emit_bne(&mut self, rs1: Reg, rs2: Reg, _target: &str) {
-        self.emitter
-            .emit_inst(RealInstruction::Bne(Bne::new(rs1, rs2, 0)));
+        self.emitter.emit_raw(&format!(
+            "\tbne {}, {}, {}",
+            reg_name(rs1, false),
+            reg_name(rs2, false),
+            _target
+        ));
     }
     fn emit_jal(&mut self, rd: Reg, _target: &str) {
-        self.emitter
-            .emit_inst(RealInstruction::Jal(Jal::new(rd, 0)));
+        if rd == ZERO {
+            self.emitter.emit_raw(&format!("\tj {}", _target));
+        } else {
+            self.emitter
+                .emit_raw(&format!("\tjal {}, {}", reg_name(rd, false), _target));
+        }
     }
     fn emit_jalr(&mut self, rd: Reg, rs1: Reg, imm: i32) {
         self.emitter
@@ -506,8 +543,11 @@ impl CompilerRv64 {
                 addr_reg,
                 offset + i as i32,
             )));
-            self.emitter
-                .emit_inst(RealInstruction::Sb(Sb::new(SP, tmp, slot as i32 + i as i32)));
+            self.emitter.emit_inst(RealInstruction::Sb(Sb::new(
+                SP,
+                tmp,
+                slot as i32 + i as i32,
+            )));
         }
     }
 
@@ -539,7 +579,14 @@ impl CompilerRv64 {
         match val {
             IrValue::Register(reg) => {
                 let slot = ctx.slot_for_reg(reg).expect("reg slot");
-                self.emit_ld(temp, SP, slot as i32);
+                if ctx.is_stack_address(reg) {
+                    self.emit_addi(temp, SP, slot as i32);
+                } else {
+                    let ty = ctx
+                        .type_for_reg(reg)
+                        .unwrap_or(IrType::Integer(crate::intermediate_language::IntWidth::I32));
+                    self.emit_load_from_slot(temp, slot, &ty);
+                }
             }
             IrValue::Integer(i) => self.emit_li(temp, *i),
             IrValue::Bool(b) => self.emit_li(temp, if *b { 1 } else { 0 }),
@@ -602,7 +649,25 @@ impl CompilerRv64 {
                     .emit_inst(RealInstruction::Ld(Ld::new(tmp, addr_reg, offset)));
             }
         }
-        self.emit_sd(SP, tmp, slot as i32);
+        self.emit_store_from_tmp(SP, tmp, ty, slot as i32);
+    }
+
+    fn emit_load_from_slot(&mut self, rd: Reg, slot: usize, ty: &IrType) {
+        match ty {
+            IrType::Integer(w) => match w {
+                crate::intermediate_language::IntWidth::I1
+                | crate::intermediate_language::IntWidth::I8 => self.emit_lb(rd, SP, slot as i32),
+                crate::intermediate_language::IntWidth::I16 => self.emit_lh(rd, SP, slot as i32),
+                crate::intermediate_language::IntWidth::I32 => self.emit_lw(rd, SP, slot as i32),
+                crate::intermediate_language::IntWidth::I64 => self.emit_ld(rd, SP, slot as i32),
+            },
+            IrType::Float(w) => match w {
+                crate::intermediate_language::FloatWidth::F32 => self.emit_flw(rd, SP, slot as i32),
+                crate::intermediate_language::FloatWidth::F64 => self.emit_fld(rd, SP, slot as i32),
+            },
+            IrType::Pointer(_) | IrType::Named(_) => self.emit_ld(rd, SP, slot as i32),
+            _ => self.emit_ld(rd, SP, slot as i32),
+        }
     }
 
     fn emit_store_from_tmp(&mut self, addr_reg: Reg, val_reg: Reg, ty: &IrType, offset: i32) {
@@ -717,6 +782,16 @@ impl CompilerRv64 {
     fn emit_slli(&mut self, rd: Reg, rs1: Reg, shamt: u8) {
         self.emitter
             .emit_inst(RealInstruction::Slli(Slli::new(rd, rs1, shamt)));
+    }
+
+    fn emit_add_imm(&mut self, rd: Reg, rs: Reg, imm: i64) {
+        if (-2048..=2047).contains(&imm) {
+            self.emit_addi(rd, rs, imm as i32);
+        } else {
+            let tmp = self.alloc_temp_reg();
+            self.emit_li(tmp, imm);
+            self.emit_add(rd, rs, tmp);
+        }
     }
 
     fn emit_srai(&mut self, rd: Reg, rs1: Reg, shamt: u8) {

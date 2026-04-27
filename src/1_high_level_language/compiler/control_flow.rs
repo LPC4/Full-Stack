@@ -322,9 +322,17 @@ impl HighLevelCompiler {
     pub(super) fn emit_deferred_action(&mut self, action: DeferredAction) {
         match action {
             DeferredAction::Call { function, args } => {
-                let dest = self.new_temp();
+                let dest = if self
+                    .function_return_types
+                    .get(&function)
+                    .is_some_and(|ty| *ty != IrType::Void)
+                {
+                    Some(self.new_temp())
+                } else {
+                    None
+                };
                 self.push_instruction(IrInstruction::Call {
-                    dest: Some(dest),
+                    dest,
                     function,
                     args,
                 });

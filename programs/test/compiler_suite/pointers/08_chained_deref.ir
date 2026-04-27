@@ -21,6 +21,6 @@ entry:
 	$6 = read i32* @ $ptr
 	$7 = read i32 @ $6
 	; executing deferred cleanup before return
-	$8 = call free($5)
+	call free($5)
 	ret $7
 }

@@ -1,5 +1,8 @@
 //! Stack frame layout for a function.
 
+use crate::intermediate_language::IrType;
+use std::collections::HashMap;
+
 /// Tracks the stack frame layout for a function.
 pub struct FrameContext {
     /// Total frame size in bytes.
@@ -63,6 +66,78 @@ impl FrameContext {
 
     pub fn frame_size(&self) -> usize {
         self.frame_size
+    }
+
+    /// Compute the size of a type after resolving aliases.
+    ///
+    /// The `type_aliases` map is used to resolve named types.
+    pub fn type_size(&self, ty: &IrType, type_aliases: &HashMap<String, IrType>) -> usize {
+        let resolved = self.resolve_type(ty, type_aliases);
+        match resolved {
+            IrType::Void => 0,
+            IrType::Integer(w) => match w {
+                crate::intermediate_language::IntWidth::I1 => 1,
+                crate::intermediate_language::IntWidth::I8 => 1,
+                crate::intermediate_language::IntWidth::I16 => 2,
+                crate::intermediate_language::IntWidth::I32 => 4,
+                crate::intermediate_language::IntWidth::I64 => 8,
+            },
+            IrType::Float(w) => match w {
+                crate::intermediate_language::FloatWidth::F32 => 4,
+                crate::intermediate_language::FloatWidth::F64 => 8,
+            },
+            IrType::Pointer(_) => 8,
+            IrType::Array { len, element } => len * self.type_size(&element, type_aliases),
+            IrType::Aggregate(fields) => fields
+                .iter()
+                .map(|(_, t)| self.type_size(t, type_aliases))
+                .sum(),
+            IrType::Named(_) => 8, // Should have been resolved, but fallback to pointer size
+        }
+    }
+
+    // Helper to fully resolve a type (remove aliases).
+    fn resolve_type(&self, ty: &IrType, type_aliases: &HashMap<String, IrType>) -> IrType {
+        self.resolve_type_inner(ty, type_aliases, &mut std::collections::HashSet::new())
+    }
+
+    fn resolve_type_inner(
+        &self,
+        ty: &IrType,
+        type_aliases: &HashMap<String, IrType>,
+        seen: &mut std::collections::HashSet<String>,
+    ) -> IrType {
+        match ty {
+            IrType::Named(name) => {
+                if let Some(resolved) = type_aliases.get(name) {
+                    if !seen.insert(name.clone()) {
+                        IrType::Named(name.clone())
+                    } else {
+                        let out = self.resolve_type_inner(resolved, type_aliases, seen);
+                        seen.remove(name);
+                        out
+                    }
+                } else {
+                    IrType::Named(name.clone())
+                }
+            }
+            IrType::Pointer(inner) => {
+                IrType::Pointer(Box::new(self.resolve_type_inner(inner, type_aliases, seen)))
+            }
+            IrType::Array { len, element } => IrType::Array {
+                len: *len,
+                element: Box::new(self.resolve_type_inner(element, type_aliases, seen)),
+            },
+            IrType::Aggregate(fields) => IrType::Aggregate(
+                fields
+                    .iter()
+                    .map(|(name, field_ty)| {
+                        (name.clone(), self.resolve_type_inner(field_ty, type_aliases, seen))
+                    })
+                    .collect(),
+            ),
+            other => other.clone(),
+        }
     }
 }
 

@@ -89,11 +89,11 @@ label_11:
 
 define void main() {
 entry:
-	$0 = call print(120)
-	$1 = call print(3628800)
-	$2 = call print(55)
-	$3 = call print(20)
-	$4 = call print(42)
-	$5 = call print(40320)
+	call print(120)
+	call print(3628800)
+	call print(55)
+	call print(20)
+	call print(42)
+	call print(40320)
 	ret
 }
