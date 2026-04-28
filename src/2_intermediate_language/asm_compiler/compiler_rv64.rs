@@ -14,6 +14,7 @@ use crate::intermediate_language::{
     IrValue,
 };
 use std::collections::{HashMap, HashSet};
+use log::warn;
 
 const ZERO: Reg = 0;
 const RA: Reg = 1;
@@ -110,10 +111,8 @@ impl CompilerRv64 {
                 ptr,
                 offset,
             } => {
-                let ptr_slot = ctx.slot_for_reg(ptr).expect("ptr slot");
                 let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
-                let ptr_tmp = self.alloc_temp_reg();
-                self.emit_ld(ptr_tmp, SP, ptr_slot as i32);
+                let ptr_tmp = self.load_pointer_operand_to_temp(ptr, ctx);
                 let addr_tmp = if let Some(off) = offset {
                     let tmp = self.alloc_temp_reg();
                     self.emit_addi(tmp, ptr_tmp, *off as i32);
@@ -139,16 +138,11 @@ impl CompilerRv64 {
                 ptr,
                 offset,
             } => {
-                let ptr_slot = ctx.slot_for_reg(ptr).expect("ptr slot");
-                let ptr_tmp = self.alloc_temp_reg();
-                self.emit_ld(ptr_tmp, SP, ptr_slot as i32);
-                let addr_tmp = if let Some(off) = offset {
-                    let tmp = self.alloc_temp_reg();
-                    self.emit_addi(tmp, ptr_tmp, *off as i32);
-                    tmp
-                } else {
-                    ptr_tmp
-                };
+                // Compute the destination address.
+                // If ptr is a stack_address register, its "value" IS the address
+                // (sp + slot). We must NOT dereference it a second time.
+                let addr_tmp = self.resolve_ptr_to_addr(ptr, ctx, offset.map(|o| o as i32));
+
                 let resolved_ty = self.resolve_ir_type(ty);
                 if matches!(resolved_ty, IrType::Array { .. } | IrType::Aggregate(_)) {
                     let IrValue::Register(reg) = value else {
@@ -172,10 +166,8 @@ impl CompilerRv64 {
                 ptr,
                 bytes,
             } => {
-                let ptr_slot = ctx.slot_for_reg(ptr).expect("ptr slot");
                 let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
-                let ptr_tmp = self.alloc_temp_reg();
-                self.emit_ld(ptr_tmp, SP, ptr_slot as i32);
+                let ptr_tmp = self.load_pointer_operand_to_temp(ptr, ctx);
                 let byte_val_reg = self.load_value_to_temp(bytes, ctx);
                 let off_tmp = self.alloc_temp_reg();
                 self.emit_mv(off_tmp, byte_val_reg);
@@ -189,10 +181,8 @@ impl CompilerRv64 {
                 base_ptr,
                 idx,
             } => {
-                let base_slot = ctx.slot_for_reg(base_ptr).expect("base slot");
                 let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
-                let base_tmp = self.alloc_temp_reg();
-                self.emit_ld(base_tmp, SP, base_slot as i32);
+                let base_tmp = self.load_pointer_operand_to_temp(base_ptr, ctx);
                 let idx_tmp = self.load_value_to_temp(idx, ctx);
                 let scale = self.type_size(ty);
                 let scaled_tmp = self.alloc_temp_reg();
@@ -307,9 +297,7 @@ impl CompilerRv64 {
                 self.emit_sd(SP, A0, dest_slot as i32);
             }
             HeapFree { ptr } => {
-                let ptr_slot = ctx.slot_for_reg(ptr).expect("ptr slot");
-                let ptr_tmp = self.alloc_temp_reg();
-                self.emit_ld(ptr_tmp, SP, ptr_slot as i32);
+                let ptr_tmp = self.load_value_to_temp(&IrValue::Register(ptr.clone()), ctx);
                 self.emit_mv(A0, ptr_tmp);
                 self.emitter.emit_raw("\tcall free");
             }
@@ -343,7 +331,43 @@ impl CompilerRv64 {
     }
 
     // -------------------------------------------------------------------------
-    // RISC‑V instruction emission helpers (unchanged)
+    // Key helper: resolve a pointer register + optional immediate offset
+    // into an address held in a temporary register.
+    //
+    // The critical distinction:
+    //   - stack_address registers: their VALUE is already an address computed
+    //     as (sp + slot). We use `addi` to offset from the stack pointer.
+    //   - normal pointer registers: their VALUE is a pointer stored in the
+    //     stack slot. We `ld` the pointer, then optionally add the offset.
+    // -------------------------------------------------------------------------
+    fn resolve_ptr_to_addr(
+        &mut self,
+        ptr: &crate::intermediate_language::IrRegister,
+        ctx: &FunctionContext,
+        byte_offset: Option<i32>,
+    ) -> Reg {
+        let slot = ctx.slot_for_reg(ptr).expect("ptr slot");
+        let tmp = self.alloc_temp_reg();
+
+        if ctx.is_stack_address(ptr) {
+            // The address IS (sp + slot). Apply any extra byte offset immediately.
+            let total_offset = slot as i64 + byte_offset.unwrap_or(0) as i64;
+            self.emit_add_imm(tmp, SP, total_offset);
+        } else {
+            // Load the pointer value from the stack slot.
+            self.emit_ld(tmp, SP, slot as i32);
+            // Then add the byte offset if present.
+            if let Some(off) = byte_offset {
+                if off != 0 {
+                    self.emit_add_imm(tmp, tmp, off as i64);
+                }
+            }
+        }
+        tmp
+    }
+
+    // -------------------------------------------------------------------------
+    // RISC‑V instruction emission helpers
     // -------------------------------------------------------------------------
     fn emit_addi(&mut self, rd: Reg, rs1: Reg, imm: i32) {
         self.emitter
@@ -441,6 +465,15 @@ impl CompilerRv64 {
     fn emit_mv(&mut self, rd: Reg, rs: Reg) {
         self.emit_addi(rd, rs, 0);
     }
+    fn emit_add_imm(&mut self, rd: Reg, rs: Reg, imm: i64) {
+        if (-2048..=2047).contains(&imm) {
+            self.emit_addi(rd, rs, imm as i32);
+        } else {
+            let tmp = self.alloc_temp_reg();
+            self.emit_li(tmp, imm);
+            self.emit_add(rd, rs, tmp);
+        }
+    }
     fn emit_mul_imm(&mut self, rd: Reg, rs: Reg, imm: i32) {
         if imm == 1 {
             self.emit_mv(rd, rs);
@@ -495,17 +528,23 @@ impl CompilerRv64 {
             .emit_inst(RealInstruction::FmvWX(FmvWX::new(fd, rs)));
     }
 
-    fn copy_bytes_from_addr_to_slot(&mut self, slot: usize, addr_reg: Reg, offset: i32, size: usize) {
+    fn copy_bytes_from_addr_to_slot(
+        &mut self,
+        slot: usize,
+        addr_reg: Reg,
+        offset: i32,
+        size: usize,
+    ) {
+        let byte_tmp = self.alloc_temp_reg();
         for i in 0..size {
-            let tmp = self.alloc_temp_reg();
             self.emitter.emit_inst(RealInstruction::Lb(Lb::new(
-                tmp,
+                byte_tmp,
                 addr_reg,
                 offset + i as i32,
             )));
             self.emitter.emit_inst(RealInstruction::Sb(Sb::new(
                 SP,
-                tmp,
+                byte_tmp,
                 slot as i32 + i as i32,
             )));
         }
@@ -518,33 +557,34 @@ impl CompilerRv64 {
         offset: i32,
         size: usize,
     ) {
+        let byte_tmp = self.alloc_temp_reg();
         for i in 0..size {
-            let tmp = self.alloc_temp_reg();
             self.emitter.emit_inst(RealInstruction::Lb(Lb::new(
-                tmp,
+                byte_tmp,
                 SP,
                 slot as i32 + i as i32,
             )));
             self.emitter.emit_inst(RealInstruction::Sb(Sb::new(
                 addr_reg,
-                tmp,
+                byte_tmp,
                 offset + i as i32,
             )));
         }
     }
 
-    // Load a value into a temporary register
     fn load_value_to_temp(&mut self, val: &IrValue, ctx: &FunctionContext) -> Reg {
         let temp = self.alloc_temp_reg();
         match val {
             IrValue::Register(reg) => {
                 let slot = ctx.slot_for_reg(reg).expect("reg slot");
                 if ctx.is_stack_address(reg) {
-                    self.emit_addi(temp, SP, slot as i32);
+                    // The register represents the address of a stack slot,
+                    // so produce (sp + slot) rather than dereferencing it.
+                    self.emit_add_imm(temp, SP, slot as i64);
                 } else {
                     let ty = ctx
                         .type_for_reg(reg)
-                        .unwrap_or(IrType::Integer(crate::intermediate_language::IntWidth::I32));
+                        .unwrap_or(IrType::Integer(crate::intermediate_language::IntWidth::I64));
                     self.emit_load_from_slot(temp, slot, &ty);
                 }
             }
@@ -560,6 +600,25 @@ impl CompilerRv64 {
                 self.emitter
                     .emit_raw(&format!("\tla {}, {}", reg_name(temp, false), symbol));
             }
+        }
+        temp
+    }
+
+    /// Load the pointer held by `reg` into a fresh temp.
+    ///
+    /// - stack_address: the "pointer" is `sp + slot`  →  use `addi`
+    /// - normal:        the pointer is stored in the slot  →  use `ld`
+    fn load_pointer_operand_to_temp(
+        &mut self,
+        reg: &crate::intermediate_language::IrRegister,
+        ctx: &FunctionContext,
+    ) -> Reg {
+        let temp = self.alloc_temp_reg();
+        let slot = ctx.slot_for_reg(reg).expect("reg slot");
+        if ctx.is_stack_address(reg) {
+            self.emit_add_imm(temp, SP, slot as i64);
+        } else {
+            self.emit_ld(temp, SP, slot as i32);
         }
         temp
     }
@@ -792,6 +851,33 @@ impl CompilerRv64 {
         }
     }
 
+    /// Return the natural alignment of a (resolved) type, in bytes.
+    fn type_alignment(&self, ty: &IrType) -> usize {
+        match self.resolve_ir_type(ty) {
+            IrType::Void => 1,
+            IrType::Integer(w) => match w {
+                crate::intermediate_language::IntWidth::I1 => 1,
+                crate::intermediate_language::IntWidth::I8 => 1,
+                crate::intermediate_language::IntWidth::I16 => 2,
+                crate::intermediate_language::IntWidth::I32 => 4,
+                crate::intermediate_language::IntWidth::I64 => 8,
+            },
+            IrType::Float(w) => match w {
+                crate::intermediate_language::FloatWidth::F32 => 4,
+                crate::intermediate_language::FloatWidth::F64 => 8,
+            },
+            IrType::Pointer(_) | IrType::Named(_) => 8,
+            IrType::Array { element, .. } => self.type_alignment(&element),
+            IrType::Aggregate(fields) => fields
+                .iter()
+                .map(|(_, ft)| self.type_alignment(ft))
+                .max()
+                .unwrap_or(1),
+        }
+    }
+
+    /// Return the padded size of a type, respecting natural alignment of every
+    /// field and the overall struct alignment (matching the C ABI).
     fn type_size(&self, ty: &IrType) -> usize {
         match self.resolve_ir_type(ty) {
             IrType::Void => 0,
@@ -807,9 +893,30 @@ impl CompilerRv64 {
                 crate::intermediate_language::FloatWidth::F64 => 8,
             },
             IrType::Pointer(_) => 8,
-            IrType::Array { len, element } => len * self.type_size(&element),
-            IrType::Aggregate(fields) => fields.iter().map(|(_, t)| self.type_size(t)).sum(),
-            IrType::Named(_) => 8,
+            IrType::Array { len, element } => {
+                // Each element occupies exactly its padded size.
+                len * self.type_size(&element)
+            }
+            IrType::Aggregate(fields) => {
+                // Walk fields respecting natural alignment, then round the
+                // total up to the struct's own alignment so that arrays of
+                // structs are correctly strided.
+                let mut offset: usize = 0;
+                let mut max_align: usize = 1;
+                for (_, field_ty) in &fields {
+                    let align = self.type_alignment(field_ty);
+                    max_align = max_align.max(align);
+                    // Pad to field alignment.
+                    offset = (offset + align - 1) & !(align - 1);
+                    offset += self.type_size(field_ty);
+                }
+                // Pad total to struct alignment.
+                (offset + max_align - 1) & !(max_align - 1)
+            }
+            IrType::Named(_) => {
+                warn!("Cannot compute size of unresolved named type; defaulting to 8");
+                8
+            }
         }
     }
 }

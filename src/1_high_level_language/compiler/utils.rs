@@ -57,6 +57,8 @@ impl HighLevelCompiler {
     ) -> Option<(i64, IrType)> {
         let mut offset = 0i64;
         for (idx, (name, field_ty)) in fields.iter().enumerate() {
+            let field_alignment = self.type_alignment_in_bytes(field_ty) as i64;
+            offset = Self::align_to(offset, field_alignment);
             if name == field || idx.to_string() == field {
                 return Some((offset, field_ty.clone()));
             }
@@ -150,9 +152,42 @@ impl HighLevelCompiler {
             IrType::Pointer(_) => 8, // 64-bit ABI
             IrType::Array { len, element } => len * self.type_size_in_bytes(element),
             IrType::Aggregate(fields) => {
-                fields.iter().map(|(_, t)| self.type_size_in_bytes(t)).sum()
+                let mut offset = 0i64;
+                let mut aggregate_alignment = 1i64;
+
+                for (_, field_ty) in fields {
+                    let field_alignment = self.type_alignment_in_bytes(field_ty) as i64;
+                    aggregate_alignment = aggregate_alignment.max(field_alignment);
+                    offset = Self::align_to(offset, field_alignment);
+                    offset += self.type_size_in_bytes(field_ty) as i64;
+                }
+
+                Self::align_to(offset, aggregate_alignment) as usize
             }
             _ => 0,
+        }
+    }
+
+    pub(super) fn type_alignment_in_bytes(&self, ty: &IrType) -> usize {
+        match &self.resolve_named_type(ty) {
+            IrType::Void => 1,
+            IrType::Integer(width) => match width {
+                IntWidth::I1 | IntWidth::I8 => 1,
+                IntWidth::I16 => 2,
+                IntWidth::I32 => 4,
+                IntWidth::I64 => 8,
+            },
+            IrType::Float(width) => match width {
+                FloatWidth::F32 => 4,
+                FloatWidth::F64 => 8,
+            },
+            IrType::Pointer(_) | IrType::Named(_) => 8,
+            IrType::Array { element, .. } => self.type_alignment_in_bytes(element),
+            IrType::Aggregate(fields) => fields
+                .iter()
+                .map(|(_, t)| self.type_alignment_in_bytes(t))
+                .max()
+                .unwrap_or(1),
         }
     }
 }

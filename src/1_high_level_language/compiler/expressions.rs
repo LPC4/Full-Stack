@@ -677,6 +677,7 @@ impl HighLevelCompiler {
             std::collections::HashMap::new();
         let mut running_offset = 0i64;
         for (name, ty) in &agg_fields {
+            running_offset = Self::align_to(running_offset, self.type_alignment_in_bytes(ty) as i64);
             field_offsets.insert(name.as_str(), (running_offset, ty.clone()));
             running_offset += self.type_size_in_bytes(ty) as i64;
         }
@@ -734,5 +735,10 @@ impl HighLevelCompiler {
         }
 
         Some(value.clone())
+    }
+
+    pub(crate) fn align_to(value: i64, alignment: i64) -> i64 {
+        let alignment = alignment.max(1);
+        (value + alignment - 1) & !(alignment - 1)
     }
 }

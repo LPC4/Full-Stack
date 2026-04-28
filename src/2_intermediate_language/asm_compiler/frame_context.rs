@@ -27,24 +27,29 @@ impl FrameContext {
         }
     }
 
-    /// Reserve space for a stack slot of given size, return its offset from sp.
-    pub fn alloc_slot(&mut self, size: usize) -> usize {
-        let offset = self.next_offset;
-        self.next_offset += size;
+    fn align_to(value: usize, alignment: usize) -> usize {
+        let alignment = alignment.max(1);
+        (value + alignment - 1) & !(alignment - 1)
+    }
+
+    /// Reserve space for a stack slot of given size and alignment, return its offset from sp.
+    pub fn alloc_slot(&mut self, size: usize, alignment: usize) -> usize {
+        let offset = Self::align_to(self.next_offset, alignment);
+        self.next_offset = offset + size;
         offset
     }
 
     /// Mark that the return address must be saved.
     pub fn save_ra(&mut self) {
         if self.ra_offset.is_none() {
-            self.ra_offset = Some(self.alloc_slot(8));
+            self.ra_offset = Some(self.alloc_slot(8, 8));
         }
     }
 
     /// Mark that a callee‑saved integer register must be saved.
     pub fn save_reg(&mut self, reg: u8) {
         if !self.saved_regs.iter().any(|(r, _)| *r == reg) {
-            let offset = self.alloc_slot(8);
+            let offset = self.alloc_slot(8, 8);
             self.saved_regs.push((reg, offset));
         }
     }
@@ -84,11 +89,44 @@ impl FrameContext {
             },
             IrType::Pointer(_) => 8,
             IrType::Array { len, element } => len * self.type_size(&element, type_aliases),
+            IrType::Aggregate(fields) => {
+                let mut offset = 0usize;
+                let mut aggregate_alignment = 1usize;
+
+                for (_, field_ty) in fields {
+                    let field_alignment = self.type_alignment(&field_ty, type_aliases);
+                    aggregate_alignment = aggregate_alignment.max(field_alignment);
+                    offset = Self::align_to(offset, field_alignment);
+                    offset += self.type_size(&field_ty, type_aliases);
+                }
+
+                Self::align_to(offset, aggregate_alignment)
+            }
+            IrType::Named(_) => 8, // Should have been resolved, but fallback to pointer size
+        }
+    }
+
+    pub fn type_alignment(&self, ty: &IrType, type_aliases: &HashMap<String, IrType>) -> usize {
+        match self.resolve_type(ty, type_aliases) {
+            IrType::Void => 1,
+            IrType::Integer(w) => match w {
+                crate::intermediate_language::IntWidth::I1 => 1,
+                crate::intermediate_language::IntWidth::I8 => 1,
+                crate::intermediate_language::IntWidth::I16 => 2,
+                crate::intermediate_language::IntWidth::I32 => 4,
+                crate::intermediate_language::IntWidth::I64 => 8,
+            },
+            IrType::Float(w) => match w {
+                crate::intermediate_language::FloatWidth::F32 => 4,
+                crate::intermediate_language::FloatWidth::F64 => 8,
+            },
+            IrType::Pointer(_) | IrType::Named(_) => 8,
+            IrType::Array { element, .. } => self.type_alignment(&element, type_aliases),
             IrType::Aggregate(fields) => fields
                 .iter()
-                .map(|(_, t)| self.type_size(t, type_aliases))
-                .sum(),
-            IrType::Named(_) => 8, // Should have been resolved, but fallback to pointer size
+                .map(|(_, field_ty)| self.type_alignment(field_ty, type_aliases))
+                .max()
+                .unwrap_or(1),
         }
     }
 

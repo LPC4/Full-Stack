@@ -52,7 +52,8 @@ impl FunctionContext {
     /// Allocate a stack slot for a virtual register.
     pub fn alloc_slot_for_reg(&mut self, reg: &IrRegister, ty: &IrType) -> usize {
         let size = self.frame.type_size(ty, &self.type_aliases);
-        let slot = self.frame.alloc_slot(size);
+        let alignment = self.frame.type_alignment(ty, &self.type_aliases);
+        let slot = self.frame.alloc_slot(size, alignment);
         self.reg_slots.insert(reg.clone(), slot);
         self.reg_types.insert(reg.clone(), ty.clone());
         slot

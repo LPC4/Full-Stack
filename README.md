@@ -141,7 +141,7 @@ For significant changes, please open an issue first to discuss your approach.
 
 ## License
 
-MIT License, see [LICENSE](LICENSE-MIT) for details.
+Dual licensed under MIT and APACHE 2.0 Licenses, see [MIT](LICENSE-MIT) and [APACHE](LICENSE-APACHE) for details.
 
 *Built with Rust, eframe, and egui.*
 
