@@ -1,5 +1,5 @@
-use crate::view::{CompilerView, CompilationState, ProgramCatalog};
 use crate::view::highlight_code;
+use crate::view::{CompilationState, CompilerView, ProgramCatalog};
 use egui::{Frame, TextEdit, TextStyle};
 
 pub struct SourceView;
@@ -9,7 +9,13 @@ impl CompilerView for SourceView {
         "Source"
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, _ctx: &egui::Context, _state: &mut CompilationState, catalog: &mut ProgramCatalog) {
+    fn ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        _ctx: &egui::Context,
+        _state: &mut CompilationState,
+        catalog: &mut ProgramCatalog,
+    ) {
         let mut source_code = catalog.get_selected_source();
 
         let mut layouter = |ui: &egui::Ui, string: &dyn egui::TextBuffer, _wrap: f32| {
@@ -33,7 +39,7 @@ impl CompilerView for SourceView {
                             .lock_focus(true)
                             .desired_width(f32::INFINITY)
                             .min_size(ui.available_size())
-                            .layouter(&mut layouter)
+                            .layouter(&mut layouter),
                     );
 
                     if response.changed() {

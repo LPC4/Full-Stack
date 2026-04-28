@@ -1,7 +1,6 @@
 use super::{
     assembly_emitter::AssemblyEmitter, data_section::DataSection,
-    function_context::FunctionContext,
-    register_allocator::RegisterAllocator,
+    function_context::FunctionContext, register_allocator::RegisterAllocator,
 };
 use crate::assembly_language::encode_decode::Reg;
 use crate::assembly_language::real::RealInstruction;
@@ -13,8 +12,8 @@ use crate::intermediate_language::{
     IrCastMode, IrCmpOp, IrInstruction, IrMathOp, IrProgram, IrTerminator, IrType, IrUnaryOp,
     IrValue,
 };
-use std::collections::{HashMap, HashSet};
 use log::warn;
+use std::collections::{HashMap, HashSet};
 
 const ZERO: Reg = 0;
 const RA: Reg = 1;
@@ -49,7 +48,8 @@ impl CompilerRv64 {
             self.data.add_global_string(s);
         }
         for alias in &program.type_aliases {
-            self.type_aliases.insert(alias.name.clone(), alias.ty.clone());
+            self.type_aliases
+                .insert(alias.name.clone(), alias.ty.clone());
             self.data.add_type_alias(alias);
         }
         for func in &program.functions {
@@ -98,7 +98,6 @@ impl CompilerRv64 {
         ctx.emit_epilogue(&mut self.emitter);
         self.emitter.end_function();
     }
-
 
     fn lower_instruction(&mut self, inst: &IrInstruction, ctx: &mut FunctionContext) {
         use IrInstruction::*;
@@ -261,7 +260,12 @@ impl CompilerRv64 {
                 }
                 self.emit_sd(SP, result_tmp, dest_slot as i32);
             }
-            Cast { dest, mode, value, ty } => {
+            Cast {
+                dest,
+                mode,
+                value,
+                ty,
+            } => {
                 let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
                 let src_tmp = self.load_value_to_temp(value, ctx);
                 let result_tmp = self.alloc_temp_reg();

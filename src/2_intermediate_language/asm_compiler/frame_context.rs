@@ -165,7 +165,10 @@ impl FrameContext {
                 fields
                     .iter()
                     .map(|(name, field_ty)| {
-                        (name.clone(), self.resolve_type_inner(field_ty, type_aliases, seen))
+                        (
+                            name.clone(),
+                            self.resolve_type_inner(field_ty, type_aliases, seen),
+                        )
                     })
                     .collect(),
             ),

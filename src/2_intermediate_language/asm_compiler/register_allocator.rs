@@ -2,9 +2,7 @@
 //! No register reuse – all values are stored in memory.
 
 use super::function_context::FunctionContext;
-use crate::intermediate_language::{
-    IrFunction, IrInstruction, IrTerminator, IrType, IrValue,
-};
+use crate::intermediate_language::{IrFunction, IrInstruction, IrTerminator, IrType, IrValue};
 use std::collections::HashMap;
 
 pub struct RegisterAllocator;

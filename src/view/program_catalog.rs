@@ -218,11 +218,8 @@ impl ProgramCatalog {
             .checked_add(1)
             .unwrap_or(self.next_custom_program_id);
 
-        self.programs.push(ProgramFile::custom(
-            program_id.clone(),
-            name,
-            source,
-        ));
+        self.programs
+            .push(ProgramFile::custom(program_id.clone(), name, source));
         self.selected_program_id = program_id;
     }
 
@@ -267,4 +264,3 @@ impl ProgramCatalog {
         self.programs.iter().filter(|p| p.kind == kind).collect()
     }
 }
-

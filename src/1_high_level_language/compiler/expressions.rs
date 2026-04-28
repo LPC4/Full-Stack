@@ -407,10 +407,7 @@ impl HighLevelCompiler {
         }
     }
 
-    pub(super) fn lower_array_literal(
-        &mut self,
-        elements: &[Expression],
-    ) -> Option<LoweredValue> {
+    pub(super) fn lower_array_literal(&mut self, elements: &[Expression]) -> Option<LoweredValue> {
         if elements.is_empty() {
             self.context
                 .diagnostics
@@ -428,9 +425,7 @@ impl HighLevelCompiler {
             if self.resolve_named_type(&lowered.ty) != self.resolve_named_type(&element_ty) {
                 self.context.diagnostics.error(format!(
                     "array literal element {} has type `{}`, but expected `{}`",
-                    index,
-                    lowered.ty,
-                    element_ty
+                    index, lowered.ty, element_ty
                 ));
                 return None;
             }
@@ -677,7 +672,8 @@ impl HighLevelCompiler {
             std::collections::HashMap::new();
         let mut running_offset = 0i64;
         for (name, ty) in &agg_fields {
-            running_offset = Self::align_to(running_offset, self.type_alignment_in_bytes(ty) as i64);
+            running_offset =
+                Self::align_to(running_offset, self.type_alignment_in_bytes(ty) as i64);
             field_offsets.insert(name.as_str(), (running_offset, ty.clone()));
             running_offset += self.type_size_in_bytes(ty) as i64;
         }

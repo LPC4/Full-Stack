@@ -31,7 +31,11 @@ pub fn auto_grid_columns(ui: &egui::Ui, pane_count: usize) -> usize {
 
 /// Splits a rectangle into a grid of equally-sized cells.
 /// Returns a vector of rectangles representing each cell's bounds.
-pub fn split_rect_into_grid(rect: egui::Rect, pane_count: usize, columns: usize) -> Vec<egui::Rect> {
+pub fn split_rect_into_grid(
+    rect: egui::Rect,
+    pane_count: usize,
+    columns: usize,
+) -> Vec<egui::Rect> {
     let columns = columns.max(1);
     let rows = pane_count.div_ceil(columns).max(1);
     let cell_width = rect.width() / columns as f32;
@@ -63,4 +67,3 @@ pub fn split_rect_into_grid(rect: egui::Rect, pane_count: usize, columns: usize)
 
     rects
 }
-

@@ -1,11 +1,11 @@
-use egui_dock::{DockState, NodeIndex};
 use crate::high_level_language::compilation_pipeline::CompilationPipeline;
 use crate::high_level_language::lexer::Lexer;
 use crate::high_level_language::token::Token;
 use crate::view::{
-    blank_custom_program_source, AssemblyView, CompilationState, CompilerView, IrView,
-    ProgramCatalog, ProgramKind, SourceView, AstView, TokensView
+    AssemblyView, AstView, CompilationState, CompilerView, IrView, ProgramCatalog, ProgramKind,
+    SourceView, TokensView, blank_custom_program_source,
 };
+use egui_dock::{DockState, NodeIndex};
 
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)]
@@ -56,7 +56,8 @@ impl TemplateApp {
         let mut dock = DockState::new(vec![source]);
         let surface = dock.main_surface_mut();
 
-        let [_left_node, right_node] = surface.split_right(NodeIndex::root(), 0.5, vec![ir, tokens, ast]);
+        let [_left_node, right_node] =
+            surface.split_right(NodeIndex::root(), 0.5, vec![ir, tokens, ast]);
 
         surface.split_below(right_node, 0.5, vec![asm]);
 
@@ -160,12 +161,7 @@ impl TemplateApp {
         });
     }
 
-    fn render_program_section(
-        &mut self,
-        ui: &mut egui::Ui,
-        kind: ProgramKind,
-        title: &str,
-    ) {
+    fn render_program_section(&mut self, ui: &mut egui::Ui, kind: ProgramKind, title: &str) {
         let entries: Vec<(String, String)> = self
             .catalog
             .get_programs_by_kind(kind)
@@ -255,14 +251,10 @@ impl eframe::App for TemplateApp {
                         });
                     }
 
-                    ui.with_layout(
-                        egui::Layout::right_to_left(egui::Align::Center),
-                        |ui| match &self.compilation_state.error {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        match &self.compilation_state.error {
                             Some(error) => {
-                                ui.colored_label(
-                                    egui::Color32::from_rgb(220, 80, 80),
-                                    error,
-                                );
+                                ui.colored_label(egui::Color32::from_rgb(220, 80, 80), error);
                             }
                             None => {
                                 ui.colored_label(
@@ -270,8 +262,8 @@ impl eframe::App for TemplateApp {
                                     "Compilation successful",
                                 );
                             }
-                        },
-                    );
+                        }
+                    });
                 });
 
                 ui.add_space(4.0);
@@ -281,10 +273,13 @@ impl eframe::App for TemplateApp {
             egui_dock::DockArea::new(&mut self.dock)
                 .show_add_buttons(false)
                 .show_close_buttons(false)
-                .show_inside(ui, &mut DockTabViewer {
-                    state: &mut self.compilation_state,
-                    catalog: &mut self.catalog,
-                });
+                .show_inside(
+                    ui,
+                    &mut DockTabViewer {
+                        state: &mut self.compilation_state,
+                        catalog: &mut self.catalog,
+                    },
+                );
         });
     }
 }

@@ -66,14 +66,21 @@ impl HighLevelCompiler {
         let mut ir_program = IrProgram::new("ir_program");
 
         for declaration in &program.declarations {
-            if let DeclNode::Function { name, generics, return_type, .. } = &declaration.decl {
+            if let DeclNode::Function {
+                name,
+                generics,
+                return_type,
+                ..
+            } = &declaration.decl
+            {
                 let final_name = if generics.is_empty() {
                     name.clone()
                 } else {
                     format!("{}<{}>", name, generics.join(", "))
                 };
                 let return_ty = self.lower_return_type(return_type.as_ref());
-                self.function_return_types.insert(final_name.clone(), return_ty.clone());
+                self.function_return_types
+                    .insert(final_name.clone(), return_ty.clone());
                 if final_name != *name {
                     self.function_return_types.insert(name.clone(), return_ty);
                 }

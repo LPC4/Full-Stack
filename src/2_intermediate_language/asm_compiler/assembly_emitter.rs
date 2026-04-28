@@ -429,4 +429,3 @@ impl Rv64Backend for AssemblyEmitter {
         AssemblyEmitter::emit_load_to_slot(self, slot, addr_reg, ty, offset);
     }
 }
-

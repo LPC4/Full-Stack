@@ -4,9 +4,9 @@ use crate::intermediate_language::{IrFunction, IrLabel, IrRegister, IrType};
 use std::collections::{HashMap, HashSet};
 
 // RISC‑V register numbers used in prologue/epilogue.
-const SP: Reg = 2;   // stack pointer
-const RA: Reg = 1;   // return address
-const S0: Reg = 8;   // callee‑saved frame pointer (used as temp in prologue)
+const SP: Reg = 2; // stack pointer
+const RA: Reg = 1; // return address
+const S0: Reg = 8; // callee‑saved frame pointer (used as temp in prologue)
 
 /// Narrow backend interface for prologue/epilogue and parameter spills.
 pub trait Rv64Backend {
@@ -152,11 +152,7 @@ impl FunctionContext {
     }
 
     /// Emit spills for function parameters that arrive in registers or on the stack.
-    pub fn emit_parameter_spills(
-        &self,
-        backend: &mut impl Rv64Backend,
-        func: &IrFunction,
-    ) {
+    pub fn emit_parameter_spills(&self, backend: &mut impl Rv64Backend, func: &IrFunction) {
         if func.params.is_empty() {
             return;
         }
@@ -176,7 +172,6 @@ impl FunctionContext {
             }
         }
     }
-
 }
 
 /// Return the argument register for the given index (a0–a7).
