@@ -27,7 +27,7 @@ impl HighLevelCompiler {
             Statement::Return(expr) => {
                 // Check if we're in a function that returns an aggregate (has sret)
                 let has_sret = self.context.symbols.lookup("__sret_ptr").is_some();
-                
+
                 if has_sret {
                     // For functions returning aggregates, we need to copy the value to sret
                     if let Some(return_expr) = expr {
@@ -35,42 +35,40 @@ impl HighLevelCompiler {
                             // The lowered value is a register pointing to the local aggregate
                             // We need to copy it to the sret location
                             let sret_ptr_info = self.context.symbols.lookup("__sret_ptr").cloned();
-                            
+
                             if let Some(sret_info) = sret_ptr_info {
                                 // Get the sret pointer value (used by backend in lower_terminator)
                                 let _sret_ptr_val = sret_info.value;
-                                
+
                                 // Get the source address (where the aggregate is currently stored)
                                 // Backend uses this to copy aggregate to sret location
-                                let _src_addr = match &lowered.value {
-                                    IrValue::Register(reg) => reg.clone(),
-                                    _ => {
-                                        self.context.diagnostics.error(
-                                            "Aggregate return value must be a register".to_owned()
-                                        );
-                                        return;
-                                    }
+                                let _src_addr = if let IrValue::Register(reg) = &lowered.value { reg.clone() } else {
+                                    self.context.diagnostics.error(
+                                        "Aggregate return value must be a register".to_owned(),
+                                    );
+                                    return;
                                 };
-                                
+
                                 // Emit code to copy the aggregate from src_addr to sret_ptr
                                 // We'll use a series of Load/Store instructions to copy field by field
                                 let agg_ty = lowered.ty.clone();
-                                
-                                self.push_instruction(IrInstruction::Comment(
-                                    format!("copying aggregate return ({}) to sret location", agg_ty)
-                                ));
+
+                                self.push_instruction(IrInstruction::Comment(format!(
+                                    "copying aggregate return ({agg_ty}) to sret location"
+                                )));
 
                                 // The backend already handles copying from src to sret in lower_terminator
                                 self.set_terminator(IrTerminator::Return(Some(lowered.value)));
                             } else {
                                 self.context.diagnostics.error(
-                                    "Internal error: __sret_ptr not found in symbol table".to_owned()
+                                    "Internal error: __sret_ptr not found in symbol table"
+                                        .to_owned(),
                                 );
                             }
                         }
                     } else {
                         self.context.diagnostics.error(
-                            "Function returning aggregate must have a return value".to_owned()
+                            "Function returning aggregate must have a return value".to_owned(),
                         );
                     }
                 } else {

@@ -39,7 +39,7 @@ pub struct FunctionContext {
 impl FunctionContext {
     pub fn new(name: &str, type_aliases: &HashMap<String, IrType>) -> Self {
         Self {
-            name: name.to_string(),
+            name: name.to_owned(),
             frame: FrameContext::new(),
             type_aliases: type_aliases.clone(),
             reg_slots: HashMap::new(),
@@ -129,14 +129,16 @@ impl FunctionContext {
     pub fn emit_prologue(&self, backend: &mut impl Rv64Backend) {
         backend.emit_comment("--- Function Prologue ---");
         let frame_size = self.frame_size();
-        backend.emit_comment(&format!("Allocate stack frame: {} bytes", frame_size));
+        backend.emit_comment(&format!("Allocate stack frame: {frame_size} bytes"));
         backend.emit_add_imm(SP, SP, -(frame_size as i64));
         if let Some(offset) = self.ra_offset() {
-            backend.emit_comment(&format!("Save return address (ra) at offset {}", offset));
+            backend.emit_comment(&format!("Save return address (ra) at offset {offset}"));
             backend.emit_sd(SP, RA, offset as i32);
         }
         for (reg, offset) in self.saved_regs() {
-            backend.emit_comment(&format!("Save callee-saved register s{} at offset {}", reg, offset));
+            backend.emit_comment(&format!(
+                "Save callee-saved register s{reg} at offset {offset}"
+            ));
             backend.emit_sd(SP, *reg, *offset as i32);
         }
         backend.emit_comment("Set up frame pointer");
@@ -148,15 +150,19 @@ impl FunctionContext {
     pub fn emit_epilogue(&self, backend: &mut impl Rv64Backend) {
         backend.emit_comment("--- Function Epilogue ---");
         for (reg, offset) in self.saved_regs().iter().rev() {
-            backend.emit_comment(&format!("Restore callee-saved register s{} from offset {}", reg, offset));
+            backend.emit_comment(&format!(
+                "Restore callee-saved register s{reg} from offset {offset}"
+            ));
             backend.emit_ld(*reg, SP, *offset as i32);
         }
         if let Some(offset) = self.ra_offset() {
-            backend.emit_comment(&format!("Restore return address (ra) from offset {}", offset));
+            backend.emit_comment(&format!(
+                "Restore return address (ra) from offset {offset}"
+            ));
             backend.emit_ld(RA, SP, offset as i32);
         }
         let frame_size = self.frame_size();
-        backend.emit_comment(&format!("Deallocate stack frame: {} bytes", frame_size));
+        backend.emit_comment(&format!("Deallocate stack frame: {frame_size} bytes"));
         backend.emit_add_imm(SP, SP, frame_size as i64);
         backend.emit_comment("Return to caller");
         backend.emit_jalr(0, RA, 0);
@@ -178,13 +184,17 @@ impl FunctionContext {
             let slot = self.slot_for_reg(&param.register).expect("param slot");
             let ty = self.frame.resolve_type(&param.ty, &self.type_aliases);
             if index < 8 {
-                backend.emit_comment(&format!("Spill parameter '{}' from register a{} to stack slot {}", 
-                    param.register, index, slot));
+                backend.emit_comment(&format!(
+                    "Spill parameter '{}' from register a{} to stack slot {}",
+                    param.register, index, slot
+                ));
                 backend.emit_store_from_tmp(SP, arg_reg(index), &ty, slot as i32);
             } else {
                 let offset = ((index - 8) * 8) as i32;
-                backend.emit_comment(&format!("Spill parameter '{}' from caller's stack (offset {}) to slot {}", 
-                    param.register, offset, slot));
+                backend.emit_comment(&format!(
+                    "Spill parameter '{}' from caller's stack (offset {}) to slot {}",
+                    param.register, offset, slot
+                ));
                 backend.emit_load_to_slot(slot, caller_sp, &ty, offset);
             }
         }
@@ -193,14 +203,26 @@ impl FunctionContext {
 
     /// Emit spills for function parameters when the function has an sret (hidden pointer) parameter.
     /// The sret pointer arrives in a0 and needs to be preserved before regular parameter spills.
-    pub fn emit_parameter_spills_with_sret(&self, backend: &mut impl Rv64Backend, func: &IrFunction, sret_slot: usize) {
+    pub fn emit_parameter_spills_with_sret(
+        &self,
+        backend: &mut impl Rv64Backend,
+        func: &IrFunction,
+        sret_slot: usize,
+    ) {
         backend.emit_comment("--- Function Parameter Spills (with sret) ---");
         // First, save the sret pointer from a0 to its designated slot
         // The sret pointer is already in a0 at function entry
         let sret_ptr = arg_reg(0); // a0 contains the sret pointer
-        backend.emit_comment(&format!("Save sret pointer from a0 to stack slot {}", sret_slot));
-        backend.emit_store_from_tmp(SP, sret_ptr, &IrType::Pointer(Box::new(IrType::Void)), sret_slot as i32);
-        
+        backend.emit_comment(&format!(
+            "Save sret pointer from a0 to stack slot {sret_slot}"
+        ));
+        backend.emit_store_from_tmp(
+            SP,
+            sret_ptr,
+            &IrType::Pointer(Box::new(IrType::Void)),
+            sret_slot as i32,
+        );
+
         // Now spill the regular parameters (skip index 0 which is __sret, already handled above)
         if func.params.is_empty() {
             backend.emit_comment("--- End Parameter Spills ---");
@@ -217,13 +239,17 @@ impl FunctionContext {
             // index 1 = first real param = a1, index 2 = a2, etc.
             // Use arg_reg(index) directly — no shift needed
             if index < 8 {
-                backend.emit_comment(&format!("Spill parameter '{}' from register a{} to stack slot {}", 
-                    param.register, index, slot));
+                backend.emit_comment(&format!(
+                    "Spill parameter '{}' from register a{} to stack slot {}",
+                    param.register, index, slot
+                ));
                 backend.emit_store_from_tmp(SP, arg_reg(index), &ty, slot as i32);
             } else {
                 let offset = ((index - 8) * 8) as i32;
-                backend.emit_comment(&format!("Spill parameter '{}' from caller's stack (offset {}) to slot {}", 
-                    param.register, offset, slot));
+                backend.emit_comment(&format!(
+                    "Spill parameter '{}' from caller's stack (offset {}) to slot {}",
+                    param.register, offset, slot
+                ));
                 backend.emit_load_to_slot(slot, caller_sp, &ty, offset);
             }
         }

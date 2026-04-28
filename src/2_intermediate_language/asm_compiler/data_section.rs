@@ -30,24 +30,24 @@ impl DataSection {
             .replace('\t', "\\t")
             .replace('\r', "\\r");
         self.rodata.push(format!("{}:", s.name));
-        self.rodata.push(format!("\t.asciz \"{}\"", escaped));
-        self.rodata.push("\t.align 1".to_string());
+        self.rodata.push(format!("\t.asciz \"{escaped}\""));
+        self.rodata.push("\t.align 1".to_owned());
     }
 
     /// No-op; type aliases are not emitted to assembly.
     pub fn add_type_alias(&mut self, _alias: &IrTypeAlias) {}
 
     pub fn add_bss_symbol(&mut self, name: &str, size: usize, align: usize) {
-        self.bss.push(format!(".globl {}", name));
-        self.bss.push(format!(".balign {}", align));
-        self.bss.push(format!("{}:", name));
-        self.bss.push(format!("\t.space {}", size));
+        self.bss.push(format!(".globl {name}"));
+        self.bss.push(format!(".balign {align}"));
+        self.bss.push(format!("{name}:"));
+        self.bss.push(format!("\t.space {size}"));
     }
 
     pub fn add_data_symbol(&mut self, name: &str, _size: usize, align: usize, init: &[u8]) {
-        self.data.push(format!(".globl {}", name));
-        self.data.push(format!(".balign {}", align));
-        self.data.push(format!("{}:", name));
+        self.data.push(format!(".globl {name}"));
+        self.data.push(format!(".balign {align}"));
+        self.data.push(format!("{name}:"));
         let mut bytes = String::new();
         for (i, b) in init.iter().enumerate() {
             if i % 8 == 0 {
@@ -57,7 +57,7 @@ impl DataSection {
                 }
                 bytes.push_str("\t.byte ");
             }
-            bytes.push_str(&format!("{:#04x}", b));
+            bytes.push_str(&format!("{b:#04x}"));
             if i != init.len() - 1 {
                 bytes.push_str(", ");
             }

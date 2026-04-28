@@ -200,7 +200,7 @@ impl HighLevelCompiler {
                 self.defers.clear();
 
                 let return_ty = self.lower_return_type(return_type.as_ref());
-                
+
                 // For functions returning aggregates, determine return strategy:
                 // - Small structs (≤16 bytes): returned in registers a0/a1
                 // - Large structs (>16 bytes): use sret pattern with hidden pointer
@@ -211,9 +211,9 @@ impl HighLevelCompiler {
                 } else {
                     false
                 };
-                
+
                 let ir_return_ty = if needs_sret {
-                    IrType::Void  // Change return type to void for sret
+                    IrType::Void // Change return type to void for sret
                 } else {
                     return_ty.clone()
                 };
@@ -221,9 +221,11 @@ impl HighLevelCompiler {
                 let mut function = IrFunction::new(final_name.clone(), ir_return_ty);
 
                 // Store the function's ACTUAL return type (before sret transformation) for call-site lookup
-                self.function_return_types.insert(final_name.clone(), return_ty.clone());
+                self.function_return_types
+                    .insert(final_name.clone(), return_ty.clone());
                 if final_name != *name {
-                    self.function_return_types.insert(name.clone(), return_ty.clone());
+                    self.function_return_types
+                        .insert(name.clone(), return_ty.clone());
                 }
 
                 self.start_new_block("entry");
@@ -231,18 +233,18 @@ impl HighLevelCompiler {
                 // If this function returns an aggregate, inject a hidden sret parameter ONLY for large structs
                 // Small structs (≤16 bytes) are returned directly in registers a0/a1
                 if needs_sret {
-                    let sret_reg = IrRegister::Named("__sret".to_string());
+                    let sret_reg = IrRegister::Named("__sret".to_owned());
                     function.push_param(IrParam {
                         ty: IrType::Pointer(Box::new(return_ty.clone())),
                         register: sret_reg.clone(),
                     });
-                    
+
                     self.push_instruction(IrInstruction::Comment(
                         "hidden sret parameter for large aggregate return".to_owned(),
                     ));
-                    
+
                     // Store the sret pointer in a local variable so we can use it in returns
-                    let sret_ptr_reg = IrRegister::Named("__sret_ptr".to_string());
+                    let sret_ptr_reg = IrRegister::Named("__sret_ptr".to_owned());
                     self.push_instruction(IrInstruction::Alloc {
                         dest: sret_ptr_reg.clone(),
                         ty: IrType::Pointer(Box::new(return_ty.clone())),
@@ -254,10 +256,10 @@ impl HighLevelCompiler {
                         ptr: sret_ptr_reg.clone(),
                         offset: None,
                     });
-                    
+
                     // Make the sret pointer available in the symbol table for return statements
                     self.context.symbols.insert(
-                        "__sret_ptr".to_string(),
+                        "__sret_ptr".to_owned(),
                         IrType::Pointer(Box::new(IrType::Pointer(Box::new(return_ty.clone())))),
                         IrValue::Register(sret_ptr_reg),
                     );

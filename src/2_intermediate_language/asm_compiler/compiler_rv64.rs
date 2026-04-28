@@ -1,15 +1,13 @@
 // file: src/2_intermediate_language/asm_compiler/compiler_rv64.rs
 
 use super::{
-    assembly_emitter::AssemblyEmitter,
-    data_section::DataSection,
-    function_context::FunctionContext,
-    register_allocator::RegisterAllocator,
+    assembly_emitter::AssemblyEmitter, data_section::DataSection,
+    function_context::FunctionContext, register_allocator::RegisterAllocator,
 };
 use crate::assembly_language::encode_decode::Reg;
 use crate::assembly_language::real::RealInstruction;
-use crate::assembly_language::riscv::rv64fd::*;
-use crate::assembly_language::riscv::rv64i::*;
+use crate::assembly_language::riscv::rv64fd::{Fsgnjn, fmv_d};
+use crate::assembly_language::riscv::rv64i::{Sw, Sh, Sb};
 use crate::assembly_language::utils::reg_name;
 use crate::intermediate_language::{
     IrCastMode, IrCmpOp, IrInstruction, IrMathOp, IrProgram, IrTerminator, IrType, IrUnaryOp,
@@ -127,7 +125,7 @@ impl CompilerRv64 {
 
     // ---------- instruction lowering ----------
     fn lower_instruction(&mut self, inst: &IrInstruction, ctx: &mut FunctionContext) {
-        use IrInstruction::*;
+        use IrInstruction::{Comment, Alloc, Load, Store, Offset, Index, Math, Unary, Cmp, Cast, Call, Phi, HeapAlloc, HeapFree};
         match inst {
             Comment(s) => self.emitter.emit_comment(s),
             Alloc { .. } => {}
@@ -139,7 +137,8 @@ impl CompilerRv64 {
             } => {
                 self.emitter.reset_temp_counter();
                 let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
-                self.emitter.emit_comment(&format!("Load {} from memory into ${}", ty, dest));
+                self.emitter
+                    .emit_comment(&format!("Load {ty} from memory into ${dest}"));
                 let ptr_tmp = self.load_pointer_operand_to_temp(ptr, ctx);
                 let addr_tmp = if let Some(off) = offset {
                     let tmp = self.emitter.alloc_temp_reg();
@@ -170,7 +169,8 @@ impl CompilerRv64 {
                 self.emitter.reset_temp_counter();
                 let addr_tmp = self.resolve_ptr_to_addr(ptr, ctx, offset.map(|o| o as i32));
                 let resolved_ty = self.resolve_ir_type(ty);
-                self.emitter.emit_comment(&format!("Store {} to memory", ty));
+                self.emitter
+                    .emit_comment(&format!("Store {ty} to memory"));
                 if matches!(resolved_ty, IrType::Array { .. } | IrType::Aggregate(_)) {
                     let IrValue::Register(reg) = value else {
                         unimplemented!("composite stores require a register source")
@@ -242,12 +242,12 @@ impl CompilerRv64 {
                 let resolved_ty = self.resolve_ir_type(ty);
                 if matches!(resolved_ty, IrType::Aggregate(_) | IrType::Array { .. }) {
                     panic!(
-                        "Math operations cannot be performed on aggregate/array type {:?}",
-                        resolved_ty
+                        "Math operations cannot be performed on aggregate/array type {resolved_ty:?}"
                     );
                 }
                 let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
-                self.emitter.emit_comment(&format!("{} operation on {}", op, ty));
+                self.emitter
+                    .emit_comment(&format!("{op} operation on {ty}"));
 
                 if matches!(
                     resolved_ty,
@@ -261,9 +261,9 @@ impl CompilerRv64 {
                         IrMathOp::Sub => self.emitter.emit_fsub_s(result_fp, lhs_fp, rhs_fp),
                         IrMathOp::Mul => self.emitter.emit_fmul_s(result_fp, lhs_fp, rhs_fp),
                         IrMathOp::Div | IrMathOp::SDiv => {
-                            self.emitter.emit_fdiv_s(result_fp, lhs_fp, rhs_fp)
+                            self.emitter.emit_fdiv_s(result_fp, lhs_fp, rhs_fp);
                         }
-                        _ => panic!("Unsupported float math op {:?}", op),
+                        _ => panic!("Unsupported float math op {op:?}"),
                     }
                     self.emitter.emit_fsw(SP, result_fp, dest_slot as i32);
                 } else {
@@ -283,8 +283,12 @@ impl CompilerRv64 {
                         IrMathOp::Or => self.emitter.emit_or(result_tmp, lhs_tmp, rhs_tmp),
                         IrMathOp::Xor => self.emitter.emit_xor(result_tmp, lhs_tmp, rhs_tmp),
                     }
-                    self.emitter
-                        .emit_store_from_tmp(SP, result_tmp, &resolved_ty, dest_slot as i32);
+                    self.emitter.emit_store_from_tmp(
+                        SP,
+                        result_tmp,
+                        &resolved_ty,
+                        dest_slot as i32,
+                    );
                 }
             }
             Unary {
@@ -297,8 +301,7 @@ impl CompilerRv64 {
                 let resolved_ty = self.resolve_ir_type(ty);
                 if matches!(resolved_ty, IrType::Aggregate(_) | IrType::Array { .. }) {
                     panic!(
-                        "Unary operations cannot be performed on aggregate/array type {:?}",
-                        resolved_ty
+                        "Unary operations cannot be performed on aggregate/array type {resolved_ty:?}"
                     );
                 }
                 let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
@@ -310,12 +313,9 @@ impl CompilerRv64 {
                     let result_fp = self.emitter.alloc_float_temp_reg();
                     match op {
                         IrUnaryOp::Neg => {
-                            self.emitter
-                                .emit_inst(RealInstruction::Fsgnjn(Fsgnjn::new(
-                                    result_fp,
-                                    val_fp,
-                                    val_fp,
-                                )));
+                            self.emitter.emit_inst(RealInstruction::Fsgnjn(Fsgnjn::new(
+                                result_fp, val_fp, val_fp,
+                            )));
                         }
                         IrUnaryOp::Not => panic!("Bitwise not not supported for floats"),
                     }
@@ -327,8 +327,12 @@ impl CompilerRv64 {
                         IrUnaryOp::Neg => self.emitter.emit_neg(result_tmp, val_tmp),
                         IrUnaryOp::Not => self.emitter.emit_not(result_tmp, val_tmp),
                     }
-                    self.emitter
-                        .emit_store_from_tmp(SP, result_tmp, &resolved_ty, dest_slot as i32);
+                    self.emitter.emit_store_from_tmp(
+                        SP,
+                        result_tmp,
+                        &resolved_ty,
+                        dest_slot as i32,
+                    );
                 }
             }
             Cmp {
@@ -342,8 +346,7 @@ impl CompilerRv64 {
                 let resolved_ty = self.resolve_ir_type(ty);
                 if matches!(resolved_ty, IrType::Aggregate(_) | IrType::Array { .. }) {
                     panic!(
-                        "Comparison operations cannot be performed on aggregate/array type {:?}",
-                        resolved_ty
+                        "Comparison operations cannot be performed on aggregate/array type {resolved_ty:?}"
                     );
                 }
                 let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
@@ -363,16 +366,16 @@ impl CompilerRv64 {
                             self.emitter.emit_not(result_tmp, tmp);
                         }
                         IrCmpOp::Slt | IrCmpOp::Ult => {
-                            self.emitter.emit_flt_s(result_tmp, lhs_fp, rhs_fp)
+                            self.emitter.emit_flt_s(result_tmp, lhs_fp, rhs_fp);
                         }
                         IrCmpOp::Sle | IrCmpOp::Ule => {
-                            self.emitter.emit_fle_s(result_tmp, lhs_fp, rhs_fp)
+                            self.emitter.emit_fle_s(result_tmp, lhs_fp, rhs_fp);
                         }
                         IrCmpOp::Sgt | IrCmpOp::Ugt => {
-                            self.emitter.emit_flt_s(result_tmp, rhs_fp, lhs_fp)
+                            self.emitter.emit_flt_s(result_tmp, rhs_fp, lhs_fp);
                         }
                         IrCmpOp::Sge | IrCmpOp::Uge => {
-                            self.emitter.emit_fle_s(result_tmp, rhs_fp, lhs_fp)
+                            self.emitter.emit_fle_s(result_tmp, rhs_fp, lhs_fp);
                         }
                     }
                     self.emitter.emit_store_from_tmp(
@@ -415,8 +418,7 @@ impl CompilerRv64 {
                 let resolved_ty = self.resolve_ir_type(ty);
                 if matches!(resolved_ty, IrType::Aggregate(_) | IrType::Array { .. }) {
                     panic!(
-                        "Cast operations cannot be performed on aggregate/array type {:?}",
-                        resolved_ty
+                        "Cast operations cannot be performed on aggregate/array type {resolved_ty:?}"
                     );
                 }
                 let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
@@ -443,7 +445,7 @@ impl CompilerRv64 {
                 let needs_sret = is_agg_return && !self.can_return_in_registers(&resolved_ret_ty);
 
                 self.emitter
-                    .emit_comment(&format!("--- Function Call: {} ---", function));
+                    .emit_comment(&format!("--- Function Call: {function} ---"));
                 if needs_sret {
                     self.emitter
                         .emit_comment("Using sret convention for large aggregate return");
@@ -464,7 +466,7 @@ impl CompilerRv64 {
 
                 self.emitter
                     .emit_comment(&format!("Passing {} arguments", args.len()));
-                for arg in args.iter() {
+                for arg in args {
                     if arg_index >= 8 {
                         break;
                     }
@@ -487,8 +489,11 @@ impl CompilerRv64 {
                                 let field_size = self.type_size(&resolved_field_ty);
                                 let reg = if i == 0 { A0 } else { 11 }; // a0 or a1
                                 if field_size >= 8 {
-                                    self.emitter
-                                        .emit_sd(SP, reg, (dest_slot + field_offset) as i32);
+                                    self.emitter.emit_sd(
+                                        SP,
+                                        reg,
+                                        (dest_slot + field_offset) as i32,
+                                    );
                                 } else if field_size >= 4 {
                                     self.emitter.emit_inst(RealInstruction::Sw(Sw::new(
                                         SP,
@@ -509,8 +514,8 @@ impl CompilerRv64 {
                                     )));
                                 }
                                 let align = self.type_alignment(&resolved_field_ty);
-                                field_offset = ((field_offset + align - 1) / align * align)
-                                    + field_size;
+                                field_offset =
+                                    ((field_offset + align - 1) / align * align) + field_size;
                             }
                         } else {
                             let size = self.type_size(&resolved_ret_ty);
@@ -529,12 +534,16 @@ impl CompilerRv64 {
                     if let Some(dest) = dest {
                         let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
                         let resolved_return_ty = self.resolve_ir_type(&func_return_type);
-                        self.emitter
-                            .emit_store_from_tmp(SP, A0, &resolved_return_ty, dest_slot as i32);
+                        self.emitter.emit_store_from_tmp(
+                            SP,
+                            A0,
+                            &resolved_return_ty,
+                            dest_slot as i32,
+                        );
                     }
                 }
                 self.emitter
-                    .emit_comment(&format!("--- End Function Call: {} ---", function));
+                    .emit_comment(&format!("--- End Function Call: {function} ---"));
             }
             Phi { .. } => {}
             HeapAlloc { dest, ty, count } => {
@@ -549,8 +558,7 @@ impl CompilerRv64 {
             }
             HeapFree { ptr } => {
                 self.emitter.reset_temp_counter();
-                let ptr_tmp =
-                    self.load_value_to_temp(&IrValue::Register(ptr.clone()), ctx);
+                let ptr_tmp = self.load_value_to_temp(&IrValue::Register(ptr.clone()), ctx);
                 self.emitter.emit_mv(A0, ptr_tmp);
                 self.emitter.emit_raw("\tcall free");
             }
@@ -570,10 +578,10 @@ impl CompilerRv64 {
                     let raw_val_type = self.resolve_value_type(val, ctx);
                     let resolved_val = match (&raw_val_type, val) {
                         (IrType::Pointer(inner), IrValue::Register(reg))
-                        if ctx.is_stack_address(reg) =>
-                            {
-                                self.resolve_ir_type(inner)
-                            }
+                            if ctx.is_stack_address(reg) =>
+                        {
+                            self.resolve_ir_type(inner)
+                        }
                         _ => raw_val_type.clone(),
                     };
                     let is_agg_return =
@@ -592,9 +600,8 @@ impl CompilerRv64 {
                                 };
                                 let sret_ptr = 9; // s1
                                 let size = self.type_size(&resolved_val);
-                                self.emitter.copy_bytes_from_addr_to_addr(
-                                    sret_ptr, 0, src_addr, 0, size,
-                                );
+                                self.emitter
+                                    .copy_bytes_from_addr_to_addr(sret_ptr, 0, src_addr, 0, size);
                             }
                             _ => panic!("Aggregate return must be a register"),
                         }
@@ -609,17 +616,29 @@ impl CompilerRv64 {
                                         let field_size = self.type_size(&resolved_field_ty);
                                         let reg = if i == 0 { A0 } else { A1 };
                                         if field_size >= 8 {
-                                            self.emitter
-                                                .emit_ld(reg, SP, (slot + field_offset) as i32);
+                                            self.emitter.emit_ld(
+                                                reg,
+                                                SP,
+                                                (slot + field_offset) as i32,
+                                            );
                                         } else if field_size >= 4 {
-                                            self.emitter
-                                                .emit_lw(reg, SP, (slot + field_offset) as i32);
+                                            self.emitter.emit_lw(
+                                                reg,
+                                                SP,
+                                                (slot + field_offset) as i32,
+                                            );
                                         } else if field_size >= 2 {
-                                            self.emitter
-                                                .emit_lh(reg, SP, (slot + field_offset) as i32);
+                                            self.emitter.emit_lh(
+                                                reg,
+                                                SP,
+                                                (slot + field_offset) as i32,
+                                            );
                                         } else if field_size >= 1 {
-                                            self.emitter
-                                                .emit_lb(reg, SP, (slot + field_offset) as i32);
+                                            self.emitter.emit_lb(
+                                                reg,
+                                                SP,
+                                                (slot + field_offset) as i32,
+                                            );
                                         }
                                         let align = self.type_alignment(&resolved_field_ty);
                                         field_offset = ((field_offset + align - 1) / align * align)
@@ -645,9 +664,8 @@ impl CompilerRv64 {
                                     self.emitter.emit_fmv_s(FA0, val_fp);
                                 }
                                 IrType::Float(crate::intermediate_language::FloatWidth::F64) => {
-                                    self.emitter.emit_inst(RealInstruction::FsgnjD(fmv_d(
-                                        FA0, val_fp,
-                                    )));
+                                    self.emitter
+                                        .emit_inst(RealInstruction::FsgnjD(fmv_d(FA0, val_fp)));
                                 }
                                 _ => unreachable!(),
                             }
@@ -716,7 +734,7 @@ impl CompilerRv64 {
                 }
             }
             IrValue::Integer(i) => self.emitter.emit_li(temp, *i),
-            IrValue::Bool(b) => self.emitter.emit_li(temp, if *b { 1 } else { 0 }),
+            IrValue::Bool(b) => self.emitter.emit_li(temp, i64::from(*b)),
             IrValue::Float(_) => panic!("Float values must use load_float_value_to_temp"),
             IrValue::Null => self.emitter.emit_li(temp, 0),
             IrValue::GlobalString(symbol) => {
@@ -750,7 +768,7 @@ impl CompilerRv64 {
                 self.emitter.emit_li(int_tmp, f.to_bits() as i64);
                 self.emitter.emit_fmv_w_x(temp, int_tmp);
             }
-            _ => panic!("Unsupported float value: {:?}", val),
+            _ => panic!("Unsupported float value: {val:?}"),
         }
         temp
     }
@@ -777,7 +795,7 @@ impl CompilerRv64 {
             }
             IrCastMode::Sext => match ty {
                 IrType::Integer(crate::intermediate_language::IntWidth::I32) => {
-                    self.emitter.emit_addiw(rd, rs, 0)
+                    self.emitter.emit_addiw(rd, rs, 0);
                 }
                 IrType::Integer(crate::intermediate_language::IntWidth::I64)
                 | IrType::Pointer(_) => self.emitter.emit_mv(rd, rs),
@@ -836,18 +854,16 @@ impl CompilerRv64 {
 
     fn resolve_value_type(&self, val: &IrValue, ctx: &FunctionContext) -> IrType {
         match val {
-            IrValue::Register(reg) => ctx.type_for_reg(reg).unwrap_or(IrType::Integer(
-                crate::intermediate_language::IntWidth::I64,
-            )),
+            IrValue::Register(reg) => ctx
+                .type_for_reg(reg)
+                .unwrap_or(IrType::Integer(crate::intermediate_language::IntWidth::I64)),
             IrValue::Integer(_) => IrType::Integer(crate::intermediate_language::IntWidth::I64),
             IrValue::Bool(_) => IrType::Integer(crate::intermediate_language::IntWidth::I1),
             IrValue::Float(_) => IrType::Float(crate::intermediate_language::FloatWidth::F64),
             IrValue::Null => IrType::Pointer(Box::new(IrType::Void)),
-            IrValue::GlobalString(_) => {
-                IrType::Pointer(Box::new(IrType::Integer(
-                    crate::intermediate_language::IntWidth::I8,
-                )))
-            }
+            IrValue::GlobalString(_) => IrType::Pointer(Box::new(IrType::Integer(
+                crate::intermediate_language::IntWidth::I8,
+            ))),
         }
     }
 

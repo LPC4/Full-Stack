@@ -1,9 +1,9 @@
 use super::{data_section::DataSection, function_context::Rv64Backend};
 use crate::assembly_language::encode_decode::Reg;
 use crate::assembly_language::real::RealInstruction;
-use crate::assembly_language::riscv::rv64fd::*;
-use crate::assembly_language::riscv::rv64i::*;
-use crate::assembly_language::riscv::rv64m::*;
+use crate::assembly_language::riscv::rv64fd::{FmvWX, Fadd, Fsub, Fmul, Fdiv, Fsw, Fsd, Flw, Fld, fmv_s, FeqS, FltS, FleqS};
+use crate::assembly_language::riscv::rv64i::{Addi, Sd, Ld, Lw, Lh, Lb, Add, Sub, And, Or, Xor, Xori, Sltiu, Sltu, Slt, Sll, Srl, Slli, Srai, Addiw, Jalr, Lui, Sb, Sh, Sw};
+use crate::assembly_language::riscv::rv64m::{Mul, Div, Rem};
 use crate::assembly_language::utils::reg_name;
 use crate::intermediate_language::IrType;
 
@@ -47,13 +47,13 @@ impl AssemblyEmitter {
     // ---------- section / label / comment utilities ----------
     pub fn switch_section(&mut self, name: &str) {
         if self.current_section.as_deref() != Some(name) {
-            self.current_section = Some(name.to_string());
-            self.lines.push(format!(".section {}", name));
+            self.current_section = Some(name.to_owned());
+            self.lines.push(format!(".section {name}"));
         }
     }
 
     pub fn emit_raw(&mut self, line: &str) {
-        self.lines.push(line.to_string());
+        self.lines.push(line.to_owned());
     }
 
     pub fn emit_data_section(&mut self, data: &DataSection) {
@@ -66,11 +66,13 @@ impl AssemblyEmitter {
 
     pub fn start_function(&mut self, name: &str) {
         self.switch_section(".text");
-        self.lines.push(format!("\t; ========================================"));
-        self.lines.push(format!("\t; Function: {}", name));
-        self.lines.push(format!("\t; ========================================"));
-        self.lines.push(format!(".globl {}", name));
-        self.lines.push(format!("{}:", name));
+        self.lines
+            .push(format!("\t; ========================================"));
+        self.lines.push(format!("\t; Function: {name}"));
+        self.lines
+            .push(format!("\t; ========================================"));
+        self.lines.push(format!(".globl {name}"));
+        self.lines.push(format!("{name}:"));
     }
 
     pub fn end_function(&mut self) {
@@ -82,10 +84,11 @@ impl AssemblyEmitter {
         if label.contains("__") {
             let parts: Vec<&str> = label.splitn(2, "__").collect();
             if parts.len() == 2 {
-                self.lines.push(format!("\t; --- Basic Block: {} ---", parts[1]));
+                self.lines
+                    .push(format!("\t; --- Basic Block: {} ---", parts[1]));
             }
         }
-        self.lines.push(format!("{}:", label));
+        self.lines.push(format!("{label}:"));
     }
 
     pub fn emit_inst(&mut self, inst: RealInstruction) {
@@ -93,7 +96,7 @@ impl AssemblyEmitter {
     }
 
     pub fn emit_comment(&mut self, text: &str) {
-        self.lines.push(format!("\t; {}", text));
+        self.lines.push(format!("\t; {text}"));
     }
 
     // ---------- register allocation helpers ----------
@@ -274,7 +277,7 @@ impl AssemblyEmitter {
     }
     pub fn emit_jal(&mut self, rd: Reg, target: &str) {
         if rd == ZERO {
-            self.emit_raw(&format!("\tj {}", target));
+            self.emit_raw(&format!("\tj {target}"));
         } else {
             self.emit_raw(&format!("\tjal {}, {}", reg_name(rd, false), target));
         }
@@ -440,8 +443,16 @@ impl AssemblyEmitter {
         }
         let byte_tmp = self.alloc_temp_reg();
         for i in 0..remaining {
-            self.emit_inst(RealInstruction::Lb(Lb::new(byte_tmp, addr_reg, current_offset + i as i32)));
-            self.emit_inst(RealInstruction::Sb(Sb::new(2, byte_tmp, current_slot as i32 + i as i32)));
+            self.emit_inst(RealInstruction::Lb(Lb::new(
+                byte_tmp,
+                addr_reg,
+                current_offset + i as i32,
+            )));
+            self.emit_inst(RealInstruction::Sb(Sb::new(
+                2,
+                byte_tmp,
+                current_slot as i32 + i as i32,
+            )));
         }
     }
 
@@ -474,8 +485,16 @@ impl AssemblyEmitter {
         }
         let byte_tmp = self.alloc_temp_reg();
         for i in 0..remaining {
-            self.emit_inst(RealInstruction::Lb(Lb::new(byte_tmp, 2, current_slot as i32 + i as i32)));
-            self.emit_inst(RealInstruction::Sb(Sb::new(addr_reg, byte_tmp, current_offset + i as i32)));
+            self.emit_inst(RealInstruction::Lb(Lb::new(
+                byte_tmp,
+                2,
+                current_slot as i32 + i as i32,
+            )));
+            self.emit_inst(RealInstruction::Sb(Sb::new(
+                addr_reg,
+                byte_tmp,
+                current_offset + i as i32,
+            )));
         }
     }
 
@@ -493,24 +512,48 @@ impl AssemblyEmitter {
 
         while remaining >= 8 {
             let tmp = self.alloc_temp_reg();
-            self.emit_inst(RealInstruction::Ld(Ld::new(tmp, src_addr, current_src_offset)));
-            self.emit_inst(RealInstruction::Sd(Sd::new(dst_addr, tmp, current_dst_offset)));
+            self.emit_inst(RealInstruction::Ld(Ld::new(
+                tmp,
+                src_addr,
+                current_src_offset,
+            )));
+            self.emit_inst(RealInstruction::Sd(Sd::new(
+                dst_addr,
+                tmp,
+                current_dst_offset,
+            )));
             remaining -= 8;
             current_dst_offset += 8;
             current_src_offset += 8;
         }
         while remaining >= 4 {
             let tmp = self.alloc_temp_reg();
-            self.emit_inst(RealInstruction::Lw(Lw::new(tmp, src_addr, current_src_offset)));
-            self.emit_inst(RealInstruction::Sw(Sw::new(dst_addr, tmp, current_dst_offset)));
+            self.emit_inst(RealInstruction::Lw(Lw::new(
+                tmp,
+                src_addr,
+                current_src_offset,
+            )));
+            self.emit_inst(RealInstruction::Sw(Sw::new(
+                dst_addr,
+                tmp,
+                current_dst_offset,
+            )));
             remaining -= 4;
             current_dst_offset += 4;
             current_src_offset += 4;
         }
         let byte_tmp = self.alloc_temp_reg();
         for i in 0..remaining {
-            self.emit_inst(RealInstruction::Lb(Lb::new(byte_tmp, src_addr, current_src_offset + i as i32)));
-            self.emit_inst(RealInstruction::Sb(Sb::new(dst_addr, byte_tmp, current_dst_offset + i as i32)));
+            self.emit_inst(RealInstruction::Lb(Lb::new(
+                byte_tmp,
+                src_addr,
+                current_src_offset + i as i32,
+            )));
+            self.emit_inst(RealInstruction::Sb(Sb::new(
+                dst_addr,
+                byte_tmp,
+                current_dst_offset + i as i32,
+            )));
         }
     }
 
@@ -528,42 +571,42 @@ impl Default for AssemblyEmitter {
 
 impl Rv64Backend for AssemblyEmitter {
     fn alloc_temp_reg(&mut self) -> Reg {
-        AssemblyEmitter::alloc_temp_reg(self)
+        Self::alloc_temp_reg(self)
     }
 
     fn emit_add_imm(&mut self, rd: Reg, rs: Reg, imm: i64) {
-        AssemblyEmitter::emit_add_imm(self, rd, rs, imm);
+        Self::emit_add_imm(self, rd, rs, imm);
     }
 
     fn emit_sd(&mut self, base: Reg, src: Reg, offset: i32) {
-        AssemblyEmitter::emit_sd(self, base, src, offset);
+        Self::emit_sd(self, base, src, offset);
     }
 
     fn emit_ld(&mut self, rd: Reg, base: Reg, offset: i32) {
-        AssemblyEmitter::emit_ld(self, rd, base, offset);
+        Self::emit_ld(self, rd, base, offset);
     }
 
     fn emit_mv(&mut self, rd: Reg, rs: Reg) {
-        AssemblyEmitter::emit_mv(self, rd, rs);
+        Self::emit_mv(self, rd, rs);
     }
 
     fn emit_jalr(&mut self, rd: Reg, rs1: Reg, imm: i32) {
-        AssemblyEmitter::emit_jalr(self, rd, rs1, imm);
+        Self::emit_jalr(self, rd, rs1, imm);
     }
 
     fn emit_li(&mut self, rd: Reg, imm: i64) {
-        AssemblyEmitter::emit_li(self, rd, imm);
+        Self::emit_li(self, rd, imm);
     }
 
     fn emit_store_from_tmp(&mut self, addr_reg: Reg, val_reg: Reg, ty: &IrType, offset: i32) {
-        AssemblyEmitter::emit_store_from_tmp(self, addr_reg, val_reg, ty, offset);
+        Self::emit_store_from_tmp(self, addr_reg, val_reg, ty, offset);
     }
 
     fn emit_load_to_slot(&mut self, slot: usize, addr_reg: Reg, ty: &IrType, offset: i32) {
-        AssemblyEmitter::emit_load_to_slot(self, slot, addr_reg, ty, offset);
+        Self::emit_load_to_slot(self, slot, addr_reg, ty, offset);
     }
 
     fn emit_comment(&mut self, text: &str) {
-        AssemblyEmitter::emit_comment(self, text);
+        Self::emit_comment(self, text);
     }
 }

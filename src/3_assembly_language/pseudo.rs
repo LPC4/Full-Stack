@@ -9,7 +9,7 @@
 use super::real::RealInstruction;
 use super::riscv::rv64i::{
     Addi, Addiw, Auipc, Beq, Bge, Bgeu, Blt, Bltu, Bne, Jal, Jalr, Lui, Or, Slli, Slt, Sltiu, Sltu,
-    Srli, Sub, Xori, Subw
+    Srli, Sub, Subw, Xori,
 };
 use crate::assembly_language::encode_decode::Reg;
 use crate::assembly_language::riscv::rv64fd;
@@ -432,11 +432,11 @@ fn expand_li(rd: Reg, imm: i64) -> Vec<RealInstruction> {
     let mut seq = Vec::new();
 
     // Load the high 32 bits into t1 and shift them left by 32.
-    seq.append(&mut load32(T1, high32));                            // T1 = sign_ext(high32)
-    seq.push(RealInstruction::Slli(Slli::new(T1, T1, 32)));   // T1 = high32 << 32
+    seq.append(&mut load32(T1, high32)); // T1 = sign_ext(high32)
+    seq.push(RealInstruction::Slli(Slli::new(T1, T1, 32))); // T1 = high32 << 32
 
     // Load the low 32 bits into rd, then zero‑extend to 64 bits.
-    seq.append(&mut load32(rd, low32));                           // rd = sign_ext(low32)
+    seq.append(&mut load32(rd, low32)); // rd = sign_ext(low32)
     seq.push(RealInstruction::Slli(Slli::new(rd, rd, 32))); // clear upper 32 bits
     seq.push(RealInstruction::Srli(Srli::new(rd, rd, 32))); // rd = zero_ext(low32)
 

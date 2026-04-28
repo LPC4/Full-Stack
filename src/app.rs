@@ -289,7 +289,7 @@ struct DockTabViewer<'a> {
     catalog: &'a mut ProgramCatalog,
 }
 
-impl<'a> egui_dock::TabViewer for DockTabViewer<'a> {
+impl egui_dock::TabViewer for DockTabViewer<'_> {
     type Tab = Box<dyn CompilerView>;
 
     fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {

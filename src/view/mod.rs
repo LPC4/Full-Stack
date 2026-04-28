@@ -23,5 +23,5 @@ pub use tokens_view::TokensView;
 pub use viewtrait::CompilerView;
 
 pub(crate) fn blank_custom_program_source() -> String {
-    "; Write your program here\n".to_string()
+    "; Write your program here\n".to_owned()
 }

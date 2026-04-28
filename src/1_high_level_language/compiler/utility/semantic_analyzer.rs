@@ -286,8 +286,7 @@ impl SemanticAnalyzer {
                             let resolved_actual = self.resolve_type_string(&element_ty);
                             if resolved_expected != resolved_actual {
                                 self.diagnostics.error(format!(
-                                    "array literal element type mismatch: expected {}, found {}",
-                                    expected_ty, element_ty
+                                    "array literal element type mismatch: expected {expected_ty}, found {element_ty}"
                                 ));
                                 return Err(());
                             }
