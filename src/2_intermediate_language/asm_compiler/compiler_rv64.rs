@@ -1,6 +1,6 @@
 use super::{
     assembly_emitter::AssemblyEmitter, data_section::DataSection,
-    function_context::{FunctionContext, Rv64Backend},
+    function_context::FunctionContext,
     register_allocator::RegisterAllocator,
 };
 use crate::assembly_language::encode_decode::Reg;
@@ -19,48 +19,13 @@ const ZERO: Reg = 0;
 const RA: Reg = 1;
 const SP: Reg = 2;
 const S0: Reg = 8;
-const T0: Reg = 5;
-const T1: Reg = 6;
-const T2: Reg = 7;
-const T3: Reg = 28;
-const T4: Reg = 29;
-const T5: Reg = 30;
-const T6: Reg = 31;
 const A0: Reg = 10;
 
 pub struct CompilerRv64 {
     emitter: AssemblyEmitter,
     data: DataSection,
-    temp_counter: usize,
     type_aliases: HashMap<String, IrType>,
     function_return_types: HashMap<String, IrType>,
-}
-
-impl Rv64Backend for CompilerRv64 {
-    fn emit_add_imm(&mut self, rd: Reg, rs: Reg, imm: i64) {
-        self.emit_add_imm(rd, rs, imm);
-    }
-    fn emit_sd(&mut self, base: Reg, src: Reg, offset: i32) {
-        self.emit_sd(base, src, offset);
-    }
-    fn emit_ld(&mut self, rd: Reg, base: Reg, offset: i32) {
-        self.emit_ld(rd, base, offset);
-    }
-    fn emit_mv(&mut self, rd: Reg, rs: Reg) {
-        self.emit_mv(rd, rs);
-    }
-    fn emit_jalr(&mut self, rd: Reg, rs1: Reg, imm: i32) {
-        self.emit_jalr(rd, rs1, imm);
-    }
-    fn emit_li(&mut self, rd: Reg, imm: i64) {
-        self.emit_li(rd, imm);
-    }
-    fn emit_store_from_tmp(&mut self, addr_reg: Reg, val_reg: Reg, ty: &IrType, offset: i32) {
-        self.emit_store_from_tmp(addr_reg, val_reg, ty, offset);
-    }
-    fn emit_load_to_slot(&mut self, slot: usize, addr_reg: Reg, ty: &IrType, offset: i32) {
-        self.emit_load_to_slot(slot, addr_reg, ty, offset);
-    }
 }
 
 impl CompilerRv64 {
@@ -68,7 +33,6 @@ impl CompilerRv64 {
         Self {
             emitter: AssemblyEmitter::new(),
             data: DataSection::new(),
-            temp_counter: 0,
             type_aliases: HashMap::new(),
             function_return_types: HashMap::new(),
         }
@@ -107,8 +71,8 @@ impl CompilerRv64 {
         let mut ctx = FunctionContext::new(&func.name, &self.type_aliases);
         let mut alloc = RegisterAllocator::new();
         alloc.allocate_slots(func, &mut ctx, &self.function_return_types);
-        ctx.frame.save_ra();
-        ctx.frame.save_reg(S0);
+        ctx.save_ra();
+        ctx.save_reg(S0);
         ctx.finalize();
 
         for block in &func.blocks {
@@ -116,8 +80,8 @@ impl CompilerRv64 {
         }
 
         self.emitter.start_function(&func.name);
-        ctx.emit_prologue(self);
-        ctx.emit_parameter_spills(self, func);
+        ctx.emit_prologue(&mut self.emitter);
+        ctx.emit_parameter_spills(&mut self.emitter, func);
 
         for block in &func.blocks {
             let label = ctx.get_label(&block.label).unwrap();
@@ -130,7 +94,7 @@ impl CompilerRv64 {
             }
         }
 
-        ctx.emit_epilogue(self);
+        ctx.emit_epilogue(&mut self.emitter);
         self.emitter.end_function();
     }
 
@@ -526,10 +490,6 @@ impl CompilerRv64 {
                 .emit_raw(&format!("\tjal {}, {}", reg_name(rd, false), _target));
         }
     }
-    fn emit_jalr(&mut self, rd: Reg, rs1: Reg, imm: i32) {
-        self.emitter
-            .emit_inst(RealInstruction::Jalr(Jalr::new(rd, rs1, imm)));
-    }
     fn emit_fmv_w_x(&mut self, fd: Reg, rs: Reg) {
         self.emitter
             .emit_inst(RealInstruction::FmvWX(FmvWX::new(fd, rs)));
@@ -784,26 +744,13 @@ impl CompilerRv64 {
             .emit_inst(RealInstruction::Slli(Slli::new(rd, rs1, shamt)));
     }
 
-    fn emit_add_imm(&mut self, rd: Reg, rs: Reg, imm: i64) {
-        if (-2048..=2047).contains(&imm) {
-            self.emit_addi(rd, rs, imm as i32);
-        } else {
-            let tmp = self.alloc_temp_reg();
-            self.emit_li(tmp, imm);
-            self.emit_add(rd, rs, tmp);
-        }
-    }
-
     fn emit_srai(&mut self, rd: Reg, rs1: Reg, shamt: u8) {
         self.emitter
             .emit_inst(RealInstruction::Srai(Srai::new(rd, rs1, shamt)));
     }
 
     fn alloc_temp_reg(&mut self) -> Reg {
-        let temps = [T0, T1, T2, T3, T4, T5, T6];
-        let reg = temps[self.temp_counter % temps.len()];
-        self.temp_counter += 1;
-        reg
+        self.emitter.alloc_temp_reg()
     }
 
     fn resolve_ir_type(&self, ty: &IrType) -> IrType {

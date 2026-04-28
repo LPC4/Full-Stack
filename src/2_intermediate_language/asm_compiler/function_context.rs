@@ -10,6 +10,7 @@ const S0: Reg = 8;   // callee‑saved frame pointer (used as temp in prologue)
 
 /// Narrow backend interface for prologue/epilogue and parameter spills.
 pub trait Rv64Backend {
+    fn alloc_temp_reg(&mut self) -> Reg;
     fn emit_add_imm(&mut self, rd: Reg, rs: Reg, imm: i64);
     fn emit_sd(&mut self, base: Reg, src: Reg, offset: i32);
     fn emit_ld(&mut self, rd: Reg, base: Reg, offset: i32);
@@ -57,6 +58,36 @@ impl FunctionContext {
         slot
     }
 
+    /// Reserve space for saving `ra`.
+    pub fn save_ra(&mut self) {
+        self.frame.save_ra();
+    }
+
+    /// Reserve space for saving a callee-saved register.
+    pub fn save_reg(&mut self, reg: u8) {
+        self.frame.save_reg(reg);
+    }
+
+    /// Finalize the frame layout.
+    pub fn finalize(&mut self) {
+        self.frame.finalize();
+    }
+
+    /// Total stack frame size in bytes.
+    pub fn frame_size(&self) -> usize {
+        self.frame.frame_size()
+    }
+
+    /// Stack offset of the saved return address, if present.
+    pub fn ra_offset(&self) -> Option<usize> {
+        self.frame.ra_offset()
+    }
+
+    /// Saved callee-saved registers and their stack offsets.
+    pub fn saved_regs(&self) -> &[(u8, usize)] {
+        self.frame.saved_regs()
+    }
+
     /// Get the stack offset for a virtual register.
     pub fn slot_for_reg(&self, reg: &IrRegister) -> Option<usize> {
         self.reg_slots.get(reg).copied()
@@ -93,18 +124,14 @@ impl FunctionContext {
         self.label_map.get(ir_label)
     }
 
-    pub fn finalize(&mut self) {
-        self.frame.finalize();
-    }
-
     /// Emit the function prologue using the given backend.
     pub fn emit_prologue(&self, backend: &mut impl Rv64Backend) {
-        let frame_size = self.frame.frame_size();
+        let frame_size = self.frame_size();
         backend.emit_add_imm(SP, SP, -(frame_size as i64));
-        if let Some(offset) = self.frame.ra_offset() {
+        if let Some(offset) = self.ra_offset() {
             backend.emit_sd(SP, RA, offset as i32);
         }
-        for (reg, offset) in self.frame.saved_regs() {
+        for (reg, offset) in self.saved_regs() {
             backend.emit_sd(SP, *reg, *offset as i32);
         }
         backend.emit_mv(S0, SP);
@@ -112,13 +139,13 @@ impl FunctionContext {
 
     /// Emit the function epilogue using the given backend.
     pub fn emit_epilogue(&self, backend: &mut impl Rv64Backend) {
-        for (reg, offset) in self.frame.saved_regs().iter().rev() {
+        for (reg, offset) in self.saved_regs().iter().rev() {
             backend.emit_ld(*reg, SP, *offset as i32);
         }
-        if let Some(offset) = self.frame.ra_offset() {
+        if let Some(offset) = self.ra_offset() {
             backend.emit_ld(RA, SP, offset as i32);
         }
-        let frame_size = self.frame.frame_size();
+        let frame_size = self.frame_size();
         backend.emit_add_imm(SP, SP, frame_size as i64);
         backend.emit_jalr(0, RA, 0);
     }
@@ -133,13 +160,13 @@ impl FunctionContext {
             return;
         }
 
-        let frame_size = self.frame.frame_size() as i64;
-        let caller_sp = self.alloc_temp_reg(backend);
+        let frame_size = self.frame_size() as i64;
+        let caller_sp = backend.alloc_temp_reg();
         backend.emit_add_imm(caller_sp, S0, frame_size);
 
         for (index, param) in func.params.iter().enumerate() {
             let slot = self.slot_for_reg(&param.register).expect("param slot");
-            let ty = self.resolve_type(&param.ty); // use local resolve (still needed)
+            let ty = self.frame.resolve_type(&param.ty, &self.type_aliases);
             if index < 8 {
                 backend.emit_store_from_tmp(SP, arg_reg(index), &ty, slot as i32);
             } else {
@@ -149,48 +176,6 @@ impl FunctionContext {
         }
     }
 
-    fn alloc_temp_reg(&self, _backend: &mut impl Rv64Backend) -> Reg {
-        // T0 = 5
-        5
-    }
-
-    /// Resolve a type using the context's type aliases.
-    fn resolve_type(&self, ty: &IrType) -> IrType {
-        self.resolve_type_inner(ty, &mut HashSet::new())
-    }
-
-    fn resolve_type_inner(&self, ty: &IrType, seen: &mut HashSet<String>) -> IrType {
-        match ty {
-            IrType::Named(name) => self
-                .type_aliases
-                .get(name)
-                .cloned()
-                .map(|resolved| {
-                    if !seen.insert(name.clone()) {
-                        IrType::Named(name.clone())
-                    } else {
-                        let out = self.resolve_type_inner(&resolved, seen);
-                        seen.remove(name);
-                        out
-                    }
-                })
-                .unwrap_or_else(|| IrType::Named(name.clone())),
-            IrType::Pointer(inner) => {
-                IrType::Pointer(Box::new(self.resolve_type_inner(inner, seen)))
-            }
-            IrType::Array { len, element } => IrType::Array {
-                len: *len,
-                element: Box::new(self.resolve_type_inner(element, seen)),
-            },
-            IrType::Aggregate(fields) => IrType::Aggregate(
-                fields
-                    .iter()
-                    .map(|(name, field_ty)| (name.clone(), self.resolve_type_inner(field_ty, seen)))
-                    .collect(),
-            ),
-            other => other.clone(),
-        }
-    }
 }
 
 /// Return the argument register for the given index (a0–a7).

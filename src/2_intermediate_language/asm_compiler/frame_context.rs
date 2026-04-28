@@ -3,7 +3,6 @@
 use crate::intermediate_language::IrType;
 use std::collections::HashMap;
 
-/// Tracks the stack frame layout for a function.
 pub struct FrameContext {
     /// Total frame size in bytes.
     frame_size: usize,
@@ -58,7 +57,6 @@ impl FrameContext {
         &self.saved_regs
     }
 
-    /// Finalize frame layout, compute total size with alignment.
     pub fn finalize(&mut self) {
         // Align frame size to 16 bytes.
         self.frame_size = (self.next_offset + self.alignment - 1) & !(self.alignment - 1);
@@ -69,8 +67,6 @@ impl FrameContext {
     }
 
     /// Compute the size of a type after resolving aliases.
-    ///
-    /// The `type_aliases` map is used to resolve named types.
     pub fn type_size(&self, ty: &IrType, type_aliases: &HashMap<String, IrType>) -> usize {
         let resolved = self.resolve_type(ty, type_aliases);
         match resolved {
@@ -96,8 +92,7 @@ impl FrameContext {
         }
     }
 
-    // Helper to fully resolve a type (remove aliases).
-    fn resolve_type(&self, ty: &IrType, type_aliases: &HashMap<String, IrType>) -> IrType {
+    pub fn resolve_type(&self, ty: &IrType, type_aliases: &HashMap<String, IrType>) -> IrType {
         self.resolve_type_inner(ty, type_aliases, &mut std::collections::HashSet::new())
     }
 
