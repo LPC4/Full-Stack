@@ -33,6 +33,7 @@ impl HighLevelCompiler {
 
         let (offset, ty) = self.aggregate_field_offset_and_type(&fields, field)?;
         let dest = self.new_temp();
+        self.push_instruction(IrInstruction::Comment(format!("Access field '{}' at offset {}", field, offset)));
         self.push_instruction(IrInstruction::Load {
             dest: dest.clone(),
             ty: ty.clone(),
@@ -50,28 +51,42 @@ impl HighLevelCompiler {
         base: &LoweredValue,
         index: &LoweredValue,
     ) -> Option<LoweredValue> {
-        match &base.ty {
-            IrType::Array { element, .. } | IrType::Pointer(element) => {
-                if let IrValue::Register(ptr_reg) = &base.value {
-                    let dest = self.new_temp();
-                    self.push_instruction(IrInstruction::Index {
-                        dest: dest.clone(),
-                        ty: *element.clone(),
-                        base_ptr: ptr_reg.clone(),
-                        idx: index.value.clone(),
-                    });
-
-                    // Return the POINTER, not the loaded value.
-                    // The `@` operator in the AST will handle the actual load.
-                    return Some(LoweredValue {
-                        value: IrValue::Register(dest),
-                        ty: IrType::Pointer(element.clone()),
-                    });
+        // Resolve the actual type (unwrap pointers to get to arrays)
+        let resolved_ty = self.resolve_named_type(&base.ty);
+        
+        // Extract element type from either direct array or pointer-to-array
+        let element_ty = match &resolved_ty {
+            IrType::Array { element, .. } => Some(*element.clone()),
+            IrType::Pointer(inner) => {
+                // If it's a pointer, check if it points to an array
+                match inner.as_ref() {
+                    IrType::Array { element, .. } => Some(*element.clone()),
+                    _ => None,
                 }
-                None
             }
             _ => None,
+        };
+        
+        if let Some(element_ty) = element_ty {
+            if let IrValue::Register(ptr_reg) = &base.value {
+                let dest = self.new_temp();
+                self.push_instruction(IrInstruction::Comment(format!("Compute array element address at index ${}", index.value)));
+                self.push_instruction(IrInstruction::Index {
+                    dest: dest.clone(),
+                    ty: element_ty.clone(),
+                    base_ptr: ptr_reg.clone(),
+                    idx: index.value.clone(),
+                });
+
+                // Return the POINTER, not the loaded value.
+                // The `@` operator in the AST will handle the actual load.
+                return Some(LoweredValue {
+                    value: IrValue::Register(dest),
+                    ty: IrType::Pointer(Box::new(element_ty)),
+                });
+            }
         }
+        None
     }
 
     pub(super) fn lower_deref_assign(
@@ -80,6 +95,7 @@ impl HighLevelCompiler {
         value: &LoweredValue,
     ) -> Option<LoweredValue> {
         let (pointee_ptr_reg, pointee_ty) = self.resolve_deref_lvalue(target)?;
+        self.push_instruction(IrInstruction::Comment(format!("Store value to dereferenced pointer ({})", pointee_ty)));
         self.push_instruction(IrInstruction::Store {
             ty: pointee_ty,
             value: value.value.clone(),

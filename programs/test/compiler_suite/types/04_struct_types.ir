@@ -10,6 +10,7 @@ entry:
 	write f32 $shift @ $shift_ptr
 	; assignment
 	$0 = read Point* @ $p_ptr
+	; Access field 'x' at offset 0
 	$1 = read f32 @ $0 + 0
 	$2 = read f32 @ $shift_ptr
 	$3 = math add f32 $1, $2
@@ -18,6 +19,7 @@ entry:
 	write f32 $3 @ $5
 	; assignment
 	$6 = read Point* @ $p_ptr
+	; Access field 'y' at offset 4
 	$7 = read f32 @ $6 + 4
 	$8 = read f32 @ $shift_ptr
 	$9 = math add f32 $7, $8
@@ -25,8 +27,10 @@ entry:
 	$11 = offset f32 $10, 4
 	write f32 $9 @ $11
 	$12 = read Point* @ $p_ptr
+	; Access field 'x' at offset 0
 	$13 = read f32 @ $12 + 0
 	$14 = read Point* @ $p_ptr
+	; Access field 'y' at offset 4
 	$15 = read f32 @ $14 + 4
 	$16 = math mul f32 $13, $15
 	ret $16

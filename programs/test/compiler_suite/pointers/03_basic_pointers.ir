@@ -10,6 +10,7 @@ entry:
 	; assignment
 	$1 = read i32 @ $val_ptr
 	$2 = read i32* @ $ptr
+	; Store value to dereferenced pointer (i32)
 	write i32 $1 @ $2
 	; local var: val_ref
 	$val_ref = stack_alloc i32*
@@ -19,6 +20,7 @@ entry:
 	$4 = read i32 @ $3
 	$5 = math add i32 $4, 10
 	$6 = read i32* @ $val_ref
+	; Store value to dereferenced pointer (i32)
 	write i32 $5 @ $6
 	$7 = read i32* @ $ptr
 	; defer: captured call free with 1 args
