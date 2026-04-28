@@ -37,11 +37,12 @@ impl HighLevelCompiler {
                             let sret_ptr_info = self.context.symbols.lookup("__sret_ptr").cloned();
                             
                             if let Some(sret_info) = sret_ptr_info {
-                                // Get the sret pointer value
-                                let sret_ptr_val = sret_info.value;
+                                // Get the sret pointer value (used by backend in lower_terminator)
+                                let _sret_ptr_val = sret_info.value;
                                 
                                 // Get the source address (where the aggregate is currently stored)
-                                let src_addr = match &lowered.value {
+                                // Backend uses this to copy aggregate to sret location
+                                let _src_addr = match &lowered.value {
                                     IrValue::Register(reg) => reg.clone(),
                                     _ => {
                                         self.context.diagnostics.error(

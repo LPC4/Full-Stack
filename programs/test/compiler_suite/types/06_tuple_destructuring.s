@@ -10,36 +10,36 @@ divide:
 	sw     a1, 4(sp)
 divide__entry:
 	; bind parameter: a
-	addi   t1, sp, 8
-	lw     t2, 0(sp)
-	sw     t2, 0(t1)
+	addi   t0, sp, 8
+	lw     t1, 0(sp)
+	sw     t1, 0(t0)
 	; bind parameter: b
-	addi   t3, sp, 12
-	lw     t4, 4(sp)
-	sw     t4, 0(t3)
-	addi   t5, sp, 8
-	lw     t6, 0(t5)
-	sw     t6, 16(sp)
+	addi   t0, sp, 12
+	lw     t1, 4(sp)
+	sw     t1, 0(t0)
+	addi   t0, sp, 8
+	lw     t1, 0(t0)
+	sw     t1, 16(sp)
 	addi   t0, sp, 12
 	lw     t1, 0(t0)
 	sw     t1, 20(sp)
-	lw     t2, 16(sp)
-	lw     t3, 20(sp)
-	div    t4, t2, t3
-	sd     t4, 24(sp)
-	addi   t5, sp, 8
-	lw     t6, 0(t5)
-	sw     t6, 28(sp)
+	lw     t0, 16(sp)
+	lw     t1, 20(sp)
+	div    t2, t0, t1
+	sw     t2, 24(sp)
+	addi   t0, sp, 8
+	lw     t1, 0(t0)
+	sw     t1, 28(sp)
 	addi   t0, sp, 12
 	lw     t1, 0(t0)
 	sw     t1, 32(sp)
-	lw     t2, 28(sp)
-	lw     t3, 32(sp)
-	rem    t4, t2, t3
-	sd     t4, 36(sp)
-	addi   t5, sp, 40
-	lw     t6, 24(sp)
-	sw     t6, 0(t5)
+	lw     t0, 28(sp)
+	lw     t1, 32(sp)
+	rem    t2, t0, t1
+	sw     t2, 36(sp)
+	addi   t0, sp, 40
+	lw     t1, 24(sp)
+	sw     t1, 0(t0)
 	addi   t0, sp, 44
 	lw     t1, 36(sp)
 	sw     t1, 0(t0)
@@ -56,26 +56,27 @@ test_tuple_destructuring:
 	addi   s0, sp, 0
 test_tuple_destructuring__entry:
 	; assignment
-	addi   t2, zero, 10
-	addi   a0, t2, 0
-	addi   t3, zero, 3
-	addi   a1, t3, 0
+	addi   t0, zero, 10
+	addi   a0, t0, 0
+	addi   t1, zero, 3
+	addi   a1, t1, 0
 	jal ra, divide
-	sd     a0, 0(sp)
-	ld     t4, 0(sp)
-	addi   t5, t4, 0
-	lw     t6, 0(t5)
-	sw     t6, 8(sp)
+	sw     a0, 0(sp)
+	sw     a1, 4(sp)
+	ld     t0, 0(sp)
+	addi   t1, t0, 0
+	lw     t2, 0(t1)
+	sw     t2, 8(sp)
 	addi   t0, sp, 12
 	lw     t1, 8(sp)
 	sw     t1, 0(t0)
-	ld     t2, 0(sp)
-	addi   t3, t2, 4
-	lw     t4, 0(t3)
-	sw     t4, 16(sp)
-	addi   t5, sp, 20
-	lw     t6, 16(sp)
-	sw     t6, 0(t5)
+	ld     t0, 0(sp)
+	addi   t1, t0, 4
+	lw     t2, 0(t1)
+	sw     t2, 16(sp)
+	addi   t0, sp, 20
+	lw     t1, 16(sp)
+	sw     t1, 0(t0)
 	addi   t0, sp, 12
 	lw     t1, 0(t0)
 	sw     t1, 24(sp)

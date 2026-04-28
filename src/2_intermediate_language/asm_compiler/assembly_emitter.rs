@@ -37,6 +37,10 @@ impl AssemblyEmitter {
         self.temp_counter = 0;
     }
 
+    pub fn reset_temp_counter(&mut self) {
+        self.temp_counter = 0;
+    }
+
     pub fn switch_section(&mut self, name: &str) {
         if self.current_section.as_deref() != Some(name) {
             self.current_section = Some(name.to_string());

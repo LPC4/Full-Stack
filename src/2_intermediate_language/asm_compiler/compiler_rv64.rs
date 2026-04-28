@@ -21,11 +21,16 @@ const SP: Reg = 2;
 const S0: Reg = 8;
 const A0: Reg = 10;
 
+// Float register constants
+const FT0: Reg = 0;  // ft0
+const FA0: Reg = 10; // fa0
+
 pub struct CompilerRv64 {
     emitter: AssemblyEmitter,
     data: DataSection,
     type_aliases: HashMap<String, IrType>,
     function_return_types: HashMap<String, IrType>,
+    float_temp_counter: usize, // Separate counter for float temp registers
 }
 
 impl CompilerRv64 {
@@ -35,6 +40,7 @@ impl CompilerRv64 {
             data: DataSection::new(),
             type_aliases: HashMap::new(),
             function_return_types: HashMap::new(),
+            float_temp_counter: 0,
         }
     }
 
@@ -101,7 +107,14 @@ impl CompilerRv64 {
             self.emit_mv(9, A0); // Save sret pointer in s1
         }
         
-        ctx.emit_parameter_spills(&mut self.emitter, func);
+        // FIXED: Use emit_parameter_spills_with_sret when needs_sret is true
+        if needs_sret {
+            // Allocate a slot for the sret pointer parameter
+            let sret_slot = ctx.frame.alloc_slot(8, 8);
+            ctx.emit_parameter_spills_with_sret(&mut self.emitter, func, sret_slot);
+        } else {
+            ctx.emit_parameter_spills(&mut self.emitter, func);
+        }
 
         for block in &func.blocks {
             let label = ctx.get_label(&block.label).unwrap();
@@ -114,7 +127,7 @@ impl CompilerRv64 {
             }
         }
 
-        ctx.emit_epilogue(&mut self.emitter);
+        // REMOVED: Epilogue now emitted per-return in lower_terminator
         self.emitter.end_function();
     }
 
@@ -129,6 +142,8 @@ impl CompilerRv64 {
                 ptr,
                 offset,
             } => {
+                self.emitter.reset_temp_counter();
+                self.float_temp_counter = 0;
                 let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
                 let ptr_tmp = self.load_pointer_operand_to_temp(ptr, ctx);
                 let addr_tmp = if let Some(off) = offset {
@@ -156,6 +171,8 @@ impl CompilerRv64 {
                 ptr,
                 offset,
             } => {
+                self.emitter.reset_temp_counter();
+                self.float_temp_counter = 0;
                 // Compute the destination address.
                 // If ptr is a stack_address register, its "value" IS the address
                 // (sp + slot). We must NOT dereference it a second time.
@@ -184,6 +201,8 @@ impl CompilerRv64 {
                 ptr,
                 bytes,
             } => {
+                self.emitter.reset_temp_counter();
+                self.float_temp_counter = 0;
                 let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
                 let ptr_tmp = self.load_pointer_operand_to_temp(ptr, ctx);
                 let byte_val_reg = self.load_value_to_temp(bytes, ctx);
@@ -199,6 +218,8 @@ impl CompilerRv64 {
                 base_ptr,
                 idx,
             } => {
+                self.emitter.reset_temp_counter();
+                self.float_temp_counter = 0;
                 let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
                 let base_tmp = self.load_pointer_operand_to_temp(base_ptr, ctx);
                 let idx_tmp = self.load_value_to_temp(idx, ctx);
@@ -220,6 +241,8 @@ impl CompilerRv64 {
                 lhs,
                 rhs,
             } => {
+                self.emitter.reset_temp_counter();
+                self.float_temp_counter = 0;
                 // CRITICAL FIX: Ensure math operations only work with scalar types
                 let resolved_ty = self.resolve_ir_type(ty);
                 if matches!(resolved_ty, IrType::Aggregate(_) | IrType::Array { .. }) {
@@ -230,23 +253,43 @@ impl CompilerRv64 {
                 }
                 
                 let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
-                let lhs_tmp = self.load_value_to_temp(lhs, ctx);
-                let rhs_tmp = self.load_value_to_temp(rhs, ctx);
-                let result_tmp = self.alloc_temp_reg();
-                match op {
-                    IrMathOp::Add => self.emit_add(result_tmp, lhs_tmp, rhs_tmp),
-                    IrMathOp::Sub => self.emit_sub(result_tmp, lhs_tmp, rhs_tmp),
-                    IrMathOp::Mul => self.emit_mul(result_tmp, lhs_tmp, rhs_tmp),
-                    IrMathOp::Div => self.emit_div(result_tmp, lhs_tmp, rhs_tmp),
-                    IrMathOp::SDiv => self.emit_div(result_tmp, lhs_tmp, rhs_tmp),
-                    IrMathOp::Mod => self.emit_rem(result_tmp, lhs_tmp, rhs_tmp),
-                    IrMathOp::Shl => self.emit_sll(result_tmp, lhs_tmp, rhs_tmp),
-                    IrMathOp::Shr => self.emit_srl(result_tmp, lhs_tmp, rhs_tmp),
-                    IrMathOp::And => self.emit_and(result_tmp, lhs_tmp, rhs_tmp),
-                    IrMathOp::Or => self.emit_or(result_tmp, lhs_tmp, rhs_tmp),
-                    IrMathOp::Xor => self.emit_xor(result_tmp, lhs_tmp, rhs_tmp),
+                
+                // FIXED: Dispatch to float or integer path based on type
+                if matches!(resolved_ty, IrType::Float(crate::intermediate_language::FloatWidth::F32)) {
+                    // Float arithmetic path
+                    let lhs_fp = self.load_float_value_to_temp(lhs, ctx);
+                    let rhs_fp = self.load_float_value_to_temp(rhs, ctx);
+                    let result_fp = self.alloc_float_temp_reg();
+                    match op {
+                        IrMathOp::Add => self.emit_fadd_s(result_fp, lhs_fp, rhs_fp),
+                        IrMathOp::Sub => self.emit_fsub_s(result_fp, lhs_fp, rhs_fp),
+                        IrMathOp::Mul => self.emit_fmul_s(result_fp, lhs_fp, rhs_fp),
+                        IrMathOp::Div | IrMathOp::SDiv => self.emit_fdiv_s(result_fp, lhs_fp, rhs_fp),
+                        _ => panic!("Unsupported float math op {:?}", op),
+                    }
+                    // Store float result back to slot via fsw
+                    self.emit_fsw(SP, result_fp, dest_slot as i32);
+                } else {
+                    // Integer arithmetic path (existing)
+                    let lhs_tmp = self.load_value_to_temp(lhs, ctx);
+                    let rhs_tmp = self.load_value_to_temp(rhs, ctx);
+                    let result_tmp = self.alloc_temp_reg();
+                    match op {
+                        IrMathOp::Add => self.emit_add(result_tmp, lhs_tmp, rhs_tmp),
+                        IrMathOp::Sub => self.emit_sub(result_tmp, lhs_tmp, rhs_tmp),
+                        IrMathOp::Mul => self.emit_mul(result_tmp, lhs_tmp, rhs_tmp),
+                        IrMathOp::Div => self.emit_div(result_tmp, lhs_tmp, rhs_tmp),
+                        IrMathOp::SDiv => self.emit_div(result_tmp, lhs_tmp, rhs_tmp),
+                        IrMathOp::Mod => self.emit_rem(result_tmp, lhs_tmp, rhs_tmp),
+                        IrMathOp::Shl => self.emit_sll(result_tmp, lhs_tmp, rhs_tmp),
+                        IrMathOp::Shr => self.emit_srl(result_tmp, lhs_tmp, rhs_tmp),
+                        IrMathOp::And => self.emit_and(result_tmp, lhs_tmp, rhs_tmp),
+                        IrMathOp::Or => self.emit_or(result_tmp, lhs_tmp, rhs_tmp),
+                        IrMathOp::Xor => self.emit_xor(result_tmp, lhs_tmp, rhs_tmp),
+                    }
+                    // FIXED: Use type-aware store instead of always sd
+                    self.emit_store_from_tmp(SP, result_tmp, &resolved_ty, dest_slot as i32);
                 }
-                self.emit_sd(SP, result_tmp, dest_slot as i32);
             }
             Unary {
                 dest,
@@ -254,6 +297,8 @@ impl CompilerRv64 {
                 ty,
                 value,
             } => {
+                self.emitter.reset_temp_counter();
+                self.float_temp_counter = 0;
                 // CRITICAL FIX: Ensure unary operations only work with scalar types
                 let resolved_ty = self.resolve_ir_type(ty);
                 if matches!(resolved_ty, IrType::Aggregate(_) | IrType::Array { .. }) {
@@ -264,13 +309,32 @@ impl CompilerRv64 {
                 }
                 
                 let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
-                let val_tmp = self.load_value_to_temp(value, ctx);
-                let result_tmp = self.alloc_temp_reg();
-                match op {
-                    IrUnaryOp::Neg => self.emit_neg(result_tmp, val_tmp),
-                    IrUnaryOp::Not => self.emit_not(result_tmp, val_tmp),
+                
+                // FIXED: Dispatch to float or integer path based on type
+                if matches!(resolved_ty, IrType::Float(crate::intermediate_language::FloatWidth::F32)) {
+                    // Float unary operations
+                    let val_fp = self.load_float_value_to_temp(value, ctx);
+                    let result_fp = self.alloc_float_temp_reg();
+                    match op {
+                        IrUnaryOp::Neg => {
+                            // Float negation using fsgnjn.s (negate sign bit)
+                            use crate::assembly_language::riscv::rv64fd::Fsgnjn;
+                            self.emitter.emit_inst(RealInstruction::Fsgnjn(Fsgnjn::new(result_fp, val_fp, val_fp)));
+                        }
+                        IrUnaryOp::Not => panic!("Bitwise not not supported for floats"),
+                    }
+                    self.emit_fsw(SP, result_fp, dest_slot as i32);
+                } else {
+                    // Integer unary operations (existing)
+                    let val_tmp = self.load_value_to_temp(value, ctx);
+                    let result_tmp = self.alloc_temp_reg();
+                    match op {
+                        IrUnaryOp::Neg => self.emit_neg(result_tmp, val_tmp),
+                        IrUnaryOp::Not => self.emit_not(result_tmp, val_tmp),
+                    }
+                    // FIXED: Use type-aware store instead of always sd
+                    self.emit_store_from_tmp(SP, result_tmp, &resolved_ty, dest_slot as i32);
                 }
-                self.emit_sd(SP, result_tmp, dest_slot as i32);
             }
             Cmp {
                 dest,
@@ -279,6 +343,8 @@ impl CompilerRv64 {
                 lhs,
                 rhs,
             } => {
+                self.emitter.reset_temp_counter();
+                self.float_temp_counter = 0;
                 // CRITICAL FIX: Ensure comparison operations only work with scalar types
                 let resolved_ty = self.resolve_ir_type(ty);
                 if matches!(resolved_ty, IrType::Aggregate(_) | IrType::Array { .. }) {
@@ -289,22 +355,48 @@ impl CompilerRv64 {
                 }
                 
                 let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
-                let lhs_tmp = self.load_value_to_temp(lhs, ctx);
-                let rhs_tmp = self.load_value_to_temp(rhs, ctx);
-                let result_tmp = self.alloc_temp_reg();
-                match op {
-                    IrCmpOp::Eq => self.emit_seq(result_tmp, lhs_tmp, rhs_tmp),
-                    IrCmpOp::Ne => self.emit_sne(result_tmp, lhs_tmp, rhs_tmp),
-                    IrCmpOp::Slt => self.emit_slt(result_tmp, lhs_tmp, rhs_tmp),
-                    IrCmpOp::Ult => self.emit_sltu(result_tmp, lhs_tmp, rhs_tmp),
-                    IrCmpOp::Sle => self.emit_cmp_sle(result_tmp, lhs_tmp, rhs_tmp),
-                    IrCmpOp::Ule => self.emit_cmp_ule(result_tmp, lhs_tmp, rhs_tmp),
-                    IrCmpOp::Sgt => self.emit_slt(result_tmp, rhs_tmp, lhs_tmp),
-                    IrCmpOp::Ugt => self.emit_sltu(result_tmp, rhs_tmp, lhs_tmp),
-                    IrCmpOp::Sge => self.emit_cmp_sge(result_tmp, lhs_tmp, rhs_tmp),
-                    IrCmpOp::Uge => self.emit_cmp_uge(result_tmp, lhs_tmp, rhs_tmp),
+                
+                // FIXED: Dispatch to float or integer path based on type
+                if matches!(resolved_ty, IrType::Float(crate::intermediate_language::FloatWidth::F32)) {
+                    // Float comparison - result is always i1 (stored as i8)
+                    let lhs_fp = self.load_float_value_to_temp(lhs, ctx);
+                    let rhs_fp = self.load_float_value_to_temp(rhs, ctx);
+                    let result_tmp = self.alloc_temp_reg(); // Integer register for comparison result
+                    match op {
+                        IrCmpOp::Eq => self.emit_feq_s(result_tmp, lhs_fp, rhs_fp),
+                        IrCmpOp::Ne => {
+                            // feq then not
+                            let tmp = self.alloc_temp_reg();
+                            self.emit_feq_s(tmp, lhs_fp, rhs_fp);
+                            self.emit_not(result_tmp, tmp);
+                        }
+                        IrCmpOp::Slt | IrCmpOp::Ult => self.emit_flt_s(result_tmp, lhs_fp, rhs_fp),
+                        IrCmpOp::Sle | IrCmpOp::Ule => self.emit_fle_s(result_tmp, lhs_fp, rhs_fp),
+                        IrCmpOp::Sgt | IrCmpOp::Ugt => self.emit_flt_s(result_tmp, rhs_fp, lhs_fp),
+                        IrCmpOp::Sge | IrCmpOp::Uge => self.emit_fle_s(result_tmp, rhs_fp, lhs_fp),
+                    }
+                    // Comparison results are always i1 (stored as i8/sb)
+                    self.emit_store_from_tmp(SP, result_tmp, &IrType::Integer(crate::intermediate_language::IntWidth::I1), dest_slot as i32);
+                } else {
+                    // Integer comparison (existing)
+                    let lhs_tmp = self.load_value_to_temp(lhs, ctx);
+                    let rhs_tmp = self.load_value_to_temp(rhs, ctx);
+                    let result_tmp = self.alloc_temp_reg();
+                    match op {
+                        IrCmpOp::Eq => self.emit_seq(result_tmp, lhs_tmp, rhs_tmp),
+                        IrCmpOp::Ne => self.emit_sne(result_tmp, lhs_tmp, rhs_tmp),
+                        IrCmpOp::Slt => self.emit_slt(result_tmp, lhs_tmp, rhs_tmp),
+                        IrCmpOp::Ult => self.emit_sltu(result_tmp, lhs_tmp, rhs_tmp),
+                        IrCmpOp::Sle => self.emit_cmp_sle(result_tmp, lhs_tmp, rhs_tmp),
+                        IrCmpOp::Ule => self.emit_cmp_ule(result_tmp, lhs_tmp, rhs_tmp),
+                        IrCmpOp::Sgt => self.emit_slt(result_tmp, rhs_tmp, lhs_tmp),
+                        IrCmpOp::Ugt => self.emit_sltu(result_tmp, rhs_tmp, lhs_tmp),
+                        IrCmpOp::Sge => self.emit_cmp_sge(result_tmp, lhs_tmp, rhs_tmp),
+                        IrCmpOp::Uge => self.emit_cmp_uge(result_tmp, lhs_tmp, rhs_tmp),
+                    }
+                    // FIXED: Comparison results are always i1 (stored as i8/sb)
+                    self.emit_store_from_tmp(SP, result_tmp, &IrType::Integer(crate::intermediate_language::IntWidth::I1), dest_slot as i32);
                 }
-                self.emit_sd(SP, result_tmp, dest_slot as i32);
             }
             Cast {
                 dest,
@@ -312,6 +404,8 @@ impl CompilerRv64 {
                 value,
                 ty,
             } => {
+                self.emitter.reset_temp_counter();
+                self.float_temp_counter = 0;
                 // CRITICAL FIX: Ensure casts only work with scalar types
                 let resolved_ty = self.resolve_ir_type(ty);
                 if matches!(resolved_ty, IrType::Aggregate(_) | IrType::Array { .. }) {
@@ -325,13 +419,16 @@ impl CompilerRv64 {
                 let src_tmp = self.load_value_to_temp(value, ctx);
                 let result_tmp = self.alloc_temp_reg();
                 self.lower_cast(result_tmp, src_tmp, *mode, ty);
-                self.emit_sd(SP, result_tmp, dest_slot as i32);
+                // FIXED: Use type-aware store instead of always sd
+                self.emit_store_from_tmp(SP, result_tmp, &resolved_ty, dest_slot as i32);
             }
             Call {
                 dest,
                 function,
                 args,
             } => {
+                self.emitter.reset_temp_counter();
+                self.float_temp_counter = 0;
                 // Check if the called function returns an aggregate type
                 let func_return_type = self.function_return_types
                     .get(function)
@@ -377,30 +474,37 @@ impl CompilerRv64 {
                 if is_agg_return && !needs_sret {
                     if let Some(dest_reg) = dest {
                         let dest_slot = ctx.slot_for_reg(dest_reg).expect("dest slot");
-                        let size = self.type_size(&resolved_ret_ty);
                         
-                        // Store first 8 bytes from a0
-                        if size >= 8 {
-                            self.emit_sd(SP, A0, dest_slot as i32);
-                        } else if size >= 4 {
-                            self.emitter.emit_inst(RealInstruction::Sw(Sw::new(SP, A0, dest_slot as i32)));
-                        } else if size >= 2 {
-                            self.emitter.emit_inst(RealInstruction::Sh(Sh::new(SP, A0, dest_slot as i32)));
-                        } else if size >= 1 {
-                            self.emitter.emit_inst(RealInstruction::Sb(Sb::new(SP, A0, dest_slot as i32)));
-                        }
-                        
-                        // Store second 8 bytes from a1 if needed
-                        if size > 8 {
-                            let remaining = size - 8;
-                            if remaining >= 8 {
-                                self.emit_sd(SP, 11, (dest_slot + 8) as i32); // a1 = x11
-                            } else if remaining >= 4 {
-                                self.emitter.emit_inst(RealInstruction::Sw(Sw::new(SP, 11, (dest_slot + 8) as i32)));
-                            } else if remaining >= 2 {
-                                self.emitter.emit_inst(RealInstruction::Sh(Sh::new(SP, 11, (dest_slot + 8) as i32)));
-                            } else if remaining >= 1 {
-                                self.emitter.emit_inst(RealInstruction::Sb(Sb::new(SP, 11, (dest_slot + 8) as i32)));
+                        // FIXED: Unpack fields from a0/a1 based on field layout
+                        if let IrType::Aggregate(fields) = &resolved_ret_ty {
+                            let mut field_offset = 0;
+                            for (i, (_, field_ty)) in fields.iter().enumerate() {
+                                let resolved_field_ty = self.resolve_ir_type(field_ty);
+                                let field_size = self.type_size(&resolved_field_ty);
+                                let reg = if i == 0 { A0 } else { 11 }; // a0 or a1
+                                
+                                // Store field based on its size
+                                if field_size >= 8 {
+                                    self.emit_sd(SP, reg, (dest_slot + field_offset) as i32);
+                                } else if field_size >= 4 {
+                                    self.emitter.emit_inst(RealInstruction::Sw(Sw::new(SP, reg, (dest_slot + field_offset) as i32)));
+                                } else if field_size >= 2 {
+                                    self.emitter.emit_inst(RealInstruction::Sh(Sh::new(SP, reg, (dest_slot + field_offset) as i32)));
+                                } else if field_size >= 1 {
+                                    self.emitter.emit_inst(RealInstruction::Sb(Sb::new(SP, reg, (dest_slot + field_offset) as i32)));
+                                }
+                                
+                                // Align to next field
+                                let align = self.type_alignment(&resolved_field_ty);
+                                field_offset = ((field_offset + align - 1) / align * align) + field_size;
+                            }
+                        } else {
+                            // Fallback for non-aggregate types
+                            let size = self.type_size(&resolved_ret_ty);
+                            if size >= 8 {
+                                self.emit_sd(SP, A0, dest_slot as i32);
+                            } else if size >= 4 {
+                                self.emitter.emit_inst(RealInstruction::Sw(Sw::new(SP, A0, dest_slot as i32)));
                             }
                         }
                     }
@@ -415,6 +519,8 @@ impl CompilerRv64 {
             }
             Phi { .. } => {}
             HeapAlloc { dest, ty, count } => {
+                self.emitter.reset_temp_counter();
+                self.float_temp_counter = 0;
                 let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
                 let elem_count = count.unwrap_or(1);
                 let bytes = self.type_size(ty).saturating_mul(elem_count);
@@ -424,6 +530,8 @@ impl CompilerRv64 {
                 self.emit_sd(SP, A0, dest_slot as i32);
             }
             HeapFree { ptr } => {
+                self.emitter.reset_temp_counter();
+                self.float_temp_counter = 0;
                 let ptr_tmp = self.load_value_to_temp(&IrValue::Register(ptr.clone()), ctx);
                 self.emit_mv(A0, ptr_tmp);
                 self.emitter.emit_raw("\tcall free");
@@ -468,34 +576,43 @@ impl CompilerRv64 {
                         // Don't set A0 for sret returns - caller already has the pointer
                     } else if is_aggregate && !needs_sret {
                         // Small struct returned in registers (a0/a1)
-                        // Load the struct fields into a0 and a1
+                        // FIXED: Load each field into separate registers based on field layout
                         match val {
                             IrValue::Register(reg) => {
                                 let slot = ctx.slot_for_reg(reg).expect("reg slot");
-                                let size = self.type_size(&resolved_val);
                                 
-                                // Load first 8 bytes into a0
-                                if size >= 8 {
-                                    self.emit_ld(A0, SP, slot as i32);
-                                } else if size >= 4 {
-                                    self.emit_lw(A0, SP, slot as i32);
-                                } else if size >= 2 {
-                                    self.emit_lh(A0, SP, slot as i32);
-                                } else if size >= 1 {
-                                    self.emit_lb(A0, SP, slot as i32);
-                                }
-                                
-                                // Load second 8 bytes into a1 if needed
-                                if size > 8 {
-                                    let remaining = size - 8;
-                                    if remaining >= 8 {
-                                        self.emit_ld(11, SP, (slot + 8) as i32); // a1 = x11
-                                    } else if remaining >= 4 {
-                                        self.emit_lw(11, SP, (slot + 8) as i32);
-                                    } else if remaining >= 2 {
-                                        self.emit_lh(11, SP, (slot + 8) as i32);
-                                    } else if remaining >= 1 {
-                                        self.emit_lb(11, SP, (slot + 8) as i32);
+                                // For a two-field struct of i32s like {quotient: i32, remainder: i32}:
+                                // Field 0 at offset 0 -> a0 via lw
+                                // Field 1 at offset 4 -> a1 via lw
+                                if let IrType::Aggregate(fields) = &resolved_val {
+                                    let mut field_offset = 0;
+                                    for (i, (_, field_ty)) in fields.iter().enumerate() {
+                                        let resolved_field_ty = self.resolve_ir_type(field_ty);
+                                        let field_size = self.type_size(&resolved_field_ty);
+                                        let reg = if i == 0 { A0 } else { 11 }; // a0 or a1
+                                        
+                                        // Load field based on its size
+                                        if field_size >= 8 {
+                                            self.emit_ld(reg, SP, (slot + field_offset) as i32);
+                                        } else if field_size >= 4 {
+                                            self.emit_lw(reg, SP, (slot + field_offset) as i32);
+                                        } else if field_size >= 2 {
+                                            self.emit_lh(reg, SP, (slot + field_offset) as i32);
+                                        } else if field_size >= 1 {
+                                            self.emit_lb(reg, SP, (slot + field_offset) as i32);
+                                        }
+                                        
+                                        // Align to next field (natural alignment)
+                                        let align = self.type_alignment(&resolved_field_ty);
+                                        field_offset = ((field_offset + align - 1) / align * align) + field_size;
+                                    }
+                                } else {
+                                    // Fallback for non-aggregate types (shouldn't happen here)
+                                    let size = self.type_size(&resolved_val);
+                                    if size >= 8 {
+                                        self.emit_ld(A0, SP, slot as i32);
+                                    } else if size >= 4 {
+                                        self.emit_lw(A0, SP, slot as i32);
                                     }
                                 }
                             }
@@ -503,10 +620,30 @@ impl CompilerRv64 {
                         }
                     } else {
                         // Scalar return value
-                        let val_tmp = self.load_value_to_temp(val, ctx);
-                        self.emit_mv(A0, val_tmp);
+                        let resolved_val = self.resolve_value_type(val, ctx);
+                        if matches!(resolved_val, IrType::Float(_)) {
+                            // FIXED: Float returns go in fa0, not a0
+                            let val_fp = self.load_float_value_to_temp(val, ctx);
+                            // Use appropriate move based on float width
+                            match resolved_val {
+                                IrType::Float(crate::intermediate_language::FloatWidth::F32) => {
+                                    self.emit_fmv_s(FA0, val_fp);
+                                }
+                                IrType::Float(crate::intermediate_language::FloatWidth::F64) => {
+                                    // For f64, we still use fa0 (f10) but need fmv.d
+                                    use crate::assembly_language::riscv::rv64fd::fmv_d;
+                                    self.emitter.emit_inst(RealInstruction::FsgnjD(fmv_d(FA0, val_fp)));
+                                }
+                                _ => unreachable!(),
+                            }
+                        } else {
+                            let val_tmp = self.load_value_to_temp(val, ctx);
+                            self.emit_mv(A0, val_tmp);
+                        }
                     }
                 }
+                // FIXED: Emit epilogue before every return
+                ctx.emit_epilogue(&mut self.emitter);
             }
             IrTerminator::Jump(label) => {
                 let lbl = ctx.get_label(label).unwrap();
@@ -520,8 +657,9 @@ impl CompilerRv64 {
                 let cond_tmp = self.load_value_to_temp(cond, ctx);
                 let then_lbl = ctx.get_label(then_label).unwrap();
                 let else_lbl = ctx.get_label(else_label).unwrap();
-                self.emit_bne(cond_tmp, ZERO, else_lbl);
-                self.emit_jal(ZERO, then_lbl);
+                // FIXED: Branch to then_label when condition is non-zero
+                self.emit_bne(cond_tmp, ZERO, then_lbl);
+                self.emit_jal(ZERO, else_lbl);
             }
         }
     }
@@ -722,6 +860,54 @@ impl CompilerRv64 {
     fn emit_fmv_w_x(&mut self, fd: Reg, rs: Reg) {
         self.emitter
             .emit_inst(RealInstruction::FmvWX(FmvWX::new(fd, rs)));
+    }
+
+    // Float arithmetic emission helpers
+    fn emit_fadd_s(&mut self, rd: Reg, rs1: Reg, rs2: Reg) {
+        self.emitter
+            .emit_inst(RealInstruction::Fadd(Fadd::new(rd, rs1, rs2)));
+    }
+
+    fn emit_fsub_s(&mut self, rd: Reg, rs1: Reg, rs2: Reg) {
+        self.emitter
+            .emit_inst(RealInstruction::Fsub(Fsub::new(rd, rs1, rs2)));
+    }
+
+    fn emit_fmul_s(&mut self, rd: Reg, rs1: Reg, rs2: Reg) {
+        self.emitter
+            .emit_inst(RealInstruction::Fmul(Fmul::new(rd, rs1, rs2)));
+    }
+
+    fn emit_fdiv_s(&mut self, rd: Reg, rs1: Reg, rs2: Reg) {
+        self.emitter
+            .emit_inst(RealInstruction::Fdiv(Fdiv::new(rd, rs1, rs2)));
+    }
+
+    fn emit_fsw(&mut self, base: Reg, src: Reg, offset: i32) {
+        self.emitter
+            .emit_inst(RealInstruction::Fsw(Fsw::new(base, src, offset)));
+    }
+
+    // Float move (copy between FP registers)
+    fn emit_fmv_s(&mut self, rd: Reg, rs: Reg) {
+        use crate::assembly_language::riscv::rv64fd::fmv_s;
+        self.emitter.emit_inst(RealInstruction::Fsgnj(fmv_s(rd, rs)));
+    }
+
+    // Float comparison emission helpers
+    fn emit_feq_s(&mut self, rd: Reg, rs1: Reg, rs2: Reg) {
+        use crate::assembly_language::riscv::rv64fd::FeqS;
+        self.emitter.emit_inst(RealInstruction::FeqS(FeqS::new(rd, rs1, rs2)));
+    }
+
+    fn emit_flt_s(&mut self, rd: Reg, rs1: Reg, rs2: Reg) {
+        use crate::assembly_language::riscv::rv64fd::FltS;
+        self.emitter.emit_inst(RealInstruction::FltS(FltS::new(rd, rs1, rs2)));
+    }
+
+    fn emit_fle_s(&mut self, rd: Reg, rs1: Reg, rs2: Reg) {
+        use crate::assembly_language::riscv::rv64fd::FleqS;
+        self.emitter.emit_inst(RealInstruction::FleqS(FleqS::new(rd, rs1, rs2)));
     }
 
     fn copy_bytes_from_addr_to_slot(
@@ -950,6 +1136,37 @@ impl CompilerRv64 {
         temp
     }
 
+    /// Load a float value into a float temporary register
+    fn load_float_value_to_temp(&mut self, val: &IrValue, ctx: &FunctionContext) -> Reg {
+        let temp = self.alloc_float_temp_reg();
+        match val {
+            IrValue::Register(reg) => {
+                let slot = ctx.slot_for_reg(reg).expect("reg slot");
+                // For floats, we need to use flw/fld instead of lw/ld
+                let ty = ctx
+                    .type_for_reg(reg)
+                    .unwrap_or(IrType::Float(crate::intermediate_language::FloatWidth::F32));
+                match ty {
+                    IrType::Float(crate::intermediate_language::FloatWidth::F32) => {
+                        self.emit_flw(temp, SP, slot as i32);
+                    }
+                    IrType::Float(crate::intermediate_language::FloatWidth::F64) => {
+                        self.emit_fld(temp, SP, slot as i32);
+                    }
+                    _ => panic!("Expected float type for float register load"),
+                }
+            }
+            IrValue::Float(f) => {
+                // Load float constant by first loading bits as integer, then converting
+                let int_tmp = self.alloc_temp_reg();
+                self.emit_li(int_tmp, f.to_bits() as i64);
+                self.emit_fmv_w_x(temp, int_tmp);
+            }
+            _ => panic!("Unsupported float value: {:?}", val),
+        }
+        temp
+    }
+
     /// Load the pointer held by `reg` into a fresh temp.
     ///
     /// - stack_address: the "pointer" is `sp + slot`  →  use `addi`
@@ -1156,6 +1373,13 @@ impl CompilerRv64 {
 
     fn alloc_temp_reg(&mut self) -> Reg {
         self.emitter.alloc_temp_reg()
+    }
+
+    fn alloc_float_temp_reg(&mut self) -> Reg {
+        // Cycle through ft0-ft7 (regs 0-7)
+        let reg = FT0 + (self.float_temp_counter as Reg % 8);
+        self.float_temp_counter += 1;
+        reg
     }
 
     fn resolve_ir_type(&self, ty: &IrType) -> IrType {

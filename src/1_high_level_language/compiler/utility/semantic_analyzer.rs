@@ -239,7 +239,7 @@ impl SemanticAnalyzer {
                     | crate::high_level_language::ast::Literal::HexInteger(_) => {
                         Ok("i32".to_owned())
                     }
-                    crate::high_level_language::ast::Literal::Float(_) => Ok("f64".to_owned()),
+                    crate::high_level_language::ast::Literal::Float(_) => Ok("f32".to_owned()),
                     crate::high_level_language::ast::Literal::Boolean(_) => Ok("i1".to_owned()),
                     crate::high_level_language::ast::Literal::Null => Ok("*unknown".to_owned()),
                     crate::high_level_language::ast::Literal::String(_) => {
