@@ -8,7 +8,6 @@ const SP: Reg = 2; // stack pointer
 const RA: Reg = 1; // return address
 const S0: Reg = 8; // callee‑saved frame pointer (used as temp in prologue)
 
-/// Narrow backend interface for prologue/epilogue and parameter spills.
 pub trait Rv64Backend {
     fn alloc_temp_reg(&mut self) -> Reg;
     fn emit_add_imm(&mut self, rd: Reg, rs: Reg, imm: i64);
@@ -168,6 +167,37 @@ impl FunctionContext {
                 backend.emit_store_from_tmp(SP, arg_reg(index), &ty, slot as i32);
             } else {
                 let offset = ((index - 8) * 8) as i32;
+                backend.emit_load_to_slot(slot, caller_sp, &ty, offset);
+            }
+        }
+    }
+
+    /// Emit spills for function parameters when the function has an sret (hidden pointer) parameter.
+    /// The sret pointer arrives in a0 and needs to be preserved before regular parameter spills.
+    pub fn emit_parameter_spills_with_sret(&self, backend: &mut impl Rv64Backend, func: &IrFunction, sret_slot: usize) {
+        // First, save the sret pointer from a0 to its designated slot
+        // The sret pointer is already in a0 at function entry
+        let sret_ptr = arg_reg(0); // a0 contains the sret pointer
+        backend.emit_store_from_tmp(SP, sret_ptr, &IrType::Pointer(Box::new(IrType::Void)), sret_slot as i32);
+        
+        // Now spill the regular parameters (shifted by one since a0 is used for sret)
+        if func.params.is_empty() {
+            return;
+        }
+
+        let frame_size = self.frame_size() as i64;
+        let caller_sp = backend.alloc_temp_reg();
+        backend.emit_add_imm(caller_sp, S0, frame_size);
+
+        for (index, param) in func.params.iter().enumerate() {
+            let slot = self.slot_for_reg(&param.register).expect("param slot");
+            let ty = self.frame.resolve_type(&param.ty, &self.type_aliases);
+            // Parameters are shifted by one because a0 is used for sret
+            let arg_index = index + 1;
+            if arg_index < 8 {
+                backend.emit_store_from_tmp(SP, arg_reg(arg_index), &ty, slot as i32);
+            } else {
+                let offset = ((arg_index - 8) * 8) as i32;
                 backend.emit_load_to_slot(slot, caller_sp, &ty, offset);
             }
         }

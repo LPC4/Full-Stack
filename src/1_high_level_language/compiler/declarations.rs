@@ -199,22 +199,69 @@ impl HighLevelCompiler {
                 self.current_block = None;
                 self.defers.clear();
 
-                let mut function = IrFunction::new(
-                    final_name.clone(),
-                    self.lower_return_type(return_type.as_ref()),
-                );
-
-                // Store the function's return type for later lookup during calls
                 let return_ty = self.lower_return_type(return_type.as_ref());
-                self.function_return_types
-                    .insert(final_name.clone(), return_ty);
+                
+                // For functions returning aggregates, determine return strategy:
+                // - Small structs (≤16 bytes): returned in registers a0/a1
+                // - Large structs (>16 bytes): use sret pattern with hidden pointer
+                let is_aggregate = matches!(return_ty, IrType::Aggregate(_) | IrType::Array { .. });
+                let needs_sret = if is_aggregate {
+                    let size = self.type_size_in_bytes(&return_ty);
+                    size > 16
+                } else {
+                    false
+                };
+                
+                let ir_return_ty = if needs_sret {
+                    IrType::Void  // Change return type to void for sret
+                } else {
+                    return_ty.clone()
+                };
+
+                let mut function = IrFunction::new(final_name.clone(), ir_return_ty);
+
+                // Store the function's ACTUAL return type (before sret transformation) for call-site lookup
+                self.function_return_types.insert(final_name.clone(), return_ty.clone());
                 if final_name != *name {
-                    // Keep source-name lookup working at call-sites until full function monomorphization is added.
-                    let return_ty = self.lower_return_type(return_type.as_ref());
-                    self.function_return_types.insert(name.clone(), return_ty);
+                    self.function_return_types.insert(name.clone(), return_ty.clone());
                 }
 
                 self.start_new_block("entry");
+
+                // If this function returns an aggregate, inject a hidden sret parameter ONLY for large structs
+                // Small structs (≤16 bytes) are returned directly in registers a0/a1
+                if needs_sret {
+                    let sret_reg = IrRegister::Named("__sret".to_string());
+                    function.push_param(IrParam {
+                        ty: IrType::Pointer(Box::new(return_ty.clone())),
+                        register: sret_reg.clone(),
+                    });
+                    
+                    self.push_instruction(IrInstruction::Comment(
+                        "hidden sret parameter for large aggregate return".to_owned(),
+                    ));
+                    
+                    // Store the sret pointer in a local variable so we can use it in returns
+                    let sret_ptr_reg = IrRegister::Named("__sret_ptr".to_string());
+                    self.push_instruction(IrInstruction::Alloc {
+                        dest: sret_ptr_reg.clone(),
+                        ty: IrType::Pointer(Box::new(return_ty.clone())),
+                        count: None,
+                    });
+                    self.push_instruction(IrInstruction::Store {
+                        ty: IrType::Pointer(Box::new(return_ty.clone())),
+                        value: IrValue::Register(sret_reg),
+                        ptr: sret_ptr_reg.clone(),
+                        offset: None,
+                    });
+                    
+                    // Make the sret pointer available in the symbol table for return statements
+                    self.context.symbols.insert(
+                        "__sret_ptr".to_string(),
+                        IrType::Pointer(Box::new(IrType::Pointer(Box::new(return_ty.clone())))),
+                        IrValue::Register(sret_ptr_reg),
+                    );
+                }
 
                 for param in params {
                     let lowered_ty = self.lower_type(&param.ty);

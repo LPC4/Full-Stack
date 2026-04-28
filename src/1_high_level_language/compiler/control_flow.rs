@@ -25,23 +25,73 @@ impl HighLevelCompiler {
                 let _ = self.lower_expression(expr);
             }
             Statement::Return(expr) => {
-                let value = expr
-                    .as_ref()
-                    .and_then(|e| self.lower_expression(e))
-                    .map(|l| l.value);
+                // Check if we're in a function that returns an aggregate (has sret)
+                let has_sret = self.context.symbols.lookup("__sret_ptr").is_some();
+                
+                if has_sret {
+                    // For functions returning aggregates, we need to copy the value to sret
+                    if let Some(return_expr) = expr {
+                        if let Some(lowered) = self.lower_expression(return_expr) {
+                            // The lowered value is a register pointing to the local aggregate
+                            // We need to copy it to the sret location
+                            let sret_ptr_info = self.context.symbols.lookup("__sret_ptr").cloned();
+                            
+                            if let Some(sret_info) = sret_ptr_info {
+                                // Get the sret pointer value
+                                let sret_ptr_val = sret_info.value;
+                                
+                                // Get the source address (where the aggregate is currently stored)
+                                let src_addr = match &lowered.value {
+                                    IrValue::Register(reg) => reg.clone(),
+                                    _ => {
+                                        self.context.diagnostics.error(
+                                            "Aggregate return value must be a register".to_owned()
+                                        );
+                                        return;
+                                    }
+                                };
+                                
+                                // Emit code to copy the aggregate from src_addr to sret_ptr
+                                // We'll use a series of Load/Store instructions to copy field by field
+                                let agg_ty = lowered.ty.clone();
+                                
+                                self.push_instruction(IrInstruction::Comment(
+                                    format!("copying aggregate return ({}) to sret location", agg_ty)
+                                ));
 
-                // Emulate proper defer by emitting cleanup instructions at exit points
-                let defers = self.defers.clone();
-                if !defers.is_empty() {
-                    self.push_instruction(IrInstruction::Comment(
-                        "executing deferred cleanup before return".to_owned(),
-                    ));
-                }
-                for action in defers.into_iter().rev() {
-                    self.emit_deferred_action(action);
-                }
+                                // The backend already handles copying from src to sret in lower_terminator
+                                self.set_terminator(IrTerminator::Return(Some(lowered.value)));
+                            } else {
+                                self.context.diagnostics.error(
+                                    "Internal error: __sret_ptr not found in symbol table".to_owned()
+                                );
+                            }
+                        }
+                    } else {
+                        self.context.diagnostics.error(
+                            "Function returning aggregate must have a return value".to_owned()
+                        );
+                    }
+                } else {
+                    // Normal return (non-aggregate)
+                    let value = expr
+                        .as_ref()
+                        .and_then(|e| self.lower_expression(e))
+                        .map(|l| l.value);
 
-                self.set_terminator(IrTerminator::Return(value));
+                    // Emulate proper defer by emitting cleanup instructions at exit points
+                    let defers = self.defers.clone();
+                    if !defers.is_empty() {
+                        self.push_instruction(IrInstruction::Comment(
+                            "executing deferred cleanup before return".to_owned(),
+                        ));
+                    }
+                    for action in defers.into_iter().rev() {
+                        self.emit_deferred_action(action);
+                    }
+
+                    self.set_terminator(IrTerminator::Return(value));
+                }
             }
             Statement::VariableDecl { name, ty, init } => {
                 self.push_instruction(IrInstruction::Comment(format!("local var: {name}")));

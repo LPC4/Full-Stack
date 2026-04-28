@@ -72,6 +72,19 @@ impl CompilerRv64 {
         let mut ctx = FunctionContext::new(&func.name, &self.type_aliases);
         let mut alloc = RegisterAllocator::new();
         alloc.allocate_slots(func, &mut ctx, &self.function_return_types);
+        
+        // Check if function returns an aggregate type - if so, determine return strategy
+        let return_type = self.resolve_ir_type(&func.return_type);
+        let is_aggregate = matches!(return_type, IrType::Aggregate(_) | IrType::Array { .. });
+        
+        // Small structs (≤16 bytes) are returned in registers, larger ones use sret
+        let needs_sret = is_aggregate && !self.can_return_in_registers(&return_type);
+        
+        // If we need sret, save an extra callee-saved register to hold the sret pointer
+        if needs_sret {
+            ctx.save_reg(9); // Save s1 (callee-saved) to hold sret pointer
+        }
+        
         ctx.save_ra();
         ctx.save_reg(S0);
         ctx.finalize();
@@ -82,6 +95,12 @@ impl CompilerRv64 {
 
         self.emitter.start_function(&func.name);
         ctx.emit_prologue(&mut self.emitter);
+        
+        // If this function returns a large aggregate, save the sret pointer from a0 to s1
+        if needs_sret {
+            self.emit_mv(9, A0); // Save sret pointer in s1
+        }
+        
         ctx.emit_parameter_spills(&mut self.emitter, func);
 
         for block in &func.blocks {
@@ -91,7 +110,7 @@ impl CompilerRv64 {
                 self.lower_instruction(inst, &mut ctx);
             }
             if let Some(term) = &block.terminator {
-                self.lower_terminator(term, &mut ctx);
+                self.lower_terminator(term, &mut ctx, needs_sret, is_aggregate);
             }
         }
 
@@ -197,10 +216,19 @@ impl CompilerRv64 {
             Math {
                 dest,
                 op,
-                ty: _,
+                ty,
                 lhs,
                 rhs,
             } => {
+                // CRITICAL FIX: Ensure math operations only work with scalar types
+                let resolved_ty = self.resolve_ir_type(ty);
+                if matches!(resolved_ty, IrType::Aggregate(_) | IrType::Array { .. }) {
+                    panic!(
+                        "Math operations cannot be performed on aggregate/array type {:?}",
+                        resolved_ty
+                    );
+                }
+                
                 let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
                 let lhs_tmp = self.load_value_to_temp(lhs, ctx);
                 let rhs_tmp = self.load_value_to_temp(rhs, ctx);
@@ -223,9 +251,18 @@ impl CompilerRv64 {
             Unary {
                 dest,
                 op,
-                ty: _,
+                ty,
                 value,
             } => {
+                // CRITICAL FIX: Ensure unary operations only work with scalar types
+                let resolved_ty = self.resolve_ir_type(ty);
+                if matches!(resolved_ty, IrType::Aggregate(_) | IrType::Array { .. }) {
+                    panic!(
+                        "Unary operations cannot be performed on aggregate/array type {:?}",
+                        resolved_ty
+                    );
+                }
+                
                 let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
                 let val_tmp = self.load_value_to_temp(value, ctx);
                 let result_tmp = self.alloc_temp_reg();
@@ -238,10 +275,19 @@ impl CompilerRv64 {
             Cmp {
                 dest,
                 op,
-                ty: _,
+                ty,
                 lhs,
                 rhs,
             } => {
+                // CRITICAL FIX: Ensure comparison operations only work with scalar types
+                let resolved_ty = self.resolve_ir_type(ty);
+                if matches!(resolved_ty, IrType::Aggregate(_) | IrType::Array { .. }) {
+                    panic!(
+                        "Comparison operations cannot be performed on aggregate/array type {:?}",
+                        resolved_ty
+                    );
+                }
+                
                 let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
                 let lhs_tmp = self.load_value_to_temp(lhs, ctx);
                 let rhs_tmp = self.load_value_to_temp(rhs, ctx);
@@ -266,6 +312,15 @@ impl CompilerRv64 {
                 value,
                 ty,
             } => {
+                // CRITICAL FIX: Ensure casts only work with scalar types
+                let resolved_ty = self.resolve_ir_type(ty);
+                if matches!(resolved_ty, IrType::Aggregate(_) | IrType::Array { .. }) {
+                    panic!(
+                        "Cast operations cannot be performed on aggregate/array type {:?}",
+                        resolved_ty
+                    );
+                }
+                
                 let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
                 let src_tmp = self.load_value_to_temp(value, ctx);
                 let result_tmp = self.alloc_temp_reg();
@@ -277,18 +332,86 @@ impl CompilerRv64 {
                 function,
                 args,
             } => {
-                for (i, arg) in args.iter().enumerate() {
-                    if i >= 8 {
+                // Check if the called function returns an aggregate type
+                let func_return_type = self.function_return_types
+                    .get(function)
+                    .cloned()
+                    .unwrap_or(IrType::Integer(crate::intermediate_language::IntWidth::I64));
+                let resolved_ret_ty = self.resolve_ir_type(&func_return_type);
+                let is_agg_return = matches!(resolved_ret_ty, IrType::Aggregate(_) | IrType::Array { .. });
+                
+                // Small structs (≤16 bytes) are returned in registers, larger ones use sret
+                let needs_sret = is_agg_return && !self.can_return_in_registers(&resolved_ret_ty);
+                
+                let mut arg_index = 0;
+                
+                // If the function returns a large aggregate, we need to pass a hidden sret pointer as the first argument
+                if needs_sret {
+                    if let Some(dest_reg) = dest {
+                        // The destination should be a stack_address register pointing to allocated memory
+                        let dest_slot = ctx.slot_for_reg(dest_reg).expect("dest slot for sret");
+                        // Compute the address: sp + slot
+                        let sret_ptr = self.alloc_temp_reg();
+                        self.emit_add_imm(sret_ptr, SP, dest_slot as i64);
+                        // Pass it as the first argument (a0)
+                        self.emit_mv(reg_for_arg(0), sret_ptr);
+                        arg_index = 1; // Start regular args from a1
+                    } else {
+                        panic!("Call with aggregate return must have a destination");
+                    }
+                }
+                
+                // Pass regular arguments
+                for arg in args.iter() {
+                    if arg_index >= 8 {
                         break;
                     }
                     let arg_tmp = self.load_value_to_temp(arg, ctx);
-                    self.emit_mv(reg_for_arg(i), arg_tmp);
+                    self.emit_mv(reg_for_arg(arg_index), arg_tmp);
+                    arg_index += 1;
                 }
+                
                 self.emit_jal(RA, function.as_str());
-                if let Some(dest) = dest {
-                    let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
-                    self.emit_sd(SP, A0, dest_slot as i32);
+                
+                // For small aggregate returns, load the result from a0/a1 into the destination slot
+                if is_agg_return && !needs_sret {
+                    if let Some(dest_reg) = dest {
+                        let dest_slot = ctx.slot_for_reg(dest_reg).expect("dest slot");
+                        let size = self.type_size(&resolved_ret_ty);
+                        
+                        // Store first 8 bytes from a0
+                        if size >= 8 {
+                            self.emit_sd(SP, A0, dest_slot as i32);
+                        } else if size >= 4 {
+                            self.emitter.emit_inst(RealInstruction::Sw(Sw::new(SP, A0, dest_slot as i32)));
+                        } else if size >= 2 {
+                            self.emitter.emit_inst(RealInstruction::Sh(Sh::new(SP, A0, dest_slot as i32)));
+                        } else if size >= 1 {
+                            self.emitter.emit_inst(RealInstruction::Sb(Sb::new(SP, A0, dest_slot as i32)));
+                        }
+                        
+                        // Store second 8 bytes from a1 if needed
+                        if size > 8 {
+                            let remaining = size - 8;
+                            if remaining >= 8 {
+                                self.emit_sd(SP, 11, (dest_slot + 8) as i32); // a1 = x11
+                            } else if remaining >= 4 {
+                                self.emitter.emit_inst(RealInstruction::Sw(Sw::new(SP, 11, (dest_slot + 8) as i32)));
+                            } else if remaining >= 2 {
+                                self.emitter.emit_inst(RealInstruction::Sh(Sh::new(SP, 11, (dest_slot + 8) as i32)));
+                            } else if remaining >= 1 {
+                                self.emitter.emit_inst(RealInstruction::Sb(Sb::new(SP, 11, (dest_slot + 8) as i32)));
+                            }
+                        }
+                    }
+                } else if !is_agg_return {
+                    // For scalar returns, store a0 to destination
+                    if let Some(dest) = dest {
+                        let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
+                        self.emit_sd(SP, A0, dest_slot as i32);
+                    }
                 }
+                // For sret returns, the result is already in the memory pointed to by sret
             }
             Phi { .. } => {}
             HeapAlloc { dest, ty, count } => {
@@ -308,12 +431,81 @@ impl CompilerRv64 {
         }
     }
 
-    fn lower_terminator(&mut self, term: &IrTerminator, ctx: &mut FunctionContext) {
+    fn lower_terminator(&mut self, term: &IrTerminator, ctx: &mut FunctionContext, needs_sret: bool, is_aggregate: bool) {
         match term {
             IrTerminator::Return(val) => {
                 if let Some(val) = val {
-                    let val_tmp = self.load_value_to_temp(val, ctx);
-                    self.emit_mv(A0, val_tmp);
+                    let resolved_val = self.resolve_value_type(val, ctx);
+                    let is_agg_return = matches!(resolved_val, IrType::Aggregate(_) | IrType::Array { .. });
+                    
+                    if needs_sret && is_agg_return {
+                        // For large aggregate returns using sret pattern:
+                        // The value should be a stack_address register pointing to the aggregate data
+                        // We need to copy it to the sret pointer passed by the caller (saved in s1)
+                        match val {
+                            IrValue::Register(reg) => {
+                                // Get the address of the aggregate data
+                                let src_addr = if ctx.is_stack_address(reg) {
+                                    // It's already an address (sp + slot)
+                                    let slot = ctx.slot_for_reg(reg).expect("reg slot");
+                                    let addr_tmp = self.alloc_temp_reg();
+                                    self.emit_add_imm(addr_tmp, SP, slot as i64);
+                                    addr_tmp
+                                } else {
+                                    // Load the pointer from the slot
+                                    self.load_pointer_operand_to_temp(reg, ctx)
+                                };
+                                
+                                // The sret pointer was saved in s1 (callee-saved register)
+                                let sret_ptr = 9; // s1
+                                
+                                // Copy the aggregate data from src_addr to sret location
+                                let size = self.type_size(&resolved_val);
+                                self.copy_bytes_from_addr_to_addr(sret_ptr, 0, src_addr, 0, size);
+                            }
+                            _ => panic!("Aggregate return must be a register"),
+                        }
+                        // Don't set A0 for sret returns - caller already has the pointer
+                    } else if is_aggregate && !needs_sret {
+                        // Small struct returned in registers (a0/a1)
+                        // Load the struct fields into a0 and a1
+                        match val {
+                            IrValue::Register(reg) => {
+                                let slot = ctx.slot_for_reg(reg).expect("reg slot");
+                                let size = self.type_size(&resolved_val);
+                                
+                                // Load first 8 bytes into a0
+                                if size >= 8 {
+                                    self.emit_ld(A0, SP, slot as i32);
+                                } else if size >= 4 {
+                                    self.emit_lw(A0, SP, slot as i32);
+                                } else if size >= 2 {
+                                    self.emit_lh(A0, SP, slot as i32);
+                                } else if size >= 1 {
+                                    self.emit_lb(A0, SP, slot as i32);
+                                }
+                                
+                                // Load second 8 bytes into a1 if needed
+                                if size > 8 {
+                                    let remaining = size - 8;
+                                    if remaining >= 8 {
+                                        self.emit_ld(11, SP, (slot + 8) as i32); // a1 = x11
+                                    } else if remaining >= 4 {
+                                        self.emit_lw(11, SP, (slot + 8) as i32);
+                                    } else if remaining >= 2 {
+                                        self.emit_lh(11, SP, (slot + 8) as i32);
+                                    } else if remaining >= 1 {
+                                        self.emit_lb(11, SP, (slot + 8) as i32);
+                                    }
+                                }
+                            }
+                            _ => panic!("Small aggregate return must be a register"),
+                        }
+                    } else {
+                        // Scalar return value
+                        let val_tmp = self.load_value_to_temp(val, ctx);
+                        self.emit_mv(A0, val_tmp);
+                    }
                 }
             }
             IrTerminator::Jump(label) => {
@@ -539,17 +731,59 @@ impl CompilerRv64 {
         offset: i32,
         size: usize,
     ) {
+        // OPTIMIZED: Use 64-bit loads/stores when possible instead of byte-by-byte
+        let mut remaining = size;
+        let mut current_offset = offset;
+        let mut current_slot = slot;
+        
+        // Copy in 8-byte chunks using ld/sd
+        while remaining >= 8 {
+            let tmp = self.alloc_temp_reg();
+            self.emitter.emit_inst(RealInstruction::Ld(Ld::new(
+                tmp,
+                addr_reg,
+                current_offset,
+            )));
+            self.emitter.emit_inst(RealInstruction::Sd(Sd::new(
+                SP,
+                tmp,
+                current_slot as i32,
+            )));
+            remaining -= 8;
+            current_offset += 8;
+            current_slot += 8;
+        }
+        
+        // Copy in 4-byte chunks using lw/sw
+        while remaining >= 4 {
+            let tmp = self.alloc_temp_reg();
+            self.emitter.emit_inst(RealInstruction::Lw(Lw::new(
+                tmp,
+                addr_reg,
+                current_offset,
+            )));
+            self.emitter.emit_inst(RealInstruction::Sw(Sw::new(
+                SP,
+                tmp,
+                current_slot as i32,
+            )));
+            remaining -= 4;
+            current_offset += 4;
+            current_slot += 4;
+        }
+        
+        // Copy remaining bytes individually
         let byte_tmp = self.alloc_temp_reg();
-        for i in 0..size {
+        for i in 0..remaining {
             self.emitter.emit_inst(RealInstruction::Lb(Lb::new(
                 byte_tmp,
                 addr_reg,
-                offset + i as i32,
+                current_offset + i as i32,
             )));
             self.emitter.emit_inst(RealInstruction::Sb(Sb::new(
                 SP,
                 byte_tmp,
-                slot as i32 + i as i32,
+                current_slot as i32 + i as i32,
             )));
         }
     }
@@ -561,17 +795,125 @@ impl CompilerRv64 {
         offset: i32,
         size: usize,
     ) {
+        // OPTIMIZED: Use 64-bit loads/stores when possible instead of byte-by-byte
+        let mut remaining = size;
+        let mut current_offset = offset;
+        let mut current_slot = slot;
+        
+        // Copy in 8-byte chunks using ld/sd
+        while remaining >= 8 {
+            let tmp = self.alloc_temp_reg();
+            self.emitter.emit_inst(RealInstruction::Ld(Ld::new(
+                tmp,
+                SP,
+                current_slot as i32,
+            )));
+            self.emitter.emit_inst(RealInstruction::Sd(Sd::new(
+                addr_reg,
+                tmp,
+                current_offset,
+            )));
+            remaining -= 8;
+            current_offset += 8;
+            current_slot += 8;
+        }
+        
+        // Copy in 4-byte chunks using lw/sw
+        while remaining >= 4 {
+            let tmp = self.alloc_temp_reg();
+            self.emitter.emit_inst(RealInstruction::Lw(Lw::new(
+                tmp,
+                SP,
+                current_slot as i32,
+            )));
+            self.emitter.emit_inst(RealInstruction::Sw(Sw::new(
+                addr_reg,
+                tmp,
+                current_offset,
+            )));
+            remaining -= 4;
+            current_offset += 4;
+            current_slot += 4;
+        }
+        
+        // Copy remaining bytes individually
         let byte_tmp = self.alloc_temp_reg();
-        for i in 0..size {
+        for i in 0..remaining {
             self.emitter.emit_inst(RealInstruction::Lb(Lb::new(
                 byte_tmp,
                 SP,
-                slot as i32 + i as i32,
+                current_slot as i32 + i as i32,
             )));
             self.emitter.emit_inst(RealInstruction::Sb(Sb::new(
                 addr_reg,
                 byte_tmp,
-                offset + i as i32,
+                current_offset + i as i32,
+            )));
+        }
+    }
+
+    /// Copy bytes from one memory address to another (both in registers)
+    fn copy_bytes_from_addr_to_addr(
+        &mut self,
+        dst_addr: Reg,
+        dst_offset: i32,
+        src_addr: Reg,
+        src_offset: i32,
+        size: usize,
+    ) {
+        // OPTIMIZED: Use 64-bit loads/stores when possible instead of byte-by-byte
+        let mut remaining = size;
+        let mut current_dst_offset = dst_offset;
+        let mut current_src_offset = src_offset;
+        
+        // Copy in 8-byte chunks using ld/sd
+        while remaining >= 8 {
+            let tmp = self.alloc_temp_reg();
+            self.emitter.emit_inst(RealInstruction::Ld(Ld::new(
+                tmp,
+                src_addr,
+                current_src_offset,
+            )));
+            self.emitter.emit_inst(RealInstruction::Sd(Sd::new(
+                dst_addr,
+                tmp,
+                current_dst_offset,
+            )));
+            remaining -= 8;
+            current_dst_offset += 8;
+            current_src_offset += 8;
+        }
+        
+        // Copy in 4-byte chunks using lw/sw
+        while remaining >= 4 {
+            let tmp = self.alloc_temp_reg();
+            self.emitter.emit_inst(RealInstruction::Lw(Lw::new(
+                tmp,
+                src_addr,
+                current_src_offset,
+            )));
+            self.emitter.emit_inst(RealInstruction::Sw(Sw::new(
+                dst_addr,
+                tmp,
+                current_dst_offset,
+            )));
+            remaining -= 4;
+            current_dst_offset += 4;
+            current_src_offset += 4;
+        }
+        
+        // Copy remaining bytes individually
+        let byte_tmp = self.alloc_temp_reg();
+        for i in 0..remaining {
+            self.emitter.emit_inst(RealInstruction::Lb(Lb::new(
+                byte_tmp,
+                src_addr,
+                current_src_offset + i as i32,
+            )));
+            self.emitter.emit_inst(RealInstruction::Sb(Sb::new(
+                dst_addr,
+                byte_tmp,
+                current_dst_offset + i as i32,
             )));
         }
     }
@@ -855,6 +1197,21 @@ impl CompilerRv64 {
         }
     }
 
+    /// Resolve the type of an IR value
+    fn resolve_value_type(&self, val: &IrValue, ctx: &FunctionContext) -> IrType {
+        match val {
+            IrValue::Register(reg) => {
+                ctx.type_for_reg(reg)
+                    .unwrap_or(IrType::Integer(crate::intermediate_language::IntWidth::I64))
+            }
+            IrValue::Integer(_) => IrType::Integer(crate::intermediate_language::IntWidth::I64),
+            IrValue::Bool(_) => IrType::Integer(crate::intermediate_language::IntWidth::I1),
+            IrValue::Float(_) => IrType::Float(crate::intermediate_language::FloatWidth::F64),
+            IrValue::Null => IrType::Pointer(Box::new(IrType::Void)),
+            IrValue::GlobalString(_) => IrType::Pointer(Box::new(IrType::Integer(crate::intermediate_language::IntWidth::I8))),
+        }
+    }
+
     /// Return the natural alignment of a (resolved) type, in bytes.
     fn type_alignment(&self, ty: &IrType) -> usize {
         match self.resolve_ir_type(ty) {
@@ -922,6 +1279,13 @@ impl CompilerRv64 {
                 8
             }
         }
+    }
+
+    /// Determine if a struct can be returned in registers (a0/a1) instead of using sret.
+    /// Small structs (≤16 bytes) are returned directly in registers according to RISC-V ABI.
+    fn can_return_in_registers(&self, ty: &IrType) -> bool {
+        let size = self.type_size(ty);
+        size <= 16 && size > 0
     }
 }
 

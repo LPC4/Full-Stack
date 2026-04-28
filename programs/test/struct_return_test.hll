@@ -1,0 +1,18 @@
+; Test struct return in registers for small structs (≤16 bytes)
+type Point = {
+    x: i32,
+    y: i32
+}
+
+make_point: (x: i32, y: i32) -> Point {
+    return { .x = x, .y = y }
+}
+
+sum_point: (p: Point) -> i32 {
+    return p.x + p.y
+}
+
+main: () -> i32 {
+    p: Point = make_point(3, 4)
+    return sum_point(p)
+}

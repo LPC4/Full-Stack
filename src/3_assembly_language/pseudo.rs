@@ -9,7 +9,7 @@
 use super::real::RealInstruction;
 use super::riscv::rv64i::{
     Addi, Addiw, Auipc, Beq, Bge, Bgeu, Blt, Bltu, Bne, Jal, Jalr, Lui, Or, Slli, Slt, Sltiu, Sltu,
-    Srli, Sub, Xori,
+    Srli, Sub, Xori, Subw
 };
 use crate::assembly_language::encode_decode::Reg;
 use crate::assembly_language::riscv::rv64fd;
@@ -225,10 +225,7 @@ impl PseudoInstruction {
 
             Self::Neg { rd, rs } => vec![RealInstruction::Sub(Sub::new(*rd, X0, *rs))],
 
-            Self::Negw { rd, rs } => {
-                use super::riscv::rv64i::Subw;
-                vec![RealInstruction::Subw(Subw::new(*rd, X0, *rs))]
-            }
+            Self::Negw { rd, rs } => vec![RealInstruction::Subw(Subw::new(*rd, X0, *rs))],
 
             Self::SextW { rd, rs } => vec![RealInstruction::Addiw(Addiw::new(*rd, *rs, 0))],
 
@@ -417,7 +414,6 @@ fn expand_li(rd: Reg, imm: i64) -> Vec<RealInstruction> {
 
     // 64‑bit case: construct the value from two 32‑bit halves.
     // The expansion uses t1 (x6) as a temporary - it is caller‑saved
-    // and therefore safe for the assembler’s own pseudo‑instruction.
     let low32 = (imm & 0xFFFF_FFFF) as i32; // as 32‑bit signed
     let high32 = ((imm >> 32) & 0xFFFF_FFFF) as i32; // as 32‑bit signed
 
@@ -436,11 +432,11 @@ fn expand_li(rd: Reg, imm: i64) -> Vec<RealInstruction> {
     let mut seq = Vec::new();
 
     // Load the high 32 bits into t1 and shift them left by 32.
-    seq.append(&mut load32(T1, high32)); // T1 = sign_ext(high32)
-    seq.push(RealInstruction::Slli(Slli::new(T1, T1, 32))); // T1 = high32 << 32
+    seq.append(&mut load32(T1, high32));                            // T1 = sign_ext(high32)
+    seq.push(RealInstruction::Slli(Slli::new(T1, T1, 32)));   // T1 = high32 << 32
 
     // Load the low 32 bits into rd, then zero‑extend to 64 bits.
-    seq.append(&mut load32(rd, low32)); // rd = sign_ext(low32)
+    seq.append(&mut load32(rd, low32));                           // rd = sign_ext(low32)
     seq.push(RealInstruction::Slli(Slli::new(rd, rd, 32))); // clear upper 32 bits
     seq.push(RealInstruction::Srli(Srli::new(rd, rd, 32))); // rd = zero_ext(low32)
 
