@@ -9,6 +9,7 @@ pub mod program_catalog;
 pub mod source_view;
 pub mod tokens_view;
 pub mod viewtrait;
+pub mod stack_view;
 
 pub use assembly_view::AssemblyView;
 pub use ast_view::AstView;
@@ -21,6 +22,7 @@ pub use program_catalog::{ProgramCatalog, ProgramFile, ProgramKind};
 pub use source_view::SourceView;
 pub use tokens_view::TokensView;
 pub use viewtrait::CompilerView;
+pub use stack_view::StackView;
 
 pub(crate) fn blank_custom_program_source() -> String {
     "; Write your program here\n".to_owned()

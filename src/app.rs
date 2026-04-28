@@ -3,7 +3,7 @@ use crate::high_level_language::lexer::Lexer;
 use crate::high_level_language::token::Token;
 use crate::view::{
     AssemblyView, AstView, CompilationState, CompilerView, IrView, ProgramCatalog, ProgramKind,
-    SourceView, TokensView, blank_custom_program_source,
+    SourceView, TokensView, blank_custom_program_source, StackView,
 };
 use egui_dock::{DockState, NodeIndex};
 
@@ -52,6 +52,7 @@ impl TemplateApp {
         let ast: Box<dyn CompilerView> = Box::new(AstView);
         let ir: Box<dyn CompilerView> = Box::new(IrView);
         let asm: Box<dyn CompilerView> = Box::new(AssemblyView);
+        let stack: Box<dyn CompilerView> = Box::new(StackView::default());
 
         let mut dock = DockState::new(vec![source]);
         let surface = dock.main_surface_mut();
@@ -59,7 +60,7 @@ impl TemplateApp {
         let [_left_node, right_node] =
             surface.split_right(NodeIndex::root(), 0.5, vec![ir, tokens, ast]);
 
-        surface.split_below(right_node, 0.5, vec![asm]);
+        surface.split_below(right_node, 0.5, vec![asm, stack]);
 
         self.dock = dock;
     }
