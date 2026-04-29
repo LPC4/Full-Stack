@@ -90,12 +90,30 @@ fn built_in_programs() -> Vec<ProgramFile> {
             )),
         ),
         ProgramFile::example(
-            "example-generics-strings-consts",
-            "Generics, Strings & Consts",
-            "Generic types, string literals, and compile-time constants.",
+            "example-casts-and-c",
+            "Casts & C Interop",
+            "Explicit type casts, calling printf from C, and pointer casts.",
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/programs/example/generics_strings_consts.hll"
+                "/programs/example/casts_and_c.hll"
+            )),
+        ),
+        ProgramFile::example(
+            "example-constexpr-functions",
+            "Constexpr Functions",
+            "Pure functions evaluated at compile time to produce constants.",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/programs/example/constexpr_functions.hll"
+            )),
+        ),
+        ProgramFile::example(
+            "example-generics-strings",
+            "Generics & Strings",
+            "Generic Box<T>, string pointers, and external puts from C.",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/programs/example/generics_strings.hll"
             )),
         ),
     ]

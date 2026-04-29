@@ -52,12 +52,46 @@ impl TypeContext {
     }
 
     /// Type check a binary operation and return the result type or error
+    /// Type check a binary operation and return the result type or error
     pub fn check_binary_op(
         &self,
         op: &BinaryOp,
         lhs_type: &str,
         rhs_type: &str,
     ) -> Result<String, TypeCheckError> {
+        // Determine if either side is a pointer type.
+        let lhs_is_ptr =
+            lhs_type.ends_with('*') || lhs_type.starts_with('*') || lhs_type == "*unknown";
+        let rhs_is_ptr =
+            rhs_type.ends_with('*') || rhs_type.starts_with('*') || rhs_type == "*unknown";
+
+        // One side pointer, other side integer/unknown => pointer arithmetic
+        if (lhs_is_ptr != rhs_is_ptr) // exactly one side is a pointer
+            && (self.is_numeric(rhs_type) || self.is_numeric(lhs_type)
+            || rhs_type == "i32"
+            || lhs_type == "i32"
+            || rhs_type == "i64"
+            || lhs_type == "i64"
+            || rhs_type == "unknown"
+            || lhs_type == "unknown")
+        {
+            return match op {
+                BinaryOp::Add | BinaryOp::Sub => {
+                    // Result is the pointer type
+                    if lhs_is_ptr {
+                        Ok(lhs_type.to_owned())
+                    } else {
+                        Ok(rhs_type.to_owned())
+                    }
+                }
+                _ => Err(TypeCheckError::InvalidOperation {
+                    op: format!("{op:?}"),
+                    lhs: lhs_type.to_owned(),
+                    rhs: rhs_type.to_owned(),
+                }),
+            };
+        }
+
         let lhs_unknown = self.is_unknown_like(lhs_type);
         let rhs_unknown = self.is_unknown_like(rhs_type);
         let lhs_placeholder = self.is_placeholder_like(lhs_type);

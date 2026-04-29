@@ -562,9 +562,9 @@ impl AssemblyEmitter {
         }
     }
 
-    // ---------- misc ----------
     pub fn finish(&mut self) -> String {
-        self.lines.join("\n")
+        let result = self.lines.join("\n");
+        result
     }
 }
 

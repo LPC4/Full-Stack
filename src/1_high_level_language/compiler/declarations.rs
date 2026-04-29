@@ -173,9 +173,12 @@ impl HighLevelCompiler {
                     format!("{}<{}>", name, generics.join(", "))
                 };
                 if *is_extern {
+                    // External functions are provided by the linker (e.g. libc).
+                    // The signature is already recorded.
                     self.context.diagnostics.warn(format!(
-                        "extern function `{final_name}` lowered as placeholder"
+                        "extern function `{final_name}` – definition omitted (linker must provide it)"
                     ));
+                    return Ok(());
                 }
 
                 // Store function declaration for compile-time evaluation

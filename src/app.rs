@@ -2,8 +2,8 @@ use crate::high_level_language::compilation_pipeline::CompilationPipeline;
 use crate::high_level_language::lexer::Lexer;
 use crate::high_level_language::token::Token;
 use crate::view::{
-    AssemblyView, AstView, CompilationState, CompilerView, IrView, ProgramCatalog, ProgramKind,
-    SourceView, StackView, TokensView, blank_custom_program_source,
+    AssemblyView, AstView, CompilationState, CompilerView, ExecutionView, IrView, ProgramCatalog,
+    ProgramKind, SourceView, StackView, TokensView, blank_custom_program_source,
 };
 use egui_dock::{DockState, NodeIndex};
 
@@ -17,6 +17,8 @@ pub struct TemplateApp {
     compilation_state: CompilationState,
     #[serde(skip)]
     pipeline: CompilationPipeline,
+    #[serde(skip)]
+    wsl_receiver: Option<std::sync::mpsc::Receiver<String>>,
 }
 
 impl Default for TemplateApp {
@@ -27,6 +29,7 @@ impl Default for TemplateApp {
             dock: DockState::new(vec![]),
             compilation_state: CompilationState::default(),
             pipeline: CompilationPipeline::new(),
+            wsl_receiver: None,
         };
         app.reset_layout();
         app
@@ -53,6 +56,7 @@ impl TemplateApp {
         let ir: Box<dyn CompilerView> = Box::new(IrView);
         let asm: Box<dyn CompilerView> = Box::new(AssemblyView);
         let stack: Box<dyn CompilerView> = Box::new(StackView::default());
+        let execution: Box<dyn CompilerView> = Box::new(ExecutionView);
 
         let mut dock = DockState::new(vec![source]);
         let surface = dock.main_surface_mut();
@@ -60,7 +64,7 @@ impl TemplateApp {
         let [_left_node, right_node] =
             surface.split_right(NodeIndex::root(), 0.5, vec![ir, tokens, ast]);
 
-        surface.split_below(right_node, 0.5, vec![asm, stack]);
+        surface.split_below(right_node, 0.5, vec![asm, stack, execution]);
 
         self.dock = dock;
     }
@@ -219,6 +223,29 @@ impl eframe::App for TemplateApp {
                         self.compile();
                     }
 
+                    #[cfg(not(target_arch = "wasm32"))]
+                    if ui
+                        .add_sized([110.0, 30.0], egui::Button::new("Run in WSL"))
+                        .clicked()
+                    {
+                        if self.compilation_state.asm.is_empty() {
+                            self.compile();
+                        }
+
+                        self.compilation_state.execution_output = "Running in WSL... please wait.\n(Executing cross-compiler and QEMU in background)".to_string();
+
+                        // Create a communication channel
+                        let (tx, rx) = std::sync::mpsc::channel();
+                        self.wsl_receiver = Some(rx);
+
+                        let asm_copy = self.compilation_state.asm.clone();
+
+                        std::thread::spawn(move || {
+                            let result = run_in_wsl(&asm_copy);
+                            let _ = tx.send(result);
+                        });
+                    }
+
                     if ui
                         .add_sized([110.0, 30.0], egui::Button::new("Reset File"))
                         .clicked()
@@ -270,6 +297,26 @@ impl eframe::App for TemplateApp {
                 ui.add_space(4.0);
             });
 
+        // Check if our background WSL thread has sent a message back
+        if let Some(rx) = &self.wsl_receiver {
+            match rx.try_recv() {
+                Ok(result) => {
+                    self.compilation_state.execution_output = result;
+                    self.wsl_receiver = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    // The thread is still running. Force the UI to keep repainting
+                    // so it doesn't wait for mouse movement to update the screen.
+                    ui.ctx().request_repaint();
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.compilation_state.execution_output =
+                        "Error: WSL thread disconnected unexpectedly.".to_string();
+                    self.wsl_receiver = None;
+                }
+            }
+        }
+
         egui::CentralPanel::default().show_inside(ui, |ui| {
             egui_dock::DockArea::new(&mut self.dock)
                 .show_add_buttons(false)
@@ -305,4 +352,104 @@ impl egui_dock::TabViewer for DockTabViewer<'_> {
     fn allowed_in_windows(&self, _tab: &mut Self::Tab) -> bool {
         false
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn run_in_wsl(asm: &str) -> String {
+    use std::io::Write;
+    use std::os::windows::process::CommandExt;
+    use std::process::{Command, Stdio};
+
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+    let clean_asm = asm
+        .lines()
+        .map(|line| line.split(';').next().unwrap_or("").trim_end())
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let script = r#"
+echo "=== Connected to WSL ==="
+
+# Make sure standard locations are on PATH just in case.
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
+
+# Use the user's home inside the Linux filesystem
+WORKDIR="$HOME/assembly"
+mkdir -p "$WORKDIR"
+cd "$WORKDIR"
+
+# Find the cross-compiler
+CC="$(which riscv64-linux-gnu-gcc 2>/dev/null)"
+if [ -z "$CC" ]; then
+    echo "ERROR: riscv64-linux-gnu-gcc not found."
+    echo "Current PATH=$PATH"
+    exit 1
+fi
+
+# Check for the emulator
+QEMU="$(which qemu-riscv64 2>/dev/null)"
+if [ -z "$QEMU" ]; then
+    echo "ERROR: qemu-riscv64 not found."
+    echo "Current PATH=$PATH"
+    exit 1
+fi
+
+set -e
+cat > program.s
+echo >> program.s
+
+"$CC" -static program.s -o program
+set +e
+"$QEMU" ./program
+EXIT_CODE=$?
+echo ""
+echo "--- Process Exited with Code: $EXIT_CODE ---"
+"#;
+
+    let mut child = match Command::new("wsl")
+        .args(["--exec", "bash", "-lc", script])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => return format!("Failed to start WSL: {}", e),
+    };
+
+    if let Some(mut stdin) = child.stdin.take() {
+        if let Err(e) = stdin.write_all(clean_asm.as_bytes()) {
+            return format!("Failed to write to WSL stdin: {}", e);
+        }
+    }
+
+    let output = match child.wait_with_output() {
+        Ok(o) => o,
+        Err(e) => return format!("Failed to wait on WSL process: {}", e),
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    let mut result = String::new();
+    if !stdout.is_empty() {
+        result.push_str(&stdout);
+    }
+    if !stderr.is_empty() {
+        if !result.is_empty() {
+            result.push_str("\n\n[STDERR]\n");
+        }
+        result.push_str(&stderr);
+    }
+
+    result
+}
+
+// Fallback for Web/WASM targets
+#[cfg(target_arch = "wasm32")]
+fn run_in_wsl(_asm: &str) -> String {
+    "WSL execution is not supported in the web browser.".to_string()
 }

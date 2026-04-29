@@ -15,6 +15,7 @@ pub use viewtrait::CompilerView;
 pub mod views;
 pub use crate::view::views::assembly_view::AssemblyView;
 pub use crate::view::views::ast_view::AstView;
+pub use crate::view::views::execution_view::ExecutionView;
 pub use crate::view::views::ir_view::IrView;
 pub use crate::view::views::source_view::SourceView;
 pub use crate::view::views::stack_view::StackView;

@@ -1,45 +1,5 @@
 .section .text
 	; ========================================
-	; Function: print
-	; ========================================
-.globl print
-print:
-	; --- Function Prologue ---
-	; Allocate stack frame: 32 bytes
-	addi   sp, sp, -32
-	; Save return address (ra) at offset 8
-	sd     ra, 8(sp)
-	; Save callee-saved register s8 at offset 16
-	sd     s0, 16(sp)
-	; Set up frame pointer
-	addi   s0, sp, 0
-	; --- End Prologue ---
-	; --- Function Parameter Spills ---
-	addi   t0, s0, 32
-	; Spill parameter '$value' from register a0 to stack slot 0
-	sw     a0, 0(sp)
-	; --- End Parameter Spills ---
-	; --- Basic Block: entry ---
-print__entry:
-	; bind parameter: value
-	addi   t0, sp, 4
-	; Store i32 to memory
-	lw     t1, 0(sp)
-	sw     t1, 0(t0)
-	; no body for function `print`
-	; --- Function Epilogue ---
-	; Restore callee-saved register s8 from offset 16
-	ld     s0, 16(sp)
-	; Restore return address (ra) from offset 8
-	ld     ra, 8(sp)
-	; Deallocate stack frame: 32 bytes
-	addi   sp, sp, 32
-	; Return to caller
-	jalr   zero, 0(ra)
-	; --- End Epilogue ---
-	; End of function
-
-	; ========================================
 	; Function: main
 	; ========================================
 .globl main

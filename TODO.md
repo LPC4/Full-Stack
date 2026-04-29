@@ -1,5 +1,7 @@
 # Compiler Project Backlog
 
+FIX SEGFAULTS FROM DEFER
+
 ## Aggregate Types & Constant Evaluation
 - [ ] **Spec Alignment:** Reconcile `IrType::Aggregate` design—decide whether to strip or retain field names and synchronize the IR specification with the codebase.
 - [ ] **Const Eval (Struct Access):** Enable compile-time field access on struct literals.

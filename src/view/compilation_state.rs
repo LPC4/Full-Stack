@@ -6,4 +6,5 @@ pub struct CompilationState {
     pub asm: String,
     pub error: Option<String>,
     pub just_compiled: bool,
+    pub execution_output: String,
 }

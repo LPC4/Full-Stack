@@ -339,7 +339,7 @@ fn all_launch_examples_compile() {
             "generics_strings_consts",
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/programs/example/generics_strings_consts.hll"
+            "/programs/example/generics_strings.hll"
             )),
         ),
     ];

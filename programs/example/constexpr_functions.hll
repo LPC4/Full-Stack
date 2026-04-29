@@ -1,0 +1,32 @@
+; Compile‑time evaluation: constants computed by pure functions
+
+; Pure function
+factorial: (n: i32) -> i32 {
+    if n <= 1 {
+        return 1
+    }
+    return n * factorial(n - 1)
+}
+
+; Another pure function with a loop
+sum_to: (n: i32) -> i32 {
+    total: i32 = 0
+    i: i32 = 0
+    while i < n {
+        i = i + 1
+        total = total + i
+    }
+    return total
+}
+
+; These are evaluated at compile time, no runtime cost
+const FACTORIAL_7 = factorial(7)    ; 5040
+const SUM_TO_10   = sum_to(10)      ; 55
+
+external printf: (format: i8*, value: i32) -> i32
+
+main: () -> i32 {
+    printf("Factorial 7 = %d\n".data, FACTORIAL_7)
+    printf("Sum 1..10   = %d\n".data, SUM_TO_10)
+    return 0
+}

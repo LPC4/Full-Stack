@@ -1,0 +1,26 @@
+; Generics and string handling via C library
+
+type Box<T> = {
+    value: T
+}
+
+external puts: (str: i8*) -> i32
+
+main: () -> i32 {
+    ; Generic box for an integer
+    int_box: Box<i32>* = new(Box<i32>)
+    @int_box.value = 42
+
+    ; Generic box for a string (pointer)
+    str_box: Box<i8*>* = new(Box<i8*>)
+    @str_box.value = "Hello, language!".data
+
+    ; Call C's puts to print the string
+    puts(@str_box.value)
+
+    ; Free memory
+    free(int_box)
+    free(str_box)
+
+    return @int_box.value
+}
