@@ -6,9 +6,11 @@
 
 ### Interactive compiler pipeline, from source to RISC-V assembly
 
-[![Live Demo](https://img.shields.io/badge/Demo-GitHub%20Pages-2ea44f?style=for-the-badge&logo=github)](https://lpc4.github.io/Full-Stack/)
+[![Demo](https://img.shields.io/badge/Demo-GitHub_Pages-5e8c61?logo=github)](https://lpc4.github.io/Full-Stack/)
 [![Build](https://github.com/LPC4/Full-Stack/actions/workflows/pages.yml/badge.svg)](https://github.com/LPC4/Full-Stack/actions/workflows/pages.yml)
-[![Rust](https://img.shields.io/badge/Rust-1.75+-orange?logo=rust)](https://www.rust-lang.org)
+[![Rust](https://img.shields.io/badge/Rust-1.75+-5e8c61?logo=rust)](https://www.rust-lang.org)
+[![License](https://img.shields.io/badge/License-MIT_%2F_Apache--2.0-5e8c61)](LICENSE)
+[![RISC‑V](https://img.shields.io/badge/RISC‑V-RV64IMAFD-5e8c61?logo=riscv)](https://riscv.org)
 
 </div>
 
