@@ -45,7 +45,7 @@ fn parse_assembly(asm: &str) -> Vec<FunctionStack> {
             if let Some(func) = current_func.take() {
                 results.push(func);
             }
-            let name = line.trim_start_matches("; Function:").trim().to_string();
+            let name = line.trim_start_matches("; Function:").trim().to_owned();
             current_func = Some(FunctionStack {
                 name,
                 frame_size: 0,
@@ -84,11 +84,11 @@ fn parse_assembly(asm: &str) -> Vec<FunctionStack> {
             }
 
             if let Some(stripped) = line.strip_prefix("; local var:") {
-                let name = stripped.trim().to_string();
+                let name = stripped.trim().to_owned();
                 pending_local_var = Some((name, String::new()));
                 pending_param = None;
             } else if let Some(stripped) = line.strip_prefix("; bind parameter:") {
-                let name = stripped.trim().to_string();
+                let name = stripped.trim().to_owned();
                 pending_param = Some((name, String::new()));
                 pending_local_var = None;
             }
@@ -150,7 +150,7 @@ fn parse_assembly(asm: &str) -> Vec<FunctionStack> {
                                     ..
                                 } => {
                                     if *sz == 0 {
-                                        *tn = type_name.to_string();
+                                        *tn = type_name.to_owned();
                                         *sz = size;
                                     }
                                 }
@@ -160,7 +160,7 @@ fn parse_assembly(asm: &str) -> Vec<FunctionStack> {
                                     ..
                                 } => {
                                     if *sz == 0 {
-                                        *tn = type_name.to_string();
+                                        *tn = type_name.to_owned();
                                         *sz = size;
                                     }
                                 }
@@ -334,7 +334,7 @@ fn draw_modern_function_stack(ui: &mut egui::Ui, func: &FunctionStack) {
                             }
                             StackElementKind::SavedRegister { reg } => {
                                 ui.label(
-                                    RichText::new(format!("Saved Register (s{})", reg))
+                                    RichText::new(format!("Saved Register (s{reg})"))
                                         .strong()
                                         .color(stroke_color),
                                 );
@@ -345,7 +345,7 @@ fn draw_modern_function_stack(ui: &mut egui::Ui, func: &FunctionStack) {
                                 size,
                             } => {
                                 ui.label(
-                                    RichText::new(format!("Local Variable: {}", name))
+                                    RichText::new(format!("Local Variable: {name}"))
                                         .strong()
                                         .color(stroke_color),
                                 );
@@ -357,7 +357,7 @@ fn draw_modern_function_stack(ui: &mut egui::Ui, func: &FunctionStack) {
                                         type_name
                                     }
                                 ));
-                                ui.label(format!("Size: {} bytes", size));
+                                ui.label(format!("Size: {size} bytes"));
                             }
                             StackElementKind::Parameter {
                                 name,
@@ -365,7 +365,7 @@ fn draw_modern_function_stack(ui: &mut egui::Ui, func: &FunctionStack) {
                                 size,
                             } => {
                                 ui.label(
-                                    RichText::new(format!("Parameter: {}", name))
+                                    RichText::new(format!("Parameter: {name}"))
                                         .strong()
                                         .color(stroke_color),
                                 );
@@ -377,7 +377,7 @@ fn draw_modern_function_stack(ui: &mut egui::Ui, func: &FunctionStack) {
                                         type_name
                                     }
                                 ));
-                                ui.label(format!("Size: {} bytes", size));
+                                ui.label(format!("Size: {size} bytes"));
                             }
                         }
                         ui.separator();
@@ -389,7 +389,7 @@ fn draw_modern_function_stack(ui: &mut egui::Ui, func: &FunctionStack) {
             let font_id = FontId::monospace(10.0);
 
             let high_galley = ui.painter().layout_no_wrap(
-                format!("SP + 0x{:X}", frame_size),
+                format!("SP + 0x{frame_size:X}"),
                 font_id.clone(),
                 Color32::LIGHT_GRAY,
             );
@@ -400,7 +400,7 @@ fn draw_modern_function_stack(ui: &mut egui::Ui, func: &FunctionStack) {
             );
 
             let low_galley = ui.painter().layout_no_wrap(
-                "SP + 0x0".to_string(),
+                "SP + 0x0".to_owned(),
                 font_id.clone(),
                 Color32::LIGHT_GRAY,
             );
@@ -441,7 +441,7 @@ fn draw_modern_function_stack(ui: &mut egui::Ui, func: &FunctionStack) {
                         if current_offset > top_of_elem {
                             let gap = current_offset - top_of_elem;
                             ui.label(
-                                RichText::new(format!("+0x{:02X}", top_of_elem))
+                                RichText::new(format!("+0x{top_of_elem:02X}"))
                                     .monospace()
                                     .color(Color32::from_gray(120)),
                             );
@@ -451,7 +451,7 @@ fn draw_modern_function_stack(ui: &mut egui::Ui, func: &FunctionStack) {
                             ui.label(RichText::new("-").color(Color32::from_gray(120)));
                             ui.label(RichText::new("-").color(Color32::from_gray(120)));
                             ui.label(
-                                RichText::new(format!("{} bytes", gap))
+                                RichText::new(format!("{gap} bytes"))
                                     .color(Color32::from_gray(120)),
                             );
                             ui.end_row();
@@ -467,16 +467,16 @@ fn draw_modern_function_stack(ui: &mut egui::Ui, func: &FunctionStack) {
                                 );
                                 ui.label("ra");
                                 ui.label("-");
-                                ui.label(format!("{} bytes", elem_size));
+                                ui.label(format!("{elem_size} bytes"));
                             }
                             StackElementKind::SavedRegister { reg } => {
                                 ui.label(
                                     RichText::new("Saved Reg")
                                         .color(Color32::from_rgb(255, 200, 100)),
                                 );
-                                ui.label(format!("s{}", reg));
+                                ui.label(format!("s{reg}"));
                                 ui.label("-");
-                                ui.label(format!("{} bytes", elem_size));
+                                ui.label(format!("{elem_size} bytes"));
                             }
                             StackElementKind::LocalVariable {
                                 name, type_name, ..
@@ -487,7 +487,7 @@ fn draw_modern_function_stack(ui: &mut egui::Ui, func: &FunctionStack) {
                                 );
                                 ui.label(name);
                                 ui.label(if type_name.is_empty() { "?" } else { type_name });
-                                ui.label(format!("{} bytes", elem_size));
+                                ui.label(format!("{elem_size} bytes"));
                             }
                             StackElementKind::Parameter {
                                 name, type_name, ..
@@ -498,7 +498,7 @@ fn draw_modern_function_stack(ui: &mut egui::Ui, func: &FunctionStack) {
                                 );
                                 ui.label(name);
                                 ui.label(if type_name.is_empty() { "?" } else { type_name });
-                                ui.label(format!("{} bytes", elem_size));
+                                ui.label(format!("{elem_size} bytes"));
                             }
                         }
                         ui.end_row();
@@ -516,7 +516,7 @@ fn draw_modern_function_stack(ui: &mut egui::Ui, func: &FunctionStack) {
                         ui.label(RichText::new("-").color(Color32::from_gray(120)));
                         ui.label(RichText::new("-").color(Color32::from_gray(120)));
                         ui.label(
-                            RichText::new(format!("{} bytes", current_offset))
+                            RichText::new(format!("{current_offset} bytes"))
                                 .color(Color32::from_gray(120)),
                         );
                         ui.end_row();

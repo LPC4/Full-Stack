@@ -529,8 +529,7 @@ impl SemanticAnalyzer {
                 let source_ir = self.parse_type_string(&source_type);
                 if !self.is_valid_cast(&source_ir, &target_ir) {
                     self.diagnostics.error(format!(
-                        "Invalid cast from `{}` to `{}`",
-                        source_type, target_name
+                        "Invalid cast from `{source_type}` to `{target_name}`"
                     ));
                     return Err(());
                 }
