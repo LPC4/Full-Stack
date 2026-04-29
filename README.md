@@ -1,19 +1,14 @@
 <div align="center">
 
-# Full-Stack
+<img src="assets/icon/icon.svg" alt="Full-Stack icon" width="128" />
 
-[![Live Demo](https://img.shields.io/badge/Live%20Demo-GitHub%20Pages-2ea44f?logo=github)](https://lpc4.github.io/Full-Stack/)
-[![Deploy Pages](https://github.com/LPC4/Full-Stack/actions/workflows/pages.yml/badge.svg)](https://github.com/LPC4/Full-Stack/actions/workflows/pages.yml)
+# Full‑Stack
+
+### Interactive compiler pipeline, from source to RISC-V assembly
+
+[![Live Demo](https://img.shields.io/badge/Demo-GitHub%20Pages-2ea44f?style=for-the-badge&logo=github)](https://lpc4.github.io/Full-Stack/)
+[![Build](https://github.com/LPC4/Full-Stack/actions/workflows/pages.yml/badge.svg)](https://github.com/LPC4/Full-Stack/actions/workflows/pages.yml)
 [![Rust](https://img.shields.io/badge/Rust-1.75+-orange?logo=rust)](https://www.rust-lang.org)
-
-</div>
-
-<div align="center">
-
-### An interactive compiler pipeline explorer
-*From high-level language semantics down to IR, assembly, and machine execution*
-
-**[🌐 Live Demo](https://lpc4.github.io/Full-Stack/)**
 
 </div>
 
@@ -21,127 +16,118 @@
 
 ## Overview
 
-This project implements a complete compilation pipeline for HLL, a systems programming language with a consistency-first memory model and explicit pointer semantics. The pipeline includes:
+Full‑Stack is a **self‑contained compiler pipeline** for a custom systems language.  
+Every stage, lexing, parsing, semantic analysis, IR generation, register allocation, and RISC‑V code emission, runs directly in the browser (or natively) and is **visualised in real time**.
 
-- **High-Level Language Frontend**: Lexer, recursive-descent parser, AST, semantic analysis, and HLL→IR lowering.
-- **Intermediate Representation**: Strongly-typed, SSA-form IR with aggregate types, control flow, and snapshot-tested code generation.
-- **Assembly Backend**: Growing RISC-V RV64IMAFD backend with full instruction encoding specifications.
-- **Interactive UI**: Desktop and web application for live editing, compilation, and step-through visualization of each pipeline stage.
-- **Test Infrastructure**: Golden tests, fixture programs, and reproducible compilation pipelines.
+The pipeline produces **RV64IMAFD assembly** that can be assembled, linked, and executed inside a RISC‑V emulator (QEMU).  
+All components are written in Rust and exposed through an egui interface.
 
 ---
 
-## Examples
+## Pipeline at a glance
 
-All example programs, IR outputs, and interactive demonstrations are available in the live GitHub Pages deployment:
+| Stage | View | What you see                                                              |
+|-------|------|---------------------------------------------------------------------------|
+| **Source** | `Source` | Syntax‑highlighted editor for HLL programs                                |
+| **Tokens** | `Tokens` | Raw token stream from the lexer                                           |
+| **AST** | `AST` | Abstract syntax tree (pretty‑printed)                                     |
+| **IR** | `IR` | Typed, SSA‑form intermediate representation                               |
+| **Assembly** | `Assembly` | Generated RISC‑V assembly (RV64IMAFD)                                     |
+| **Stack** | `Stack` | Stack frame layout, saved registers, locals per function                  |
+| **Execution** | `Execution` | Stdout and exit code from running the binary in QEMU (only works locally) |
 
-<div align="center">
-
-**[https://lpc4.github.io/Full-Stack/](https://lpc4.github.io/Full-Stack/)**
-
-</div>
+All panels are resizable and can be rearranged, the layout persists across sessions.
 
 ---
 
-## Quick Start
+## Live version
 
-### Run Locally (Desktop)
+No install required, the compiler runs client‑side via WebAssembly.
 
-```bash
-cargo run --release
+<p align="center">
+  <a href="https://lpc4.github.io/Full-Stack/">
+    <img src="assets/readme/demo.png" alt="Full‑Stack demo" width="85%" />
+  </a>
+</p>
+
+**[Open the live app →](https://lpc4.github.io/Full-Stack/)**
+
+---
+
+## The language
+
+The project includes a small systems language called **HLL** (High‑Level Language).  
+It was designed to make memory operations completely explicit and predictable.
+
+- **`T*` is a pointer, never implicitly dereferenced.**  
+  Use `@ptr` to read/write, `&var` to take an address.
+- **Structs, arrays, generics, and inline aggregates** (multiple returns via structs).
+- **`defer`** for deterministic cleanup.
+- **Compile‑time evaluation**, pure functions, loops, recursion all resolved at build time.
+- **Manual memory management** with `new`/`free`.
+- **C interop** via `external` declarations.
+
+A small example:
+
+```hll
+type Point = { x: f32, y: f32 }
+
+calc_offset: (p: Point*, shift: f32) -> f32 {
+    @p.x = @p.x + shift
+    @p.y = @p.y + shift
+    return @p.x * @p.y
+}
+
+main: () -> i32 {
+    p: Point* = new(Point)
+    @p = { .x = 3.0, .y = 4.0 }
+    result: f32 = calc_offset(p, 1.0)
+    free(p)
+    return 0
+}
 ```
 
-### Run in Browser (WASM)
+For the full specification, see the [language reference](src/1_high_level_language/_LANG_SPECIFICATIONS.md).
 
-```bash
-# Install prerequisites
-rustup target add wasm32-unknown-unknown
-cargo install --locked trunk
+---
 
-# Serve with hot-reload
-trunk serve
-```
+## Documentation
 
-Open `http://127.0.0.1:8080` in your browser. Append `#dev` to bypass service-worker caching during development: `http://127.0.0.1:8080/#dev`
-
-### Build Release Bundle
-
-```bash
-trunk build --release
-# Output: dist/
-```
+- [Language specification](src/1_high_level_language/_LANG_SPECIFICATIONS.md)
+- [IR design](src/2_intermediate_language/_IR_SPECIFICATIONS.md)
+- [RISC‑V backend](src/3_assembly_language/_RISC_SPECIFICATIONS.md)
+- [Source tree overview](src/)
 
 ---
 
 ## Testing
 
 ```bash
-# Run all tests
 cargo test
-
-# Run with output capture
-cargo test -- --nocapture
-
-# Test specific module
-cargo test -p full_stack intermediate_language
+cargo test -- --nocapture   # full output
 ```
 
-Golden tests reside in `tests/` and compare generated IR against expected outputs.
-
----
-
-## Development
-
-### Prerequisites
-- Rust 1.75+ (via `rustup`)
-- `trunk` (for WASM builds)
-- A modern browser (for web target)
-
-### Useful Commands
-
-```bash
-# Format code
-cargo fmt --all
-
-# Lint
-cargo clippy --all-targets --all-features -- -D warnings
-
-# Check WASM build
-cargo check --target wasm32-unknown-unknown
-
-# Profile compilation
-cargo build --release --timings
-```
-
----
-
-## Documentation
-
-- **Language Specification**: [`src/1_high_level_language/_LANG_SPECIFICATIONS.md`](src/1_high_level_language/_LANG_SPECIFICATIONS.md)
-- **IR Specification**: [`src/2_intermediate_language/_IR_SPECIFICATIONS.md`](src/2_intermediate_language/_IR_SPECIFICATIONS.md)
-- **RISC-V Backend**: [`src/3_assembly_language/_RISC_SPECIFICATIONS.md`](src/3_assembly_language/_RISC_SPECIFICATIONS.md)
+Golden‑file tests compare generated IR and assembly against expected snapshots.
 
 ---
 
 ## Contributing
 
-Contributions are welcome. Please:
+Pull requests are welcome. For larger changes, please open an issue first to discuss the approach.
 
 1. Fork the repository
-2. Create a feature branch (`git checkout -b feat/your-feature`)
-3. Commit changes with clear, descriptive messages
-4. Open a Pull Request with a summary of changes
+2. Create a feature branch (`git checkout -b feature/your-change`)
+3. Commit your changes with clear messages
+4. Push and open a PR
 
-For significant changes, please open an issue first to discuss your approach.
+---
+
+## License
+
+Dual‑licensed under MIT and Apache 2.0, see [LICENSE-MIT](LICENSE-MIT) and [LICENSE-APACHE](LICENSE-APACHE) for details.
 
 ---
 
 <div align="center">
-
-## License
-
-Dual licensed under MIT and APACHE 2.0 Licenses, see [MIT](LICENSE-MIT) and [APACHE](LICENSE-APACHE) for details.
-
-*Built with Rust, eframe, and egui.*
-
+  <sub>Built with Rust and <a href="https://github.com/emilk/egui">egui</a></sub>
 </div>

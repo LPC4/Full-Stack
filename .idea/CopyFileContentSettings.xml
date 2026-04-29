@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="CopyFileContentSettings">
-    <option name="fileCountLimit" value="130" />
+    <option name="fileCountLimit" value="500" />
+    <option name="maxFileSizeKB" value="5000" />
   </component>
 </project>

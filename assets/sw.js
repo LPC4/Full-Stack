@@ -1,5 +1,12 @@
-const CACHE_NAME = "full-stack-pwa-v2";
-const APP_SHELL = ["./", "./index.html", "./full_stack.js", "./full_stack_bg.wasm"];
+const CACHE_NAME = "full-stack-pwa-v3";
+
+const APP_SHELL = [
+    "./",
+    "./index.html",
+    "./full_stack.js",
+    "./full_stack_bg.wasm",
+    "./assets/icon/icon.png"
+];
 
 // Install the current app shell and immediately activate this worker.
 self.addEventListener("install", (event) => {

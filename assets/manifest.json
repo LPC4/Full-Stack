@@ -1,15 +1,10 @@
 {
-  "name": "egui Template PWA",
-  "short_name": "egui-template-pwa",
+  "name": "Full-Stack Compiler",
+  "short_name": "Full-Stack",
   "icons": [
     {
-      "src": "./assets/favicon-192x192.png",
-      "sizes": "192x192",
-      "type": "image/png"
-    },
-    {
-      "src": "./assets/favicon-512x512.png",
-      "sizes": "512x512",
+      "src": "./assets/icon/icon.png",
+      "sizes": "any",
       "type": "image/png",
       "purpose": "any maskable"
     }
@@ -18,6 +13,6 @@
   "id": "/index.html",
   "start_url": "./index.html",
   "display": "standalone",
-  "background_color": "white",
-  "theme_color": "white"
+  "background_color": "#13141C",
+  "theme_color": "#13141C"
 }

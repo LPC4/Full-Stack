@@ -70,18 +70,15 @@ fn main() -> eframe::Result {
             .with_inner_size([1100.0, 860.0])
             .with_min_inner_size([900.0, 680.0])
             .with_icon(
-                // NOTE: Adding an icon is optional
-                eframe::icon_data::from_png_bytes(
-                    &include_bytes!("../assets/favicon-512x512.png")[..],
-                )
-                .expect("Failed to load icon"),
+                eframe::icon_data::from_png_bytes(&include_bytes!("../assets/icon/icon.png")[..])
+                    .expect("Failed to load icon"),
             ),
         ..Default::default()
     };
     eframe::run_native(
-        "Compiler",
+        "Full-Stack",
         native_options,
-        Box::new(|cc| Ok(Box::new(full_stack::TemplateApp::new(cc)))),
+        Box::new(|cc| Ok(Box::new(full_stack::FullStackApp::new(cc)))),
     )
 }
 
@@ -111,7 +108,7 @@ fn main() {
             .start(
                 canvas,
                 web_options,
-                Box::new(|cc| Ok(Box::new(full_stack::TemplateApp::new(cc)))),
+                Box::new(|cc| Ok(Box::new(full_stack::FullStackApp::new(cc)))),
             )
             .await;
 

@@ -9,7 +9,7 @@ use egui_dock::{DockState, NodeIndex};
 
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)]
-pub struct TemplateApp {
+pub struct FullStackApp {
     catalog: ProgramCatalog,
     #[serde(skip)]
     dock: DockState<Box<dyn CompilerView>>,
@@ -21,7 +21,7 @@ pub struct TemplateApp {
     wsl_receiver: Option<std::sync::mpsc::Receiver<String>>,
 }
 
-impl Default for TemplateApp {
+impl Default for FullStackApp {
     fn default() -> Self {
         let catalog = ProgramCatalog::default();
         let mut app = Self {
@@ -36,7 +36,7 @@ impl Default for TemplateApp {
     }
 }
 
-impl TemplateApp {
+impl FullStackApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let mut app: Self = cc
             .storage
@@ -198,11 +198,7 @@ impl TemplateApp {
     }
 }
 
-impl eframe::App for TemplateApp {
-    fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        self.save_state(storage);
-    }
-
+impl eframe::App for FullStackApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         egui::Panel::left("left_panel")
             .resizable(true)
@@ -329,6 +325,10 @@ impl eframe::App for TemplateApp {
                     },
                 );
         });
+    }
+
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        self.save_state(storage);
     }
 }
 
