@@ -1,0 +1,109 @@
+define i32 print(i32 $value) {
+entry:
+	; bind parameter: value
+	$value_ptr = stack_alloc i32
+	write i32 $value @ $value_ptr
+	; no body for function `print`
+	ret
+}
+
+define i32 main() {
+entry:
+	; local var: signed_a
+	$signed_a = stack_alloc i32
+	write i32 10 @ $signed_a
+	; local var: signed_b
+	$signed_b = stack_alloc i32
+	write i32 3 @ $signed_b
+	; local var: signed_result
+	$signed_result = stack_alloc i32
+	$0 = read i32 @ $signed_a
+	$1 = read i32 @ $signed_b
+	$2 = math sdiv i32 $0, $1
+	write i32 $2 @ $signed_result
+	; local var: unsigned_a
+	$unsigned_a = stack_alloc i32
+	write i32 10 @ $unsigned_a
+	; local var: unsigned_b
+	$unsigned_b = stack_alloc i32
+	write i32 3 @ $unsigned_b
+	; local var: unsigned_result
+	$unsigned_result = stack_alloc i32
+	$3 = read i32 @ $unsigned_a
+	$4 = read i32 @ $unsigned_b
+	$5 = math div i32 $3, $4
+	write i32 $5 @ $unsigned_result
+	; local var: signed_cmp
+	$signed_cmp = stack_alloc i1
+	$6 = cmp slt i32 5, 10
+	write i1 $6 @ $signed_cmp
+	; local var: ua
+	$ua = stack_alloc i32
+	write i32 5 @ $ua
+	; local var: ub
+	$ub = stack_alloc i32
+	write i32 10 @ $ub
+	; local var: unsigned_cmp
+	$unsigned_cmp = stack_alloc i1
+	$7 = read i32 @ $ua
+	$8 = read i32 @ $ub
+	$9 = cmp ult i32 $7, $8
+	write i1 $9 @ $unsigned_cmp
+	; local var: small
+	$small = stack_alloc i32
+	write i32 42 @ $small
+	; local var: big
+	$big = stack_alloc i64
+	$10 = read i32 @ $small
+	$11 = cast sext $10 -> i64
+	write i64 $11 @ $big
+	; local var: large
+	$large = stack_alloc i64
+	write i64 100 @ $large
+	; local var: small_again
+	$small_again = stack_alloc i32
+	$12 = read i64 @ $large
+	$13 = cast trunc $12 -> i32
+	write i32 $13 @ $small_again
+	; local var: int_val
+	$int_val = stack_alloc i32
+	write i32 42 @ $int_val
+	; local var: float_val
+	$float_val = stack_alloc f64
+	$14 = read i32 @ $int_val
+	$15 = cast i2f $14 -> f64
+	write f64 $15 @ $float_val
+	; local var: ptr
+	$ptr = stack_alloc i32*
+	$16 = heap_alloc i32
+	write i32* $16 @ $ptr
+	; assignment
+	$17 = read i32* @ $ptr
+	; Store value to dereferenced pointer (i32)
+	write i32 99 @ $17
+	; local var: heap_value
+	$heap_value = stack_alloc i32
+	$18 = read i32* @ $ptr
+	$19 = read i32 @ $18
+	write i32 $19 @ $heap_value
+	$20 = read i32* @ $ptr
+	heap_free $20
+	; local var: int_ptr
+	$int_ptr = stack_alloc i32*
+	$21 = heap_alloc i32
+	write i32* $21 @ $int_ptr
+	; local var: byte_ptr
+	$byte_ptr = stack_alloc i8*
+	$22 = read i32* @ $int_ptr
+	$23 = cast bitcast $22 -> i8*
+	write i8* $23 @ $byte_ptr
+	$24 = read i32* @ $int_ptr
+	heap_free $24
+	$25 = read i32 @ $signed_result
+	$26 = read i32 @ $unsigned_result
+	$27 = cast zext $26 -> i32
+	$28 = math add i32 $25, $27
+	$29 = read i32 @ $heap_value
+	$30 = math add i32 $28, $29
+	ret $30
+}

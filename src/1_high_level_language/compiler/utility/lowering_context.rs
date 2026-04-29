@@ -3,6 +3,7 @@ use crate::high_level_language::compiler::utility::symbol_table::SymbolTable;
 use crate::high_level_language::compiler::utility::type_context::TypeContext;
 use crate::intermediate_language::values::{IrLabel, IrValue};
 use std::collections::HashMap;
+use std::collections::HashSet;
 
 #[derive(Debug, Default)]
 pub struct LoweringContext {
@@ -12,6 +13,8 @@ pub struct LoweringContext {
     pub ssa_env: HashMap<String, IrValue>,
     /// Tracks SSA values at the end of each block for phi reconciliation
     pub block_exit_values: HashMap<String, HashMap<String, IrValue>>,
+    /// Tracks which variables have unsigned types
+    pub unsigned_vars: HashSet<String>,
 }
 
 impl LoweringContext {
@@ -22,6 +25,7 @@ impl LoweringContext {
             diagnostics: Diagnostics::new(),
             ssa_env: HashMap::new(),
             block_exit_values: HashMap::new(),
+            unsigned_vars: HashSet::new(),
         }
     }
 
@@ -31,10 +35,12 @@ impl LoweringContext {
         self.diagnostics.clear();
         self.ssa_env.clear();
         self.block_exit_values.clear();
+        self.unsigned_vars.clear();
     }
 
     pub fn begin_function(&mut self) {
         self.symbols.enter_scope();
+        self.unsigned_vars.clear();
     }
 
     pub fn end_function(&mut self) {

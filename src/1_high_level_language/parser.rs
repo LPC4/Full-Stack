@@ -445,6 +445,41 @@ impl<'a> Parser<'a> {
         let mut expr = self.parse_prefix()?;
         loop {
             self.consume_terminators();
+
+            // Check for pointer-cast syntax: type*(expr)
+            if self.peek() == Some(&Token::Star) {
+                if let Expression::Primary(PrimaryExpr::Identifier(name)) = &expr {
+                    if let Some(base_ty) = self.parse_type_name_as_cast(name) {
+                        // Lookahead to see if next token after * is (
+                        if self.peek_n(1) == Some(&Token::LParen) {
+                            // This is a pointer-cast: consume *
+                            self.advance();
+
+                            let ptr_ty = Type::Pointer(Box::new(base_ty));
+
+                            // Consume ( and parse the argument
+                            self.advance(); // consume LParen
+                            let arguments = self.parse_argument_list_after_open_paren()?;
+
+                            // Type casts should have exactly one argument
+                            if arguments.len() != 1 {
+                                return Err(self.error("type cast expects exactly one argument"));
+                            }
+
+                            expr = Expression::Cast {
+                                target_ty: ptr_ty,
+                                expr: Box::new(arguments.into_iter().next().unwrap()),
+                            };
+
+                            // Allow further postfix operations
+                            expr = self.parse_postfix(expr)?;
+
+                            continue;
+                        }
+                    }
+                }
+            }
+
             let op = if self.match_star() {
                 Some(BinaryOp::Mul)
             } else if self.match_slash() {
@@ -525,8 +560,24 @@ impl<'a> Parser<'a> {
                     _ => return Err(self.error("function calls must target an identifier")),
                 };
 
-                let arguments = self.parse_argument_list_after_open_paren()?;
-                expr = Expression::Primary(PrimaryExpr::FunctionCall { name, arguments });
+                // Check if this is a type cast (e.g., u32(value), i64(x))
+                if let Some(target_ty) = self.parse_type_name_as_cast(&name) {
+                    let arguments = self.parse_argument_list_after_open_paren()?;
+
+                    // Type casts should have exactly one argument
+                    if arguments.len() != 1 {
+                        return Err(self.error("type cast expects exactly one argument"));
+                    }
+
+                    expr = Expression::Cast {
+                        target_ty,
+                        expr: Box::new(arguments.into_iter().next().unwrap()),
+                    };
+                } else {
+                    // Regular function call
+                    let arguments = self.parse_argument_list_after_open_paren()?;
+                    expr = Expression::Primary(PrimaryExpr::FunctionCall { name, arguments });
+                }
                 continue;
             }
 
@@ -702,6 +753,15 @@ impl<'a> Parser<'a> {
 
         self.expect_rparen()?;
         Ok(args)
+    }
+
+    /// Check if an identifier is a type name that can be used for casting
+    fn parse_type_name_as_cast(&self, name: &str) -> Option<Type> {
+        match name {
+            "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" | "f32" | "f64"
+            | "bool" => Some(Type::Primitive(name.to_owned())),
+            _ => None,
+        }
     }
 
     fn parse_struct_destructure_target(&mut self) -> Result<AssignTarget, ParserError> {
@@ -1046,6 +1106,51 @@ impl<'a> Parser<'a> {
                 let id = name.to_string();
                 self.advance();
                 Expression::Primary(PrimaryExpr::Identifier(id))
+            }
+            // Casts
+            Some(Token::I8) => {
+                self.advance();
+                Expression::Primary(PrimaryExpr::Identifier("i8".to_owned()))
+            }
+            Some(Token::I16) => {
+                self.advance();
+                Expression::Primary(PrimaryExpr::Identifier("i16".to_owned()))
+            }
+            Some(Token::I32) => {
+                self.advance();
+                Expression::Primary(PrimaryExpr::Identifier("i32".to_owned()))
+            }
+            Some(Token::I64) => {
+                self.advance();
+                Expression::Primary(PrimaryExpr::Identifier("i64".to_owned()))
+            }
+            Some(Token::U8) => {
+                self.advance();
+                Expression::Primary(PrimaryExpr::Identifier("u8".to_owned()))
+            }
+            Some(Token::U16) => {
+                self.advance();
+                Expression::Primary(PrimaryExpr::Identifier("u16".to_owned()))
+            }
+            Some(Token::U32) => {
+                self.advance();
+                Expression::Primary(PrimaryExpr::Identifier("u32".to_owned()))
+            }
+            Some(Token::U64) => {
+                self.advance();
+                Expression::Primary(PrimaryExpr::Identifier("u64".to_owned()))
+            }
+            Some(Token::F32) => {
+                self.advance();
+                Expression::Primary(PrimaryExpr::Identifier("f32".to_owned()))
+            }
+            Some(Token::F64) => {
+                self.advance();
+                Expression::Primary(PrimaryExpr::Identifier("f64".to_owned()))
+            }
+            Some(Token::Bool) => {
+                self.advance();
+                Expression::Primary(PrimaryExpr::Identifier("bool".to_owned()))
             }
             Some(Token::Free) => {
                 self.advance();

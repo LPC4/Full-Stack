@@ -153,7 +153,13 @@ impl SemanticAnalyzer {
                     let resolved_decl_ty =
                         self.resolve_type_string(&self.context.get_type_name(&ir_ty));
                     let resolved_init_ty = self.resolve_type_string(&init_ty);
-                    if resolved_decl_ty != resolved_init_ty {
+
+                    // Allow integer literal widening: i32 literals can be assigned to wider integer types
+                    let is_literal_widening_allowed = Self::is_integer_type(&resolved_decl_ty)
+                        && Self::is_i32_type(&resolved_init_ty)
+                        && Self::is_literal_source(init_expr);
+
+                    if resolved_decl_ty != resolved_init_ty && !is_literal_widening_allowed {
                         self.diagnostics.error(format!(
                             "Type mismatch in variable initialization: expected {}, found {}",
                             self.context.get_type_name(&ir_ty),
@@ -510,6 +516,27 @@ impl SemanticAnalyzer {
 
                 // Assignment returns the type of the right side
                 Ok(rvalue_type)
+            }
+            Expression::Cast { target_ty, expr } => {
+                // Infer the type of the expression being cast
+                let source_type = self.infer_expression_type(expr)?;
+
+                // Convert target type to IR type
+                let target_ir = self.ast_type_to_ir_type(target_ty);
+                let target_name = self.context.get_type_name(&target_ir);
+
+                // Validate that the cast is legal
+                let source_ir = self.parse_type_string(&source_type);
+                if !self.is_valid_cast(&source_ir, &target_ir) {
+                    self.diagnostics.error(format!(
+                        "Invalid cast from `{}` to `{}`",
+                        source_type, target_name
+                    ));
+                    return Err(());
+                }
+
+                // Return the target type
+                Ok(target_name)
             }
         }
     }
@@ -923,6 +950,54 @@ impl SemanticAnalyzer {
 
     fn resolve_type_string(&self, ty_str: &str) -> IrType {
         self.resolve_named_ir_type(&self.parse_type_string(ty_str))
+    }
+
+    /// Check if a cast from source to target type is valid
+    fn is_valid_cast(&self, source: &IrType, target: &IrType) -> bool {
+        // Allow casts between numeric types (integers and floats)
+        let source_is_numeric = matches!(source, IrType::Integer(_) | IrType::Float(_));
+        let target_is_numeric = matches!(target, IrType::Integer(_) | IrType::Float(_));
+
+        if source_is_numeric && target_is_numeric {
+            return true;
+        }
+
+        // Allow pointer to pointer casts
+        if matches!(source, IrType::Pointer(_)) && matches!(target, IrType::Pointer(_)) {
+            return true;
+        }
+
+        // Allow same-type casts (identity)
+        if source == target {
+            return true;
+        }
+
+        // TODO: can still be improved
+        false
+    }
+
+    /// Check if an IR type is any integer type
+    fn is_integer_type(ty: &IrType) -> bool {
+        matches!(ty, IrType::Integer(_))
+    }
+
+    /// Check if an IR type is specifically i32
+    fn is_i32_type(ty: &IrType) -> bool {
+        matches!(
+            ty,
+            IrType::Integer(crate::intermediate_language::IntWidth::I32)
+        )
+    }
+
+    /// Check if an expression is a literal source (integer or hex integer literal)
+    fn is_literal_source(expr: &Expression) -> bool {
+        matches!(
+            expr,
+            Expression::Primary(crate::high_level_language::ast::PrimaryExpr::Literal(
+                crate::high_level_language::ast::Literal::Integer(_)
+                    | crate::high_level_language::ast::Literal::HexInteger(_)
+            ))
+        )
     }
 
     pub fn diagnostics(&self) -> &[crate::high_level_language::compiler::Diagnostic] {

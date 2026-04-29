@@ -5,6 +5,36 @@ use full_stack::high_level_language::parser::Parser;
 use full_stack::high_level_language::token::Token;
 
 #[test]
+fn parses_pointer_cast_syntax() {
+    // Test parsing of i8*(ptr) as a pointer-type cast, not multiplication
+    let tokens = vec![
+        Token::I8,
+        Token::Star,
+        Token::LParen,
+        Token::Ident("int_ptr"),
+        Token::RParen,
+        Token::Eof,
+    ];
+
+    let mut parser = Parser::new(tokens);
+    match parser.parse_expression().unwrap() {
+        Expression::Cast { target_ty, expr } => {
+            // Verify it's a pointer type i8*
+            assert!(matches!(&target_ty, Type::Pointer(inner) if matches!(inner.as_ref(), Type::Primitive(name) if name == "i8")));
+            
+            // Verify the expression being cast is an identifier
+            match expr.as_ref() {
+                Expression::Primary(full_stack::high_level_language::ast::PrimaryExpr::Identifier(name)) => {
+                    assert_eq!(name, "int_ptr");
+                }
+                other => panic!("expected identifier in cast, got: {other:?}"),
+            }
+        }
+        other => panic!("expected Cast expression, got: {other:?}"),
+    }
+}
+
+#[test]
 fn parses_variable_declaration() {
     let tokens = vec![
         Token::Ident("x"),

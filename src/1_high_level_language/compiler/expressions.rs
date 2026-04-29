@@ -4,6 +4,8 @@ use super::{
     LoweredValue, UnaryOp,
 };
 
+use crate::intermediate_language::IrCastMode;
+
 impl HighLevelCompiler {
     pub(super) fn lower_expression(&mut self, expression: &Expression) -> Option<LoweredValue> {
         match expression {
@@ -24,6 +26,7 @@ impl HighLevelCompiler {
                                 return Some(LoweredValue {
                                     value: IrValue::Register(dest),
                                     ty: *inner_ty.clone(),
+                                    is_unsigned: self.context.unsigned_vars.contains(name),
                                 });
                             }
                         }
@@ -31,6 +34,7 @@ impl HighLevelCompiler {
                         return Some(LoweredValue {
                             value: info.value,
                             ty: info.ty,
+                            is_unsigned: false, // Non-pointer values (e.g., parameters) default to signed
                         });
                     } else if let Some(const_val) = self.compile_time_consts.get(name).cloned() {
                         Some(self.lower_literal(&const_val))
@@ -48,7 +52,7 @@ impl HighLevelCompiler {
                     self.lower_expression(expr)
                 }
                 crate::high_level_language::ast::PrimaryExpr::FieldAccess { expr, field } => {
-                    // Parser commonly represents `@ptr.field` as `FieldAccess(expr = Dereference(ptr), ...)`.
+                    // Parser represents `@ptr.field` as `FieldAccess(expr = Dereference(ptr), ...)`.
                     // Lower from the pointer base directly so we don't try to load fields from aggregate values.
                     if let Expression::Unary {
                         op: UnaryOp::Dereference,
@@ -85,6 +89,7 @@ impl HighLevelCompiler {
                                 return Some(LoweredValue {
                                     value: IrValue::Register(dest),
                                     ty: *element_ty.clone(),
+                                    is_unsigned: false, // Loaded values default to signed unless tracked
                                 });
                             }
                         }
@@ -116,6 +121,7 @@ impl HighLevelCompiler {
                             return Some(LoweredValue {
                                 value: IrValue::Register(dest),
                                 ty: *element_ty.clone(),
+                                is_unsigned: false, // Loaded values default to signed unless tracked
                             });
                         }
                     }
@@ -157,9 +163,41 @@ impl HighLevelCompiler {
                     Some(LoweredValue {
                         value: IrValue::Register(dest),
                         ty: IrType::Pointer(Box::new(lowered_ty)),
+                        is_unsigned: false, // Pointers are not unsigned integers
                     })
                 }
                 crate::high_level_language::ast::PrimaryExpr::FunctionCall { name, arguments } => {
+                    // Special handling for built-in free() function
+                    if name == "free" {
+                        if arguments.len() != 1 {
+                            self.context
+                                .diagnostics
+                                .error("free() expects exactly one argument".to_owned());
+                            return None;
+                        }
+
+                        // Evaluate the argument (pointer to free)
+                        let arg = self.lower_expression(&arguments[0])?;
+
+                        // Emit HeapFree instruction
+                        if let IrValue::Register(ptr_reg) = arg.value {
+                            self.push_instruction(IrInstruction::HeapFree { ptr: ptr_reg });
+                        } else {
+                            self.context
+                                .diagnostics
+                                .error("free() argument must be a pointer value".to_owned());
+                            return None;
+                        }
+
+                        // Return void type
+                        return Some(LoweredValue {
+                            value: IrValue::Null,
+                            ty: IrType::Void,
+                            is_unsigned: false,
+                        });
+                    }
+
+                    // Standard function call handling
                     let mut arg_values = Vec::new();
                     for arg in arguments {
                         if let Some(lowered) = self.lower_expression(arg) {
@@ -194,6 +232,7 @@ impl HighLevelCompiler {
                     Some(LoweredValue {
                         value: dest.map(IrValue::Register).unwrap_or(IrValue::Null),
                         ty: return_ty,
+                        is_unsigned: false, // Function call results default to signed
                     })
                 }
                 crate::high_level_language::ast::PrimaryExpr::ArrayLiteral(elements) => {
@@ -256,6 +295,7 @@ impl HighLevelCompiler {
                     Some(LoweredValue {
                         value: IrValue::Register(dest),
                         ty: struct_ty,
+                        is_unsigned: false, // Struct literals are not unsigned integers
                     })
                 }
             },
@@ -286,6 +326,7 @@ impl HighLevelCompiler {
                             return Some(LoweredValue {
                                 value: IrValue::Register(ptr_reg),
                                 ty: IrType::Pointer(Box::new(value_ty)),
+                                is_unsigned: false, // Pointers are not unsigned integers
                             });
                         }
                     }
@@ -299,6 +340,82 @@ impl HighLevelCompiler {
                     let input = self.lower_expression(expr)?;
                     self.lower_unary(op, input)
                 }
+            }
+            Expression::Cast { target_ty, expr } => {
+                // Lower the source expression
+                let source_value = self.lower_expression(expr)?;
+
+                // Convert target type to IR type
+                let target_ir = self.lower_type(target_ty);
+
+                // Determine the appropriate cast mode based on source and target types
+                let source_resolved = self.resolve_named_type(&source_value.ty);
+                let target_resolved = self.resolve_named_type(&target_ir);
+
+                let cast_mode = match (&source_resolved, &target_resolved) {
+                    // Integer to integer casts
+                    (IrType::Integer(src_width), IrType::Integer(tgt_width)) => {
+                        use crate::intermediate_language::IntWidth;
+                        let src_bits = match src_width {
+                            IntWidth::I1 => 1,
+                            IntWidth::I8 => 8,
+                            IntWidth::I16 => 16,
+                            IntWidth::I32 => 32,
+                            IntWidth::I64 => 64,
+                        };
+                        let tgt_bits = match tgt_width {
+                            IntWidth::I1 => 1,
+                            IntWidth::I8 => 8,
+                            IntWidth::I16 => 16,
+                            IntWidth::I32 => 32,
+                            IntWidth::I64 => 64,
+                        };
+
+                        if tgt_bits < src_bits {
+                            IrCastMode::Trunc
+                        } else if source_value.is_unsigned {
+                            IrCastMode::Zext
+                        } else {
+                            IrCastMode::Sext
+                        }
+                    }
+                    // Float to integer
+                    (IrType::Float(_), IrType::Integer(_)) => IrCastMode::F2i,
+                    // Integer to float
+                    (IrType::Integer(_), IrType::Float(_)) => IrCastMode::I2f,
+                    // Float to float (different precision)
+                    (IrType::Float(_), IrType::Float(_)) => IrCastMode::Bitcast,
+                    // Pointer to pointer
+                    (IrType::Pointer(_), IrType::Pointer(_)) => IrCastMode::Bitcast,
+                    // Same type - no cast needed, just return the value
+                    _ if source_resolved == target_resolved => {
+                        return Some(source_value);
+                    }
+                    _ => {
+                        self.context.diagnostics.error(format!(
+                            "Unsupported cast from `{}` to `{}`",
+                            source_value.ty, target_ir
+                        ));
+                        return None;
+                    }
+                };
+
+                // Create destination register
+                let dest = self.new_temp();
+
+                // Emit cast instruction
+                self.push_instruction(IrInstruction::Cast {
+                    dest: dest.clone(),
+                    mode: cast_mode,
+                    value: source_value.value,
+                    ty: target_ir.clone(),
+                });
+
+                Some(LoweredValue {
+                    value: IrValue::Register(dest),
+                    ty: target_ir,
+                    is_unsigned: source_value.is_unsigned, // Cast inherits signedness from source
+                })
             }
             Expression::Assignment { target, rvalue } => {
                 self.push_instruction(IrInstruction::Comment("assignment".to_owned()));
@@ -343,18 +460,22 @@ impl HighLevelCompiler {
             Literal::Integer(value) | Literal::HexInteger(value) => LoweredValue {
                 value: IrValue::Integer(*value),
                 ty: IrType::Integer(IntWidth::I32),
+                is_unsigned: false, // Literals are always signed
             },
             Literal::Float(value) => LoweredValue {
                 value: IrValue::Float(*value),
                 ty: IrType::Float(FloatWidth::F64),
+                is_unsigned: false,
             },
             Literal::Boolean(value) => LoweredValue {
                 value: IrValue::Bool(*value),
                 ty: IrType::Integer(IntWidth::I1),
+                is_unsigned: false,
             },
             Literal::Null => LoweredValue {
                 value: IrValue::Null,
                 ty: IrType::Pointer(Box::new(IrType::Named("unknown".to_owned()))),
+                is_unsigned: false,
             },
             Literal::String(content) => {
                 // Create a global string constant and add it to pending list
@@ -402,6 +523,7 @@ impl HighLevelCompiler {
                 LoweredValue {
                     value: IrValue::Register(dest),
                     ty: struct_ty,
+                    is_unsigned: false, // String literals are not unsigned integers
                 }
             }
         }
@@ -457,6 +579,7 @@ impl HighLevelCompiler {
         Some(LoweredValue {
             value: IrValue::Register(dest),
             ty: array_ty,
+            is_unsigned: false, // Array literals are not unsigned integers
         })
     }
 
@@ -511,7 +634,14 @@ impl HighLevelCompiler {
                     BinaryOp::Add => IrMathOp::Add,
                     BinaryOp::Sub => IrMathOp::Sub,
                     BinaryOp::Mul => IrMathOp::Mul,
-                    BinaryOp::Div => IrMathOp::SDiv,
+                    BinaryOp::Div => {
+                        // Check if the type is unsigned to select appropriate division operation
+                        if lhs.is_unsigned {
+                            IrMathOp::Div // Unsigned division
+                        } else {
+                            IrMathOp::SDiv // Signed division
+                        }
+                    }
                     BinaryOp::Mod => IrMathOp::Mod,
                     BinaryOp::And => IrMathOp::And,
                     BinaryOp::Or => IrMathOp::Or,
@@ -527,6 +657,7 @@ impl HighLevelCompiler {
                 Some(LoweredValue {
                     value: IrValue::Register(dest),
                     ty: lhs.ty,
+                    is_unsigned: lhs.is_unsigned, // Binary ops inherit signedness from operands
                 })
             }
             BinaryOp::Eq
@@ -538,10 +669,34 @@ impl HighLevelCompiler {
                 let cmp = match op {
                     BinaryOp::Eq => IrCmpOp::Eq,
                     BinaryOp::Neq => IrCmpOp::Ne,
-                    BinaryOp::Lt => IrCmpOp::Slt,
-                    BinaryOp::Lte => IrCmpOp::Sle,
-                    BinaryOp::Gt => IrCmpOp::Sgt,
-                    BinaryOp::Gte => IrCmpOp::Sge,
+                    BinaryOp::Lt => {
+                        if lhs.is_unsigned {
+                            IrCmpOp::Ult
+                        } else {
+                            IrCmpOp::Slt
+                        }
+                    }
+                    BinaryOp::Lte => {
+                        if lhs.is_unsigned {
+                            IrCmpOp::Ule
+                        } else {
+                            IrCmpOp::Sle
+                        }
+                    }
+                    BinaryOp::Gt => {
+                        if lhs.is_unsigned {
+                            IrCmpOp::Ugt
+                        } else {
+                            IrCmpOp::Sgt
+                        }
+                    }
+                    BinaryOp::Gte => {
+                        if lhs.is_unsigned {
+                            IrCmpOp::Uge
+                        } else {
+                            IrCmpOp::Sge
+                        }
+                    }
                     _ => unreachable!(),
                 };
                 self.push_instruction(IrInstruction::Cmp {
@@ -554,6 +709,7 @@ impl HighLevelCompiler {
                 Some(LoweredValue {
                     value: IrValue::Register(dest),
                     ty: IrType::Integer(IntWidth::I1),
+                    is_unsigned: false, // Comparison results are booleans (signed)
                 })
             }
         }
@@ -581,6 +737,7 @@ impl HighLevelCompiler {
                 Some(LoweredValue {
                     value: IrValue::Register(dest),
                     ty: input.ty,
+                    is_unsigned: input.is_unsigned, // Unary ops inherit signedness from operand
                 })
             }
             UnaryOp::Dereference => {
@@ -612,6 +769,7 @@ impl HighLevelCompiler {
                 Some(LoweredValue {
                     value: IrValue::Register(dest),
                     ty: pointee_ty,
+                    is_unsigned: false, // Loaded values default to signed unless tracked
                 })
             }
             UnaryOp::AddressOf => {
@@ -619,6 +777,7 @@ impl HighLevelCompiler {
                     Some(LoweredValue {
                         value: IrValue::Register(reg),
                         ty: IrType::Pointer(Box::new(input.ty)),
+                        is_unsigned: false, // Pointers are not unsigned integers
                     })
                 } else {
                     self.context

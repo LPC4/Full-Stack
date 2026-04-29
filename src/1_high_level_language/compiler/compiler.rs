@@ -37,6 +37,7 @@ pub enum CompilerError {
 struct LoweredValue {
     value: IrValue,
     ty: IrType,
+    is_unsigned: bool,
 }
 
 #[derive(Debug, Clone)]

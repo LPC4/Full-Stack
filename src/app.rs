@@ -3,7 +3,7 @@ use crate::high_level_language::lexer::Lexer;
 use crate::high_level_language::token::Token;
 use crate::view::{
     AssemblyView, AstView, CompilationState, CompilerView, IrView, ProgramCatalog, ProgramKind,
-    SourceView, TokensView, blank_custom_program_source, StackView,
+    SourceView, StackView, TokensView, blank_custom_program_source,
 };
 use egui_dock::{DockState, NodeIndex};
 

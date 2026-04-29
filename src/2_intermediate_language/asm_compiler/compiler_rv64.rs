@@ -7,7 +7,7 @@ use super::{
 use crate::assembly_language::encode_decode::Reg;
 use crate::assembly_language::real::RealInstruction;
 use crate::assembly_language::riscv::rv64fd::{Fsgnjn, fmv_d};
-use crate::assembly_language::riscv::rv64i::{Sw, Sh, Sb};
+use crate::assembly_language::riscv::rv64i::{Sb, Sh, Sw};
 use crate::assembly_language::utils::reg_name;
 use crate::intermediate_language::{
     IrCastMode, IrCmpOp, IrInstruction, IrMathOp, IrProgram, IrTerminator, IrType, IrUnaryOp,
@@ -125,7 +125,10 @@ impl CompilerRv64 {
 
     // ---------- instruction lowering ----------
     fn lower_instruction(&mut self, inst: &IrInstruction, ctx: &mut FunctionContext) {
-        use IrInstruction::{Comment, Alloc, Load, Store, Offset, Index, Math, Unary, Cmp, Cast, Call, Phi, HeapAlloc, HeapFree};
+        use IrInstruction::{
+            Alloc, Call, Cast, Cmp, Comment, HeapAlloc, HeapFree, Index, Load, Math, Offset, Phi,
+            Store, Unary,
+        };
         match inst {
             Comment(s) => self.emitter.emit_comment(s),
             Alloc { .. } => {}
@@ -169,8 +172,7 @@ impl CompilerRv64 {
                 self.emitter.reset_temp_counter();
                 let addr_tmp = self.resolve_ptr_to_addr(ptr, ctx, offset.map(|o| o as i32));
                 let resolved_ty = self.resolve_ir_type(ty);
-                self.emitter
-                    .emit_comment(&format!("Store {ty} to memory"));
+                self.emitter.emit_comment(&format!("Store {ty} to memory"));
                 if matches!(resolved_ty, IrType::Array { .. } | IrType::Aggregate(_)) {
                     let IrValue::Register(reg) = value else {
                         unimplemented!("composite stores require a register source")

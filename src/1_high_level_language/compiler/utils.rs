@@ -190,4 +190,27 @@ impl HighLevelCompiler {
                 .unwrap_or(1),
         }
     }
+
+    /// Helper function to check if a type is unsigned
+    pub(super) fn is_unsigned_type(&self, ty: &IrType) -> bool {
+        let resolved = self.resolve_named_type(ty);
+        match resolved {
+            IrType::Integer(_) => {
+                // Check the type name from the context to see if it's unsigned
+                let type_name = self.context.types.get_type_name(ty);
+                matches!(type_name.as_str(), "u8" | "u16" | "u32" | "u64")
+            }
+            _ => false,
+        }
+    }
+
+    /// Helper function to check if an HLL type is an unsigned primitive
+    pub(super) fn is_unsigned_primitive_type(ty: &crate::high_level_language::ast::Type) -> bool {
+        match ty {
+            crate::high_level_language::ast::Type::Primitive(name) => {
+                matches!(name.as_str(), "u8" | "u16" | "u32" | "u64")
+            }
+            _ => false,
+        }
+    }
 }

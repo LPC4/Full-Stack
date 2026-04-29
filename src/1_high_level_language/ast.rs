@@ -106,6 +106,10 @@ pub enum Expression {
         op: UnaryOp,
         expr: Box<Self>,
     },
+    Cast {
+        target_ty: Type,
+        expr: Box<Self>,
+    },
     Primary(PrimaryExpr),
 }
 

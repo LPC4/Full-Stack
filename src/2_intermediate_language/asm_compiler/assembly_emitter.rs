@@ -1,9 +1,14 @@
 use super::{data_section::DataSection, function_context::Rv64Backend};
 use crate::assembly_language::encode_decode::Reg;
 use crate::assembly_language::real::RealInstruction;
-use crate::assembly_language::riscv::rv64fd::{FmvWX, Fadd, Fsub, Fmul, Fdiv, Fsw, Fsd, Flw, Fld, fmv_s, FeqS, FltS, FleqS};
-use crate::assembly_language::riscv::rv64i::{Addi, Sd, Ld, Lw, Lh, Lb, Add, Sub, And, Or, Xor, Xori, Sltiu, Sltu, Slt, Sll, Srl, Slli, Srai, Addiw, Jalr, Lui, Sb, Sh, Sw};
-use crate::assembly_language::riscv::rv64m::{Mul, Div, Rem};
+use crate::assembly_language::riscv::rv64fd::{
+    Fadd, Fdiv, FeqS, Fld, FleqS, FltS, Flw, Fmul, FmvWX, Fsd, Fsub, Fsw, fmv_s,
+};
+use crate::assembly_language::riscv::rv64i::{
+    Add, Addi, Addiw, And, Jalr, Lb, Ld, Lh, Lui, Lw, Or, Sb, Sd, Sh, Sll, Slli, Slt, Sltiu, Sltu,
+    Srai, Srl, Sub, Sw, Xor, Xori,
+};
+use crate::assembly_language::riscv::rv64m::{Div, Mul, Rem};
 use crate::assembly_language::utils::reg_name;
 use crate::intermediate_language::IrType;
 

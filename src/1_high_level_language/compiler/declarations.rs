@@ -273,6 +273,11 @@ impl HighLevelCompiler {
                         register: register.clone(),
                     });
 
+                    // Track unsigned parameters
+                    if Self::is_unsigned_primitive_type(&param.ty) {
+                        self.context.unsigned_vars.insert(param.name.clone());
+                    }
+
                     self.push_instruction(IrInstruction::Comment(format!(
                         "bind parameter: {}",
                         param.name

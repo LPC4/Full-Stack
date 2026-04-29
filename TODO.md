@@ -23,7 +23,6 @@
 
 ## 3. Frontend Lowering & Semantic Mapping
 - [ ] **Type Casting:** Implement cast expressions (`target_type(value)`) end-to-end (AST node, Semantic Analysis, IR lowering).
-- [ ] **Pointer Math:** Lower pointer arithmetic (`ptr + int`) to the byte-scaled `offset` instruction rather than `math add`.
 - [ ] **Signed/Unsigned Operations:** Ensure the frontend correctly lowers to unsigned comparison opcodes (`ult`, `ule`, `ugt`, `uge`) and unsigned division (`div`) for `u8..u64` types.
 - [ ] **Memory Management:** Detect the `free` built-in and correctly lower it to the `heap_free` IR instruction.
 - [ ] **Void Calls:** Ensure `void` function calls omit destination register assignments in the IR.

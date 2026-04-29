@@ -32,10 +32,6 @@ fn compile_fixture(subdir: &str, name: &str) -> String {
     pipeline.compile_ir_to_assembly(&result.ir_program)
 }
 
-// ===========================================================================
-// Fix 1: Type-width stores (sw/sb/sh vs sd)
-// ===========================================================================
-
 #[test]
 fn fix1_uses_correct_store_widths() {
     let asm = compile_fixture("arithmetic", "01_basic_arithmetic");
@@ -63,10 +59,6 @@ fn fix1_bool_uses_sb() {
             "expected 'sb' for i1/bool storage");
 }
 
-// ===========================================================================
-// Fix 2: Epilogue emitted before every ret
-// ===========================================================================
-
 #[test]
 fn fix2_epilogue_before_return() {
     let asm = compile_fixture("functions", "11_constexpr_pure_functions");
@@ -88,10 +80,6 @@ fn fix2_no_duplicate_epilogue() {
                "expected exactly 1 epilogue, found {epilogue_count}");
 }
 
-// ===========================================================================
-// Fix 3: Branch inversion (then/else labels correct)
-// ===========================================================================
-
 #[test]
 fn fix3_conditional_branches_correct() {
     let asm = compile_fixture("control_flow", "02_conditional_and_loop");
@@ -110,10 +98,6 @@ fn fix3_loop_control_flow() {
     assert!(line_count > 10, 
             "loop control flow should generate substantial assembly");
 }
-
-// ===========================================================================
-// Fix 4: Float arithmetic dispatch (flw/fsw/fadd.s)
-// ===========================================================================
 
 #[test]
 fn fix4_float_load_store() {
@@ -175,10 +159,6 @@ fn fix4_float_return_in_fa0() {
             "expected float return in fa0/f10 register");
 }
 
-// ===========================================================================
-// Fix 5: Temp counter reset (no register aliasing)
-// ===========================================================================
-
 #[test]
 fn fix5_no_register_aliasing() {
     let source = r#"main: () -> i32 {
@@ -211,10 +191,6 @@ fn fix5_no_register_aliasing() {
     assert!(t_regs_used.len() >= 3, 
             "expected multiple temp registers, got {t_regs_used:?}");
 }
-
-// ===========================================================================
-// Fix 6: Struct return ABI (fields in a0/a1 separately)
-// ===========================================================================
 
 #[test]
 fn fix6_struct_return_two_fields() {
@@ -249,10 +225,6 @@ fn fix6_tuple_destructuring() {
     assert!(asm.contains("jal"), 
             "expected function call instruction");
 }
-
-// ===========================================================================
-// Integration: Full compilation pipeline
-// ===========================================================================
 
 #[test]
 fn execute_assembly_fix_validation_suite() {

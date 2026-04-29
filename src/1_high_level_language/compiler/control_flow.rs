@@ -42,7 +42,9 @@ impl HighLevelCompiler {
 
                                 // Get the source address (where the aggregate is currently stored)
                                 // Backend uses this to copy aggregate to sret location
-                                let _src_addr = if let IrValue::Register(reg) = &lowered.value { reg.clone() } else {
+                                let _src_addr = if let IrValue::Register(reg) = &lowered.value {
+                                    reg.clone()
+                                } else {
                                     self.context.diagnostics.error(
                                         "Aggregate return value must be a register".to_owned(),
                                     );
@@ -103,6 +105,12 @@ impl HighLevelCompiler {
                         return;
                     }
                 };
+
+                // Track unsigned variables
+                if Self::is_unsigned_primitive_type(ty) {
+                    self.context.unsigned_vars.insert(name.clone());
+                }
+
                 let ptr_reg = IrRegister::Named(name.clone());
 
                 self.push_instruction(IrInstruction::Alloc {

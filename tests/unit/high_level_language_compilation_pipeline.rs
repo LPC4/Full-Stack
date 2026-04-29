@@ -1,4 +1,6 @@
 use full_stack::high_level_language::compilation_pipeline::CompilationPipeline;
+use full_stack::intermediate_language::{IrCmpOp, IrInstruction, IrMathOp};
+
 
 fn assert_semantic_error_contains(source: &str, expected: &str) {
     let pipeline = CompilationPipeline::new();
@@ -141,3 +143,413 @@ main: () -> i32* {
         "Type error in binary operation",
     );
 }
+
+#[test]
+fn test_unsigned_division_uses_udiv() {
+    let source = r#"
+        main: () -> i32 {
+            a: u32 = 10
+            b: u32 = 2
+            c: u32 = a / b
+            return i32(c)
+        }
+    "#;
+
+    let pipeline = CompilationPipeline::new();
+    let result = pipeline.compile(source).unwrap();
+    let program = &result.ir_program;
+
+    
+    let has_unsigned_div = program.functions.iter().any(|func| {
+        func.blocks.iter().any(|block| {
+            block.instructions.iter().any(|inst| {
+                matches!(inst, IrInstruction::Math { op, .. } if op == &IrMathOp::Div)
+            })
+        })
+    });
+
+    assert!(has_unsigned_div, "Expected unsigned division (IrMathOp::Div) for u32 types");
+}
+
+#[test]
+fn test_signed_division_uses_sdiv() {
+    let source = r#"
+        main: () -> i32 {
+            a: i32 = 10
+            b: i32 = 2
+            c: i32 = a / b
+            return c
+        }
+    "#;
+
+    let pipeline = CompilationPipeline::new();
+    let result = pipeline.compile(source).unwrap();
+    let program = &result.ir_program;
+
+    
+    let has_signed_div = program.functions.iter().any(|func| {
+        func.blocks.iter().any(|block| {
+            block.instructions.iter().any(|inst| {
+                matches!(inst, IrInstruction::Math { op, .. } if op == &IrMathOp::SDiv)
+            })
+        })
+    });
+
+    assert!(has_signed_div, "Expected signed division (IrMathOp::SDiv) for i32 types");
+}
+
+#[test]
+fn test_unsigned_comparison_uses_unsigned_ops() {
+    let source = r#"
+        main: () -> bool {
+            a: u32 = 10
+            b: u32 = 20
+            result: bool = a < b
+            return result
+        }
+    "#;
+
+    let pipeline = CompilationPipeline::new();
+    let result = pipeline.compile(source).unwrap();
+    let program = &result.ir_program;
+
+    
+    let has_unsigned_cmp = program.functions.iter().any(|func| {
+        func.blocks.iter().any(|block| {
+            block.instructions.iter().any(|inst| {
+                matches!(inst, IrInstruction::Cmp { op, .. } 
+                    if matches!(op, IrCmpOp::Ult | IrCmpOp::Ule | IrCmpOp::Ugt | IrCmpOp::Uge))
+            })
+        })
+    });
+
+    assert!(has_unsigned_cmp, "Expected unsigned comparison operator for u32 types");
+}
+
+#[test]
+fn test_signed_comparison_uses_signed_ops() {
+    let source = r#"
+        main: () -> bool {
+            a: i32 = 10
+            b: i32 = 20
+            result: bool = a < b
+            return result
+        }
+    "#;
+
+    let pipeline = CompilationPipeline::new();
+    let result = pipeline.compile(source).unwrap();
+    let program = &result.ir_program;
+
+    
+    let has_signed_cmp = program.functions.iter().any(|func| {
+        func.blocks.iter().any(|block| {
+            block.instructions.iter().any(|inst| {
+                matches!(inst, IrInstruction::Cmp { op, .. } 
+                    if matches!(op, IrCmpOp::Slt | IrCmpOp::Sle | IrCmpOp::Sgt | IrCmpOp::Sge))
+            })
+        })
+    });
+
+    assert!(has_signed_cmp, "Expected signed comparison operator for i32 types");
+}
+
+#[test]
+fn test_free_builtin_emits_heap_free() {
+    let source = r#"
+        external print: (value: i32) -> i32
+        
+        main: () -> i32 {
+            ptr: i32* = new(i32)
+            @ptr = 42
+            value: i32 = @ptr
+            free(ptr)
+            return value
+        }
+    "#;
+
+    let pipeline = CompilationPipeline::new();
+    let result = pipeline.compile(source).unwrap();
+    let program = &result.ir_program;
+
+    
+    let has_heap_free = program.functions.iter().any(|func| {
+        func.blocks.iter().any(|block| {
+            block.instructions.iter().any(|inst| {
+                matches!(inst, IrInstruction::HeapFree { .. })
+            })
+        })
+    });
+
+    assert!(has_heap_free, "Expected HeapFree instruction for free() call");
+}
+
+#[test]
+fn test_free_with_wrong_arg_count_fails() {
+    let source = r#"
+        main: () -> i32 {
+            ptr: i32* = new(i32)
+            free()  ; Error: no arguments
+            return 0
+        }
+    "#;
+
+    let pipeline = CompilationPipeline::new();
+    let result = pipeline.compile(source);
+
+    assert!(result.is_err(), "Expected error for free() with no arguments");
+}
+
+#[test]
+fn test_type_cast_i32_to_i64() {
+    let source = r#"
+        main: () -> i64 {
+            a: i32 = 42
+            b: i64 = i64(a)
+            return b
+        }
+    "#;
+
+    let pipeline = CompilationPipeline::new();
+    let result = pipeline.compile(source).unwrap();
+    let program = &result.ir_program;
+
+    
+    let has_cast = program.functions.iter().any(|func| {
+        func.blocks.iter().any(|block| {
+            block.instructions.iter().any(|inst| {
+                matches!(inst, IrInstruction::Cast { .. })
+            })
+        })
+    });
+
+    assert!(has_cast, "Expected Cast instruction for i32 to i64 conversion");
+}
+
+#[test]
+fn test_type_cast_u32_to_u64() {
+    let source = r#"
+        main: () -> u64 {
+            a: u32 = 42
+            b: u64 = u64(a)
+            return b
+        }
+    "#;
+
+    let pipeline = CompilationPipeline::new();
+    let result = pipeline.compile(source).unwrap();
+    let program = &result.ir_program;
+
+    
+    let has_cast = program.functions.iter().any(|func| {
+        func.blocks.iter().any(|block| {
+            block.instructions.iter().any(|inst| {
+                matches!(inst, IrInstruction::Cast { .. })
+            })
+        })
+    });
+
+    assert!(has_cast, "Expected Cast instruction for u32 to u64 conversion");
+}
+
+#[test]
+fn test_type_cast_i64_to_i32() {
+    let source = r#"
+        main: () -> i32 {
+            a: i64 = 42
+            b: i32 = i32(a)
+            return b
+        }
+    "#;
+
+    let pipeline = CompilationPipeline::new();
+    let result = pipeline.compile(source).unwrap();
+    let program = &result.ir_program;
+
+    
+    let has_cast = program.functions.iter().any(|func| {
+        func.blocks.iter().any(|block| {
+            block.instructions.iter().any(|inst| {
+                matches!(inst, IrInstruction::Cast { .. })
+            })
+        })
+    });
+
+    assert!(has_cast, "Expected Cast instruction for i64 to i32 truncation");
+}
+
+#[test]
+fn test_type_cast_i32_to_f64() {
+    let source = r#"
+        main: () -> f64 {
+            a: i32 = 42
+            b: f64 = f64(a)
+            return b
+        }
+    "#;
+
+    let pipeline = CompilationPipeline::new();
+    let result = pipeline.compile(source).unwrap();
+    let program = &result.ir_program;
+
+    
+    let has_cast = program.functions.iter().any(|func| {
+        func.blocks.iter().any(|block| {
+            block.instructions.iter().any(|inst| {
+                matches!(inst, IrInstruction::Cast { .. })
+            })
+        })
+    });
+
+    assert!(has_cast, "Expected Cast instruction for i32 to f64 conversion");
+}
+
+#[test]
+fn test_type_cast_pointer_to_pointer() {
+    let source = r#"
+        main: () -> i8* {
+            a: i32* = new(i32)
+            b: i8* = i8*(a)
+            return b
+        }
+    "#;
+
+    let pipeline = CompilationPipeline::new();
+    let result = pipeline.compile(source).unwrap();
+    let program = &result.ir_program;
+
+    
+    let has_cast = program.functions.iter().any(|func| {
+        func.blocks.iter().any(|block| {
+            block.instructions.iter().any(|inst| {
+                matches!(inst, IrInstruction::Cast { .. })
+            })
+        })
+    });
+
+    assert!(has_cast, "Expected Cast instruction for pointer to pointer conversion");
+}
+
+#[test]
+fn test_multiple_casts_in_expression() {
+    
+    let source = r#"
+        main: () -> i64 {
+            a: i32 = 10
+            b: i64 = i64(a) + i64(20)
+            return b
+        }
+    "#;
+
+    let pipeline = CompilationPipeline::new();
+    let result = pipeline.compile(source).unwrap();
+    let program = &result.ir_program;
+
+    
+    let cast_count = program.functions.iter().fold(0, |acc, func| {
+        acc + func.blocks.iter().fold(0, |block_acc, block| {
+            block_acc + block.instructions.iter().filter(|inst| {
+                matches!(inst, IrInstruction::Cast { .. })
+            }).count()
+        })
+    });
+
+    assert!(cast_count >= 2, "Expected at least 2 Cast instructions, found {}", cast_count);
+}
+
+#[test]
+fn test_cast_followed_by_arithmetic() {
+    
+    let source = r#"
+        main: () -> i64 {
+            small: i32 = 100
+            big: i64 = i64(small) * i64(1000)
+            return big
+        }
+    "#;
+
+    let pipeline = CompilationPipeline::new();
+    let result = pipeline.compile(source);
+
+    assert!(result.is_ok(), "Cast followed by arithmetic should compile successfully");
+}
+
+#[test]
+fn test_unsigned_and_signed_mixed_operations() {
+    
+    let source = r#"
+        main: () -> i32 {
+            signed_val: i32 = 10 / 2      ; Should use SDiv
+            ua: u32 = 5
+            ub: u32 = 10
+            unsigned_val: u32 = ua / ub   ; Should use Div
+            
+            signed_cmp: bool = 5 < 10     ; Should use Slt
+            unsigned_cmp: bool = ua < ub  ; Should use Ult
+            
+            return signed_val
+        }
+    "#;
+
+    let pipeline = CompilationPipeline::new();
+    let result = pipeline.compile(source).unwrap();
+    let program = &result.ir_program;
+
+    
+    let has_both_div = program.functions.iter().any(|func| {
+        let has_sdiv = func.blocks.iter().any(|block| {
+            block.instructions.iter().any(|inst| {
+                matches!(inst, IrInstruction::Math { op, .. } if op == &IrMathOp::SDiv)
+            })
+        });
+        let has_udiv = func.blocks.iter().any(|block| {
+            block.instructions.iter().any(|inst| {
+                matches!(inst, IrInstruction::Math { op, .. } if op == &IrMathOp::Div)
+            })
+        });
+        has_sdiv && has_udiv
+    });
+
+    assert!(has_both_div, "Expected both signed and unsigned division in mixed operations");
+}
+
+#[test]
+fn test_free_after_new_pattern() {
+    
+    let source = r#"
+        external print: (value: i32) -> i32
+        
+        main: () -> i32 {
+            ptr: i32* = new(i32)
+            @ptr = 100
+            result: i32 = @ptr
+            free(ptr)
+            return result
+        }
+    "#;
+
+    let pipeline = CompilationPipeline::new();
+    let result = pipeline.compile(source).unwrap();
+    let program = &result.ir_program;
+
+    
+    let has_alloc = program.functions.iter().any(|func| {
+        func.blocks.iter().any(|block| {
+            block.instructions.iter().any(|inst| {
+                matches!(inst, IrInstruction::HeapAlloc { .. })
+            })
+        })
+    });
+
+    let has_free = program.functions.iter().any(|func| {
+        func.blocks.iter().any(|block| {
+            block.instructions.iter().any(|inst| {
+                matches!(inst, IrInstruction::HeapFree { .. })
+            })
+        })
+    });
+
+    assert!(has_alloc, "Expected HeapAlloc for new()");
+    assert!(has_free, "Expected HeapFree for free()");
+}
+

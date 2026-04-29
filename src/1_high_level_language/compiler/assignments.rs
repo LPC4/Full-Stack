@@ -45,6 +45,7 @@ impl HighLevelCompiler {
         Some(LoweredValue {
             value: IrValue::Register(dest),
             ty,
+            is_unsigned: false, // Loaded field values default to signed unless tracked
         })
     }
 
@@ -88,6 +89,7 @@ impl HighLevelCompiler {
                 return Some(LoweredValue {
                     value: IrValue::Register(dest),
                     ty: IrType::Pointer(Box::new(element_ty)),
+                    is_unsigned: false, // Pointers are not unsigned integers
                 });
             }
         }

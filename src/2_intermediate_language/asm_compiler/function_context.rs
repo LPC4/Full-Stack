@@ -156,9 +156,7 @@ impl FunctionContext {
             backend.emit_ld(*reg, SP, *offset as i32);
         }
         if let Some(offset) = self.ra_offset() {
-            backend.emit_comment(&format!(
-                "Restore return address (ra) from offset {offset}"
-            ));
+            backend.emit_comment(&format!("Restore return address (ra) from offset {offset}"));
             backend.emit_ld(RA, SP, offset as i32);
         }
         let frame_size = self.frame_size();

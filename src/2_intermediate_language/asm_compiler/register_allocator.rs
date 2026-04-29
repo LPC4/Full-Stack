@@ -39,7 +39,10 @@ impl RegisterAllocator {
         ctx: &mut FunctionContext,
         function_return_types: &HashMap<String, IrType>,
     ) {
-        use IrInstruction::{Alloc, Load, Store, Offset, Index, Math, Unary, Cmp, Cast, Call, Phi, HeapAlloc, HeapFree, Comment};
+        use IrInstruction::{
+            Alloc, Call, Cast, Cmp, Comment, HeapAlloc, HeapFree, Index, Load, Math, Offset, Phi,
+            Store, Unary,
+        };
         match inst {
             Alloc { dest, ty, .. } => {
                 ctx.alloc_slot_for_reg(dest, ty);
@@ -138,7 +141,7 @@ impl RegisterAllocator {
     }
 
     fn visit_terminator(&self, term: &IrTerminator, ctx: &mut FunctionContext) {
-        use IrTerminator::{Return, Branch};
+        use IrTerminator::{Branch, Return};
         match term {
             Return(Some(val)) => {
                 if let IrValue::Register(reg) = val {

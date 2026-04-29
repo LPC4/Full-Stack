@@ -197,8 +197,8 @@ impl TypeContext {
     pub fn get_type_name(&self, ty: &IrType) -> String {
         match ty {
             IrType::Void => "void".to_owned(),
-            IrType::Integer(width) => format!("{width:?}").to_lowercase(),
-            IrType::Float(width) => format!("{width:?}").to_lowercase(),
+            IrType::Integer(width) => format!("{width}"),
+            IrType::Float(width) => format!("{width}"),
             IrType::Pointer(inner) => format!("*{}", self.get_type_name(inner)),
             IrType::Array { element, len } => {
                 format!("{}[{}]", self.get_type_name(element), len)
