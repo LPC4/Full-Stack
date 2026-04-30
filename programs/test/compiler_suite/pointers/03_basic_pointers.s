@@ -43,7 +43,6 @@ pointers__entry:
 	addi   t0, sp, 8
 	ld     t1, 0(t0)
 	sd     t1, 32(sp)
-	; Store value to dereferenced pointer (i32)
 	ld     t0, 32(sp)
 	; Store i32 to memory
 	lw     t1, 24(sp)
@@ -71,7 +70,6 @@ pointers__entry:
 	addi   t0, sp, 40
 	ld     t1, 0(t0)
 	sd     t1, 64(sp)
-	; Store value to dereferenced pointer (i32)
 	ld     t0, 64(sp)
 	; Store i32 to memory
 	lw     t1, 60(sp)

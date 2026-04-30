@@ -12,6 +12,12 @@ use crate::intermediate_language::{
     IrValue,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum EvalMode {
+    Value,
+    Address,
+}
+
 #[derive(Debug, Clone)]
 struct GenericTypeDef {
     params: Vec<String>,
@@ -74,14 +80,14 @@ pub struct HighLevelCompiler {
     pending_global_strings: Vec<IrGlobalString>,
 }
 
-#[path = "assignments.rs"]
-mod assignments;
 #[path = "control_flow.rs"]
 mod control_flow;
 #[path = "declarations.rs"]
 mod declarations;
 #[path = "expressions.rs"]
 mod expressions;
+#[path = "literals.rs"]
+mod literals;
 #[path = "types.rs"]
 mod types;
 #[path = "utils.rs"]

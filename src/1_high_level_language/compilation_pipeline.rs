@@ -184,7 +184,7 @@ impl CompilationPipeline {
         Ok((ir_program, diagnostics))
     }
 
-    /// Compile and return only the IR program (convenience method)
+    /// Compile and return only the IR program
     pub fn compile_to_ir_only(&self, source: &str) -> Result<IrProgram, CompilationError> {
         let result = self.compile(source)?;
         Ok(result.ir_program)

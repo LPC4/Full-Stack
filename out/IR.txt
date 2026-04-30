@@ -17,7 +17,6 @@ entry:
 	$2 = read i32 @ $1
 	$3 = math add i32 $2, 10
 	$4 = read i32* @ $ptr
-	; Store value to dereferenced pointer (i32)
 	write i32 $3 @ $4
 	$5 = read i32* @ $ptr
 	; defer: captured call free with 1 args

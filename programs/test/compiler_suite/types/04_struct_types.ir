@@ -15,6 +15,7 @@ entry:
 	$2 = read f32 @ $shift_ptr
 	$3 = math add f32 $1, $2
 	$4 = read Point* @ $p_ptr
+	; Address of field 'x' at offset 0
 	$5 = offset f32 $4, 0
 	write f32 $3 @ $5
 	; assignment
@@ -24,6 +25,7 @@ entry:
 	$8 = read f32 @ $shift_ptr
 	$9 = math add f32 $7, $8
 	$10 = read Point* @ $p_ptr
+	; Address of field 'y' at offset 4
 	$11 = offset f32 $10, 4
 	write f32 $9 @ $11
 	$12 = read Point* @ $p_ptr

@@ -1,20 +1,18 @@
-use crate::high_level_language::ast::{
-    DeclNode, Declaration, Expression, Program, ReturnType, Statement, Type, UnaryOp,
-};
-use crate::high_level_language::compiler::utility::diagnostics::Diagnostics;
-use crate::high_level_language::compiler::utility::symbol_table::SymbolTable;
-use crate::high_level_language::compiler::utility::type_context::TypeContext;
+use crate::high_level_language::ast::*;
+use crate::high_level_language::compiler::*;
 use crate::intermediate_language::IrType;
 use std::collections::{HashMap, HashSet};
+use utility::diagnostics::Diagnostics;
+use utility::symbol_table::SymbolTable;
+use utility::type_context::TypeContext;
+use {DeclNode, Declaration, Expression, Program, ReturnType, Statement, Type, UnaryOp};
 
 #[derive(Debug)]
 pub struct SemanticAnalyzer {
     context: TypeContext,
     symbols: SymbolTable,
     diagnostics: Diagnostics,
-    /// Map of type names to their original AST type strings
     type_mapping: HashMap<String, String>,
-    /// Map of function names to their return type strings
     function_signatures: HashMap<String, String>,
 }
 
@@ -50,7 +48,6 @@ impl SemanticAnalyzer {
         }
 
         // Post-resolution check for unresolved types (optional strict mode)
-        // Uncomment if you want to enforce full type resolution:
         // self.check_for_unresolved_unknowns(program)?;
 
         Ok(())
@@ -120,7 +117,7 @@ impl SemanticAnalyzer {
         }
     }
 
-    fn check_block(&mut self, block: &crate::high_level_language::ast::Block) -> Result<(), ()> {
+    fn check_block(&mut self, block: &Block) -> Result<(), ()> {
         for stmt in &block.statements {
             self.check_statement(stmt)?;
         }
@@ -154,7 +151,7 @@ impl SemanticAnalyzer {
                         self.resolve_type_string(&self.context.get_type_name(&ir_ty));
                     let resolved_init_ty = self.resolve_type_string(&init_ty);
 
-                    // Allow integer literal widening: i32 literals can be assigned to wider integer types
+                    // Allow integer literal widening
                     let is_literal_widening_allowed = Self::is_integer_type(&resolved_decl_ty)
                         && Self::is_i32_type(&resolved_init_ty)
                         && Self::is_literal_source(init_expr);
@@ -229,7 +226,7 @@ impl SemanticAnalyzer {
     fn infer_expression_type(&mut self, expr: &Expression) -> Result<String, ()> {
         match expr {
             Expression::Primary(primary) => match primary {
-                crate::high_level_language::ast::PrimaryExpr::Identifier(name) => {
+                PrimaryExpr::Identifier(name) => {
                     if let Some(info) = self.symbols.lookup(name) {
                         Ok(self.context.get_type_name(&info.ty))
                     } else if let Some(ty_name) = self.type_mapping.get(name) {
@@ -240,30 +237,21 @@ impl SemanticAnalyzer {
                         Err(())
                     }
                 }
-                crate::high_level_language::ast::PrimaryExpr::Literal(lit) => match lit {
-                    crate::high_level_language::ast::Literal::Integer(_)
-                    | crate::high_level_language::ast::Literal::HexInteger(_) => {
-                        Ok("i32".to_owned())
-                    }
-                    crate::high_level_language::ast::Literal::Float(_) => Ok("f32".to_owned()),
-                    crate::high_level_language::ast::Literal::Boolean(_) => Ok("i1".to_owned()),
-                    crate::high_level_language::ast::Literal::Null => Ok("*unknown".to_owned()),
-                    crate::high_level_language::ast::Literal::String(_) => {
-                        Ok("{ data: u8*, length: u64 }".to_owned())
-                    }
+                PrimaryExpr::Literal(lit) => match lit {
+                    Literal::Integer(_) | Literal::HexInteger(_) => Ok("i32".to_owned()),
+                    Literal::Float(_) => Ok("f32".to_owned()),
+                    Literal::Boolean(_) => Ok("i1".to_owned()),
+                    Literal::Null => Ok("*unknown".to_owned()),
+                    Literal::String(_) => Ok("{ data: u8*, length: u64 }".to_owned()),
                 },
-                crate::high_level_language::ast::PrimaryExpr::Grouped(expr) => {
-                    self.infer_expression_type(expr)
-                }
-                crate::high_level_language::ast::PrimaryExpr::New { ty, .. } => {
+                PrimaryExpr::Grouped(expr) => self.infer_expression_type(expr),
+                PrimaryExpr::New { ty, .. } => {
                     let ir_ty = self.ast_type_to_ir_type(ty);
                     let inner_name = self.context.get_type_name(&ir_ty);
                     Ok(format!("*{inner_name}"))
                 }
-                crate::high_level_language::ast::PrimaryExpr::FunctionCall {
-                    name,
-                    arguments,
-                    ..
+                PrimaryExpr::FunctionCall {
+                    name, arguments, ..
                 } => {
                     // Type check arguments
                     for arg in arguments {
@@ -277,7 +265,7 @@ impl SemanticAnalyzer {
                         Ok("unknown".to_owned())
                     }
                 }
-                crate::high_level_language::ast::PrimaryExpr::ArrayLiteral(elements) => {
+                PrimaryExpr::ArrayLiteral(elements) => {
                     if elements.is_empty() {
                         self.diagnostics
                             .error("empty array literals are not supported yet".to_owned());
@@ -304,11 +292,11 @@ impl SemanticAnalyzer {
                     let element_ty = inferred_element_ty.unwrap();
                     Ok(format!("{}[{}]", element_ty, elements.len()))
                 }
-                crate::high_level_language::ast::PrimaryExpr::FieldAccess { expr, field } => {
+                PrimaryExpr::FieldAccess { expr, field } => {
                     let base_ty = self.infer_expression_type(expr)?;
                     self.infer_field_access_type(&base_ty, field)
                 }
-                crate::high_level_language::ast::PrimaryExpr::ArrayIndex { expr, index } => {
+                PrimaryExpr::ArrayIndex { expr, index } => {
                     let _ = self.infer_expression_type(index)?;
                     let base_ty = match expr.as_ref() {
                         Expression::Unary {
@@ -332,7 +320,7 @@ impl SemanticAnalyzer {
                         self.infer_index_element_type(&base_ty)
                     }
                 }
-                crate::high_level_language::ast::PrimaryExpr::StructLiteral(fields) => {
+                PrimaryExpr::StructLiteral(fields) => {
                     let mut field_types = Vec::new();
                     for field in fields {
                         let expr_ty = self.infer_expression_type(&field.expr)?;
@@ -384,10 +372,7 @@ impl SemanticAnalyzer {
                     if self.stack_address_root_name(inner).is_some() {
                         // Special case for AddressOf: we need the pointer type of the operand,
                         // not the dereferenced value type.
-                        if let Expression::Primary(
-                            crate::high_level_language::ast::PrimaryExpr::Identifier(name),
-                        ) = inner.as_ref()
-                        {
+                        if let Expression::Primary(PrimaryExpr::Identifier(name)) = inner.as_ref() {
                             if let Some(info) = self.symbols.lookup(name) {
                                 let ty_name = self.context.get_type_name(&info.ty);
                                 return Ok(format!("*{ty_name}"));
@@ -429,9 +414,7 @@ impl SemanticAnalyzer {
                 let rvalue_type = self.infer_expression_type(rvalue)?;
 
                 // Handle brace-based struct destructuring.
-                if let crate::high_level_language::ast::AssignTarget::StructDestructure(fields) =
-                    target.as_ref()
-                {
+                if let AssignTarget::StructDestructure(fields) = target.as_ref() {
                     let resolved_rvalue = self.resolve_type_string(&rvalue_type);
                     let field_types = match resolved_rvalue {
                         IrType::Aggregate(types) => types,
@@ -505,12 +488,11 @@ impl SemanticAnalyzer {
                             return Err(());
                         }
 
-                        let target =
-                            crate::high_level_language::ast::AssignTarget::Identifier(name.clone());
+                        let target = AssignTarget::Identifier(name.clone());
                         self.register_assign_target(&target, &ty_to_use)?;
                     }
                 } else {
-                    // Regular assignment - check target exists
+                    // Regular assignment, check target exists
                     self.check_assign_target(target)?;
                 }
 
@@ -534,7 +516,6 @@ impl SemanticAnalyzer {
                     return Err(());
                 }
 
-                // Return the target type
                 Ok(target_name)
             }
         }
@@ -546,7 +527,7 @@ impl SemanticAnalyzer {
                 op: UnaryOp::AddressOf,
                 expr: inner,
             } => self.stack_address_root_name(inner),
-            Expression::Primary(crate::high_level_language::ast::PrimaryExpr::Grouped(inner)) => {
+            Expression::Primary(PrimaryExpr::Grouped(inner)) => {
                 self.returning_local_address_name(inner)
             }
             _ => None,
@@ -555,20 +536,16 @@ impl SemanticAnalyzer {
 
     fn stack_address_root_name(&self, expr: &Expression) -> Option<String> {
         match expr {
-            Expression::Primary(crate::high_level_language::ast::PrimaryExpr::Identifier(name)) => {
+            Expression::Primary(PrimaryExpr::Identifier(name)) => {
                 self.symbols.lookup(name).map(|_| name.clone())
             }
-            Expression::Primary(crate::high_level_language::ast::PrimaryExpr::Grouped(inner)) => {
-                self.stack_address_root_name(inner)
+            Expression::Primary(PrimaryExpr::Grouped(inner)) => self.stack_address_root_name(inner),
+            Expression::Primary(PrimaryExpr::FieldAccess { expr, .. }) => {
+                self.stack_address_root_name(expr)
             }
-            Expression::Primary(crate::high_level_language::ast::PrimaryExpr::FieldAccess {
-                expr,
-                ..
-            }) => self.stack_address_root_name(expr),
-            Expression::Primary(crate::high_level_language::ast::PrimaryExpr::ArrayIndex {
-                expr,
-                ..
-            }) => self.stack_address_root_name(expr),
+            Expression::Primary(PrimaryExpr::ArrayIndex { expr, .. }) => {
+                self.stack_address_root_name(expr)
+            }
             _ => None,
         }
     }
@@ -583,24 +560,17 @@ impl SemanticAnalyzer {
             Expression::Binary { left, right, .. } => {
                 self.contains_dereference(left) || self.contains_dereference(right)
             }
-            Expression::Primary(crate::high_level_language::ast::PrimaryExpr::Grouped(inner)) => {
-                self.contains_dereference(inner)
+            Expression::Primary(PrimaryExpr::Grouped(inner)) => self.contains_dereference(inner),
+            Expression::Primary(PrimaryExpr::FieldAccess { expr, .. }) => {
+                self.contains_dereference(expr)
             }
-            Expression::Primary(crate::high_level_language::ast::PrimaryExpr::FieldAccess {
-                expr,
-                ..
-            }) => self.contains_dereference(expr),
-            Expression::Primary(crate::high_level_language::ast::PrimaryExpr::ArrayIndex {
-                expr,
-                index,
-            }) => self.contains_dereference(expr) || self.contains_dereference(index),
-            Expression::Primary(crate::high_level_language::ast::PrimaryExpr::FunctionCall {
-                arguments,
-                ..
-            }) => arguments.iter().any(|arg| self.contains_dereference(arg)),
-            Expression::Primary(crate::high_level_language::ast::PrimaryExpr::StructLiteral(
-                fields,
-            )) => fields
+            Expression::Primary(PrimaryExpr::ArrayIndex { expr, index }) => {
+                self.contains_dereference(expr) || self.contains_dereference(index)
+            }
+            Expression::Primary(PrimaryExpr::FunctionCall { arguments, .. }) => {
+                arguments.iter().any(|arg| self.contains_dereference(arg))
+            }
+            Expression::Primary(PrimaryExpr::StructLiteral(fields)) => fields
                 .iter()
                 .any(|field| self.contains_dereference(&field.expr)),
             _ => false,
@@ -780,13 +750,9 @@ impl SemanticAnalyzer {
     }
 
     /// Register an assignment target (for struct destructuring)
-    fn register_assign_target(
-        &mut self,
-        target: &crate::high_level_language::ast::AssignTarget,
-        ty: &str,
-    ) -> Result<(), ()> {
+    fn register_assign_target(&mut self, target: &AssignTarget, ty: &str) -> Result<(), ()> {
         match target {
-            crate::high_level_language::ast::AssignTarget::Identifier(name) => {
+            AssignTarget::Identifier(name) => {
                 // Check if already defined
                 if self.symbols.lookup(name).is_some() {
                     // Variable exists, just verify type compatibility
@@ -809,16 +775,15 @@ impl SemanticAnalyzer {
                 }
                 Ok(())
             }
-            crate::high_level_language::ast::AssignTarget::Dereference(inner) => {
+            AssignTarget::Dereference(inner) => {
                 // For @x, check that x is a pointer
                 self.check_assign_target(inner)
             }
-            crate::high_level_language::ast::AssignTarget::FieldAccess { .. }
-            | crate::high_level_language::ast::AssignTarget::ArrayIndex { .. } => {
+            AssignTarget::FieldAccess { .. } | AssignTarget::ArrayIndex { .. } => {
                 // These should already exist
                 self.check_assign_target(target)
             }
-            crate::high_level_language::ast::AssignTarget::StructDestructure(_) => {
+            AssignTarget::StructDestructure(_) => {
                 self.diagnostics.error(
                     "Nested struct destructuring not supported in semantic analysis".to_owned(),
                 );
@@ -828,12 +793,9 @@ impl SemanticAnalyzer {
     }
 
     /// Check that an assignment target is valid (exists and is assignable)
-    fn check_assign_target(
-        &mut self,
-        target: &crate::high_level_language::ast::AssignTarget,
-    ) -> Result<(), ()> {
+    fn check_assign_target(&mut self, target: &AssignTarget) -> Result<(), ()> {
         match target {
-            crate::high_level_language::ast::AssignTarget::Identifier(name) => {
+            AssignTarget::Identifier(name) => {
                 if self.symbols.lookup(name).is_none() {
                     self.diagnostics
                         .error(format!("Undefined identifier: {name}"));
@@ -841,18 +803,14 @@ impl SemanticAnalyzer {
                 }
                 Ok(())
             }
-            crate::high_level_language::ast::AssignTarget::Dereference(inner) => {
-                self.check_assign_target(inner)
-            }
-            crate::high_level_language::ast::AssignTarget::FieldAccess { expr, field: _ } => {
-                self.check_assign_target(expr)
-            }
-            crate::high_level_language::ast::AssignTarget::ArrayIndex { expr, index } => {
+            AssignTarget::Dereference(inner) => self.check_assign_target(inner),
+            AssignTarget::FieldAccess { expr, field: _ } => self.check_assign_target(expr),
+            AssignTarget::ArrayIndex { expr, index } => {
                 self.check_assign_target(expr)?;
                 let _ = self.infer_expression_type(index)?;
                 Ok(())
             }
-            crate::high_level_language::ast::AssignTarget::StructDestructure(_) => {
+            AssignTarget::StructDestructure(_) => {
                 self.diagnostics
                     .error("Nested struct destructuring not supported".to_owned());
                 Err(())
@@ -975,12 +933,10 @@ impl SemanticAnalyzer {
         false
     }
 
-    /// Check if an IR type is any integer type
     fn is_integer_type(ty: &IrType) -> bool {
         matches!(ty, IrType::Integer(_))
     }
 
-    /// Check if an IR type is specifically i32
     fn is_i32_type(ty: &IrType) -> bool {
         matches!(
             ty,
@@ -988,18 +944,16 @@ impl SemanticAnalyzer {
         )
     }
 
-    /// Check if an expression is a literal source (integer or hex integer literal)
     fn is_literal_source(expr: &Expression) -> bool {
         matches!(
             expr,
-            Expression::Primary(crate::high_level_language::ast::PrimaryExpr::Literal(
-                crate::high_level_language::ast::Literal::Integer(_)
-                    | crate::high_level_language::ast::Literal::HexInteger(_)
+            Expression::Primary(PrimaryExpr::Literal(
+                Literal::Integer(_) | Literal::HexInteger(_)
             ))
         )
     }
 
-    pub fn diagnostics(&self) -> &[crate::high_level_language::compiler::Diagnostic] {
+    pub fn diagnostics(&self) -> &[Diagnostic] {
         self.diagnostics.entries()
     }
 }

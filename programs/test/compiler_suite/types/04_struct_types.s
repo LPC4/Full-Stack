@@ -57,6 +57,7 @@ calc_offset__entry:
 	addi   t0, sp, 16
 	ld     t1, 0(t0)
 	sd     t1, 56(sp)
+	; Address of field 'x' at offset 0
 	ld     t0, 56(sp)
 	addi   t1, zero, 0
 	addi   t2, t1, 0
@@ -90,6 +91,7 @@ calc_offset__entry:
 	addi   t0, sp, 16
 	ld     t1, 0(t0)
 	sd     t1, 96(sp)
+	; Address of field 'y' at offset 4
 	ld     t0, 96(sp)
 	addi   t1, zero, 4
 	addi   t2, t1, 0

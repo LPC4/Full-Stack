@@ -11,9 +11,8 @@ pub struct LoweringContext {
     pub types: TypeContext,
     pub diagnostics: Diagnostics,
     pub ssa_env: HashMap<String, IrValue>,
-    /// Tracks SSA values at the end of each block for phi reconciliation
+    /// Tracks SSA values at the end of each block for phi nodes
     pub block_exit_values: HashMap<String, HashMap<String, IrValue>>,
-    /// Tracks which variables have unsigned types
     pub unsigned_vars: HashSet<String>,
 }
 

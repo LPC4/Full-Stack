@@ -172,7 +172,6 @@ main__entry:
 	addi   t0, sp, 160
 	ld     t1, 0(t0)
 	sd     t1, 176(sp)
-	; Store value to dereferenced pointer (i32)
 	ld     t0, 176(sp)
 	; Store i32 to memory
 	addi   t1, zero, 99

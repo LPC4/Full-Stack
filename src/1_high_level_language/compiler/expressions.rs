@@ -1,747 +1,521 @@
 use super::{
-    AssignTarget, BinaryOp, Expression, FloatWidth, HighLevelCompiler, IntWidth, IrCmpOp,
-    IrGlobalString, IrInstruction, IrMathOp, IrRegister, IrType, IrUnaryOp, IrValue, Literal,
+    AssignTarget, EvalMode, Expression, HighLevelCompiler, IrInstruction, IrType, IrValue, Literal,
     LoweredValue, UnaryOp,
 };
-
-use crate::intermediate_language::IrCastMode;
+use crate::high_level_language::ast::{PrimaryExpr, Type};
+use crate::intermediate_language::{FloatWidth, IntWidth, IrCastMode};
 
 impl HighLevelCompiler {
+    /// Evaluate expression in Value mode (rvalue context).
     pub(super) fn lower_expression(&mut self, expression: &Expression) -> Option<LoweredValue> {
+        self.lower_expr(expression, EvalMode::Value)
+    }
+
+    /// Unified expression lowering.
+    ///
+    /// `EvalMode::Value`   → produce the loaded/computed value.
+    /// `EvalMode::Address` → produce a pointer (`Pointer(T)`) to the storage location.
+    pub(super) fn lower_expr(
+        &mut self,
+        expression: &Expression,
+        mode: EvalMode,
+    ) -> Option<LoweredValue> {
         match expression {
-            Expression::Primary(primary) => match primary {
-                crate::high_level_language::ast::PrimaryExpr::Identifier(name) => {
-                    let info = self.context.symbols.lookup(name).cloned();
-                    if let Some(info) = info {
-                        if let IrType::Pointer(ref inner_ty) = info.ty {
-                            // Locals are stack slots (`T*`) in the symbol table; expressions use loaded `T`.
-                            let dest = self.new_temp();
-                            if let IrValue::Register(ptr_reg) = info.value {
-                                self.push_instruction(IrInstruction::Load {
-                                    dest: dest.clone(),
-                                    ty: *inner_ty.clone(),
-                                    ptr: ptr_reg,
-                                    offset: None,
-                                });
-                                return Some(LoweredValue {
-                                    value: IrValue::Register(dest),
-                                    ty: *inner_ty.clone(),
-                                    is_unsigned: self.context.unsigned_vars.contains(name),
-                                });
-                            }
-                        }
-
-                        return Some(LoweredValue {
-                            value: info.value,
-                            ty: info.ty,
-                            is_unsigned: false, // Non-pointer values (e.g., parameters) default to signed
-                        });
-                    } else if let Some(const_val) = self.compile_time_consts.get(name).cloned() {
-                        Some(self.lower_literal(&const_val))
-                    } else {
-                        self.context
-                            .diagnostics
-                            .error(format!("unknown identifier `{name}`"));
-                        None
-                    }
-                }
-                crate::high_level_language::ast::PrimaryExpr::Literal(literal) => {
-                    Some(self.lower_literal(literal))
-                }
-                crate::high_level_language::ast::PrimaryExpr::Grouped(expr) => {
-                    self.lower_expression(expr)
-                }
-                crate::high_level_language::ast::PrimaryExpr::FieldAccess { expr, field } => {
-                    // Parser represents `@ptr.field` as `FieldAccess(expr = Dereference(ptr), ...)`.
-                    // Lower from the pointer base directly so we don't try to load fields from aggregate values.
-                    if let Expression::Unary {
-                        op: UnaryOp::Dereference,
-                        expr: inner,
-                    } = &**expr
-                    {
-                        let base_ptr = self.lower_expression(inner)?;
-                        return self.lower_field_access(&base_ptr, field);
-                    }
-
-                    let base = self.lower_expression(expr)?;
-                    self.lower_field_access(&base, field)
-                }
-                crate::high_level_language::ast::PrimaryExpr::ArrayIndex { expr, index } => {
-                    // Parser currently represents `@arr[i]` as `ArrayIndex(expr = Dereference(arr), ...)`.
-                    // Normalize that form here so it lowers as "index through pointer then load value".
-                    if let Expression::Unary {
-                        op: UnaryOp::Dereference,
-                        expr: inner,
-                    } = &**expr
-                    {
-                        let base_ptr = self.lower_expression(inner)?;
-                        let idx = self.lower_expression(index)?;
-                        let element_ptr = self.lower_array_index(&base_ptr, &idx)?;
-                        if let IrType::Pointer(ref element_ty) = element_ptr.ty {
-                            if let IrValue::Register(ptr_reg) = element_ptr.value {
-                                let dest = self.new_temp();
-                                self.push_instruction(IrInstruction::Load {
-                                    dest: dest.clone(),
-                                    ty: *element_ty.clone(),
-                                    ptr: ptr_reg,
-                                    offset: None,
-                                });
-                                return Some(LoweredValue {
-                                    value: IrValue::Register(dest),
-                                    ty: *element_ty.clone(),
-                                    is_unsigned: false, // Loaded values default to signed unless tracked
-                                });
-                            }
-                        }
-                        return Some(element_ptr);
-                    }
-
-                    let should_load_indexed_value = self.is_deref_based_index_expr(expr);
-                    let base = match &**expr {
-                        Expression::Unary {
-                            op: UnaryOp::Dereference,
-                            expr: inner,
-                        } => self.lower_expression(inner)?,
-                        _ => self.lower_expression(expr)?,
-                    };
-                    let idx = self.lower_expression(index)?;
-                    let element_ptr = self.lower_array_index(&base, &idx)?;
-
-                    if should_load_indexed_value {
-                        if let (IrType::Pointer(element_ty), IrValue::Register(ptr_reg)) =
-                            (&element_ptr.ty, &element_ptr.value)
-                        {
-                            let dest = self.new_temp();
-                            self.push_instruction(IrInstruction::Load {
-                                dest: dest.clone(),
-                                ty: *element_ty.clone(),
-                                ptr: ptr_reg.clone(),
-                                offset: None,
-                            });
-                            return Some(LoweredValue {
-                                value: IrValue::Register(dest),
-                                ty: *element_ty.clone(),
-                                is_unsigned: false, // Loaded values default to signed unless tracked
-                            });
-                        }
-                    }
-
-                    Some(element_ptr)
-                }
-                crate::high_level_language::ast::PrimaryExpr::New { ty, args } => {
-                    let dest = self.new_temp();
-                    let lowered_ty = self.lower_type(ty);
-                    let count = match args.len() {
-                        0 => None,
-                        1 => match &args[0] {
-                            Expression::Primary(
-                                crate::high_level_language::ast::PrimaryExpr::Literal(
-                                    Literal::Integer(v) | Literal::HexInteger(v),
-                                ),
-                            ) if *v > 0 => Some(*v as usize),
-                            other => {
-                                self.context.diagnostics.error(format!(
-                                        "new({}, count) requires a positive integer literal count; got `{}`",
-                                        lowered_ty,
-                                        self.format_expression(other)
-                                    ));
-                                return None;
-                            }
-                        },
-                        n => {
-                            self.context.diagnostics.error(format!(
-                                "new({lowered_ty}, ...) expects at most one count argument, got {n}"
-                            ));
-                            return None;
-                        }
-                    };
-                    self.push_instruction(IrInstruction::HeapAlloc {
-                        dest: dest.clone(),
-                        ty: lowered_ty.clone(),
-                        count,
-                    });
-                    Some(LoweredValue {
-                        value: IrValue::Register(dest),
-                        ty: IrType::Pointer(Box::new(lowered_ty)),
-                        is_unsigned: false, // Pointers are not unsigned integers
-                    })
-                }
-                crate::high_level_language::ast::PrimaryExpr::FunctionCall { name, arguments } => {
-                    // Special handling for built-in free() function
-                    if name == "free" {
-                        if arguments.len() != 1 {
-                            self.context
-                                .diagnostics
-                                .error("free() expects exactly one argument".to_owned());
-                            return None;
-                        }
-
-                        // Evaluate the argument (pointer to free)
-                        let arg = self.lower_expression(&arguments[0])?;
-
-                        // Emit HeapFree instruction
-                        if let IrValue::Register(ptr_reg) = arg.value {
-                            self.push_instruction(IrInstruction::HeapFree { ptr: ptr_reg });
-                        } else {
-                            self.context
-                                .diagnostics
-                                .error("free() argument must be a pointer value".to_owned());
-                            return None;
-                        }
-
-                        // Return void type
-                        return Some(LoweredValue {
-                            value: IrValue::Null,
-                            ty: IrType::Void,
-                            is_unsigned: false,
-                        });
-                    }
-
-                    // Standard function call handling
-                    let mut arg_values = Vec::new();
-                    for arg in arguments {
-                        if let Some(lowered) = self.lower_expression(arg) {
-                            arg_values.push(lowered.value);
-                        } else {
-                            self.context
-                                .diagnostics
-                                .error(format!("failed to lower argument for call to {name}"));
-                            return None;
-                        }
-                    }
-
-                    // Look up the function's return type
-                    let return_ty = self
-                        .function_return_types
-                        .get(name)
-                        .cloned()
-                        .unwrap_or(IrType::Void);
-
-                    let dest = if return_ty == IrType::Void {
-                        None
-                    } else {
-                        Some(self.new_temp())
-                    };
-
-                    self.push_instruction(IrInstruction::Call {
-                        dest: dest.clone(),
-                        function: name.clone(),
-                        args: arg_values,
-                    });
-
-                    Some(LoweredValue {
-                        value: dest.map(IrValue::Register).unwrap_or(IrValue::Null),
-                        ty: return_ty,
-                        is_unsigned: false, // Function call results default to signed
-                    })
-                }
-                crate::high_level_language::ast::PrimaryExpr::ArrayLiteral(elements) => {
-                    self.lower_array_literal(elements)
-                }
-                crate::high_level_language::ast::PrimaryExpr::StructLiteral(fields) => {
-                    // Lower struct literal
-                    let mut lowered_fields = Vec::new();
-                    for field_init in fields {
-                        let field_value = self.lower_expression(&field_init.expr)?;
-                        let expected_ty = field_init
-                            .ty
-                            .as_ref()
-                            .map(|ty| self.lower_type(ty))
-                            .unwrap_or_else(|| field_value.ty.clone());
-                        let expected_resolved = self.resolve_named_type(&expected_ty);
-                        let actual_resolved = self.resolve_named_type(&field_value.ty);
-                        if actual_resolved != expected_resolved {
-                            let declared_ty = field_init
-                                .ty
-                                .as_ref()
-                                .map(|ty| self.lower_type(ty).to_string())
-                                .unwrap_or_else(|| field_value.ty.to_string());
-                            self.context.diagnostics.error(format!(
-                                "struct literal field `{}` type mismatch: declared `{}`, got `{}`",
-                                field_init.name, declared_ty, field_value.ty
-                            ));
-                            return None;
-                        }
-                        lowered_fields.push((field_init.name.clone(), field_value));
-                    }
-
-                    // Create aggregate type
-                    let struct_fields: Vec<(String, IrType)> = lowered_fields
-                        .iter()
-                        .map(|(name, val)| (name.clone(), val.ty.clone()))
-                        .collect();
-                    let struct_ty = IrType::Aggregate(struct_fields);
-                    let dest = self.new_temp();
-
-                    self.push_instruction(IrInstruction::Alloc {
-                        dest: dest.clone(),
-                        ty: struct_ty.clone(),
-                        count: None,
-                    });
-
-                    // Store each field
-                    let mut offset = 0i64;
-                    for (_, field_value) in lowered_fields {
-                        self.push_instruction(IrInstruction::Store {
-                            ty: field_value.ty.clone(),
-                            value: field_value.value,
-                            ptr: dest.clone(),
-                            offset: Some(offset),
-                        });
-                        // Use actual type size for offset calculation
-                        offset += self.type_size_in_bytes(&field_value.ty) as i64;
-                    }
-
-                    Some(LoweredValue {
-                        value: IrValue::Register(dest),
-                        ty: struct_ty,
-                        is_unsigned: false, // Struct literals are not unsigned integers
-                    })
-                }
-            },
+            Expression::Primary(primary) => self.lower_primary(primary, mode),
             Expression::Binary { op, left, right } => {
-                let lhs = self.lower_expression(left)?;
-                let rhs = self.lower_expression(right)?;
+                let lhs = self.lower_expr(left, EvalMode::Value)?;
+                let rhs = self.lower_expr(right, EvalMode::Value)?;
                 self.lower_binary(op, lhs, rhs)
             }
-            Expression::Unary { op, expr } => {
-                if op == &UnaryOp::AddressOf {
-                    // `&` accepts l-values like identifiers and array elements, but never `&@ptr`.
-                    if matches!(
-                        &**expr,
-                        Expression::Unary {
-                            op: UnaryOp::Dereference,
-                            ..
-                        }
-                    ) {
-                        self.context.diagnostics.error(
-                            "cannot take address of a dereference expression (`&@...` is invalid)"
-                                .to_owned(),
-                        );
-                        return None;
-                    }
+            Expression::Unary { op, expr } => self.lower_unary_expr(op, expr, mode),
+            Expression::Cast { target_ty, expr } => self.lower_cast(target_ty, expr),
+            Expression::Assignment { target, rvalue } => self.lower_assignment(target, rvalue),
+        }
+    }
 
-                    if let Some(target) = self.expression_to_assign_target(expr) {
-                        if let Some((ptr_reg, value_ty)) = self.resolve_assign_lvalue(&target) {
-                            return Some(LoweredValue {
-                                value: IrValue::Register(ptr_reg),
-                                ty: IrType::Pointer(Box::new(value_ty)),
-                                is_unsigned: false, // Pointers are not unsigned integers
-                            });
-                        }
-                    }
-
-                    self.context.diagnostics.error(
-                        "address-of requires an assignable l-value (identifier or array element)"
-                            .to_owned(),
-                    );
-                    None
-                } else {
-                    let input = self.lower_expression(expr)?;
-                    self.lower_unary(op, input)
-                }
+    fn lower_primary(&mut self, primary: &PrimaryExpr, mode: EvalMode) -> Option<LoweredValue> {
+        match primary {
+            PrimaryExpr::Identifier(name) => self.lower_identifier(name, mode),
+            PrimaryExpr::Literal(literal) => Some(self.lower_literal(literal)),
+            PrimaryExpr::Grouped(expr) => self.lower_expr(expr, mode),
+            PrimaryExpr::FieldAccess { expr, field } => {
+                self.lower_field_access_expr(expr, field, mode)
             }
-            Expression::Cast { target_ty, expr } => {
-                // Lower the source expression
-                let source_value = self.lower_expression(expr)?;
-
-                // Convert target type to IR type
-                let target_ir = self.lower_type(target_ty);
-
-                // Determine the appropriate cast mode based on source and target types
-                let source_resolved = self.resolve_named_type(&source_value.ty);
-                let target_resolved = self.resolve_named_type(&target_ir);
-
-                let cast_mode = match (&source_resolved, &target_resolved) {
-                    // Integer to integer casts
-                    (IrType::Integer(src_width), IrType::Integer(tgt_width)) => {
-                        use crate::intermediate_language::IntWidth;
-                        let src_bits = match src_width {
-                            IntWidth::I1 => 1,
-                            IntWidth::I8 => 8,
-                            IntWidth::I16 => 16,
-                            IntWidth::I32 => 32,
-                            IntWidth::I64 => 64,
-                        };
-                        let tgt_bits = match tgt_width {
-                            IntWidth::I1 => 1,
-                            IntWidth::I8 => 8,
-                            IntWidth::I16 => 16,
-                            IntWidth::I32 => 32,
-                            IntWidth::I64 => 64,
-                        };
-
-                        if tgt_bits < src_bits {
-                            IrCastMode::Trunc
-                        } else if source_value.is_unsigned {
-                            IrCastMode::Zext
-                        } else {
-                            IrCastMode::Sext
+            PrimaryExpr::ArrayIndex { expr, index } => {
+                self.lower_array_index_expr(expr, index, mode)
+            }
+            PrimaryExpr::New { ty, args } => {
+                use crate::intermediate_language::IrInstruction;
+                let dest = self.new_temp();
+                let lowered_ty = self.lower_type(ty);
+                let count = match args.len() {
+                    0 => None,
+                    1 => match &args[0] {
+                        Expression::Primary(PrimaryExpr::Literal(
+                            Literal::Integer(v) | Literal::HexInteger(v),
+                        )) if *v > 0 => Some(*v as usize),
+                        other => {
+                            self.context.diagnostics.error(format!(
+                                "new({}, count) requires a positive integer literal count; got `{}`",
+                                lowered_ty,
+                                self.format_expression(other)
+                            ));
+                            return None;
                         }
-                    }
-                    // Float to integer
-                    (IrType::Float(_), IrType::Integer(_)) => IrCastMode::F2i,
-                    // Integer to float
-                    (IrType::Integer(_), IrType::Float(_)) => IrCastMode::I2f,
-                    // Float to float (different precision)
-                    (IrType::Float(_), IrType::Float(_)) => IrCastMode::Bitcast,
-                    // Pointer to pointer
-                    (IrType::Pointer(_), IrType::Pointer(_)) => IrCastMode::Bitcast,
-                    // Same type - no cast needed, just return the value
-                    _ if source_resolved == target_resolved => {
-                        return Some(source_value);
-                    }
-                    _ => {
+                    },
+                    n => {
                         self.context.diagnostics.error(format!(
-                            "Unsupported cast from `{}` to `{}`",
-                            source_value.ty, target_ir
+                            "new({lowered_ty}, ...) expects at most one count argument, got {n}"
                         ));
                         return None;
                     }
                 };
-
-                // Create destination register
-                let dest = self.new_temp();
-
-                // Emit cast instruction
-                self.push_instruction(IrInstruction::Cast {
+                self.push_instruction(IrInstruction::HeapAlloc {
                     dest: dest.clone(),
-                    mode: cast_mode,
-                    value: source_value.value,
-                    ty: target_ir.clone(),
+                    ty: lowered_ty.clone(),
+                    count,
+                });
+                Some(LoweredValue {
+                    value: IrValue::Register(dest),
+                    ty: IrType::Pointer(Box::new(lowered_ty)),
+                    is_unsigned: false,
+                })
+            }
+            PrimaryExpr::FunctionCall { name, arguments } => {
+                if name == "free" {
+                    if arguments.len() != 1 {
+                        self.context
+                            .diagnostics
+                            .error("free() expects exactly one argument".to_owned());
+                        return None;
+                    }
+                    let arg = self.lower_expr(&arguments[0], EvalMode::Value)?;
+                    if let IrValue::Register(ptr_reg) = arg.value {
+                        self.push_instruction(IrInstruction::HeapFree { ptr: ptr_reg });
+                    } else {
+                        self.context
+                            .diagnostics
+                            .error("free() argument must be a pointer value".to_owned());
+                        return None;
+                    }
+                    return Some(LoweredValue {
+                        value: IrValue::Null,
+                        ty: IrType::Void,
+                        is_unsigned: false,
+                    });
+                }
+
+                let mut arg_values = Vec::new();
+                for arg in arguments {
+                    if let Some(lowered) = self.lower_expr(arg, EvalMode::Value) {
+                        arg_values.push(lowered.value);
+                    } else {
+                        self.context
+                            .diagnostics
+                            .error(format!("failed to lower argument for call to {name}"));
+                        return None;
+                    }
+                }
+
+                let return_ty = self
+                    .function_return_types
+                    .get(name)
+                    .cloned()
+                    .unwrap_or(IrType::Void);
+
+                let dest = if return_ty == IrType::Void {
+                    None
+                } else {
+                    Some(self.new_temp())
+                };
+
+                self.push_instruction(IrInstruction::Call {
+                    dest: dest.clone(),
+                    function: name.clone(),
+                    args: arg_values,
                 });
 
                 Some(LoweredValue {
-                    value: IrValue::Register(dest),
-                    ty: target_ir,
-                    is_unsigned: source_value.is_unsigned, // Cast inherits signedness from source
+                    value: dest.map(IrValue::Register).unwrap_or(IrValue::Null),
+                    ty: return_ty,
+                    is_unsigned: false,
                 })
             }
-            Expression::Assignment { target, rvalue } => {
-                self.push_instruction(IrInstruction::Comment("assignment".to_owned()));
-                let lowered = self.lower_expression(rvalue)?;
-                match &**target {
-                    AssignTarget::Identifier(name) => {
-                        let ptr_info = self.context.symbols.lookup(name)?;
-                        if let IrType::Pointer(inner_ty) = &ptr_info.ty {
-                            if let IrValue::Register(ptr_reg) = &ptr_info.value {
-                                self.push_instruction(IrInstruction::Store {
-                                    ty: *inner_ty.clone(),
-                                    value: lowered.value.clone(),
-                                    ptr: ptr_reg.clone(),
-                                    offset: None,
-                                });
-                                return Some(lowered);
-                            }
-                        }
-                        self.context
-                            .diagnostics
-                            .error(format!("cannot assign to non-pointer target `{name}`"));
-                        None
+            PrimaryExpr::ArrayLiteral(elements) => self.lower_array_literal(elements),
+            PrimaryExpr::StructLiteral(fields) => {
+                let mut lowered_fields = Vec::new();
+                for field_init in fields {
+                    let field_value = self.lower_expr(&field_init.expr, EvalMode::Value)?;
+                    let expected_ty = field_init
+                        .ty
+                        .as_ref()
+                        .map(|ty| self.lower_type(ty))
+                        .unwrap_or_else(|| field_value.ty.clone());
+                    let expected_resolved = self.resolve_named_type(&expected_ty);
+                    let actual_resolved = self.resolve_named_type(&field_value.ty);
+                    if actual_resolved != expected_resolved {
+                        let declared_ty = field_init
+                            .ty
+                            .as_ref()
+                            .map(|ty| self.lower_type(ty).to_string())
+                            .unwrap_or_else(|| field_value.ty.to_string());
+                        self.context.diagnostics.error(format!(
+                            "struct literal field `{}` type mismatch: declared `{}`, got `{}`",
+                            field_init.name, declared_ty, field_value.ty
+                        ));
+                        return None;
                     }
-                    AssignTarget::Dereference(target) => self.lower_deref_assign(target, &lowered),
-                    AssignTarget::FieldAccess { expr, field } => {
-                        self.lower_field_assign(expr, field, &lowered)
-                    }
-                    AssignTarget::ArrayIndex { expr, index } => {
-                        self.lower_array_index_assign(expr, index, &lowered)
-                    }
-                    AssignTarget::StructDestructure(fields) => {
-                        // Struct destructuring: extract each field from the aggregate value
-                        self.lower_struct_destructuring(fields, &lowered)
-                    }
+                    lowered_fields.push((field_init.name.clone(), field_value));
                 }
-            }
-        }
-    }
 
-    pub(super) fn lower_literal(&mut self, literal: &Literal) -> LoweredValue {
-        match literal {
-            Literal::Integer(value) | Literal::HexInteger(value) => LoweredValue {
-                value: IrValue::Integer(*value),
-                ty: IrType::Integer(IntWidth::I32),
-                is_unsigned: false, // Literals are always signed
-            },
-            Literal::Float(value) => LoweredValue {
-                value: IrValue::Float(*value),
-                ty: IrType::Float(FloatWidth::F64),
-                is_unsigned: false,
-            },
-            Literal::Boolean(value) => LoweredValue {
-                value: IrValue::Bool(*value),
-                ty: IrType::Integer(IntWidth::I1),
-                is_unsigned: false,
-            },
-            Literal::Null => LoweredValue {
-                value: IrValue::Null,
-                ty: IrType::Pointer(Box::new(IrType::Named("unknown".to_owned()))),
-                is_unsigned: false,
-            },
-            Literal::String(content) => {
-                // Create a global string constant and add it to pending list
-                let string_name = format!("str_{}", self.pending_global_strings.len());
-                self.pending_global_strings.push(IrGlobalString {
-                    name: string_name.clone(),
-                    content: content.clone(),
-                });
-                let content_len = content.len();
-
-                // Represent strings as an inline struct `{ data: u8*, length: u64 }`.
-                let struct_fields = vec![
-                    (
-                        "data".to_owned(),
-                        IrType::Pointer(Box::new(IrType::Integer(IntWidth::I8))),
-                    ),
-                    ("length".to_owned(), IrType::Integer(IntWidth::I64)),
-                ];
+                let struct_fields: Vec<(String, IrType)> = lowered_fields
+                    .iter()
+                    .map(|(name, val)| (name.clone(), val.ty.clone()))
+                    .collect();
                 let struct_ty = IrType::Aggregate(struct_fields);
-
-                // Allocate space for the inline struct on the stack.
                 let dest = self.new_temp();
+
                 self.push_instruction(IrInstruction::Alloc {
                     dest: dest.clone(),
                     ty: struct_ty.clone(),
                     count: None,
                 });
 
-                // Store the pointer to the global string (field 0)
-                self.push_instruction(IrInstruction::Store {
-                    ty: IrType::Pointer(Box::new(IrType::Integer(IntWidth::I8))),
-                    value: IrValue::GlobalString(string_name),
-                    ptr: dest.clone(),
-                    offset: Some(0),
-                });
+                let mut offset = 0i64;
+                for (_, field_value) in lowered_fields {
+                    self.push_instruction(IrInstruction::Store {
+                        ty: field_value.ty.clone(),
+                        value: field_value.value,
+                        ptr: dest.clone(),
+                        offset: Some(offset),
+                    });
+                    offset += self.type_size_in_bytes(&field_value.ty) as i64;
+                }
 
-                // Store the length (field 1)
-                self.push_instruction(IrInstruction::Store {
-                    ty: IrType::Integer(IntWidth::I64),
-                    value: IrValue::Integer(content_len as i64),
-                    ptr: dest.clone(),
-                    offset: Some(8), // byte pointers are 8 bytes
-                });
-
-                LoweredValue {
+                Some(LoweredValue {
                     value: IrValue::Register(dest),
                     ty: struct_ty,
-                    is_unsigned: false, // String literals are not unsigned integers
+                    is_unsigned: false,
+                })
+            }
+        }
+    }
+
+    fn lower_identifier(&mut self, name: &str, mode: EvalMode) -> Option<LoweredValue> {
+        let info = self.context.symbols.lookup(name).cloned();
+        if let Some(info) = info {
+            match mode {
+                EvalMode::Address => {
+                    // The symbol table stores locals as Pointer(T) stack slots.
+                    // In Address mode, return the slot pointer directly.
+                    Some(LoweredValue {
+                        value: info.value,
+                        ty: info.ty,
+                        is_unsigned: false,
+                    })
+                }
+                EvalMode::Value => {
+                    if let IrType::Pointer(ref inner_ty) = info.ty {
+                        let dest = self.new_temp();
+                        if let IrValue::Register(ptr_reg) = info.value {
+                            self.push_instruction(IrInstruction::Load {
+                                dest: dest.clone(),
+                                ty: *inner_ty.clone(),
+                                ptr: ptr_reg,
+                                offset: None,
+                            });
+                            return Some(LoweredValue {
+                                value: IrValue::Register(dest),
+                                ty: *inner_ty.clone(),
+                                is_unsigned: self.context.unsigned_vars.contains(name),
+                            });
+                        }
+                    }
+                    Some(LoweredValue {
+                        value: info.value,
+                        ty: info.ty,
+                        is_unsigned: false,
+                    })
                 }
             }
-        }
-    }
-
-    pub(super) fn lower_array_literal(&mut self, elements: &[Expression]) -> Option<LoweredValue> {
-        if elements.is_empty() {
+        } else if let Some(const_val) = self.compile_time_consts.get(name).cloned() {
+            Some(self.lower_literal(&const_val))
+        } else {
             self.context
                 .diagnostics
-                .error("empty array literals are not supported yet".to_owned());
-            return None;
+                .error(format!("unknown identifier `{name}`"));
+            None
         }
-
-        let mut lowered_elements = Vec::with_capacity(elements.len());
-        for element in elements {
-            lowered_elements.push(self.lower_expression(element)?);
-        }
-
-        let element_ty = lowered_elements[0].ty.clone();
-        for (index, lowered) in lowered_elements.iter().enumerate().skip(1) {
-            if self.resolve_named_type(&lowered.ty) != self.resolve_named_type(&element_ty) {
-                self.context.diagnostics.error(format!(
-                    "array literal element {} has type `{}`, but expected `{}`",
-                    index, lowered.ty, element_ty
-                ));
-                return None;
-            }
-        }
-
-        let array_ty = IrType::Array {
-            len: lowered_elements.len(),
-            element: Box::new(element_ty.clone()),
-        };
-        let dest = self.new_temp();
-        self.push_instruction(IrInstruction::Alloc {
-            dest: dest.clone(),
-            ty: array_ty.clone(),
-            count: None,
-        });
-
-        let mut offset = 0i64;
-        for lowered in lowered_elements {
-            let element_size = self.type_size_in_bytes(&lowered.ty) as i64;
-            self.push_instruction(IrInstruction::Store {
-                ty: lowered.ty.clone(),
-                value: lowered.value,
-                ptr: dest.clone(),
-                offset: Some(offset),
-            });
-            offset += element_size;
-        }
-
-        Some(LoweredValue {
-            value: IrValue::Register(dest),
-            ty: array_ty,
-            is_unsigned: false, // Array literals are not unsigned integers
-        })
     }
 
-    fn expression_to_assign_target(&self, expr: &Expression) -> Option<AssignTarget> {
-        match expr {
-            Expression::Primary(crate::high_level_language::ast::PrimaryExpr::Identifier(name)) => {
-                Some(AssignTarget::Identifier(name.clone()))
-            }
-            Expression::Primary(crate::high_level_language::ast::PrimaryExpr::Grouped(expr)) => {
-                self.expression_to_assign_target(expr)
-            }
+    fn lower_field_access_expr(
+        &mut self,
+        expr: &Expression,
+        field: &str,
+        mode: EvalMode,
+    ) -> Option<LoweredValue> {
+        // `@ptr.field` (parser form: FieldAccess(Dereference(ptr), field)):
+        //   evaluate the inner pointer in Value mode — its register IS the base pointer.
+        // `x.field` (ordinary form):
+        //   evaluate the base in Address mode — the slot pointer IS the aggregate pointer.
+        let base_addr = match expr {
             Expression::Unary {
                 op: UnaryOp::Dereference,
-                expr,
-            } => Some(AssignTarget::Dereference(Box::new(
-                self.expression_to_assign_target(expr)?,
-            ))),
-            Expression::Primary(crate::high_level_language::ast::PrimaryExpr::FieldAccess {
-                expr,
-                field,
-            }) => Some(AssignTarget::FieldAccess {
-                expr: Box::new(self.expression_to_assign_target(expr)?),
-                field: field.clone(),
-            }),
-            Expression::Primary(crate::high_level_language::ast::PrimaryExpr::ArrayIndex {
-                expr,
-                index,
-            }) => Some(AssignTarget::ArrayIndex {
-                expr: Box::new(self.expression_to_assign_target(expr)?),
-                index: index.clone(),
-            }),
-            _ => None,
-        }
+                expr: inner,
+            } => self.lower_expr(inner, EvalMode::Value)?,
+            _ => self.lower_expr(expr, EvalMode::Address)?,
+        };
+        self.lower_field_access_mode(&base_addr, field, mode)
     }
 
-    pub(super) fn lower_binary(
+    pub(super) fn lower_field_access_mode(
         &mut self,
-        op: &BinaryOp,
-        lhs: LoweredValue,
-        rhs: LoweredValue,
+        base_addr: &LoweredValue,
+        field: &str,
+        mode: EvalMode,
     ) -> Option<LoweredValue> {
-        let dest = self.new_temp();
-        match op {
-            BinaryOp::Add
-            | BinaryOp::Sub
-            | BinaryOp::Mul
-            | BinaryOp::Div
-            | BinaryOp::Mod
-            | BinaryOp::And
-            | BinaryOp::Or => {
-                let ir_op = match op {
-                    BinaryOp::Add => IrMathOp::Add,
-                    BinaryOp::Sub => IrMathOp::Sub,
-                    BinaryOp::Mul => IrMathOp::Mul,
-                    BinaryOp::Div => {
-                        // Check if the type is unsigned to select appropriate division operation
-                        if lhs.is_unsigned {
-                            IrMathOp::Div // Unsigned division
+        let resolved_ty = self.resolve_named_type(&base_addr.ty);
+
+        // Resolve the aggregate pointer and field list from the base type.
+        // Three shapes are valid:
+        //   Aggregate(fields)              → base_addr.value is the pointer to the aggregate
+        //   Pointer(Aggregate(fields))     → base_addr.value is the pointer to the aggregate
+        //   Pointer(Pointer(Aggregate))    → load from base_addr.value first (heap-ptr in stack slot)
+        let (agg_ptr, fields) = match resolved_ty {
+            IrType::Aggregate(fields) => {
+                let reg = match &base_addr.value {
+                    IrValue::Register(r) => r.clone(),
+                    _ => return None,
+                };
+                (reg, fields)
+            }
+            IrType::Pointer(ref inner) => {
+                let inner_resolved = self.resolve_named_type(inner);
+                match inner_resolved {
+                    IrType::Aggregate(fields) => {
+                        let reg = match &base_addr.value {
+                            IrValue::Register(r) => r.clone(),
+                            _ => return None,
+                        };
+                        (reg, fields)
+                    }
+                    IrType::Pointer(ref inner_inner) => {
+                        let inner_inner_resolved = self.resolve_named_type(inner_inner);
+                        if let IrType::Aggregate(fields) = inner_inner_resolved {
+                            let slot_reg = match &base_addr.value {
+                                IrValue::Register(r) => r.clone(),
+                                _ => return None,
+                            };
+                            let loaded = self.new_temp();
+                            self.push_instruction(IrInstruction::Load {
+                                dest: loaded.clone(),
+                                ty: *inner.clone(),
+                                ptr: slot_reg,
+                                offset: None,
+                            });
+                            (loaded, fields)
                         } else {
-                            IrMathOp::SDiv // Signed division
+                            return None;
                         }
                     }
-                    BinaryOp::Mod => IrMathOp::Mod,
-                    BinaryOp::And => IrMathOp::And,
-                    BinaryOp::Or => IrMathOp::Or,
-                    _ => unreachable!(),
-                };
-                self.push_instruction(IrInstruction::Math {
+                    _ => return None,
+                }
+            }
+            _ => return None,
+        };
+
+        let (offset, field_ty) = self.aggregate_field_offset_and_type(&fields, field)?;
+
+        match mode {
+            EvalMode::Value => {
+                let dest = self.new_temp();
+                self.push_instruction(IrInstruction::Comment(format!(
+                    "Access field '{field}' at offset {offset}"
+                )));
+                self.push_instruction(IrInstruction::Load {
                     dest: dest.clone(),
-                    op: ir_op,
-                    ty: lhs.ty.clone(),
-                    lhs: lhs.value,
-                    rhs: rhs.value,
+                    ty: field_ty.clone(),
+                    ptr: agg_ptr,
+                    offset: Some(offset),
                 });
                 Some(LoweredValue {
                     value: IrValue::Register(dest),
-                    ty: lhs.ty,
-                    is_unsigned: lhs.is_unsigned, // Binary ops inherit signedness from operands
+                    ty: field_ty,
+                    is_unsigned: false,
                 })
             }
-            BinaryOp::Eq
-            | BinaryOp::Neq
-            | BinaryOp::Lt
-            | BinaryOp::Lte
-            | BinaryOp::Gt
-            | BinaryOp::Gte => {
-                let cmp = match op {
-                    BinaryOp::Eq => IrCmpOp::Eq,
-                    BinaryOp::Neq => IrCmpOp::Ne,
-                    BinaryOp::Lt => {
-                        if lhs.is_unsigned {
-                            IrCmpOp::Ult
-                        } else {
-                            IrCmpOp::Slt
-                        }
-                    }
-                    BinaryOp::Lte => {
-                        if lhs.is_unsigned {
-                            IrCmpOp::Ule
-                        } else {
-                            IrCmpOp::Sle
-                        }
-                    }
-                    BinaryOp::Gt => {
-                        if lhs.is_unsigned {
-                            IrCmpOp::Ugt
-                        } else {
-                            IrCmpOp::Sgt
-                        }
-                    }
-                    BinaryOp::Gte => {
-                        if lhs.is_unsigned {
-                            IrCmpOp::Uge
-                        } else {
-                            IrCmpOp::Sge
-                        }
-                    }
-                    _ => unreachable!(),
-                };
-                self.push_instruction(IrInstruction::Cmp {
+            EvalMode::Address => {
+                let dest = self.new_temp();
+                self.push_instruction(IrInstruction::Comment(format!(
+                    "Address of field '{field}' at offset {offset}"
+                )));
+                self.push_instruction(IrInstruction::Offset {
                     dest: dest.clone(),
-                    op: cmp,
-                    ty: lhs.ty,
-                    lhs: lhs.value,
-                    rhs: rhs.value,
+                    ty: field_ty.clone(),
+                    ptr: agg_ptr,
+                    bytes: IrValue::Integer(offset),
                 });
                 Some(LoweredValue {
                     value: IrValue::Register(dest),
-                    ty: IrType::Integer(IntWidth::I1),
-                    is_unsigned: false, // Comparison results are booleans (signed)
+                    ty: IrType::Pointer(Box::new(field_ty)),
+                    is_unsigned: false,
                 })
             }
         }
     }
 
-    pub(super) fn lower_unary(
+    fn lower_array_index_expr(
+        &mut self,
+        expr: &Expression,
+        index: &Expression,
+        mode: EvalMode,
+    ) -> Option<LoweredValue> {
+        match expr {
+            Expression::Unary {
+                op: UnaryOp::Dereference,
+                expr: inner,
+            } => {
+                // `@arr[i]`: evaluate arr in Value mode to get the heap pointer;
+                // respect the requested mode for load-vs-address.
+                let base = self.lower_expr(inner, EvalMode::Value)?;
+                let idx = self.lower_expr(index, EvalMode::Value)?;
+                self.lower_array_index_mode(&base, &idx, mode)
+            }
+            _ => {
+                // `arr[i]`: non-dereference base always returns the element pointer (Address),
+                // preserving the old "array element is an lvalue" semantics.
+                // Callers must apply `@` to load the value.
+                let base = self.lower_expr(expr, EvalMode::Address)?;
+                let idx = self.lower_expr(index, EvalMode::Value)?;
+                self.lower_array_index_mode(&base, &idx, EvalMode::Address)
+            }
+        }
+    }
+
+    pub(super) fn lower_array_index_mode(
+        &mut self,
+        base: &LoweredValue,
+        index: &LoweredValue,
+        mode: EvalMode,
+    ) -> Option<LoweredValue> {
+        let resolved_ty = self.resolve_named_type(&base.ty);
+
+        // Determine the pointer that directly addresses the first element and the element type.
+        let (indexable_ptr, element_ty) = match resolved_ty {
+            // Direct array (pointer to array storage)
+            IrType::Array { element, .. } => {
+                let reg = match &base.value {
+                    IrValue::Register(r) => r.clone(),
+                    _ => return None,
+                };
+                (reg, *element)
+            }
+            IrType::Pointer(ref inner) => {
+                let inner_resolved = self.resolve_named_type(inner);
+                match inner_resolved {
+                    // Pointer → Array: base.value points directly to the array data
+                    IrType::Array { element, .. } => {
+                        let reg = match &base.value {
+                            IrValue::Register(r) => r.clone(),
+                            _ => return None,
+                        };
+                        (reg, *element)
+                    }
+                    // Pointer → Pointer → something: load the inner pointer first
+                    IrType::Pointer(ref inner_inner) => {
+                        let inner_inner_resolved = self.resolve_named_type(inner_inner);
+                        let element_ty = match inner_inner_resolved {
+                            IrType::Array { element, .. } => *element,
+                            other => other,
+                        };
+                        let slot_reg = match &base.value {
+                            IrValue::Register(r) => r.clone(),
+                            _ => return None,
+                        };
+                        let loaded = self.new_temp();
+                        self.push_instruction(IrInstruction::Load {
+                            dest: loaded.clone(),
+                            ty: *inner.clone(),
+                            ptr: slot_reg,
+                            offset: None,
+                        });
+                        (loaded, element_ty)
+                    }
+                    // Pointer → T: base.value is a pointer to elements of type T
+                    other => {
+                        let reg = match &base.value {
+                            IrValue::Register(r) => r.clone(),
+                            _ => return None,
+                        };
+                        (reg, other)
+                    }
+                }
+            }
+            _ => return None,
+        };
+
+        let elem_ptr = self.new_temp();
+        self.push_instruction(IrInstruction::Comment(format!(
+            "Compute array element address at index ${}",
+            index.value
+        )));
+        self.push_instruction(IrInstruction::Index {
+            dest: elem_ptr.clone(),
+            ty: element_ty.clone(),
+            base_ptr: indexable_ptr,
+            idx: index.value.clone(),
+        });
+
+        match mode {
+            EvalMode::Address => Some(LoweredValue {
+                value: IrValue::Register(elem_ptr),
+                ty: IrType::Pointer(Box::new(element_ty)),
+                is_unsigned: false,
+            }),
+            EvalMode::Value => {
+                let dest = self.new_temp();
+                self.push_instruction(IrInstruction::Load {
+                    dest: dest.clone(),
+                    ty: element_ty.clone(),
+                    ptr: elem_ptr,
+                    offset: None,
+                });
+                Some(LoweredValue {
+                    value: IrValue::Register(dest),
+                    ty: element_ty,
+                    is_unsigned: false,
+                })
+            }
+        }
+    }
+
+    fn lower_unary_expr(
         &mut self,
         op: &UnaryOp,
-        input: LoweredValue,
+        expr: &Expression,
+        mode: EvalMode,
     ) -> Option<LoweredValue> {
         match op {
-            UnaryOp::Negate | UnaryOp::Not => {
-                let dest = self.new_temp();
-                let ir_op = match op {
-                    UnaryOp::Negate => IrUnaryOp::Neg,
-                    UnaryOp::Not => IrUnaryOp::Not,
-                    _ => unreachable!(),
-                };
-                self.push_instruction(IrInstruction::Unary {
-                    dest: dest.clone(),
-                    op: ir_op,
-                    ty: input.ty.clone(),
-                    value: input.value,
-                });
-                Some(LoweredValue {
-                    value: IrValue::Register(dest),
-                    ty: input.ty,
-                    is_unsigned: input.is_unsigned, // Unary ops inherit signedness from operand
-                })
+            UnaryOp::AddressOf => {
+                if matches!(
+                    expr,
+                    Expression::Unary {
+                        op: UnaryOp::Dereference,
+                        ..
+                    }
+                ) {
+                    self.context.diagnostics.error(
+                        "cannot take address of a dereference expression (`&@...` is invalid)"
+                            .to_owned(),
+                    );
+                    return None;
+                }
+                // `&x` — evaluate x in Address mode; the result already is a Pointer(T).
+                self.lower_expr(expr, EvalMode::Address)
             }
             UnaryOp::Dereference => {
-                let pointee_ty = match &input.ty {
+                let ptr_val = self.lower_expr(expr, EvalMode::Value)?;
+                let pointee_ty = match &ptr_val.ty {
                     IrType::Pointer(inner) => *inner.clone(),
                     other => {
                         self.context.diagnostics.error(format!(
@@ -750,150 +524,177 @@ impl HighLevelCompiler {
                         return None;
                     }
                 };
-
-                let dest = self.new_temp();
-                let ptr_reg = if let IrValue::Register(reg) = input.value {
-                    reg
-                } else {
-                    self.context
-                        .diagnostics
-                        .error("cannot dereference non-register value".to_owned());
-                    return None;
-                };
-                self.push_instruction(IrInstruction::Load {
-                    dest: dest.clone(),
-                    ty: pointee_ty.clone(),
-                    ptr: ptr_reg,
-                    offset: None,
-                });
-                Some(LoweredValue {
-                    value: IrValue::Register(dest),
-                    ty: pointee_ty,
-                    is_unsigned: false, // Loaded values default to signed unless tracked
-                })
-            }
-            UnaryOp::AddressOf => {
-                if let IrValue::Register(reg) = input.value {
-                    Some(LoweredValue {
-                        value: IrValue::Register(reg),
-                        ty: IrType::Pointer(Box::new(input.ty)),
-                        is_unsigned: false, // Pointers are not unsigned integers
-                    })
-                } else {
-                    self.context
-                        .diagnostics
-                        .error("cannot take address of non-register".to_owned());
-                    None
+                match mode {
+                    EvalMode::Address => {
+                        // `@x` in Address mode: the pointer value itself is the address of the pointee.
+                        Some(LoweredValue {
+                            value: ptr_val.value,
+                            ty: ptr_val.ty,
+                            is_unsigned: false,
+                        })
+                    }
+                    EvalMode::Value => {
+                        let ptr_reg = match ptr_val.value {
+                            IrValue::Register(r) => r,
+                            _ => {
+                                self.context
+                                    .diagnostics
+                                    .error("cannot dereference non-register value".to_owned());
+                                return None;
+                            }
+                        };
+                        let dest = self.new_temp();
+                        self.push_instruction(IrInstruction::Load {
+                            dest: dest.clone(),
+                            ty: pointee_ty.clone(),
+                            ptr: ptr_reg,
+                            offset: None,
+                        });
+                        Some(LoweredValue {
+                            value: IrValue::Register(dest),
+                            ty: pointee_ty,
+                            is_unsigned: false,
+                        })
+                    }
                 }
+            }
+            _ => {
+                let input = self.lower_expr(expr, EvalMode::Value)?;
+                self.lower_unary(op, input)
             }
         }
     }
 
-    pub(super) fn lower_struct_destructuring(
+    fn lower_cast(
         &mut self,
-        fields: &[crate::high_level_language::ast::StructDestructureField],
-        value: &LoweredValue,
+        target_ty: &Type,
+        expr: &Expression,
     ) -> Option<LoweredValue> {
-        // Get the aggregate type fields
-        let resolved_value_ty = self.resolve_named_type(&value.ty);
-        let agg_fields = match &resolved_value_ty {
-            IrType::Aggregate(fields) => fields.clone(),
-            IrType::Pointer(inner) => {
-                if let IrType::Aggregate(fields) = inner.as_ref() {
-                    fields.clone()
+        let source_value = self.lower_expr(expr, EvalMode::Value)?;
+        let target_ir = self.lower_type(target_ty);
+
+        let source_resolved = self.resolve_named_type(&source_value.ty);
+        let target_resolved = self.resolve_named_type(&target_ir);
+
+        let cast_mode = match (&source_resolved, &target_resolved) {
+            (IrType::Integer(src_width), IrType::Integer(tgt_width)) => {
+                let src_bits = match src_width {
+                    IntWidth::I1 => 1,
+                    IntWidth::I8 => 8,
+                    IntWidth::I16 => 16,
+                    IntWidth::I32 => 32,
+                    IntWidth::I64 => 64,
+                };
+                let tgt_bits = match tgt_width {
+                    IntWidth::I1 => 1,
+                    IntWidth::I8 => 8,
+                    IntWidth::I16 => 16,
+                    IntWidth::I32 => 32,
+                    IntWidth::I64 => 64,
+                };
+                if tgt_bits < src_bits {
+                    IrCastMode::Trunc
+                } else if source_value.is_unsigned {
+                    IrCastMode::Zext
                 } else {
-                    self.context
-                        .diagnostics
-                        .error("struct destructuring requires an aggregate type".to_owned());
-                    return None;
+                    IrCastMode::Sext
                 }
             }
+            (IrType::Float(_), IrType::Integer(_)) => IrCastMode::F2i,
+            (IrType::Integer(_), IrType::Float(_)) => IrCastMode::I2f,
+            (IrType::Float(_), IrType::Float(_)) => IrCastMode::Bitcast,
+            (IrType::Pointer(_), IrType::Pointer(_)) => IrCastMode::Bitcast,
+            _ if source_resolved == target_resolved => return Some(source_value),
             _ => {
-                self.context
-                    .diagnostics
-                    .error("struct destructuring requires an aggregate type".to_owned());
+                self.context.diagnostics.error(format!(
+                    "Unsupported cast from `{}` to `{}`",
+                    source_value.ty, target_ir
+                ));
                 return None;
             }
         };
 
-        // Base pointer for the aggregate
-        let base_ptr = if let IrValue::Register(reg) = &value.value {
-            reg.clone()
-        } else {
-            self.context
-                .diagnostics
-                .error("struct destructuring requires a register value".to_owned());
-            return None;
-        };
-
-        // Build lookup by field name so partial/reordered destructuring follows source names.
-        let mut field_offsets: std::collections::HashMap<&str, (i64, IrType)> =
-            std::collections::HashMap::new();
-        let mut running_offset = 0i64;
-        for (name, ty) in &agg_fields {
-            running_offset =
-                Self::align_to(running_offset, self.type_alignment_in_bytes(ty) as i64);
-            field_offsets.insert(name.as_str(), (running_offset, ty.clone()));
-            running_offset += self.type_size_in_bytes(ty) as i64;
-        }
-
-        // Extract each requested field and assign to target variables.
-        for field in fields {
-            if let Some(ref name) = field.name {
-                let Some((field_offset, field_ty)) = field_offsets.get(name.as_str()).cloned()
-                else {
-                    self.context.diagnostics.error(format!(
-                        "struct destructuring field `{name}` not found in aggregate type"
-                    ));
-                    return None;
-                };
-
-                let dest = self.new_temp();
-                self.push_instruction(IrInstruction::Load {
-                    dest: dest.clone(),
-                    ty: field_ty.clone(),
-                    ptr: base_ptr.clone(),
-                    offset: Some(field_offset),
-                });
-
-                let target_ptr = if let Some(var_info) = self.context.symbols.lookup(name) {
-                    if let IrValue::Register(var_ptr) = &var_info.value {
-                        var_ptr.clone()
-                    } else {
-                        self.context.diagnostics.error(format!(
-                            "struct destructuring target `{name}` is not register-backed"
-                        ));
-                        return None;
-                    }
-                } else {
-                    let var_ptr = IrRegister::Named(name.clone());
-                    self.push_instruction(IrInstruction::Alloc {
-                        dest: var_ptr.clone(),
-                        ty: field_ty.clone(),
-                        count: None,
-                    });
-                    self.context.symbols.insert(
-                        name.clone(),
-                        IrType::Pointer(Box::new(field_ty.clone())),
-                        IrValue::Register(var_ptr.clone()),
-                    );
-                    var_ptr
-                };
-
-                self.push_instruction(IrInstruction::Store {
-                    ty: field_ty,
-                    value: IrValue::Register(dest),
-                    ptr: target_ptr,
-                    offset: None,
-                });
-            }
-        }
-
-        Some(value.clone())
+        let dest = self.new_temp();
+        self.push_instruction(IrInstruction::Cast {
+            dest: dest.clone(),
+            mode: cast_mode,
+            value: source_value.value,
+            ty: target_ir.clone(),
+        });
+        Some(LoweredValue {
+            value: IrValue::Register(dest),
+            ty: target_ir,
+            is_unsigned: source_value.is_unsigned,
+        })
     }
 
-    pub(crate) fn align_to(value: i64, alignment: i64) -> i64 {
-        let alignment = alignment.max(1);
-        (value + alignment - 1) & !(alignment - 1)
+    fn lower_assignment(
+        &mut self,
+        target: &AssignTarget,
+        rvalue: &Expression,
+    ) -> Option<LoweredValue> {
+        self.push_instruction(IrInstruction::Comment("assignment".to_owned()));
+        let lowered = self.lower_expr(rvalue, EvalMode::Value)?;
+
+        // Struct destructuring is the one target form that doesn't have a single address.
+        if let AssignTarget::StructDestructure(fields) = target {
+            return self.lower_struct_destructuring(fields, &lowered);
+        }
+
+        let target_expr = Self::assign_target_to_expression(target)?;
+        let addr = self.lower_expr(&target_expr, EvalMode::Address)?;
+
+        let (ptr_reg, store_ty) = match (&addr.value, &addr.ty) {
+            (IrValue::Register(reg), IrType::Pointer(inner)) => (reg.clone(), *inner.clone()),
+            _ => {
+                self.context
+                    .diagnostics
+                    .error("assignment target did not resolve to a register address".to_owned());
+                return None;
+            }
+        };
+
+        self.push_instruction(IrInstruction::Store {
+            ty: store_ty,
+            value: lowered.value.clone(),
+            ptr: ptr_reg,
+            offset: None,
+        });
+        Some(lowered)
+    }
+
+    /// Convert an `AssignTarget` back into an `Expression` so it can be lowered with `lower_expr`.
+    pub(super) fn assign_target_to_expression(target: &AssignTarget) -> Option<Expression> {
+        match target {
+            AssignTarget::Identifier(name) => Some(Expression::Primary(
+                PrimaryExpr::Identifier(name.clone()),
+            )),
+            AssignTarget::Dereference(inner) => {
+                let inner_expr = Self::assign_target_to_expression(inner)?;
+                Some(Expression::Unary {
+                    op: UnaryOp::Dereference,
+                    expr: Box::new(inner_expr),
+                })
+            }
+            AssignTarget::FieldAccess { expr, field } => {
+                let base_expr = Self::assign_target_to_expression(expr)?;
+                Some(Expression::Primary(
+                    PrimaryExpr::FieldAccess {
+                        expr: Box::new(base_expr),
+                        field: field.clone(),
+                    },
+                ))
+            }
+            AssignTarget::ArrayIndex { expr, index } => {
+                let base_expr = Self::assign_target_to_expression(expr)?;
+                Some(Expression::Primary(
+                    PrimaryExpr::ArrayIndex {
+                        expr: Box::new(base_expr),
+                        index: index.clone(),
+                    },
+                ))
+            }
+            AssignTarget::StructDestructure(_) => None,
+        }
     }
 }

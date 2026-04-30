@@ -52,7 +52,6 @@ impl TypeContext {
     }
 
     /// Type check a binary operation and return the result type or error
-    /// Type check a binary operation and return the result type or error
     pub fn check_binary_op(
         &self,
         op: &BinaryOp,

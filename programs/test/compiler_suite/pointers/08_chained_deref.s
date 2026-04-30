@@ -57,7 +57,6 @@ chained_deref_assign__entry:
 	ld     t0, 40(sp)
 	ld     t1, 0(t0)
 	sd     t1, 48(sp)
-	; Store value to dereferenced pointer (i32)
 	ld     t0, 48(sp)
 	; Store i32 to memory
 	lw     t1, 36(sp)

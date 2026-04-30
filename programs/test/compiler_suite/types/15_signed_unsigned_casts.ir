@@ -70,7 +70,6 @@ entry:
 	write i32* $16 @ $ptr
 	; assignment
 	$17 = read i32* @ $ptr
-	; Store value to dereferenced pointer (i32)
 	write i32 99 @ $17
 	; local var: heap_value
 	$heap_value = stack_alloc i32

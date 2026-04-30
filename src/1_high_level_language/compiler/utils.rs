@@ -1,6 +1,6 @@
 use super::{
-    AssignTarget, Expression, FloatWidth, HighLevelCompiler, IntWidth, IrBlock, IrInstruction,
-    IrLabel, IrRegister, IrTerminator, IrType, IrValue, UnaryOp,
+    Expression, FloatWidth, HighLevelCompiler, IntWidth, IrBlock, IrInstruction, IrLabel,
+    IrRegister, IrTerminator, IrType, IrValue,
 };
 
 impl HighLevelCompiler {
@@ -90,51 +90,8 @@ impl HighLevelCompiler {
         }
     }
 
-    pub(super) fn format_assign_target(&self, target: &AssignTarget) -> String {
-        match target {
-            AssignTarget::Identifier(name) => name.clone(),
-            AssignTarget::Dereference(inner) => format!("@{}", self.format_assign_target(inner)),
-            AssignTarget::FieldAccess { expr, field } => {
-                format!("{}.{}", self.format_assign_target(expr), field)
-            }
-            AssignTarget::ArrayIndex { expr, index } => {
-                format!(
-                    "{}[{}]",
-                    self.format_assign_target(expr),
-                    self.format_expression(index)
-                )
-            }
-            AssignTarget::StructDestructure(fields) => {
-                let items = fields
-                    .iter()
-                    .map(|f| f.name.as_deref().unwrap_or("_").to_owned())
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                format!("({items})")
-            }
-        }
-    }
-
     pub(super) fn format_expression(&self, expr: &Expression) -> String {
         format!("{expr:?}")
-    }
-
-    pub(super) fn is_deref_based_index_expr(&self, expr: &Expression) -> bool {
-        match expr {
-            Expression::Unary {
-                op: UnaryOp::Dereference,
-                ..
-            } => true,
-            Expression::Primary(crate::high_level_language::ast::PrimaryExpr::FieldAccess {
-                expr,
-                ..
-            }) => self.is_deref_based_index_expr(expr),
-            Expression::Primary(crate::high_level_language::ast::PrimaryExpr::ArrayIndex {
-                expr,
-                ..
-            }) => self.is_deref_based_index_expr(expr),
-            _ => false,
-        }
     }
 
     pub(super) fn type_size_in_bytes(&self, ty: &IrType) -> usize {
@@ -149,7 +106,7 @@ impl HighLevelCompiler {
                 FloatWidth::F32 => 4,
                 FloatWidth::F64 => 8,
             },
-            IrType::Pointer(_) => 8, // 64-bit ABI
+            IrType::Pointer(_) => 8,
             IrType::Array { len, element } => len * self.type_size_in_bytes(element),
             IrType::Aggregate(fields) => {
                 let mut offset = 0i64;
@@ -191,20 +148,6 @@ impl HighLevelCompiler {
         }
     }
 
-    /// Helper function to check if a type is unsigned
-    pub(super) fn is_unsigned_type(&self, ty: &IrType) -> bool {
-        let resolved = self.resolve_named_type(ty);
-        match resolved {
-            IrType::Integer(_) => {
-                // Check the type name from the context to see if it's unsigned
-                let type_name = self.context.types.get_type_name(ty);
-                matches!(type_name.as_str(), "u8" | "u16" | "u32" | "u64")
-            }
-            _ => false,
-        }
-    }
-
-    /// Helper function to check if an HLL type is an unsigned primitive
     pub(super) fn is_unsigned_primitive_type(ty: &crate::high_level_language::ast::Type) -> bool {
         match ty {
             crate::high_level_language::ast::Type::Primitive(name) => {
