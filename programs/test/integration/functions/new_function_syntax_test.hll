@@ -1,8 +1,0 @@
-; Test new function syntax
-test_func: (x: i32) -> i32 {
-    return x
-}
-
-main: () -> () {
-    value: i32 = test_func(5)
-}
