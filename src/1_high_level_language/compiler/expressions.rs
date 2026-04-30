@@ -82,6 +82,10 @@ impl HighLevelCompiler {
                 })
             }
             PrimaryExpr::FunctionCall { name, arguments } => {
+                // Function call results are rvalues; they have no storage address.
+                if mode == EvalMode::Address {
+                    return None;
+                }
                 if name == "free" {
                     if arguments.len() != 1 {
                         self.context
@@ -649,13 +653,37 @@ impl HighLevelCompiler {
         rvalue: &Expression,
     ) -> Option<LoweredValue> {
         self.push_instruction(IrInstruction::Comment("assignment".to_owned()));
-        let lowered = self.lower_expr(rvalue, EvalMode::Value)?;
 
         // Struct destructuring is the one target form that doesn't have a single address.
         if let AssignTarget::StructDestructure(fields) = target {
-            return self.lower_struct_destructuring(fields, &lowered);
+            // 1) Try Address mode – works for local variables, field accesses, etc.
+            if let Some(addr) = self.lower_expr(rvalue, EvalMode::Address) {
+                return self.lower_struct_destructuring_from_addr(fields, &addr);
+            }
+            // 2) Fallback: spill the rvalue to stack and use that address.
+            //    Evaluate exactly once here; do NOT call lower_expr again below.
+            let lowered = self.lower_expr(rvalue, EvalMode::Value)?;
+            let spill = self.new_temp();
+            self.push_instruction(IrInstruction::Alloc {
+                dest: spill.clone(),
+                ty: lowered.ty.clone(),
+                count: None,
+            });
+            self.push_instruction(IrInstruction::Store {
+                ty: lowered.ty.clone(),
+                value: lowered.value,
+                ptr: spill.clone(),
+                offset: None,
+            });
+            let addr = LoweredValue {
+                value: IrValue::Register(spill),
+                ty: IrType::Pointer(Box::new(lowered.ty)),
+                is_unsigned: false,
+            };
+            return self.lower_struct_destructuring_from_addr(fields, &addr);
         }
 
+        let lowered = self.lower_expr(rvalue, EvalMode::Value)?;
         let target_expr = Self::assign_target_to_expression(target)?;
         let addr = self.lower_expr(&target_expr, EvalMode::Address)?;
 

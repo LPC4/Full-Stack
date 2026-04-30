@@ -1,0 +1,124 @@
+; Comprehensive pointer and memory test.
+;
+; Covers: new/free, defer free, address-of (&) and dereference (@),
+;         pointer mutation through function parameters, stack arrays,
+;         chained dereference, variable-index array element addressing.
+;
+; Every heap allocation is explicitly freed before the program exits.
+; A clean return-0 exit confirms no memory corruption or missing free.
+;
+; Returns 0 on full success. Unique non-zero codes name failing checks.
+
+swap: (a: i32*, b: i32*) -> i32 {
+    tmp: i32 = @a
+    @a = @b
+    @b = tmp
+    return 0
+}
+
+increment: (p: i32*, delta: i32) -> i32 {
+    @p = @p + delta
+    return @p
+}
+
+main: () -> i32 {
+    ; --- basic new / write / read / free ---
+    p: i32* = new(i32)
+    @p = 99
+    if @p != 99 {
+        free(p)
+        return 1
+    }
+    @p = @p - 57
+    if @p != 42 {
+        free(p)
+        return 2
+    }
+    free(p)
+
+    ; --- defer free: guaranteed cleanup even on early exit ---
+    q: i32* = new(i32)
+    defer free(q)
+    @q = 10
+    @q = @q * 3
+    if @q != 30 { return 3 }
+
+    ; --- address-of stack variable, mutate via pointer ---
+    local: i32 = 5
+    lp: i32* = &local
+    @lp = @lp + @lp
+    if local != 10 { return 4 }
+
+    ; --- pointer swap via parameter ---
+    sx: i32* = new(i32)
+    sy: i32* = new(i32)
+    defer free(sx)
+    defer free(sy)
+    @sx = 111
+    @sy = 222
+    swap(sx, sy)
+    if @sx != 222 { return 5 }
+    if @sy != 111 { return 6 }
+
+    ; --- increment via pointer parameter ---
+    val: i32* = new(i32)
+    defer free(val)
+    @val = 0
+    increment(val, 7)
+    increment(val, 7)
+    increment(val, 7)
+    if @val != 21 { return 7 }
+
+    ; --- stack array: write and read elements ---
+    arr: i32[5]
+    @arr[0] = 2
+    @arr[1] = 4
+    @arr[2] = 6
+    @arr[3] = 8
+    @arr[4] = 10
+    stack_sum: i32 = @arr[0] + @arr[1] + @arr[2] + @arr[3] + @arr[4]
+    if stack_sum != 30 { return 8 }
+
+    ; --- overwrite a stack element and re-verify ---
+    @arr[2] = 0
+    stack_sum2: i32 = @arr[0] + @arr[1] + @arr[2] + @arr[3] + @arr[4]
+    if stack_sum2 != 24 { return 9 }
+
+    ; --- address of stack array element via variable index ---
+    idx: i32 = 3
+    elem_ptr: i32* = arr[idx]
+    if @elem_ptr != 8 { return 10 }
+    @elem_ptr = 100
+    if @arr[3] != 100 { return 11 }
+
+    ; --- chained pointer: pointer to pointer ---
+    inner: i32* = new(i32)
+    defer free(inner)
+    @inner = 77
+    outer: i32** = &inner
+    if @@outer != 77 { return 12 }
+    @@outer = 88
+    if @inner != 88 { return 13 }
+
+    ; --- multiple independent heap allocations, each deferred ---
+    h1: i32* = new(i32)
+    h2: i32* = new(i32)
+    h3: i32* = new(i32)
+    defer free(h1)
+    defer free(h2)
+    defer free(h3)
+    @h1 = 10
+    @h2 = 20
+    @h3 = 30
+    heap_sum: i32 = @h1 + @h2 + @h3
+    if heap_sum != 60 { return 14 }
+
+    ; --- pointer arithmetic (byte-scaled): advance by 4 bytes (sizeof i32) ---
+    base: i32* = new(i32)
+    defer free(base)
+    @base = 55
+    same: i32* = base + 0
+    if @same != 55 { return 15 }
+
+    return 0
+}

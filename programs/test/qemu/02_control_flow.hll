@@ -1,0 +1,91 @@
+; Comprehensive control-flow test.
+;
+; Covers: if/else chains, while loops, break, continue, nested loops,
+;         compile-time const, boolean short-circuit ordering.
+;
+; Returns 100 on full success, composed of five sub-results:
+;   category  =  3   (x=15 falls in the 10..20 bucket)
+;   sum       = 55   (1+2+…+10)
+;   break_val =  7   (loop exited when counter reached 7)
+;   evens     = 10   (even numbers in [1..20])
+;   inner_sum = 25   (5×5 nested-loop counter)
+;   total: 3+55+7+10+25 = 100
+
+const BUCKET_LO = 10
+const BUCKET_HI = 20
+
+categorise: (x: i32) -> i32 {
+    if x < 5 {
+        return 1
+    }
+    if x < 10 {
+        return 2
+    }
+    if x < BUCKET_HI {
+        return 3
+    }
+    return 4
+}
+
+sum_to: (n: i32) -> i32 {
+    total: i32 = 0
+    i: i32 = 1
+    while i <= n {
+        total = total + i
+        i = i + 1
+    }
+    return total
+}
+
+main: () -> i32 {
+    ; --- if/else chain via helper ---
+    category: i32 = categorise(15)   ; expects 3
+
+    ; --- while accumulation ---
+    sum: i32 = sum_to(10)             ; expects 55
+
+    ; --- break: stop when counter reaches 7 ---
+    break_val: i32 = 0
+    while break_val < 100 {
+        break_val = break_val + 1
+        if break_val == 7 {
+            break
+        }
+    }
+
+    ; --- continue: count even numbers in [1..20] ---
+    k: i32 = 0
+    evens: i32 = 0
+    while k < 20 {
+        k = k + 1
+        if k % 2 != 0 {
+            continue
+        }
+        evens = evens + 1
+    }
+
+    ; --- nested loops: 5×5 = 25 iterations ---
+    outer: i32 = 0
+    inner_sum: i32 = 0
+    while outer < 5 {
+        inner: i32 = 0
+        while inner < 5 {
+            inner_sum = inner_sum + 1
+            inner = inner + 1
+        }
+        outer = outer + 1
+    }
+
+    ; --- validate each sub-result before combining ---
+    if category  !=  3 { return 201 }
+    if sum       != 55 { return 202 }
+    if break_val !=  7 { return 203 }
+    if evens     != 10 { return 204 }
+    if inner_sum != 25 { return 205 }
+
+    ; --- inline boolean logic check ---
+    flag: bool = category == 3 and sum == 55
+    if flag == false { return 206 }
+
+    return category + sum + break_val + evens + inner_sum
+}

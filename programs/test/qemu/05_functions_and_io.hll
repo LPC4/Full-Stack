@@ -1,0 +1,129 @@
+; Comprehensive functions and I/O test.
+;
+; Covers: external C FFI (putchar), iterative recursion-style functions,
+;         function composition, bool return values, multi-call pipelines,
+;         string output via individual character writes.
+;
+; On success: writes "PASS\n" to stdout AND returns 0.
+; Each failure branch returns a unique non-zero code.
+
+external putchar: (c: i32) -> i32
+
+; --- pure computation helpers ---
+
+factorial: (n: i32) -> i32 {
+    result: i32 = 1
+    i: i32 = 2
+    while i <= n {
+        result = result * i
+        i = i + 1
+    }
+    return result
+}
+
+fibonacci: (n: i32) -> i32 {
+    if n <= 1 { return n }
+    a: i32 = 0
+    b: i32 = 1
+    i: i32 = 2
+    while i <= n {
+        tmp: i32 = a + b
+        a = b
+        b = tmp
+        i = i + 1
+    }
+    return b
+}
+
+is_prime: (n: i32) -> bool {
+    if n < 2 { return false }
+    if n == 2 { return true }
+    rem: i32 = n % 2
+    if rem == 0 { return false }
+    i: i32 = 3
+    while i * i <= n {
+        r: i32 = n % i
+        if r == 0 { return false }
+        i = i + 2
+    }
+    return true
+}
+
+count_primes_up_to: (limit: i32) -> i32 {
+    count: i32 = 0
+    n: i32 = 2
+    while n <= limit {
+        if is_prime(n) {
+            count = count + 1
+        }
+        n = n + 1
+    }
+    return count
+}
+
+; power: base^exp (exp >= 0)
+power: (base: i32, exp: i32) -> i32 {
+    result: i32 = 1
+    i: i32 = 0
+    while i < exp {
+        result = result * base
+        i = i + 1
+    }
+    return result
+}
+
+; --- I/O helper: emit one character ---
+emit: (c: i32) -> i32 {
+    putchar(c)
+    return 0
+}
+
+main: () -> i32 {
+    ; --- factorial ---
+    if factorial(0)  !=   1 { return 1 }
+    if factorial(1)  !=   1 { return 2 }
+    if factorial(5)  != 120 { return 3 }
+    if factorial(7)  != 5040 { return 4 }
+
+    ; --- fibonacci ---
+    if fibonacci(0)  !=   0 { return 5 }
+    if fibonacci(1)  !=   1 { return 6 }
+    if fibonacci(10) !=  55 { return 7 }
+    if fibonacci(15) != 610 { return 8 }
+
+    ; --- is_prime ---
+    if is_prime(1)  == true  { return 9 }
+    if is_prime(2)  == false { return 10 }
+    if is_prime(17) == false { return 11 }
+    if is_prime(18) == true  { return 12 }
+
+    ; --- count_primes_up_to ---
+    ; primes <= 20: 2,3,5,7,11,13,17,19 -> 8 primes
+    cp: i32 = count_primes_up_to(20)
+    if cp != 8 { return 13 }
+
+    ; primes <= 50: 15 primes
+    cp2: i32 = count_primes_up_to(50)
+    if cp2 != 15 { return 14 }
+
+    ; --- power ---
+    if power(2, 0)  !=   1 { return 15 }
+    if power(2, 10) != 1024 { return 16 }
+    if power(3, 5)  != 243  { return 17 }
+
+    ; --- function composition: fib(count_primes_up_to(10)) ---
+    ; primes <= 10: 2,3,5,7 -> 4. fib(4) = 3.
+    cp10: i32 = count_primes_up_to(10)
+    if cp10 != 4 { return 18 }
+    composed: i32 = fibonacci(cp10)
+    if composed != 3 { return 19 }
+
+    ; --- all checks passed: write "PASS\n" to stdout ---
+    emit(80)   ; P
+    emit(65)   ; A
+    emit(83)   ; S
+    emit(83)   ; S
+    emit(10)   ; newline
+
+    return 0
+}

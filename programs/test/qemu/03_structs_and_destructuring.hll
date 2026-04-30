@@ -1,0 +1,141 @@
+; Comprehensive struct and destructuring test.
+;
+; Covers: inline-struct literals, named type aliases, struct pass-by-value,
+;         struct return by value (small-struct RISC-V ABI path),
+;         full and partial destructuring, order-independent field binding,
+;         struct mutation through pointer parameters.
+;
+; Returns 0 on full success. Each failure branch returns a unique
+; non-zero error code that names the failing assertion.
+
+type Vec2 = { x: i32, y: i32 }
+type DivResult = { quotient: i32, remainder: i32 }
+type Range = { lo: i32, hi: i32 }
+
+make_vec: (x: i32, y: i32) -> Vec2 {
+    return { .x = x, .y = y }
+}
+
+dot: (a: Vec2, b: Vec2) -> i32 {
+    return a.x * b.x + a.y * b.y
+}
+
+scale: (v: Vec2, s: i32) -> Vec2 {
+    return { .x = v.x * s, .y = v.y * s }
+}
+
+add_vec: (a: Vec2, b: Vec2) -> Vec2 {
+    return { .x = a.x + b.x, .y = a.y + b.y }
+}
+
+div_rem: (n: i32, d: i32) -> DivResult {
+    return { .quotient = n / d, .remainder = n % d }
+}
+
+make_range: (lo: i32, hi: i32) -> Range {
+    return { .lo = lo, .hi = hi }
+}
+
+range_len: (r: Range) -> i32 {
+    return r.hi - r.lo
+}
+
+range_contains: (r: Range, v: i32) -> bool {
+    return v >= r.lo and v <= r.hi
+}
+
+clamp_to: (r: Range, v: i32) -> i32 {
+    result: i32 = v
+    if v < r.lo { result = r.lo }
+    if v > r.hi { result = r.hi }
+    return result
+}
+
+; Write a Vec2 through a pointer (exercises struct pointer parameter)
+zero_vec: (v: Vec2*) -> i32 {
+    @v.x = 0
+    @v.y = 0
+    return 0
+}
+
+main: () -> i32 {
+    ; --- struct creation and field access ---
+    a: Vec2 = make_vec(3, 4)
+    if a.x != 3 { return 1 }
+    if a.y != 4 { return 2 }
+
+    ; --- struct pass-by-value (dot product) ---
+    b: Vec2 = make_vec(1, 2)
+    d: i32 = dot(a, b)     ; 3*1 + 4*2 = 11
+    if d != 11 { return 3 }
+
+    ; --- struct returned by value, used without destructuring ---
+    scaled: Vec2 = scale(a, 2)
+    if scaled.x != 6 { return 4 }
+    if scaled.y != 8 { return 5 }
+
+    ; --- small-struct ABI: destructure from function return ---
+    { quotient: i32, remainder: i32 } = div_rem(17, 5)
+    if quotient != 3 { return 6 }
+    if remainder != 2 { return 7 }
+
+    ; --- second destructure, different values ---
+    { quotient: i32, remainder: i32 } = div_rem(100, 7)
+    if quotient != 14 { return 8 }
+    if remainder !=  2 { return 9 }
+
+    ; --- destructure from local variable (address-mode path, not spill) ---
+    { x: i32, y: i32 } = a
+    if x != 3 { return 10 }
+    if y != 4 { return 11 }
+
+    ; --- partial destructure (only one field) ---
+    { x: i32 } = scaled    ; x = 6, y intentionally ignored
+    if x != 6 { return 12 }
+
+    ; --- order-independent field binding ---
+    c: Vec2 = make_vec(10, 20)
+    { y: i32, x: i32 } = c  ; names, not positions, determine binding
+    if x != 10 { return 13 }
+    if y != 20 { return 14 }
+
+    ; --- Range struct: return by value, field access, pass-by-value ---
+    rng: Range = make_range(10, 50)
+    if rng.lo != 10 { return 15 }
+    if rng.hi != 50 { return 16 }
+    rlen: i32 = range_len(rng)
+    if rlen != 40 { return 17 }
+
+    ; --- bool return from struct-taking function ---
+    inside:  bool = range_contains(rng, 30)
+    outside: bool = range_contains(rng, 60)
+    if inside  == false { return 18 }
+    if outside == true  { return 19 }
+
+    ; --- clamp via struct parameter ---
+    clo: i32 = clamp_to(rng, 0 - 5)
+    cmid: i32 = clamp_to(rng, 25)
+    chi:  i32 = clamp_to(rng, 99)
+    if clo  != 10 { return 20 }
+    if cmid != 25 { return 21 }
+    if chi  != 50 { return 22 }
+
+    ; --- add_vec and use result directly ---
+    sum_vec: Vec2 = add_vec(a, c)   ; a=(3,4), c=(10,20) -> (13,24)
+    if sum_vec.x != 13 { return 23 }
+    if sum_vec.y != 24 { return 24 }
+
+    ; --- inline anonymous struct literal and destructure ---
+    inline: { lo: i32, hi: i32 } = { .lo = 7, .hi = 42 }
+    { lo: i32, hi: i32 } = inline
+    if lo !=  7 { return 25 }
+    if hi != 42 { return 26 }
+
+    ; --- struct pointer parameter: zero_vec writes through pointer ---
+    v: Vec2 = make_vec(99, 99)
+    zero_vec(&v)
+    if v.x != 0 { return 27 }
+    if v.y != 0 { return 28 }
+
+    return 0
+}

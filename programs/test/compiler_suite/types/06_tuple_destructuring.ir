@@ -22,12 +22,14 @@ define i32 test_tuple_destructuring() {
 entry:
 	; assignment
 	$0 = call divide(10, 3)
-	$1 = read i32 @ $0 + 0
+	$1 = stack_alloc {quotient: i32, remainder: i32}
+	write {quotient: i32, remainder: i32} $0 @ $1
+	$2 = read i32 @ $1 + 0
 	$quotient = stack_alloc i32
-	write i32 $1 @ $quotient
-	$2 = read i32 @ $0 + 4
+	write i32 $2 @ $quotient
+	$3 = read i32 @ $1 + 4
 	$remainder = stack_alloc i32
-	write i32 $2 @ $remainder
-	$3 = read i32 @ $quotient
-	ret $3
+	write i32 $3 @ $remainder
+	$4 = read i32 @ $quotient
+	ret $4
 }

@@ -1,0 +1,100 @@
+; Comprehensive arithmetic and type system test.
+;
+; Covers: i32 +/-/*/div/mod, i64 cast roundtrip, u32 unsigned div/mod,
+;         signed vs unsigned comparison, helper functions.
+;
+; Returns 42 on full success. Each failure branch returns a unique
+; error code (1-20) so a non-42 exit immediately names the bad check.
+
+abs_val: (n: i32) -> i32 {
+    result: i32 = n
+    if n < 0 {
+        result = 0 - n
+    }
+    return result
+}
+
+clamp: (lo: i32, hi: i32, v: i32) -> i32 {
+    result: i32 = v
+    if v < lo {
+        result = lo
+    }
+    if v > hi {
+        result = hi
+    }
+    return result
+}
+
+gcd: (a: i32, b: i32) -> i32 {
+    while b != 0 {
+        tmp: i32 = b
+        b = a % b
+        a = tmp
+    }
+    return a
+}
+
+main: () -> i32 {
+    ; --- i32 basic arithmetic ---
+    prod: i32 = 6 * 7          ; 42
+    diff: i32 = 100 - 58       ; 42
+    quot: i32 = 168 / 4        ; 42
+    rem:  i32 = 127 % 85       ; 42  (127 = 1*85 + 42)
+
+    if prod != 42 { return 1 }
+    if diff != 42 { return 2 }
+    if quot != 42 { return 3 }
+    if rem  != 42 { return 4 }
+
+    ; --- i64 cast roundtrip ---
+    big:  i64 = i64(prod)
+    back: i32 = i32(big)
+    if back != 42 { return 5 }
+
+    ; --- u32 unsigned arithmetic ---
+    ua:   u32 = 210
+    ub:   u32 = 5
+    udiv: u32 = ua / ub        ; 42 unsigned
+    umod: u32 = ua % ub        ; 0
+    if i32(udiv) != 42 { return 6 }
+    if i32(umod) !=  0 { return 7 }
+
+    ; --- abs_val helper ---
+    pos: i32 = abs_val(0 - 42)
+    neg: i32 = abs_val(42)
+    if pos != 42 { return 8 }
+    if neg != 42 { return 9 }
+
+    ; --- clamp helper ---
+    lo:  i32 = clamp(0, 100, 0 - 5)  ; 0
+    mid: i32 = clamp(0, 100, 42)     ; 42
+    hi:  i32 = clamp(0, 100, 200)    ; 100
+    if lo  !=   0 { return 10 }
+    if mid != 42  { return 11 }
+    if hi  != 100 { return 12 }
+
+    ; --- gcd ---
+    g1: i32 = gcd(56, 98)   ; gcd(56,98) = 14
+    g2: i32 = gcd(42, 18)   ; gcd(42,18) = 6
+    if g1 != 14 { return 13 }
+    if g2 !=  6 { return 14 }
+
+    ; --- mixed signed/unsigned comparison ---
+    a: i32 = 0 - 1            ; -1 signed
+    b: u32 = 4294967295       ; 0xFFFFFFFF = max u32
+    signed_lt:   bool = a < 0     ; true  (-1 < 0)
+    unsigned_big: bool = b > 0    ; true  (4294967295 > 0 as u32)
+    if signed_lt   == false { return 15 }
+    if unsigned_big == false { return 16 }
+
+    ; --- integer overflow behaviour (wrapping) ---
+    max_i32: i32 = 2147483647
+    wrapped: i32 = max_i32 + 1   ; wraps to -2147483648
+    if wrapped >= 0 { return 17 }
+
+    ; --- precedence check: 2 + 3 * 4 = 14, not 20 ---
+    prec: i32 = 2 + 3 * 4
+    if prec != 14 { return 18 }
+
+    return 42
+}

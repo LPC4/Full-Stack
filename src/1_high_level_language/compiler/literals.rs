@@ -1,3 +1,5 @@
+use log::warn;
+use crate::high_level_language::ast::StructDestructureField;
 use super::{
     BinaryOp, Expression, FloatWidth, HighLevelCompiler, IntWidth, IrCmpOp, IrGlobalString,
     IrInstruction, IrMathOp, IrRegister, IrType, IrUnaryOp, IrValue, Literal, LoweredValue,
@@ -249,79 +251,91 @@ impl HighLevelCompiler {
         })
     }
 
-    pub(super) fn lower_struct_destructuring(
+    pub(super) fn lower_struct_destructuring_from_addr(
         &mut self,
-        fields: &[crate::high_level_language::ast::StructDestructureField],
-        value: &LoweredValue,
+        fields: &[StructDestructureField],
+        addr: &LoweredValue,
     ) -> Option<LoweredValue> {
-        let resolved_value_ty = self.resolve_named_type(&value.ty);
-        let agg_fields = match &resolved_value_ty {
-            IrType::Aggregate(fields) => fields.clone(),
-            IrType::Pointer(inner) => {
-                if let IrType::Aggregate(fields) = inner.as_ref() {
-                    fields.clone()
-                } else {
-                    self.context
-                        .diagnostics
-                        .error("struct destructuring requires an aggregate type".to_owned());
-                    return None;
-                }
-            }
-            _ => {
+        // `addr` must be a register-backed pointer to an aggregate.
+        let ptr_reg = match &addr.value {
+            IrValue::Register(r) => r.clone(),
+            other => {
                 self.context
                     .diagnostics
-                    .error("struct destructuring requires an aggregate type".to_owned());
+                    .error(format!("destructuring source must be a register pointer, got {:?}", other));
                 return None;
             }
         };
 
-        let base_ptr = if let IrValue::Register(reg) = &value.value {
-            reg.clone()
-        } else {
-            self.context
-                .diagnostics
-                .error("struct destructuring requires a register value".to_owned());
-            return None;
+        // Resolve the pointee type; it must be an aggregate.
+        let pointee_ty = match &addr.ty {
+            IrType::Pointer(inner) => self.resolve_named_type(inner),
+            other => {
+                self.context.diagnostics.error(format!(
+                    "destructuring source type must be a pointer to an aggregate, got {}",
+                    other
+                ));
+                return None;
+            }
         };
 
-        let mut field_offsets: std::collections::HashMap<&str, (i64, IrType)> =
-            std::collections::HashMap::new();
+        let agg_fields = match pointee_ty {
+            IrType::Aggregate(fields) => fields.clone(),
+            other => {
+                self.context.diagnostics.error(format!(
+                    "destructuring source must point to an aggregate, got pointer to {}",
+                    other
+                ));
+                return None;
+            }
+        };
+
+        // Build offset map: field name -> (byte_offset, field_type)
+        let mut offset_map = std::collections::HashMap::new();
         let mut running_offset = 0i64;
         for (name, ty) in &agg_fields {
             running_offset =
                 Self::align_to(running_offset, self.type_alignment_in_bytes(ty) as i64);
-            field_offsets.insert(name.as_str(), (running_offset, ty.clone()));
+            offset_map.insert(name.as_str(), (running_offset, ty.clone()));
             running_offset += self.type_size_in_bytes(ty) as i64;
         }
 
+        // Process each field in the pattern (order independent)
         for field in fields {
             if let Some(ref name) = field.name {
-                let Some((field_offset, field_ty)) = field_offsets.get(name.as_str()).cloned()
-                else {
-                    self.context.diagnostics.error(format!(
-                        "struct destructuring field `{name}` not found in aggregate type"
-                    ));
-                    return None;
+                let &(field_offset, ref field_ty) = match offset_map.get(name.as_str()) {
+                    Some(v) => v,
+                    None => {
+                        self.context.diagnostics.error(format!(
+                            "field `{}` not found in aggregate type",
+                            name
+                        ));
+                        return None;
+                    }
                 };
 
-                let dest = self.new_temp();
+                // Load the field value from the source pointer at the computed offset
+                let loaded = self.new_temp();
                 self.push_instruction(IrInstruction::Load {
-                    dest: dest.clone(),
+                    dest: loaded.clone(),
                     ty: field_ty.clone(),
-                    ptr: base_ptr.clone(),
+                    ptr: ptr_reg.clone(),
                     offset: Some(field_offset),
                 });
 
+                // Determine the target pointer (existing variable or create a new stack slot)
                 let target_ptr = if let Some(var_info) = self.context.symbols.lookup(name) {
                     if let IrValue::Register(var_ptr) = &var_info.value {
                         var_ptr.clone()
                     } else {
                         self.context.diagnostics.error(format!(
-                            "struct destructuring target `{name}` is not register-backed"
+                            "variable `{}` is not register-backed",
+                            name
                         ));
                         return None;
                     }
                 } else {
+                    // Introduce a new stack variable for the destructured field.
                     let var_ptr = IrRegister::Named(name.clone());
                     self.push_instruction(IrInstruction::Alloc {
                         dest: var_ptr.clone(),
@@ -336,16 +350,19 @@ impl HighLevelCompiler {
                     var_ptr
                 };
 
+                // Store the loaded value into the target
                 self.push_instruction(IrInstruction::Store {
-                    ty: field_ty,
-                    value: IrValue::Register(dest),
+                    ty: field_ty.clone(),
+                    value: IrValue::Register(loaded),
                     ptr: target_ptr,
                     offset: None,
                 });
             }
+            // If field.name is None (should not happen), skip.
+            warn!("field.name is None")
         }
 
-        Some(value.clone())
+        Some(addr.clone())
     }
 
     pub(crate) fn align_to(value: i64, alignment: i64) -> i64 {

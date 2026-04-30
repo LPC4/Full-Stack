@@ -553,3 +553,201 @@ fn test_free_after_new_pattern() {
     assert!(has_free, "Expected HeapFree for free()");
 }
 
+// ── Struct destructuring ────────────────────────────────────────────────────
+
+fn compile_ok(source: &str) -> full_stack::high_level_language::compilation_pipeline::CompilationResult {
+    CompilationPipeline::new()
+        .compile(source)
+        .unwrap_or_else(|e| panic!("expected compilation to succeed, got: {e}"))
+}
+
+fn instruction_count<F>(result: &full_stack::high_level_language::compilation_pipeline::CompilationResult, pred: F) -> usize
+where
+    F: Fn(&IrInstruction) -> bool,
+{
+    result.ir_program.functions.iter().flat_map(|f| f.blocks.iter()).flat_map(|b| b.instructions.iter()).filter(|i| pred(i)).count()
+}
+
+/// Small struct (2 × i32) returned by value from a function and destructured.
+/// The fix that landed this test: function-call results are rvalues — they
+/// must be spilled before field extraction, not treated as addressable.
+#[test]
+fn small_struct_return_destructured_compiles() {
+    let result = compile_ok(r#"
+divide: (a: i32, b: i32) -> { quotient: i32, remainder: i32 } {
+    return { .quotient = a / b, .remainder = a % b }
+}
+
+main: () -> i32 {
+    { quotient: i32, remainder: i32 } = divide(10, 3)
+    return quotient
+}
+"#);
+    // divide() must be called exactly once — the old double-evaluation bug emitted two calls.
+    let call_count = instruction_count(&result, |i| {
+        matches!(i, IrInstruction::Call { function, .. } if function == "divide")
+    });
+    assert_eq!(call_count, 1, "divide() should be called exactly once, got {call_count}");
+}
+
+/// Struct returned by value where all fields are used after destructuring.
+#[test]
+fn small_struct_both_fields_accessible_after_destructure() {
+    compile_ok(r#"
+minmax: (a: i32, b: i32) -> { lo: i32, hi: i32 } {
+    return { .lo = a, .hi = b }
+}
+
+main: () -> i32 {
+    { lo: i32, hi: i32 } = minmax(1, 9)
+    return hi - lo
+}
+"#);
+}
+
+/// A single-field struct returned by value.
+#[test]
+fn single_field_struct_return_destructured() {
+    compile_ok(r#"
+wrap: (x: i32) -> { val: i32 } {
+    return { .val = x }
+}
+
+main: () -> i32 {
+    { val: i32 } = wrap(7)
+    return val
+}
+"#);
+}
+
+/// Struct with mixed field types (i32 + bool).
+#[test]
+fn struct_with_bool_field_destructured() {
+    compile_ok(r#"
+check: (x: i32) -> { value: i32, ok: bool } {
+    return { .value = x, .ok = true }
+}
+
+main: () -> i32 {
+    { value: i32, ok: bool } = check(5)
+    return value
+}
+"#);
+}
+
+/// Type-aliased struct returned and destructured — exercises the named-type
+/// resolution path inside lower_struct_destructuring_from_addr.
+#[test]
+fn type_alias_struct_return_destructured() {
+    compile_ok(r#"
+type Pair = { first: i32, second: i32 }
+
+make_pair: (a: i32, b: i32) -> Pair {
+    return { .first = a, .second = b }
+}
+
+main: () -> i32 {
+    { first: i32, second: i32 } = make_pair(3, 4)
+    return first + second
+}
+"#);
+}
+
+/// Destructuring a local struct variable (address-mode path, not the spill path).
+#[test]
+fn local_struct_variable_destructured() {
+    compile_ok(r#"
+main: () -> i32 {
+    p: { x: i32, y: i32 } = { .x = 10, .y = 20 }
+    { x: i32, y: i32 } = p
+    return x + y
+}
+"#);
+}
+
+/// Nested struct returned by inner call; outer function destructures it.
+#[test]
+fn chained_function_call_struct_destructure() {
+    compile_ok(r#"
+inner: () -> { val: i32 } {
+    return { .val = 42 }
+}
+
+outer: () -> i32 {
+    { val: i32 } = inner()
+    return val
+}
+
+main: () -> i32 {
+    return outer()
+}
+"#);
+}
+
+/// Struct returned by a function called with non-trivial (computed) arguments.
+#[test]
+fn struct_return_with_computed_args() {
+    compile_ok(r#"
+pair: (a: i32, b: i32) -> { sum: i32, product: i32 } {
+    return { .sum = a + b, .product = a * b }
+}
+
+main: () -> i32 {
+    x: i32 = 3
+    y: i32 = 4
+    { sum: i32, product: i32 } = pair(x + 1, y - 1)
+    return sum
+}
+"#);
+}
+
+/// Destructuring from a function call inside an if-branch.
+#[test]
+fn struct_destructure_inside_if() {
+    compile_ok(r#"
+get_val: () -> { n: i32 } {
+    return { .n = 99 }
+}
+
+main: () -> i32 {
+    result: i32 = 0
+    if true {
+        { n: i32 } = get_val()
+        result = n
+    }
+    return result
+}
+"#);
+}
+
+/// Destructuring result is used in a subsequent expression, not just returned.
+#[test]
+fn struct_field_used_in_arithmetic() {
+    compile_ok(r#"
+dims: () -> { w: i32, h: i32 } {
+    return { .w = 6, .h = 7 }
+}
+
+main: () -> i32 {
+    { w: i32, h: i32 } = dims()
+    area: i32 = w * h
+    return area
+}
+"#);
+}
+
+/// Three-field struct — exceeds the two-register ABI window so the spill path
+/// must handle more than two loads.
+#[test]
+fn three_field_struct_return_destructured() {
+    compile_ok(r#"
+triple: (a: i32, b: i32, c: i32) -> { x: i32, y: i32, z: i32 } {
+    return { .x = a, .y = b, .z = c }
+}
+
+main: () -> i32 {
+    { x: i32, y: i32, z: i32 } = triple(1, 2, 3)
+    return x + y + z
+}
+"#);
+}

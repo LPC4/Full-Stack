@@ -87,12 +87,12 @@ divide__entry:
 .globl test_tuple_destructuring
 test_tuple_destructuring:
 	; --- Function Prologue ---
-	; Allocate stack frame: 48 bytes
-	addi   sp, sp, -48
-	; Save return address (ra) at offset 32
-	sd     ra, 32(sp)
-	; Save callee-saved register s8 at offset 40
-	sd     s0, 40(sp)
+	; Allocate stack frame: 64 bytes
+	addi   sp, sp, -64
+	; Save return address (ra) at offset 40
+	sd     ra, 40(sp)
+	; Save callee-saved register s8 at offset 48
+	sd     s0, 48(sp)
 	; Set up frame pointer
 	addi   s0, sp, 0
 	; --- End Prologue ---
@@ -110,18 +110,13 @@ test_tuple_destructuring__entry:
 	sw     a0, 0(sp)
 	sw     a1, 4(sp)
 	; --- End Function Call: divide ---
-	; Load i32 from memory into $$1
-	addi   t0, sp, 0
-	addi   t1, t0, 0
-	lw     t2, 0(t1)
-	sw     t2, 8(sp)
-	addi   t0, sp, 12
-	; Store i32 to memory
-	lw     t1, 8(sp)
-	sw     t1, 0(t0)
+	addi   t0, sp, 8
+	; Store {quotient: i32, remainder: i32} to memory
+	ld     t1, 0(sp)
+	sd     t1, 0(t0)
 	; Load i32 from memory into $$2
-	addi   t0, sp, 0
-	addi   t1, t0, 4
+	addi   t0, sp, 8
+	addi   t1, t0, 0
 	lw     t2, 0(t1)
 	sw     t2, 16(sp)
 	addi   t0, sp, 20
@@ -129,18 +124,27 @@ test_tuple_destructuring__entry:
 	lw     t1, 16(sp)
 	sw     t1, 0(t0)
 	; Load i32 from memory into $$3
-	addi   t0, sp, 12
+	addi   t0, sp, 8
+	addi   t1, t0, 4
+	lw     t2, 0(t1)
+	sw     t2, 24(sp)
+	addi   t0, sp, 28
+	; Store i32 to memory
+	lw     t1, 24(sp)
+	sw     t1, 0(t0)
+	; Load i32 from memory into $$4
+	addi   t0, sp, 20
 	lw     t1, 0(t0)
-	sw     t1, 24(sp)
-	lw     t2, 24(sp)
+	sw     t1, 32(sp)
+	lw     t2, 32(sp)
 	addi   a0, t2, 0
 	; --- Function Epilogue ---
-	; Restore callee-saved register s8 from offset 40
-	ld     s0, 40(sp)
-	; Restore return address (ra) from offset 32
-	ld     ra, 32(sp)
-	; Deallocate stack frame: 48 bytes
-	addi   sp, sp, 48
+	; Restore callee-saved register s8 from offset 48
+	ld     s0, 48(sp)
+	; Restore return address (ra) from offset 40
+	ld     ra, 40(sp)
+	; Deallocate stack frame: 64 bytes
+	addi   sp, sp, 64
 	; Return to caller
 	jalr   zero, 0(ra)
 	; --- End Epilogue ---
