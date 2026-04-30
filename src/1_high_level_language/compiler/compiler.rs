@@ -62,22 +62,94 @@ pub struct HighLevelCompiler {
     next_label: u32,
     current_blocks: Vec<IrBlock>,
     current_block: Option<IrBlock>,
-    /// Stack of deferred actions to execute at the end of the current function/block
     defers: Vec<DeferredAction>,
-    /// Map of compile-time constant names to their evaluated literal values
     compile_time_consts: std::collections::HashMap<String, Literal>,
     /// Stack of (`continue_label`, `break_label`) for nested loops
     loop_labels: Vec<(IrLabel, IrLabel)>,
     /// Cache of specialized generic types: (`original_name`, `type_args`) -> `specialized_name`
     generic_type_cache: std::collections::HashMap<(String, Vec<IrType>), String>,
-    /// Store generic type definitions for later specialization
     generic_type_defs: std::collections::HashMap<String, GenericTypeDef>,
-    /// Map of function names to their return types
     function_return_types: std::collections::HashMap<String, IrType>,
     /// Store function declarations for compile-time evaluation
     function_declarations: std::collections::HashMap<String, FunctionDecl>,
-    /// Pending global strings to be added to the IR program
     pending_global_strings: Vec<IrGlobalString>,
+}
+
+impl HighLevelCompiler {
+    pub fn new() -> Self {
+        Self {
+            context: LoweringContext::new(),
+            next_temp: 0,
+            next_label: 0,
+            current_blocks: Vec::new(),
+            current_block: None,
+            defers: Vec::new(),
+            compile_time_consts: std::collections::HashMap::new(),
+            loop_labels: Vec::new(),
+            generic_type_cache: std::collections::HashMap::new(),
+            generic_type_defs: std::collections::HashMap::new(),
+            function_return_types: std::collections::HashMap::new(),
+            function_declarations: std::collections::HashMap::new(),
+            pending_global_strings: Vec::new(),
+        }
+    }
+
+    pub fn compile_program(&mut self, program: &Program) -> Result<IrProgram, CompilerError> {
+        log::info!(
+            "Starting IR compilation for {} declarations",
+            program.declarations.len()
+        );
+
+        let mut semantic_analyzer = SemanticAnalyzer::new();
+        if let Err(_) = semantic_analyzer.analyze_program(program) {
+            // Collect semantic errors and emit them as diagnostics
+            for diagnostic in semantic_analyzer.diagnostics() {
+                self.context.diagnostics.error(diagnostic.message.clone());
+            }
+            log::warn!(
+                "Semantic analysis found errors, continuing with compilation for diagnostics"
+            );
+        }
+
+        self.context.reset_for_program();
+        self.next_temp = 0;
+        self.next_label = 0;
+        self.pending_global_strings.clear();
+        let mut ir_program = IrProgram::new("ir_program");
+
+        for declaration in &program.declarations {
+            if let DeclNode::Function {
+                name,
+                generics,
+                return_type,
+                ..
+            } = &declaration.decl
+            {
+                let final_name = if generics.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{}<{}>", name, generics.join(", "))
+                };
+                let return_ty = self.lower_return_type(return_type.as_ref());
+                self.function_return_types
+                    .insert(final_name.clone(), return_ty.clone());
+                if final_name != *name {
+                    self.function_return_types.insert(name.clone(), return_ty);
+                }
+            }
+        }
+
+        for declaration in &program.declarations {
+            self.lower_declaration(&mut ir_program, declaration)?;
+        }
+
+        // Add all pending global strings to the IR program
+        for global_string in self.pending_global_strings.drain(..) {
+            ir_program.push_global_string(global_string);
+        }
+
+        Ok(ir_program)
+    }
 }
 
 #[path = "control_flow.rs"]

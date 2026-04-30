@@ -156,4 +156,8 @@ impl HighLevelCompiler {
             _ => false,
         }
     }
+    
+    pub fn diagnostics(&self) -> &[crate::high_level_language::compiler::Diagnostic] {
+        self.context.diagnostics.entries()
+    }
 }
