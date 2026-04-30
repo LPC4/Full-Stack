@@ -45,7 +45,7 @@ impl HighLevelCompiler {
                                 let _src_addr = if let IrValue::Register(reg) = &lowered.value {
                                     reg.clone()
                                 } else {
-                                    self.context.diagnostics.error(
+                                    self.context.error(
                                         "Aggregate return value must be a register".to_owned(),
                                     );
                                     return;
@@ -62,14 +62,14 @@ impl HighLevelCompiler {
                                 // The backend already handles copying from src to sret in lower_terminator
                                 self.set_terminator(IrTerminator::Return(Some(lowered.value)));
                             } else {
-                                self.context.diagnostics.error(
+                                self.context.error(
                                     "Internal error: __sret_ptr not found in symbol table"
                                         .to_owned(),
                                 );
                             }
                         }
                     } else {
-                        self.context.diagnostics.error(
+                        self.context.error(
                             "Function returning aggregate must have a return value".to_owned(),
                         );
                     }
@@ -177,7 +177,7 @@ impl HighLevelCompiler {
                         let lowered = if let Some(v) = self.lower_expression(arg) {
                             v
                         } else {
-                            self.context.diagnostics.error(format!(
+                            self.context.error(format!(
                                 "failed to capture defer argument `{}` for call `{}`",
                                 self.format_expression(arg),
                                 name
@@ -200,7 +200,7 @@ impl HighLevelCompiler {
                     self.push_instruction(IrInstruction::Comment(
                         "defer: register cleanup logic".to_owned(),
                     ));
-                    self.context.diagnostics.warn(
+                    self.context.warn(
                         "defer on non-call expression is not capture-safe yet; evaluating at exit",
                     );
                     self.defers.push(DeferredAction::Expr(expr.clone()));
@@ -220,7 +220,7 @@ impl HighLevelCompiler {
         let cond_value = if let Some(lowered) = self.lower_expression(cond) {
             lowered.value
         } else {
-            self.context.diagnostics.error(format!(
+            self.context.error(format!(
                 "failed to lower if condition `{}` (see previous diagnostics for root cause)",
                 self.format_expression(cond)
             ));
@@ -321,7 +321,7 @@ impl HighLevelCompiler {
         let cond_value = if let Some(lowered) = self.lower_expression(cond) {
             lowered.value
         } else {
-            self.context.diagnostics.error(format!(
+            self.context.error(format!(
                 "failed to lower while condition `{}` (see previous diagnostics for root cause)",
                 self.format_expression(cond)
             ));

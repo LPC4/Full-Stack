@@ -66,7 +66,7 @@ fn parse_fixture(file_name: &str) -> Result<full_stack::high_level_language::ast
     let mut parser = Parser::new(tokens);
     parser
         .parse_program()
-        .map_err(|err| format!("{} @{}", err.message, err.pos))
+        .map_err(|err| format!("{}", err))
 }
 
 fn contains_token<F>(tokens: &[Token<'_>], predicate: F) -> bool

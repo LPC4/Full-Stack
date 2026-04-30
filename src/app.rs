@@ -1,24 +1,74 @@
+// file: src/app.rs
 use crate::high_level_language::compilation_pipeline::CompilationPipeline;
 use crate::high_level_language::lexer::Lexer;
 use crate::high_level_language::token::Token;
 use crate::view::{
-    AssemblyView, AstView, CompilationState, CompilerView, ExecutionView, IrView, ProgramCatalog,
-    ProgramKind, SourceView, StackView, TokensView, blank_custom_program_source,
+    AssemblyView, AstView, CfgView, CompilationState, CompilerView, ExecutionView, IrView,
+    MemoryMapView, ProgramCatalog, ProgramKind, SourceView, StackView, TokensView,
+    blank_custom_program_source,
 };
 use egui_dock::{DockState, NodeIndex};
+use std::fmt;
 
+// ------------------------------------------------------------
+// Unique wrapper so every tab has its own identity
+// ------------------------------------------------------------
+struct ViewWrapper {
+    id: u64,
+    view: Box<dyn CompilerView>,
+}
+
+impl Clone for ViewWrapper {
+    fn clone(&self) -> Self {
+        Self {
+            id: self.id,
+            view: self.view.clone_box()
+        }
+    }
+}
+
+impl ViewWrapper {
+    fn new(view: Box<dyn CompilerView>, counter: &mut u64) -> Self {
+        let id = *counter;
+        *counter += 1;
+        Self { id, view }
+    }
+}
+
+impl PartialEq for ViewWrapper {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+// egui_dock requires Display for the tab title
+impl fmt::Display for ViewWrapper {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.view.title())
+    }
+}
+
+// ------------------------------------------------------------
+// Application state
+// ------------------------------------------------------------
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)]
 pub struct FullStackApp {
     catalog: ProgramCatalog,
     #[serde(skip)]
-    dock: DockState<Box<dyn CompilerView>>,
+    dock: DockState<ViewWrapper>,
     #[serde(skip)]
     compilation_state: CompilationState,
     #[serde(skip)]
     pipeline: CompilationPipeline,
     #[serde(skip)]
     wsl_receiver: Option<std::sync::mpsc::Receiver<String>>,
+    #[serde(skip)]
+    rename_id: Option<String>,
+    #[serde(skip)]
+    pending_new_view: Option<ViewWrapper>,
+    #[serde(skip)]
+    next_view_id: u64,
 }
 
 impl Default for FullStackApp {
@@ -30,6 +80,9 @@ impl Default for FullStackApp {
             compilation_state: CompilationState::default(),
             pipeline: CompilationPipeline::new(),
             wsl_receiver: None,
+            rename_id: None,
+            pending_new_view: None,
+            next_view_id: 0,
         };
         app.reset_layout();
         app
@@ -49,22 +102,48 @@ impl FullStackApp {
         app
     }
 
-    fn reset_layout(&mut self) {
-        let source: Box<dyn CompilerView> = Box::new(SourceView);
-        let tokens: Box<dyn CompilerView> = Box::new(TokensView);
-        let ast: Box<dyn CompilerView> = Box::new(AstView);
-        let ir: Box<dyn CompilerView> = Box::new(IrView);
-        let asm: Box<dyn CompilerView> = Box::new(AssemblyView);
-        let stack: Box<dyn CompilerView> = Box::new(StackView::default());
-        let execution: Box<dyn CompilerView> = Box::new(ExecutionView);
+    fn next_id(&mut self) -> u64 {
+        let id = self.next_view_id;
+        self.next_view_id += 1;
+        id
+    }
 
-        let mut dock = DockState::new(vec![source]);
+    fn reset_layout(&mut self) {
+        let views = vec![
+            ViewWrapper::new(Box::new(SourceView), &mut self.next_view_id),        // 0
+            ViewWrapper::new(Box::new(TokensView), &mut self.next_view_id),        // 1
+            ViewWrapper::new(Box::new(AstView), &mut self.next_view_id),           // 2
+            ViewWrapper::new(Box::new(IrView), &mut self.next_view_id),            // 3
+            ViewWrapper::new(Box::new(AssemblyView), &mut self.next_view_id),      // 4
+            ViewWrapper::new(Box::new(CfgView), &mut self.next_view_id),           // 5
+            ViewWrapper::new(Box::new(StackView::default()), &mut self.next_view_id), // 6
+            ViewWrapper::new(Box::new(MemoryMapView::default()), &mut self.next_view_id), // 7
+            ViewWrapper::new(Box::new(ExecutionView), &mut self.next_view_id),     // 8
+        ];
+
+        // Source is the first view → root
+        let mut dock = DockState::new(vec![views[0].clone()]);
         let surface = dock.main_surface_mut();
 
-        let [_left_node, right_node] =
-            surface.split_right(NodeIndex::root(), 0.5, vec![ir, tokens, ast]);
+        // Right side: IR (index 3), Tokens (1), AST (2)
+        let [_left, right] = surface.split_right(
+            NodeIndex::root(),
+            0.5,
+            vec![views[3].clone(), views[1].clone(), views[2].clone()],
+        );
 
-        surface.split_below(right_node, 0.5, vec![asm, stack, execution]);
+        // Bottom side: Assembly (4), CFG (5), Stack (6), Memory Map (7), Execution (8)
+        surface.split_below(
+            right,
+            0.5,
+            vec![
+                views[4].clone(),
+                views[5].clone(),
+                views[6].clone(),
+                views[7].clone(),
+                views[8].clone(),
+            ],
+        );
 
         self.dock = dock;
     }
@@ -80,7 +159,7 @@ impl FullStackApp {
 
             if let Token::Error(message) = &token {
                 self.compilation_state.tokens = format!("LEXER ERROR: {message}");
-                self.compilation_state.error = Some(format!("Lexer error: {message}"));
+                self.compilation_state.set_error(format!("Lexer error: {message}"));
                 self.compilation_state.just_compiled = false;
                 return;
             }
@@ -101,11 +180,11 @@ impl FullStackApp {
                 self.compilation_state.ir = result.ir_program.to_string();
                 self.compilation_state.asm =
                     self.pipeline.compile_ir_to_assembly(&result.ir_program);
-                self.compilation_state.error = None;
+                self.compilation_state.clear_error();
                 self.compilation_state.just_compiled = true;
             }
             Err(error) => {
-                self.compilation_state.error = Some(error.to_string());
+                self.compilation_state.set_error(error.to_string());
                 self.compilation_state.just_compiled = false;
             }
         }
@@ -121,11 +200,13 @@ impl FullStackApp {
             ui.horizontal(|ui| {
                 if ui.button("New File").clicked() {
                     self.catalog.create_blank_program();
+                    self.rename_id = None;
                     self.compile();
                 }
 
                 if ui.button("Duplicate").clicked() {
                     self.catalog.duplicate_current_program();
+                    self.rename_id = None;
                     self.compile();
                 }
             });
@@ -134,34 +215,16 @@ impl FullStackApp {
             self.render_program_section(ui, ProgramKind::Example, "Examples");
             ui.separator();
             self.render_program_section(ui, ProgramKind::Custom, "Your programs");
-            ui.separator();
-
-            if let Some(program) = self.catalog.current_program() {
-                ui.label(egui::RichText::new(format!("Current: {}", program.name)).strong());
-                ui.small(match program.kind {
-                    ProgramKind::Example => "Example program",
-                    ProgramKind::Custom => "Your program",
-                });
-            }
 
             let is_custom = self
                 .catalog
                 .current_program()
-                .map(|program| program.is_custom())
+                .map(|p| p.is_custom())
                 .unwrap_or(false);
-
-            if is_custom {
-                ui.add_space(8.0);
-                ui.label("Rename:");
-
-                if let Some(program) = self.catalog.current_program_mut() {
-                    ui.text_edit_singleline(&mut program.name);
-                }
-
-                if ui.button("Delete").clicked() {
-                    self.catalog.delete_current_custom_program();
-                    self.compile();
-                }
+            if is_custom && ui.input(|i| i.key_pressed(egui::Key::Delete)) {
+                self.catalog.delete_current_custom_program();
+                self.rename_id = None;
+                self.compile();
             }
         });
     }
@@ -182,12 +245,47 @@ impl FullStackApp {
             .default_open(true)
             .show(ui, |ui| {
                 for (id, name) in &entries {
-                    let selected = *id == self.catalog.selected_program_id;
-                    let response = ui.selectable_label(selected, name);
+                    let is_rename_active = self.rename_id.as_deref() == Some(id.as_str());
 
-                    if response.clicked() {
-                        self.catalog.select_program(id);
-                        self.compile();
+                    if is_rename_active {
+                        let mut new_name = name.clone();
+                        let response = ui.text_edit_singleline(&mut new_name);
+                        // Request focus so the keyboard works immediately
+                        response.request_focus();
+
+                        // Commit on Enter or when focus is lost
+                        if response.lost_focus()
+                            || ui.input(|i| i.key_pressed(egui::Key::Enter))
+                        {
+                            if let Some(program) = self.catalog.current_program_mut() {
+                                if program.id == *id {
+                                    program.name = new_name.trim().to_string();
+                                }
+                            }
+                            self.rename_id = None;
+                            ui.ctx().request_repaint();
+                        }
+                        // Cancel only if a click happens *outside* the text field,
+                        // and only after this very frame (so the double‑click itself won't cancel)
+                        if ui.input(|i| i.pointer.any_click()) && !response.hovered() {
+                            // But we must ignore the click that started the rename.
+                            // That click happened *last* frame, so it's safe now.
+                            self.rename_id = None;
+                            ui.ctx().request_repaint();
+                        }
+                    } else {
+                        let selected = *id == self.catalog.selected_program_id;
+                        let response = ui.selectable_label(selected, name);
+
+                        if response.clicked() {
+                            self.catalog.select_program(id);
+                            self.compile();
+                        }
+
+                        if response.double_clicked() && kind == ProgramKind::Custom {
+                            self.rename_id = Some(id.clone());
+                            ui.ctx().request_repaint();
+                        }
                     }
                 }
             });
@@ -200,6 +298,11 @@ impl FullStackApp {
 
 impl eframe::App for FullStackApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        // --- Process a pending “Add View” request (deferred from menu) ---
+        if let Some(view) = self.pending_new_view.take() {
+            self.dock.main_surface_mut().push_to_focused_leaf(view);
+        }
+
         egui::Panel::left("left_panel")
             .resizable(true)
             .default_size(250.0)
@@ -210,7 +313,6 @@ impl eframe::App for FullStackApp {
             .exact_size(44.0)
             .show_inside(ui, |ui| {
                 ui.add_space(4.0);
-
                 ui.horizontal(|ui| {
                     if ui
                         .add_sized([110.0, 30.0], egui::Button::new("Compile"))
@@ -230,10 +332,8 @@ impl eframe::App for FullStackApp {
 
                         self.compilation_state.execution_output = "Running in WSL... please wait.\n(Executing cross-compiler and QEMU in background)".to_string();
 
-                        // Create a communication channel
                         let (tx, rx) = std::sync::mpsc::channel();
                         self.wsl_receiver = Some(rx);
-
                         let asm_copy = self.compilation_state.asm.clone();
 
                         std::thread::spawn(move || {
@@ -254,7 +354,6 @@ impl eframe::App for FullStackApp {
                                 self.catalog.ensure_consistency();
                             }
                         }
-
                         self.compile();
                     }
 
@@ -264,6 +363,32 @@ impl eframe::App for FullStackApp {
                     {
                         self.reset_layout();
                     }
+
+                    // --- “Add View” dropdown (deferred) ---
+                    egui::menu::bar(ui, |ui| {
+                        ui.menu_button("Add View", |ui| {
+                            let factories: Vec<(&str, fn(&mut u64) -> ViewWrapper)> = vec![
+                                ("Source", SourceView::make_wrapper),
+                                ("Tokens", TokensView::make_wrapper),
+                                ("AST", AstView::make_wrapper),
+                                ("IR", IrView::make_wrapper),
+                                ("Assembly", AssemblyView::make_wrapper),
+                                ("CFG", CfgView::make_wrapper),
+                                ("Stack", StackView::make_wrapper),
+                                ("Memory Map", MemoryMapView::make_wrapper),
+                                ("Execution (WSL)", ExecutionView::make_wrapper),
+                            ];
+
+                            for (label, factory) in factories {
+                                if ui.button(label).clicked() {
+                                    // We cannot push the tab here because the menu is still open.
+                                    // Queue it and close the menu.
+                                    self.pending_new_view = Some(factory(&mut self.next_view_id));
+                                    ui.close_menu();
+                                }
+                            }
+                        });
+                    });
 
                     ui.separator();
 
@@ -276,24 +401,26 @@ impl eframe::App for FullStackApp {
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        match &self.compilation_state.error {
-                            Some(error) => {
-                                ui.colored_label(egui::Color32::from_rgb(220, 80, 80), error);
+                        match &self.compilation_state.error_summary {
+                            Some(summary) => {
+                                ui.colored_label(
+                                    egui::Color32::from_rgb(220, 80, 80),
+                                    format!("✖ {summary}"),
+                                );
                             }
                             None => {
                                 ui.colored_label(
                                     egui::Color32::from_rgb(100, 200, 120),
-                                    "Compilation successful",
+                                    "✔ Compilation successful",
                                 );
                             }
                         }
                     });
                 });
-
                 ui.add_space(4.0);
             });
 
-        // Check if our background WSL thread has sent a message back
+        // WSL output polling (unchanged)
         if let Some(rx) = &self.wsl_receiver {
             match rx.try_recv() {
                 Ok(result) => {
@@ -301,8 +428,6 @@ impl eframe::App for FullStackApp {
                     self.wsl_receiver = None;
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => {
-                    // The thread is still running. Force the UI to keep repainting
-                    // so it doesn't wait for mouse movement to update the screen.
                     ui.ctx().request_repaint();
                 }
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
@@ -332,21 +457,24 @@ impl eframe::App for FullStackApp {
     }
 }
 
+// ------------------------------------------------------------
+// DockTabViewer
+// ------------------------------------------------------------
 struct DockTabViewer<'a> {
     state: &'a mut CompilationState,
     catalog: &'a mut ProgramCatalog,
 }
 
 impl egui_dock::TabViewer for DockTabViewer<'_> {
-    type Tab = Box<dyn CompilerView>;
+    type Tab = ViewWrapper;
 
     fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {
-        tab.title().into()
+        tab.view.title().into()
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
         let ctx = ui.ctx().clone();
-        tab.ui(ui, &ctx, self.state, self.catalog);
+        tab.view.ui(ui, &ctx, self.state, self.catalog);
     }
 
     fn allowed_in_windows(&self, _tab: &mut Self::Tab) -> bool {
@@ -354,6 +482,33 @@ impl egui_dock::TabViewer for DockTabViewer<'_> {
     }
 }
 
+// ------------------------------------------------------------
+// Each view now defines a static factory that
+// creates a ViewWrapper, so we can pass it to the menu.
+// ------------------------------------------------------------
+macro_rules! impl_view_factory {
+    ($view:ty) => {
+        impl $view {
+            fn make_wrapper(counter: &mut u64) -> ViewWrapper {
+                ViewWrapper::new(Box::new(<$view>::default()), counter)
+            }
+        }
+    };
+}
+
+impl_view_factory!(SourceView);
+impl_view_factory!(TokensView);
+impl_view_factory!(AstView);
+impl_view_factory!(IrView);
+impl_view_factory!(AssemblyView);
+impl_view_factory!(CfgView);
+impl_view_factory!(StackView);
+impl_view_factory!(MemoryMapView);
+impl_view_factory!(ExecutionView);
+
+// ------------------------------------------------------------
+// WSL runner
+// ------------------------------------------------------------
 #[cfg(not(target_arch = "wasm32"))]
 fn run_in_wsl(asm: &str) -> String {
     use std::io::Write;
@@ -371,35 +526,23 @@ fn run_in_wsl(asm: &str) -> String {
 
     let script = r#"
 echo "=== Connected to WSL ==="
-
-# Make sure standard locations are on PATH just in case.
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
-
-# Use the user's home inside the Linux filesystem
 WORKDIR="$HOME/assembly"
 mkdir -p "$WORKDIR"
 cd "$WORKDIR"
-
-# Find the cross-compiler
 CC="$(which riscv64-linux-gnu-gcc 2>/dev/null)"
 if [ -z "$CC" ]; then
     echo "ERROR: riscv64-linux-gnu-gcc not found."
-    echo "Current PATH=$PATH"
     exit 1
 fi
-
-# Check for the emulator
 QEMU="$(which qemu-riscv64 2>/dev/null)"
 if [ -z "$QEMU" ]; then
     echo "ERROR: qemu-riscv64 not found."
-    echo "Current PATH=$PATH"
     exit 1
 fi
-
 set -e
 cat > program.s
 echo >> program.s
-
 "$CC" -static program.s -o program
 set +e
 "$QEMU" ./program
@@ -448,7 +591,6 @@ echo "--- Process Exited with Code: $EXIT_CODE ---"
     result
 }
 
-// Fallback for Web/WASM targets
 #[cfg(target_arch = "wasm32")]
 fn run_in_wsl(_asm: &str) -> String {
     "WSL execution is not supported in the web browser.".to_string()

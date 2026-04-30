@@ -55,7 +55,7 @@ impl HighLevelCompiler {
                             Literal::Integer(v) | Literal::HexInteger(v),
                         )) if *v > 0 => Some(*v as usize),
                         other => {
-                            self.context.diagnostics.error(format!(
+                            self.context.error(format!(
                                 "new({}, count) requires a positive integer literal count; got `{}`",
                                 lowered_ty,
                                 self.format_expression(other)
@@ -64,7 +64,7 @@ impl HighLevelCompiler {
                         }
                     },
                     n => {
-                        self.context.diagnostics.error(format!(
+                        self.context.error(format!(
                             "new({lowered_ty}, ...) expects at most one count argument, got {n}"
                         ));
                         return None;
@@ -163,7 +163,7 @@ impl HighLevelCompiler {
                             .as_ref()
                             .map(|ty| self.lower_type(ty).to_string())
                             .unwrap_or_else(|| field_value.ty.to_string());
-                        self.context.diagnostics.error(format!(
+                        self.context.error(format!(
                             "struct literal field `{}` type mismatch: declared `{}`, got `{}`",
                             field_init.name, declared_ty, field_value.ty
                         ));
@@ -523,7 +523,7 @@ impl HighLevelCompiler {
                         ..
                     }
                 ) {
-                    self.context.diagnostics.error(
+                    self.context.error(
                         "cannot take address of a dereference expression (`&@...` is invalid)"
                             .to_owned(),
                     );
@@ -537,7 +537,7 @@ impl HighLevelCompiler {
                 let pointee_ty = match &ptr_val.ty {
                     IrType::Pointer(inner) => *inner.clone(),
                     other => {
-                        self.context.diagnostics.error(format!(
+                        self.context.error(format!(
                             "cannot dereference expression of non-pointer type `{other}`"
                         ));
                         return None;
@@ -625,7 +625,7 @@ impl HighLevelCompiler {
             (IrType::Pointer(_), IrType::Pointer(_)) => IrCastMode::Bitcast,
             _ if source_resolved == target_resolved => return Some(source_value),
             _ => {
-                self.context.diagnostics.error(format!(
+                self.context.error(format!(
                     "Unsupported cast from `{}` to `{}`",
                     source_value.ty, target_ir
                 ));

@@ -179,7 +179,7 @@ fn parse_assembly(asm: &str) -> Vec<FunctionStack> {
     results
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct StackView {
     selected_function_index: usize,
 }
@@ -235,6 +235,10 @@ impl CompilerView for StackView {
                 ui.add_space(8.0);
                 draw_modern_function_stack(ui, func);
             });
+    }
+
+    fn clone_box(&self) -> Box<dyn CompilerView> {
+        Box::new(self.clone())
     }
 }
 

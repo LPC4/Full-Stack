@@ -1,4 +1,4 @@
-use crate::high_level_language::token::Token;
+use crate::high_level_language::token::{Span, Token};
 use std::iter::Peekable;
 use std::str::Chars;
 
@@ -6,6 +6,8 @@ pub struct Lexer<'a> {
     input: &'a str,
     chars: Peekable<Chars<'a>>,
     pos: usize,
+    line: u32,
+    line_start: usize,
 }
 
 impl<'a> Lexer<'a> {
@@ -14,7 +16,33 @@ impl<'a> Lexer<'a> {
             input,
             chars: input.chars().peekable(),
             pos: 0,
+            line: 1,
+            line_start: 0,
         }
+    }
+
+    /// Tokenize the entire input, returning tokens paired with their source spans.
+    pub fn tokenize(input: &'a str) -> Vec<(Token<'a>, Span)> {
+        let mut lexer = Self::new(input);
+        let lines: Vec<&str> = input.lines().collect();
+        let mut out = Vec::new();
+        loop {
+            let span_start_pos = lexer.pos;
+            let span_line = lexer.line;
+            let span_col = (span_start_pos - lexer.line_start + 1) as u32;
+            let tok = lexer.next_token();
+            let source_line = lines
+                .get((span_line as usize).saturating_sub(1))
+                .unwrap_or(&"")
+                .to_string();
+            let span = Span { line: span_line, col: span_col, source_line };
+            let is_eof = matches!(tok, Token::Eof);
+            out.push((tok, span));
+            if is_eof {
+                break;
+            }
+        }
+        out
     }
 
     pub fn next_token(&mut self) -> Token<'a> {
@@ -32,7 +60,11 @@ impl<'a> Lexer<'a> {
 
         match c {
             // Significant Newline
-            '\n' => Token::StatementTerminator,
+            '\n' => {
+                self.line += 1;
+                self.line_start = self.pos;
+                Token::StatementTerminator
+            }
 
             // Comments
             ';' => {

@@ -1,6 +1,7 @@
 use crate::view::highlight_ir;
 use crate::view::{CompilationState, CompilerView, ProgramCatalog};
 
+#[derive(Default, Clone)]
 pub struct IrView;
 
 impl CompilerView for IrView {
@@ -22,5 +23,9 @@ impl CompilerView for IrView {
             .show(ui, |ui| {
                 ui.label(galley);
             });
+    }
+
+    fn clone_box(&self) -> Box<dyn CompilerView> {
+        Box::new(self.clone())
     }
 }

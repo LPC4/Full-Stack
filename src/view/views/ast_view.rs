@@ -3,6 +3,7 @@
 use crate::view::highlight_ast;
 use crate::view::{CompilationState, CompilerView, ProgramCatalog};
 
+#[derive(Default, Clone)]
 pub struct AstView;
 
 impl CompilerView for AstView {
@@ -25,5 +26,9 @@ impl CompilerView for AstView {
             .show(ui, |ui| {
                 ui.label(galley);
             });
+    }
+
+    fn clone_box(&self) -> Box<dyn CompilerView> {
+        Box::new(self.clone())
     }
 }

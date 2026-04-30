@@ -24,6 +24,26 @@ pub enum TypeCheckError {
     },
 }
 
+impl std::fmt::Display for TypeCheckError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TypeMismatch { expected, found } => {
+                write!(f, "type mismatch: expected `{expected}`, found `{found}`")
+            }
+            Self::UndefinedType(name) => write!(f, "undefined type `{name}`"),
+            Self::InvalidOperation { op, lhs, rhs } => {
+                write!(f, "operator `{op}` cannot be applied to `{lhs}` and `{rhs}`")
+            }
+            Self::InvalidUnaryOp { op, ty } => {
+                write!(f, "operator `{op}` cannot be applied to `{ty}`")
+            }
+            Self::InvalidCast { from, to } => {
+                write!(f, "cannot cast `{from}` to `{to}`")
+            }
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct TypeContext {
     named_types: HashMap<String, IrType>,

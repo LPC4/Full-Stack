@@ -11,4 +11,7 @@ pub trait CompilerView {
         state: &mut CompilationState,
         catalog: &mut ProgramCatalog,
     );
+
+    /// Returns a boxed clone of this view.
+    fn clone_box(&self) -> Box<dyn CompilerView>;
 }

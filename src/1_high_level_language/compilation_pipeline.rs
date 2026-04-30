@@ -20,9 +20,7 @@ impl std::fmt::Display for CompilationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::LexerError(msg) => write!(f, "Lexer error: {msg}"),
-            Self::ParseError(err) => {
-                write!(f, "Parse error at pos {}: {}", err.pos, err.message)
-            }
+            Self::ParseError(err) => write!(f, "Parse error: {err}"),
             Self::CompilerError(err) => write!(f, "Compiler error: {err:?}"),
             Self::SemanticErrors(errors) => {
                 writeln!(f, "Semantic errors:")?;
@@ -98,27 +96,22 @@ impl CompilationPipeline {
         })
     }
 
-    fn lex_internal<'a>(&self, source: &'a str) -> Result<Vec<Token<'a>>, CompilationError> {
-        let mut lexer = Lexer::new(source);
-        let mut tokens = Vec::new();
-
-        loop {
-            let token = lexer.next_token();
-            if let Token::Error(ref msg) = token {
-                return Err(CompilationError::LexerError(msg.clone()));
-            }
-            let is_eof = matches!(token, Token::Eof);
-            tokens.push(token);
-            if is_eof {
-                break;
-            }
+    fn lex_internal<'a>(
+        &self,
+        source: &'a str,
+    ) -> Result<Vec<(Token<'a>, crate::high_level_language::token::Span)>, CompilationError> {
+        let token_spans = Lexer::tokenize(source);
+        if let Some((Token::Error(msg), _)) = token_spans.iter().find(|(t, _)| matches!(t, Token::Error(_))) {
+            return Err(CompilationError::LexerError(msg.clone()));
         }
-
-        Ok(tokens)
+        Ok(token_spans)
     }
 
-    pub fn parse(&self, tokens: Vec<Token<'_>>) -> Result<Program, CompilationError> {
-        let mut parser = Parser::new(tokens);
+    pub fn parse(
+        &self,
+        token_spans: Vec<(Token<'_>, crate::high_level_language::token::Span)>,
+    ) -> Result<Program, CompilationError> {
+        let mut parser = Parser::new_with_spans(token_spans);
         parser.parse_program().map_err(CompilationError::ParseError)
     }
 

@@ -14,6 +14,8 @@ pub struct LoweringContext {
     /// Tracks SSA values at the end of each block for phi nodes
     pub block_exit_values: HashMap<String, HashMap<String, IrValue>>,
     pub unsigned_vars: HashSet<String>,
+    /// Name of the function currently being lowered — included in error messages.
+    pub current_function: Option<String>,
 }
 
 impl LoweringContext {
@@ -25,6 +27,7 @@ impl LoweringContext {
             ssa_env: HashMap::new(),
             block_exit_values: HashMap::new(),
             unsigned_vars: HashSet::new(),
+            current_function: None,
         }
     }
 
@@ -35,15 +38,38 @@ impl LoweringContext {
         self.ssa_env.clear();
         self.block_exit_values.clear();
         self.unsigned_vars.clear();
+        self.current_function = None;
     }
 
-    pub fn begin_function(&mut self) {
+    pub fn begin_function(&mut self, name: &str) {
         self.symbols.enter_scope();
         self.unsigned_vars.clear();
+        self.current_function = Some(name.to_owned());
     }
 
     pub fn end_function(&mut self) {
         self.symbols.exit_scope();
+        self.current_function = None;
+    }
+
+    /// Emit a diagnostic error, prefixed with the current function name when available.
+    pub fn error(&mut self, message: impl Into<String>) {
+        let msg = message.into();
+        let full = match &self.current_function {
+            Some(fn_name) => format!("in function '{fn_name}': {msg}"),
+            None => msg,
+        };
+        self.diagnostics.error(full);
+    }
+
+    /// Emit a diagnostic warning, prefixed with the current function name when available.
+    pub fn warn(&mut self, message: impl Into<String>) {
+        let msg = message.into();
+        let full = match &self.current_function {
+            Some(fn_name) => format!("in function '{fn_name}': {msg}"),
+            None => msg,
+        };
+        self.diagnostics.warn(full);
     }
 
     pub fn save_block_exit_values(&mut self, label: IrLabel) {

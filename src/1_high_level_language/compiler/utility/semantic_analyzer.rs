@@ -14,6 +14,7 @@ pub struct SemanticAnalyzer {
     diagnostics: Diagnostics,
     type_mapping: HashMap<String, String>,
     function_signatures: HashMap<String, String>,
+    current_function: Option<String>,
 }
 
 impl SemanticAnalyzer {
@@ -24,7 +25,17 @@ impl SemanticAnalyzer {
             diagnostics: Diagnostics::new(),
             type_mapping: HashMap::new(),
             function_signatures: HashMap::new(),
+            current_function: None,
         }
+    }
+
+    fn error(&mut self, message: impl Into<String>) {
+        let msg = message.into();
+        let full = match &self.current_function {
+            Some(fn_name) => format!("in function '{fn_name}': {msg}"),
+            None => msg,
+        };
+        self.diagnostics.error(full);
     }
 
     pub fn analyze_program(&mut self, program: &Program) -> Result<(), ()> {
@@ -91,7 +102,8 @@ impl SemanticAnalyzer {
 
     fn check_declaration(&mut self, decl: &Declaration) -> Result<(), ()> {
         match &decl.decl {
-            DeclNode::Function { params, body, .. } => {
+            DeclNode::Function { name, params, body, .. } => {
+                self.current_function = Some(name.clone());
                 self.symbols.enter_scope();
 
                 // Register parameters
@@ -111,6 +123,7 @@ impl SemanticAnalyzer {
                 }
 
                 self.symbols.exit_scope();
+                self.current_function = None;
                 Ok(())
             }
             DeclNode::Type { .. } | DeclNode::Const { .. } | DeclNode::Variable { .. } => Ok(()),
@@ -132,7 +145,7 @@ impl SemanticAnalyzer {
             }
             Statement::Return(Some(expr)) => {
                 if let Some(name) = self.returning_local_address_name(expr) {
-                    self.diagnostics.error(format!(
+                    self.error(format!(
                         "Returning address of local `{name}` is not allowed"
                     ));
                     return Err(());
@@ -157,7 +170,7 @@ impl SemanticAnalyzer {
                         && Self::is_literal_source(init_expr);
 
                     if resolved_decl_ty != resolved_init_ty && !is_literal_widening_allowed {
-                        self.diagnostics.error(format!(
+                        self.error(format!(
                             "Type mismatch in variable initialization: expected {}, found {}",
                             self.context.get_type_name(&ir_ty),
                             init_ty
@@ -279,7 +292,7 @@ impl SemanticAnalyzer {
                             let resolved_expected = self.resolve_type_string(expected_ty);
                             let resolved_actual = self.resolve_type_string(&element_ty);
                             if resolved_expected != resolved_actual {
-                                self.diagnostics.error(format!(
+                                self.error(format!(
                                     "array literal element type mismatch: expected {expected_ty}, found {element_ty}"
                                 ));
                                 return Err(());
@@ -331,7 +344,7 @@ impl SemanticAnalyzer {
                                 && expr_ty != "unknown"
                                 && expr_ty != "*unknown"
                             {
-                                self.diagnostics.error(format!(
+                                self.error(format!(
                                     "Type mismatch in struct literal field `{}`: expected {}, found {}",
                                     field.name, annotated_name, expr_ty
                                 ));
@@ -354,7 +367,7 @@ impl SemanticAnalyzer {
                     Ok(result_type) => Ok(result_type),
                     Err(err) => {
                         self.diagnostics
-                            .error(format!("Type error in binary operation: {err:?}"));
+                            .error(format!("Type error in binary operation: {err}"));
                         Err(())
                     }
                 }
@@ -362,7 +375,7 @@ impl SemanticAnalyzer {
             Expression::Unary { op, expr: inner } => {
                 if op == &UnaryOp::AddressOf {
                     if self.contains_dereference(inner) {
-                        self.diagnostics.error(
+                        self.error(
                             "cannot take address of a dereference expression (`&@...` is invalid)"
                                 .to_owned(),
                         );
@@ -388,12 +401,12 @@ impl SemanticAnalyzer {
                             Ok(result_type) => Ok(result_type),
                             Err(err) => {
                                 self.diagnostics
-                                    .error(format!("Type error in unary operation: {err:?}"));
+                                    .error(format!("Type error in unary operation: {err}"));
                                 Err(())
                             }
                         };
                     } else {
-                        self.diagnostics.error(
+                        self.error(
                             "address-of requires an assignable l-value (identifier, field access, or array element)".to_owned(),
                         );
                         Err(())
@@ -404,7 +417,7 @@ impl SemanticAnalyzer {
                         Ok(result_type) => Ok(result_type),
                         Err(err) => {
                             self.diagnostics
-                                .error(format!("Type error in unary operation: {err:?}"));
+                                .error(format!("Type error in unary operation: {err}"));
                             Err(())
                         }
                     }
@@ -422,14 +435,14 @@ impl SemanticAnalyzer {
                             if let IrType::Aggregate(types) = *inner {
                                 types
                             } else {
-                                self.diagnostics.error(format!(
+                                self.error(format!(
                                     "Expected struct type for destructuring, got: {rvalue_type}"
                                 ));
                                 return Err(());
                             }
                         }
                         _ => {
-                            self.diagnostics.error(format!(
+                            self.error(format!(
                                 "Expected struct type for destructuring, got: {rvalue_type}"
                             ));
                             return Err(());
@@ -439,7 +452,7 @@ impl SemanticAnalyzer {
                     // Per spec v1.4.1: all fields must have explicit type annotations
                     for field in fields {
                         let Some(name) = field.name.as_ref() else {
-                            self.diagnostics.error(
+                            self.error(
                                 "Struct destructuring requires explicit variable names".to_owned(),
                             );
                             return Err(());
@@ -447,7 +460,7 @@ impl SemanticAnalyzer {
 
                         // Type annotation is required per spec
                         let Some(ref annotated_ty) = field.ty else {
-                            self.diagnostics.error(format!(
+                            self.error(format!(
                                 "Struct destructuring field `{name}` requires explicit type annotation"
                             ));
                             return Err(());
@@ -465,7 +478,7 @@ impl SemanticAnalyzer {
                             .unwrap_or_else(|| "unknown".to_owned());
 
                         if inferred_ty == "unknown" {
-                            self.diagnostics.error(format!(
+                            self.error(format!(
                                 "Field `{}` not found in struct type `{}`. Available fields: {}",
                                 name,
                                 rvalue_type,
@@ -482,7 +495,7 @@ impl SemanticAnalyzer {
                         let resolved_inferred_ty = self.resolve_type_string(&inferred_ty);
 
                         if resolved_ty_to_use != resolved_inferred_ty && inferred_ty != "unknown" {
-                            self.diagnostics.error(format!(
+                            self.error(format!(
                                 "Type mismatch in struct destructuring field `{name}`: expected {inferred_ty}, found {ty_to_use}"
                             ));
                             return Err(());
@@ -510,7 +523,7 @@ impl SemanticAnalyzer {
                 // Validate that the cast is legal
                 let source_ir = self.parse_type_string(&source_type);
                 if !self.is_valid_cast(&source_ir, &target_ir) {
-                    self.diagnostics.error(format!(
+                    self.error(format!(
                         "Invalid cast from `{source_type}` to `{target_name}`"
                     ));
                     return Err(());
@@ -746,7 +759,7 @@ impl SemanticAnalyzer {
                 Ok("*unknown".to_owned())
             }
             _ => {
-                self.diagnostics.error(format!(
+                self.error(format!(
                     "indexing non-indexable type `{base_type}` (resolved: `{resolved:?}`)"
                 ));
                 Err(())
@@ -764,7 +777,7 @@ impl SemanticAnalyzer {
                     let info = self.symbols.lookup(name).unwrap();
                     let existing_ty = self.context.get_type_name(&info.ty);
                     if existing_ty != ty {
-                        self.diagnostics.error(format!(
+                        self.error(format!(
                             "Type mismatch in reassignment of `{name}`: expected {existing_ty}, found {ty}"
                         ));
                         return Err(());
@@ -789,7 +802,7 @@ impl SemanticAnalyzer {
                 self.check_assign_target(target)
             }
             AssignTarget::StructDestructure(_) => {
-                self.diagnostics.error(
+                self.error(
                     "Nested struct destructuring not supported in semantic analysis".to_owned(),
                 );
                 Err(())

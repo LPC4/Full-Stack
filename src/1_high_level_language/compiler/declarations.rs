@@ -61,7 +61,7 @@ impl HighLevelCompiler {
                 ty: _ty,
                 init: _init,
             } => {
-                self.context.diagnostics.warn(format!(
+                self.context.warn(format!(
                     "global variable `{name}` lowering emitted as static placeholder"
                 ));
                 Ok(())
@@ -73,7 +73,6 @@ impl HighLevelCompiler {
                     }
                     Err(err) => {
                         self.context
-                            .diagnostics
                             .error(format!("const `{name}` initialization failed: {err}"));
                     }
                 }
@@ -96,7 +95,7 @@ impl HighLevelCompiler {
                 if *is_extern {
                     // External functions are provided by the linker (e.g. libc).
                     // The signature is already recorded.
-                    self.context.diagnostics.warn(format!(
+                    self.context.warn(format!(
                         "extern function `{final_name}` – definition omitted (linker must provide it)"
                     ));
                     return Ok(());
@@ -117,7 +116,7 @@ impl HighLevelCompiler {
                     log::debug!("Stored function `{name}` for compile-time evaluation");
                 }
 
-                self.context.begin_function();
+                self.context.begin_function(name);
                 self.next_temp = 0;
                 self.current_blocks.clear();
                 self.current_block = None;

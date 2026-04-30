@@ -1,6 +1,7 @@
 use crate::view::highlight_assembly;
 use crate::view::{CompilationState, CompilerView, ProgramCatalog};
 
+#[derive(Default, Clone)]
 pub struct AssemblyView;
 
 impl CompilerView for AssemblyView {
@@ -22,5 +23,9 @@ impl CompilerView for AssemblyView {
             .show(ui, |ui| {
                 ui.label(galley);
             });
+    }
+
+    fn clone_box(&self) -> Box<dyn CompilerView> {
+        Box::new(self.clone())
     }
 }

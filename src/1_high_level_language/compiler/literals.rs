@@ -90,7 +90,7 @@ impl HighLevelCompiler {
         let element_ty = lowered_elements[0].ty.clone();
         for (index, lowered) in lowered_elements.iter().enumerate().skip(1) {
             if self.resolve_named_type(&lowered.ty) != self.resolve_named_type(&element_ty) {
-                self.context.diagnostics.error(format!(
+                self.context.error(format!(
                     "array literal element {} has type `{}`, but expected `{}`",
                     index, lowered.ty, element_ty
                 ));
@@ -271,7 +271,7 @@ impl HighLevelCompiler {
         let pointee_ty = match &addr.ty {
             IrType::Pointer(inner) => self.resolve_named_type(inner),
             other => {
-                self.context.diagnostics.error(format!(
+                self.context.error(format!(
                     "destructuring source type must be a pointer to an aggregate, got {}",
                     other
                 ));
@@ -282,7 +282,7 @@ impl HighLevelCompiler {
         let agg_fields = match pointee_ty {
             IrType::Aggregate(fields) => fields.clone(),
             other => {
-                self.context.diagnostics.error(format!(
+                self.context.error(format!(
                     "destructuring source must point to an aggregate, got pointer to {}",
                     other
                 ));
@@ -306,7 +306,7 @@ impl HighLevelCompiler {
                 let &(field_offset, ref field_ty) = match offset_map.get(name.as_str()) {
                     Some(v) => v,
                     None => {
-                        self.context.diagnostics.error(format!(
+                        self.context.error(format!(
                             "field `{}` not found in aggregate type",
                             name
                         ));
@@ -328,7 +328,7 @@ impl HighLevelCompiler {
                     if let IrValue::Register(var_ptr) = &var_info.value {
                         var_ptr.clone()
                     } else {
-                        self.context.diagnostics.error(format!(
+                        self.context.error(format!(
                             "variable `{}` is not register-backed",
                             name
                         ));

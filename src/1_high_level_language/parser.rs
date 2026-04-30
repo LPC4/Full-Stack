@@ -3,23 +3,40 @@ use super::ast::{
     Literal, Parameter, PrimaryExpr, Program, ReturnType, Statement, StructDestructureField, Type,
     UnaryOp,
 };
-use super::token::Token;
+use super::token::{Span, Token};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParserError {
     pub message: String,
-    pub pos: usize,
+    pub span: Span,
+}
+
+impl std::fmt::Display for ParserError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.span.location(), self.message)?;
+        if !self.span.source_line.is_empty() {
+            write!(f, "\n  | {}", self.span.source_line)?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct Parser<'a> {
     pub tokens: Vec<Token<'a>>,
+    pub spans: Vec<Span>,
     pub pos: usize,
 }
 
 impl<'a> Parser<'a> {
     pub fn new(tokens: Vec<Token<'a>>) -> Self {
-        Self { tokens, pos: 0 }
+        let spans = vec![Span::default(); tokens.len()];
+        Self { tokens, spans, pos: 0 }
+    }
+
+    pub fn new_with_spans(token_spans: Vec<(Token<'a>, Span)>) -> Self {
+        let (tokens, spans): (Vec<_>, Vec<_>) = token_spans.into_iter().unzip();
+        Self { tokens, spans, pos: 0 }
     }
 
     pub fn parse_program(&mut self) -> Result<Program, ParserError> {
@@ -1405,17 +1422,23 @@ impl<'a> Parser<'a> {
         matches!(self.peek(), Some(Token::Eof) | None)
     }
 
+    fn current_span(&self) -> Span {
+        // Use the span of the current (not yet consumed) token, or the last one.
+        let idx = self.pos.min(self.spans.len().saturating_sub(1));
+        self.spans.get(idx).cloned().unwrap_or_default()
+    }
+
     fn error(&self, message: &str) -> ParserError {
         ParserError {
             message: message.to_owned(),
-            pos: self.pos,
+            span: self.current_span(),
         }
     }
 
     fn error_with_token(&self, message: &str, token: &Token<'a>) -> ParserError {
         ParserError {
             message: format!("{message}: {token:?}"),
-            pos: self.pos,
+            span: self.current_span(),
         }
     }
 }
