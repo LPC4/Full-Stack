@@ -12,8 +12,8 @@ main: () -> i32 {
     outer: Box<Box<i32>>* = new(Box<Box<i32>>)
     @outer.value = @inner
     
-    ; Access nested value through double dereference
-    result: i32 = @(@outer.value).value
+    ; Access nested value through outer deref then field access
+    result: i32 = (@outer.value).value
     
     ; Cleanup
     free(inner)

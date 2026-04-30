@@ -13,7 +13,7 @@ main: () -> i32 {
     printf("truncated (i8) = %d\n".data, i32(truncated))
 
     arr: i32[3] = [10, 20, 30]
-    base: i32* = &arr[0]               ; pointer to first element
+    base: i32* = arr[0]               ; pointer to first element
     printf("arr[0]         = %d\n".data, @base)
 
     ; Cast i32* -> u8* (byte pointer) and add offset

@@ -523,14 +523,11 @@ impl<'a> Parser<'a> {
         }
 
         let mut expr = self.parse_primary()?;
+        expr = self.parse_postfix(expr)?;   // apply postfix first (binds tighter)
         for op in ops.into_iter().rev() {
-            expr = Expression::Unary {
-                op,
-                expr: Box::new(expr),
-            };
+            expr = Expression::Unary { op, expr: Box::new(expr) };
         }
-
-        self.parse_postfix(expr)
+        Ok(expr)
     }
 
     fn parse_postfix(&mut self, mut expr: Expression) -> Result<Expression, ParserError> {

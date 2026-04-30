@@ -313,7 +313,22 @@ impl HighLevelCompiler {
                                 ptr: slot_reg,
                                 offset: None,
                             });
-                            (loaded, fields)
+                            // ptr.field always yields *field_T per spec.
+                            // Return the field address; @ is required to load the value.
+                            let (offset, field_ty) =
+                                self.aggregate_field_offset_and_type(&fields, field)?;
+                            let dest = self.new_temp();
+                            self.push_instruction(IrInstruction::Offset {
+                                dest: dest.clone(),
+                                ty: field_ty.clone(),
+                                ptr: loaded,
+                                bytes: IrValue::Integer(offset),
+                            });
+                            return Some(LoweredValue {
+                                value: IrValue::Register(dest),
+                                ty: IrType::Pointer(Box::new(field_ty)),
+                                is_unsigned: false,
+                            });
                         } else {
                             return None;
                         }

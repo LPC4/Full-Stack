@@ -666,11 +666,11 @@ impl SemanticAnalyzer {
 
         let resolved = self.resolve_type_string(base_type);
 
-        let fields = match resolved {
-            IrType::Aggregate(fields) => fields,
+        let (fields, through_pointer) = match resolved {
+            IrType::Aggregate(fields) => (fields, false),
             IrType::Pointer(inner) => {
                 if let IrType::Aggregate(fields) = *inner {
-                    fields
+                    (fields, true)
                 } else {
                     self.diagnostics
                         .error(format!("field access on non-aggregate type `{base_type}`"));
@@ -685,7 +685,12 @@ impl SemanticAnalyzer {
         };
 
         if let Some((_, field_ty)) = fields.iter().find(|(name, _)| name == field) {
-            Ok(self.context.get_type_name(field_ty))
+            let field_type_name = self.context.get_type_name(field_ty);
+            if through_pointer {
+                Ok(format!("*{field_type_name}"))
+            } else {
+                Ok(field_type_name)
+            }
         } else {
             self.diagnostics
                 .error(format!("unknown field `{field}` for type `{base_type}`"));
@@ -711,7 +716,7 @@ impl SemanticAnalyzer {
             return Ok(format!("*{inner}"));
         }
 
-        // Handle direct array: T[N] → *T
+        // Handle direct array: T[N] → *T (stack arrays follow the same pointer-element rule)
         if let Some((element, _rest)) = base_type.split_once('[') {
             return Ok(format!("*{element}"));
         }
