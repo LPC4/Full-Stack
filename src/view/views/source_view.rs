@@ -79,7 +79,9 @@ impl CompilerView for SourceView {
                         for line in error_text.lines() {
                             if line.trim().is_empty() {
                                 ui.add_space(2.0);
-                            } else if line.trim_start().starts_with("- ") || line.trim_start().starts_with("  -") {
+                            } else if line.trim_start().starts_with("- ")
+                                || line.trim_start().starts_with("  -")
+                            {
                                 // Bullet error entries
                                 ui.horizontal(|ui| {
                                     ui.add_space(8.0);

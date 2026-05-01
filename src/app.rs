@@ -22,7 +22,7 @@ impl Clone for ViewWrapper {
     fn clone(&self) -> Self {
         Self {
             id: self.id,
-            view: self.view.clone_box()
+            view: self.view.clone_box(),
         }
     }
 }
@@ -107,15 +107,15 @@ impl FullStackApp {
 
     fn reset_layout(&mut self) {
         let views = vec![
-            ViewWrapper::new(Box::new(SourceView), &mut self.next_view_id),        // 0
-            ViewWrapper::new(Box::new(TokensView), &mut self.next_view_id),        // 1
-            ViewWrapper::new(Box::new(AstView), &mut self.next_view_id),           // 2
-            ViewWrapper::new(Box::new(IrView), &mut self.next_view_id),            // 3
-            ViewWrapper::new(Box::new(AssemblyView), &mut self.next_view_id),      // 4
-            ViewWrapper::new(Box::new(CfgView), &mut self.next_view_id),           // 5
+            ViewWrapper::new(Box::new(SourceView), &mut self.next_view_id), // 0
+            ViewWrapper::new(Box::new(TokensView), &mut self.next_view_id), // 1
+            ViewWrapper::new(Box::new(AstView), &mut self.next_view_id),    // 2
+            ViewWrapper::new(Box::new(IrView), &mut self.next_view_id),     // 3
+            ViewWrapper::new(Box::new(AssemblyView), &mut self.next_view_id), // 4
+            ViewWrapper::new(Box::new(CfgView), &mut self.next_view_id),    // 5
             ViewWrapper::new(Box::new(StackView::default()), &mut self.next_view_id), // 6
             ViewWrapper::new(Box::new(MemoryMapView::default()), &mut self.next_view_id), // 7
-            ViewWrapper::new(Box::new(ExecutionView), &mut self.next_view_id),     // 8
+            ViewWrapper::new(Box::new(ExecutionView), &mut self.next_view_id), // 8
         ];
 
         // Source is the first view → root
@@ -156,7 +156,8 @@ impl FullStackApp {
 
             if let Token::Error(message) = &token {
                 self.compilation_state.tokens = format!("LEXER ERROR: {message}");
-                self.compilation_state.set_error(format!("Lexer error: {message}"));
+                self.compilation_state
+                    .set_error(format!("Lexer error: {message}"));
                 self.compilation_state.just_compiled = false;
                 return;
             }

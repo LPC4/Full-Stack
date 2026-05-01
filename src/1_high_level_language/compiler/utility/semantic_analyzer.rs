@@ -102,7 +102,9 @@ impl SemanticAnalyzer {
 
     fn check_declaration(&mut self, decl: &Declaration) -> Result<(), ()> {
         match &decl.decl {
-            DeclNode::Function { name, params, body, .. } => {
+            DeclNode::Function {
+                name, params, body, ..
+            } => {
                 self.current_function = Some(name.clone());
                 self.symbols.enter_scope();
 

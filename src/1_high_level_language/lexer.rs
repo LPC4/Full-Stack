@@ -35,7 +35,11 @@ impl<'a> Lexer<'a> {
                 .get((span_line as usize).saturating_sub(1))
                 .unwrap_or(&"")
                 .to_string();
-            let span = Span { line: span_line, col: span_col, source_line };
+            let span = Span {
+                line: span_line,
+                col: span_col,
+                source_line,
+            };
             let is_eof = matches!(tok, Token::Eof);
             out.push((tok, span));
             if is_eof {

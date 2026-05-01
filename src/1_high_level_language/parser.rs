@@ -31,12 +31,20 @@ pub struct Parser<'a> {
 impl<'a> Parser<'a> {
     pub fn new(tokens: Vec<Token<'a>>) -> Self {
         let spans = vec![Span::default(); tokens.len()];
-        Self { tokens, spans, pos: 0 }
+        Self {
+            tokens,
+            spans,
+            pos: 0,
+        }
     }
 
     pub fn new_with_spans(token_spans: Vec<(Token<'a>, Span)>) -> Self {
         let (tokens, spans): (Vec<_>, Vec<_>) = token_spans.into_iter().unzip();
-        Self { tokens, spans, pos: 0 }
+        Self {
+            tokens,
+            spans,
+            pos: 0,
+        }
     }
 
     pub fn parse_program(&mut self) -> Result<Program, ParserError> {
@@ -540,9 +548,12 @@ impl<'a> Parser<'a> {
         }
 
         let mut expr = self.parse_primary()?;
-        expr = self.parse_postfix(expr)?;   // apply postfix first (binds tighter)
+        expr = self.parse_postfix(expr)?; // apply postfix first (binds tighter)
         for op in ops.into_iter().rev() {
-            expr = Expression::Unary { op, expr: Box::new(expr) };
+            expr = Expression::Unary {
+                op,
+                expr: Box::new(expr),
+            };
         }
         Ok(expr)
     }

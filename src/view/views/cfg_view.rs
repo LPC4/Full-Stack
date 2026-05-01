@@ -143,7 +143,8 @@ fn draw_cfg(ui: &mut egui::Ui, blocks: &[BasicBlock]) {
         ui.available_width()
     } else {
         content_width
-    }.max(content_width);
+    }
+    .max(content_width);
 
     let (rect, _resp) = ui.allocate_exact_size(
         Vec2::new(available_width, total_height),

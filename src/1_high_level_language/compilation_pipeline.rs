@@ -101,7 +101,10 @@ impl CompilationPipeline {
         source: &'a str,
     ) -> Result<Vec<(Token<'a>, crate::high_level_language::token::Span)>, CompilationError> {
         let token_spans = Lexer::tokenize(source);
-        if let Some((Token::Error(msg), _)) = token_spans.iter().find(|(t, _)| matches!(t, Token::Error(_))) {
+        if let Some((Token::Error(msg), _)) = token_spans
+            .iter()
+            .find(|(t, _)| matches!(t, Token::Error(_)))
+        {
             return Err(CompilationError::LexerError(msg.clone()));
         }
         Ok(token_spans)

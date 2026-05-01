@@ -1,10 +1,10 @@
-use log::warn;
-use crate::high_level_language::ast::StructDestructureField;
 use super::{
     BinaryOp, Expression, FloatWidth, HighLevelCompiler, IntWidth, IrCmpOp, IrGlobalString,
     IrInstruction, IrMathOp, IrRegister, IrType, IrUnaryOp, IrValue, Literal, LoweredValue,
     UnaryOp,
 };
+use crate::high_level_language::ast::StructDestructureField;
+use log::warn;
 
 impl HighLevelCompiler {
     pub(super) fn lower_literal(&mut self, literal: &Literal) -> LoweredValue {
@@ -260,9 +260,10 @@ impl HighLevelCompiler {
         let ptr_reg = match &addr.value {
             IrValue::Register(r) => r.clone(),
             other => {
-                self.context
-                    .diagnostics
-                    .error(format!("destructuring source must be a register pointer, got {:?}", other));
+                self.context.diagnostics.error(format!(
+                    "destructuring source must be a register pointer, got {:?}",
+                    other
+                ));
                 return None;
             }
         };
@@ -306,10 +307,8 @@ impl HighLevelCompiler {
                 let (field_offset, field_ty) = match offset_map.get(name.as_str()) {
                     Some(v) => v,
                     None => {
-                        self.context.error(format!(
-                            "field `{}` not found in aggregate type",
-                            name
-                        ));
+                        self.context
+                            .error(format!("field `{}` not found in aggregate type", name));
                         return None;
                     }
                 };
@@ -328,10 +327,8 @@ impl HighLevelCompiler {
                     if let IrValue::Register(var_ptr) = &var_info.value {
                         var_ptr.clone()
                     } else {
-                        self.context.error(format!(
-                            "variable `{}` is not register-backed",
-                            name
-                        ));
+                        self.context
+                            .error(format!("variable `{}` is not register-backed", name));
                         return None;
                     }
                 } else {

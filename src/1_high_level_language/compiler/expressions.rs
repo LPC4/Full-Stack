@@ -584,11 +584,7 @@ impl HighLevelCompiler {
         }
     }
 
-    fn lower_cast(
-        &mut self,
-        target_ty: &Type,
-        expr: &Expression,
-    ) -> Option<LoweredValue> {
+    fn lower_cast(&mut self, target_ty: &Type, expr: &Expression) -> Option<LoweredValue> {
         let source_value = self.lower_expr(expr, EvalMode::Value)?;
         let target_ir = self.lower_type(target_ty);
 
@@ -709,9 +705,9 @@ impl HighLevelCompiler {
     /// Convert an `AssignTarget` back into an `Expression` so it can be lowered with `lower_expr`.
     pub(super) fn assign_target_to_expression(target: &AssignTarget) -> Option<Expression> {
         match target {
-            AssignTarget::Identifier(name) => Some(Expression::Primary(
-                PrimaryExpr::Identifier(name.clone()),
-            )),
+            AssignTarget::Identifier(name) => {
+                Some(Expression::Primary(PrimaryExpr::Identifier(name.clone())))
+            }
             AssignTarget::Dereference(inner) => {
                 let inner_expr = Self::assign_target_to_expression(inner)?;
                 Some(Expression::Unary {
@@ -721,21 +717,17 @@ impl HighLevelCompiler {
             }
             AssignTarget::FieldAccess { expr, field } => {
                 let base_expr = Self::assign_target_to_expression(expr)?;
-                Some(Expression::Primary(
-                    PrimaryExpr::FieldAccess {
-                        expr: Box::new(base_expr),
-                        field: field.clone(),
-                    },
-                ))
+                Some(Expression::Primary(PrimaryExpr::FieldAccess {
+                    expr: Box::new(base_expr),
+                    field: field.clone(),
+                }))
             }
             AssignTarget::ArrayIndex { expr, index } => {
                 let base_expr = Self::assign_target_to_expression(expr)?;
-                Some(Expression::Primary(
-                    PrimaryExpr::ArrayIndex {
-                        expr: Box::new(base_expr),
-                        index: index.clone(),
-                    },
-                ))
+                Some(Expression::Primary(PrimaryExpr::ArrayIndex {
+                    expr: Box::new(base_expr),
+                    index: index.clone(),
+                }))
             }
             AssignTarget::StructDestructure(_) => None,
         }

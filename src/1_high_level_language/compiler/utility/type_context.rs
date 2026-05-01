@@ -32,7 +32,10 @@ impl std::fmt::Display for TypeCheckError {
             }
             Self::UndefinedType(name) => write!(f, "undefined type `{name}`"),
             Self::InvalidOperation { op, lhs, rhs } => {
-                write!(f, "operator `{op}` cannot be applied to `{lhs}` and `{rhs}`")
+                write!(
+                    f,
+                    "operator `{op}` cannot be applied to `{lhs}` and `{rhs}`"
+                )
             }
             Self::InvalidUnaryOp { op, ty } => {
                 write!(f, "operator `{op}` cannot be applied to `{ty}`")
