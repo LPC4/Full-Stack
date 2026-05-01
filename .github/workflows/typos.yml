@@ -1,10 +1,22 @@
 name: Spell Check
-on: [pull_request]
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: 'Choose the runner to use'
+        type: choice
+        required: false
+        options:
+          - ubuntu-latest
+          - self-hosted
+        default: ubuntu-latest
 
 jobs:
   run:
     name: Spell Check
-    runs-on: self-hosted
+    runs-on: ${{ inputs.runner || vars.RUNNER_TYPE || 'ubuntu-latest' }}
     steps:
       - name: Checkout Actions Repository
         uses: actions/checkout@v4

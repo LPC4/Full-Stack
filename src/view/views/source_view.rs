@@ -35,9 +35,10 @@ impl CompilerView for SourceView {
             .fill(ui.visuals().extreme_bg_color)
             .inner_margin(4.0);
 
+        let panel_id = ui.id();
         frame.show(ui, |ui| {
             egui::ScrollArea::both()
-                .id_salt("source_editor_scroll")
+                .id_salt(panel_id.with("source_editor_scroll"))
                 .auto_shrink([false; 2])
                 .max_height(editor_height)
                 .show(ui, |ui| {
@@ -71,7 +72,7 @@ impl CompilerView for SourceView {
                 ui.add_space(4.0);
 
                 egui::ScrollArea::vertical()
-                    .id_salt("error_scroll")
+                    .id_salt(panel_id.with("error_scroll"))
                     .max_height(error_panel_height - 30.0)
                     .auto_shrink([false; 2])
                     .show(ui, |ui| {

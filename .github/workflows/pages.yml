@@ -4,6 +4,15 @@ on:
   push:
     branches: [ main ]
   workflow_dispatch:
+    inputs:
+      runner:
+        description: 'Choose the runner to use'
+        type: choice
+        required: false
+        options:
+          - ubuntu-latest
+          - self-hosted
+        default: ubuntu-latest
 
 permissions:
   contents: read
@@ -16,7 +25,7 @@ concurrency:
 
 jobs:
   build-and-deploy:
-    runs-on: self-hosted
+    runs-on: ${{ inputs.runner || vars.RUNNER_TYPE || 'ubuntu-latest' }}
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

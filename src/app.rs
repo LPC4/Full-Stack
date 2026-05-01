@@ -66,6 +66,8 @@ pub struct FullStackApp {
     #[serde(skip)]
     rename_id: Option<String>,
     #[serde(skip)]
+    rename_buffer: String,
+    #[serde(skip)]
     pending_new_view: Option<ViewWrapper>,
     #[serde(skip)]
     next_view_id: u64,
@@ -81,6 +83,7 @@ impl Default for FullStackApp {
             pipeline: CompilationPipeline::new(),
             wsl_receiver: None,
             rename_id: None,
+            rename_buffer: String::new(),
             pending_new_view: None,
             next_view_id: 0,
         };
@@ -100,12 +103,6 @@ impl FullStackApp {
         app.reset_layout();
         app.compile();
         app
-    }
-
-    fn next_id(&mut self) -> u64 {
-        let id = self.next_view_id;
-        self.next_view_id += 1;
-        id
     }
 
     fn reset_layout(&mut self) {
@@ -248,28 +245,16 @@ impl FullStackApp {
                     let is_rename_active = self.rename_id.as_deref() == Some(id.as_str());
 
                     if is_rename_active {
-                        let mut new_name = name.clone();
-                        let response = ui.text_edit_singleline(&mut new_name);
-                        // Request focus so the keyboard works immediately
+                        let response = ui.text_edit_singleline(&mut self.rename_buffer);
                         response.request_focus();
 
-                        // Commit on Enter or when focus is lost
-                        if response.lost_focus()
-                            || ui.input(|i| i.key_pressed(egui::Key::Enter))
-                        {
+                        let enter_pressed = ui.input(|i| i.key_pressed(egui::Key::Enter));
+                        if response.lost_focus() || enter_pressed {
                             if let Some(program) = self.catalog.current_program_mut() {
                                 if program.id == *id {
-                                    program.name = new_name.trim().to_string();
+                                    program.name = self.rename_buffer.trim().to_string();
                                 }
                             }
-                            self.rename_id = None;
-                            ui.ctx().request_repaint();
-                        }
-                        // Cancel only if a click happens *outside* the text field,
-                        // and only after this very frame (so the double‑click itself won't cancel)
-                        if ui.input(|i| i.pointer.any_click()) && !response.hovered() {
-                            // But we must ignore the click that started the rename.
-                            // That click happened *last* frame, so it's safe now.
                             self.rename_id = None;
                             ui.ctx().request_repaint();
                         }
@@ -283,6 +268,7 @@ impl FullStackApp {
                         }
 
                         if response.double_clicked() && kind == ProgramKind::Custom {
+                            self.rename_buffer = name.clone();
                             self.rename_id = Some(id.clone());
                             ui.ctx().request_repaint();
                         }
@@ -441,7 +427,7 @@ impl eframe::App for FullStackApp {
         egui::CentralPanel::default().show_inside(ui, |ui| {
             egui_dock::DockArea::new(&mut self.dock)
                 .show_add_buttons(false)
-                .show_close_buttons(false)
+                .show_close_buttons(true)
                 .show_inside(
                     ui,
                     &mut DockTabViewer {

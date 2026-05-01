@@ -5,13 +5,21 @@ on:
     branches: [ main ]
   pull_request:
   workflow_dispatch:
+    inputs:
+      runner:
+        description: 'Choose the runner to use'
+        type: choice
+        required: false
+        options:
+          - ubuntu-latest
+          - self-hosted
+        default: ubuntu-latest
 
 jobs:
   check-and-test:
     name: Lint, Check, and Test
-    runs-on: self-hosted
+    runs-on: ${{ inputs.runner || vars.RUNNER_TYPE || 'ubuntu-latest' }}
 
-    # Gives the runner permission to push code
     permissions:
       contents: write
 
