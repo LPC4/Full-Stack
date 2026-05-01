@@ -1,17 +1,16 @@
+use super::AssemblerError;
+use super::layout::Layout;
+use super::output::AssembledOutput;
+use super::section::{SectionData, SectionKind};
+use super::token::{AsmToken, BranchKind};
 /// Pass 2: encode the typed token stream to bytes, resolving all label references.
 ///
 /// At this point the `SymbolTable` from the layout pass contains every label's
 /// section-relative address.  We convert those to absolute addresses by adding
 /// the running section base, then compute PC-relative branch/jump offsets and
 /// encode the final machine words.
-
 use crate::assembly_language::real::RealInstruction;
 use crate::assembly_language::riscv::rv64i::{Beq, Bge, Bgeu, Blt, Bltu, Bne, Jal as JalInst};
-use super::layout::Layout;
-use super::output::AssembledOutput;
-use super::section::{SectionData, SectionKind};
-use super::token::{AsmToken, BranchKind};
-use super::AssemblerError;
 
 /// Encode all tokens into an `AssembledOutput` using layout information for
 /// label resolution.
@@ -38,8 +37,7 @@ pub fn encode(tokens: &[AsmToken], layout: &Layout) -> Result<AssembledOutput, A
     // Walk tokens and emit bytes.
     let mut current_kind = SectionKind::Text;
     // Current absolute address of the next byte to be emitted.
-    let mut current_addr: u64 =
-        section_bases.get(&current_kind).copied().unwrap_or(0);
+    let mut current_addr: u64 = section_bases.get(&current_kind).copied().unwrap_or(0);
 
     for token in tokens {
         match token {
@@ -79,7 +77,12 @@ pub fn encode(tokens: &[AsmToken], layout: &Layout) -> Result<AssembledOutput, A
                 );
             }
 
-            AsmToken::Branch { kind, rs1, rs2, target } => {
+            AsmToken::Branch {
+                kind,
+                rs1,
+                rs2,
+                target,
+            } => {
                 let word = encode_branch(kind, *rs1, *rs2, target, current_addr, &layout.symbols)?;
                 push_u32(
                     sections
@@ -107,8 +110,8 @@ pub fn encode(tokens: &[AsmToken], layout: &Layout) -> Result<AssembledOutput, A
                     .or_insert_with(|| SectionData::new(current_kind.clone()));
                 let alignment = 1usize << n;
                 sec.align_to(alignment);
-                current_addr = section_bases.get(&current_kind).copied().unwrap_or(0)
-                    + sec.current_offset();
+                current_addr =
+                    section_bases.get(&current_kind).copied().unwrap_or(0) + sec.current_offset();
             }
 
             AsmToken::Balign(n) => {
@@ -116,8 +119,8 @@ pub fn encode(tokens: &[AsmToken], layout: &Layout) -> Result<AssembledOutput, A
                     .entry(current_kind.clone())
                     .or_insert_with(|| SectionData::new(current_kind.clone()));
                 sec.align_to(*n);
-                current_addr = section_bases.get(&current_kind).copied().unwrap_or(0)
-                    + sec.current_offset();
+                current_addr =
+                    section_bases.get(&current_kind).copied().unwrap_or(0) + sec.current_offset();
             }
 
             AsmToken::Space(n) => {
@@ -201,9 +204,9 @@ fn encode_branch(
     current_addr: u64,
     symbols: &super::symbol_table::SymbolTable,
 ) -> Result<u32, AssemblerError> {
-    let target_addr = symbols.resolve(target).ok_or_else(|| {
-        AssemblerError::new(format!("undefined label `{target}`"))
-    })?;
+    let target_addr = symbols
+        .resolve(target)
+        .ok_or_else(|| AssemblerError::new(format!("undefined label `{target}`")))?;
 
     let offset = (target_addr as i64) - (current_addr as i64);
     if offset & 1 != 0 {
@@ -219,10 +222,10 @@ fn encode_branch(
     let off = offset as i32;
 
     let inst: RealInstruction = match kind {
-        BranchKind::Beq  => RealInstruction::Beq(Beq::new(rs1, rs2, off)),
-        BranchKind::Bne  => RealInstruction::Bne(Bne::new(rs1, rs2, off)),
-        BranchKind::Blt  => RealInstruction::Blt(Blt::new(rs1, rs2, off)),
-        BranchKind::Bge  => RealInstruction::Bge(Bge::new(rs1, rs2, off)),
+        BranchKind::Beq => RealInstruction::Beq(Beq::new(rs1, rs2, off)),
+        BranchKind::Bne => RealInstruction::Bne(Bne::new(rs1, rs2, off)),
+        BranchKind::Blt => RealInstruction::Blt(Blt::new(rs1, rs2, off)),
+        BranchKind::Bge => RealInstruction::Bge(Bge::new(rs1, rs2, off)),
         BranchKind::Bltu => RealInstruction::Bltu(Bltu::new(rs1, rs2, off)),
         BranchKind::Bgeu => RealInstruction::Bgeu(Bgeu::new(rs1, rs2, off)),
     };
@@ -235,9 +238,9 @@ fn encode_jal(
     current_addr: u64,
     symbols: &super::symbol_table::SymbolTable,
 ) -> Result<u32, AssemblerError> {
-    let target_addr = symbols.resolve(target).ok_or_else(|| {
-        AssemblerError::new(format!("undefined label `{target}`"))
-    })?;
+    let target_addr = symbols
+        .resolve(target)
+        .ok_or_else(|| AssemblerError::new(format!("undefined label `{target}`")))?;
 
     let offset = (target_addr as i64) - (current_addr as i64);
     if offset & 1 != 0 {

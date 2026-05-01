@@ -7,7 +7,6 @@
 /// | 0 — Parse    | `parser.rs`   | `RvInstruction` → `Vec<AsmToken>` (typed, no raw strings) |
 /// | 1 — Layout   | `layout.rs`   | Walk tokens, compute every label's section-relative address |
 /// | 2 — Encode   | `encode.rs`   | Emit bytes, resolve branch/jump offsets via symbol table |
-
 pub mod directive;
 pub mod encode;
 pub mod layout;
@@ -35,7 +34,9 @@ impl std::fmt::Display for AssemblerError {
 
 impl AssemblerError {
     pub(crate) fn new(msg: impl Into<String>) -> Self {
-        Self { message: msg.into() }
+        Self {
+            message: msg.into(),
+        }
     }
 }
 

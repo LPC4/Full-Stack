@@ -1,14 +1,13 @@
+use super::directive::Directive;
+use super::reg_parse::parse_int_reg;
+use super::section::SectionKind;
+use super::token::{AsmToken, BranchKind};
 /// Pass 0: parse `Vec<RvInstruction>` into `Vec<AsmToken>`.
 ///
 /// `RvInstruction` carries some untyped raw strings (branches emitted via
 /// `emit_raw`, data-section directives, etc.).  This pass converts every token
 /// into a fully-typed `AsmToken` so subsequent passes never touch raw strings.
-
 use crate::assembly_language::rv_instruction::RvInstruction;
-use super::directive::Directive;
-use super::reg_parse::parse_int_reg;
-use super::section::SectionKind;
-use super::token::{AsmToken, BranchKind};
 
 /// Convert a `RvInstruction` stream to a typed `AsmToken` stream.
 ///
@@ -59,7 +58,9 @@ fn parse_directive_or_instruction(raw: &str, out: &mut Vec<AsmToken>) {
         if let Some(dir) = Directive::parse(trimmed) {
             push_directive(dir, out);
         } else {
-            out.push(AsmToken::Comment(format!("unrecognised directive: {trimmed}")));
+            out.push(AsmToken::Comment(format!(
+                "unrecognised directive: {trimmed}"
+            )));
         }
         return;
     }
@@ -70,7 +71,9 @@ fn parse_directive_or_instruction(raw: &str, out: &mut Vec<AsmToken>) {
         if let Some(tok) = parse_instruction_line(trimmed) {
             out.push(tok);
         } else {
-            out.push(AsmToken::Comment(format!("unrecognised instruction: {trimmed}")));
+            out.push(AsmToken::Comment(format!(
+                "unrecognised instruction: {trimmed}"
+            )));
         }
         return;
     }
@@ -147,7 +150,12 @@ fn parse_branch(kind: BranchKind, operands: &str) -> Option<AsmToken> {
     let rs1 = parse_int_reg(parts[0].trim())?;
     let rs2 = parse_int_reg(parts[1].trim())?;
     let target = parts[2].trim().to_owned();
-    Some(AsmToken::Branch { kind, rs1, rs2, target })
+    Some(AsmToken::Branch {
+        kind,
+        rs1,
+        rs2,
+        target,
+    })
 }
 
 /// Parse `rd, label` (or just `label` for the `j` form handled above).

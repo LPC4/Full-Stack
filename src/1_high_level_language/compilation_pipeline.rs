@@ -196,7 +196,10 @@ impl CompilationPipeline {
     pub fn compile_ir_to_assembly_with_tokens(
         &self,
         ir: &IrProgram,
-    ) -> (String, Vec<crate::assembly_language::rv_instruction::RvInstruction>) {
+    ) -> (
+        String,
+        Vec<crate::assembly_language::rv_instruction::RvInstruction>,
+    ) {
         let mut compiler = CompilerRv64::new();
         compiler.compile_with_tokens(ir)
     }

@@ -1,14 +1,13 @@
+use super::AssemblerError;
 /// Pass 1: walk the typed token stream and compute every label's byte address.
 ///
 /// The layout pass does **not** emit any bytes; it only answers the question
 /// "at what byte offset within the output does this label live?"  That information
 /// is recorded in a `SymbolTable` which the encode pass uses to fill in
 /// branch/jump immediate fields.
-
 use super::section::SectionKind;
 use super::symbol_table::SymbolTable;
 use super::token::AsmToken;
-use super::AssemblerError;
 
 /// Result of the layout pass.
 pub struct Layout {
@@ -28,7 +27,8 @@ pub struct Layout {
 pub fn compute_layout(tokens: &[AsmToken]) -> Result<Layout, AssemblerError> {
     let mut symbols = SymbolTable::new();
     let mut section_order: Vec<SectionKind> = Vec::new();
-    let mut section_sizes: std::collections::HashMap<SectionKind, u64> = std::collections::HashMap::new();
+    let mut section_sizes: std::collections::HashMap<SectionKind, u64> =
+        std::collections::HashMap::new();
 
     let mut current = SectionKind::Text;
     let mut offset: u64 = 0; // byte offset within `current`
@@ -84,7 +84,11 @@ pub fn compute_layout(tokens: &[AsmToken]) -> Result<Layout, AssemblerError> {
     // Commit the final section.
     *section_sizes.entry(current).or_insert(0) = offset;
 
-    Ok(Layout { symbols, section_order, section_sizes })
+    Ok(Layout {
+        symbols,
+        section_order,
+        section_sizes,
+    })
 }
 
 pub fn align_up(offset: u64, alignment: u64) -> u64 {

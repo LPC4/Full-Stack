@@ -52,7 +52,10 @@ impl CompilerRv64 {
     pub fn compile_with_tokens(
         &mut self,
         program: &IrProgram,
-    ) -> (String, Vec<crate::assembly_language::rv_instruction::RvInstruction>) {
+    ) -> (
+        String,
+        Vec<crate::assembly_language::rv_instruction::RvInstruction>,
+    ) {
         self.compile_inner(program);
         (self.emitter.finish(), self.emitter.finish_tokens())
     }

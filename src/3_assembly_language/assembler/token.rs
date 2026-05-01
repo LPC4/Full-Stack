@@ -1,12 +1,11 @@
+use super::section::SectionKind;
 /// Internal token type produced by the parser and consumed by the layout/encode passes.
 ///
 /// Unlike `RvInstruction`, every variant here is fully typed — there are no raw
 /// string blobs.  Unresolved label references are preserved as `String` targets
 /// so the encode pass can patch them using the symbol table built in the layout pass.
-
 use crate::assembly_language::encode_decode::Reg;
 use crate::assembly_language::real::RealInstruction;
-use super::section::SectionKind;
 
 /// Which B-type branch opcode to use.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,7 +36,6 @@ impl BranchKind {
 #[derive(Debug, Clone)]
 pub enum AsmToken {
     // ---- code ----
-
     /// An already-encoded real machine instruction (no unresolved references).
     Real(RealInstruction),
 
@@ -57,7 +55,6 @@ pub enum AsmToken {
     },
 
     // ---- structure ----
-
     /// Switch the active section.
     Section(SectionKind),
 
@@ -68,7 +65,6 @@ pub enum AsmToken {
     Globl(String),
 
     // ---- data ----
-
     /// Align to 2ⁿ bytes (`.align n`).
     Align(usize),
 

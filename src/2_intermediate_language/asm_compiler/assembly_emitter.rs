@@ -1,7 +1,6 @@
 use super::{data_section::DataSection, function_context::Rv64Backend};
 use crate::assembly_language::encode_decode::Reg;
 use crate::assembly_language::real::RealInstruction;
-use crate::assembly_language::rv_instruction::RvInstruction;
 use crate::assembly_language::riscv::rv64fd::{
     Fadd, Fdiv, FeqS, Fld, FleqS, FltS, Flw, Fmul, FmvWX, Fsd, Fsub, Fsw, fmv_s,
 };
@@ -10,6 +9,7 @@ use crate::assembly_language::riscv::rv64i::{
     Srai, Srl, Sub, Sw, Xor, Xori,
 };
 use crate::assembly_language::riscv::rv64m::{Div, Mul, Rem};
+use crate::assembly_language::rv_instruction::RvInstruction;
 use crate::assembly_language::utils::reg_name;
 use crate::intermediate_language::IrType;
 
@@ -65,8 +65,7 @@ impl AssemblyEmitter {
 
     pub fn emit_raw(&mut self, line: &str) {
         self.lines.push(line.to_owned());
-        self.tokens
-            .push(RvInstruction::Directive(line.to_owned()));
+        self.tokens.push(RvInstruction::Directive(line.to_owned()));
     }
 
     pub fn emit_data_section(&mut self, data: &DataSection) {

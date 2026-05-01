@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use super::section::{SectionData, SectionKind};
+use std::collections::HashMap;
 
 /// The final output produced by the assembler — one byte blob per section,
 /// plus a complete symbol table ready to hand to a linker or ELF writer.
@@ -63,7 +63,11 @@ impl std::fmt::Display for AssembledOutput {
         let mut sorted: Vec<_> = self.symbol_table.iter().collect();
         sorted.sort_by_key(|&(_, addr)| addr);
         for (name, addr) in sorted {
-            let marker = if self.global_symbols.contains(name) { " [global]" } else { "" };
+            let marker = if self.global_symbols.contains(name) {
+                " [global]"
+            } else {
+                ""
+            };
             writeln!(f, "  {addr:#010x}  {name}{marker}")?;
         }
         Ok(())
