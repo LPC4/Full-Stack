@@ -10,7 +10,7 @@ const PTE_SIZE: u64 = 8; // Each PTE is 8 bytes
 const LEVELS: usize = 3; // 3 levels for Sv39
 
 /// Translate a virtual address to a physical address using Sv39 page tables.
-/// 
+///
 /// # Arguments
 /// * `vaddr` - Virtual address to translate
 /// * `satp` - Supervisor Address Translation and Protection register value
@@ -52,34 +52,34 @@ pub fn translate(
 
     // Walk the page table
     let mut current_ppn = ppn;
-    
+
     for level in (0..LEVELS).rev() {
         // Extract VPN for this level
         let vpn_shift = 12 + level as u64 * VPN_BITS;
         let vpn = (vaddr >> vpn_shift) & 0x1FF;
-        
+
         // Calculate PTE address
         let pte_addr = (current_ppn << 12) | (vpn * PTE_SIZE);
-        
+
         // Read PTE from physical memory
         let pte = match bus.read_doubleword(pte_addr) {
             Ok(val) => val,
             Err(_) => return Err(VmError::PageFault(vaddr)),
         };
-        
+
         // Check valid bit
         if pte & 0x1 == 0 {
             return Err(VmError::PageFault(vaddr));
         }
-        
+
         // Check if this is a leaf PTE (R=1 or X=1)
         let r = (pte >> 1) & 1;
         let w = (pte >> 2) & 1;
         let x = (pte >> 3) & 1;
-        
+
         if r == 1 || x == 1 {
             // This is a leaf PTE
-            
+
             // Check permissions based on access type
             if is_execute && x == 0 {
                 return Err(VmError::InstructionAccessFault(vaddr));
@@ -90,7 +90,7 @@ pub fn translate(
             if !is_write && !is_execute && r == 0 {
                 return Err(VmError::LoadAccessFault(vaddr));
             }
-            
+
             // For supervisor mode, check U bit (bit 4)
             // If U=0, only accessible in S-mode or M-mode
             // If U=1, accessible in U-mode
@@ -98,14 +98,14 @@ pub fn translate(
             if priv_mode == PrivilegeMode::User && u_bit == 0 {
                 return Err(VmError::PageFault(vaddr));
             }
-            
+
             // Extract physical page number from PTE
             let page_ppn = (pte >> 10) & 0x0000_0FFF_FFFF_FFFF;
-            
+
             // Calculate physical address
             let page_offset = vaddr & 0xFFF;
             let phys_addr = (page_ppn << 12) | page_offset;
-            
+
             return Ok(phys_addr);
         } else {
             // This is a non-leaf PTE (pointer to next level)
@@ -113,12 +113,12 @@ pub fn translate(
             if w == 1 {
                 return Err(VmError::PageFault(vaddr));
             }
-            
+
             // Move to next level
             current_ppn = (pte >> 10) & 0x0000_0FFF_FFFF_FFFF;
         }
     }
-    
+
     // Should not reach here
     Err(VmError::PageFault(vaddr))
 }

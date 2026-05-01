@@ -10,7 +10,10 @@ use super::token::{AsmToken, BranchKind};
 /// the running section base, then compute PC-relative branch/jump offsets and
 /// encode the final machine words.
 use crate::assembly_language::real::RealInstruction;
-use crate::assembly_language::riscv::rv64i::{Beq, Bge, Bgeu, Blt, Bltu, Bne, Jal as JalInst};
+use crate::assembly_language::riscv::rv64i::{
+    Addi, Auipc, Beq, Bge, Bgeu, Blt, Bltu, Bne, Jal as JalInst, Jalr,
+};
+use crate::assembly_language::traits::Instruction;
 
 /// Encode all tokens into an `AssembledOutput` using layout information for
 /// label resolution.
@@ -102,6 +105,30 @@ pub fn encode(tokens: &[AsmToken], layout: &Layout) -> Result<AssembledOutput, A
                     word,
                     &mut current_addr,
                 );
+            }
+
+            AsmToken::Call { symbol } => {
+                let sec = sections
+                    .entry(current_kind.clone())
+                    .or_insert_with(|| SectionData::new(current_kind.clone()));
+                encode_call(sec, symbol, current_addr, &layout.symbols)?;
+                current_addr += 8; // 2 instructions
+            }
+
+            AsmToken::Tail { symbol } => {
+                let sec = sections
+                    .entry(current_kind.clone())
+                    .or_insert_with(|| SectionData::new(current_kind.clone()));
+                encode_tail(sec, symbol, current_addr, &layout.symbols)?;
+                current_addr += 8; // 2 instructions
+            }
+
+            AsmToken::La { rd, symbol } => {
+                let sec = sections
+                    .entry(current_kind.clone())
+                    .or_insert_with(|| SectionData::new(current_kind.clone()));
+                encode_la(sec, *rd, symbol, current_addr, &layout.symbols)?;
+                current_addr += 8; // 2 instructions
             }
 
             AsmToken::Align(n) => {
@@ -263,5 +290,98 @@ fn push_u32(sec: &mut SectionData, word: u32, current_addr: &mut u64) {
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// Pseudo-instruction encoding with symbol relocation
 // ---------------------------------------------------------------------------
+
+/// Encode `call symbol` → `auipc ra, %pcrel_hi(symbol); jalr ra, ra, %pcrel_lo(symbol)`
+fn encode_call(
+    sec: &mut SectionData,
+    symbol: &str,
+    current_addr: u64,
+    symbols: &super::symbol_table::SymbolTable,
+) -> Result<(), AssemblerError> {
+    let target_addr = symbols
+        .resolve(symbol)
+        .ok_or_else(|| AssemblerError::new(format!("undefined symbol `{symbol}`")))?;
+
+    // Calculate PC-relative offset from the instruction after auipc (current_addr + 4)
+    let pc_after_auipc = current_addr + 4;
+    let offset = (target_addr as i64) - (pc_after_auipc as i64);
+
+    // Split into hi20 and lo12 (same as li but PC-relative)
+    // The lo12 is sign-extended, so we need to adjust hi20 if bit 11 of lo12 is set
+    let lo12 = ((offset & 0xFFF) as i32).wrapping_sub(if offset & 0x800 != 0 { 0x1000 } else { 0 });
+    let hi20 = ((offset - lo12 as i64) >> 12) as i32;
+
+    // Emit: auipc ra, hi20
+    let auipc_word = Auipc::new(1, hi20).encode(); // x1 = ra
+    sec.push_u32_le(auipc_word);
+
+    // Emit: jalr ra, ra, lo12
+    let jalr_word = Jalr::new(1, 1, lo12).encode(); // rd=ra, rs1=ra, imm=lo12
+    sec.push_u32_le(jalr_word);
+
+    Ok(())
+}
+
+/// Encode `tail symbol` → `auipc t1, %pcrel_hi(symbol); jalr x0, t1, %pcrel_lo(symbol)`
+fn encode_tail(
+    sec: &mut SectionData,
+    symbol: &str,
+    current_addr: u64,
+    symbols: &super::symbol_table::SymbolTable,
+) -> Result<(), AssemblerError> {
+    let target_addr = symbols
+        .resolve(symbol)
+        .ok_or_else(|| AssemblerError::new(format!("undefined symbol `{symbol}`")))?;
+
+    // Calculate PC-relative offset from the instruction after auipc (current_addr + 4)
+    let pc_after_auipc = current_addr + 4;
+    let offset = (target_addr as i64) - (pc_after_auipc as i64);
+
+    // Split into hi20 and lo12
+    let lo12 = ((offset & 0xFFF) as i32).wrapping_sub(if offset & 0x800 != 0 { 0x1000 } else { 0 });
+    let hi20 = ((offset - lo12 as i64) >> 12) as i32;
+
+    // Emit: auipc t1, hi20
+    let auipc_word = Auipc::new(6, hi20).encode(); // x6 = t1
+    sec.push_u32_le(auipc_word);
+
+    // Emit: jalr x0, t1, lo12 (tail call, no return)
+    let jalr_word = Jalr::new(0, 6, lo12).encode(); // rd=x0, rs1=t1, imm=lo12
+    sec.push_u32_le(jalr_word);
+
+    Ok(())
+}
+
+/// Encode `la rd, symbol` → `auipc rd, %pcrel_hi(symbol); addi rd, rd, %pcrel_lo(symbol)`
+fn encode_la(
+    sec: &mut SectionData,
+    rd: u8,
+    symbol: &str,
+    current_addr: u64,
+    symbols: &super::symbol_table::SymbolTable,
+) -> Result<(), AssemblerError> {
+    let target_addr = symbols
+        .resolve(symbol)
+        .ok_or_else(|| AssemblerError::new(format!("undefined symbol `{symbol}`")))?;
+
+    // Calculate PC-relative offset from the instruction after auipc (current_addr + 4)
+    let pc_after_auipc = current_addr + 4;
+    let offset = (target_addr as i64) - (pc_after_auipc as i64);
+
+    // Split into hi20 and lo12
+    let lo12 = ((offset & 0xFFF) as i32).wrapping_sub(if offset & 0x800 != 0 { 0x1000 } else { 0 });
+    let hi20 = ((offset - lo12 as i64) >> 12) as i32;
+
+    // Emit: auipc rd, hi20
+    let auipc_word = Auipc::new(rd, hi20).encode();
+    sec.push_u32_le(auipc_word);
+
+    // Emit: addi rd, rd, lo12
+    let addi_word = Addi::new(rd, rd, lo12).encode();
+    sec.push_u32_le(addi_word);
+
+    Ok(())
+}
+

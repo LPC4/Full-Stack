@@ -1,13 +1,26 @@
-Relocation for call, tail, la
-The pseudo‑instructions call symbol, tail symbol, and la rd, symbol expand to auipc/jalr or lui/addi with zero immediate, i.e. they are not resolved. The current parser immediately expands them into RealInstructions without recording the symbol, so the encode pass has no chance to fill in the offsets.
-If you plan to use those pseudo‑instructions, you’ll need a relocation step (or a linker). For now you can:
+## Future Enhancements
 
-Avoid them and build address arithmetic manually (e.g., auipc rd, %hi(label) → addi rd, rd, %lo(label)), but the assembler doesn’t support %hi/%lo yet either.
+### Linker-script / base addresses (PARTIALLY ADDRESSED)
+The assembler lays out sections starting at virtual address 0 (each section packed sequentially). When you load the VM's memory, you'll typically want .text at 0x8000_0000 (or wherever).
 
-Wait until you need multi‑file linking; for a simple VM test environment, direct jal label and j label are usually enough.
+**Current State:**
+- Assembler produces `AssembledOutput` with sections and symbol tables
+- Symbol addresses are relative to section base (starting at 0)
+- **Loader responsibility**: Add base offset when loading into VM memory
 
-Linker‑script / base addresses
-The assembler lays out sections starting at virtual address 0 (each section packed sequentially). When you load the VM’s memory, you’ll typically want .text at 0x8000_0000 (or wherever). You can simply add that base offset to all symbol addresses after loading. No assembler change needed – just a “loader” step in the VM that sets the base and copies the bytes.
+**Recommended Approach:**
+Implement a simple loader in the VM that:
+1. Reads the assembled sections
+2. Adds a configurable base address (e.g., 0x8000_0000) to all section data
+3. Adjusts the entry point accordingly
 
-Elf/image generation
-If you eventually want to run a real OS kernel, you’ll want to output ELF files. That’s a future concern; for bringing up the VM, loading the raw SectionData bytes directly is fine.
+No assembler changes needed – this is purely a VM loading concern.
+
+### Elf/image generation (FUTURE WORK)
+If you eventually want to run a real OS kernel, you'll want to output ELF files. That's a future concern; for bringing up the VM, loading the raw SectionData bytes directly is fine.
+
+**Potential Implementation:**
+- Add ELF header generation to `AssembledOutput`
+- Support program headers for LOAD segments
+- Generate proper section headers
+- Export as `.elf` binary format

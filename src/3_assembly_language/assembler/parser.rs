@@ -1,13 +1,13 @@
-use super::directive::Directive;
-use super::reg_parse::parse_int_reg;
-use super::section::SectionKind;
-use super::token::{AsmToken, BranchKind};
 /// Pass 0: parse `Vec<RvInstruction>` into `Vec<AsmToken>`.
 ///
 /// `RvInstruction` carries some untyped raw strings (branches emitted via
 /// `emit_raw`, data-section directives, etc.).  This pass converts every token
 /// into a fully-typed `AsmToken` so subsequent passes never touch raw strings.
 use crate::assembly_language::rv_instruction::RvInstruction;
+use super::directive::Directive;
+use super::reg_parse::parse_int_reg;
+use super::section::SectionKind;
+use super::token::{AsmToken, BranchKind};
 
 /// Convert a `RvInstruction` stream to a typed `AsmToken` stream.
 ///
@@ -131,6 +131,31 @@ fn parse_instruction_line(line: &str) -> Option<AsmToken> {
         return parse_jal(rest);
     }
 
+    // CALL pseudo: `call symbol` → expands to auipc + jalr
+    if mnemonic == "call" {
+        let symbol = rest.trim().to_owned();
+        return if symbol.is_empty() {
+            None
+        } else {
+            Some(AsmToken::Call { symbol })
+        };
+    }
+
+    // TAIL pseudo: `tail symbol` → expands to auipc + jalr (tail call)
+    if mnemonic == "tail" {
+        let symbol = rest.trim().to_owned();
+        return if symbol.is_empty() {
+            None
+        } else {
+            Some(AsmToken::Tail { symbol })
+        };
+    }
+
+    // LA pseudo: `la rd, symbol` → expands to auipc + addi
+    if mnemonic == "la" {
+        return parse_la(rest);
+    }
+
     None
 }
 
@@ -177,5 +202,20 @@ fn parse_jal(operands: &str) -> Option<AsmToken> {
             }
         }
         _ => None,
+    }
+}
+
+/// Parse `rd, symbol` for the `la` pseudo-instruction.
+fn parse_la(operands: &str) -> Option<AsmToken> {
+    let parts: Vec<&str> = operands.splitn(2, ',').collect();
+    if parts.len() != 2 {
+        return None;
+    }
+    let rd = parse_int_reg(parts[0].trim())?;
+    let symbol = parts[1].trim().to_owned();
+    if symbol.is_empty() {
+        None
+    } else {
+        Some(AsmToken::La { rd, symbol })
     }
 }

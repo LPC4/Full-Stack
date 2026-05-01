@@ -1,11 +1,11 @@
-use super::section::SectionKind;
 /// Internal token type produced by the parser and consumed by the layout/encode passes.
 ///
-/// Unlike `RvInstruction`, every variant here is fully typed — there are no raw
+/// Unlike `RvInstruction`, every variant here is fully typed, there are no raw
 /// string blobs.  Unresolved label references are preserved as `String` targets
 /// so the encode pass can patch them using the symbol table built in the layout pass.
 use crate::assembly_language::encode_decode::Reg;
 use crate::assembly_language::real::RealInstruction;
+use super::section::SectionKind;
 
 /// Which B-type branch opcode to use.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,7 +32,7 @@ impl BranchKind {
     }
 }
 
-/// A single logical assembler token — section-aware and fully typed.
+/// A single logical assembler token, section-aware and fully typed.
 #[derive(Debug, Clone)]
 pub enum AsmToken {
     // ---- code ----
@@ -52,6 +52,22 @@ pub enum AsmToken {
     Jal {
         rd: Reg,
         target: String,
+    },
+
+    /// CALL pseudo: `auipc ra, %pcrel_hi(symbol); jalr ra, %pcrel_lo(ra)`
+    Call {
+        symbol: String,
+    },
+
+    /// TAIL pseudo: `auipc t1, %pcrel_hi(symbol); jalr x0, %pcrel_lo(t1)`
+    Tail {
+        symbol: String,
+    },
+
+    /// LA pseudo: `auipc rd, %pcrel_hi(symbol); addi rd, rd, %pcrel_lo(symbol)`
+    La {
+        rd: Reg,
+        symbol: String,
     },
 
     // ---- structure ----
@@ -90,17 +106,19 @@ pub enum AsmToken {
 impl AsmToken {
     /// Fixed byte size contributed to the output section.
     /// Returns `None` for tokens whose size depends on current alignment offset
-    /// (Align, Balign) — the layout pass handles those specially.
+    /// (Align, Balign), the layout pass handles those specially.
     pub fn fixed_size(&self) -> Option<usize> {
         match self {
             Self::Real(_) | Self::Branch { .. } | Self::Jal { .. } => Some(4),
+            // Call, Tail, and La expand to 2 instructions (8 bytes)
+            Self::Call { .. } | Self::Tail { .. } | Self::La { .. } => Some(8),
             Self::DataU8(_) => Some(1),
             Self::DataU16(_) => Some(2),
             Self::DataU32(_) => Some(4),
             Self::DataU64(_) => Some(8),
             Self::DataAsciz(s) => Some(s.len() + 1), // +1 for null terminator
             Self::Space(n) => Some(*n as usize),
-            // Size depends on current offset — layout pass computes these
+            // Size depends on current offset, layout pass computes these
             Self::Align(_) | Self::Balign(_) => None,
             // No bytes
             Self::Section(_) | Self::Label(_) | Self::Globl(_) | Self::Comment(_) => Some(0),
@@ -108,6 +126,6 @@ impl AsmToken {
     }
 
     pub fn is_code(&self) -> bool {
-        matches!(self, Self::Real(_) | Self::Branch { .. } | Self::Jal { .. })
+        matches!(self, Self::Real(_) | Self::Branch { .. } | Self::Jal { .. } | Self::Call { .. } | Self::Tail { .. } | Self::La { .. })
     }
 }

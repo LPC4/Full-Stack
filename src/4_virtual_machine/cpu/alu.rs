@@ -27,7 +27,7 @@ pub const RM_RTZ: u8 = 1; // Round towards Zero
 pub const RM_RDN: u8 = 2; // Round Down (towards −∞)
 pub const RM_RUP: u8 = 3; // Round Up (towards +∞)
 pub const RM_RMM: u8 = 4; // Round to Nearest, ties to Max Magnitude
-pub const RM_DYN: u8 = 7; // Dynamic (use fcsr.frm) — caller resolves before calling
+pub const RM_DYN: u8 = 7; // Dynamic (use fcsr.frm), caller resolves before calling
 
 // ---------------------------------------------------------------------------
 // Exception flag bits
@@ -70,7 +70,7 @@ fn box_f64(v: f64) -> u64 {
 }
 
 // ---------------------------------------------------------------------------
-// Base integer ALU — RV64I
+// Base integer ALU, RV64I
 // ---------------------------------------------------------------------------
 
 #[inline]
@@ -114,7 +114,7 @@ pub fn sltu(a: u64, b: u64) -> u64 {
     (a < b) as u64
 }
 
-// 32-bit word ops — result is sign-extended to 64 bits.
+// 32-bit word ops, result is sign-extended to 64 bits.
 
 #[inline]
 pub fn addw(a: u64, b: u64) -> u64 {
@@ -142,7 +142,7 @@ pub fn sraw(a: u64, b: u64) -> u64 {
 }
 
 // ---------------------------------------------------------------------------
-// M extension — multiply / divide
+// M extension, multiply / divide
 // ---------------------------------------------------------------------------
 
 /// Lower 64 bits of a×b (both interpreted as two's-complement 64-bit).
@@ -205,7 +205,7 @@ pub fn remu(a: u64, b: u64) -> u64 {
     if b == 0 { a } else { a % b }
 }
 
-// 32-bit M-extension variants — results sign-extended to 64 bits.
+// 32-bit M-extension variants, results sign-extended to 64 bits.
 
 #[inline]
 pub fn mulw(a: u64, b: u64) -> u64 {
@@ -401,7 +401,7 @@ pub fn fp_flags_from_exact_s(exact: f64, result: f32) -> u8 {
 }
 
 // ---------------------------------------------------------------------------
-// f64 flag detection helper — used by the D-extension operations
+// f64 flag detection helper, used by the D-extension operations
 // ---------------------------------------------------------------------------
 
 fn flags_binary_d(a: f64, b: f64, result: f64) -> u8 {
@@ -419,7 +419,7 @@ fn flags_binary_d(a: f64, b: f64, result: f64) -> u8 {
 }
 
 // ---------------------------------------------------------------------------
-// F extension — single-precision arithmetic (exact via f64 promotion)
+// F extension, single-precision arithmetic (exact via f64 promotion)
 // ---------------------------------------------------------------------------
 
 pub fn fp_add_s(a: f32, b: f32, rm: u8) -> (u64, u8) {
@@ -504,7 +504,7 @@ pub fn fp_sqrt_s(a: f32, rm: u8) -> (u64, u8) {
 }
 
 // ---------------------------------------------------------------------------
-// D extension — double-precision arithmetic
+// D extension, double-precision arithmetic
 // ---------------------------------------------------------------------------
 
 pub fn fp_add_d(a: f64, b: f64, _rm: u8) -> (u64, u8) {
@@ -571,7 +571,7 @@ pub fn fp_sqrt_d(a: f64, _rm: u8) -> (u64, u8) {
 }
 
 // ---------------------------------------------------------------------------
-// FCVT.S.D — convert f64 to f32 with rounding mode and full flag detection
+// FCVT.S.D, convert f64 to f32 with rounding mode and full flag detection
 // ---------------------------------------------------------------------------
 
 /// Convert a double-precision value to single-precision with explicit rounding.
@@ -643,7 +643,7 @@ pub fn fp_sgnjx_d(a: f64, b: f64) -> u64 {
 }
 
 // ---------------------------------------------------------------------------
-// Min / Max (RISC-V 2.2: NaN propagation — if one input is NaN, return the other)
+// Min / Max (RISC-V 2.2: NaN propagation, if one input is NaN, return the other)
 // ---------------------------------------------------------------------------
 
 pub fn fp_min_s(a: f32, b: f32) -> (u64, u8) {
@@ -715,7 +715,7 @@ pub fn fp_max_d(a: f64, b: f64) -> (u64, u8) {
 }
 
 // ---------------------------------------------------------------------------
-// Comparisons — return 0 or 1 (not NaN-boxed); NV if either input is NaN
+// Comparisons, return 0 or 1 (not NaN-boxed); NV if either input is NaN
 // ---------------------------------------------------------------------------
 
 pub fn fp_feq_s(a: f32, b: f32) -> (u64, u8) {
@@ -767,7 +767,7 @@ pub fn fp_fle_d(a: f64, b: f64) -> (u64, u8) {
 }
 
 // ---------------------------------------------------------------------------
-// fclass — classify a floating-point value into one of 10 categories
+// fclass, classify a floating-point value into one of 10 categories
 //
 // Bit index meanings:
 //   0 = −∞      1 = −normal   2 = −subnormal   3 = −0
@@ -809,7 +809,7 @@ pub fn fp_fclass_d(a: f64) -> u64 {
 }
 
 // ---------------------------------------------------------------------------
-// Fused multiply-add (F extension) — exact via f64 promotion
+// Fused multiply-add (F extension), exact via f64 promotion
 //
 // All four FMA variants use f64 arithmetic internally.  For f32 operands
 // (≤ 24 significant bits), both the intermediate product (≤ 48 bits) and the
@@ -901,7 +901,7 @@ pub fn fp_fnmadd_s(rs1: f32, rs2: f32, rs3: f32, rm: u8) -> (u64, u8) {
 }
 
 // ---------------------------------------------------------------------------
-// Fused multiply-add (D extension) — hardware precision (RNE only)
+// Fused multiply-add (D extension), hardware precision (RNE only)
 // ---------------------------------------------------------------------------
 
 pub fn fp_fmadd_d(rs1: f64, rs2: f64, rs3: f64, _rm: u8) -> (u64, u8) {

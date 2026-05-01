@@ -13,7 +13,6 @@ pub struct RunResult {
     pub outcome: StepOutcome,
 }
 
-/// The top-level virtual machine that wires together the CPU and system bus.
 pub struct VirtualMachine {
     cpu: Cpu,
     bus: SystemBus,
@@ -66,7 +65,6 @@ impl VirtualMachine {
     // Step / run
     // -----------------------------------------------------------------------
 
-    /// Execute a single instruction cycle.
     pub fn step(&mut self) -> Result<StepOutcome, VmError> {
         self.cpu.step(&mut self.bus)
     }
@@ -108,7 +106,6 @@ impl VirtualMachine {
     // Peripheral / debug accessors
     // -----------------------------------------------------------------------
 
-    /// Feed a byte into the UART receive FIFO (simulates console input).
     pub fn uart_receive(&mut self, byte: u8) {
         self.bus.uart_mut().receive(byte);
     }
