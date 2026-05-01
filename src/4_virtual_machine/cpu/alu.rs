@@ -73,16 +73,46 @@ fn box_f64(v: f64) -> u64 {
 // Base integer ALU — RV64I
 // ---------------------------------------------------------------------------
 
-#[inline] pub fn add(a: u64, b: u64) -> u64 { a.wrapping_add(b) }
-#[inline] pub fn sub(a: u64, b: u64) -> u64 { a.wrapping_sub(b) }
-#[inline] pub fn sll(a: u64, b: u64) -> u64 { a << (b & 63) }
-#[inline] pub fn srl(a: u64, b: u64) -> u64 { a >> (b & 63) }
-#[inline] pub fn sra(a: u64, b: u64) -> u64 { ((a as i64) >> (b & 63)) as u64 }
-#[inline] pub fn and(a: u64, b: u64) -> u64 { a & b }
-#[inline] pub fn or (a: u64, b: u64) -> u64 { a | b }
-#[inline] pub fn xor(a: u64, b: u64) -> u64 { a ^ b }
-#[inline] pub fn slt (a: u64, b: u64) -> u64 { ((a as i64) < (b as i64)) as u64 }
-#[inline] pub fn sltu(a: u64, b: u64) -> u64 { (a < b) as u64 }
+#[inline]
+pub fn add(a: u64, b: u64) -> u64 {
+    a.wrapping_add(b)
+}
+#[inline]
+pub fn sub(a: u64, b: u64) -> u64 {
+    a.wrapping_sub(b)
+}
+#[inline]
+pub fn sll(a: u64, b: u64) -> u64 {
+    a << (b & 63)
+}
+#[inline]
+pub fn srl(a: u64, b: u64) -> u64 {
+    a >> (b & 63)
+}
+#[inline]
+pub fn sra(a: u64, b: u64) -> u64 {
+    ((a as i64) >> (b & 63)) as u64
+}
+#[inline]
+pub fn and(a: u64, b: u64) -> u64 {
+    a & b
+}
+#[inline]
+pub fn or(a: u64, b: u64) -> u64 {
+    a | b
+}
+#[inline]
+pub fn xor(a: u64, b: u64) -> u64 {
+    a ^ b
+}
+#[inline]
+pub fn slt(a: u64, b: u64) -> u64 {
+    ((a as i64) < (b as i64)) as u64
+}
+#[inline]
+pub fn sltu(a: u64, b: u64) -> u64 {
+    (a < b) as u64
+}
 
 // 32-bit word ops — result is sign-extended to 64 bits.
 
@@ -321,7 +351,11 @@ pub fn f64_to_f32_with_rm(val: f64, rm: u8) -> f32 {
             // Result must not be farther from zero than the exact value.
             if (val > 0.0 && rne_f64 > val) || (val < 0.0 && rne_f64 < val) {
                 // Hardware rounded away from zero; nudge back.
-                if val > 0.0 { next_down_f32(rne) } else { next_up_f32(rne) }
+                if val > 0.0 {
+                    next_down_f32(rne)
+                } else {
+                    next_up_f32(rne)
+                }
             } else {
                 rne
             }
@@ -336,11 +370,7 @@ pub fn f64_to_f32_with_rm(val: f64, rm: u8) -> f32 {
         }
         RM_RUP => {
             // Result must be ≥ val.
-            if rne_f64 < val {
-                next_up_f32(rne)
-            } else {
-                rne
-            }
+            if rne_f64 < val { next_up_f32(rne) } else { rne }
         }
         _ => rne,
     }
@@ -446,7 +476,11 @@ pub fn fp_div_s(a: f32, b: f32, rm: u8) -> (u64, u8) {
     if b == 0.0 && a.is_finite() && a != 0.0 {
         flags |= DZ;
         // Result is ±∞; infinite ÷ 0 is not an overflow.
-        let bits = if a > 0.0 { box_f32(f32::INFINITY) } else { box_f32(f32::NEG_INFINITY) };
+        let bits = if a > 0.0 {
+            box_f32(f32::INFINITY)
+        } else {
+            box_f32(f32::NEG_INFINITY)
+        };
         return (bits, flags);
     }
     let result = f64_to_f32_with_rm(exact, rm);
@@ -476,21 +510,33 @@ pub fn fp_sqrt_s(a: f32, rm: u8) -> (u64, u8) {
 pub fn fp_add_d(a: f64, b: f64, _rm: u8) -> (u64, u8) {
     let result = a + b;
     let flags = flags_binary_d(a, b, result);
-    let bits = if result.is_nan() { canon_nan_d() } else { box_f64(result) };
+    let bits = if result.is_nan() {
+        canon_nan_d()
+    } else {
+        box_f64(result)
+    };
     (bits, flags)
 }
 
 pub fn fp_sub_d(a: f64, b: f64, _rm: u8) -> (u64, u8) {
     let result = a - b;
     let flags = flags_binary_d(a, b, result);
-    let bits = if result.is_nan() { canon_nan_d() } else { box_f64(result) };
+    let bits = if result.is_nan() {
+        canon_nan_d()
+    } else {
+        box_f64(result)
+    };
     (bits, flags)
 }
 
 pub fn fp_mul_d(a: f64, b: f64, _rm: u8) -> (u64, u8) {
     let result = a * b;
     let flags = flags_binary_d(a, b, result);
-    let bits = if result.is_nan() { canon_nan_d() } else { box_f64(result) };
+    let bits = if result.is_nan() {
+        canon_nan_d()
+    } else {
+        box_f64(result)
+    };
     (bits, flags)
 }
 
@@ -500,7 +546,11 @@ pub fn fp_div_d(a: f64, b: f64, _rm: u8) -> (u64, u8) {
     if b == 0.0 && a.is_finite() && a != 0.0 {
         flags |= DZ;
     }
-    let bits = if result.is_nan() { canon_nan_d() } else { box_f64(result) };
+    let bits = if result.is_nan() {
+        canon_nan_d()
+    } else {
+        box_f64(result)
+    };
     (bits, flags)
 }
 
@@ -512,7 +562,11 @@ pub fn fp_sqrt_d(a: f64, _rm: u8) -> (u64, u8) {
     } else if result.is_subnormal() {
         flags |= UF | NX;
     }
-    let bits = if result.is_nan() { canon_nan_d() } else { box_f64(result) };
+    let bits = if result.is_nan() {
+        canon_nan_d()
+    } else {
+        box_f64(result)
+    };
     (bits, flags)
 }
 
@@ -538,7 +592,14 @@ pub fn fp_cvt_d_to_s(val: f64, rm: u8) -> (u64, u8) {
             flags |= UF;
         }
     }
-    (if result.is_nan() { canon_nan_s() } else { box_f32(result) }, flags)
+    (
+        if result.is_nan() {
+            canon_nan_s()
+        } else {
+            box_f32(result)
+        },
+        flags,
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -594,7 +655,11 @@ pub fn fp_min_s(a: f32, b: f32) -> (u64, u8) {
         a.min(b)
     };
     let flags = if a.is_nan() || b.is_nan() { NV } else { 0 };
-    let bits = if result.is_nan() { canon_nan_s() } else { box_f32(result) };
+    let bits = if result.is_nan() {
+        canon_nan_s()
+    } else {
+        box_f32(result)
+    };
     (bits, flags)
 }
 
@@ -607,7 +672,11 @@ pub fn fp_max_s(a: f32, b: f32) -> (u64, u8) {
         a.max(b)
     };
     let flags = if a.is_nan() || b.is_nan() { NV } else { 0 };
-    let bits = if result.is_nan() { canon_nan_s() } else { box_f32(result) };
+    let bits = if result.is_nan() {
+        canon_nan_s()
+    } else {
+        box_f32(result)
+    };
     (bits, flags)
 }
 
@@ -620,7 +689,11 @@ pub fn fp_min_d(a: f64, b: f64) -> (u64, u8) {
         a.min(b)
     };
     let flags = if a.is_nan() || b.is_nan() { NV } else { 0 };
-    let bits = if result.is_nan() { canon_nan_d() } else { box_f64(result) };
+    let bits = if result.is_nan() {
+        canon_nan_d()
+    } else {
+        box_f64(result)
+    };
     (bits, flags)
 }
 
@@ -633,7 +706,11 @@ pub fn fp_max_d(a: f64, b: f64) -> (u64, u8) {
         a.max(b)
     };
     let flags = if a.is_nan() || b.is_nan() { NV } else { 0 };
-    let bits = if result.is_nan() { canon_nan_d() } else { box_f64(result) };
+    let bits = if result.is_nan() {
+        canon_nan_d()
+    } else {
+        box_f64(result)
+    };
     (bits, flags)
 }
 
@@ -751,7 +828,14 @@ pub fn fp_fmadd_s(rs1: f32, rs2: f32, rs3: f32, rm: u8) -> (u64, u8) {
     }
     let result = f64_to_f32_with_rm(exact, rm);
     let flags = fp_flags_from_exact_s(exact, result);
-    (if result.is_nan() { canon_nan_s() } else { box_f32(result) }, flags)
+    (
+        if result.is_nan() {
+            canon_nan_s()
+        } else {
+            box_f32(result)
+        },
+        flags,
+    )
 }
 
 pub fn fp_fmsub_s(rs1: f32, rs2: f32, rs3: f32, rm: u8) -> (u64, u8) {
@@ -764,7 +848,14 @@ pub fn fp_fmsub_s(rs1: f32, rs2: f32, rs3: f32, rm: u8) -> (u64, u8) {
     }
     let result = f64_to_f32_with_rm(exact, rm);
     let flags = fp_flags_from_exact_s(exact, result);
-    (if result.is_nan() { canon_nan_s() } else { box_f32(result) }, flags)
+    (
+        if result.is_nan() {
+            canon_nan_s()
+        } else {
+            box_f32(result)
+        },
+        flags,
+    )
 }
 
 /// -(rs1 × rs2) + rs3
@@ -778,7 +869,14 @@ pub fn fp_fnmsub_s(rs1: f32, rs2: f32, rs3: f32, rm: u8) -> (u64, u8) {
     }
     let result = f64_to_f32_with_rm(exact, rm);
     let flags = fp_flags_from_exact_s(exact, result);
-    (if result.is_nan() { canon_nan_s() } else { box_f32(result) }, flags)
+    (
+        if result.is_nan() {
+            canon_nan_s()
+        } else {
+            box_f32(result)
+        },
+        flags,
+    )
 }
 
 /// -(rs1 × rs2 + rs3)
@@ -792,7 +890,14 @@ pub fn fp_fnmadd_s(rs1: f32, rs2: f32, rs3: f32, rm: u8) -> (u64, u8) {
     }
     let result = f64_to_f32_with_rm(exact, rm);
     let flags = fp_flags_from_exact_s(exact, result);
-    (if result.is_nan() { canon_nan_s() } else { box_f32(result) }, flags)
+    (
+        if result.is_nan() {
+            canon_nan_s()
+        } else {
+            box_f32(result)
+        },
+        flags,
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -809,7 +914,11 @@ pub fn fp_fmadd_d(rs1: f64, rs2: f64, rs3: f64, _rm: u8) -> (u64, u8) {
     } else if result.is_subnormal() {
         flags |= UF | NX;
     }
-    let bits = if result.is_nan() { canon_nan_d() } else { box_f64(result) };
+    let bits = if result.is_nan() {
+        canon_nan_d()
+    } else {
+        box_f64(result)
+    };
     (bits, flags)
 }
 
@@ -823,7 +932,11 @@ pub fn fp_fmsub_d(rs1: f64, rs2: f64, rs3: f64, _rm: u8) -> (u64, u8) {
     } else if result.is_subnormal() {
         flags |= UF | NX;
     }
-    let bits = if result.is_nan() { canon_nan_d() } else { box_f64(result) };
+    let bits = if result.is_nan() {
+        canon_nan_d()
+    } else {
+        box_f64(result)
+    };
     (bits, flags)
 }
 
@@ -838,7 +951,11 @@ pub fn fp_fnmsub_d(rs1: f64, rs2: f64, rs3: f64, _rm: u8) -> (u64, u8) {
     } else if result.is_subnormal() {
         flags |= UF | NX;
     }
-    let bits = if result.is_nan() { canon_nan_d() } else { box_f64(result) };
+    let bits = if result.is_nan() {
+        canon_nan_d()
+    } else {
+        box_f64(result)
+    };
     (bits, flags)
 }
 
@@ -853,6 +970,10 @@ pub fn fp_fnmadd_d(rs1: f64, rs2: f64, rs3: f64, _rm: u8) -> (u64, u8) {
     } else if result.is_subnormal() {
         flags |= UF | NX;
     }
-    let bits = if result.is_nan() { canon_nan_d() } else { box_f64(result) };
+    let bits = if result.is_nan() {
+        canon_nan_d()
+    } else {
+        box_f64(result)
+    };
     (bits, flags)
 }

@@ -4,25 +4,25 @@
 use crate::virtual_machine::error::VmError;
 use crate::virtual_machine::memory::MemoryAccess;
 
-const MAX_SOURCES:  usize = 32;
+const MAX_SOURCES: usize = 32;
 const MAX_CONTEXTS: usize = 1;
 
 pub struct Plic {
-    priority:        [u32; MAX_SOURCES],
-    pending:         [u32; (MAX_SOURCES + 31) / 32],
-    enable:          [u32; (MAX_SOURCES + 31) / 32 * MAX_CONTEXTS],
-    threshold:       [u32; MAX_CONTEXTS],
+    priority: [u32; MAX_SOURCES],
+    pending: [u32; (MAX_SOURCES + 31) / 32],
+    enable: [u32; (MAX_SOURCES + 31) / 32 * MAX_CONTEXTS],
+    threshold: [u32; MAX_CONTEXTS],
     #[allow(dead_code)]
-    claim_complete:  [u32; MAX_CONTEXTS],
+    claim_complete: [u32; MAX_CONTEXTS],
 }
 
 impl Plic {
     pub fn new() -> Self {
         Self {
-            priority:       [0; MAX_SOURCES],
-            pending:        [0; (MAX_SOURCES + 31) / 32],
-            enable:         [0; (MAX_SOURCES + 31) / 32 * MAX_CONTEXTS],
-            threshold:      [0; MAX_CONTEXTS],
+            priority: [0; MAX_SOURCES],
+            pending: [0; (MAX_SOURCES + 31) / 32],
+            enable: [0; (MAX_SOURCES + 31) / 32 * MAX_CONTEXTS],
+            threshold: [0; MAX_CONTEXTS],
             claim_complete: [0; MAX_CONTEXTS],
         }
     }
@@ -52,7 +52,11 @@ impl Plic {
         let mut best_prio = 0;
         for id in 1..=MAX_SOURCES as u32 {
             let prio = self.priority[id as usize - 1];
-            if prio > threshold && prio > best_prio && self.is_pending(id) && self.is_enabled(hart, id) {
+            if prio > threshold
+                && prio > best_prio
+                && self.is_pending(id)
+                && self.is_enabled(hart, id)
+            {
                 best_prio = prio;
                 best_id = Some(id);
             }
@@ -85,7 +89,7 @@ impl MemoryAccess for Plic {
     }
 
     fn read_word(&mut self, addr: u64) -> Result<u32, VmError> {
-        let offset = addr;          // base already subtracted by caller
+        let offset = addr; // base already subtracted by caller
         match offset {
             0x0000..=0x007C => {
                 let src_idx = (offset / 4) as usize;

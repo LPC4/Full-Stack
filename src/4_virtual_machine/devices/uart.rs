@@ -6,16 +6,16 @@ use crate::virtual_machine::memory::MemoryAccess;
 
 /// UART registers (byte offsets from base)
 pub mod reg {
-    pub const RBR: u64 = 0;  // Receiver Buffer (read)
-    pub const THR: u64 = 0;  // Transmitter Holding (write)
-    pub const IER: u64 = 1;  // Interrupt Enable
-    pub const IIR: u64 = 2;  // Interrupt Identification (read)
-    pub const FCR: u64 = 2;  // FIFO Control (write)
-    pub const LCR: u64 = 3;  // Line Control
-    pub const MCR: u64 = 4;  // Modem Control
-    pub const LSR: u64 = 5;  // Line Status
-    pub const MSR: u64 = 6;  // Modem Status
-    pub const SCR: u64 = 7;  // Scratch
+    pub const RBR: u64 = 0; // Receiver Buffer (read)
+    pub const THR: u64 = 0; // Transmitter Holding (write)
+    pub const IER: u64 = 1; // Interrupt Enable
+    pub const IIR: u64 = 2; // Interrupt Identification (read)
+    pub const FCR: u64 = 2; // FIFO Control (write)
+    pub const LCR: u64 = 3; // Line Control
+    pub const MCR: u64 = 4; // Modem Control
+    pub const LSR: u64 = 5; // Line Status
+    pub const MSR: u64 = 6; // Modem Status
+    pub const SCR: u64 = 7; // Scratch
 }
 
 pub struct Uart {
@@ -35,11 +35,11 @@ impl Uart {
     pub fn new() -> Self {
         Self {
             ier: 0,
-            iir: 0x01,      // no interrupts pending
+            iir: 0x01, // no interrupts pending
             fcr: 0,
             lcr: 0,
             mcr: 0,
-            lsr: 0x60,      // TX empty & TX holding empty
+            lsr: 0x60, // TX empty & TX holding empty
             msr: 0,
             scr: 0,
             rx_buf: std::collections::VecDeque::new(),
@@ -49,7 +49,7 @@ impl Uart {
 
     pub fn receive(&mut self, byte: u8) {
         self.rx_buf.push_back(byte);
-        self.lsr |= 0x01;   // Data Ready
+        self.lsr |= 0x01; // Data Ready
     }
 
     pub fn drain_output(&mut self) -> Vec<u8> {

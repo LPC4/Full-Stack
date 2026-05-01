@@ -34,10 +34,10 @@ pub struct Cache<Next: MemoryAccess> {
 
 #[derive(Default)]
 pub struct CacheStats {
-    pub read_hits:   u64,
+    pub read_hits: u64,
     pub read_misses: u64,
-    pub write_hits:  u64,
-    pub write_misses:u64,
+    pub write_hits: u64,
+    pub write_misses: u64,
 }
 
 impl<Next: MemoryAccess> Cache<Next> {
@@ -74,8 +74,8 @@ impl<Next: MemoryAccess> Cache<Next> {
     }
 
     fn address_fields(&self, addr: u64) -> (u64, u64, u64) {
-        let tag    = addr >> (self.block_bits + self.set_bits);
-        let index  = (addr >> self.block_bits) & ((1u64 << self.set_bits) - 1);
+        let tag = addr >> (self.block_bits + self.set_bits);
+        let index = (addr >> self.block_bits) & ((1u64 << self.set_bits) - 1);
         let offset = addr & ((1u64 << self.block_bits) - 1);
         (tag, index, offset)
     }

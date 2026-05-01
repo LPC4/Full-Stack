@@ -32,7 +32,9 @@ impl fmt::Display for VmError {
         match self {
             VmError::BusError(addr) => write!(f, "bus error at address {addr:#010x}"),
             VmError::WriteToRom => write!(f, "write to read‑only memory"),
-            VmError::InstructionAccessFault(addr) => write!(f, "instruction access fault at {addr:#010x}"),
+            VmError::InstructionAccessFault(addr) => {
+                write!(f, "instruction access fault at {addr:#010x}")
+            }
             VmError::LoadAccessFault(addr) => write!(f, "load access fault at {addr:#010x}"),
             VmError::StoreAccessFault(addr) => write!(f, "store access fault at {addr:#010x}"),
             VmError::IllegalInstruction(word) => write!(f, "illegal instruction {word:#010x}"),

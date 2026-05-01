@@ -1,8 +1,8 @@
 //! Main memory (DRAM). Occupies the top half of the address space
 //! (0x8000_0000 .. 0xFFFF_FFFF) by default.
 
-use crate::virtual_machine::memory::MemoryAccess;
 use crate::virtual_machine::error::VmError;
+use crate::virtual_machine::memory::MemoryAccess;
 
 pub struct Ram {
     data: Vec<u8>,
