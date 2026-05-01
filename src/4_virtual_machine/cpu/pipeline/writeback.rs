@@ -19,12 +19,22 @@ pub fn writeback(
             regs.write_f_bits(rd, bits);
             Ok(next_pc)
         }
-        MemResult::WriteIntFlags { rd, val, fflags, next_pc } => {
+        MemResult::WriteIntFlags {
+            rd,
+            val,
+            fflags,
+            next_pc,
+        } => {
             csrs.accumulate_fflags(fflags);
             regs.write_x(rd, val);
             Ok(next_pc)
         }
-        MemResult::WriteFpFlags { rd, bits, fflags, next_pc } => {
+        MemResult::WriteFpFlags {
+            rd,
+            bits,
+            fflags,
+            next_pc,
+        } => {
             csrs.accumulate_fflags(fflags);
             regs.write_f_bits(rd, bits);
             Ok(next_pc)
@@ -32,16 +42,23 @@ pub fn writeback(
         MemResult::Jump { next_pc } => Ok(next_pc),
         MemResult::Fence { next_pc } => Ok(next_pc),
         MemResult::FenceI { next_pc } => Ok(next_pc),
-        MemResult::Csr { funct3, rd, rs1_uimm, csr, operand, next_pc } => {
+        MemResult::Csr {
+            funct3,
+            rd,
+            rs1_uimm,
+            csr,
+            operand,
+            next_pc,
+        } => {
             let old = csrs.read(csr)?;
 
             let (new_val, do_write) = match funct3 {
-                1 => (operand, true),                                            // CSRRW
-                2 => (old | operand, rs1_uimm != 0),                            // CSRRS
-                3 => (old & !operand, rs1_uimm != 0),                           // CSRRC
-                5 => (operand, true),                                            // CSRRWI
-                6 => (old | operand, rs1_uimm != 0),                            // CSRRSI
-                7 => (old & !operand, rs1_uimm != 0),                           // CSRRCI
+                1 => (operand, true),                 // CSRRW
+                2 => (old | operand, rs1_uimm != 0),  // CSRRS
+                3 => (old & !operand, rs1_uimm != 0), // CSRRC
+                5 => (operand, true),                 // CSRRWI
+                6 => (old | operand, rs1_uimm != 0),  // CSRRSI
+                7 => (old & !operand, rs1_uimm != 0), // CSRRCI
                 _ => return Err(VmError::IllegalInstruction(funct3 as u32)),
             };
 
@@ -53,7 +70,7 @@ pub fn writeback(
             regs.write_x(rd, old);
             Ok(next_pc)
         }
-        MemResult::Ecall  => Err(VmError::Ecall),
+        MemResult::Ecall => Err(VmError::Ecall),
         MemResult::Ebreak => Err(VmError::Ebreak),
     }
 }

@@ -1,8 +1,8 @@
 //! Read‑Only Memory – holds boot code and fixed firmware.
 //! Mapped at the bottom of the address space (0x0000_0000 .. 0x0FFF_FFFF).
 
-use crate::virtual_machine::memory::MemoryAccess;
 use crate::virtual_machine::error::VmError;
+use crate::virtual_machine::memory::MemoryAccess;
 
 /// Simple ROM: loaded once, never modified.
 pub struct Rom {

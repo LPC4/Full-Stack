@@ -10,5 +10,6 @@ pub fn fetch(bus: &mut SystemBus, pc: u64) -> Result<u32, VmError> {
     if pc & 0x3 != 0 {
         return Err(VmError::InstructionAccessFault(pc));
     }
-    bus.read_word(pc).map_err(|_| VmError::InstructionAccessFault(pc))
+    bus.read_word(pc)
+        .map_err(|_| VmError::InstructionAccessFault(pc))
 }

@@ -20,27 +20,121 @@ pub enum FMacOp {
 
 #[derive(Debug, Clone)]
 pub enum DecodedInsn {
-    Lui    { rd: usize, imm: i64 },
-    Auipc  { rd: usize, imm: i64 },
-    Jal    { rd: usize, imm: i64 },
-    Jalr   { rd: usize, rs1: usize, imm: i64 },
-    Branch { funct3: u8, rs1: usize, rs2: usize, imm: i64 },
-    Load   { funct3: u8, rd: usize, rs1: usize, imm: i64 },
-    Store  { funct3: u8, rs1: usize, rs2: usize, imm: i64 },
-    AluImm   { funct3: u8, funct7: u8, rd: usize, rs1: usize, imm: i64 },
-    AluImm32 { funct3: u8, funct7: u8, rd: usize, rs1: usize, imm: i64 },
-    Alu      { funct3: u8, funct7: u8, rd: usize, rs1: usize, rs2: usize },
-    Alu32    { funct3: u8, funct7: u8, rd: usize, rs1: usize, rs2: usize },
-    Fence  { fm: u8, pred: u8, succ: u8 },
+    Lui {
+        rd: usize,
+        imm: i64,
+    },
+    Auipc {
+        rd: usize,
+        imm: i64,
+    },
+    Jal {
+        rd: usize,
+        imm: i64,
+    },
+    Jalr {
+        rd: usize,
+        rs1: usize,
+        imm: i64,
+    },
+    Branch {
+        funct3: u8,
+        rs1: usize,
+        rs2: usize,
+        imm: i64,
+    },
+    Load {
+        funct3: u8,
+        rd: usize,
+        rs1: usize,
+        imm: i64,
+    },
+    Store {
+        funct3: u8,
+        rs1: usize,
+        rs2: usize,
+        imm: i64,
+    },
+    AluImm {
+        funct3: u8,
+        funct7: u8,
+        rd: usize,
+        rs1: usize,
+        imm: i64,
+    },
+    AluImm32 {
+        funct3: u8,
+        funct7: u8,
+        rd: usize,
+        rs1: usize,
+        imm: i64,
+    },
+    Alu {
+        funct3: u8,
+        funct7: u8,
+        rd: usize,
+        rs1: usize,
+        rs2: usize,
+    },
+    Alu32 {
+        funct3: u8,
+        funct7: u8,
+        rd: usize,
+        rs1: usize,
+        rs2: usize,
+    },
+    Fence {
+        fm: u8,
+        pred: u8,
+        succ: u8,
+    },
     FenceI,
     Ecall,
     Ebreak,
-    Csr    { funct3: u8, rd: usize, rs1_uimm: usize, csr: u16 },
-    FLoad  { funct3: u8, rd: usize, rs1: usize, imm: i64 },
-    FStore { funct3: u8, rs1: usize, rs2: usize, imm: i64 },
-    FOp    { funct5: u8, fmt: u8, rm: u8, rd: usize, rs1: usize, rs2: usize },
-    FMac   { op: FMacOp, fmt: u8, rm: u8, rd: usize, rs1: usize, rs2: usize, rs3: usize },
-    Atomic { funct5: u8, aq: bool, rl: bool, funct3: u8, rd: usize, rs1: usize, rs2: usize },
+    Csr {
+        funct3: u8,
+        rd: usize,
+        rs1_uimm: usize,
+        csr: u16,
+    },
+    FLoad {
+        funct3: u8,
+        rd: usize,
+        rs1: usize,
+        imm: i64,
+    },
+    FStore {
+        funct3: u8,
+        rs1: usize,
+        rs2: usize,
+        imm: i64,
+    },
+    FOp {
+        funct5: u8,
+        fmt: u8,
+        rm: u8,
+        rd: usize,
+        rs1: usize,
+        rs2: usize,
+    },
+    FMac {
+        op: FMacOp,
+        fmt: u8,
+        rm: u8,
+        rd: usize,
+        rs1: usize,
+        rs2: usize,
+        rs3: usize,
+    },
+    Atomic {
+        funct5: u8,
+        aq: bool,
+        rl: bool,
+        funct3: u8,
+        rd: usize,
+        rs1: usize,
+        rs2: usize,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -50,11 +144,20 @@ pub enum DecodedInsn {
 pub fn decode(word: u32) -> Result<DecodedInsn, VmError> {
     let opcode = word & 0x7F;
     match opcode {
-        0x37 => Ok(DecodedInsn::Lui   { rd: rd(word), imm: u_imm(word) }),
-        0x17 => Ok(DecodedInsn::Auipc { rd: rd(word), imm: u_imm(word) }),
-        0x6F => Ok(DecodedInsn::Jal   { rd: rd(word), imm: j_imm(word) }),
-        0x67 => Ok(DecodedInsn::Jalr  {
-            rd:  rd(word),
+        0x37 => Ok(DecodedInsn::Lui {
+            rd: rd(word),
+            imm: u_imm(word),
+        }),
+        0x17 => Ok(DecodedInsn::Auipc {
+            rd: rd(word),
+            imm: u_imm(word),
+        }),
+        0x6F => Ok(DecodedInsn::Jal {
+            rd: rd(word),
+            imm: j_imm(word),
+        }),
+        0x67 => Ok(DecodedInsn::Jalr {
+            rd: rd(word),
             rs1: rs1(word),
             imm: i_imm(word),
         }),
@@ -66,7 +169,7 @@ pub fn decode(word: u32) -> Result<DecodedInsn, VmError> {
         }),
         0x03 => Ok(DecodedInsn::Load {
             funct3: funct3(word),
-            rd:  rd(word),
+            rd: rd(word),
             rs1: rs1(word),
             imm: i_imm(word),
         }),
@@ -81,28 +184,28 @@ pub fn decode(word: u32) -> Result<DecodedInsn, VmError> {
         0x13 => Ok(DecodedInsn::AluImm {
             funct3: funct3(word),
             funct7: field(word, 31, 25) as u8,
-            rd:  rd(word),
+            rd: rd(word),
             rs1: rs1(word),
             imm: i_imm(word),
         }),
         0x1B => Ok(DecodedInsn::AluImm32 {
             funct3: funct3(word),
             funct7: field(word, 31, 25) as u8,
-            rd:  rd(word),
+            rd: rd(word),
             rs1: rs1(word),
             imm: i_imm(word),
         }),
         0x33 => Ok(DecodedInsn::Alu {
             funct3: funct3(word),
             funct7: funct7(word),
-            rd:  rd(word),
+            rd: rd(word),
             rs1: rs1(word),
             rs2: rs2(word),
         }),
         0x3B => Ok(DecodedInsn::Alu32 {
             funct3: funct3(word),
             funct7: funct7(word),
-            rd:  rd(word),
+            rd: rd(word),
             rs1: rs1(word),
             rs2: rs2(word),
         }),
@@ -110,7 +213,7 @@ pub fn decode(word: u32) -> Result<DecodedInsn, VmError> {
         0x73 => decode_system(word),
         0x07 => Ok(DecodedInsn::FLoad {
             funct3: funct3(word),
-            rd:  rd(word),
+            rd: rd(word),
             rs1: rs1(word),
             imm: i_imm(word),
         }),
@@ -122,11 +225,11 @@ pub fn decode(word: u32) -> Result<DecodedInsn, VmError> {
         }),
         0x53 => Ok(DecodedInsn::FOp {
             funct5: field(word, 31, 27) as u8,
-            fmt:    field(word, 26, 25) as u8,
-            rm:     funct3(word),
-            rd:     rd(word),
-            rs1:    rs1(word),
-            rs2:    rs2(word),
+            fmt: field(word, 26, 25) as u8,
+            rm: funct3(word),
+            rd: rd(word),
+            rs1: rs1(word),
+            rs2: rs2(word),
         }),
         0x43 => Ok(fmac(word, FMacOp::Fmadd)),
         0x47 => Ok(fmac(word, FMacOp::Fmsub)),
@@ -134,12 +237,12 @@ pub fn decode(word: u32) -> Result<DecodedInsn, VmError> {
         0x4F => Ok(fmac(word, FMacOp::Fnmadd)),
         0x2F => Ok(DecodedInsn::Atomic {
             funct5: field(word, 31, 27) as u8,
-            aq:     field(word, 26, 26) != 0,
-            rl:     field(word, 25, 25) != 0,
+            aq: field(word, 26, 26) != 0,
+            rl: field(word, 25, 25) != 0,
             funct3: funct3(word),
-            rd:     rd(word),
-            rs1:    rs1(word),
-            rs2:    rs2(word),
+            rd: rd(word),
+            rs1: rs1(word),
+            rs2: rs2(word),
         }),
         _ => Err(VmError::IllegalInstruction(word)),
     }
@@ -152,7 +255,7 @@ pub fn decode(word: u32) -> Result<DecodedInsn, VmError> {
 fn decode_fence(word: u32) -> Result<DecodedInsn, VmError> {
     match funct3(word) {
         0 => Ok(DecodedInsn::Fence {
-            fm:   field(word, 31, 28) as u8,
+            fm: field(word, 31, 28) as u8,
             pred: field(word, 27, 24) as u8,
             succ: field(word, 23, 20) as u8,
         }),
@@ -173,10 +276,10 @@ fn decode_system(word: u32) -> Result<DecodedInsn, VmError> {
             }
         }
         1..=7 => Ok(DecodedInsn::Csr {
-            funct3:   funct3(word),
-            rd:       rd(word),
+            funct3: funct3(word),
+            rd: rd(word),
             rs1_uimm: rs1(word), // for CSRRWI/CSRRSI/CSRRCI this is the uimm[4:0]
-            csr:      field(word, 31, 20) as u16,
+            csr: field(word, 31, 20) as u16,
         }),
         _ => Err(VmError::IllegalInstruction(word)),
     }
@@ -187,8 +290,8 @@ fn fmac(word: u32, op: FMacOp) -> DecodedInsn {
         op,
         rs3: field(word, 31, 27) as usize,
         fmt: field(word, 26, 25) as u8,
-        rm:  funct3(word),
-        rd:  rd(word),
+        rm: funct3(word),
+        rd: rd(word),
         rs1: rs1(word),
         rs2: rs2(word),
     }
@@ -208,11 +311,26 @@ fn field(word: u32, hi: u32, lo: u32) -> u32 {
     }
 }
 
-#[inline] fn rd    (word: u32) -> usize { field(word, 11,  7) as usize }
-#[inline] fn rs1   (word: u32) -> usize { field(word, 19, 15) as usize }
-#[inline] fn rs2   (word: u32) -> usize { field(word, 24, 20) as usize }
-#[inline] fn funct3(word: u32) -> u8    { field(word, 14, 12) as u8 }
-#[inline] fn funct7(word: u32) -> u8    { field(word, 31, 25) as u8 }
+#[inline]
+fn rd(word: u32) -> usize {
+    field(word, 11, 7) as usize
+}
+#[inline]
+fn rs1(word: u32) -> usize {
+    field(word, 19, 15) as usize
+}
+#[inline]
+fn rs2(word: u32) -> usize {
+    field(word, 24, 20) as usize
+}
+#[inline]
+fn funct3(word: u32) -> u8 {
+    field(word, 14, 12) as u8
+}
+#[inline]
+fn funct7(word: u32) -> u8 {
+    field(word, 31, 25) as u8
+}
 
 /// Sign-extend `val` (a value in the low `bits` bits) to `i64`.
 fn sign_ext(val: u32, bits: u32) -> i64 {
@@ -234,24 +352,24 @@ fn u_imm(word: u32) -> i64 {
 /// S-type immediate: bits[31:25] || bits[11:7], sign-extended to 12 bits.
 fn s_imm(word: u32) -> i64 {
     let hi = field(word, 31, 25);
-    let lo = field(word, 11,  7);
+    let lo = field(word, 11, 7);
     sign_ext((hi << 5) | lo, 12)
 }
 
 /// B-type immediate: [31]<<12 | [7]<<11 | [30:25]<<5 | [11:8]<<1, sign-extended to 13 bits.
 fn b_imm(word: u32) -> i64 {
-    let bit12  = field(word, 31, 31) << 12;
-    let bit11  = field(word,  7,  7) << 11;
+    let bit12 = field(word, 31, 31) << 12;
+    let bit11 = field(word, 7, 7) << 11;
     let bits10_5 = field(word, 30, 25) << 5;
-    let bits4_1  = field(word, 11,  8) << 1;
+    let bits4_1 = field(word, 11, 8) << 1;
     sign_ext(bit12 | bit11 | bits10_5 | bits4_1, 13)
 }
 
 /// J-type immediate: [31]<<20 | [19:12]<<12 | [20]<<11 | [30:21]<<1, sign-extended to 21 bits.
 fn j_imm(word: u32) -> i64 {
-    let bit20    = field(word, 31, 31) << 20;
+    let bit20 = field(word, 31, 31) << 20;
     let bits19_12 = field(word, 19, 12) << 12;
-    let bit11    = field(word, 20, 20) << 11;
+    let bit11 = field(word, 20, 20) << 11;
     let bits10_1 = field(word, 30, 21) << 1;
     sign_ext(bit20 | bits19_12 | bit11 | bits10_1, 21)
 }

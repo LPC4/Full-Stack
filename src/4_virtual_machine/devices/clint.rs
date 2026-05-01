@@ -32,9 +32,9 @@ impl Clint {
     }
 }
 
-const MSIP_BASE:       u64 = 0x0000;
-const MTIMECMP_BASE:   u64 = 0x4000;
-const MTIME_BASE:      u64 = 0xBFF8;
+const MSIP_BASE: u64 = 0x0000;
+const MTIMECMP_BASE: u64 = 0x4000;
+const MTIME_BASE: u64 = 0xBFF8;
 
 impl MemoryAccess for Clint {
     // Byte and halfword accesses are illegal → fault.

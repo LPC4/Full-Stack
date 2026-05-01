@@ -1,11 +1,11 @@
 //! Top-level virtual machine: ties together the CPU and memory bus.
 
 use crate::assembly_language::assembler::output::AssembledOutput;
-use crate::virtual_machine::bus::{SystemBus, RAM_BASE, RAM_SIZE_DEFAULT};
+use crate::virtual_machine::bus::{RAM_BASE, RAM_SIZE_DEFAULT, SystemBus};
 use crate::virtual_machine::cpu::Cpu;
+pub use crate::virtual_machine::cpu::StepOutcome;
 use crate::virtual_machine::error::VmError;
 use crate::virtual_machine::memory::MemoryAccess;
-pub use crate::virtual_machine::cpu::StepOutcome;
 
 pub struct RunResult {
     pub steps: u64,
@@ -97,7 +97,11 @@ impl VirtualMachine {
         let uart_bytes = self.bus.uart_mut().drain_output();
         let uart_output = String::from_utf8_lossy(&uart_bytes).into_owned();
 
-        RunResult { steps, uart_output, outcome }
+        RunResult {
+            steps,
+            uart_output,
+            outcome,
+        }
     }
 
     // -----------------------------------------------------------------------

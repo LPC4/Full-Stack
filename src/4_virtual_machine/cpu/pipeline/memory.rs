@@ -11,14 +11,45 @@ use crate::virtual_machine::memory::MemoryAccess;
 
 #[derive(Debug)]
 pub enum MemResult {
-    WriteInt      { rd: usize, val: u64, next_pc: u64 },
-    WriteFp       { rd: usize, bits: u64, next_pc: u64 },
-    WriteIntFlags { rd: usize, val: u64, fflags: u8, next_pc: u64 },
-    WriteFpFlags  { rd: usize, bits: u64, fflags: u8, next_pc: u64 },
-    Jump          { next_pc: u64 },
-    Csr           { funct3: u8, rd: usize, rs1_uimm: usize, csr: u16, operand: u64, next_pc: u64 },
-    Fence         { next_pc: u64 },
-    FenceI        { next_pc: u64 },
+    WriteInt {
+        rd: usize,
+        val: u64,
+        next_pc: u64,
+    },
+    WriteFp {
+        rd: usize,
+        bits: u64,
+        next_pc: u64,
+    },
+    WriteIntFlags {
+        rd: usize,
+        val: u64,
+        fflags: u8,
+        next_pc: u64,
+    },
+    WriteFpFlags {
+        rd: usize,
+        bits: u64,
+        fflags: u8,
+        next_pc: u64,
+    },
+    Jump {
+        next_pc: u64,
+    },
+    Csr {
+        funct3: u8,
+        rd: usize,
+        rs1_uimm: usize,
+        csr: u16,
+        operand: u64,
+        next_pc: u64,
+    },
+    Fence {
+        next_pc: u64,
+    },
+    FenceI {
+        next_pc: u64,
+    },
     Ecall,
     Ebreak,
 }
@@ -34,55 +65,112 @@ pub fn memory_stage(
 ) -> Result<MemResult, VmError> {
     match result {
         // Pass-through variants
-        ExecResult::WriteInt { rd, val, next_pc } => {
-            Ok(MemResult::WriteInt { rd, val, next_pc })
-        }
-        ExecResult::WriteFp { rd, bits, next_pc } => {
-            Ok(MemResult::WriteFp { rd, bits, next_pc })
-        }
-        ExecResult::WriteIntFlags { rd, val, fflags, next_pc } => {
-            Ok(MemResult::WriteIntFlags { rd, val, fflags, next_pc })
-        }
-        ExecResult::WriteFpFlags { rd, bits, fflags, next_pc } => {
-            Ok(MemResult::WriteFpFlags { rd, bits, fflags, next_pc })
-        }
+        ExecResult::WriteInt { rd, val, next_pc } => Ok(MemResult::WriteInt { rd, val, next_pc }),
+        ExecResult::WriteFp { rd, bits, next_pc } => Ok(MemResult::WriteFp { rd, bits, next_pc }),
+        ExecResult::WriteIntFlags {
+            rd,
+            val,
+            fflags,
+            next_pc,
+        } => Ok(MemResult::WriteIntFlags {
+            rd,
+            val,
+            fflags,
+            next_pc,
+        }),
+        ExecResult::WriteFpFlags {
+            rd,
+            bits,
+            fflags,
+            next_pc,
+        } => Ok(MemResult::WriteFpFlags {
+            rd,
+            bits,
+            fflags,
+            next_pc,
+        }),
         ExecResult::Jump { next_pc } => Ok(MemResult::Jump { next_pc }),
-        ExecResult::Csr { funct3, rd, rs1_uimm, csr, operand, next_pc } => {
-            Ok(MemResult::Csr { funct3, rd, rs1_uimm, csr, operand, next_pc })
-        }
+        ExecResult::Csr {
+            funct3,
+            rd,
+            rs1_uimm,
+            csr,
+            operand,
+            next_pc,
+        } => Ok(MemResult::Csr {
+            funct3,
+            rd,
+            rs1_uimm,
+            csr,
+            operand,
+            next_pc,
+        }),
         ExecResult::Fence { next_pc } => Ok(MemResult::Fence { next_pc }),
         ExecResult::FenceI { next_pc } => Ok(MemResult::FenceI { next_pc }),
         ExecResult::Ecall => Ok(MemResult::Ecall),
         ExecResult::Ebreak => Ok(MemResult::Ebreak),
 
         // Integer Load
-        ExecResult::Load { rd, addr, funct3, next_pc } => {
+        ExecResult::Load {
+            rd,
+            addr,
+            funct3,
+            next_pc,
+        } => {
             let val = load_int(bus, addr, funct3)?;
             Ok(MemResult::WriteInt { rd, val, next_pc })
         }
 
         // Integer Store
-        ExecResult::Store { addr, val, funct3, next_pc } => {
+        ExecResult::Store {
+            addr,
+            val,
+            funct3,
+            next_pc,
+        } => {
             store_int(bus, addr, val, funct3)?;
             Ok(MemResult::Jump { next_pc })
         }
 
         // FP Load
-        ExecResult::FLoad { rd, addr, funct3, next_pc } => {
+        ExecResult::FLoad {
+            rd,
+            addr,
+            funct3,
+            next_pc,
+        } => {
             let bits = load_fp(bus, addr, funct3)?;
             Ok(MemResult::WriteFp { rd, bits, next_pc })
         }
 
         // FP Store
-        ExecResult::FStore { addr, bits, funct3, next_pc } => {
+        ExecResult::FStore {
+            addr,
+            bits,
+            funct3,
+            next_pc,
+        } => {
             store_fp(bus, addr, bits, funct3)?;
             Ok(MemResult::Jump { next_pc })
         }
 
         // Atomic
-        ExecResult::Atomic { funct5, aq: _aq, rl: _rl, funct3, rd, addr, val, next_pc } => {
+        ExecResult::Atomic {
+            funct5,
+            aq: _aq,
+            rl: _rl,
+            funct3,
+            rd,
+            addr,
+            val,
+            next_pc,
+        } => {
             let result_val = handle_atomic(bus, reservation, funct5, funct3, rd, addr, val)?;
-            Ok(MemResult::WriteInt { rd, val: result_val, next_pc })
+            Ok(MemResult::WriteInt {
+                rd,
+                val: result_val,
+                next_pc,
+            })
         }
     }
 }
@@ -94,31 +182,45 @@ pub fn memory_stage(
 fn load_int(bus: &mut SystemBus, addr: u64, funct3: u8) -> Result<u64, VmError> {
     match funct3 {
         0 => {
-            let byte = bus.read_byte(addr).map_err(|_| VmError::LoadAccessFault(addr))?;
+            let byte = bus
+                .read_byte(addr)
+                .map_err(|_| VmError::LoadAccessFault(addr))?;
             Ok((byte as i8) as i64 as u64)
         }
         1 => {
-            let hw = bus.read_halfword(addr).map_err(|_| VmError::LoadAccessFault(addr))?;
+            let hw = bus
+                .read_halfword(addr)
+                .map_err(|_| VmError::LoadAccessFault(addr))?;
             Ok((hw as i16) as i64 as u64)
         }
         2 => {
-            let w = bus.read_word(addr).map_err(|_| VmError::LoadAccessFault(addr))?;
+            let w = bus
+                .read_word(addr)
+                .map_err(|_| VmError::LoadAccessFault(addr))?;
             Ok((w as i32) as i64 as u64)
         }
         3 => {
-            let dw = bus.read_doubleword(addr).map_err(|_| VmError::LoadAccessFault(addr))?;
+            let dw = bus
+                .read_doubleword(addr)
+                .map_err(|_| VmError::LoadAccessFault(addr))?;
             Ok(dw)
         }
         4 => {
-            let byte = bus.read_byte(addr).map_err(|_| VmError::LoadAccessFault(addr))?;
+            let byte = bus
+                .read_byte(addr)
+                .map_err(|_| VmError::LoadAccessFault(addr))?;
             Ok(byte as u64)
         }
         5 => {
-            let hw = bus.read_halfword(addr).map_err(|_| VmError::LoadAccessFault(addr))?;
+            let hw = bus
+                .read_halfword(addr)
+                .map_err(|_| VmError::LoadAccessFault(addr))?;
             Ok(hw as u64)
         }
         6 => {
-            let w = bus.read_word(addr).map_err(|_| VmError::LoadAccessFault(addr))?;
+            let w = bus
+                .read_word(addr)
+                .map_err(|_| VmError::LoadAccessFault(addr))?;
             Ok(w as u64)
         }
         _ => Err(VmError::LoadAccessFault(addr)),
@@ -131,10 +233,18 @@ fn load_int(bus: &mut SystemBus, addr: u64, funct3: u8) -> Result<u64, VmError> 
 
 fn store_int(bus: &mut SystemBus, addr: u64, val: u64, funct3: u8) -> Result<(), VmError> {
     match funct3 {
-        0 => bus.write_byte(addr, val as u8).map_err(|_| VmError::StoreAccessFault(addr)),
-        1 => bus.write_halfword(addr, val as u16).map_err(|_| VmError::StoreAccessFault(addr)),
-        2 => bus.write_word(addr, val as u32).map_err(|_| VmError::StoreAccessFault(addr)),
-        3 => bus.write_doubleword(addr, val).map_err(|_| VmError::StoreAccessFault(addr)),
+        0 => bus
+            .write_byte(addr, val as u8)
+            .map_err(|_| VmError::StoreAccessFault(addr)),
+        1 => bus
+            .write_halfword(addr, val as u16)
+            .map_err(|_| VmError::StoreAccessFault(addr)),
+        2 => bus
+            .write_word(addr, val as u32)
+            .map_err(|_| VmError::StoreAccessFault(addr)),
+        3 => bus
+            .write_doubleword(addr, val)
+            .map_err(|_| VmError::StoreAccessFault(addr)),
         _ => Err(VmError::StoreAccessFault(addr)),
     }
 }
@@ -147,12 +257,16 @@ fn load_fp(bus: &mut SystemBus, addr: u64, funct3: u8) -> Result<u64, VmError> {
     match funct3 {
         2 => {
             // FLW: NaN-box
-            let word = bus.read_word(addr).map_err(|_| VmError::LoadAccessFault(addr))?;
+            let word = bus
+                .read_word(addr)
+                .map_err(|_| VmError::LoadAccessFault(addr))?;
             Ok(0xFFFF_FFFF_0000_0000u64 | (word as u64))
         }
         3 => {
             // FLD
-            let dw = bus.read_doubleword(addr).map_err(|_| VmError::LoadAccessFault(addr))?;
+            let dw = bus
+                .read_doubleword(addr)
+                .map_err(|_| VmError::LoadAccessFault(addr))?;
             Ok(dw)
         }
         _ => Err(VmError::LoadAccessFault(addr)),
@@ -167,11 +281,13 @@ fn store_fp(bus: &mut SystemBus, addr: u64, bits: u64, funct3: u8) -> Result<(),
     match funct3 {
         2 => {
             // FSW: lower 32 bits
-            bus.write_word(addr, bits as u32).map_err(|_| VmError::StoreAccessFault(addr))
+            bus.write_word(addr, bits as u32)
+                .map_err(|_| VmError::StoreAccessFault(addr))
         }
         3 => {
             // FSD
-            bus.write_doubleword(addr, bits).map_err(|_| VmError::StoreAccessFault(addr))
+            bus.write_doubleword(addr, bits)
+                .map_err(|_| VmError::StoreAccessFault(addr))
         }
         _ => Err(VmError::StoreAccessFault(addr)),
     }
@@ -203,10 +319,13 @@ fn handle_atomic(
         0x02 => {
             *reservation = Some(addr);
             let result = if is_word {
-                let w = bus.read_word(addr).map_err(|_| VmError::LoadAccessFault(addr))?;
+                let w = bus
+                    .read_word(addr)
+                    .map_err(|_| VmError::LoadAccessFault(addr))?;
                 (w as i32) as i64 as u64
             } else {
-                bus.read_doubleword(addr).map_err(|_| VmError::LoadAccessFault(addr))?
+                bus.read_doubleword(addr)
+                    .map_err(|_| VmError::LoadAccessFault(addr))?
             };
             Ok(result)
         }
@@ -246,18 +365,20 @@ fn amo_op(
 
     if is_word {
         // 32-bit AMO
-        let old_w = bus.read_word(addr).map_err(|_| VmError::LoadAccessFault(addr))?;
+        let old_w = bus
+            .read_word(addr)
+            .map_err(|_| VmError::LoadAccessFault(addr))?;
         let old_i = old_w as i32;
         let val_i = val as i32;
 
         let new_i: i32 = match funct5 {
-            0x00 => old_i.wrapping_add(val_i),          // AMOADD.W
-            0x01 => val_i,                               // AMOSWAP.W
-            0x04 => old_i ^ val_i,                       // AMOXOR.W
-            0x08 => old_i | val_i,                       // AMOOR.W
-            0x0C => old_i & val_i,                       // AMOAND.W
-            0x10 => old_i.min(val_i),                    // AMOMIN.W
-            0x14 => old_i.max(val_i),                    // AMOMAX.W
+            0x00 => old_i.wrapping_add(val_i), // AMOADD.W
+            0x01 => val_i,                     // AMOSWAP.W
+            0x04 => old_i ^ val_i,             // AMOXOR.W
+            0x08 => old_i | val_i,             // AMOOR.W
+            0x0C => old_i & val_i,             // AMOAND.W
+            0x10 => old_i.min(val_i),          // AMOMIN.W
+            0x14 => old_i.max(val_i),          // AMOMAX.W
             0x18 => {
                 let old_u = old_w;
                 let val_u = val as u32;
@@ -278,20 +399,22 @@ fn amo_op(
         Ok(old_i as i64 as u64)
     } else {
         // 64-bit AMO
-        let old = bus.read_doubleword(addr).map_err(|_| VmError::LoadAccessFault(addr))?;
+        let old = bus
+            .read_doubleword(addr)
+            .map_err(|_| VmError::LoadAccessFault(addr))?;
         let old_i = old as i64;
         let val_i = val as i64;
 
         let new_val: u64 = match funct5 {
-            0x00 => old.wrapping_add(val),                  // AMOADD.D
-            0x01 => val,                                     // AMOSWAP.D
-            0x04 => old ^ val,                               // AMOXOR.D
-            0x08 => old | val,                               // AMOOR.D
-            0x0C => old & val,                               // AMOAND.D
-            0x10 => old_i.min(val_i) as u64,                // AMOMIN.D
-            0x14 => old_i.max(val_i) as u64,                // AMOMAX.D
-            0x18 => old.min(val),                            // AMOMINU.D
-            0x1C => old.max(val),                            // AMOMAXU.D
+            0x00 => old.wrapping_add(val),   // AMOADD.D
+            0x01 => val,                     // AMOSWAP.D
+            0x04 => old ^ val,               // AMOXOR.D
+            0x08 => old | val,               // AMOOR.D
+            0x0C => old & val,               // AMOAND.D
+            0x10 => old_i.min(val_i) as u64, // AMOMIN.D
+            0x14 => old_i.max(val_i) as u64, // AMOMAX.D
+            0x18 => old.min(val),            // AMOMINU.D
+            0x1C => old.max(val),            // AMOMAXU.D
             _ => return Err(VmError::IllegalInstruction(funct5 as u32)),
         };
 

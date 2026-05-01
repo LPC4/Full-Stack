@@ -1,8 +1,8 @@
 //! Memory subsystem: trait, bus, and sub‑module organisation.
 
-pub mod rom;
-pub mod ram;
 pub mod cache;
+pub mod ram;
+pub mod rom;
 
 use crate::virtual_machine::error::VmError;
 
