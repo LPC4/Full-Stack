@@ -13,15 +13,15 @@ pub use program_catalog::{ProgramCatalog, ProgramFile, ProgramKind};
 pub use viewtrait::CompilerView;
 
 pub mod views;
-pub use crate::view::views::assembly_view::AssemblyView;
-pub use crate::view::views::ast_view::AstView;
-pub use crate::view::views::cfg_view::CfgView;
-pub use crate::view::views::execution_view::ExecutionView;
-pub use crate::view::views::ir_view::IrView;
-pub use crate::view::views::memory_map_view::MemoryMapView;
-pub use crate::view::views::source_view::SourceView;
-pub use crate::view::views::stack_view::StackView;
-pub use crate::view::views::tokens_view::TokensView;
+pub use crate::view::views::AssemblyView;
+pub use crate::view::views::AstView;
+pub use crate::view::views::CfgView;
+pub use crate::view::views::ExecutionView;
+pub use crate::view::views::IrView;
+pub use crate::view::views::MemoryMapView;
+pub use crate::view::views::SourceView;
+pub use crate::view::views::StackView;
+pub use crate::view::views::TokensView;
 
 pub(crate) fn blank_custom_program_source() -> String {
     "; Write your program here\n".to_owned()

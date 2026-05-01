@@ -284,7 +284,7 @@ impl FullStackApp {
 
 impl eframe::App for FullStackApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        // --- Process a pending “Add View” request (deferred from menu) ---
+        // --- Process a pending "Add View" request (deferred from menu) ---
         if let Some(view) = self.pending_new_view.take() {
             self.dock.main_surface_mut().push_to_focused_leaf(view);
         }
@@ -307,7 +307,7 @@ impl eframe::App for FullStackApp {
                         self.compile();
                     }
 
-                    #[cfg(not(target_arch = "wasm32"))]
+                    #[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
                     if ui
                         .add_sized([110.0, 30.0], egui::Button::new("Run in WSL"))
                         .clicked()
@@ -350,27 +350,29 @@ impl eframe::App for FullStackApp {
                         self.reset_layout();
                     }
 
-                    // --- “Add View” dropdown (deferred) ---
+                    // --- "Add View" dropdown (deferred one frame so the menu can close) ---
                     egui::menu::bar(ui, |ui| {
                         ui.menu_button("Add View", |ui| {
-                            let factories: Vec<(&str, fn(&mut u64) -> ViewWrapper)> = vec![
-                                ("Source", SourceView::make_wrapper),
-                                ("Tokens", TokensView::make_wrapper),
-                                ("AST", AstView::make_wrapper),
-                                ("IR", IrView::make_wrapper),
-                                ("Assembly", AssemblyView::make_wrapper),
-                                ("CFG", CfgView::make_wrapper),
-                                ("Stack", StackView::make_wrapper),
-                                ("Memory Map", MemoryMapView::make_wrapper),
-                                ("Execution (WSL)", ExecutionView::make_wrapper),
+                            // Each entry is (menu label, prototype view).
+                            // We clone_box() the prototype when the button is clicked.
+                            let entries: Vec<(&str, Box<dyn CompilerView>)> = vec![
+                                ("Source",          Box::new(SourceView::default())),
+                                ("Tokens",          Box::new(TokensView::default())),
+                                ("AST",             Box::new(AstView::default())),
+                                ("IR",              Box::new(IrView::default())),
+                                ("Assembly",        Box::new(AssemblyView::default())),
+                                ("CFG",             Box::new(CfgView::default())),
+                                ("Stack",           Box::new(StackView::default())),
+                                ("Memory Map",      Box::new(MemoryMapView::default())),
+                                ("Execution (WSL)", Box::new(ExecutionView::default())),
                             ];
-
-                            for (label, factory) in factories {
-                                if ui.button(label).clicked() {
-                                    // We cannot push the tab here because the menu is still open.
-                                    // Queue it and close the menu.
-                                    self.pending_new_view = Some(factory(&mut self.next_view_id));
-                                    ui.close_menu();
+                            for (label, proto) in &entries {
+                                if ui.button(*label).clicked() {
+                                    self.pending_new_view = Some(ViewWrapper::new(
+                                        proto.clone_box(),
+                                        &mut self.next_view_id,
+                                    ));
+                                    ui.close();
                                 }
                             }
                         });
@@ -469,33 +471,9 @@ impl egui_dock::TabViewer for DockTabViewer<'_> {
 }
 
 // ------------------------------------------------------------
-// Each view now defines a static factory that
-// creates a ViewWrapper, so we can pass it to the menu.
+// WSL runner — Windows-only (calls the `wsl` binary with creation_flags)
 // ------------------------------------------------------------
-macro_rules! impl_view_factory {
-    ($view:ty) => {
-        impl $view {
-            fn make_wrapper(counter: &mut u64) -> ViewWrapper {
-                ViewWrapper::new(Box::new(<$view>::default()), counter)
-            }
-        }
-    };
-}
-
-impl_view_factory!(SourceView);
-impl_view_factory!(TokensView);
-impl_view_factory!(AstView);
-impl_view_factory!(IrView);
-impl_view_factory!(AssemblyView);
-impl_view_factory!(CfgView);
-impl_view_factory!(StackView);
-impl_view_factory!(MemoryMapView);
-impl_view_factory!(ExecutionView);
-
-// ------------------------------------------------------------
-// WSL runner
-// ------------------------------------------------------------
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
 fn run_in_wsl(asm: &str) -> String {
     use std::io::Write;
     use std::os::windows::process::CommandExt;
@@ -577,7 +555,7 @@ echo "--- Process Exited with Code: $EXIT_CODE ---"
     result
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(not(all(not(target_arch = "wasm32"), target_os = "windows")))]
 fn run_in_wsl(_asm: &str) -> String {
-    "WSL execution is not supported in the web browser.".to_string()
+    "WSL execution is only supported on Windows.".to_string()
 }

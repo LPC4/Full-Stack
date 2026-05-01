@@ -219,7 +219,7 @@ impl HighLevelCompiler {
                     })
                 }
                 EvalMode::Value => {
-                    if let IrType::Pointer(ref inner_ty) = info.ty {
+                    if let IrType::Pointer(inner_ty) = &info.ty {
                         let dest = self.new_temp();
                         if let IrValue::Register(ptr_reg) = info.value {
                             self.push_instruction(IrInstruction::Load {
@@ -293,8 +293,8 @@ impl HighLevelCompiler {
                 };
                 (reg, fields)
             }
-            IrType::Pointer(ref inner) => {
-                let inner_resolved = self.resolve_named_type(inner);
+            IrType::Pointer(inner) => {
+                let inner_resolved = self.resolve_named_type(&inner);
                 match inner_resolved {
                     IrType::Aggregate(fields) => {
                         let reg = match &base_addr.value {
@@ -303,8 +303,8 @@ impl HighLevelCompiler {
                         };
                         (reg, fields)
                     }
-                    IrType::Pointer(ref inner_inner) => {
-                        let inner_inner_resolved = self.resolve_named_type(inner_inner);
+                    IrType::Pointer(inner_inner) => {
+                        let inner_inner_resolved = self.resolve_named_type(&inner_inner);
                         if let IrType::Aggregate(fields) = inner_inner_resolved {
                             let slot_reg = match &base_addr.value {
                                 IrValue::Register(r) => r.clone(),
@@ -429,8 +429,8 @@ impl HighLevelCompiler {
                 };
                 (reg, *element)
             }
-            IrType::Pointer(ref inner) => {
-                let inner_resolved = self.resolve_named_type(inner);
+            IrType::Pointer(inner) => {
+                let inner_resolved = self.resolve_named_type(&inner);
                 match inner_resolved {
                     // Pointer → Array: base.value points directly to the array data
                     IrType::Array { element, .. } => {
@@ -441,8 +441,8 @@ impl HighLevelCompiler {
                         (reg, *element)
                     }
                     // Pointer → Pointer → something: load the inner pointer first
-                    IrType::Pointer(ref inner_inner) => {
-                        let inner_inner_resolved = self.resolve_named_type(inner_inner);
+                    IrType::Pointer(inner_inner) => {
+                        let inner_inner_resolved = self.resolve_named_type(&inner_inner);
                         let element_ty = match inner_inner_resolved {
                             IrType::Array { element, .. } => *element,
                             other => other,

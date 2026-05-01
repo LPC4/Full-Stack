@@ -79,7 +79,7 @@ impl CompilerView for CfgView {
         let blocks = parse_blocks(&state.asm);
 
         egui::ScrollArea::both()
-            .id_salt("cfg_scroll")
+            .id_salt(ui.id())
             .auto_shrink([false; 2])
             .show(ui, |ui| {
                 draw_cfg(ui, &blocks);

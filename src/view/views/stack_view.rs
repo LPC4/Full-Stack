@@ -211,7 +211,7 @@ impl CompilerView for StackView {
                 self.selected_function_index = 0;
             }
 
-            egui::ComboBox::from_id_salt("function_select")
+            egui::ComboBox::from_id_salt(ui.id().with("function_select"))
                 .selected_text(&functions[self.selected_function_index].name)
                 .show_ui(ui, |ui| {
                     for (i, func) in functions.iter().enumerate() {
@@ -421,7 +421,7 @@ fn draw_modern_function_stack(ui: &mut egui::Ui, func: &FunctionStack) {
             ui.heading("Frame Variables");
             ui.add_space(8.0);
 
-            egui::Grid::new("stack_elements_grid")
+            egui::Grid::new(ui.id().with("stack_elements_grid"))
                 .striped(true)
                 .min_col_width(70.0)
                 .spacing([20.0, 8.0])

@@ -302,8 +302,8 @@ impl HighLevelCompiler {
 
         // Process each field in the pattern (order independent)
         for field in fields {
-            if let Some(ref name) = field.name {
-                let &(field_offset, ref field_ty) = match offset_map.get(name.as_str()) {
+            if let Some(name) = &field.name {
+                let (field_offset, field_ty) = match offset_map.get(name.as_str()) {
                     Some(v) => v,
                     None => {
                         self.context.error(format!(
@@ -320,7 +320,7 @@ impl HighLevelCompiler {
                     dest: loaded.clone(),
                     ty: field_ty.clone(),
                     ptr: ptr_reg.clone(),
-                    offset: Some(field_offset),
+                    offset: Some(*field_offset),
                 });
 
                 // Determine the target pointer (existing variable or create a new stack slot)

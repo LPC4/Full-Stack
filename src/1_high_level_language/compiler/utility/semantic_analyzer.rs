@@ -337,7 +337,7 @@ impl SemanticAnalyzer {
                     let mut field_types = Vec::new();
                     for field in fields {
                         let expr_ty = self.infer_expression_type(&field.expr)?;
-                        let inferred_ir = if let Some(ref annotated_ty) = field.ty {
+                        let inferred_ir = if let Some(annotated_ty) = &field.ty {
                             let annotated_ir = self.ast_type_to_ir_type(annotated_ty);
                             let annotated_name = self.context.get_type_name(&annotated_ir);
                             if expr_ty != annotated_name
@@ -459,7 +459,7 @@ impl SemanticAnalyzer {
                         };
 
                         // Type annotation is required per spec
-                        let Some(ref annotated_ty) = field.ty else {
+                        let Some(annotated_ty) = &field.ty else {
                             self.error(format!(
                                 "Struct destructuring field `{name}` requires explicit type annotation"
                             ));
