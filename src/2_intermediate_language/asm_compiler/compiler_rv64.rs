@@ -44,6 +44,20 @@ impl CompilerRv64 {
     }
 
     pub fn compile(&mut self, program: &IrProgram) -> String {
+        self.compile_inner(program);
+        self.emitter.finish()
+    }
+
+    /// Compile and return both the text assembly and the structured token stream.
+    pub fn compile_with_tokens(
+        &mut self,
+        program: &IrProgram,
+    ) -> (String, Vec<crate::assembly_language::rv_instruction::RvInstruction>) {
+        self.compile_inner(program);
+        (self.emitter.finish(), self.emitter.finish_tokens())
+    }
+
+    fn compile_inner(&mut self, program: &IrProgram) {
         self.emitter.reset();
         self.data.reset();
         self.type_aliases.clear();
@@ -68,8 +82,6 @@ impl CompilerRv64 {
 
         self.emitter.emit_data_section(&self.data);
         self.emitter.emit_text_section();
-
-        self.emitter.finish()
     }
 
     fn compile_function(&mut self, func: &crate::intermediate_language::IrFunction) {

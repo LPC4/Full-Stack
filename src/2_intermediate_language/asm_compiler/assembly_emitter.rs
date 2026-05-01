@@ -1,6 +1,7 @@
 use super::{data_section::DataSection, function_context::Rv64Backend};
 use crate::assembly_language::encode_decode::Reg;
 use crate::assembly_language::real::RealInstruction;
+use crate::assembly_language::rv_instruction::RvInstruction;
 use crate::assembly_language::riscv::rv64fd::{
     Fadd, Fdiv, FeqS, Fld, FleqS, FltS, Flw, Fmul, FmvWX, Fsd, Fsub, Fsw, fmv_s,
 };
@@ -23,6 +24,7 @@ const T6: Reg = 31;
 
 pub struct AssemblyEmitter {
     lines: Vec<String>,
+    tokens: Vec<RvInstruction>,
     current_section: Option<String>,
     temp_counter: usize,
     float_temp_counter: usize,
@@ -32,6 +34,7 @@ impl AssemblyEmitter {
     pub fn new() -> Self {
         Self {
             lines: Vec::new(),
+            tokens: Vec::new(),
             current_section: None,
             temp_counter: 0,
             float_temp_counter: 0,
@@ -40,6 +43,7 @@ impl AssemblyEmitter {
 
     pub fn reset(&mut self) {
         self.lines.clear();
+        self.tokens.clear();
         self.current_section = None;
         self.temp_counter = 0;
         self.float_temp_counter = 0;
@@ -54,11 +58,15 @@ impl AssemblyEmitter {
         if self.current_section.as_deref() != Some(name) {
             self.current_section = Some(name.to_owned());
             self.lines.push(format!(".section {name}"));
+            self.tokens
+                .push(RvInstruction::Directive(format!(".section {name}")));
         }
     }
 
     pub fn emit_raw(&mut self, line: &str) {
         self.lines.push(line.to_owned());
+        self.tokens
+            .push(RvInstruction::Directive(line.to_owned()));
     }
 
     pub fn emit_data_section(&mut self, data: &DataSection) {
@@ -78,11 +86,18 @@ impl AssemblyEmitter {
             .push(format!("\t; ========================================"));
         self.lines.push(format!(".globl {name}"));
         self.lines.push(format!("{name}:"));
+        self.tokens
+            .push(RvInstruction::Comment(format!("Function: {name}")));
+        self.tokens
+            .push(RvInstruction::Directive(format!(".globl {name}")));
+        self.tokens.push(RvInstruction::Label(name.to_owned()));
     }
 
     pub fn end_function(&mut self) {
         self.lines.push(format!("\t; End of function"));
-        self.lines.push(format!(""));
+        self.lines.push(String::new());
+        self.tokens
+            .push(RvInstruction::Comment("End of function".to_owned()));
     }
 
     pub fn emit_label(&mut self, label: &str) {
@@ -91,17 +106,22 @@ impl AssemblyEmitter {
             if parts.len() == 2 {
                 self.lines
                     .push(format!("\t; --- Basic Block: {} ---", parts[1]));
+                self.tokens
+                    .push(RvInstruction::Comment(format!("Basic Block: {}", parts[1])));
             }
         }
         self.lines.push(format!("{label}:"));
+        self.tokens.push(RvInstruction::Label(label.to_owned()));
     }
 
     pub fn emit_inst(&mut self, inst: RealInstruction) {
         self.lines.push(format!("\t{}", inst.to_asm()));
+        self.tokens.push(RvInstruction::Real(inst));
     }
 
     pub fn emit_comment(&mut self, text: &str) {
         self.lines.push(format!("\t; {text}"));
+        self.tokens.push(RvInstruction::Comment(text.to_owned()));
     }
 
     // ---------- register allocation helpers ----------
@@ -563,8 +583,12 @@ impl AssemblyEmitter {
     }
 
     pub fn finish(&mut self) -> String {
-        let result = self.lines.join("\n");
-        result
+        self.lines.join("\n")
+    }
+
+    /// Returns the structured token stream collected in parallel with the text output.
+    pub fn finish_tokens(&self) -> Vec<RvInstruction> {
+        self.tokens.clone()
     }
 }
 

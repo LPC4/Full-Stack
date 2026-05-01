@@ -191,4 +191,24 @@ impl CompilationPipeline {
         let mut compiler = CompilerRv64::new();
         compiler.compile(ir)
     }
+
+    /// Compile an IR program to assembly text and the structured token stream.
+    pub fn compile_ir_to_assembly_with_tokens(
+        &self,
+        ir: &IrProgram,
+    ) -> (String, Vec<crate::assembly_language::rv_instruction::RvInstruction>) {
+        let mut compiler = CompilerRv64::new();
+        compiler.compile_with_tokens(ir)
+    }
+
+    /// Assemble a token stream into machine code, producing one byte blob per section.
+    pub fn assemble(
+        &self,
+        tokens: &[crate::assembly_language::rv_instruction::RvInstruction],
+    ) -> Result<
+        crate::assembly_language::assembler::output::AssembledOutput,
+        crate::assembly_language::assembler::AssemblerError,
+    > {
+        crate::assembly_language::assembler::Assembler::assemble(tokens)
+    }
 }

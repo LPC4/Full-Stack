@@ -10,6 +10,7 @@ pub mod rv_instruction;
 pub mod traits;
 pub mod utils;
 
+pub use assembler::{Assembler, AssemblerError};
 pub use pseudo::PseudoInstruction;
 pub use real::RealInstruction;
 pub use rv_instruction::RvInstruction;

@@ -4,16 +4,16 @@ pub struct CompilationState {
     pub ast: String,
     pub ir: String,
     pub asm: String,
-    /// Full formatted error message (multi-line, displayed in error panel).
+    pub assembly_tokens: Vec<crate::assembly_language::rv_instruction::RvInstruction>,
+    /// Machine-code output from the assembler — one byte blob per ELF section.
+    pub assembled: Option<crate::assembly_language::assembler::output::AssembledOutput>,
     pub error: Option<String>,
-    /// Short one-liner for the top status bar (e.g. "Parse error at line 5").
     pub error_summary: Option<String>,
     pub just_compiled: bool,
     pub execution_output: String,
 }
 
 impl CompilationState {
-    /// Set both the full error and derive a compact summary from it.
     pub fn set_error(&mut self, full: String) {
         // Try to find the first bulleted error line; fallback to the first non-empty line.
         let first_meaningful_line = full

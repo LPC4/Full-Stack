@@ -137,7 +137,6 @@ impl FullStackApp {
                 views[4].clone(),
                 views[5].clone(),
                 views[6].clone(),
-                views[7].clone(),
                 views[8].clone(),
             ],
         );
@@ -176,8 +175,12 @@ impl FullStackApp {
             Ok(result) => {
                 self.compilation_state.ast = format!("{:#?}", result.ast);
                 self.compilation_state.ir = result.ir_program.to_string();
-                self.compilation_state.asm =
-                    self.pipeline.compile_ir_to_assembly(&result.ir_program);
+                let (asm_text, asm_tokens) = self
+                    .pipeline
+                    .compile_ir_to_assembly_with_tokens(&result.ir_program);
+                self.compilation_state.asm = asm_text;
+                self.compilation_state.assembled = self.pipeline.assemble(&asm_tokens).ok();
+                self.compilation_state.assembly_tokens = asm_tokens;
                 self.compilation_state.clear_error();
                 self.compilation_state.just_compiled = true;
             }
@@ -351,11 +354,9 @@ impl eframe::App for FullStackApp {
                         self.reset_layout();
                     }
 
-                    // --- "Add View" dropdown (deferred one frame so the menu can close) ---
+                    // "Add View" dropdown
                     egui::menu::bar(ui, |ui| {
                         ui.menu_button("Add View", |ui| {
-                            // Each entry is (menu label, prototype view).
-                            // We clone_box() the prototype when the button is clicked.
                             let entries: Vec<(&str, Box<dyn CompilerView>)> = vec![
                                 ("Source",          Box::new(SourceView::default())),
                                 ("Tokens",          Box::new(TokensView::default())),
@@ -472,7 +473,7 @@ impl egui_dock::TabViewer for DockTabViewer<'_> {
 }
 
 // ------------------------------------------------------------
-// WSL runner — Windows-only (calls the `wsl` binary with creation_flags)
+// WSL runner
 // ------------------------------------------------------------
 #[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
 fn run_in_wsl(asm: &str) -> String {
