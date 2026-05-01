@@ -4,7 +4,7 @@
 
 # Full‑Stack
 
-### Interactive compiler pipeline, from source to RISC-V assembly
+### Interactive compiler pipeline, from source to machine code
 
 [![Demo](https://img.shields.io/badge/Demo-GitHub_Pages-5e8c61?logo=github)](https://lpc4.github.io/Full-Stack/)
 [![Rust](https://img.shields.io/badge/Rust-1.75+-5e8c61?logo=rust)](https://www.rust-lang.org)
@@ -18,26 +18,37 @@
 ## Overview
 
 Full‑Stack is a **self‑contained compiler pipeline** for a custom systems language.  
-Every stage, lexing, parsing, semantic analysis, IR generation, register allocation, and RISC‑V code emission, runs directly in the browser (or natively) and is **visualised in real time**.
+Every stage, lexing, parsing, semantic analysis, IR generation, register allocation, RISC‑V code emission, two-pass assembly to machine code, and execution, runs directly in the browser (or natively) and is **visualised in real time**.
 
-The pipeline produces **RV64IMAFD assembly** that can be assembled, linked, and executed inside a RISC‑V emulator (QEMU).  
+The pipeline compiles HLL source all the way to **RV64IMAFD machine code** (ELF-ready section blobs).  
+Execution is handled by QEMU in native builds; an internal VM is planned for WASM.  
 All components are written in Rust and exposed through an egui interface.
 
 ---
 
 ## Pipeline at a glance
 
-| Stage | View | What you see                                                              |
-|-------|------|---------------------------------------------------------------------------|
-| **Source** | `Source` | Syntax‑highlighted editor for HLL programs                                |
-| **Tokens** | `Tokens` | Raw token stream from the lexer                                           |
-| **AST** | `AST` | Abstract syntax tree (pretty‑printed)                                     |
-| **IR** | `IR` | Typed, SSA‑form intermediate representation                               |
-| **Assembly** | `Assembly` | Generated RISC‑V assembly (RV64IMAFD)                                     |
-| **Stack** | `Stack` | Stack frame layout, saved registers, locals per function                  |
-| **Execution** | `Execution` | Stdout and exit code from running the binary in QEMU (only works locally) |
+```
+HLL Source
+  → Lexer / Parser        tokens, AST
+  → Semantic Analysis     diagnostics
+  → IR Compiler           typed SSA IR
+  → RISC-V Emitter        Vec<RvInstruction>  →  assembly text
+  → Two-pass Assembler    AssembledOutput  (.text / .data / .rodata / .bss bytes + symbol table)
+  → VM / QEMU             stdout, exit code
+```
 
-All panels are resizable and can be rearranged, the layout persists across sessions.
+| Stage | View | What you see |
+|-------|------|--------------|
+| **Source** | `Source` | Syntax‑highlighted editor for HLL programs |
+| **Tokens** | `Tokens` | Raw token stream from the lexer |
+| **AST** | `AST` | Abstract syntax tree (pretty‑printed) |
+| **IR** | `IR` | Typed, SSA‑form intermediate representation |
+| **Assembly** | `Assembly` | Generated RISC‑V assembly text (RV64IMAFD) |
+| **Stack** | `Stack` | Stack frame layout, saved registers, locals per function |
+| **Execution** | `Execution` | Stdout and exit code from QEMU (native only) |
+
+All panels are resizable and rearrangeable; the layout persists across sessions.
 
 ---
 
@@ -96,8 +107,7 @@ For the full specification, see the [language reference](src/1_high_level_langua
 
 - [Language specification](src/1_high_level_language/_LANG_SPECIFICATIONS.md)
 - [IR design](src/2_intermediate_language/_IR_SPECIFICATIONS.md)
-- [RISC‑V backend](src/3_assembly_language/_RISC_SPECIFICATIONS.md)
-- [Source tree overview](src/)
+- [RISC‑V backend](src/3_assembly_language/_RISCV_SPECIFICATIONS.md)
 
 ---
 
