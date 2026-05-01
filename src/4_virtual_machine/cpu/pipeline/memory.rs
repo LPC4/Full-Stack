@@ -1,7 +1,9 @@
 //! Memory access stage — resolves Load/Store/Atomic ExecResults against the system bus.
 
 use crate::virtual_machine::bus::SystemBus;
+use crate::virtual_machine::cpu::mmu;
 use crate::virtual_machine::cpu::pipeline::execute::ExecResult;
+use crate::virtual_machine::cpu::registers::PrivilegeMode;
 use crate::virtual_machine::error::VmError;
 use crate::virtual_machine::memory::MemoryAccess;
 
@@ -21,6 +23,9 @@ pub enum MemResult {
     FenceI        { next_pc: u64 },
     Ecall,
     Ebreak,
+    Mret,
+    Sret,
+    SfenceVma,
 }
 
 // ---------------------------------------------------------------------------
@@ -31,6 +36,8 @@ pub fn memory_stage(
     result: ExecResult,
     bus: &mut SystemBus,
     reservation: &mut Option<u64>,
+    satp: u64,
+    priv_mode: PrivilegeMode,
 ) -> Result<MemResult, VmError> {
     match result {
         // Pass-through variants
@@ -54,34 +61,42 @@ pub fn memory_stage(
         ExecResult::FenceI { next_pc } => Ok(MemResult::FenceI { next_pc }),
         ExecResult::Ecall => Ok(MemResult::Ecall),
         ExecResult::Ebreak => Ok(MemResult::Ebreak),
+        ExecResult::Mret => Ok(MemResult::Mret),
+        ExecResult::Sret => Ok(MemResult::Sret),
+        ExecResult::SfenceVma => Ok(MemResult::SfenceVma),
 
         // Integer Load
         ExecResult::Load { rd, addr, funct3, next_pc } => {
-            let val = load_int(bus, addr, funct3)?;
+            let phys_addr = mmu::translate(addr, satp, priv_mode, bus, false, false)?;
+            let val = load_int(bus, phys_addr, funct3)?;
             Ok(MemResult::WriteInt { rd, val, next_pc })
         }
 
         // Integer Store
         ExecResult::Store { addr, val, funct3, next_pc } => {
-            store_int(bus, addr, val, funct3)?;
+            let phys_addr = mmu::translate(addr, satp, priv_mode, bus, true, false)?;
+            store_int(bus, phys_addr, val, funct3)?;
             Ok(MemResult::Jump { next_pc })
         }
 
         // FP Load
         ExecResult::FLoad { rd, addr, funct3, next_pc } => {
-            let bits = load_fp(bus, addr, funct3)?;
+            let phys_addr = mmu::translate(addr, satp, priv_mode, bus, false, false)?;
+            let bits = load_fp(bus, phys_addr, funct3)?;
             Ok(MemResult::WriteFp { rd, bits, next_pc })
         }
 
         // FP Store
         ExecResult::FStore { addr, bits, funct3, next_pc } => {
-            store_fp(bus, addr, bits, funct3)?;
+            let phys_addr = mmu::translate(addr, satp, priv_mode, bus, true, false)?;
+            store_fp(bus, phys_addr, bits, funct3)?;
             Ok(MemResult::Jump { next_pc })
         }
 
         // Atomic
         ExecResult::Atomic { funct5, aq: _aq, rl: _rl, funct3, rd, addr, val, next_pc } => {
-            let result_val = handle_atomic(bus, reservation, funct5, funct3, rd, addr, val)?;
+            let phys_addr = mmu::translate(addr, satp, priv_mode, bus, true, false)?;
+            let result_val = handle_atomic(bus, reservation, funct5, funct3, rd, phys_addr, val)?;
             Ok(MemResult::WriteInt { rd, val: result_val, next_pc })
         }
     }

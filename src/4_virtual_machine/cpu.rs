@@ -5,8 +5,9 @@ pub mod mmu;
 pub mod pipeline;
 pub mod registers;
 
-// Re-export Cpu and StepOutcome for external use
+// Re-export Cpu, StepOutcome, and PrivilegeMode for external use
 pub use cpu_impl::{Cpu, StepOutcome};
+pub use registers::PrivilegeMode;
 
 mod cpu_impl {
 
@@ -24,8 +25,17 @@ use crate::virtual_machine::error::VmError;
 
 const CAUSE_INSN_ACCESS_FAULT:  u64 = 1;
 const CAUSE_ILLEGAL_INSN:       u64 = 2;
+const CAUSE_EBREAK:             u64 = 3;
 const CAUSE_LOAD_ACCESS_FAULT:  u64 = 5;
 const CAUSE_STORE_ACCESS_FAULT: u64 = 7;
+const CAUSE_ECALL_U:            u64 = 8;
+const CAUSE_ECALL_S:            u64 = 9;
+const CAUSE_ECALL_M:            u64 = 11;
+#[allow(dead_code)]
+const CAUSE_PAGE_FAULT_INST:    u64 = 12;
+const CAUSE_PAGE_FAULT_LOAD:    u64 = 13;
+#[allow(dead_code)]
+const CAUSE_PAGE_FAULT_STORE:   u64 = 15;
 
 // Interrupt causes have bit 63 set.
 const CAUSE_M_SOFTWARE_IRQ: u64 = (1u64 << 63) | 3;
@@ -69,7 +79,7 @@ impl Cpu {
 
     /// Fetch the next instruction from memory.
     fn fetch_instruction(&self, bus: &mut SystemBus) -> Result<u32, VmError> {
-        fetch::fetch(bus, self.regs.pc)
+        fetch::fetch(bus, self.regs.pc, self.csrs.satp, self.regs.priv_mode)
     }
 
     /// Execute a decoded instruction.
@@ -79,7 +89,7 @@ impl Cpu {
 
     /// Perform memory operations for Load/Store/Atomic instructions.
     fn memory_stage(&mut self, result: ExecResult, bus: &mut SystemBus) -> Result<memory::MemResult, VmError> {
-        memory::memory_stage(result, bus, &mut self.reservation)
+        memory::memory_stage(result, bus, &mut self.reservation, self.csrs.satp, self.regs.priv_mode)
     }
 
     /// Write back results to registers and CSRs.
@@ -91,31 +101,79 @@ impl Cpu {
     // Trap / interrupt handling
     // -----------------------------------------------------------------------
 
-    /// Enter a machine-mode trap: saves state, updates CSRs, jumps to handler.
+    /// Enter a trap: saves state, updates CSRs, jumps to handler.
+    /// This handles both M-mode and S-mode traps.
     fn take_trap(&mut self, cause: u64, tval: u64) {
+        use crate::virtual_machine::cpu::registers::PrivilegeMode;
+        
         let pc = self.regs.pc;
-        self.csrs.mepc  = pc & !0x3u64;
-        self.csrs.mcause = cause;
-        self.csrs.mtval  = tval;
-
-        // Save MIE → MPIE; clear MIE; set MPP = 3 (M-mode).
-        let mie_bit = (self.csrs.mstatus >> 3) & 1;
-        self.csrs.mstatus &= !(1u64 << 7);  // clear MPIE
-        self.csrs.mstatus |= mie_bit << 7;   // MPIE = old MIE
-        self.csrs.mstatus &= !(1u64 << 3);  // clear MIE
-        self.csrs.mstatus |= 3u64 << 11;    // MPP = 3 (M-mode)
-
-        let mtvec = self.csrs.mtvec;
-        let mode  = mtvec & 0x3;
-        let base  = mtvec & !0x3u64;
-
-        // Vectored mode (1): jump to base + 4*cause for interrupts, base for exceptions.
-        self.regs.pc = if mode == 1 && (cause & (1u64 << 63)) != 0 {
-            let idx = cause & !(1u64 << 63);
-            base + 4 * idx
-        } else {
-            base
-        };
+        let current_priv = self.regs.priv_mode;
+        
+        // Determine target mode and CSRs based on current privilege
+        match current_priv {
+            PrivilegeMode::Machine => {
+                // M-mode trap
+                self.csrs.mepc = pc & !0x3u64;
+                self.csrs.mcause = cause;
+                self.csrs.mtval = tval;
+                
+                // Save MIE → MPIE; clear MIE; set MPP
+                let mie_bit = (self.csrs.mstatus >> 3) & 1;
+                self.csrs.mstatus &= !(1u64 << 7);  // clear MPIE
+                self.csrs.mstatus |= mie_bit << 7;   // MPIE = old MIE
+                self.csrs.mstatus &= !(1u64 << 3);  // clear MIE
+                
+                // Set MPP based on current privilege
+                self.csrs.mstatus &= !(0x3u64 << 11);
+                self.csrs.mstatus |= (current_priv as u64) << 11;
+                
+                // Jump to mtvec
+                let mtvec = self.csrs.mtvec;
+                let mode = mtvec & 0x3;
+                let base = mtvec & !0x3u64;
+                
+                self.regs.pc = if mode == 1 && (cause & (1u64 << 63)) != 0 {
+                    let idx = cause & !(1u64 << 63);
+                    base + 4 * idx
+                } else {
+                    base
+                };
+                
+                // Switch to M-mode
+                self.regs.priv_mode = PrivilegeMode::Machine;
+            }
+            PrivilegeMode::Supervisor | PrivilegeMode::User => {
+                // Trap to M-mode (we don't implement delegation to S-mode yet)
+                self.csrs.mepc = pc & !0x3u64;
+                self.csrs.mcause = cause;
+                self.csrs.mtval = tval;
+                
+                // Save MIE → MPIE; clear MIE; set MPP
+                let mie_bit = (self.csrs.mstatus >> 3) & 1;
+                self.csrs.mstatus &= !(1u64 << 7);  // clear MPIE
+                self.csrs.mstatus |= mie_bit << 7;   // MPIE = old MIE
+                self.csrs.mstatus &= !(1u64 << 3);  // clear MIE
+                
+                // Set MPP based on current privilege
+                self.csrs.mstatus &= !(0x3u64 << 11);
+                self.csrs.mstatus |= (current_priv as u64) << 11;
+                
+                // Jump to mtvec
+                let mtvec = self.csrs.mtvec;
+                let mode = mtvec & 0x3;
+                let base = mtvec & !0x3u64;
+                
+                self.regs.pc = if mode == 1 && (cause & (1u64 << 63)) != 0 {
+                    let idx = cause & !(1u64 << 63);
+                    base + 4 * idx
+                } else {
+                    base
+                };
+                
+                // Switch to M-mode
+                self.regs.priv_mode = PrivilegeMode::Machine;
+            }
+        }
     }
 
     /// Map a `VmError` to a trap cause/tval pair, invoke the handler (if installed),
@@ -127,6 +185,12 @@ impl Cpu {
             VmError::LoadAccessFault(addr)
             | VmError::BusError(addr)              => (CAUSE_LOAD_ACCESS_FAULT, *addr),
             VmError::StoreAccessFault(addr)        => (CAUSE_STORE_ACCESS_FAULT, *addr),
+            VmError::PageFault(addr)               => {
+                // Determine page fault type based on context
+                // For simplicity, default to load page fault
+                // In a real implementation, we'd track the access type
+                (CAUSE_PAGE_FAULT_LOAD, *addr)
+            }
             _ => return Err(e),
         };
 
@@ -187,8 +251,23 @@ impl Cpu {
 
     /// Handle ecall syscall instructions.
     fn handle_ecall(&mut self, bus: &mut SystemBus) -> Result<StepOutcome, VmError> {
+        use crate::virtual_machine::cpu::registers::PrivilegeMode;
         use crate::virtual_machine::memory::MemoryAccess;
 
+        // In S-mode or U-mode, ecall should trap to M-mode
+        if self.regs.priv_mode != PrivilegeMode::Machine {
+            let cause = match self.regs.priv_mode {
+                PrivilegeMode::User => CAUSE_ECALL_U,
+                PrivilegeMode::Supervisor => CAUSE_ECALL_S,
+                PrivilegeMode::Machine => CAUSE_ECALL_M, // shouldn't reach here
+            };
+            self.take_trap(cause, 0);
+            self.csrs.increment_instret();
+            self.csrs.increment_cycle();
+            return Ok(StepOutcome::Continue);
+        }
+
+        // M-mode ecall - handle as syscall
         let syscall = self.regs.read_x(17); // a7
 
         match syscall {
@@ -224,6 +303,65 @@ impl Cpu {
         }
     }
 
+    /// Handle MRET instruction - return from machine-mode trap
+    fn handle_mret(&mut self) -> StepOutcome {
+        use crate::virtual_machine::cpu::registers::PrivilegeMode;
+        
+        // Restore MIE from MPIE
+        let mpie = (self.csrs.mstatus >> 7) & 1;
+        self.csrs.mstatus &= !(1u64 << 3);  // clear MIE
+        self.csrs.mstatus |= mpie << 3;      // MIE = old MPIE
+        
+        // Set MPIE to 1
+        self.csrs.mstatus |= 1u64 << 7;
+        
+        // Restore previous privilege mode from MPP
+        let mpp = (self.csrs.mstatus >> 11) & 0x3;
+        let prev_priv = match mpp {
+            0 => PrivilegeMode::User,
+            1 => PrivilegeMode::Supervisor,
+            3 => PrivilegeMode::Machine,
+            _ => PrivilegeMode::Machine, // default to M-mode
+        };
+        
+        self.regs.priv_mode = prev_priv;
+        
+        // Set MPP to User mode (least privileged)
+        self.csrs.mstatus &= !(0x3u64 << 11);
+        self.csrs.mstatus |= 0u64 << 11;
+        
+        // Jump to MEPC
+        self.regs.pc = self.csrs.mepc;
+        
+        self.csrs.increment_instret();
+        self.csrs.increment_cycle();
+        StepOutcome::Continue
+    }
+
+    /// Handle SRET instruction - return from supervisor-mode trap
+    fn handle_sret(&mut self) -> Result<StepOutcome, VmError> {
+        use crate::virtual_machine::cpu::registers::PrivilegeMode;
+        
+        // Check if SRET is allowed (not in U-mode)
+        if self.regs.priv_mode == PrivilegeMode::User {
+            return Err(VmError::IllegalInstruction(0x102));
+        }
+        
+        // For now, we'll implement basic SRET similar to MRET but using sstatus/sepc
+        // In a full implementation, this would use sstatus fields
+        
+        // Restore previous privilege mode
+        // For simplicity, assume returning to U-mode
+        self.regs.priv_mode = PrivilegeMode::User;
+        
+        // Jump to SEPC
+        self.regs.pc = self.csrs.sepc;
+        
+        self.csrs.increment_instret();
+        self.csrs.increment_cycle();
+        Ok(StepOutcome::Continue)
+    }
+
     // -----------------------------------------------------------------------
     // Main step function
     // -----------------------------------------------------------------------
@@ -256,7 +394,9 @@ impl Cpu {
             ExecResult::Ebreak => {
                 self.csrs.increment_instret();
                 self.csrs.increment_cycle();
-                return Ok(StepOutcome::Halted(-2));
+                // EBREAK should trap, not halt
+                self.take_trap(CAUSE_EBREAK, 0);
+                return Ok(StepOutcome::Continue);
             }
             _ => {}
         }
@@ -272,7 +412,15 @@ impl Cpu {
             Err(VmError::Ebreak) => {
                 self.csrs.increment_instret();
                 self.csrs.increment_cycle();
-                return Ok(StepOutcome::Halted(-2));
+                // EBREAK should trap
+                self.take_trap(CAUSE_EBREAK, 0);
+                return Ok(StepOutcome::Continue);
+            }
+            Err(VmError::Other(msg)) if msg == "MRET" => {
+                return Ok(self.handle_mret());
+            }
+            Err(VmError::Other(msg)) if msg == "SRET" => {
+                return self.handle_sret();
             }
             Err(e) => return self.dispatch_trap(e),
         };

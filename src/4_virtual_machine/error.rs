@@ -21,6 +21,8 @@ pub enum VmError {
     Ecall,
     /// Breakpoint (ebreak).
     Ebreak,
+    /// Page fault - virtual address translation failed
+    PageFault(u64),
     /// Other runtime error with a descriptive message.
     Other(String),
 }
@@ -36,6 +38,7 @@ impl fmt::Display for VmError {
             VmError::IllegalInstruction(word) => write!(f, "illegal instruction {word:#010x}"),
             VmError::Ecall => write!(f, "environment call"),
             VmError::Ebreak => write!(f, "breakpoint"),
+            VmError::PageFault(addr) => write!(f, "page fault at {addr:#010x}"),
             VmError::Other(msg) => write!(f, "{msg}"),
         }
     }

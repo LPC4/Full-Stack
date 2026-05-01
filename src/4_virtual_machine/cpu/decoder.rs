@@ -35,6 +35,9 @@ pub enum DecodedInsn {
     FenceI,
     Ecall,
     Ebreak,
+    Mret,
+    Sret,
+    SfenceVma,
     Csr    { funct3: u8, rd: usize, rs1_uimm: usize, csr: u16 },
     FLoad  { funct3: u8, rd: usize, rs1: usize, imm: i64 },
     FStore { funct3: u8, rs1: usize, rs2: usize, imm: i64 },
@@ -162,23 +165,26 @@ fn decode_fence(word: u32) -> Result<DecodedInsn, VmError> {
 }
 
 fn decode_system(word: u32) -> Result<DecodedInsn, VmError> {
-    match funct3(word) {
-        0 => {
-            // ECALL / EBREAK distinguished by bits[31:20]
-            let imm = field(word, 31, 20);
-            match imm {
-                0 => Ok(DecodedInsn::Ecall),
-                1 => Ok(DecodedInsn::Ebreak),
-                _ => Err(VmError::IllegalInstruction(word)),
-            }
+    // Check for SFENCE.VMA first (opcode 0x73, funct3=0, but with specific pattern)
+    // SFENCE.VMA: imm[11:0]=0b0001_0001_0000, rs1 and rs2 can be non-zero
+    if funct3(word) == 0 {
+        let imm = field(word, 31, 20);
+        match imm {
+            0 => Ok(DecodedInsn::Ecall),
+            1 => Ok(DecodedInsn::Ebreak),
+            0x302 => Ok(DecodedInsn::Mret),
+            0x102 => Ok(DecodedInsn::Sret),
+            0x120 => Ok(DecodedInsn::SfenceVma), // SFENCE.VMA
+            _ => Err(VmError::IllegalInstruction(word)),
         }
-        1..=7 => Ok(DecodedInsn::Csr {
+    } else {
+        // CSR instructions
+        Ok(DecodedInsn::Csr {
             funct3:   funct3(word),
             rd:       rd(word),
             rs1_uimm: rs1(word), // for CSRRWI/CSRRSI/CSRRCI this is the uimm[4:0]
             csr:      field(word, 31, 20) as u16,
-        }),
-        _ => Err(VmError::IllegalInstruction(word)),
+        })
     }
 }
 

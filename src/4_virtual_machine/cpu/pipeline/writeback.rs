@@ -55,5 +55,19 @@ pub fn writeback(
         }
         MemResult::Ecall  => Err(VmError::Ecall),
         MemResult::Ebreak => Err(VmError::Ebreak),
+        MemResult::Mret => {
+            // MRET is handled specially in the CPU - restore state and jump to mepc
+            // For now, we'll signal it needs special handling
+            Err(VmError::Other("MRET".to_string()))
+        }
+        MemResult::Sret => {
+            // SRET is handled specially in the CPU
+            Err(VmError::Other("SRET".to_string()))
+        }
+        MemResult::SfenceVma => {
+            // SFENCE.VMA is a no-op in our simple implementation (no TLB)
+            // Just advance PC by 4
+            Ok(regs.pc.wrapping_add(4))
+        }
     }
 }

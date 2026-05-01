@@ -28,6 +28,9 @@ pub enum ExecResult {
     FenceI        { next_pc: u64 },
     Ecall,
     Ebreak,
+    Mret,
+    Sret,
+    SfenceVma,
 }
 
 // ---------------------------------------------------------------------------
@@ -133,6 +136,12 @@ pub fn execute(
         DecodedInsn::Ecall => Ok(ExecResult::Ecall),
 
         DecodedInsn::Ebreak => Ok(ExecResult::Ebreak),
+
+        DecodedInsn::Mret => Ok(ExecResult::Mret),
+
+        DecodedInsn::Sret => Ok(ExecResult::Sret),
+
+        DecodedInsn::SfenceVma => Ok(ExecResult::SfenceVma),
 
         DecodedInsn::Csr { funct3, rd, rs1_uimm, csr } => {
             let operand = match funct3 {

@@ -10,12 +10,22 @@ const CANONICAL_NAN_BOXED: u64 = 0xFFFF_FFFF_7FC0_0000;
 /// The upper 32 bits that must all be 1 for a NaN-boxed f32 to be valid.
 const NAN_BOX_UPPER: u64 = 0xFFFF_FFFF_0000_0000;
 
+/// RISC-V privilege modes
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrivilegeMode {
+    User = 0,
+    Supervisor = 1,
+    Machine = 3,
+}
+
 pub struct Registers {
     /// Integer registers x0–x31. x[0] is hardwired to zero.
     x: [u64; 32],
     /// FP registers f0–f31, stored as raw bits with NaN-boxing for f32.
     f: [u64; 32],
     pub pc: u64,
+    /// Current privilege mode
+    pub priv_mode: PrivilegeMode,
 }
 
 impl Registers {
@@ -24,6 +34,7 @@ impl Registers {
             x: [0u64; 32],
             f: [CANONICAL_NAN_BOXED; 32],
             pc: 0,
+            priv_mode: PrivilegeMode::Machine,
         }
     }
 
