@@ -42,7 +42,7 @@ impl SystemBus {
     fn route(&mut self, addr: u64) -> Option<(&mut dyn MemoryAccess, u64)> {
         match addr {
             a if a >= ROM_BASE && a <= ROM_END =>
-                Some((&mut self.rom, addr - ROM_BASE)),
+                Some((&mut self.rom, addr)),
             a if a >= UART_BASE && a <= UART_END =>
                 Some((&mut self.uart, addr - UART_BASE)),
             a if a >= CLINT_BASE && a <= CLINT_END =>
@@ -52,7 +52,7 @@ impl SystemBus {
             _ => {
                 let ram_end = RAM_BASE + self.ram.size() - 1;
                 if addr >= RAM_BASE && addr <= ram_end {
-                    Some((&mut self.ram, addr - RAM_BASE))
+                    Some((&mut self.ram, addr))
                 } else {
                     None
                 }
@@ -76,19 +76,9 @@ impl MemoryAccess for SystemBus {
         dev.read_byte(local)
     }
 
-    fn write_byte(&mut self, addr: u64, data: u8) -> Result<(), VmError> {
-        let (dev, local) = self.route(addr).ok_or(VmError::BusError(addr))?;
-        dev.write_byte(local, data)
-    }
-
     fn read_halfword(&mut self, addr: u64) -> Result<u16, VmError> {
         let (dev, local) = self.route(addr).ok_or(VmError::BusError(addr))?;
         dev.read_halfword(local)
-    }
-
-    fn write_halfword(&mut self, addr: u64, data: u16) -> Result<(), VmError> {
-        let (dev, local) = self.route(addr).ok_or(VmError::BusError(addr))?;
-        dev.write_halfword(local, data)
     }
 
     fn read_word(&mut self, addr: u64) -> Result<u32, VmError> {
@@ -96,14 +86,24 @@ impl MemoryAccess for SystemBus {
         dev.read_word(local)
     }
 
-    fn write_word(&mut self, addr: u64, data: u32) -> Result<(), VmError> {
-        let (dev, local) = self.route(addr).ok_or(VmError::BusError(addr))?;
-        dev.write_word(local, data)
-    }
-
     fn read_doubleword(&mut self, addr: u64) -> Result<u64, VmError> {
         let (dev, local) = self.route(addr).ok_or(VmError::BusError(addr))?;
         dev.read_doubleword(local)
+    }
+
+    fn write_byte(&mut self, addr: u64, data: u8) -> Result<(), VmError> {
+        let (dev, local) = self.route(addr).ok_or(VmError::BusError(addr))?;
+        dev.write_byte(local, data)
+    }
+
+    fn write_halfword(&mut self, addr: u64, data: u16) -> Result<(), VmError> {
+        let (dev, local) = self.route(addr).ok_or(VmError::BusError(addr))?;
+        dev.write_halfword(local, data)
+    }
+
+    fn write_word(&mut self, addr: u64, data: u32) -> Result<(), VmError> {
+        let (dev, local) = self.route(addr).ok_or(VmError::BusError(addr))?;
+        dev.write_word(local, data)
     }
 
     fn write_doubleword(&mut self, addr: u64, data: u64) -> Result<(), VmError> {

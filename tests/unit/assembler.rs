@@ -333,7 +333,7 @@ fn encode_forward_branch_resolves() {
     let word = u32::from_le_bytes(text[4..8].try_into().unwrap());
     // BNE: opcode = 0x63, funct3 = 1
     assert_eq!(word & 0x7F, 0x63, "wrong opcode for branch");
-    assert_eq!((word >> 12) & 0x7, 1, "wrong funct3 — expected BNE");
+    assert_eq!((word >> 12) & 0x7, 1, "wrong funct3, expected BNE");
 }
 
 #[test]
@@ -357,7 +357,7 @@ fn encode_backward_branch_resolves() {
     let word = u32::from_le_bytes(text[4..8].try_into().unwrap());
     // BEQ: opcode = 0x63, funct3 = 0
     assert_eq!(word & 0x7F, 0x63, "wrong opcode for branch");
-    assert_eq!((word >> 12) & 0x7, 0, "wrong funct3 — expected BEQ");
+    assert_eq!((word >> 12) & 0x7, 0, "wrong funct3, expected BEQ");
 }
 
 #[test]

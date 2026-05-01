@@ -6,7 +6,7 @@ use full_stack::virtual_machine::error::VmError;
 
 #[test]
 fn decode_lui() {
-    // Lui::new(rd, imm) — imm is the full 32-bit value whose upper 20 bits are used.
+    // Lui::new(rd, imm), imm is the full 32-bit value whose upper 20 bits are used.
     // Lui::new(5, 0x12345 << 12) would put 0x12345 in upper bits.
     // But the u_inst! macro takes imm as i32 and masks lower 12 bits during encode.
     // Pass the already-shifted value so upper 20 bits = 0x12345.

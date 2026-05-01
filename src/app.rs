@@ -355,7 +355,7 @@ impl eframe::App for FullStackApp {
                     }
 
                     // "Add View" dropdown
-                    egui::menu::bar(ui, |ui| {
+                    egui::MenuBar::new().ui(ui, |ui| {
                         ui.menu_button("Add View", |ui| {
                             let entries: Vec<(&str, Box<dyn CompilerView>)> = vec![
                                 ("Source",          Box::new(SourceView::default())),

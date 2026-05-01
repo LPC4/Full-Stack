@@ -12,6 +12,7 @@ pub struct Plic {
     pending:         [u32; (MAX_SOURCES + 31) / 32],
     enable:          [u32; (MAX_SOURCES + 31) / 32 * MAX_CONTEXTS],
     threshold:       [u32; MAX_CONTEXTS],
+    #[allow(dead_code)]
     claim_complete:  [u32; MAX_CONTEXTS],
 }
 

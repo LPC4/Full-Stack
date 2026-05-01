@@ -9,6 +9,7 @@ use crate::virtual_machine::memory::MemoryAccess;
 // Public result type
 // ---------------------------------------------------------------------------
 
+#[derive(Debug)]
 pub enum MemResult {
     WriteInt      { rd: usize, val: u64, next_pc: u64 },
     WriteFp       { rd: usize, bits: u64, next_pc: u64 },

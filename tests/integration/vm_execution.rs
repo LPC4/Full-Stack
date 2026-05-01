@@ -203,9 +203,9 @@ fn test_csr_instret() {
         ri(RealInstruction::Addi(Addi::new(17, 0, 93))),  // a7 = 93
         ri(RealInstruction::Ecall(Ecall::new())),
     ]);
-    // instret should be > 3 (at minimum the 3 nops have retired)
+    // instret should be >= 3 (the 3 nops have retired; csrrs reads the count before incrementing)
     assert!(
-        matches!(outcome, StepOutcome::Halted(n) if n > 3),
-        "expected instret > 3, got {outcome:?}"
+        matches!(outcome, StepOutcome::Halted(n) if n >= 3),
+        "expected instret >= 3, got {outcome:?}"
     );
 }

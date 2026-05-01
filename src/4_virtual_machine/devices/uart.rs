@@ -27,8 +27,8 @@ pub struct Uart {
     lsr: u8,
     msr: u8,
     scr: u8,
-    rx_buf: std::collections::VecDeque<u8>,
-    tx_out: Vec<u8>,
+    pub rx_buf: std::collections::VecDeque<u8>,
+    pub tx_out: Vec<u8>,
 }
 
 impl Uart {
