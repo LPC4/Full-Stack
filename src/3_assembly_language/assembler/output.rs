@@ -39,6 +39,10 @@ impl AssembledOutput {
         self.section_bytes(&SectionKind::RoData)
     }
 
+    pub fn bss_bytes(&self) -> &[u8] {
+        self.section_bytes(&SectionKind::Bss)
+    }
+
     /// Total encoded size across all sections.
     pub fn total_bytes(&self) -> usize {
         self.sections.iter().map(|s| s.bytes.len()).sum()
