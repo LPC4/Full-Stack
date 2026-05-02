@@ -127,7 +127,7 @@ pub fn encode(tokens: &[AsmToken], layout: &Layout) -> Result<AssembledOutput, A
                 let sec = sections
                     .entry(current_kind.clone())
                     .or_insert_with(|| SectionData::new(current_kind.clone()));
-                encode_la(sec, *rd, symbol, current_addr, &layout.symbols)?;
+                encode_la(sec, *rd, symbol, current_addr, &layout.symbols, &section_bases)?;
                 current_addr += 8; // 2 instructions
             }
 
@@ -358,10 +358,26 @@ fn encode_la(
     symbol: &str,
     current_addr: u64,
     symbols: &super::symbol_table::SymbolTable,
+    section_bases: &std::collections::HashMap<SectionKind, u64>,
 ) -> Result<(), AssemblerError> {
-    let target_addr = symbols
+    // Get the section-relative offset from the symbol table
+    let section_offset = symbols
         .resolve(symbol)
         .ok_or_else(|| AssemblerError::new(format!("undefined symbol `{symbol}`")))?;
+    
+    // Determine which section this symbol belongs to by checking section-qualified names
+    let mut target_abs_addr = None;
+    for (section_name, base) in section_bases {
+        let qualified_name = format!("{}@{}", symbol, section_name.name());
+        if symbols.resolve(&qualified_name).is_some() {
+            // Found it! Compute absolute address
+            target_abs_addr = Some(base + section_offset);
+            break;
+        }
+    }
+    
+    // Fallback: if we couldn't determine the section, assume it's in the same section as current instruction
+    let target_addr = target_abs_addr.unwrap_or(section_offset);
 
     // auipc uses its own PC (current_addr) as the base, not PC+4
     let offset = (target_addr as i64) - (current_addr as i64);

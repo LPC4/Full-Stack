@@ -19,8 +19,8 @@ main: () -> i32 {
     puts(@str_box.value)
 
     ; Free memory
-    free(int_box)
-    free(str_box)
+    defer free(int_box)
+    defer free(str_box)
 
     return @int_box.value
 }
