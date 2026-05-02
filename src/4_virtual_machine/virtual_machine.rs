@@ -165,4 +165,15 @@ impl VirtualMachine {
     pub fn drain_uart_output(&mut self) -> Vec<u8> {
         self.bus.uart_mut().drain_output()
     }
+
+    /// Get cache statistics for all three levels (L1, L2, L3)
+    pub fn get_cache_stats(
+        &self,
+    ) -> (
+        crate::virtual_machine::memory::cache::CacheStats,
+        crate::virtual_machine::memory::cache::CacheStats,
+        crate::virtual_machine::memory::cache::CacheStats,
+    ) {
+        self.bus.get_cache_stats()
+    }
 }

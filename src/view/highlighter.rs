@@ -1,4 +1,5 @@
 // Syntax highlighting for different language representations
+
 use egui::Color32;
 use egui::text::LayoutJob;
 

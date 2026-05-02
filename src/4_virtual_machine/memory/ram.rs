@@ -36,6 +36,11 @@ impl Ram {
     pub fn size(&self) -> u64 {
         self.size
     }
+
+    /// Peek at a byte without mutation (for debugging).
+    pub fn peek_byte(&self, addr: u64) -> Option<u8> {
+        self.index(addr).map(|idx| self.data[idx])
+    }
 }
 
 impl MemoryAccess for Ram {

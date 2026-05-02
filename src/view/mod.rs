@@ -16,20 +16,20 @@ pub use layout::{
 pub use program_catalog::{ProgramCatalog, ProgramFile, ProgramKind};
 pub use viewtrait::CompilerView;
 
-pub mod views;
+pub mod ide;
 pub use crate::view::debug::{
-    CacheView, CpuStateView, FramebufferView, IoView, MemoryView, PipelineView,
+    CacheView, CpuStateView, DisassemblyView, FramebufferView, IoView, MemoryView, PipelineView,
 };
-pub use crate::view::views::AssemblyView;
-pub use crate::view::views::AstView;
-pub use crate::view::views::CfgView;
-pub use crate::view::views::ExecutionView;
-pub use crate::view::views::IrView;
-pub use crate::view::views::MemoryMapView;
-pub use crate::view::views::SourceView;
-pub use crate::view::views::StackView;
-pub use crate::view::views::TokensView;
-pub use crate::view::views::VmExecutionView;
+pub use crate::view::ide::AssemblyView;
+pub use crate::view::ide::AstView;
+pub use crate::view::ide::CfgView;
+pub use crate::view::ide::ExecutionView;
+pub use crate::view::ide::IrView;
+pub use crate::view::ide::MemoryMapView;
+pub use crate::view::ide::SourceView;
+pub use crate::view::ide::StackView;
+pub use crate::view::ide::TokensView;
+pub use crate::view::ide::VmExecutionView;
 
 pub(crate) fn blank_custom_program_source() -> String {
     "; Write your program here\n".to_owned()

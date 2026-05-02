@@ -16,6 +16,7 @@ pub use snapshot::{CpuSnapshot, DebugSnapshot, PipelineHistory};
 
 pub mod cache_view;
 pub mod cpu_state_view;
+pub mod disassembly_view;
 pub mod framebuffer_view;
 pub mod io_view;
 pub mod memory_view;
@@ -24,6 +25,7 @@ pub mod snapshot;
 
 pub use cache_view::CacheView;
 pub use cpu_state_view::CpuStateView;
+pub use disassembly_view::DisassemblyView;
 pub use framebuffer_view::FramebufferView;
 pub use io_view::IoView;
 pub use memory_view::MemoryView;
@@ -203,6 +205,7 @@ impl DebugSession {
         let xregs = self.vm.peek_all_xregs();
         let fregs = self.vm.peek_all_fregs();
         let csrs = self.vm.peek_csrs();
+        let (l1_stats, l2_stats, l3_stats) = self.vm.get_cache_stats();
 
         let prev_pc = self.snapshot.cpu.pc;
         let prev_xregs = self.snapshot.cpu.xregs;
@@ -217,6 +220,9 @@ impl DebugSession {
         };
 
         self.snapshot.pipeline.push(pc);
+        self.snapshot.l1_stats = l1_stats;
+        self.snapshot.l2_stats = l2_stats;
+        self.snapshot.l3_stats = l3_stats;
     }
 }
 

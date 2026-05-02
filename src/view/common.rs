@@ -1,4 +1,4 @@
-// Shared UI building blocks used across all views.
+// Shared UI building blocks used across all ide.
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ViewType {
@@ -21,7 +21,7 @@ impl ViewType {
     }
 }
 
-/// Shows a dimmed message centred in the available space.  Used by views that
+/// Shows a dimmed message centred in the available space.  Used by ide that
 /// have nothing to display yet (empty compilation state).
 pub fn centered_placeholder(ui: &mut egui::Ui, message: &str) {
     ui.centered_and_justified(|ui| {

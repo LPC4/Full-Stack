@@ -1,5 +1,7 @@
+// Shared compilation state
+
 use crate::view::debug::DebugSession;
-use crate::view::views::vm_execution_view::VmExecutionResult;
+use crate::view::ide::vm_execution_view::VmExecutionResult;
 
 #[derive(Default)]
 pub struct CompilationState {

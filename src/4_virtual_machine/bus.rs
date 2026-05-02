@@ -2,7 +2,12 @@
 
 use crate::virtual_machine::devices::{clint::Clint, plic::Plic, uart::Uart};
 use crate::virtual_machine::error::VmError;
-use crate::virtual_machine::memory::{MemoryAccess, ram::Ram, rom::Rom};
+use crate::virtual_machine::memory::{
+    MemoryAccess,
+    cache::{Cache, CacheParams},
+    ram::Ram,
+    rom::Rom,
+};
 
 /// Physical address map
 pub const ROM_BASE: u64 = 0x0000_0000;
@@ -26,7 +31,7 @@ pub const HEAP_PTR_ADDR: u64 = RAM_BASE + 32 * 1024 * 1024 - 8; // 0x81FF_FFF8
 
 pub struct SystemBus {
     rom: Rom,
-    ram: Ram,
+    l1_cache: Cache<Cache<Cache<Ram>>>, // L1 → L2 → L3 → RAM
     uart: Uart,
     clint: Clint,
     plic: Plic,
@@ -35,20 +40,52 @@ pub struct SystemBus {
 impl SystemBus {
     pub fn new(rom_data: Vec<u8>) -> Self {
         let rom = Rom::new(ROM_BASE, rom_data);
+
+        // Create three-level cache hierarchy
+        // L3: 8MB, 64-byte blocks, 16-way set associative
         let ram = Ram::new(RAM_BASE, RAM_SIZE_DEFAULT);
+        let l3_params = CacheParams {
+            size: 8 * 1024 * 1024, // 8MB
+            block_size: 64,
+            associativity: 16,
+            write_back: true,
+            read_only: false,
+        };
+        let l3_cache = Cache::new(l3_params, ram);
+
+        // L2: 256KB, 64-byte blocks, 8-way set associative
+        let l2_params = CacheParams {
+            size: 256 * 1024, // 256KB
+            block_size: 64,
+            associativity: 8,
+            write_back: true,
+            read_only: false,
+        };
+        let l2_cache = Cache::new(l2_params, l3_cache);
+
+        // L1: 4KB, 64-byte blocks, 2-way set associative
+        let l1_params = CacheParams {
+            size: 4096, // 4KB
+            block_size: 64,
+            associativity: 2,
+            write_back: true,
+            read_only: false,
+        };
+        let l1_cache = Cache::new(l1_params, l2_cache);
+
         let uart = Uart::new();
         let clint = Clint::new();
         let plic = Plic::new();
         Self {
             rom,
-            ram,
+            l1_cache,
             uart,
             clint,
             plic,
         }
     }
 
-    /// Map an absolute address to the correct device and return its local offset.
+    /// Route memory accesses through L1 cache for RAM, direct for MMIO
     fn route(&mut self, addr: u64) -> Option<(&mut dyn MemoryAccess, u64)> {
         match addr {
             a if a >= ROM_BASE && a <= ROM_END => Some((&mut self.rom, addr)),
@@ -56,28 +93,65 @@ impl SystemBus {
             a if a >= CLINT_BASE && a <= CLINT_END => Some((&mut self.clint, addr - CLINT_BASE)),
             a if a >= PLIC_BASE && a <= PLIC_END => Some((&mut self.plic, addr - PLIC_BASE)),
             _ => {
-                let ram_end = RAM_BASE + self.ram.size() - 1;
-                if addr >= RAM_BASE && addr <= ram_end {
-                    Some((&mut self.ram, addr))
-                } else {
-                    None
-                }
+                // Route all RAM accesses through L1 cache (which cascades to L2, L3, then RAM)
+                Some((&mut self.l1_cache, addr))
             }
         }
     }
 
     // Expose RAM size for bounds check (also needed by route)
     pub fn ram_size(&self) -> usize {
-        self.ram.size() as usize
+        // Return the size of the underlying RAM in the data cache
+        // This is a simplification - in reality we'd need to expose this from Cache
+        RAM_SIZE_DEFAULT
     }
+
     pub fn rom_size(&self) -> usize {
         self.rom.size() as usize
     }
 
+    /// Get snapshots of cache statistics for all three levels
+    pub fn get_cache_stats(
+        &self,
+    ) -> (
+        crate::virtual_machine::memory::cache::CacheStats,
+        crate::virtual_machine::memory::cache::CacheStats,
+        crate::virtual_machine::memory::cache::CacheStats,
+    ) {
+        let l1_stats = self.l1_cache.stats().clone();
+        let l2_stats = self.l1_cache.peek_next().stats().clone();
+        let l3_stats = self.l1_cache.peek_next().peek_next().stats().clone();
+        (l1_stats, l2_stats, l3_stats)
+    }
+
     /// Read up to `len` bytes starting at `addr`, silently skipping unroutable addresses.
+    /// This is for debugging/inspection only and bypasses cache statistics.
     pub fn peek_bytes(&mut self, addr: u64, len: usize) -> Vec<u8> {
         (0..len as u64)
-            .map(|i| self.read_byte(addr + i).unwrap_or(0))
+            .map(|i| {
+                // Bypass cache stats by reading directly from the underlying memory
+                match addr + i {
+                    a if a >= ROM_BASE && a <= ROM_END => self.rom.read_byte(a).unwrap_or(0),
+                    a if a >= UART_BASE && a <= UART_END => {
+                        self.uart.read_byte(a - UART_BASE).unwrap_or(0)
+                    }
+                    a if a >= CLINT_BASE && a <= CLINT_END => {
+                        self.clint.read_byte(a - CLINT_BASE).unwrap_or(0)
+                    }
+                    a if a >= PLIC_BASE && a <= PLIC_END => {
+                        self.plic.read_byte(a - PLIC_BASE).unwrap_or(0)
+                    }
+                    _ => {
+                        // For RAM, peek directly into the cache hierarchy's underlying RAM
+                        self.l1_cache
+                            .peek_next() // L2
+                            .peek_next() // L3
+                            .peek_next() // RAM
+                            .peek_byte(addr + i)
+                            .unwrap_or(0)
+                    }
+                }
+            })
             .collect()
     }
 

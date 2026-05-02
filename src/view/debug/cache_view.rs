@@ -16,20 +16,21 @@ impl CompilerView for CacheView {
         state: &mut CompilationState,
         _catalog: &mut ProgramCatalog,
     ) {
-        let Some(_session) = &state.debug_session else {
+        let Some(session) = &state.debug_session else {
             ui.centered_and_justified(|ui| {
                 ui.label(RichText::new("No debug session active").weak());
             });
             return;
         };
 
-        ui.heading("Cache");
+        ui.heading("Cache Hierarchy");
         ui.add_space(6.0);
 
-        // The cache is structurally defined in memory/cache.rs but is not yet
-        // wired into the SystemBus — the bus talks directly to Ram/Rom. Stats
-        // will appear here automatically once a Cache<Ram> replaces the raw Ram
-        // in SystemBus and the snapshot accessor is plumbed through.
+        // Get cache stats from the debug session snapshot
+        let l1_stats = &session.snapshot.l1_stats;
+        let l2_stats = &session.snapshot.l2_stats;
+        let l3_stats = &session.snapshot.l3_stats;
+
         Frame::NONE
             .fill(Color32::from_gray(28))
             .stroke(Stroke::new(1.0, Color32::from_gray(60)))
@@ -37,24 +38,55 @@ impl CompilerView for CacheView {
             .show(ui, |ui| {
                 ui.set_min_width(ui.available_width());
                 ui.colored_label(
-                    Color32::from_rgb(200, 160, 50),
-                    "Cache not yet wired into SystemBus.",
+                    Color32::from_rgb(60, 200, 80),
+                    "Three-Level Cache Hierarchy Active",
                 );
                 ui.label(
-                    RichText::new("Replace Ram with Cache<Ram> in bus.rs to enable live stats.")
-                        .weak(),
+                    RichText::new(
+                        "L1: 4KB, 2-way | L2: 256KB, 8-way | L3: 8MB, 16-way | 64-byte blocks, write-back",
+                    )
+                    .weak(),
                 );
             });
 
         ui.add_space(12.0);
 
-        // Layout for when cache IS wired (shown with placeholder zeros).
-        ui.label(RichText::new("L1 Data Cache").strong());
-        stats_block(ui, "l1d", 0, 0, 0, 0);
+        // Display L1 cache statistics
+        ui.label(RichText::new("L1 Cache (4KB, 2-way)").strong());
+        stats_block(
+            ui,
+            "l1",
+            l1_stats.read_hits,
+            l1_stats.read_misses,
+            l1_stats.write_hits,
+            l1_stats.write_misses,
+        );
 
         ui.add_space(8.0);
-        ui.label(RichText::new("L1 Instruction Cache").strong());
-        stats_block(ui, "l1i", 0, 0, 0, 0);
+
+        // Display L2 cache statistics
+        ui.label(RichText::new("L2 Cache (256KB, 8-way)").strong());
+        stats_block(
+            ui,
+            "l2",
+            l2_stats.read_hits,
+            l2_stats.read_misses,
+            l2_stats.write_hits,
+            l2_stats.write_misses,
+        );
+
+        ui.add_space(8.0);
+
+        // Display L3 cache statistics
+        ui.label(RichText::new("L3 Cache (8MB, 16-way)").strong());
+        stats_block(
+            ui,
+            "l3",
+            l3_stats.read_hits,
+            l3_stats.read_misses,
+            l3_stats.write_hits,
+            l3_stats.write_misses,
+        );
     }
 
     fn clone_box(&self) -> Box<dyn CompilerView> {

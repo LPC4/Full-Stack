@@ -73,6 +73,12 @@ impl<Next: MemoryAccess> Cache<Next> {
         &self.stats
     }
 
+    /// Peek at the underlying memory without affecting cache state or statistics.
+    /// This is useful for debugging/inspection purposes.
+    pub fn peek_next(&self) -> &Next {
+        &self.next
+    }
+
     fn address_fields(&self, addr: u64) -> (u64, u64, u64) {
         let tag = addr >> (self.block_bits + self.set_bits);
         let index = (addr >> self.block_bits) & ((1u64 << self.set_bits) - 1);
@@ -187,8 +193,51 @@ impl<Next: MemoryAccess> MemoryAccess for Cache<Next> {
         self.read_byte_inner(addr)
     }
 
+    fn read_halfword(&mut self, addr: u64) -> Result<u16, VmError> {
+        // Read two bytes directly to avoid double-counting in stats
+        let lo = self.read_byte_inner(addr)? as u16;
+        let hi = self.read_byte_inner(addr + 1)? as u16;
+        Ok(lo | (hi << 8))
+    }
+
+    fn read_word(&mut self, addr: u64) -> Result<u32, VmError> {
+        // Read four bytes directly to avoid double-counting in stats
+        let b0 = self.read_byte_inner(addr)? as u32;
+        let b1 = self.read_byte_inner(addr + 1)? as u32;
+        let b2 = self.read_byte_inner(addr + 2)? as u32;
+        let b3 = self.read_byte_inner(addr + 3)? as u32;
+        Ok(b0 | (b1 << 8) | (b2 << 16) | (b3 << 24))
+    }
+
+    fn read_doubleword(&mut self, addr: u64) -> Result<u64, VmError> {
+        // Read eight bytes directly to avoid double-counting in stats
+        let w0 = self.read_word(addr)? as u64;
+        let w1 = self.read_word(addr + 4)? as u64;
+        Ok(w0 | (w1 << 32))
+    }
+
     fn write_byte(&mut self, addr: u64, data: u8) -> Result<(), VmError> {
         self.write_byte_inner(addr, data)
+    }
+
+    fn write_halfword(&mut self, addr: u64, data: u16) -> Result<(), VmError> {
+        // Write two bytes directly to avoid double-counting in stats
+        self.write_byte_inner(addr, data as u8)?;
+        self.write_byte_inner(addr + 1, (data >> 8) as u8)
+    }
+
+    fn write_word(&mut self, addr: u64, data: u32) -> Result<(), VmError> {
+        // Write four bytes directly to avoid double-counting in stats
+        self.write_byte_inner(addr, data as u8)?;
+        self.write_byte_inner(addr + 1, (data >> 8) as u8)?;
+        self.write_byte_inner(addr + 2, (data >> 16) as u8)?;
+        self.write_byte_inner(addr + 3, (data >> 24) as u8)
+    }
+
+    fn write_doubleword(&mut self, addr: u64, data: u64) -> Result<(), VmError> {
+        // Write eight bytes directly to avoid double-counting in stats
+        self.write_word(addr, data as u32)?;
+        self.write_word(addr + 4, (data >> 32) as u32)
     }
 }
 

@@ -1,4 +1,3 @@
-// file: src/view/viewtrait.rs
 use super::{CompilationState, ProgramCatalog};
 use egui::Context;
 

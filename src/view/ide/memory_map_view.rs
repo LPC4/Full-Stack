@@ -1,4 +1,3 @@
-// file: src/view/views/memory_map_view.rs
 use crate::view::{CompilationState, CompilerView, ProgramCatalog};
 use egui::epaint::PathStroke;
 use egui::{Color32, CornerRadius, Pos2, Rect, RichText, Sense, Stroke, StrokeKind, Vec2};

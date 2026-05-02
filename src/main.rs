@@ -1,6 +1,6 @@
 #![allow(clippy::all)]
 #![warn(rust_2018_idioms)]
-#![windows_subsystem = "windows"] // hide console window on Windows
+#![windows_subsystem = "windows"]
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::fs;

@@ -2,11 +2,11 @@ use crate::high_level_language::compilation_pipeline::CompilationPipeline;
 use crate::high_level_language::lexer::Lexer;
 use crate::high_level_language::token::Token;
 use crate::view::debug::{DebugSession, SessionStatus};
-use crate::view::views::vm_execution_view::VmExecutionResult;
+use crate::view::ide::vm_execution_view::VmExecutionResult;
 use crate::view::{
     AssemblyView, AstView, CacheView, CfgView, CompilationState, CompilerView, CpuStateView,
-    ExecutionView, FramebufferView, IoView, IrView, MemoryMapView, MemoryView, PipelineView,
-    ProgramCatalog, ProgramKind, SourceView, StackView, TokensView, VmExecutionView,
+    DisassemblyView, ExecutionView, FramebufferView, IoView, IrView, MemoryMapView, MemoryView,
+    PipelineView, ProgramCatalog, ProgramKind, SourceView, StackView, TokensView, VmExecutionView,
     blank_custom_program_source,
 };
 use egui::{Color32, Layout, RichText};
@@ -159,19 +159,24 @@ impl FullStackApp {
         let cpu = ViewWrapper::new(Box::new(CpuStateView::default()), &mut self.next_view_id);
         let pipeline = ViewWrapper::new(Box::new(PipelineView::default()), &mut self.next_view_id);
         let cache = ViewWrapper::new(Box::new(CacheView::default()), &mut self.next_view_id);
+        let disasm = ViewWrapper::new(Box::new(DisassemblyView), &mut self.next_view_id);
         let fb = ViewWrapper::new(Box::new(FramebufferView::default()), &mut self.next_view_id);
         let mem = ViewWrapper::new(Box::new(MemoryView::default()), &mut self.next_view_id);
         let io = ViewWrapper::new(Box::new(IoView::default()), &mut self.next_view_id);
 
-        // Two equal columns (50% each)
-        let mut dock = DockState::new(vec![cpu, pipeline, cache]);
+        // Three-column layout: Left (CPU + Disassembly), Middle (Pipeline + Cache), Right (Memory + IO)
+        let mut dock = DockState::new(vec![cpu, disasm]);
         let surface = dock.main_surface_mut();
 
-        // Split root into left (50%) and right (50%)
-        let [left, _right] = surface.split_right(NodeIndex::root(), 0.5, vec![mem, io]);
+        // Split root into left (40%) and right (60%)
+        let [left, right] = surface.split_right(NodeIndex::root(), 0.4, vec![pipeline, cache]);
 
-        // Split left column vertically: top 50% for CPU views, bottom 50% for Framebuffer
+        // Split left column vertically: top 50% for CPU state, bottom 50% for Disassembly
         surface.split_below(left, 0.5, vec![fb]);
+
+        // Add memory and IO to the right column
+        surface.push_to_focused_leaf(mem);
+        surface.push_to_focused_leaf(io);
 
         self.debug_dock = dock;
     }
@@ -458,7 +463,6 @@ impl FullStackApp {
                 });
             });
 
-            // ── Right: status + program name + To Debugger button ────────────
             ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(8.0);
 
@@ -508,7 +512,6 @@ impl FullStackApp {
     fn debug_top_bar(&mut self, ui: &mut egui::Ui) {
         ui.set_min_size(egui::vec2(ui.available_width(), ui.available_height()));
         ui.horizontal(|ui| {
-            // ── Left: Debug controls ─────────────────────────────────────────
             if ui
                 .add(egui::Button::new("Reset").min_size(egui::vec2(80.0, 35.0)))
                 .clicked()
@@ -587,7 +590,6 @@ impl FullStackApp {
                 });
             });
 
-            // ── Right: PC / steps / status + To IDE button ───────────────────
             ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(8.0);
 

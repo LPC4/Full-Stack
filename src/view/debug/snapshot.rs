@@ -2,6 +2,7 @@
 //! No VM references live here — everything is Clone.
 
 use crate::virtual_machine::cpu::csr::CsrSnapshot;
+use crate::virtual_machine::memory::cache::CacheStats;
 
 // ---------------------------------------------------------------------------
 // CPU snapshot
@@ -73,4 +74,8 @@ pub struct DebugSnapshot {
     /// `(label, address)` pairs for the memory view's preset jump buttons.
     /// Populated from the linker symbol table (text/rodata/data/bss starts).
     pub section_presets: Vec<(&'static str, u64)>,
+    /// Cache statistics from L1, L2, and L3 caches
+    pub l1_stats: CacheStats,
+    pub l2_stats: CacheStats,
+    pub l3_stats: CacheStats,
 }

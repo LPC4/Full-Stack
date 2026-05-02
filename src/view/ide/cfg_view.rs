@@ -1,4 +1,3 @@
-// file: src/view/views/cfg_view.rs
 use crate::view::{CompilationState, CompilerView, ProgramCatalog};
 use eframe::epaint::PathStroke;
 use egui::{Color32, CornerRadius, Pos2, Rect, Stroke, StrokeKind, Vec2};
