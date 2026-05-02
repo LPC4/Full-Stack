@@ -395,4 +395,3 @@ fn encode_la(
 
     Ok(())
 }
-

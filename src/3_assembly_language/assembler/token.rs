@@ -1,3 +1,4 @@
+use super::section::SectionKind;
 /// Internal token type produced by the parser and consumed by the layout/encode passes.
 ///
 /// Unlike `RvInstruction`, every variant here is fully typed, there are no raw
@@ -5,7 +6,6 @@
 /// so the encode pass can patch them using the symbol table built in the layout pass.
 use crate::assembly_language::encode_decode::Reg;
 use crate::assembly_language::real::RealInstruction;
-use super::section::SectionKind;
 
 /// Which B-type branch opcode to use.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -126,6 +126,14 @@ impl AsmToken {
     }
 
     pub fn is_code(&self) -> bool {
-        matches!(self, Self::Real(_) | Self::Branch { .. } | Self::Jal { .. } | Self::Call { .. } | Self::Tail { .. } | Self::La { .. })
+        matches!(
+            self,
+            Self::Real(_)
+                | Self::Branch { .. }
+                | Self::Jal { .. }
+                | Self::Call { .. }
+                | Self::Tail { .. }
+                | Self::La { .. }
+        )
     }
 }

@@ -1,13 +1,13 @@
+use super::directive::Directive;
+use super::reg_parse::parse_int_reg;
+use super::section::SectionKind;
+use super::token::{AsmToken, BranchKind};
 /// Pass 0: parse `Vec<RvInstruction>` into `Vec<AsmToken>`.
 ///
 /// `RvInstruction` carries some untyped raw strings (branches emitted via
 /// `emit_raw`, data-section directives, etc.).  This pass converts every token
 /// into a fully-typed `AsmToken` so subsequent passes never touch raw strings.
 use crate::assembly_language::rv_instruction::RvInstruction;
-use super::directive::Directive;
-use super::reg_parse::parse_int_reg;
-use super::section::SectionKind;
-use super::token::{AsmToken, BranchKind};
 
 /// Convert a `RvInstruction` stream to a typed `AsmToken` stream.
 ///
