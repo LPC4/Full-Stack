@@ -1,8 +1,8 @@
 //! Stack frame layout for a function.
 
+use super::type_utils;
 use crate::intermediate_language::IrType;
 use std::collections::HashMap;
-use super::type_utils;
 
 pub struct FrameContext {
     /// Total frame size in bytes.

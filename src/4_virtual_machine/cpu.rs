@@ -315,7 +315,9 @@ mod cpu_impl {
                     let mut ptr = self.regs.read_x(10);
                     loop {
                         let byte = bus.read_byte(ptr).unwrap_or(0);
-                        if byte == 0 { break; }
+                        if byte == 0 {
+                            break;
+                        }
                         let _ = bus.uart_mut().write_byte(0, byte);
                         ptr += 1;
                     }
@@ -344,7 +346,8 @@ mod cpu_impl {
                     use crate::virtual_machine::bus::HEAP_PTR_ADDR;
                     let size = self.regs.read_x(10);
                     let aligned = (size + 7) & !7;
-                    let current = bus.read_doubleword(HEAP_PTR_ADDR)
+                    let current = bus
+                        .read_doubleword(HEAP_PTR_ADDR)
                         .unwrap_or(HEAP_PTR_ADDR + 8);
                     let new_ptr = current.wrapping_add(aligned);
                     let _ = bus.write_doubleword(HEAP_PTR_ADDR, new_ptr);
@@ -551,7 +554,9 @@ mod cpu_impl {
         loop {
             let c = bus.read_byte(addr).unwrap_or(0);
             addr += 1;
-            if c == 0 { break; }
+            if c == 0 {
+                break;
+            }
 
             if c != b'%' {
                 out.push(c);
@@ -594,7 +599,9 @@ mod cpu_impl {
                     let mut ptr = arg;
                     loop {
                         let byte = bus.read_byte(ptr).unwrap_or(0);
-                        if byte == 0 { break; }
+                        if byte == 0 {
+                            break;
+                        }
                         out.push(byte);
                         ptr += 1;
                     }
@@ -606,7 +613,9 @@ mod cpu_impl {
                 b'%' => {
                     out.push(b'%');
                     // No argument consumed for %%
-                    if arg_reg > 11 { arg_reg -= 1; }
+                    if arg_reg > 11 {
+                        arg_reg -= 1;
+                    }
                 }
                 other => {
                     out.push(b'%');
@@ -617,5 +626,4 @@ mod cpu_impl {
 
         out
     }
-
 } // end of cpu_impl module

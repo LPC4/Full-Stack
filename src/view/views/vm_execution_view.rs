@@ -24,7 +24,9 @@ impl CompilerView for VmExecutionView {
                 });
                 ui.add_space(10.0);
                 ui.centered_and_justified(|ui| {
-                    ui.label(egui::RichText::new("Click \"Run in VM\" button above to execute").weak());
+                    ui.label(
+                        egui::RichText::new("Click \"Run in VM\" button above to execute").weak(),
+                    );
                 });
                 ui.centered_and_justified(|ui| {
                     ui.label(egui::RichText::new("on the custom RISC-V virtual machine.").weak());

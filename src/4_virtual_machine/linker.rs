@@ -6,10 +6,10 @@
 //! future features (multiple object files, weak symbols, section attributes)
 //! can be added without a full rewrite.
 
+use super::bus::RAM_BASE;
 use crate::assembly_language::assembler::output::AssembledOutput;
 use crate::assembly_language::assembler::section::SectionKind;
 use std::collections::HashMap;
-use super::bus::RAM_BASE;
 
 /// Linker configuration.
 pub struct LinkerConfig {
@@ -20,7 +20,9 @@ pub struct LinkerConfig {
 
 impl Default for LinkerConfig {
     fn default() -> Self {
-        Self { text_base: RAM_BASE }
+        Self {
+            text_base: RAM_BASE,
+        }
     }
 }
 

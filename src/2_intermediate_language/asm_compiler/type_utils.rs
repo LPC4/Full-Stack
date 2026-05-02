@@ -1,6 +1,6 @@
 use crate::intermediate_language::{FloatWidth, IntWidth, IrType};
-use std::collections::{HashMap, HashSet};
 use log::warn;
+use std::collections::{HashMap, HashSet};
 
 pub fn resolve_ir_type(ty: &IrType, type_aliases: &HashMap<String, IrType>) -> IrType {
     resolve_ir_type_inner(ty, type_aliases, &mut HashSet::new())
@@ -36,7 +36,10 @@ fn resolve_ir_type_inner(
             fields
                 .iter()
                 .map(|(name, field_ty)| {
-                    (name.clone(), resolve_ir_type_inner(field_ty, type_aliases, seen))
+                    (
+                        name.clone(),
+                        resolve_ir_type_inner(field_ty, type_aliases, seen),
+                    )
                 })
                 .collect(),
         ),

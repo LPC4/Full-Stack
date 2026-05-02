@@ -127,7 +127,14 @@ pub fn encode(tokens: &[AsmToken], layout: &Layout) -> Result<AssembledOutput, A
                 let sec = sections
                     .entry(current_kind.clone())
                     .or_insert_with(|| SectionData::new(current_kind.clone()));
-                encode_la(sec, *rd, symbol, current_addr, &layout.symbols, &section_bases)?;
+                encode_la(
+                    sec,
+                    *rd,
+                    symbol,
+                    current_addr,
+                    &layout.symbols,
+                    &section_bases,
+                )?;
                 current_addr += 8; // 2 instructions
             }
 
@@ -364,7 +371,7 @@ fn encode_la(
     let section_offset = symbols
         .resolve(symbol)
         .ok_or_else(|| AssemblerError::new(format!("undefined symbol `{symbol}`")))?;
-    
+
     // Determine which section this symbol belongs to by checking section-qualified names
     let mut target_abs_addr = None;
     for (section_name, base) in section_bases {
@@ -375,7 +382,7 @@ fn encode_la(
             break;
         }
     }
-    
+
     // Fallback: if we couldn't determine the section, assume it's in the same section as current instruction
     let target_addr = target_abs_addr.unwrap_or(section_offset);
 

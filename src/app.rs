@@ -112,8 +112,8 @@ impl FullStackApp {
             ViewWrapper::new(Box::new(CfgView), &mut self.next_view_id),    // 5
             ViewWrapper::new(Box::new(StackView::default()), &mut self.next_view_id), // 6
             ViewWrapper::new(Box::new(MemoryMapView::default()), &mut self.next_view_id), // 7
-            ViewWrapper::new(Box::new(ExecutionView::default()), &mut self.next_view_id),             // 8
-            ViewWrapper::new(Box::new(VmExecutionView), &mut self.next_view_id),           // 9
+            ViewWrapper::new(Box::new(ExecutionView::default()), &mut self.next_view_id), // 8
+            ViewWrapper::new(Box::new(VmExecutionView), &mut self.next_view_id), // 9
         ];
 
         // Source is the first view → root
@@ -348,16 +348,16 @@ impl eframe::App for FullStackApp {
                     egui::MenuBar::new().ui(ui, |ui| {
                         ui.menu_button("Add View", |ui| {
                             let entries: Vec<(&str, Box<dyn CompilerView>)> = vec![
-                                ("Source",          Box::new(SourceView::default())),
-                                ("Tokens",          Box::new(TokensView::default())),
-                                ("AST",             Box::new(AstView::default())),
-                                ("IR",              Box::new(IrView::default())),
-                                ("Assembly",        Box::new(AssemblyView::default())),
-                                ("CFG",             Box::new(CfgView::default())),
-                                ("Stack",           Box::new(StackView::default())),
-                                ("Memory Map",      Box::new(MemoryMapView::default())),
+                                ("Source", Box::new(SourceView::default())),
+                                ("Tokens", Box::new(TokensView::default())),
+                                ("AST", Box::new(AstView::default())),
+                                ("IR", Box::new(IrView::default())),
+                                ("Assembly", Box::new(AssemblyView::default())),
+                                ("CFG", Box::new(CfgView::default())),
+                                ("Stack", Box::new(StackView::default())),
+                                ("Memory Map", Box::new(MemoryMapView::default())),
                                 ("Execution (QEMU)", Box::new(ExecutionView::default())),
-                                ("VM Output",       Box::new(VmExecutionView::default())),
+                                ("VM Output", Box::new(VmExecutionView::default())),
                             ];
                             for (label, proto) in &entries {
                                 if ui.button(*label).clicked() {
@@ -478,7 +478,7 @@ fn run_in_vm(assembled: &crate::assembly_language::assembler::output::AssembledO
     out.push_str("┌─────────────────────────────────────┐\n");
     out.push_str("│ Execution Summary                   │\n");
     out.push_str("├─────────────────────────────────────┤\n");
-    
+
     match result.outcome {
         StepOutcome::Halted(0) => {
             out.push_str("│ +  Ran Successfully                 │\n");
@@ -492,9 +492,9 @@ fn run_in_vm(assembled: &crate::assembly_language::assembler::output::AssembledO
             out.push_str(&format!("│ !  {:<33}│\n", text));
         }
     }
-    
+
     out.push_str(&format!("│ Steps: {:<29}│\n", result.steps.to_string()));
     out.push_str("└─────────────────────────────────────┘\n");
-    
+
     out
 }
