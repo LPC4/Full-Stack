@@ -1,3 +1,5 @@
+use crate::view::views::vm_execution_view::VmExecutionResult;
+
 #[derive(Default)]
 pub struct CompilationState {
     pub tokens: String,
@@ -10,7 +12,7 @@ pub struct CompilationState {
     pub error_summary: Option<String>,
     pub just_compiled: bool,
     pub execution_output: String,
-    pub vm_output: String,
+    pub vm_result: Option<VmExecutionResult>,
 }
 
 impl CompilationState {

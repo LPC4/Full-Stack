@@ -7,6 +7,7 @@ use crate::view::{
     MemoryMapView, ProgramCatalog, ProgramKind, SourceView, StackView, TokensView, VmExecutionView,
     blank_custom_program_source,
 };
+use crate::view::views::vm_execution_view::VmExecutionResult;
 use egui_dock::{DockState, NodeIndex};
 use std::fmt;
 
@@ -316,9 +317,8 @@ impl eframe::App for FullStackApp {
                         .add_sized([110.0, 30.0], egui::Button::new("Run in VM"))
                         .clicked()
                     {
-                        // Re-run the VM to refresh output
                         if let Some(assembled) = &self.compilation_state.assembled {
-                            self.compilation_state.vm_output = run_in_vm(assembled);
+                            self.compilation_state.vm_result = Some(run_in_vm(assembled));
                         }
                     }
 
@@ -449,7 +449,7 @@ impl egui_dock::TabViewer for DockTabViewer<'_> {
 // Internal VM runner
 // ---------------------------------------------------------------------------
 
-fn run_in_vm(assembled: &crate::assembly_language::assembler::output::AssembledOutput) -> String {
+fn run_in_vm(assembled: &crate::assembly_language::assembler::output::AssembledOutput) -> VmExecutionResult {
     use crate::virtual_machine::cpu::StepOutcome;
     use crate::virtual_machine::virtual_machine::VirtualMachine;
 
@@ -458,43 +458,13 @@ fn run_in_vm(assembled: &crate::assembly_language::assembler::output::AssembledO
     let mut vm = VirtualMachine::new(assembled);
     let result = vm.run(MAX_STEPS);
 
-    let mut out = String::new();
-
-    out.push_str("╔══════════════════════════════════════╗\n");
-    out.push_str("║       VM Execution Output            ║\n");
-    out.push_str("╚══════════════════════════════════════╝\n\n");
-
-    if !result.uart_output.is_empty() {
-        out.push_str(&result.uart_output);
-        if !result.uart_output.ends_with('\n') {
-            out.push('\n');
-        }
-    } else {
-        out.push_str("(No output)\n\n");
+    VmExecutionResult {
+        uart_output: result.uart_output,
+        exit_code: match result.outcome {
+            StepOutcome::Halted(code) => Some(code as i32),
+            _ => None,
+        },
+        steps: result.steps,
+        max_steps_reached: matches!(result.outcome, StepOutcome::Continue),
     }
-
-    // Add execution summary with status indicator
-    out.push_str("\n");
-    out.push_str("┌─────────────────────────────────────┐\n");
-    out.push_str("│ Execution Summary                   │\n");
-    out.push_str("├─────────────────────────────────────┤\n");
-
-    match result.outcome {
-        StepOutcome::Halted(0) => {
-            out.push_str("│ +  Ran Successfully                 │\n");
-        }
-        StepOutcome::Halted(code) => {
-            let text = format!("Exited with code {}", code);
-            out.push_str(&format!("│ -  {:<33}│\n", text));
-        }
-        StepOutcome::Continue => {
-            let text = format!("Reached step limit ({})", MAX_STEPS);
-            out.push_str(&format!("│ !  {:<33}│\n", text));
-        }
-    }
-
-    out.push_str(&format!("│ Steps: {:<29}│\n", result.steps.to_string()));
-    out.push_str("└─────────────────────────────────────┘\n");
-
-    out
 }
