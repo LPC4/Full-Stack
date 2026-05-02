@@ -312,7 +312,6 @@ impl eframe::App for FullStackApp {
                         self.compile();
                     }
 
-                    #[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
                     if ui
                         .add_sized([110.0, 30.0], egui::Button::new("Run in VM"))
                         .clicked()
