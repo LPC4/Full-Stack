@@ -1,10 +1,11 @@
 //! Top-level virtual machine: ties together the CPU and memory bus.
 
 use crate::assembly_language::assembler::output::AssembledOutput;
-use crate::virtual_machine::bus::{RAM_BASE, RAM_SIZE_DEFAULT, SystemBus};
+use crate::virtual_machine::bus::{HEAP_PTR_ADDR, RAM_BASE, RAM_SIZE_DEFAULT, SystemBus};
 use crate::virtual_machine::cpu::Cpu;
 pub use crate::virtual_machine::cpu::StepOutcome;
 use crate::virtual_machine::error::VmError;
+use crate::virtual_machine::linker::{self, LinkerConfig, LinkedProgram};
 use crate::virtual_machine::memory::MemoryAccess;
 
 pub struct RunResult {
@@ -19,52 +20,46 @@ pub struct VirtualMachine {
 }
 
 // ---------------------------------------------------------------------------
-// impl VirtualMachine
+// Constructors
 // ---------------------------------------------------------------------------
 
 impl VirtualMachine {
+    /// Create a VM from raw assembled output, linking it at the default base address.
     pub fn new(assembled: &AssembledOutput) -> Self {
+        let program = linker::link(assembled, &LinkerConfig::default());
+        Self::from_linked(&program)
+    }
+
+    /// Create a VM from an already-linked program image.
+    pub fn from_linked(program: &LinkedProgram) -> Self {
         let mut bus = SystemBus::new(Vec::new());
 
-        // Load all section bytes into RAM at RAM_BASE in ELF layout order.
-        let mut offset = 0u64;
-        for byte in assembled.text_bytes() {
-            let _ = bus.write_byte(RAM_BASE + offset, *byte);
-            offset += 1;
-        }
-        for byte in assembled.rodata_bytes() {
-            let _ = bus.write_byte(RAM_BASE + offset, *byte);
-            offset += 1;
-        }
-        for byte in assembled.data_bytes() {
-            let _ = bus.write_byte(RAM_BASE + offset, *byte);
-            offset += 1;
-        }
-        // BSS: zero-initialized; write explicit zeros so the region is backed by RAM.
-        for byte in assembled.bss_bytes() {
-            let _ = bus.write_byte(RAM_BASE + offset, *byte);
-            offset += 1;
+        // Load the flat image into RAM.
+        for (i, &byte) in program.bytes.iter().enumerate() {
+            let _ = bus.write_byte(program.load_addr + i as u64, byte);
         }
 
-        // Compute entry point
-        let start_pc = if assembled.symbol_table.contains_key("_start") {
-            RAM_BASE + assembled.symbol_table["_start"]
-        } else {
-            RAM_BASE
-        };
+        // Write the initial heap bump-pointer value.
+        let _ = bus.write_doubleword(HEAP_PTR_ADDR, program.heap_base);
 
-        // Stack pointer = top of RAM, 16-byte aligned
+        // Stack pointer = top of RAM, 16-byte aligned.
         let stack_ptr = RAM_BASE + RAM_SIZE_DEFAULT as u64 - 16;
+        let mut cpu = Cpu::new(program.entry_point, stack_ptr);
 
-        let cpu = Cpu::new(start_pc, stack_ptr);
+        // Set ra to the `exit` stub so that returning from `main` halts cleanly.
+        if let Some(&exit_addr) = program.symbols.get("exit") {
+            cpu.set_return_addr(exit_addr);
+        }
 
         Self { cpu, bus }
     }
+}
 
-    // -----------------------------------------------------------------------
-    // Step / run
-    // -----------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Step / run
+// ---------------------------------------------------------------------------
 
+impl VirtualMachine {
     pub fn step(&mut self) -> Result<StepOutcome, VmError> {
         self.cpu.step(&mut self.bus)
     }
@@ -101,11 +96,13 @@ impl VirtualMachine {
             outcome,
         }
     }
+}
 
-    // -----------------------------------------------------------------------
-    // Peripheral / debug accessors
-    // -----------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Peripheral / debug accessors
+// ---------------------------------------------------------------------------
 
+impl VirtualMachine {
     pub fn uart_receive(&mut self, byte: u8) {
         self.bus.uart_mut().receive(byte);
     }

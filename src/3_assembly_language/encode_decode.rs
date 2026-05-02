@@ -142,11 +142,11 @@ impl BType {
     #[inline]
     fn encode_imm(imm: i32) -> u32 {
         debug_assert!(imm & 1 == 0, "B-type byte offset must be even");
-        let offset = imm >> 1; // Convert to word offset
-        let i12 = ((offset >> 11) & 1) as u32;
-        let i10_5 = ((offset >> 5) & 0x3F) as u32;
-        let i4_1 = (offset & 0xF) as u32;
-        let i11 = ((offset >> 10) & 1) as u32;
+        let i = imm as u32;
+        let i12 = (i >> 12) & 1;
+        let i10_5 = (i >> 5) & 0x3F;
+        let i4_1 = (i >> 1) & 0xF;
+        let i11 = (i >> 11) & 1;
         (i12 << 31) | (i10_5 << 25) | (i11 << 7) | (i4_1 << 8)
     }
 
@@ -227,11 +227,11 @@ impl JType {
     #[inline]
     fn encode_imm(imm: i32) -> u32 {
         debug_assert!(imm & 1 == 0, "J-type byte offset must be even");
-        let offset = imm >> 1; // Convert to word offset
-        let i20 = ((offset >> 20) & 1) as u32;
-        let i10_1 = ((offset >> 1) & 0x3FF) as u32;
-        let i11 = ((offset >> 11) & 1) as u32;
-        let i19_12 = ((offset >> 12) & 0xFF) as u32;
+        let i = imm as u32;
+        let i20 = (i >> 20) & 1;
+        let i10_1 = (i >> 1) & 0x3FF;
+        let i11 = (i >> 11) & 1;
+        let i19_12 = (i >> 12) & 0xFF;
         (i20 << 31) | (i10_1 << 21) | (i11 << 20) | (i19_12 << 12)
     }
 

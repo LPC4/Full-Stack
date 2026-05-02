@@ -304,9 +304,8 @@ fn encode_call(
         .resolve(symbol)
         .ok_or_else(|| AssemblerError::new(format!("undefined symbol `{symbol}`")))?;
 
-    // Calculate PC-relative offset from the instruction after auipc (current_addr + 4)
-    let pc_after_auipc = current_addr + 4;
-    let offset = (target_addr as i64) - (pc_after_auipc as i64);
+    // auipc uses its own PC (current_addr) as the base, not PC+4
+    let offset = (target_addr as i64) - (current_addr as i64);
 
     // Split into hi20 and lo12 (same as li but PC-relative)
     // The lo12 is sign-extended, so we need to adjust hi20 if bit 11 of lo12 is set
@@ -335,11 +334,9 @@ fn encode_tail(
         .resolve(symbol)
         .ok_or_else(|| AssemblerError::new(format!("undefined symbol `{symbol}`")))?;
 
-    // Calculate PC-relative offset from the instruction after auipc (current_addr + 4)
-    let pc_after_auipc = current_addr + 4;
-    let offset = (target_addr as i64) - (pc_after_auipc as i64);
+    // auipc uses its own PC (current_addr) as the base, not PC+4
+    let offset = (target_addr as i64) - (current_addr as i64);
 
-    // Split into hi20 and lo12
     let lo12 = ((offset & 0xFFF) as i32).wrapping_sub(if offset & 0x800 != 0 { 0x1000 } else { 0 });
     let hi20 = ((offset - lo12 as i64) >> 12) as i32;
 
@@ -366,11 +363,9 @@ fn encode_la(
         .resolve(symbol)
         .ok_or_else(|| AssemblerError::new(format!("undefined symbol `{symbol}`")))?;
 
-    // Calculate PC-relative offset from the instruction after auipc (current_addr + 4)
-    let pc_after_auipc = current_addr + 4;
-    let offset = (target_addr as i64) - (pc_after_auipc as i64);
+    // auipc uses its own PC (current_addr) as the base, not PC+4
+    let offset = (target_addr as i64) - (current_addr as i64);
 
-    // Split into hi20 and lo12
     let lo12 = ((offset & 0xFFF) as i32).wrapping_sub(if offset & 0x800 != 0 { 0x1000 } else { 0 });
     let hi20 = ((offset - lo12 as i64) >> 12) as i32;
 

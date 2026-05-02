@@ -4,7 +4,7 @@ use crate::high_level_language::lexer::Lexer;
 use crate::high_level_language::token::Token;
 use crate::view::{
     AssemblyView, AstView, CfgView, CompilationState, CompilerView, ExecutionView, IrView,
-    MemoryMapView, ProgramCatalog, ProgramKind, SourceView, StackView, TokensView,
+    MemoryMapView, ProgramCatalog, ProgramKind, SourceView, StackView, TokensView, VmExecutionView,
     blank_custom_program_source,
 };
 use egui_dock::{DockState, NodeIndex};
@@ -115,7 +115,8 @@ impl FullStackApp {
             ViewWrapper::new(Box::new(CfgView), &mut self.next_view_id),    // 5
             ViewWrapper::new(Box::new(StackView::default()), &mut self.next_view_id), // 6
             ViewWrapper::new(Box::new(MemoryMapView::default()), &mut self.next_view_id), // 7
-            ViewWrapper::new(Box::new(ExecutionView), &mut self.next_view_id), // 8
+            ViewWrapper::new(Box::new(ExecutionView), &mut self.next_view_id),             // 8
+            ViewWrapper::new(Box::new(VmExecutionView), &mut self.next_view_id),           // 9
         ];
 
         // Source is the first view → root
@@ -129,7 +130,7 @@ impl FullStackApp {
             vec![views[3].clone(), views[1].clone(), views[2].clone()],
         );
 
-        // Bottom side: Assembly (4), CFG (5), Stack (6), Memory Map (7), Execution (8)
+        // Bottom side: Assembly (4), CFG (5), Stack (6), Execution (8), VM Output (9)
         surface.split_below(
             right,
             0.5,
@@ -138,6 +139,7 @@ impl FullStackApp {
                 views[5].clone(),
                 views[6].clone(),
                 views[8].clone(),
+                views[9].clone(),
             ],
         );
 
@@ -183,6 +185,14 @@ impl FullStackApp {
                 self.compilation_state.assembly_tokens = asm_tokens;
                 self.compilation_state.clear_error();
                 self.compilation_state.just_compiled = true;
+
+                // Run the internal VM and capture output.
+                self.compilation_state.vm_output =
+                    if let Some(assembled) = &self.compilation_state.assembled {
+                        run_in_vm(assembled)
+                    } else {
+                        String::new()
+                    };
             }
             Err(error) => {
                 self.compilation_state.set_error(error.to_string());
@@ -367,6 +377,7 @@ impl eframe::App for FullStackApp {
                                 ("Stack",           Box::new(StackView::default())),
                                 ("Memory Map",      Box::new(MemoryMapView::default())),
                                 ("Execution (WSL)", Box::new(ExecutionView::default())),
+                                ("VM Output",       Box::new(VmExecutionView::default())),
                             ];
                             for (label, proto) in &entries {
                                 if ui.button(*label).clicked() {
@@ -560,4 +571,35 @@ echo "--- Process Exited with Code: $EXIT_CODE ---"
 #[cfg(not(all(not(target_arch = "wasm32"), target_os = "windows")))]
 fn run_in_wsl(_asm: &str) -> String {
     "WSL execution is only supported on Windows.".to_string()
+}
+
+// ---------------------------------------------------------------------------
+// Internal VM runner
+// ---------------------------------------------------------------------------
+
+fn run_in_vm(assembled: &crate::assembly_language::assembler::output::AssembledOutput) -> String {
+    use crate::virtual_machine::cpu::StepOutcome;
+    use crate::virtual_machine::virtual_machine::VirtualMachine;
+
+    const MAX_STEPS: u64 = 5_000_000;
+
+    let mut vm = VirtualMachine::new(assembled);
+    let result = vm.run(MAX_STEPS);
+
+    let mut out = String::new();
+
+    if !result.uart_output.is_empty() {
+        out.push_str(&result.uart_output);
+        if !result.uart_output.ends_with('\n') {
+            out.push('\n');
+        }
+    }
+
+    let status = match result.outcome {
+        StepOutcome::Halted(0) => format!("\n[exit 0 — {} steps]", result.steps),
+        StepOutcome::Halted(code) => format!("\n[exit {code} — {} steps]", result.steps),
+        StepOutcome::Continue => format!("\n[reached step limit ({MAX_STEPS}) — execution incomplete]"),
+    };
+    out.push_str(&status);
+    out
 }

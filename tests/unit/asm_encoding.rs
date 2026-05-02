@@ -136,8 +136,8 @@ fn rv64i_branches() {
 
 #[test]
 fn rv64i_jump() {
-    assert_enc!(Jal::new(1, 4),   0x002000efu32);
-    assert_enc!(Jal::new(0, -8),  0xffdff06fu32);
+    assert_enc!(Jal::new(1, 4),   0x004000efu32);
+    assert_enc!(Jal::new(0, -8),  0xff9ff06fu32);
     assert_enc!(Jalr::new(1, 5, 0), 0x000280e7u32);
 }
 

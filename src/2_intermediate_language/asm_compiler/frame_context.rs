@@ -2,6 +2,7 @@
 
 use crate::intermediate_language::IrType;
 use std::collections::HashMap;
+use super::type_utils;
 
 pub struct FrameContext {
     /// Total frame size in bytes.
@@ -73,107 +74,15 @@ impl FrameContext {
 
     /// Compute the size of a type after resolving aliases.
     pub fn type_size(&self, ty: &IrType, type_aliases: &HashMap<String, IrType>) -> usize {
-        let resolved = self.resolve_type(ty, type_aliases);
-        match resolved {
-            IrType::Void => 0,
-            IrType::Integer(w) => match w {
-                crate::intermediate_language::IntWidth::I1 => 1,
-                crate::intermediate_language::IntWidth::I8 => 1,
-                crate::intermediate_language::IntWidth::I16 => 2,
-                crate::intermediate_language::IntWidth::I32 => 4,
-                crate::intermediate_language::IntWidth::I64 => 8,
-            },
-            IrType::Float(w) => match w {
-                crate::intermediate_language::FloatWidth::F32 => 4,
-                crate::intermediate_language::FloatWidth::F64 => 8,
-            },
-            IrType::Pointer(_) => 8,
-            IrType::Array { len, element } => len * self.type_size(&element, type_aliases),
-            IrType::Aggregate(fields) => {
-                let mut offset = 0usize;
-                let mut aggregate_alignment = 1usize;
-
-                for (_, field_ty) in fields {
-                    let field_alignment = self.type_alignment(&field_ty, type_aliases);
-                    aggregate_alignment = aggregate_alignment.max(field_alignment);
-                    offset = Self::align_to(offset, field_alignment);
-                    offset += self.type_size(&field_ty, type_aliases);
-                }
-
-                Self::align_to(offset, aggregate_alignment)
-            }
-            IrType::Named(_) => 8, // Should have been resolved, but fallback to pointer size
-        }
+        type_utils::type_size(ty, type_aliases)
     }
 
     pub fn type_alignment(&self, ty: &IrType, type_aliases: &HashMap<String, IrType>) -> usize {
-        match self.resolve_type(ty, type_aliases) {
-            IrType::Void => 1,
-            IrType::Integer(w) => match w {
-                crate::intermediate_language::IntWidth::I1 => 1,
-                crate::intermediate_language::IntWidth::I8 => 1,
-                crate::intermediate_language::IntWidth::I16 => 2,
-                crate::intermediate_language::IntWidth::I32 => 4,
-                crate::intermediate_language::IntWidth::I64 => 8,
-            },
-            IrType::Float(w) => match w {
-                crate::intermediate_language::FloatWidth::F32 => 4,
-                crate::intermediate_language::FloatWidth::F64 => 8,
-            },
-            IrType::Pointer(_) | IrType::Named(_) => 8,
-            IrType::Array { element, .. } => self.type_alignment(&element, type_aliases),
-            IrType::Aggregate(fields) => fields
-                .iter()
-                .map(|(_, field_ty)| self.type_alignment(field_ty, type_aliases))
-                .max()
-                .unwrap_or(1),
-        }
+        type_utils::type_alignment(ty, type_aliases)
     }
 
     pub fn resolve_type(&self, ty: &IrType, type_aliases: &HashMap<String, IrType>) -> IrType {
-        self.resolve_type_inner(ty, type_aliases, &mut std::collections::HashSet::new())
-    }
-
-    fn resolve_type_inner(
-        &self,
-        ty: &IrType,
-        type_aliases: &HashMap<String, IrType>,
-        seen: &mut std::collections::HashSet<String>,
-    ) -> IrType {
-        match ty {
-            IrType::Named(name) => {
-                if let Some(resolved) = type_aliases.get(name) {
-                    if !seen.insert(name.clone()) {
-                        IrType::Named(name.clone())
-                    } else {
-                        let out = self.resolve_type_inner(resolved, type_aliases, seen);
-                        seen.remove(name);
-                        out
-                    }
-                } else {
-                    IrType::Named(name.clone())
-                }
-            }
-            IrType::Pointer(inner) => {
-                IrType::Pointer(Box::new(self.resolve_type_inner(inner, type_aliases, seen)))
-            }
-            IrType::Array { len, element } => IrType::Array {
-                len: *len,
-                element: Box::new(self.resolve_type_inner(element, type_aliases, seen)),
-            },
-            IrType::Aggregate(fields) => IrType::Aggregate(
-                fields
-                    .iter()
-                    .map(|(name, field_ty)| {
-                        (
-                            name.clone(),
-                            self.resolve_type_inner(field_ty, type_aliases, seen),
-                        )
-                    })
-                    .collect(),
-            ),
-            other => other.clone(),
-        }
+        type_utils::resolve_ir_type(ty, type_aliases)
     }
 }
 

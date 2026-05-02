@@ -152,15 +152,9 @@ impl HighLevelCompiler {
     }
 }
 
-#[path = "control_flow.rs"]
 mod control_flow;
-#[path = "declarations.rs"]
 mod declarations;
-#[path = "expressions.rs"]
 mod expressions;
-#[path = "literals.rs"]
 mod literals;
-#[path = "types.rs"]
 mod types;
-#[path = "utils.rs"]
 mod utils;

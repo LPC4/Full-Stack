@@ -22,6 +22,7 @@ pub use crate::view::views::MemoryMapView;
 pub use crate::view::views::SourceView;
 pub use crate::view::views::StackView;
 pub use crate::view::views::TokensView;
+pub use crate::view::views::VmExecutionView;
 
 pub(crate) fn blank_custom_program_source() -> String {
     "; Write your program here\n".to_owned()

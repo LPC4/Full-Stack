@@ -4,8 +4,6 @@ pub mod decoder;
 pub mod mmu;
 pub mod pipeline;
 pub mod registers;
-
-// Re-export Cpu, StepOutcome, and PrivilegeMode for external use
 pub use cpu_impl::{Cpu, StepOutcome};
 pub use registers::PrivilegeMode;
 
@@ -302,6 +300,68 @@ mod cpu_impl {
                     let exit_code = self.regs.read_x(10) as i64;
                     Ok(StepOutcome::Halted(exit_code))
                 }
+                // putchar(a0 = byte)
+                1000 => {
+                    let c = self.regs.read_x(10) as u8;
+                    let _ = bus.uart_mut().write_byte(0, c);
+                    self.regs.write_x(10, 0);
+                    self.regs.pc = self.regs.pc.wrapping_add(4);
+                    self.csrs.increment_instret();
+                    self.csrs.increment_cycle();
+                    Ok(StepOutcome::Continue)
+                }
+                // puts(a0 = ptr to null-terminated string) — writes string + newline
+                1001 => {
+                    let mut ptr = self.regs.read_x(10);
+                    loop {
+                        let byte = bus.read_byte(ptr).unwrap_or(0);
+                        if byte == 0 { break; }
+                        let _ = bus.uart_mut().write_byte(0, byte);
+                        ptr += 1;
+                    }
+                    let _ = bus.uart_mut().write_byte(0, b'\n');
+                    self.regs.write_x(10, 0);
+                    self.regs.pc = self.regs.pc.wrapping_add(4);
+                    self.csrs.increment_instret();
+                    self.csrs.increment_cycle();
+                    Ok(StepOutcome::Continue)
+                }
+                // printf(a0 = fmt, a1..a7 = varargs)
+                1002 => {
+                    let output = vm_printf(self, bus);
+                    let len = output.len();
+                    for byte in output {
+                        let _ = bus.uart_mut().write_byte(0, byte);
+                    }
+                    self.regs.write_x(10, len as u64);
+                    self.regs.pc = self.regs.pc.wrapping_add(4);
+                    self.csrs.increment_instret();
+                    self.csrs.increment_cycle();
+                    Ok(StepOutcome::Continue)
+                }
+                // malloc(a0 = size) — bump allocator; bump ptr lives at HEAP_PTR_ADDR
+                1003 => {
+                    use crate::virtual_machine::bus::HEAP_PTR_ADDR;
+                    let size = self.regs.read_x(10);
+                    let aligned = (size + 7) & !7;
+                    let current = bus.read_doubleword(HEAP_PTR_ADDR)
+                        .unwrap_or(HEAP_PTR_ADDR + 8);
+                    let new_ptr = current.wrapping_add(aligned);
+                    let _ = bus.write_doubleword(HEAP_PTR_ADDR, new_ptr);
+                    self.regs.write_x(10, current);
+                    self.regs.pc = self.regs.pc.wrapping_add(4);
+                    self.csrs.increment_instret();
+                    self.csrs.increment_cycle();
+                    Ok(StepOutcome::Continue)
+                }
+                // free(a0 = ptr) — no-op (bump allocator never reclaims)
+                1004 => {
+                    self.regs.write_x(10, 0);
+                    self.regs.pc = self.regs.pc.wrapping_add(4);
+                    self.csrs.increment_instret();
+                    self.csrs.increment_cycle();
+                    Ok(StepOutcome::Continue)
+                }
                 // Unknown syscall — return -1.
                 _ => {
                     self.regs.write_x(10, u64::MAX);
@@ -468,5 +528,94 @@ mod cpu_impl {
         pub fn write_csr_mtvec(&mut self, val: u64) {
             self.csrs.mtvec = val;
         }
+
+        /// Set the return-address register (x1 / ra).
+        pub fn set_return_addr(&mut self, ra: u64) {
+            self.regs.write_x(1, ra);
+        }
     }
+
+    // -----------------------------------------------------------------------
+    // printf helper (used by syscall 1002)
+    // -----------------------------------------------------------------------
+
+    /// Minimal printf: handles %d %i %u %x %X %c %s %f %% and width-less %p.
+    fn vm_printf(cpu: &Cpu, bus: &mut SystemBus) -> Vec<u8> {
+        use crate::virtual_machine::memory::MemoryAccess;
+        let fmt_ptr = cpu.regs.read_x(10);
+        let mut arg_reg = 11u32; // a1..a7 supply arguments
+
+        let mut out = Vec::<u8>::new();
+        let mut addr = fmt_ptr;
+
+        loop {
+            let c = bus.read_byte(addr).unwrap_or(0);
+            addr += 1;
+            if c == 0 { break; }
+
+            if c != b'%' {
+                out.push(c);
+                continue;
+            }
+
+            // Read the format specifier (skip simple flags/width for now)
+            let spec = bus.read_byte(addr).unwrap_or(0);
+            addr += 1;
+
+            let arg = if arg_reg <= 17 {
+                let v = cpu.regs.read_x(arg_reg as usize);
+                arg_reg += 1;
+                v
+            } else {
+                0
+            };
+
+            match spec {
+                b'd' | b'i' => {
+                    let s = (arg as i64).to_string();
+                    out.extend_from_slice(s.as_bytes());
+                }
+                b'u' => {
+                    out.extend_from_slice(arg.to_string().as_bytes());
+                }
+                b'x' => {
+                    out.extend_from_slice(format!("{arg:x}").as_bytes());
+                }
+                b'X' => {
+                    out.extend_from_slice(format!("{arg:X}").as_bytes());
+                }
+                b'p' => {
+                    out.extend_from_slice(format!("0x{arg:x}").as_bytes());
+                }
+                b'c' => {
+                    out.push(arg as u8);
+                }
+                b's' => {
+                    let mut ptr = arg;
+                    loop {
+                        let byte = bus.read_byte(ptr).unwrap_or(0);
+                        if byte == 0 { break; }
+                        out.push(byte);
+                        ptr += 1;
+                    }
+                }
+                b'f' | b'g' | b'e' => {
+                    let f = f64::from_bits(arg);
+                    out.extend_from_slice(format!("{f}").as_bytes());
+                }
+                b'%' => {
+                    out.push(b'%');
+                    // No argument consumed for %%
+                    if arg_reg > 11 { arg_reg -= 1; }
+                }
+                other => {
+                    out.push(b'%');
+                    out.push(other);
+                }
+            }
+        }
+
+        out
+    }
+
 } // end of cpu_impl module

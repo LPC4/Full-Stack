@@ -4,7 +4,93 @@ use full_stack::assembly_language::riscv::rv64i::*;
 use full_stack::assembly_language::riscv::rv64m::*;
 use full_stack::assembly_language::riscv::rv64zicsr::Csrrs;
 use full_stack::assembly_language::rv_instruction::RvInstruction;
+use full_stack::high_level_language::compilation_pipeline::CompilationPipeline;
 use full_stack::virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
+
+// ---------------------------------------------------------------------------
+// Full HLL pipeline helpers
+// ---------------------------------------------------------------------------
+
+fn run_hll(src: &str) -> (VirtualMachine, StepOutcome, String) {
+    let pipeline = CompilationPipeline::new();
+    let result = pipeline.compile(src).expect("compile failed");
+    let (_, toks) = pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program);
+    let assembled = pipeline.assemble(&toks).expect("assemble failed");
+    let mut vm = VirtualMachine::new(&assembled);
+    let run = vm.run(5_000_000);
+    let uart = run.uart_output.clone();
+    (vm, run.outcome, uart)
+}
+
+// ---------------------------------------------------------------------------
+// HLL full-pipeline VM tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn hll_arithmetic_return() {
+    let (_, outcome, _) = run_hll(r#"
+main: () -> i32 {
+    a: i32 = 6
+    b: i32 = 7
+    return a * b
+}
+"#);
+    assert!(matches!(outcome, StepOutcome::Halted(42)), "expected Halted(42), got {outcome:?}");
+}
+
+#[test]
+fn hll_return_zero() {
+    let (_, outcome, _) = run_hll(r#"
+main: () -> i32 {
+    return 0
+}
+"#);
+    assert!(matches!(outcome, StepOutcome::Halted(0)), "expected Halted(0), got {outcome:?}");
+}
+
+#[test]
+fn hll_function_call_and_return() {
+    let (_, outcome, _) = run_hll(r#"
+add: (a: i32, b: i32) -> i32 {
+    return a + b
+}
+main: () -> i32 {
+    return add(10, 32)
+}
+"#);
+    assert!(matches!(outcome, StepOutcome::Halted(42)), "expected Halted(42), got {outcome:?}");
+}
+
+#[test]
+fn hll_putchar_output() {
+    let (_, outcome, uart) = run_hll(r#"
+main: () -> i32 {
+    putchar(65)
+    putchar(66)
+    putchar(67)
+    return 0
+}
+"#);
+    assert_eq!(uart, "ABC", "expected UART='ABC', got {uart:?}");
+    assert!(matches!(outcome, StepOutcome::Halted(0)), "expected Halted(0), got {outcome:?}");
+}
+
+#[test]
+fn hll_user_function_calls_putchar() {
+    let (_, outcome, uart) = run_hll(r#"
+emit: (c: i32) -> i32 {
+    putchar(c)
+    return 0
+}
+main: () -> i32 {
+    emit(65)
+    emit(66)
+    return 0
+}
+"#);
+    assert_eq!(uart, "AB", "expected UART='AB', got {uart:?}");
+    assert!(matches!(outcome, StepOutcome::Halted(0)), "expected Halted(0), got {outcome:?}");
+}
 
 // ---------------------------------------------------------------------------
 // Helper

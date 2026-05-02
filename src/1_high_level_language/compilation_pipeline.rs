@@ -205,6 +205,9 @@ impl CompilationPipeline {
     }
 
     /// Assemble a token stream into machine code, producing one byte blob per section.
+    ///
+    /// Stubs for common libc symbols (putchar, printf, puts, malloc, free, exit) are
+    /// appended automatically so external calls resolve without needing a real libc.
     pub fn assemble(
         &self,
         tokens: &[crate::assembly_language::rv_instruction::RvInstruction],
@@ -212,6 +215,50 @@ impl CompilationPipeline {
         crate::assembly_language::assembler::output::AssembledOutput,
         crate::assembly_language::assembler::AssemblerError,
     > {
-        crate::assembly_language::assembler::Assembler::assemble(tokens)
+        let mut all: Vec<crate::assembly_language::rv_instruction::RvInstruction> =
+            tokens.to_vec();
+        all.extend(extern_stubs());
+        crate::assembly_language::assembler::Assembler::assemble(&all)
     }
+}
+
+// ---------------------------------------------------------------------------
+// Libc stub injection
+// ---------------------------------------------------------------------------
+
+/// Build the syscall-based stubs for common external symbols.
+///
+/// Each stub is three instructions:
+///   addi a7, x0, <syscall_no>   // set syscall ID
+///   ecall                       // handled by the VM
+///   jalr x0, x1, 0              // ret — return to caller
+///
+/// The VM's ecall handler recognises these custom syscall numbers and
+/// implements the corresponding behaviour (I/O, malloc, etc.).
+fn extern_stubs() -> Vec<crate::assembly_language::rv_instruction::RvInstruction> {
+    use crate::assembly_language::real::RealInstruction;
+    use crate::assembly_language::rv_instruction::RvInstruction;
+    use crate::assembly_language::riscv::rv64i::{Addi, Ecall, Jalr};
+
+    // (symbol name, syscall number)
+    const STUBS: &[(&str, i32)] = &[
+        ("putchar", 1000),
+        ("puts",    1001),
+        ("printf",  1002),
+        ("malloc",  1003),
+        ("free",    1004),
+        ("exit",    93),
+    ];
+
+    let mut tokens = Vec::new();
+    // Switch back to .text so stubs land in the code section regardless of
+    // what section the user's assembly ended in.
+    tokens.push(RvInstruction::Directive(".text".to_owned()));
+    for &(name, syscall_no) in STUBS {
+        tokens.push(RvInstruction::Label(name.to_owned()));
+        tokens.push(RvInstruction::Real(RealInstruction::Addi(Addi::new(17, 0, syscall_no))));
+        tokens.push(RvInstruction::Real(RealInstruction::Ecall(Ecall)));
+        tokens.push(RvInstruction::Real(RealInstruction::Jalr(Jalr::new(0, 1, 0))));
+    }
+    tokens
 }

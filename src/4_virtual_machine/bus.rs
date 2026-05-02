@@ -20,6 +20,10 @@ pub const PLIC_END: u64 = PLIC_BASE + PLIC_SIZE - 1;
 pub const RAM_BASE: u64 = 0x8000_0000;
 pub const RAM_SIZE_DEFAULT: usize = 128 * 1024 * 1024; // 128 MiB
 
+/// Fixed address where the heap bump-pointer is stored (one u64 word in RAM).
+/// The actual heap region begins at `HEAP_PTR_ADDR + 8`.
+pub const HEAP_PTR_ADDR: u64 = RAM_BASE + 32 * 1024 * 1024 - 8; // 0x81FF_FFF8
+
 pub struct SystemBus {
     rom: Rom,
     ram: Ram,

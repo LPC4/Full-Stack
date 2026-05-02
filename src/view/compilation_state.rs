@@ -5,12 +5,12 @@ pub struct CompilationState {
     pub ir: String,
     pub asm: String,
     pub assembly_tokens: Vec<crate::assembly_language::rv_instruction::RvInstruction>,
-    /// Machine-code output from the assembler — one byte blob per ELF section.
     pub assembled: Option<crate::assembly_language::assembler::output::AssembledOutput>,
     pub error: Option<String>,
     pub error_summary: Option<String>,
     pub just_compiled: bool,
     pub execution_output: String,
+    pub vm_output: String,
 }
 
 impl CompilationState {
