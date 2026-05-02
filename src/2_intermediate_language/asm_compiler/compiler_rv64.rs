@@ -1,7 +1,6 @@
 use super::{
     assembly_emitter::AssemblyEmitter, data_section::DataSection,
-    function_context::FunctionContext, register_allocator::RegisterAllocator,
-    type_utils,
+    function_context::FunctionContext, register_allocator::RegisterAllocator, type_utils,
 };
 use crate::assembly_language::encode_decode::Reg;
 use crate::assembly_language::real::RealInstruction;
@@ -144,15 +143,58 @@ impl CompilerRv64 {
         match inst {
             Comment(s) => self.emitter.emit_comment(s),
             Alloc { .. } | Phi { .. } => {}
-            Load { dest, ty, ptr, offset } => self.lower_load(dest, ty, ptr, *offset, ctx),
-            Store { ty, value, ptr, offset } => self.lower_store(ty, value, ptr, *offset, ctx),
-            Offset { dest, ptr, bytes, .. } => self.lower_offset(dest, ptr, bytes, ctx),
-            Index { dest, ty, base_ptr, idx } => self.lower_index(dest, ty, base_ptr, idx, ctx),
-            Math { dest, op, ty, lhs, rhs } => self.lower_math(dest, op, ty, lhs, rhs, ctx),
-            Unary { dest, op, ty, value } => self.lower_unary(dest, op, ty, value, ctx),
-            Cmp { dest, op, ty, lhs, rhs } => self.lower_cmp(dest, op, ty, lhs, rhs, ctx),
-            Cast { dest, mode, value, ty } => self.lower_cast_inst(dest, *mode, value, ty, ctx),
-            Call { dest, function, args } => self.lower_call(dest, function, args, ctx),
+            Load {
+                dest,
+                ty,
+                ptr,
+                offset,
+            } => self.lower_load(dest, ty, ptr, *offset, ctx),
+            Store {
+                ty,
+                value,
+                ptr,
+                offset,
+            } => self.lower_store(ty, value, ptr, *offset, ctx),
+            Offset {
+                dest, ptr, bytes, ..
+            } => self.lower_offset(dest, ptr, bytes, ctx),
+            Index {
+                dest,
+                ty,
+                base_ptr,
+                idx,
+            } => self.lower_index(dest, ty, base_ptr, idx, ctx),
+            Math {
+                dest,
+                op,
+                ty,
+                lhs,
+                rhs,
+            } => self.lower_math(dest, op, ty, lhs, rhs, ctx),
+            Unary {
+                dest,
+                op,
+                ty,
+                value,
+            } => self.lower_unary(dest, op, ty, value, ctx),
+            Cmp {
+                dest,
+                op,
+                ty,
+                lhs,
+                rhs,
+            } => self.lower_cmp(dest, op, ty, lhs, rhs, ctx),
+            Cast {
+                dest,
+                mode,
+                value,
+                ty,
+            } => self.lower_cast_inst(dest, *mode, value, ty, ctx),
+            Call {
+                dest,
+                function,
+                args,
+            } => self.lower_call(dest, function, args, ctx),
             HeapAlloc { dest, ty, count } => self.lower_heap_alloc(dest, ty, *count, ctx),
             HeapFree { ptr } => self.lower_heap_free(ptr, ctx),
         }
@@ -168,7 +210,8 @@ impl CompilerRv64 {
     ) {
         self.emitter.reset_temp_counter();
         let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
-        self.emitter.emit_comment(&format!("Load {ty} from memory into ${dest}"));
+        self.emitter
+            .emit_comment(&format!("Load {ty} from memory into ${dest}"));
         let ptr_tmp = self.load_pointer_operand_to_temp(ptr, ctx);
         let addr_tmp = if let Some(off) = offset {
             let tmp = self.emitter.alloc_temp_reg();
@@ -186,7 +229,8 @@ impl CompilerRv64 {
                 self.type_size(&resolved_ty),
             );
         } else {
-            self.emitter.emit_load_to_slot(dest_slot, addr_tmp, &resolved_ty, 0);
+            self.emitter
+                .emit_load_to_slot(dest_slot, addr_tmp, &resolved_ty, 0);
         }
     }
 
@@ -215,10 +259,12 @@ impl CompilerRv64 {
             );
         } else if matches!(resolved_ty, IrType::Float(_)) {
             let val_fp = self.load_float_value_to_temp(value, ctx);
-            self.emitter.emit_store_from_tmp(addr_tmp, val_fp, &resolved_ty, 0);
+            self.emitter
+                .emit_store_from_tmp(addr_tmp, val_fp, &resolved_ty, 0);
         } else {
             let val_tmp = self.load_value_to_temp(value, ctx);
-            self.emitter.emit_store_from_tmp(addr_tmp, val_tmp, &resolved_ty, 0);
+            self.emitter
+                .emit_store_from_tmp(addr_tmp, val_tmp, &resolved_ty, 0);
         }
     }
 
@@ -279,8 +325,12 @@ impl CompilerRv64 {
             panic!("Math operations cannot be performed on aggregate/array type {resolved_ty:?}");
         }
         let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
-        self.emitter.emit_comment(&format!("{op} operation on {ty}"));
-        if matches!(resolved_ty, IrType::Float(crate::intermediate_language::FloatWidth::F32)) {
+        self.emitter
+            .emit_comment(&format!("{op} operation on {ty}"));
+        if matches!(
+            resolved_ty,
+            IrType::Float(crate::intermediate_language::FloatWidth::F32)
+        ) {
             let lhs_fp = self.load_float_value_to_temp(lhs, ctx);
             let rhs_fp = self.load_float_value_to_temp(rhs, ctx);
             let result_fp = self.emitter.alloc_float_temp_reg();
@@ -312,7 +362,8 @@ impl CompilerRv64 {
                 IrMathOp::Or => self.emitter.emit_or(result_tmp, lhs_tmp, rhs_tmp),
                 IrMathOp::Xor => self.emitter.emit_xor(result_tmp, lhs_tmp, rhs_tmp),
             }
-            self.emitter.emit_store_from_tmp(SP, result_tmp, &resolved_ty, dest_slot as i32);
+            self.emitter
+                .emit_store_from_tmp(SP, result_tmp, &resolved_ty, dest_slot as i32);
         }
     }
 
@@ -330,7 +381,10 @@ impl CompilerRv64 {
             panic!("Unary operations cannot be performed on aggregate/array type {resolved_ty:?}");
         }
         let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
-        if matches!(resolved_ty, IrType::Float(crate::intermediate_language::FloatWidth::F32)) {
+        if matches!(
+            resolved_ty,
+            IrType::Float(crate::intermediate_language::FloatWidth::F32)
+        ) {
             let val_fp = self.load_float_value_to_temp(value, ctx);
             let result_fp = self.emitter.alloc_float_temp_reg();
             match op {
@@ -349,7 +403,8 @@ impl CompilerRv64 {
                 IrUnaryOp::Neg => self.emitter.emit_neg(result_tmp, val_tmp),
                 IrUnaryOp::Not => self.emitter.emit_not(result_tmp, val_tmp),
             }
-            self.emitter.emit_store_from_tmp(SP, result_tmp, &resolved_ty, dest_slot as i32);
+            self.emitter
+                .emit_store_from_tmp(SP, result_tmp, &resolved_ty, dest_slot as i32);
         }
     }
 
@@ -371,7 +426,10 @@ impl CompilerRv64 {
         }
         let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
         let bool_ty = IrType::Integer(crate::intermediate_language::IntWidth::I1);
-        if matches!(resolved_ty, IrType::Float(crate::intermediate_language::FloatWidth::F32)) {
+        if matches!(
+            resolved_ty,
+            IrType::Float(crate::intermediate_language::FloatWidth::F32)
+        ) {
             let lhs_fp = self.load_float_value_to_temp(lhs, ctx);
             let rhs_fp = self.load_float_value_to_temp(rhs, ctx);
             let result_tmp = self.emitter.alloc_temp_reg();
@@ -395,7 +453,8 @@ impl CompilerRv64 {
                     self.emitter.emit_fle_s(result_tmp, rhs_fp, lhs_fp);
                 }
             }
-            self.emitter.emit_store_from_tmp(SP, result_tmp, &bool_ty, dest_slot as i32);
+            self.emitter
+                .emit_store_from_tmp(SP, result_tmp, &bool_ty, dest_slot as i32);
         } else {
             let lhs_tmp = self.load_value_to_temp(lhs, ctx);
             let rhs_tmp = self.load_value_to_temp(rhs, ctx);
@@ -412,7 +471,8 @@ impl CompilerRv64 {
                 IrCmpOp::Sge => self.emitter.emit_cmp_sge(result_tmp, lhs_tmp, rhs_tmp),
                 IrCmpOp::Uge => self.emitter.emit_cmp_uge(result_tmp, lhs_tmp, rhs_tmp),
             }
-            self.emitter.emit_store_from_tmp(SP, result_tmp, &bool_ty, dest_slot as i32);
+            self.emitter
+                .emit_store_from_tmp(SP, result_tmp, &bool_ty, dest_slot as i32);
         }
     }
 
@@ -433,7 +493,8 @@ impl CompilerRv64 {
         let src_tmp = self.load_value_to_temp(value, ctx);
         let result_tmp = self.emitter.alloc_temp_reg();
         self.lower_cast(result_tmp, src_tmp, mode, &resolved_ty);
-        self.emitter.emit_store_from_tmp(SP, result_tmp, &resolved_ty, dest_slot as i32);
+        self.emitter
+            .emit_store_from_tmp(SP, result_tmp, &resolved_ty, dest_slot as i32);
     }
 
     fn lower_call(
@@ -453,9 +514,11 @@ impl CompilerRv64 {
         let is_agg_return = matches!(resolved_ret_ty, IrType::Aggregate(_) | IrType::Array { .. });
         let needs_sret = is_agg_return && !self.can_return_in_registers(&resolved_ret_ty);
 
-        self.emitter.emit_comment(&format!("--- Function Call: {function} ---"));
+        self.emitter
+            .emit_comment(&format!("--- Function Call: {function} ---"));
         if needs_sret {
-            self.emitter.emit_comment("Using sret convention for large aggregate return");
+            self.emitter
+                .emit_comment("Using sret convention for large aggregate return");
         }
 
         let mut arg_index = 0;
@@ -471,7 +534,8 @@ impl CompilerRv64 {
             }
         }
 
-        self.emitter.emit_comment(&format!("Passing {} arguments", args.len()));
+        self.emitter
+            .emit_comment(&format!("Passing {} arguments", args.len()));
         for arg in args {
             if arg_index >= 8 {
                 break;
@@ -484,7 +548,8 @@ impl CompilerRv64 {
         self.emitter.emit_jal(RA, function);
 
         if is_agg_return && !needs_sret {
-            self.emitter.emit_comment("Unpacking small aggregate return from a0/a1");
+            self.emitter
+                .emit_comment("Unpacking small aggregate return from a0/a1");
             if let Some(dest_reg) = dest {
                 let dest_slot = ctx.slot_for_reg(dest_reg).expect("dest slot");
                 if let IrType::Aggregate(fields) = &resolved_ret_ty {
@@ -494,18 +559,25 @@ impl CompilerRv64 {
                         let field_size = self.type_size(&resolved_field_ty);
                         let reg = if i == 0 { A0 } else { A1 };
                         if field_size >= 8 {
-                            self.emitter.emit_sd(SP, reg, (dest_slot + field_offset) as i32);
+                            self.emitter
+                                .emit_sd(SP, reg, (dest_slot + field_offset) as i32);
                         } else if field_size >= 4 {
                             self.emitter.emit_inst(RealInstruction::Sw(Sw::new(
-                                SP, reg, (dest_slot + field_offset) as i32,
+                                SP,
+                                reg,
+                                (dest_slot + field_offset) as i32,
                             )));
                         } else if field_size >= 2 {
                             self.emitter.emit_inst(RealInstruction::Sh(Sh::new(
-                                SP, reg, (dest_slot + field_offset) as i32,
+                                SP,
+                                reg,
+                                (dest_slot + field_offset) as i32,
                             )));
                         } else if field_size >= 1 {
                             self.emitter.emit_inst(RealInstruction::Sb(Sb::new(
-                                SP, reg, (dest_slot + field_offset) as i32,
+                                SP,
+                                reg,
+                                (dest_slot + field_offset) as i32,
                             )));
                         }
                         let align = self.type_alignment(&resolved_field_ty);
@@ -516,8 +588,11 @@ impl CompilerRv64 {
                     if size >= 8 {
                         self.emitter.emit_sd(SP, A0, dest_slot as i32);
                     } else if size >= 4 {
-                        self.emitter
-                            .emit_inst(RealInstruction::Sw(Sw::new(SP, A0, dest_slot as i32)));
+                        self.emitter.emit_inst(RealInstruction::Sw(Sw::new(
+                            SP,
+                            A0,
+                            dest_slot as i32,
+                        )));
                     }
                 }
             }
@@ -525,10 +600,12 @@ impl CompilerRv64 {
             if let Some(dest) = dest {
                 let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
                 let resolved_return_ty = self.resolve_ir_type(&func_return_type);
-                self.emitter.emit_store_from_tmp(SP, A0, &resolved_return_ty, dest_slot as i32);
+                self.emitter
+                    .emit_store_from_tmp(SP, A0, &resolved_return_ty, dest_slot as i32);
             }
         }
-        self.emitter.emit_comment(&format!("--- End Function Call: {function} ---"));
+        self.emitter
+            .emit_comment(&format!("--- End Function Call: {function} ---"));
     }
 
     fn lower_heap_alloc(
@@ -570,7 +647,11 @@ impl CompilerRv64 {
                 let lbl = ctx.get_label(label).unwrap();
                 self.emitter.emit_jal(ZERO, lbl);
             }
-            IrTerminator::Branch { cond, then_label, else_label } => {
+            IrTerminator::Branch {
+                cond,
+                then_label,
+                else_label,
+            } => {
                 let cond_tmp = self.load_value_to_temp(cond, ctx);
                 let then_lbl = ctx.get_label(then_label).unwrap();
                 let else_lbl = ctx.get_label(else_label).unwrap();
@@ -605,7 +686,8 @@ impl CompilerRv64 {
                 };
                 let sret_ptr = 9; // s1
                 let size = self.type_size(&resolved_val);
-                self.emitter.copy_bytes_from_addr_to_addr(sret_ptr, 0, src_addr, 0, size);
+                self.emitter
+                    .copy_bytes_from_addr_to_addr(sret_ptr, 0, src_addr, 0, size);
             } else if is_agg_return {
                 let IrValue::Register(reg) = val else {
                     panic!("Small aggregate return must be a register")
@@ -618,13 +700,17 @@ impl CompilerRv64 {
                         let field_size = self.type_size(&resolved_field_ty);
                         let ret_reg = if i == 0 { A0 } else { A1 };
                         if field_size >= 8 {
-                            self.emitter.emit_ld(ret_reg, SP, (slot + field_offset) as i32);
+                            self.emitter
+                                .emit_ld(ret_reg, SP, (slot + field_offset) as i32);
                         } else if field_size >= 4 {
-                            self.emitter.emit_lw(ret_reg, SP, (slot + field_offset) as i32);
+                            self.emitter
+                                .emit_lw(ret_reg, SP, (slot + field_offset) as i32);
                         } else if field_size >= 2 {
-                            self.emitter.emit_lh(ret_reg, SP, (slot + field_offset) as i32);
+                            self.emitter
+                                .emit_lh(ret_reg, SP, (slot + field_offset) as i32);
                         } else if field_size >= 1 {
-                            self.emitter.emit_lb(ret_reg, SP, (slot + field_offset) as i32);
+                            self.emitter
+                                .emit_lb(ret_reg, SP, (slot + field_offset) as i32);
                         }
                         let align = self.type_alignment(&resolved_field_ty);
                         field_offset = ((field_offset + align - 1) / align * align) + field_size;
@@ -646,7 +732,8 @@ impl CompilerRv64 {
                             self.emitter.emit_fmv_s(FA0, val_fp);
                         }
                         IrType::Float(crate::intermediate_language::FloatWidth::F64) => {
-                            self.emitter.emit_inst(RealInstruction::FsgnjD(fmv_d(FA0, val_fp)));
+                            self.emitter
+                                .emit_inst(RealInstruction::FsgnjD(fmv_d(FA0, val_fp)));
                         }
                         _ => unreachable!(),
                     }

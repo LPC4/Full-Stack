@@ -5,7 +5,7 @@ use crate::virtual_machine::bus::{HEAP_PTR_ADDR, RAM_BASE, RAM_SIZE_DEFAULT, Sys
 use crate::virtual_machine::cpu::Cpu;
 pub use crate::virtual_machine::cpu::StepOutcome;
 use crate::virtual_machine::error::VmError;
-use crate::virtual_machine::linker::{self, LinkerConfig, LinkedProgram};
+use crate::virtual_machine::linker::{self, LinkedProgram, LinkerConfig};
 use crate::virtual_machine::memory::MemoryAccess;
 
 pub struct RunResult {

@@ -215,8 +215,7 @@ impl CompilationPipeline {
         crate::assembly_language::assembler::output::AssembledOutput,
         crate::assembly_language::assembler::AssemblerError,
     > {
-        let mut all: Vec<crate::assembly_language::rv_instruction::RvInstruction> =
-            tokens.to_vec();
+        let mut all: Vec<crate::assembly_language::rv_instruction::RvInstruction> = tokens.to_vec();
         all.extend(extern_stubs());
         crate::assembly_language::assembler::Assembler::assemble(&all)
     }
@@ -237,17 +236,17 @@ impl CompilationPipeline {
 /// implements the corresponding behaviour (I/O, malloc, etc.).
 fn extern_stubs() -> Vec<crate::assembly_language::rv_instruction::RvInstruction> {
     use crate::assembly_language::real::RealInstruction;
-    use crate::assembly_language::rv_instruction::RvInstruction;
     use crate::assembly_language::riscv::rv64i::{Addi, Ecall, Jalr};
+    use crate::assembly_language::rv_instruction::RvInstruction;
 
     // (symbol name, syscall number)
     const STUBS: &[(&str, i32)] = &[
         ("putchar", 1000),
-        ("puts",    1001),
-        ("printf",  1002),
-        ("malloc",  1003),
-        ("free",    1004),
-        ("exit",    93),
+        ("puts", 1001),
+        ("printf", 1002),
+        ("malloc", 1003),
+        ("free", 1004),
+        ("exit", 93),
     ];
 
     let mut tokens = Vec::new();
@@ -256,9 +255,13 @@ fn extern_stubs() -> Vec<crate::assembly_language::rv_instruction::RvInstruction
     tokens.push(RvInstruction::Directive(".text".to_owned()));
     for &(name, syscall_no) in STUBS {
         tokens.push(RvInstruction::Label(name.to_owned()));
-        tokens.push(RvInstruction::Real(RealInstruction::Addi(Addi::new(17, 0, syscall_no))));
+        tokens.push(RvInstruction::Real(RealInstruction::Addi(Addi::new(
+            17, 0, syscall_no,
+        ))));
         tokens.push(RvInstruction::Real(RealInstruction::Ecall(Ecall)));
-        tokens.push(RvInstruction::Real(RealInstruction::Jalr(Jalr::new(0, 1, 0))));
+        tokens.push(RvInstruction::Real(RealInstruction::Jalr(Jalr::new(
+            0, 1, 0,
+        ))));
     }
     tokens
 }
