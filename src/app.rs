@@ -62,8 +62,6 @@ pub struct FullStackApp {
     #[serde(skip)]
     pipeline: CompilationPipeline,
     #[serde(skip)]
-    wsl_receiver: Option<std::sync::mpsc::Receiver<String>>,
-    #[serde(skip)]
     rename_id: Option<String>,
     #[serde(skip)]
     rename_buffer: String,
@@ -81,7 +79,6 @@ impl Default for FullStackApp {
             dock: DockState::new(vec![]),
             compilation_state: CompilationState::default(),
             pipeline: CompilationPipeline::new(),
-            wsl_receiver: None,
             rename_id: None,
             rename_buffer: String::new(),
             pending_new_view: None,
@@ -115,7 +112,7 @@ impl FullStackApp {
             ViewWrapper::new(Box::new(CfgView), &mut self.next_view_id),    // 5
             ViewWrapper::new(Box::new(StackView::default()), &mut self.next_view_id), // 6
             ViewWrapper::new(Box::new(MemoryMapView::default()), &mut self.next_view_id), // 7
-            ViewWrapper::new(Box::new(ExecutionView), &mut self.next_view_id),             // 8
+            ViewWrapper::new(Box::new(ExecutionView::default()), &mut self.next_view_id),             // 8
             ViewWrapper::new(Box::new(VmExecutionView), &mut self.next_view_id),           // 9
         ];
 
@@ -130,7 +127,7 @@ impl FullStackApp {
             vec![views[3].clone(), views[1].clone(), views[2].clone()],
         );
 
-        // Bottom side: Assembly (4), CFG (5), Stack (6), Execution (8), VM Output (9)
+        // Bottom side: Assembly (4), CFG (5), Stack (6), Execution/QEMU (8), VM Output (9)
         surface.split_below(
             right,
             0.5,
@@ -323,23 +320,13 @@ impl eframe::App for FullStackApp {
 
                     #[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
                     if ui
-                        .add_sized([110.0, 30.0], egui::Button::new("Run in WSL"))
+                        .add_sized([110.0, 30.0], egui::Button::new("Run in VM"))
                         .clicked()
                     {
-                        if self.compilation_state.asm.is_empty() {
-                            self.compile();
+                        // Re-run the VM to refresh output
+                        if let Some(assembled) = &self.compilation_state.assembled {
+                            self.compilation_state.vm_output = run_in_vm(assembled);
                         }
-
-                        self.compilation_state.execution_output = "Running in WSL... please wait.\n(Executing cross-compiler and QEMU in background)".to_string();
-
-                        let (tx, rx) = std::sync::mpsc::channel();
-                        self.wsl_receiver = Some(rx);
-                        let asm_copy = self.compilation_state.asm.clone();
-
-                        std::thread::spawn(move || {
-                            let result = run_in_wsl(&asm_copy);
-                            let _ = tx.send(result);
-                        });
                     }
 
                     if ui
@@ -376,7 +363,7 @@ impl eframe::App for FullStackApp {
                                 ("CFG",             Box::new(CfgView::default())),
                                 ("Stack",           Box::new(StackView::default())),
                                 ("Memory Map",      Box::new(MemoryMapView::default())),
-                                ("Execution (WSL)", Box::new(ExecutionView::default())),
+                                ("Execution (QEMU)", Box::new(ExecutionView::default())),
                                 ("VM Output",       Box::new(VmExecutionView::default())),
                             ];
                             for (label, proto) in &entries {
@@ -420,24 +407,6 @@ impl eframe::App for FullStackApp {
                 });
                 ui.add_space(4.0);
             });
-
-        // WSL output polling (unchanged)
-        if let Some(rx) = &self.wsl_receiver {
-            match rx.try_recv() {
-                Ok(result) => {
-                    self.compilation_state.execution_output = result;
-                    self.wsl_receiver = None;
-                }
-                Err(std::sync::mpsc::TryRecvError::Empty) => {
-                    ui.ctx().request_repaint();
-                }
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    self.compilation_state.execution_output =
-                        "Error: WSL thread disconnected unexpectedly.".to_string();
-                    self.wsl_receiver = None;
-                }
-            }
-        }
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
             egui_dock::DockArea::new(&mut self.dock)
@@ -484,98 +453,8 @@ impl egui_dock::TabViewer for DockTabViewer<'_> {
 }
 
 // ------------------------------------------------------------
-// WSL runner
+// DockTabViewer
 // ------------------------------------------------------------
-#[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
-fn run_in_wsl(asm: &str) -> String {
-    use std::io::Write;
-    use std::os::windows::process::CommandExt;
-    use std::process::{Command, Stdio};
-
-    const CREATE_NO_WINDOW: u32 = 0x08000000;
-
-    let clean_asm = asm
-        .lines()
-        .map(|line| line.split(';').next().unwrap_or("").trim_end())
-        .filter(|line| !line.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    let script = r#"
-echo "=== Connected to WSL ==="
-export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
-WORKDIR="$HOME/assembly"
-mkdir -p "$WORKDIR"
-cd "$WORKDIR"
-CC="$(which riscv64-linux-gnu-gcc 2>/dev/null)"
-if [ -z "$CC" ]; then
-    echo "ERROR: riscv64-linux-gnu-gcc not found."
-    exit 1
-fi
-QEMU="$(which qemu-riscv64 2>/dev/null)"
-if [ -z "$QEMU" ]; then
-    echo "ERROR: qemu-riscv64 not found."
-    exit 1
-fi
-set -e
-cat > program.s
-echo >> program.s
-"$CC" -static program.s -o program
-set +e
-"$QEMU" ./program
-EXIT_CODE=$?
-echo ""
-echo "--- Process Exited with Code: $EXIT_CODE ---"
-"#;
-
-    let mut child = match Command::new("wsl")
-        .args(["--exec", "bash", "-lc", script])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .creation_flags(CREATE_NO_WINDOW)
-        .spawn()
-    {
-        Ok(c) => c,
-        Err(e) => return format!("Failed to start WSL: {}", e),
-    };
-
-    if let Some(mut stdin) = child.stdin.take() {
-        if let Err(e) = stdin.write_all(clean_asm.as_bytes()) {
-            return format!("Failed to write to WSL stdin: {}", e);
-        }
-    }
-
-    let output = match child.wait_with_output() {
-        Ok(o) => o,
-        Err(e) => return format!("Failed to wait on WSL process: {}", e),
-    };
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
-    let mut result = String::new();
-    if !stdout.is_empty() {
-        result.push_str(&stdout);
-    }
-    if !stderr.is_empty() {
-        if !result.is_empty() {
-            result.push_str("\n\n[STDERR]\n");
-        }
-        result.push_str(&stderr);
-    }
-
-    result
-}
-
-#[cfg(not(all(not(target_arch = "wasm32"), target_os = "windows")))]
-fn run_in_wsl(_asm: &str) -> String {
-    "WSL execution is only supported on Windows.".to_string()
-}
-
-// ---------------------------------------------------------------------------
-// Internal VM runner
-// ---------------------------------------------------------------------------
 
 fn run_in_vm(assembled: &crate::assembly_language::assembler::output::AssembledOutput) -> String {
     use crate::virtual_machine::cpu::StepOutcome;
