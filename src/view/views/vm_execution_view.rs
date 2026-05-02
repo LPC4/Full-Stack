@@ -1,5 +1,5 @@
 use crate::view::{CompilationState, CompilerView, ProgramCatalog};
-use egui::{Frame, RichText, ScrollArea, Color32, Stroke};
+use egui::{Color32, Frame, RichText, ScrollArea, Stroke};
 
 #[derive(Clone)]
 pub struct VmExecutionResult {
@@ -42,9 +42,10 @@ impl CompilerView for VmExecutionView {
                     ui.visuals().text_color(),
                 )
             });
-            
+
             let frame_vpad = 20.0; // account for frame border + inner margin + label height
-            let label_height = ui.fonts_mut(|f| f.row_height(&egui::TextStyle::Body.resolve(ui.style())));
+            let label_height =
+                ui.fonts_mut(|f| f.row_height(&egui::TextStyle::Body.resolve(ui.style())));
             let desired_uart_height = 4.0 + label_height + 4.0 + galley.size().y + frame_vpad; // 4 extra space after label
 
             let summary_min_height = 82.0;
@@ -59,7 +60,7 @@ impl CompilerView for VmExecutionView {
 
                 // Allocate exact height for UART area
                 let uart_height = desired_uart_height.min(max_uart_height);
-                
+
                 Frame::NONE
                     .stroke(Stroke::new(1.0, Color32::from_gray(100)))
                     .inner_margin(8.0)
@@ -68,7 +69,9 @@ impl CompilerView for VmExecutionView {
                         ui.set_min_height(uart_height);
                         ui.label(RichText::new("UART Output:").strong());
                         ui.add_space(4.0);
-                        if output == "(no output)" || galley.size().y <= max_uart_height - frame_vpad {
+                        if output == "(no output)"
+                            || galley.size().y <= max_uart_height - frame_vpad
+                        {
                             // is short enough to display fully
                             ui.label(RichText::new(&output).monospace());
                         } else {
@@ -93,15 +96,27 @@ impl CompilerView for VmExecutionView {
                         ui.add_space(4.0);
 
                         let (status_text, status_color) = if result.max_steps_reached {
-                            ("[WARNING] Step limit reached", Color32::from_rgb(255, 200, 50))
+                            (
+                                "[WARNING] Step limit reached",
+                                Color32::from_rgb(255, 200, 50),
+                            )
                         } else if let Some(code) = result.exit_code {
                             if code == 0 {
-                                ("[OK] Program halted successfully", Color32::from_rgb(50, 220, 50))
+                                (
+                                    "[OK] Program halted successfully",
+                                    Color32::from_rgb(50, 220, 50),
+                                )
                             } else {
-                                ("[ERROR] Program exited with non-zero code", Color32::from_rgb(220, 50, 50))
+                                (
+                                    "[ERROR] Program exited with non-zero code",
+                                    Color32::from_rgb(220, 50, 50),
+                                )
                             }
                         } else {
-                            ("[UNKNOWN] Execution finished", Color32::from_rgb(150, 150, 150))
+                            (
+                                "[UNKNOWN] Execution finished",
+                                Color32::from_rgb(150, 150, 150),
+                            )
                         };
 
                         ui.colored_label(status_color, status_text);
@@ -126,10 +141,7 @@ impl CompilerView for VmExecutionView {
                     );
                 });
                 ui.centered_and_justified(|ui| {
-                    ui.label(
-                        RichText::new("on the custom RISC-V virtual machine.")
-                            .weak(),
-                    );
+                    ui.label(RichText::new("on the custom RISC-V virtual machine.").weak());
                 });
             });
         }

@@ -43,7 +43,8 @@ impl CompilerView for PipelineView {
             let w = ui.available_width();
             let h = 28.0;
             let (rect, _) = ui.allocate_exact_size(vec2(w, h), egui::Sense::hover());
-            ui.painter().rect_filled(rect, 4.0, Color32::from_rgb(50, 50, 70));
+            ui.painter()
+                .rect_filled(rect, 4.0, Color32::from_rgb(50, 50, 70));
             ui.painter().text(
                 rect.left_center() + vec2(10.0, 0.0),
                 egui::Align2::LEFT_CENTER,
@@ -69,7 +70,6 @@ impl CompilerView for PipelineView {
                 "Pipeline stages are simulated from the last 5 committed PCs.\n\
                  Fetch = oldest, Writeback = most recently retired.",
             )
-            
             .weak(),
         );
     }
@@ -100,10 +100,7 @@ pub fn pipeline_diagram(ui: &mut Ui, history: &PipelineHistory, w: f32) {
         };
 
         let x = area.min.x + display_idx as f32 * (bar_w + gap);
-        let bar_rect = Rect::from_min_size(
-            egui::pos2(x, area.min.y + 18.0),
-            vec2(bar_w, bar_h),
-        );
+        let bar_rect = Rect::from_min_size(egui::pos2(x, area.min.y + 18.0), vec2(bar_w, bar_h));
 
         ui.painter().rect_filled(bar_rect, 3.0, color);
 
@@ -125,7 +122,11 @@ pub fn pipeline_diagram(ui: &mut Ui, history: &PipelineHistory, w: f32) {
             egui::Align2::CENTER_CENTER,
             pc_text,
             FontId::monospace(10.5),
-            if pc_opt.is_some() { Color32::WHITE } else { Color32::from_gray(50) },
+            if pc_opt.is_some() {
+                Color32::WHITE
+            } else {
+                Color32::from_gray(50)
+            },
         );
     }
 }

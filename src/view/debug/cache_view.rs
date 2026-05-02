@@ -41,11 +41,8 @@ impl CompilerView for CacheView {
                     "Cache not yet wired into SystemBus.",
                 );
                 ui.label(
-                    RichText::new(
-                        "Replace Ram with Cache<Ram> in bus.rs to enable live stats.",
-                    )
-                    
-                    .weak(),
+                    RichText::new("Replace Ram with Cache<Ram> in bus.rs to enable live stats.")
+                        .weak(),
                 );
             });
 
@@ -96,8 +93,16 @@ fn stats_block(
                 .spacing([20.0, 4.0])
                 .show(ui, |ui| {
                     ui.label(RichText::new("").monospace());
-                    ui.label(RichText::new("Hits").monospace().color(Color32::from_gray(160)));
-                    ui.label(RichText::new("Misses").monospace().color(Color32::from_gray(160)));
+                    ui.label(
+                        RichText::new("Hits")
+                            .monospace()
+                            .color(Color32::from_gray(160)),
+                    );
+                    ui.label(
+                        RichText::new("Misses")
+                            .monospace()
+                            .color(Color32::from_gray(160)),
+                    );
                     ui.end_row();
 
                     ui.label(RichText::new("Reads").monospace());
@@ -125,8 +130,7 @@ fn hit_rate_bar(ui: &mut Ui, label: &str, pct: f64) {
         ui.label(RichText::new(label).color(Color32::from_gray(150)));
         let bar_w = 120.0;
         let bar_h = 10.0;
-        let (rect, _) =
-            ui.allocate_exact_size(egui::vec2(bar_w, bar_h), egui::Sense::hover());
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(bar_w, bar_h), egui::Sense::hover());
         ui.painter().rect_filled(rect, 2.0, Color32::from_gray(40));
         let fill_w = bar_w * (pct as f32 / 100.0).clamp(0.0, 1.0);
         let fill = egui::Rect::from_min_size(rect.min, egui::vec2(fill_w, bar_h));

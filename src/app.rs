@@ -1,14 +1,14 @@
 use crate::high_level_language::compilation_pipeline::CompilationPipeline;
 use crate::high_level_language::lexer::Lexer;
 use crate::high_level_language::token::Token;
+use crate::view::debug::{DebugSession, SessionStatus};
+use crate::view::views::vm_execution_view::VmExecutionResult;
 use crate::view::{
     AssemblyView, AstView, CacheView, CfgView, CompilationState, CompilerView, CpuStateView,
     ExecutionView, FramebufferView, IoView, IrView, MemoryMapView, MemoryView, PipelineView,
     ProgramCatalog, ProgramKind, SourceView, StackView, TokensView, VmExecutionView,
     blank_custom_program_source,
 };
-use crate::view::debug::{DebugSession, SessionStatus};
-use crate::view::views::vm_execution_view::VmExecutionResult;
 use egui::{Color32, Layout, RichText};
 use egui_dock::{DockState, NodeIndex};
 use std::fmt;
@@ -30,7 +30,10 @@ struct ViewWrapper {
 
 impl Clone for ViewWrapper {
     fn clone(&self) -> Self {
-        Self { id: self.id, view: self.view.clone_box() }
+        Self {
+            id: self.id,
+            view: self.view.clone_box(),
+        }
     }
 }
 
@@ -153,20 +156,20 @@ impl FullStackApp {
     }
 
     fn reset_debug_layout(&mut self) {
-        let cpu      = ViewWrapper::new(Box::new(CpuStateView::default()),   &mut self.next_view_id);
-        let pipeline = ViewWrapper::new(Box::new(PipelineView::default()),   &mut self.next_view_id);
-        let cache    = ViewWrapper::new(Box::new(CacheView::default()),       &mut self.next_view_id);
-        let fb       = ViewWrapper::new(Box::new(FramebufferView::default()), &mut self.next_view_id);
-        let mem      = ViewWrapper::new(Box::new(MemoryView::default()),      &mut self.next_view_id);
-        let io       = ViewWrapper::new(Box::new(IoView::default()),          &mut self.next_view_id);
+        let cpu = ViewWrapper::new(Box::new(CpuStateView::default()), &mut self.next_view_id);
+        let pipeline = ViewWrapper::new(Box::new(PipelineView::default()), &mut self.next_view_id);
+        let cache = ViewWrapper::new(Box::new(CacheView::default()), &mut self.next_view_id);
+        let fb = ViewWrapper::new(Box::new(FramebufferView::default()), &mut self.next_view_id);
+        let mem = ViewWrapper::new(Box::new(MemoryView::default()), &mut self.next_view_id);
+        let io = ViewWrapper::new(Box::new(IoView::default()), &mut self.next_view_id);
 
         // Two equal columns (50% each)
         let mut dock = DockState::new(vec![cpu, pipeline, cache]);
         let surface = dock.main_surface_mut();
-        
+
         // Split root into left (50%) and right (50%)
         let [left, _right] = surface.split_right(NodeIndex::root(), 0.5, vec![mem, io]);
-        
+
         // Split left column vertically: top 50% for CPU views, bottom 50% for Framebuffer
         surface.split_below(left, 0.5, vec![fb]);
 
@@ -195,13 +198,16 @@ impl FullStackApp {
             let token = lexer.next_token();
             if let Token::Error(message) = &token {
                 self.compilation_state.tokens = format!("LEXER ERROR: {message}");
-                self.compilation_state.set_error(format!("Lexer error: {message}"));
+                self.compilation_state
+                    .set_error(format!("Lexer error: {message}"));
                 self.compilation_state.just_compiled = false;
                 return;
             }
             let is_eof = matches!(token, Token::Eof);
             tokens.push(token);
-            if is_eof { break; }
+            if is_eof {
+                break;
+            }
         }
 
         self.compilation_state.tokens = format!("{tokens:#?}");
@@ -272,7 +278,9 @@ impl FullStackApp {
             .map(|p| (p.id.clone(), p.name.clone()))
             .collect();
 
-        if entries.is_empty() { return; }
+        if entries.is_empty() {
+            return;
+        }
 
         egui::CollapsingHeader::new(title)
             .default_open(true)
@@ -323,7 +331,10 @@ impl eframe::App for FullStackApp {
         if let Some(view) = self.pending_new_view.take() {
             match self.mode {
                 AppMode::Ide => self.dock.main_surface_mut().push_to_focused_leaf(view),
-                AppMode::Debug => self.debug_dock.main_surface_mut().push_to_focused_leaf(view),
+                AppMode::Debug => self
+                    .debug_dock
+                    .main_surface_mut()
+                    .push_to_focused_leaf(view),
             }
         }
 
@@ -343,10 +354,13 @@ impl eframe::App for FullStackApp {
                     egui_dock::DockArea::new(&mut self.dock)
                         .show_add_buttons(false)
                         .show_close_buttons(true)
-                        .show_inside(ui, &mut DockTabViewer {
-                            state: &mut self.compilation_state,
-                            catalog: &mut self.catalog,
-                        });
+                        .show_inside(
+                            ui,
+                            &mut DockTabViewer {
+                                state: &mut self.compilation_state,
+                                catalog: &mut self.catalog,
+                            },
+                        );
                 });
             }
             AppMode::Debug => {
@@ -360,10 +374,13 @@ impl eframe::App for FullStackApp {
                     egui_dock::DockArea::new(&mut self.debug_dock)
                         .show_add_buttons(false)
                         .show_close_buttons(true)
-                        .show_inside(ui, &mut DockTabViewer {
-                            state: &mut self.compilation_state,
-                            catalog: &mut self.catalog,
-                        });
+                        .show_inside(
+                            ui,
+                            &mut DockTabViewer {
+                                state: &mut self.compilation_state,
+                                catalog: &mut self.catalog,
+                            },
+                        );
                 });
             }
         }
@@ -383,16 +400,16 @@ impl FullStackApp {
         ui.set_min_size(egui::vec2(ui.available_width(), ui.available_height()));
         ui.horizontal(|ui| {
             // ── Left: Compile and Run actions ────────────────────────────────
-            if ui.add(
-                egui::Button::new("Compile")
-                    .min_size(egui::vec2(80.0, 35.0))
-            ).clicked() {
+            if ui
+                .add(egui::Button::new("Compile").min_size(egui::vec2(80.0, 35.0)))
+                .clicked()
+            {
                 self.compile();
             }
-            if ui.add(
-                egui::Button::new("Run in VM")
-                    .min_size(egui::vec2(100.0, 35.0))
-            ).clicked() {
+            if ui
+                .add(egui::Button::new("Run in VM").min_size(egui::vec2(100.0, 35.0)))
+                .clicked()
+            {
                 if let Some(assembled) = &self.compilation_state.assembled {
                     self.compilation_state.vm_result = Some(run_in_vm(assembled));
                 }
@@ -404,7 +421,8 @@ impl FullStackApp {
                     if ui.button("Reset File").clicked() {
                         if let Some(program) = self.catalog.current_program() {
                             if program.is_custom() {
-                                self.catalog.set_selected_source(blank_custom_program_source());
+                                self.catalog
+                                    .set_selected_source(blank_custom_program_source());
                             } else {
                                 self.catalog.ensure_consistency();
                             }
@@ -419,20 +437,21 @@ impl FullStackApp {
                     ui.separator();
                     ui.label(RichText::new("Add View").small().weak());
                     let view_entries: &[(&str, fn() -> Box<dyn CompilerView>)] = &[
-                        ("Source",           || Box::new(SourceView::default())),
-                        ("Tokens",           || Box::new(TokensView::default())),
-                        ("AST",              || Box::new(AstView::default())),
-                        ("IR",               || Box::new(IrView::default())),
-                        ("Assembly",         || Box::new(AssemblyView::default())),
-                        ("CFG",              || Box::new(CfgView::default())),
-                        ("Stack",            || Box::new(StackView::default())),
-                        ("Memory Map",       || Box::new(MemoryMapView::default())),
+                        ("Source", || Box::new(SourceView::default())),
+                        ("Tokens", || Box::new(TokensView::default())),
+                        ("AST", || Box::new(AstView::default())),
+                        ("IR", || Box::new(IrView::default())),
+                        ("Assembly", || Box::new(AssemblyView::default())),
+                        ("CFG", || Box::new(CfgView::default())),
+                        ("Stack", || Box::new(StackView::default())),
+                        ("Memory Map", || Box::new(MemoryMapView::default())),
                         ("Execution (QEMU)", || Box::new(ExecutionView::default())),
-                        ("VM Output",        || Box::new(VmExecutionView::default())),
+                        ("VM Output", || Box::new(VmExecutionView::default())),
                     ];
                     for (label, make) in view_entries {
                         if ui.button(*label).clicked() {
-                            self.pending_new_view = Some(ViewWrapper::new(make(), &mut self.next_view_id));
+                            self.pending_new_view =
+                                Some(ViewWrapper::new(make(), &mut self.next_view_id));
                             ui.close();
                         }
                     }
@@ -442,7 +461,7 @@ impl FullStackApp {
             // ── Right: status + program name + To Debugger button ────────────
             ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(8.0);
-                
+
                 // Primary action - To Debugger
                 let can_debug = self.compilation_state.assembled.is_some();
                 if ui
@@ -490,10 +509,10 @@ impl FullStackApp {
         ui.set_min_size(egui::vec2(ui.available_width(), ui.available_height()));
         ui.horizontal(|ui| {
             // ── Left: Debug controls ─────────────────────────────────────────
-            if ui.add(
-                egui::Button::new("Reset")
-                    .min_size(egui::vec2(80.0, 35.0))
-            ).clicked() {
+            if ui
+                .add(egui::Button::new("Reset").min_size(egui::vec2(80.0, 35.0)))
+                .clicked()
+            {
                 if let Some(s) = self.compilation_state.debug_session.as_mut() {
                     s.reset();
                 }
@@ -508,17 +527,18 @@ impl FullStackApp {
                     .font(egui::TextStyle::Monospace),
             );
             let n: u64 = self.step_n_input.trim().parse().unwrap_or(1).max(1);
-            
+
             let session = self.compilation_state.debug_session.as_ref();
             let is_running = session
                 .map(|s| s.status == SessionStatus::Running)
                 .unwrap_or(false);
 
-            if ui.add_enabled(
-                is_running,
-                egui::Button::new("Step")
-                    .min_size(egui::vec2(80.0, 35.0))
-            ).on_hover_text(format!("Step {n} instruction(s)"))
+            if ui
+                .add_enabled(
+                    is_running,
+                    egui::Button::new("Step").min_size(egui::vec2(80.0, 35.0)),
+                )
+                .on_hover_text(format!("Step {n} instruction(s)"))
                 .clicked()
             {
                 if let Some(s) = self.compilation_state.debug_session.as_mut() {
@@ -526,12 +546,14 @@ impl FullStackApp {
                 }
             }
 
-            if ui.add_enabled(
-                is_running,
-                egui::Button::new(RichText::new("Run").strong())
-                    .fill(Color32::from_rgb(30, 110, 60))
-                    .min_size(egui::vec2(100.0, 35.0))
-            ).on_hover_text("Run until halt or error")
+            if ui
+                .add_enabled(
+                    is_running,
+                    egui::Button::new(RichText::new("Run").strong())
+                        .fill(Color32::from_rgb(30, 110, 60))
+                        .min_size(egui::vec2(100.0, 35.0)),
+                )
+                .on_hover_text("Run until halt or error")
                 .clicked()
             {
                 if let Some(s) = self.compilation_state.debug_session.as_mut() {
@@ -548,16 +570,17 @@ impl FullStackApp {
                     ui.separator();
                     ui.label(RichText::new("Add View").small().weak());
                     let entries: &[(&str, fn() -> Box<dyn CompilerView>)] = &[
-                        ("CPU State",   || Box::new(CpuStateView::default())),
-                        ("Pipeline",    || Box::new(PipelineView::default())),
-                        ("Memory",      || Box::new(MemoryView::default())),
-                        ("IO",          || Box::new(IoView::default())),
-                        ("Cache",       || Box::new(CacheView::default())),
+                        ("CPU State", || Box::new(CpuStateView::default())),
+                        ("Pipeline", || Box::new(PipelineView::default())),
+                        ("Memory", || Box::new(MemoryView::default())),
+                        ("IO", || Box::new(IoView::default())),
+                        ("Cache", || Box::new(CacheView::default())),
                         ("Framebuffer", || Box::new(FramebufferView::default())),
                     ];
                     for (label, make) in entries {
                         if ui.button(*label).clicked() {
-                            self.pending_new_view = Some(ViewWrapper::new(make(), &mut self.next_view_id));
+                            self.pending_new_view =
+                                Some(ViewWrapper::new(make(), &mut self.next_view_id));
                             ui.close();
                         }
                     }
@@ -567,32 +590,45 @@ impl FullStackApp {
             // ── Right: PC / steps / status + To IDE button ───────────────────
             ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(8.0);
-                
+
                 // To IDE button
-                if ui.add(
-                    egui::Button::new(RichText::new("To IDE").strong())
-                        .fill(Color32::from_rgb(45, 85, 175))
-                        .min_size(egui::vec2(100.0, 35.0))
-                ).clicked() {
+                if ui
+                    .add(
+                        egui::Button::new(RichText::new("To IDE").strong())
+                            .fill(Color32::from_rgb(45, 85, 175))
+                            .min_size(egui::vec2(100.0, 35.0)),
+                    )
+                    .clicked()
+                {
                     self.exit_debug_mode();
                     return;
                 }
 
                 ui.separator();
 
-                let Some(session) = &self.compilation_state.debug_session else { return };
+                let Some(session) = &self.compilation_state.debug_session else {
+                    return;
+                };
 
                 let (status_text, status_color) = match &session.status {
-                    SessionStatus::Running    => ("Running",      Color32::from_rgb(80, 200, 80)),
-                    SessionStatus::Halted(0)  => ("Halted OK",    Color32::from_rgb(80, 200, 80)),
-                    SessionStatus::Halted(_)  => ("Halted (err)", Color32::from_rgb(220, 80, 80)),
-                    SessionStatus::Error(_)   => ("Error",        Color32::from_rgb(220, 80, 80)),
+                    SessionStatus::Running => ("Running", Color32::from_rgb(80, 200, 80)),
+                    SessionStatus::Halted(0) => ("Halted OK", Color32::from_rgb(80, 200, 80)),
+                    SessionStatus::Halted(_) => ("Halted (err)", Color32::from_rgb(220, 80, 80)),
+                    SessionStatus::Error(_) => ("Error", Color32::from_rgb(220, 80, 80)),
                 };
                 ui.colored_label(status_color, status_text);
                 ui.separator();
-                ui.label(RichText::new(format!("{} steps", session.step_count)).monospace().weak());
+                ui.label(
+                    RichText::new(format!("{} steps", session.step_count))
+                        .monospace()
+                        .weak(),
+                );
                 ui.separator();
-                ui.label(RichText::new(format!("PC {:#010x}", session.snapshot.cpu.pc)).monospace().strong());
+                ui.label(
+                    RichText::new(format!("PC {:#010x}", session.snapshot.cpu.pc))
+                        .monospace()
+                        .strong(),
+                );
             });
         });
     }

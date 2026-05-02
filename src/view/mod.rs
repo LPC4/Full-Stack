@@ -1,6 +1,6 @@
-pub mod debug;
 pub mod common;
 pub mod compilation_state;
+pub mod debug;
 pub mod highlighter;
 pub mod layout;
 pub mod program_catalog;
@@ -9,12 +9,17 @@ pub mod viewtrait;
 pub use common::ViewType;
 pub use compilation_state::CompilationState;
 pub use highlighter::{highlight_assembly, highlight_ast, highlight_code, highlight_ir};
-pub use layout::{auto_grid_columns, auto_grid_columns_with_min_width, estimated_monospace_char_width, split_rect_into_grid};
+pub use layout::{
+    auto_grid_columns, auto_grid_columns_with_min_width, estimated_monospace_char_width,
+    split_rect_into_grid,
+};
 pub use program_catalog::{ProgramCatalog, ProgramFile, ProgramKind};
 pub use viewtrait::CompilerView;
 
 pub mod views;
-pub use crate::view::debug::{CacheView, CpuStateView, FramebufferView, IoView, MemoryView, PipelineView};
+pub use crate::view::debug::{
+    CacheView, CpuStateView, FramebufferView, IoView, MemoryView, PipelineView,
+};
 pub use crate::view::views::AssemblyView;
 pub use crate::view::views::AstView;
 pub use crate::view::views::CfgView;

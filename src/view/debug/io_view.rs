@@ -57,10 +57,13 @@ impl CompilerView for IoView {
         ui.horizontal(|ui| {
             let resp = ui.text_edit_singleline(&mut self.tx_input);
             let send = ui.button("Send").clicked()
-                || (resp.lost_focus()
-                    && ui.input(|i| i.key_pressed(egui::Key::Enter)));
+                || (resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
             if send && !self.tx_input.is_empty() {
-                let bytes: Vec<u8> = self.tx_input.bytes().chain(std::iter::once(b'\n')).collect();
+                let bytes: Vec<u8> = self
+                    .tx_input
+                    .bytes()
+                    .chain(std::iter::once(b'\n'))
+                    .collect();
                 session.send_uart(bytes);
                 self.tx_input.clear();
             }
@@ -68,9 +71,7 @@ impl CompilerView for IoView {
 
         ui.add_space(2.0);
         ui.label(
-            RichText::new("Bytes are queued and sent to the VM's UART RX on the next step.")
-                
-                .weak(),
+            RichText::new("Bytes are queued and sent to the VM's UART RX on the next step.").weak(),
         );
     }
 

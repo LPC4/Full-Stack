@@ -4,9 +4,7 @@
 use std::collections::HashMap;
 
 use crate::assembly_language::assembler::output::AssembledOutput;
-use crate::virtual_machine::bus::{
-    CLINT_BASE, PLIC_BASE, RAM_BASE, ROM_BASE, UART_BASE,
-};
+use crate::virtual_machine::bus::{CLINT_BASE, PLIC_BASE, RAM_BASE, ROM_BASE, UART_BASE};
 use crate::virtual_machine::linker::{self, LinkerConfig};
 use crate::virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 
@@ -56,11 +54,26 @@ pub struct AddressPreset {
 }
 
 pub const ADDRESS_PRESETS: &[AddressPreset] = &[
-    AddressPreset { label: "ROM base", addr: ROM_BASE },
-    AddressPreset { label: "UART MMIO", addr: UART_BASE },
-    AddressPreset { label: "CLINT", addr: CLINT_BASE },
-    AddressPreset { label: "PLIC", addr: PLIC_BASE },
-    AddressPreset { label: "RAM base", addr: RAM_BASE },
+    AddressPreset {
+        label: "ROM base",
+        addr: ROM_BASE,
+    },
+    AddressPreset {
+        label: "UART MMIO",
+        addr: UART_BASE,
+    },
+    AddressPreset {
+        label: "CLINT",
+        addr: CLINT_BASE,
+    },
+    AddressPreset {
+        label: "PLIC",
+        addr: PLIC_BASE,
+    },
+    AddressPreset {
+        label: "RAM base",
+        addr: RAM_BASE,
+    },
 ];
 
 // ---------------------------------------------------------------------------
@@ -225,6 +238,8 @@ fn fill_section_presets(snapshot: &mut DebugSnapshot, symbols: &HashMap<String, 
     }
     // Always include the RAM base as a fallback for .text if no symbol exists.
     if snapshot.section_presets.is_empty() {
-        snapshot.section_presets.push((".text (RAM base)", RAM_BASE));
+        snapshot
+            .section_presets
+            .push((".text (RAM base)", RAM_BASE));
     }
 }

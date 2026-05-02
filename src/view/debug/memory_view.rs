@@ -100,7 +100,7 @@ impl CompilerView for MemoryView {
                     let resp = ui.add(
                         egui::TextEdit::singleline(&mut self.addr_input)
                             .desired_width(120.0)
-                            .font(egui::TextStyle::Monospace)
+                            .font(egui::TextStyle::Monospace),
                     );
 
                     if (resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
@@ -133,9 +133,9 @@ impl CompilerView for MemoryView {
                                 self.current_addr,
                                 self.current_addr + page_size as u64 - 1
                             ))
-                                .monospace()
-                                .weak()
-                                .color(Color32::from_gray(140)),
+                            .monospace()
+                            .weak()
+                            .color(Color32::from_gray(140)),
                         );
                     });
                 });
@@ -156,9 +156,24 @@ impl CompilerView for MemoryView {
                     .spacing([24.0, 6.0])
                     .show(ui, |ui| {
                         // Header (Left aligned perfectly with the data)
-                        ui.label(RichText::new("Address").monospace().strong().color(Color32::from_gray(160)));
-                        ui.label(RichText::new("Hex").monospace().strong().color(Color32::from_gray(160)));
-                        ui.label(RichText::new("ASCII").monospace().strong().color(Color32::from_gray(160)));
+                        ui.label(
+                            RichText::new("Address")
+                                .monospace()
+                                .strong()
+                                .color(Color32::from_gray(160)),
+                        );
+                        ui.label(
+                            RichText::new("Hex")
+                                .monospace()
+                                .strong()
+                                .color(Color32::from_gray(160)),
+                        );
+                        ui.label(
+                            RichText::new("ASCII")
+                                .monospace()
+                                .strong()
+                                .color(Color32::from_gray(160)),
+                        );
                         ui.end_row();
 
                         for (row_idx, chunk) in bytes.chunks(bytes_per_row).enumerate() {
@@ -172,14 +187,19 @@ impl CompilerView for MemoryView {
                             );
 
                             // Hex column
-                            let mut hex_str = String::with_capacity(bytes_per_row * 3 + half_chunks * 2);
+                            let mut hex_str =
+                                String::with_capacity(bytes_per_row * 3 + half_chunks * 2);
                             for (i, &b) in chunk.iter().enumerate() {
                                 if i > 0 && i % 8 == 0 {
                                     hex_str.push(' ');
                                 }
                                 hex_str.push_str(&format!("{b:02x} "));
                             }
-                            ui.label(RichText::new(hex_str).monospace().color(Color32::from_gray(220)));
+                            ui.label(
+                                RichText::new(hex_str)
+                                    .monospace()
+                                    .color(Color32::from_gray(220)),
+                            );
 
                             // ASCII column
                             let mut ascii_str = String::with_capacity(bytes_per_row + half_chunks);

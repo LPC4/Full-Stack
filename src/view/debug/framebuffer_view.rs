@@ -66,7 +66,10 @@ impl CompilerView for FramebufferView {
             ui.separator();
             ui.label("W:");
             let mut w_str = self.width.to_string();
-            if ui.add(egui::TextEdit::singleline(&mut w_str).desired_width(40.0)).changed() {
+            if ui
+                .add(egui::TextEdit::singleline(&mut w_str).desired_width(40.0))
+                .changed()
+            {
                 if let Ok(v) = w_str.parse::<usize>() {
                     self.width = v.clamp(1, 1024);
                     self.texture = None;
@@ -74,7 +77,10 @@ impl CompilerView for FramebufferView {
             }
             ui.label("H:");
             let mut h_str = self.height.to_string();
-            if ui.add(egui::TextEdit::singleline(&mut h_str).desired_width(40.0)).changed() {
+            if ui
+                .add(egui::TextEdit::singleline(&mut h_str).desired_width(40.0))
+                .changed()
+            {
                 if let Ok(v) = h_str.parse::<usize>() {
                     self.height = v.clamp(1, 768);
                     self.texture = None;
@@ -108,7 +114,11 @@ impl FramebufferView {
             let mut text = String::with_capacity(bytes_needed + self.height);
             for row in bytes.chunks(self.width) {
                 for &b in row {
-                    text.push(if b.is_ascii_graphic() || b == b' ' { b as char } else { '.' });
+                    text.push(if b.is_ascii_graphic() || b == b' ' {
+                        b as char
+                    } else {
+                        '.'
+                    });
                 }
                 text.push('\n');
             }

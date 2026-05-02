@@ -1,12 +1,13 @@
 use crate::view::debug::snapshot::CpuSnapshot;
-use crate::view::{auto_grid_columns_with_min_width, CompilationState, CompilerView, ProgramCatalog};
+use crate::view::{
+    CompilationState, CompilerView, ProgramCatalog, auto_grid_columns_with_min_width,
+};
 use egui::{Color32, FontId, Grid, RichText, ScrollArea, Ui, vec2};
 
 const ABI_NAMES: [&str; 32] = [
-    "zero", "ra",  "sp",  "gp",  "tp",  "t0",  "t1",  "t2",
-    "s0",   "s1",  "a0",  "a1",  "a2",  "a3",  "a4",  "a5",
-    "a6",   "a7",  "s2",  "s3",  "s4",  "s5",  "s6",  "s7",
-    "s8",   "s9",  "s10", "s11", "t3",  "t4",  "t5",  "t6",
+    "zero", "ra", "sp", "gp", "tp", "t0", "t1", "t2", "s0", "s1", "a0", "a1", "a2", "a3", "a4",
+    "a5", "a6", "a7", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11", "t3", "t4",
+    "t5", "t6",
 ];
 
 #[derive(Clone, Default)]
@@ -47,7 +48,8 @@ impl CompilerView for CpuStateView {
 
                 // Use a single global grid for all registers so their major columns perfectly align.
                 let num_cols = auto_grid_columns_with_min_width(ui, 320.0, 1, 4);
-                let col_width = ((available_w - (num_cols - 1) as f32 * 16.0) / num_cols as f32).max(10.0);
+                let col_width =
+                    ((available_w - (num_cols - 1) as f32 * 16.0) / num_cols as f32).max(10.0);
 
                 Grid::new("global_cpu_state_grid")
                     .striped(true)
@@ -57,38 +59,60 @@ impl CompilerView for CpuStateView {
                     .show(ui, |ui| {
                         // --- Integer Registers Header ---
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Integer Registers").strong().color(Color32::from_gray(160)));
+                            ui.label(
+                                RichText::new("Integer Registers")
+                                    .strong()
+                                    .color(Color32::from_gray(160)),
+                            );
                         });
-                        for _ in 1..num_cols { ui.label(""); }
+                        for _ in 1..num_cols {
+                            ui.label("");
+                        }
                         ui.end_row();
 
                         // --- Integer Registers ---
                         integer_regs(ui, &cpu.xregs, &cpu.prev_xregs, num_cols);
 
                         // Spacer Row
-                        for _ in 0..num_cols { ui.label(""); }
+                        for _ in 0..num_cols {
+                            ui.label("");
+                        }
                         ui.end_row();
 
                         // --- FP Registers Header ---
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("FP Registers").strong().color(Color32::from_gray(160)));
+                            ui.label(
+                                RichText::new("FP Registers")
+                                    .strong()
+                                    .color(Color32::from_gray(160)),
+                            );
                             ui.checkbox(&mut self.show_fp_as_float, "as float");
                         });
-                        for _ in 1..num_cols { ui.label(""); }
+                        for _ in 1..num_cols {
+                            ui.label("");
+                        }
                         ui.end_row();
 
                         // --- FP Registers ---
                         fp_regs(ui, &cpu.fregs, self.show_fp_as_float, num_cols);
 
                         // Spacer Row
-                        for _ in 0..num_cols { ui.label(""); }
+                        for _ in 0..num_cols {
+                            ui.label("");
+                        }
                         ui.end_row();
 
                         // --- CSRs Header ---
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("CSRs").strong().color(Color32::from_gray(160)));
+                            ui.label(
+                                RichText::new("CSRs")
+                                    .strong()
+                                    .color(Color32::from_gray(160)),
+                            );
                         });
-                        for _ in 1..num_cols { ui.label(""); }
+                        for _ in 1..num_cols {
+                            ui.label("");
+                        }
                         ui.end_row();
 
                         // --- CSRs ---
@@ -105,7 +129,8 @@ impl CompilerView for CpuStateView {
 fn pc_bar(ui: &mut Ui, pc: u64, w: f32) {
     let h = 28.0;
     let (rect, _) = ui.allocate_exact_size(vec2(w, h), egui::Sense::hover());
-    ui.painter().rect_filled(rect, 4.0, Color32::from_rgb(50, 50, 70));
+    ui.painter()
+        .rect_filled(rect, 4.0, Color32::from_rgb(50, 50, 70));
     ui.painter().text(
         rect.left_center() + vec2(10.0, 0.0),
         egui::Align2::LEFT_CENTER,
@@ -201,14 +226,22 @@ fn fp_regs(ui: &mut Ui, regs: &[u64; 32], as_float: bool, num_cols: usize) {
 fn csr_table(ui: &mut Ui, cpu: &CpuSnapshot, num_cols: usize) {
     let c = &cpu.csrs;
     let csrs: &[(&str, u64)] = &[
-        ("mstatus", c.mstatus), ("mtvec",   c.mtvec),
-        ("mepc",    c.mepc),    ("mcause",  c.mcause),
-        ("mtval",   c.mtval),   ("mie",     c.mie),
-        ("mip",     c.mip),     ("mscratch", c.mscratch),
-        ("stvec",   c.stvec),   ("sepc",    c.sepc),
-        ("scause",  c.scause),  ("stval",   c.stval),
-        ("satp",    c.satp),    ("cycle",   c.cycle),
-        ("instret", c.instret), ("fcsr",    ((c.frm as u64) << 5) | (c.fflags as u64)),
+        ("mstatus", c.mstatus),
+        ("mtvec", c.mtvec),
+        ("mepc", c.mepc),
+        ("mcause", c.mcause),
+        ("mtval", c.mtval),
+        ("mie", c.mie),
+        ("mip", c.mip),
+        ("mscratch", c.mscratch),
+        ("stvec", c.stvec),
+        ("sepc", c.sepc),
+        ("scause", c.scause),
+        ("stval", c.stval),
+        ("satp", c.satp),
+        ("cycle", c.cycle),
+        ("instret", c.instret),
+        ("fcsr", ((c.frm as u64) << 5) | (c.fflags as u64)),
     ];
 
     let dim = Color32::from_gray(130);
