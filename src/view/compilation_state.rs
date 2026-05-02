@@ -1,3 +1,4 @@
+use crate::view::debug::DebugSession;
 use crate::view::views::vm_execution_view::VmExecutionResult;
 
 #[derive(Default)]
@@ -13,6 +14,7 @@ pub struct CompilationState {
     pub just_compiled: bool,
     pub execution_output: String,
     pub vm_result: Option<VmExecutionResult>,
+    pub debug_session: Option<DebugSession>,
 }
 
 impl CompilationState {

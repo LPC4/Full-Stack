@@ -250,3 +250,55 @@ impl Default for CsrFile {
         Self::new()
     }
 }
+
+/// A plain-data snapshot of all CSR values, suitable for cloning and passing to the UI.
+#[derive(Clone, Debug, Default)]
+pub struct CsrSnapshot {
+    pub mstatus: u64,
+    pub misa: u64,
+    pub mie: u64,
+    pub mtvec: u64,
+    pub mscratch: u64,
+    pub mepc: u64,
+    pub mcause: u64,
+    pub mtval: u64,
+    pub mip: u64,
+    pub sstatus: u64,
+    pub stvec: u64,
+    pub sscratch: u64,
+    pub sepc: u64,
+    pub scause: u64,
+    pub stval: u64,
+    pub satp: u64,
+    pub cycle: u64,
+    pub instret: u64,
+    pub fflags: u8,
+    pub frm: u8,
+}
+
+impl CsrFile {
+    pub fn snapshot(&self) -> CsrSnapshot {
+        CsrSnapshot {
+            mstatus: self.mstatus,
+            misa: self.misa,
+            mie: self.mie,
+            mtvec: self.mtvec,
+            mscratch: self.mscratch,
+            mepc: self.mepc,
+            mcause: self.mcause,
+            mtval: self.mtval,
+            mip: self.mip,
+            sstatus: self.sstatus,
+            stvec: self.stvec,
+            sscratch: self.sscratch,
+            sepc: self.sepc,
+            scause: self.scause,
+            stval: self.stval,
+            satp: self.satp,
+            cycle: self.cycle,
+            instret: self.instret,
+            fflags: self.fflags,
+            frm: self.frm,
+        }
+    }
+}

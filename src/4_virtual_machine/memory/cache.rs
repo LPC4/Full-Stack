@@ -32,7 +32,7 @@ pub struct Cache<Next: MemoryAccess> {
     set_bits: u32,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct CacheStats {
     pub read_hits: u64,
     pub read_misses: u64,
@@ -189,5 +189,76 @@ impl<Next: MemoryAccess> MemoryAccess for Cache<Next> {
 
     fn write_byte(&mut self, addr: u64, data: u8) -> Result<(), VmError> {
         self.write_byte_inner(addr, data)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Snapshot types for the debug UI
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Debug, Default)]
+pub struct CacheParamsSnapshot {
+    pub size: usize,
+    pub block_size: usize,
+    pub associativity: usize,
+    pub write_back: bool,
+    pub read_only: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct CacheLineSnapshot {
+    pub valid: bool,
+    pub dirty: bool,
+    pub tag: u64,
+}
+
+/// A full snapshot of cache state (sets × ways) plus cumulative stats.
+#[derive(Clone, Debug, Default)]
+pub struct CacheSnapshot {
+    pub params: CacheParamsSnapshot,
+    /// `sets[set_index][way_index]`
+    pub sets: Vec<Vec<CacheLineSnapshot>>,
+    pub stats: CacheStats,
+}
+
+impl Clone for CacheStats {
+    fn clone(&self) -> Self {
+        Self {
+            read_hits: self.read_hits,
+            read_misses: self.read_misses,
+            write_hits: self.write_hits,
+            write_misses: self.write_misses,
+        }
+    }
+}
+
+impl<Next: MemoryAccess> Cache<Next> {
+    pub fn snapshot(&self) -> CacheSnapshot {
+        let sets = self
+            .sets
+            .iter()
+            .map(|s| {
+                s.ways
+                    .iter()
+                    .map(|w| CacheLineSnapshot {
+                        valid: w.valid,
+                        dirty: w.dirty,
+                        tag: w.tag,
+                    })
+                    .collect()
+            })
+            .collect();
+
+        CacheSnapshot {
+            params: CacheParamsSnapshot {
+                size: self.params.size,
+                block_size: self.params.block_size,
+                associativity: self.params.associativity,
+                write_back: self.params.write_back,
+                read_only: self.params.read_only,
+            },
+            sets,
+            stats: self.stats.clone(),
+        }
     }
 }

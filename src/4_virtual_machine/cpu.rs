@@ -532,6 +532,18 @@ mod cpu_impl {
             self.csrs.mtvec = val;
         }
 
+        pub fn peek_all_xregs(&self) -> [u64; 32] {
+            std::array::from_fn(|i| self.regs.read_x(i))
+        }
+
+        pub fn peek_all_fregs(&self) -> [u64; 32] {
+            std::array::from_fn(|i| self.regs.read_f_bits(i))
+        }
+
+        pub fn peek_csrs(&self) -> crate::virtual_machine::cpu::csr::CsrSnapshot {
+            self.csrs.snapshot()
+        }
+
         /// Set the return-address register (x1 / ra).
         pub fn set_return_addr(&mut self, ra: u64) {
             self.regs.write_x(1, ra);

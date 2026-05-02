@@ -29,6 +29,19 @@ pub fn auto_grid_columns(ui: &egui::Ui, pane_count: usize) -> usize {
         .clamp(1, pane_count.max(1))
 }
 
+/// Calculates responsive column count based on minimum column width.
+/// Returns a value between min_cols and max_cols based on available width.
+pub fn auto_grid_columns_with_min_width(
+    ui: &egui::Ui,
+    min_column_width: f32,
+    min_cols: usize,
+    max_cols: usize,
+) -> usize {
+    let available_width = ui.available_width();
+    let cols_by_width = (available_width / min_column_width).floor() as usize;
+    cols_by_width.clamp(min_cols, max_cols)
+}
+
 /// Splits a rectangle into a grid of equally-sized cells.
 /// Returns a vector of rectangles representing each cell's bounds.
 pub fn split_rect_into_grid(

@@ -74,6 +74,13 @@ impl SystemBus {
         self.rom.size() as usize
     }
 
+    /// Read up to `len` bytes starting at `addr`, silently skipping unroutable addresses.
+    pub fn peek_bytes(&mut self, addr: u64, len: usize) -> Vec<u8> {
+        (0..len as u64)
+            .map(|i| self.read_byte(addr + i).unwrap_or(0))
+            .collect()
+    }
+
     // Direct access to devices for interrupt handling
     pub fn uart_mut(&mut self) -> &mut Uart {
         &mut self.uart

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 /// The final output produced by the assembler — one byte blob per section,
 /// plus a complete symbol table ready to hand to a linker or ELF writer.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct AssembledOutput {
     /// Sections in emission order, keyed by kind.
     pub sections: Vec<SectionData>,

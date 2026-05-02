@@ -36,7 +36,7 @@ impl SectionKind {
 }
 
 /// Accumulated bytes and local symbol table for one section.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct SectionData {
     pub kind: Option<SectionKind>,
     /// Raw bytes emitted so far (instructions + data directives).

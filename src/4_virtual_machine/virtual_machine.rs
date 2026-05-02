@@ -4,6 +4,7 @@ use crate::assembly_language::assembler::output::AssembledOutput;
 use crate::virtual_machine::bus::{HEAP_PTR_ADDR, RAM_BASE, RAM_SIZE_DEFAULT, SystemBus};
 use crate::virtual_machine::cpu::Cpu;
 pub use crate::virtual_machine::cpu::StepOutcome;
+pub use crate::virtual_machine::cpu::csr::CsrSnapshot;
 use crate::virtual_machine::error::VmError;
 use crate::virtual_machine::linker::{self, LinkedProgram, LinkerConfig};
 use crate::virtual_machine::memory::MemoryAccess;
@@ -133,5 +134,35 @@ impl VirtualMachine {
 
     pub fn write_csr_mtvec(&mut self, val: u64) {
         self.cpu.write_csr_mtvec(val);
+    }
+
+    // ---------------------------------------------------------------------------
+    // Bulk debug accessors
+    // ---------------------------------------------------------------------------
+
+    pub fn peek_all_xregs(&self) -> [u64; 32] {
+        self.cpu.peek_all_xregs()
+    }
+
+    pub fn peek_all_fregs(&self) -> [u64; 32] {
+        self.cpu.peek_all_fregs()
+    }
+
+    pub fn peek_csrs(&self) -> CsrSnapshot {
+        self.cpu.peek_csrs()
+    }
+
+    /// Read up to `len` bytes from the address space starting at `addr`.
+    /// Unroutable addresses produce 0x00 bytes.
+    pub fn peek_bytes(&mut self, addr: u64, len: usize) -> Vec<u8> {
+        self.bus.peek_bytes(addr, len)
+    }
+
+    pub fn push_uart_rx(&mut self, byte: u8) {
+        self.bus.uart_mut().receive(byte);
+    }
+
+    pub fn drain_uart_output(&mut self) -> Vec<u8> {
+        self.bus.uart_mut().drain_output()
     }
 }
