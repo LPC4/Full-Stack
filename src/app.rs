@@ -183,13 +183,7 @@ impl FullStackApp {
                 self.compilation_state.clear_error();
                 self.compilation_state.just_compiled = true;
 
-                // Run the internal VM and capture output.
-                self.compilation_state.vm_output =
-                    if let Some(assembled) = &self.compilation_state.assembled {
-                        run_in_vm(assembled)
-                    } else {
-                        String::new()
-                    };
+                // Don't auto-run VM - user must click "Run in VM" button
             }
             Err(error) => {
                 self.compilation_state.set_error(error.to_string());
@@ -452,9 +446,9 @@ impl egui_dock::TabViewer for DockTabViewer<'_> {
     }
 }
 
-// ------------------------------------------------------------
-// DockTabViewer
-// ------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Internal VM runner
+// ---------------------------------------------------------------------------
 
 fn run_in_vm(assembled: &crate::assembly_language::assembler::output::AssembledOutput) -> String {
     use crate::virtual_machine::cpu::StepOutcome;
@@ -467,18 +461,41 @@ fn run_in_vm(assembled: &crate::assembly_language::assembler::output::AssembledO
 
     let mut out = String::new();
 
+    out.push_str("╔══════════════════════════════════════╗\n");
+    out.push_str("║       VM Execution Output            ║\n");
+    out.push_str("╚══════════════════════════════════════╝\n\n");
+
     if !result.uart_output.is_empty() {
         out.push_str(&result.uart_output);
         if !result.uart_output.ends_with('\n') {
             out.push('\n');
         }
+    } else {
+        out.push_str("(No output)\n\n");
     }
 
-    let status = match result.outcome {
-        StepOutcome::Halted(0) => format!("\n[exit 0 — {} steps]", result.steps),
-        StepOutcome::Halted(code) => format!("\n[exit {code} — {} steps]", result.steps),
-        StepOutcome::Continue => format!("\n[reached step limit ({MAX_STEPS}) — execution incomplete]"),
-    };
-    out.push_str(&status);
+    // Add execution summary with status indicator
+    out.push_str("\n");
+    out.push_str("┌─────────────────────────────────────┐\n");
+    out.push_str("│ Execution Summary                   │\n");
+    out.push_str("├─────────────────────────────────────┤\n");
+    
+    match result.outcome {
+        StepOutcome::Halted(0) => {
+            out.push_str("│ +  Ran Successfully                 │\n");
+        }
+        StepOutcome::Halted(code) => {
+            let text = format!("Exited with code {}", code);
+            out.push_str(&format!("│ -  {:<33}│\n", text));
+        }
+        StepOutcome::Continue => {
+            let text = format!("Reached step limit ({})", MAX_STEPS);
+            out.push_str(&format!("│ !  {:<33}│\n", text));
+        }
+    }
+    
+    out.push_str(&format!("│ Steps: {:<29}│\n", result.steps.to_string()));
+    out.push_str("└─────────────────────────────────────┘\n");
+    
     out
 }
