@@ -167,10 +167,11 @@ impl FullStackApp {
         let mut dock = DockState::new(vec![disasm, cpu]);
         let surface = dock.main_surface_mut();
 
-        let [left, _right] = surface.split_right(NodeIndex::root(), 0.4, vec![mem, pipeline, cache]);
+        let [left, _right] =
+            surface.split_right(NodeIndex::root(), 0.4, vec![mem, pipeline, cache]);
 
         surface.split_below(left, 0.5, vec![fb]);
-        
+
         surface.push_to_focused_leaf(io);
 
         self.debug_dock = dock;

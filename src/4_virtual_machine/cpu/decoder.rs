@@ -143,88 +143,165 @@ pub enum DecodedInsn {
 impl DecodedInsn {
     pub fn mnemonic(&self) -> &'static str {
         match self {
-            Self::Lui { .. }      => "lui",
-            Self::Auipc { .. }    => "auipc",
-            Self::Jal { .. }      => "jal",
-            Self::Jalr { .. }     => "jalr",
+            Self::Lui { .. } => "lui",
+            Self::Auipc { .. } => "auipc",
+            Self::Jal { .. } => "jal",
+            Self::Jalr { .. } => "jalr",
             Self::Branch { funct3, .. } => match funct3 {
-                0 => "beq", 1 => "bne", 4 => "blt", 5 => "bge",
-                6 => "bltu", 7 => "bgeu", _ => "b??",
+                0 => "beq",
+                1 => "bne",
+                4 => "blt",
+                5 => "bge",
+                6 => "bltu",
+                7 => "bgeu",
+                _ => "b??",
             },
             Self::Load { funct3, .. } => match funct3 {
-                0 => "lb", 1 => "lh", 2 => "lw", 3 => "ld",
-                4 => "lbu", 5 => "lhu", 6 => "lwu", _ => "l??",
+                0 => "lb",
+                1 => "lh",
+                2 => "lw",
+                3 => "ld",
+                4 => "lbu",
+                5 => "lhu",
+                6 => "lwu",
+                _ => "l??",
             },
             Self::Store { funct3, .. } => match funct3 {
-                0 => "sb", 1 => "sh", 2 => "sw", 3 => "sd", _ => "s??",
+                0 => "sb",
+                1 => "sh",
+                2 => "sw",
+                3 => "sd",
+                _ => "s??",
             },
             Self::AluImm { funct3, funct7, .. } => match funct3 {
-                0 => "addi", 1 => "slli", 2 => "slti", 3 => "sltiu",
+                0 => "addi",
+                1 => "slli",
+                2 => "slti",
+                3 => "sltiu",
                 4 => "xori",
-                5 => if funct7 & 0x20 != 0 { "srai" } else { "srli" },
-                6 => "ori", 7 => "andi", _ => "imm??",
+                5 => {
+                    if funct7 & 0x20 != 0 {
+                        "srai"
+                    } else {
+                        "srli"
+                    }
+                }
+                6 => "ori",
+                7 => "andi",
+                _ => "imm??",
             },
             Self::AluImm32 { funct3, funct7, .. } => match funct3 {
-                0 => "addiw", 1 => "slliw",
-                5 => if funct7 & 0x20 != 0 { "sraiw" } else { "srliw" },
+                0 => "addiw",
+                1 => "slliw",
+                5 => {
+                    if funct7 & 0x20 != 0 {
+                        "sraiw"
+                    } else {
+                        "srliw"
+                    }
+                }
                 _ => "immw??",
             },
             Self::Alu { funct3, funct7, .. } => {
                 if *funct7 == 1 {
                     match funct3 {
-                        0 => "mul", 1 => "mulh", 2 => "mulhsu", 3 => "mulhu",
-                        4 => "div", 5 => "divu", 6 => "rem", 7 => "remu", _ => "m??",
+                        0 => "mul",
+                        1 => "mulh",
+                        2 => "mulhsu",
+                        3 => "mulhu",
+                        4 => "div",
+                        5 => "divu",
+                        6 => "rem",
+                        7 => "remu",
+                        _ => "m??",
                     }
                 } else {
                     match (funct3, funct7 & 0x20 != 0) {
-                        (0, true)  => "sub", (0, false) => "add",
-                        (1, _)     => "sll", (2, _)     => "slt",
-                        (3, _)     => "sltu",(4, _)     => "xor",
-                        (5, true)  => "sra", (5, false) => "srl",
-                        (6, _)     => "or",  (7, _)     => "and",
-                        _          => "alu??",
+                        (0, true) => "sub",
+                        (0, false) => "add",
+                        (1, _) => "sll",
+                        (2, _) => "slt",
+                        (3, _) => "sltu",
+                        (4, _) => "xor",
+                        (5, true) => "sra",
+                        (5, false) => "srl",
+                        (6, _) => "or",
+                        (7, _) => "and",
+                        _ => "alu??",
                     }
                 }
             }
             Self::Alu32 { funct3, funct7, .. } => {
                 if *funct7 == 1 {
                     match funct3 {
-                        0 => "mulw", 4 => "divw", 5 => "divuw",
-                        6 => "remw", 7 => "remuw", _ => "mw??",
+                        0 => "mulw",
+                        4 => "divw",
+                        5 => "divuw",
+                        6 => "remw",
+                        7 => "remuw",
+                        _ => "mw??",
                     }
                 } else {
                     match (funct3, funct7 & 0x20 != 0) {
-                        (0, true)  => "subw", (0, false) => "addw",
-                        (1, _)     => "sllw",
-                        (5, true)  => "sraw", (5, false) => "srlw",
-                        _          => "alu32??",
+                        (0, true) => "subw",
+                        (0, false) => "addw",
+                        (1, _) => "sllw",
+                        (5, true) => "sraw",
+                        (5, false) => "srlw",
+                        _ => "alu32??",
                     }
                 }
             }
-            Self::Fence { .. }    => "fence",
-            Self::FenceI          => "fence.i",
-            Self::Ecall           => "ecall",
-            Self::Ebreak          => "ebreak",
-            Self::Mret            => "mret",
-            Self::Sret            => "sret",
-            Self::SfenceVma       => "sfence.vma",
+            Self::Fence { .. } => "fence",
+            Self::FenceI => "fence.i",
+            Self::Ecall => "ecall",
+            Self::Ebreak => "ebreak",
+            Self::Mret => "mret",
+            Self::Sret => "sret",
+            Self::SfenceVma => "sfence.vma",
             Self::Csr { funct3, .. } => match funct3 {
-                1 => "csrrw", 2 => "csrrs", 3 => "csrrc",
-                5 => "csrrwi", 6 => "csrrsi", 7 => "csrrci", _ => "csr??",
+                1 => "csrrw",
+                2 => "csrrs",
+                3 => "csrrc",
+                5 => "csrrwi",
+                6 => "csrrsi",
+                7 => "csrrci",
+                _ => "csr??",
             },
-            Self::FLoad  { funct3, .. } => if *funct3 == 2 { "flw" } else { "fld" },
-            Self::FStore { funct3, .. } => if *funct3 == 2 { "fsw" } else { "fsd" },
-            Self::FOp    { .. }         => "f.op",
-            Self::FMac   { op, .. }     => match op {
-                FMacOp::Fmadd  => "fmadd",  FMacOp::Fmsub  => "fmsub",
-                FMacOp::Fnmsub => "fnmsub", FMacOp::Fnmadd => "fnmadd",
+            Self::FLoad { funct3, .. } => {
+                if *funct3 == 2 {
+                    "flw"
+                } else {
+                    "fld"
+                }
+            }
+            Self::FStore { funct3, .. } => {
+                if *funct3 == 2 {
+                    "fsw"
+                } else {
+                    "fsd"
+                }
+            }
+            Self::FOp { .. } => "f.op",
+            Self::FMac { op, .. } => match op {
+                FMacOp::Fmadd => "fmadd",
+                FMacOp::Fmsub => "fmsub",
+                FMacOp::Fnmsub => "fnmsub",
+                FMacOp::Fnmadd => "fnmadd",
             },
             Self::Atomic { funct5, .. } => match funct5 {
-                2  => "lr.w",   3  => "sc.w",
-                1  => "amoswap",0  => "amoadd",
-                4  => "amoxor", 8  => "amoor",  12 => "amoand",
-                16 => "amomin", 20 => "amomax", 24 => "amominu", 28 => "amomaxu",
-                _  => "amo??",
+                2 => "lr.w",
+                3 => "sc.w",
+                1 => "amoswap",
+                0 => "amoadd",
+                4 => "amoxor",
+                8 => "amoor",
+                12 => "amoand",
+                16 => "amomin",
+                20 => "amomax",
+                24 => "amominu",
+                28 => "amomaxu",
+                _ => "amo??",
             },
         }
     }

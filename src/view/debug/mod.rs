@@ -12,7 +12,9 @@ use crate::virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 // Re-exports
 // ---------------------------------------------------------------------------
 
-pub use snapshot::{CpuSnapshot, DebugSnapshot, PipelineCycleSnapshot, PipelineEntry, PipelineHistory, SlotState};
+pub use snapshot::{
+    CpuSnapshot, DebugSnapshot, PipelineCycleSnapshot, PipelineEntry, PipelineHistory, SlotState,
+};
 
 pub mod cache_view;
 pub mod cpu_state_view;
@@ -308,4 +310,3 @@ fn fill_section_presets(snapshot: &mut DebugSnapshot, symbols: &HashMap<String, 
             .push((".text (RAM base)", RAM_BASE));
     }
 }
-

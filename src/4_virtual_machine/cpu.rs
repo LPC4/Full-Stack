@@ -6,7 +6,7 @@ pub mod pipeline;
 pub mod pipelined;
 pub mod registers;
 pub use cpu_impl::{Cpu, StepOutcome};
-pub use pipelined::{PipelinedCpu, PipelineStats, TickOutcome};
+pub use pipelined::{PipelineStats, PipelinedCpu, TickOutcome};
 pub use registers::PrivilegeMode;
 
 mod cpu_impl {
