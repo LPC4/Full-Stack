@@ -158,11 +158,25 @@ impl DebugSession {
         self.refresh_snapshot();
     }
 
-    /// Execute up to `n` instructions, stopping early on halt/error.
+    /// Execute up to `n` pipeline cycles, stopping early on halt/error.
     pub fn step_n(&mut self, n: u64) {
         for _ in 0..n {
             self.step();
             if self.status != SessionStatus::Running {
+                break;
+            }
+        }
+    }
+
+    /// Execute until `n` instructions have retired through WB, stopping early on halt/error.
+    pub fn step_n_instructions(&mut self, n: u64) {
+        let target = self.vm.insns_retired().saturating_add(n);
+        loop {
+            self.step();
+            if self.status != SessionStatus::Running {
+                break;
+            }
+            if self.vm.insns_retired() >= target {
                 break;
             }
         }

@@ -518,7 +518,7 @@ impl FullStackApp {
 
             ui.separator();
 
-            ui.label("Step");
+            ui.label("N:");
             ui.add(
                 egui::TextEdit::singleline(&mut self.step_n_input)
                     .desired_width(36.0)
@@ -534,9 +534,22 @@ impl FullStackApp {
             if ui
                 .add_enabled(
                     is_running,
-                    egui::Button::new("Step").min_size(egui::vec2(80.0, 35.0)),
+                    egui::Button::new("Step Insn").min_size(egui::vec2(80.0, 35.0)),
                 )
-                .on_hover_text(format!("Step {n} instruction(s)"))
+                .on_hover_text(format!("Retire {n} instruction(s) through the pipeline"))
+                .clicked()
+            {
+                if let Some(s) = self.compilation_state.debug_session.as_mut() {
+                    s.step_n_instructions(n);
+                }
+            }
+
+            if ui
+                .add_enabled(
+                    is_running,
+                    egui::Button::new("Step Cycle").min_size(egui::vec2(80.0, 35.0)),
+                )
+                .on_hover_text(format!("Advance {n} pipeline cycle(s)"))
                 .clicked()
             {
                 if let Some(s) = self.compilation_state.debug_session.as_mut() {

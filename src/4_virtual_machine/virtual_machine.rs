@@ -151,6 +151,11 @@ impl VirtualMachine {
         &self.cpu.stats
     }
 
+    /// Total instructions retired through WB since reset.
+    pub fn insns_retired(&self) -> u64 {
+        self.cpu.stats.insns_retired
+    }
+
     // ---------------------------------------------------------------------------
     // Bulk debug accessors
     // ---------------------------------------------------------------------------
