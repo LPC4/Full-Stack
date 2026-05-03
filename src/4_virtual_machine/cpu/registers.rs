@@ -20,9 +20,9 @@ pub enum PrivilegeMode {
 
 #[derive(Clone)]
 pub struct Registers {
-    /// Integer registers x0–x31. x[0] is hardwired to zero.
+    /// Integer registers x0-x31. x[0] is hardwired to zero.
     x: [u64; 32],
-    /// FP registers f0–f31, stored as raw bits with NaN-boxing for f32.
+    /// FP registers f0-f31, stored as raw bits with NaN-boxing for f32.
     f: [u64; 32],
     pub pc: u64,
     /// Current privilege mode

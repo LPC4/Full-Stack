@@ -122,7 +122,7 @@ fn draw_cfg(ui: &mut egui::Ui, blocks: &[BasicBlock]) {
     let displayed_lines = |block: &BasicBlock| -> usize {
         let len = block.instructions.len();
         if len > 5 {
-            6 // 5 instructions + "… +X more"
+            6 // 5 instructions + "... +X more"
         } else {
             len.max(1)
         }
@@ -250,7 +250,7 @@ fn draw_cfg(ui: &mut egui::Ui, blocks: &[BasicBlock]) {
         }
     }
 
-    // Fall‑through arrows (straight down) between consecutive blocks
+    // Fall-through arrows (straight down) between consecutive blocks
     let unconditional_jumps: &[&str] = &["j", "jal", "jr", "ret", "tail", "jump"];
 
     for i in 0..blocks.len() - 1 {

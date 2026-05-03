@@ -1,7 +1,7 @@
 //! 5-stage pipelined CPU simulation for RV64IMAFD.
 //!
-//! Implements the Fetch → Decode → Execute → Memory → Writeback pipeline with:
-//! - Data forwarding (EX/MEM → EX, MEM/WB → EX) for integer and FP registers.
+//! Implements the Fetch -> Decode -> Execute -> Memory -> Writeback pipeline with:
+//! - Data forwarding (EX/MEM -> EX, MEM/WB -> EX) for integer and FP registers.
 //! - Load-use stall detection (1-cycle bubble on load-use hazard).
 //! - 2-bit bimodal branch prediction with BTB; 2-cycle flush on mispredict.
 //!
@@ -9,8 +9,8 @@
 //! fully flushed and the trap handler is invoked.
 
 use crate::virtual_machine::bus::SystemBus;
-use crate::virtual_machine::cpu::csr::CsrFile;
-use crate::virtual_machine::cpu::decoder::DecodedInsn;
+use crate::virtual_machine::cpu::csr::{CsrFile, CsrSnapshot};
+use crate::virtual_machine::cpu::decoder::{DecodedInsn, decode as decode_insn};
 use crate::virtual_machine::cpu::pipeline::execute::ExecResult;
 use crate::virtual_machine::cpu::pipeline::hazard::{
     compute_forwarding, insn_is_atomic, insn_is_fp_dest, insn_is_load, insn_rd, insn_rs1,
@@ -61,6 +61,20 @@ pub struct PipelineStats {
 // PipelinedCpu
 // ---------------------------------------------------------------------------
 
+/// Per-cycle pipeline stage snapshot: (pc, mnemonic) or None for a bubble.
+pub type StageEntry = Option<(u64, &'static str)>;
+
+/// Raw pipeline state feed captured after each tick (one entry per stage).
+#[derive(Clone, Debug)]
+pub struct CpuPipelineFeed {
+    /// `stages[0]` = IF ... `stages[4]` = WB.  `None` means bubble/empty.
+    pub stages: [StageEntry; 5],
+    /// IF stage was held (load-use stall).
+    pub stalled: bool,
+    /// IF/ID were squashed (branch mispredict).
+    pub flushed: bool,
+}
+
 pub struct PipelinedCpu {
     regs: Registers,
     csrs: CsrFile,
@@ -75,6 +89,8 @@ pub struct PipelinedCpu {
 
     predictor: BranchPredictor,
     pub stats: PipelineStats,
+    /// Snapshot of the pipeline state produced by the most recent tick.
+    pub last_cycle: CpuPipelineFeed,
 }
 
 impl PipelinedCpu {
@@ -93,6 +109,11 @@ impl PipelinedCpu {
             mem_wb: None,
             predictor: BranchPredictor::new(),
             stats: PipelineStats::default(),
+            last_cycle: CpuPipelineFeed {
+                stages: [None; 5],
+                stalled: false,
+                flushed: false,
+            },
         }
     }
 
@@ -108,8 +129,32 @@ impl PipelinedCpu {
         self.regs.read_x(r)
     }
 
+    pub fn peek_fp_reg(&self, r: usize) -> u64 {
+        self.regs.read_f_bits(r)
+    }
+
     pub fn peek_pc(&self) -> u64 {
         self.regs.pc
+    }
+
+    pub fn peek_csr_mcause(&self) -> u64 {
+        self.csrs.mcause
+    }
+
+    pub fn peek_csr_mtvec(&self) -> u64 {
+        self.csrs.mtvec
+    }
+
+    pub fn peek_all_xregs(&self) -> [u64; 32] {
+        std::array::from_fn(|i| self.regs.read_x(i))
+    }
+
+    pub fn peek_all_fregs(&self) -> [u64; 32] {
+        std::array::from_fn(|i| self.regs.read_f_bits(i))
+    }
+
+    pub fn peek_csrs(&self) -> CsrSnapshot {
+        self.csrs.snapshot()
     }
 
     pub fn predictor_stats(&self) -> &crate::virtual_machine::cpu::pipeline::predictor::PredictorStats {
@@ -125,6 +170,16 @@ impl PipelinedCpu {
     pub fn tick(&mut self, bus: &mut SystemBus) -> Result<TickOutcome, VmError> {
         self.stats.cycles += 1;
         self.csrs.increment_cycle();
+
+        // Snapshot pipeline state at the START of this cycle (before any stage runs).
+        // stages: [IF, ID, EX, MEM, WB] = what each stage is processing this cycle.
+        let snap_wb_entry: StageEntry = self.mem_wb.as_ref().map(|r| (r.pc, r.mnemonic));
+        let snap_mem_entry: StageEntry = self.ex_mem.as_ref().map(|r| (r.pc, r.mnemonic));
+        let snap_ex_entry: StageEntry = self.id_ex.as_ref().map(|r| (r.pc, r.mnemonic));
+        let snap_id_entry: StageEntry = self.if_id.as_ref().map(|r| {
+            let mnem = decode_insn(r.raw).map(|i| i.mnemonic()).unwrap_or("???");
+            (r.pc, mnem)
+        });
 
         // Take snapshot of the current (old) pipeline state
         let old_mem_wb = self.mem_wb.take();
@@ -182,6 +237,32 @@ impl PipelinedCpu {
             self.stats.flush_cycles += 2;
         }
 
+        // ---- Capture cycle snapshot -----------------------------------------
+        // IF slot: what was fetched this cycle (or held/squashed).
+        let snap_if_entry: StageEntry = if stall {
+            // IF was held -- same instruction as before (show it as stalled).
+            snap_id_entry // the instruction that was in IF is still there
+        } else if flush {
+            None // squashed
+        } else {
+            self.if_id.as_ref().map(|r| {
+                let mnem = decode_insn(r.raw).map(|i| i.mnemonic()).unwrap_or("???");
+                (r.pc, mnem)
+            })
+        };
+
+        self.last_cycle = CpuPipelineFeed {
+            stages: [
+                snap_if_entry,  // IF
+                snap_id_entry,  // ID
+                snap_ex_entry,  // EX
+                snap_mem_entry, // MEM
+                snap_wb_entry,  // WB
+            ],
+            stalled: stall,
+            flushed: flush,
+        };
+
         Ok(TickOutcome::Continue)
     }
 
@@ -223,6 +304,7 @@ impl PipelinedCpu {
             }
         };
 
+        let mnemonic = insn.mnemonic();
         let rs1 = insn_rs1(&insn);
         let rs2 = insn_rs2(&insn);
         let rd = insn_rd(&insn);
@@ -241,6 +323,7 @@ impl PipelinedCpu {
 
         Ok(Some(IDEXReg {
             pc: if_id.pc,
+            mnemonic,
             rs1_val: self.regs.read_x(rs1),
             rs2_val: self.regs.read_x(rs2),
             frs1_val: self.regs.read_f_bits(frs1),
@@ -329,6 +412,7 @@ impl PipelinedCpu {
         Ok((
             Some(EXMEMReg {
                 pc: id_ex.pc,
+                mnemonic: id_ex.mnemonic,
                 exec_result,
                 rd,
                 is_fp_dest,
@@ -370,7 +454,7 @@ impl PipelinedCpu {
 
         let (fwd_rd, is_fp_dest, fwd_val) = mem_forwarding_info(&mem_result, ex_mem);
 
-        Ok(Some(MEMWBReg { rd: fwd_rd, is_fp_dest, fwd_val, mem_result }))
+        Ok(Some(MEMWBReg { pc: ex_mem.pc, mnemonic: ex_mem.mnemonic, rd: fwd_rd, is_fp_dest, fwd_val, mem_result }))
     }
 
     fn stage_wb(
@@ -571,6 +655,61 @@ impl PipelinedCpu {
                 self.stats.insns_retired += 1;
                 Ok(TickOutcome::Continue)
             }
+            1001 => {
+                // puts(a0 = ptr to null-terminated string), writes string + newline
+                let mut ptr = self.regs.read_x(10);
+                loop {
+                    let byte = bus.read_byte(ptr).unwrap_or(0);
+                    if byte == 0 { break; }
+                    let _ = bus.uart_mut().write_byte(0, byte);
+                    ptr += 1;
+                }
+                let _ = bus.uart_mut().write_byte(0, b'\n');
+                self.regs.write_x(10, 0);
+                self.regs.pc = self.regs.pc.wrapping_add(4);
+                self.fetch_pc = self.regs.pc;
+                self.csrs.increment_instret();
+                self.stats.insns_retired += 1;
+                Ok(TickOutcome::Continue)
+            }
+            1002 => {
+                // printf(a0 = fmt, a1..a7 = varargs)
+                let output = vm_printf_pipelined(&self.regs, bus);
+                let len = output.len();
+                for byte in output {
+                    let _ = bus.uart_mut().write_byte(0, byte);
+                }
+                self.regs.write_x(10, len as u64);
+                self.regs.pc = self.regs.pc.wrapping_add(4);
+                self.fetch_pc = self.regs.pc;
+                self.csrs.increment_instret();
+                self.stats.insns_retired += 1;
+                Ok(TickOutcome::Continue)
+            }
+            1003 => {
+                // malloc(a0 = size), bump allocator
+                use crate::virtual_machine::bus::HEAP_PTR_ADDR;
+                let size = self.regs.read_x(10);
+                let aligned = (size + 7) & !7;
+                let current = bus.read_doubleword(HEAP_PTR_ADDR).unwrap_or(HEAP_PTR_ADDR + 8);
+                let new_ptr = current.wrapping_add(aligned);
+                let _ = bus.write_doubleword(HEAP_PTR_ADDR, new_ptr);
+                self.regs.write_x(10, current);
+                self.regs.pc = self.regs.pc.wrapping_add(4);
+                self.fetch_pc = self.regs.pc;
+                self.csrs.increment_instret();
+                self.stats.insns_retired += 1;
+                Ok(TickOutcome::Continue)
+            }
+            1004 => {
+                // free(a0 = ptr), no-op (bump allocator never reclaims)
+                self.regs.write_x(10, 0);
+                self.regs.pc = self.regs.pc.wrapping_add(4);
+                self.fetch_pc = self.regs.pc;
+                self.csrs.increment_instret();
+                self.stats.insns_retired += 1;
+                Ok(TickOutcome::Continue)
+            }
             _ => {
                 self.regs.write_x(10, u64::MAX);
                 self.regs.pc = self.regs.pc.wrapping_add(4);
@@ -611,6 +750,57 @@ impl PipelinedCpu {
 // ---------------------------------------------------------------------------
 // Forwarding value helpers
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// printf helper used by syscall 1002
+// ---------------------------------------------------------------------------
+
+fn vm_printf_pipelined(regs: &Registers, bus: &mut SystemBus) -> Vec<u8> {
+    let fmt_ptr = regs.read_x(10);
+    let mut arg_reg = 11u32;
+    let mut out = Vec::<u8>::new();
+    let mut addr = fmt_ptr;
+    loop {
+        let c = bus.read_byte(addr).unwrap_or(0);
+        addr += 1;
+        if c == 0 { break; }
+        if c != b'%' {
+            out.push(c);
+            continue;
+        }
+        let spec = bus.read_byte(addr).unwrap_or(0);
+        addr += 1;
+        let arg = if arg_reg <= 17 {
+            let v = regs.read_x(arg_reg as usize);
+            arg_reg += 1;
+            v
+        } else { 0 };
+        match spec {
+            b'd' | b'i' => out.extend_from_slice((arg as i64).to_string().as_bytes()),
+            b'u'        => out.extend_from_slice(arg.to_string().as_bytes()),
+            b'x'        => out.extend_from_slice(format!("{arg:x}").as_bytes()),
+            b'X'        => out.extend_from_slice(format!("{arg:X}").as_bytes()),
+            b'p'        => out.extend_from_slice(format!("0x{arg:x}").as_bytes()),
+            b'c'        => out.push(arg as u8),
+            b's' => {
+                let mut ptr = arg;
+                loop {
+                    let byte = bus.read_byte(ptr).unwrap_or(0);
+                    if byte == 0 { break; }
+                    out.push(byte);
+                    ptr += 1;
+                }
+            }
+            b'f' | b'g' | b'e' => out.extend_from_slice(format!("{}", f64::from_bits(arg)).as_bytes()),
+            b'%' => {
+                out.push(b'%');
+                if arg_reg > 11 { arg_reg -= 1; }
+            }
+            other => { out.push(b'%'); out.push(other); }
+        }
+    }
+    out
+}
 
 /// Extract (rd, is_fp_dest, fwd_val) from an ExecResult for the EX/MEM register.
 fn ex_forwarding_info(result: &ExecResult, id_ex: &IDEXReg) -> (usize, bool, u64) {

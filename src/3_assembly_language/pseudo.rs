@@ -3,7 +3,7 @@
 //! Each variant stores exactly the information visible at the source level.
 //! [`PseudoInstruction::expand`] produces the canonical real-instruction expansion.
 //!
-//! Integer pseudo-instructions are covered here.  FP pseudos (fmv.s, fneg.d, …)
+//! Integer pseudo-instructions are covered here.  FP pseudos (fmv.s, fneg.d, ...)
 //! live in the `rv64fd` module alongside the FP real instructions they expand to.
 
 use super::real::RealInstruction;
@@ -17,7 +17,7 @@ use crate::assembly_language::utils::reg_name;
 
 #[derive(Debug, Clone)]
 pub enum PseudoInstruction {
-    /// `nop` → `addi x0, x0, 0`
+    /// `nop` -> `addi x0, x0, 0`
     Nop,
 
     /// `li rd, imm` - Load immediate.
@@ -27,150 +27,150 @@ pub enum PseudoInstruction {
         imm: i64,
     },
 
-    /// `mv rd, rs` → `addi rd, rs, 0`
+    /// `mv rd, rs` -> `addi rd, rs, 0`
     Mv {
         rd: Reg,
         rs: Reg,
     },
 
-    /// `not rd, rs` → `xori rd, rs, -1`
+    /// `not rd, rs` -> `xori rd, rs, -1`
     Not {
         rd: Reg,
         rs: Reg,
     },
 
-    /// `neg rd, rs` → `sub rd, x0, rs`
+    /// `neg rd, rs` -> `sub rd, x0, rs`
     Neg {
         rd: Reg,
         rs: Reg,
     },
 
-    /// `negw rd, rs` → `subw rd, x0, rs`
+    /// `negw rd, rs` -> `subw rd, x0, rs`
     Negw {
         rd: Reg,
         rs: Reg,
     },
 
-    /// `sext.w rd, rs` → `addiw rd, rs, 0`
+    /// `sext.w rd, rs` -> `addiw rd, rs, 0`
     SextW {
         rd: Reg,
         rs: Reg,
     },
 
-    /// `seqz rd, rs` → `sltiu rd, rs, 1`
+    /// `seqz rd, rs` -> `sltiu rd, rs, 1`
     Seqz {
         rd: Reg,
         rs: Reg,
     },
 
-    /// `snez rd, rs` → `sltu rd, x0, rs`
+    /// `snez rd, rs` -> `sltu rd, x0, rs`
     Snez {
         rd: Reg,
         rs: Reg,
     },
 
-    /// `sltz rd, rs` → `slt rd, rs, x0`
+    /// `sltz rd, rs` -> `slt rd, rs, x0`
     Sltz {
         rd: Reg,
         rs: Reg,
     },
 
-    /// `sgtz rd, rs` → `slt rd, x0, rs`
+    /// `sgtz rd, rs` -> `slt rd, x0, rs`
     Sgtz {
         rd: Reg,
         rs: Reg,
     },
 
-    /// `beqz rs, offset` → `beq rs, x0, offset`
+    /// `beqz rs, offset` -> `beq rs, x0, offset`
     Beqz {
         rs: Reg,
         offset: i32,
     },
 
-    /// `bnez rs, offset` → `bne rs, x0, offset`
+    /// `bnez rs, offset` -> `bne rs, x0, offset`
     Bnez {
         rs: Reg,
         offset: i32,
     },
 
-    /// `blez rs, offset` → `bge x0, rs, offset`
+    /// `blez rs, offset` -> `bge x0, rs, offset`
     Blez {
         rs: Reg,
         offset: i32,
     },
 
-    /// `bgez rs, offset` → `bge rs, x0, offset`
+    /// `bgez rs, offset` -> `bge rs, x0, offset`
     Bgez {
         rs: Reg,
         offset: i32,
     },
 
-    /// `bltz rs, offset` → `blt rs, x0, offset`
+    /// `bltz rs, offset` -> `blt rs, x0, offset`
     Bltz {
         rs: Reg,
         offset: i32,
     },
 
-    /// `bgtz rs, offset` → `blt x0, rs, offset`
+    /// `bgtz rs, offset` -> `blt x0, rs, offset`
     Bgtz {
         rs: Reg,
         offset: i32,
     },
 
-    /// `bgt rs1, rs2, offset` → `blt rs2, rs1, offset`
+    /// `bgt rs1, rs2, offset` -> `blt rs2, rs1, offset`
     Bgt {
         rs1: Reg,
         rs2: Reg,
         offset: i32,
     },
 
-    /// `ble rs1, rs2, offset` → `bge rs2, rs1, offset`
+    /// `ble rs1, rs2, offset` -> `bge rs2, rs1, offset`
     Ble {
         rs1: Reg,
         rs2: Reg,
         offset: i32,
     },
 
-    /// `bgtu rs1, rs2, offset` → `bltu rs2, rs1, offset`
+    /// `bgtu rs1, rs2, offset` -> `bltu rs2, rs1, offset`
     Bgtu {
         rs1: Reg,
         rs2: Reg,
         offset: i32,
     },
 
-    /// `bleu rs1, rs2, offset` → `bgeu rs2, rs1, offset`
+    /// `bleu rs1, rs2, offset` -> `bgeu rs2, rs1, offset`
     Bleu {
         rs1: Reg,
         rs2: Reg,
         offset: i32,
     },
 
-    /// `j offset` → `jal x0, offset`
+    /// `j offset` -> `jal x0, offset`
     J {
         offset: i32,
     },
 
-    /// `jr rs` → `jalr x0, 0(rs)`
+    /// `jr rs` -> `jalr x0, 0(rs)`
     Jr {
         rs: Reg,
     },
 
-    /// `ret` → `jalr x0, 0(ra)`
+    /// `ret` -> `jalr x0, 0(ra)`
     Ret,
 
-    /// `call symbol` → `auipc ra, %pcrel_hi(symbol); jalr ra, %pcrel_lo(symbol)(ra)`
+    /// `call symbol` -> `auipc ra, %pcrel_hi(symbol); jalr ra, %pcrel_lo(symbol)(ra)`
     /// The `hi` and `lo` offsets must be filled in by the linker/assembler
     /// during symbol resolution; they are stored as `0` here.
     Call {
         symbol: String,
     },
 
-    /// `tail symbol` → `auipc t1, %pcrel_hi(symbol); jalr x0, %pcrel_lo(symbol)(t1)`
+    /// `tail symbol` -> `auipc t1, %pcrel_hi(symbol); jalr x0, %pcrel_lo(symbol)(t1)`
     Tail {
         symbol: String,
     },
 
-    /// `la rd, symbol` → `auipc rd, %pcrel_hi(symbol); addi rd, rd, %pcrel_lo(symbol)`
+    /// `la rd, symbol` -> `auipc rd, %pcrel_hi(symbol); addi rd, rd, %pcrel_lo(symbol)`
     La {
         rd: Reg,
         symbol: String,
@@ -391,12 +391,12 @@ impl PseudoInstruction {
 
 /// Expands `li rd, imm` into the minimal real instruction sequence.
 fn expand_li(rd: Reg, imm: i64) -> Vec<RealInstruction> {
-    // 12‑bit sign‑extended case: addi rd, x0, imm
+    // 12-bit sign-extended case: addi rd, x0, imm
     if (-2048..=2047).contains(&imm) {
         return vec![RealInstruction::Addi(Addi::new(rd, 0, imm as i32))];
     }
 
-    // 32‑bit case: the value must fit into a signed 32‑bit word.
+    // 32-bit case: the value must fit into a signed 32-bit word.
     // If so, we can use lui + addi.
     let fits_i32 = (-2_147_483_648..=2_147_483_647).contains(&imm);
     if fits_i32 {
@@ -412,12 +412,12 @@ fn expand_li(rd: Reg, imm: i64) -> Vec<RealInstruction> {
         return out;
     }
 
-    // 64‑bit case: construct the value from two 32‑bit halves.
-    // The expansion uses t1 (x6) as a temporary - it is caller‑saved
-    let low32 = (imm & 0xFFFF_FFFF) as i32; // as 32‑bit signed
-    let high32 = ((imm >> 32) & 0xFFFF_FFFF) as i32; // as 32‑bit signed
+    // 64-bit case: construct the value from two 32-bit halves.
+    // The expansion uses t1 (x6) as a temporary - it is caller-saved
+    let low32 = (imm & 0xFFFF_FFFF) as i32; // as 32-bit signed
+    let high32 = ((imm >> 32) & 0xFFFF_FFFF) as i32; // as 32-bit signed
 
-    // Helper to produce the lui+addi sequence for a 32‑bit constant
+    // Helper to produce the lui+addi sequence for a 32-bit constant
     fn load32(rd: Reg, val32: i32) -> Vec<RealInstruction> {
         let lo12 = val32 & 0xFFF;
         let lo12_signed = if lo12 >= 0x800 { lo12 - 0x1000 } else { lo12 };
@@ -435,7 +435,7 @@ fn expand_li(rd: Reg, imm: i64) -> Vec<RealInstruction> {
     seq.append(&mut load32(T1, high32)); // T1 = sign_ext(high32)
     seq.push(RealInstruction::Slli(Slli::new(T1, T1, 32))); // T1 = high32 << 32
 
-    // Load the low 32 bits into rd, then zero‑extend to 64 bits.
+    // Load the low 32 bits into rd, then zero-extend to 64 bits.
     seq.append(&mut load32(rd, low32)); // rd = sign_ext(low32)
     seq.push(RealInstruction::Slli(Slli::new(rd, rd, 32))); // clear upper 32 bits
     seq.push(RealInstruction::Srli(Srli::new(rd, rd, 32))); // rd = zero_ext(low32)

@@ -1,5 +1,5 @@
 //! Simple register allocator that maps every virtual register to a stack slot.
-//! No register reuse – all values are stored in memory.
+//! No register reuse - all values are stored in memory.
 
 use super::function_context::FunctionContext;
 use crate::intermediate_language::{IrFunction, IrInstruction, IrTerminator, IrType, IrValue};
@@ -117,7 +117,7 @@ impl RegisterAllocator {
                         .unwrap_or(IrType::Integer(crate::intermediate_language::IntWidth::I64));
                     ctx.alloc_slot_for_reg(dest, &ret_ty);
                     ctx.set_reg_type(dest, ret_ty.clone());
-                    // If the return type is an aggregate, the slot IS the data — mark as stack address
+                    // If the return type is an aggregate, the slot IS the data -- mark as stack address
                     if matches!(ret_ty, IrType::Aggregate(_) | IrType::Array { .. }) {
                         ctx.mark_stack_address(dest);
                     }

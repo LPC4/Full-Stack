@@ -96,7 +96,7 @@ impl HighLevelCompiler {
                     // External functions are provided by the linker (e.g. libc).
                     // The signature is already recorded.
                     self.context.warn(format!(
-                        "extern function `{final_name}` – definition omitted (linker must provide it)"
+                        "extern function `{final_name}` - definition omitted (linker must provide it)"
                     ));
                     return Ok(());
                 }
@@ -125,7 +125,7 @@ impl HighLevelCompiler {
                 let return_ty = self.lower_return_type(return_type.as_ref());
 
                 // For functions returning aggregates, determine return strategy:
-                // - Small structs (≤16 bytes): returned in registers a0/a1
+                // - Small structs (<=16 bytes): returned in registers a0/a1
                 // - Large structs (>16 bytes): use sret pattern with hidden pointer
                 let is_aggregate = matches!(return_ty, IrType::Aggregate(_) | IrType::Array { .. });
                 let needs_sret = if is_aggregate {
@@ -154,7 +154,7 @@ impl HighLevelCompiler {
                 self.start_new_block("entry");
 
                 // If this function returns an aggregate, inject a hidden sret parameter ONLY for large structs
-                // Small structs (≤16 bytes) are returned directly in registers a0/a1
+                // Small structs (<=16 bytes) are returned directly in registers a0/a1
                 if needs_sret {
                     let sret_reg = IrRegister::Named("__sret".to_owned());
                     function.push_param(IrParam {

@@ -1,4 +1,4 @@
-//! Read‑Only Memory – holds boot code and fixed firmware.
+//! Read-Only Memory - holds boot code and fixed firmware.
 //! Mapped at the bottom of the address space (0x0000_0000 .. 0x0FFF_FFFF).
 
 use crate::virtual_machine::error::VmError;
@@ -51,7 +51,7 @@ impl MemoryAccess for Rom {
     fn read_halfword(&mut self, addr: u64) -> Result<u16, VmError> {
         let b0 = self.read_byte(addr)? as u16;
         let b1 = self.read_byte(addr + 1)? as u16;
-        Ok(b0 | (b1 << 8)) // little‑endian
+        Ok(b0 | (b1 << 8)) // little-endian
     }
 
     fn read_word(&mut self, addr: u64) -> Result<u32, VmError> {

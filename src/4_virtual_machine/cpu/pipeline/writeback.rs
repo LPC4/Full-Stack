@@ -1,4 +1,4 @@
-//! Writeback stage — commits results to registers and CSRs, returns next PC.
+//! Writeback stage -- commits results to registers and CSRs, returns next PC.
 
 use crate::virtual_machine::cpu::csr::CsrFile;
 use crate::virtual_machine::cpu::pipeline::memory::MemResult;

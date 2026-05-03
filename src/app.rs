@@ -399,7 +399,7 @@ impl FullStackApp {
     fn ide_top_bar(&mut self, ui: &mut egui::Ui) {
         ui.set_min_size(egui::vec2(ui.available_width(), ui.available_height()));
         ui.horizontal(|ui| {
-            // ── Left: Compile and Run actions ────────────────────────────────
+            // -- Left: Compile and Run actions --------------------------------
             if ui
                 .add(egui::Button::new("Compile").min_size(egui::vec2(80.0, 35.0)))
                 .clicked()

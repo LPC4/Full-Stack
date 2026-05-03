@@ -13,7 +13,7 @@ pub struct FrameContext {
     saved_regs: Vec<(u8, usize)>,
     /// Next available offset from the frame base (negative from sp).
     next_offset: usize,
-    /// Alignment requirement (16 bytes for RISC‑V ABI).
+    /// Alignment requirement (16 bytes for RISC-V ABI).
     alignment: usize,
 }
 
@@ -47,7 +47,7 @@ impl FrameContext {
         }
     }
 
-    /// Mark that a callee‑saved integer register must be saved.
+    /// Mark that a callee-saved integer register must be saved.
     pub fn save_reg(&mut self, reg: u8) {
         if !self.saved_regs.iter().any(|(r, _)| *r == reg) {
             let offset = self.alloc_slot(8, 8);

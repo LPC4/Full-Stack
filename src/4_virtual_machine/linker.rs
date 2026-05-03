@@ -42,7 +42,7 @@ pub struct LinkedProgram {
     pub image_size: u64,
 }
 
-/// Canonical section load order: text → rodata → data → bss → custom.
+/// Canonical section load order: text -> rodata -> data -> bss -> custom.
 fn section_load_order() -> &'static [SectionKind] {
     &[
         SectionKind::Text,

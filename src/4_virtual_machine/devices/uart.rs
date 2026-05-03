@@ -1,5 +1,5 @@
-//! Simple memory‑mapped UART (NS16550A subset).
-//! Base address: 0x1000_0000 (typical RISC‑V virt machine).
+//! Simple memory-mapped UART (NS16550A subset).
+//! Base address: 0x1000_0000 (typical RISC-V virt machine).
 
 use crate::virtual_machine::error::VmError;
 use crate::virtual_machine::memory::MemoryAccess;

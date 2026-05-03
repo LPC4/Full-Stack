@@ -7,9 +7,9 @@ use std::fmt;
 pub enum VmError {
     /// Physical address is not mapped to any device.
     BusError(u64),
-    /// Attempt to write to ROM or a read‑only cache.
+    /// Attempt to write to ROM or a read-only cache.
     WriteToRom,
-    /// Instruction fetch from non‑executable memory or protection fault.
+    /// Instruction fetch from non-executable memory or protection fault.
     InstructionAccessFault(u64),
     /// Load from memory caused an exception.
     LoadAccessFault(u64),
@@ -31,7 +31,7 @@ impl fmt::Display for VmError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             VmError::BusError(addr) => write!(f, "bus error at address {addr:#010x}"),
-            VmError::WriteToRom => write!(f, "write to read‑only memory"),
+            VmError::WriteToRom => write!(f, "write to read-only memory"),
             VmError::InstructionAccessFault(addr) => {
                 write!(f, "instruction access fault at {addr:#010x}")
             }

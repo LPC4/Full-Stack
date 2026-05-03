@@ -1,3 +1,4 @@
+use crate::view::debug::snapshot::SlotState;
 use crate::view::{CompilationState, CompilerView, ProgramCatalog};
 use egui::{Align2, Color32, FontId, Rect, RichText, Stroke, Ui, pos2, vec2};
 
@@ -13,7 +14,7 @@ const CORNER: f32 = 2.0;
 
 const STAGE_LABELS: [&str; 5] = ["IF", "ID", "EX", "MEM", "WB"];
 
-// Per-stage background (blue gradient: darker fetch → brighter writeback)
+// Per-stage background (blue gradient: darker fetch -> brighter writeback)
 const STAGE_BG: [Color32; 5] = [
     Color32::from_rgb(22,  42,  78),
     Color32::from_rgb(28,  56,  100),
@@ -22,7 +23,6 @@ const STAGE_BG: [Color32; 5] = [
     Color32::from_rgb(50, 122,  182),
 ];
 
-// Dimmed version of each stage (for the header strip)
 const STAGE_HEADER_BG: [Color32; 5] = [
     Color32::from_rgb(16, 30, 55),
     Color32::from_rgb(20, 40, 70),
@@ -31,14 +31,18 @@ const STAGE_HEADER_BG: [Color32; 5] = [
     Color32::from_rgb(34, 82, 124),
 ];
 
-const EMPTY_BG:    Color32 = Color32::from_rgb(18, 18, 28);
-const CYCLE_BG:    Color32 = Color32::from_rgb(15, 15, 25);
-const GRID_LINE:   Color32 = Color32::from_rgb(40, 40, 60);
-const PC_TEXT:     Color32 = Color32::from_rgb(140, 190, 255);
-const MNEM_TEXT:   Color32 = Color32::WHITE;
-const EMPTY_TEXT:  Color32 = Color32::from_rgb(40, 40, 55);
-const CYCLE_TEXT:  Color32 = Color32::from_rgb(120, 120, 150);
-const HEADER_TEXT: Color32 = Color32::from_rgb(180, 190, 210);
+const EMPTY_BG:       Color32 = Color32::from_rgb(18, 18, 28);
+const STALL_BG:       Color32 = Color32::from_rgb(80, 50, 10);
+const FLUSH_BG:       Color32 = Color32::from_rgb(70, 15, 15);
+const CYCLE_BG:       Color32 = Color32::from_rgb(15, 15, 25);
+const GRID_LINE:      Color32 = Color32::from_rgb(40, 40, 60);
+const PC_TEXT:        Color32 = Color32::from_rgb(140, 190, 255);
+const MNEM_TEXT:      Color32 = Color32::WHITE;
+const EMPTY_TEXT:     Color32 = Color32::from_rgb(40, 40, 55);
+const STALL_TEXT:     Color32 = Color32::from_rgb(220, 140, 40);
+const FLUSH_TEXT:     Color32 = Color32::from_rgb(220, 70, 70);
+const CYCLE_TEXT:     Color32 = Color32::from_rgb(120, 120, 150);
+const HEADER_TEXT:    Color32 = Color32::from_rgb(180, 190, 210);
 
 // ---------------------------------------------------------------------------
 // View
@@ -72,7 +76,7 @@ impl CompilerView for PipelineView {
 
         ui.add_space(6.0);
 
-        // ── Status bar ────────────────────────────────────────────────────
+        // -- Status bar ----------------------------------------------------
         ui.horizontal(|ui| {
             ui.label(
                 RichText::new(format!("PC  {pc:#018x}"))
@@ -81,7 +85,7 @@ impl CompilerView for PipelineView {
             );
             ui.separator();
             ui.label(
-                RichText::new(format!("Step #{steps}"))
+                RichText::new(format!("Cycle #{}", history.total_cycles))
                     .monospace()
                     .color(Color32::from_gray(170)),
             );
@@ -91,7 +95,7 @@ impl CompilerView for PipelineView {
 
         ui.add_space(10.0);
 
-        // ── Waterfall diagram ─────────────────────────────────────────────
+        // -- Waterfall diagram ---------------------------------------------
         let available_w = ui.available_width();
         let stage_w = (available_w - CYCLE_COL_W) / 5.0;
         let total_h = HEADER_H + NUM_ROWS as f32 * ROW_H;
@@ -107,7 +111,6 @@ impl CompilerView for PipelineView {
             let h_rect = Rect::from_min_size(area.min, vec2(available_w, HEADER_H));
             p.rect_filled(h_rect, 0.0, Color32::from_rgb(12, 12, 20));
 
-            // "Cycle" label
             let cyc_rect = Rect::from_min_size(area.min, vec2(CYCLE_COL_W, HEADER_H));
             p.text(
                 cyc_rect.center(),
@@ -117,7 +120,6 @@ impl CompilerView for PipelineView {
                 CYCLE_TEXT,
             );
 
-            // Stage headers
             for (si, label) in STAGE_LABELS.iter().enumerate() {
                 let x = area.min.x + CYCLE_COL_W + si as f32 * stage_w;
                 let cell = Rect::from_min_size(pos2(x, area.min.y), vec2(stage_w, HEADER_H));
@@ -153,11 +155,10 @@ impl CompilerView for PipelineView {
             Stroke::new(1.0, GRID_LINE),
         );
 
-        // Data rows — row 0 = most recent cycle
+        // Data rows -- row 0 = most recent cycle
         for row in 0..NUM_ROWS {
             let row_y = area.min.y + HEADER_H + row as f32 * ROW_H;
 
-            // Bottom separator
             p.line_segment(
                 [pos2(area.min.x, row_y + ROW_H),
                  pos2(area.max.x, row_y + ROW_H)],
@@ -170,7 +171,7 @@ impl CompilerView for PipelineView {
             let cycle_label = history
                 .cycle_for_row(row)
                 .map(|c| format!("#{c}"))
-                .unwrap_or_else(|| "─".into());
+                .unwrap_or_else(|| "-".into());
             p.text(
                 cyc_cell.center(),
                 Align2::CENTER_CENTER,
@@ -183,60 +184,101 @@ impl CompilerView for PipelineView {
             for si in 0..5 {
                 let x = area.min.x + CYCLE_COL_W + si as f32 * stage_w;
                 let cell = Rect::from_min_size(pos2(x, row_y), vec2(stage_w, ROW_H));
-                let entry = history.waterfall(si, row);
 
-                if let Some(e) = entry {
-                    p.rect_filled(cell, CORNER, STAGE_BG[si]);
+                match history.slot(si, row) {
+                    Some(SlotState::Normal(entry)) => {
+                        p.rect_filled(cell, CORNER, STAGE_BG[si]);
 
-                    // PC — short form to fit the cell
-                    let pc_short = format!("{:#010x}", e.pc);
-                    p.text(
-                        pos2(cell.center().x, cell.min.y + ROW_H * 0.28),
-                        Align2::CENTER_CENTER,
-                        pc_short,
-                        FontId::monospace(9.0),
-                        PC_TEXT,
-                    );
-
-                    // Mnemonic — larger, centred
-                    p.text(
-                        pos2(cell.center().x, cell.min.y + ROW_H * 0.68),
-                        Align2::CENTER_CENTER,
-                        &e.mnemonic,
-                        FontId::monospace(12.5),
-                        MNEM_TEXT,
-                    );
-                } else {
-                    p.rect_filled(cell, CORNER, EMPTY_BG);
-                    p.text(
-                        cell.center(),
-                        Align2::CENTER_CENTER,
-                        "─",
-                        FontId::monospace(11.0),
-                        EMPTY_TEXT,
-                    );
+                        let pc_short = format!("{:#010x}", entry.pc);
+                        p.text(
+                            pos2(cell.center().x, cell.min.y + ROW_H * 0.28),
+                            Align2::CENTER_CENTER,
+                            pc_short,
+                            FontId::monospace(9.0),
+                            PC_TEXT,
+                        );
+                        p.text(
+                            pos2(cell.center().x, cell.min.y + ROW_H * 0.68),
+                            Align2::CENTER_CENTER,
+                            &entry.mnemonic,
+                            FontId::monospace(12.5),
+                            MNEM_TEXT,
+                        );
+                    }
+                    Some(SlotState::StallBubble) => {
+                        p.rect_filled(cell, CORNER, STALL_BG);
+                        p.text(
+                            cell.center(),
+                            Align2::CENTER_CENTER,
+                            "STALL",
+                            FontId::monospace(11.0),
+                            STALL_TEXT,
+                        );
+                    }
+                    Some(SlotState::FlushBubble) => {
+                        p.rect_filled(cell, CORNER, FLUSH_BG);
+                        p.text(
+                            cell.center(),
+                            Align2::CENTER_CENTER,
+                            "FLUSH",
+                            FontId::monospace(11.0),
+                            FLUSH_TEXT,
+                        );
+                    }
+                    Some(SlotState::Empty) | None => {
+                        p.rect_filled(cell, CORNER, EMPTY_BG);
+                        p.text(
+                            cell.center(),
+                            Align2::CENTER_CENTER,
+                            "-",
+                            FontId::monospace(11.0),
+                            EMPTY_TEXT,
+                        );
+                    }
                 }
             }
         }
 
         ui.add_space(10.0);
 
-        // ── Stats footer ──────────────────────────────────────────────────
-        let fill = (history.step).min(5); // how many stages are occupied
-        let ipc_note = if steps > 5 {
-            "Scalar in-order (1 IPC)"
-        } else {
-            "Filling pipeline…"
-        };
+        // -- Stats footer --------------------------------------------------
+        let cycles = history.total_cycles;
+        let stalls = history.stall_cycles;
+        let flushes = history.flush_cycles;
+        let branches = history.branches_seen;
+        let mispredicts = history.branches_mispredicted;
 
         ui.horizontal(|ui| {
             ui.label(
-                RichText::new(format!(
-                    "Steps retired: {steps}   ·   Pipeline fill: {fill}/5   ·   {ipc_note}"
-                ))
-                .small()
-                .weak(),
+                RichText::new(format!("Steps: {steps}   *   Cycles: {cycles}"))
+                    .small()
+                    .weak(),
             );
+            ui.separator();
+            if stalls > 0 {
+                ui.label(
+                    RichText::new(format!("Stalls: {stalls}"))
+                        .small()
+                        .color(STALL_TEXT),
+                );
+                ui.separator();
+            }
+            if flushes > 0 {
+                ui.label(
+                    RichText::new(format!("Flushes: {flushes}"))
+                        .small()
+                        .color(FLUSH_TEXT),
+                );
+                ui.separator();
+            }
+            if branches > 0 {
+                let accuracy = 100.0 * (1.0 - mispredicts as f64 / branches as f64);
+                ui.label(
+                    RichText::new(format!("Branch acc: {accuracy:.1}%"))
+                        .small()
+                        .weak(),
+                );
+            }
         });
     }
 

@@ -1,10 +1,10 @@
 //! RV64 Zicsr - Control and Status Register instructions.
 //!
 //! All CSR instructions use opcode `0x73` (SYSTEM).
-//! The 12‑bit CSR address is placed in the I‑type immediate field.
-//! For register‑operand instructions (CSRRW, CSRRS, CSRRC) the source
+//! The 12-bit CSR address is placed in the I-type immediate field.
+//! For register-operand instructions (CSRRW, CSRRS, CSRRC) the source
 //! register is `rs1`. For immediate variants (CSRRWI, CSRRSI, CSRRCI)
-//! the 5‑bit unsigned immediate is placed in the `rs1` field bits.
+//! the 5-bit unsigned immediate is placed in the `rs1` field bits.
 
 use crate::assembly_language::encode_decode::{IType, Reg, RiscvFormat as _};
 use crate::assembly_language::traits::Instruction;
@@ -31,7 +31,7 @@ pub mod csr {
 }
 
 // ---------------------------------------------------------------------------
-// Register‑operand CSR instructions (funct3 = 1‑3)
+// Register-operand CSR instructions (funct3 = 1-3)
 // ---------------------------------------------------------------------------
 
 macro_rules! csr_reg_inst {
@@ -40,7 +40,7 @@ macro_rules! csr_reg_inst {
         pub struct $name {
             /// Destination register (rd). If rd = x0 the old CSR value is discarded.
             pub rd: Reg,
-            /// CSR address (12‑bit).
+            /// CSR address (12-bit).
             pub csr: u16,
             /// Source register (rs1). If rs1 = x0, the CSR write is suppressed
             /// for CSRRS/CSRRC (not for CSRRW).
@@ -93,7 +93,7 @@ csr_reg_inst!(Csrrs, 2, "csrrs");
 csr_reg_inst!(Csrrc, 3, "csrrc");
 
 // ---------------------------------------------------------------------------
-// Immediate‑operand CSR instructions (funct3 = 5‑7)
+// Immediate-operand CSR instructions (funct3 = 5-7)
 // ---------------------------------------------------------------------------
 
 macro_rules! csr_imm_inst {
@@ -102,9 +102,9 @@ macro_rules! csr_imm_inst {
         pub struct $name {
             /// Destination register (rd).
             pub rd: Reg,
-            /// CSR address (12‑bit).
+            /// CSR address (12-bit).
             pub csr: u16,
-            /// 5‑bit unsigned immediate (zero‑extended).
+            /// 5-bit unsigned immediate (zero-extended).
             pub uimm: u8,
         }
 

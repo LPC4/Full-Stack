@@ -70,7 +70,7 @@ impl RiscvFormat for IType {
     #[inline]
     fn decode(word: u32) -> Self {
         let imm12 = ((word >> 20) & 0xFFF) as i32;
-        // Sign-extend 12-bit → 32-bit
+        // Sign-extend 12-bit -> 32-bit
         let imm = (imm12 << 20) >> 20;
         Self {
             imm,
@@ -113,7 +113,7 @@ impl RiscvFormat for SType {
         let imm11_5 = ((word >> 25) & 0x7F) as i32;
         let imm4_0 = ((word >> 7) & 0x1F) as i32;
         let imm = (imm11_5 << 5) | imm4_0;
-        // Sign-extend 12-bit → 32-bit
+        // Sign-extend 12-bit -> 32-bit
         let imm = (imm << 20) >> 20;
         Self {
             imm,
@@ -157,7 +157,7 @@ impl BType {
         let i4_1 = ((word >> 8) & 0xF) as i32;
         let i11 = ((word >> 7) & 1) as i32;
         let offset = (i12 << 11) | (i10_5 << 5) | (i11 << 10) | i4_1;
-        // Sign-extend 13-bit word offset → 32-bit, then convert back to bytes
+        // Sign-extend 13-bit word offset -> 32-bit, then convert back to bytes
         (offset << 19) >> 18
     }
 }
@@ -242,7 +242,7 @@ impl JType {
         let i11 = ((word >> 20) & 1) as i32;
         let i19_12 = ((word >> 12) & 0xFF) as i32;
         let offset = (i20 << 20) | (i10_1 << 1) | (i11 << 11) | (i19_12 << 12);
-        // Sign-extend 21-bit word offset → 32-bit, then convert back to bytes
+        // Sign-extend 21-bit word offset -> 32-bit, then convert back to bytes
         (offset << 11) >> 10
     }
 }

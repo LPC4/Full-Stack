@@ -24,8 +24,8 @@
 
 pub const RM_RNE: u8 = 0; // Round to Nearest, ties to Even
 pub const RM_RTZ: u8 = 1; // Round towards Zero
-pub const RM_RDN: u8 = 2; // Round Down (towards −∞)
-pub const RM_RUP: u8 = 3; // Round Up (towards +∞)
+pub const RM_RDN: u8 = 2; // Round Down (towards -inf)
+pub const RM_RUP: u8 = 3; // Round Up (towards +inf)
 pub const RM_RMM: u8 = 4; // Round to Nearest, ties to Max Magnitude
 pub const RM_DYN: u8 = 7; // Dynamic (use fcsr.frm), caller resolves before calling
 
@@ -145,25 +145,25 @@ pub fn sraw(a: u64, b: u64) -> u64 {
 // M extension, multiply / divide
 // ---------------------------------------------------------------------------
 
-/// Lower 64 bits of a×b (both interpreted as two's-complement 64-bit).
+/// Lower 64 bits of a*b (both interpreted as two's-complement 64-bit).
 #[inline]
 pub fn mul(a: u64, b: u64) -> u64 {
     a.wrapping_mul(b)
 }
 
-/// Upper 64 bits of signed×signed product.
+/// Upper 64 bits of signed*signed product.
 #[inline]
 pub fn mulh(a: u64, b: u64) -> u64 {
     ((a as i64 as i128).wrapping_mul(b as i64 as i128) >> 64) as u64
 }
 
-/// Upper 64 bits of unsigned×unsigned product.
+/// Upper 64 bits of unsigned*unsigned product.
 #[inline]
 pub fn mulhu(a: u64, b: u64) -> u64 {
     ((a as u128).wrapping_mul(b as u128) >> 64) as u64
 }
 
-/// Upper 64 bits of signed×unsigned product.
+/// Upper 64 bits of signed*unsigned product.
 #[inline]
 pub fn mulhsu(a: u64, b: u64) -> u64 {
     ((a as i64 as i128).wrapping_mul(b as u128 as i128) >> 64) as u64
@@ -294,14 +294,14 @@ fn next_up_f32(x: f32) -> f32 {
     }
     let bits = x.to_bits();
     if x.is_sign_negative() {
-        // negative: decreasing magnitude (bits decrease) moves toward 0 / +∞
+        // negative: decreasing magnitude (bits decrease) moves toward 0 / +inf
         if bits == 0x8000_0000 {
-            f32::from_bits(0x0000_0001) // -0 → smallest positive subnormal
+            f32::from_bits(0x0000_0001) // -0 -> smallest positive subnormal
         } else {
             f32::from_bits(bits - 1)
         }
     } else {
-        // positive or +0: increasing bits moves toward +∞
+        // positive or +0: increasing bits moves toward +inf
         f32::from_bits(bits + 1)
     }
 }
@@ -314,12 +314,12 @@ fn next_down_f32(x: f32) -> f32 {
     }
     let bits = x.to_bits();
     if x.is_sign_negative() {
-        // negative: increasing magnitude moves toward -∞
+        // negative: increasing magnitude moves toward -inf
         f32::from_bits(bits + 1)
     } else {
         // positive or +0: decreasing bits moves toward 0 and then negative
         if bits == 0 {
-            f32::from_bits(0x8000_0001) // +0 → smallest negative subnormal
+            f32::from_bits(0x8000_0001) // +0 -> smallest negative subnormal
         } else {
             f32::from_bits(bits - 1)
         }
@@ -327,7 +327,7 @@ fn next_down_f32(x: f32) -> f32 {
 }
 
 // ---------------------------------------------------------------------------
-// f64 → f32 with explicit rounding mode
+// f64 -> f32 with explicit rounding mode
 //
 // Strategy: compute with hardware default (RNE on x86/ARM), then if the
 // rounded result is on the wrong side of the exact value, nudge it by one ULP.
@@ -341,7 +341,7 @@ pub fn f64_to_f32_with_rm(val: f64, rm: u8) -> f32 {
         return f32::NAN;
     }
     if !val.is_finite() {
-        return val as f32; // ±∞ maps exactly
+        return val as f32; // +/-inf maps exactly
     }
     let rne = val as f32; // host hardware rounds with RNE
     let rne_f64 = rne as f64;
@@ -361,7 +361,7 @@ pub fn f64_to_f32_with_rm(val: f64, rm: u8) -> f32 {
             }
         }
         RM_RDN => {
-            // Result must be ≤ val.
+            // Result must be <= val.
             if rne_f64 > val {
                 next_down_f32(rne)
             } else {
@@ -369,7 +369,7 @@ pub fn f64_to_f32_with_rm(val: f64, rm: u8) -> f32 {
             }
         }
         RM_RUP => {
-            // Result must be ≥ val.
+            // Result must be >= val.
             if rne_f64 < val { next_up_f32(rne) } else { rne }
         }
         _ => rne,
@@ -387,7 +387,7 @@ pub fn f64_to_f32_with_rm(val: f64, rm: u8) -> f32 {
 pub fn fp_flags_from_exact_s(exact: f64, result: f32) -> u8 {
     let mut flags = 0u8;
     if result.is_infinite() && exact.is_finite() {
-        // Overflow to ±∞ is always inexact.
+        // Overflow to +/-inf is always inexact.
         flags |= OF | NX;
     } else if !result.is_nan() {
         if (result as f64) != exact {
@@ -428,7 +428,7 @@ pub fn fp_add_s(a: f32, b: f32, rm: u8) -> (u64, u8) {
     }
     let exact = (a as f64) + (b as f64);
     if exact.is_nan() {
-        return (canon_nan_s(), NV); // e.g., +∞ + (−∞)
+        return (canon_nan_s(), NV); // e.g., +inf + (-inf)
     }
     let result = f64_to_f32_with_rm(exact, rm);
     let flags = fp_flags_from_exact_s(exact, result);
@@ -454,7 +454,7 @@ pub fn fp_mul_s(a: f32, b: f32, rm: u8) -> (u64, u8) {
     }
     let exact = (a as f64) * (b as f64);
     if exact.is_nan() {
-        return (canon_nan_s(), NV); // e.g., ∞ * 0
+        return (canon_nan_s(), NV); // e.g., inf * 0
     }
     let result = f64_to_f32_with_rm(exact, rm);
     let flags = fp_flags_from_exact_s(exact, result);
@@ -468,14 +468,14 @@ pub fn fp_div_s(a: f32, b: f32, rm: u8) -> (u64, u8) {
     }
     let exact = (a as f64) / (b as f64);
     if exact.is_nan() {
-        // 0 / 0 → NaN, NV
+        // 0 / 0 -> NaN, NV
         return (canon_nan_s(), NV);
     }
     let mut flags = 0u8;
-    // DZ: finite non-zero ÷ 0
+    // DZ: finite non-zero / 0
     if b == 0.0 && a.is_finite() && a != 0.0 {
         flags |= DZ;
-        // Result is ±∞; infinite ÷ 0 is not an overflow.
+        // Result is +/-inf; infinite / 0 is not an overflow.
         let bits = if a > 0.0 {
             box_f32(f32::INFINITY)
         } else {
@@ -577,7 +577,7 @@ pub fn fp_sqrt_d(a: f64, _rm: u8) -> (u64, u8) {
 /// Convert a double-precision value to single-precision with explicit rounding.
 pub fn fp_cvt_d_to_s(val: f64, rm: u8) -> (u64, u8) {
     if val.is_nan() {
-        // NaN → NaN conversion is exact; no flags.
+        // NaN -> NaN conversion is exact; no flags.
         return (canon_nan_s(), 0);
     }
     let result = f64_to_f32_with_rm(val, rm);
@@ -770,8 +770,8 @@ pub fn fp_fle_d(a: f64, b: f64) -> (u64, u8) {
 // fclass, classify a floating-point value into one of 10 categories
 //
 // Bit index meanings:
-//   0 = −∞      1 = −normal   2 = −subnormal   3 = −0
-//   4 = +0      5 = +subnormal  6 = +normal    7 = +∞
+//   0 = -inf      1 = -normal   2 = -subnormal   3 = -0
+//   4 = +0      5 = +subnormal  6 = +normal    7 = +inf
 //   8 = sNaN (Rust cannot distinguish sNaN from qNaN, so we always use 9)
 //   9 = qNaN
 // ---------------------------------------------------------------------------
@@ -812,8 +812,8 @@ pub fn fp_fclass_d(a: f64) -> u64 {
 // Fused multiply-add (F extension), exact via f64 promotion
 //
 // All four FMA variants use f64 arithmetic internally.  For f32 operands
-// (≤ 24 significant bits), both the intermediate product (≤ 48 bits) and the
-// final sum (≤ 49 bits) fit exactly in f64 (53-bit mantissa), so the f64
+// (<= 24 significant bits), both the intermediate product (<= 48 bits) and the
+// final sum (<= 49 bits) fit exactly in f64 (53-bit mantissa), so the f64
 // result is the correctly-rounded mathematical result before the final
 // rounding to f32.
 // ---------------------------------------------------------------------------
@@ -858,7 +858,7 @@ pub fn fp_fmsub_s(rs1: f32, rs2: f32, rs3: f32, rm: u8) -> (u64, u8) {
     )
 }
 
-/// -(rs1 × rs2) + rs3
+/// -(rs1 * rs2) + rs3
 pub fn fp_fnmsub_s(rs1: f32, rs2: f32, rs3: f32, rm: u8) -> (u64, u8) {
     if rs1.is_nan() || rs2.is_nan() || rs3.is_nan() {
         return (canon_nan_s(), 0);
@@ -879,7 +879,7 @@ pub fn fp_fnmsub_s(rs1: f32, rs2: f32, rs3: f32, rm: u8) -> (u64, u8) {
     )
 }
 
-/// -(rs1 × rs2 + rs3)
+/// -(rs1 * rs2 + rs3)
 pub fn fp_fnmadd_s(rs1: f32, rs2: f32, rs3: f32, rm: u8) -> (u64, u8) {
     if rs1.is_nan() || rs2.is_nan() || rs3.is_nan() {
         return (canon_nan_s(), 0);
@@ -940,7 +940,7 @@ pub fn fp_fmsub_d(rs1: f64, rs2: f64, rs3: f64, _rm: u8) -> (u64, u8) {
     (bits, flags)
 }
 
-/// -(rs1 × rs2) + rs3
+/// -(rs1 * rs2) + rs3
 pub fn fp_fnmsub_d(rs1: f64, rs2: f64, rs3: f64, _rm: u8) -> (u64, u8) {
     let result = (-rs1).mul_add(rs2, rs3);
     let mut flags = 0u8;
@@ -959,7 +959,7 @@ pub fn fp_fnmsub_d(rs1: f64, rs2: f64, rs3: f64, _rm: u8) -> (u64, u8) {
     (bits, flags)
 }
 
-/// -(rs1 × rs2 + rs3)
+/// -(rs1 * rs2 + rs3)
 pub fn fp_fnmadd_d(rs1: f64, rs2: f64, rs3: f64, _rm: u8) -> (u64, u8) {
     let result = -(rs1.mul_add(rs2, rs3));
     let mut flags = 0u8;

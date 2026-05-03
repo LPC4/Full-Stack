@@ -3,10 +3,10 @@ use crate::assembly_language::encode_decode::Reg;
 use crate::intermediate_language::{IrFunction, IrLabel, IrRegister, IrType};
 use std::collections::{HashMap, HashSet};
 
-// RISC‑V register numbers used in prologue/epilogue.
+// RISC-V register numbers used in prologue/epilogue.
 const SP: Reg = 2;
 const RA: Reg = 1;
-const S0: Reg = 8; // callee‑saved frame pointer (used as temp in prologue)
+const S0: Reg = 8; // callee-saved frame pointer (used as temp in prologue)
 
 pub trait Rv64Backend {
     fn alloc_temp_reg(&mut self) -> Reg;
@@ -21,7 +21,7 @@ pub trait Rv64Backend {
     fn emit_comment(&mut self, text: &str);
 }
 
-/// Function‑level context that owns prologue/epilogue emission and frame layout.
+/// Function-level context that owns prologue/epilogue emission and frame layout.
 pub struct FunctionContext {
     pub name: String,
     pub frame: FrameContext,
@@ -235,7 +235,7 @@ impl FunctionContext {
             let slot = self.slot_for_reg(&param.register).expect("param slot");
             let ty = self.frame.resolve_type(&param.ty, &self.type_aliases);
             // index 1 = first real param = a1, index 2 = a2, etc.
-            // Use arg_reg(index) directly — no shift needed
+            // Use arg_reg(index) directly -- no shift needed
             if index < 8 {
                 backend.emit_comment(&format!(
                     "Spill parameter '{}' from register a{} to stack slot {}",
@@ -255,7 +255,7 @@ impl FunctionContext {
     }
 }
 
-/// Return the argument register for the given index (a0–a7).
+/// Return the argument register for the given index (a0-a7).
 fn arg_reg(i: usize) -> Reg {
     match i {
         0 => 10,

@@ -150,7 +150,7 @@ pub enum RealInstruction {
     AmomaxuD(AmomaxuD),
 
     // -------------------------------------------------------------------
-    // RV64FD - floating‑point loads / stores
+    // RV64FD - floating-point loads / stores
     // -------------------------------------------------------------------
     Flw(Flw),
     Fld(Fld),
@@ -158,7 +158,7 @@ pub enum RealInstruction {
     Fsd(Fsd),
 
     // -------------------------------------------------------------------
-    // RV64FD - FP ALU single‑precision
+    // RV64FD - FP ALU single-precision
     // -------------------------------------------------------------------
     Fadd(Fadd),
     Fsub(Fsub),
@@ -172,7 +172,7 @@ pub enum RealInstruction {
     Fmax(Fmax),
 
     // -------------------------------------------------------------------
-    // RV64FD - FP ALU double‑precision
+    // RV64FD - FP ALU double-precision
     // -------------------------------------------------------------------
     FaddD(FaddD),
     FsubD(FsubD),
@@ -210,7 +210,7 @@ pub enum RealInstruction {
     FmvDX(FmvDX),
 
     // -------------------------------------------------------------------
-    // RV64FD - FP → integer conversions
+    // RV64FD - FP -> integer conversions
     // -------------------------------------------------------------------
     FcvtWS(FcvtWS),
     FcvtWUS(FcvtWUS),
@@ -222,7 +222,7 @@ pub enum RealInstruction {
     FcvtLUD(FcvtLUD),
 
     // -------------------------------------------------------------------
-    // RV64FD - integer → FP conversions
+    // RV64FD - integer -> FP conversions
     // -------------------------------------------------------------------
     FcvtSW(FcvtSW),
     FcvtSWU(FcvtSWU),
@@ -234,13 +234,13 @@ pub enum RealInstruction {
     FcvtDLU(FcvtDLU),
 
     // -------------------------------------------------------------------
-    // RV64FD - FP ↔ FP conversions
+    // RV64FD - FP <-> FP conversions
     // -------------------------------------------------------------------
     FcvtSD(FcvtSD),
     FcvtDS(FcvtDS),
 
     // -------------------------------------------------------------------
-    // RV64FD - FMAC (fused multiply‑add/sub)
+    // RV64FD - FMAC (fused multiply-add/sub)
     // -------------------------------------------------------------------
     FmaddS(FmaddS),
     FmaddD(FmaddD),

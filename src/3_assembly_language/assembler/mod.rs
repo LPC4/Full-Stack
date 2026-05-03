@@ -1,12 +1,12 @@
-/// Multi-pass assembler: `Vec<RvInstruction>` → `AssembledOutput`.
+/// Multi-pass assembler: `Vec<RvInstruction>` -> `AssembledOutput`.
 ///
 /// # Passes
 ///
 /// | Pass | File | Responsibility |
 /// |------|------|----------------|
-/// | 0 — Parse    | `parser.rs`   | `RvInstruction` → `Vec<AsmToken>` (typed, no raw strings) |
-/// | 1 — Layout   | `layout.rs`   | Walk tokens, compute every label's section-relative address |
-/// | 2 — Encode   | `encode.rs`   | Emit bytes, resolve branch/jump offsets via symbol table |
+/// | 0 -- Parse    | `parser.rs`   | `RvInstruction` -> `Vec<AsmToken>` (typed, no raw strings) |
+/// | 1 -- Layout   | `layout.rs`   | Walk tokens, compute every label's section-relative address |
+/// | 2 -- Encode   | `encode.rs`   | Emit bytes, resolve branch/jump offsets via symbol table |
 pub mod directive;
 pub mod encode;
 pub mod layout;
@@ -40,7 +40,7 @@ impl AssemblerError {
     }
 }
 
-/// Top-level assembler — runs all three passes in sequence.
+/// Top-level assembler -- runs all three passes in sequence.
 pub struct Assembler;
 
 impl Assembler {

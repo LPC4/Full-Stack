@@ -722,16 +722,16 @@ impl SemanticAnalyzer {
             return Ok("*unknown".to_owned());
         }
 
-        // Handle pointer-to-array: *T[N] → *T
+        // Handle pointer-to-array: *T[N] -> *T
         if let Some(inner) = base_type.strip_prefix('*') {
             if let Some((element, _len)) = inner.split_once('[') {
                 return Ok(format!("*{element}"));
             }
-            // Pointer to non-array: *T → *T (indexing through pointer returns pointer to element)
+            // Pointer to non-array: *T -> *T (indexing through pointer returns pointer to element)
             return Ok(format!("*{inner}"));
         }
 
-        // Handle direct array: T[N] → *T (stack arrays follow the same pointer-element rule)
+        // Handle direct array: T[N] -> *T (stack arrays follow the same pointer-element rule)
         if let Some((element, _rest)) = base_type.split_once('[') {
             return Ok(format!("*{element}"));
         }

@@ -650,7 +650,7 @@ fn exec_fp_op(
                 next_pc,
             })
         }
-        // FCVT.{W,WU,L,LU}.{S,D} , FP → int
+        // FCVT.{W,WU,L,LU}.{S,D} , FP -> int
         0b11000 => {
             let (val, fflags) = match fmt {
                 0 => {
@@ -682,17 +682,17 @@ fn exec_fp_op(
                 next_pc,
             })
         }
-        // FCVT.{S,D}.{W,WU,L,LU} , int → FP
+        // FCVT.{S,D}.{W,WU,L,LU} , int -> FP
         0b11010 => {
             let src = regs.read_x(rs1);
             let (bits, fflags) = match fmt {
                 0 => {
-                    // int → f32: use f64 as exact intermediate, then apply rm.
+                    // int -> f32: use f64 as exact intermediate, then apply rm.
                     let exact_f64: f64 = match rs2 {
-                        0 => (src as i32) as f64, // i32 → f64 is exact
-                        1 => (src as u32) as f64, // u32 → f64 is exact
-                        2 => (src as i64) as f64, // i64 → f64: exact for |v| ≤ 2^53
-                        3 => src as f64,          // u64 → f64: exact for v ≤ 2^53
+                        0 => (src as i32) as f64, // i32 -> f64 is exact
+                        1 => (src as u32) as f64, // u32 -> f64 is exact
+                        2 => (src as i64) as f64, // i64 -> f64: exact for |v| <= 2^53
+                        3 => src as f64,          // u64 -> f64: exact for v <= 2^53
                         _ => return Err(VmError::IllegalInstruction(rs2 as u32)),
                     };
                     let result = alu::f64_to_f32_with_rm(exact_f64, rm);
@@ -707,7 +707,7 @@ fn exec_fp_op(
                         3 => src as f64,
                         _ => return Err(VmError::IllegalInstruction(rs2 as u32)),
                     };
-                    // Detect NX for large integer → f64 conversions that lose bits.
+                    // Detect NX for large integer -> f64 conversions that lose bits.
                     let fflags: u8 = match rs2 {
                         2 => {
                             if (result as i64) != (src as i64) {
@@ -736,7 +736,7 @@ fn exec_fp_op(
                 next_pc,
             })
         }
-        // FCVT.S.D (fmt=0, rs2=1), convert f64 → f32 with rounding + flags
+        // FCVT.S.D (fmt=0, rs2=1), convert f64 -> f32 with rounding + flags
         0b01000 => {
             if fmt != 0 {
                 return Err(VmError::IllegalInstruction(funct5 as u32));
@@ -750,14 +750,14 @@ fn exec_fp_op(
                 next_pc,
             })
         }
-        // FCVT.D.S (fmt=1, rs2=0), convert f32 → f64; exact, no flags
+        // FCVT.D.S (fmt=1, rs2=0), convert f32 -> f64; exact, no flags
         0b01001 => {
             if fmt != 1 {
                 return Err(VmError::IllegalInstruction(funct5 as u32));
             }
             let val_s = regs.read_f32(rs1);
             let val_d = val_s as f64;
-            // f32 → f64 is always exact; no exception flags (incl. for NaN).
+            // f32 -> f64 is always exact; no exception flags (incl. for NaN).
             Ok(ExecResult::WriteFpFlags {
                 rd,
                 bits: val_d.to_bits(),
@@ -864,7 +864,7 @@ fn exec_fmac(
 }
 
 // ---------------------------------------------------------------------------
-// FP → integer saturation helpers
+// FP -> integer saturation helpers
 // ---------------------------------------------------------------------------
 
 const NV: u8 = 0x10;
@@ -931,7 +931,7 @@ fn sat_f32_to_u64(val: f32, rm: u8) -> (u64, u8) {
     (rounded as u64, flags)
 }
 
-// f64→int: round first, then check overflow bounds (fixes the double-rounding issue).
+// f64->int: round first, then check overflow bounds (fixes the double-rounding issue).
 
 fn sat_f64_to_i32(val: f64, rm: u8) -> (u64, u8) {
     if val.is_nan() {

@@ -1,5 +1,5 @@
-//! CLINT – Core‑Local Interruptor (timer + software interrupts).
-//! Memory‑mapped at 0x0200_0000.
+//! CLINT - Core-Local Interruptor (timer + software interrupts).
+//! Memory-mapped at 0x0200_0000.
 
 use crate::virtual_machine::error::VmError;
 use crate::virtual_machine::memory::MemoryAccess;
@@ -37,7 +37,7 @@ const MTIMECMP_BASE: u64 = 0x4000;
 const MTIME_BASE: u64 = 0xBFF8;
 
 impl MemoryAccess for Clint {
-    // Byte and halfword accesses are illegal → fault.
+    // Byte and halfword accesses are illegal -> fault.
     fn read_byte(&mut self, addr: u64) -> Result<u8, VmError> {
         Err(VmError::LoadAccessFault(addr))
     }

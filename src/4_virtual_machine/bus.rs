@@ -31,7 +31,7 @@ pub const HEAP_PTR_ADDR: u64 = RAM_BASE + 32 * 1024 * 1024 - 8; // 0x81FF_FFF8
 
 pub struct SystemBus {
     rom: Rom,
-    l1_cache: Cache<Cache<Cache<Ram>>>, // L1 → L2 → L3 → RAM
+    l1_cache: Cache<Cache<Cache<Ram>>>, // L1 -> L2 -> L3 -> RAM
     uart: Uart,
     clint: Clint,
     plic: Plic,

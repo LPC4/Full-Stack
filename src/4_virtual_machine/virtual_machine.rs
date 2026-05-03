@@ -2,9 +2,10 @@
 
 use crate::assembly_language::assembler::output::AssembledOutput;
 use crate::virtual_machine::bus::{HEAP_PTR_ADDR, RAM_BASE, RAM_SIZE_DEFAULT, SystemBus};
-use crate::virtual_machine::cpu::Cpu;
+use crate::virtual_machine::cpu::PipelinedCpu;
 pub use crate::virtual_machine::cpu::StepOutcome;
 pub use crate::virtual_machine::cpu::csr::CsrSnapshot;
+pub use crate::virtual_machine::cpu::pipelined::{CpuPipelineFeed, PipelineStats, StageEntry};
 use crate::virtual_machine::error::VmError;
 use crate::virtual_machine::linker::{self, LinkedProgram, LinkerConfig};
 use crate::virtual_machine::memory::MemoryAccess;
@@ -16,7 +17,7 @@ pub struct RunResult {
 }
 
 pub struct VirtualMachine {
-    cpu: Cpu,
+    cpu: PipelinedCpu,
     bus: SystemBus,
 }
 
@@ -45,7 +46,7 @@ impl VirtualMachine {
 
         // Stack pointer = top of RAM, 16-byte aligned.
         let stack_ptr = RAM_BASE + RAM_SIZE_DEFAULT as u64 - 16;
-        let mut cpu = Cpu::new(program.entry_point, stack_ptr);
+        let mut cpu = PipelinedCpu::new(program.entry_point, stack_ptr);
 
         // Set ra to the `exit` stub so that returning from `main` halts cleanly.
         if let Some(&exit_addr) = program.symbols.get("exit") {
@@ -62,7 +63,11 @@ impl VirtualMachine {
 
 impl VirtualMachine {
     pub fn step(&mut self) -> Result<StepOutcome, VmError> {
-        self.cpu.step(&mut self.bus)
+        use crate::virtual_machine::cpu::pipelined::TickOutcome;
+        match self.cpu.tick(&mut self.bus)? {
+            TickOutcome::Continue => Ok(StepOutcome::Continue),
+            TickOutcome::Halted(code) => Ok(StepOutcome::Halted(code)),
+        }
     }
 
     pub fn run(&mut self, max_steps: u64) -> RunResult {
@@ -134,6 +139,16 @@ impl VirtualMachine {
 
     pub fn write_csr_mtvec(&mut self, val: u64) {
         self.cpu.write_csr_mtvec(val);
+    }
+
+    /// Raw pipeline stage feed from the most recent tick.
+    pub fn pipeline_snapshot(&self) -> &CpuPipelineFeed {
+        &self.cpu.last_cycle
+    }
+
+    /// Cumulative pipeline performance stats.
+    pub fn pipeline_stats(&self) -> &PipelineStats {
+        &self.cpu.stats
     }
 
     // ---------------------------------------------------------------------------

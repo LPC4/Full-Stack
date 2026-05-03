@@ -3,9 +3,9 @@ use std::collections::HashMap;
 /// Tracks label addresses accumulated across all sections during Pass 1.
 #[derive(Debug, Default)]
 pub struct SymbolTable {
-    /// label → absolute byte address (section-base + section-offset).
+    /// label -> absolute byte address (section-base + section-offset).
     symbols: HashMap<String, u64>,
-    /// Labels marked `.globl` — exported for the linker.
+    /// Labels marked `.globl` -- exported for the linker.
     globals: Vec<String>,
 }
 

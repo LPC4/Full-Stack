@@ -13,8 +13,8 @@ impl HighLevelCompiler {
 
     /// Unified expression lowering.
     ///
-    /// `EvalMode::Value`   → produce the loaded/computed value.
-    /// `EvalMode::Address` → produce a pointer (`Pointer(T)`) to the storage location.
+    /// `EvalMode::Value`   -> produce the loaded/computed value.
+    /// `EvalMode::Address` -> produce a pointer (`Pointer(T)`) to the storage location.
     pub(super) fn lower_expr(
         &mut self,
         expression: &Expression,
@@ -259,9 +259,9 @@ impl HighLevelCompiler {
         mode: EvalMode,
     ) -> Option<LoweredValue> {
         // `@ptr.field` (parser form: FieldAccess(Dereference(ptr), field)):
-        //   evaluate the inner pointer in Value mode — its register IS the base pointer.
+        //   evaluate the inner pointer in Value mode -- its register IS the base pointer.
         // `x.field` (ordinary form):
-        //   evaluate the base in Address mode — the slot pointer IS the aggregate pointer.
+        //   evaluate the base in Address mode -- the slot pointer IS the aggregate pointer.
         let base_addr = match expr {
             Expression::Unary {
                 op: UnaryOp::Dereference,
@@ -282,9 +282,9 @@ impl HighLevelCompiler {
 
         // Resolve the aggregate pointer and field list from the base type.
         // Three shapes are valid:
-        //   Aggregate(fields)              → base_addr.value is the pointer to the aggregate
-        //   Pointer(Aggregate(fields))     → base_addr.value is the pointer to the aggregate
-        //   Pointer(Pointer(Aggregate))    → load from base_addr.value first (heap-ptr in stack slot)
+        //   Aggregate(fields)              -> base_addr.value is the pointer to the aggregate
+        //   Pointer(Aggregate(fields))     -> base_addr.value is the pointer to the aggregate
+        //   Pointer(Pointer(Aggregate))    -> load from base_addr.value first (heap-ptr in stack slot)
         let (agg_ptr, fields) = match resolved_ty {
             IrType::Aggregate(fields) => {
                 let reg = match &base_addr.value {
@@ -432,7 +432,7 @@ impl HighLevelCompiler {
             IrType::Pointer(inner) => {
                 let inner_resolved = self.resolve_named_type(&inner);
                 match inner_resolved {
-                    // Pointer → Array: base.value points directly to the array data
+                    // Pointer -> Array: base.value points directly to the array data
                     IrType::Array { element, .. } => {
                         let reg = match &base.value {
                             IrValue::Register(r) => r.clone(),
@@ -440,7 +440,7 @@ impl HighLevelCompiler {
                         };
                         (reg, *element)
                     }
-                    // Pointer → Pointer → something: load the inner pointer first
+                    // Pointer -> Pointer -> something: load the inner pointer first
                     IrType::Pointer(inner_inner) => {
                         let inner_inner_resolved = self.resolve_named_type(&inner_inner);
                         let element_ty = match inner_inner_resolved {
@@ -460,7 +460,7 @@ impl HighLevelCompiler {
                         });
                         (loaded, element_ty)
                     }
-                    // Pointer → T: base.value is a pointer to elements of type T
+                    // Pointer -> T: base.value is a pointer to elements of type T
                     other => {
                         let reg = match &base.value {
                             IrValue::Register(r) => r.clone(),
@@ -529,7 +529,7 @@ impl HighLevelCompiler {
                     );
                     return None;
                 }
-                // `&x` — evaluate x in Address mode; the result already is a Pointer(T).
+                // `&x` -- evaluate x in Address mode; the result already is a Pointer(T).
                 self.lower_expr(expr, EvalMode::Address)
             }
             UnaryOp::Dereference => {
@@ -652,7 +652,7 @@ impl HighLevelCompiler {
 
         // Struct destructuring is the one target form that doesn't have a single address.
         if let AssignTarget::StructDestructure(fields) = target {
-            // 1) Try Address mode – works for local variables, field accesses, etc.
+            // 1) Try Address mode - works for local variables, field accesses, etc.
             if let Some(addr) = self.lower_expr(rvalue, EvalMode::Address) {
                 return self.lower_struct_destructuring_from_addr(fields, &addr);
             }

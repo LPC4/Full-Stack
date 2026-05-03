@@ -149,7 +149,7 @@ amo_inst!(AmomaxuD, funct3 = 3, funct5 = 0x1C, mnemonic = "amomaxu");
 // Load-Reserved / Store-Conditional  (LR has no rs2; SC has all three)
 // ---------------------------------------------------------------------------
 
-/// `lr.w rd, (rs1)` / `lr.d rd, (rs1)` — Load-reserved.
+/// `lr.w rd, (rs1)` / `lr.d rd, (rs1)` -- Load-reserved.
 ///
 /// `rs2` must be `x0` per spec. This struct has no `src` field to enforce that.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -214,7 +214,7 @@ impl Instruction for Lr {
     }
 }
 
-/// `sc.w rd, rs2, (rs1)` / `sc.d rd, rs2, (rs1)` — Store-conditional.
+/// `sc.w rd, rs2, (rs1)` / `sc.d rd, rs2, (rs1)` -- Store-conditional.
 ///
 /// `rd = 0` on success, `rd = 1` on failure. `rd = x0` is valid (status discarded).
 #[derive(Debug, Clone, PartialEq, Eq)]

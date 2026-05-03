@@ -2,7 +2,7 @@ use crate::assembly_language::encode_decode::Reg;
 
 pub fn reg_name(r: Reg, fp: bool) -> String {
     if fp {
-        // Floating point: f0–f31, also ABI names ft0–ft11, fa0–fa7, fs0–fs11
+        // Floating point: f0-f31, also ABI names ft0-ft11, fa0-fa7, fs0-fs11
         match r {
             0 => "ft0".into(),
             1 => "ft1".into(),
@@ -39,7 +39,7 @@ pub fn reg_name(r: Reg, fp: bool) -> String {
             _ => format!("f{r}"),
         }
     } else {
-        // Integer: x0–x31 with ABI aliases
+        // Integer: x0-x31 with ABI aliases
         match r {
             0 => "zero".into(),
             1 => "ra".into(),

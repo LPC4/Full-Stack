@@ -14,7 +14,7 @@ pub struct LoweringContext {
     /// Tracks SSA values at the end of each block for phi nodes
     pub block_exit_values: HashMap<String, HashMap<String, IrValue>>,
     pub unsigned_vars: HashSet<String>,
-    /// Name of the function currently being lowered — included in error messages.
+    /// Name of the function currently being lowered -- included in error messages.
     pub current_function: Option<String>,
 }
 

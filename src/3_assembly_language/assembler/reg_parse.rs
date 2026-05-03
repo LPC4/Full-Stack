@@ -1,4 +1,4 @@
-/// Inverse of `utils::reg_name` — map an ABI register name back to its number (0-31).
+/// Inverse of `utils::reg_name` -- map an ABI register name back to its number (0-31).
 use crate::assembly_language::encode_decode::Reg;
 
 /// Parse an ABI integer register name (e.g. `"a0"`, `"x10"`, `"zero"`) to a

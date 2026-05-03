@@ -2,8 +2,8 @@
 //!
 //! Two kinds of hazards are handled:
 //! - **Load-use**: a load in ID/EX whose result is needed by the instruction
-//!   being decoded — insert one stall bubble.
-//! - **RAW**: a register written in EX/MEM or MEM/WB is read in EX — resolved
+//!   being decoded -- insert one stall bubble.
+//! - **RAW**: a register written in EX/MEM or MEM/WB is read in EX -- resolved
 //!   through forwarding (no stall).
 
 use crate::virtual_machine::cpu::decoder::DecodedInsn;
@@ -131,7 +131,7 @@ pub fn compute_forwarding(
     let mut frs1 = id_ex.frs1_val;
     let mut frs2 = id_ex.frs2_val;
 
-    // MEM/WB → EX (lower priority)
+    // MEM/WB -> EX (lower priority)
     if let Some(mw) = mem_wb {
         if mw.rd != 0 {
             if !mw.is_fp_dest {
@@ -152,7 +152,7 @@ pub fn compute_forwarding(
         }
     }
 
-    // EX/MEM → EX (higher priority, load results excluded)
+    // EX/MEM -> EX (higher priority, load results excluded)
     if let Some(em) = ex_mem {
         if em.rd != 0 && !em.is_load {
             if !em.is_fp_dest {

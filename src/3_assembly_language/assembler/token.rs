@@ -81,7 +81,7 @@ pub enum AsmToken {
     Globl(String),
 
     // ---- data ----
-    /// Align to 2ⁿ bytes (`.align n`).
+    /// Align to 2^n bytes (`.align n`).
     Align(usize),
 
     /// Align to exactly n bytes (`.balign n`).

@@ -12,7 +12,7 @@ use crate::assembly_language::rv_instruction::RvInstruction;
 /// Convert a `RvInstruction` stream to a typed `AsmToken` stream.
 ///
 /// Tokens that cannot be parsed are emitted as `AsmToken::Comment` with the raw
-/// text so nothing is silently lost — the caller can choose to error on those.
+/// text so nothing is silently lost -- the caller can choose to error on those.
 pub fn parse(tokens: &[RvInstruction]) -> Vec<AsmToken> {
     let mut out = Vec::with_capacity(tokens.len());
     for tok in tokens {
@@ -131,7 +131,7 @@ fn parse_instruction_line(line: &str) -> Option<AsmToken> {
         return parse_jal(rest);
     }
 
-    // CALL pseudo: `call symbol` → expands to auipc + jalr
+    // CALL pseudo: `call symbol` -> expands to auipc + jalr
     if mnemonic == "call" {
         let symbol = rest.trim().to_owned();
         return if symbol.is_empty() {
@@ -141,7 +141,7 @@ fn parse_instruction_line(line: &str) -> Option<AsmToken> {
         };
     }
 
-    // TAIL pseudo: `tail symbol` → expands to auipc + jalr (tail call)
+    // TAIL pseudo: `tail symbol` -> expands to auipc + jalr (tail call)
     if mnemonic == "tail" {
         let symbol = rest.trim().to_owned();
         return if symbol.is_empty() {
@@ -151,7 +151,7 @@ fn parse_instruction_line(line: &str) -> Option<AsmToken> {
         };
     }
 
-    // LA pseudo: `la rd, symbol` → expands to auipc + addi
+    // LA pseudo: `la rd, symbol` -> expands to auipc + addi
     if mnemonic == "la" {
         return parse_la(rest);
     }
@@ -193,7 +193,7 @@ fn parse_jal(operands: &str) -> Option<AsmToken> {
             Some(AsmToken::Jal { rd, target })
         }
         1 => {
-            // `jal label` — treat as `jal ra, label`
+            // `jal label` -- treat as `jal ra, label`
             let target = parts[0].trim().to_owned();
             if target.is_empty() {
                 None

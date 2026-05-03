@@ -388,12 +388,12 @@ pub fn highlight_ir(theme: &egui::Style, code: &str) -> LayoutJob {
     job
 }
 
-/// Highlights RISC‑V assembly (RV64IMAFD) with proper mnemonics, registers, and directives.
+/// Highlights RISC-V assembly (RV64IMAFD) with proper mnemonics, registers, and directives.
 pub fn highlight_assembly(theme: &egui::Style, code: &str) -> LayoutJob {
     let mut job = LayoutJob::default();
     let font_id = egui::TextStyle::Monospace.resolve(theme);
 
-    // RISC‑V integer / FP instruction mnemonics (full set for RV64IMAFD)
+    // RISC-V integer / FP instruction mnemonics (full set for RV64IMAFD)
     let instructions: &[&str] = &[
         "lb",
         "lh",
@@ -461,7 +461,7 @@ pub fn highlight_assembly(theme: &egui::Style, code: &str) -> LayoutJob {
         "divuw",
         "remw",
         "remuw",
-        // A‑extension
+        // A-extension
         "lr.w",
         "sc.w",
         "amoadd.w",
@@ -484,7 +484,7 @@ pub fn highlight_assembly(theme: &egui::Style, code: &str) -> LayoutJob {
         "amomax.d",
         "amominu.d",
         "amomaxu.d",
-        // F/D‑extension
+        // F/D-extension
         "flw",
         "fld",
         "fsw",
@@ -547,7 +547,7 @@ pub fn highlight_assembly(theme: &egui::Style, code: &str) -> LayoutJob {
         "fmsub.d",
         "fnmsub.d",
         "fnmadd.d",
-        // pseudo‑instructions (treated as instructions for highlighting)
+        // pseudo-instructions (treated as instructions for highlighting)
         "nop",
         "li",
         "la",
@@ -589,7 +589,7 @@ pub fn highlight_assembly(theme: &egui::Style, code: &str) -> LayoutJob {
         "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11", "a0", "a1", "a2", "a3", "a4", "a5",
         "a6", "a7",
     ];
-    // Floating‑point ABI names
+    // Floating-point ABI names
     let fp_regs: &[&str] = &[
         "ft0", "ft1", "ft2", "ft3", "ft4", "ft5", "ft6", "ft7", "fs0", "fs1", "fs2", "fs3", "fs4",
         "fs5", "fs6", "fs7", "fs8", "fs9", "fs10", "fs11", "fa0", "fa1", "fa2", "fa3", "fa4",
@@ -609,7 +609,7 @@ pub fn highlight_assembly(theme: &egui::Style, code: &str) -> LayoutJob {
             (segment, false)
         };
 
-        // Whole‑line comment (; …)
+        // Whole-line comment (; ...)
         if line.trim_start().starts_with(';') {
             job.append(
                 line,

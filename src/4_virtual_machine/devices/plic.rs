@@ -1,4 +1,4 @@
-//! PLIC – Platform‑Level Interrupt Controller.
+//! PLIC - Platform-Level Interrupt Controller.
 //! Base address 0x0C00_0000.
 
 use crate::virtual_machine::error::VmError;

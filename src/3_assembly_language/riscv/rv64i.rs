@@ -290,7 +290,7 @@ impl Instruction for Srai {
     }
 }
 
-// 32‑bit word shifts (5‑bit shamt, opcode 0x1B)
+// 32-bit word shifts (5-bit shamt, opcode 0x1B)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Slliw {
     pub rd: Reg,

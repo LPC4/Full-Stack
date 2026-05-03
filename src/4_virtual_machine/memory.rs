@@ -1,4 +1,4 @@
-//! Memory subsystem: trait, bus, and sub‑module organisation.
+//! Memory subsystem: trait, bus, and sub-module organisation.
 
 pub mod cache;
 pub mod ram;

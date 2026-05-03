@@ -300,7 +300,7 @@ fn push_u32(sec: &mut SectionData, word: u32, current_addr: &mut u64) {
 // Pseudo-instruction encoding with symbol relocation
 // ---------------------------------------------------------------------------
 
-/// Encode `call symbol` → `auipc ra, %pcrel_hi(symbol); jalr ra, ra, %pcrel_lo(symbol)`
+/// Encode `call symbol` -> `auipc ra, %pcrel_hi(symbol); jalr ra, ra, %pcrel_lo(symbol)`
 fn encode_call(
     sec: &mut SectionData,
     symbol: &str,
@@ -330,7 +330,7 @@ fn encode_call(
     Ok(())
 }
 
-/// Encode `tail symbol` → `auipc t1, %pcrel_hi(symbol); jalr x0, t1, %pcrel_lo(symbol)`
+/// Encode `tail symbol` -> `auipc t1, %pcrel_hi(symbol); jalr x0, t1, %pcrel_lo(symbol)`
 fn encode_tail(
     sec: &mut SectionData,
     symbol: &str,
@@ -358,7 +358,7 @@ fn encode_tail(
     Ok(())
 }
 
-/// Encode `la rd, symbol` → `auipc rd, %pcrel_hi(symbol); addi rd, rd, %pcrel_lo(symbol)`
+/// Encode `la rd, symbol` -> `auipc rd, %pcrel_hi(symbol); addi rd, rd, %pcrel_lo(symbol)`
 fn encode_la(
     sec: &mut SectionData,
     rd: u8,

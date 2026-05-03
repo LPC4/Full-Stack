@@ -1,13 +1,13 @@
 use super::section::{SectionData, SectionKind};
 use std::collections::HashMap;
 
-/// The final output produced by the assembler — one byte blob per section,
+/// The final output produced by the assembler -- one byte blob per section,
 /// plus a complete symbol table ready to hand to a linker or ELF writer.
 #[derive(Debug, Default, Clone)]
 pub struct AssembledOutput {
     /// Sections in emission order, keyed by kind.
     pub sections: Vec<SectionData>,
-    /// All resolved labels: name → absolute address within the output blob.
+    /// All resolved labels: name -> absolute address within the output blob.
     pub symbol_table: HashMap<String, u64>,
     /// Names marked `.globl` (exported).
     pub global_symbols: Vec<String>,

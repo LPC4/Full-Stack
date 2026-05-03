@@ -61,7 +61,7 @@ impl CompilationPipeline {
         }
     }
 
-    /// source → tokens → AST → IR
+    /// source -> tokens -> AST -> IR
     pub fn compile(&self, source: &str) -> Result<CompilationResult, CompilationError> {
         log::info!("Starting compilation pipeline");
 
@@ -186,7 +186,7 @@ impl CompilationPipeline {
         Ok(result.ir_program)
     }
 
-    /// Compile an IR program to RISC‑V assembly text.
+    /// Compile an IR program to RISC-V assembly text.
     pub fn compile_ir_to_assembly(&self, ir: &IrProgram) -> String {
         let mut compiler = CompilerRv64::new();
         compiler.compile(ir)
@@ -230,7 +230,7 @@ impl CompilationPipeline {
 /// Each stub is three instructions:
 ///   addi a7, x0, <syscall_no>   // set syscall ID
 ///   ecall                       // handled by the VM
-///   jalr x0, x1, 0              // ret — return to caller
+///   jalr x0, x1, 0              // ret -- return to caller
 ///
 /// The VM's ecall handler recognises these custom syscall numbers and
 /// implements the corresponding behaviour (I/O, malloc, etc.).

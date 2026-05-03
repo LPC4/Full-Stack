@@ -111,7 +111,7 @@ impl<Next: MemoryAccess> Cache<Next> {
             return Ok((set_idx, way_idx, false));
         }
 
-        // Miss: choose victim — first invalid way, else true LRU (smallest age)
+        // Miss: choose victim -- first invalid way, else true LRU (smallest age)
         let victim_idx = {
             let set = &self.sets[set_idx];
             set.ways
@@ -166,7 +166,7 @@ impl<Next: MemoryAccess> Cache<Next> {
     }
 
     // ---------------------------------------------------------------------------
-    // Internal multi-byte helpers — count one stat per unique cache block touched
+    // Internal multi-byte helpers -- count one stat per unique cache block touched
     // ---------------------------------------------------------------------------
 
     fn read_n(&mut self, addr: u64, n: usize) -> Result<u64, VmError> {

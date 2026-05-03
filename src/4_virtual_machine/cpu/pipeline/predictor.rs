@@ -1,4 +1,4 @@
-//! Branch predictor — 2-bit bimodal predictor with a Branch Target Buffer (BTB).
+//! Branch predictor -- 2-bit bimodal predictor with a Branch Target Buffer (BTB).
 //!
 //! The PHT (Pattern History Table) holds 2-bit saturating counters indexed by
 //! PC bits.  The BTB maps known branch PCs to their most-recently-seen target.
@@ -11,7 +11,7 @@ const PHT_SIZE: usize = 256;
 pub struct BranchPredictor {
     /// 2-bit saturating counters: 0-1 = predict not-taken, 2-3 = predict taken.
     pht: [u8; PHT_SIZE],
-    /// Maps branch PC → last seen target address.
+    /// Maps branch PC -> last seen target address.
     btb: HashMap<u64, u64>,
     pub stats: PredictorStats,
 }
