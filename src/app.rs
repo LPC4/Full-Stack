@@ -164,18 +164,13 @@ impl FullStackApp {
         let mem = ViewWrapper::new(Box::new(MemoryView::default()), &mut self.next_view_id);
         let io = ViewWrapper::new(Box::new(IoView::default()), &mut self.next_view_id);
 
-        // Three-column layout: Left (CPU + Disassembly), Middle (Pipeline + Cache), Right (Memory + IO)
-        let mut dock = DockState::new(vec![cpu, disasm]);
+        let mut dock = DockState::new(vec![disasm, cpu]);
         let surface = dock.main_surface_mut();
 
-        // Split root into left (40%) and right (60%)
-        let [left, right] = surface.split_right(NodeIndex::root(), 0.4, vec![pipeline, cache]);
+        let [left, _right] = surface.split_right(NodeIndex::root(), 0.4, vec![mem, pipeline, cache]);
 
-        // Split left column vertically: top 50% for CPU state, bottom 50% for Disassembly
         surface.split_below(left, 0.5, vec![fb]);
-
-        // Add memory and IO to the right column
-        surface.push_to_focused_leaf(mem);
+        
         surface.push_to_focused_leaf(io);
 
         self.debug_dock = dock;

@@ -5,6 +5,7 @@ use std::collections::HashMap;
 
 use crate::assembly_language::assembler::output::AssembledOutput;
 use crate::virtual_machine::bus::{CLINT_BASE, PLIC_BASE, RAM_BASE, ROM_BASE, UART_BASE};
+use crate::virtual_machine::cpu::decoder::{DecodedInsn, FMacOp, decode as decode_insn};
 use crate::virtual_machine::linker::{self, LinkerConfig};
 use crate::virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 
@@ -12,7 +13,7 @@ use crate::virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 // Re-exports
 // ---------------------------------------------------------------------------
 
-pub use snapshot::{CpuSnapshot, DebugSnapshot, PipelineHistory};
+pub use snapshot::{CpuSnapshot, DebugSnapshot, PipelineEntry, PipelineHistory};
 
 pub mod cache_view;
 pub mod cpu_state_view;
@@ -219,7 +220,20 @@ impl DebugSession {
             prev_xregs,
         };
 
-        self.snapshot.pipeline.push(pc);
+        // Decode mnemonic at current fetch PC and record it in the pipeline log.
+        let mnemonic = {
+            let bytes = self.vm.peek_bytes(pc, 4);
+            if bytes.len() == 4 {
+                let raw = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                decode_insn(raw)
+                    .map(|insn| insn_mnemonic(&insn).to_string())
+                    .unwrap_or_else(|_| "???".into())
+            } else {
+                "---".into()
+            }
+        };
+        self.snapshot.pipeline.push(snapshot::PipelineEntry { pc, mnemonic });
+
         self.snapshot.l1_stats = l1_stats;
         self.snapshot.l2_stats = l2_stats;
         self.snapshot.l3_stats = l3_stats;
@@ -247,5 +261,99 @@ fn fill_section_presets(snapshot: &mut DebugSnapshot, symbols: &HashMap<String, 
         snapshot
             .section_presets
             .push((".text (RAM base)", RAM_BASE));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Instruction mnemonic helper
+// ---------------------------------------------------------------------------
+
+fn insn_mnemonic(insn: &DecodedInsn) -> &'static str {
+    match insn {
+        DecodedInsn::Lui { .. }      => "lui",
+        DecodedInsn::Auipc { .. }    => "auipc",
+        DecodedInsn::Jal { .. }      => "jal",
+        DecodedInsn::Jalr { .. }     => "jalr",
+        DecodedInsn::Branch { funct3, .. } => match funct3 {
+            0 => "beq", 1 => "bne", 4 => "blt", 5 => "bge", 6 => "bltu", 7 => "bgeu", _ => "b??",
+        },
+        DecodedInsn::Load { funct3, .. } => match funct3 {
+            0 => "lb",  1 => "lh",  2 => "lw",  3 => "ld",
+            4 => "lbu", 5 => "lhu", 6 => "lwu",  _ => "l??",
+        },
+        DecodedInsn::Store { funct3, .. } => match funct3 {
+            0 => "sb", 1 => "sh", 2 => "sw", 3 => "sd", _ => "s??",
+        },
+        DecodedInsn::AluImm { funct3, funct7, .. } => match funct3 {
+            0 => "addi", 1 => "slli", 2 => "slti", 3 => "sltiu",
+            4 => "xori",
+            5 => if funct7 & 0x20 != 0 { "srai" } else { "srli" },
+            6 => "ori",  7 => "andi", _ => "imm??",
+        },
+        DecodedInsn::AluImm32 { funct3, funct7, .. } => match funct3 {
+            0 => "addiw", 1 => "slliw",
+            5 => if funct7 & 0x20 != 0 { "sraiw" } else { "srliw" },
+            _ => "immw??",
+        },
+        DecodedInsn::Alu { funct3, funct7, .. } => {
+            if *funct7 == 1 {
+                match funct3 {
+                    0 => "mul", 1 => "mulh", 2 => "mulhsu", 3 => "mulhu",
+                    4 => "div", 5 => "divu",  6 => "rem",   7 => "remu",
+                    _ => "m??",
+                }
+            } else {
+                let alt = funct7 & 0x20 != 0;
+                match (funct3, alt) {
+                    (0, true)  => "sub", (0, false) => "add",
+                    (1, _)     => "sll", (2, _)     => "slt",
+                    (3, _)     => "sltu",(4, _)     => "xor",
+                    (5, true)  => "sra", (5, false) => "srl",
+                    (6, _)     => "or",  (7, _)     => "and",
+                    _          => "alu??",
+                }
+            }
+        },
+        DecodedInsn::Alu32 { funct3, funct7, .. } => {
+            if *funct7 == 1 {
+                match funct3 {
+                    0 => "mulw", 4 => "divw", 5 => "divuw", 6 => "remw", 7 => "remuw", _ => "mw??",
+                }
+            } else {
+                let alt = funct7 & 0x20 != 0;
+                match (funct3, alt) {
+                    (0, true)  => "subw", (0, false) => "addw",
+                    (1, _)     => "sllw",
+                    (5, true)  => "sraw", (5, false) => "srlw",
+                    _          => "alu32??",
+                }
+            }
+        },
+        DecodedInsn::Fence { .. }    => "fence",
+        DecodedInsn::FenceI          => "fence.i",
+        DecodedInsn::Ecall           => "ecall",
+        DecodedInsn::Ebreak          => "ebreak",
+        DecodedInsn::Mret            => "mret",
+        DecodedInsn::Sret            => "sret",
+        DecodedInsn::SfenceVma       => "sfence.vma",
+        DecodedInsn::Csr { funct3, .. } => match funct3 {
+            1 => "csrrw", 2 => "csrrs", 3 => "csrrc",
+            5 => "csrrwi",6 => "csrrsi",7 => "csrrci",
+            _ => "csr??",
+        },
+        DecodedInsn::FLoad  { funct3, .. } => if *funct3 == 2 { "flw" } else { "fld" },
+        DecodedInsn::FStore { funct3, .. } => if *funct3 == 2 { "fsw" } else { "fsd" },
+        DecodedInsn::FOp    { .. }         => "f.op",
+        DecodedInsn::FMac   { op, .. }     => match op {
+            FMacOp::Fmadd  => "fmadd",  FMacOp::Fmsub  => "fmsub",
+            FMacOp::Fnmsub => "fnmsub", FMacOp::Fnmadd => "fnmadd",
+        },
+        DecodedInsn::Atomic { funct5, .. } => match funct5 {
+            2  => "lr.w",    3  => "sc.w",
+            1  => "amoswap", 0  => "amoadd",
+            4  => "amoxor",  8  => "amoor",   12 => "amoand",
+            16 => "amomin",  20 => "amomax",  24 => "amominu", 28 => "amomaxu",
+            _  => "amo??",
+        },
     }
 }

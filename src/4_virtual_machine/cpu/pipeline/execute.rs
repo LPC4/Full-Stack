@@ -10,6 +10,7 @@ use crate::virtual_machine::error::VmError;
 // Public result type
 // ---------------------------------------------------------------------------
 
+#[derive(Clone, Debug)]
 pub enum ExecResult {
     WriteInt {
         rd: usize,

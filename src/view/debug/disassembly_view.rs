@@ -43,9 +43,40 @@ impl CompilerView for DisassemblyView {
         
         // Parse assembly into lines and track current label context
         let lines: Vec<&str> = asm_text.lines().collect();
-        let mut current_label: Option<String> = None;
         let mut current_block_start_addr: Option<u64> = None;
         let mut instruction_offset = 0u64; // Track offset within current block
+        
+        // First pass: build a map of line indices to addresses
+        let mut line_to_address: std::collections::HashMap<usize, u64> = std::collections::HashMap::new();
+        let mut address_to_line: std::collections::HashMap<u64, usize> = std::collections::HashMap::new();
+        
+        for (line_idx, line) in lines.iter().enumerate() {
+            let trimmed = line.trim();
+            
+            // Check if this is a label line
+            if trimmed.ends_with(':') && !trimmed.starts_with('.') {
+                let label_name = trimmed.trim_end_matches(':');
+                current_block_start_addr = label_addresses.get(label_name).copied();
+                instruction_offset = 0;
+                
+                // Record the label's address
+                if let Some(addr) = current_block_start_addr {
+                    line_to_address.insert(line_idx, addr);
+                    address_to_line.insert(addr, line_idx);
+                }
+            } else if !trimmed.is_empty() && !trimmed.starts_with('.') && !trimmed.starts_with(';') {
+                // This is an instruction line
+                if let Some(base_addr) = current_block_start_addr {
+                    let instr_addr = base_addr + instruction_offset;
+                    line_to_address.insert(line_idx, instr_addr);
+                    address_to_line.insert(instr_addr, line_idx);
+                    instruction_offset += 4; // Each RV64 instruction is 4 bytes
+                }
+            }
+        }
+        
+        // Find the line number for the current PC
+        let _current_line_idx = address_to_line.get(&current_pc).copied();
         
         ScrollArea::vertical()
             .auto_shrink([false, false])
@@ -55,32 +86,8 @@ impl CompilerView for DisassemblyView {
                 for (line_idx, line) in lines.iter().enumerate() {
                     let trimmed = line.trim();
                     
-                    // Check if this is a label line
-                    if trimmed.ends_with(':') && !trimmed.starts_with('.') {
-                        let label_name = trimmed.trim_end_matches(':');
-                        current_label = Some(label_name.to_string());
-                        current_block_start_addr = label_addresses.get(label_name).copied();
-                        instruction_offset = 0;
-                    }
-                    
-                    // Calculate the address for this instruction
-                    let line_addr = if trimmed.starts_with('.') || trimmed.is_empty() || trimmed.starts_with(';') {
-                        // Directives, empty lines, comments don't have addresses
-                        None
-                    } else if let Some(base_addr) = current_block_start_addr {
-                        // Instructions are at base + offset (each RV64 instruction is 4 bytes)
-                        Some(base_addr + instruction_offset)
-                    } else {
-                        None
-                    };
-                    
                     // Check if this line contains the current PC
-                    let is_current_line = line_addr.map_or(false, |addr| addr == current_pc);
-                    
-                    // Increment instruction offset for actual instructions (not directives/comments)
-                    if !trimmed.is_empty() && !trimmed.starts_with('.') && !trimmed.starts_with(';') && !trimmed.ends_with(':') {
-                        instruction_offset += 4;
-                    }
+                    let is_current_line = line_to_address.get(&line_idx).map_or(false, |&addr| addr == current_pc);
 
                     // Background highlighting for current instruction
                     if is_current_line {
@@ -133,7 +140,7 @@ impl CompilerView for DisassemblyView {
                         ui.add_space(8.0);
 
                         // Show address if present
-                        if let Some(addr) = line_addr {
+                        if let Some(addr) = line_to_address.get(&line_idx) {
                             let addr_color = if is_current_line {
                                 Color32::from_rgb(255, 215, 0)
                             } else {

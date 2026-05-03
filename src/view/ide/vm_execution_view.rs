@@ -59,7 +59,7 @@ impl CompilerView for VmExecutionView {
                 ui.heading("Virtual Machine Execution");
 
                 // Allocate exact height for UART area
-                let uart_height = desired_uart_height.min(max_uart_height);
+                let _uart_height = desired_uart_height.min(max_uart_height);
 
                 Frame::NONE
                     .stroke(Stroke::new(1.0, Color32::from_gray(100)))

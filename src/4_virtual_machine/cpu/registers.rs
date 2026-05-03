@@ -18,6 +18,7 @@ pub enum PrivilegeMode {
     Machine = 3,
 }
 
+#[derive(Clone)]
 pub struct Registers {
     /// Integer registers x0–x31. x[0] is hardwired to zero.
     x: [u64; 32],

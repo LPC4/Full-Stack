@@ -3,8 +3,10 @@ pub mod csr;
 pub mod decoder;
 pub mod mmu;
 pub mod pipeline;
+pub mod pipelined;
 pub mod registers;
 pub use cpu_impl::{Cpu, StepOutcome};
+pub use pipelined::{PipelinedCpu, PipelineStats, TickOutcome};
 pub use registers::PrivilegeMode;
 
 mod cpu_impl {
@@ -124,7 +126,7 @@ mod cpu_impl {
                     self.csrs.mcause = cause;
                     self.csrs.mtval = tval;
 
-                    // Save MIE → MPIE; clear MIE; set MPP
+                    // Save MIE -> MPIE; clear MIE; set MPP
                     let mie_bit = (self.csrs.mstatus >> 3) & 1;
                     self.csrs.mstatus &= !(1u64 << 7); // clear MPIE
                     self.csrs.mstatus |= mie_bit << 7; // MPIE = old MIE
@@ -155,7 +157,7 @@ mod cpu_impl {
                     self.csrs.mcause = cause;
                     self.csrs.mtval = tval;
 
-                    // Save MIE → MPIE; clear MIE; set MPP
+                    // Save MIE -> MPIE; clear MIE; set MPP
                     let mie_bit = (self.csrs.mstatus >> 3) & 1;
                     self.csrs.mstatus &= !(1u64 << 7); // clear MPIE
                     self.csrs.mstatus |= mie_bit << 7; // MPIE = old MIE
@@ -310,7 +312,7 @@ mod cpu_impl {
                     self.csrs.increment_cycle();
                     Ok(StepOutcome::Continue)
                 }
-                // puts(a0 = ptr to null-terminated string) — writes string + newline
+                // puts(a0 = ptr to null-terminated string), writes string + newline
                 1001 => {
                     let mut ptr = self.regs.read_x(10);
                     loop {
@@ -341,7 +343,7 @@ mod cpu_impl {
                     self.csrs.increment_cycle();
                     Ok(StepOutcome::Continue)
                 }
-                // malloc(a0 = size) — bump allocator; bump ptr lives at HEAP_PTR_ADDR
+                // malloc(a0 = size), bump allocator; bump ptr lives at HEAP_PTR_ADDR
                 1003 => {
                     use crate::virtual_machine::bus::HEAP_PTR_ADDR;
                     let size = self.regs.read_x(10);
@@ -357,7 +359,7 @@ mod cpu_impl {
                     self.csrs.increment_cycle();
                     Ok(StepOutcome::Continue)
                 }
-                // free(a0 = ptr) — no-op (bump allocator never reclaims)
+                // free(a0 = ptr), no-op (bump allocator never reclaims)
                 1004 => {
                     self.regs.write_x(10, 0);
                     self.regs.pc = self.regs.pc.wrapping_add(4);
@@ -365,7 +367,7 @@ mod cpu_impl {
                     self.csrs.increment_cycle();
                     Ok(StepOutcome::Continue)
                 }
-                // Unknown syscall — return -1.
+                // Unknown syscall, return -1.
                 _ => {
                     self.regs.write_x(10, u64::MAX);
                     self.regs.pc = self.regs.pc.wrapping_add(4);

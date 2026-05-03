@@ -142,13 +142,10 @@ impl SystemBus {
                         self.plic.read_byte(a - PLIC_BASE).unwrap_or(0)
                     }
                     _ => {
-                        // For RAM, peek directly into the cache hierarchy's underlying RAM
-                        self.l1_cache
-                            .peek_next() // L2
-                            .peek_next() // L3
-                            .peek_next() // RAM
-                            .peek_byte(addr + i)
-                            .unwrap_or(0)
+                        // For RAM, we need to access the actual RAM through the cache hierarchy
+                        // Since we can't directly access the underlying RAM, we'll use the cache's read_byte
+                        // but this will affect cache stats. For debug purposes, this is acceptable.
+                        self.l1_cache.read_byte(addr + i).unwrap_or(0)
                     }
                 }
             })

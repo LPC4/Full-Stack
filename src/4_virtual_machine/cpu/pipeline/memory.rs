@@ -11,7 +11,7 @@ use crate::virtual_machine::memory::MemoryAccess;
 // Public result type
 // ---------------------------------------------------------------------------
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum MemResult {
     WriteInt {
         rd: usize,

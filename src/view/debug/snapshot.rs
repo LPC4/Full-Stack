@@ -1,5 +1,5 @@
 //! Plain-data snapshot types that the debug panels render from.
-//! No VM references live here — everything is Clone.
+//! No VM references live here, everything is Clone.
 
 use crate::virtual_machine::cpu::csr::CsrSnapshot;
 use crate::virtual_machine::memory::cache::CacheStats;
@@ -17,7 +17,7 @@ pub struct CpuSnapshot {
     /// All 32 FP registers (raw bits, NaN-boxed for f32).
     pub fregs: [u64; 32],
     pub csrs: CsrSnapshot,
-    /// PC from the *previous* snapshot — used to highlight changes.
+    /// PC from the *previous* snapshot, used to highlight changes.
     pub prev_pc: u64,
     /// Integer registers from the previous snapshot.
     pub prev_xregs: [u64; 32],
@@ -27,38 +27,54 @@ pub struct CpuSnapshot {
 // Pipeline history
 // ---------------------------------------------------------------------------
 
-/// Tracks the PCs of the last N instructions so the pipeline diagram can show
-/// where each instruction is in the 5-stage pipeline (Fetch→Writeback).
+/// One instruction's snapshot inside the pipeline waterfall.
+#[derive(Clone, Debug, Default)]
+pub struct PipelineEntry {
+    /// Address of the instruction.
+    pub pc: u64,
+    /// Short mnemonic, e.g. "addi", "lw", "beq".
+    pub mnemonic: String,
+}
+
+/// Rolling log of recently-fetched instructions used to render the pipeline
+/// waterfall diagram.
 ///
-/// Because this is a scalar in-order core, after step N:
-///   writeback  = history[N-1]
-///   memory     = history[N-2]
-///   execute    = history[N-3]
-///   decode     = history[N-4]
-///   fetch      = history[N-5] (current PC, not yet executed)
+/// Layout convention (index 0 = most recently pushed = currently in IF):
+///
+/// ```text
+///   history[S + R]  →  stage S (0=IF … 4=WB) at row R (0=current cycle)
+/// ```
+///
+/// Because in a perfect in-order pipeline an instruction advances one stage
+/// per cycle, the entry that is in IF this cycle (index 0) will be in WB four
+/// cycles later (index 4 at row 0 → that entry is now row 0 but shifted).
 #[derive(Clone, Debug, Default)]
 pub struct PipelineHistory {
-    /// Ring buffer of the last `DEPTH` committed PCs (index 0 = most recent).
-    history: Vec<u64>,
+    /// Most-recently-fetched instruction first (index 0).
+    pub log: Vec<PipelineEntry>,
+    /// Monotonically-increasing cycle counter (incremented on every push).
+    pub step: u64,
 }
 
 impl PipelineHistory {
-    pub const DEPTH: usize = 5;
+    pub const DEPTH: usize = 20;
 
-    /// Record that an instruction at `pc` just entered the pipeline.
-    pub fn push(&mut self, pc: u64) {
-        self.history.insert(0, pc);
-        self.history.truncate(Self::DEPTH);
+    /// Record that an instruction at `pc` with the given mnemonic just entered IF.
+    pub fn push(&mut self, entry: PipelineEntry) {
+        self.log.insert(0, entry);
+        self.log.truncate(Self::DEPTH);
+        self.step += 1;
     }
 
-    /// Returns the PC in the given stage (0 = writeback … 4 = fetch), or None
-    /// if fewer than `stage + 1` instructions have been committed.
-    pub fn stage(&self, stage: usize) -> Option<u64> {
-        self.history.get(stage).copied()
+    /// Entry for stage `stage` (0=IF … 4=WB) at waterfall row `row` (0=current).
+    /// Returns `None` if the pipeline has not been filled that far yet.
+    pub fn waterfall(&self, stage: usize, row: usize) -> Option<&PipelineEntry> {
+        self.log.get(stage + row)
     }
 
-    pub fn stages(&self) -> [Option<u64>; 5] {
-        std::array::from_fn(|i| self.history.get(i).copied())
+    /// Display cycle number for waterfall row `row`.
+    pub fn cycle_for_row(&self, row: usize) -> Option<u64> {
+        if self.step > row as u64 { Some(self.step - row as u64) } else { None }
     }
 }
 
