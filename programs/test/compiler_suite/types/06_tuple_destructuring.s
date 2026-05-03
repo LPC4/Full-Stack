@@ -5,17 +5,17 @@
 .globl divide
 divide:
 	; --- Function Prologue ---
-	; Allocate stack frame: 64 bytes
-	addi   sp, sp, -64
-	; Save return address (ra) at offset 48
-	sd     ra, 48(sp)
-	; Save callee-saved register s8 at offset 56
-	sd     s0, 56(sp)
+	; Allocate stack frame: 80 bytes
+	addi   sp, sp, -80
+	; Save return address (ra) at offset 56
+	sd     ra, 56(sp)
+	; Save callee-saved register s8 at offset 64
+	sd     s0, 64(sp)
 	; Set up frame pointer
 	addi   s0, sp, 0
 	; --- End Prologue ---
 	; --- Function Parameter Spills ---
-	addi   t0, s0, 64
+	addi   t0, s0, 80
 	; Spill parameter '$a' from register a0 to stack slot 0
 	sw     a0, 0(sp)
 	; Spill parameter '$b' from register a1 to stack slot 4
@@ -29,53 +29,53 @@ divide__entry:
 	lw     t1, 0(sp)
 	sw     t1, 0(t0)
 	; bind parameter: b
-	addi   t0, sp, 12
+	addi   t0, sp, 16
 	; Store i32 to memory
 	lw     t1, 4(sp)
 	sw     t1, 0(t0)
 	; Load i32 from memory into $$0
 	addi   t0, sp, 8
 	lw     t1, 0(t0)
-	sw     t1, 16(sp)
+	sw     t1, 24(sp)
 	; Load i32 from memory into $$1
-	addi   t0, sp, 12
+	addi   t0, sp, 16
 	lw     t1, 0(t0)
-	sw     t1, 20(sp)
+	sw     t1, 28(sp)
 	; sdiv operation on i32
-	lw     t0, 16(sp)
-	lw     t1, 20(sp)
+	lw     t0, 24(sp)
+	lw     t1, 28(sp)
 	div    t2, t0, t1
-	sw     t2, 24(sp)
+	sw     t2, 32(sp)
 	; Load i32 from memory into $$3
 	addi   t0, sp, 8
 	lw     t1, 0(t0)
-	sw     t1, 28(sp)
+	sw     t1, 36(sp)
 	; Load i32 from memory into $$4
-	addi   t0, sp, 12
+	addi   t0, sp, 16
 	lw     t1, 0(t0)
-	sw     t1, 32(sp)
+	sw     t1, 40(sp)
 	; mod operation on i32
-	lw     t0, 28(sp)
-	lw     t1, 32(sp)
+	lw     t0, 36(sp)
+	lw     t1, 40(sp)
 	rem    t2, t0, t1
-	sw     t2, 36(sp)
-	addi   t0, sp, 40
+	sw     t2, 44(sp)
+	addi   t0, sp, 48
 	; Store i32 to memory
-	lw     t1, 24(sp)
+	lw     t1, 32(sp)
 	sw     t1, 0(t0)
-	addi   t0, sp, 44
+	addi   t0, sp, 52
 	; Store i32 to memory
-	lw     t1, 36(sp)
+	lw     t1, 44(sp)
 	sw     t1, 0(t0)
-	lw     a0, 40(sp)
-	lw     a1, 44(sp)
+	lw     a0, 48(sp)
+	lw     a1, 52(sp)
 	; --- Function Epilogue ---
-	; Restore callee-saved register s8 from offset 56
-	ld     s0, 56(sp)
-	; Restore return address (ra) from offset 48
-	ld     ra, 48(sp)
-	; Deallocate stack frame: 64 bytes
-	addi   sp, sp, 64
+	; Restore callee-saved register s8 from offset 64
+	ld     s0, 64(sp)
+	; Restore return address (ra) from offset 56
+	ld     ra, 56(sp)
+	; Deallocate stack frame: 80 bytes
+	addi   sp, sp, 80
 	; Return to caller
 	jalr   zero, 0(ra)
 	; --- End Epilogue ---
@@ -87,12 +87,12 @@ divide__entry:
 .globl test_tuple_destructuring
 test_tuple_destructuring:
 	; --- Function Prologue ---
-	; Allocate stack frame: 64 bytes
-	addi   sp, sp, -64
-	; Save return address (ra) at offset 40
-	sd     ra, 40(sp)
-	; Save callee-saved register s8 at offset 48
-	sd     s0, 48(sp)
+	; Allocate stack frame: 80 bytes
+	addi   sp, sp, -80
+	; Save return address (ra) at offset 56
+	sd     ra, 56(sp)
+	; Save callee-saved register s8 at offset 64
+	sd     s0, 64(sp)
 	; Set up frame pointer
 	addi   s0, sp, 0
 	; --- End Prologue ---
@@ -119,7 +119,7 @@ test_tuple_destructuring__entry:
 	addi   t1, t0, 0
 	lw     t2, 0(t1)
 	sw     t2, 16(sp)
-	addi   t0, sp, 20
+	addi   t0, sp, 24
 	; Store i32 to memory
 	lw     t1, 16(sp)
 	sw     t1, 0(t0)
@@ -127,24 +127,24 @@ test_tuple_destructuring__entry:
 	addi   t0, sp, 8
 	addi   t1, t0, 4
 	lw     t2, 0(t1)
-	sw     t2, 24(sp)
-	addi   t0, sp, 28
+	sw     t2, 32(sp)
+	addi   t0, sp, 40
 	; Store i32 to memory
-	lw     t1, 24(sp)
+	lw     t1, 32(sp)
 	sw     t1, 0(t0)
 	; Load i32 from memory into $$4
-	addi   t0, sp, 20
+	addi   t0, sp, 24
 	lw     t1, 0(t0)
-	sw     t1, 32(sp)
-	lw     t2, 32(sp)
+	sw     t1, 48(sp)
+	lw     t2, 48(sp)
 	addi   a0, t2, 0
 	; --- Function Epilogue ---
-	; Restore callee-saved register s8 from offset 48
-	ld     s0, 48(sp)
-	; Restore return address (ra) from offset 40
-	ld     ra, 40(sp)
-	; Deallocate stack frame: 64 bytes
-	addi   sp, sp, 64
+	; Restore callee-saved register s8 from offset 64
+	ld     s0, 64(sp)
+	; Restore return address (ra) from offset 56
+	ld     ra, 56(sp)
+	; Deallocate stack frame: 80 bytes
+	addi   sp, sp, 80
 	; Return to caller
 	jalr   zero, 0(ra)
 	; --- End Epilogue ---

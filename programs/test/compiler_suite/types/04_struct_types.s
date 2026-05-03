@@ -45,11 +45,11 @@ calc_offset__entry:
 	sd     t3, 40(sp)
 	; Load f32 from memory into $$2
 	ld     t0, 40(sp)
-	flw    ft6, 0(t0)
+	ld     t1, 0(t0)
 	fsw    ft6, 48(sp)
 	; Load f32 from memory into $$3
 	addi   t0, sp, 24
-	flw    ft6, 0(t0)
+	ld     t1, 0(t0)
 	fsw    ft6, 52(sp)
 	; add operation on f32
 	flw    ft1, 48(sp)
@@ -81,11 +81,11 @@ calc_offset__entry:
 	sd     t3, 88(sp)
 	; Load f32 from memory into $$9
 	ld     t0, 88(sp)
-	flw    ft6, 0(t0)
+	ld     t1, 0(t0)
 	fsw    ft6, 96(sp)
 	; Load f32 from memory into $$10
 	addi   t0, sp, 24
-	flw    ft6, 0(t0)
+	ld     t1, 0(t0)
 	fsw    ft6, 100(sp)
 	; add operation on f32
 	flw    ft5, 96(sp)
@@ -116,7 +116,7 @@ calc_offset__entry:
 	sd     t3, 136(sp)
 	; Load f32 from memory into $$16
 	ld     t0, 136(sp)
-	flw    ft6, 0(t0)
+	ld     t1, 0(t0)
 	fsw    ft6, 144(sp)
 	; Load {x: f32, y: f32}* from memory into $$17
 	addi   t0, sp, 16
@@ -129,7 +129,7 @@ calc_offset__entry:
 	sd     t3, 160(sp)
 	; Load f32 from memory into $$19
 	ld     t0, 160(sp)
-	flw    ft6, 0(t0)
+	ld     t1, 0(t0)
 	fsw    ft6, 168(sp)
 	; mul operation on f32
 	flw    ft1, 144(sp)

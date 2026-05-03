@@ -1,11 +1,11 @@
 use super::{
     assembly_emitter::AssemblyEmitter, data_section::DataSection,
-    function_context::FunctionContext, register_allocator::RegisterAllocator, type_utils,
+    function_context::FunctionContext, register_allocator::{RegisterAllocator, Allocation}, type_utils,
 };
 use crate::assembly_language::encode_decode::Reg;
 use crate::assembly_language::real::RealInstruction;
 use crate::assembly_language::riscv::rv64fd::{Fsgnjn, fmv_d};
-use crate::assembly_language::riscv::rv64i::{Sb, Sh, Sw};
+use crate::assembly_language::riscv::rv64i::{Lb, Ld, Lh, Lw, Sb, Sh, Sw};
 use crate::assembly_language::utils::reg_name;
 use crate::intermediate_language::{
     IrCastMode, IrCmpOp, IrInstruction, IrMathOp, IrProgram, IrTerminator, IrType, IrUnaryOp,
@@ -125,17 +125,17 @@ impl CompilerRv64 {
             let label = ctx.get_label(&block.label).unwrap();
             self.emitter.emit_label(label);
             for inst in &block.instructions {
-                self.lower_instruction(inst, &mut ctx);
+                self.lower_instruction(inst, &mut ctx, &alloc);
             }
             if let Some(term) = &block.terminator {
-                self.lower_terminator(term, &mut ctx, needs_sret, is_aggregate);
+                self.lower_terminator(term, &mut ctx, &alloc, needs_sret, is_aggregate);
             }
         }
 
         self.emitter.end_function();
     }
 
-    fn lower_instruction(&mut self, inst: &IrInstruction, ctx: &mut FunctionContext) {
+    fn lower_instruction(&mut self, inst: &IrInstruction, ctx: &mut FunctionContext, alloc: &RegisterAllocator) {
         use IrInstruction::{
             Alloc, Call, Cast, Cmp, Comment, HeapAlloc, HeapFree, Index, Load, Math, Offset, Phi,
             Store, Unary,
@@ -148,55 +148,55 @@ impl CompilerRv64 {
                 ty,
                 ptr,
                 offset,
-            } => self.lower_load(dest, ty, ptr, *offset, ctx),
+            } => self.lower_load(dest, ty, ptr, *offset, ctx, alloc),
             Store {
                 ty,
                 value,
                 ptr,
                 offset,
-            } => self.lower_store(ty, value, ptr, *offset, ctx),
+            } => self.lower_store(ty, value, ptr, *offset, ctx, alloc),
             Offset {
                 dest, ptr, bytes, ..
-            } => self.lower_offset(dest, ptr, bytes, ctx),
+            } => self.lower_offset(dest, ptr, bytes, ctx, alloc),
             Index {
                 dest,
                 ty,
                 base_ptr,
                 idx,
-            } => self.lower_index(dest, ty, base_ptr, idx, ctx),
+            } => self.lower_index(dest, ty, base_ptr, idx, ctx, alloc),
             Math {
                 dest,
                 op,
                 ty,
                 lhs,
                 rhs,
-            } => self.lower_math(dest, op, ty, lhs, rhs, ctx),
+            } => self.lower_math(dest, op, ty, lhs, rhs, ctx, alloc),
             Unary {
                 dest,
                 op,
                 ty,
                 value,
-            } => self.lower_unary(dest, op, ty, value, ctx),
+            } => self.lower_unary(dest, op, ty, value, ctx, alloc),
             Cmp {
                 dest,
                 op,
                 ty,
                 lhs,
                 rhs,
-            } => self.lower_cmp(dest, op, ty, lhs, rhs, ctx),
+            } => self.lower_cmp(dest, op, ty, lhs, rhs, ctx, alloc),
             Cast {
                 dest,
                 mode,
                 value,
                 ty,
-            } => self.lower_cast_inst(dest, *mode, value, ty, ctx),
+            } => self.lower_cast_inst(dest, *mode, value, ty, ctx, alloc),
             Call {
                 dest,
                 function,
                 args,
-            } => self.lower_call(dest, function, args, ctx),
-            HeapAlloc { dest, ty, count } => self.lower_heap_alloc(dest, ty, *count, ctx),
-            HeapFree { ptr } => self.lower_heap_free(ptr, ctx),
+            } => self.lower_call(dest, function, args, ctx, alloc),
+            HeapAlloc { dest, ty, count } => self.lower_heap_alloc(dest, ty, *count, ctx, alloc),
+            HeapFree { ptr } => self.lower_heap_free(ptr, ctx, alloc),
         }
     }
 
@@ -207,12 +207,13 @@ impl CompilerRv64 {
         ptr: &crate::intermediate_language::IrRegister,
         offset: Option<i64>,
         ctx: &mut FunctionContext,
+        alloc: &RegisterAllocator,
     ) {
         self.emitter.reset_temp_counter();
         let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
         self.emitter
             .emit_comment(&format!("Load {ty} from memory into ${dest}"));
-        let ptr_tmp = self.load_pointer_operand_to_temp(ptr, ctx);
+        let ptr_tmp = self.load_pointer_operand_to_temp(ptr, ctx, alloc);
         let addr_tmp = if let Some(off) = offset {
             let tmp = self.emitter.alloc_temp_reg();
             self.emitter.emit_addi(tmp, ptr_tmp, off as i32);
@@ -229,8 +230,37 @@ impl CompilerRv64 {
                 self.type_size(&resolved_ty),
             );
         } else {
-            self.emitter
-                .emit_load_to_slot(dest_slot, addr_tmp, &resolved_ty, 0);
+            // Load value into a temp register first
+            let loaded_val = self.emitter.alloc_temp_reg();
+            match &resolved_ty {
+                IrType::Integer(w) => match w {
+                    crate::intermediate_language::IntWidth::I1
+                    | crate::intermediate_language::IntWidth::I8 => {
+                        self.emitter.emit_inst(RealInstruction::Lb(Lb::new(loaded_val, addr_tmp, 0)));
+                    }
+                    crate::intermediate_language::IntWidth::I16 => {
+                        self.emitter.emit_inst(RealInstruction::Lh(Lh::new(loaded_val, addr_tmp, 0)));
+                    }
+                    crate::intermediate_language::IntWidth::I32 => {
+                        self.emitter.emit_inst(RealInstruction::Lw(Lw::new(loaded_val, addr_tmp, 0)));
+                    }
+                    crate::intermediate_language::IntWidth::I64 => {
+                        self.emitter.emit_inst(RealInstruction::Ld(Ld::new(loaded_val, addr_tmp, 0)));
+                    }
+                },
+                IrType::Pointer(_) => {
+                    self.emitter.emit_inst(RealInstruction::Ld(Ld::new(loaded_val, addr_tmp, 0)));
+                }
+                _ => {
+                    self.emitter.emit_inst(RealInstruction::Ld(Ld::new(loaded_val, addr_tmp, 0)));
+                }
+            }
+            // Store to stack slot
+            self.emitter.emit_store_from_tmp(SP, loaded_val, &resolved_ty, dest_slot as i32);
+            // If dest has a physical register allocation, also store there
+            if let Some(Allocation::Physical(phys_reg)) = alloc.get_allocation(dest) {
+                self.emitter.emit_mv(*phys_reg, loaded_val);
+            }
         }
     }
 
@@ -241,9 +271,10 @@ impl CompilerRv64 {
         ptr: &crate::intermediate_language::IrRegister,
         offset: Option<i64>,
         ctx: &mut FunctionContext,
+        alloc: &RegisterAllocator,
     ) {
         self.emitter.reset_temp_counter();
-        let addr_tmp = self.resolve_ptr_to_addr(ptr, ctx, offset.map(|o| o as i32));
+        let addr_tmp = self.resolve_ptr_to_addr(ptr, ctx, offset.map(|o| o as i32), alloc);
         let resolved_ty = self.resolve_ir_type(ty);
         self.emitter.emit_comment(&format!("Store {ty} to memory"));
         if matches!(resolved_ty, IrType::Array { .. } | IrType::Aggregate(_)) {
@@ -258,11 +289,11 @@ impl CompilerRv64 {
                 self.type_size(&resolved_ty),
             );
         } else if matches!(resolved_ty, IrType::Float(_)) {
-            let val_fp = self.load_float_value_to_temp(value, ctx);
+            let val_fp = self.load_float_value_to_temp(value, ctx, alloc);
             self.emitter
                 .emit_store_from_tmp(addr_tmp, val_fp, &resolved_ty, 0);
         } else {
-            let val_tmp = self.load_value_to_temp(value, ctx);
+            let val_tmp = self.load_value_to_temp(value, ctx, alloc);
             self.emitter
                 .emit_store_from_tmp(addr_tmp, val_tmp, &resolved_ty, 0);
         }
@@ -274,11 +305,12 @@ impl CompilerRv64 {
         ptr: &crate::intermediate_language::IrRegister,
         bytes: &IrValue,
         ctx: &mut FunctionContext,
+        alloc: &RegisterAllocator,
     ) {
         self.emitter.reset_temp_counter();
         let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
-        let ptr_tmp = self.load_pointer_operand_to_temp(ptr, ctx);
-        let byte_val_reg = self.load_value_to_temp(bytes, ctx);
+        let ptr_tmp = self.load_pointer_operand_to_temp(ptr, ctx, alloc);
+        let byte_val_reg = self.load_value_to_temp(bytes, ctx, alloc);
         let off_tmp = self.emitter.alloc_temp_reg();
         self.emitter.emit_mv(off_tmp, byte_val_reg);
         let result_tmp = self.emitter.alloc_temp_reg();
@@ -293,11 +325,12 @@ impl CompilerRv64 {
         base_ptr: &crate::intermediate_language::IrRegister,
         idx: &IrValue,
         ctx: &mut FunctionContext,
+        alloc: &RegisterAllocator,
     ) {
         self.emitter.reset_temp_counter();
         let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
-        let base_tmp = self.load_pointer_operand_to_temp(base_ptr, ctx);
-        let idx_tmp = self.load_value_to_temp(idx, ctx);
+        let base_tmp = self.load_pointer_operand_to_temp(base_ptr, ctx, alloc);
+        let idx_tmp = self.load_value_to_temp(idx, ctx, alloc);
         let scale = self.type_size(ty);
         let scaled_tmp = self.emitter.alloc_temp_reg();
         if scale == 1 {
@@ -318,6 +351,7 @@ impl CompilerRv64 {
         lhs: &IrValue,
         rhs: &IrValue,
         ctx: &mut FunctionContext,
+        alloc: &RegisterAllocator,
     ) {
         self.emitter.reset_temp_counter();
         let resolved_ty = self.resolve_ir_type(ty);
@@ -331,8 +365,8 @@ impl CompilerRv64 {
             resolved_ty,
             IrType::Float(crate::intermediate_language::FloatWidth::F32)
         ) {
-            let lhs_fp = self.load_float_value_to_temp(lhs, ctx);
-            let rhs_fp = self.load_float_value_to_temp(rhs, ctx);
+            let lhs_fp = self.load_float_value_to_temp(lhs, ctx, alloc);
+            let rhs_fp = self.load_float_value_to_temp(rhs, ctx, alloc);
             let result_fp = self.emitter.alloc_float_temp_reg();
             match op {
                 IrMathOp::Add => self.emitter.emit_fadd_s(result_fp, lhs_fp, rhs_fp),
@@ -345,8 +379,8 @@ impl CompilerRv64 {
             }
             self.emitter.emit_fsw(SP, result_fp, dest_slot as i32);
         } else {
-            let lhs_tmp = self.load_value_to_temp(lhs, ctx);
-            let rhs_tmp = self.load_value_to_temp(rhs, ctx);
+            let lhs_tmp = self.load_value_to_temp(lhs, ctx, alloc);
+            let rhs_tmp = self.load_value_to_temp(rhs, ctx, alloc);
             let result_tmp = self.emitter.alloc_temp_reg();
             match op {
                 IrMathOp::Add => self.emitter.emit_add(result_tmp, lhs_tmp, rhs_tmp),
@@ -364,6 +398,10 @@ impl CompilerRv64 {
             }
             self.emitter
                 .emit_store_from_tmp(SP, result_tmp, &resolved_ty, dest_slot as i32);
+            // If dest has a physical register allocation, also store there for future uses
+            if let Some(Allocation::Physical(phys_reg)) = alloc.get_allocation(dest) {
+                self.emitter.emit_mv(*phys_reg, result_tmp);
+            }
         }
     }
 
@@ -374,6 +412,7 @@ impl CompilerRv64 {
         ty: &IrType,
         value: &IrValue,
         ctx: &mut FunctionContext,
+        alloc: &RegisterAllocator,
     ) {
         self.emitter.reset_temp_counter();
         let resolved_ty = self.resolve_ir_type(ty);
@@ -385,7 +424,7 @@ impl CompilerRv64 {
             resolved_ty,
             IrType::Float(crate::intermediate_language::FloatWidth::F32)
         ) {
-            let val_fp = self.load_float_value_to_temp(value, ctx);
+            let val_fp = self.load_float_value_to_temp(value, ctx, alloc);
             let result_fp = self.emitter.alloc_float_temp_reg();
             match op {
                 IrUnaryOp::Neg => {
@@ -397,7 +436,7 @@ impl CompilerRv64 {
             }
             self.emitter.emit_fsw(SP, result_fp, dest_slot as i32);
         } else {
-            let val_tmp = self.load_value_to_temp(value, ctx);
+            let val_tmp = self.load_value_to_temp(value, ctx, alloc);
             let result_tmp = self.emitter.alloc_temp_reg();
             match op {
                 IrUnaryOp::Neg => self.emitter.emit_neg(result_tmp, val_tmp),
@@ -405,6 +444,10 @@ impl CompilerRv64 {
             }
             self.emitter
                 .emit_store_from_tmp(SP, result_tmp, &resolved_ty, dest_slot as i32);
+            // If dest has a physical register allocation, also store there
+            if let Some(Allocation::Physical(phys_reg)) = alloc.get_allocation(dest) {
+                self.emitter.emit_mv(*phys_reg, result_tmp);
+            }
         }
     }
 
@@ -416,6 +459,7 @@ impl CompilerRv64 {
         lhs: &IrValue,
         rhs: &IrValue,
         ctx: &mut FunctionContext,
+        alloc: &RegisterAllocator,
     ) {
         self.emitter.reset_temp_counter();
         let resolved_ty = self.resolve_ir_type(ty);
@@ -430,8 +474,8 @@ impl CompilerRv64 {
             resolved_ty,
             IrType::Float(crate::intermediate_language::FloatWidth::F32)
         ) {
-            let lhs_fp = self.load_float_value_to_temp(lhs, ctx);
-            let rhs_fp = self.load_float_value_to_temp(rhs, ctx);
+            let lhs_fp = self.load_float_value_to_temp(lhs, ctx, alloc);
+            let rhs_fp = self.load_float_value_to_temp(rhs, ctx, alloc);
             let result_tmp = self.emitter.alloc_temp_reg();
             match op {
                 IrCmpOp::Eq => self.emitter.emit_feq_s(result_tmp, lhs_fp, rhs_fp),
@@ -456,8 +500,8 @@ impl CompilerRv64 {
             self.emitter
                 .emit_store_from_tmp(SP, result_tmp, &bool_ty, dest_slot as i32);
         } else {
-            let lhs_tmp = self.load_value_to_temp(lhs, ctx);
-            let rhs_tmp = self.load_value_to_temp(rhs, ctx);
+            let lhs_tmp = self.load_value_to_temp(lhs, ctx, alloc);
+            let rhs_tmp = self.load_value_to_temp(rhs, ctx, alloc);
             let result_tmp = self.emitter.alloc_temp_reg();
             match op {
                 IrCmpOp::Eq => self.emitter.emit_seq(result_tmp, lhs_tmp, rhs_tmp),
@@ -473,6 +517,10 @@ impl CompilerRv64 {
             }
             self.emitter
                 .emit_store_from_tmp(SP, result_tmp, &bool_ty, dest_slot as i32);
+            // If dest has a physical register allocation, also store there
+            if let Some(Allocation::Physical(phys_reg)) = alloc.get_allocation(dest) {
+                self.emitter.emit_mv(*phys_reg, result_tmp);
+            }
         }
     }
 
@@ -483,6 +531,7 @@ impl CompilerRv64 {
         value: &IrValue,
         ty: &IrType,
         ctx: &mut FunctionContext,
+        alloc: &RegisterAllocator,
     ) {
         self.emitter.reset_temp_counter();
         let resolved_ty = self.resolve_ir_type(ty);
@@ -490,11 +539,15 @@ impl CompilerRv64 {
             panic!("Cast operations cannot be performed on aggregate/array type {resolved_ty:?}");
         }
         let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
-        let src_tmp = self.load_value_to_temp(value, ctx);
+        let src_tmp = self.load_value_to_temp(value, ctx, alloc);
         let result_tmp = self.emitter.alloc_temp_reg();
         self.lower_cast(result_tmp, src_tmp, mode, &resolved_ty);
         self.emitter
             .emit_store_from_tmp(SP, result_tmp, &resolved_ty, dest_slot as i32);
+        // If dest has a physical register allocation, also store there
+        if let Some(Allocation::Physical(phys_reg)) = alloc.get_allocation(dest) {
+            self.emitter.emit_mv(*phys_reg, result_tmp);
+        }
     }
 
     fn lower_call(
@@ -503,6 +556,7 @@ impl CompilerRv64 {
         function: &str,
         args: &[IrValue],
         ctx: &mut FunctionContext,
+        alloc: &RegisterAllocator,
     ) {
         self.emitter.reset_temp_counter();
         let func_return_type = self
@@ -540,7 +594,7 @@ impl CompilerRv64 {
             if arg_index >= 8 {
                 break;
             }
-            let arg_tmp = self.load_value_to_temp(arg, ctx);
+            let arg_tmp = self.load_value_to_temp(arg, ctx, alloc);
             self.emitter.emit_mv(reg_for_arg(arg_index), arg_tmp);
             arg_index += 1;
         }
@@ -602,6 +656,10 @@ impl CompilerRv64 {
                 let resolved_return_ty = self.resolve_ir_type(&func_return_type);
                 self.emitter
                     .emit_store_from_tmp(SP, A0, &resolved_return_ty, dest_slot as i32);
+                // If dest has a physical register allocation, also store there
+                if let Some(Allocation::Physical(phys_reg)) = alloc.get_allocation(dest) {
+                    self.emitter.emit_mv(*phys_reg, A0);
+                }
             }
         }
         self.emitter
@@ -614,6 +672,7 @@ impl CompilerRv64 {
         ty: &IrType,
         count: Option<usize>,
         ctx: &mut FunctionContext,
+        alloc: &RegisterAllocator,
     ) {
         self.emitter.reset_temp_counter();
         let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
@@ -621,15 +680,20 @@ impl CompilerRv64 {
         self.emitter.emit_li(A0, bytes as i64);
         self.emitter.emit_raw("\tcall malloc");
         self.emitter.emit_sd(SP, A0, dest_slot as i32);
+        // If dest has a physical register allocation, also store there
+        if let Some(Allocation::Physical(phys_reg)) = alloc.get_allocation(dest) {
+            self.emitter.emit_mv(*phys_reg, A0);
+        }
     }
 
     fn lower_heap_free(
         &mut self,
         ptr: &crate::intermediate_language::IrRegister,
         ctx: &mut FunctionContext,
+        alloc: &RegisterAllocator,
     ) {
         self.emitter.reset_temp_counter();
-        let ptr_tmp = self.load_value_to_temp(&IrValue::Register(ptr.clone()), ctx);
+        let ptr_tmp = self.load_value_to_temp(&IrValue::Register(ptr.clone()), ctx, alloc);
         self.emitter.emit_mv(A0, ptr_tmp);
         self.emitter.emit_raw("\tcall free");
     }
@@ -638,11 +702,12 @@ impl CompilerRv64 {
         &mut self,
         term: &IrTerminator,
         ctx: &mut FunctionContext,
+        alloc: &RegisterAllocator,
         needs_sret: bool,
         _is_aggregate: bool,
     ) {
         match term {
-            IrTerminator::Return(val) => self.lower_return(val.as_ref(), needs_sret, ctx),
+            IrTerminator::Return(val) => self.lower_return(val.as_ref(), needs_sret, ctx, alloc),
             IrTerminator::Jump(label) => {
                 let lbl = ctx.get_label(label).unwrap();
                 self.emitter.emit_jal(ZERO, lbl);
@@ -652,7 +717,7 @@ impl CompilerRv64 {
                 then_label,
                 else_label,
             } => {
-                let cond_tmp = self.load_value_to_temp(cond, ctx);
+                let cond_tmp = self.load_value_to_temp(cond, ctx, alloc);
                 let then_lbl = ctx.get_label(then_label).unwrap();
                 let else_lbl = ctx.get_label(else_label).unwrap();
                 self.emitter.emit_bne(cond_tmp, ZERO, then_lbl);
@@ -661,7 +726,7 @@ impl CompilerRv64 {
         }
     }
 
-    fn lower_return(&mut self, val: Option<&IrValue>, needs_sret: bool, ctx: &mut FunctionContext) {
+    fn lower_return(&mut self, val: Option<&IrValue>, needs_sret: bool, ctx: &mut FunctionContext, alloc: &RegisterAllocator) {
         if let Some(val) = val {
             let raw_val_type = self.resolve_value_type(val, ctx);
             let resolved_val = match (&raw_val_type, val) {
@@ -682,7 +747,7 @@ impl CompilerRv64 {
                     self.emitter.emit_add_imm(addr_tmp, SP, slot as i64);
                     addr_tmp
                 } else {
-                    self.load_pointer_operand_to_temp(reg, ctx)
+                    self.load_pointer_operand_to_temp(reg, ctx, alloc)
                 };
                 let sret_ptr = 9; // s1
                 let size = self.type_size(&resolved_val);
@@ -726,7 +791,7 @@ impl CompilerRv64 {
             } else {
                 let resolved_val = self.resolve_value_type(val, ctx);
                 if matches!(resolved_val, IrType::Float(_)) {
-                    let val_fp = self.load_float_value_to_temp(val, ctx);
+                    let val_fp = self.load_float_value_to_temp(val, ctx, alloc);
                     match resolved_val {
                         IrType::Float(crate::intermediate_language::FloatWidth::F32) => {
                             self.emitter.emit_fmv_s(FA0, val_fp);
@@ -738,7 +803,7 @@ impl CompilerRv64 {
                         _ => unreachable!(),
                     }
                 } else {
-                    let val_tmp = self.load_value_to_temp(val, ctx);
+                    let val_tmp = self.load_value_to_temp(val, ctx, alloc);
                     self.emitter.emit_mv(A0, val_tmp);
                 }
             }
@@ -752,7 +817,26 @@ impl CompilerRv64 {
         ptr: &crate::intermediate_language::IrRegister,
         ctx: &FunctionContext,
         byte_offset: Option<i32>,
+        alloc: &RegisterAllocator,
     ) -> Reg {
+        // Check if pointer is in a physical register
+        if let Some(alloc_result) = alloc.get_allocation(ptr) {
+            if let Allocation::Physical(phys_reg) = alloc_result {
+                let tmp = self.emitter.alloc_temp_reg();
+                if let Some(off) = byte_offset {
+                    if off != 0 {
+                        self.emitter.emit_add_imm(tmp, *phys_reg, off as i64);
+                    } else {
+                        self.emitter.emit_mv(tmp, *phys_reg);
+                    }
+                } else {
+                    self.emitter.emit_mv(tmp, *phys_reg);
+                }
+                return tmp;
+            }
+        }
+        
+        // Fall back to stack slot
         let slot = ctx.slot_for_reg(ptr).expect("ptr slot");
         let tmp = self.emitter.alloc_temp_reg();
 
@@ -770,10 +854,34 @@ impl CompilerRv64 {
         tmp
     }
 
-    fn load_value_to_temp(&mut self, val: &IrValue, ctx: &FunctionContext) -> Reg {
+    fn load_value_to_temp(&mut self, val: &IrValue, ctx: &FunctionContext, alloc: &RegisterAllocator) -> Reg {
         let temp = self.emitter.alloc_temp_reg();
         match val {
             IrValue::Register(reg) => {
+                // Check if this register has a physical register allocation
+                if let Some(alloc_result) = alloc.get_allocation(reg) {
+                    match alloc_result {
+                        Allocation::Physical(phys_reg) => {
+                            // Value is in a physical register, copy it to our temp
+                            self.emitter.emit_mv(temp, *phys_reg);
+                            return temp;
+                        }
+                        Allocation::StackSlot(slot) => {
+                            // Load from stack slot
+                            if ctx.is_stack_address(reg) {
+                                self.emitter.emit_add_imm(temp, SP, *slot as i64);
+                            } else {
+                                let ty = ctx
+                                    .type_for_reg(reg)
+                                    .unwrap_or(IrType::Integer(crate::intermediate_language::IntWidth::I64));
+                                self.emitter.emit_load_from_slot(temp, *slot, &ty);
+                            }
+                            return temp;
+                        }
+                    }
+                }
+                
+                // Fallback to old behavior if no allocation found
                 let slot = ctx.slot_for_reg(reg).expect("reg slot");
                 if ctx.is_stack_address(reg) {
                     self.emitter.emit_add_imm(temp, SP, slot as i64);
@@ -784,10 +892,16 @@ impl CompilerRv64 {
                     self.emitter.emit_load_from_slot(temp, slot, &ty);
                 }
             }
-            IrValue::Integer(i) => self.emitter.emit_li(temp, *i),
-            IrValue::Bool(b) => self.emitter.emit_li(temp, i64::from(*b)),
+            IrValue::Integer(i) => {
+                self.emitter.emit_li(temp, *i);
+            }
+            IrValue::Bool(b) => {
+                self.emitter.emit_li(temp, i64::from(*b));
+            }
             IrValue::Float(_) => panic!("Float values must use load_float_value_to_temp"),
-            IrValue::Null => self.emitter.emit_li(temp, 0),
+            IrValue::Null => {
+                self.emitter.emit_li(temp, 0);
+            }
             IrValue::GlobalString(symbol) => {
                 self.emitter
                     .emit_raw(&format!("\tla {}, {}", reg_name(temp, false), symbol));
@@ -796,10 +910,32 @@ impl CompilerRv64 {
         temp
     }
 
-    fn load_float_value_to_temp(&mut self, val: &IrValue, ctx: &FunctionContext) -> Reg {
+    fn load_float_value_to_temp(&mut self, val: &IrValue, ctx: &FunctionContext, alloc: &RegisterAllocator) -> Reg {
         let temp = self.emitter.alloc_float_temp_reg();
         match val {
             IrValue::Register(reg) => {
+                // Check if this register has a physical register allocation
+                if let Some(alloc_result) = alloc.get_allocation(reg) {
+                    if let Allocation::Physical(phys_reg) = alloc_result {
+                        // Value is in a physical register, copy it to our temp
+                        // For floats, we need to use the appropriate move instruction
+                        let ty = ctx
+                            .type_for_reg(reg)
+                            .unwrap_or(IrType::Float(crate::intermediate_language::FloatWidth::F32));
+                        match ty {
+                            IrType::Float(crate::intermediate_language::FloatWidth::F32) => {
+                                self.emitter.emit_fmv_s(temp, *phys_reg);
+                            }
+                            IrType::Float(crate::intermediate_language::FloatWidth::F64) => {
+                                self.emitter.emit_inst(RealInstruction::FsgnjD(fmv_d(temp, *phys_reg)));
+                            }
+                            _ => panic!("Expected float type"),
+                        }
+                        return temp;
+                    }
+                }
+                
+                // Load from stack
                 let slot = ctx.slot_for_reg(reg).expect("reg slot");
                 let ty = ctx
                     .type_for_reg(reg)
@@ -828,8 +964,19 @@ impl CompilerRv64 {
         &mut self,
         reg: &crate::intermediate_language::IrRegister,
         ctx: &FunctionContext,
+        alloc: &RegisterAllocator,
     ) -> Reg {
         let temp = self.emitter.alloc_temp_reg();
+        // Check if this register has a physical register allocation
+        if let Some(alloc_result) = alloc.get_allocation(reg) {
+            if let Allocation::Physical(phys_reg) = alloc_result {
+                // Value is in a physical register, copy it to our temp
+                self.emitter.emit_mv(temp, *phys_reg);
+                return temp;
+            }
+        }
+        
+        // Load from stack
         let slot = ctx.slot_for_reg(reg).expect("reg slot");
         if ctx.is_stack_address(reg) {
             self.emitter.emit_add_imm(temp, SP, slot as i64);

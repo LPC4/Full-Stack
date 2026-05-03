@@ -5,12 +5,12 @@
 .globl main
 main:
 	; --- Function Prologue ---
-	; Allocate stack frame: 32 bytes
-	addi   sp, sp, -32
-	; Save return address (ra) at offset 16
-	sd     ra, 16(sp)
-	; Save callee-saved register s8 at offset 24
-	sd     s0, 24(sp)
+	; Allocate stack frame: 48 bytes
+	addi   sp, sp, -48
+	; Save return address (ra) at offset 24
+	sd     ra, 24(sp)
+	; Save callee-saved register s8 at offset 32
+	sd     s0, 32(sp)
 	; Set up frame pointer
 	addi   s0, sp, 0
 	; --- End Prologue ---
@@ -22,12 +22,12 @@ main__entry:
 	addi   t0, zero, 0
 	addi   a0, t0, 0
 	; --- Function Epilogue ---
-	; Restore callee-saved register s8 from offset 24
-	ld     s0, 24(sp)
-	; Restore return address (ra) from offset 16
-	ld     ra, 16(sp)
-	; Deallocate stack frame: 32 bytes
-	addi   sp, sp, 32
+	; Restore callee-saved register s8 from offset 32
+	ld     s0, 32(sp)
+	; Restore return address (ra) from offset 24
+	ld     ra, 24(sp)
+	; Deallocate stack frame: 48 bytes
+	addi   sp, sp, 48
 	; Return to caller
 	jalr   zero, 0(ra)
 	; --- End Epilogue ---
