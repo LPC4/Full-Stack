@@ -36,35 +36,39 @@ impl CompilerView for DisassemblyView {
         }
 
         // Build a map of label -> address from the symbol table
-        let mut label_addresses: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+        let mut label_addresses: std::collections::HashMap<String, u64> =
+            std::collections::HashMap::new();
         for (label, addr) in &session.symbols {
             label_addresses.insert(label.clone(), *addr);
         }
-        
+
         // Parse assembly into lines and track current label context
         let lines: Vec<&str> = asm_text.lines().collect();
         let mut current_block_start_addr: Option<u64> = None;
         let mut instruction_offset = 0u64; // Track offset within current block
-        
+
         // First pass: build a map of line indices to addresses
-        let mut line_to_address: std::collections::HashMap<usize, u64> = std::collections::HashMap::new();
-        let mut address_to_line: std::collections::HashMap<u64, usize> = std::collections::HashMap::new();
-        
+        let mut line_to_address: std::collections::HashMap<usize, u64> =
+            std::collections::HashMap::new();
+        let mut address_to_line: std::collections::HashMap<u64, usize> =
+            std::collections::HashMap::new();
+
         for (line_idx, line) in lines.iter().enumerate() {
             let trimmed = line.trim();
-            
+
             // Check if this is a label line
             if trimmed.ends_with(':') && !trimmed.starts_with('.') {
                 let label_name = trimmed.trim_end_matches(':');
                 current_block_start_addr = label_addresses.get(label_name).copied();
                 instruction_offset = 0;
-                
+
                 // Record the label's address
                 if let Some(addr) = current_block_start_addr {
                     line_to_address.insert(line_idx, addr);
                     address_to_line.insert(addr, line_idx);
                 }
-            } else if !trimmed.is_empty() && !trimmed.starts_with('.') && !trimmed.starts_with(';') {
+            } else if !trimmed.is_empty() && !trimmed.starts_with('.') && !trimmed.starts_with(';')
+            {
                 // This is an instruction line
                 if let Some(base_addr) = current_block_start_addr {
                     let instr_addr = base_addr + instruction_offset;
@@ -74,10 +78,10 @@ impl CompilerView for DisassemblyView {
                 }
             }
         }
-        
+
         // Find the line number for the current PC
         let _current_line_idx = address_to_line.get(&current_pc).copied();
-        
+
         ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
@@ -85,9 +89,11 @@ impl CompilerView for DisassemblyView {
 
                 for (line_idx, line) in lines.iter().enumerate() {
                     let trimmed = line.trim();
-                    
+
                     // Check if this line contains the current PC
-                    let is_current_line = line_to_address.get(&line_idx).map_or(false, |&addr| addr == current_pc);
+                    let is_current_line = line_to_address
+                        .get(&line_idx)
+                        .map_or(false, |&addr| addr == current_pc);
 
                     // Background highlighting for current instruction
                     if is_current_line {
@@ -173,4 +179,3 @@ impl CompilerView for DisassemblyView {
         Box::new(self.clone())
     }
 }
-

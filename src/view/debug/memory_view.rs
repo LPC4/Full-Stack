@@ -88,14 +88,14 @@ impl CompilerView for MemoryView {
                             self.addr_input = format!("{:#010x}", addr);
                         }
                     }
-                    
+
                     // Show available presets info
                     if session.snapshot.section_presets.is_empty() {
                         ui.label(
                             RichText::new("(No section symbols found)")
                                 .weak()
                                 .small()
-                                .color(Color32::from_rgb(255, 150, 100))
+                                .color(Color32::from_rgb(255, 150, 100)),
                         );
                     }
                 });
@@ -123,13 +123,20 @@ impl CompilerView for MemoryView {
                     }
 
                     ui.add_space(8.0);
-                    
+
                     // Button to jump to current PC
-                    if ui.small_button("@PC").on_hover_text(format!("Jump to current PC: {:#010x}", session.snapshot.cpu.pc)).clicked() {
+                    if ui
+                        .small_button("@PC")
+                        .on_hover_text(format!(
+                            "Jump to current PC: {:#010x}",
+                            session.snapshot.cpu.pc
+                        ))
+                        .clicked()
+                    {
                         self.current_addr = session.snapshot.cpu.pc & !7;
                         self.addr_input = format!("{:#010x}", self.current_addr);
                     }
-                    
+
                     ui.separator();
                     ui.add_space(8.0);
 
@@ -162,17 +169,20 @@ impl CompilerView for MemoryView {
 
         // ---- Fetch bytes from VM ----
         let bytes = session.peek_bytes(self.current_addr, page_size);
-        
+
         // Debug info: show how many bytes were actually read
         ui.horizontal(|ui| {
             ui.label(
-                RichText::new(format!("Read {} bytes from {:#010x}", bytes.len(), self.current_addr))
-                    .small()
-                    .weak()
+                RichText::new(format!(
+                    "Read {} bytes from {:#010x}",
+                    bytes.len(),
+                    self.current_addr
+                ))
+                .small()
+                .weak(),
             );
         });
         ui.add_space(4.0);
-
 
         // ---- Hex dump ----
         ScrollArea::vertical()

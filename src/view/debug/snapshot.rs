@@ -44,7 +44,9 @@ pub enum SlotState {
 }
 
 impl Default for SlotState {
-    fn default() -> Self { Self::Empty }
+    fn default() -> Self {
+        Self::Empty
+    }
 }
 
 /// Full 5-stage pipeline state captured for one clock cycle.

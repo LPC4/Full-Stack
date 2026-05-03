@@ -16,11 +16,11 @@ const STAGE_LABELS: [&str; 5] = ["IF", "ID", "EX", "MEM", "WB"];
 
 // Per-stage background (blue gradient: darker fetch -> brighter writeback)
 const STAGE_BG: [Color32; 5] = [
-    Color32::from_rgb(22,  42,  78),
-    Color32::from_rgb(28,  56,  100),
-    Color32::from_rgb(34,  76,  128),
-    Color32::from_rgb(40,  98,  152),
-    Color32::from_rgb(50, 122,  182),
+    Color32::from_rgb(22, 42, 78),
+    Color32::from_rgb(28, 56, 100),
+    Color32::from_rgb(34, 76, 128),
+    Color32::from_rgb(40, 98, 152),
+    Color32::from_rgb(50, 122, 182),
 ];
 
 const STAGE_HEADER_BG: [Color32; 5] = [
@@ -31,18 +31,18 @@ const STAGE_HEADER_BG: [Color32; 5] = [
     Color32::from_rgb(34, 82, 124),
 ];
 
-const EMPTY_BG:       Color32 = Color32::from_rgb(18, 18, 28);
-const STALL_BG:       Color32 = Color32::from_rgb(80, 50, 10);
-const FLUSH_BG:       Color32 = Color32::from_rgb(70, 15, 15);
-const CYCLE_BG:       Color32 = Color32::from_rgb(15, 15, 25);
-const GRID_LINE:      Color32 = Color32::from_rgb(40, 40, 60);
-const PC_TEXT:        Color32 = Color32::from_rgb(140, 190, 255);
-const MNEM_TEXT:      Color32 = Color32::WHITE;
-const EMPTY_TEXT:     Color32 = Color32::from_rgb(40, 40, 55);
-const STALL_TEXT:     Color32 = Color32::from_rgb(220, 140, 40);
-const FLUSH_TEXT:     Color32 = Color32::from_rgb(220, 70, 70);
-const CYCLE_TEXT:     Color32 = Color32::from_rgb(120, 120, 150);
-const HEADER_TEXT:    Color32 = Color32::from_rgb(180, 190, 210);
+const EMPTY_BG: Color32 = Color32::from_rgb(18, 18, 28);
+const STALL_BG: Color32 = Color32::from_rgb(80, 50, 10);
+const FLUSH_BG: Color32 = Color32::from_rgb(70, 15, 15);
+const CYCLE_BG: Color32 = Color32::from_rgb(15, 15, 25);
+const GRID_LINE: Color32 = Color32::from_rgb(40, 40, 60);
+const PC_TEXT: Color32 = Color32::from_rgb(140, 190, 255);
+const MNEM_TEXT: Color32 = Color32::WHITE;
+const EMPTY_TEXT: Color32 = Color32::from_rgb(40, 40, 55);
+const STALL_TEXT: Color32 = Color32::from_rgb(220, 140, 40);
+const FLUSH_TEXT: Color32 = Color32::from_rgb(220, 70, 70);
+const CYCLE_TEXT: Color32 = Color32::from_rgb(120, 120, 150);
+const HEADER_TEXT: Color32 = Color32::from_rgb(180, 190, 210);
 
 // ---------------------------------------------------------------------------
 // View
@@ -100,10 +100,7 @@ impl CompilerView for PipelineView {
         let stage_w = (available_w - CYCLE_COL_W) / 5.0;
         let total_h = HEADER_H + NUM_ROWS as f32 * ROW_H;
 
-        let (area, _) = ui.allocate_exact_size(
-            vec2(available_w, total_h),
-            egui::Sense::hover(),
-        );
+        let (area, _) = ui.allocate_exact_size(vec2(available_w, total_h), egui::Sense::hover());
         let p = ui.painter_at(area);
 
         // Header row
@@ -136,8 +133,10 @@ impl CompilerView for PipelineView {
 
         // Vertical grid lines
         p.line_segment(
-            [pos2(area.min.x + CYCLE_COL_W, area.min.y),
-             pos2(area.min.x + CYCLE_COL_W, area.max.y)],
+            [
+                pos2(area.min.x + CYCLE_COL_W, area.min.y),
+                pos2(area.min.x + CYCLE_COL_W, area.max.y),
+            ],
             Stroke::new(1.0, GRID_LINE),
         );
         for si in 1..5 {
@@ -160,8 +159,10 @@ impl CompilerView for PipelineView {
             let row_y = area.min.y + HEADER_H + row as f32 * ROW_H;
 
             p.line_segment(
-                [pos2(area.min.x, row_y + ROW_H),
-                 pos2(area.max.x, row_y + ROW_H)],
+                [
+                    pos2(area.min.x, row_y + ROW_H),
+                    pos2(area.max.x, row_y + ROW_H),
+                ],
                 Stroke::new(1.0, GRID_LINE),
             );
 

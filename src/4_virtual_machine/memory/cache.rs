@@ -114,17 +114,14 @@ impl<Next: MemoryAccess> Cache<Next> {
         // Miss: choose victim -- first invalid way, else true LRU (smallest age)
         let victim_idx = {
             let set = &self.sets[set_idx];
-            set.ways
-                .iter()
-                .position(|w| !w.valid)
-                .unwrap_or_else(|| {
-                    set.ways
-                        .iter()
-                        .enumerate()
-                        .min_by_key(|(_, w)| w.lru_age)
-                        .map(|(i, _)| i)
-                        .unwrap_or(0)
-                })
+            set.ways.iter().position(|w| !w.valid).unwrap_or_else(|| {
+                set.ways
+                    .iter()
+                    .enumerate()
+                    .min_by_key(|(_, w)| w.lru_age)
+                    .map(|(i, _)| i)
+                    .unwrap_or(0)
+            })
         };
 
         // Write back dirty victim

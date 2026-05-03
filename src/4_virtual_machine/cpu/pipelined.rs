@@ -13,8 +13,8 @@ use crate::virtual_machine::cpu::csr::{CsrFile, CsrSnapshot};
 use crate::virtual_machine::cpu::decoder::{DecodedInsn, decode as decode_insn};
 use crate::virtual_machine::cpu::pipeline::execute::ExecResult;
 use crate::virtual_machine::cpu::pipeline::hazard::{
-    compute_forwarding, insn_is_atomic, insn_is_fp_dest, insn_is_load, insn_rd, insn_rs1,
-    insn_rs2, load_use_hazard,
+    compute_forwarding, insn_is_atomic, insn_is_fp_dest, insn_is_load, insn_rd, insn_rs1, insn_rs2,
+    load_use_hazard,
 };
 use crate::virtual_machine::cpu::pipeline::memory::MemResult;
 use crate::virtual_machine::cpu::pipeline::predictor::BranchPredictor;
@@ -33,9 +33,12 @@ const CAUSE_ILLEGAL_INSN: u64 = 2;
 const CAUSE_EBREAK: u64 = 3;
 const CAUSE_LOAD_ACCESS_FAULT: u64 = 5;
 const CAUSE_STORE_ACCESS_FAULT: u64 = 7;
-#[allow(dead_code)] const CAUSE_ECALL_U: u64 = 8;
-#[allow(dead_code)] const CAUSE_ECALL_S: u64 = 9;
-#[allow(dead_code)] const CAUSE_ECALL_M: u64 = 11;
+#[allow(dead_code)]
+const CAUSE_ECALL_U: u64 = 8;
+#[allow(dead_code)]
+const CAUSE_ECALL_S: u64 = 9;
+#[allow(dead_code)]
+const CAUSE_ECALL_M: u64 = 11;
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -157,7 +160,9 @@ impl PipelinedCpu {
         self.csrs.snapshot()
     }
 
-    pub fn predictor_stats(&self) -> &crate::virtual_machine::cpu::pipeline::predictor::PredictorStats {
+    pub fn predictor_stats(
+        &self,
+    ) -> &crate::virtual_machine::cpu::pipeline::predictor::PredictorStats {
         self.predictor.stats()
     }
 
@@ -285,9 +290,20 @@ impl PipelinedCpu {
         let rs2 = ((raw >> 20) & 0x1f) as usize;
 
         let (predicted_taken, predicted_target) = self.predictor.predict(pc);
-        self.fetch_pc = if predicted_taken { predicted_target } else { pc.wrapping_add(4) };
+        self.fetch_pc = if predicted_taken {
+            predicted_target
+        } else {
+            pc.wrapping_add(4)
+        };
 
-        Ok(Some(IFIDReg { pc, raw, rs1, rs2, predicted_taken, predicted_target }))
+        Ok(Some(IFIDReg {
+            pc,
+            raw,
+            rs1,
+            rs2,
+            predicted_taken,
+            predicted_target,
+        }))
     }
 
     fn stage_id(&mut self, if_id: Option<&IFIDReg>) -> Result<Option<IDEXReg>, VmError> {
@@ -316,8 +332,12 @@ impl PipelinedCpu {
         // as integer rs1/rs2 but are read from the FP register file.
         let (frs1, frs2) = match &insn {
             DecodedInsn::FStore { rs2, .. } => (rs1, *rs2),
-            DecodedInsn::FOp { rs1: r1, rs2: r2, .. } => (*r1, *r2),
-            DecodedInsn::FMac { rs1: r1, rs2: r2, .. } => (*r1, *r2),
+            DecodedInsn::FOp {
+                rs1: r1, rs2: r2, ..
+            } => (*r1, *r2),
+            DecodedInsn::FMac {
+                rs1: r1, rs2: r2, ..
+            } => (*r1, *r2),
             _ => (0, 0),
         };
 
@@ -454,7 +474,14 @@ impl PipelinedCpu {
 
         let (fwd_rd, is_fp_dest, fwd_val) = mem_forwarding_info(&mem_result, ex_mem);
 
-        Ok(Some(MEMWBReg { pc: ex_mem.pc, mnemonic: ex_mem.mnemonic, rd: fwd_rd, is_fp_dest, fwd_val, mem_result }))
+        Ok(Some(MEMWBReg {
+            pc: ex_mem.pc,
+            mnemonic: ex_mem.mnemonic,
+            rd: fwd_rd,
+            is_fp_dest,
+            fwd_val,
+            mem_result,
+        }))
     }
 
     fn stage_wb(
@@ -467,29 +494,30 @@ impl PipelinedCpu {
             None => return Ok(TickOutcome::Continue),
         };
 
-        let next_pc = match writeback::writeback(mem_wb.mem_result.clone(), &mut self.regs, &mut self.csrs) {
-            Ok(pc) => pc,
-            Err(VmError::Ecall) => return self.handle_ecall(bus),
-            Err(VmError::Ebreak) => {
-                let pc = self.regs.pc;
-                self.flush_pipeline();
-                self.take_trap(CAUSE_EBREAK, 0, pc);
-                return Ok(TickOutcome::Continue);
-            }
-            Err(VmError::Other(ref msg)) if msg == "MRET" => {
-                self.handle_mret();
-                return Ok(TickOutcome::Continue);
-            }
-            Err(VmError::Other(ref msg)) if msg == "SRET" => {
-                self.handle_sret();
-                return Ok(TickOutcome::Continue);
-            }
-            Err(e) => {
-                let pc = self.regs.pc;
-                self.flush_and_trap(e, pc);
-                return Ok(TickOutcome::Continue);
-            }
-        };
+        let next_pc =
+            match writeback::writeback(mem_wb.mem_result.clone(), &mut self.regs, &mut self.csrs) {
+                Ok(pc) => pc,
+                Err(VmError::Ecall) => return self.handle_ecall(bus),
+                Err(VmError::Ebreak) => {
+                    let pc = self.regs.pc;
+                    self.flush_pipeline();
+                    self.take_trap(CAUSE_EBREAK, 0, pc);
+                    return Ok(TickOutcome::Continue);
+                }
+                Err(VmError::Other(ref msg)) if msg == "MRET" => {
+                    self.handle_mret();
+                    return Ok(TickOutcome::Continue);
+                }
+                Err(VmError::Other(ref msg)) if msg == "SRET" => {
+                    self.handle_sret();
+                    return Ok(TickOutcome::Continue);
+                }
+                Err(e) => {
+                    let pc = self.regs.pc;
+                    self.flush_and_trap(e, pc);
+                    return Ok(TickOutcome::Continue);
+                }
+            };
 
         self.regs.pc = next_pc;
         self.csrs.increment_instret();
@@ -524,9 +552,7 @@ impl PipelinedCpu {
                 let sequential = pc.wrapping_add(4);
                 let taken = *next_pc != sequential;
                 (
-                    *next_pc,
-                    taken,
-                    taken, // only flag jumps as "branches" when they deviate
+                    *next_pc, taken, taken, // only flag jumps as "branches" when they deviate
                 )
             }
             ExecResult::Jump { next_pc } => {
@@ -538,10 +564,11 @@ impl PipelinedCpu {
                 let taken = *next_pc != pc.wrapping_add(4);
                 (*next_pc, taken, false)
             }
-            ExecResult::Ecall | ExecResult::Ebreak | ExecResult::Mret
-            | ExecResult::Sret | ExecResult::SfenceVma => {
-                (pc.wrapping_add(4), false, false)
-            }
+            ExecResult::Ecall
+            | ExecResult::Ebreak
+            | ExecResult::Mret
+            | ExecResult::Sret
+            | ExecResult::SfenceVma => (pc.wrapping_add(4), false, false),
         }
     }
 
@@ -660,7 +687,9 @@ impl PipelinedCpu {
                 let mut ptr = self.regs.read_x(10);
                 loop {
                     let byte = bus.read_byte(ptr).unwrap_or(0);
-                    if byte == 0 { break; }
+                    if byte == 0 {
+                        break;
+                    }
                     let _ = bus.uart_mut().write_byte(0, byte);
                     ptr += 1;
                 }
@@ -691,7 +720,9 @@ impl PipelinedCpu {
                 use crate::virtual_machine::bus::HEAP_PTR_ADDR;
                 let size = self.regs.read_x(10);
                 let aligned = (size + 7) & !7;
-                let current = bus.read_doubleword(HEAP_PTR_ADDR).unwrap_or(HEAP_PTR_ADDR + 8);
+                let current = bus
+                    .read_doubleword(HEAP_PTR_ADDR)
+                    .unwrap_or(HEAP_PTR_ADDR + 8);
                 let new_ptr = current.wrapping_add(aligned);
                 let _ = bus.write_doubleword(HEAP_PTR_ADDR, new_ptr);
                 self.regs.write_x(10, current);
@@ -763,7 +794,9 @@ fn vm_printf_pipelined(regs: &Registers, bus: &mut SystemBus) -> Vec<u8> {
     loop {
         let c = bus.read_byte(addr).unwrap_or(0);
         addr += 1;
-        if c == 0 { break; }
+        if c == 0 {
+            break;
+        }
         if c != b'%' {
             out.push(c);
             continue;
@@ -774,29 +807,40 @@ fn vm_printf_pipelined(regs: &Registers, bus: &mut SystemBus) -> Vec<u8> {
             let v = regs.read_x(arg_reg as usize);
             arg_reg += 1;
             v
-        } else { 0 };
+        } else {
+            0
+        };
         match spec {
             b'd' | b'i' => out.extend_from_slice((arg as i64).to_string().as_bytes()),
-            b'u'        => out.extend_from_slice(arg.to_string().as_bytes()),
-            b'x'        => out.extend_from_slice(format!("{arg:x}").as_bytes()),
-            b'X'        => out.extend_from_slice(format!("{arg:X}").as_bytes()),
-            b'p'        => out.extend_from_slice(format!("0x{arg:x}").as_bytes()),
-            b'c'        => out.push(arg as u8),
+            b'u' => out.extend_from_slice(arg.to_string().as_bytes()),
+            b'x' => out.extend_from_slice(format!("{arg:x}").as_bytes()),
+            b'X' => out.extend_from_slice(format!("{arg:X}").as_bytes()),
+            b'p' => out.extend_from_slice(format!("0x{arg:x}").as_bytes()),
+            b'c' => out.push(arg as u8),
             b's' => {
                 let mut ptr = arg;
                 loop {
                     let byte = bus.read_byte(ptr).unwrap_or(0);
-                    if byte == 0 { break; }
+                    if byte == 0 {
+                        break;
+                    }
                     out.push(byte);
                     ptr += 1;
                 }
             }
-            b'f' | b'g' | b'e' => out.extend_from_slice(format!("{}", f64::from_bits(arg)).as_bytes()),
+            b'f' | b'g' | b'e' => {
+                out.extend_from_slice(format!("{}", f64::from_bits(arg)).as_bytes())
+            }
             b'%' => {
                 out.push(b'%');
-                if arg_reg > 11 { arg_reg -= 1; }
+                if arg_reg > 11 {
+                    arg_reg -= 1;
+                }
             }
-            other => { out.push(b'%'); out.push(other); }
+            other => {
+                out.push(b'%');
+                out.push(other);
+            }
         }
     }
     out

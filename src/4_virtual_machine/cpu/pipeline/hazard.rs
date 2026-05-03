@@ -173,5 +173,10 @@ pub fn compute_forwarding(
         }
     }
 
-    ForwardedValues { rs1, rs2, frs1, frs2 }
+    ForwardedValues {
+        rs1,
+        rs2,
+        frs1,
+        frs2,
+    }
 }
