@@ -1,6 +1,9 @@
 use super::{
-    assembly_emitter::AssemblyEmitter, data_section::DataSection,
-    function_context::FunctionContext, register_allocator::{RegisterAllocator, Allocation}, type_utils,
+    assembly_emitter::AssemblyEmitter,
+    data_section::DataSection,
+    function_context::FunctionContext,
+    register_allocator::{Allocation, RegisterAllocator},
+    type_utils,
 };
 use crate::assembly_language::encode_decode::Reg;
 use crate::assembly_language::real::RealInstruction;
@@ -135,7 +138,12 @@ impl CompilerRv64 {
         self.emitter.end_function();
     }
 
-    fn lower_instruction(&mut self, inst: &IrInstruction, ctx: &mut FunctionContext, alloc: &RegisterAllocator) {
+    fn lower_instruction(
+        &mut self,
+        inst: &IrInstruction,
+        ctx: &mut FunctionContext,
+        alloc: &RegisterAllocator,
+    ) {
         use IrInstruction::{
             Alloc, Call, Cast, Cmp, Comment, HeapAlloc, HeapFree, Index, Load, Math, Offset, Phi,
             Store, Unary,
@@ -236,27 +244,34 @@ impl CompilerRv64 {
                 IrType::Integer(w) => match w {
                     crate::intermediate_language::IntWidth::I1
                     | crate::intermediate_language::IntWidth::I8 => {
-                        self.emitter.emit_inst(RealInstruction::Lb(Lb::new(loaded_val, addr_tmp, 0)));
+                        self.emitter
+                            .emit_inst(RealInstruction::Lb(Lb::new(loaded_val, addr_tmp, 0)));
                     }
                     crate::intermediate_language::IntWidth::I16 => {
-                        self.emitter.emit_inst(RealInstruction::Lh(Lh::new(loaded_val, addr_tmp, 0)));
+                        self.emitter
+                            .emit_inst(RealInstruction::Lh(Lh::new(loaded_val, addr_tmp, 0)));
                     }
                     crate::intermediate_language::IntWidth::I32 => {
-                        self.emitter.emit_inst(RealInstruction::Lw(Lw::new(loaded_val, addr_tmp, 0)));
+                        self.emitter
+                            .emit_inst(RealInstruction::Lw(Lw::new(loaded_val, addr_tmp, 0)));
                     }
                     crate::intermediate_language::IntWidth::I64 => {
-                        self.emitter.emit_inst(RealInstruction::Ld(Ld::new(loaded_val, addr_tmp, 0)));
+                        self.emitter
+                            .emit_inst(RealInstruction::Ld(Ld::new(loaded_val, addr_tmp, 0)));
                     }
                 },
                 IrType::Pointer(_) => {
-                    self.emitter.emit_inst(RealInstruction::Ld(Ld::new(loaded_val, addr_tmp, 0)));
+                    self.emitter
+                        .emit_inst(RealInstruction::Ld(Ld::new(loaded_val, addr_tmp, 0)));
                 }
                 _ => {
-                    self.emitter.emit_inst(RealInstruction::Ld(Ld::new(loaded_val, addr_tmp, 0)));
+                    self.emitter
+                        .emit_inst(RealInstruction::Ld(Ld::new(loaded_val, addr_tmp, 0)));
                 }
             }
             // Store to stack slot
-            self.emitter.emit_store_from_tmp(SP, loaded_val, &resolved_ty, dest_slot as i32);
+            self.emitter
+                .emit_store_from_tmp(SP, loaded_val, &resolved_ty, dest_slot as i32);
             // If dest has a physical register allocation, also store there
             if let Some(Allocation::Physical(phys_reg)) = alloc.get_allocation(dest) {
                 self.emitter.emit_mv(*phys_reg, loaded_val);
@@ -726,7 +741,13 @@ impl CompilerRv64 {
         }
     }
 
-    fn lower_return(&mut self, val: Option<&IrValue>, needs_sret: bool, ctx: &mut FunctionContext, alloc: &RegisterAllocator) {
+    fn lower_return(
+        &mut self,
+        val: Option<&IrValue>,
+        needs_sret: bool,
+        ctx: &mut FunctionContext,
+        alloc: &RegisterAllocator,
+    ) {
         if let Some(val) = val {
             let raw_val_type = self.resolve_value_type(val, ctx);
             let resolved_val = match (&raw_val_type, val) {
@@ -835,7 +856,7 @@ impl CompilerRv64 {
                 return tmp;
             }
         }
-        
+
         // Fall back to stack slot
         let slot = ctx.slot_for_reg(ptr).expect("ptr slot");
         let tmp = self.emitter.alloc_temp_reg();
@@ -854,7 +875,12 @@ impl CompilerRv64 {
         tmp
     }
 
-    fn load_value_to_temp(&mut self, val: &IrValue, ctx: &FunctionContext, alloc: &RegisterAllocator) -> Reg {
+    fn load_value_to_temp(
+        &mut self,
+        val: &IrValue,
+        ctx: &FunctionContext,
+        alloc: &RegisterAllocator,
+    ) -> Reg {
         let temp = self.emitter.alloc_temp_reg();
         match val {
             IrValue::Register(reg) => {
@@ -871,16 +897,16 @@ impl CompilerRv64 {
                             if ctx.is_stack_address(reg) {
                                 self.emitter.emit_add_imm(temp, SP, *slot as i64);
                             } else {
-                                let ty = ctx
-                                    .type_for_reg(reg)
-                                    .unwrap_or(IrType::Integer(crate::intermediate_language::IntWidth::I64));
+                                let ty = ctx.type_for_reg(reg).unwrap_or(IrType::Integer(
+                                    crate::intermediate_language::IntWidth::I64,
+                                ));
                                 self.emitter.emit_load_from_slot(temp, *slot, &ty);
                             }
                             return temp;
                         }
                     }
                 }
-                
+
                 // Fallback to old behavior if no allocation found
                 let slot = ctx.slot_for_reg(reg).expect("reg slot");
                 if ctx.is_stack_address(reg) {
@@ -910,7 +936,12 @@ impl CompilerRv64 {
         temp
     }
 
-    fn load_float_value_to_temp(&mut self, val: &IrValue, ctx: &FunctionContext, alloc: &RegisterAllocator) -> Reg {
+    fn load_float_value_to_temp(
+        &mut self,
+        val: &IrValue,
+        ctx: &FunctionContext,
+        alloc: &RegisterAllocator,
+    ) -> Reg {
         let temp = self.emitter.alloc_float_temp_reg();
         match val {
             IrValue::Register(reg) => {
@@ -919,22 +950,23 @@ impl CompilerRv64 {
                     if let Allocation::Physical(phys_reg) = alloc_result {
                         // Value is in a physical register, copy it to our temp
                         // For floats, we need to use the appropriate move instruction
-                        let ty = ctx
-                            .type_for_reg(reg)
-                            .unwrap_or(IrType::Float(crate::intermediate_language::FloatWidth::F32));
+                        let ty = ctx.type_for_reg(reg).unwrap_or(IrType::Float(
+                            crate::intermediate_language::FloatWidth::F32,
+                        ));
                         match ty {
                             IrType::Float(crate::intermediate_language::FloatWidth::F32) => {
                                 self.emitter.emit_fmv_s(temp, *phys_reg);
                             }
                             IrType::Float(crate::intermediate_language::FloatWidth::F64) => {
-                                self.emitter.emit_inst(RealInstruction::FsgnjD(fmv_d(temp, *phys_reg)));
+                                self.emitter
+                                    .emit_inst(RealInstruction::FsgnjD(fmv_d(temp, *phys_reg)));
                             }
                             _ => panic!("Expected float type"),
                         }
                         return temp;
                     }
                 }
-                
+
                 // Load from stack
                 let slot = ctx.slot_for_reg(reg).expect("reg slot");
                 let ty = ctx
@@ -975,7 +1007,7 @@ impl CompilerRv64 {
                 return temp;
             }
         }
-        
+
         // Load from stack
         let slot = ctx.slot_for_reg(reg).expect("reg slot");
         if ctx.is_stack_address(reg) {

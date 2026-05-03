@@ -4,7 +4,7 @@
 use super::function_context::FunctionContext;
 use crate::assembly_language::encode_decode::Reg;
 use crate::intermediate_language::{IrFunction, IrInstruction, IrTerminator, IrType, IrValue};
-use std::collections::{HashMap, BTreeMap};
+use std::collections::{BTreeMap, HashMap};
 
 /// Available physical registers for allocation (caller-saved temporaries)
 const AVAILABLE_REGS: [Reg; 7] = [5, 6, 7, 28, 29, 30, 31]; // t0-t2, t3-t6
@@ -49,7 +49,7 @@ impl RegisterAllocator {
         for param in &func.params {
             ctx.alloc_slot_for_reg(&param.register, &param.ty);
         }
-        
+
         // Mark stack addresses from Alloc instructions
         for block in &func.blocks {
             for inst in &block.instructions {
@@ -58,9 +58,9 @@ impl RegisterAllocator {
                 }
             }
         }
-        
+
         let mut vregs = Vec::new();
-        
+
         // Add params to vregs list
         for param in &func.params {
             vregs.push((param.register.clone(), param.ty.clone()));
@@ -77,14 +77,14 @@ impl RegisterAllocator {
 
         // Second pass: compute live intervals
         let intervals = self.compute_live_intervals(func, &vregs, function_return_types);
-        
+
         // Ensure ALL registers have stack slots BEFORE allocation (needed for spilling)
         for interval in &intervals {
             if !ctx.slot_for_reg(&interval.reg).is_some() {
                 ctx.alloc_slot_for_reg(&interval.reg, &interval.ty);
             }
         }
-        
+
         // DISABLED: Register allocation causes edge case bugs with certain patterns
         // Third pass: allocate registers using linear scan (only for non-float types)
         // self.linear_scan_allocate(&intervals, ctx, func);
@@ -97,7 +97,7 @@ impl RegisterAllocator {
         function_return_types: &HashMap<String, IrType>,
     ) {
         use IrInstruction::*;
-        
+
         match inst {
             Alloc { dest, ty, .. } => {
                 if !vregs.iter().any(|(r, _)| r == dest) {
@@ -110,25 +110,25 @@ impl RegisterAllocator {
                     vregs.push((dest.clone(), ty.clone()));
                 }
             }
-            Math { dest, ty, .. } 
-            | Unary { dest, ty, .. }
-            | Cast { dest, ty, .. } => {
+            Math { dest, ty, .. } | Unary { dest, ty, .. } | Cast { dest, ty, .. } => {
                 if !vregs.iter().any(|(r, _)| r == dest) {
                     vregs.push((dest.clone(), ty.clone()));
                 }
             }
             Cmp { dest, .. } => {
                 if !vregs.iter().any(|(r, _)| r == dest) {
-                    vregs.push((dest.clone(), IrType::Integer(crate::intermediate_language::IntWidth::I1)));
+                    vregs.push((
+                        dest.clone(),
+                        IrType::Integer(crate::intermediate_language::IntWidth::I1),
+                    ));
                 }
             }
             Call { dest, function, .. } => {
                 if let Some(dest) = dest {
                     if !vregs.iter().any(|(r, _)| r == dest) {
-                        let ret_ty = function_return_types
-                            .get(function)
-                            .cloned()
-                            .unwrap_or(IrType::Integer(crate::intermediate_language::IntWidth::I64));
+                        let ret_ty = function_return_types.get(function).cloned().unwrap_or(
+                            IrType::Integer(crate::intermediate_language::IntWidth::I64),
+                        );
                         vregs.push((dest.clone(), ret_ty));
                     }
                 }
@@ -138,8 +138,7 @@ impl RegisterAllocator {
                     vregs.push((dest.clone(), ty.clone()));
                 }
             }
-            Offset { dest, ty, .. }
-            | Index { dest, ty, .. } => {
+            Offset { dest, ty, .. } | Index { dest, ty, .. } => {
                 if !vregs.iter().any(|(r, _)| r == dest) {
                     vregs.push((dest.clone(), IrType::Pointer(Box::new(ty.clone()))));
                 }
@@ -163,14 +162,20 @@ impl RegisterAllocator {
             Return(Some(val)) => {
                 if let IrValue::Register(reg) = val {
                     if !vregs.iter().any(|(r, _)| r == reg) {
-                        vregs.push((reg.clone(), IrType::Integer(crate::intermediate_language::IntWidth::I64)));
+                        vregs.push((
+                            reg.clone(),
+                            IrType::Integer(crate::intermediate_language::IntWidth::I64),
+                        ));
                     }
                 }
             }
             Branch { cond, .. } => {
                 if let IrValue::Register(reg) = cond {
                     if !vregs.iter().any(|(r, _)| r == reg) {
-                        vregs.push((reg.clone(), IrType::Integer(crate::intermediate_language::IntWidth::I1)));
+                        vregs.push((
+                            reg.clone(),
+                            IrType::Integer(crate::intermediate_language::IntWidth::I1),
+                        ));
                     }
                 }
             }
@@ -191,13 +196,13 @@ impl RegisterAllocator {
             for inst in &block.instructions {
                 // Process uses
                 self.record_uses(inst, pos, &mut intervals);
-                
+
                 // Process defs
                 self.record_defs(inst, pos, &mut intervals, function_return_types);
-                
+
                 pos += 1;
             }
-            
+
             if let Some(term) = &block.terminator {
                 self.record_terminator_uses(term, pos, &mut intervals);
                 pos += 1;
@@ -229,7 +234,7 @@ impl RegisterAllocator {
         intervals: &mut HashMap<crate::intermediate_language::IrRegister, (usize, usize)>,
     ) {
         use IrInstruction::*;
-        
+
         let mut update_interval = |reg: &crate::intermediate_language::IrRegister| {
             let entry = intervals.entry(reg.clone()).or_insert((pos, pos));
             entry.1 = entry.1.max(pos);
@@ -257,8 +262,7 @@ impl RegisterAllocator {
                     update_interval(reg);
                 }
             }
-            Math { lhs, rhs, .. } 
-            | Cmp { lhs, rhs, .. } => {
+            Math { lhs, rhs, .. } | Cmp { lhs, rhs, .. } => {
                 if let IrValue::Register(reg) = lhs {
                     update_interval(reg);
                 }
@@ -298,7 +302,7 @@ impl RegisterAllocator {
         function_return_types: &HashMap<String, IrType>,
     ) {
         use IrInstruction::*;
-        
+
         let mut update_interval = |reg: &crate::intermediate_language::IrRegister| {
             let entry = intervals.entry(reg.clone()).or_insert((pos, pos));
             entry.1 = entry.1.max(pos);
@@ -333,7 +337,7 @@ impl RegisterAllocator {
         intervals: &mut HashMap<crate::intermediate_language::IrRegister, (usize, usize)>,
     ) {
         use IrTerminator::*;
-        
+
         let mut update_interval = |reg: &crate::intermediate_language::IrRegister| {
             let entry = intervals.entry(reg.clone()).or_insert((pos, pos));
             entry.1 = entry.1.max(pos);
@@ -368,17 +372,17 @@ impl RegisterAllocator {
             // Only allocate registers to i32 and i64 integer types
             // Skip everything else to avoid ABI and edge case issues
             match &interval.ty {
-                IrType::Integer(crate::intermediate_language::IntWidth::I32) => {},
-                IrType::Integer(crate::intermediate_language::IntWidth::I64) => {},
-                _ => continue,  // Skip all other types
+                IrType::Integer(crate::intermediate_language::IntWidth::I32) => {}
+                IrType::Integer(crate::intermediate_language::IntWidth::I64) => {}
+                _ => continue, // Skip all other types
             }
-            
+
             // Skip parameter registers - they're already spilled to stack in the prologue,
             // and loading from their allocated register would give garbage
             if func.params.iter().any(|p| p.register == interval.reg) {
                 continue;
             }
-            
+
             // Expire old intervals
             self.expire_old_intervals(&interval, &mut active, &mut free_regs, ctx);
 
@@ -388,7 +392,8 @@ impl RegisterAllocator {
             } else {
                 // Allocate a register
                 let reg = free_regs.pop().unwrap();
-                self.reg_mapping.insert(interval.reg.clone(), Allocation::Physical(reg));
+                self.reg_mapping
+                    .insert(interval.reg.clone(), Allocation::Physical(reg));
                 active.push((interval.clone(), reg));
                 // Sort active list by end point
                 active.sort_by_key(|(i, _)| i.end);
@@ -404,7 +409,7 @@ impl RegisterAllocator {
         ctx: &mut FunctionContext,
     ) {
         let mut expired = Vec::new();
-        
+
         for (i, (interval, reg)) in active.iter().enumerate() {
             if interval.end >= current.start {
                 break;
@@ -431,14 +436,16 @@ impl RegisterAllocator {
                 // Spill the candidate and give its register to current
                 let spilled_reg = spill_candidate.1;
                 let spilled_vreg = spill_candidate.0.reg.clone();
-                
+
                 // Assign stack slot to spilled vreg
                 let slot = ctx.slot_for_reg(&spilled_vreg).expect("slot exists");
-                self.reg_mapping.insert(spilled_vreg, Allocation::StackSlot(slot));
-                
+                self.reg_mapping
+                    .insert(spilled_vreg, Allocation::StackSlot(slot));
+
                 // Give register to current interval
-                self.reg_mapping.insert(current.reg.clone(), Allocation::Physical(spilled_reg));
-                
+                self.reg_mapping
+                    .insert(current.reg.clone(), Allocation::Physical(spilled_reg));
+
                 // Update active list
                 active.pop();
                 active.push((current.clone(), spilled_reg));
@@ -446,17 +453,22 @@ impl RegisterAllocator {
             } else {
                 // Spill current interval
                 let slot = ctx.slot_for_reg(&current.reg).expect("slot exists");
-                self.reg_mapping.insert(current.reg.clone(), Allocation::StackSlot(slot));
+                self.reg_mapping
+                    .insert(current.reg.clone(), Allocation::StackSlot(slot));
             }
         } else {
             // No active intervals, spill current
             let slot = ctx.slot_for_reg(&current.reg).expect("slot exists");
-            self.reg_mapping.insert(current.reg.clone(), Allocation::StackSlot(slot));
+            self.reg_mapping
+                .insert(current.reg.clone(), Allocation::StackSlot(slot));
         }
     }
 
     /// Get the allocation for a virtual register
-    pub fn get_allocation(&self, reg: &crate::intermediate_language::IrRegister) -> Option<&Allocation> {
+    pub fn get_allocation(
+        &self,
+        reg: &crate::intermediate_language::IrRegister,
+    ) -> Option<&Allocation> {
         self.reg_mapping.get(reg)
     }
 }
