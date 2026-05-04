@@ -1,13 +1,7 @@
 ## Future Enhancements
 
-### Elf/image generation (FUTURE WORK)
-If you eventually want to run a real OS kernel, you'll want to output ELF files. That's a future concern; for bringing up the VM, loading the raw SectionData bytes directly is fine.
-
-**Potential Implementation:**
-- Add ELF header generation to `AssembledOutput`
-- Support program headers for LOAD segments
-- Generate proper section headers
-- Export as `.elf` binary format
+### [x] Elf/image generation
+`AssembledOutput` can emit ELF-64 bytes, and the native UI can export the compiled image as a `.elf` file for external tooling.
 
 
 ## 1. What still needs to be added

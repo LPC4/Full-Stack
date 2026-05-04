@@ -3,12 +3,14 @@ use full_stack::assembly_language::assembler::encode::encode;
 use full_stack::assembly_language::assembler::layout::compute_layout;
 use full_stack::assembly_language::assembler::parser::parse;
 use full_stack::assembly_language::assembler::reg_parse::{parse_float_reg, parse_int_reg};
+use full_stack::assembly_language::assembler::output::AssembledOutput;
 use full_stack::assembly_language::assembler::section::SectionKind;
 use full_stack::assembly_language::assembler::token::{AsmToken, BranchKind};
 use full_stack::assembly_language::real::RealInstruction;
 use full_stack::assembly_language::riscv::rv64i::Addi;
 use full_stack::assembly_language::rv_instruction::RvInstruction;
 use full_stack::assembly_language::utils::reg_name;
+use std::collections::HashMap;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -425,3 +427,27 @@ fn encode_globl_is_exported() {
         "main should be exported"
     );
 }
+
+#[test]
+fn elf_export_uses_absolute_entry_point() {
+    let output = AssembledOutput {
+        sections: vec![full_stack::assembly_language::assembler::section::SectionData {
+            kind: Some(SectionKind::Text),
+            bytes: vec![0x13, 0x00, 0x00, 0x00],
+            symbols: vec![],
+            globals: vec![],
+        }],
+        symbol_table: HashMap::from([(String::from("_start"), 0x40)]),
+        global_symbols: vec![String::from("_start")],
+    };
+
+    let elf = output.to_elf(0x8000_0000);
+
+    assert_eq!(&elf[..4], b"\x7fELF");
+    assert_eq!(elf[4], 2, "expected ELFCLASS64");
+    assert_eq!(elf[5], 1, "expected little-endian ELF");
+    assert_eq!(u16::from_le_bytes(elf[16..18].try_into().unwrap()), 2, "expected ET_EXEC");
+    assert_eq!(u16::from_le_bytes(elf[18..20].try_into().unwrap()), 243, "expected EM_RISCV");
+    assert_eq!(u64::from_le_bytes(elf[24..32].try_into().unwrap()), 0x8000_0040);
+}
+

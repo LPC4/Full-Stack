@@ -65,7 +65,6 @@ mod elf64 {
     pub const PF_X: u32 = 1;
     pub const PF_W: u32 = 2;
     pub const PF_R: u32 = 4;
-    pub const SHT_NULL: u32 = 0;
     pub const SHT_PROGBITS: u32 = 1;
     pub const SHT_SYMTAB: u32 = 2;
     pub const SHT_STRTAB: u32 = 3;
@@ -76,7 +75,6 @@ mod elf64 {
     pub const STB_LOCAL: u8 = 0;
     pub const STB_GLOBAL: u8 = 1;
     pub const STT_NOTYPE: u8 = 0;
-    pub const STT_FUNC: u8 = 2;
     pub const ELF64_HDR_SIZE: u16 = 64;
     pub const ELF64_PHDR_SIZE: u16 = 56;
     pub const ELF64_SHDR_SIZE: u16 = 64;
@@ -107,7 +105,6 @@ impl AssembledOutput {
         struct ElfSec<'a> {
             sec: &'a super::section::SectionData,
             load_addr: u64,
-            sh_name: u32,
             sh_type: u32,
             sh_flags: u64,
         }
@@ -131,7 +128,6 @@ impl AssembledOutput {
                 elf_secs.push(ElfSec {
                     sec,
                     load_addr: running_addr,
-                    sh_name: 0, // filled in after shstrtab is built
                     sh_type,
                     sh_flags,
                 });
@@ -144,7 +140,7 @@ impl AssembledOutput {
             .symbol_table
             .get("_start")
             .or_else(|| self.symbol_table.get("main"))
-            .copied()
+            .map(|addr| load_base + addr)
             .unwrap_or(load_base);
 
         // ---- Build section-name string table (.shstrtab) ----
@@ -194,7 +190,7 @@ impl AssembledOutput {
             sym_entries.push(st_info); // st_info
             sym_entries.push(0); // st_other
             push_u16_le(&mut sym_entries, 1); // st_shndx = section 1 (approx)
-            push_u64_le(&mut sym_entries, addr); // st_value
+            push_u64_le(&mut sym_entries, load_base + addr); // st_value
             push_u64_le(&mut sym_entries, 0); // st_size
         }
 

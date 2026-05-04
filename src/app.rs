@@ -9,17 +9,44 @@ use crate::view::{
     PipelineView, ProgramCatalog, ProgramKind, SourceView, StackView, TokensView, VmExecutionView,
     blank_custom_program_source,
 };
+use crate::virtual_machine::bus::RAM_BASE;
 use egui::{Color32, Layout, RichText};
 use egui_dock::{DockState, NodeIndex};
+use std::fmt;
 use std::fs;
 use std::path::Path;
-use std::fmt;
 
 #[derive(Default, Clone, PartialEq, Eq)]
 enum AppMode {
     #[default]
     Ide,
     Debug,
+}
+
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+enum CatalogExportKind {
+    #[default]
+    Hll,
+    Asm,
+    Elf,
+}
+
+impl CatalogExportKind {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Hll => ".hll",
+            Self::Asm => ".s",
+            Self::Elf => ".elf",
+        }
+    }
+
+    fn hint(self) -> &'static str {
+        match self {
+            Self::Hll => "Path to .hll file",
+            Self::Asm => "Path to .s file",
+            Self::Elf => "Path to .elf file",
+        }
+    }
 }
 
 // ------------------------------------------------------------
@@ -79,9 +106,15 @@ pub struct FullStackApp {
     #[serde(skip)]
     rename_buffer: String,
     #[serde(skip)]
-    import_paste_buffer: Option<String>,
+    import_disk_path: String,
     #[serde(skip)]
-    program_disk_path: String,
+    export_disk_path: String,
+    #[serde(skip)]
+    export_kind: CatalogExportKind,
+    #[serde(skip)]
+    show_import_controls: bool,
+    #[serde(skip)]
+    show_export_controls: bool,
     #[serde(skip)]
     catalog_message: Option<String>,
     #[serde(skip)]
@@ -105,8 +138,11 @@ impl Default for FullStackApp {
             pipeline: CompilationPipeline::new(),
             rename_id: None,
             rename_buffer: String::new(),
-            import_paste_buffer: None,
-            program_disk_path: String::new(),
+            import_disk_path: String::new(),
+            export_disk_path: String::new(),
+            export_kind: CatalogExportKind::default(),
+            show_import_controls: false,
+            show_export_controls: false,
             catalog_message: None,
             pending_new_view: None,
             next_view_id: 0,
@@ -245,31 +281,68 @@ impl FullStackApp {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn export_current_program_to_disk(&mut self) {
-        let path = self.program_disk_path.trim().to_owned();
+    fn export_selected_output_to_disk(&mut self) {
+        let path = self.export_disk_path.trim().to_owned();
         if path.is_empty() {
-            self.catalog_message = Some("enter a file path to export the current program".to_owned());
+            self.catalog_message = Some("enter a file path to export the selected file".to_owned());
             return;
         }
 
-        let Some(program) = self.catalog.current_program() else {
-            self.catalog_message = Some("no program selected".to_owned());
-            return;
+        let result = match self.export_kind {
+            CatalogExportKind::Hll => {
+                let Some(program) = self.catalog.current_program() else {
+                    self.catalog_message = Some("no program selected".to_owned());
+                    return;
+                };
+
+                fs::write(&path, &program.source)
+                    .map(|_| format!("exported `{}` to `{path}`", program.name))
+            }
+            CatalogExportKind::Asm => {
+                if self.compilation_state.assembled.is_none() {
+                    self.catalog_message =
+                        Some("compile successfully before exporting assembly".to_owned());
+                    return;
+                }
+
+                if !self.compilation_state.just_compiled {
+                    self.catalog_message =
+                        Some("recompile successfully before exporting assembly".to_owned());
+                    return;
+                }
+
+                fs::write(&path, self.compilation_state.asm.as_bytes())
+                    .map(|_| format!("exported assembly to `{path}`"))
+            }
+            CatalogExportKind::Elf => {
+                let Some(assembled) = self.compilation_state.assembled.as_ref() else {
+                    self.catalog_message =
+                        Some("compile successfully before exporting an ELF image".to_owned());
+                    return;
+                };
+
+                if !self.compilation_state.just_compiled {
+                    self.catalog_message =
+                        Some("recompile successfully before exporting an ELF image".to_owned());
+                    return;
+                }
+
+                fs::write(&path, assembled.to_elf(RAM_BASE))
+                    .map(|_| format!("exported assembled ELF image to `{path}`"))
+            }
         };
 
-        match fs::write(&path, &program.source) {
-            Ok(()) => {
-                self.catalog_message = Some(format!("exported `{}` to `{path}`", program.name));
-            }
+        match result {
+            Ok(message) => self.catalog_message = Some(message),
             Err(err) => {
-                self.catalog_message = Some(format!("failed to export `{}`: {err}", program.name));
+                self.catalog_message = Some(format!("failed to export to `{path}`: {err}"));
             }
         }
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     fn import_program_from_disk(&mut self) {
-        let path = self.program_disk_path.trim().to_owned();
+        let path = self.import_disk_path.trim().to_owned();
         if path.is_empty() {
             self.catalog_message = Some("enter a file path to import a program".to_owned());
             return;
@@ -295,10 +368,6 @@ impl FullStackApp {
     }
 
     fn catalog_ui(&mut self, ui: &mut egui::Ui) {
-        let mut import_buffer = self.import_paste_buffer.take();
-        let mut import_source: Option<String> = None;
-        let mut cancel_import = false;
-
         ui.vertical(|ui| {
             ui.heading("Files");
             ui.add_space(6.0);
@@ -318,75 +387,104 @@ impl FullStackApp {
                 }
             });
 
+            #[cfg(not(target_arch = "wasm32"))]
             ui.horizontal(|ui| {
                 if ui
-                    .button("Copy Source")
-                    .on_hover_text("Copy the current program source to clipboard")
+                    .button("Import")
+                    .on_hover_text("Import a .hll file from disk")
                     .clicked()
                 {
-                    let src = self.catalog.get_selected_source();
-                    ui.ctx().copy_text(src);
+                    self.show_import_controls = !self.show_import_controls;
+                    if self.show_import_controls {
+                        self.show_export_controls = false;
+                    }
                 }
                 if ui
-                    .button("Import...")
-                    .on_hover_text("Paste HLL source to create a new program")
+                    .button("Export")
+                    .on_hover_text("Export the current program, assembly, or ELF image")
                     .clicked()
                 {
-                    import_buffer = Some(String::new());
+                    self.show_export_controls = !self.show_export_controls;
+                    if self.show_export_controls {
+                        self.show_import_controls = false;
+                    }
                 }
             });
 
             #[cfg(not(target_arch = "wasm32"))]
             {
-                ui.separator();
-                ui.small("Import/export the selected program from a .hll file:");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.program_disk_path)
-                        .hint_text("Path to .hll file")
-                        .desired_width(f32::INFINITY),
-                );
-                ui.horizontal(|ui| {
-                    let path_ready = !self.program_disk_path.trim().is_empty();
+                if self.show_import_controls {
+                    ui.separator();
+                    ui.small("Import a .hll file from disk:");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.import_disk_path)
+                            .hint_text("Path to .hll file")
+                            .desired_width(f32::INFINITY),
+                    );
+                    let path_ready = !self.import_disk_path.trim().is_empty();
                     if ui
-                        .add_enabled(path_ready, egui::Button::new("Import from Disk"))
+                        .add_enabled(path_ready, egui::Button::new("Import .hll"))
                         .clicked()
                     {
                         self.import_program_from_disk();
                     }
+                }
+
+                if self.show_export_controls {
+                    ui.separator();
+                    ui.small("Export the current program, assembly, or ELF image:");
+                    ui.horizontal(|ui| {
+                        ui.label("Format:");
+                        egui::ComboBox::from_id_salt("catalog_export_format")
+                            .selected_text(self.export_kind.label())
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(
+                                    &mut self.export_kind,
+                                    CatalogExportKind::Hll,
+                                    ".hll",
+                                );
+                                ui.selectable_value(
+                                    &mut self.export_kind,
+                                    CatalogExportKind::Asm,
+                                    ".s",
+                                );
+                                ui.selectable_value(
+                                    &mut self.export_kind,
+                                    CatalogExportKind::Elf,
+                                    ".elf",
+                                );
+                            });
+                    });
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.export_disk_path)
+                            .hint_text(self.export_kind.hint())
+                            .desired_width(f32::INFINITY),
+                    );
+                    let path_ready = !self.export_disk_path.trim().is_empty();
+                    let can_export = path_ready
+                        && match self.export_kind {
+                            CatalogExportKind::Hll => self.catalog.current_program().is_some(),
+                            CatalogExportKind::Asm | CatalogExportKind::Elf => {
+                                self.compilation_state.just_compiled
+                                    && self.compilation_state.assembled.is_some()
+                            }
+                        };
+                    let export_label = match self.export_kind {
+                        CatalogExportKind::Hll => "Export .hll",
+                        CatalogExportKind::Asm => "Export .s",
+                        CatalogExportKind::Elf => "Export .elf",
+                    };
                     if ui
-                        .add_enabled(path_ready, egui::Button::new("Export Current"))
+                        .add_enabled(can_export, egui::Button::new(export_label))
                         .clicked()
                     {
-                        self.export_current_program_to_disk();
+                        self.export_selected_output_to_disk();
                     }
-                });
+                }
+
                 if let Some(message) = &self.catalog_message {
                     ui.small(message);
                 }
-            }
-
-            if let Some(buf) = &mut import_buffer {
-                ui.separator();
-                ui.small("Paste HLL source, then click Create:");
-                let ready = !buf.as_str().trim().is_empty();
-                ui.add(
-                    egui::TextEdit::multiline(buf)
-                        .desired_rows(6)
-                        .desired_width(f32::INFINITY)
-                        .font(egui::TextStyle::Monospace),
-                );
-                ui.horizontal(|ui| {
-                    if ui
-                        .add_enabled(ready, egui::Button::new("Create"))
-                        .clicked()
-                    {
-                        import_source = Some(buf.as_str().trim().to_owned());
-                    }
-                    if ui.button("Cancel").clicked() {
-                        cancel_import = true;
-                    }
-                });
-                ui.separator();
             }
 
             ui.add_space(8.0);
@@ -405,17 +503,6 @@ impl FullStackApp {
                 self.compile();
             }
         });
-
-        if let Some(source) = import_source {
-            let name = format!("Imported {}", self.catalog.next_custom_program_id);
-            self.catalog.create_custom_program(source, name);
-            self.rename_id = None;
-            self.compile();
-        } else if cancel_import {
-            self.import_paste_buffer = None;
-        } else {
-            self.import_paste_buffer = import_buffer;
-        }
     }
 
     fn render_program_section(&mut self, ui: &mut egui::Ui, kind: ProgramKind, title: &str) {
