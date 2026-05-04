@@ -11,7 +11,7 @@ pub fn highlight_code(theme: &egui::Style, code: &str) -> LayoutJob {
     let keywords = [
         "type", "const", "if", "else", "while", "return", "defer", "new", "free", "and", "or",
         "true", "false", "null", "main", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64",
-        "f32", "f64", "bool",
+        "f32", "f64", "bool", "defer",
     ];
 
     for segment in code.split_inclusive('\n') {
@@ -21,46 +21,87 @@ pub fn highlight_code(theme: &egui::Style, code: &str) -> LayoutJob {
             (segment, false)
         };
 
-        if line.trim_start().starts_with(';') {
-            job.append(
-                line,
-                0.0,
-                egui::TextFormat {
-                    font_id: font_id.clone(),
-                    color: Color32::from_rgb(100, 150, 100),
-                    ..Default::default()
-                },
-            );
-            if has_newline {
-                job.append(
-                    "\n",
-                    0.0,
-                    egui::TextFormat {
-                        font_id: font_id.clone(),
-                        ..Default::default()
-                    },
-                );
+        // ---------- find the first unescaped ';' outside a string ----------
+        let mut comment_start = None;
+        let mut in_string = false;
+        let mut string_quote = b'\0';
+        let mut escape = false;
+
+        for (i, &b) in line.as_bytes().iter().enumerate() {
+            if escape {
+                escape = false;
+                continue;
             }
-            continue;
+            if in_string {
+                if b == b'\\' {
+                    escape = true;
+                } else if b == string_quote {
+                    in_string = false;
+                }
+            } else {
+                if b == b';' {
+                    comment_start = Some(i);
+                    break;
+                } else if b == b'"' || b == b'\'' {
+                    in_string = true;
+                    string_quote = b;
+                }
+            }
         }
 
+        // split into code part and optional comment part
+        let (code_part, comment_part) = if let Some(idx) = comment_start {
+            (&line[..idx], Some(&line[idx..]))
+        } else {
+            (line, None)
+        };
+
+        // ---------- tokenise the code part ----------
         let mut start = 0;
-        let bytes = line.as_bytes();
+        let bytes = code_part.as_bytes();
         let len = bytes.len();
 
         while start < len {
             let mut end = start;
+
+            // string literal
+            if bytes[start] == b'"' || bytes[start] == b'\'' {
+                let quote = bytes[start];
+                end = start + 1;
+                while end < len {
+                    if bytes[end] == b'\\' && end + 1 < len {
+                        end += 2; // skip escaped char
+                    } else if bytes[end] == quote {
+                        end += 1;
+                        break;
+                    } else {
+                        end += 1;
+                    }
+                }
+                job.append(
+                    &code_part[start..end],
+                    0.0,
+                    egui::TextFormat {
+                        font_id: font_id.clone(),
+                        color: Color32::from_rgb(70, 120, 70), // green strings
+                        ..Default::default()
+                    },
+                );
+                start = end;
+                continue;
+            }
+
+            // identifier / keyword
             if bytes[start].is_ascii_alphabetic() || bytes[start] == b'_' {
                 while end < len && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_') {
                     end += 1;
                 }
-                let word = &line[start..end];
+                let word = &code_part[start..end];
                 let color = if keywords.contains(&word) {
-                    Color32::from_rgb(200, 100, 200) // matched keywords (purple)
+                    Color32::from_rgb(200, 100, 200) // keywords (purple)
                 } else {
                     theme.visuals.text_color() // generic
                 };
-
                 job.append(
                     word,
                     0.0,
@@ -70,12 +111,17 @@ pub fn highlight_code(theme: &egui::Style, code: &str) -> LayoutJob {
                         ..Default::default()
                     },
                 );
-            } else if bytes[start].is_ascii_digit() {
+                start = end;
+                continue;
+            }
+
+            // number
+            if bytes[start].is_ascii_digit() {
                 while end < len && bytes[end].is_ascii_digit() {
                     end += 1;
                 }
                 job.append(
-                    &line[start..end],
+                    &code_part[start..end],
                     0.0,
                     egui::TextFormat {
                         font_id: font_id.clone(),
@@ -83,22 +129,45 @@ pub fn highlight_code(theme: &egui::Style, code: &str) -> LayoutJob {
                         ..Default::default()
                     },
                 );
-            } else {
-                while end < len && !bytes[end].is_ascii_alphanumeric() && bytes[end] != b'_' {
-                    end += 1;
-                }
-                job.append(
-                    &line[start..end],
-                    0.0,
-                    egui::TextFormat {
-                        font_id: font_id.clone(),
-                        color: theme.visuals.text_color(),
-                        ..Default::default()
-                    },
-                );
+                start = end;
+                continue;
             }
+
+            // other symbols (operators, whitespace, etc.) – no quotes or semicolons here
+            while end < len
+                && !bytes[end].is_ascii_alphanumeric()
+                && bytes[end] != b'_'
+                && bytes[end] != b'"'
+                && bytes[end] != b'\''
+            {
+                end += 1;
+            }
+            job.append(
+                &code_part[start..end],
+                0.0,
+                egui::TextFormat {
+                    font_id: font_id.clone(),
+                    color: theme.visuals.text_color(),
+                    ..Default::default()
+                },
+            );
             start = end;
         }
+
+        // ---------- append the comment part (if any) ----------
+        if let Some(comment) = comment_part {
+            job.append(
+                comment,
+                0.0,
+                egui::TextFormat {
+                    font_id: font_id.clone(),
+                    color: Color32::from_rgb(60, 60, 60),
+                    ..Default::default()
+                },
+            );
+        }
+
+        // append newline
         if has_newline {
             job.append(
                 "\n",

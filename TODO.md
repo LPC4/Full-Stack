@@ -1,7 +1,6 @@
 ## Future Enhancements
 
-### [x] Elf/image generation
-`AssembledOutput` can emit ELF-64 bytes, and the native UI can export the compiled image as a `.elf` file for external tooling.
+TODO: Update UI with central theme colors / objects, for easy changing themes etc... 
 
 
 ## 1. What still needs to be added

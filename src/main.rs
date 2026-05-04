@@ -2,68 +2,12 @@
 #![warn(rust_2018_idioms)]
 #![windows_subsystem = "windows"]
 
-#[cfg(not(target_arch = "wasm32"))]
-use std::fs;
-#[cfg(not(target_arch = "wasm32"))]
-use std::path::Path;
-
-/// Compilation pipeline: HLL -> Lexer -> Parser -> Compiler -> IR
-#[cfg(not(target_arch = "wasm32"))]
-fn compile_hll_file(input_file: &str, output_file: &str) -> Result<(), Box<dyn std::error::Error>> {
-    use full_stack::high_level_language::compilation_pipeline::CompilationPipeline;
-
-    log::info!("Reading HLL file: {input_file}");
-    let content = fs::read_to_string(input_file)?;
-
-    log::info!("Starting compilation pipeline");
-    let pipeline = CompilationPipeline::new();
-    let result = pipeline.compile(&content)?;
-
-    log::info!("Compilation successful!");
-    log::info!("  Declarations: {}", result.ast.declarations.len());
-    log::info!("  Diagnostics: {}", result.diagnostics.len());
-
-    let ir_text = format!("{}", result.ir_program);
-
-    // Create output directory if needed
-    if let Some(parent) = Path::new(output_file).parent() {
-        if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent)?;
-        }
-    }
-
-    log::info!("Writing IR to file: {output_file}");
-    fs::write(output_file, ir_text.clone())?;
-    log::info!("Successfully wrote IR output to {output_file}");
-
-    log::info!("=== GENERATED IR ===\n{ir_text}");
-
-    Ok(())
-}
-
 // When compiling natively:
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .format_timestamp(None)
         .init();
-
-    eprintln!("\n=== Starting Compilation Pipeline ===\n");
-
-    // Compilation pipeline
-    let input_file = "programs/debug/debug.hll";
-    let output_file = "out/IR.txt";
-
-    match compile_hll_file(input_file, output_file) {
-        Ok(()) => {
-            log::info!("Pipeline completed successfully!");
-            eprintln!("\n=== Pipeline completed successfully! ===\n");
-        }
-        Err(e) => {
-            log::error!("Pipeline failed: {e}");
-            eprintln!("\n!!! Pipeline failed: {e} !!!\n");
-        }
-    }
 
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()

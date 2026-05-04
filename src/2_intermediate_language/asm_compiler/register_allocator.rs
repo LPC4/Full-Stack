@@ -4,7 +4,7 @@
 use super::function_context::FunctionContext;
 use crate::assembly_language::encode_decode::Reg;
 use crate::intermediate_language::{IrFunction, IrInstruction, IrTerminator, IrType, IrValue};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 /// Available physical registers for allocation (caller-saved temporaries)
 const AVAILABLE_REGS: [Reg; 7] = [5, 6, 7, 28, 29, 30, 31]; // t0-t2, t3-t6
@@ -20,8 +20,6 @@ struct LiveInterval {
 pub struct RegisterAllocator {
     /// Maps virtual registers to their assigned physical register or stack slot
     reg_mapping: HashMap<crate::intermediate_language::IrRegister, Allocation>,
-    /// Current position in instruction stream
-    position: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -34,7 +32,6 @@ impl RegisterAllocator {
     pub fn new() -> Self {
         Self {
             reg_mapping: HashMap::new(),
-            position: 0,
         }
     }
 
@@ -45,6 +42,31 @@ impl RegisterAllocator {
         ctx: &mut FunctionContext,
         function_return_types: &HashMap<String, IrType>,
     ) {
+        let intervals = self.prepare_intervals_and_stack_slots(func, ctx, function_return_types);
+        self.linear_scan_allocate(&intervals, ctx, func);
+    }
+
+    /// Prepare stack slots for every live virtual register without assigning physical registers.
+    ///
+    /// This is used by the main code generator so emitted assembly remains stable even when the
+    /// linear allocator is exercised directly in tests.
+    pub fn allocate_stack_slots(
+        &mut self,
+        func: &IrFunction,
+        ctx: &mut FunctionContext,
+        function_return_types: &HashMap<String, IrType>,
+    ) {
+        let _ = self.prepare_intervals_and_stack_slots(func, ctx, function_return_types);
+    }
+
+    fn prepare_intervals_and_stack_slots(
+        &mut self,
+        func: &IrFunction,
+        ctx: &mut FunctionContext,
+        function_return_types: &HashMap<String, IrType>,
+    ) -> Vec<LiveInterval> {
+        self.reg_mapping.clear();
+
         // First pass: allocate stack slots for parameters (they always need slots for spilling)
         for param in &func.params {
             ctx.alloc_slot_for_reg(&param.register, &param.ty);
@@ -76,18 +98,16 @@ impl RegisterAllocator {
         }
 
         // Second pass: compute live intervals
-        let intervals = self.compute_live_intervals(func, &vregs, function_return_types);
+        let intervals = self.compute_live_intervals(func, &vregs);
 
         // Ensure ALL registers have stack slots BEFORE allocation (needed for spilling)
         for interval in &intervals {
-            if !ctx.slot_for_reg(&interval.reg).is_some() {
+            if ctx.slot_for_reg(&interval.reg).is_none() {
                 ctx.alloc_slot_for_reg(&interval.reg, &interval.ty);
             }
         }
 
-        // DISABLED: Register allocation causes edge case bugs with certain patterns
-        // Third pass: allocate registers using linear scan (only for non-float types)
-        // self.linear_scan_allocate(&intervals, ctx, func);
+        intervals
     }
 
     fn collect_vregs_from_instruction(
@@ -187,7 +207,6 @@ impl RegisterAllocator {
         &self,
         func: &IrFunction,
         vregs: &[(crate::intermediate_language::IrRegister, IrType)],
-        function_return_types: &HashMap<String, IrType>,
     ) -> Vec<LiveInterval> {
         let mut intervals = HashMap::new();
         let mut pos = 0;
@@ -198,7 +217,7 @@ impl RegisterAllocator {
                 self.record_uses(inst, pos, &mut intervals);
 
                 // Process defs
-                self.record_defs(inst, pos, &mut intervals, function_return_types);
+                self.record_defs(inst, pos, &mut intervals);
 
                 pos += 1;
             }
@@ -222,8 +241,8 @@ impl RegisterAllocator {
             }
         }
 
-        // Sort by start position
-        result.sort_by_key(|i| i.start);
+        // Sort by start position and then by end position for deterministic allocation.
+        result.sort_by_key(|i| (i.start, i.end));
         result
     }
 
@@ -287,6 +306,13 @@ impl RegisterAllocator {
                     }
                 }
             }
+            Phi { incoming, .. } => {
+                for (value, _) in incoming {
+                    if let IrValue::Register(reg) = value {
+                        update_interval(reg);
+                    }
+                }
+            }
             HeapFree { ptr } => {
                 update_interval(ptr);
             }
@@ -299,7 +325,6 @@ impl RegisterAllocator {
         inst: &IrInstruction,
         pos: usize,
         intervals: &mut HashMap<crate::intermediate_language::IrRegister, (usize, usize)>,
-        function_return_types: &HashMap<String, IrType>,
     ) {
         use IrInstruction::*;
 
@@ -321,7 +346,9 @@ impl RegisterAllocator {
             | HeapAlloc { dest, .. } => {
                 update_interval(dest);
             }
-            Call { dest, function, .. } => {
+            Call {
+                dest, function: _, ..
+            } => {
                 if let Some(dest) = dest {
                     update_interval(dest);
                 }
@@ -365,26 +392,17 @@ impl RegisterAllocator {
         ctx: &mut FunctionContext,
         func: &IrFunction,
     ) {
+        self.reg_mapping.clear();
         let mut active: Vec<(LiveInterval, Reg)> = Vec::new();
         let mut free_regs: Vec<Reg> = AVAILABLE_REGS.to_vec();
 
         for interval in intervals {
-            // Only allocate registers to i32 and i64 integer types
-            // Skip everything else to avoid ABI and edge case issues
-            match &interval.ty {
-                IrType::Integer(crate::intermediate_language::IntWidth::I32) => {}
-                IrType::Integer(crate::intermediate_language::IntWidth::I64) => {}
-                _ => continue, // Skip all other types
-            }
-
-            // Skip parameter registers - they're already spilled to stack in the prologue,
-            // and loading from their allocated register would give garbage
-            if func.params.iter().any(|p| p.register == interval.reg) {
+            if !self.is_allocatable_interval(interval, ctx, func) {
                 continue;
             }
 
-            // Expire old intervals
-            self.expire_old_intervals(&interval, &mut active, &mut free_regs, ctx);
+            // Expire old intervals.
+            self.expire_old_intervals(interval, &mut active, &mut free_regs);
 
             if free_regs.is_empty() {
                 // Need to spill
@@ -401,12 +419,30 @@ impl RegisterAllocator {
         }
     }
 
+    fn is_allocatable_interval(
+        &self,
+        interval: &LiveInterval,
+        ctx: &FunctionContext,
+        func: &IrFunction,
+    ) -> bool {
+        if func.params.iter().any(|p| p.register == interval.reg) {
+            return false;
+        }
+        if ctx.is_stack_address(&interval.reg) {
+            return false;
+        }
+
+        matches!(
+            ctx.resolve_type(&interval.ty),
+            IrType::Integer(_) | IrType::Pointer(_)
+        )
+    }
+
     fn expire_old_intervals(
         &self,
         current: &LiveInterval,
         active: &mut Vec<(LiveInterval, Reg)>,
         free_regs: &mut Vec<Reg>,
-        ctx: &mut FunctionContext,
     ) {
         let mut expired = Vec::new();
 

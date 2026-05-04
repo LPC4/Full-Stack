@@ -1,167 +1,174 @@
-use full_stack::high_level_language::compilation_pipeline::CompilationPipeline;
-use full_stack::intermediate_language::{IrBlock, IrFunction, IrInstruction, IrMathOp, IrProgram, IrRegister, IrTerminator, IrType, IrValue, IntWidth};
-use full_stack::intermediate_language::asm_compiler::compiler_rv64::CompilerRv64;
+use full_stack::intermediate_language::asm_compiler::function_context::FunctionContext;
+use full_stack::intermediate_language::asm_compiler::register_allocator::{
+    Allocation, RegisterAllocator,
+};
+use full_stack::intermediate_language::{
+    IntWidth, IrBlock, IrFunction, IrInstruction, IrMathOp, IrRegister, IrTerminator, IrType,
+    IrValue,
+};
+use std::collections::HashMap;
 
 fn int32() -> IrType {
     IrType::Integer(IntWidth::I32)
 }
 
-#[test]
-fn test_register_allocation_output() {
-    let mut program = IrProgram::new("test");
-    let mut func = IrFunction::new("main", int32());
+fn reg(name: &str) -> IrRegister {
+    IrRegister::Named(name.to_owned())
+}
 
-    let mut entry = IrBlock::new("entry");
-    
-    // Allocate local variables
-    entry.push_instruction(IrInstruction::Alloc {
-        dest: IrRegister::Named("a".into()),
+fn lit_math(dest: &str, lhs: i64, rhs: i64) -> IrInstruction {
+    IrInstruction::Math {
+        dest: reg(dest),
+        op: IrMathOp::Add,
         ty: int32(),
-        count: None,
-    });
-    entry.push_instruction(IrInstruction::Alloc {
-        dest: IrRegister::Named("b".into()),
-        ty: int32(),
-        count: None,
-    });
-    
-    // Store values
-    entry.push_instruction(IrInstruction::Store {
-        ty: int32(),
-        value: IrValue::Integer(6),
-        ptr: IrRegister::Named("a".into()),
-        offset: None,
-    });
-    entry.push_instruction(IrInstruction::Store {
-        ty: int32(),
-        value: IrValue::Integer(7),
-        ptr: IrRegister::Named("b".into()),
-        offset: None,
-    });
-    
-    // Load values for multiplication
-    entry.push_instruction(IrInstruction::Load {
-        dest: IrRegister::Named("x".into()),
-        ty: int32(),
-        ptr: IrRegister::Named("a".into()),
-        offset: None,
-    });
-    entry.push_instruction(IrInstruction::Load {
-        dest: IrRegister::Named("y".into()),
-        ty: int32(),
-        ptr: IrRegister::Named("b".into()),
-        offset: None,
-    });
-    
-    // Multiply
-    entry.push_instruction(IrInstruction::Math {
-        dest: IrRegister::Named("result".into()),
-        op: IrMathOp::Mul,
-        ty: int32(),
-        lhs: IrValue::Register(IrRegister::Named("x".into())),
-        rhs: IrValue::Register(IrRegister::Named("y".into())),
-    });
-    
-    // Return result
-    entry.set_terminator(IrTerminator::Return(Some(IrValue::Register(IrRegister::Named("result".into())))));
-    func.push_block(entry);
-    program.push_function(func);
-
-    let mut compiler = CompilerRv64::new();
-    let asm = compiler.compile(&program);
-    
-    println!("Generated Assembly:\n{}", asm);
-    
-    // Check that we have some register allocations (fewer stack operations)
-    assert!(asm.contains("mul"), "Should contain mul instruction");
-}
-
-#[test]
-fn test_dot_product_assembly() {
-    let source = r#"
-type Vec2 = { x: i32, y: i32 }
-
-make_vec: (x: i32, y: i32) -> Vec2 {
-    return { .x = x, .y = y }
-}
-
-dot: (a: Vec2, b: Vec2) -> i32 {
-    return a.x * b.x + a.y * b.y
-}
-
-main: () -> i32 {
-    a: Vec2 = make_vec(3, 4)
-    b: Vec2 = make_vec(1, 2)
-    d: i32 = dot(a, b)
-    return d
-}
-"#;
-    
-    let pipeline = CompilationPipeline::new();
-    let result = pipeline.compile(source).expect("compile failed");
-    let (asm_text, _) = pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program);
-    
-    println!("Generated Assembly:\n{}", asm_text);
-}
-
-#[test]
-fn test_array_sum_assembly() {
-    let source = r#"
-main: () -> i32 {
-    arr: i32[5]
-    @arr[0] = 2
-    @arr[1] = 4
-    @arr[2] = 6
-    @arr[3] = 8
-    @arr[4] = 10
-    stack_sum: i32 = @arr[0] + @arr[1] + @arr[2] + @arr[3] + @arr[4]
-    return stack_sum
-}
-"#;
-    
-    let pipeline = CompilationPipeline::new();
-    let result = pipeline.compile(source).expect("compile failed");
-    let (asm_text, _) = pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program);
-    
-    println!("Generated Assembly:\n{}", asm_text);
-}
-
-#[test]
-fn test_function_call_assembly() {
-    let source = r#"
-add: (a: i32, b: i32) -> i32 {
-    return a + b
-}
-main: () -> i32 {
-    return add(10, 32)
-}
-"#;
-    
-    let pipeline = CompilationPipeline::new();
-    let result = pipeline.compile(source).expect("compile failed");
-    let (asm_text, toks) = pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program);
-    
-    println!("Generated Assembly:\n{}", asm_text);
-}
-
-#[test]
-fn test_pointer_assembly() {
-    let source = r#"
-main: () -> i32 {
-    p: i32* = new(i32)
-    @p = 99
-    if @p != 99 {
-        free(p)
-        return 1
+        lhs: IrValue::Integer(lhs),
+        rhs: IrValue::Integer(rhs),
     }
-    free(p)
-    return 0
 }
-"#;
-    
-    let pipeline = CompilationPipeline::new();
-    let result = pipeline.compile(source).expect("compile failed");
-    let (asm_text, _) = pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program);
-    
-    println!("Generated Assembly:\n{}", asm_text);
+
+fn allocate_function(func: &IrFunction) -> (RegisterAllocator, FunctionContext) {
+    let mut allocator = RegisterAllocator::new();
+    let mut ctx = FunctionContext::new("test", &HashMap::new());
+    allocator.allocate_slots(func, &mut ctx, &HashMap::new());
+    (allocator, ctx)
+}
+
+#[test]
+fn linear_allocator_places_short_lived_ints_in_physical_registers() {
+    let mut func = IrFunction::new("main", int32());
+    let mut block = IrBlock::new("entry");
+    block.push_instruction(lit_math("a", 1, 2));
+    block.push_instruction(lit_math("b", 3, 4));
+    block.set_terminator(IrTerminator::Return(Some(IrValue::Register(reg("b")))));
+    func.push_block(block);
+
+    let (allocator, ctx) = allocate_function(&func);
+
+    assert!(
+        ctx.slot_for_reg(&reg("a")).is_some(),
+        "stack slot should exist for a"
+    );
+    assert!(
+        ctx.slot_for_reg(&reg("b")).is_some(),
+        "stack slot should exist for b"
+    );
+    assert!(matches!(
+        allocator.get_allocation(&reg("a")),
+        Some(Allocation::Physical(_))
+    ));
+    assert!(matches!(
+        allocator.get_allocation(&reg("b")),
+        Some(Allocation::Physical(_))
+    ));
+}
+
+#[test]
+fn linear_allocator_spills_after_register_pressure_exceeds_available_regs() {
+    let mut func = IrFunction::new("main", int32());
+    let mut block = IrBlock::new("entry");
+
+    for index in 0..8 {
+        block.push_instruction(lit_math(
+            &format!("t{index}"),
+            index as i64,
+            index as i64 + 1,
+        ));
+    }
+
+    block.push_instruction(IrInstruction::Call {
+        dest: None,
+        function: "sink".to_owned(),
+        args: (0..8)
+            .map(|index| IrValue::Register(reg(&format!("t{index}"))))
+            .collect(),
+    });
+    block.set_terminator(IrTerminator::Return(Some(IrValue::Integer(0))));
+    func.push_block(block);
+
+    let (allocator, ctx) = allocate_function(&func);
+
+    for index in 0..7 {
+        let name = format!("t{index}");
+        assert!(
+            matches!(
+                allocator.get_allocation(&reg(&name)),
+                Some(Allocation::Physical(_))
+            ),
+            "expected {name} to fit in a physical register"
+        );
+    }
+
+    let spilled = reg("t7");
+    assert!(matches!(
+        allocator.get_allocation(&spilled),
+        Some(Allocation::StackSlot(_))
+    ));
+    assert!(
+        ctx.slot_for_reg(&spilled).is_some(),
+        "spilled register still needs a stack slot"
+    );
+}
+
+#[test]
+fn linear_allocator_leaves_stack_address_registers_on_the_stack() {
+    let mut func = IrFunction::new("main", int32());
+    let mut block = IrBlock::new("entry");
+    block.push_instruction(IrInstruction::Alloc {
+        dest: reg("ptr"),
+        ty: int32(),
+        count: None,
+    });
+    block.push_instruction(IrInstruction::Store {
+        ty: int32(),
+        value: IrValue::Integer(42),
+        ptr: reg("ptr"),
+        offset: None,
+    });
+    block.set_terminator(IrTerminator::Return(None));
+    func.push_block(block);
+
+    let (allocator, ctx) = allocate_function(&func);
+
+    assert!(
+        ctx.is_stack_address(&reg("ptr")),
+        "alloc destinations are stack addresses"
+    );
+    assert!(
+        ctx.slot_for_reg(&reg("ptr")).is_some(),
+        "stack address registers still need slots"
+    );
+    assert!(
+        allocator.get_allocation(&reg("ptr")).is_none(),
+        "stack address registers should not be assigned a physical register"
+    );
+}
+
+#[test]
+fn linear_allocator_reuses_a_register_after_an_interval_expires() {
+    let mut func = IrFunction::new("main", int32());
+    let mut block = IrBlock::new("entry");
+    block.push_instruction(lit_math("first", 1, 2));
+    block.push_instruction(IrInstruction::Call {
+        dest: None,
+        function: "sink".to_owned(),
+        args: vec![IrValue::Register(reg("first"))],
+    });
+    block.push_instruction(lit_math("second", 3, 4));
+    block.set_terminator(IrTerminator::Return(Some(IrValue::Register(reg("second")))));
+    func.push_block(block);
+
+    let (allocator, _) = allocate_function(&func);
+
+    let first = allocator.get_allocation(&reg("first"));
+    let second = allocator.get_allocation(&reg("second"));
+
+    match (first, second) {
+        (Some(Allocation::Physical(a)), Some(Allocation::Physical(b))) => {
+            assert_eq!(
+                a, b,
+                "expired intervals should release their register for reuse"
+            );
+        }
+        other => panic!("unexpected allocations: {other:?}"),
+    }
 }

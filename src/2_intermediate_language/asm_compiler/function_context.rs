@@ -107,6 +107,11 @@ impl FunctionContext {
         self.reg_types.get(reg).cloned()
     }
 
+    /// Resolve a type through the function's alias table.
+    pub fn resolve_type(&self, ty: &IrType) -> IrType {
+        self.frame.resolve_type(ty, &self.type_aliases)
+    }
+
     /// Mark that a register's value should be computed as `sp + slot`.
     pub fn mark_stack_address(&mut self, reg: &IrRegister) {
         self.stack_address_regs.insert(reg.clone());

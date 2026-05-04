@@ -90,7 +90,7 @@ impl CompilerRv64 {
     fn compile_function(&mut self, func: &crate::intermediate_language::IrFunction) {
         let mut ctx = FunctionContext::new(&func.name, &self.type_aliases);
         let mut alloc = RegisterAllocator::new();
-        alloc.allocate_slots(func, &mut ctx, &self.function_return_types);
+        alloc.allocate_stack_slots(func, &mut ctx, &self.function_return_types);
 
         let return_type = self.resolve_ir_type(&func.return_type);
         let is_aggregate = matches!(return_type, IrType::Aggregate(_) | IrType::Array { .. });
