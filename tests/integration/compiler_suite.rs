@@ -1,3 +1,6 @@
+#[path = "../common/golden_support.rs"]
+mod golden_support;
+
 use full_stack::high_level_language::compilation_pipeline::CompilationPipeline;
 use std::fs;
 use std::path::PathBuf;
@@ -31,7 +34,7 @@ fn execute_compiler_test_suite() {
 
     let mut tests_run = 0;
     let pipeline = CompilationPipeline::new();
-    let update_goldens = std::env::var_os("UPDATE_GOLDENS").is_some();
+    let update_goldens = golden_support::should_update_goldens("UPDATE_GOLDENS");
 
     for path in hll_files {
         if path.extension().and_then(|e| e.to_str()) == Some("hll") {

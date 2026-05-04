@@ -300,6 +300,32 @@ fn push_u32(sec: &mut SectionData, word: u32, current_addr: &mut u64) {
 // Pseudo-instruction encoding with symbol relocation
 // ---------------------------------------------------------------------------
 
+/// Split a PC-relative byte offset into (hi20, lo12) for AUIPC+lo pairs.
+///
+/// lo12 is sign-extended, so hi20 is adjusted up by 1 when bit 11 of lo12 is
+/// set to compensate for the sign extension at load time.
+fn pcrel_split(offset: i64) -> (i32, i32) {
+    let lo12 =
+        ((offset & 0xFFF) as i32).wrapping_sub(if offset & 0x800 != 0 { 0x1000 } else { 0 });
+    let hi20 = ((offset - lo12 as i64) >> 12) as i32;
+    (hi20, lo12)
+}
+
+/// Resolve a symbol to its absolute address, returning an error if missing.
+fn resolve_symbol(
+    symbol: &str,
+    symbols: &super::symbol_table::SymbolTable,
+) -> Result<u64, AssemblerError> {
+    symbols
+        .resolve(symbol)
+        .ok_or_else(|| AssemblerError::new(format!("undefined symbol `{symbol}`")))
+}
+
+/// Compute the PC-relative pair for a target address and current instruction address.
+fn pcrel_offsets(target_addr: u64, current_addr: u64) -> (i32, i32) {
+    pcrel_split((target_addr as i64) - (current_addr as i64))
+}
+
 /// Encode `call symbol` -> `auipc ra, %pcrel_hi(symbol); jalr ra, ra, %pcrel_lo(symbol)`
 fn encode_call(
     sec: &mut SectionData,
@@ -307,26 +333,10 @@ fn encode_call(
     current_addr: u64,
     symbols: &super::symbol_table::SymbolTable,
 ) -> Result<(), AssemblerError> {
-    let target_addr = symbols
-        .resolve(symbol)
-        .ok_or_else(|| AssemblerError::new(format!("undefined symbol `{symbol}`")))?;
-
-    // auipc uses its own PC (current_addr) as the base, not PC+4
-    let offset = (target_addr as i64) - (current_addr as i64);
-
-    // Split into hi20 and lo12 (same as li but PC-relative)
-    // The lo12 is sign-extended, so we need to adjust hi20 if bit 11 of lo12 is set
-    let lo12 = ((offset & 0xFFF) as i32).wrapping_sub(if offset & 0x800 != 0 { 0x1000 } else { 0 });
-    let hi20 = ((offset - lo12 as i64) >> 12) as i32;
-
-    // Emit: auipc ra, hi20
-    let auipc_word = Auipc::new(1, hi20).encode(); // x1 = ra
-    sec.push_u32_le(auipc_word);
-
-    // Emit: jalr ra, ra, lo12
-    let jalr_word = Jalr::new(1, 1, lo12).encode(); // rd=ra, rs1=ra, imm=lo12
-    sec.push_u32_le(jalr_word);
-
+    let target_addr = resolve_symbol(symbol, symbols)?;
+    let (hi20, lo12) = pcrel_offsets(target_addr, current_addr);
+    sec.push_u32_le(Auipc::new(1, hi20).encode()); // auipc ra, hi20
+    sec.push_u32_le(Jalr::new(1, 1, lo12).encode()); // jalr ra, ra, lo12
     Ok(())
 }
 
@@ -337,24 +347,10 @@ fn encode_tail(
     current_addr: u64,
     symbols: &super::symbol_table::SymbolTable,
 ) -> Result<(), AssemblerError> {
-    let target_addr = symbols
-        .resolve(symbol)
-        .ok_or_else(|| AssemblerError::new(format!("undefined symbol `{symbol}`")))?;
-
-    // auipc uses its own PC (current_addr) as the base, not PC+4
-    let offset = (target_addr as i64) - (current_addr as i64);
-
-    let lo12 = ((offset & 0xFFF) as i32).wrapping_sub(if offset & 0x800 != 0 { 0x1000 } else { 0 });
-    let hi20 = ((offset - lo12 as i64) >> 12) as i32;
-
-    // Emit: auipc t1, hi20
-    let auipc_word = Auipc::new(6, hi20).encode(); // x6 = t1
-    sec.push_u32_le(auipc_word);
-
-    // Emit: jalr x0, t1, lo12 (tail call, no return)
-    let jalr_word = Jalr::new(0, 6, lo12).encode(); // rd=x0, rs1=t1, imm=lo12
-    sec.push_u32_le(jalr_word);
-
+    let target_addr = resolve_symbol(symbol, symbols)?;
+    let (hi20, lo12) = pcrel_offsets(target_addr, current_addr);
+    sec.push_u32_le(Auipc::new(6, hi20).encode()); // auipc t1, hi20
+    sec.push_u32_le(Jalr::new(0, 6, lo12).encode()); // jalr x0, t1, lo12 (no return)
     Ok(())
 }
 
@@ -367,38 +363,22 @@ fn encode_la(
     symbols: &super::symbol_table::SymbolTable,
     section_bases: &std::collections::HashMap<SectionKind, u64>,
 ) -> Result<(), AssemblerError> {
-    // Get the section-relative offset from the symbol table
-    let section_offset = symbols
-        .resolve(symbol)
-        .ok_or_else(|| AssemblerError::new(format!("undefined symbol `{symbol}`")))?;
+    let section_offset = resolve_symbol(symbol, symbols)?;
 
-    // Determine which section this symbol belongs to by checking section-qualified names
+    // Find the absolute address by checking which section owns this symbol.
     let mut target_abs_addr = None;
     for (section_name, base) in section_bases {
         let qualified_name = format!("{}@{}", symbol, section_name.name());
         if symbols.resolve(&qualified_name).is_some() {
-            // Found it! Compute absolute address
             target_abs_addr = Some(base + section_offset);
             break;
         }
     }
-
-    // Fallback: if we couldn't determine the section, assume it's in the same section as current instruction
+    // Fallback: treat symbol value as already absolute (same-section case).
     let target_addr = target_abs_addr.unwrap_or(section_offset);
 
-    // auipc uses its own PC (current_addr) as the base, not PC+4
-    let offset = (target_addr as i64) - (current_addr as i64);
-
-    let lo12 = ((offset & 0xFFF) as i32).wrapping_sub(if offset & 0x800 != 0 { 0x1000 } else { 0 });
-    let hi20 = ((offset - lo12 as i64) >> 12) as i32;
-
-    // Emit: auipc rd, hi20
-    let auipc_word = Auipc::new(rd, hi20).encode();
-    sec.push_u32_le(auipc_word);
-
-    // Emit: addi rd, rd, lo12
-    let addi_word = Addi::new(rd, rd, lo12).encode();
-    sec.push_u32_le(addi_word);
-
+    let (hi20, lo12) = pcrel_offsets(target_addr, current_addr);
+    sec.push_u32_le(Auipc::new(rd, hi20).encode()); // auipc rd, hi20
+    sec.push_u32_le(Addi::new(rd, rd, lo12).encode()); // addi rd, rd, lo12
     Ok(())
 }

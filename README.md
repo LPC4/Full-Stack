@@ -18,7 +18,9 @@
 ## Overview
 
 Full‑Stack is a **self‑contained compiler pipeline** for a custom systems language.  
-Every stage -- lexing, parsing, semantic analysis, IR generation, register allocation, RISC‑V code emission, two-pass assembly to machine code, and execution -- runs directly in the browser (or natively) and is **visualised in real time**.
+Every stage -- lexing, parsing, semantic analysis, IR generation, register allocation, RISC‑V code emission, and two-pass assembly to machine code -- runs directly in the browser (or natively) and is **visualised in real time**.
+
+Runtime execution uses the built-in VM on native desktop builds. The WebAssembly build is currently for compilation and visualization only.
 
 The pipeline compiles HLL source all the way to **RV64IMAFD machine code** (ELF-ready section blobs).  
 Execution uses a built-in **5-stage pipelined CPU** with data forwarding, load-use hazard detection, and 2-bit branch prediction.  
@@ -55,7 +57,7 @@ All panels are resizable and rearrangeable; the layout persists across sessions.
 
 ## Debug session
 
-Starting a debug session compiles the current program and loads it into the built-in VM.  
+Starting a debug session compiles the current program and loads it into the built-in VM on native desktop builds.  
 Step through execution one pipeline cycle at a time and inspect the full machine state.
 
 | Panel | What you see                                                  |
@@ -91,7 +93,9 @@ IF  →  ID  →  EX  →  MEM  →  WB
 
 ## Live version
 
-No install required -- the compiler runs client‑side via WebAssembly.
+No install required -- the compiler and UI run client-side via WebAssembly.
+
+Note: browser builds do not currently run the VM. For execution, use the native desktop build.
 
 <p align="center">
   <a href="https://lpc4.github.io/Full-Stack/">

@@ -12,6 +12,10 @@ pub struct ProgramFile {
     pub name: String,
     pub kind: ProgramKind,
     pub source: String,
+    #[serde(default)]
+    pub undo_stack: Vec<String>,
+    #[serde(default)]
+    pub redo_stack: Vec<String>,
     #[serde(skip)]
     pub description: String,
 }
@@ -23,6 +27,8 @@ impl ProgramFile {
             name: name.to_owned(),
             kind: ProgramKind::Example,
             source: source.to_owned(),
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
             description: description.to_owned(),
         }
     }
@@ -33,6 +39,8 @@ impl ProgramFile {
             name,
             kind: ProgramKind::Custom,
             source,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
             description: String::from("Your personal in-memory program."),
         }
     }
@@ -219,7 +227,59 @@ impl ProgramCatalog {
     pub fn set_selected_source(&mut self, source: String) {
         if let Some(program) = self.current_program_mut() {
             program.source = source;
+            program.undo_stack.clear();
+            program.redo_stack.clear();
         }
+    }
+
+    pub fn replace_selected_source_with_history(&mut self, source: String) {
+        if let Some(program) = self.current_program_mut() {
+            if program.source != source {
+                program.undo_stack.push(program.source.clone());
+                program.redo_stack.clear();
+                program.source = source;
+            }
+        }
+    }
+
+    pub fn undo_selected_source(&mut self) -> bool {
+        let Some(program) = self.current_program_mut() else {
+            return false;
+        };
+
+        let Some(previous) = program.undo_stack.pop() else {
+            return false;
+        };
+
+        program.redo_stack.push(program.source.clone());
+        program.source = previous;
+        true
+    }
+
+    pub fn can_undo_selected_source(&self) -> bool {
+        self.current_program()
+            .map(|program| !program.undo_stack.is_empty())
+            .unwrap_or(false)
+    }
+
+    pub fn can_redo_selected_source(&self) -> bool {
+        self.current_program()
+            .map(|program| !program.redo_stack.is_empty())
+            .unwrap_or(false)
+    }
+
+    pub fn redo_selected_source(&mut self) -> bool {
+        let Some(program) = self.current_program_mut() else {
+            return false;
+        };
+
+        let Some(next) = program.redo_stack.pop() else {
+            return false;
+        };
+
+        program.undo_stack.push(program.source.clone());
+        program.source = next;
+        true
     }
 
     pub fn select_program(&mut self, program_id: &str) {

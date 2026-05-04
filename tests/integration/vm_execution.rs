@@ -11,6 +11,25 @@ use full_stack::virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 // Full HLL pipeline helpers
 // ---------------------------------------------------------------------------
 
+fn run_hll_with_limit(src: &str, max_steps: u64) -> (VirtualMachine, StepOutcome, String) {
+    let pipeline = CompilationPipeline::new();
+    let result = pipeline.compile(src).expect("compile failed");
+    let (_, toks) = pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program);
+    let assembled = pipeline.assemble(&toks).expect("assemble failed");
+    let mut vm = VirtualMachine::new(&assembled);
+    let run = vm.run(max_steps);
+    let uart = run.uart_output.clone();
+    (vm, run.outcome, uart)
+}
+
+fn run_hll_file(path: &str) -> (VirtualMachine, StepOutcome, String) {
+    let manifest = env!("CARGO_MANIFEST_DIR");
+    let full_path = std::path::Path::new(manifest).join(path);
+    let src = std::fs::read_to_string(&full_path)
+        .unwrap_or_else(|e| panic!("failed to read {path}: {e}"));
+    run_hll_with_limit(&src, 50_000_000)
+}
+
 fn run_hll(src: &str) -> (VirtualMachine, StepOutcome, String) {
     let pipeline = CompilationPipeline::new();
     let result = pipeline.compile(src).expect("compile failed");
@@ -293,5 +312,60 @@ fn test_csr_instret() {
     assert!(
         matches!(outcome, StepOutcome::Halted(n) if n >= 3),
         "expected instret >= 3, got {outcome:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// End-to-end qemu program tests (full HLL pipeline through VM)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn qemu_01_arithmetic_and_types() {
+    let (_, outcome, _) = run_hll_file("programs/test/qemu/01_arithmetic_and_types.hll");
+    assert!(
+        matches!(outcome, StepOutcome::Halted(42)),
+        "expected Halted(42), got {outcome:?}"
+    );
+}
+
+#[test]
+fn qemu_02_control_flow() {
+    let (_, outcome, _) = run_hll_file("programs/test/qemu/02_control_flow.hll");
+    assert!(
+        matches!(outcome, StepOutcome::Halted(100)),
+        "expected Halted(100), got {outcome:?}"
+    );
+}
+
+#[test]
+fn qemu_03_structs_and_destructuring() {
+    let (_, outcome, _) = run_hll_file("programs/test/qemu/03_structs_and_destructuring.hll");
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "expected Halted(0), got {outcome:?}"
+    );
+}
+
+// qemu_04 uses `defer`, pointer-to-pointer (@@), and stack arrays.
+// The program does not terminate in the internal VM within a reasonable step
+// budget — a pre-existing compiler/VM issue. Tracked in TODO.md under "VM
+// integration tests". The QEMU test suite covers this program via WSL.
+#[test]
+#[ignore]
+fn qemu_04_pointers_and_memory() {
+    let (_, outcome, _) = run_hll_file("programs/test/qemu/04_pointers_and_memory.hll");
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "expected Halted(0), got {outcome:?}"
+    );
+}
+
+#[test]
+fn qemu_05_functions_and_io() {
+    let (_, outcome, uart) = run_hll_file("programs/test/qemu/05_functions_and_io.hll");
+    assert_eq!(uart, "PASS\n", "expected UART='PASS\\n', got {uart:?}");
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "expected Halted(0), got {outcome:?}"
     );
 }

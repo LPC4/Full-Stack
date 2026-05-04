@@ -11,6 +11,8 @@ use crate::view::{
 };
 use egui::{Color32, Layout, RichText};
 use egui_dock::{DockState, NodeIndex};
+use std::fs;
+use std::path::Path;
 use std::fmt;
 
 #[derive(Default, Clone, PartialEq, Eq)]
@@ -77,6 +79,12 @@ pub struct FullStackApp {
     #[serde(skip)]
     rename_buffer: String,
     #[serde(skip)]
+    import_paste_buffer: Option<String>,
+    #[serde(skip)]
+    program_disk_path: String,
+    #[serde(skip)]
+    catalog_message: Option<String>,
+    #[serde(skip)]
     pending_new_view: Option<ViewWrapper>,
     #[serde(skip)]
     next_view_id: u64,
@@ -97,6 +105,9 @@ impl Default for FullStackApp {
             pipeline: CompilationPipeline::new(),
             rename_id: None,
             rename_buffer: String::new(),
+            import_paste_buffer: None,
+            program_disk_path: String::new(),
+            catalog_message: None,
             pending_new_view: None,
             next_view_id: 0,
             mode: AppMode::Ide,
@@ -233,7 +244,61 @@ impl FullStackApp {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    fn export_current_program_to_disk(&mut self) {
+        let path = self.program_disk_path.trim().to_owned();
+        if path.is_empty() {
+            self.catalog_message = Some("enter a file path to export the current program".to_owned());
+            return;
+        }
+
+        let Some(program) = self.catalog.current_program() else {
+            self.catalog_message = Some("no program selected".to_owned());
+            return;
+        };
+
+        match fs::write(&path, &program.source) {
+            Ok(()) => {
+                self.catalog_message = Some(format!("exported `{}` to `{path}`", program.name));
+            }
+            Err(err) => {
+                self.catalog_message = Some(format!("failed to export `{}`: {err}", program.name));
+            }
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn import_program_from_disk(&mut self) {
+        let path = self.program_disk_path.trim().to_owned();
+        if path.is_empty() {
+            self.catalog_message = Some("enter a file path to import a program".to_owned());
+            return;
+        }
+
+        match fs::read_to_string(&path) {
+            Ok(source) => {
+                let name = Path::new(&path)
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .filter(|stem| !stem.trim().is_empty())
+                    .map(|stem| stem.to_owned())
+                    .unwrap_or_else(|| String::from("Imported Program"));
+                self.catalog.create_custom_program(source, name.clone());
+                self.rename_id = None;
+                self.catalog_message = Some(format!("imported `{name}` from `{path}`"));
+                self.compile();
+            }
+            Err(err) => {
+                self.catalog_message = Some(format!("failed to import from `{path}`: {err}"));
+            }
+        }
+    }
+
     fn catalog_ui(&mut self, ui: &mut egui::Ui) {
+        let mut import_buffer = self.import_paste_buffer.take();
+        let mut import_source: Option<String> = None;
+        let mut cancel_import = false;
+
         ui.vertical(|ui| {
             ui.heading("Files");
             ui.add_space(6.0);
@@ -253,6 +318,77 @@ impl FullStackApp {
                 }
             });
 
+            ui.horizontal(|ui| {
+                if ui
+                    .button("Copy Source")
+                    .on_hover_text("Copy the current program source to clipboard")
+                    .clicked()
+                {
+                    let src = self.catalog.get_selected_source();
+                    ui.ctx().copy_text(src);
+                }
+                if ui
+                    .button("Import...")
+                    .on_hover_text("Paste HLL source to create a new program")
+                    .clicked()
+                {
+                    import_buffer = Some(String::new());
+                }
+            });
+
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                ui.separator();
+                ui.small("Import/export the selected program from a .hll file:");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.program_disk_path)
+                        .hint_text("Path to .hll file")
+                        .desired_width(f32::INFINITY),
+                );
+                ui.horizontal(|ui| {
+                    let path_ready = !self.program_disk_path.trim().is_empty();
+                    if ui
+                        .add_enabled(path_ready, egui::Button::new("Import from Disk"))
+                        .clicked()
+                    {
+                        self.import_program_from_disk();
+                    }
+                    if ui
+                        .add_enabled(path_ready, egui::Button::new("Export Current"))
+                        .clicked()
+                    {
+                        self.export_current_program_to_disk();
+                    }
+                });
+                if let Some(message) = &self.catalog_message {
+                    ui.small(message);
+                }
+            }
+
+            if let Some(buf) = &mut import_buffer {
+                ui.separator();
+                ui.small("Paste HLL source, then click Create:");
+                let ready = !buf.as_str().trim().is_empty();
+                ui.add(
+                    egui::TextEdit::multiline(buf)
+                        .desired_rows(6)
+                        .desired_width(f32::INFINITY)
+                        .font(egui::TextStyle::Monospace),
+                );
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(ready, egui::Button::new("Create"))
+                        .clicked()
+                    {
+                        import_source = Some(buf.as_str().trim().to_owned());
+                    }
+                    if ui.button("Cancel").clicked() {
+                        cancel_import = true;
+                    }
+                });
+                ui.separator();
+            }
+
             ui.add_space(8.0);
             self.render_program_section(ui, ProgramKind::Example, "Examples");
             ui.separator();
@@ -269,6 +405,17 @@ impl FullStackApp {
                 self.compile();
             }
         });
+
+        if let Some(source) = import_source {
+            let name = format!("Imported {}", self.catalog.next_custom_program_id);
+            self.catalog.create_custom_program(source, name);
+            self.rename_id = None;
+            self.compile();
+        } else if cancel_import {
+            self.import_paste_buffer = None;
+        } else {
+            self.import_paste_buffer = import_buffer;
+        }
     }
 
     fn render_program_section(&mut self, ui: &mut egui::Ui, kind: ProgramKind, title: &str) {
