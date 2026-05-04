@@ -1,7 +1,7 @@
 use crate::view::debug::ADDRESS_PRESETS;
-use crate::view::{CompilationState, CompilerView, ProgramCatalog};
+use crate::view::{CompilationState, CompilerView, ProgramCatalog, ui_theme};
 use crate::virtual_machine::bus::RAM_BASE;
-use egui::{Color32, Grid, RichText, ScrollArea, Ui};
+use egui::{Grid, RichText, ScrollArea, Ui};
 
 #[derive(Clone)]
 pub struct MemoryView {
@@ -30,6 +30,7 @@ impl CompilerView for MemoryView {
         state: &mut CompilationState,
         _catalog: &mut ProgramCatalog,
     ) {
+        let theme = ui_theme();
         let Some(session) = state.debug_session.as_mut() else {
             ui.centered_and_justified(|ui| {
                 ui.label(RichText::new("No debug session active").weak());
@@ -67,7 +68,7 @@ impl CompilerView for MemoryView {
 
         // ---- Styled Top Toolbar ----
         egui::Frame::NONE
-            .fill(ui.visuals().faint_bg_color)
+            .fill(theme.panel_alt)
             .corner_radius(6.0)
             .inner_margin(10.0)
             .show(ui, |ui| {
@@ -95,7 +96,7 @@ impl CompilerView for MemoryView {
                             RichText::new("(No section symbols found)")
                                 .weak()
                                 .small()
-                                .color(Color32::from_rgb(255, 150, 100)),
+                                .color(theme.warning),
                         );
                     }
                 });
@@ -159,7 +160,7 @@ impl CompilerView for MemoryView {
                             ))
                             .monospace()
                             .weak()
-                            .color(Color32::from_gray(140)),
+                            .color(theme.text_dim),
                         );
                     });
                 });
@@ -198,19 +199,19 @@ impl CompilerView for MemoryView {
                             RichText::new("Address")
                                 .monospace()
                                 .strong()
-                                .color(Color32::from_gray(160)),
+                                .color(theme.text_dim),
                         );
                         ui.label(
                             RichText::new("Hex")
                                 .monospace()
                                 .strong()
-                                .color(Color32::from_gray(160)),
+                                .color(theme.text_dim),
                         );
                         ui.label(
                             RichText::new("ASCII")
                                 .monospace()
                                 .strong()
-                                .color(Color32::from_gray(160)),
+                                .color(theme.text_dim),
                         );
                         ui.end_row();
 
@@ -221,7 +222,7 @@ impl CompilerView for MemoryView {
                             ui.label(
                                 RichText::new(format!("{row_addr:#010x}"))
                                     .monospace()
-                                    .color(Color32::from_gray(140)),
+                                            .color(theme.text_soft),
                             );
 
                             // Hex column
@@ -236,7 +237,7 @@ impl CompilerView for MemoryView {
                             ui.label(
                                 RichText::new(hex_str)
                                     .monospace()
-                                    .color(Color32::from_gray(220)),
+                                            .color(theme.text),
                             );
 
                             // ASCII column
@@ -254,7 +255,7 @@ impl CompilerView for MemoryView {
                             ui.label(
                                 RichText::new(ascii_str)
                                     .monospace()
-                                    .color(Color32::from_gray(180)),
+                                            .color(theme.text_soft),
                             );
 
                             ui.end_row();

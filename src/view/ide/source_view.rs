@@ -1,5 +1,5 @@
 use crate::view::highlight_code;
-use crate::view::{CompilationState, CompilerView, ProgramCatalog};
+use crate::view::{CompilationState, CompilerView, ProgramCatalog, ui_theme};
 use egui::{Frame, Key, TextEdit, TextStyle};
 
 #[derive(Default, Clone)]
@@ -17,6 +17,7 @@ impl CompilerView for SourceView {
         state: &mut CompilationState,
         catalog: &mut ProgramCatalog,
     ) {
+        let theme = ui_theme();
         let mut source_code = catalog.get_selected_source();
 
         let undo_shortcut = ui.input(|i| i.modifiers.command && i.key_pressed(Key::Z));
@@ -45,9 +46,7 @@ impl CompilerView for SourceView {
         let available = ui.available_size();
         let editor_height = (available.y - error_panel_height).max(50.0);
 
-        let frame = Frame::NONE
-            .fill(ui.visuals().extreme_bg_color)
-            .inner_margin(4.0);
+        let frame = Frame::NONE.fill(theme.panel).inner_margin(4.0);
 
         let panel_id = ui.id();
         frame.show(ui, |ui| {
@@ -92,11 +91,7 @@ impl CompilerView for SourceView {
             let error_text = error_text.clone();
             ui.add_space(2.0);
 
-            let error_frame = Frame::NONE
-                .fill(egui::Color32::from_rgb(40, 15, 15))
-                .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(160, 50, 50)))
-                .inner_margin(8.0)
-                .corner_radius(4.0);
+            let error_frame = theme.alert_frame(theme.error.gamma_multiply(0.12), theme.error);
 
             error_frame.show(ui, |ui| {
                 ui.add_space(4.0);
@@ -116,7 +111,7 @@ impl CompilerView for SourceView {
                                 ui.horizontal(|ui| {
                                     ui.add_space(8.0);
                                     ui.colored_label(
-                                        egui::Color32::from_rgb(255, 120, 100),
+                                        theme.error,
                                         egui::RichText::new(line.trim()).monospace(),
                                     );
                                 });
@@ -125,14 +120,14 @@ impl CompilerView for SourceView {
                                 ui.horizontal(|ui| {
                                     ui.add_space(8.0);
                                     ui.colored_label(
-                                        egui::Color32::from_rgb(150, 150, 200),
+                                        theme.info,
                                         egui::RichText::new(line).monospace(),
                                     );
                                 });
                             } else {
                                 // Header / main message
                                 ui.colored_label(
-                                    egui::Color32::from_rgb(240, 100, 80),
+                                    theme.error,
                                     egui::RichText::new(line).monospace().strong(),
                                 );
                             }

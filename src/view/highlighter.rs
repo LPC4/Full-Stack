@@ -1,10 +1,11 @@
 // Syntax highlighting for different language representations
 
-use egui::Color32;
+use crate::view::ui_theme;
 use egui::text::LayoutJob;
 
 /// Highlights source code with basic syntax highlighting for the HLL.
 pub fn highlight_code(theme: &egui::Style, code: &str) -> LayoutJob {
+    let palette = ui_theme().syntax;
     let mut job = LayoutJob::default();
     let font_id = egui::TextStyle::Monospace.resolve(theme);
 
@@ -83,7 +84,7 @@ pub fn highlight_code(theme: &egui::Style, code: &str) -> LayoutJob {
                     0.0,
                     egui::TextFormat {
                         font_id: font_id.clone(),
-                        color: Color32::from_rgb(70, 120, 70), // green strings
+                        color: palette.string,
                         ..Default::default()
                     },
                 );
@@ -98,7 +99,7 @@ pub fn highlight_code(theme: &egui::Style, code: &str) -> LayoutJob {
                 }
                 let word = &code_part[start..end];
                 let color = if keywords.contains(&word) {
-                    Color32::from_rgb(200, 100, 200) // keywords (purple)
+                    palette.keyword
                 } else {
                     theme.visuals.text_color() // generic
                 };
@@ -125,7 +126,7 @@ pub fn highlight_code(theme: &egui::Style, code: &str) -> LayoutJob {
                     0.0,
                     egui::TextFormat {
                         font_id: font_id.clone(),
-                        color: Color32::from_rgb(100, 150, 200), // numbers (blue)
+                        color: palette.number,
                         ..Default::default()
                     },
                 );
@@ -161,7 +162,7 @@ pub fn highlight_code(theme: &egui::Style, code: &str) -> LayoutJob {
                 0.0,
                 egui::TextFormat {
                     font_id: font_id.clone(),
-                    color: Color32::from_rgb(60, 60, 60),
+                    color: palette.comment,
                     ..Default::default()
                 },
             );
@@ -184,6 +185,7 @@ pub fn highlight_code(theme: &egui::Style, code: &str) -> LayoutJob {
 
 /// Highlights AST and token output.
 pub fn highlight_ast(theme: &egui::Style, code: &str) -> LayoutJob {
+    let palette = ui_theme().syntax;
     let mut job = LayoutJob::default();
     let font_id = egui::TextStyle::Monospace.resolve(theme);
 
@@ -205,7 +207,7 @@ pub fn highlight_ast(theme: &egui::Style, code: &str) -> LayoutJob {
                 0.0,
                 egui::TextFormat {
                     font_id: font_id.clone(),
-                    color: Color32::from_rgb(180, 220, 180), // pale green
+                    color: palette.identifier,
                     ..Default::default()
                 },
             );
@@ -219,7 +221,7 @@ pub fn highlight_ast(theme: &egui::Style, code: &str) -> LayoutJob {
                 0.0,
                 egui::TextFormat {
                     font_id: font_id.clone(),
-                    color: Color32::from_rgb(100, 150, 200), // blue
+                    color: palette.number,
                     ..Default::default()
                 },
             );
@@ -231,7 +233,7 @@ pub fn highlight_ast(theme: &egui::Style, code: &str) -> LayoutJob {
                 0.0,
                 egui::TextFormat {
                     font_id: font_id.clone(),
-                    color: Color32::from_rgb(220, 200, 100), // yellow
+                    color: palette.bracket,
                     ..Default::default()
                 },
             );
@@ -253,7 +255,7 @@ pub fn highlight_ast(theme: &egui::Style, code: &str) -> LayoutJob {
                 0.0,
                 egui::TextFormat {
                     font_id: font_id.clone(),
-                    color: Color32::from_rgb(200, 150, 100), // orange
+                    color: palette.string,
                     ..Default::default()
                 },
             );
@@ -290,6 +292,7 @@ pub fn highlight_ast(theme: &egui::Style, code: &str) -> LayoutJob {
 
 /// Highlights IR (Intermediate Representation) output with IR-specific keywords.
 pub fn highlight_ir(theme: &egui::Style, code: &str) -> LayoutJob {
+    let palette = ui_theme().syntax;
     let mut job = LayoutJob::default();
     let font_id = egui::TextStyle::Monospace.resolve(theme);
 
@@ -328,7 +331,7 @@ pub fn highlight_ir(theme: &egui::Style, code: &str) -> LayoutJob {
                 0.0,
                 egui::TextFormat {
                     font_id: font_id.clone(),
-                    color: Color32::from_rgb(100, 150, 100),
+                    color: palette.comment,
                     ..Default::default()
                 },
             );
@@ -369,7 +372,7 @@ pub fn highlight_ir(theme: &egui::Style, code: &str) -> LayoutJob {
                         0.0,
                         egui::TextFormat {
                             font_id: font_id.clone(),
-                            color: Color32::from_rgb(150, 200, 255), // light blue
+                            color: palette.label,
                             ..Default::default()
                         },
                     );
@@ -379,7 +382,7 @@ pub fn highlight_ir(theme: &egui::Style, code: &str) -> LayoutJob {
                     }
                     let word = &line[start..end];
                     let color = if ir_keywords.contains(&word) {
-                        Color32::from_rgb(200, 100, 200) // keywords (purple)
+                        palette.keyword
                     } else {
                         theme.visuals.text_color()
                     };
@@ -403,7 +406,7 @@ pub fn highlight_ir(theme: &egui::Style, code: &str) -> LayoutJob {
                     0.0,
                     egui::TextFormat {
                         font_id: font_id.clone(),
-                        color: Color32::from_rgb(100, 200, 100), // green
+                        color: palette.number,
                         ..Default::default()
                     },
                 );
@@ -418,7 +421,7 @@ pub fn highlight_ir(theme: &egui::Style, code: &str) -> LayoutJob {
                     0.0,
                     egui::TextFormat {
                         font_id: font_id.clone(),
-                        color: Color32::from_rgb(255, 200, 100), // orange
+                        color: palette.register,
                         ..Default::default()
                     },
                 );
@@ -459,6 +462,7 @@ pub fn highlight_ir(theme: &egui::Style, code: &str) -> LayoutJob {
 
 /// Highlights RISC-V assembly (RV64IMAFD) with proper mnemonics, registers, and directives.
 pub fn highlight_assembly(theme: &egui::Style, code: &str) -> LayoutJob {
+    let palette = ui_theme().syntax;
     let mut job = LayoutJob::default();
     let font_id = egui::TextStyle::Monospace.resolve(theme);
 
@@ -685,7 +689,7 @@ pub fn highlight_assembly(theme: &egui::Style, code: &str) -> LayoutJob {
                 0.0,
                 egui::TextFormat {
                     font_id: font_id.clone(),
-                    color: Color32::from_rgb(100, 150, 100), // comment green
+                    color: palette.comment,
                     ..Default::default()
                 },
             );
@@ -745,7 +749,7 @@ pub fn highlight_assembly(theme: &egui::Style, code: &str) -> LayoutJob {
                         0.0,
                         egui::TextFormat {
                             font_id: font_id.clone(),
-                            color: Color32::from_rgb(255, 200, 100), // label orange
+                            color: palette.label,
                             ..Default::default()
                         },
                     );
@@ -767,7 +771,7 @@ pub fn highlight_assembly(theme: &egui::Style, code: &str) -> LayoutJob {
                         0.0,
                         egui::TextFormat {
                             font_id: font_id.clone(),
-                            color: Color32::from_rgb(200, 100, 200), // purple
+                            color: palette.keyword,
                             ..Default::default()
                         },
                     );
@@ -783,7 +787,7 @@ pub fn highlight_assembly(theme: &egui::Style, code: &str) -> LayoutJob {
                         0.0,
                         egui::TextFormat {
                             font_id: font_id.clone(),
-                            color: Color32::from_rgb(100, 200, 255), // light blue
+                            color: palette.register,
                             ..Default::default()
                         },
                     );
@@ -795,7 +799,7 @@ pub fn highlight_assembly(theme: &egui::Style, code: &str) -> LayoutJob {
                         0.0,
                         egui::TextFormat {
                             font_id: font_id.clone(),
-                            color: Color32::from_rgb(255, 150, 100), // orange directive
+                            color: palette.directive,
                             ..Default::default()
                         },
                     );
@@ -829,7 +833,7 @@ pub fn highlight_assembly(theme: &egui::Style, code: &str) -> LayoutJob {
                     0.0,
                     egui::TextFormat {
                         font_id: font_id.clone(),
-                        color: Color32::from_rgb(100, 200, 100), // green numbers
+                            color: palette.number,
                         ..Default::default()
                     },
                 );

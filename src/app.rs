@@ -7,7 +7,7 @@ use crate::view::{
     AssemblyView, AstView, CacheView, CfgView, CompilationState, CompilerView, CpuStateView,
     DisassemblyView, ExecutionView, FramebufferView, IoView, IrView, MemoryMapView, MemoryView,
     PipelineView, ProgramCatalog, ProgramKind, SourceView, StackView, TokensView, VmExecutionView,
-    blank_custom_program_source,
+    apply_ui_theme, blank_custom_program_source, ui_theme,
 };
 use crate::virtual_machine::bus::RAM_BASE;
 use egui::{Color32, Layout, RichText};
@@ -157,6 +157,7 @@ impl Default for FullStackApp {
 
 impl FullStackApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        apply_ui_theme(&cc.egui_ctx);
         let mut app: Self = cc
             .storage
             .and_then(|storage| eframe::get_value(storage, eframe::APP_KEY))
@@ -632,6 +633,7 @@ impl eframe::App for FullStackApp {
 
 impl FullStackApp {
     fn ide_top_bar(&mut self, ui: &mut egui::Ui) {
+        let theme = ui_theme();
         ui.set_min_size(egui::vec2(ui.available_width(), ui.available_height()));
         ui.horizontal(|ui| {
             // -- Left: Compile and Run actions --------------------------------
@@ -702,7 +704,7 @@ impl FullStackApp {
                     .add_enabled(
                         can_debug,
                         egui::Button::new(RichText::new("To Debugger").strong())
-                            .fill(Color32::from_rgb(45, 85, 175))
+                            .fill(theme.accent)
                             .min_size(egui::vec2(100.0, 35.0)),
                     )
                     .on_disabled_hover_text("Compile successfully first")
@@ -729,10 +731,10 @@ impl FullStackApp {
                 match &self.compilation_state.error_summary.clone() {
                     Some(summary) => {
                         let short: String = summary.chars().take(40).collect();
-                        ui.colored_label(Color32::from_rgb(220, 80, 80), format!("ERR: {short}"));
+                        ui.colored_label(theme.error, format!("ERR: {short}"));
                     }
                     None => {
-                        ui.colored_label(Color32::from_rgb(90, 200, 100), "OK");
+                        ui.colored_label(theme.success, "OK");
                     }
                 }
             });
@@ -740,6 +742,7 @@ impl FullStackApp {
     }
 
     fn debug_top_bar(&mut self, ui: &mut egui::Ui) {
+        let theme = ui_theme();
         ui.set_min_size(egui::vec2(ui.available_width(), ui.available_height()));
         ui.horizontal(|ui| {
             if ui
@@ -840,7 +843,7 @@ impl FullStackApp {
                 if ui
                     .add(
                         egui::Button::new(RichText::new("To IDE").strong())
-                            .fill(Color32::from_rgb(45, 85, 175))
+                            .fill(theme.accent)
                             .min_size(egui::vec2(100.0, 35.0)),
                     )
                     .clicked()
@@ -856,10 +859,10 @@ impl FullStackApp {
                 };
 
                 let (status_text, status_color) = match &session.status {
-                    SessionStatus::Running => ("Running", Color32::from_rgb(80, 200, 80)),
-                    SessionStatus::Halted(0) => ("Halted OK", Color32::from_rgb(80, 200, 80)),
-                    SessionStatus::Halted(_) => ("Halted (err)", Color32::from_rgb(220, 80, 80)),
-                    SessionStatus::Error(_) => ("Error", Color32::from_rgb(220, 80, 80)),
+                    SessionStatus::Running => ("Running", theme.success),
+                    SessionStatus::Halted(0) => ("Halted OK", theme.success),
+                    SessionStatus::Halted(_) => ("Halted (err)", theme.error),
+                    SessionStatus::Error(_) => ("Error", theme.error),
                 };
                 ui.colored_label(status_color, status_text);
                 ui.separator();

@@ -1,5 +1,5 @@
-use crate::view::{CompilationState, CompilerView, ProgramCatalog};
-use egui::{Color32, Frame, RichText, ScrollArea, Stroke, Ui};
+use crate::view::{CompilationState, CompilerView, ProgramCatalog, ui_theme};
+use egui::{Frame, RichText, ScrollArea, Stroke, Ui};
 
 #[derive(Clone, Default)]
 pub struct IoView {
@@ -18,6 +18,7 @@ impl CompilerView for IoView {
         state: &mut CompilationState,
         _catalog: &mut ProgramCatalog,
     ) {
+        let theme = ui_theme();
         let Some(session) = state.debug_session.as_mut() else {
             ui.centered_and_justified(|ui| {
                 ui.label(RichText::new("No debug session active").weak());
@@ -34,7 +35,8 @@ impl CompilerView for IoView {
         let available = ui.available_height() - 80.0;
 
         Frame::NONE
-            .stroke(Stroke::new(1.0, Color32::from_gray(70)))
+            .fill(theme.surface)
+            .stroke(Stroke::new(1.0, theme.border_soft))
             .inner_margin(8.0)
             .show(ui, |ui| {
                 ui.set_min_width(ui.available_width());

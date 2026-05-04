@@ -1,5 +1,5 @@
-use crate::view::{CompilationState, CompilerView, ProgramCatalog};
-use egui::{Color32, Frame, RichText, ScrollArea, Stroke};
+use crate::view::{CompilationState, CompilerView, ProgramCatalog, ui_theme};
+use egui::{Frame, RichText, ScrollArea, Stroke};
 
 #[derive(Clone)]
 pub struct VmExecutionResult {
@@ -24,6 +24,7 @@ impl CompilerView for VmExecutionView {
         state: &mut CompilationState,
         _catalog: &mut ProgramCatalog,
     ) {
+        let theme = ui_theme();
         if let Some(result) = &state.vm_result {
             // Prepare text for measurement
             let output = if result.uart_output.is_empty() {
@@ -62,7 +63,8 @@ impl CompilerView for VmExecutionView {
                 let _uart_height = desired_uart_height.min(max_uart_height);
 
                 Frame::NONE
-                    .stroke(Stroke::new(1.0, Color32::from_gray(100)))
+                            .fill(theme.surface)
+                            .stroke(Stroke::new(1.0, theme.border_soft))
                     .inner_margin(8.0)
                     .show(ui, |ui| {
                         ui.set_min_width(ui.available_width());
@@ -87,8 +89,8 @@ impl CompilerView for VmExecutionView {
 
                 // Execution summary
                 Frame::NONE
-                    .fill(Color32::from_gray(24))
-                    .stroke(Stroke::new(1.0, Color32::from_gray(80)))
+                    .fill(theme.panel_alt)
+                    .stroke(Stroke::new(1.0, theme.border_soft))
                     .inner_margin(12.0)
                     .show(ui, |ui| {
                         ui.set_min_width(ui.available_width());
@@ -98,24 +100,24 @@ impl CompilerView for VmExecutionView {
                         let (status_text, status_color) = if result.max_steps_reached {
                             (
                                 "[WARNING] Step limit reached",
-                                Color32::from_rgb(255, 200, 50),
+                                theme.warning,
                             )
                         } else if let Some(code) = result.exit_code {
                             if code == 0 {
                                 (
                                     "[OK] Program halted successfully",
-                                    Color32::from_rgb(50, 220, 50),
+                                    theme.success,
                                 )
                             } else {
                                 (
                                     "[ERROR] Program exited with non-zero code",
-                                    Color32::from_rgb(220, 50, 50),
+                                    theme.error,
                                 )
                             }
                         } else {
                             (
                                 "[UNKNOWN] Execution finished",
-                                Color32::from_rgb(150, 150, 150),
+                                theme.text_dim,
                             )
                         };
 

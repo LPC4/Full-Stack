@@ -1,4 +1,4 @@
-use crate::view::{CompilationState, CompilerView, ProgramCatalog};
+use crate::view::{CompilationState, CompilerView, ProgramCatalog, ui_theme};
 use eframe::epaint::PathStroke;
 use egui::{Color32, CornerRadius, Pos2, Rect, Stroke, StrokeKind, Vec2};
 use std::collections::HashMap;
@@ -108,6 +108,7 @@ fn draw_arrowhead(painter: &egui::Painter, tip: Pos2, dir: Vec2, color: Color32)
 }
 
 fn draw_cfg(ui: &mut egui::Ui, blocks: &[BasicBlock]) {
+    let theme = ui_theme();
     // Define the fixed widths and margins of our content
     let margin_left = 120.0; // Space for the curved branch arrows
     let block_width = 250.0;
@@ -168,11 +169,11 @@ fn draw_cfg(ui: &mut egui::Ui, blocks: &[BasicBlock]) {
             Vec2::new(block_width, block_height),
         );
 
-        painter.rect_filled(b_rect, CornerRadius::same(6), Color32::from_gray(30));
+        painter.rect_filled(b_rect, CornerRadius::same(6), theme.panel_alt);
         painter.rect_stroke(
             b_rect,
             CornerRadius::same(6),
-            Stroke::new(1.0, Color32::from_gray(100)),
+            Stroke::new(1.0, theme.border_soft),
             StrokeKind::Middle,
         );
 
@@ -181,14 +182,14 @@ fn draw_cfg(ui: &mut egui::Ui, blocks: &[BasicBlock]) {
             egui::Align2::LEFT_TOP,
             &block.label,
             egui::FontId::monospace(14.0),
-            Color32::from_rgb(255, 200, 100),
+            theme.memory.link,
         );
         painter.line_segment(
             [
                 b_rect.left_top() + Vec2::new(0.0, 25.0),
                 b_rect.right_top() + Vec2::new(0.0, 25.0),
             ],
-            Stroke::new(1.0, Color32::from_gray(60)),
+            Stroke::new(1.0, theme.border_soft),
         );
 
         let max_lines = block.instructions.len().min(5);
@@ -198,7 +199,7 @@ fn draw_cfg(ui: &mut egui::Ui, blocks: &[BasicBlock]) {
                 egui::Align2::LEFT_TOP,
                 inst,
                 egui::FontId::monospace(12.0),
-                Color32::LIGHT_GRAY,
+                theme.text_soft,
             );
         }
         if block.instructions.len() > 5 {
@@ -207,7 +208,7 @@ fn draw_cfg(ui: &mut egui::Ui, blocks: &[BasicBlock]) {
                 egui::Align2::LEFT_TOP,
                 format!("... +{} more", block.instructions.len() - 5),
                 egui::FontId::monospace(12.0),
-                Color32::from_gray(150),
+                theme.text_dim,
             );
         }
 
@@ -236,7 +237,7 @@ fn draw_cfg(ui: &mut egui::Ui, blocks: &[BasicBlock]) {
                         points: [start_pos, c1, c2, end_pos],
                         closed: false,
                         fill: Color32::TRANSPARENT,
-                        stroke: PathStroke::new(1.5, Color32::from_rgb(100, 150, 250)),
+                        stroke: PathStroke::new(1.5, theme.memory.link),
                     };
                     painter.add(shape);
 
@@ -244,7 +245,7 @@ fn draw_cfg(ui: &mut egui::Ui, blocks: &[BasicBlock]) {
                     // Derivative at t=1: 3*(P3 - P2)
                     let tangent = (end_pos - c2) * 3.0;
                     let dir = tangent.normalized(); // points into the block (rightwards)
-                    draw_arrowhead(&painter, end_pos, dir, Color32::from_rgb(100, 150, 250));
+                    draw_arrowhead(&painter, end_pos, dir, theme.memory.link);
                 }
             }
         }
@@ -272,7 +273,7 @@ fn draw_cfg(ui: &mut egui::Ui, blocks: &[BasicBlock]) {
             let start = src_rect.center_bottom();
             let end = dst_rect.center_top();
 
-            let arrow_color = Color32::from_rgb(150, 200, 100);
+            let arrow_color = theme.success;
             painter.line_segment([start, end], Stroke::new(1.5, arrow_color));
 
             // Downward direction

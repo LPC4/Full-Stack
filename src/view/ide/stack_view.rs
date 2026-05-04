@@ -1,5 +1,5 @@
-use crate::view::{CompilationState, CompilerView, ProgramCatalog};
-use egui::{Color32, CornerRadius, FontId, Pos2, Rect, RichText, Sense, Stroke, StrokeKind, Vec2};
+use crate::view::{CompilationState, CompilerView, ProgramCatalog, ui_theme};
+use egui::{CornerRadius, FontId, Pos2, Rect, RichText, Sense, Stroke, StrokeKind, Vec2};
 
 #[derive(Debug, Clone)]
 enum StackElementKind {
@@ -243,6 +243,8 @@ impl CompilerView for StackView {
 }
 
 fn draw_modern_function_stack(ui: &mut egui::Ui, func: &FunctionStack) {
+    let theme = ui_theme();
+    let palette = theme.stack;
     if func.frame_size == 0 {
         ui.label(
             RichText::new("Leaf function or fully registered. No stack frame allocated.")
@@ -274,11 +276,11 @@ fn draw_modern_function_stack(ui: &mut egui::Ui, func: &FunctionStack) {
                 Pos2::new(rect.left() + 10.0 + bar_width, bottom_y),
             );
 
-            painter.rect_filled(bar_rect, CornerRadius::same(4), Color32::from_gray(30));
+            painter.rect_filled(bar_rect, CornerRadius::same(4), palette.background);
             painter.rect_stroke(
                 bar_rect,
                 CornerRadius::same(4),
-                Stroke::new(1.0, Color32::from_gray(100)),
+                Stroke::new(1.0, palette.frame),
                 StrokeKind::Middle,
             );
 
@@ -299,20 +301,20 @@ fn draw_modern_function_stack(ui: &mut egui::Ui, func: &FunctionStack) {
 
                 let (fill_color, stroke_color) = match &elem.kind {
                     StackElementKind::ReturnAddress => (
-                        Color32::from_rgba_premultiplied(200, 80, 80, 180),
-                        Color32::from_rgb(255, 100, 100),
+                        palette.return_address.gamma_multiply(0.25),
+                        palette.return_address,
                     ),
                     StackElementKind::SavedRegister { .. } => (
-                        Color32::from_rgba_premultiplied(180, 140, 60, 180),
-                        Color32::from_rgb(255, 200, 100),
+                        palette.saved_register.gamma_multiply(0.25),
+                        palette.saved_register,
                     ),
                     StackElementKind::LocalVariable { .. } => (
-                        Color32::from_rgba_premultiplied(60, 160, 100, 180),
-                        Color32::from_rgb(100, 255, 150),
+                        palette.local_variable.gamma_multiply(0.25),
+                        palette.local_variable,
                     ),
                     StackElementKind::Parameter { .. } => (
-                        Color32::from_rgba_premultiplied(120, 100, 200, 180),
-                        Color32::from_rgb(180, 150, 255),
+                        palette.parameter.gamma_multiply(0.25),
+                        palette.parameter,
                     ),
                 };
 
@@ -392,26 +394,18 @@ fn draw_modern_function_stack(ui: &mut egui::Ui, func: &FunctionStack) {
 
             let font_id = FontId::monospace(10.0);
 
-            let high_galley = ui.painter().layout_no_wrap(
-                format!("SP + 0x{frame_size:X}"),
-                font_id.clone(),
-                Color32::LIGHT_GRAY,
-            );
+            let high_galley = ui.painter().layout_no_wrap(format!("SP + 0x{frame_size:X}"), font_id.clone(), palette.label_text);
             painter.galley(
                 Pos2::new(bar_rect.right() + 8.0, top_y - 4.0),
                 high_galley,
-                Color32::LIGHT_GRAY,
+                palette.label_text,
             );
 
-            let low_galley = ui.painter().layout_no_wrap(
-                "SP + 0x0".to_owned(),
-                font_id.clone(),
-                Color32::LIGHT_GRAY,
-            );
+            let low_galley = ui.painter().layout_no_wrap("SP + 0x0".to_owned(), font_id.clone(), palette.label_text);
             painter.galley(
                 Pos2::new(bar_rect.right() + 8.0, bottom_y - 4.0),
                 low_galley,
-                Color32::LIGHT_GRAY,
+                palette.label_text,
             );
         }
 
@@ -447,16 +441,14 @@ fn draw_modern_function_stack(ui: &mut egui::Ui, func: &FunctionStack) {
                             ui.label(
                                 RichText::new(format!("+0x{top_of_elem:02X}"))
                                     .monospace()
-                                    .color(Color32::from_gray(120)),
+                                    .color(palette.dim_text),
                             );
-                            ui.label(
-                                RichText::new("Padding / Locals").color(Color32::from_gray(120)),
-                            );
-                            ui.label(RichText::new("-").color(Color32::from_gray(120)));
-                            ui.label(RichText::new("-").color(Color32::from_gray(120)));
+                            ui.label(RichText::new("Padding / Locals").color(palette.dim_text));
+                            ui.label(RichText::new("-").color(palette.dim_text));
+                            ui.label(RichText::new("-").color(palette.dim_text));
                             ui.label(
                                 RichText::new(format!("{gap} bytes"))
-                                    .color(Color32::from_gray(120)),
+                                    .color(palette.dim_text),
                             );
                             ui.end_row();
                         }
@@ -466,8 +458,7 @@ fn draw_modern_function_stack(ui: &mut egui::Ui, func: &FunctionStack) {
                         match &elem.kind {
                             StackElementKind::ReturnAddress => {
                                 ui.label(
-                                    RichText::new("Return Addr")
-                                        .color(Color32::from_rgb(255, 100, 100)),
+                                    RichText::new("Return Addr").color(palette.return_address),
                                 );
                                 ui.label("ra");
                                 ui.label("-");
@@ -475,8 +466,7 @@ fn draw_modern_function_stack(ui: &mut egui::Ui, func: &FunctionStack) {
                             }
                             StackElementKind::SavedRegister { reg } => {
                                 ui.label(
-                                    RichText::new("Saved Reg")
-                                        .color(Color32::from_rgb(255, 200, 100)),
+                                    RichText::new("Saved Reg").color(palette.saved_register),
                                 );
                                 ui.label(format!("s{reg}"));
                                 ui.label("-");
@@ -486,8 +476,7 @@ fn draw_modern_function_stack(ui: &mut egui::Ui, func: &FunctionStack) {
                                 name, type_name, ..
                             } => {
                                 ui.label(
-                                    RichText::new("Local Var")
-                                        .color(Color32::from_rgb(100, 255, 150)),
+                                    RichText::new("Local Var").color(palette.local_variable),
                                 );
                                 ui.label(name);
                                 ui.label(if type_name.is_empty() { "?" } else { type_name });
@@ -497,8 +486,7 @@ fn draw_modern_function_stack(ui: &mut egui::Ui, func: &FunctionStack) {
                                 name, type_name, ..
                             } => {
                                 ui.label(
-                                    RichText::new("Parameter")
-                                        .color(Color32::from_rgb(180, 150, 255)),
+                                    RichText::new("Parameter").color(palette.parameter),
                                 );
                                 ui.label(name);
                                 ui.label(if type_name.is_empty() { "?" } else { type_name });
@@ -514,14 +502,14 @@ fn draw_modern_function_stack(ui: &mut egui::Ui, func: &FunctionStack) {
                         ui.label(
                             RichText::new("+0x00")
                                 .monospace()
-                                .color(Color32::from_gray(120)),
+                                .color(palette.dim_text),
                         );
-                        ui.label(RichText::new("Padding / Locals").color(Color32::from_gray(120)));
-                        ui.label(RichText::new("-").color(Color32::from_gray(120)));
-                        ui.label(RichText::new("-").color(Color32::from_gray(120)));
+                        ui.label(RichText::new("Padding / Locals").color(palette.dim_text));
+                        ui.label(RichText::new("-").color(palette.dim_text));
+                        ui.label(RichText::new("-").color(palette.dim_text));
                         ui.label(
                             RichText::new(format!("{current_offset} bytes"))
-                                .color(Color32::from_gray(120)),
+                                .color(palette.dim_text),
                         );
                         ui.end_row();
                     }

@@ -1,7 +1,7 @@
 //! Interactive disassembly view that highlights the current instruction during debugging.
 
-use crate::view::{CompilationState, CompilerView, ProgramCatalog};
-use egui::{Color32, RichText, ScrollArea, Stroke, Ui};
+use crate::view::{CompilationState, CompilerView, ProgramCatalog, ui_theme};
+use egui::{RichText, ScrollArea, Stroke, Ui};
 
 #[derive(Clone, Default)]
 pub struct DisassemblyView;
@@ -18,6 +18,7 @@ impl CompilerView for DisassemblyView {
         state: &mut CompilationState,
         _catalog: &mut ProgramCatalog,
     ) {
+        let theme = ui_theme();
         let Some(session) = &state.debug_session else {
             ui.centered_and_justified(|ui| {
                 ui.label(RichText::new("No debug session active").weak());
@@ -105,31 +106,31 @@ impl CompilerView for DisassemblyView {
                         ui.painter().rect_filled(
                             rect,
                             2.0,
-                            Color32::from_rgba_premultiplied(255, 215, 0, 40), // Yellow highlight
+                            theme.highlight.gamma_multiply(0.16),
                         );
 
                         // Draw a left border indicator
                         ui.painter().line_segment(
                             [rect.left_top(), rect.left_bottom()],
-                            Stroke::new(3.0, Color32::from_rgb(255, 215, 0)),
+                            Stroke::new(3.0, theme.highlight),
                         );
                     }
 
                     // Format the line with syntax highlighting
                     let text_color = if is_current_line {
-                        Color32::WHITE
+                        theme.text
                     } else if trimmed.starts_with(';') {
                         // Comments
-                        Color32::from_gray(80)
+                        theme.text_dim
                     } else if trimmed.starts_with('.') {
                         // Directives
-                        Color32::from_gray(120)
+                        theme.text_soft
                     } else if trimmed.ends_with(':') {
                         // Labels
-                        Color32::from_rgb(200, 180, 100)
+                        theme.syntax.label
                     } else {
                         // Regular instructions
-                        Color32::from_gray(200)
+                        theme.text_soft
                     };
 
                     let font_size = if is_current_line { 13.0 } else { 12.0 };
@@ -141,16 +142,16 @@ impl CompilerView for DisassemblyView {
                             RichText::new(line_num_str)
                                 .monospace()
                                 .size(11.0)
-                                .color(Color32::from_gray(80)),
+                                    .color(theme.text_dim),
                         );
                         ui.add_space(8.0);
 
                         // Show address if present
                         if let Some(addr) = line_to_address.get(&line_idx) {
                             let addr_color = if is_current_line {
-                                Color32::from_rgb(255, 215, 0)
+                                theme.highlight
                             } else {
-                                Color32::from_gray(120)
+                                theme.text_soft
                             };
                             ui.label(
                                 RichText::new(format!("{:#018x}", addr))

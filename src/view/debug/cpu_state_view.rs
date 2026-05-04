@@ -1,6 +1,6 @@
 use crate::view::debug::snapshot::CpuSnapshot;
 use crate::view::{
-    CompilationState, CompilerView, ProgramCatalog, auto_grid_columns_with_min_width,
+    CompilationState, CompilerView, ProgramCatalog, auto_grid_columns_with_min_width, ui_theme,
 };
 use egui::{Color32, FontId, Grid, RichText, ScrollArea, Ui, vec2};
 
@@ -27,6 +27,7 @@ impl CompilerView for CpuStateView {
         state: &mut CompilationState,
         _catalog: &mut ProgramCatalog,
     ) {
+        let theme = ui_theme();
         let Some(session) = &state.debug_session else {
             ui.centered_and_justified(|ui| {
                 ui.label(RichText::new("No debug session active").weak());
@@ -62,7 +63,7 @@ impl CompilerView for CpuStateView {
                             ui.label(
                                 RichText::new("Integer Registers")
                                     .strong()
-                                    .color(Color32::from_gray(160)),
+                                    .color(theme.text_dim),
                             );
                         });
                         for _ in 1..num_cols {
@@ -84,7 +85,7 @@ impl CompilerView for CpuStateView {
                             ui.label(
                                 RichText::new("FP Registers")
                                     .strong()
-                                    .color(Color32::from_gray(160)),
+                                    .color(theme.text_dim),
                             );
                             ui.checkbox(&mut self.show_fp_as_float, "as float");
                         });
@@ -107,7 +108,7 @@ impl CompilerView for CpuStateView {
                             ui.label(
                                 RichText::new("CSRs")
                                     .strong()
-                                    .color(Color32::from_gray(160)),
+                                    .color(theme.text_dim),
                             );
                         });
                         for _ in 1..num_cols {
@@ -129,14 +130,14 @@ impl CompilerView for CpuStateView {
 fn pc_bar(ui: &mut Ui, pc: u64, w: f32) {
     let h = 28.0;
     let (rect, _) = ui.allocate_exact_size(vec2(w, h), egui::Sense::hover());
-    ui.painter()
-        .rect_filled(rect, 4.0, Color32::from_rgb(50, 50, 70));
+    let theme = ui_theme();
+    ui.painter().rect_filled(rect, 4.0, theme.surface_alt);
     ui.painter().text(
         rect.left_center() + vec2(10.0, 0.0),
         egui::Align2::LEFT_CENTER,
         "PC",
         FontId::monospace(11.0),
-        Color32::from_gray(140),
+        theme.text_dim,
     );
     ui.painter().text(
         rect.center(),
@@ -148,10 +149,11 @@ fn pc_bar(ui: &mut Ui, pc: u64, w: f32) {
 }
 
 fn integer_regs(ui: &mut Ui, regs: &[u64; 32], prev: &[u64; 32], num_cols: usize) {
-    let changed = Color32::from_rgb(255, 215, 0);
-    let dim = Color32::from_gray(130);
-    let normal = Color32::from_gray(220);
-    let dec_color = Color32::from_gray(100);
+    let theme = ui_theme();
+    let changed = theme.highlight;
+    let dim = theme.text_dim;
+    let normal = theme.text;
+    let dec_color = theme.text_soft;
 
     let regs_per_col = (32 + num_cols - 1) / num_cols;
 
@@ -184,8 +186,9 @@ fn integer_regs(ui: &mut Ui, regs: &[u64; 32], prev: &[u64; 32], num_cols: usize
 }
 
 fn fp_regs(ui: &mut Ui, regs: &[u64; 32], as_float: bool, num_cols: usize) {
-    let dim = Color32::from_gray(130);
-    let normal = Color32::from_gray(210);
+    let theme = ui_theme();
+    let dim = theme.text_dim;
+    let normal = theme.text_soft;
 
     let regs_per_col = (32 + num_cols - 1) / num_cols;
 
@@ -244,8 +247,9 @@ fn csr_table(ui: &mut Ui, cpu: &CpuSnapshot, num_cols: usize) {
         ("fcsr", ((c.frm as u64) << 5) | (c.fflags as u64)),
     ];
 
-    let dim = Color32::from_gray(130);
-    let val_color = Color32::from_gray(210);
+    let theme = ui_theme();
+    let dim = theme.text_dim;
+    let val_color = theme.text_soft;
 
     let items_per_col = (csrs.len() + num_cols - 1) / num_cols;
 

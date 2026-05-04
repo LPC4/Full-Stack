@@ -1,5 +1,5 @@
-use crate::view::{CompilationState, CompilerView, ProgramCatalog};
-use egui::{Color32, Frame, Grid, RichText, Stroke, Ui};
+use crate::view::{CompilationState, CompilerView, ProgramCatalog, ui_theme};
+use egui::{Frame, Grid, RichText, Stroke, Ui};
 
 #[derive(Clone, Default)]
 pub struct CacheView;
@@ -16,6 +16,7 @@ impl CompilerView for CacheView {
         state: &mut CompilationState,
         _catalog: &mut ProgramCatalog,
     ) {
+        let theme = ui_theme();
         let Some(session) = &state.debug_session else {
             ui.centered_and_justified(|ui| {
                 ui.label(RichText::new("No debug session active").weak());
@@ -32,13 +33,13 @@ impl CompilerView for CacheView {
         let l3_stats = &session.snapshot.l3_stats;
 
         Frame::NONE
-            .fill(Color32::from_gray(28))
-            .stroke(Stroke::new(1.0, Color32::from_gray(60)))
+            .fill(theme.panel_alt)
+            .stroke(Stroke::new(1.0, theme.border_soft))
             .inner_margin(10.0)
             .show(ui, |ui| {
                 ui.set_min_width(ui.available_width());
                 ui.colored_label(
-                    Color32::from_rgb(60, 200, 80),
+                    theme.success,
                     "Three-Level Cache Hierarchy Active",
                 );
                 ui.label(
@@ -102,6 +103,7 @@ fn stats_block(
     write_hits: u64,
     write_misses: u64,
 ) {
+    let theme = ui_theme();
     let total_reads = read_hits + read_misses;
     let total_writes = write_hits + write_misses;
     let read_rate = if total_reads > 0 {
@@ -116,7 +118,7 @@ fn stats_block(
     };
 
     Frame::NONE
-        .stroke(Stroke::new(1.0, Color32::from_gray(55)))
+        .stroke(Stroke::new(1.0, theme.border_soft))
         .inner_margin(8.0)
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
@@ -128,12 +130,12 @@ fn stats_block(
                     ui.label(
                         RichText::new("Hits")
                             .monospace()
-                            .color(Color32::from_gray(160)),
+                            .color(theme.text_dim),
                     );
                     ui.label(
                         RichText::new("Misses")
                             .monospace()
-                            .color(Color32::from_gray(160)),
+                            .color(theme.text_dim),
                     );
                     ui.end_row();
 
@@ -159,19 +161,20 @@ fn stats_block(
 
 fn hit_rate_bar(ui: &mut Ui, label: &str, pct: f64) {
     ui.vertical(|ui| {
-        ui.label(RichText::new(label).color(Color32::from_gray(150)));
+        let theme = ui_theme();
+        ui.label(RichText::new(label).color(theme.text_dim));
         let bar_w = 120.0;
         let bar_h = 10.0;
         let (rect, _) = ui.allocate_exact_size(egui::vec2(bar_w, bar_h), egui::Sense::hover());
-        ui.painter().rect_filled(rect, 2.0, Color32::from_gray(40));
+        ui.painter().rect_filled(rect, 2.0, theme.surface_alt);
         let fill_w = bar_w * (pct as f32 / 100.0).clamp(0.0, 1.0);
         let fill = egui::Rect::from_min_size(rect.min, egui::vec2(fill_w, bar_h));
         let color = if pct >= 90.0 {
-            Color32::from_rgb(60, 200, 80)
+            theme.success
         } else if pct >= 60.0 {
-            Color32::from_rgb(200, 180, 40)
+            theme.warning
         } else {
-            Color32::from_rgb(200, 60, 60)
+            theme.error
         };
         ui.painter().rect_filled(fill, 2.0, color);
         ui.label(RichText::new(format!("{pct:.1}%")).monospace());

@@ -1,5 +1,5 @@
 use crate::view::debug::snapshot::SlotState;
-use crate::view::{CompilationState, CompilerView, ProgramCatalog};
+use crate::view::{CompilationState, CompilerView, ProgramCatalog, ui_theme};
 use egui::{Align2, Color32, FontId, Rect, RichText, Stroke, Ui, pos2, vec2};
 
 fn lerp_color(a: Color32, b: Color32, t: f32) -> Color32 {
@@ -13,7 +13,7 @@ fn lerp_color(a: Color32, b: Color32, t: f32) -> Color32 {
 }
 
 // ---------------------------------------------------------------------------
-// Layout & Color Constants
+// Layout Constants
 // ---------------------------------------------------------------------------
 
 const NUM_ROWS: usize = 12;
@@ -22,22 +22,7 @@ const ROW_H: f32 = 42.0;
 const HEADER_H: f32 = 28.0;
 const CORNER: f32 = 3.0;
 
-const BG_DARK: Color32 = Color32::from_rgb(15, 15, 18);
-const BG_CELL: Color32 = Color32::from_rgb(22, 22, 26);
-const GRID_COLOR: Color32 = Color32::from_rgb(35, 35, 45);
-
-const STAGE_COLORS: [Color32; 5] = [
-    Color32::from_rgb(100, 150, 255), // IF
-    Color32::from_rgb(130, 120, 255), // ID
-    Color32::from_rgb(180, 110, 255), // EX
-    Color32::from_rgb(255, 110, 180), // MEM
-    Color32::from_rgb(255, 170, 100), // WB
-];
 const STAGE_LABELS: [&str; 5] = ["IF", "ID", "EX", "MEM", "WB"];
-
-const COLOR_STALL: Color32 = Color32::from_rgb(255, 190, 60);
-const COLOR_FLUSH: Color32 = Color32::from_rgb(255, 80, 80);
-const TEXT_DIM: Color32 = Color32::from_rgb(100, 105, 120);
 
 #[derive(Clone, Default)]
 pub struct PipelineView;
@@ -48,6 +33,8 @@ impl CompilerView for PipelineView {
     }
 
     fn ui(&mut self, ui: &mut Ui, _ctx: &egui::Context, state: &mut CompilationState, _catalog: &mut ProgramCatalog) {
+        let theme = ui_theme();
+        let palette = theme.pipeline;
         let Some(session) = &state.debug_session else {
             ui.centered_and_justified(|ui| {
                 ui.label(RichText::new("No debug session active").weak());
@@ -65,7 +52,7 @@ impl CompilerView for PipelineView {
         let (area, _) = ui.allocate_exact_size(vec2(available_w, total_h), egui::Sense::hover());
         let p = ui.painter_at(area);
 
-        p.rect_filled(area, CORNER, BG_DARK);
+        p.rect_filled(area, CORNER, palette.background);
 
         // -- Header --
         for (si, label) in STAGE_LABELS.iter().enumerate() {
@@ -73,15 +60,15 @@ impl CompilerView for PipelineView {
             let cell = Rect::from_min_size(pos2(x, area.min.y), vec2(stage_w, HEADER_H));
             p.line_segment(
                 [pos2(cell.min.x + 4.0, cell.max.y - 2.0), pos2(cell.max.x - 4.0, cell.max.y - 2.0)],
-                Stroke::new(2.0, STAGE_COLORS[si]),
+                Stroke::new(2.0, palette.stage[si]),
             );
-            p.text(cell.center(), Align2::CENTER_CENTER, *label, FontId::proportional(12.0), Color32::WHITE);
+            p.text(cell.center(), Align2::CENTER_CENTER, *label, FontId::proportional(12.0), theme.text);
         }
 
         // -- Grid --
         for row in 0..=NUM_ROWS {
             let y = area.min.y + HEADER_H + row as f32 * ROW_H;
-            p.line_segment([pos2(area.min.x, y), pos2(area.max.x, y)], Stroke::new(1.0, GRID_COLOR));
+            p.line_segment([pos2(area.min.x, y), pos2(area.max.x, y)], Stroke::new(1.0, palette.grid));
         }
 
         // -- Rows --
@@ -89,7 +76,7 @@ impl CompilerView for PipelineView {
             let row_y = area.min.y + HEADER_H + row as f32 * ROW_H;
             let cyc_cell = Rect::from_min_size(pos2(area.min.x, row_y), vec2(CYCLE_COL_W, ROW_H));
             if let Some(c) = history.cycle_for_row(row) {
-                p.text(cyc_cell.center(), Align2::CENTER_CENTER, format!("{c}"), FontId::monospace(10.0), TEXT_DIM);
+                p.text(cyc_cell.center(), Align2::CENTER_CENTER, format!("{c}"), FontId::monospace(10.0), palette.cycle_text);
             }
 
             for si in 0..5 {
@@ -98,15 +85,15 @@ impl CompilerView for PipelineView {
 
                 match history.slot(si, row) {
                     Some(SlotState::Normal(entry)) => {
-                        p.rect_stroke(cell, CORNER, Stroke::new(1.0, STAGE_COLORS[si].gamma_multiply(0.5)), egui::StrokeKind::Inside);
-                        p.rect_filled(cell, CORNER, BG_CELL);
+                        p.rect_stroke(cell, CORNER, Stroke::new(1.0, palette.stage[si].gamma_multiply(0.5)), egui::StrokeKind::Inside);
+                        p.rect_filled(cell, CORNER, palette.cell);
 
                         p.text(
                             pos2(cell.center().x, cell.min.y + 12.0),
                             Align2::CENTER_CENTER,
                             format!("{:#06x}", entry.pc & 0xFFFF),
                             FontId::monospace(9.0),
-                            lerp_color(STAGE_COLORS[si], Color32::WHITE, 0.4),
+                            lerp_color(palette.stage[si], theme.text, 0.4),
                         );
                         p.text(
                             pos2(cell.center().x, cell.min.y + 26.0),
@@ -117,16 +104,16 @@ impl CompilerView for PipelineView {
                         );
                     }
                     Some(SlotState::StallBubble) => {
-                        p.rect_stroke(cell, CORNER, Stroke::new(1.0, COLOR_STALL.gamma_multiply(0.6)), egui::StrokeKind::Inside);
-                        p.text(cell.center(), Align2::CENTER_CENTER, "STALL", FontId::monospace(10.0), COLOR_STALL);
+                        p.rect_stroke(cell, CORNER, Stroke::new(1.0, palette.stall.gamma_multiply(0.6)), egui::StrokeKind::Inside);
+                        p.text(cell.center(), Align2::CENTER_CENTER, "STALL", FontId::monospace(10.0), palette.stall);
                     }
                     Some(SlotState::FlushBubble) => {
-                        p.rect_stroke(cell, CORNER, Stroke::new(1.0, COLOR_FLUSH.gamma_multiply(0.6)), egui::StrokeKind::Inside);
-                        p.rect_filled(cell, CORNER, COLOR_FLUSH.gamma_multiply(0.05));
-                        p.text(cell.center(), Align2::CENTER_CENTER, "FLUSH", FontId::monospace(10.0), COLOR_FLUSH);
+                        p.rect_stroke(cell, CORNER, Stroke::new(1.0, palette.flush.gamma_multiply(0.6)), egui::StrokeKind::Inside);
+                        p.rect_filled(cell, CORNER, palette.flush.gamma_multiply(0.05));
+                        p.text(cell.center(), Align2::CENTER_CENTER, "FLUSH", FontId::monospace(10.0), palette.flush);
                     }
                     _ => {
-                        p.text(cell.center(), Align2::CENTER_CENTER, "·", FontId::monospace(12.0), GRID_COLOR);
+                        p.text(cell.center(), Align2::CENTER_CENTER, "·", FontId::monospace(12.0), palette.grid);
                     }
                 }
             }
@@ -142,9 +129,9 @@ impl CompilerView for PipelineView {
                     ui.label(RichText::new(val).small().color(color).monospace());
                 });
             };
-            label("CYCLES", format!("{}", history.total_cycles), Color32::WHITE);
-            label("STALLS", format!("{}", history.stall_cycles), COLOR_STALL);
-            label("FLUSHES", format!("{}", history.flush_cycles), COLOR_FLUSH);
+            label("CYCLES", format!("{}", history.total_cycles), theme.text);
+            label("STALLS", format!("{}", history.stall_cycles), palette.stall);
+            label("FLUSHES", format!("{}", history.flush_cycles), palette.flush);
         });
     }
 

@@ -1,4 +1,4 @@
-use crate::view::{CompilationState, CompilerView, ProgramCatalog};
+use crate::view::{CompilationState, CompilerView, ProgramCatalog, ui_theme};
 use egui::epaint::PathStroke;
 use egui::{Color32, CornerRadius, Pos2, Rect, RichText, Sense, Stroke, StrokeKind, Vec2};
 use std::collections::HashMap;
@@ -77,7 +77,7 @@ impl CompilerView for MemoryMapView {
                 if state.asm.is_empty() {
                     ui.label(RichText::new("(Schematic)").weak().italics());
                 } else {
-                    ui.label(RichText::new("(Live Program Mappings)").color(Color32::from_rgb(100, 200, 100)));
+                    ui.label(RichText::new("(Live Program Mappings)").color(ui_theme().success));
                 }
             });
             ui.add_space(4.0);
@@ -115,6 +115,8 @@ impl CompilerView for MemoryMapView {
 
 /// Parses the user's assembly and mocks an OS environment around it.
 fn build_mmu_state(asm: &str) -> MmuState {
+    let theme = ui_theme();
+    let memory = theme.memory;
     let mut text_sz = 0;
     let mut data_sz = 0;
     let mut bss_sz = 0;
@@ -201,7 +203,7 @@ fn build_mmu_state(asm: &str) -> MmuState {
             name: "OS Kernel".into(),
             va_start: 0xFFFFFFC0_00000000,
             size_bytes: 0x1000000,
-            color: Color32::from_rgb(100, 100, 100),
+            color: memory.kernel,
             target_pa: Some(pa_kernel),
             description: "Mapped into all tasks. Handles syscalls and interrupts.".into(),
         },
@@ -209,7 +211,7 @@ fn build_mmu_state(asm: &str) -> MmuState {
             name: "Stack".into(),
             va_start: 0x0000003F_FFF00000,
             size_bytes: stack_sz,
-            color: Color32::from_rgb(220, 90, 90),
+            color: memory.stack,
             target_pa: Some(pa_t1_stack),
             description: "Task 1 Local Stack".into(),
         },
@@ -217,7 +219,7 @@ fn build_mmu_state(asm: &str) -> MmuState {
             name: ".bss".into(),
             va_start: 0x00000000_00012000,
             size_bytes: bss_sz,
-            color: Color32::from_rgb(220, 180, 70),
+            color: memory.bss,
             target_pa: Some(pa_t1_bss),
             description: "Uninitialized Data".into(),
         },
@@ -225,7 +227,7 @@ fn build_mmu_state(asm: &str) -> MmuState {
             name: ".data".into(),
             va_start: 0x00000000_00011000,
             size_bytes: data_sz,
-            color: Color32::from_rgb(190, 130, 230),
+            color: memory.data,
             target_pa: Some(pa_t1_data),
             description: "Initialized Data".into(),
         },
@@ -233,7 +235,7 @@ fn build_mmu_state(asm: &str) -> MmuState {
             name: ".text".into(),
             va_start: 0x00000000_00010000,
             size_bytes: text_sz,
-            color: Color32::from_rgb(90, 160, 255),
+            color: memory.text,
             target_pa: Some(pa_t1_text),
             description: "Program Instructions".into(),
         },
@@ -244,7 +246,7 @@ fn build_mmu_state(asm: &str) -> MmuState {
             name: "OS Kernel".into(),
             va_start: 0xFFFFFFC0_00000000,
             size_bytes: 0x1000000,
-            color: Color32::from_rgb(100, 100, 100),
+            color: memory.kernel,
             target_pa: Some(pa_kernel),
             description: "Shared Kernel Space".into(),
         },
@@ -252,7 +254,7 @@ fn build_mmu_state(asm: &str) -> MmuState {
             name: "Stack".into(),
             va_start: 0x0000003F_FFF00000,
             size_bytes: stack_sz,
-            color: Color32::from_rgb(200, 100, 140),
+            color: memory.stack,
             target_pa: Some(pa_t2_stack),
             description: "Task 2 Stack (Isolated)".into(),
         },
@@ -260,7 +262,7 @@ fn build_mmu_state(asm: &str) -> MmuState {
             name: ".data".into(),
             va_start: 0x00000000_00011000,
             size_bytes: 8192,
-            color: Color32::from_rgb(160, 100, 160),
+            color: memory.data,
             target_pa: Some(pa_t2_data),
             description: "Task 2 Data".into(),
         },
@@ -268,7 +270,7 @@ fn build_mmu_state(asm: &str) -> MmuState {
             name: ".text".into(),
             va_start: 0x00000000_00010000,
             size_bytes: 16384,
-            color: Color32::from_rgb(80, 200, 200),
+            color: memory.link,
             target_pa: Some(pa_t2_text),
             description: "Background Daemon Code".into(),
         },
@@ -279,56 +281,56 @@ fn build_mmu_state(asm: &str) -> MmuState {
             name: "Kernel Image".into(),
             pa_start: pa_kernel,
             size_bytes: 0x1000000,
-            color: Color32::from_rgb(100, 100, 100),
+            color: memory.kernel,
             owner_pid: 0,
         },
         PmBlock {
             name: "T1 .text".into(),
             pa_start: pa_t1_text,
             size_bytes: text_sz,
-            color: Color32::from_rgb(90, 160, 255),
+            color: memory.text,
             owner_pid: 1,
         },
         PmBlock {
             name: "T1 .data".into(),
             pa_start: pa_t1_data,
             size_bytes: data_sz,
-            color: Color32::from_rgb(190, 130, 230),
+            color: memory.data,
             owner_pid: 1,
         },
         PmBlock {
             name: "T1 .bss".into(),
             pa_start: pa_t1_bss,
             size_bytes: bss_sz,
-            color: Color32::from_rgb(220, 180, 70),
+            color: memory.bss,
             owner_pid: 1,
         },
         PmBlock {
             name: "T1 Stack".into(),
             pa_start: pa_t1_stack,
             size_bytes: stack_sz,
-            color: Color32::from_rgb(220, 90, 90),
+            color: memory.stack,
             owner_pid: 1,
         },
         PmBlock {
             name: "T2 .text".into(),
             pa_start: pa_t2_text,
             size_bytes: 16384,
-            color: Color32::from_rgb(80, 200, 200),
+            color: memory.link,
             owner_pid: 2,
         },
         PmBlock {
             name: "T2 .data".into(),
             pa_start: pa_t2_data,
             size_bytes: 8192,
-            color: Color32::from_rgb(160, 100, 160),
+            color: memory.data,
             owner_pid: 2,
         },
         PmBlock {
             name: "T2 Stack".into(),
             pa_start: pa_t2_stack,
             size_bytes: stack_sz,
-            color: Color32::from_rgb(200, 100, 140),
+            color: memory.stack,
             owner_pid: 2,
         },
     ];
@@ -351,6 +353,7 @@ fn build_mmu_state(asm: &str) -> MmuState {
 }
 
 fn draw_mmu_visualization(ui: &mut egui::Ui, process: &Process, phys_mem: &[PmBlock]) {
+    let theme = ui_theme();
     // 1. Subtract a little extra right-side buffer just to be safe with the scrollbar
     let available_width = ui.available_width().max(600.0) - 10.0;
 
@@ -390,12 +393,12 @@ fn draw_mmu_visualization(ui: &mut egui::Ui, process: &Process, phys_mem: &[PmBl
     painter.rect_filled(
         va_bg_rect,
         CornerRadius::same(6),
-        Color32::from_white_alpha(8),
+        theme.panel_alt,
     );
     painter.rect_filled(
         pa_bg_rect,
         CornerRadius::same(6),
-        Color32::from_white_alpha(8),
+        theme.panel_alt,
     );
 
     // Headers
@@ -404,14 +407,14 @@ fn draw_mmu_visualization(ui: &mut egui::Ui, process: &Process, phys_mem: &[PmBl
         egui::Align2::CENTER_TOP,
         format!("Virtual Address Space\n(Process {})", process.pid),
         egui::FontId::proportional(15.0),
-        Color32::WHITE,
+        theme.text,
     );
     painter.text(
         Pos2::new(pa_x_left + (col_width / 2.0), rect.top()),
         egui::Align2::CENTER_TOP,
         "Physical RAM\n(Shared by Hardware)",
         egui::FontId::proportional(15.0),
-        Color32::WHITE,
+        theme.text,
     );
 
     let mut current_va_y = rect.top() + 50.0;
@@ -449,14 +452,14 @@ fn draw_mmu_visualization(ui: &mut egui::Ui, process: &Process, phys_mem: &[PmBl
             egui::Align2::LEFT_TOP,
             name,
             egui::FontId::proportional(14.0),
-            Color32::WHITE,
+            theme.text,
         );
         painter.text(
             Pos2::new(x1 + 10.0, y + 26.0),
             egui::Align2::LEFT_TOP,
             sub,
             egui::FontId::monospace(11.0),
-            Color32::from_gray(180),
+            theme.text_soft,
         );
 
         // Interaction
@@ -561,7 +564,7 @@ fn draw_mmu_visualization(ui: &mut egui::Ui, process: &Process, phys_mem: &[PmBl
             painter.rect_stroke(
                 gap_rect,
                 CornerRadius::same(4),
-                Stroke::new(1.0, Color32::from_gray(60)),
+                    Stroke::new(1.0, theme.border_soft),
                 StrokeKind::Middle,
             );
             painter.text(
@@ -569,7 +572,7 @@ fn draw_mmu_visualization(ui: &mut egui::Ui, process: &Process, phys_mem: &[PmBl
                 egui::Align2::CENTER_CENTER,
                 "Unmapped / Page Fault",
                 egui::FontId::monospace(11.0),
-                Color32::from_gray(120),
+                theme.text_dim,
             );
 
             current_va_y += 45.0;
