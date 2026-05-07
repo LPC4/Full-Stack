@@ -10,18 +10,6 @@ const PTE_SIZE: u64 = 8; // Each PTE is 8 bytes
 const LEVELS: usize = 3; // 3 levels for Sv39
 
 /// Translate a virtual address to a physical address using Sv39 page tables.
-///
-/// # Arguments
-/// * `vaddr` - Virtual address to translate
-/// * `satp` - Supervisor Address Translation and Protection register value
-/// * `priv_mode` - Current privilege mode
-/// * `bus` - Memory bus for reading page table entries
-/// * `is_write` - Whether this is a write access (for D bit checking)
-/// * `is_execute` - Whether this is an instruction fetch (for X bit checking)
-///
-/// # Returns
-/// * `Ok(physical_address)` - Successfully translated
-/// * `Err(VmError::PageFault)` - Page fault occurred
 pub fn translate(
     vaddr: u64,
     satp: u64,

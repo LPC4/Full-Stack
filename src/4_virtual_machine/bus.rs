@@ -110,7 +110,7 @@ impl SystemBus {
         self.rom.size() as usize
     }
 
-    /// Get snapshots of cache statistics for all three levels
+    /// Cheap stats-only read, no allocation. Called every step.
     pub fn get_cache_stats(
         &self,
     ) -> (
@@ -118,10 +118,31 @@ impl SystemBus {
         crate::virtual_machine::memory::cache::CacheStats,
         crate::virtual_machine::memory::cache::CacheStats,
     ) {
-        let l1_stats = self.l1_cache.stats().clone();
-        let l2_stats = self.l1_cache.peek_next().stats().clone();
-        let l3_stats = self.l1_cache.peek_next().peek_next().stats().clone();
-        (l1_stats, l2_stats, l3_stats)
+        let l1 = self.l1_cache.stats().clone();
+        let l2 = self.l1_cache.peek_next().stats().clone();
+        let l3 = self.l1_cache.peek_next().peek_next().stats().clone();
+        (l1, l2, l3)
+    }
+
+    /// Flush all dirty cache lines to RAM then invalidate every level cold.
+    pub fn cold_cache_reset(&mut self) {
+        self.l1_cache.flush_and_invalidate();
+        self.l1_cache.peek_next_mut().flush_and_invalidate();
+        self.l1_cache.peek_next_mut().peek_next_mut().flush_and_invalidate();
+    }
+
+    /// Get full snapshots for all three cache levels (params + line states + stats).
+    pub fn get_cache_snapshots(
+        &self,
+    ) -> (
+        crate::virtual_machine::memory::cache::CacheSnapshot,
+        crate::virtual_machine::memory::cache::CacheSnapshot,
+        crate::virtual_machine::memory::cache::CacheSnapshot,
+    ) {
+        let l1 = self.l1_cache.snapshot();
+        let l2 = self.l1_cache.peek_next().snapshot();
+        let l3 = self.l1_cache.peek_next().peek_next().snapshot();
+        (l1, l2, l3)
     }
 
     /// Read up to `len` bytes starting at `addr`, silently skipping unroutable addresses.

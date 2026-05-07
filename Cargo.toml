@@ -1,6 +1,6 @@
 [package]
 name = "full_stack"
-version = "0.1.0"
+version = "1.0.0"
 authors = ["Liam DK"]
 edition = "2024"
 license = "MIT OR Apache-2.0"
@@ -20,7 +20,6 @@ egui_dock = "0.19.1"
 
 # You only need serde if you want app persistence:
 serde = { version = "1.0.219", features = ["derive"] }
-egui_extras = { version = "0.34.1", features = ["syntect"] }
 
 # native:
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

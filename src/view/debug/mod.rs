@@ -161,25 +161,62 @@ impl DebugSession {
     }
 
     /// Execute up to `n` pipeline cycles, stopping early on halt/error.
+    ///
+    /// Runs the inner loop without snapshotting — snapshots once at the end.
+    /// Use `step()` for single-step interactive debugging.
     pub fn step_n(&mut self, n: u64) {
-        for _ in 0..n {
-            self.step();
-            if self.status != SessionStatus::Running {
-                break;
-            }
+        if self.status != SessionStatus::Running {
+            return;
         }
+        self.run_inner(n, None);
+        let new_bytes = self.vm.drain_uart_output();
+        self.uart_output.extend_from_slice(&new_bytes);
+        self.refresh_snapshot();
     }
 
     /// Execute until `n` instructions have retired through WB, stopping early on halt/error.
+    ///
+    /// Runs the inner loop without snapshotting — snapshots once at the end.
     pub fn step_n_instructions(&mut self, n: u64) {
+        if self.status != SessionStatus::Running {
+            return;
+        }
         let target = self.vm.insns_retired().saturating_add(n);
-        loop {
-            self.step();
-            if self.status != SessionStatus::Running {
-                break;
+        self.run_inner(u64::MAX, Some(target));
+        let new_bytes = self.vm.drain_uart_output();
+        self.uart_output.extend_from_slice(&new_bytes);
+        self.refresh_snapshot();
+    }
+
+    /// Tight inner loop: step the VM up to `max` times, stopping early if halted/errored
+    /// or if `insn_target` retired instructions have been reached.
+    /// Does NOT snapshot or drain UART — callers handle that.
+    fn run_inner(&mut self, max: u64, insn_target: Option<u64>) {
+        for _ in 0..max {
+            for byte in self.uart_tx_pending.drain(..) {
+                self.vm.push_uart_rx(byte);
             }
-            if self.vm.insns_retired() >= target {
-                break;
+
+            match self.vm.step() {
+                Ok(StepOutcome::Continue) => {
+                    self.step_count += 1;
+                }
+                Ok(StepOutcome::Halted(code)) => {
+                    self.step_count += 1;
+                    self.status = SessionStatus::Halted(code);
+                    return;
+                }
+                Err(e) => {
+                    self.step_count += 1;
+                    self.status = SessionStatus::Error(format!("{e:?}"));
+                    return;
+                }
+            }
+
+            if let Some(target) = insn_target {
+                if self.vm.insns_retired() >= target {
+                    return;
+                }
             }
         }
     }
@@ -210,6 +247,18 @@ impl DebugSession {
     /// Read up to `len` bytes from the VM's address space.
     pub fn peek_bytes(&mut self, addr: u64, len: usize) -> Vec<u8> {
         self.vm.peek_bytes(addr, len)
+    }
+
+    /// Full cache snapshots (params + per-line state + stats) for the cache view.
+    /// Only call this from the render path — it allocates ~1.3MB for L3.
+    pub fn cache_snapshots(
+        &self,
+    ) -> (
+        crate::virtual_machine::memory::cache::CacheSnapshot,
+        crate::virtual_machine::memory::cache::CacheSnapshot,
+        crate::virtual_machine::memory::cache::CacheSnapshot,
+    ) {
+        self.vm.get_cache_snapshots()
     }
 
     // -----------------------------------------------------------------------

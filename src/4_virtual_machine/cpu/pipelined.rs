@@ -4,9 +4,6 @@
 //! - Data forwarding (EX/MEM -> EX, MEM/WB -> EX) for integer and FP registers.
 //! - Load-use stall detection (1-cycle bubble on load-use hazard).
 //! - 2-bit bimodal branch prediction with BTB; 2-cycle flush on mispredict.
-//!
-//! Traps are handled imprecisely but safely: on any exception the pipeline is
-//! fully flushed and the trap handler is invoked.
 
 use crate::virtual_machine::bus::SystemBus;
 use crate::virtual_machine::cpu::csr::{CsrFile, CsrSnapshot};

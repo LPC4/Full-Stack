@@ -365,7 +365,9 @@ fn encode_la(
     let section_offset = resolve_symbol(symbol, symbols)?;
 
     // Find the absolute address by checking which section owns this symbol.
+    // Order doesn't matter — we break on the first match.
     let mut target_abs_addr = None;
+    #[allow(clippy::iter_over_hash_type)]
     for (section_name, base) in section_bases {
         let qualified_name = format!("{}@{}", symbol, section_name.name());
         if symbols.resolve(&qualified_name).is_some() {

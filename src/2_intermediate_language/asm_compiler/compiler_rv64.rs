@@ -303,7 +303,7 @@ impl CompilerRv64 {
         self.emitter.emit_comment(&format!("Store {ty} to memory"));
         if matches!(resolved_ty, IrType::Array { .. } | IrType::Aggregate(_)) {
             let IrValue::Register(reg) = value else {
-                unimplemented!("composite stores require a register source")
+                unreachable!("IR invariant: composite/array stores always have a register source")
             };
             let val_slot = ctx.slot_for_reg(reg).expect("value slot");
             self.emitter.copy_bytes_from_slot_to_addr(

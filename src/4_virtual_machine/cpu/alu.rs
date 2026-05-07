@@ -6,17 +6,6 @@
 //!
 //! NaN-boxing convention: single-precision results have their upper 32 bits set to
 //! `0xFFFF_FFFF` so that the 64-bit FP register holds a valid NaN-boxed f32.
-//!
-//! # f32 rounding mode support
-//!
-//! f32 arithmetic (add, sub, mul, div, sqrt, FMA) computes the exact mathematical
-//! result in f64 (which is always exact for f32 operands: the 24-bit f32 mantissa
-//! fits without loss in the 53-bit f64), then rounds the f64 result to f32 according
-//! to the requested rounding mode.  This gives exact rounding-mode compliance for all
-//! five RISC-V modes (RNE, RTZ, RDN, RUP, RMM) and correct NX/UF/OF flags.
-//!
-//! f64 arithmetic uses the host hardware (always RNE on x86/ARM; other modes
-//! are approximated as RNE).  UF and OF flags are derived from the f64 result.
 
 // ---------------------------------------------------------------------------
 // FP rounding mode constants (match RISC-V spec frm field)

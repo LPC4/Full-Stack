@@ -44,6 +44,10 @@ impl VirtualMachine {
         // Write the initial heap bump-pointer value.
         let _ = bus.write_doubleword(HEAP_PTR_ADDR, program.heap_base);
 
+        // Reset caches to cold state: the loader writes directly to physical memory on real
+        // hardware, so caches start empty. Stats and line states from loading are discarded.
+        bus.cold_cache_reset();
+
         // Stack pointer = top of RAM, 16-byte aligned.
         let stack_ptr = RAM_BASE + RAM_SIZE_DEFAULT as u64 - 16;
         let mut cpu = PipelinedCpu::new(program.entry_point, stack_ptr);
@@ -186,7 +190,7 @@ impl VirtualMachine {
         self.bus.uart_mut().drain_output()
     }
 
-    /// Get cache statistics for all three levels (L1, L2, L3)
+    /// Lightweight stats-only read — no allocation. Called every step.
     pub fn get_cache_stats(
         &self,
     ) -> (
@@ -195,5 +199,16 @@ impl VirtualMachine {
         crate::virtual_machine::memory::cache::CacheStats,
     ) {
         self.bus.get_cache_stats()
+    }
+
+    /// Full snapshots including per-line state — only call when the cache view renders.
+    pub fn get_cache_snapshots(
+        &self,
+    ) -> (
+        crate::virtual_machine::memory::cache::CacheSnapshot,
+        crate::virtual_machine::memory::cache::CacheSnapshot,
+        crate::virtual_machine::memory::cache::CacheSnapshot,
+    ) {
+        self.bus.get_cache_snapshots()
     }
 }

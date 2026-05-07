@@ -271,7 +271,9 @@ impl HighLevelCompiler {
         self.start_new_block(merge_label.0.clone());
         self.context.restore_env(merge_env.clone());
 
-        for (var_name, then_value) in &then_exit_env {
+        let mut then_vars: Vec<_> = then_exit_env.iter().collect();
+        then_vars.sort_by_key(|(k, _)| *k);
+        for (var_name, then_value) in then_vars {
             if let Some(else_value) = else_exit_env.get(var_name) {
                 if then_value != else_value {
                     // Emit phi node to merge diverging values
@@ -347,7 +349,9 @@ impl HighLevelCompiler {
         self.start_new_block(exit_label.0.clone());
 
         // Emit phi nodes for variables that changed in the loop
-        for (var_name, pre_loop_value) in &pre_loop_env {
+        let mut pre_loop_vars: Vec<_> = pre_loop_env.iter().collect();
+        pre_loop_vars.sort_by_key(|(k, _)| *k);
+        for (var_name, pre_loop_value) in pre_loop_vars {
             if let Some(post_loop_value) = loop_exit_env.get(var_name) {
                 if pre_loop_value != post_loop_value {
                     let phi_dest = self.new_temp();

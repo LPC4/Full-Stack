@@ -1,10 +1,6 @@
 //! Integer and floating-point register file for the RV64 CPU.
 
 /// Canonical NaN-boxed NaN stored in every FP register at reset.
-///
-/// RV64 NaN-boxing: an f32 value is valid only when bits [63:32] are all 1s.
-/// `0xFFFF_FFFF_7FC0_0000` encodes positive quiet NaN in the lower word with
-/// the required all-ones upper word.
 const CANONICAL_NAN_BOXED: u64 = 0xFFFF_FFFF_7FC0_0000;
 
 /// The upper 32 bits that must all be 1 for a NaN-boxed f32 to be valid.

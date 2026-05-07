@@ -82,6 +82,41 @@ impl<Next: MemoryAccess> Cache<Next> {
         &self.next
     }
 
+    pub fn peek_next_mut(&mut self) -> &mut Next {
+        &mut self.next
+    }
+
+    /// Zero all stats for this cache level only.
+    pub fn reset_stats(&mut self) {
+        self.stats = CacheStats::default();
+    }
+
+    /// Flush all dirty lines to the next level, then invalidate everything.
+    pub fn flush_and_invalidate(&mut self) {
+        for set_idx in 0..self.sets.len() {
+            for way_idx in 0..self.sets[set_idx].ways.len() {
+                let (need_flush, tag) = {
+                    let line = &self.sets[set_idx].ways[way_idx];
+                    (line.valid && line.dirty, line.tag)
+                };
+                if need_flush {
+                    let data = self.sets[set_idx].ways[way_idx].data.clone();
+                    let base = self.line_base_address(tag, set_idx as u64);
+                    for (i, &byte) in data.iter().enumerate() {
+                        let _ = self.next.write_byte(base + i as u64, byte);
+                    }
+                }
+                let line = &mut self.sets[set_idx].ways[way_idx];
+                line.valid = false;
+                line.dirty = false;
+                line.tag = 0;
+                line.lru_age = 0;
+            }
+        }
+        self.stats = CacheStats::default();
+        self.access_tick = 0;
+    }
+
     fn address_fields(&self, addr: u64) -> (u64, u64, u64) {
         let tag = addr >> (self.block_bits + self.set_bits);
         let index = (addr >> self.block_bits) & ((1u64 << self.set_bits) - 1);

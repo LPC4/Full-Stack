@@ -875,10 +875,10 @@ fn sat_f32_to_i32(val: f32, rm: u8) -> (u64, u8) {
         return (i32::MAX as i64 as u64, NV);
     }
     let rounded = alu::round_f32(val, rm);
-    if rounded >= 2_147_483_648.0f32 {
+    if rounded >= i32::MAX as f32 {
         return (i32::MAX as i64 as u64, NV);
     }
-    if rounded < -2_147_483_648.0f32 {
+    if rounded < i32::MIN as f32 {
         return (i32::MIN as i64 as u64, NV);
     }
     let flags = if val != rounded { NX } else { 0 };
@@ -893,7 +893,7 @@ fn sat_f32_to_u32(val: f32, rm: u8) -> (u64, u8) {
         return (0, NV);
     }
     let rounded = alu::round_f32(val, rm);
-    if rounded >= 4_294_967_296.0f32 {
+    if rounded >= u32::MAX as f32 {
         return (u32::MAX as u64, NV);
     }
     let flags = if val != rounded { NX } else { 0 };
@@ -904,10 +904,10 @@ fn sat_f32_to_i64(val: f32, rm: u8) -> (u64, u8) {
     if val.is_nan() {
         return (i64::MAX as u64, NV);
     }
-    if val >= 9_223_372_036_854_775_808.0f32 {
+    if val >= i64::MAX as f32 {
         return (i64::MAX as u64, NV);
     }
-    if val < -9_223_372_036_854_775_808.0f32 {
+    if val < i64::MIN as f32 {
         return (i64::MIN as u64, NV);
     }
     let rounded = alu::round_f32(val, rm);
@@ -968,10 +968,10 @@ fn sat_f64_to_i64(val: f64, rm: u8) -> (u64, u8) {
         return (i64::MAX as u64, NV);
     }
     let rounded = alu::round_f64(val, rm);
-    if rounded >= 9_223_372_036_854_775_808.0f64 || rounded.is_infinite() {
+    if rounded >= i64::MAX as f64 || rounded.is_infinite() {
         return (i64::MAX as u64, NV);
     }
-    if rounded < -9_223_372_036_854_775_808.0f64 {
+    if rounded < i64::MIN as f64 {
         return (i64::MIN as u64, NV);
     }
     let flags = if val != rounded { NX } else { 0 };

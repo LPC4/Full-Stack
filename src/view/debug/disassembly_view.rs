@@ -39,6 +39,7 @@ impl CompilerView for DisassemblyView {
         // Build a map of label -> address from the symbol table
         let mut label_addresses: std::collections::HashMap<String, u64> =
             std::collections::HashMap::new();
+        #[allow(clippy::iter_over_hash_type)]
         for (label, addr) in &session.symbols {
             label_addresses.insert(label.clone(), *addr);
         }
