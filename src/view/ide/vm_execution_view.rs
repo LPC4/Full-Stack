@@ -63,8 +63,8 @@ impl CompilerView for VmExecutionView {
                 let _uart_height = desired_uart_height.min(max_uart_height);
 
                 Frame::NONE
-                            .fill(theme.surface)
-                            .stroke(Stroke::new(1.0, theme.border_soft))
+                    .fill(theme.surface)
+                    .stroke(Stroke::new(1.0, theme.border_soft))
                     .inner_margin(8.0)
                     .show(ui, |ui| {
                         ui.set_min_width(ui.available_width());
@@ -98,27 +98,15 @@ impl CompilerView for VmExecutionView {
                         ui.add_space(4.0);
 
                         let (status_text, status_color) = if result.max_steps_reached {
-                            (
-                                "[WARNING] Step limit reached",
-                                theme.warning,
-                            )
+                            ("[WARNING] Step limit reached", theme.warning)
                         } else if let Some(code) = result.exit_code {
                             if code == 0 {
-                                (
-                                    "[OK] Program halted successfully",
-                                    theme.success,
-                                )
+                                ("[OK] Program halted successfully", theme.success)
                             } else {
-                                (
-                                    "[ERROR] Program exited with non-zero code",
-                                    theme.error,
-                                )
+                                ("[ERROR] Program exited with non-zero code", theme.error)
                             }
                         } else {
-                            (
-                                "[UNKNOWN] Execution finished",
-                                theme.text_dim,
-                            )
+                            ("[UNKNOWN] Execution finished", theme.text_dim)
                         };
 
                         ui.colored_label(status_color, status_text);

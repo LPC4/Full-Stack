@@ -743,15 +743,15 @@ impl<'a> Parser<'a> {
 
     fn parse_argument_list_after_open_paren(&mut self) -> Result<Vec<Expression>, ParserError> {
         let mut args = Vec::new();
-        self.consume_terminators();       // after '('
+        self.consume_terminators(); // after '('
         if self.match_rparen() {
             return Ok(args);
         }
 
         loop {
-            self.consume_terminators();   // before each argument
+            self.consume_terminators(); // before each argument
             args.push(self.parse_expression()?);
-            self.consume_terminators();   // after argument
+            self.consume_terminators(); // after argument
             if self.match_comma() {
                 self.consume_terminators(); // after comma
                 if self.check_rparen() {
@@ -762,7 +762,7 @@ impl<'a> Parser<'a> {
             break;
         }
 
-        self.consume_terminators();       // before ')'
+        self.consume_terminators(); // before ')'
         self.expect_rparen()?;
         Ok(args)
     }
@@ -1179,12 +1179,12 @@ impl<'a> Parser<'a> {
             Some(Token::LBracket) => {
                 self.advance();
                 let mut elements = Vec::new();
-                self.consume_terminators();          // after '['
+                self.consume_terminators(); // after '['
                 if !self.check_rbracket() {
                     loop {
-                        self.consume_terminators();  // before element
+                        self.consume_terminators(); // before element
                         elements.push(self.parse_expression()?);
-                        self.consume_terminators();  // after element
+                        self.consume_terminators(); // after element
                         if self.match_comma() {
                             self.consume_terminators(); // after comma
                             if self.check_rbracket() {
@@ -1195,17 +1195,17 @@ impl<'a> Parser<'a> {
                         break;
                     }
                 }
-                self.consume_terminators();          // before ']'
+                self.consume_terminators(); // before ']'
                 self.expect_rbracket()?;
                 Expression::Primary(PrimaryExpr::ArrayLiteral(elements))
             }
             Some(Token::LBrace) => {
                 self.advance();
                 let mut fields = Vec::new();
-                self.consume_terminators();          // after '{'
+                self.consume_terminators(); // after '{'
                 if !self.check_rbrace() {
                     loop {
-                        self.consume_terminators();  // before field
+                        self.consume_terminators(); // before field
                         let (name, ty) = if self.match_dot() {
                             let name = self.expect_ident()?;
                             (name, None)
@@ -1219,7 +1219,7 @@ impl<'a> Parser<'a> {
                         let expr = self.parse_expression()?;
                         fields.push(FieldInit { name, ty, expr });
 
-                        self.consume_terminators();  // after value
+                        self.consume_terminators(); // after value
                         if self.match_comma() {
                             self.consume_terminators(); // after comma
                             if self.check_rbrace() {
@@ -1230,7 +1230,7 @@ impl<'a> Parser<'a> {
                         break;
                     }
                 }
-                self.consume_terminators();          // before '}'
+                self.consume_terminators(); // before '}'
                 self.expect_rbrace()?;
                 Expression::Primary(PrimaryExpr::StructLiteral(fields))
             }
@@ -1239,7 +1239,7 @@ impl<'a> Parser<'a> {
                 self.expect_lparen()?;
                 let ty = self.parse_type()?;
                 let mut args = Vec::new();
-                self.consume_terminators();          // after '('
+                self.consume_terminators(); // after '('
                 if self.match_comma() {
                     if !self.check_rparen() {
                         loop {
@@ -1257,7 +1257,7 @@ impl<'a> Parser<'a> {
                         }
                     }
                 }
-                self.consume_terminators();          // before ')'
+                self.consume_terminators(); // before ')'
                 self.expect_rparen()?;
                 Expression::Primary(PrimaryExpr::New { ty, args })
             }

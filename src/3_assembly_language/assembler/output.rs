@@ -144,35 +144,38 @@ impl AssembledOutput {
         //   jal  ra, <main_addr - stub_addr>   ; PC-relative call to main
         //   addi a7, x0, 94                    ; exit_group syscall number
         //   ecall                              ; terminate with a0 as exit code
-        let start_stub: Option<(Vec<u8>, u64)> =
-            if !self.symbol_table.contains_key("_start") {
-                if let Some(&main_off) = self.symbol_table.get("main") {
-                    let stub_addr = running_addr; // placed after all existing sections
-                    let main_addr = load_base + main_off;
-                    let offset = (main_addr as i64) - (stub_addr as i64);
-                    // JAL ra, offset  (rd=1, opcode=0x6f)
-                    let off = offset as u32;
-                    let imm20 = (off >> 20) & 1;
-                    let imm10_1 = (off >> 1) & 0x3ff;
-                    let imm11 = (off >> 11) & 1;
-                    let imm19_12 = (off >> 12) & 0xff;
-                    let jal = (imm20 << 31) | (imm10_1 << 21) | (imm11 << 20)
-                        | (imm19_12 << 12) | (1 << 7) | 0x6f_u32;
-                    // ADDI a7, x0, 94  (exit_group)
-                    let addi: u32 = (94 << 20) | (17 << 7) | 0x13;
-                    // ECALL
-                    let ecall: u32 = 0x0000_0073;
-                    let mut stub = Vec::with_capacity(12);
-                    stub.extend_from_slice(&jal.to_le_bytes());
-                    stub.extend_from_slice(&addi.to_le_bytes());
-                    stub.extend_from_slice(&ecall.to_le_bytes());
-                    Some((stub, stub_addr))
-                } else {
-                    None
-                }
+        let start_stub: Option<(Vec<u8>, u64)> = if !self.symbol_table.contains_key("_start") {
+            if let Some(&main_off) = self.symbol_table.get("main") {
+                let stub_addr = running_addr; // placed after all existing sections
+                let main_addr = load_base + main_off;
+                let offset = (main_addr as i64) - (stub_addr as i64);
+                // JAL ra, offset  (rd=1, opcode=0x6f)
+                let off = offset as u32;
+                let imm20 = (off >> 20) & 1;
+                let imm10_1 = (off >> 1) & 0x3ff;
+                let imm11 = (off >> 11) & 1;
+                let imm19_12 = (off >> 12) & 0xff;
+                let jal = (imm20 << 31)
+                    | (imm10_1 << 21)
+                    | (imm11 << 20)
+                    | (imm19_12 << 12)
+                    | (1 << 7)
+                    | 0x6f_u32;
+                // ADDI a7, x0, 94  (exit_group)
+                let addi: u32 = (94 << 20) | (17 << 7) | 0x13;
+                // ECALL
+                let ecall: u32 = 0x0000_0073;
+                let mut stub = Vec::with_capacity(12);
+                stub.extend_from_slice(&jal.to_le_bytes());
+                stub.extend_from_slice(&addi.to_le_bytes());
+                stub.extend_from_slice(&ecall.to_le_bytes());
+                Some((stub, stub_addr))
             } else {
                 None
-            };
+            }
+        } else {
+            None
+        };
 
         // ---- Determine entry point ----
         let entry = if let Some(&sym_addr) = self.symbol_table.get("_start") {
@@ -182,10 +185,7 @@ impl AssembledOutput {
         } else if let Some(&sym_addr) = self.symbol_table.get("main") {
             load_base + sym_addr
         } else {
-            elf_secs
-                .first()
-                .map(|s| s.load_addr)
-                .unwrap_or(load_base)
+            elf_secs.first().map(|s| s.load_addr).unwrap_or(load_base)
         };
 
         // ---- Build section-name string table (.shstrtab) ----
@@ -302,7 +302,10 @@ impl AssembledOutput {
         for (i, es) in elf_secs.iter().enumerate() {
             let flags = if es.sec.kind.as_ref().map_or(false, |k| k.is_executable()) {
                 PF_R | PF_X
-            } else if matches!(es.sec.kind, Some(SectionKind::Data) | Some(SectionKind::Bss)) {
+            } else if matches!(
+                es.sec.kind,
+                Some(SectionKind::Data) | Some(SectionKind::Bss)
+            ) {
                 PF_R | PF_W
             } else {
                 PF_R

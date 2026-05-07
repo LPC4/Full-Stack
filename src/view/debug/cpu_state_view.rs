@@ -82,11 +82,7 @@ impl CompilerView for CpuStateView {
 
                         // --- FP Registers Header ---
                         ui.horizontal(|ui| {
-                            ui.label(
-                                RichText::new("FP Registers")
-                                    .strong()
-                                    .color(theme.text_dim),
-                            );
+                            ui.label(RichText::new("FP Registers").strong().color(theme.text_dim));
                             ui.checkbox(&mut self.show_fp_as_float, "as float");
                         });
                         for _ in 1..num_cols {
@@ -105,11 +101,7 @@ impl CompilerView for CpuStateView {
 
                         // --- CSRs Header ---
                         ui.horizontal(|ui| {
-                            ui.label(
-                                RichText::new("CSRs")
-                                    .strong()
-                                    .color(theme.text_dim),
-                            );
+                            ui.label(RichText::new("CSRs").strong().color(theme.text_dim));
                         });
                         for _ in 1..num_cols {
                             ui.label("");

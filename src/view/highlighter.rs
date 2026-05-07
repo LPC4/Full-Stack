@@ -833,7 +833,7 @@ pub fn highlight_assembly(theme: &egui::Style, code: &str) -> LayoutJob {
                     0.0,
                     egui::TextFormat {
                         font_id: font_id.clone(),
-                            color: palette.number,
+                        color: palette.number,
                         ..Default::default()
                     },
                 );

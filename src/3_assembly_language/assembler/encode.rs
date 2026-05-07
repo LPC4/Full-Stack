@@ -305,8 +305,7 @@ fn push_u32(sec: &mut SectionData, word: u32, current_addr: &mut u64) {
 /// lo12 is sign-extended, so hi20 is adjusted up by 1 when bit 11 of lo12 is
 /// set to compensate for the sign extension at load time.
 fn pcrel_split(offset: i64) -> (i32, i32) {
-    let lo12 =
-        ((offset & 0xFFF) as i32).wrapping_sub(if offset & 0x800 != 0 { 0x1000 } else { 0 });
+    let lo12 = ((offset & 0xFFF) as i32).wrapping_sub(if offset & 0x800 != 0 { 0x1000 } else { 0 });
     let hi20 = ((offset - lo12 as i64) >> 12) as i32;
     (hi20, lo12)
 }

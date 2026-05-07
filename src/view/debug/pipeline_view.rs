@@ -32,7 +32,13 @@ impl CompilerView for PipelineView {
         "Pipeline Waterfall"
     }
 
-    fn ui(&mut self, ui: &mut Ui, _ctx: &egui::Context, state: &mut CompilationState, _catalog: &mut ProgramCatalog) {
+    fn ui(
+        &mut self,
+        ui: &mut Ui,
+        _ctx: &egui::Context,
+        state: &mut CompilationState,
+        _catalog: &mut ProgramCatalog,
+    ) {
         let theme = ui_theme();
         let palette = theme.pipeline;
         let Some(session) = &state.debug_session else {
@@ -59,16 +65,28 @@ impl CompilerView for PipelineView {
             let x = area.min.x + CYCLE_COL_W + si as f32 * stage_w;
             let cell = Rect::from_min_size(pos2(x, area.min.y), vec2(stage_w, HEADER_H));
             p.line_segment(
-                [pos2(cell.min.x + 4.0, cell.max.y - 2.0), pos2(cell.max.x - 4.0, cell.max.y - 2.0)],
+                [
+                    pos2(cell.min.x + 4.0, cell.max.y - 2.0),
+                    pos2(cell.max.x - 4.0, cell.max.y - 2.0),
+                ],
                 Stroke::new(2.0, palette.stage[si]),
             );
-            p.text(cell.center(), Align2::CENTER_CENTER, *label, FontId::proportional(12.0), theme.text);
+            p.text(
+                cell.center(),
+                Align2::CENTER_CENTER,
+                *label,
+                FontId::proportional(12.0),
+                theme.text,
+            );
         }
 
         // -- Grid --
         for row in 0..=NUM_ROWS {
             let y = area.min.y + HEADER_H + row as f32 * ROW_H;
-            p.line_segment([pos2(area.min.x, y), pos2(area.max.x, y)], Stroke::new(1.0, palette.grid));
+            p.line_segment(
+                [pos2(area.min.x, y), pos2(area.max.x, y)],
+                Stroke::new(1.0, palette.grid),
+            );
         }
 
         // -- Rows --
@@ -76,7 +94,13 @@ impl CompilerView for PipelineView {
             let row_y = area.min.y + HEADER_H + row as f32 * ROW_H;
             let cyc_cell = Rect::from_min_size(pos2(area.min.x, row_y), vec2(CYCLE_COL_W, ROW_H));
             if let Some(c) = history.cycle_for_row(row) {
-                p.text(cyc_cell.center(), Align2::CENTER_CENTER, format!("{c}"), FontId::monospace(10.0), palette.cycle_text);
+                p.text(
+                    cyc_cell.center(),
+                    Align2::CENTER_CENTER,
+                    format!("{c}"),
+                    FontId::monospace(10.0),
+                    palette.cycle_text,
+                );
             }
 
             for si in 0..5 {
@@ -85,7 +109,12 @@ impl CompilerView for PipelineView {
 
                 match history.slot(si, row) {
                     Some(SlotState::Normal(entry)) => {
-                        p.rect_stroke(cell, CORNER, Stroke::new(1.0, palette.stage[si].gamma_multiply(0.5)), egui::StrokeKind::Inside);
+                        p.rect_stroke(
+                            cell,
+                            CORNER,
+                            Stroke::new(1.0, palette.stage[si].gamma_multiply(0.5)),
+                            egui::StrokeKind::Inside,
+                        );
                         p.rect_filled(cell, CORNER, palette.cell);
 
                         p.text(
@@ -104,16 +133,44 @@ impl CompilerView for PipelineView {
                         );
                     }
                     Some(SlotState::StallBubble) => {
-                        p.rect_stroke(cell, CORNER, Stroke::new(1.0, palette.stall.gamma_multiply(0.6)), egui::StrokeKind::Inside);
-                        p.text(cell.center(), Align2::CENTER_CENTER, "STALL", FontId::monospace(10.0), palette.stall);
+                        p.rect_stroke(
+                            cell,
+                            CORNER,
+                            Stroke::new(1.0, palette.stall.gamma_multiply(0.6)),
+                            egui::StrokeKind::Inside,
+                        );
+                        p.text(
+                            cell.center(),
+                            Align2::CENTER_CENTER,
+                            "STALL",
+                            FontId::monospace(10.0),
+                            palette.stall,
+                        );
                     }
                     Some(SlotState::FlushBubble) => {
-                        p.rect_stroke(cell, CORNER, Stroke::new(1.0, palette.flush.gamma_multiply(0.6)), egui::StrokeKind::Inside);
+                        p.rect_stroke(
+                            cell,
+                            CORNER,
+                            Stroke::new(1.0, palette.flush.gamma_multiply(0.6)),
+                            egui::StrokeKind::Inside,
+                        );
                         p.rect_filled(cell, CORNER, palette.flush.gamma_multiply(0.05));
-                        p.text(cell.center(), Align2::CENTER_CENTER, "FLUSH", FontId::monospace(10.0), palette.flush);
+                        p.text(
+                            cell.center(),
+                            Align2::CENTER_CENTER,
+                            "FLUSH",
+                            FontId::monospace(10.0),
+                            palette.flush,
+                        );
                     }
                     _ => {
-                        p.text(cell.center(), Align2::CENTER_CENTER, "·", FontId::monospace(12.0), palette.grid);
+                        p.text(
+                            cell.center(),
+                            Align2::CENTER_CENTER,
+                            "·",
+                            FontId::monospace(12.0),
+                            palette.grid,
+                        );
                     }
                 }
             }
@@ -131,9 +188,15 @@ impl CompilerView for PipelineView {
             };
             label("CYCLES", format!("{}", history.total_cycles), theme.text);
             label("STALLS", format!("{}", history.stall_cycles), palette.stall);
-            label("FLUSHES", format!("{}", history.flush_cycles), palette.flush);
+            label(
+                "FLUSHES",
+                format!("{}", history.flush_cycles),
+                palette.flush,
+            );
         });
     }
 
-    fn clone_box(&self) -> Box<dyn CompilerView> { Box::new(self.clone()) }
+    fn clone_box(&self) -> Box<dyn CompilerView> {
+        Box::new(self.clone())
+    }
 }

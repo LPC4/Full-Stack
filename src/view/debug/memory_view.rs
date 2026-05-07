@@ -222,7 +222,7 @@ impl CompilerView for MemoryView {
                             ui.label(
                                 RichText::new(format!("{row_addr:#010x}"))
                                     .monospace()
-                                            .color(theme.text_soft),
+                                    .color(theme.text_soft),
                             );
 
                             // Hex column
@@ -234,11 +234,7 @@ impl CompilerView for MemoryView {
                                 }
                                 hex_str.push_str(&format!("{b:02x} "));
                             }
-                            ui.label(
-                                RichText::new(hex_str)
-                                    .monospace()
-                                            .color(theme.text),
-                            );
+                            ui.label(RichText::new(hex_str).monospace().color(theme.text));
 
                             // ASCII column
                             let mut ascii_str = String::with_capacity(bytes_per_row + half_chunks);
@@ -252,11 +248,7 @@ impl CompilerView for MemoryView {
                                     ascii_str.push('.');
                                 }
                             }
-                            ui.label(
-                                RichText::new(ascii_str)
-                                    .monospace()
-                                            .color(theme.text_soft),
-                            );
+                            ui.label(RichText::new(ascii_str).monospace().color(theme.text_soft));
 
                             ui.end_row();
                         }

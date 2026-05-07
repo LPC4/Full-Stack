@@ -6,7 +6,10 @@ pub mod layout;
 pub mod program_catalog;
 pub mod viewtrait;
 
-pub use common::{apply_ui_theme, ui_theme, MemoryPalette, PipelinePalette, StackPalette, SyntaxPalette, UiTheme, ViewType};
+pub use common::{
+    MemoryPalette, PipelinePalette, StackPalette, SyntaxPalette, UiTheme, ViewType, apply_ui_theme,
+    ui_theme,
+};
 pub use compilation_state::CompilationState;
 pub use highlighter::{highlight_assembly, highlight_ast, highlight_code, highlight_ir};
 pub use layout::{

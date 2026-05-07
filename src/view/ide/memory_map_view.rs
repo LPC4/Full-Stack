@@ -390,16 +390,8 @@ fn draw_mmu_visualization(ui: &mut egui::Ui, process: &Process, phys_mem: &[PmBl
         Pos2::new(pa_x_right + padding, rect.bottom()),
     );
 
-    painter.rect_filled(
-        va_bg_rect,
-        CornerRadius::same(6),
-        theme.panel_alt,
-    );
-    painter.rect_filled(
-        pa_bg_rect,
-        CornerRadius::same(6),
-        theme.panel_alt,
-    );
+    painter.rect_filled(va_bg_rect, CornerRadius::same(6), theme.panel_alt);
+    painter.rect_filled(pa_bg_rect, CornerRadius::same(6), theme.panel_alt);
 
     // Headers
     painter.text(
@@ -564,7 +556,7 @@ fn draw_mmu_visualization(ui: &mut egui::Ui, process: &Process, phys_mem: &[PmBl
             painter.rect_stroke(
                 gap_rect,
                 CornerRadius::same(4),
-                    Stroke::new(1.0, theme.border_soft),
+                Stroke::new(1.0, theme.border_soft),
                 StrokeKind::Middle,
             );
             painter.text(

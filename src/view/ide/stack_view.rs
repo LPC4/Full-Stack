@@ -312,10 +312,9 @@ fn draw_modern_function_stack(ui: &mut egui::Ui, func: &FunctionStack) {
                         palette.local_variable.gamma_multiply(0.25),
                         palette.local_variable,
                     ),
-                    StackElementKind::Parameter { .. } => (
-                        palette.parameter.gamma_multiply(0.25),
-                        palette.parameter,
-                    ),
+                    StackElementKind::Parameter { .. } => {
+                        (palette.parameter.gamma_multiply(0.25), palette.parameter)
+                    }
                 };
 
                 painter.rect_filled(seg_rect, CornerRadius::same(2), fill_color);
@@ -394,14 +393,22 @@ fn draw_modern_function_stack(ui: &mut egui::Ui, func: &FunctionStack) {
 
             let font_id = FontId::monospace(10.0);
 
-            let high_galley = ui.painter().layout_no_wrap(format!("SP + 0x{frame_size:X}"), font_id.clone(), palette.label_text);
+            let high_galley = ui.painter().layout_no_wrap(
+                format!("SP + 0x{frame_size:X}"),
+                font_id.clone(),
+                palette.label_text,
+            );
             painter.galley(
                 Pos2::new(bar_rect.right() + 8.0, top_y - 4.0),
                 high_galley,
                 palette.label_text,
             );
 
-            let low_galley = ui.painter().layout_no_wrap("SP + 0x0".to_owned(), font_id.clone(), palette.label_text);
+            let low_galley = ui.painter().layout_no_wrap(
+                "SP + 0x0".to_owned(),
+                font_id.clone(),
+                palette.label_text,
+            );
             painter.galley(
                 Pos2::new(bar_rect.right() + 8.0, bottom_y - 4.0),
                 low_galley,
@@ -446,10 +453,7 @@ fn draw_modern_function_stack(ui: &mut egui::Ui, func: &FunctionStack) {
                             ui.label(RichText::new("Padding / Locals").color(palette.dim_text));
                             ui.label(RichText::new("-").color(palette.dim_text));
                             ui.label(RichText::new("-").color(palette.dim_text));
-                            ui.label(
-                                RichText::new(format!("{gap} bytes"))
-                                    .color(palette.dim_text),
-                            );
+                            ui.label(RichText::new(format!("{gap} bytes")).color(palette.dim_text));
                             ui.end_row();
                         }
 
@@ -465,9 +469,7 @@ fn draw_modern_function_stack(ui: &mut egui::Ui, func: &FunctionStack) {
                                 ui.label(format!("{elem_size} bytes"));
                             }
                             StackElementKind::SavedRegister { reg } => {
-                                ui.label(
-                                    RichText::new("Saved Reg").color(palette.saved_register),
-                                );
+                                ui.label(RichText::new("Saved Reg").color(palette.saved_register));
                                 ui.label(format!("s{reg}"));
                                 ui.label("-");
                                 ui.label(format!("{elem_size} bytes"));
@@ -475,9 +477,7 @@ fn draw_modern_function_stack(ui: &mut egui::Ui, func: &FunctionStack) {
                             StackElementKind::LocalVariable {
                                 name, type_name, ..
                             } => {
-                                ui.label(
-                                    RichText::new("Local Var").color(palette.local_variable),
-                                );
+                                ui.label(RichText::new("Local Var").color(palette.local_variable));
                                 ui.label(name);
                                 ui.label(if type_name.is_empty() { "?" } else { type_name });
                                 ui.label(format!("{elem_size} bytes"));
@@ -485,9 +485,7 @@ fn draw_modern_function_stack(ui: &mut egui::Ui, func: &FunctionStack) {
                             StackElementKind::Parameter {
                                 name, type_name, ..
                             } => {
-                                ui.label(
-                                    RichText::new("Parameter").color(palette.parameter),
-                                );
+                                ui.label(RichText::new("Parameter").color(palette.parameter));
                                 ui.label(name);
                                 ui.label(if type_name.is_empty() { "?" } else { type_name });
                                 ui.label(format!("{elem_size} bytes"));
@@ -499,11 +497,7 @@ fn draw_modern_function_stack(ui: &mut egui::Ui, func: &FunctionStack) {
                     }
 
                     if current_offset > 0 {
-                        ui.label(
-                            RichText::new("+0x00")
-                                .monospace()
-                                .color(palette.dim_text),
-                        );
+                        ui.label(RichText::new("+0x00").monospace().color(palette.dim_text));
                         ui.label(RichText::new("Padding / Locals").color(palette.dim_text));
                         ui.label(RichText::new("-").color(palette.dim_text));
                         ui.label(RichText::new("-").color(palette.dim_text));

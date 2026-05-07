@@ -127,16 +127,8 @@ fn stats_block(
                 .spacing([20.0, 4.0])
                 .show(ui, |ui| {
                     ui.label(RichText::new("").monospace());
-                    ui.label(
-                        RichText::new("Hits")
-                            .monospace()
-                            .color(theme.text_dim),
-                    );
-                    ui.label(
-                        RichText::new("Misses")
-                            .monospace()
-                            .color(theme.text_dim),
-                    );
+                    ui.label(RichText::new("Hits").monospace().color(theme.text_dim));
+                    ui.label(RichText::new("Misses").monospace().color(theme.text_dim));
                     ui.end_row();
 
                     ui.label(RichText::new("Reads").monospace());

@@ -140,7 +140,8 @@ main: () -> i32 {
 
 #[test]
 fn vm_diag_malloc_loop() {
-    let src = prepend_stdlib(r#"
+    let src = prepend_stdlib(
+        r#"
 main: () -> i32 {
     p: i32* = new(i32)
     @p = 42
@@ -148,7 +149,8 @@ main: () -> i32 {
     free(p)
     return v
 }
-"#);
+"#,
+    );
     let pipeline = CompilationPipeline::new();
     let result = pipeline.compile(&src).expect("compile");
     let (asm_text, toks) = pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program);
@@ -172,7 +174,10 @@ main: () -> i32 {
         if pc == prev_pc {
             same_count += 1;
             if same_count > 100 {
-                eprintln!("STUCK at PC {:#x} for {} steps (step {})", pc, same_count, i);
+                eprintln!(
+                    "STUCK at PC {:#x} for {} steps (step {})",
+                    pc, same_count, i
+                );
                 break;
             }
         } else {
@@ -191,5 +196,8 @@ main: () -> i32 {
             }
         }
     }
-    eprintln!("UART: {:?}", String::from_utf8_lossy(&vm.drain_uart_output()));
+    eprintln!(
+        "UART: {:?}",
+        String::from_utf8_lossy(&vm.drain_uart_output())
+    );
 }

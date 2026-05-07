@@ -103,11 +103,8 @@ impl CompilerView for DisassemblyView {
                             egui::vec2(ui.available_width(), row_height),
                             egui::Sense::hover(),
                         );
-                        ui.painter().rect_filled(
-                            rect,
-                            2.0,
-                            theme.highlight.gamma_multiply(0.16),
-                        );
+                        ui.painter()
+                            .rect_filled(rect, 2.0, theme.highlight.gamma_multiply(0.16));
 
                         // Draw a left border indicator
                         ui.painter().line_segment(
@@ -142,7 +139,7 @@ impl CompilerView for DisassemblyView {
                             RichText::new(line_num_str)
                                 .monospace()
                                 .size(11.0)
-                                    .color(theme.text_dim),
+                                .color(theme.text_dim),
                         );
                         ui.add_space(8.0);
 
