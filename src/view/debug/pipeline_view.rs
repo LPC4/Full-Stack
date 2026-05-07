@@ -29,7 +29,7 @@ pub struct PipelineView;
 
 impl CompilerView for PipelineView {
     fn title(&self) -> &'static str {
-        "Pipeline Waterfall"
+        "Pipeline"
     }
 
     fn ui(

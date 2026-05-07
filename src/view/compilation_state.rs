@@ -8,7 +8,14 @@ pub struct CompilationState {
     pub tokens: String,
     pub ast: String,
     pub ir: String,
+    /// Assembly output from user code only (pre-linking)
     pub asm: String,
+    /// Full linked assembly (stdlib + user) for execution/debugging
+    pub linked_asm: String,
+    /// IR output from stdlib only (for separate inspection)
+    pub stdlib_ir: String,
+    /// Assembly output from stdlib only (for separate inspection)
+    pub stdlib_asm: String,
     pub assembly_tokens: Vec<crate::assembly_language::rv_instruction::RvInstruction>,
     pub assembled: Option<crate::assembly_language::assembler::output::AssembledOutput>,
     pub error: Option<String>,

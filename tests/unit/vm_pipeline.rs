@@ -109,15 +109,6 @@ fn nop() -> u32 {
     addi(0, 0, 0)
 }
 
-// Helper: set up ecall(93) to halt — assumes a7=93, a0=exit_code already set
-fn halt_sequence(exit_code: u32) -> Vec<u32> {
-    vec![
-        addi(17, 0, 93),         // li a7, 93
-        addi(10, 0, exit_code as i32), // li a0, exit_code
-        ecall(),
-    ]
-}
-
 // ---------------------------------------------------------------------------
 // Test 1: Basic sequential execution — no hazards
 // ---------------------------------------------------------------------------

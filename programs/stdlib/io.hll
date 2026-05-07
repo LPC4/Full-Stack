@@ -1,0 +1,27 @@
+; Standard I/O stubs.
+;
+; These functions are implemented in hand-written RISC-V assembly and injected
+; at link time by the compiler backend.  They use only Linux syscall 64
+; (sys_write) so programs run identically on our internal VM and on real
+; hardware / QEMU.
+;
+; Argument types use raw byte pointers (u8*) for string data.  String literals
+; expose their data pointer via the .data field, e.g. "hello".data.
+;
+; printf supports a single %d format specifier.  For richer formatting, call
+; print_int directly or build your own formatter on top of putchar.
+
+; Write a single byte to stdout and return it.
+external putchar: (c: i32) -> i32
+
+; Write a null-terminated byte string to stdout followed by a newline.
+external puts: (str: u8*) -> i32
+
+; Write a format string to stdout, substituting one %d with 'value'.
+external printf: (fmt: u8*, value: i32) -> i32
+
+; Print an integer in decimal to stdout without a trailing newline.
+external print_int: (value: i32) -> i32
+
+; Terminate the process with the given exit code (never returns).
+external exit: (code: i32) -> i32

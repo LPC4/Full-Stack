@@ -1,6 +1,6 @@
 use crate::view::highlight_code;
 use crate::view::{CompilationState, CompilerView, ProgramCatalog, ui_theme};
-use egui::{Frame, Key, TextEdit, TextStyle};
+use egui::{Frame, TextEdit, TextStyle};
 
 #[derive(Default, Clone)]
 pub struct SourceView;
@@ -19,19 +19,23 @@ impl CompilerView for SourceView {
     ) {
         let theme = ui_theme();
         let mut source_code = catalog.get_selected_source();
+        let is_stdlib = catalog
+            .current_program()
+            .map(|p| p.is_stdlib())
+            .unwrap_or(false);
 
-        let undo_shortcut = ui.input(|i| i.modifiers.command && i.key_pressed(Key::Z));
-        let redo_shortcut = ui.input(|i| {
-            (i.modifiers.command && i.key_pressed(Key::Y))
-                || (i.modifiers.command && i.modifiers.shift && i.key_pressed(Key::Z))
-        });
-
-        if undo_shortcut && catalog.undo_selected_source() {
-            source_code = catalog.get_selected_source();
-        }
-
-        if redo_shortcut && catalog.redo_selected_source() {
-            source_code = catalog.get_selected_source();
+        // Stdlib programs are read-only
+        if is_stdlib {
+            ui.vertical(|ui| {
+                ui.heading("Standard Library (Read-Only)");
+                ui.add_space(4.0);
+                ui.label(
+                    egui::RichText::new("This is a read-only standard library file")
+                        .weak()
+                        .small(),
+                );
+                ui.add_space(8.0);
+            });
         }
 
         let mut layouter = |ui: &egui::Ui, string: &dyn egui::TextBuffer, _wrap: f32| {
@@ -50,28 +54,6 @@ impl CompilerView for SourceView {
 
         let panel_id = ui.id();
         frame.show(ui, |ui| {
-            ui.horizontal(|ui| {
-                let can_undo = catalog.can_undo_selected_source();
-                if ui
-                    .add_enabled(can_undo, egui::Button::new("Undo"))
-                    .clicked()
-                {
-                    if catalog.undo_selected_source() {
-                        source_code = catalog.get_selected_source();
-                    }
-                }
-
-                let can_redo = catalog.can_redo_selected_source();
-                if ui
-                    .add_enabled(can_redo, egui::Button::new("Redo"))
-                    .clicked()
-                {
-                    if catalog.redo_selected_source() {
-                        source_code = catalog.get_selected_source();
-                    }
-                }
-            });
-
             egui::ScrollArea::both()
                 .id_salt(panel_id.with("source_editor_scroll"))
                 .auto_shrink([false; 2])
@@ -84,10 +66,11 @@ impl CompilerView for SourceView {
                             .lock_focus(true)
                             .desired_width(f32::INFINITY)
                             .min_size(egui::vec2(available.x, editor_height))
-                            .layouter(&mut layouter),
+                            .layouter(&mut layouter)
+                            .interactive(!is_stdlib), // Make read-only for stdlib
                     );
 
-                    if response.changed() {
+                    if !is_stdlib && response.changed() {
                         catalog.replace_selected_source_with_history(source_code);
                     }
                 });

@@ -671,16 +671,24 @@ impl PipelinedCpu {
         let syscall = self.regs.read_x(17);
         match syscall {
             64 => {
-                // write(fd, buf, len)
-                let len = self.regs.read_x(12) as usize;
+                // Linux sys_write(fd, buf, len)
+                let fd = self.regs.read_x(10);
                 let buf = self.regs.read_x(11);
-                let mut written = 0usize;
-                for i in 0..len {
-                    let byte = bus.read_byte(buf + i as u64).unwrap_or(0);
-                    let _ = bus.uart_mut().write_byte(0, byte);
-                    written += 1;
+                let len = self.regs.read_x(12) as usize;
+
+                // Only support stdout (fd=1)
+                if fd == 1 {
+                    let mut written = 0usize;
+                    for i in 0..len {
+                        let byte = bus.read_byte(buf + i as u64).unwrap_or(0);
+                        let _ = bus.uart_mut().write_byte(0, byte);
+                        written += 1;
+                    }
+                    self.regs.write_x(10, written as u64);
+                } else {
+                    // Unsupported file descriptor
+                    self.regs.write_x(10, u64::MAX);
                 }
-                self.regs.write_x(10, written as u64);
                 self.regs.pc = self.regs.pc.wrapping_add(4);
                 self.fetch_pc = self.regs.pc;
                 self.csrs.increment_instret();
@@ -688,53 +696,12 @@ impl PipelinedCpu {
                 Ok(TickOutcome::EcallSquash)
             }
             93 | 94 => {
+                // Linux sys_exit / sys_exit_group
                 let code = self.regs.read_x(10) as i64;
                 Ok(TickOutcome::Halted(code))
             }
-            1000 => {
-                let c = self.regs.read_x(10) as u8;
-                let _ = bus.uart_mut().write_byte(0, c);
-                self.regs.write_x(10, 0);
-                self.regs.pc = self.regs.pc.wrapping_add(4);
-                self.fetch_pc = self.regs.pc;
-                self.csrs.increment_instret();
-                self.stats.insns_retired += 1;
-                Ok(TickOutcome::EcallSquash)
-            }
-            1001 => {
-                // puts(a0 = ptr to null-terminated string), writes string + newline
-                let mut ptr = self.regs.read_x(10);
-                loop {
-                    let byte = bus.read_byte(ptr).unwrap_or(0);
-                    if byte == 0 {
-                        break;
-                    }
-                    let _ = bus.uart_mut().write_byte(0, byte);
-                    ptr += 1;
-                }
-                let _ = bus.uart_mut().write_byte(0, b'\n');
-                self.regs.write_x(10, 0);
-                self.regs.pc = self.regs.pc.wrapping_add(4);
-                self.fetch_pc = self.regs.pc;
-                self.csrs.increment_instret();
-                self.stats.insns_retired += 1;
-                Ok(TickOutcome::EcallSquash)
-            }
-            1002 => {
-                // printf(a0 = fmt, a1..a7 = varargs)
-                let output = vm_printf_pipelined(&self.regs, bus);
-                let len = output.len();
-                for byte in output {
-                    let _ = bus.uart_mut().write_byte(0, byte);
-                }
-                self.regs.write_x(10, len as u64);
-                self.regs.pc = self.regs.pc.wrapping_add(4);
-                self.fetch_pc = self.regs.pc;
-                self.csrs.increment_instret();
-                self.stats.insns_retired += 1;
-                Ok(TickOutcome::EcallSquash)
-            }
             _ => {
+                // Unknown syscall - return error
                 self.regs.write_x(10, u64::MAX);
                 self.regs.pc = self.regs.pc.wrapping_add(4);
                 self.fetch_pc = self.regs.pc;
@@ -774,70 +741,6 @@ impl PipelinedCpu {
 // ---------------------------------------------------------------------------
 // Forwarding value helpers
 // ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// printf helper used by syscall 1002
-// ---------------------------------------------------------------------------
-
-fn vm_printf_pipelined(regs: &Registers, bus: &mut SystemBus) -> Vec<u8> {
-    let fmt_ptr = regs.read_x(10);
-    let mut arg_reg = 11u32;
-    let mut out = Vec::<u8>::new();
-    let mut addr = fmt_ptr;
-    loop {
-        let c = bus.read_byte(addr).unwrap_or(0);
-        addr += 1;
-        if c == 0 {
-            break;
-        }
-        if c != b'%' {
-            out.push(c);
-            continue;
-        }
-        let spec = bus.read_byte(addr).unwrap_or(0);
-        addr += 1;
-        let arg = if arg_reg <= 17 {
-            let v = regs.read_x(arg_reg as usize);
-            arg_reg += 1;
-            v
-        } else {
-            0
-        };
-        match spec {
-            b'd' | b'i' => out.extend_from_slice((arg as i64).to_string().as_bytes()),
-            b'u' => out.extend_from_slice(arg.to_string().as_bytes()),
-            b'x' => out.extend_from_slice(format!("{arg:x}").as_bytes()),
-            b'X' => out.extend_from_slice(format!("{arg:X}").as_bytes()),
-            b'p' => out.extend_from_slice(format!("0x{arg:x}").as_bytes()),
-            b'c' => out.push(arg as u8),
-            b's' => {
-                let mut ptr = arg;
-                loop {
-                    let byte = bus.read_byte(ptr).unwrap_or(0);
-                    if byte == 0 {
-                        break;
-                    }
-                    out.push(byte);
-                    ptr += 1;
-                }
-            }
-            b'f' | b'g' | b'e' => {
-                out.extend_from_slice(format!("{}", f64::from_bits(arg)).as_bytes())
-            }
-            b'%' => {
-                out.push(b'%');
-                if arg_reg > 11 {
-                    arg_reg -= 1;
-                }
-            }
-            other => {
-                out.push(b'%');
-                out.push(other);
-            }
-        }
-    }
-    out
-}
 
 /// Extract (rd, is_fp_dest, fwd_val) from an ExecResult for the EX/MEM register.
 fn ex_forwarding_info(result: &ExecResult, id_ex: &IDEXReg) -> (usize, bool, u64) {

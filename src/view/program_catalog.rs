@@ -4,6 +4,7 @@
 pub enum ProgramKind {
     Example,
     Custom,
+    Stdlib, // Read-only stdlib programs
 }
 
 #[derive(Clone, serde::Deserialize, serde::Serialize, Debug)]
@@ -45,13 +46,54 @@ impl ProgramFile {
         }
     }
 
+    pub fn stdlib(id: &str, name: &str, description: &str, source: &str) -> Self {
+        Self {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            kind: ProgramKind::Stdlib,
+            source: source.to_owned(),
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
+            description: description.to_owned(),
+        }
+    }
+
     pub fn is_custom(&self) -> bool {
         matches!(self.kind, ProgramKind::Custom)
+    }
+
+    pub fn is_stdlib(&self) -> bool {
+        matches!(self.kind, ProgramKind::Stdlib)
     }
 }
 
 fn built_in_programs() -> Vec<ProgramFile> {
+    // Load stdlib sources and combine into one file
+    let std_types = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/programs/stdlib/types.hll"
+    ));
+    let std_memory = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/programs/stdlib/memory_allocator.hll"
+    ));
+    let std_strings = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/programs/stdlib/string_utils.hll"
+    ));
+
+    // Combine all stdlib into one source
+    let stdlib_combined = format!("{}\n\n{}\n\n{}", std_types, std_memory, std_strings);
+
     vec![
+        // Stdlib program (read-only, single combined file)
+        ProgramFile::stdlib(
+            "stdlib",
+            "stdlib.hll",
+            "Standard library (types, memory allocation, strings)",
+            &stdlib_combined,
+        ),
+        // Example programs
         ProgramFile::example(
             "example-core-syntax",
             "Core Syntax",
@@ -165,10 +207,13 @@ impl ProgramCatalog {
                 .find(|program| program.id == built_in.id)
             {
                 let mut updated = existing.clone();
-                updated.name = built_in.name;
-                updated.kind = ProgramKind::Example;
-                updated.source = built_in.source;
-                updated.description = built_in.description;
+                // For stdlib and examples, always update from embedded source (read-only)
+                if built_in.kind != ProgramKind::Custom {
+                    updated.name = built_in.name;
+                    updated.kind = built_in.kind;
+                    updated.source = built_in.source;
+                    updated.description = built_in.description;
+                }
                 merged_programs.push(updated);
             } else {
                 merged_programs.push(built_in);

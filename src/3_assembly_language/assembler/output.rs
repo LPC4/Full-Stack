@@ -250,7 +250,15 @@ impl AssembledOutput {
         let ehdr_size = ELF64_HDR_SIZE as u64;
         let phdrs_size = (ELF64_PHDR_SIZE as u64) * (n_phdrs as u64);
         let mut sec_file_offsets: Vec<u64> = Vec::new();
-        let mut file_offset = ehdr_size + phdrs_size;
+
+        // Round section data up to a PAGE_SIZE boundary so that
+        // p_vaddr ≡ p_offset (mod PAGE_SIZE) is satisfied for any
+        // PAGE_SIZE-aligned load address (such as RAM_BASE = 0x8000_0000).
+        // Linux and QEMU require this constraint even when p_align > 1.
+        const PAGE_SIZE: u64 = 0x1000;
+        let header_end = ehdr_size + phdrs_size;
+        let mut file_offset = (header_end + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
+        let header_padding = file_offset - header_end;
 
         for es in &elf_secs {
             sec_file_offsets.push(file_offset);
@@ -322,10 +330,7 @@ impl AssembledOutput {
             push_u64_le(&mut buf, es.load_addr); // p_paddr
             push_u64_le(&mut buf, filesz); // p_filesz
             push_u64_le(&mut buf, es.sec.bytes.len() as u64); // p_memsz
-            // p_align = 1: no alignment constraint.  Segments are placed at
-            // file offsets that are NOT page-aligned (ehdr+phdrs precede them),
-            // so p_align = 0x1000 would violate p_vaddr ≡ p_offset (mod align).
-            push_u64_le(&mut buf, 1);
+            push_u64_le(&mut buf, PAGE_SIZE);
         }
 
         // Program header for the _start stub (executable, no section header).
@@ -337,8 +342,12 @@ impl AssembledOutput {
             push_u64_le(&mut buf, stub_vaddr);
             push_u64_le(&mut buf, stub_bytes.len() as u64);
             push_u64_le(&mut buf, stub_bytes.len() as u64);
-            push_u64_le(&mut buf, 1);
+            push_u64_le(&mut buf, PAGE_SIZE);
         }
+
+        // Pad from end of program headers to the page-aligned section data start.
+        debug_assert_eq!(buf.len() as u64, header_end);
+        buf.extend(std::iter::repeat(0u8).take(header_padding as usize));
 
         // ---- Emit section data ----
         for (i, es) in elf_secs.iter().enumerate() {

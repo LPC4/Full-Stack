@@ -71,7 +71,7 @@ Step through execution one pipeline cycle at a time and inspect the full machine
 
 ---
 
-## CPU -- 5-stage pipelined RV64IMAFD
+## CPU: 5-stage pipelined RV64IMAFD
 
 The built-in virtual machine implements a classic in-order scalar pipeline:
 
@@ -87,7 +87,7 @@ IF  →  ID  →  EX  →  MEM  →  WB
 | Load-use | 1-cycle bubble; pipeline stalls (IF held, bubble injected after ID) |
 | Branch mispredict | 2-cycle flush; IF and ID squashed, fetch redirected |
 
-**Branch prediction** -- 2-bit bimodal predictor with Branch Target Buffer (BTB).
+**Branch prediction**: 2-bit bimodal predictor with Branch Target Buffer (BTB).
 
 ---
 

@@ -1,3 +1,4 @@
+use crate::assembly_language::linker::strip_comments;
 use crate::view::{CompilationState, CompilerView, ProgramCatalog};
 use egui::{RichText, ScrollArea};
 
@@ -33,7 +34,14 @@ impl CompilerView for ExecutionView {
         {
             ui.horizontal(|ui| {
                 if ui.button("Run in QEMU").clicked() {
-                    if state.asm.is_empty() {
+                    // Use linked_asm (full stdlib + user) for execution
+                    let asm_to_run = if state.linked_asm.is_empty() {
+                        &state.asm
+                    } else {
+                        &state.linked_asm
+                    };
+
+                    if asm_to_run.is_empty() {
                         state.execution_output = "Please compile first.".to_string();
                         return;
                     }
@@ -42,7 +50,7 @@ impl CompilerView for ExecutionView {
 
                     let (tx, rx) = std::sync::mpsc::channel();
                     self.wsl_receiver = Some(rx);
-                    let asm_copy = state.asm.clone();
+                    let asm_copy = asm_to_run.clone();
 
                     std::thread::spawn(move || {
                         let result = run_in_wsl(&asm_copy);
@@ -102,12 +110,8 @@ fn run_in_wsl(asm: &str) -> String {
 
     const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-    let clean_asm = asm
-        .lines()
-        .map(|line| line.split(';').next().unwrap_or("").trim_end())
-        .filter(|line| !line.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n");
+    // The asm is already fully linked (stdlib + user + runtime glue)
+    let clean_asm = strip_comments(asm);
 
     let script = r#"
 echo "=== Connected to WSL ==="
@@ -128,7 +132,8 @@ fi
 set -e
 cat > program.s
 echo >> program.s
-"$CC" -static program.s -o program
+# Use -nostdlib to avoid conflicts with user-defined malloc/free
+"$CC" -static -nostdlib program.s -o program
 set +e
 "$QEMU" ./program
 EXIT_CODE=$?

@@ -8,6 +8,21 @@ use full_stack::intermediate_language::{
 };
 use std::collections::HashMap;
 
+fn i64_ty() -> IrType {
+    IrType::Integer(IntWidth::I64)
+}
+
+/// A 4-field struct of i64 — mirrors HeapBlock (next, ptr, size, is_free).
+/// Size = 4 × 8 = 32 bytes.
+fn heap_block_ty() -> IrType {
+    IrType::Aggregate(vec![
+        ("next".to_string(), i64_ty()),
+        ("ptr".to_string(), i64_ty()),
+        ("size".to_string(), i64_ty()),
+        ("is_free".to_string(), i64_ty()),
+    ])
+}
+
 fn int32() -> IrType {
     IrType::Integer(IntWidth::I32)
 }
@@ -171,4 +186,67 @@ fn linear_allocator_reuses_a_register_after_an_interval_expires() {
         }
         other => panic!("unexpected allocations: {other:?}"),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Regression: Alloc slot must be sized by the inner struct type, not pointer.
+//
+// Before the fix, IrInstruction::Alloc { dest, ty: HeapBlock, .. } was given
+// an 8-byte slot (pointer size) instead of 32 bytes (struct size).  The next
+// register's slot then overlapped the struct's second field, corrupting struct
+// literals in malloc and causing the heap_list load to target an invalid address.
+// ---------------------------------------------------------------------------
+
+/// `alloc_slot_for_alloc` with a 32-byte struct must reserve ≥ 32 bytes.
+/// The frame size after allocation must be at least 32 bytes.
+#[test]
+fn alloc_slot_for_struct_reserves_full_struct_size() {
+    let mut ctx = FunctionContext::new("test", &HashMap::new());
+    let struct_ty = heap_block_ty(); // 4 × i64 = 32 bytes
+    ctx.alloc_slot_for_alloc(&reg("block"), &struct_ty, None);
+    ctx.finalize();
+    assert!(
+        ctx.frame_size() >= 32,
+        "frame should be at least 32 bytes for a 32-byte struct Alloc, got {}",
+        ctx.frame_size()
+    );
+}
+
+/// After allocating a 32-byte struct Alloc followed by an 8-byte pointer, the
+/// two slots must not overlap.  Before the fix, the pointer was placed at
+/// struct_offset + 8 (overlapping fields 2–4 of the struct).
+#[test]
+fn alloc_slot_for_struct_does_not_overlap_next_slot() {
+    let mut func = IrFunction::new("main", int32());
+    let mut block = IrBlock::new("entry");
+
+    // $37 = Alloc HeapBlock  (needs 32 bytes)
+    block.push_instruction(IrInstruction::Alloc {
+        dest: reg("block"),
+        ty: heap_block_ty(),
+        count: None,
+    });
+    // $38 = Alloc i64 pointer  (8 bytes) — this is the register that used to collide
+    block.push_instruction(IrInstruction::Alloc {
+        dest: reg("ptr"),
+        ty: i64_ty(),
+        count: None,
+    });
+    block.set_terminator(IrTerminator::Return(None));
+    func.push_block(block);
+
+    let (_, ctx) = allocate_function(&func);
+
+    let slot_block = ctx.slot_for_reg(&reg("block")).expect("block must have a slot");
+    let slot_ptr = ctx.slot_for_reg(&reg("ptr")).expect("ptr must have a slot");
+
+    // The struct occupies [slot_block, slot_block + 32).
+    // The pointer slot must not fall inside that range.
+    let block_end = slot_block + 32;
+    assert!(
+        slot_ptr >= block_end || slot_ptr + 8 <= slot_block,
+        "struct slot [{slot_block}, {block_end}) overlaps pointer slot [{slot_ptr}, {}): \
+         regression — Alloc struct was given only 8 bytes instead of 32",
+        slot_ptr + 8
+    );
 }

@@ -240,8 +240,59 @@ impl FullStackApp {
     }
 
     fn compile(&mut self) {
-        let source = prepend_stdlib(&self.catalog.get_selected_source());
-        let mut lexer = Lexer::new(&source);
+        let user_source = &self.catalog.get_selected_source();
+        let is_stdlib = self
+            .catalog
+            .current_program()
+            .map(|p| p.is_stdlib())
+            .unwrap_or(false);
+
+        // For stdlib programs, just compile and display them
+        if is_stdlib {
+            let mut lexer = Lexer::new(user_source);
+            let mut tokens = Vec::new();
+
+            loop {
+                let token = lexer.next_token();
+                if let Token::Error(message) = &token {
+                    self.compilation_state.tokens = format!("LEXER ERROR: {message}");
+                    self.compilation_state
+                        .set_error(format!("Lexer error: {message}"));
+                    self.compilation_state.just_compiled = false;
+                    return;
+                }
+                let is_eof = matches!(token, Token::Eof);
+                tokens.push(token);
+                if is_eof {
+                    break;
+                }
+            }
+
+            self.compilation_state.tokens = format!("{tokens:#?}");
+
+            match self.pipeline.compile(user_source) {
+                Ok(result) => {
+                    self.compilation_state.ast = format!("{:#?}", result.ast);
+                    self.compilation_state.ir = result.ir_program.to_string();
+                    let (asm_text, asm_tokens) = self
+                        .pipeline
+                        .compile_ir_to_assembly_with_tokens(&result.ir_program);
+                    self.compilation_state.asm = asm_text;
+                    self.compilation_state.assembled = self.pipeline.assemble(&asm_tokens).ok();
+                    self.compilation_state.assembly_tokens = asm_tokens;
+                    self.compilation_state.clear_error();
+                    self.compilation_state.just_compiled = true;
+                }
+                Err(error) => {
+                    self.compilation_state.set_error(error.to_string());
+                    self.compilation_state.just_compiled = false;
+                }
+            }
+            return;
+        }
+
+        // For user programs: compile WITHOUT stdlib for IR/ASM views
+        let mut lexer = Lexer::new(user_source);
         let mut tokens = Vec::new();
 
         loop {
@@ -262,16 +313,44 @@ impl FullStackApp {
 
         self.compilation_state.tokens = format!("{tokens:#?}");
 
-        match self.pipeline.compile(&source) {
+        // Compile user code only (no stdlib)
+        match self.pipeline.compile(user_source) {
             Ok(result) => {
                 self.compilation_state.ast = format!("{:#?}", result.ast);
+                // IR and ASM show ONLY user code (pre-linking)
                 self.compilation_state.ir = result.ir_program.to_string();
                 let (asm_text, asm_tokens) = self
                     .pipeline
                     .compile_ir_to_assembly_with_tokens(&result.ir_program);
                 self.compilation_state.asm = asm_text;
-                self.compilation_state.assembled = self.pipeline.assemble(&asm_tokens).ok();
                 self.compilation_state.assembly_tokens = asm_tokens;
+
+                // Now link with stdlib for execution/debugging
+                let full_source = prepend_stdlib(user_source);
+                match self.pipeline.compile(&full_source) {
+                    Ok(full_result) => {
+                        let (full_asm_text, full_asm_tokens) = self
+                            .pipeline
+                            .compile_ir_to_assembly_with_tokens(&full_result.ir_program);
+
+                        // Add runtime glue (_start and putchar) for execution
+                        let linked_with_glue =
+                            crate::assembly_language::linker::link_assembly(&[&full_asm_text]);
+
+                        // Store the full linked assembly for execution/debugging
+                        self.compilation_state.linked_asm = linked_with_glue;
+
+                        // Assemble the linked version with glue
+                        self.compilation_state.assembled =
+                            self.pipeline.assemble(&full_asm_tokens).ok();
+                    }
+                    Err(_) => {
+                        // If linking fails, still show user code but no assembled output
+                        self.compilation_state.linked_asm.clear();
+                        self.compilation_state.assembled = None;
+                    }
+                }
+
                 self.compilation_state.clear_error();
                 self.compilation_state.just_compiled = true;
             }
@@ -490,6 +569,8 @@ impl FullStackApp {
             }
 
             ui.add_space(8.0);
+            self.render_program_section(ui, ProgramKind::Stdlib, "Standard Library");
+            ui.separator();
             self.render_program_section(ui, ProgramKind::Example, "Examples");
             ui.separator();
             self.render_program_section(ui, ProgramKind::Custom, "Your programs");
@@ -723,6 +804,7 @@ impl FullStackApp {
                         RichText::new(match program.kind {
                             ProgramKind::Example => "example",
                             ProgramKind::Custom => "custom",
+                            ProgramKind::Stdlib => "stdlib",
                         })
                         .weak()
                         .small(),

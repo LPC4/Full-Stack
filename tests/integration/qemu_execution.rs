@@ -7,6 +7,7 @@
 /// If the WSL toolchain is absent the tests print a diagnostic with the exact
 /// missing prerequisite and return without failing, so CI on machines without
 /// the cross-toolchain stays green.
+use full_stack::assembly_language::linker::LinkedProgram;
 use full_stack::high_level_language::compilation_pipeline::CompilationPipeline;
 use full_stack::virtual_machine::bus::RAM_BASE;
 use std::fmt;
@@ -18,6 +19,10 @@ use std::process::{Command, Stdio};
 
 fn qemu_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("programs/test/qemu")
+}
+
+fn stdlib_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("programs/stdlib")
 }
 
 fn read_program(filename: &str) -> String {
@@ -34,13 +39,7 @@ fn compile_to_asm(source: &str) -> String {
         .compile(source)
         .unwrap_or_else(|e| panic!("HLL compilation failed: {e}"));
     let asm = pipeline.compile_ir_to_assembly(&result.ir_program);
-
-    // Mirror the comment-strip that app.rs does before sending to WSL.
-    asm.lines()
-        .map(|line| line.split(';').next().unwrap_or("").trim_end())
-        .filter(|line| !line.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n")
+    full_stack::assembly_language::linker::strip_comments(&asm)
 }
 
 struct QemuResult {
@@ -157,7 +156,8 @@ cd "$WORKDIR"
 cat > program.s
 
 # Compile; capture stderr so a failed compile is surfaced in the Rust output.
-COMPILE_OUT="$("$CC" -static program.s -o program 2>&1)"
+# Use -nostdlib to avoid conflicts with user-defined malloc/free
+COMPILE_OUT="$("$CC" -static -nostdlib program.s -o program 2>&1)"
 if [ $? -ne 0 ]; then
     echo "LINK_FAILED: $COMPILE_OUT"
     exit 0
@@ -341,9 +341,28 @@ echo "---EXIT:$?---"
 }
 
 /// Compile HLL and run through QEMU in one step.
+/// Prepends the glue (`_start` + `putchar`) and the compiled stdlib
+/// (malloc/free/HeapBlock) so every program has a complete runtime.
 fn run_hll_via_qemu(source: &str) -> Result<QemuResult, QemuSkipReason> {
-    let asm = compile_to_asm(source);
-    run_asm_via_qemu(&asm)
+    // Compile stdlib
+    let types_src = std::fs::read_to_string(stdlib_dir().join("types.hll"))
+        .expect("failed to read stdlib/types.hll");
+    let alloc_src = std::fs::read_to_string(stdlib_dir().join("memory_allocator.hll"))
+        .expect("failed to read stdlib/memory_allocator.hll");
+    let stdlib_combined = format!("{}\n{}", types_src, alloc_src);
+    let stdlib_asm = compile_to_asm(&stdlib_combined);
+    
+    // Compile user code
+    let main_asm = compile_to_asm(source);
+    
+    // Link everything together using the primitive linker
+    // LinkedProgram::new_stripped automatically prepends runtime_glue
+    let linked = LinkedProgram::new_stripped(&[
+        &stdlib_asm,
+        &main_asm,
+    ]);
+    
+    run_asm_via_qemu(linked.as_str())
 }
 
 /// Compile HLL to ELF and run through QEMU in one step.
