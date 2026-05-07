@@ -1,8 +1,8 @@
-use crate::view::{ui_theme, CompilationState, CompilerView, ProgramCatalog};
+use crate::view::{CompilationState, CompilerView, ProgramCatalog, ui_theme};
 use crate::virtual_machine::memory::cache::{CacheParamsSnapshot, CacheSnapshot};
 use egui::{Color32, Frame, Grid, Rect, RichText, ScrollArea, Sense, Stroke, Ui, Vec2};
 
-// State colors for cache lines 
+// State colors for cache lines
 const COLOR_INVALID: Color32 = Color32::from_rgb(40, 40, 45);
 const COLOR_CLEAN: Color32 = Color32::from_rgb(56, 142, 80); // muted green
 const COLOR_DIRTY: Color32 = Color32::from_rgb(204, 120, 40); // amber
@@ -201,10 +201,8 @@ fn draw_full_grid(ui: &mut Ui, snap: &CacheSnapshot) {
         // Way labels column
         ui.vertical(|ui| {
             for way in 0..n_ways {
-                let (r, _) = ui.allocate_exact_size(
-                    Vec2::new(label_w, cell_h + gap),
-                    Sense::hover(),
-                );
+                let (r, _) =
+                    ui.allocate_exact_size(Vec2::new(label_w, cell_h + gap), Sense::hover());
                 ui.painter().text(
                     r.right_center(),
                     egui::Align2::RIGHT_CENTER,
@@ -299,26 +297,21 @@ fn draw_way_bars(ui: &mut Ui, snap: &CacheSnapshot) {
 
                 // Stacked bar: valid (green) + dirty overlay (amber) + empty (dark)
                 ui.horizontal(|ui| {
-                    let (rect, _) =
-                        ui.allocate_exact_size(Vec2::new(bar_w, bar_h), Sense::hover());
+                    let (rect, _) = ui.allocate_exact_size(Vec2::new(bar_w, bar_h), Sense::hover());
                     let painter = ui.painter();
 
                     // background
                     painter.rect_filled(rect, 1.0, COLOR_INVALID);
 
                     // valid portion
-                    let valid_rect = Rect::from_min_size(
-                        rect.min,
-                        Vec2::new(bar_w * fill_frac, bar_h),
-                    );
+                    let valid_rect =
+                        Rect::from_min_size(rect.min, Vec2::new(bar_w * fill_frac, bar_h));
                     painter.rect_filled(valid_rect, 1.0, COLOR_CLEAN);
 
                     // dirty portion (overlay from left edge of valid)
                     if dirty > 0 {
-                        let dirty_rect = Rect::from_min_size(
-                            rect.min,
-                            Vec2::new(bar_w * dirty_frac, bar_h),
-                        );
+                        let dirty_rect =
+                            Rect::from_min_size(rect.min, Vec2::new(bar_w * dirty_frac, bar_h));
                         painter.rect_filled(dirty_rect, 1.0, COLOR_DIRTY);
                     }
 
@@ -355,16 +348,29 @@ fn draw_aggregate(ui: &mut Ui, snap: &CacheSnapshot) {
         .filter(|l| l.valid && l.dirty)
         .count();
 
-    let valid_frac = if total > 0 { valid as f32 / total as f32 } else { 0.0 };
-    let dirty_frac = if total > 0 { dirty as f32 / total as f32 } else { 0.0 };
+    let valid_frac = if total > 0 {
+        valid as f32 / total as f32
+    } else {
+        0.0
+    };
+    let dirty_frac = if total > 0 {
+        dirty as f32 / total as f32
+    } else {
+        0.0
+    };
 
     let bar_w = 200.0_f32;
     let bar_h = 10.0_f32;
 
     ui.label(
-        RichText::new(format!("{} total lines ({} sets × {} ways)", total, snap.sets.len(), snap.params.associativity))
-            .small()
-            .color(theme.text_dim),
+        RichText::new(format!(
+            "{} total lines ({} sets × {} ways)",
+            total,
+            snap.sets.len(),
+            snap.params.associativity
+        ))
+        .small()
+        .color(theme.text_dim),
     );
     ui.add_space(4.0);
 
