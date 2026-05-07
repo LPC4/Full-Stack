@@ -36,6 +36,18 @@ fn run_hll(src: &str) -> (VirtualMachine, StepOutcome, String) {
     run_hll_with_limit(src, 5_000_000)
 }
 
+#[test]
+fn hll_new_i32_and_return() {
+    let (_, outcome, _) = run_hll(r#"
+main: () -> i32 {
+    p: i32* = new(i32)
+    @p = 42
+    return @p
+}
+"#);
+    assert!(matches!(outcome, StepOutcome::Halted(42)), "expected Halted(42), got {outcome:?}");
+}
+
 // ---------------------------------------------------------------------------
 // HLL full-pipeline VM tests
 // ---------------------------------------------------------------------------
@@ -413,24 +425,38 @@ main: () -> i32 {
     let result = pipeline.compile(&src_with_stdlib).expect("compile failed");
     let ir_text = format!("{}", result.ir_program);
     let (asm, _) = pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program);
-    // Print just the heap_raw_alloc and malloc IR functions
+
+    // Print HeapBlock type alias to verify its size
     for line in ir_text.lines() {
-        if line.contains("heap_raw_alloc") || line.contains("malloc") || line.contains("heap_list") || line.contains("heap_bump") {
+        if line.contains("HeapBlock") || line.contains("heap_raw_alloc") || line.contains("define") && line.contains("malloc") {
             println!("{line}");
         }
     }
-    println!("--- ASM (heap_raw_alloc section) ---");
-    let mut in_fn = false;
+
+    // Print just the malloc function assembly
+    println!("--- malloc ASM ---");
+    let mut in_malloc = false;
+    let mut in_heap_raw = false;
     for line in asm.lines() {
-        if line.contains("heap_raw_alloc:") { in_fn = true; }
-        if in_fn {
+        if line.trim_start().starts_with("malloc:") { in_malloc = true; }
+        if line.trim_start().starts_with("heap_raw_alloc:") { in_heap_raw = true; }
+        if in_malloc || in_heap_raw {
             println!("{line}");
-            if line.trim().starts_with("ret") || (in_fn && line.contains(':') && !line.contains("heap_raw_alloc") && line.trim().ends_with(':')) {
-                in_fn = false;
+            // stop at next function label
+            if (in_malloc && line.trim_start().starts_with("heap_raw_alloc:"))
+                || (in_heap_raw && !line.trim_start().starts_with("heap_raw_alloc:") && line.trim().ends_with(':') && !line.contains("__"))
+            {
+                if in_malloc && line.trim_start().starts_with("heap_raw_alloc:") { in_malloc = false; in_heap_raw = true; }
+                else { in_heap_raw = false; }
             }
         }
     }
-    panic!("diagnostic done");
+
+    let (_, outcome, _) = run_hll(src);
+    assert!(
+        matches!(outcome, StepOutcome::Halted(42)),
+        "expected Halted(42), got {outcome:?}"
+    );
 }
 
 #[test]

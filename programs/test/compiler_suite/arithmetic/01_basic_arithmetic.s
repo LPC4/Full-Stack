@@ -30,71 +30,71 @@ main__entry:
 	; Load i32 from memory into $$0
 	addi   t0, sp, 0
 	lw     t1, 0(t0)
-	sw     t1, 24(sp)
+	sw     t1, 40(sp)
 	; Load i32 from memory into $$1
 	addi   t0, sp, 8
 	lw     t1, 0(t0)
-	sw     t1, 28(sp)
+	sw     t1, 44(sp)
 	; add operation on i32
-	lw     t0, 24(sp)
-	lw     t1, 28(sp)
+	lw     t0, 40(sp)
+	lw     t1, 44(sp)
 	add    t2, t0, t1
-	sw     t2, 32(sp)
+	sw     t2, 48(sp)
 	; mul operation on i32
-	lw     t0, 32(sp)
+	lw     t0, 48(sp)
 	addi   t1, zero, 2
 	mul    t2, t0, t1
-	sw     t2, 36(sp)
+	sw     t2, 52(sp)
 	addi   t0, sp, 16
 	; Store i32 to memory
-	lw     t1, 36(sp)
+	lw     t1, 52(sp)
 	sw     t1, 0(t0)
 	; local var: d
 	; Load i32 from memory into $$4
 	addi   t0, sp, 16
 	lw     t1, 0(t0)
-	sw     t1, 48(sp)
+	sw     t1, 56(sp)
 	; sdiv operation on i32
-	lw     t0, 48(sp)
+	lw     t0, 56(sp)
 	addi   t1, zero, 5
 	div    t2, t0, t1
-	sw     t2, 52(sp)
+	sw     t2, 60(sp)
 	; Load i32 from memory into $$6
 	addi   t0, sp, 0
 	lw     t1, 0(t0)
-	sw     t1, 56(sp)
+	sw     t1, 64(sp)
 	; Load i32 from memory into $$7
 	addi   t0, sp, 8
 	lw     t1, 0(t0)
-	sw     t1, 60(sp)
+	sw     t1, 68(sp)
 	; mod operation on i32
-	lw     t0, 56(sp)
-	lw     t1, 60(sp)
-	rem    t2, t0, t1
-	sw     t2, 64(sp)
-	; sub operation on i32
-	lw     t0, 52(sp)
-	lw     t1, 64(sp)
-	sub    t2, t0, t1
-	sw     t2, 68(sp)
-	addi   t0, sp, 40
-	; Store i32 to memory
+	lw     t0, 64(sp)
 	lw     t1, 68(sp)
+	rem    t2, t0, t1
+	sw     t2, 72(sp)
+	; sub operation on i32
+	lw     t0, 60(sp)
+	lw     t1, 72(sp)
+	sub    t2, t0, t1
+	sw     t2, 76(sp)
+	addi   t0, sp, 24
+	; Store i32 to memory
+	lw     t1, 76(sp)
 	sw     t1, 0(t0)
 	; local var: e
 	; Load i32 from memory into $$10
-	addi   t0, sp, 40
+	addi   t0, sp, 24
 	lw     t1, 0(t0)
 	sw     t1, 80(sp)
 	lw     t0, 80(sp)
 	sub    t1, zero, t0
 	sw     t1, 84(sp)
-	addi   t0, sp, 72
+	addi   t0, sp, 32
 	; Store i32 to memory
 	lw     t1, 84(sp)
 	sw     t1, 0(t0)
 	; Load i32 from memory into $$12
-	addi   t0, sp, 72
+	addi   t0, sp, 32
 	lw     t1, 0(t0)
 	sw     t1, 88(sp)
 	lw     t2, 88(sp)

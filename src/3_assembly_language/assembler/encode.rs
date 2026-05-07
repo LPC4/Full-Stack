@@ -334,7 +334,7 @@ fn encode_call(
 ) -> Result<(), AssemblerError> {
     let target_addr = resolve_symbol(symbol, symbols)?;
     let (hi20, lo12) = pcrel_offsets(target_addr, current_addr);
-    sec.push_u32_le(Auipc::new(1, hi20).encode()); // auipc ra, hi20
+    sec.push_u32_le(Auipc::new(1, hi20 << 12).encode()); // auipc ra, hi20
     sec.push_u32_le(Jalr::new(1, 1, lo12).encode()); // jalr ra, ra, lo12
     Ok(())
 }
@@ -348,7 +348,7 @@ fn encode_tail(
 ) -> Result<(), AssemblerError> {
     let target_addr = resolve_symbol(symbol, symbols)?;
     let (hi20, lo12) = pcrel_offsets(target_addr, current_addr);
-    sec.push_u32_le(Auipc::new(6, hi20).encode()); // auipc t1, hi20
+    sec.push_u32_le(Auipc::new(6, hi20 << 12).encode()); // auipc t1, hi20
     sec.push_u32_le(Jalr::new(0, 6, lo12).encode()); // jalr x0, t1, lo12 (no return)
     Ok(())
 }
@@ -377,7 +377,7 @@ fn encode_la(
     let target_addr = target_abs_addr.unwrap_or(section_offset);
 
     let (hi20, lo12) = pcrel_offsets(target_addr, current_addr);
-    sec.push_u32_le(Auipc::new(rd, hi20).encode()); // auipc rd, hi20
+    sec.push_u32_le(Auipc::new(rd, hi20 << 12).encode()); // auipc rd, hi20
     sec.push_u32_le(Addi::new(rd, rd, lo12).encode()); // addi rd, rd, lo12
     Ok(())
 }

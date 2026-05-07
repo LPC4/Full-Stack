@@ -29,13 +29,13 @@ chained_deref_assign__entry:
 	; local var: ptr
 	addi   a0, zero, 4
 	call malloc
-	sd     a0, 24(sp)
+	sd     a0, 32(sp)
 	addi   t0, sp, 16
 	; Store i32* to memory
-	ld     t1, 24(sp)
+	ld     t1, 32(sp)
 	sd     t1, 0(t0)
 	; local var: pp
-	addi   t0, sp, 32
+	addi   t0, sp, 24
 	; Store i32** to memory
 	addi   t1, sp, 16
 	sd     t1, 0(t0)
@@ -50,7 +50,7 @@ chained_deref_assign__entry:
 	add    t2, t0, t1
 	sw     t2, 44(sp)
 	; Load i32** from memory into $$3
-	addi   t0, sp, 32
+	addi   t0, sp, 24
 	ld     t1, 0(t0)
 	sd     t1, 48(sp)
 	; Load i32* from memory into $$4

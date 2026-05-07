@@ -29,26 +29,26 @@ pointers__entry:
 	; local var: ptr
 	addi   a0, zero, 4
 	call malloc
-	sd     a0, 24(sp)
+	sd     a0, 32(sp)
 	addi   t0, sp, 16
 	; Store i32* to memory
-	ld     t1, 24(sp)
+	ld     t1, 32(sp)
 	sd     t1, 0(t0)
 	; assignment
 	; Load i32 from memory into $$1
 	addi   t0, sp, 8
 	lw     t1, 0(t0)
-	sw     t1, 32(sp)
+	sw     t1, 40(sp)
 	; Load i32* from memory into $$2
 	addi   t0, sp, 16
 	ld     t1, 0(t0)
-	sd     t1, 40(sp)
-	ld     t0, 40(sp)
+	sd     t1, 48(sp)
+	ld     t0, 48(sp)
 	; Store i32 to memory
-	lw     t1, 32(sp)
+	lw     t1, 40(sp)
 	sw     t1, 0(t0)
 	; local var: val_ref
-	addi   t0, sp, 48
+	addi   t0, sp, 24
 	; Store i32* to memory
 	addi   t1, sp, 8
 	sd     t1, 0(t0)
@@ -67,7 +67,7 @@ pointers__entry:
 	add    t2, t0, t1
 	sw     t2, 68(sp)
 	; Load i32* from memory into $$6
-	addi   t0, sp, 48
+	addi   t0, sp, 24
 	ld     t1, 0(t0)
 	sd     t1, 72(sp)
 	ld     t0, 72(sp)

@@ -72,11 +72,14 @@ impl RegisterAllocator {
             ctx.alloc_slot_for_reg(&param.register, &param.ty);
         }
 
-        // Mark stack addresses from Alloc instructions
+        // Mark stack addresses from Alloc instructions and pre-allocate with the correct size.
+        // This must happen before the generic interval-based allocation so that struct Alloc
+        // registers get (type_size * count) bytes instead of the 8-byte pointer size.
         for block in &func.blocks {
             for inst in &block.instructions {
-                if let IrInstruction::Alloc { dest, .. } = inst {
+                if let IrInstruction::Alloc { dest, ty, count } = inst {
                     ctx.mark_stack_address(dest);
+                    ctx.alloc_slot_for_alloc(dest, ty, *count);
                 }
             }
         }

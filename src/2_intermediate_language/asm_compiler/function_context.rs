@@ -59,6 +59,24 @@ impl FunctionContext {
         slot
     }
 
+    /// Allocate a stack slot for an `Alloc` (stack_alloc) instruction.
+    /// Uses the actual inner type size rather than pointer size so structs get enough space.
+    pub fn alloc_slot_for_alloc(
+        &mut self,
+        reg: &IrRegister,
+        ty: &IrType,
+        count: Option<usize>,
+    ) -> usize {
+        let elem_size = self.frame.type_size(ty, &self.type_aliases);
+        let total_size = (elem_size * count.unwrap_or(1)).max(8);
+        let alignment = self.frame.type_alignment(ty, &self.type_aliases).max(8);
+        let slot = self.frame.alloc_slot(total_size, alignment);
+        self.reg_slots.insert(reg.clone(), slot);
+        self.reg_types
+            .insert(reg.clone(), IrType::Pointer(Box::new(ty.clone())));
+        slot
+    }
+
     /// Reserve space for saving `ra`.
     pub fn save_ra(&mut self) {
         self.frame.save_ra();
