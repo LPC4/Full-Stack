@@ -1,18 +1,20 @@
 /// QEMU execution integration tests.
 ///
-/// Each test compiles an HLL program all the way to RISC-V assembly, then
-/// runs it under qemu-riscv64 inside WSL and verifies the exit code and
+/// Each test compiles an HLL program all the way to RISC-V assembly or ELF,
+/// then runs it under qemu-riscv64 inside WSL and verifies the exit code and
 /// (where applicable) stdout output.
 ///
-/// If the WSL toolchain (riscv64-linux-gnu-gcc + qemu-riscv64) is absent
-/// the tests print a diagnostic and return without failing, so CI on
-/// machines without the cross-toolchain stays green.
+/// If the WSL toolchain is absent the tests print a diagnostic with the exact
+/// missing prerequisite and return without failing, so CI on machines without
+/// the cross-toolchain stays green.
 use full_stack::high_level_language::compilation_pipeline::CompilationPipeline;
+use full_stack::virtual_machine::bus::RAM_BASE;
+use std::fmt;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+
 
 fn qemu_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("programs/test/qemu")
@@ -47,22 +49,102 @@ struct QemuResult {
     stdout: String,
 }
 
+#[allow(dead_code)]
+#[derive(Debug)]
+enum QemuSkipReason {
+    NotWindows,
+    WslUnavailable(String),
+    WslLaunchFailed(String),
+    WslWaitFailed(String),
+    MissingRiscv64Gcc,
+    MissingQemuRiscv64,
+}
+
+impl fmt::Display for QemuSkipReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotWindows => write!(
+                f,
+                "QEMU integration tests currently require Windows + WSL2. Install WSL2 and run the suite on Windows to enable them."
+            ),
+            Self::WslUnavailable(msg) => write!(
+                f,
+                "failed to start WSL ({msg}). Install WSL2 and make sure `wsl.exe` is available on PATH"
+            ),
+            Self::WslLaunchFailed(msg) => write!(
+                f,
+                "WSL could not launch the QEMU test shell ({msg}). Check that your WSL distro is installed and healthy"
+            ),
+            Self::WslWaitFailed(msg) => write!(
+                f,
+                "WSL terminated unexpectedly while waiting for QEMU ({msg}). Reinstall or repair WSL2 if this persists"
+            ),
+            Self::MissingRiscv64Gcc => write!(
+                f,
+                "missing `riscv64-linux-gnu-gcc` in WSL. Install the RISC-V cross toolchain, for example `sudo apt install gcc-riscv64-linux-gnu qemu-user` on Ubuntu/Debian WSL"
+            ),
+            Self::MissingQemuRiscv64 => write!(
+                f,
+                "missing `qemu-riscv64` in WSL. Install the RISC-V user-mode emulator, for example `sudo apt install qemu-user` on Ubuntu/Debian WSL"
+            ),
+        }
+    }
+}
+
+fn qemu_skip_reason_from_output(combined: &str) -> Option<QemuSkipReason> {
+    if combined.contains("TOOLCHAIN_UNAVAILABLE: riscv64-linux-gnu-gcc not found") {
+        return Some(QemuSkipReason::MissingRiscv64Gcc);
+    }
+    if combined.contains("TOOLCHAIN_UNAVAILABLE: qemu-riscv64 not found") {
+        return Some(QemuSkipReason::MissingQemuRiscv64);
+    }
+    None
+}
+
+fn report_qemu_skip(test_name: &str, reason: QemuSkipReason) -> bool {
+    eprintln!("[SKIP] {test_name} - {reason}");
+    false
+}
+
+fn require_qemu_result(test_name: &'static str, result: Result<QemuResult, QemuSkipReason>) -> Option<QemuResult> {
+    match result {
+        Ok(value) => Some(value),
+        Err(reason) => {
+            let _ = report_qemu_skip(test_name, reason);
+            None
+        }
+    }
+}
+
+/// Compile HLL source to the final assembled output and export it as an ELF
+/// image ready for qemu-riscv64.
+fn compile_to_elf(source: &str) -> Vec<u8> {
+    let pipeline = CompilationPipeline::new();
+    let result = pipeline
+        .compile(source)
+        .unwrap_or_else(|e| panic!("HLL compilation failed: {e}"));
+    let (_asm, tokens) = pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program);
+    let assembled = pipeline
+        .assemble(&tokens)
+        .unwrap_or_else(|e| panic!("assembly failed: {e}"));
+    assembled.to_elf(RAM_BASE)
+}
+
 /// Run a pre-compiled assembly string through WSL → riscv64-linux-gnu-gcc
-/// → qemu-riscv64.  Returns `None` when the toolchain is unavailable so
-/// callers can skip gracefully.
-fn run_asm_via_qemu(asm: &str) -> Option<QemuResult> {
+/// → qemu-riscv64.
+fn run_asm_via_qemu(asm: &str) -> Result<QemuResult, QemuSkipReason> {
     // The bash script is identical in structure to the one in app.rs but it
     // also prints a sentinel line so we can reliably extract the exit code
     // even when the program itself produces output.
     let script = r#"
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 
-CC="$(which riscv64-linux-gnu-gcc 2>/dev/null)"
+CC="$(command -v riscv64-linux-gnu-gcc 2>/dev/null)"
 if [ -z "$CC" ]; then
     echo "TOOLCHAIN_UNAVAILABLE: riscv64-linux-gnu-gcc not found"
     exit 0
 fi
-QEMU="$(which qemu-riscv64 2>/dev/null)"
+QEMU="$(command -v qemu-riscv64 2>/dev/null)"
 if [ -z "$QEMU" ]; then
     echo "TOOLCHAIN_UNAVAILABLE: qemu-riscv64 not found"
     exit 0
@@ -88,8 +170,7 @@ echo "---EXIT:$?---"
     #[cfg(not(target_os = "windows"))]
     {
         // On non-Windows hosts wsl is not available; skip.
-        eprintln!("[qemu_execution] not on Windows, skipping QEMU tests");
-        return None;
+        return Err(QemuSkipReason::NotWindows);
     }
 
     #[cfg(target_os = "windows")]
@@ -107,8 +188,7 @@ echo "---EXIT:$?---"
         {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("[qemu_execution] failed to start WSL: {e}; skipping");
-                return None;
+                return Err(QemuSkipReason::WslUnavailable(e.to_string()));
             }
         };
 
@@ -119,17 +199,15 @@ echo "---EXIT:$?---"
         let output = match child.wait_with_output() {
             Ok(o) => o,
             Err(e) => {
-                eprintln!("[qemu_execution] WSL wait failed: {e}; skipping");
-                return None;
+                return Err(QemuSkipReason::WslWaitFailed(e.to_string()));
             }
         };
 
         let combined = String::from_utf8_lossy(&output.stdout).into_owned();
 
         // Detect toolchain or link failures and skip instead of panicking.
-        if combined.contains("TOOLCHAIN_UNAVAILABLE") {
-            eprintln!("[qemu_execution] {}", combined.trim());
-            return None;
+        if let Some(reason) = qemu_skip_reason_from_output(&combined) {
+            return Err(reason);
         }
         if combined.contains("LINK_FAILED") {
             panic!("assembly link step failed:\n{combined}");
@@ -165,17 +243,116 @@ echo "---EXIT:$?---"
         // Trim leading/trailing blank lines but preserve internal newlines.
         let stdout = stdout.trim_matches('\n').to_string();
 
-        Some(QemuResult { exit_code, stdout })
+        Ok(QemuResult { exit_code, stdout })
+    }
+}
+
+/// Run a pre-compiled ELF image through WSL → qemu-riscv64.
+fn run_elf_via_qemu(elf: &[u8]) -> Result<QemuResult, QemuSkipReason> {
+    let script = r#"
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
+
+QEMU="$(command -v qemu-riscv64 2>/dev/null)"
+if [ -z "$QEMU" ]; then
+    echo "TOOLCHAIN_UNAVAILABLE: qemu-riscv64 not found"
+    exit 0
+fi
+
+WORKDIR="$(mktemp -d)"
+trap 'rm -rf "$WORKDIR"' EXIT
+cd "$WORKDIR"
+
+cat > program
+chmod +x program
+
+"$QEMU" ./program
+echo "---EXIT:$?---"
+"#;
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        return Err(QemuSkipReason::NotWindows);
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+        let mut child = match Command::new("wsl")
+            .args(["--exec", "bash", "-lc", script])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                return Err(QemuSkipReason::WslUnavailable(e.to_string()));
+            }
+        };
+
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(elf);
+        }
+
+        let output = match child.wait_with_output() {
+            Ok(o) => o,
+            Err(e) => {
+                return Err(QemuSkipReason::WslWaitFailed(e.to_string()));
+            }
+        };
+
+        let combined = String::from_utf8_lossy(&output.stdout).into_owned();
+        if let Some(reason) = qemu_skip_reason_from_output(&combined) {
+            return Err(reason);
+        }
+
+        let sentinel_prefix = "---EXIT:";
+        let exit_code = combined
+            .lines()
+            .rev()
+            .find_map(|line| {
+                let trimmed = line.trim();
+                if trimmed.starts_with(sentinel_prefix) && trimmed.ends_with("---") {
+                    let inner = &trimmed[sentinel_prefix.len()..trimmed.len() - 3];
+                    inner.parse::<i32>().ok()
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| {
+                panic!("could not find exit-code sentinel in WSL output:\n{combined}")
+            });
+
+        let stdout = combined
+            .lines()
+            .filter(|l| {
+                let t = l.trim();
+                !t.starts_with(sentinel_prefix)
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let stdout = stdout.trim_matches('\n').to_string();
+
+        Ok(QemuResult { exit_code, stdout })
     }
 }
 
 /// Compile HLL and run through QEMU in one step.
-fn run_hll_via_qemu(source: &str) -> Option<QemuResult> {
+fn run_hll_via_qemu(source: &str) -> Result<QemuResult, QemuSkipReason> {
     let asm = compile_to_asm(source);
     run_asm_via_qemu(&asm)
 }
 
-// ── Test 1: Arithmetic & Types ────────────────────────────────────────────────
+/// Compile HLL to ELF and run through QEMU in one step.
+fn run_hll_elf_via_qemu(source: &str) -> Result<QemuResult, QemuSkipReason> {
+    let elf = compile_to_elf(source);
+    run_elf_via_qemu(&elf)
+}
+
+
 
 /// Verifies i32 mul/div/mod/sub, i64 cast roundtrip, u32 unsigned arithmetic,
 /// abs/clamp/gcd helpers, signed vs unsigned comparisons, and operator
@@ -183,13 +360,7 @@ fn run_hll_via_qemu(source: &str) -> Option<QemuResult> {
 #[test]
 fn qemu_01_arithmetic_and_types() {
     let source = read_program("01_arithmetic_and_types.hll");
-    let result = match run_hll_via_qemu(&source) {
-        Some(r) => r,
-        None => {
-            eprintln!("[SKIP] qemu_01_arithmetic_and_types – toolchain unavailable");
-            return;
-        }
-    };
+    let Some(result) = require_qemu_result("qemu_01_arithmetic_and_types", run_hll_via_qemu(&source)) else { return; };
     assert_eq!(
         result.exit_code, 42,
         "01_arithmetic_and_types: expected exit 42 (all arithmetic checks pass); \
@@ -199,7 +370,7 @@ fn qemu_01_arithmetic_and_types() {
     );
 }
 
-// ── Test 2: Control Flow ──────────────────────────────────────────────────────
+
 
 /// Verifies if/else chains (categorise helper), while accumulation, break,
 /// continue, nested loops, compile-time const, and boolean infix `and`.
@@ -207,13 +378,7 @@ fn qemu_01_arithmetic_and_types() {
 #[test]
 fn qemu_02_control_flow() {
     let source = read_program("02_control_flow.hll");
-    let result = match run_hll_via_qemu(&source) {
-        Some(r) => r,
-        None => {
-            eprintln!("[SKIP] qemu_02_control_flow – toolchain unavailable");
-            return;
-        }
-    };
+    let Some(result) = require_qemu_result("qemu_02_control_flow", run_hll_via_qemu(&source)) else { return; };
     assert_eq!(
         result.exit_code, 100,
         "02_control_flow: expected exit 100 (category=3 + sum=55 + break=7 + \
@@ -221,7 +386,7 @@ fn qemu_02_control_flow() {
     );
 }
 
-// ── Test 3: Structs & Destructuring ──────────────────────────────────────────
+
 
 /// Verifies inline struct literals, named type aliases, struct pass-by-value,
 /// dot product, scaling, the small-struct RISC-V ABI return path
@@ -231,13 +396,7 @@ fn qemu_02_control_flow() {
 #[test]
 fn qemu_03_structs_and_destructuring() {
     let source = read_program("03_structs_and_destructuring.hll");
-    let result = match run_hll_via_qemu(&source) {
-        Some(r) => r,
-        None => {
-            eprintln!("[SKIP] qemu_03_structs_and_destructuring – toolchain unavailable");
-            return;
-        }
-    };
+    let Some(result) = require_qemu_result("qemu_03_structs_and_destructuring", run_hll_via_qemu(&source)) else { return; };
     assert_eq!(
         result.exit_code, 0,
         "03_structs_and_destructuring: non-zero exit names the failing assertion \
@@ -248,7 +407,7 @@ fn qemu_03_structs_and_destructuring() {
     );
 }
 
-// ── Test 4: Pointers & Memory ─────────────────────────────────────────────────
+
 
 /// Verifies new/free, defer free (guaranteed cleanup), address-of stack
 /// variables, pointer mutation via function parameters, pointer swap,
@@ -260,13 +419,7 @@ fn qemu_03_structs_and_destructuring() {
 #[test]
 fn qemu_04_pointers_and_memory() {
     let source = read_program("04_pointers_and_memory.hll");
-    let result = match run_hll_via_qemu(&source) {
-        Some(r) => r,
-        None => {
-            eprintln!("[SKIP] qemu_04_pointers_and_memory – toolchain unavailable");
-            return;
-        }
-    };
+    let Some(result) = require_qemu_result("qemu_04_pointers_and_memory", run_hll_via_qemu(&source)) else { return; };
     assert_eq!(
         result.exit_code, 0,
         "04_pointers_and_memory: non-zero exit names the failing assertion \
@@ -276,7 +429,7 @@ fn qemu_04_pointers_and_memory() {
     );
 }
 
-// ── Test 5: Functions & I/O ───────────────────────────────────────────────────
+
 
 /// Verifies iterative factorial and Fibonacci (with boundary values),
 /// is_prime (including edge cases 1, 2, even numbers), prime counting,
@@ -286,13 +439,7 @@ fn qemu_04_pointers_and_memory() {
 #[test]
 fn qemu_05_functions_and_io() {
     let source = read_program("05_functions_and_io.hll");
-    let result = match run_hll_via_qemu(&source) {
-        Some(r) => r,
-        None => {
-            eprintln!("[SKIP] qemu_05_functions_and_io – toolchain unavailable");
-            return;
-        }
-    };
+    let Some(result) = require_qemu_result("qemu_05_functions_and_io", run_hll_via_qemu(&source)) else { return; };
 
     // Verify the I/O first so a mis-printed output gets its own message.
     assert_eq!(
@@ -309,8 +456,23 @@ fn qemu_05_functions_and_io() {
     );
 }
 
-// ── Compile-only smoke tests ──────────────────────────────────────────────────
-//
+
+
+/// Verifies that the assembled output can be exported as an ELF image and run
+/// directly under qemu-riscv64 without going through the GCC linker path.
+/// The arithmetic-and-types program is pure compute, so it avoids any libc or
+/// UART assumptions and gives a stable exit code.
+#[test]
+fn qemu_06_elf_export_and_execution() {
+    let source = read_program("01_arithmetic_and_types.hll");
+    let Some(result) = require_qemu_result("qemu_06_elf_export_and_execution", run_hll_elf_via_qemu(&source)) else { return; };
+    assert_eq!(
+        result.exit_code, 42,
+        "06_elf_export_and_execution: expected exit 42 after running the exported ELF under qemu-riscv64"
+    );
+}
+
+
 // These run on every platform (no WSL needed) and confirm the full
 // HLL → IR → assembly pipeline doesn't panic or error on any of the five
 // programs.  They are cheap and always active.

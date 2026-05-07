@@ -1,7 +1,6 @@
 ## Future Enhancements
 
-TODO: Update UI with central theme colors / objects, for easy changing themes etc... 
-
+fix this by adding my own stdlib with malloc and free that actually works, and then linking against it. 
 
 ## 1. What still needs to be added
 

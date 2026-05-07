@@ -5,6 +5,7 @@ use full_stack::assembly_language::riscv::rv64m::*;
 use full_stack::assembly_language::riscv::rv64zicsr::Csrrs;
 use full_stack::assembly_language::rv_instruction::RvInstruction;
 use full_stack::high_level_language::compilation_pipeline::CompilationPipeline;
+use full_stack::high_level_language::stdlib::prepend_stdlib;
 use full_stack::virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 
 // ---------------------------------------------------------------------------
@@ -12,8 +13,9 @@ use full_stack::virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 // ---------------------------------------------------------------------------
 
 fn run_hll_with_limit(src: &str, max_steps: u64) -> (VirtualMachine, StepOutcome, String) {
+    let src_with_stdlib = prepend_stdlib(src);
     let pipeline = CompilationPipeline::new();
-    let result = pipeline.compile(src).expect("compile failed");
+    let result = pipeline.compile(&src_with_stdlib).expect("compile failed");
     let (_, toks) = pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program);
     let assembled = pipeline.assemble(&toks).expect("assemble failed");
     let mut vm = VirtualMachine::new(&assembled);
@@ -31,14 +33,7 @@ fn run_hll_file(path: &str) -> (VirtualMachine, StepOutcome, String) {
 }
 
 fn run_hll(src: &str) -> (VirtualMachine, StepOutcome, String) {
-    let pipeline = CompilationPipeline::new();
-    let result = pipeline.compile(src).expect("compile failed");
-    let (_, toks) = pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program);
-    let assembled = pipeline.assemble(&toks).expect("assemble failed");
-    let mut vm = VirtualMachine::new(&assembled);
-    let run = vm.run(5_000_000);
-    let uart = run.uart_output.clone();
-    (vm, run.outcome, uart)
+    run_hll_with_limit(src, 5_000_000)
 }
 
 // ---------------------------------------------------------------------------
@@ -346,18 +341,96 @@ fn qemu_03_structs_and_destructuring() {
     );
 }
 
-// qemu_04 uses `defer`, pointer-to-pointer (@@), and stack arrays.
-// The program does not terminate in the internal VM within a reasonable step
-// budget — a pre-existing compiler/VM issue. Tracked in TODO.md under "VM
-// integration tests". The QEMU test suite covers this program via WSL.
 #[test]
-#[ignore]
 fn qemu_04_pointers_and_memory() {
     let (_, outcome, _) = run_hll_file("programs/test/qemu/04_pointers_and_memory.hll");
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
         "expected Halted(0), got {outcome:?}"
     );
+}
+
+/// Single new/free cycle, no defer.
+#[test]
+fn hll_new_and_free_basic() {
+    let (_, outcome, _) = run_hll(r#"
+main: () -> i32 {
+    p: i32* = new(i32)
+    @p = 42
+    v: i32 = @p
+    free(p)
+    return v
+}
+"#);
+    assert!(matches!(outcome, StepOutcome::Halted(42)), "expected Halted(42), got {outcome:?}");
+}
+
+/// Allocate, free, then reallocate - exercises the free-list reuse path.
+#[test]
+fn hll_new_free_reuse() {
+    let (_, outcome, _) = run_hll(r#"
+main: () -> i32 {
+    p: i32* = new(i32)
+    @p = 1
+    free(p)
+    q: i32* = new(i32)
+    @q = 42
+    v: i32 = @q
+    free(q)
+    return v
+}
+"#);
+    assert!(matches!(outcome, StepOutcome::Halted(42)), "expected Halted(42), got {outcome:?}");
+}
+
+/// defer free on a heap pointer.
+#[test]
+fn hll_defer_free() {
+    let (_, outcome, _) = run_hll(r#"
+main: () -> i32 {
+    p: i32* = new(i32)
+    defer free(p)
+    @p = 42
+    return @p
+}
+"#);
+    assert!(matches!(outcome, StepOutcome::Halted(42)), "expected Halted(42), got {outcome:?}");
+}
+
+#[test]
+fn debug_malloc_ir() {
+    let src = r#"
+main: () -> i32 {
+    p: i32* = new(i32)
+    @p = 42
+    v: i32 = @p
+    free(p)
+    return v
+}
+"#;
+    let src_with_stdlib = prepend_stdlib(src);
+    let pipeline = CompilationPipeline::new();
+    let result = pipeline.compile(&src_with_stdlib).expect("compile failed");
+    let ir_text = format!("{}", result.ir_program);
+    let (asm, _) = pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program);
+    // Print just the heap_raw_alloc and malloc IR functions
+    for line in ir_text.lines() {
+        if line.contains("heap_raw_alloc") || line.contains("malloc") || line.contains("heap_list") || line.contains("heap_bump") {
+            println!("{line}");
+        }
+    }
+    println!("--- ASM (heap_raw_alloc section) ---");
+    let mut in_fn = false;
+    for line in asm.lines() {
+        if line.contains("heap_raw_alloc:") { in_fn = true; }
+        if in_fn {
+            println!("{line}");
+            if line.trim().starts_with("ret") || (in_fn && line.contains(':') && !line.contains("heap_raw_alloc") && line.trim().ends_with(':')) {
+                in_fn = false;
+            }
+        }
+    }
+    panic!("diagnostic done");
 }
 
 #[test]

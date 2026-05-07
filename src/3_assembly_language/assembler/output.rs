@@ -135,13 +135,58 @@ impl AssembledOutput {
             }
         }
 
+        // ---- Build _start trampoline if only main is present ----
+        // qemu-riscv64 (Linux user-mode) jumps to the ELF entry point.  If the
+        // entry is main, returning from it crashes because ra is 0 at startup.
+        // We append a 12-byte _start stub that calls main then does exit_group.
+        //
+        // Encoding:
+        //   jal  ra, <main_addr - stub_addr>   ; PC-relative call to main
+        //   addi a7, x0, 94                    ; exit_group syscall number
+        //   ecall                              ; terminate with a0 as exit code
+        let start_stub: Option<(Vec<u8>, u64)> =
+            if !self.symbol_table.contains_key("_start") {
+                if let Some(&main_off) = self.symbol_table.get("main") {
+                    let stub_addr = running_addr; // placed after all existing sections
+                    let main_addr = load_base + main_off;
+                    let offset = (main_addr as i64) - (stub_addr as i64);
+                    // JAL ra, offset  (rd=1, opcode=0x6f)
+                    let off = offset as u32;
+                    let imm20 = (off >> 20) & 1;
+                    let imm10_1 = (off >> 1) & 0x3ff;
+                    let imm11 = (off >> 11) & 1;
+                    let imm19_12 = (off >> 12) & 0xff;
+                    let jal = (imm20 << 31) | (imm10_1 << 21) | (imm11 << 20)
+                        | (imm19_12 << 12) | (1 << 7) | 0x6f_u32;
+                    // ADDI a7, x0, 94  (exit_group)
+                    let addi: u32 = (94 << 20) | (17 << 7) | 0x13;
+                    // ECALL
+                    let ecall: u32 = 0x0000_0073;
+                    let mut stub = Vec::with_capacity(12);
+                    stub.extend_from_slice(&jal.to_le_bytes());
+                    stub.extend_from_slice(&addi.to_le_bytes());
+                    stub.extend_from_slice(&ecall.to_le_bytes());
+                    Some((stub, stub_addr))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
         // ---- Determine entry point ----
-        let entry = self
-            .symbol_table
-            .get("_start")
-            .or_else(|| self.symbol_table.get("main"))
-            .map(|addr| load_base + addr)
-            .unwrap_or(load_base);
+        let entry = if let Some(&sym_addr) = self.symbol_table.get("_start") {
+            load_base + sym_addr
+        } else if let Some((_, stub_addr)) = &start_stub {
+            *stub_addr
+        } else if let Some(&sym_addr) = self.symbol_table.get("main") {
+            load_base + sym_addr
+        } else {
+            elf_secs
+                .first()
+                .map(|s| s.load_addr)
+                .unwrap_or(load_base)
+        };
 
         // ---- Build section-name string table (.shstrtab) ----
         let mut shstrtab: Vec<u8> = vec![0]; // index 0 = empty string
@@ -196,7 +241,8 @@ impl AssembledOutput {
 
         // ---- Compute file layout ----
         let n_prog_secs = elf_secs.len();
-        let n_phdrs = n_prog_secs; // one PT_LOAD per section
+        // The _start stub gets its own PT_LOAD but no section header.
+        let n_phdrs = n_prog_secs + if start_stub.is_some() { 1 } else { 0 };
         let n_shdrs = 1 // SHT_NULL
             + n_prog_secs
             + 3; // .shstrtab, .strtab, .symtab
@@ -211,6 +257,12 @@ impl AssembledOutput {
             if !matches!(es.sec.kind, Some(SectionKind::Bss)) {
                 file_offset += es.sec.bytes.len() as u64;
             }
+        }
+
+        // Reserve space for the stub (if present) after all other section data.
+        let stub_file_offset = file_offset;
+        if let Some((ref stub_bytes, _)) = start_stub {
+            file_offset += stub_bytes.len() as u64;
         }
 
         let shstrtab_offset = file_offset;
@@ -238,7 +290,7 @@ impl AssembledOutput {
         push_u64_le(&mut buf, entry); // e_entry
         push_u64_le(&mut buf, ehdr_size); // e_phoff
         push_u64_le(&mut buf, shdrs_offset); // e_shoff
-        push_u32_le(&mut buf, 0x0005); // e_flags: RVC + double-float ABI
+        push_u32_le(&mut buf, 0x0005); // e_flags: RV64 soft-float ABI
         push_u16_le(&mut buf, ELF64_HDR_SIZE);
         push_u16_le(&mut buf, ELF64_PHDR_SIZE);
         push_u16_le(&mut buf, n_phdrs as u16);
@@ -267,7 +319,22 @@ impl AssembledOutput {
             push_u64_le(&mut buf, es.load_addr); // p_paddr
             push_u64_le(&mut buf, filesz); // p_filesz
             push_u64_le(&mut buf, es.sec.bytes.len() as u64); // p_memsz
-            push_u64_le(&mut buf, 0x1000); // p_align
+            // p_align = 1: no alignment constraint.  Segments are placed at
+            // file offsets that are NOT page-aligned (ehdr+phdrs precede them),
+            // so p_align = 0x1000 would violate p_vaddr ≡ p_offset (mod align).
+            push_u64_le(&mut buf, 1);
+        }
+
+        // Program header for the _start stub (executable, no section header).
+        if let Some((ref stub_bytes, stub_vaddr)) = start_stub {
+            push_u32_le(&mut buf, PT_LOAD);
+            push_u32_le(&mut buf, PF_R | PF_X);
+            push_u64_le(&mut buf, stub_file_offset);
+            push_u64_le(&mut buf, stub_vaddr);
+            push_u64_le(&mut buf, stub_vaddr);
+            push_u64_le(&mut buf, stub_bytes.len() as u64);
+            push_u64_le(&mut buf, stub_bytes.len() as u64);
+            push_u64_le(&mut buf, 1);
         }
 
         // ---- Emit section data ----
@@ -276,6 +343,12 @@ impl AssembledOutput {
             if !matches!(es.sec.kind, Some(SectionKind::Bss)) {
                 buf.extend_from_slice(&es.sec.bytes);
             }
+        }
+
+        // Emit _start stub bytes (if present).
+        debug_assert_eq!(buf.len() as u64, stub_file_offset);
+        if let Some((ref stub_bytes, _)) = start_stub {
+            buf.extend_from_slice(stub_bytes);
         }
 
         // ---- Emit .shstrtab, .strtab, .symtab ----
@@ -336,7 +409,6 @@ impl AssembledOutput {
         push_u64_le(&mut buf, 0);
 
         // .symtab header
-        let symtab_shndx = 1 + n_prog_secs + 2; // index of .symtab section header
         let strtab_shndx = 1 + n_prog_secs + 1; // index of .strtab
         let n_local_syms = sorted_syms
             .iter()
@@ -354,7 +426,6 @@ impl AssembledOutput {
         push_u64_le(&mut buf, 8);
         push_u64_le(&mut buf, ELF64_SYM_SIZE as u64);
 
-        let _ = symtab_shndx; // suppress unused warning
         buf
     }
 }

@@ -65,7 +65,7 @@ impl VirtualMachine {
     pub fn step(&mut self) -> Result<StepOutcome, VmError> {
         use crate::virtual_machine::cpu::pipelined::TickOutcome;
         match self.cpu.tick(&mut self.bus)? {
-            TickOutcome::Continue => Ok(StepOutcome::Continue),
+            TickOutcome::Continue | TickOutcome::EcallSquash => Ok(StepOutcome::Continue),
             TickOutcome::Halted(code) => Ok(StepOutcome::Halted(code)),
         }
     }

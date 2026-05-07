@@ -93,11 +93,21 @@ impl fmt::Display for IrFunction {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+/// A global variable emitted into the `.bss` / `.data` section.
+#[derive(Debug, Clone)]
+pub struct IrGlobalVar {
+    pub name: String,
+    pub ty: IrType,
+    /// Raw initial bytes; `None` means zero-initialised (goes in `.bss`).
+    pub init: Option<Vec<u8>>,
+}
+
+#[derive(Debug)]
 pub struct IrProgram {
     pub module_name: String,
     pub type_aliases: Vec<IrTypeAlias>,
     pub global_strings: Vec<IrGlobalString>,
+    pub global_vars: Vec<IrGlobalVar>,
     pub functions: Vec<IrFunction>,
 }
 
@@ -107,6 +117,7 @@ impl IrProgram {
             module_name: module_name.into(),
             type_aliases: Vec::new(),
             global_strings: Vec::new(),
+            global_vars: Vec::new(),
             functions: Vec::new(),
         }
     }
@@ -117,6 +128,10 @@ impl IrProgram {
 
     pub fn push_global_string(&mut self, global_string: IrGlobalString) {
         self.global_strings.push(global_string);
+    }
+
+    pub fn push_global_var(&mut self, var: IrGlobalVar) {
+        self.global_vars.push(var);
     }
 
     pub fn push_function(&mut self, function: IrFunction) {

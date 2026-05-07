@@ -179,7 +179,6 @@ impl<'a> Lexer<'a> {
             "return" => Token::Return,
             "defer" => Token::Defer,
             "new" => Token::New,
-            "free" => Token::Free,
             "and" => Token::And,
             "or" => Token::Or,
             "not" => Token::Not,

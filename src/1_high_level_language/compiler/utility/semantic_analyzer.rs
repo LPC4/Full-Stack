@@ -128,7 +128,16 @@ impl SemanticAnalyzer {
                 self.current_function = None;
                 Ok(())
             }
-            DeclNode::Type { .. } | DeclNode::Const { .. } | DeclNode::Variable { .. } => Ok(()),
+            DeclNode::Type { .. } | DeclNode::Const { .. } => Ok(()),
+            DeclNode::Variable { name, ty, init: _ } => {
+                let ir_ty = self.ast_type_to_ir_type(ty);
+                self.symbols.insert(
+                    name.clone(),
+                    ir_ty,
+                    crate::intermediate_language::IrValue::Null,
+                );
+                Ok(())
+            }
         }
     }
 

@@ -92,9 +92,6 @@ impl<'a> Parser<'a> {
             }
             Some(Token::Ident(_)) => {
                 // Look ahead to determine if this is a function or variable declaration
-                // Function=    identifier : ( params ) -> return_type { }
-                // Variable=    identifier : type [= expr]
-                // After "identifier:", if next is LParen, it's a function
                 if self.peek_n(1) == Some(&Token::Colon) && self.peek_n(2) == Some(&Token::LParen) {
                     self.parse_function_decl(false)?
                 } else {
@@ -156,7 +153,6 @@ impl<'a> Parser<'a> {
                 Ok(Statement::Block(self.parse_block()?))
             }
             Some(Token::Ident(_)) if self.peek_n(1) == Some(&Token::Colon) => {
-                // This is a variable declaration: ident : type = expr
                 let name = self.expect_ident()?;
                 self.expect_colon()?;
                 let ty = self.parse_type()?;
@@ -223,12 +219,10 @@ impl<'a> Parser<'a> {
         let name = self.expect_ident()?;
         let generics = self.parse_generic_params()?;
 
-        // Expect colon before parameters
         self.expect_colon()?;
 
         let params = self.parse_param_list()?;
 
-        // Expect arrow for return type
         let return_type = if self.match_arrow() {
             Some(self.parse_return_type()?)
         } else {
@@ -319,7 +313,6 @@ impl<'a> Parser<'a> {
         if self.is_expression_terminator() || self.check_rbrace() || self.is_eof() {
             Ok(Statement::Return(None))
         } else {
-            // Parse a single expression (including inline struct literals)
             let expr = self.parse_expression()?;
             Ok(Statement::Return(Some(expr)))
         }
@@ -475,18 +468,14 @@ impl<'a> Parser<'a> {
             if self.peek() == Some(&Token::Star) {
                 if let Expression::Primary(PrimaryExpr::Identifier(name)) = &expr {
                     if let Some(base_ty) = self.parse_type_name_as_cast(name) {
-                        // Lookahead to see if next token after * is (
                         if self.peek_n(1) == Some(&Token::LParen) {
-                            // This is a pointer-cast: consume *
                             self.advance();
 
                             let ptr_ty = Type::Pointer(Box::new(base_ty));
 
-                            // Consume ( and parse the argument
                             self.advance(); // consume LParen
                             let arguments = self.parse_argument_list_after_open_paren()?;
 
-                            // Type casts should have exactly one argument
                             if arguments.len() != 1 {
                                 return Err(self.error("type cast expects exactly one argument"));
                             }
@@ -496,9 +485,7 @@ impl<'a> Parser<'a> {
                                 expr: Box::new(arguments.into_iter().next().unwrap()),
                             };
 
-                            // Allow further postfix operations
                             expr = self.parse_postfix(expr)?;
-
                             continue;
                         }
                     }
@@ -548,7 +535,7 @@ impl<'a> Parser<'a> {
         }
 
         let mut expr = self.parse_primary()?;
-        expr = self.parse_postfix(expr)?; // apply postfix first (binds tighter)
+        expr = self.parse_postfix(expr)?;
         for op in ops.into_iter().rev() {
             expr = Expression::Unary {
                 op,
@@ -585,21 +572,16 @@ impl<'a> Parser<'a> {
                     _ => return Err(self.error("function calls must target an identifier")),
                 };
 
-                // Check if this is a type cast (e.g., u32(value), i64(x))
                 if let Some(target_ty) = self.parse_type_name_as_cast(&name) {
                     let arguments = self.parse_argument_list_after_open_paren()?;
-
-                    // Type casts should have exactly one argument
                     if arguments.len() != 1 {
                         return Err(self.error("type cast expects exactly one argument"));
                     }
-
                     expr = Expression::Cast {
                         target_ty,
                         expr: Box::new(arguments.into_iter().next().unwrap()),
                     };
                 } else {
-                    // Regular function call
                     let arguments = self.parse_argument_list_after_open_paren()?;
                     expr = Expression::Primary(PrimaryExpr::FunctionCall { name, arguments });
                 }
@@ -761,13 +743,17 @@ impl<'a> Parser<'a> {
 
     fn parse_argument_list_after_open_paren(&mut self) -> Result<Vec<Expression>, ParserError> {
         let mut args = Vec::new();
+        self.consume_terminators();       // after '('
         if self.match_rparen() {
             return Ok(args);
         }
 
         loop {
+            self.consume_terminators();   // before each argument
             args.push(self.parse_expression()?);
+            self.consume_terminators();   // after argument
             if self.match_comma() {
+                self.consume_terminators(); // after comma
                 if self.check_rparen() {
                     break;
                 }
@@ -776,16 +762,26 @@ impl<'a> Parser<'a> {
             break;
         }
 
+        self.consume_terminators();       // before ')'
         self.expect_rparen()?;
         Ok(args)
     }
 
-    /// Check if an identifier is a type name that can be used for casting
     fn parse_type_name_as_cast(&self, name: &str) -> Option<Type> {
         match name {
             "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" | "f32" | "f64"
             | "bool" => Some(Type::Primitive(name.to_owned())),
-            _ => None,
+            _ => {
+                // PascalCase identifiers are treated as named type casts (e.g. Str, HeapBlock).
+                if name.starts_with(|c: char| c.is_uppercase()) {
+                    Some(Type::Named {
+                        name: name.to_owned(),
+                        args: Vec::new(),
+                    })
+                } else {
+                    None
+                }
+            }
         }
     }
 
@@ -813,7 +809,6 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_struct_destructure_field(&mut self) -> Result<StructDestructureField, ParserError> {
-        // Per spec v1.4.1: struct destructuring requires explicit type annotations
         let name = self.expect_ident()?;
         self.expect_colon()?;
         let ty = self.parse_type()?;
@@ -1045,7 +1040,6 @@ impl<'a> Parser<'a> {
                 if self.peek_n(1) != Some(&Token::Colon) {
                     return false;
                 }
-                // `name: (` is function decl syntax; `name: type` is variable decl.
                 true
             }
             _ => false,
@@ -1132,7 +1126,6 @@ impl<'a> Parser<'a> {
                 self.advance();
                 Expression::Primary(PrimaryExpr::Identifier(id))
             }
-            // Casts
             Some(Token::I8) => {
                 self.advance();
                 Expression::Primary(PrimaryExpr::Identifier("i8".to_owned()))
@@ -1177,10 +1170,6 @@ impl<'a> Parser<'a> {
                 self.advance();
                 Expression::Primary(PrimaryExpr::Identifier("bool".to_owned()))
             }
-            Some(Token::Free) => {
-                self.advance();
-                Expression::Primary(PrimaryExpr::Identifier("free".to_owned()))
-            }
             Some(Token::LParen) => {
                 self.advance();
                 let expr = self.parse_expression()?;
@@ -1190,10 +1179,14 @@ impl<'a> Parser<'a> {
             Some(Token::LBracket) => {
                 self.advance();
                 let mut elements = Vec::new();
+                self.consume_terminators();          // after '['
                 if !self.check_rbracket() {
                     loop {
+                        self.consume_terminators();  // before element
                         elements.push(self.parse_expression()?);
+                        self.consume_terminators();  // after element
                         if self.match_comma() {
+                            self.consume_terminators(); // after comma
                             if self.check_rbracket() {
                                 break;
                             }
@@ -1202,14 +1195,17 @@ impl<'a> Parser<'a> {
                         break;
                     }
                 }
+                self.consume_terminators();          // before ']'
                 self.expect_rbracket()?;
                 Expression::Primary(PrimaryExpr::ArrayLiteral(elements))
             }
             Some(Token::LBrace) => {
                 self.advance();
                 let mut fields = Vec::new();
+                self.consume_terminators();          // after '{'
                 if !self.check_rbrace() {
                     loop {
+                        self.consume_terminators();  // before field
                         let (name, ty) = if self.match_dot() {
                             let name = self.expect_ident()?;
                             (name, None)
@@ -1223,7 +1219,9 @@ impl<'a> Parser<'a> {
                         let expr = self.parse_expression()?;
                         fields.push(FieldInit { name, ty, expr });
 
+                        self.consume_terminators();  // after value
                         if self.match_comma() {
+                            self.consume_terminators(); // after comma
                             if self.check_rbrace() {
                                 break;
                             }
@@ -1232,7 +1230,7 @@ impl<'a> Parser<'a> {
                         break;
                     }
                 }
-
+                self.consume_terminators();          // before '}'
                 self.expect_rbrace()?;
                 Expression::Primary(PrimaryExpr::StructLiteral(fields))
             }
@@ -1241,11 +1239,15 @@ impl<'a> Parser<'a> {
                 self.expect_lparen()?;
                 let ty = self.parse_type()?;
                 let mut args = Vec::new();
+                self.consume_terminators();          // after '('
                 if self.match_comma() {
                     if !self.check_rparen() {
                         loop {
+                            self.consume_terminators(); // before arg
                             args.push(self.parse_expression()?);
+                            self.consume_terminators(); // after arg
                             if self.match_comma() {
+                                self.consume_terminators(); // after comma
                                 if self.check_rparen() {
                                     break;
                                 }
@@ -1255,6 +1257,7 @@ impl<'a> Parser<'a> {
                         }
                     }
                 }
+                self.consume_terminators();          // before ')'
                 self.expect_rparen()?;
                 Expression::Primary(PrimaryExpr::New { ty, args })
             }
@@ -1434,7 +1437,6 @@ impl<'a> Parser<'a> {
     }
 
     fn current_span(&self) -> Span {
-        // Use the span of the current (not yet consumed) token, or the last one.
         let idx = self.pos.min(self.spans.len().saturating_sub(1));
         self.spans.get(idx).cloned().unwrap_or_default()
     }

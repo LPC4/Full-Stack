@@ -244,6 +244,34 @@ impl HighLevelCompiler {
             }
         } else if let Some(const_val) = self.compile_time_consts.get(name).cloned() {
             Some(self.lower_literal(&const_val))
+        } else if let Some(gv_ty) = self.global_vars.get(name).cloned() {
+            // Global variable: emit `la dest, name` to get its address.
+            let addr_reg = self.new_temp();
+            self.push_instruction(IrInstruction::GlobalRef {
+                dest: addr_reg.clone(),
+                name: name.to_owned(),
+            });
+            match mode {
+                super::EvalMode::Address => Some(LoweredValue {
+                    value: IrValue::Register(addr_reg),
+                    ty: IrType::Pointer(Box::new(gv_ty)),
+                    is_unsigned: false,
+                }),
+                super::EvalMode::Value => {
+                    let val_reg = self.new_temp();
+                    self.push_instruction(IrInstruction::Load {
+                        dest: val_reg.clone(),
+                        ty: gv_ty.clone(),
+                        ptr: addr_reg,
+                        offset: None,
+                    });
+                    Some(LoweredValue {
+                        value: IrValue::Register(val_reg),
+                        ty: gv_ty,
+                        is_unsigned: false,
+                    })
+                }
+            }
         } else {
             self.context
                 .diagnostics

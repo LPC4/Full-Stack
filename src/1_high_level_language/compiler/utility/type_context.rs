@@ -119,12 +119,14 @@ impl TypeContext {
         let lhs_placeholder = self.is_placeholder_like(lhs_type);
         let rhs_placeholder = self.is_placeholder_like(rhs_type);
 
-        // Both operands must be same type
+        // Both operands must be the same type, with an exception: integer types of
+        // different widths are compatible (e.g. i64 op i32 literal is valid).
         if lhs_type != rhs_type
             && !lhs_unknown
             && !rhs_unknown
             && !lhs_placeholder
             && !rhs_placeholder
+            && !(Self::is_integer_typename(lhs_type) && Self::is_integer_typename(rhs_type))
         {
             return Err(TypeCheckError::TypeMismatch {
                 expected: lhs_type.to_owned(),
@@ -223,6 +225,13 @@ impl TypeContext {
             }
             UnaryOp::AddressOf => Ok(format!("*{operand_type}")),
         }
+    }
+
+    fn is_integer_typename(ty: &str) -> bool {
+        matches!(
+            ty,
+            "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64"
+        )
     }
 
     fn is_numeric(&self, ty: &str) -> bool {

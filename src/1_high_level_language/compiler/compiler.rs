@@ -7,9 +7,9 @@ use crate::high_level_language::ast::{
 use crate::high_level_language::compiler::SemanticAnalyzer;
 use crate::high_level_language::compiler::utility::LoweringContext;
 use crate::intermediate_language::{
-    FloatWidth, IntWidth, IrBlock, IrCmpOp, IrFunction, IrGlobalString, IrInstruction, IrLabel,
-    IrMathOp, IrParam, IrProgram, IrRegister, IrTerminator, IrType, IrTypeAlias, IrUnaryOp,
-    IrValue,
+    FloatWidth, IntWidth, IrBlock, IrCmpOp, IrFunction, IrGlobalString, IrGlobalVar, IrInstruction,
+    IrLabel, IrMathOp, IrParam, IrProgram, IrRegister, IrTerminator, IrType, IrTypeAlias,
+    IrUnaryOp, IrValue,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,6 +73,8 @@ pub struct HighLevelCompiler {
     /// Store function declarations for compile-time evaluation
     function_declarations: std::collections::HashMap<String, FunctionDecl>,
     pending_global_strings: Vec<IrGlobalString>,
+    /// Global variables declared at module scope: name -> IR type
+    global_vars: std::collections::HashMap<String, IrType>,
 }
 
 impl HighLevelCompiler {
@@ -91,6 +93,7 @@ impl HighLevelCompiler {
             function_return_types: std::collections::HashMap::new(),
             function_declarations: std::collections::HashMap::new(),
             pending_global_strings: Vec::new(),
+            global_vars: std::collections::HashMap::new(),
         }
     }
 
@@ -115,6 +118,7 @@ impl HighLevelCompiler {
         self.next_temp = 0;
         self.next_label = 0;
         self.pending_global_strings.clear();
+        self.global_vars.clear();
         let mut ir_program = IrProgram::new("ir_program");
 
         for declaration in &program.declarations {

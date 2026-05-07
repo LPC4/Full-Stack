@@ -1,0 +1,68 @@
+; 64 KB static heap buffer in BSS (zero-initialised by the loader).
+heap_buffer: u8[65536]
+
+; Byte offset of the next free slot inside heap_buffer.
+heap_bump: u64 = 0
+
+; Head of the free-list (HeapBlock nodes live inside heap_buffer).
+heap_list: HeapBlock* = null
+
+; Allocate n bytes from heap_buffer at the current bump offset.
+; Rounds up to the nearest 8-byte boundary; returns null on overflow.
+heap_raw_alloc: (n: u64) -> u8* {
+    aligned: u64 = ((n + 7) / 8) * 8
+    new_bump: u64 = heap_bump + aligned
+    if new_bump > 65536 {
+        return null
+    }
+    ptr: u8* = heap_buffer[heap_bump]
+    heap_bump = new_bump
+    return ptr
+}
+
+malloc: (size: u64) -> u8* {
+    requested: u64 = size
+    if requested == 0 {
+        requested = 1
+    }
+
+    current: HeapBlock* = heap_list
+    while current != null {
+        if @current.is_free != 0 and @current.size >= requested {
+            @current.is_free = 0
+            return @current.ptr
+        }
+        current = @current.next
+    }
+
+    block: HeapBlock* = HeapBlock*(heap_raw_alloc(32))
+    if block == null {
+        return null
+    }
+    payload: u8* = heap_raw_alloc(requested)
+    if payload == null {
+        return null
+    }
+    @block = {
+        .next    = heap_list,
+        .ptr     = payload,
+        .size    = requested,
+        .is_free = 0,
+    }
+    heap_list = block
+    return payload
+}
+
+free: (ptr: u8*) -> () {
+    if ptr == null {
+        return
+    }
+    current: HeapBlock* = heap_list
+    while current != null {
+        if @current.ptr == ptr {
+            @current.is_free = 1
+            return
+        }
+        current = @current.next
+    }
+}

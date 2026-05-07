@@ -29,7 +29,7 @@ fn run_n(cpu: &mut PipelinedCpu, bus: &mut SystemBus, max: u64) -> TickOutcome {
     for _ in 0..max {
         match cpu.tick(bus) {
             Ok(TickOutcome::Halted(code)) => return TickOutcome::Halted(code),
-            Ok(TickOutcome::Continue) => {}
+            Ok(TickOutcome::Continue | TickOutcome::EcallSquash) => {}
             Err(_) => return TickOutcome::Halted(-1),
         }
     }

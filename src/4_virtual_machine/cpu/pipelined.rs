@@ -48,6 +48,9 @@ const CAUSE_ECALL_M: u64 = 11;
 pub enum TickOutcome {
     Continue,
     Halted(i64),
+    /// An ecall was serviced in WB. The pipeline was squashed; remaining stages
+    /// must not commit their results. tick() early-returns after seeing this.
+    EcallSquash,
 }
 
 #[derive(Default, Debug, Clone)]
@@ -194,8 +197,19 @@ impl PipelinedCpu {
 
         // ---- WB stage -------------------------------------------------------
         let wb_outcome = self.stage_wb(old_mem_wb.as_ref(), bus)?;
-        if let TickOutcome::Halted(code) = wb_outcome {
-            return Ok(TickOutcome::Halted(code));
+        match wb_outcome {
+            TickOutcome::Halted(code) => return Ok(TickOutcome::Halted(code)),
+            TickOutcome::EcallSquash => {
+                // An ecall was serviced. fetch_pc is already set to the next
+                // instruction after the ecall (the `jalr` ret stub). The old
+                // pipeline latches (old_ex_mem / old_id_ex / old_if_id) contain
+                // instructions that were speculatively fetched past the ecall and
+                // must be squashed -- we do that by early-returning here so their
+                // results never get written to self.{mem_wb, ex_mem, id_ex, if_id}.
+                self.flush_pipeline();
+                return Ok(TickOutcome::Continue);
+            }
+            TickOutcome::Continue => {}
         }
 
         // ---- MEM stage ------------------------------------------------------
@@ -649,6 +663,11 @@ impl PipelinedCpu {
     }
 
     fn handle_ecall(&mut self, bus: &mut SystemBus) -> Result<TickOutcome, VmError> {
+        // NOTE: do NOT call flush_pipeline() here. tick() has already snapshotted
+        // the old pipeline latches into local old_* variables, so flushing self.*
+        // has no effect on the stages that run after WB in the same tick. Instead,
+        // tick() detects EcallSquash and early-returns before committing any
+        // new stage results, which is the correct squash mechanism.
         let syscall = self.regs.read_x(17);
         match syscall {
             64 => {
@@ -666,7 +685,7 @@ impl PipelinedCpu {
                 self.fetch_pc = self.regs.pc;
                 self.csrs.increment_instret();
                 self.stats.insns_retired += 1;
-                Ok(TickOutcome::Continue)
+                Ok(TickOutcome::EcallSquash)
             }
             93 | 94 => {
                 let code = self.regs.read_x(10) as i64;
@@ -680,7 +699,7 @@ impl PipelinedCpu {
                 self.fetch_pc = self.regs.pc;
                 self.csrs.increment_instret();
                 self.stats.insns_retired += 1;
-                Ok(TickOutcome::Continue)
+                Ok(TickOutcome::EcallSquash)
             }
             1001 => {
                 // puts(a0 = ptr to null-terminated string), writes string + newline
@@ -699,7 +718,7 @@ impl PipelinedCpu {
                 self.fetch_pc = self.regs.pc;
                 self.csrs.increment_instret();
                 self.stats.insns_retired += 1;
-                Ok(TickOutcome::Continue)
+                Ok(TickOutcome::EcallSquash)
             }
             1002 => {
                 // printf(a0 = fmt, a1..a7 = varargs)
@@ -713,33 +732,7 @@ impl PipelinedCpu {
                 self.fetch_pc = self.regs.pc;
                 self.csrs.increment_instret();
                 self.stats.insns_retired += 1;
-                Ok(TickOutcome::Continue)
-            }
-            1003 => {
-                // malloc(a0 = size), bump allocator
-                use crate::virtual_machine::bus::HEAP_PTR_ADDR;
-                let size = self.regs.read_x(10);
-                let aligned = (size + 7) & !7;
-                let current = bus
-                    .read_doubleword(HEAP_PTR_ADDR)
-                    .unwrap_or(HEAP_PTR_ADDR + 8);
-                let new_ptr = current.wrapping_add(aligned);
-                let _ = bus.write_doubleword(HEAP_PTR_ADDR, new_ptr);
-                self.regs.write_x(10, current);
-                self.regs.pc = self.regs.pc.wrapping_add(4);
-                self.fetch_pc = self.regs.pc;
-                self.csrs.increment_instret();
-                self.stats.insns_retired += 1;
-                Ok(TickOutcome::Continue)
-            }
-            1004 => {
-                // free(a0 = ptr), no-op (bump allocator never reclaims)
-                self.regs.write_x(10, 0);
-                self.regs.pc = self.regs.pc.wrapping_add(4);
-                self.fetch_pc = self.regs.pc;
-                self.csrs.increment_instret();
-                self.stats.insns_retired += 1;
-                Ok(TickOutcome::Continue)
+                Ok(TickOutcome::EcallSquash)
             }
             _ => {
                 self.regs.write_x(10, u64::MAX);
@@ -747,7 +740,7 @@ impl PipelinedCpu {
                 self.fetch_pc = self.regs.pc;
                 self.csrs.increment_instret();
                 self.stats.insns_retired += 1;
-                Ok(TickOutcome::Continue)
+                Ok(TickOutcome::EcallSquash)
             }
         }
     }
@@ -760,7 +753,7 @@ impl PipelinedCpu {
         let mut outcome = TickOutcome::Continue;
         for _ in 0..max_cycles {
             match self.tick(bus) {
-                Ok(TickOutcome::Continue) => {}
+                Ok(TickOutcome::Continue | TickOutcome::EcallSquash) => {}
                 Ok(TickOutcome::Halted(code)) => {
                     outcome = TickOutcome::Halted(code);
                     break;

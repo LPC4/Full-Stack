@@ -206,8 +206,9 @@ impl CompilationPipeline {
 
     /// Assemble a token stream into machine code, producing one byte blob per section.
     ///
-    /// Stubs for common libc symbols (putchar, printf, puts, malloc, free, exit) are
-    /// appended automatically so external calls resolve without needing a real libc.
+    /// Stubs for common runtime symbols are appended automatically so external
+    /// calls resolve without needing a real libc. Heap primitives use internal
+    /// raw names so the public stdlib can provide `malloc` and `free`.
     pub fn assemble(
         &self,
         tokens: &[crate::assembly_language::rv_instruction::RvInstruction],
@@ -222,7 +223,7 @@ impl CompilationPipeline {
 }
 
 // ---------------------------------------------------------------------------
-// Libc stub injection
+// Runtime stub injection
 // ---------------------------------------------------------------------------
 
 /// Build the syscall-based stubs for common external symbols.
@@ -244,8 +245,6 @@ fn extern_stubs() -> Vec<crate::assembly_language::rv_instruction::RvInstruction
         ("putchar", 1000),
         ("puts", 1001),
         ("printf", 1002),
-        ("malloc", 1003),
-        ("free", 1004),
         ("exit", 93),
     ];
 

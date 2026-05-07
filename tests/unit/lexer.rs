@@ -70,7 +70,7 @@ fn test_memory_management() {
     assert_eq!(lexer.next_token(), Token::StatementTerminator);
 
     assert_eq!(lexer.next_token(), Token::Defer);
-    assert_eq!(lexer.next_token(), Token::Free);
+    assert_eq!(lexer.next_token(), Token::Ident("free"));
     assert_eq!(lexer.next_token(), Token::Ident("ptr"));
     assert_eq!(lexer.next_token(), Token::StatementTerminator);
     assert_eq!(lexer.next_token(), Token::Eof);

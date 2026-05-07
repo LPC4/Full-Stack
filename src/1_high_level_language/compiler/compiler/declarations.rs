@@ -1,7 +1,8 @@
 use super::{
     Block, CompilerError, DeclNode, Declaration, Expression, FunctionDecl, GenericTypeDef,
-    HighLevelCompiler, IrFunction, IrInstruction, IrParam, IrProgram, IrRegister, IrTerminator,
-    IrType, IrTypeAlias, IrValue, Literal, LoweringContext, Program, SemanticAnalyzer, Statement,
+    HighLevelCompiler, IrFunction, IrGlobalVar, IrInstruction, IrParam, IrProgram, IrRegister,
+    IrTerminator, IrType, IrTypeAlias, IrValue, Literal, LoweringContext, Program, SemanticAnalyzer,
+    Statement,
 };
 
 #[derive(Debug, Clone)]
@@ -56,14 +57,28 @@ impl HighLevelCompiler {
                     Ok(())
                 }
             }
-            DeclNode::Variable {
-                name,
-                ty: _ty,
-                init: _init,
-            } => {
-                self.context.warn(format!(
-                    "global variable `{name}` lowering emitted as static placeholder"
-                ));
+            DeclNode::Variable { name, ty, init } => {
+                let ir_ty = self.lower_type(ty);
+                // Zero-initialised for null/zero init, otherwise use raw bytes if constant.
+                let init_bytes: Option<Vec<u8>> = match init {
+                    None => None,
+                    Some(expr) => {
+                        if let Ok(lit) = self.eval_const_expr(expr) {
+                            match &lit {
+                                Literal::Integer(0) | Literal::Null => None,
+                                _ => None, // non-zero init: treat as zero for now
+                            }
+                        } else {
+                            None
+                        }
+                    }
+                };
+                self.global_vars.insert(name.clone(), ir_ty.clone());
+                ir_program.push_global_var(IrGlobalVar {
+                    name: name.clone(),
+                    ty: ir_ty,
+                    init: init_bytes,
+                });
                 Ok(())
             }
             DeclNode::Const { name, init } => {

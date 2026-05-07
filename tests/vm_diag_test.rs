@@ -1,4 +1,5 @@
 use full_stack::high_level_language::compilation_pipeline::CompilationPipeline;
+use full_stack::high_level_language::stdlib::prepend_stdlib;
 use full_stack::virtual_machine::virtual_machine::VirtualMachine;
 
 #[test]
@@ -65,7 +66,8 @@ fn vm_diag_printf_symbols() {
 
 #[test]
 fn vm_diag_generics_strings() {
-    let src = std::fs::read_to_string("programs/example/generics_strings.hll").unwrap();
+    let raw = std::fs::read_to_string("programs/example/generics_strings.hll").unwrap();
+    let src = prepend_stdlib(&raw);
     let pipeline = CompilationPipeline::new();
     let result = pipeline.compile(&src).expect("compile");
 
@@ -134,4 +136,60 @@ main: () -> i32 {
     eprintln!("UART: {:?}", run.uart_output);
     eprintln!("Outcome: {:?}", run.outcome);
     eprintln!("Steps: {}", run.steps);
+}
+
+#[test]
+fn vm_diag_malloc_loop() {
+    let src = prepend_stdlib(r#"
+main: () -> i32 {
+    p: i32* = new(i32)
+    @p = 42
+    v: i32 = @p
+    free(p)
+    return v
+}
+"#);
+    let pipeline = CompilationPipeline::new();
+    let result = pipeline.compile(&src).expect("compile");
+    let (asm_text, toks) = pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program);
+    let assembled = pipeline.assemble(&toks).expect("assemble");
+
+    eprintln!("=== SYMBOL TABLE ===");
+    let mut syms: Vec<_> = assembled.symbol_table.iter().collect();
+    syms.sort_by_key(|(_, v)| *v);
+    for (k, v) in &syms {
+        eprintln!("  {:#010x}  {}", v, k);
+    }
+
+    let _ = asm_text;
+    let mut vm = VirtualMachine::new(&assembled);
+
+    // Run step-by-step and print PC transitions
+    let mut prev_pc = 0u64;
+    let mut same_count = 0u64;
+    for i in 0..200_000u64 {
+        let pc = vm.peek_pc();
+        if pc == prev_pc {
+            same_count += 1;
+            if same_count > 100 {
+                eprintln!("STUCK at PC {:#x} for {} steps (step {})", pc, same_count, i);
+                break;
+            }
+        } else {
+            same_count = 0;
+        }
+        prev_pc = pc;
+        match vm.step() {
+            Ok(full_stack::virtual_machine::virtual_machine::StepOutcome::Halted(code)) => {
+                eprintln!("Halted({}) at step {}, PC={:#x}", code, i, pc);
+                break;
+            }
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!("Error at step {}: {:?}", i, e);
+                break;
+            }
+        }
+    }
+    eprintln!("UART: {:?}", String::from_utf8_lossy(&vm.drain_uart_output()));
 }

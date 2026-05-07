@@ -343,30 +343,6 @@ mod cpu_impl {
                     self.csrs.increment_cycle();
                     Ok(StepOutcome::Continue)
                 }
-                // malloc(a0 = size), bump allocator; bump ptr lives at HEAP_PTR_ADDR
-                1003 => {
-                    use crate::virtual_machine::bus::HEAP_PTR_ADDR;
-                    let size = self.regs.read_x(10);
-                    let aligned = (size + 7) & !7;
-                    let current = bus
-                        .read_doubleword(HEAP_PTR_ADDR)
-                        .unwrap_or(HEAP_PTR_ADDR + 8);
-                    let new_ptr = current.wrapping_add(aligned);
-                    let _ = bus.write_doubleword(HEAP_PTR_ADDR, new_ptr);
-                    self.regs.write_x(10, current);
-                    self.regs.pc = self.regs.pc.wrapping_add(4);
-                    self.csrs.increment_instret();
-                    self.csrs.increment_cycle();
-                    Ok(StepOutcome::Continue)
-                }
-                // free(a0 = ptr), no-op (bump allocator never reclaims)
-                1004 => {
-                    self.regs.write_x(10, 0);
-                    self.regs.pc = self.regs.pc.wrapping_add(4);
-                    self.csrs.increment_instret();
-                    self.csrs.increment_cycle();
-                    Ok(StepOutcome::Continue)
-                }
                 // Unknown syscall, return -1.
                 _ => {
                     self.regs.write_x(10, u64::MAX);

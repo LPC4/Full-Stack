@@ -79,6 +79,11 @@ pub enum IrInstruction {
         ty: IrType,
         incoming: Vec<(IrValue, IrLabel)>,
     },
+    /// Load the address of a named global variable into `dest`.
+    GlobalRef {
+        dest: IrRegister,
+        name: String,
+    },
 }
 
 impl fmt::Display for IrInstruction {
@@ -189,6 +194,7 @@ impl fmt::Display for IrInstruction {
                 }
                 Ok(())
             }
+            Self::GlobalRef { dest, name } => write!(f, "{dest} = global_ref {name}"),
         }
     }
 }

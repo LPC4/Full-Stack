@@ -69,6 +69,14 @@ impl CompilerRv64 {
         for s in &program.global_strings {
             self.data.add_global_string(s);
         }
+        for gv in &program.global_vars {
+            let size = self.type_size(&gv.ty).max(1);
+            let align = size.min(8);
+            match &gv.init {
+                None => self.data.add_bss_symbol(&gv.name, size, align),
+                Some(bytes) => self.data.add_data_symbol(&gv.name, size, align, bytes),
+            }
+        }
         for alias in &program.type_aliases {
             self.type_aliases
                 .insert(alias.name.clone(), alias.ty.clone());
@@ -145,12 +153,13 @@ impl CompilerRv64 {
         alloc: &RegisterAllocator,
     ) {
         use IrInstruction::{
-            Alloc, Call, Cast, Cmp, Comment, HeapAlloc, HeapFree, Index, Load, Math, Offset, Phi,
-            Store, Unary,
+            Alloc, Call, Cast, Cmp, Comment, GlobalRef, HeapAlloc, HeapFree, Index, Load, Math,
+            Offset, Phi, Store, Unary,
         };
         match inst {
             Comment(s) => self.emitter.emit_comment(s),
             Alloc { .. } | Phi { .. } => {}
+            GlobalRef { dest, name } => self.lower_global_ref(dest, name, ctx, alloc),
             Load {
                 dest,
                 ty,
@@ -679,6 +688,24 @@ impl CompilerRv64 {
         }
         self.emitter
             .emit_comment(&format!("--- End Function Call: {function} ---"));
+    }
+
+    fn lower_global_ref(
+        &mut self,
+        dest: &crate::intermediate_language::IrRegister,
+        name: &str,
+        ctx: &mut FunctionContext,
+        alloc: &RegisterAllocator,
+    ) {
+        self.emitter.reset_temp_counter();
+        let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
+        let temp = self.emitter.alloc_temp_reg();
+        self.emitter
+            .emit_raw(&format!("\tla {}, {}", reg_name(temp, false), name));
+        self.emitter.emit_sd(SP, temp, dest_slot as i32);
+        if let Some(Allocation::Physical(phys_reg)) = alloc.get_allocation(dest) {
+            self.emitter.emit_mv(*phys_reg, temp);
+        }
     }
 
     fn lower_heap_alloc(

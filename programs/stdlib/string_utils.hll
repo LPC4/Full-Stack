@@ -1,0 +1,63 @@
+; String helpers built on top of the stdlib allocator.
+
+str_len: (text: Str) -> u64 {
+    return text.length
+}
+
+str_is_empty: (text: Str) -> bool {
+    return text.length == 0
+}
+
+str_equals: (lhs: Str, rhs: Str) -> bool {
+    if lhs.length != rhs.length {
+        return false
+    }
+
+    i: u64 = 0
+    while i < lhs.length {
+        if lhs.data[i] != rhs.data[i] {
+            return false
+        }
+        i = i + 1
+    }
+
+    return true
+}
+
+str_copy: (src: Str) -> Str* {
+    data: u8* = malloc(src.length)
+    i: u64 = 0
+    while i < src.length {
+        data[i] = src.data[i]
+        i = i + 1
+    }
+
+    copy: Str* = Str*(malloc(16))
+    @copy.data = data
+    @copy.length = src.length
+    return copy
+}
+
+str_concat: (left: Str, right: Str) -> Str* {
+    total: u64 = left.length + right.length
+    data: u8* = malloc(total)
+
+    i: u64 = 0
+    while i < left.length {
+        data[i] = left.data[i]
+        i = i + 1
+    }
+
+    j: u64 = 0
+    while j < right.length {
+        data[left.length + j] = right.data[j]
+        j = j + 1
+    }
+
+    result: Str* = Str*(malloc(16))
+    @result = {
+        .data   = data,
+        .length = total,
+    }
+    return result
+}

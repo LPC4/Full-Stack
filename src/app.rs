@@ -1,5 +1,6 @@
 use crate::high_level_language::compilation_pipeline::CompilationPipeline;
 use crate::high_level_language::lexer::Lexer;
+use crate::high_level_language::stdlib::prepend_stdlib;
 use crate::high_level_language::token::Token;
 use crate::view::debug::{DebugSession, SessionStatus};
 use crate::view::ide::vm_execution_view::VmExecutionResult;
@@ -239,7 +240,7 @@ impl FullStackApp {
     }
 
     fn compile(&mut self) {
-        let source = self.catalog.get_selected_source();
+        let source = prepend_stdlib(&self.catalog.get_selected_source());
         let mut lexer = Lexer::new(&source);
         let mut tokens = Vec::new();
 
