@@ -208,7 +208,7 @@ main: () -> i32 {
 fn allows_array_literals_through_assembly() {
     let source = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/programs/example/array_literals.hll"
+        "/programs/example/array_initialization.hll"
     ));
 
     let pipeline = CompilationPipeline::new();
@@ -304,42 +304,42 @@ fn all_launch_examples_compile() {
             "core_syntax",
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/programs/example/core_syntax.hll"
+                "/programs/example/core_basics.hll"
             )),
         ),
         (
             "pointers_arrays",
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/programs/example/pointers_arrays.hll"
+                "/programs/example/pointer_arrays.hll"
             )),
         ),
         (
             "array_literals",
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/programs/example/array_literals.hll"
+                "/programs/example/array_initialization.hll"
             )),
         ),
         (
             "structs_destructuring",
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/programs/example/structs_destructuring.hll"
+                "/programs/example/struct_binding.hll"
             )),
         ),
         (
             "control_flow_functions",
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/programs/example/control_flow_functions.hll"
+                "/programs/example/control_flow_basics.hll"
             )),
         ),
         (
             "generics_strings_consts",
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-            "/programs/example/generics_strings.hll"
+            "/programs/example/generics_and_strings.hll"
             )),
         ),
     ];

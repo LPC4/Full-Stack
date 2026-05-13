@@ -5,17 +5,36 @@ use full_stack::assembly_language::riscv::rv64m::*;
 use full_stack::assembly_language::riscv::rv64zicsr::Csrrs;
 use full_stack::assembly_language::rv_instruction::RvInstruction;
 use full_stack::high_level_language::compilation_pipeline::CompilationPipeline;
-use full_stack::high_level_language::stdlib::prepend_stdlib;
 use full_stack::virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
+
+const ALLOCATOR_TYPES: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/programs/stdlib/types.hll"
+));
+const ALLOCATOR_MEMORY: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/programs/stdlib/memory_allocator.hll"
+));
+
+fn prepend_allocator_runtime(source: &str) -> String {
+    let mut out = String::with_capacity(ALLOCATOR_TYPES.len() + ALLOCATOR_MEMORY.len() + source.len() + 128);
+    out.push_str(ALLOCATOR_TYPES);
+    out.push('\n');
+    out.push_str(ALLOCATOR_MEMORY);
+    out.push('\n');
+    out.push_str(source);
+    out
+}
 
 // ---------------------------------------------------------------------------
 // Full HLL pipeline helpers
 // ---------------------------------------------------------------------------
 
 fn run_hll_with_limit(src: &str, max_steps: u64) -> (VirtualMachine, StepOutcome, String) {
-    let src_with_stdlib = prepend_stdlib(src);
     let pipeline = CompilationPipeline::new();
-    let result = pipeline.compile(&src_with_stdlib).expect("compile failed");
+    let result = pipeline
+        .compile(&prepend_allocator_runtime(src))
+        .expect("compile failed");
     let (_, toks) = pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program);
     let assembled = pipeline.assemble(&toks).expect("assemble failed");
     let mut vm = VirtualMachine::new(&assembled);
@@ -90,6 +109,8 @@ main: () -> i32 {
 #[test]
 fn hll_putchar_output() {
     let (_, outcome, uart) = run_hll(r#"
+external putchar: (c: i32) -> i32
+
 main: () -> i32 {
     putchar(65)
     putchar(66)
@@ -104,6 +125,8 @@ main: () -> i32 {
 #[test]
 fn hll_user_function_calls_putchar() {
     let (_, outcome, uart) = run_hll(r#"
+external putchar: (c: i32) -> i32
+
 emit: (c: i32) -> i32 {
     putchar(c)
     return 0
@@ -420,9 +443,10 @@ main: () -> i32 {
     return v
 }
 "#;
-    let src_with_stdlib = prepend_stdlib(src);
     let pipeline = CompilationPipeline::new();
-    let result = pipeline.compile(&src_with_stdlib).expect("compile failed");
+    let result = pipeline
+        .compile(&prepend_allocator_runtime(src))
+        .expect("compile failed");
     let ir_text = format!("{}", result.ir_program);
     let (asm, _) = pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program);
 

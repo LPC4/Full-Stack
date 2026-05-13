@@ -22,10 +22,26 @@ pub struct ProgramFile {
 }
 
 impl ProgramFile {
-    pub fn example(id: &str, name: &str, description: &str, source: &str) -> Self {
+    fn display_name_from_file_name(file_name: &str) -> String {
+        file_name
+            .trim_end_matches(".hll")
+            .replace('_', " ")
+            .split_whitespace()
+            .map(|part| {
+                let mut chars = part.chars();
+                match chars.next() {
+                    Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                    None => String::new(),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    pub fn example(id: &str, file_name: &str, description: &str, source: &str) -> Self {
         Self {
             id: id.to_owned(),
-            name: name.to_owned(),
+            name: Self::display_name_from_file_name(file_name),
             kind: ProgramKind::Example,
             source: source.to_owned(),
             undo_stack: Vec::new(),
@@ -89,81 +105,81 @@ fn built_in_programs() -> Vec<ProgramFile> {
         // Stdlib program (read-only, single combined file)
         ProgramFile::stdlib(
             "stdlib",
-            "stdlib.hll",
-            "Standard library (types, memory allocation, strings)",
+            "Standard Library",
+            "Read-only standard library (types, memory allocation, strings)",
             &stdlib_combined,
         ),
         // Example programs
         ProgramFile::example(
-            "example-core-syntax",
-            "Core Syntax",
-            "Basic declarations, constants, functions, and primitive values.",
+            "example-core-basics",
+            "core_basics.hll",
+            "A compact starter program with constants, a helper, and one branch.",
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/programs/example/core_syntax.hll"
+                "/programs/example/core_basics.hll"
             )),
         ),
         ProgramFile::example(
-            "example-pointers-arrays",
-            "Pointers & Arrays",
-            "Address-of, dereference, array indexing, and heap cleanup.",
+            "example-pointer-arrays",
+            "pointer_arrays.hll",
+            "Address-of, dereference, and heap cleanup with distinct pointer math.",
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/programs/example/pointers_arrays.hll"
+                "/programs/example/pointer_arrays.hll"
             )),
         ),
         ProgramFile::example(
-            "example-array-literals",
-            "Array Literals",
-            "Fixed-size array literals, element access, and IR/ASM array copies.",
+            "example-array-initialization",
+            "array_initialization.hll",
+            "Stack arrays mirrored into heap storage and read back through indexing.",
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/programs/example/array_literals.hll"
+                "/programs/example/array_initialization.hll"
             )),
         ),
         ProgramFile::example(
-            "example-structs-destructuring",
-            "Structs & Destructuring",
-            "Named structs, shorthand literals, and reordered/partial destructuring.",
+            "example-struct-binding",
+            "struct_binding.hll",
+            "Named structs, reordered fields, and partial destructuring.",
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/programs/example/structs_destructuring.hll"
+                "/programs/example/struct_binding.hll"
             )),
         ),
         ProgramFile::example(
-            "example-control-flow-functions",
-            "Control Flow & Functions",
-            "Function calls, loops, branching, and defer-based cleanup.",
+            "example-control-flow-basics",
+            "control_flow_basics.hll",
+            "Loops, continue, and defer-based cleanup around a reusable helper.",
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/programs/example/control_flow_functions.hll"
+                "/programs/example/control_flow_basics.hll"
             )),
         ),
         ProgramFile::example(
-            "example-casts-and-pointers",
-            "Casts & Pointers",
-            "Explicit type casts, calling printf, and pointer casts.",
+            "example-casting-and-pointers",
+            "casting_and_pointers.hll",
+            "Explicit type casts, pointer reinterpretation, and formatted output.",
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/programs/example/casts_and_pointers.hll"
+                "/programs/example/casting_and_pointers.hll"
             )),
         ),
         ProgramFile::example(
-            "example-constexpr-functions",
-            "Constexpr Functions",
-            "Pure functions evaluated at compile time to produce constants.",
+            "example-compile-time-math",
+            "compile_time_math.hll",
+            "Pure functions folded into constants before runtime.",
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/programs/example/constexpr_functions.hll"
+                "/programs/example/compile_time_math.hll"
             )),
         ),
         ProgramFile::example(
-            "example-generics-strings",
-            "Generics & Strings",
-            "Generic Box<T>, string pointers, and external puts from C.",
+            "example-generics-and-strings",
+            "generics_and_strings.hll",
+            "A larger demo mixing generics, heap values, strings, and output.",
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/programs/example/generics_strings.hll"
+                "/programs/example/generics_and_strings.hll"
             )),
         ),
     ]

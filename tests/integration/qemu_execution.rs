@@ -8,11 +8,29 @@
 /// missing prerequisite and return without failing, so CI on machines without
 /// the cross-toolchain stays green.
 use full_stack::high_level_language::compilation_pipeline::CompilationPipeline;
-use full_stack::high_level_language::stdlib::prepend_stdlib;
 use full_stack::virtual_machine::bus::ELF_LOAD_BASE;
 use std::fmt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+
+const ALLOCATOR_TYPES: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/programs/stdlib/types.hll"
+));
+const ALLOCATOR_MEMORY: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/programs/stdlib/memory_allocator.hll"
+));
+
+fn prepend_allocator_runtime(source: &str) -> String {
+    let mut out = String::with_capacity(ALLOCATOR_TYPES.len() + ALLOCATOR_MEMORY.len() + source.len() + 128);
+    out.push_str(ALLOCATOR_TYPES);
+    out.push('\n');
+    out.push_str(ALLOCATOR_MEMORY);
+    out.push('\n');
+    out.push_str(source);
+    out
+}
 
 
 
@@ -119,9 +137,8 @@ fn require_qemu_result(test_name: &'static str, result: Result<QemuResult, QemuS
 /// image ready for qemu-riscv64.
 fn compile_to_elf(source: &str) -> Vec<u8> {
     let pipeline = CompilationPipeline::new();
-    let full_source = prepend_stdlib(source);
     let result = pipeline
-        .compile(&full_source)
+        .compile(&prepend_allocator_runtime(source))
         .unwrap_or_else(|e| panic!("HLL compilation failed: {e}"));
     let (_asm, tokens) = pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program);
     let assembled = pipeline

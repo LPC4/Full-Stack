@@ -1,0 +1,20 @@
+; Casting demo: explicit casts, pointer reinterpretation, and printf output.
+external printf: (format: u8*, value: i32) -> i32
+
+main: () -> i32 {
+    tiny: i8 = 21
+    wide: i32 = i32(tiny)
+    back: i8 = i8(wide + 21)
+
+    slot: i32 = 21
+    slot_ptr: i32* = &slot
+    byte_ptr: u8* = u8*(slot_ptr)
+    round_trip: i32* = i32*(byte_ptr)
+
+    printf("wide=%d\n".data, wide)
+    printf("back=%d\n".data, i32(back))
+    printf("round_trip=%d\n".data, @round_trip)
+
+    return wide + i32(back) - @round_trip
+}
+

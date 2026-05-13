@@ -1,0 +1,44 @@
+; Feature showcase: generics, strings, and heap-backed values.
+
+type Box<T> = {
+    value: T
+}
+
+type Pair = {
+    left: i32,
+    right: i32,
+}
+
+external puts: (str: u8*) -> i32
+external printf: (fmt: u8*, value: i32) -> i32
+
+sum_pair: (pair: Pair) -> i32 {
+    return pair.left + pair.right
+}
+
+make_pair: (left: i32, right: i32) -> Pair {
+    return { .left = left, .right = right }
+}
+
+main: () -> i32 {
+    title: Box<u8*>* = new(Box<u8*>)
+    defer free(title)
+    @title.value = "Feature showcase".data
+    puts(@title.value)
+
+    pair_box: Box<Pair>* = new(Box<Pair>)
+    defer free(pair_box)
+    @pair_box.value = make_pair(19, 23)
+
+    total: i32 = sum_pair(@pair_box.value)
+    if total != 42 {
+        return 1
+    }
+
+    inner: Box<i32>* = new(Box<i32>)
+    defer free(inner)
+    @inner.value = total
+    printf("total=%d\n".data, @inner.value)
+
+    return @inner.value - 42
+}

@@ -1,6 +1,5 @@
-; Compile‑time evaluation: constants computed by pure functions
+; Compile-time math: pure functions folded into constants.
 
-; Pure function
 factorial: (n: i32) -> i32 {
     if n <= 1 {
         return 1
@@ -8,7 +7,6 @@ factorial: (n: i32) -> i32 {
     return n * factorial(n - 1)
 }
 
-; Another pure function with a loop
 sum_to: (n: i32) -> i32 {
     total: i32 = 0
     i: i32 = 0
@@ -19,14 +17,19 @@ sum_to: (n: i32) -> i32 {
     return total
 }
 
-; These are evaluated at compile time, no runtime cost
+blend: (a: i32, b: i32) -> i32 {
+    return factorial(a) + sum_to(b)
+}
+
 const FACTORIAL_7 = factorial(7)    ; 5040
 const SUM_TO_10   = sum_to(10)      ; 55
+const BLEND       = blend(3, 3)     ; 6 + 6 = 12
 
 external printf: (format: u8*, value: i32) -> i32
 
 main: () -> i32 {
     printf("Factorial 7 = %d\n".data, FACTORIAL_7)
     printf("Sum 1..10   = %d\n".data, SUM_TO_10)
+    printf("Blend      = %d\n".data, BLEND)
     return 0
 }

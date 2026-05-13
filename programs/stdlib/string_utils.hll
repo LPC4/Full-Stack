@@ -1,4 +1,5 @@
 ; String helpers built on top of the stdlib allocator.
+external malloc: (size: u64) -> u8*
 
 str_len: (text: Str) -> u64 {
     return text.length

@@ -1,0 +1,20 @@
+; Core warmup: constants, a helper function, and one simple branch.
+const BASE = 12
+const OFFSET = 30
+
+bump: (value: i32) -> i32 {
+    return value + 1
+}
+
+main: () -> i32 {
+    start: i32 = bump(BASE)
+    total: i32 = start + OFFSET
+
+    if total != 43 {
+        return 1
+    }
+
+    return total
+}
+
+

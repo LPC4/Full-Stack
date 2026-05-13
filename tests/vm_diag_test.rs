@@ -1,7 +1,26 @@
 use full_stack::high_level_language::compilation_pipeline::CompilationPipeline;
-use full_stack::high_level_language::stdlib::{extract_registries, get_stdlib_source, prepend_stdlib};
+use full_stack::high_level_language::stdlib::{extract_registries, get_stdlib_source};
 use full_stack::virtual_machine::bus::ELF_LOAD_BASE;
 use full_stack::virtual_machine::virtual_machine::VirtualMachine;
+
+const ALLOCATOR_TYPES: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/programs/stdlib/types.hll"
+));
+const ALLOCATOR_MEMORY: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/programs/stdlib/memory_allocator.hll"
+));
+
+fn prepend_allocator_runtime(source: &str) -> String {
+    let mut out = String::with_capacity(ALLOCATOR_TYPES.len() + ALLOCATOR_MEMORY.len() + source.len() + 128);
+    out.push_str(ALLOCATOR_TYPES);
+    out.push('\n');
+    out.push_str(ALLOCATOR_MEMORY);
+    out.push('\n');
+    out.push_str(source);
+    out
+}
 
 #[test]
 fn vm_diag_simple() {
@@ -67,10 +86,11 @@ fn vm_diag_printf_symbols() {
 
 #[test]
 fn vm_diag_generics_strings() {
-    let raw = std::fs::read_to_string("programs/example/generics_strings.hll").unwrap();
-    let src = prepend_stdlib(&raw);
+    let raw = std::fs::read_to_string("programs/example/generics_and_strings.hll").unwrap();
     let pipeline = CompilationPipeline::new();
-    let result = pipeline.compile(&src).expect("compile");
+    let result = pipeline
+        .compile(&prepend_allocator_runtime(&raw))
+        .expect("compile");
 
     let (asm_text, toks) = pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program);
     let assembled = pipeline.assemble(&toks).expect("assemble");
@@ -109,6 +129,8 @@ fn vm_diag_generics_strings() {
 fn vm_diag_call_encoding() {
     // Simple: one function that calls another
     let src = r#"
+external putchar: (c: i32) -> i32
+
 emit: (c: i32) -> i32 {
     putchar(c)
     return 0
@@ -141,7 +163,7 @@ main: () -> i32 {
 
 #[test]
 fn vm_diag_malloc_loop() {
-    let src = prepend_stdlib(
+    let src = prepend_allocator_runtime(
         r#"
 main: () -> i32 {
     p: i32* = new(i32)
@@ -260,7 +282,7 @@ main: () -> i32 {
 
 #[test]
 fn gui_path_printf_constexpr() {
-    let src = std::fs::read_to_string("programs/example/constexpr_functions.hll").unwrap();
+    let src = std::fs::read_to_string("programs/example/compile_time_math.hll").unwrap();
     let (uart, exit) = run_gui_path(&src);
     eprintln!("UART:\n{}", uart);
     eprintln!("Exit: {:?}", exit);
@@ -287,22 +309,16 @@ fn gui_path_printf_constexpr_debug() {
     use full_stack::virtual_machine::virtual_machine::StepOutcome;
 
     let pipeline = CompilationPipeline::new();
-    let stdlib_src = get_stdlib_source();
-    let stdlib_result = pipeline.compile(&stdlib_src).expect("stdlib compile");
-    let (fn_reg, ty_reg) = extract_registries(&stdlib_result.ir_program);
-    let (_, stdlib_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&stdlib_result.ir_program);
-
-    let src = std::fs::read_to_string("programs/example/constexpr_functions.hll").unwrap();
+    let src = std::fs::read_to_string("programs/example/compile_time_math.hll").unwrap();
     let user_result = pipeline
-        .compile_with_externs(&src, &fn_reg, &ty_reg)
+        .compile(&src)
         .expect("user compile");
     let (user_asm, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program);
 
     eprintln!("=== USER ASM ===\n{}", &user_asm[..user_asm.len().min(3000)]);
 
-    let mut linked = stdlib_tokens;
-    linked.extend(user_tokens);
-
+    let mut linked = user_tokens;
+    linked.extend(Vec::new());
     let assembled = pipeline.assemble(&linked).expect("assemble");
 
     let mut syms: Vec<_> = assembled.symbol_table.iter().collect();
