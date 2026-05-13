@@ -10,8 +10,6 @@ pub struct CompilationState {
     pub ir: String,
     /// Assembly output from user code only (pre-linking)
     pub asm: String,
-    /// Full linked assembly (stdlib + user) for execution/debugging
-    pub linked_asm: String,
     /// IR output from stdlib only (for separate inspection)
     pub stdlib_ir: String,
     /// Assembly output from stdlib only (for separate inspection)

@@ -27,12 +27,19 @@ pub fn encode(tokens: &[AsmToken], layout: &Layout) -> Result<AssembledOutput, A
         .map(|k| (k.clone(), SectionData::new(k.clone())))
         .collect();
 
-    // Compute the absolute base address of each section by packing them
-    // consecutively (base of section N = sum of sizes of sections 0..N-1).
+    // Compute the absolute base address of each section, packing non-BSS sections
+    // first and BSS sections last.  BSS is excluded from the ELF file (it is
+    // zero-filled by the loader), so if BSS were sandwiched between text and
+    // rodata the ELF virtual addresses would diverge from the file layout and
+    // `la` instructions would point past the actual rodata.
     let mut section_bases: std::collections::HashMap<SectionKind, u64> =
         std::collections::HashMap::new();
     let mut running_base: u64 = 0;
-    for kind in &layout.section_order {
+    for kind in layout.section_order.iter().filter(|k| !matches!(k, SectionKind::Bss)) {
+        section_bases.insert(kind.clone(), running_base);
+        running_base += layout.section_sizes.get(kind).copied().unwrap_or(0);
+    }
+    for kind in layout.section_order.iter().filter(|k| matches!(k, SectionKind::Bss)) {
         section_bases.insert(kind.clone(), running_base);
         running_base += layout.section_sizes.get(kind).copied().unwrap_or(0);
     }

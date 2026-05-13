@@ -1,10 +1,10 @@
-; Generics and string handling via C library
+; Generics and string handling with the standard runtime
 
 type Box<T> = {
     value: T
 }
 
-external puts: (str: i8*) -> i32
+external puts: (str: u8*) -> i32
 
 main: () -> i32 {
     ; Generic box for an integer
@@ -12,7 +12,7 @@ main: () -> i32 {
     @int_box.value = 42
 
     ; Generic box for a string (pointer)
-    str_box: Box<i8*>* = new(Box<i8*>)
+    str_box: Box<u8*>* = new(Box<u8*>)
     @str_box.value = "Hello, language!".data
 
     ; Call C's puts to print the string

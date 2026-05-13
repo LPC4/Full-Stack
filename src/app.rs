@@ -1,6 +1,8 @@
 use crate::high_level_language::compilation_pipeline::CompilationPipeline;
 use crate::high_level_language::lexer::Lexer;
-use crate::high_level_language::stdlib::prepend_stdlib;
+use crate::high_level_language::stdlib::{
+    extract_registries, get_stdlib_source, FunctionRegistry, TypeRegistry,
+};
 use crate::high_level_language::token::Token;
 use crate::view::debug::{DebugSession, SessionStatus};
 use crate::view::ide::vm_execution_view::VmExecutionResult;
@@ -10,7 +12,7 @@ use crate::view::{
     PipelineView, ProgramCatalog, ProgramKind, SourceView, StackView, TokensView, VmExecutionView,
     apply_ui_theme, blank_custom_program_source, ui_theme,
 };
-use crate::virtual_machine::bus::RAM_BASE;
+use crate::virtual_machine::bus::ELF_LOAD_BASE;
 use egui::{Color32, Layout, RichText};
 use egui_dock::{DockState, NodeIndex};
 use std::fmt;
@@ -126,6 +128,12 @@ pub struct FullStackApp {
     mode: AppMode,
     #[serde(skip)]
     step_n_input: String,
+    #[serde(skip)]
+    stdlib_tokens: Vec<crate::assembly_language::rv_instruction::RvInstruction>,
+    #[serde(skip)]
+    stdlib_fn_registry: FunctionRegistry,
+    #[serde(skip)]
+    stdlib_ty_registry: TypeRegistry,
 }
 
 impl Default for FullStackApp {
@@ -149,6 +157,9 @@ impl Default for FullStackApp {
             next_view_id: 0,
             mode: AppMode::Ide,
             step_n_input: "1".to_owned(),
+            stdlib_tokens: Vec::new(),
+            stdlib_fn_registry: FunctionRegistry::default(),
+            stdlib_ty_registry: TypeRegistry::default(),
         };
         app.reset_layout();
         app.reset_debug_layout();
@@ -165,8 +176,26 @@ impl FullStackApp {
             .unwrap_or_default();
         app.catalog.ensure_consistency();
         app.reset_layout();
+        app.init_stdlib_cache();
         app.compile();
         app
+    }
+
+    fn init_stdlib_cache(&mut self) {
+        let stdlib_src = get_stdlib_source();
+        match self.pipeline.compile(&stdlib_src) {
+            Ok(result) => {
+                let (fn_reg, ty_reg) = extract_registries(&result.ir_program);
+                let (_, tokens) =
+                    self.pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program);
+                self.stdlib_fn_registry = fn_reg;
+                self.stdlib_ty_registry = ty_reg;
+                self.stdlib_tokens = tokens;
+            }
+            Err(e) => {
+                log::error!("stdlib compilation failed: {e}");
+            }
+        }
     }
 
     fn reset_layout(&mut self) {
@@ -313,43 +342,25 @@ impl FullStackApp {
 
         self.compilation_state.tokens = format!("{tokens:#?}");
 
-        // Compile user code only (no stdlib)
-        match self.pipeline.compile(user_source) {
+        // Single-pass user compile, seeded with cached stdlib signatures and type aliases.
+        // IR/ASM panels show user-only code; execution uses token-level linking with stdlib.
+        match self.pipeline.compile_with_externs(
+            user_source,
+            &self.stdlib_fn_registry,
+            &self.stdlib_ty_registry,
+        ) {
             Ok(result) => {
                 self.compilation_state.ast = format!("{:#?}", result.ast);
-                // IR and ASM show ONLY user code (pre-linking)
                 self.compilation_state.ir = result.ir_program.to_string();
-                let (asm_text, asm_tokens) = self
-                    .pipeline
-                    .compile_ir_to_assembly_with_tokens(&result.ir_program);
+                let (asm_text, user_tokens) =
+                    self.pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program);
                 self.compilation_state.asm = asm_text;
-                self.compilation_state.assembly_tokens = asm_tokens;
+                self.compilation_state.assembly_tokens = user_tokens.clone();
 
-                // Now link with stdlib for execution/debugging
-                let full_source = prepend_stdlib(user_source);
-                match self.pipeline.compile(&full_source) {
-                    Ok(full_result) => {
-                        let (full_asm_text, full_asm_tokens) = self
-                            .pipeline
-                            .compile_ir_to_assembly_with_tokens(&full_result.ir_program);
-
-                        // Add runtime glue (_start and putchar) for execution
-                        let linked_with_glue =
-                            crate::assembly_language::linker::link_assembly(&[&full_asm_text]);
-
-                        // Store the full linked assembly for execution/debugging
-                        self.compilation_state.linked_asm = linked_with_glue;
-
-                        // Assemble the linked version with glue
-                        self.compilation_state.assembled =
-                            self.pipeline.assemble(&full_asm_tokens).ok();
-                    }
-                    Err(_) => {
-                        // If linking fails, still show user code but no assembled output
-                        self.compilation_state.linked_asm.clear();
-                        self.compilation_state.assembled = None;
-                    }
-                }
+                // Token-level link: prepend cached stdlib tokens, then assemble once.
+                let mut linked = self.stdlib_tokens.clone();
+                linked.extend(user_tokens);
+                self.compilation_state.assembled = self.pipeline.assemble(&linked).ok();
 
                 self.compilation_state.clear_error();
                 self.compilation_state.just_compiled = true;
@@ -408,7 +419,7 @@ impl FullStackApp {
                     return;
                 }
 
-                fs::write(&path, assembled.to_elf(RAM_BASE))
+                fs::write(&path, assembled.to_elf(ELF_LOAD_BASE))
                     .map(|_| format!("exported assembled ELF image to `{path}`"))
             }
         };
@@ -1001,7 +1012,18 @@ fn run_in_vm(
     use crate::virtual_machine::virtual_machine::VirtualMachine;
 
     const MAX_STEPS: u64 = 5_000_000;
-    let mut vm = VirtualMachine::new(assembled);
+    let elf = assembled.to_elf(crate::virtual_machine::bus::ELF_LOAD_BASE);
+    let mut vm = match VirtualMachine::from_elf(&elf) {
+        Ok(vm) => vm,
+        Err(err) => {
+            return VmExecutionResult {
+                uart_output: format!("ELF load failed: {err}"),
+                exit_code: None,
+                steps: 0,
+                max_steps_reached: false,
+            };
+        }
+    };
     let result = vm.run(MAX_STEPS);
 
     VmExecutionResult {

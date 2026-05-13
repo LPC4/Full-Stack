@@ -1,5 +1,5 @@
-; Casts and C interop: type casting, pointer arithmetic, and external printf
-external printf: (format: i8*, value: i32) -> i32
+; Casts and pointers: type casting, pointer arithmetic, and external printf
+external printf: (format: u8*, value: i32) -> i32
 
 main: () -> i32 {
     small: i8 = 100                    ; 100 fits in i8

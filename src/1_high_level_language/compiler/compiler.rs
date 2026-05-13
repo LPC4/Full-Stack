@@ -75,6 +75,10 @@ pub struct HighLevelCompiler {
     pending_global_strings: Vec<IrGlobalString>,
     /// Global variables declared at module scope: name -> IR type
     global_vars: std::collections::HashMap<String, IrType>,
+    /// Extern function return types from a pre-compiled stdlib, applied during compile_program.
+    extern_fn_returns: std::collections::HashMap<String, IrType>,
+    /// Extern type aliases from a pre-compiled stdlib, re-applied after reset_for_program().
+    extern_ty_aliases: Vec<IrTypeAlias>,
 }
 
 impl HighLevelCompiler {
@@ -94,6 +98,8 @@ impl HighLevelCompiler {
             function_declarations: std::collections::HashMap::new(),
             pending_global_strings: Vec::new(),
             global_vars: std::collections::HashMap::new(),
+            extern_fn_returns: std::collections::HashMap::new(),
+            extern_ty_aliases: Vec::new(),
         }
     }
 
@@ -104,6 +110,12 @@ impl HighLevelCompiler {
         );
 
         let mut semantic_analyzer = SemanticAnalyzer::new();
+        if !self.extern_fn_returns.is_empty() {
+            semantic_analyzer.seed_extern_fn_returns(&self.extern_fn_returns);
+        }
+        if !self.extern_ty_aliases.is_empty() {
+            semantic_analyzer.seed_extern_type_aliases(&self.extern_ty_aliases);
+        }
         if let Err(_) = semantic_analyzer.analyze_program(program) {
             // Collect semantic errors and emit them as diagnostics
             for diagnostic in semantic_analyzer.diagnostics() {
@@ -115,6 +127,10 @@ impl HighLevelCompiler {
         }
 
         self.context.reset_for_program();
+        // Re-apply extern type aliases cleared by reset
+        for alias in &self.extern_ty_aliases {
+            self.context.types.register_type(alias.name.clone(), alias.ty.clone());
+        }
         self.next_temp = 0;
         self.next_label = 0;
         self.pending_global_strings.clear();
@@ -153,6 +169,31 @@ impl HighLevelCompiler {
         }
 
         Ok(ir_program)
+    }
+
+    /// Like `compile_program`, but pre-seeded with stdlib function signatures and type aliases.
+    /// Produces correct IR for user code that calls stdlib functions (correct return types, not Void).
+    pub fn compile_program_with_externs(
+        &mut self,
+        program: &Program,
+        fn_reg: &crate::high_level_language::stdlib::FunctionRegistry,
+        ty_reg: &crate::high_level_language::stdlib::TypeRegistry,
+    ) -> Result<IrProgram, CompilerError> {
+        // Pre-seed function return types; these survive reset_for_program().
+        // The first pass of compile_program will overwrite with user-defined types where names collide.
+        for (name, sig) in &fn_reg.functions {
+            self.function_return_types.insert(name.clone(), sig.return_type.clone());
+        }
+        self.extern_fn_returns = fn_reg
+            .functions
+            .iter()
+            .map(|(k, v)| (k.clone(), v.return_type.clone()))
+            .collect();
+        self.extern_ty_aliases = ty_reg.aliases.clone();
+        let result = self.compile_program(program);
+        self.extern_fn_returns.clear();
+        self.extern_ty_aliases.clear();
+        result
     }
 }
 

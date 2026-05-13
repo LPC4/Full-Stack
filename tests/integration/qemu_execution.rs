@@ -7,11 +7,10 @@
 /// If the WSL toolchain is absent the tests print a diagnostic with the exact
 /// missing prerequisite and return without failing, so CI on machines without
 /// the cross-toolchain stays green.
-use full_stack::assembly_language::linker::LinkedProgram;
 use full_stack::high_level_language::compilation_pipeline::CompilationPipeline;
-use full_stack::virtual_machine::bus::RAM_BASE;
+use full_stack::high_level_language::stdlib::prepend_stdlib;
+use full_stack::virtual_machine::bus::ELF_LOAD_BASE;
 use std::fmt;
-use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
@@ -19,10 +18,6 @@ use std::process::{Command, Stdio};
 
 fn qemu_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("programs/test/qemu")
-}
-
-fn stdlib_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("programs/stdlib")
 }
 
 fn read_program(filename: &str) -> String {
@@ -39,7 +34,15 @@ fn compile_to_asm(source: &str) -> String {
         .compile(source)
         .unwrap_or_else(|e| panic!("HLL compilation failed: {e}"));
     let asm = pipeline.compile_ir_to_assembly(&result.ir_program);
-    full_stack::assembly_language::linker::strip_comments(&asm)
+    strip_comments(&asm)
+}
+
+fn strip_comments(asm: &str) -> String {
+    asm.lines()
+        .map(|line| line.split(';').next().unwrap_or("").trim_end())
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 struct QemuResult {
@@ -91,9 +94,6 @@ impl fmt::Display for QemuSkipReason {
 }
 
 fn qemu_skip_reason_from_output(combined: &str) -> Option<QemuSkipReason> {
-    if combined.contains("TOOLCHAIN_UNAVAILABLE: riscv64-linux-gnu-gcc not found") {
-        return Some(QemuSkipReason::MissingRiscv64Gcc);
-    }
     if combined.contains("TOOLCHAIN_UNAVAILABLE: qemu-riscv64 not found") {
         return Some(QemuSkipReason::MissingQemuRiscv64);
     }
@@ -119,156 +119,36 @@ fn require_qemu_result(test_name: &'static str, result: Result<QemuResult, QemuS
 /// image ready for qemu-riscv64.
 fn compile_to_elf(source: &str) -> Vec<u8> {
     let pipeline = CompilationPipeline::new();
+    let full_source = prepend_stdlib(source);
     let result = pipeline
-        .compile(source)
+        .compile(&full_source)
         .unwrap_or_else(|e| panic!("HLL compilation failed: {e}"));
     let (_asm, tokens) = pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program);
     let assembled = pipeline
         .assemble(&tokens)
         .unwrap_or_else(|e| panic!("assembly failed: {e}"));
-    assembled.to_elf(RAM_BASE)
+    assembled.to_elf(ELF_LOAD_BASE)
 }
 
-/// Run a pre-compiled assembly string through WSL → riscv64-linux-gnu-gcc
-/// → qemu-riscv64.
-fn run_asm_via_qemu(asm: &str) -> Result<QemuResult, QemuSkipReason> {
-    // The bash script is identical in structure to the one in app.rs but it
-    // also prints a sentinel line so we can reliably extract the exit code
-    // even when the program itself produces output.
-    let script = r#"
-export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
-
-CC="$(command -v riscv64-linux-gnu-gcc 2>/dev/null)"
-if [ -z "$CC" ]; then
-    echo "TOOLCHAIN_UNAVAILABLE: riscv64-linux-gnu-gcc not found"
-    exit 0
-fi
-QEMU="$(command -v qemu-riscv64 2>/dev/null)"
-if [ -z "$QEMU" ]; then
-    echo "TOOLCHAIN_UNAVAILABLE: qemu-riscv64 not found"
-    exit 0
-fi
-
-WORKDIR="$(mktemp -d)"
-trap 'rm -rf "$WORKDIR"' EXIT
-cd "$WORKDIR"
-
-cat > program.s
-
-# Compile; capture stderr so a failed compile is surfaced in the Rust output.
-# Use -nostdlib to avoid conflicts with user-defined malloc/free
-COMPILE_OUT="$("$CC" -static -nostdlib program.s -o program 2>&1)"
-if [ $? -ne 0 ]; then
-    echo "LINK_FAILED: $COMPILE_OUT"
-    exit 0
-fi
-
-"$QEMU" ./program
-echo "---EXIT:$?---"
-"#;
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        // On non-Windows hosts wsl is not available; skip.
-        return Err(QemuSkipReason::NotWindows);
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-
-        let mut child = match Command::new("wsl")
-            .args(["--exec", "bash", "-lc", script])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .creation_flags(CREATE_NO_WINDOW)
-            .spawn()
-        {
-            Ok(c) => c,
-            Err(e) => {
-                return Err(QemuSkipReason::WslUnavailable(e.to_string()));
-            }
-        };
-
-        if let Some(mut stdin) = child.stdin.take() {
-            let _ = stdin.write_all(asm.as_bytes());
-        }
-
-        let output = match child.wait_with_output() {
-            Ok(o) => o,
-            Err(e) => {
-                return Err(QemuSkipReason::WslWaitFailed(e.to_string()));
-            }
-        };
-
-        let combined = String::from_utf8_lossy(&output.stdout).into_owned();
-
-        // Detect toolchain or link failures and skip instead of panicking.
-        if let Some(reason) = qemu_skip_reason_from_output(&combined) {
-            return Err(reason);
-        }
-        if combined.contains("LINK_FAILED") {
-            panic!("assembly link step failed:\n{combined}");
-        }
-
-        // Parse the sentinel line "---EXIT:N---".
-        let sentinel_prefix = "---EXIT:";
-        let exit_code = combined
-            .lines()
-            .rev()
-            .find_map(|line| {
-                let trimmed = line.trim();
-                if trimmed.starts_with(sentinel_prefix) && trimmed.ends_with("---") {
-                    let inner = &trimmed[sentinel_prefix.len()..trimmed.len() - 3];
-                    inner.parse::<i32>().ok()
-                } else {
-                    None
-                }
-            })
-            .unwrap_or_else(|| {
-                panic!("could not find exit-code sentinel in WSL output:\n{combined}")
-            });
-
-        // Stdout = everything before the sentinel line.
-        let stdout = combined
-            .lines()
-            .filter(|l| {
-                let t = l.trim();
-                !t.starts_with(sentinel_prefix)
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        // Trim leading/trailing blank lines but preserve internal newlines.
-        let stdout = stdout.trim_matches('\n').to_string();
-
-        Ok(QemuResult { exit_code, stdout })
-    }
+/// Convert a Windows absolute path to its WSL /mnt/... equivalent.
+/// e.g. `C:\Users\foo\bar.elf` → `/mnt/c/Users/foo/bar.elf`
+#[cfg(target_os = "windows")]
+fn win_path_to_wsl(path: &std::path::Path) -> String {
+    let s = path.to_string_lossy();
+    // Expect "X:\rest\of\path"
+    let (drive, rest) = if s.len() >= 3 && s.as_bytes()[1] == b':' {
+        let drive = s[..1].to_lowercase();
+        let rest = s[2..].replace('\\', "/");
+        (drive, rest)
+    } else {
+        // Not a drive-rooted path — best-effort conversion
+        return s.replace('\\', "/");
+    };
+    format!("/mnt/{drive}{rest}")
 }
 
 /// Run a pre-compiled ELF image through WSL → qemu-riscv64.
 fn run_elf_via_qemu(elf: &[u8]) -> Result<QemuResult, QemuSkipReason> {
-    let script = r#"
-export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
-
-QEMU="$(command -v qemu-riscv64 2>/dev/null)"
-if [ -z "$QEMU" ]; then
-    echo "TOOLCHAIN_UNAVAILABLE: qemu-riscv64 not found"
-    exit 0
-fi
-
-WORKDIR="$(mktemp -d)"
-trap 'rm -rf "$WORKDIR"' EXIT
-cd "$WORKDIR"
-
-cat > program
-chmod +x program
-
-"$QEMU" ./program
-echo "---EXIT:$?---"
-"#;
-
     #[cfg(not(target_os = "windows"))]
     {
         return Err(QemuSkipReason::NotWindows);
@@ -279,9 +159,36 @@ echo "---EXIT:$?---"
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-        let mut child = match Command::new("wsl")
-            .args(["--exec", "bash", "-lc", script])
-            .stdin(Stdio::piped())
+        // Write ELF to a unique Windows temp file — avoids both binary-mode
+        // issues with stdin piping and races between parallel test threads.
+        static COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let unique = format!("fst_{}_{}", std::process::id(), seq);
+        let win_elf_path = std::env::temp_dir().join(format!("{unique}.elf"));
+        std::fs::write(&win_elf_path, elf)
+            .unwrap_or_else(|e| panic!("failed to write ELF to temp file: {e}"));
+        let wsl_elf_path = win_path_to_wsl(&win_elf_path);
+
+        let script = format!(
+            r#"
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
+
+QEMU="$(command -v qemu-riscv64 2>/dev/null)"
+if [ -z "$QEMU" ]; then
+    echo "TOOLCHAIN_UNAVAILABLE: qemu-riscv64 not found"
+    exit 0
+fi
+
+ELF_PATH="{wsl_elf_path}"
+chmod +x "$ELF_PATH"
+"$QEMU" "$ELF_PATH" 2>&1
+echo "---EXIT:$?---"
+"#
+        );
+
+        let child = match Command::new("wsl")
+            .args(["--exec", "bash", "-lc", &script])
+            .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .creation_flags(CREATE_NO_WINDOW)
@@ -293,10 +200,6 @@ echo "---EXIT:$?---"
             }
         };
 
-        if let Some(mut stdin) = child.stdin.take() {
-            let _ = stdin.write_all(elf);
-        }
-
         let output = match child.wait_with_output() {
             Ok(o) => o,
             Err(e) => {
@@ -307,6 +210,11 @@ echo "---EXIT:$?---"
         let combined = String::from_utf8_lossy(&output.stdout).into_owned();
         if let Some(reason) = qemu_skip_reason_from_output(&combined) {
             return Err(reason);
+        }
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if !stderr.trim().is_empty() {
+            eprintln!("[QEMU stderr]: {stderr}");
         }
 
         let sentinel_prefix = "---EXIT:";
@@ -323,46 +231,25 @@ echo "---EXIT:$?---"
                 }
             })
             .unwrap_or_else(|| {
-                panic!("could not find exit-code sentinel in WSL output:\n{combined}")
+                panic!("could not find exit-code sentinel in WSL output:\n{combined}\nstderr:\n{stderr}")
             });
 
         let stdout = combined
             .lines()
-            .filter(|l| {
-                let t = l.trim();
-                !t.starts_with(sentinel_prefix)
-            })
+            .filter(|l| !l.trim().starts_with(sentinel_prefix))
             .collect::<Vec<_>>()
             .join("\n");
         let stdout = stdout.trim_matches('\n').to_string();
+
+        let _ = std::fs::remove_file(&win_elf_path);
 
         Ok(QemuResult { exit_code, stdout })
     }
 }
 
 /// Compile HLL and run through QEMU in one step.
-/// Prepends the glue (`_start` + `putchar`) and the compiled stdlib
-/// (malloc/free/HeapBlock) so every program has a complete runtime.
 fn run_hll_via_qemu(source: &str) -> Result<QemuResult, QemuSkipReason> {
-    // Compile stdlib
-    let types_src = std::fs::read_to_string(stdlib_dir().join("types.hll"))
-        .expect("failed to read stdlib/types.hll");
-    let alloc_src = std::fs::read_to_string(stdlib_dir().join("memory_allocator.hll"))
-        .expect("failed to read stdlib/memory_allocator.hll");
-    let stdlib_combined = format!("{}\n{}", types_src, alloc_src);
-    let stdlib_asm = compile_to_asm(&stdlib_combined);
-    
-    // Compile user code
-    let main_asm = compile_to_asm(source);
-    
-    // Link everything together using the primitive linker
-    // LinkedProgram::new_stripped automatically prepends runtime_glue
-    let linked = LinkedProgram::new_stripped(&[
-        &stdlib_asm,
-        &main_asm,
-    ]);
-    
-    run_asm_via_qemu(linked.as_str())
+    run_hll_elf_via_qemu(source)
 }
 
 /// Compile HLL to ELF and run through QEMU in one step.
@@ -453,8 +340,8 @@ fn qemu_04_pointers_and_memory() {
 /// Verifies iterative factorial and Fibonacci (with boundary values),
 /// is_prime (including edge cases 1, 2, even numbers), prime counting,
 /// power function, function composition (fib∘count_primes), and external
-/// C FFI via putchar.  On success the program writes "PASS\n" to stdout
-/// and returns 0.
+/// putchar I/O.  On success the program writes "PASS\n" to stdout and
+/// returns 0.
 #[test]
 fn qemu_05_functions_and_io() {
     let source = read_program("05_functions_and_io.hll");

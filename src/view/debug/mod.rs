@@ -4,8 +4,7 @@
 use std::collections::HashMap;
 
 use crate::assembly_language::assembler::output::AssembledOutput;
-use crate::virtual_machine::bus::{CLINT_BASE, PLIC_BASE, RAM_BASE, ROM_BASE, UART_BASE};
-use crate::virtual_machine::linker::{self, LinkerConfig};
+use crate::virtual_machine::bus::{CLINT_BASE, ELF_LOAD_BASE, PLIC_BASE, RAM_BASE, ROM_BASE, UART_BASE};
 use crate::virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 
 // ---------------------------------------------------------------------------
@@ -100,14 +99,19 @@ pub struct DebugSession {
 
 impl DebugSession {
     pub fn new(assembled: &AssembledOutput) -> Self {
-        let program = linker::link(assembled, &LinkerConfig::default());
-        let symbols = program.symbols.clone();
+        let symbols: HashMap<String, u64> = assembled
+            .symbol_table
+            .iter()
+            .map(|(name, &offset)| (name.clone(), RAM_BASE + offset))
+            .collect();
+        let elf = assembled.to_elf(ELF_LOAD_BASE);
 
         // Build the initial snapshot with dynamic section presets.
         let mut initial_snapshot = DebugSnapshot::default();
         fill_section_presets(&mut initial_snapshot, &symbols);
 
-        let vm = VirtualMachine::from_linked(&program);
+        let vm = VirtualMachine::from_elf(&elf)
+            .unwrap_or_else(|e| panic!("failed to load debug ELF: {e}"));
 
         let mut session = Self {
             vm,
@@ -223,9 +227,15 @@ impl DebugSession {
 
     /// Rebuild the VM from the original assembled output and reset all state.
     pub fn reset(&mut self) {
-        let program = linker::link(&self.assembled, &LinkerConfig::default());
-        self.symbols = program.symbols.clone();
-        self.vm = VirtualMachine::from_linked(&program);
+        self.symbols = self
+            .assembled
+            .symbol_table
+            .iter()
+            .map(|(name, &offset)| (name.clone(), RAM_BASE + offset))
+            .collect();
+        let elf = self.assembled.to_elf(ELF_LOAD_BASE);
+        self.vm = VirtualMachine::from_elf(&elf)
+            .unwrap_or_else(|e| panic!("failed to reload debug ELF: {e}"));
         self.step_count = 0;
         self.status = SessionStatus::Running;
         self.uart_output.clear();

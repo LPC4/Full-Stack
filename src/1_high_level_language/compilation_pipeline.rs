@@ -1,9 +1,10 @@
 use crate::high_level_language::ast::Program;
 use crate::high_level_language::compiler::{
-    CompilerError, Diagnostic, HighLevelCompiler, SemanticAnalyzer,
+    CompilerError, Diagnostic, DiagnosticLevel, HighLevelCompiler, SemanticAnalyzer,
 };
 use crate::high_level_language::lexer::Lexer;
 use crate::high_level_language::parser::{Parser, ParserError};
+use crate::high_level_language::stdlib::{FunctionRegistry, TypeRegistry};
 use crate::high_level_language::token::Token;
 use crate::intermediate_language::IrProgram;
 use crate::intermediate_language::asm_compiler::compiler_rv64::CompilerRv64;
@@ -202,6 +203,76 @@ impl CompilationPipeline {
     ) {
         let mut compiler = CompilerRv64::new();
         compiler.compile_with_tokens(ir)
+    }
+
+    /// Like `compile`, but pre-seeded with stdlib registries so user calls to stdlib
+    /// functions produce correct IR (proper return types, not Void).
+    pub fn compile_with_externs(
+        &self,
+        source: &str,
+        fn_reg: &FunctionRegistry,
+        ty_reg: &TypeRegistry,
+    ) -> Result<CompilationResult, CompilationError> {
+        log::info!("Starting compilation pipeline with externs");
+        let tokens = self.lex_internal(source)?;
+        let ast = self.parse(tokens)?;
+        if self.run_semantic_analysis {
+            self.semantic_analysis_with_externs(&ast, fn_reg, ty_reg)?;
+        }
+        let (ir_program, diagnostics) = self.compile_to_ir_with_externs(&ast, fn_reg, ty_reg)?;
+        Ok(CompilationResult { ast, ir_program, diagnostics })
+    }
+
+    fn semantic_analysis_with_externs(
+        &self,
+        ast: &Program,
+        fn_reg: &FunctionRegistry,
+        ty_reg: &TypeRegistry,
+    ) -> Result<(), CompilationError> {
+        let mut analyzer = SemanticAnalyzer::new();
+        let returns: std::collections::HashMap<String, crate::intermediate_language::IrType> =
+            fn_reg.functions.iter().map(|(k, v)| (k.clone(), v.return_type.clone())).collect();
+        analyzer.seed_extern_fn_returns(&returns);
+        analyzer.seed_extern_type_aliases(&ty_reg.aliases);
+
+        if let Ok(_) = analyzer.analyze_program(ast) {
+            let errors: Vec<_> = analyzer
+                .diagnostics()
+                .iter()
+                .filter(|d| matches!(d.level, DiagnosticLevel::Error))
+                .map(|d| d.message.clone())
+                .collect();
+            if !errors.is_empty() {
+                return Err(CompilationError::SemanticErrors(errors));
+            }
+            Ok(())
+        } else {
+            let errors: Vec<_> =
+                analyzer.diagnostics().iter().map(|d| d.message.clone()).collect();
+            Err(CompilationError::SemanticErrors(errors))
+        }
+    }
+
+    fn compile_to_ir_with_externs(
+        &self,
+        ast: &Program,
+        fn_reg: &FunctionRegistry,
+        ty_reg: &TypeRegistry,
+    ) -> Result<(IrProgram, Vec<Diagnostic>), CompilationError> {
+        let mut compiler = HighLevelCompiler::new();
+        let ir_program = compiler
+            .compile_program_with_externs(ast, fn_reg, ty_reg)
+            .map_err(CompilationError::CompilerError)?;
+        let diagnostics = compiler.diagnostics().to_vec();
+        let errors: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| matches!(d.level, DiagnosticLevel::Error))
+            .map(|d| d.message.clone())
+            .collect();
+        if !errors.is_empty() {
+            return Err(CompilationError::SemanticErrors(errors));
+        }
+        Ok((ir_program, diagnostics))
     }
 
     /// Assemble a token stream into machine code, producing one byte blob per section.
@@ -544,6 +615,18 @@ fn extern_stubs() -> Vec<crate::assembly_language::rv_instruction::RvInstruction
     t.push(RvInstruction::Real(RealInstruction::Jalr(Jalr::new(
         0, RA, 0,
     ))));
+
+    // ---- _start: kernel/QEMU entry point ----
+    // Placed in .text so no separate PT_LOAD stub is needed (avoiding BSS-induced
+    // p_vaddr/p_offset misalignment that breaks qemu-user segment mapping).
+    t.push(RvInstruction::Directive(".globl _start".to_owned()));
+    t.push(RvInstruction::Label("_start".to_owned()));
+    t.push(RvInstruction::Directive("\tcall main".to_owned()));
+    t.push(RvInstruction::Pseudo(PseudoInstruction::Li {
+        rd: A7,
+        imm: 93,
+    }));
+    t.push(RvInstruction::Real(RealInstruction::Ecall(Ecall)));
 
     t
 }

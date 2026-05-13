@@ -23,7 +23,7 @@ sum_to: (n: i32) -> i32 {
 const FACTORIAL_7 = factorial(7)    ; 5040
 const SUM_TO_10   = sum_to(10)      ; 55
 
-external printf: (format: i8*, value: i32) -> i32
+external printf: (format: u8*, value: i32) -> i32
 
 main: () -> i32 {
     printf("Factorial 7 = %d\n".data, FACTORIAL_7)

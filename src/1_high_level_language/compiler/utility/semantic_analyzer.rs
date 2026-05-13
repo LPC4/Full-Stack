@@ -985,6 +985,26 @@ impl SemanticAnalyzer {
     pub fn diagnostics(&self) -> &[Diagnostic] {
         self.diagnostics.entries()
     }
+
+    /// Pre-populate function return types from an extern map (name → IrType).
+    /// Called before `analyze_program` so stdlib calls type-check correctly in user code.
+    pub fn seed_extern_fn_returns(
+        &mut self,
+        returns: &std::collections::HashMap<String, IrType>,
+    ) {
+        for (name, ret_ty) in returns {
+            let ty_str = self.context.get_type_name(ret_ty);
+            self.function_signatures.insert(name.clone(), ty_str);
+        }
+    }
+
+    /// Pre-populate type aliases so stdlib-defined types (e.g. `HeapBlock`) resolve in user code.
+    pub fn seed_extern_type_aliases(&mut self, aliases: &[crate::intermediate_language::IrTypeAlias]) {
+        for alias in aliases {
+            self.context.register_type(alias.name.clone(), alias.ty.clone());
+            self.type_mapping.insert(alias.name.clone(), alias.name.clone());
+        }
+    }
 }
 
 impl Default for SemanticAnalyzer {

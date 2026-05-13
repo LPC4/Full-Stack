@@ -1,4 +1,4 @@
-use crate::assembly_language::linker::strip_comments;
+use crate::virtual_machine::bus::ELF_LOAD_BASE;
 use crate::view::{CompilationState, CompilerView, ProgramCatalog};
 use egui::{RichText, ScrollArea};
 
@@ -34,26 +34,19 @@ impl CompilerView for ExecutionView {
         {
             ui.horizontal(|ui| {
                 if ui.button("Run in QEMU").clicked() {
-                    // Use linked_asm (full stdlib + user) for execution
-                    let asm_to_run = if state.linked_asm.is_empty() {
-                        &state.asm
-                    } else {
-                        &state.linked_asm
-                    };
-
-                    if asm_to_run.is_empty() {
+                    let Some(assembled) = state.assembled.as_ref() else {
                         state.execution_output = "Please compile first.".to_string();
                         return;
-                    }
+                    };
 
-                    state.execution_output = "Running in QEMU... please wait.\n(Executing cross-compiler and QEMU in background)".to_string();
+                    state.execution_output = "Running in QEMU... please wait.\n(Executing qemu-riscv64 in background)".to_string();
 
                     let (tx, rx) = std::sync::mpsc::channel();
                     self.wsl_receiver = Some(rx);
-                    let asm_copy = asm_to_run.clone();
+                    let elf_bytes = assembled.to_elf(ELF_LOAD_BASE);
 
                     std::thread::spawn(move || {
-                        let result = run_in_wsl(&asm_copy);
+                        let result = run_in_wsl(&elf_bytes);
                         let _ = tx.send(result);
                     });
                 }
@@ -103,15 +96,12 @@ impl CompilerView for ExecutionView {
 }
 
 #[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
-fn run_in_wsl(asm: &str) -> String {
+fn run_in_wsl(elf: &[u8]) -> String {
     use std::io::Write;
     use std::os::windows::process::CommandExt;
     use std::process::{Command, Stdio};
 
     const CREATE_NO_WINDOW: u32 = 0x08000000;
-
-    // The asm is already fully linked (stdlib + user + runtime glue)
-    let clean_asm = strip_comments(asm);
 
     let script = r#"
 echo "=== Connected to WSL ==="
@@ -119,21 +109,14 @@ export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 WORKDIR="$HOME/assembly"
 mkdir -p "$WORKDIR"
 cd "$WORKDIR"
-CC="$(which riscv64-linux-gnu-gcc 2>/dev/null)"
-if [ -z "$CC" ]; then
-    echo "ERROR: riscv64-linux-gnu-gcc not found."
-    exit 1
-fi
 QEMU="$(which qemu-riscv64 2>/dev/null)"
 if [ -z "$QEMU" ]; then
     echo "ERROR: qemu-riscv64 not found."
     exit 1
 fi
 set -e
-cat > program.s
-echo >> program.s
-# Use -nostdlib to avoid conflicts with user-defined malloc/free
-"$CC" -static -nostdlib program.s -o program
+cat > program
+chmod +x program
 set +e
 "$QEMU" ./program
 EXIT_CODE=$?
@@ -154,7 +137,7 @@ echo "--- Process Exited with Code: $EXIT_CODE ---"
     };
 
     if let Some(mut stdin) = child.stdin.take() {
-        if let Err(e) = stdin.write_all(clean_asm.as_bytes()) {
+        if let Err(e) = stdin.write_all(elf) {
             return format!("Failed to write to WSL stdin: {}", e);
         }
     }

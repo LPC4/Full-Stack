@@ -3,7 +3,6 @@ mod macros;
 
 pub mod assembler;
 pub mod encode_decode;
-pub mod linker;
 pub mod pseudo;
 pub mod real;
 pub mod riscv;

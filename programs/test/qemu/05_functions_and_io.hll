@@ -1,6 +1,6 @@
 ; Comprehensive functions and I/O test.
 ;
-; Covers: external C FFI (putchar), iterative recursion-style functions,
+; Covers: external putchar I/O, iterative recursion-style functions,
 ;         function composition, bool return values, multi-call pipelines,
 ;         string output via individual character writes.
 ;
