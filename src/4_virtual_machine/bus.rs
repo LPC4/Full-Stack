@@ -130,7 +130,10 @@ impl SystemBus {
     pub fn cold_cache_reset(&mut self) {
         self.l1_cache.flush_and_invalidate();
         self.l1_cache.peek_next_mut().flush_and_invalidate();
-        self.l1_cache.peek_next_mut().peek_next_mut().flush_and_invalidate();
+        self.l1_cache
+            .peek_next_mut()
+            .peek_next_mut()
+            .flush_and_invalidate();
     }
 
     /// Get full snapshots for all three cache levels (params + line states + stats).

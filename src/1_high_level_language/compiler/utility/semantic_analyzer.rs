@@ -313,7 +313,8 @@ impl SemanticAnalyzer {
                         }
                     }
 
-                    let element_ty = inferred_element_ty.expect("array must have at least one typed element");
+                    let element_ty =
+                        inferred_element_ty.expect("array must have at least one typed element");
                     Ok(format!("{}[{}]", element_ty, elements.len()))
                 }
                 PrimaryExpr::FieldAccess { expr, field } => {
@@ -785,7 +786,10 @@ impl SemanticAnalyzer {
                 // Check if already defined
                 if self.symbols.lookup(name).is_some() {
                     // Variable exists, just verify type compatibility
-                    let info = self.symbols.lookup(name).expect("symbol exists: checked above");
+                    let info = self
+                        .symbols
+                        .lookup(name)
+                        .expect("symbol exists: checked above");
                     let existing_ty = self.context.get_type_name(&info.ty);
                     if existing_ty != ty {
                         self.error(format!(

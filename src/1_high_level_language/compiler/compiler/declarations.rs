@@ -262,7 +262,10 @@ impl HighLevelCompiler {
                             self.emit_deferred_action(action);
                         }
 
-                        let mut final_b = self.current_block.take().expect("current block must exist at function exit");
+                        let mut final_b = self
+                            .current_block
+                            .take()
+                            .expect("current block must exist at function exit");
                         final_b.set_terminator(IrTerminator::Return(None));
                         self.current_blocks.push(final_b);
                     } else {
