@@ -154,7 +154,6 @@ impl HighLevelCompiler {
 
         Ok(ir_program)
     }
-
 }
 
 mod control_flow;

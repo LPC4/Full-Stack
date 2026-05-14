@@ -1,7 +1,9 @@
 //! Top-level virtual machine: ties together the CPU and memory bus.
 
 use crate::assembly_language::assembler::output::AssembledOutput;
-use crate::virtual_machine::bus::{ELF_LOAD_BASE, HEAP_PTR_ADDR, RAM_BASE, RAM_SIZE_DEFAULT, SystemBus};
+use crate::virtual_machine::bus::{
+    ELF_LOAD_BASE, HEAP_PTR_ADDR, RAM_BASE, RAM_SIZE_DEFAULT, SystemBus,
+};
 use crate::virtual_machine::cpu::PipelinedCpu;
 pub use crate::virtual_machine::cpu::StepOutcome;
 pub use crate::virtual_machine::cpu::csr::CsrSnapshot;
@@ -177,7 +179,9 @@ impl ParsedElf {
         let phnum = read_u16(bytes, 56)? as u64;
 
         if phentsize < 56 {
-            return Err(VmError::Other("ELF program header size is invalid".to_string()));
+            return Err(VmError::Other(
+                "ELF program header size is invalid".to_string(),
+            ));
         }
 
         let mut load_segments = Vec::new();
@@ -207,7 +211,9 @@ impl ParsedElf {
         }
 
         if load_segments.is_empty() {
-            return Err(VmError::Other("ELF contains no PT_LOAD segments".to_string()));
+            return Err(VmError::Other(
+                "ELF contains no PT_LOAD segments".to_string(),
+            ));
         }
 
         Ok(Self {

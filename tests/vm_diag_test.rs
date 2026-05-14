@@ -21,9 +21,10 @@ fn link_stdlib_and_run(user_src: &str) -> (String, Option<i64>) {
     use full_stack::virtual_machine::virtual_machine::StepOutcome;
 
     let pipeline = CompilationPipeline::new();
-    let stdlib_result = pipeline.compile(&get_stdlib_source()).expect("stdlib compile");
-    let (_, stdlib_tokens) =
-        pipeline.compile_ir_to_assembly_with_tokens(&stdlib_result.ir_program);
+    let stdlib_result = pipeline
+        .compile(&get_stdlib_source())
+        .expect("stdlib compile");
+    let (_, stdlib_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&stdlib_result.ir_program);
 
     let user_result = pipeline.compile(user_src).expect("user compile");
     let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program);
@@ -48,7 +49,9 @@ fn link_stdlib_and_run(user_src: &str) -> (String, Option<i64>) {
 #[test]
 fn stdlib_provides_malloc() {
     let pipeline = CompilationPipeline::new();
-    let result = pipeline.compile(&get_stdlib_source()).expect("stdlib compile");
+    let result = pipeline
+        .compile(&get_stdlib_source())
+        .expect("stdlib compile");
     let (_, tokens) = pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program);
     assert!(!tokens.is_empty(), "stdlib token stream must not be empty");
     let has_malloc = tokens.iter().any(|t| {
@@ -127,16 +130,22 @@ main: () -> i32 {
 #[test]
 fn stdlib_provides_runtime() {
     let pipeline = CompilationPipeline::new();
-    let result = pipeline.compile(&get_stdlib_source()).expect("stdlib compile");
+    let result = pipeline
+        .compile(&get_stdlib_source())
+        .expect("stdlib compile");
     let (_, tokens) = pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program);
     use full_stack::assembly_language::rv_instruction::RvInstruction;
-    let has = |name: &str| tokens.iter().any(|t| matches!(t, RvInstruction::Label(n) if n == name));
-    assert!(has("putchar"),     "stdlib must define putchar");
-    assert!(has("puts"),        "stdlib must define puts");
-    assert!(has("print_int"),   "stdlib must define print_int");
-    assert!(has("printf"),      "stdlib must define printf");
-    assert!(has("exit"),        "stdlib must define exit");
-    assert!(has("_start"),      "stdlib must define _start");
+    let has = |name: &str| {
+        tokens
+            .iter()
+            .any(|t| matches!(t, RvInstruction::Label(n) if n == name))
+    };
+    assert!(has("putchar"), "stdlib must define putchar");
+    assert!(has("puts"), "stdlib must define puts");
+    assert!(has("print_int"), "stdlib must define print_int");
+    assert!(has("printf"), "stdlib must define printf");
+    assert!(has("exit"), "stdlib must define exit");
+    assert!(has("_start"), "stdlib must define _start");
 }
 
 // Verify puts writes a null-terminated string plus newline.

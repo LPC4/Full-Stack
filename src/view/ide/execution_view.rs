@@ -1,5 +1,5 @@
-use crate::virtual_machine::bus::ELF_LOAD_BASE;
 use crate::view::{CompilationState, CompilerView, ProgramCatalog};
+use crate::virtual_machine::bus::ELF_LOAD_BASE;
 use egui::{RichText, ScrollArea};
 
 #[derive(Default)]
@@ -39,7 +39,9 @@ impl CompilerView for ExecutionView {
                         return;
                     };
 
-                    state.execution_output = "Running in QEMU... please wait.\n(Executing qemu-riscv64 in background)".to_string();
+                    state.execution_output =
+                        "Running in QEMU... please wait.\n(Executing qemu-riscv64 in background)"
+                            .to_string();
 
                     let (tx, rx) = std::sync::mpsc::channel();
                     self.wsl_receiver = Some(rx);

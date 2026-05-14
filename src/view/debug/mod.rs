@@ -4,7 +4,9 @@
 use std::collections::HashMap;
 
 use crate::assembly_language::assembler::output::AssembledOutput;
-use crate::virtual_machine::bus::{CLINT_BASE, ELF_LOAD_BASE, PLIC_BASE, RAM_BASE, ROM_BASE, UART_BASE};
+use crate::virtual_machine::bus::{
+    CLINT_BASE, ELF_LOAD_BASE, PLIC_BASE, RAM_BASE, ROM_BASE, UART_BASE,
+};
 use crate::virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 
 // ---------------------------------------------------------------------------

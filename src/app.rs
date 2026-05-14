@@ -177,8 +177,9 @@ impl FullStackApp {
         let stdlib_src = get_stdlib_source();
         match self.pipeline.compile(&stdlib_src) {
             Ok(result) => {
-                let (_, tokens) =
-                    self.pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program);
+                let (_, tokens) = self
+                    .pipeline
+                    .compile_ir_to_assembly_with_tokens(&result.ir_program);
                 self.stdlib_tokens = tokens;
             }
             Err(e) => {
@@ -341,8 +342,9 @@ impl FullStackApp {
             Ok(result) => {
                 self.compilation_state.ast = format!("{:#?}", result.ast);
                 self.compilation_state.ir = result.ir_program.to_string();
-                let (asm_text, user_tokens) =
-                    self.pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program);
+                let (asm_text, user_tokens) = self
+                    .pipeline
+                    .compile_ir_to_assembly_with_tokens(&result.ir_program);
                 self.compilation_state.asm = asm_text;
                 self.compilation_state.assembly_tokens = user_tokens.clone();
 

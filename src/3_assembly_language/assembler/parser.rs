@@ -3,7 +3,7 @@ use super::reg_parse::parse_int_reg;
 use super::section::SectionKind;
 use super::token::{AsmToken, BranchKind};
 use crate::assembly_language::real::RealInstruction;
-use crate::assembly_language::riscv::rv64i::{Addi, Ecall, Jalr, Lbu, Ld, Sd, Sb};
+use crate::assembly_language::riscv::rv64i::{Addi, Ecall, Jalr, Lbu, Ld, Sb, Sd};
 /// Pass 0: parse `Vec<RvInstruction>` into `Vec<AsmToken>`.
 ///
 /// `RvInstruction` carries some untyped raw strings (branches emitted via
@@ -200,7 +200,9 @@ fn parse_instruction_line(line: &str, out: &mut Vec<AsmToken>) {
     // `addi rd, rs1, imm`
     if mnemonic == "addi" {
         if let Some((rd, rs1, imm)) = parse_r_i_imm(rest) {
-            out.push(AsmToken::Real(RealInstruction::Addi(Addi::new(rd, rs1, imm))));
+            out.push(AsmToken::Real(RealInstruction::Addi(Addi::new(
+                rd, rs1, imm,
+            ))));
             return;
         }
         out.push(AsmToken::Comment(format!("unrecognised addi: {line}")));
@@ -247,22 +249,31 @@ fn parse_instruction_line(line: &str, out: &mut Vec<AsmToken>) {
         return;
     }
 
-    out.push(AsmToken::Comment(format!("unrecognised instruction: {line}")));
+    out.push(AsmToken::Comment(format!(
+        "unrecognised instruction: {line}"
+    )));
 }
 
 /// Expand `li rd, imm` into addi (1-instr) or lui+addi (2-instr).
 fn expand_li(rd: u8, imm: i64, out: &mut Vec<AsmToken>) {
     use crate::assembly_language::riscv::rv64i::Lui;
     if (-2048..=2047).contains(&imm) {
-        out.push(AsmToken::Real(RealInstruction::Addi(Addi::new(rd, 0, imm as i32))));
+        out.push(AsmToken::Real(RealInstruction::Addi(Addi::new(
+            rd, 0, imm as i32,
+        ))));
     } else {
         let hi = ((imm >> 12) & 0xFFFFF) as i32;
         let lo = (imm & 0xFFF) as i32;
         let lo_signed = if lo >= 0x800 { lo - 0x1000 } else { lo };
         let hi_adj = if lo_signed < 0 { hi + 1 } else { hi };
-        out.push(AsmToken::Real(RealInstruction::Lui(Lui::new(rd, hi_adj << 12))));
+        out.push(AsmToken::Real(RealInstruction::Lui(Lui::new(
+            rd,
+            hi_adj << 12,
+        ))));
         if lo_signed != 0 {
-            out.push(AsmToken::Real(RealInstruction::Addi(Addi::new(rd, rd, lo_signed))));
+            out.push(AsmToken::Real(RealInstruction::Addi(Addi::new(
+                rd, rd, lo_signed,
+            ))));
         }
     }
 }

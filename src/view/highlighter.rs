@@ -4,9 +4,9 @@ use crate::view::ui_theme;
 use egui::text::LayoutJob;
 
 const HLL_KEYWORDS: &[&str] = &[
-    "type", "const", "if", "else", "while", "return", "defer", "new", "free", "and", "or",
-    "true", "false", "null", "main", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64",
-    "f32", "f64", "bool", "asm",
+    "type", "const", "if", "else", "while", "return", "defer", "new", "free", "and", "or", "true",
+    "false", "null", "main", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64",
+    "bool", "asm",
 ];
 
 const ABI_INT_REGS: &[&str] = &[
@@ -222,7 +222,8 @@ fn append_inline_asm_code_part(job: &mut LayoutJob, theme: &egui::Style, code_pa
             continue;
         }
 
-        if b.is_ascii_digit() || (b == b'-' && start + 1 < len && bytes[start + 1].is_ascii_digit()) {
+        if b.is_ascii_digit() || (b == b'-' && start + 1 < len && bytes[start + 1].is_ascii_digit())
+        {
             end += 1;
             while end < len && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'x') {
                 end += 1;

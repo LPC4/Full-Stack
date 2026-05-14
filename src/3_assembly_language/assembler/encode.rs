@@ -35,11 +35,19 @@ pub fn encode(tokens: &[AsmToken], layout: &Layout) -> Result<AssembledOutput, A
     let mut section_bases: std::collections::HashMap<SectionKind, u64> =
         std::collections::HashMap::new();
     let mut running_base: u64 = 0;
-    for kind in layout.section_order.iter().filter(|k| !matches!(k, SectionKind::Bss)) {
+    for kind in layout
+        .section_order
+        .iter()
+        .filter(|k| !matches!(k, SectionKind::Bss))
+    {
         section_bases.insert(kind.clone(), running_base);
         running_base += layout.section_sizes.get(kind).copied().unwrap_or(0);
     }
-    for kind in layout.section_order.iter().filter(|k| matches!(k, SectionKind::Bss)) {
+    for kind in layout
+        .section_order
+        .iter()
+        .filter(|k| matches!(k, SectionKind::Bss))
+    {
         section_bases.insert(kind.clone(), running_base);
         running_base += layout.section_sizes.get(kind).copied().unwrap_or(0);
     }

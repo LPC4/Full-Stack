@@ -82,7 +82,9 @@ pub enum Statement {
     },
     Return(Option<Expression>),
     Defer(Expression),
-    AsmBlock { lines: Vec<String> },
+    AsmBlock {
+        lines: Vec<String>,
+    },
     Break,
     Continue,
     VariableDecl {
