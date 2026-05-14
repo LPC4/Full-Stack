@@ -23,6 +23,10 @@ pub enum VmError {
     Ebreak,
     /// Page fault - virtual address translation failed
     PageFault(u64),
+    /// Return from machine-mode trap (MRET)
+    Mret,
+    /// Return from supervisor-mode trap (SRET)
+    Sret,
     /// Other runtime error with a descriptive message.
     Other(String),
 }
@@ -41,6 +45,8 @@ impl fmt::Display for VmError {
             VmError::Ecall => write!(f, "environment call"),
             VmError::Ebreak => write!(f, "breakpoint"),
             VmError::PageFault(addr) => write!(f, "page fault at {addr:#010x}"),
+            VmError::Mret => write!(f, "return from machine-mode trap (MRET)"),
+            VmError::Sret => write!(f, "return from supervisor-mode trap (SRET)"),
             VmError::Other(msg) => write!(f, "{msg}"),
         }
     }

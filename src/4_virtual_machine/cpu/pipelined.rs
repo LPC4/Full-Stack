@@ -17,25 +17,11 @@ use crate::virtual_machine::cpu::pipeline::memory::MemResult;
 use crate::virtual_machine::cpu::pipeline::predictor::BranchPredictor;
 use crate::virtual_machine::cpu::pipeline::registers::{EXMEMReg, IDEXReg, IFIDReg, MEMWBReg};
 use crate::virtual_machine::cpu::pipeline::{decode, execute, fetch, memory, writeback};
-use crate::virtual_machine::cpu::registers::{PrivilegeMode, Registers};
+use crate::virtual_machine::cpu::registers::Registers;
+use crate::virtual_machine::cpu::syscall;
+use crate::virtual_machine::cpu::traps;
 use crate::virtual_machine::error::VmError;
 use crate::virtual_machine::memory::MemoryAccess;
-
-// ---------------------------------------------------------------------------
-// mcause constants (duplicated from cpu_impl)
-// ---------------------------------------------------------------------------
-
-const CAUSE_INSN_ACCESS_FAULT: u64 = 1;
-const CAUSE_ILLEGAL_INSN: u64 = 2;
-const CAUSE_EBREAK: u64 = 3;
-const CAUSE_LOAD_ACCESS_FAULT: u64 = 5;
-const CAUSE_STORE_ACCESS_FAULT: u64 = 7;
-#[allow(dead_code)]
-const CAUSE_ECALL_U: u64 = 8;
-#[allow(dead_code)]
-const CAUSE_ECALL_S: u64 = 9;
-#[allow(dead_code)]
-const CAUSE_ECALL_M: u64 = 11;
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -170,8 +156,24 @@ impl PipelinedCpu {
     // Main tick, advance the pipeline by one clock cycle
     // -----------------------------------------------------------------------
 
-    /// Advance every pipeline stage by one cycle.  Returns `Continue` until the
-    /// program halts via ecall(93) or the pipeline drains after a halt.
+    /// Advance every pipeline stage by one cycle.
+    ///
+    /// The 5-stage RISC-V pipeline executes in reverse order (WB -> MEM -> EX -> ID -> IF)
+    /// to ensure that each stage can pass its results to the next stage in the same cycle.
+    ///
+    /// Pipeline stages:
+    /// 1. **WB (Writeback)**: Commits results to registers/CSRs, handles syscalls
+    /// 2. **MEM (Memory)**: Performs load/store operations, accesses memory bus
+    /// 3. **EX (Execute)**: Executes ALU operations, resolves branches
+    /// 4. **ID (Decode)**: Decodes instructions, reads register values
+    /// 5. **IF (Fetch)**: Fetches next instruction from memory
+    ///
+    /// Hazard handling:
+    /// - Data forwarding: EX/MEM and MEM/WB results forwarded to EX stage
+    /// - Load-use stalls: 1-cycle bubble when load result needed immediately
+    /// - Branch misprediction: 2-cycle flush when branch prediction is wrong
+    ///
+    /// Returns `Continue` until the program halts via ecall(93) or the pipeline drains.
     pub fn tick(&mut self, bus: &mut SystemBus) -> Result<TickOutcome, VmError> {
         self.stats.cycles += 1;
         self.csrs.increment_cycle();
@@ -192,7 +194,9 @@ impl PipelinedCpu {
         let old_id_ex = self.id_ex.take();
         let old_if_id = self.if_id.take();
 
-        // ---- WB stage -------------------------------------------------------
+        // ---- WB stage (Writeback) -------------------------------------------
+        // Commits results to registers and CSRs. This is where instructions
+        // officially "retire" and architectural state is updated.
         let wb_outcome = self.stage_wb(old_mem_wb.as_ref(), bus)?;
         match wb_outcome {
             TickOutcome::Halted(code) => return Ok(TickOutcome::Halted(code)),
@@ -209,27 +213,39 @@ impl PipelinedCpu {
             TickOutcome::Continue => {}
         }
 
-        // ---- MEM stage ------------------------------------------------------
+        // ---- MEM stage (Memory) ---------------------------------------------
+        // Performs load/store operations by accessing the memory bus.
+        // Load instructions read from memory, store instructions write to memory.
         let new_mem_wb = self.stage_mem(old_ex_mem.as_ref(), bus)?;
 
-        // ---- EX stage -------------------------------------------------------
+        // ---- EX stage (Execute) ---------------------------------------------
+        // Executes ALU operations, computes addresses, resolves branches.
+        // Branch prediction is checked here; mispredictions trigger a flush.
         let (new_ex_mem, flush, redirect_pc) =
             self.stage_ex(old_id_ex.as_ref(), old_ex_mem.as_ref(), old_mem_wb.as_ref())?;
 
         // ---- Hazard detection -----------------------------------------------
+        // Detects load-use hazards: if ID stage needs a value that's still being
+        // loaded in EX stage, we must stall for 1 cycle to avoid using stale data.
         let stall = match (old_id_ex.as_ref(), old_if_id.as_ref()) {
             (Some(id_ex), Some(if_id)) => load_use_hazard(id_ex, if_id.rs1, if_id.rs2),
             _ => false,
         };
 
-        // ---- ID stage -------------------------------------------------------
+        // ---- ID stage (Decode) ----------------------------------------------
+        // Decodes the instruction, reads register values from the register file.
+        // If there's a flush (branch mispredict) or stall (load-use hazard),
+        // insert a bubble (None) instead of decoding.
         let new_id_ex = if flush || stall {
             None // bubble
         } else {
             self.stage_id(old_if_id.as_ref())?
         };
 
-        // ---- IF stage -------------------------------------------------------
+        // ---- IF stage (Fetch) -----------------------------------------------
+        // Fetches the next instruction from memory at fetch_pc.
+        // If stalled, preserve the current instruction (don't fetch new one).
+        // If flushed, update fetch_pc to branch target and skip fetching this cycle.
         let new_if_id = if stall {
             old_if_id // preserve stalled instruction
         } else if flush {
@@ -512,14 +528,14 @@ impl PipelinedCpu {
                 Err(VmError::Ebreak) => {
                     let pc = self.regs.pc;
                     self.flush_pipeline();
-                    self.take_trap(CAUSE_EBREAK, 0, pc);
+                    self.take_trap(traps::CAUSE_EBREAK, 0, pc);
                     return Ok(TickOutcome::Continue);
                 }
-                Err(VmError::Other(ref msg)) if msg == "MRET" => {
+                Err(VmError::Mret) => {
                     self.handle_mret();
                     return Ok(TickOutcome::Continue);
                 }
-                Err(VmError::Other(ref msg)) if msg == "SRET" => {
+                Err(VmError::Sret) => {
                     self.handle_sret();
                     return Ok(TickOutcome::Continue);
                 }
@@ -596,67 +612,49 @@ impl PipelinedCpu {
 
     fn flush_and_trap(&mut self, e: VmError, pc: u64) {
         self.flush_pipeline();
-        let (cause, tval) = match &e {
-            VmError::InstructionAccessFault(a) => (CAUSE_INSN_ACCESS_FAULT, *a),
-            VmError::IllegalInstruction(i) => (CAUSE_ILLEGAL_INSN, *i as u64),
-            VmError::LoadAccessFault(a) | VmError::BusError(a) => (CAUSE_LOAD_ACCESS_FAULT, *a),
-            VmError::StoreAccessFault(a) => (CAUSE_STORE_ACCESS_FAULT, *a),
-            _ => return, // fatal,caller will see Err if needed
-        };
-        self.take_trap(cause, tval, pc);
+        if let Some((cause, tval)) = traps::error_to_trap_cause(&e) {
+            self.take_trap(cause, tval, pc);
+        }
     }
 
     fn take_trap(&mut self, cause: u64, tval: u64, pc: u64) {
-        self.csrs.mepc = pc & !0x3u64;
-        self.csrs.mcause = cause;
-        self.csrs.mtval = tval;
-
-        let mie_bit = (self.csrs.mstatus >> 3) & 1;
-        self.csrs.mstatus &= !(1u64 << 7);
-        self.csrs.mstatus |= mie_bit << 7;
-        self.csrs.mstatus &= !(1u64 << 3);
-        let mode = self.regs.priv_mode as u64;
-        self.csrs.mstatus &= !(0x3u64 << 11);
-        self.csrs.mstatus |= mode << 11;
-
-        let mtvec = self.csrs.mtvec;
-        let vmode = mtvec & 0x3;
-        let base = mtvec & !0x3u64;
-        self.fetch_pc = if vmode == 1 && (cause & (1u64 << 63)) != 0 {
-            base + 4 * (cause & !(1u64 << 63))
-        } else {
-            base
-        };
-        self.regs.pc = self.fetch_pc;
-        self.regs.priv_mode = PrivilegeMode::Machine;
+        let new_pc = traps::take_trap(
+            &mut self.regs,
+            &mut self.csrs,
+            cause,
+            tval,
+            pc,
+        );
+        self.fetch_pc = new_pc;
+        self.regs.pc = new_pc;
     }
 
     fn handle_mret(&mut self) {
-        let mpie = (self.csrs.mstatus >> 7) & 1;
-        self.csrs.mstatus &= !(1u64 << 3);
-        self.csrs.mstatus |= mpie << 3;
-        self.csrs.mstatus |= 1u64 << 7;
-        let mpp = (self.csrs.mstatus >> 11) & 0x3;
-        self.regs.priv_mode = match mpp {
-            0 => PrivilegeMode::User,
-            1 => PrivilegeMode::Supervisor,
-            _ => PrivilegeMode::Machine,
-        };
-        self.csrs.mstatus &= !(0x3u64 << 11);
-        self.regs.pc = self.csrs.mepc;
-        self.fetch_pc = self.regs.pc;
+        let new_pc = traps::handle_mret(&mut self.regs, &mut self.csrs);
+        self.fetch_pc = new_pc;
+        self.regs.pc = new_pc;
         self.flush_pipeline();
         self.csrs.increment_instret();
         self.stats.insns_retired += 1;
     }
 
     fn handle_sret(&mut self) {
-        self.regs.priv_mode = PrivilegeMode::User;
-        self.regs.pc = self.csrs.sepc;
-        self.fetch_pc = self.regs.pc;
-        self.flush_pipeline();
-        self.csrs.increment_instret();
-        self.stats.insns_retired += 1;
+        match traps::handle_sret(&mut self.regs, &mut self.csrs) {
+            Ok(new_pc) => {
+                self.fetch_pc = new_pc;
+                self.regs.pc = new_pc;
+                self.flush_pipeline();
+                self.csrs.increment_instret();
+                self.stats.insns_retired += 1;
+            }
+            Err(e) => {
+                // If SRET fails (e.g., called from U-mode), flush and trap
+                self.flush_pipeline();
+                if let Some((cause, tval)) = traps::error_to_trap_cause(&e) {
+                    self.take_trap(cause, tval, self.regs.pc);
+                }
+            }
+        }
     }
 
     fn handle_ecall(&mut self, bus: &mut SystemBus) -> Result<TickOutcome, VmError> {
@@ -665,47 +663,14 @@ impl PipelinedCpu {
         // has no effect on the stages that run after WB in the same tick. Instead,
         // tick() detects EcallSquash and early-returns before committing any
         // new stage results, which is the correct squash mechanism.
-        let syscall = self.regs.read_x(17);
-        match syscall {
-            64 => {
-                // Linux sys_write(fd, buf, len)
-                let fd = self.regs.read_x(10);
-                let buf = self.regs.read_x(11);
-                let len = self.regs.read_x(12) as usize;
-
-                // Only support stdout (fd=1)
-                if fd == 1 {
-                    let mut written = 0usize;
-                    for i in 0..len {
-                        let byte = bus.read_byte(buf + i as u64).unwrap_or(0);
-                        let _ = bus.uart_mut().write_byte(0, byte);
-                        written += 1;
-                    }
-                    self.regs.write_x(10, written as u64);
-                } else {
-                    // Unsupported file descriptor
-                    self.regs.write_x(10, u64::MAX);
-                }
-                self.regs.pc = self.regs.pc.wrapping_add(4);
+        
+        match syscall::handle_syscall(&mut self.regs, &mut self.csrs, bus)? {
+            syscall::SyscallOutcome::Continue => {
+                // Update fetch_pc to match regs.pc after syscall advances it
                 self.fetch_pc = self.regs.pc;
-                self.csrs.increment_instret();
-                self.stats.insns_retired += 1;
                 Ok(TickOutcome::EcallSquash)
             }
-            93 | 94 => {
-                // Linux sys_exit / sys_exit_group
-                let code = self.regs.read_x(10) as i64;
-                Ok(TickOutcome::Halted(code))
-            }
-            _ => {
-                // Unknown syscall - return error
-                self.regs.write_x(10, u64::MAX);
-                self.regs.pc = self.regs.pc.wrapping_add(4);
-                self.fetch_pc = self.regs.pc;
-                self.csrs.increment_instret();
-                self.stats.insns_retired += 1;
-                Ok(TickOutcome::EcallSquash)
-            }
+            syscall::SyscallOutcome::Halted(code) => Ok(TickOutcome::Halted(code)),
         }
     }
 

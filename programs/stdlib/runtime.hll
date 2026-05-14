@@ -1,8 +1,6 @@
 ; Standard Library Runtime
 ;
 ; Implements the entry point, I/O primitives, and process control in HLL.
-; Previously these were injected as hardcoded RISC-V assembly by extern_stubs()
-; in compilation_pipeline.rs; the compiler no longer emits any code of its own.
 ;
 ; Linux syscall numbers (RV64):
 ;   64  sys_write(fd, buf, len) -> bytes_written
@@ -10,7 +8,6 @@
 
 external main: () -> i32
 
-; Write a single byte to stdout (fd=1) via sys_write (syscall 64).
 putchar: (c: i32) -> i32 {
     asm {
         addi  sp, sp, -8
@@ -25,7 +22,6 @@ putchar: (c: i32) -> i32 {
     return 0
 }
 
-; Write a null-terminated byte string to stdout followed by a newline.
 puts: (str: u8*) -> i32 {
     i: u64 = 0
     c: i32 = i32(@(str + i))
@@ -38,7 +34,6 @@ puts: (str: u8*) -> i32 {
     return 0
 }
 
-; Helper: recursively print the digits of n where n > 0.
 print_int_rec: (n: i64) -> () {
     if n == 0 {
         return
@@ -47,7 +42,6 @@ print_int_rec: (n: i64) -> () {
     putchar(i32(n % 10) + 48)
 }
 
-; Print a signed integer in decimal to stdout (no trailing newline).
 print_int: (value: i64) -> i32 {
     if value == 0 {
         putchar(48)
@@ -62,7 +56,6 @@ print_int: (value: i64) -> i32 {
     return 0
 }
 
-; Write a format string to stdout, substituting the first %d with value.
 printf: (fmt: u8*, value: i32) -> i32 {
     i: u64 = 0
     c: i32 = i32(@(fmt + i))
@@ -86,7 +79,6 @@ printf: (fmt: u8*, value: i32) -> i32 {
     return 0
 }
 
-; Terminate the process via sys_exit (syscall 93). Never returns.
 exit: (code: i32) -> i32 {
     asm {
         li    a7, 93

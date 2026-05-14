@@ -9,7 +9,6 @@ use crate::virtual_machine::memory::{
     rom::Rom,
 };
 
-/// Physical address map
 pub const ROM_BASE: u64 = 0x0000_0000;
 pub const ROM_SIZE: u64 = 256 * 1024 * 1024; // 256 MiB
 pub const ROM_END: u64 = ROM_BASE + ROM_SIZE - 1;
@@ -24,11 +23,7 @@ pub const PLIC_SIZE: u64 = 0x20_0000;
 pub const PLIC_END: u64 = PLIC_BASE + PLIC_SIZE - 1;
 pub const RAM_BASE: u64 = 0x8000_0000;
 pub const RAM_SIZE_DEFAULT: usize = 128 * 1024 * 1024; // 128 MiB
-/// Default load address used when exporting ELF images for qemu-user.
 pub const ELF_LOAD_BASE: u64 = 0x0001_0000;
-
-/// Fixed address where the heap bump-pointer is stored (one u64 word in RAM).
-/// The actual heap region begins at `HEAP_PTR_ADDR + 8`.
 pub const HEAP_PTR_ADDR: u64 = RAM_BASE + 32 * 1024 * 1024 - 8; // 0x81FF_FFF8
 
 pub struct SystemBus {
@@ -88,6 +83,7 @@ impl SystemBus {
     }
 
     /// Route memory accesses through L1 cache for RAM, direct for MMIO
+    #[inline]
     fn route(&mut self, addr: u64) -> Option<(&mut dyn MemoryAccess, u64)> {
         match addr {
             a if a >= ROM_BASE && a <= ROM_END => Some((&mut self.rom, addr)),
@@ -191,41 +187,49 @@ impl SystemBus {
 }
 
 impl MemoryAccess for SystemBus {
+    #[inline]
     fn read_byte(&mut self, addr: u64) -> Result<u8, VmError> {
         let (dev, local) = self.route(addr).ok_or(VmError::BusError(addr))?;
         dev.read_byte(local)
     }
 
+    #[inline]
     fn read_halfword(&mut self, addr: u64) -> Result<u16, VmError> {
         let (dev, local) = self.route(addr).ok_or(VmError::BusError(addr))?;
         dev.read_halfword(local)
     }
 
+    #[inline]
     fn read_word(&mut self, addr: u64) -> Result<u32, VmError> {
         let (dev, local) = self.route(addr).ok_or(VmError::BusError(addr))?;
         dev.read_word(local)
     }
 
+    #[inline]
     fn read_doubleword(&mut self, addr: u64) -> Result<u64, VmError> {
         let (dev, local) = self.route(addr).ok_or(VmError::BusError(addr))?;
         dev.read_doubleword(local)
     }
 
+    #[inline]
     fn write_byte(&mut self, addr: u64, data: u8) -> Result<(), VmError> {
         let (dev, local) = self.route(addr).ok_or(VmError::BusError(addr))?;
         dev.write_byte(local, data)
     }
 
+    #[inline]
     fn write_halfword(&mut self, addr: u64, data: u16) -> Result<(), VmError> {
         let (dev, local) = self.route(addr).ok_or(VmError::BusError(addr))?;
         dev.write_halfword(local, data)
     }
 
+    #[inline]
     fn write_word(&mut self, addr: u64, data: u32) -> Result<(), VmError> {
         let (dev, local) = self.route(addr).ok_or(VmError::BusError(addr))?;
         dev.write_word(local, data)
     }
 
+    #[inline]
     fn write_doubleword(&mut self, addr: u64, data: u64) -> Result<(), VmError> {
         let (dev, local) = self.route(addr).ok_or(VmError::BusError(addr))?;
         dev.write_doubleword(local, data)
