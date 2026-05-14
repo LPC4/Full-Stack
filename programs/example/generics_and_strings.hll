@@ -40,5 +40,6 @@ main: () -> i32 {
     @inner.value = total
     printf("total=%d\n".data, @inner.value)
 
+    ; Exit 0 on success by subtracting the expected value.
     return @inner.value - 42
 }

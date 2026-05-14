@@ -81,6 +81,22 @@ impl HighLevelCompiler {
                     is_unsigned: false,
                 })
             }
+            PrimaryExpr::AsmReg { reg } => {
+                if mode == EvalMode::Address {
+                    return None;
+                }
+                use crate::intermediate_language::IrInstruction;
+                let dest = self.new_temp();
+                self.push_instruction(IrInstruction::ReadReg {
+                    dest: dest.clone(),
+                    reg: reg.clone(),
+                });
+                Some(LoweredValue {
+                    value: IrValue::Register(dest),
+                    ty: IrType::Integer(IntWidth::I64),
+                    is_unsigned: false,
+                })
+            }
             PrimaryExpr::FunctionCall { name, arguments } => {
                 // Function call results are rvalues; they have no storage address.
                 if mode == EvalMode::Address {

@@ -129,6 +129,7 @@ impl<'a> Parser<'a> {
             Some(Token::While) => self.parse_while_statement(),
             Some(Token::Return) => self.parse_return_statement(),
             Some(Token::Defer) => self.parse_defer_statement(),
+            Some(Token::Asm) => self.parse_asm_block(),
             Some(Token::Break) => {
                 self.advance();
                 Ok(Statement::Break)
@@ -321,6 +322,29 @@ impl<'a> Parser<'a> {
     fn parse_defer_statement(&mut self) -> Result<Statement, ParserError> {
         self.expect_defer()?;
         Ok(Statement::Defer(self.parse_expression()?))
+    }
+
+    fn parse_asm_block(&mut self) -> Result<Statement, ParserError> {
+        self.advance(); // consume Token::Asm
+        self.expect_lbrace()?;
+        self.consume_terminators(); // skip the newline after `{`
+
+        let mut lines = Vec::new();
+
+        while !self.check_rbrace() && !self.is_eof() {
+            if matches!(self.peek(), Some(Token::StatementTerminator)) {
+                let source = self.spans[self.pos].source_line.trim().to_string();
+                self.advance();
+                if !source.is_empty() {
+                    lines.push(source);
+                }
+            } else {
+                self.advance();
+            }
+        }
+
+        self.expect_rbrace()?;
+        Ok(Statement::AsmBlock { lines })
     }
 
     fn parse_assignment(&mut self) -> Result<Expression, ParserError> {
@@ -572,7 +596,11 @@ impl<'a> Parser<'a> {
                     _ => return Err(self.error("function calls must target an identifier")),
                 };
 
-                if let Some(target_ty) = self.parse_type_name_as_cast(&name) {
+                if name == "asm_reg" {
+                    let reg = self.expect_ident()?;
+                    self.expect_rparen()?;
+                    expr = Expression::Primary(PrimaryExpr::AsmReg { reg });
+                } else if let Some(target_ty) = self.parse_type_name_as_cast(&name) {
                     let arguments = self.parse_argument_list_after_open_paren()?;
                     if arguments.len() != 1 {
                         return Err(self.error("type cast expects exactly one argument"));

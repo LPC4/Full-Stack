@@ -5,38 +5,36 @@ use full_stack::assembly_language::riscv::rv64m::*;
 use full_stack::assembly_language::riscv::rv64zicsr::Csrrs;
 use full_stack::assembly_language::rv_instruction::RvInstruction;
 use full_stack::high_level_language::compilation_pipeline::CompilationPipeline;
+use full_stack::high_level_language::stdlib::get_stdlib_source;
 use full_stack::virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
-
-const ALLOCATOR_TYPES: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/programs/stdlib/types.hll"
-));
-const ALLOCATOR_MEMORY: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/programs/stdlib/memory_allocator.hll"
-));
-
-fn prepend_allocator_runtime(source: &str) -> String {
-    let mut out = String::with_capacity(ALLOCATOR_TYPES.len() + ALLOCATOR_MEMORY.len() + source.len() + 128);
-    out.push_str(ALLOCATOR_TYPES);
-    out.push('\n');
-    out.push_str(ALLOCATOR_MEMORY);
-    out.push('\n');
-    out.push_str(source);
-    out
-}
 
 // ---------------------------------------------------------------------------
 // Full HLL pipeline helpers
 // ---------------------------------------------------------------------------
 
+/// Link stdlib and user code using two-stage compilation:
+/// 1. Compile stdlib independently → token stream
+/// 2. Compile user code independently → token stream
+/// 3. Link them together at token level: [stdlib_tokens..., user_tokens...]
+/// 4. Assemble the combined token stream
 fn run_hll_with_limit(src: &str, max_steps: u64) -> (VirtualMachine, StepOutcome, String) {
     let pipeline = CompilationPipeline::new();
-    let result = pipeline
-        .compile(&prepend_allocator_runtime(src))
-        .expect("compile failed");
-    let (_, toks) = pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program);
-    let assembled = pipeline.assemble(&toks).expect("assemble failed");
+
+    // Stage 1: Compile stdlib
+    let stdlib_result = pipeline.compile(&get_stdlib_source()).expect("stdlib compile failed");
+    let (_, stdlib_tokens) =
+        pipeline.compile_ir_to_assembly_with_tokens(&stdlib_result.ir_program);
+
+    // Stage 2: Compile user code
+    let user_result = pipeline.compile(src).expect("user compile failed");
+    let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program);
+
+    // Stage 3: Link at token level
+    let mut linked = stdlib_tokens;
+    linked.extend(user_tokens);
+
+    // Stage 4: Assemble
+    let assembled = pipeline.assemble(&linked).expect("assemble failed");
     let mut vm = VirtualMachine::new(&assembled);
     let run = vm.run(max_steps);
     let uart = run.uart_output.clone();
@@ -444,11 +442,19 @@ main: () -> i32 {
 }
 "#;
     let pipeline = CompilationPipeline::new();
-    let result = pipeline
-        .compile(&prepend_allocator_runtime(src))
-        .expect("compile failed");
-    let ir_text = format!("{}", result.ir_program);
-    let (asm, _) = pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program);
+
+    // Two-stage compilation: link stdlib and user code
+    let stdlib_result = pipeline.compile(&get_stdlib_source()).expect("stdlib compile failed");
+    let (stdlib_asm, _stdlib_tokens) =
+        pipeline.compile_ir_to_assembly_with_tokens(&stdlib_result.ir_program);
+
+    let user_result = pipeline.compile(src).expect("user compile failed");
+    let (user_asm, _user_tokens) =
+        pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program);
+
+    // Combine assembly output for diagnostics
+    let asm = format!("{stdlib_asm}\n{user_asm}");
+    let ir_text = format!("{}", stdlib_result.ir_program);
 
     // Print HeapBlock type alias to verify its size
     for line in ir_text.lines() {
@@ -492,3 +498,26 @@ fn qemu_05_functions_and_io() {
         "expected Halted(0), got {outcome:?}"
     );
 }
+
+#[test]
+fn examples_exit_zero_in_vm() {
+    let files = [
+        "programs/example/core_basics.hll",
+        "programs/example/pointer_arrays.hll",
+        "programs/example/array_initialization.hll",
+        "programs/example/struct_binding.hll",
+        "programs/example/control_flow_basics.hll",
+        "programs/example/casting_and_pointers.hll",
+        "programs/example/compile_time_math.hll",
+        "programs/example/generics_and_strings.hll",
+    ];
+
+    for file in files {
+        let (_, outcome, _uart) = run_hll_file(file);
+        assert!(
+            matches!(outcome, StepOutcome::Halted(0)),
+            "{file}: expected Halted(0), got {outcome:?}"
+        );
+    }
+}
+

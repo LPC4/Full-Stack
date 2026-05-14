@@ -171,6 +171,14 @@ impl RegisterAllocator {
                     vregs.push((dest.clone(), IrType::Pointer(Box::new(ty.clone()))));
                 }
             }
+            ReadReg { dest, .. } => {
+                if !vregs.iter().any(|(r, _)| r == dest) {
+                    vregs.push((
+                        dest.clone(),
+                        IrType::Integer(crate::intermediate_language::IntWidth::I64),
+                    ));
+                }
+            }
             GlobalRef { dest, .. } => {
                 if !vregs.iter().any(|(r, _)| r == dest) {
                     vregs.push((
@@ -357,6 +365,7 @@ impl RegisterAllocator {
             | Offset { dest, .. }
             | Index { dest, .. }
             | HeapAlloc { dest, .. }
+            | ReadReg { dest, .. }
             | GlobalRef { dest, .. } => {
                 update_interval(dest);
             }

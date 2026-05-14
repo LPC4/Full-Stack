@@ -243,6 +243,18 @@ impl SemanticAnalyzer {
                 let _ = self.infer_expression_type(expr)?;
                 Ok(())
             }
+            Statement::AsmBlock { lines } => {
+                for line in lines {
+                    let instr = line.split_whitespace().next().unwrap_or("");
+                    if instr.starts_with('.') {
+                        self.error(format!(
+                            "data directives are not allowed in asm blocks: `{instr}`"
+                        ));
+                        return Err(());
+                    }
+                }
+                Ok(())
+            }
             Statement::Break | Statement::Continue => Ok(()),
         }
     }
@@ -273,6 +285,20 @@ impl SemanticAnalyzer {
                     let ir_ty = self.ast_type_to_ir_type(ty);
                     let inner_name = self.context.get_type_name(&ir_ty);
                     Ok(format!("*{inner_name}"))
+                }
+                PrimaryExpr::AsmReg { reg } => {
+                    const ALLOWED: &[&str] = &[
+                        "sp", "fp", "ra",
+                        "a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7",
+                        "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11",
+                    ];
+                    if !ALLOWED.contains(&reg.as_str()) {
+                        self.error(format!(
+                            "asm_reg: `{reg}` is not an allowed ABI register (temp registers t0-t6 and s0/fp are excluded by name)"
+                        ));
+                        return Err(());
+                    }
+                    Ok("i64".to_owned())
                 }
                 PrimaryExpr::FunctionCall {
                     name, arguments, ..

@@ -38,9 +38,18 @@ HLL Source
   -> Semantic Analysis     diagnostics
   -> IR Compiler           typed SSA IR
   -> RISC-V Emitter        Vec<RvInstruction>  ->  assembly text
+  -> Token-level Link      [stdlib_tokens..., user_tokens...]
   -> Three-pass Assembler  AssembledOutput  (.text / .data / .rodata / .bss + symbol table)
   -> VM                    5-stage pipelined CPU
 ```
+
+### Runtime and linking
+
+- The stdlib is compiled from HLL source (`types.hll`, `memory_allocator.hll`, `string_utils.hll`, `runtime.hll`) into `Vec<RvInstruction>`.
+- User code is compiled independently into its own token stream.
+- The linker unit is the token stream: stdlib tokens are prepended to user tokens before `assemble()`.
+- `assemble()` performs parse/layout/encode only; it does **not** inject extern stubs.
+- Runtime symbols (`putchar`, `puts`, `print_int`, `printf`, `exit`, `_start`) are provided by `programs/stdlib/runtime.hll`.
 
 | Stage | View | What you see |
 |-------|------|--------------|
@@ -175,6 +184,7 @@ cargo test
 
 Golden-file tests compare generated IR and assembly against expected snapshots.
 Integration tests compile and execute HLL programs through the full pipeline and assert on exit codes and UART output.
+This includes two-stage stdlib+user token linking in VM and QEMU integration paths.
 
 ```bash
 cargo test

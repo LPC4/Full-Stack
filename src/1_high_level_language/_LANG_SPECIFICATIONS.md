@@ -224,6 +224,64 @@ If you only need specific fields from a struct, you can omit the unwanted fields
 <span style="color:#56b6c2">}</span></code></pre>
 **Resource Rule:** All heap allocations require matching `free()` or `defer free()`. No garbage collection.
 
+### 7.3 Inline Assembly
+
+Two forms of inline assembly let you emit raw RISC-V instructions or read hardware registers directly from HLL. They exist exclusively for low-level system code (`_start`, syscall wrappers, etc.); application code should not need them.
+
+**`asm_reg(name)` — register read expression**
+
+Reads the current value of a named ABI register as an `i64`. Valid anywhere an expression is accepted, including conditions and arithmetic.
+
+```hll
+stack_ok: () -> bool {
+    return asm_reg(sp) > 0x10000
+}
+
+get_sp: () -> i64 {
+    return asm_reg(sp)
+}
+```
+
+**`asm { }` — verbatim assembly block**
+
+A statement that emits raw RISC-V instruction lines interleaved with surrounding compiled code. Each line is one instruction (whitespace-delimited, newline or semicolon terminated).
+
+```hll
+putchar: (c: i32) -> i32 {
+    asm {
+        addi  sp, sp, -16
+        sd    ra, 8(sp)
+        sb    a0, 7(sp)
+        li    a0, 1
+        addi  a1, sp, 7
+        li    a2, 1
+        li    a7, 64
+        ecall
+        ld    ra, 8(sp)
+        addi  sp, sp, 16
+    }
+    return 0
+}
+
+_start: () {
+    asm {
+        call main
+        li   a7, 93
+        ecall
+    }
+}
+```
+
+**Allowed registers (both forms):** `sp`, `fp`/`s0`, `ra`, `a0`–`a7`, `s1`–`s11`.
+
+Temp registers `t0`–`t6` are **not allowed** — the register allocator may hold live values in them at any asm site; clobbering them would silently corrupt surrounding compiled code.
+
+**Restrictions on `asm { }` blocks:**
+- No HLL variables or expressions inside — raw assembly text only.
+- No data directives (`.asciz`, `.word`, …) — use HLL string/array literals for data.
+- Branches and labels within a block are permitted; they must not target labels outside the block.
+- Cannot be nested.
+
 ---
 
 ## 8. Compile-Time Evaluation & Error Handling
@@ -296,18 +354,24 @@ param_list     = parameter { "," parameter };
 parameter      = identifier ":" type;
 return_type    = type;
 block          = "{" { statement } "}";
-statement      = expression ";" | if_stmt | while_stmt | return_stmt | defer_stmt | variable_decl ";";
+statement      = expression ";" | if_stmt | while_stmt | return_stmt | defer_stmt | variable_decl ";" | asm_block;
 if_stmt        = "if" expression block [ "else" ( if_stmt | block ) ];
 while_stmt     = "while" expression block;
 return_stmt    = "return" [ expression ];
 defer_stmt     = "defer" expression;
+asm_block      = "asm" "{" { asm_line } "}";
+asm_line       = { any_char - newline } newline;
 expression     = assignment | binary_expr | unary_expr | primary_expr;
 assignment     = lvalue "=" expression;
 lvalue         = struct_destructure | dereference | field_access | array_index | identifier;
 struct_destructure = "{" [ identifier ":" type { "," identifier ":" type } [ "," ] ] "}";
 unary_expr     = unary_op expression;
 unary_op       = "-" | "!" | "&" | "@";
-primary_expr   = identifier | literal | "(" expression ")" | function_call | array_literal | struct_literal;
+primary_expr   = identifier | literal | "(" expression ")" | function_call | array_literal | struct_literal | asm_reg_expr;
+asm_reg_expr   = "asm_reg" "(" abi_reg ")";
+abi_reg        = "sp" | "fp" | "ra"
+               | "a0" | "a1" | "a2" | "a3" | "a4" | "a5" | "a6" | "a7"
+               | "s1" | "s2" | "s3" | "s4" | "s5" | "s6" | "s7" | "s8" | "s9" | "s10" | "s11";
 struct_literal = "{" [ field_init { "," field_init } [ "," ] ] "}";
 field_init     = shorthand_field_init | typed_field_init;
 shorthand_field_init = "." identifier "=" expression;

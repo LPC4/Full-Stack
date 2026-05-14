@@ -25,7 +25,8 @@ main: () -> i32 {
         return 1
     }
 
-    return @scratch + 12
+    ; Exit 0 on success by subtracting the expected final score.
+    return @scratch + 12 - 42
 }
 
 

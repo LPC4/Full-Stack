@@ -15,6 +15,7 @@ main: () -> i32 {
     printf("back=%d\n".data, i32(back))
     printf("round_trip=%d\n".data, @round_trip)
 
-    return wide + i32(back) - @round_trip
+    ; Exit 0 on success by subtracting the expected value (42).
+    return wide + i32(back) - @round_trip - 42
 }
 

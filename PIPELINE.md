@@ -2,11 +2,11 @@
 
 `new(T[, count])` and `free(ptr)` are compiler intrinsics, they lower directly to
 `heap_alloc`/`heap_free` IR instructions and need no `external` declaration.
-The backend emits `call malloc` / `call free`; the runtime that provides those symbols
-is pluggable at link time (HLL stdlib, custom allocator, or a future C stdlib path).
+The backend emits `call malloc` / `call free`; whichever runtime token stream is linked
+must define those symbols (current: HLL stdlib).
 
-Everything else exposed by the stdlib (`putchar`, `puts`, `printf`, `print_int`, string
-helpers, etc.) is an ordinary `external` declaration in user source — no magic injection.
+Everything else exposed by the stdlib (`putchar`, `puts`, `printf`, `print_int`, `exit`,
+`_start`, string helpers, etc.) is ordinary HLL source in `runtime.hll` / stdlib modules.
 
 ## Startup
 
@@ -14,7 +14,7 @@ helpers, etc.) is an ordinary `external` declaration in user source — no magic
 programs/stdlib/types.hll
 programs/stdlib/memory_allocator.hll
 programs/stdlib/string_utils.hll
-programs/stdlib/io.hll
+programs/stdlib/runtime.hll
        │
        ▼  get_stdlib_source()
   stdlib HLL source
@@ -50,12 +50,6 @@ programs/stdlib/io.hll
   [stdlib_tokens..., user_tokens...]
        │
        ▼  assemble()
-       │    appends extern_stubs():
-       │      putchar   (ecall 64 / sys_write)
-       │      puts, print_int, printf
-       │      exit      (ecall 93)
-       │      _start    (calls main, then exit)
-       │
        │    Pass 0  RvInstruction → Vec<AsmToken>
        │    Pass 1  layout: section-relative label addresses
        │            section order: Text, Data, RoData, Bss (always last)
@@ -72,7 +66,7 @@ programs/stdlib/io.hll
        │   p_vaddr  = 0x10000
        │   p_filesz = Text + RoData + Data   (BSS excluded)
        │   p_memsz  = p_filesz + Bss         (loader zero-fills BSS)
-       │   e_entry  = load_base + addr(_start)
+       │   e_entry  = load_base + addr(_start)  (fallback: `main`, then first section)
        │
        ├──▶  VirtualMachine::from_elf()              → Execution panel (native + WASM)
        │         map PT_LOAD → RAM_BASE (0x80000000)
@@ -91,17 +85,14 @@ stream with any `Vec<RvInstruction>` that defines the symbols user code calls ex
 
 | Runtime              | Provides                              | How linked          |
 |----------------------|---------------------------------------|---------------------|
-| HLL stdlib (current) | malloc, free, string utils, I/O       | token-level prepend |
+| HLL stdlib (current) | malloc, free, string utils, runtime I/O + `_start` | token-level prepend |
 | Custom allocator     | malloc, free (drop-in replacement)    | token-level prepend |
 | C stdlib (future)    | everything via libc + crt0            | ld / lld            |
 
-The `extern_stubs()` injected by `assemble()` provide `putchar`, `printf`, `exit`, and
-`_start` as POSIX-compatible syscall implementations (ecall 64 / ecall 93). They do not
-overlap with the HLL stdlib, which only defines the allocator and string/IO helpers that
-call down to `putchar`.
+Current runtime behavior is implemented in `programs/stdlib/runtime.hll` via inline asm:
 
-## Notes
+- `putchar` uses Linux `ecall 64` (`sys_write`)
+- `exit` uses Linux `ecall 93` (`sys_exit`)
+- `_start` calls `main()` then `exit(code)`
 
-- The GUI's example names come from the file name, with underscores replaced by spaces
-  and each word capitalized.
-- The stdlib entry label is hardcoded as `Standard Library`.
+`assemble()` performs pure assembly passes only (parse/layout/encode) and injects no code.

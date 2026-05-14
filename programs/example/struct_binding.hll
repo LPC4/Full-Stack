@@ -28,7 +28,8 @@ main: () -> i32 {
         return 1
     }
 
-    return pair_sum(pair) + x + y
+    ; Exit 0 on success by subtracting the expected aggregate.
+    return pair_sum(pair) + x + y - 14
 }
 
 

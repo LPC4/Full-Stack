@@ -8,29 +8,12 @@
 /// missing prerequisite and return without failing, so CI on machines without
 /// the cross-toolchain stays green.
 use full_stack::high_level_language::compilation_pipeline::CompilationPipeline;
+use full_stack::high_level_language::stdlib::get_stdlib_source;
 use full_stack::virtual_machine::bus::ELF_LOAD_BASE;
 use std::fmt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
-const ALLOCATOR_TYPES: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/programs/stdlib/types.hll"
-));
-const ALLOCATOR_MEMORY: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/programs/stdlib/memory_allocator.hll"
-));
-
-fn prepend_allocator_runtime(source: &str) -> String {
-    let mut out = String::with_capacity(ALLOCATOR_TYPES.len() + ALLOCATOR_MEMORY.len() + source.len() + 128);
-    out.push_str(ALLOCATOR_TYPES);
-    out.push('\n');
-    out.push_str(ALLOCATOR_MEMORY);
-    out.push('\n');
-    out.push_str(source);
-    out
-}
 
 
 
@@ -46,13 +29,27 @@ fn read_program(filename: &str) -> String {
 
 /// Compile HLL source → assembly text, stripping inline comments so the
 /// assembly can be passed safely through a shell heredoc.
+/// Uses two-stage compilation: compile stdlib and user code independently,
+/// then link them at the token level before generating assembly.
 fn compile_to_asm(source: &str) -> String {
     let pipeline = CompilationPipeline::new();
-    let result = pipeline
+
+    // Stage 1: Compile stdlib
+    let stdlib_result = pipeline
+        .compile(&get_stdlib_source())
+        .unwrap_or_else(|e| panic!("stdlib compilation failed: {e}"));
+    let (stdlib_asm, _) =
+        pipeline.compile_ir_to_assembly_with_tokens(&stdlib_result.ir_program);
+
+    // Stage 2: Compile user code
+    let user_result = pipeline
         .compile(source)
         .unwrap_or_else(|e| panic!("HLL compilation failed: {e}"));
-    let asm = pipeline.compile_ir_to_assembly(&result.ir_program);
-    strip_comments(&asm)
+    let (user_asm, _) = pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program);
+
+    // Combine assembly outputs and strip comments
+    let combined = format!("{}\n{}", stdlib_asm, user_asm);
+    strip_comments(&combined)
 }
 
 fn strip_comments(asm: &str) -> String {
@@ -135,14 +132,31 @@ fn require_qemu_result(test_name: &'static str, result: Result<QemuResult, QemuS
 
 /// Compile HLL source to the final assembled output and export it as an ELF
 /// image ready for qemu-riscv64.
+/// Uses two-stage compilation: compile stdlib and user code independently,
+/// then link them at the token level before assembling.
 fn compile_to_elf(source: &str) -> Vec<u8> {
     let pipeline = CompilationPipeline::new();
-    let result = pipeline
-        .compile(&prepend_allocator_runtime(source))
+
+    // Stage 1: Compile stdlib
+    let stdlib_result = pipeline
+        .compile(&get_stdlib_source())
+        .unwrap_or_else(|e| panic!("stdlib compilation failed: {e}"));
+    let (_, stdlib_tokens) =
+        pipeline.compile_ir_to_assembly_with_tokens(&stdlib_result.ir_program);
+
+    // Stage 2: Compile user code
+    let user_result = pipeline
+        .compile(source)
         .unwrap_or_else(|e| panic!("HLL compilation failed: {e}"));
-    let (_asm, tokens) = pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program);
+    let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program);
+
+    // Stage 3: Link at token level
+    let mut linked = stdlib_tokens;
+    linked.extend(user_tokens);
+
+    // Stage 4: Assemble
     let assembled = pipeline
-        .assemble(&tokens)
+        .assemble(&linked)
         .unwrap_or_else(|e| panic!("assembly failed: {e}"));
     assembled.to_elf(ELF_LOAD_BASE)
 }

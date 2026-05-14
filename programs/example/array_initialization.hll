@@ -7,7 +7,8 @@ main: () -> i32 {
     @mirror = [3, 5, 7, 11]
 
     total: i32 = @source[0] + @source[1] + @source[2] + @source[3]
-    return total + @mirror[1]
+    ; Exit 0 on success by subtracting the expected combined total.
+    return total + @mirror[1] - 31
 }
 
 

@@ -1,5 +1,7 @@
 // Program file management and catalog
 
+use crate::high_level_language::stdlib::get_stdlib_source;
+
 #[derive(Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Debug)]
 pub enum ProgramKind {
     Example,
@@ -84,29 +86,15 @@ impl ProgramFile {
 }
 
 fn built_in_programs() -> Vec<ProgramFile> {
-    // Load stdlib sources and combine into one file
-    let std_types = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/programs/stdlib/types.hll"
-    ));
-    let std_memory = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/programs/stdlib/memory_allocator.hll"
-    ));
-    let std_strings = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/programs/stdlib/string_utils.hll"
-    ));
-
-    // Combine all stdlib into one source
-    let stdlib_combined = format!("{}\n\n{}\n\n{}", std_types, std_memory, std_strings);
+    // Keep the catalog's "Standard Library" source in lock-step with the compiler pipeline.
+    let stdlib_combined = get_stdlib_source();
 
     vec![
         // Stdlib program (read-only, single combined file)
         ProgramFile::stdlib(
             "stdlib",
             "Standard Library",
-            "Read-only standard library (types, memory allocation, strings)",
+            "Read-only standard library (types, memory, strings, io, runtime)",
             &stdlib_combined,
         ),
         // Example programs

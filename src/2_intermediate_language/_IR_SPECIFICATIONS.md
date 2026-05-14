@@ -87,6 +87,8 @@ Memory instructions in This IR use the `@` syntax to visually mirror HLL's deref
 | **`stack_alloc`** | `$dest = stack_alloc <type> [count]` | Allocates space on the stack. Returns `type*`. |
 | **`heap_alloc`** | `$dest = heap_alloc <type> [count]` | Allocates heap memory. Returns `type*`. Mirrors HLL `new(...)`. |
 | **`heap_free`** | `heap_free $ptr` | Frees heap memory. |
+| **`inline_asm`** | `inline_asm { "line1"; "line2"; ... }` | Emits raw RISC-V assembly lines verbatim. Only ABI-stable registers (sp, fp, ra, a0–a7, s1–s11) may appear. Branches and labels within the block are permitted; they must not target labels outside the block. |
+| **`read_reg`** | `$dest = read_reg <reg>` | Reads the current value of a named ABI register into `$dest`. Result type is always `i64`. |
 | **`read`** | `$dest = read <type> @ $ptr [+ offset]` | Dereferences memory. `offset` is an immediate byte offset. |
 | **`write`** | `write <type> <value> @ $ptr [+ offset]`| Writes `<value>` to memory at `$ptr` + `offset` bytes. |
 | **`index`**| `$dest = index <type> $base_ptr, $idx` | Array indexing. Scales the offset automatically by `sizeof(type)`. Returns a pointer. |
@@ -243,11 +245,18 @@ global_string = "const" identifier "=" "c\"" { any_char - '"' } "\"";
 program      = { type_decl } { global_string } { function_def };
 
 instruction  = alloc_inst | heap_alloc_inst | free_inst | read_inst | write_inst 
-             | index_inst | offset_inst | math_inst | unary_inst | cmp_inst | cast_inst | call_inst;
+             | index_inst | offset_inst | math_inst | unary_inst | cmp_inst | cast_inst | call_inst
+             | inline_asm_inst | read_reg_inst;
 
 alloc_inst      = register "=" "stack_alloc" type [ integer ];
 heap_alloc_inst = register "=" "heap_alloc" type [ integer ];
 free_inst       = "heap_free" register;
+
+inline_asm_inst = "inline_asm" "{" { '"' { any_char - '"' } '"' ";" } "}";
+read_reg_inst   = register "=" "read_reg" abi_reg;
+abi_reg         = "sp" | "fp" | "ra"
+                | "a0" | "a1" | "a2" | "a3" | "a4" | "a5" | "a6" | "a7"
+                | "s1" | "s2" | "s3" | "s4" | "s5" | "s6" | "s7" | "s8" | "s9" | "s10" | "s11";
 
 read_inst    = register "=" "read" type "@" register [ "+" integer ];
 write_inst   = "write" type value "@" register [ "+" integer ];

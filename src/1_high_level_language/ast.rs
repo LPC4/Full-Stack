@@ -82,6 +82,7 @@ pub enum Statement {
     },
     Return(Option<Expression>),
     Defer(Expression),
+    AsmBlock { lines: Vec<String> },
     Break,
     Continue,
     VariableDecl {
@@ -181,6 +182,9 @@ pub enum PrimaryExpr {
     New {
         ty: Type,
         args: Vec<Expression>, // Optional size/capacity args
+    },
+    AsmReg {
+        reg: String,
     },
 }
 

@@ -14,7 +14,8 @@ main: () -> i32 {
         return 1
     }
 
-    return total
+    ; Exit 0 on success by subtracting the expected total.
+    return total - 43
 }
 
 

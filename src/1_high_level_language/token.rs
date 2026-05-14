@@ -45,6 +45,7 @@ pub enum Token<'a> {
     Return,
     Defer,
     New,
+    Asm,
     And,
     Or,
     True,

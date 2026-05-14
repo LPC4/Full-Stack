@@ -167,6 +167,11 @@ impl HighLevelCompiler {
                         .error("continue outside of loop".to_owned());
                 }
             }
+            Statement::AsmBlock { lines } => {
+                self.push_instruction(IrInstruction::InlineAsm {
+                    lines: lines.clone(),
+                });
+            }
             Statement::Defer(expr) => {
                 if let Expression::Primary(
                     crate::high_level_language::ast::PrimaryExpr::FunctionCall { name, arguments },

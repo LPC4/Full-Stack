@@ -13,7 +13,8 @@ main: () -> i32 {
     defer free(heap)
     @heap = @pl + @pr
 
-    return @heap
+    ; Exit 0 on success by subtracting the expected heap sum.
+    return @heap - 32
 }
 
 

@@ -1,0 +1,102 @@
+; Standard Library Runtime
+;
+; Implements the entry point, I/O primitives, and process control in HLL.
+; Previously these were injected as hardcoded RISC-V assembly by extern_stubs()
+; in compilation_pipeline.rs; the compiler no longer emits any code of its own.
+;
+; Linux syscall numbers (RV64):
+;   64  sys_write(fd, buf, len) -> bytes_written
+;   93  sys_exit(code)          -> never returns
+
+external main: () -> i32
+
+; Write a single byte to stdout (fd=1) via sys_write (syscall 64).
+putchar: (c: i32) -> i32 {
+    asm {
+        addi  sp, sp, -8
+        sb    a0, 0(sp)
+        li    a0, 1
+        mv    a1, sp
+        li    a2, 1
+        li    a7, 64
+        ecall
+        addi  sp, sp, 8
+    }
+    return 0
+}
+
+; Write a null-terminated byte string to stdout followed by a newline.
+puts: (str: u8*) -> i32 {
+    i: u64 = 0
+    c: i32 = i32(@(str + i))
+    while c != 0 {
+        putchar(c)
+        i = i + 1
+        c = i32(@(str + i))
+    }
+    putchar(10)
+    return 0
+}
+
+; Helper: recursively print the digits of n where n > 0.
+print_int_rec: (n: i64) -> () {
+    if n == 0 {
+        return
+    }
+    print_int_rec(n / 10)
+    putchar(i32(n % 10) + 48)
+}
+
+; Print a signed integer in decimal to stdout (no trailing newline).
+print_int: (value: i64) -> i32 {
+    if value == 0 {
+        putchar(48)
+        return 0
+    }
+    if value < 0 {
+        putchar(45)
+        print_int_rec(-value)
+    } else {
+        print_int_rec(value)
+    }
+    return 0
+}
+
+; Write a format string to stdout, substituting the first %d with value.
+printf: (fmt: u8*, value: i32) -> i32 {
+    i: u64 = 0
+    c: i32 = i32(@(fmt + i))
+    while c != 0 {
+        if c == 37 {
+            ni: u64 = i + 1
+            next: i32 = i32(@(fmt + ni))
+            if next == 100 {
+                print_int(i64(value))
+                i = i + 2
+            } else {
+                putchar(c)
+                i = i + 1
+            }
+        } else {
+            putchar(c)
+            i = i + 1
+        }
+        c = i32(@(fmt + i))
+    }
+    return 0
+}
+
+; Terminate the process via sys_exit (syscall 93). Never returns.
+exit: (code: i32) -> i32 {
+    asm {
+        li    a7, 93
+        ecall
+    }
+    return 0
+}
+
+; Kernel/QEMU entry point: call user main, then exit with its return code.
+_start: () -> () {
+    code: i32 = main()
+    exit(code)
+}

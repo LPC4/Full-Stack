@@ -153,12 +153,18 @@ impl CompilerRv64 {
         alloc: &RegisterAllocator,
     ) {
         use IrInstruction::{
-            Alloc, Call, Cast, Cmp, Comment, GlobalRef, HeapAlloc, HeapFree, Index, Load, Math,
-            Offset, Phi, Store, Unary,
+            Alloc, Call, Cast, Cmp, Comment, GlobalRef, HeapAlloc, HeapFree, Index, InlineAsm,
+            Load, Math, Offset, Phi, ReadReg, Store, Unary,
         };
         match inst {
             Comment(s) => self.emitter.emit_comment(s),
             Alloc { .. } | Phi { .. } => {}
+            InlineAsm { lines } => {
+                for line in lines {
+                    self.emitter.emit_raw(&format!("\t{line}"));
+                }
+            }
+            ReadReg { dest, reg } => self.lower_read_reg(dest, reg, ctx, alloc),
             GlobalRef { dest, name } => self.lower_global_ref(dest, name, ctx, alloc),
             Load {
                 dest,
@@ -738,6 +744,25 @@ impl CompilerRv64 {
         let ptr_tmp = self.load_value_to_temp(&IrValue::Register(ptr.clone()), ctx, alloc);
         self.emitter.emit_mv(A0, ptr_tmp);
         self.emitter.emit_raw("\tcall free");
+    }
+
+    fn lower_read_reg(
+        &mut self,
+        dest: &crate::intermediate_language::IrRegister,
+        reg: &str,
+        ctx: &mut FunctionContext,
+        alloc: &RegisterAllocator,
+    ) {
+        use crate::assembly_language::assembler::reg_parse::parse_int_reg;
+        self.emitter.reset_temp_counter();
+        let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
+        let src_hw = parse_int_reg(reg).expect("asm_reg: register validated by semantic analysis");
+        let tmp = self.emitter.alloc_temp_reg();
+        self.emitter.emit_mv(tmp, src_hw);
+        self.emitter.emit_sd(SP, tmp, dest_slot as i32);
+        if let Some(Allocation::Physical(phys_reg)) = alloc.get_allocation(dest) {
+            self.emitter.emit_mv(*phys_reg, src_hw);
+        }
     }
 
     fn lower_terminator(

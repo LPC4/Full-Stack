@@ -2,6 +2,8 @@ use super::directive::Directive;
 use super::reg_parse::parse_int_reg;
 use super::section::SectionKind;
 use super::token::{AsmToken, BranchKind};
+use crate::assembly_language::real::RealInstruction;
+use crate::assembly_language::riscv::rv64i::{Addi, Ecall, Jalr, Lbu, Ld, Sd, Sb};
 /// Pass 0: parse `Vec<RvInstruction>` into `Vec<AsmToken>`.
 ///
 /// `RvInstruction` carries some untyped raw strings (branches emitted via
@@ -68,13 +70,7 @@ fn parse_directive_or_instruction(raw: &str, out: &mut Vec<AsmToken>) {
     // Instruction lines start with whitespace (tab or spaces) in our emitter.
     // Strip leading whitespace then try to parse as a mnemonic.
     if raw.starts_with('\t') || raw.starts_with(' ') {
-        if let Some(tok) = parse_instruction_line(trimmed) {
-            out.push(tok);
-        } else {
-            out.push(AsmToken::Comment(format!(
-                "unrecognised instruction: {trimmed}"
-            )));
-        }
+        parse_instruction_line(trimmed, out);
         return;
     }
 
@@ -105,58 +101,210 @@ fn push_directive(dir: Directive, out: &mut Vec<AsmToken>) {
 // Parsing raw instruction lines
 // ---------------------------------------------------------------------------
 
-/// Try to parse a trimmed instruction line such as `bne a0, a1, .Lelse` or
-/// `j .Ltop` into a typed `AsmToken`.
-fn parse_instruction_line(line: &str) -> Option<AsmToken> {
-    // Split mnemonic from operands
+/// Parse a trimmed instruction line and push typed `AsmToken`s into `out`.
+///
+/// May push more than one token (e.g. `li` expands to up to two real instructions).
+/// Unrecognised mnemonics are emitted as `AsmToken::Comment` so nothing is silently lost.
+fn parse_instruction_line(line: &str, out: &mut Vec<AsmToken>) {
     let (mnemonic, rest) = split_mnemonic(line);
 
     // Branch instructions: `bne rs1, rs2, label`
     if let Some(kind) = BranchKind::from_mnemonic(mnemonic) {
-        return parse_branch(kind, rest);
+        if let Some(tok) = parse_branch(kind, rest) {
+            out.push(tok);
+        }
+        return;
     }
 
-    // Unconditional jump: `j label`  (pseudo for `jal x0, label`)
+    // Unconditional jump: `j label`
     if mnemonic == "j" {
         let target = rest.trim().to_owned();
-        return if target.is_empty() {
-            None
-        } else {
-            Some(AsmToken::Jal { rd: 0, target })
-        };
+        if !target.is_empty() {
+            out.push(AsmToken::Jal { rd: 0, target });
+        }
+        return;
     }
 
-    // JAL with destination: `jal rd, label`
+    // `jal rd, label`
     if mnemonic == "jal" {
-        return parse_jal(rest);
+        if let Some(tok) = parse_jal(rest) {
+            out.push(tok);
+        }
+        return;
     }
 
-    // CALL pseudo: `call symbol` -> expands to auipc + jalr
+    // `call symbol`
     if mnemonic == "call" {
         let symbol = rest.trim().to_owned();
-        return if symbol.is_empty() {
-            None
-        } else {
-            Some(AsmToken::Call { symbol })
-        };
+        if !symbol.is_empty() {
+            out.push(AsmToken::Call { symbol });
+        }
+        return;
     }
 
-    // TAIL pseudo: `tail symbol` -> expands to auipc + jalr (tail call)
+    // `tail symbol`
     if mnemonic == "tail" {
         let symbol = rest.trim().to_owned();
-        return if symbol.is_empty() {
-            None
-        } else {
-            Some(AsmToken::Tail { symbol })
-        };
+        if !symbol.is_empty() {
+            out.push(AsmToken::Tail { symbol });
+        }
+        return;
     }
 
-    // LA pseudo: `la rd, symbol` -> expands to auipc + addi
+    // `la rd, symbol`
     if mnemonic == "la" {
-        return parse_la(rest);
+        if let Some(tok) = parse_la(rest) {
+            out.push(tok);
+        }
+        return;
     }
 
-    None
+    // `ecall`
+    if mnemonic == "ecall" {
+        out.push(AsmToken::Real(RealInstruction::Ecall(Ecall)));
+        return;
+    }
+
+    // `ret`  →  jalr x0, 0(ra)
+    if mnemonic == "ret" {
+        out.push(AsmToken::Real(RealInstruction::Jalr(Jalr::new(0, 1, 0))));
+        return;
+    }
+
+    // `li rd, imm`  (pseudo: expands to addi or lui+addi)
+    if mnemonic == "li" {
+        if let Some((rd, imm)) = parse_two_fields(rest) {
+            if let Some(rd) = parse_int_reg(rd) {
+                if let Ok(imm) = imm.parse::<i64>() {
+                    expand_li(rd, imm, out);
+                    return;
+                }
+            }
+        }
+        out.push(AsmToken::Comment(format!("unrecognised li: {line}")));
+        return;
+    }
+
+    // `mv rd, rs`  →  addi rd, rs, 0
+    if mnemonic == "mv" {
+        if let Some((rd_str, rs_str)) = parse_two_fields(rest) {
+            if let (Some(rd), Some(rs)) = (parse_int_reg(rd_str), parse_int_reg(rs_str)) {
+                out.push(AsmToken::Real(RealInstruction::Addi(Addi::new(rd, rs, 0))));
+                return;
+            }
+        }
+        out.push(AsmToken::Comment(format!("unrecognised mv: {line}")));
+        return;
+    }
+
+    // `addi rd, rs1, imm`
+    if mnemonic == "addi" {
+        if let Some((rd, rs1, imm)) = parse_r_i_imm(rest) {
+            out.push(AsmToken::Real(RealInstruction::Addi(Addi::new(rd, rs1, imm))));
+            return;
+        }
+        out.push(AsmToken::Comment(format!("unrecognised addi: {line}")));
+        return;
+    }
+
+    // Store: `sd rs2, imm(rs1)`  →  Sd::new(base=rs1, src=rs2, offset=imm)
+    if mnemonic == "sd" {
+        if let Some((rs2, rs1, imm)) = parse_store_mem(rest) {
+            out.push(AsmToken::Real(RealInstruction::Sd(Sd::new(rs1, rs2, imm))));
+            return;
+        }
+        out.push(AsmToken::Comment(format!("unrecognised sd: {line}")));
+        return;
+    }
+
+    // Store: `sb rs2, imm(rs1)`
+    if mnemonic == "sb" {
+        if let Some((rs2, rs1, imm)) = parse_store_mem(rest) {
+            out.push(AsmToken::Real(RealInstruction::Sb(Sb::new(rs1, rs2, imm))));
+            return;
+        }
+        out.push(AsmToken::Comment(format!("unrecognised sb: {line}")));
+        return;
+    }
+
+    // Load: `ld rd, imm(rs1)`  →  Ld::new(rd, base=rs1, offset=imm)
+    if mnemonic == "ld" {
+        if let Some((rd, rs1, imm)) = parse_load_mem(rest) {
+            out.push(AsmToken::Real(RealInstruction::Ld(Ld::new(rd, rs1, imm))));
+            return;
+        }
+        out.push(AsmToken::Comment(format!("unrecognised ld: {line}")));
+        return;
+    }
+
+    // Load: `lbu rd, imm(rs1)`
+    if mnemonic == "lbu" {
+        if let Some((rd, rs1, imm)) = parse_load_mem(rest) {
+            out.push(AsmToken::Real(RealInstruction::Lbu(Lbu::new(rd, rs1, imm))));
+            return;
+        }
+        out.push(AsmToken::Comment(format!("unrecognised lbu: {line}")));
+        return;
+    }
+
+    out.push(AsmToken::Comment(format!("unrecognised instruction: {line}")));
+}
+
+/// Expand `li rd, imm` into addi (1-instr) or lui+addi (2-instr).
+fn expand_li(rd: u8, imm: i64, out: &mut Vec<AsmToken>) {
+    use crate::assembly_language::riscv::rv64i::Lui;
+    if (-2048..=2047).contains(&imm) {
+        out.push(AsmToken::Real(RealInstruction::Addi(Addi::new(rd, 0, imm as i32))));
+    } else {
+        let hi = ((imm >> 12) & 0xFFFFF) as i32;
+        let lo = (imm & 0xFFF) as i32;
+        let lo_signed = if lo >= 0x800 { lo - 0x1000 } else { lo };
+        let hi_adj = if lo_signed < 0 { hi + 1 } else { hi };
+        out.push(AsmToken::Real(RealInstruction::Lui(Lui::new(rd, hi_adj << 12))));
+        if lo_signed != 0 {
+            out.push(AsmToken::Real(RealInstruction::Addi(Addi::new(rd, rd, lo_signed))));
+        }
+    }
+}
+
+/// Split `"rd, rest"` into `(rd_str, rest_str)`.
+fn parse_two_fields(operands: &str) -> Option<(&str, &str)> {
+    let comma = operands.find(',')?;
+    Some((operands[..comma].trim(), operands[comma + 1..].trim()))
+}
+
+/// Parse `"rd, rs1, imm"` → (rd_reg, rs1_reg, imm_i32).
+fn parse_r_i_imm(operands: &str) -> Option<(u8, u8, i32)> {
+    let mut parts = operands.splitn(3, ',');
+    let rd = parse_int_reg(parts.next()?.trim())?;
+    let rs1 = parse_int_reg(parts.next()?.trim())?;
+    let imm: i32 = parts.next()?.trim().parse().ok()?;
+    Some((rd, rs1, imm))
+}
+
+/// Parse `"rs2, imm(rs1)"` → (rs2_reg, rs1_reg, imm_i32).  Used by stores.
+fn parse_store_mem(operands: &str) -> Option<(u8, u8, i32)> {
+    let comma = operands.find(',')?;
+    let rs2 = parse_int_reg(operands[..comma].trim())?;
+    let (rs1, imm) = parse_mem_ref(operands[comma + 1..].trim())?;
+    Some((rs2, rs1, imm))
+}
+
+/// Parse `"rd, imm(rs1)"` → (rd_reg, rs1_reg, imm_i32).  Used by loads.
+fn parse_load_mem(operands: &str) -> Option<(u8, u8, i32)> {
+    let comma = operands.find(',')?;
+    let rd = parse_int_reg(operands[..comma].trim())?;
+    let (rs1, imm) = parse_mem_ref(operands[comma + 1..].trim())?;
+    Some((rd, rs1, imm))
+}
+
+/// Parse `"imm(rs1)"` → (rs1_reg, imm_i32).
+fn parse_mem_ref(s: &str) -> Option<(u8, i32)> {
+    let lparen = s.find('(')?;
+    let rparen = s.find(')')?;
+    let imm: i32 = s[..lparen].trim().parse().ok()?;
+    let rs1 = parse_int_reg(s[lparen + 1..rparen].trim())?;
+    Some((rs1, imm))
 }
 
 fn split_mnemonic(line: &str) -> (&str, &str) {

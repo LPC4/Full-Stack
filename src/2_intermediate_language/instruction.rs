@@ -19,6 +19,13 @@ pub enum IrInstruction {
     HeapFree {
         ptr: IrRegister,
     },
+    InlineAsm {
+        lines: Vec<String>,
+    },
+    ReadReg {
+        dest: IrRegister,
+        reg: String,
+    },
     Load {
         dest: IrRegister,
         ty: IrType,
@@ -105,6 +112,14 @@ impl fmt::Display for IrInstruction {
                 Ok(())
             }
             Self::HeapFree { ptr } => write!(f, "heap_free {ptr}"),
+            Self::InlineAsm { lines } => {
+                write!(f, "inline_asm {{")?;
+                for line in lines {
+                    write!(f, " \"{line}\";")?;
+                }
+                write!(f, " }}")
+            }
+            Self::ReadReg { dest, reg } => write!(f, "{dest} = read_reg {reg}"),
             Self::Load {
                 dest,
                 ty,

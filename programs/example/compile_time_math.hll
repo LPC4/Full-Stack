@@ -31,5 +31,6 @@ main: () -> i32 {
     printf("Factorial 7 = %d\n".data, FACTORIAL_7)
     printf("Sum 1..10   = %d\n".data, SUM_TO_10)
     printf("Blend      = %d\n".data, BLEND)
-    return 0
+    ; Exit 0 on success by subtracting the expected blend value.
+    return BLEND - 12
 }
