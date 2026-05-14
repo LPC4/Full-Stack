@@ -1,8 +1,6 @@
 use crate::high_level_language::compilation_pipeline::CompilationPipeline;
 use crate::high_level_language::lexer::Lexer;
-use crate::high_level_language::stdlib::{
-    extract_registries, get_stdlib_source, FunctionRegistry, TypeRegistry,
-};
+use crate::high_level_language::stdlib::get_stdlib_source;
 use crate::high_level_language::token::Token;
 use crate::view::debug::{DebugSession, SessionStatus};
 use crate::view::ide::vm_execution_view::VmExecutionResult;
@@ -130,10 +128,6 @@ pub struct FullStackApp {
     step_n_input: String,
     #[serde(skip)]
     stdlib_tokens: Vec<crate::assembly_language::rv_instruction::RvInstruction>,
-    #[serde(skip)]
-    stdlib_fn_registry: FunctionRegistry,
-    #[serde(skip)]
-    stdlib_ty_registry: TypeRegistry,
 }
 
 impl Default for FullStackApp {
@@ -158,8 +152,6 @@ impl Default for FullStackApp {
             mode: AppMode::Ide,
             step_n_input: "1".to_owned(),
             stdlib_tokens: Vec::new(),
-            stdlib_fn_registry: FunctionRegistry::default(),
-            stdlib_ty_registry: TypeRegistry::default(),
         };
         app.reset_layout();
         app.reset_debug_layout();
@@ -185,11 +177,8 @@ impl FullStackApp {
         let stdlib_src = get_stdlib_source();
         match self.pipeline.compile(&stdlib_src) {
             Ok(result) => {
-                let (fn_reg, ty_reg) = extract_registries(&result.ir_program);
                 let (_, tokens) =
                     self.pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program);
-                self.stdlib_fn_registry = fn_reg;
-                self.stdlib_ty_registry = ty_reg;
                 self.stdlib_tokens = tokens;
             }
             Err(e) => {
@@ -198,18 +187,22 @@ impl FullStackApp {
         }
     }
 
+    fn view<T: CompilerView + Default + 'static>(&mut self) -> ViewWrapper {
+        ViewWrapper::new(Box::new(T::default()), &mut self.next_view_id)
+    }
+
     fn reset_layout(&mut self) {
         let views = vec![
-            ViewWrapper::new(Box::new(SourceView), &mut self.next_view_id),
-            ViewWrapper::new(Box::new(TokensView), &mut self.next_view_id),
-            ViewWrapper::new(Box::new(AstView), &mut self.next_view_id),
-            ViewWrapper::new(Box::new(IrView), &mut self.next_view_id),
-            ViewWrapper::new(Box::new(AssemblyView), &mut self.next_view_id),
-            ViewWrapper::new(Box::new(CfgView), &mut self.next_view_id),
-            ViewWrapper::new(Box::new(StackView::default()), &mut self.next_view_id),
-            ViewWrapper::new(Box::new(MemoryMapView::default()), &mut self.next_view_id),
-            ViewWrapper::new(Box::new(ExecutionView::default()), &mut self.next_view_id),
-            ViewWrapper::new(Box::new(VmExecutionView), &mut self.next_view_id),
+            self.view::<SourceView>(),
+            self.view::<TokensView>(),
+            self.view::<AstView>(),
+            self.view::<IrView>(),
+            self.view::<AssemblyView>(),
+            self.view::<CfgView>(),
+            self.view::<StackView>(),
+            self.view::<MemoryMapView>(),
+            self.view::<ExecutionView>(),
+            self.view::<VmExecutionView>(),
         ];
 
         let mut dock = DockState::new(vec![views[0].clone()]);
@@ -234,13 +227,13 @@ impl FullStackApp {
     }
 
     fn reset_debug_layout(&mut self) {
-        let cpu = ViewWrapper::new(Box::new(CpuStateView::default()), &mut self.next_view_id);
-        let pipeline = ViewWrapper::new(Box::new(PipelineView::default()), &mut self.next_view_id);
-        let cache = ViewWrapper::new(Box::new(CacheView::default()), &mut self.next_view_id);
-        let disasm = ViewWrapper::new(Box::new(DisassemblyView), &mut self.next_view_id);
-        let fb = ViewWrapper::new(Box::new(FramebufferView::default()), &mut self.next_view_id);
-        let mem = ViewWrapper::new(Box::new(MemoryView::default()), &mut self.next_view_id);
-        let io = ViewWrapper::new(Box::new(IoView::default()), &mut self.next_view_id);
+        let cpu = self.view::<CpuStateView>();
+        let pipeline = self.view::<PipelineView>();
+        let cache = self.view::<CacheView>();
+        let disasm = self.view::<DisassemblyView>();
+        let fb = self.view::<FramebufferView>();
+        let mem = self.view::<MemoryView>();
+        let io = self.view::<IoView>();
 
         let mut dock = DockState::new(vec![disasm, cpu]);
         let surface = dock.main_surface_mut();
@@ -342,13 +335,9 @@ impl FullStackApp {
 
         self.compilation_state.tokens = format!("{tokens:#?}");
 
-        // Single-pass user compile, seeded with cached stdlib signatures and type aliases.
-        // IR/ASM panels show user-only code; execution uses token-level linking with stdlib.
-        match self.pipeline.compile_with_externs(
-            user_source,
-            &self.stdlib_fn_registry,
-            &self.stdlib_ty_registry,
-        ) {
+        // Compile user code; IR/ASM panels show user-only code.
+        // Execution uses token-level linking with cached stdlib tokens.
+        match self.pipeline.compile(user_source) {
             Ok(result) => {
                 self.compilation_state.ast = format!("{:#?}", result.ast);
                 self.compilation_state.ir = result.ir_program.to_string();

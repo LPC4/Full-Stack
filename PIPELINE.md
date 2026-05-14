@@ -1,6 +1,14 @@
 # Compilation Pipeline
 
-## Startup — compiled once, cached
+`new(T[, count])` and `free(ptr)` are compiler intrinsics, they lower directly to
+`heap_alloc`/`heap_free` IR instructions and need no `external` declaration.
+The backend emits `call malloc` / `call free`; the runtime that provides those symbols
+is pluggable at link time (HLL stdlib, custom allocator, or a future C stdlib path).
+
+Everything else exposed by the stdlib (`putchar`, `puts`, `printf`, `print_int`, string
+helpers, etc.) is an ordinary `external` declaration in user source — no magic injection.
+
+## Startup
 
 ```
 programs/stdlib/types.hll
@@ -14,15 +22,11 @@ programs/stdlib/io.hll
        ▼  CompilationPipeline::compile()
   IrProgram (stdlib)
        │
-       ├──▶  extract_registries()
-       │         FunctionRegistry   name → (params, return_type)
-       │         TypeRegistry       name → field layout / aliases
-       │
        └──▶  compile_ir_to_assembly_with_tokens()
-                 stdlib_tokens: Vec<RvInstruction>   (cached)
+                 stdlib_tokens: Vec<RvInstruction>   (cached in app.stdlib_tokens)
 ```
 
-## Per edit — runs on every keystroke
+## Per edit
 
 ```
   user source (.hll)
@@ -33,10 +37,10 @@ programs/stdlib/io.hll
        ▼  Parser
   AST                                     → AST panel
        │
-       ▼  SemanticAnalyzer  ← seeded with FunctionRegistry + TypeRegistry
+       ▼  SemanticAnalyzer
   diagnostics
        │
-       ▼  IR Compiler  ← seeded with FunctionRegistry (return types)
+       ▼  IR Compiler
   IrProgram (user)                        → IR panel
        │
        ▼  compile_ir_to_assembly_with_tokens()
@@ -79,3 +83,25 @@ programs/stdlib/io.hll
        │
        └──▶  temp .elf → qemu-riscv64                → QEMU tab (native only)
 ```
+
+## Linking model
+
+The token stream is the linkable unit. To swap runtimes, substitute the stdlib token
+stream with any `Vec<RvInstruction>` that defines the symbols user code calls externally:
+
+| Runtime              | Provides                              | How linked          |
+|----------------------|---------------------------------------|---------------------|
+| HLL stdlib (current) | malloc, free, string utils, I/O       | token-level prepend |
+| Custom allocator     | malloc, free (drop-in replacement)    | token-level prepend |
+| C stdlib (future)    | everything via libc + crt0            | ld / lld            |
+
+The `extern_stubs()` injected by `assemble()` provide `putchar`, `printf`, `exit`, and
+`_start` as POSIX-compatible syscall implementations (ecall 64 / ecall 93). They do not
+overlap with the HLL stdlib, which only defines the allocator and string/IO helpers that
+call down to `putchar`.
+
+## Notes
+
+- The GUI's example names come from the file name, with underscores replaced by spaces
+  and each word capitalized.
+- The stdlib entry label is hardcoded as `Standard Library`.
