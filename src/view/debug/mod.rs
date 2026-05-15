@@ -105,10 +105,12 @@ pub struct DebugSession {
 
 impl DebugSession {
     pub fn new(assembled: &AssembledOutput, load_base: u64, entry_symbol: &str) -> Self {
+        // The VM always remaps ELF vaddrs to RAM_BASE + offset regardless of the
+        // ELF load_base, so symbols must be in that same address space.
         let symbols: HashMap<String, u64> = assembled
             .symbol_table
             .iter()
-            .map(|(name, &offset)| (name.clone(), load_base + offset))
+            .map(|(name, &offset)| (name.clone(), RAM_BASE + offset))
             .collect();
         let elf = assembled.to_elf_with_entry(load_base, entry_symbol);
 
@@ -200,6 +202,50 @@ impl DebugSession {
         self.refresh_snapshot();
     }
 
+    /// Step instructions until the PC moves into a different function (symbol region),
+    /// stopping early on halt/error or after 1 million steps.
+    pub fn step_to_next_function(&mut self) {
+        if self.status != SessionStatus::Running {
+            return;
+        }
+        let start_fn = self.nearest_symbol_addr(self.vm.peek_pc());
+        for _ in 0..1_000_000u64 {
+            for byte in self.uart_tx_pending.drain(..) {
+                self.vm.push_uart_rx(byte);
+            }
+            match self.vm.step() {
+                Ok(StepOutcome::Continue) => {
+                    self.step_count += 1;
+                }
+                Ok(StepOutcome::Halted(code)) => {
+                    self.step_count += 1;
+                    self.status = SessionStatus::Halted(code);
+                    break;
+                }
+                Err(e) => {
+                    self.step_count += 1;
+                    self.status = SessionStatus::Error(format!("{e:?}"));
+                    break;
+                }
+            }
+            if self.nearest_symbol_addr(self.vm.peek_pc()) != start_fn {
+                break;
+            }
+        }
+        let new_bytes = self.vm.drain_uart_output();
+        self.uart_output.extend_from_slice(&new_bytes);
+        self.refresh_snapshot();
+    }
+
+    /// Returns the address of the nearest symbol whose address is <= `pc`.
+    fn nearest_symbol_addr(&self, pc: u64) -> Option<u64> {
+        self.symbols
+            .values()
+            .filter(|&&a| a <= pc)
+            .max_by_key(|&&a| a)
+            .copied()
+    }
+
     /// Tight inner loop: step the VM up to `max` times, stopping early if halted/errored
     /// or if `insn_target` retired instructions have been reached.
     /// Does NOT snapshot or drain UART — callers handle that.
@@ -239,7 +285,7 @@ impl DebugSession {
             .assembled
             .symbol_table
             .iter()
-            .map(|(name, &offset)| (name.clone(), self.load_base + offset))
+            .map(|(name, &offset)| (name.clone(), RAM_BASE + offset))
             .collect();
         let elf = self
             .assembled

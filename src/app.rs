@@ -132,6 +132,8 @@ pub struct FullStackApp {
     #[serde(skip)]
     stdlib_tokens: Vec<crate::assembly_language::rv_instruction::RvInstruction>,
     #[serde(skip)]
+    stdlib_asm: String,
+    #[serde(skip)]
     target_mode: TargetMode,
     #[serde(skip)]
     entry_point: String,
@@ -161,6 +163,7 @@ impl Default for FullStackApp {
             mode: AppMode::Ide,
             step_n_input: "1".to_owned(),
             stdlib_tokens: Vec::new(),
+            stdlib_asm: String::new(),
             target_mode: TargetMode::Hosted,
             entry_point: "kmain".to_owned(),
             load_base_input: format!("{:#010x}", LinkLayout::freestanding_kernel().load_base),
@@ -191,10 +194,11 @@ impl FullStackApp {
         let stdlib_src = get_stdlib_source_for_mode(self.pipeline.target_mode);
         match self.pipeline.compile(&stdlib_src) {
             Ok(result) => {
-                let (_, tokens) = self
+                let (asm_text, tokens) = self
                     .pipeline
                     .compile_ir_to_assembly_with_tokens(&result.ir_program);
                 self.stdlib_tokens = tokens;
+                self.stdlib_asm = asm_text;
             }
             Err(e) => {
                 log::error!("stdlib compilation failed: {e}");
@@ -303,6 +307,7 @@ impl FullStackApp {
             let base = self.compilation_state.load_base;
             self.compilation_state.debug_session =
                 Some(DebugSession::new(assembled, base, &entry));
+            self.compilation_state.disasm_follow_pc = true;
             self.reset_debug_layout();
             self.mode = AppMode::Debug;
         }
@@ -380,6 +385,7 @@ impl FullStackApp {
                     let (asm_text, asm_tokens) = self
                         .pipeline
                         .compile_ir_to_assembly_with_tokens(&result.ir_program);
+                    self.compilation_state.linked_asm = asm_text.clone();
                     self.compilation_state.asm = asm_text;
                     self.compilation_state.assembled = self.pipeline.assemble(&asm_tokens).ok();
                     self.compilation_state.assembly_tokens = asm_tokens;
@@ -425,7 +431,9 @@ impl FullStackApp {
                 let (asm_text, user_tokens) = self
                     .pipeline
                     .compile_ir_to_assembly_with_tokens(&result.ir_program);
-                self.compilation_state.asm = asm_text;
+                self.compilation_state.asm = asm_text.clone();
+                self.compilation_state.linked_asm =
+                    format!("{}\n{}", self.stdlib_asm, asm_text);
                 self.compilation_state.assembly_tokens = user_tokens.clone();
 
                 // Token-level link: prepend cached stdlib tokens, then assemble once.
@@ -836,7 +844,11 @@ impl FullStackApp {
                 self.compile();
             }
             if ui
-                .add(egui::Button::new("Run in VM").min_size(egui::vec2(100.0, 35.0)))
+                .add(
+                    egui::Button::new(RichText::new("Run in VM").strong())
+                        .fill(Color32::from_rgb(30, 110, 60))
+                        .min_size(egui::vec2(100.0, 35.0)),
+                )
                 .clicked()
             {
                 if let Some(assembled) = &self.compilation_state.assembled {
@@ -1051,6 +1063,19 @@ impl FullStackApp {
             if ui
                 .add_enabled(
                     is_running,
+                    egui::Button::new("Step Fn").min_size(egui::vec2(80.0, 35.0)),
+                )
+                .on_hover_text("Run until the PC enters a different function")
+                .clicked()
+            {
+                if let Some(s) = self.compilation_state.debug_session.as_mut() {
+                    s.step_to_next_function();
+                }
+            }
+
+            if ui
+                .add_enabled(
+                    is_running,
                     egui::Button::new(RichText::new("Run").strong())
                         .fill(Color32::from_rgb(30, 110, 60))
                         .min_size(egui::vec2(100.0, 35.0)),
@@ -1061,6 +1086,27 @@ impl FullStackApp {
                 if let Some(s) = self.compilation_state.debug_session.as_mut() {
                     s.step_n(u64::MAX);
                 }
+            }
+
+            ui.separator();
+
+            // Follow PC toggle, shared with the disassembly view.
+            let follow = &mut self.compilation_state.disasm_follow_pc;
+            let follow_color = if *follow {
+                Color32::from_rgb(90, 200, 120)
+            } else {
+                Color32::from_rgb(80, 88, 108)
+            };
+            if ui
+                .add(
+                    egui::Button::new(RichText::new("Follow PC").color(follow_color))
+                        .selected(*follow)
+                        .min_size(egui::vec2(80.0, 35.0)),
+                )
+                .on_hover_text("Keep the disassembly view scrolled to the current PC")
+                .clicked()
+            {
+                *follow = !*follow;
             }
 
             egui::MenuBar::new().ui(ui, |ui| {

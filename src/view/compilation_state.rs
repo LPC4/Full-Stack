@@ -9,6 +9,7 @@ pub struct CompilationState {
     pub ast: String,
     pub ir: String,
     pub asm: String,
+    pub linked_asm: String,
     pub stdlib_ir: String,
     pub stdlib_asm: String,
     pub assembly_tokens: Vec<crate::assembly_language::rv_instruction::RvInstruction>,
@@ -19,6 +20,7 @@ pub struct CompilationState {
     pub execution_output: String,
     pub vm_result: Option<VmExecutionResult>,
     pub debug_session: Option<DebugSession>,
+    pub disasm_follow_pc: bool,
     pub entry_symbol: String,
     pub load_base: u64,
 }
