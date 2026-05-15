@@ -8,11 +8,8 @@ pub struct CompilationState {
     pub tokens: String,
     pub ast: String,
     pub ir: String,
-    /// Assembly output from user code only (pre-linking)
     pub asm: String,
-    /// IR output from stdlib only (for separate inspection)
     pub stdlib_ir: String,
-    /// Assembly output from stdlib only (for separate inspection)
     pub stdlib_asm: String,
     pub assembly_tokens: Vec<crate::assembly_language::rv_instruction::RvInstruction>,
     pub assembled: Option<crate::assembly_language::assembler::output::AssembledOutput>,
@@ -22,6 +19,8 @@ pub struct CompilationState {
     pub execution_output: String,
     pub vm_result: Option<VmExecutionResult>,
     pub debug_session: Option<DebugSession>,
+    pub entry_symbol: String,
+    pub load_base: u64,
 }
 
 impl CompilationState {

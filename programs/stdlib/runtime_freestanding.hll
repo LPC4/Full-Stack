@@ -1,0 +1,25 @@
+; Freestanding Kernel Runtime
+;
+; This runtime carries NO Linux syscall dependencies and defines NO hosted
+; entry point.  It is linked in place of runtime.hll when the compiler is
+; targeting a bare-metal / freestanding build.
+;
+; Conventions:
+;   - No _start is defined here.  The kernel entry point (kmain, kernel_main,
+;     _start, or any custom symbol) must be provided by the user program.
+;   - No hosted I/O (putchar, puts, printf, exit, ...) is available.
+;   - Use MMIO registers, SBI ecalls, or raw `asm { }` blocks for device I/O.
+;
+; Provided:
+;   - _kpanic: spin-halts the CPU.  Suitable as a bare-metal panic handler.
+
+; Spin-halt: execute WFI in a tight loop so the CPU enters a low-power idle
+; instead of running off into undefined memory.  Replace with a UART write +
+; halt once a console driver is available.
+_kpanic: () -> () {
+    asm {
+        .Lkpanic_loop:
+        wfi
+        j .Lkpanic_loop
+    }
+}

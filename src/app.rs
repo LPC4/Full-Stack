@@ -1,6 +1,7 @@
-use crate::high_level_language::compilation_pipeline::CompilationPipeline;
+use crate::assembly_language::assembler::link_layout::LinkLayout;
+use crate::high_level_language::compilation_pipeline::{CompilationPipeline, TargetMode};
 use crate::high_level_language::lexer::Lexer;
-use crate::high_level_language::stdlib::get_stdlib_source;
+use crate::high_level_language::stdlib::get_stdlib_source_for_mode;
 use crate::high_level_language::token::Token;
 use crate::view::debug::{DebugSession, SessionStatus};
 use crate::view::ide::vm_execution_view::VmExecutionResult;
@@ -10,7 +11,6 @@ use crate::view::{
     PipelineView, ProgramCatalog, ProgramKind, SourceView, StackView, TokensView, VmExecutionView,
     apply_ui_theme, blank_custom_program_source, ui_theme,
 };
-use crate::virtual_machine::bus::ELF_LOAD_BASE;
 use egui::{Color32, Layout, RichText};
 use egui_dock::{DockState, NodeIndex};
 use std::fmt;
@@ -30,6 +30,7 @@ enum CatalogExportKind {
     Hll,
     Asm,
     Elf,
+    Bin,
 }
 
 impl CatalogExportKind {
@@ -38,6 +39,7 @@ impl CatalogExportKind {
             Self::Hll => ".hll",
             Self::Asm => ".s",
             Self::Elf => ".elf",
+            Self::Bin => ".bin",
         }
     }
 
@@ -46,6 +48,7 @@ impl CatalogExportKind {
             Self::Hll => "Path to .hll file",
             Self::Asm => "Path to .s file",
             Self::Elf => "Path to .elf file",
+            Self::Bin => "Path to flat binary (.bin)",
         }
     }
 }
@@ -128,6 +131,12 @@ pub struct FullStackApp {
     step_n_input: String,
     #[serde(skip)]
     stdlib_tokens: Vec<crate::assembly_language::rv_instruction::RvInstruction>,
+    #[serde(skip)]
+    target_mode: TargetMode,
+    #[serde(skip)]
+    entry_point: String,
+    #[serde(skip)]
+    load_base_input: String,
 }
 
 impl Default for FullStackApp {
@@ -152,6 +161,9 @@ impl Default for FullStackApp {
             mode: AppMode::Ide,
             step_n_input: "1".to_owned(),
             stdlib_tokens: Vec::new(),
+            target_mode: TargetMode::Hosted,
+            entry_point: "kmain".to_owned(),
+            load_base_input: format!("{:#010x}", LinkLayout::freestanding_kernel().load_base),
         };
         app.reset_layout();
         app.reset_debug_layout();
@@ -174,7 +186,9 @@ impl FullStackApp {
     }
 
     fn init_stdlib_cache(&mut self) {
-        let stdlib_src = get_stdlib_source();
+        // Compile the stdlib appropriate for the current target mode.
+        // The pipeline's target_mode is set before this is called.
+        let stdlib_src = get_stdlib_source_for_mode(self.pipeline.target_mode);
         match self.pipeline.compile(&stdlib_src) {
             Ok(result) => {
                 let (_, tokens) = self
@@ -249,9 +263,46 @@ impl FullStackApp {
         self.debug_dock = dock;
     }
 
+    /// Switch target mode, re-cache the stdlib for the new mode, and recompile.
+    fn set_target_mode(&mut self, mode: TargetMode) {
+        if self.target_mode == mode {
+            return;
+        }
+        self.target_mode = mode;
+        self.pipeline.target_mode = mode;
+        // Update the entry point field to the mode default when switching,
+        // unless the user has already overridden it for that mode.
+        if mode == TargetMode::Hosted {
+            self.pipeline.entry_point = None; // use "_start"
+            self.pipeline.link_layout = Some(LinkLayout::hosted());
+        } else {
+            // Keep whatever the user typed; default is "kmain".
+            let ep = if self.entry_point.trim().is_empty() {
+                "kmain".to_owned()
+            } else {
+                self.entry_point.clone()
+            };
+            self.pipeline.entry_point = Some(ep);
+            // Reset load base to kernel default if the user hasn't customised it.
+            let kernel_default = LinkLayout::freestanding_kernel();
+            if self.load_base_input.is_empty()
+                || parse_hex_or_dec(&self.load_base_input)
+                    == Some(LinkLayout::hosted().load_base)
+            {
+                self.load_base_input = format!("{:#010x}", kernel_default.load_base);
+            }
+            self.pipeline.link_layout = Some(kernel_default);
+        }
+        self.init_stdlib_cache();
+        self.compile();
+    }
+
     fn enter_debug_mode(&mut self) {
         if let Some(assembled) = &self.compilation_state.assembled {
-            self.compilation_state.debug_session = Some(DebugSession::new(assembled));
+            let entry = self.compilation_state.entry_symbol.clone();
+            let base = self.compilation_state.load_base;
+            self.compilation_state.debug_session =
+                Some(DebugSession::new(assembled, base, &entry));
             self.reset_debug_layout();
             self.mode = AppMode::Debug;
         }
@@ -263,6 +314,35 @@ impl FullStackApp {
     }
 
     fn compile(&mut self) {
+        // Sync pipeline config with current UI state.
+        self.pipeline.target_mode = self.target_mode;
+        if self.target_mode == TargetMode::Freestanding {
+            let ep = self.entry_point.trim().to_owned();
+            self.pipeline.entry_point = Some(if ep.is_empty() {
+                "kmain".to_owned()
+            } else {
+                ep
+            });
+        } else {
+            self.pipeline.entry_point = None;
+        }
+
+        // Sync link layout from UI state.
+        if self.target_mode == TargetMode::Freestanding {
+            let load_base = parse_hex_or_dec(&self.load_base_input)
+                .unwrap_or_else(|| LinkLayout::freestanding_kernel().load_base);
+            let mut layout = LinkLayout::freestanding_kernel();
+            layout.load_base = load_base;
+            self.pipeline.link_layout = Some(layout);
+        } else {
+            self.pipeline.link_layout = Some(LinkLayout::hosted());
+        }
+
+        // Keep entry_symbol and load_base in sync so VM and ELF export always use the right values.
+        self.compilation_state.entry_symbol =
+            self.pipeline.effective_entry_point().to_owned();
+        self.compilation_state.load_base = self.pipeline.effective_load_base();
+
         let user_source = &self.catalog.get_selected_source();
         let is_stdlib = self
             .catalog
@@ -351,7 +431,8 @@ impl FullStackApp {
                 // Token-level link: prepend cached stdlib tokens, then assemble once.
                 let mut linked = self.stdlib_tokens.clone();
                 linked.extend(user_tokens);
-                self.compilation_state.assembled = self.pipeline.assemble(&linked).ok();
+                self.compilation_state.assembled =
+                    self.pipeline.assemble_linked(&linked).ok();
 
                 self.compilation_state.clear_error();
                 self.compilation_state.just_compiled = true;
@@ -410,8 +491,27 @@ impl FullStackApp {
                     return;
                 }
 
-                fs::write(&path, assembled.to_elf(ELF_LOAD_BASE))
-                    .map(|_| format!("exported assembled ELF image to `{path}`"))
+                let entry = &self.compilation_state.entry_symbol;
+                let base = self.compilation_state.load_base;
+                fs::write(&path, assembled.to_elf_with_entry(base, entry))
+                    .map(|_| format!("exported ELF image to `{path}` (load base {base:#010x})"))
+            }
+
+            CatalogExportKind::Bin => {
+                let Some(assembled) = self.compilation_state.assembled.as_ref() else {
+                    self.catalog_message =
+                        Some("compile successfully before exporting a flat binary".to_owned());
+                    return;
+                };
+
+                if !self.compilation_state.just_compiled {
+                    self.catalog_message =
+                        Some("recompile successfully before exporting a flat binary".to_owned());
+                    return;
+                }
+
+                fs::write(&path, assembled.to_flat_binary())
+                    .map(|_| format!("exported flat binary to `{path}`"))
             }
         };
 
@@ -536,6 +636,11 @@ impl FullStackApp {
                                     CatalogExportKind::Elf,
                                     ".elf",
                                 );
+                                ui.selectable_value(
+                                    &mut self.export_kind,
+                                    CatalogExportKind::Bin,
+                                    ".bin (flat binary)",
+                                );
                             });
                     });
                     ui.add(
@@ -547,7 +652,9 @@ impl FullStackApp {
                     let can_export = path_ready
                         && match self.export_kind {
                             CatalogExportKind::Hll => self.catalog.current_program().is_some(),
-                            CatalogExportKind::Asm | CatalogExportKind::Elf => {
+                            CatalogExportKind::Asm
+                            | CatalogExportKind::Elf
+                            | CatalogExportKind::Bin => {
                                 self.compilation_state.just_compiled
                                     && self.compilation_state.assembled.is_some()
                             }
@@ -556,6 +663,7 @@ impl FullStackApp {
                         CatalogExportKind::Hll => "Export .hll",
                         CatalogExportKind::Asm => "Export .s",
                         CatalogExportKind::Elf => "Export .elf",
+                        CatalogExportKind::Bin => "Export .bin",
                     };
                     if ui
                         .add_enabled(can_export, egui::Button::new(export_label))
@@ -732,7 +840,67 @@ impl FullStackApp {
                 .clicked()
             {
                 if let Some(assembled) = &self.compilation_state.assembled {
-                    self.compilation_state.vm_result = Some(run_in_vm(assembled));
+                    let entry = self.compilation_state.entry_symbol.clone();
+                    let base = self.compilation_state.load_base;
+                    self.compilation_state.vm_result = Some(run_in_vm(assembled, &entry, base));
+                }
+            }
+
+            // Target mode selector
+            ui.separator();
+            ui.label("Target:");
+            let prev_mode = self.target_mode;
+            egui::ComboBox::from_id_salt("target_mode_combo")
+                .selected_text(self.target_mode.label())
+                .width(110.0)
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(
+                        &mut self.target_mode,
+                        TargetMode::Hosted,
+                        TargetMode::Hosted.label(),
+                    );
+                    ui.selectable_value(
+                        &mut self.target_mode,
+                        TargetMode::Freestanding,
+                        TargetMode::Freestanding.label(),
+                    );
+                });
+            if self.target_mode != prev_mode {
+                let new_mode = self.target_mode;
+                // Reset target_mode to prev so set_target_mode sees a real change.
+                self.target_mode = prev_mode;
+                self.set_target_mode(new_mode);
+            }
+
+            // Entry-point and load-base inputs (freestanding only)
+            if self.target_mode == TargetMode::Freestanding {
+                ui.label("Entry:");
+                let ep_response = ui.add(
+                    egui::TextEdit::singleline(&mut self.entry_point)
+                        .desired_width(70.0)
+                        .font(egui::TextStyle::Monospace)
+                        .hint_text("kmain"),
+                );
+                if ep_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    let ep = self.entry_point.trim().to_owned();
+                    let ep = if ep.is_empty() {
+                        "kmain".to_owned()
+                    } else {
+                        ep
+                    };
+                    self.pipeline.entry_point = Some(ep);
+                    self.compile();
+                }
+
+                ui.label("Base:");
+                let lb_response = ui.add(
+                    egui::TextEdit::singleline(&mut self.load_base_input)
+                        .desired_width(90.0)
+                        .font(egui::TextStyle::Monospace)
+                        .hint_text("0x80200000"),
+                );
+                if lb_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    self.compile();
                 }
             }
 
@@ -996,14 +1164,26 @@ impl egui_dock::TabViewer for DockTabViewer<'_> {
 // Internal VM runner
 // ------------------------------------------------------------
 
+/// Parse a number that may be a `0x…` hex literal or a plain decimal integer.
+fn parse_hex_or_dec(s: &str) -> Option<u64> {
+    let s = s.trim();
+    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        u64::from_str_radix(hex, 16).ok()
+    } else {
+        s.parse::<u64>().ok()
+    }
+}
+
 fn run_in_vm(
     assembled: &crate::assembly_language::assembler::output::AssembledOutput,
+    entry_symbol: &str,
+    load_base: u64,
 ) -> VmExecutionResult {
     use crate::virtual_machine::cpu::StepOutcome;
     use crate::virtual_machine::virtual_machine::VirtualMachine;
 
     const MAX_STEPS: u64 = 5_000_000;
-    let elf = assembled.to_elf(crate::virtual_machine::bus::ELF_LOAD_BASE);
+    let elf = assembled.to_elf_with_entry(load_base, entry_symbol);
     let mut vm = match VirtualMachine::from_elf(&elf) {
         Ok(vm) => vm,
         Err(err) => {

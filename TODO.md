@@ -10,29 +10,29 @@ This project is already a compiler + VM stack. The goal of this list is to finis
 - [x] Write the kernel bring-up goals in a separate spec so compiler/runtime changes stay aligned.
 
 ## Phase 1: Make the compiler truly freestanding
-- [ ] Add a dedicated **bare-metal target mode** for HLL.
-- [ ] Stop assuming Linux syscalls in the OS build path.
-- [ ] Split the current runtime into two modes:
-  - [ ] hosted stdlib/runtime for native app execution
-  - [ ] freestanding kernel runtime for OS bring-up
-- [ ] Make `runtime.hll` configurable so it can be replaced by a kernel runtime later.
-- [ ] Ensure `main` is optional for kernel builds and can be replaced by a kernel entry symbol.
-- [ ] Add a way to define custom entrypoints such as `kmain`, `kernel_main`, or `_start`.
-- [ ] Make inline `asm { ... }` work cleanly in freestanding builds.
-- [ ] Audit all codegen for hidden dependencies on host process APIs.
-- [ ] Add compiler checks for unsupported hosted-only features in bare-metal mode.
-- [ ] Improve diagnostics so OS-facing compile failures point to the exact source location and reason.
+- [x] Add a dedicated **bare-metal target mode** for HLL.
+- [x] Stop assuming Linux syscalls in the OS build path.
+- [x] Split the current runtime into two modes:
+  - [x] hosted stdlib/runtime for native app execution
+  - [x] freestanding kernel runtime for OS bring-up
+- [x] Make `runtime.hll` configurable so it can be replaced by a kernel runtime later.
+- [x] Ensure `main` is optional for kernel builds and can be replaced by a kernel entry symbol.
+- [x] Add a way to define custom entrypoints such as `kmain`, `kernel_main`, or `_start`.
+- [x] Make inline `asm { ... }` work cleanly in freestanding builds.
+- [x] Audit all codegen for hidden dependencies on host process APIs.
+- [x] Add compiler checks for unsupported hosted-only features in bare-metal mode.
+- [x] Improve diagnostics so OS-facing compile failures point to the exact source location and reason.
 
 ## Phase 2: Linker and image generation
-- [ ] Add a real linker script / layout story for kernel images.
-- [ ] Support placing `.text`, `.rodata`, `.data`, `.bss`, heap, stack, and trap vectors explicitly.
-- [ ] Support kernel entry symbol selection without relying on the current userland `_start` flow.
-- [ ] Add support for producing a kernel ELF with the correct load addresses.
-- [ ] Add support for producing a flat binary image for bootloaders that want one.
-- [ ] Support relocation records well enough for kernel code and global data.
-- [ ] Add symbol export/import rules for kernel modules or future drivers.
-- [ ] Add debug-symbol output if needed for kernel debugging later.
-- [ ] Make the current assembly/ELF pipeline capable of building both hosted and freestanding images.
+- [x] Add a real linker script / layout story for kernel images.
+- [x] Support placing `.text`, `.rodata`, `.data`, `.bss`, heap, stack, and trap vectors explicitly.
+- [x] Support kernel entry symbol selection without relying on the current userland `_start` flow.
+- [x] Add support for producing a kernel ELF with the correct load addresses.
+- [x] Add support for producing a flat binary image for bootloaders that want one.
+- [x] Support relocation records well enough for kernel code and global data.
+- [x] Add symbol export/import rules for kernel modules or future drivers.
+- [x] Add debug-symbol output if needed for kernel debugging later.
+- [x] Make the current assembly/ELF pipeline capable of building both hosted and freestanding images.
 
 ## Phase 3: Runtime foundation for an OS
 - [ ] Replace Linux syscall-based I/O with a console abstraction.
@@ -54,7 +54,7 @@ This project is already a compiler + VM stack. The goal of this list is to finis
 - [ ] Finish PLIC behavior for external interrupt routing.
 - [ ] Ensure UART behaves like a real serial console endpoint.
 - [x] Add a boot ROM / firmware path if the OS expects one.
-- [ ] **Implement full ROM firmware** with _boot entry, exception/interrupt dispatch, trap_fatal handler, and syscall implementations (see branch/POC in programs/rom/rom.s).
+- [ ] Implement full ROM firmware with _boot entry, exception/interrupt dispatch, trap_fatal handler, and syscall implementations (see branch/POC in programs/rom/rom.s).
 - [ ] Complete Sv39 virtual memory behavior enough for kernel paging.
 - [ ] Add TLB behavior if needed for realistic kernel testing.
 - [ ] Add a device tree or equivalent machine description if the boot path needs one.

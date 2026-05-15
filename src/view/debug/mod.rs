@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use crate::assembly_language::assembler::output::AssembledOutput;
 use crate::virtual_machine::bus::{
-    CLINT_BASE, ELF_LOAD_BASE, PLIC_BASE, RAM_BASE, ROM_BASE, UART_BASE,
+    CLINT_BASE, PLIC_BASE, RAM_BASE, ROM_BASE, UART_BASE,
 };
 use crate::virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 
@@ -97,16 +97,20 @@ pub struct DebugSession {
     pub uart_output: Vec<u8>,
     /// Pending bytes to send to the VM's UART RX buffer.
     uart_tx_pending: Vec<u8>,
+    /// Virtual base address the image was loaded at.
+    load_base: u64,
+    /// Entry-point symbol name used when generating the ELF.
+    entry_symbol: String,
 }
 
 impl DebugSession {
-    pub fn new(assembled: &AssembledOutput) -> Self {
+    pub fn new(assembled: &AssembledOutput, load_base: u64, entry_symbol: &str) -> Self {
         let symbols: HashMap<String, u64> = assembled
             .symbol_table
             .iter()
-            .map(|(name, &offset)| (name.clone(), RAM_BASE + offset))
+            .map(|(name, &offset)| (name.clone(), load_base + offset))
             .collect();
-        let elf = assembled.to_elf(ELF_LOAD_BASE);
+        let elf = assembled.to_elf_with_entry(load_base, entry_symbol);
 
         // Build the initial snapshot with dynamic section presets.
         let mut initial_snapshot = DebugSnapshot::default();
@@ -124,6 +128,8 @@ impl DebugSession {
             symbols,
             uart_output: Vec::new(),
             uart_tx_pending: Vec::new(),
+            load_base,
+            entry_symbol: entry_symbol.to_owned(),
         };
 
         // Capture the initial CPU state (before any steps).
@@ -233,9 +239,11 @@ impl DebugSession {
             .assembled
             .symbol_table
             .iter()
-            .map(|(name, &offset)| (name.clone(), RAM_BASE + offset))
+            .map(|(name, &offset)| (name.clone(), self.load_base + offset))
             .collect();
-        let elf = self.assembled.to_elf(ELF_LOAD_BASE);
+        let elf = self
+            .assembled
+            .to_elf_with_entry(self.load_base, &self.entry_symbol);
         self.vm = VirtualMachine::from_elf(&elf)
             .unwrap_or_else(|e| panic!("failed to reload debug ELF: {e}"));
         self.step_count = 0;

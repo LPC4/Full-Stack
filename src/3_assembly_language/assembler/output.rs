@@ -1,3 +1,4 @@
+use super::link_layout::LinkLayout;
 use super::section::{SectionData, SectionKind};
 use std::collections::HashMap;
 
@@ -106,11 +107,21 @@ impl AssembledOutput {
     /// The entry point is resolved from the symbol table; `_start` is preferred
     /// over `main`, which falls back to the load base address.
     pub fn to_elf(&self, load_base: u64) -> Vec<u8> {
+        self.to_elf_with_candidates(load_base, &["_start", "main"])
+    }
+
+    /// Like `to_elf` but tries `entry_symbol` first before the default fallbacks.
+    /// Use this for freestanding builds whose entry point is not `_start`.
+    pub fn to_elf_with_entry(&self, load_base: u64, entry_symbol: &str) -> Vec<u8> {
+        self.to_elf_with_candidates(load_base, &[entry_symbol, "_start", "main"])
+    }
+
+    fn to_elf_with_candidates(&self, load_base: u64, candidates: &[&str]) -> Vec<u8> {
         use elf64::*;
 
         // ---- Collect sections with their load addresses ----
         struct ElfSec<'a> {
-            sec: &'a super::section::SectionData,
+            sec: &'a SectionData,
             load_addr: u64,
             sh_type: u32,
             sh_flags: u64,
@@ -118,8 +129,7 @@ impl AssembledOutput {
 
         let mut elf_secs: Vec<ElfSec<'_>> = Vec::new();
         let mut running_addr = load_base;
-        // Non-BSS sections first, then BSS — must match the section_bases ordering in
-        // encode.rs.  BSS is excluded from the ELF file (zero-filled by the loader);
+        // BSS is excluded from the ELF file (zero-filled by the loader);
         // placing it last prevents it from displacing rodata in the virtual address space.
         for pass_bss in [false, true] {
             for sec in &self.sections {
@@ -152,13 +162,10 @@ impl AssembledOutput {
         // running_addr is now load_base + total virtual memory size (including BSS)
 
         // ---- Determine entry point ----
-        let entry = if let Some(&sym_addr) = self.symbol_table.get("_start") {
-            load_base + sym_addr
-        } else if let Some(&sym_addr) = self.symbol_table.get("main") {
-            load_base + sym_addr
-        } else {
-            elf_secs.first().map(|s| s.load_addr).unwrap_or(load_base)
-        };
+        let entry = candidates
+            .iter()
+            .find_map(|sym| self.symbol_table.get(*sym).map(|&a| load_base + a))
+            .unwrap_or_else(|| elf_secs.first().map(|s| s.load_addr).unwrap_or(load_base));
 
         // ---- Build section-name string table (.shstrtab) ----
         let mut shstrtab: Vec<u8> = vec![0]; // index 0 = empty string
@@ -392,6 +399,136 @@ impl AssembledOutput {
         push_u64_le(&mut buf, ELF64_SYM_SIZE as u64);
 
         buf
+    }
+
+    // ---------------------------------------------------------------------------
+    // Flat binary
+    // ---------------------------------------------------------------------------
+
+    /// Produce a raw flat binary: all sections packed in load order (non-BSS
+    /// first, then BSS as zeros).  No ELF headers are included.  Suitable for
+    /// bootloaders that copy the image directly into memory.
+    pub fn to_flat_binary(&self) -> Vec<u8> {
+        let mut buf = Vec::new();
+        for pass_bss in [false, true] {
+            for sec in &self.sections {
+                if let Some(kind) = &sec.kind {
+                    if matches!(kind, SectionKind::Bss) != pass_bss {
+                        continue;
+                    }
+                    buf.extend_from_slice(&sec.bytes);
+                }
+            }
+        }
+        buf
+    }
+
+    // ---------------------------------------------------------------------------
+    // Layout symbol injection
+    // ---------------------------------------------------------------------------
+
+    /// Inject linker boundary symbols (`__text_start`, `__bss_end`, etc.) into
+    /// the symbol table so kernel startup code can zero BSS, set the stack
+    /// pointer, and initialise the heap without hard-coding addresses.
+    ///
+    /// Symbols are stored as section-relative offsets (load_base is added by
+    /// the ELF writer).  If `layout.stack_top > 0` the value stored is
+    /// `layout.stack_top - layout.load_base` so that after load-base adjustment
+    /// the ELF symbol value equals `layout.stack_top`.
+    ///
+    /// Only called when `layout.emit_layout_symbols` is true.
+    pub fn inject_layout_symbols(&mut self, layout: &LinkLayout) {
+        if !layout.emit_layout_symbols {
+            return;
+        }
+
+        // Walk sections in the same order as to_elf: non-BSS first, BSS last.
+        let mut running: u64 = 0;
+        for pass_bss in [false, true] {
+            for sec in &self.sections {
+                if let Some(kind) = &sec.kind {
+                    if matches!(kind, SectionKind::Bss) != pass_bss {
+                        continue;
+                    }
+                    let start = running;
+                    let end = running + sec.bytes.len() as u64;
+
+                    match kind {
+                        SectionKind::Text => {
+                            self.symbol_table
+                                .entry("__text_start".to_owned())
+                                .or_insert(start);
+                            self.symbol_table.insert("__text_end".to_owned(), end);
+                        }
+                        SectionKind::RoData => {
+                            self.symbol_table
+                                .entry("__rodata_start".to_owned())
+                                .or_insert(start);
+                            self.symbol_table.insert("__rodata_end".to_owned(), end);
+                        }
+                        SectionKind::Data => {
+                            self.symbol_table
+                                .entry("__data_start".to_owned())
+                                .or_insert(start);
+                            self.symbol_table.insert("__data_end".to_owned(), end);
+                        }
+                        SectionKind::Bss => {
+                            self.symbol_table
+                                .entry("__bss_start".to_owned())
+                                .or_insert(start);
+                            self.symbol_table.insert("__bss_end".to_owned(), end);
+
+                            // Heap starts immediately after BSS, aligned to 16 bytes.
+                            let heap_start = (end + 15) & !15;
+                            self.symbol_table
+                                .insert("__heap_start".to_owned(), heap_start);
+                            if layout.heap_size > 0 {
+                                self.symbol_table.insert(
+                                    "__heap_end".to_owned(),
+                                    heap_start + layout.heap_size,
+                                );
+                            }
+                        }
+                        _ => {}
+                    }
+                    running = end;
+                }
+            }
+        }
+
+        // If no BSS section exists, place the heap after the last section.
+        if !self.symbol_table.contains_key("__bss_start") {
+            let heap_start = (running + 15) & !15;
+            self.symbol_table
+                .insert("__heap_start".to_owned(), heap_start);
+            if layout.heap_size > 0 {
+                self.symbol_table
+                    .insert("__heap_end".to_owned(), heap_start + layout.heap_size);
+            }
+        }
+
+        // Stack top: store as an offset from load_base so the ELF writer adds
+        // load_base and the resulting symbol equals the intended virtual address.
+        if layout.stack_top > 0 {
+            let stack_offset = layout.stack_top.saturating_sub(layout.load_base);
+            self.symbol_table
+                .insert("__stack_top".to_owned(), stack_offset);
+        }
+    }
+
+    // ---------------------------------------------------------------------------
+    // Entry-point marking
+    // ---------------------------------------------------------------------------
+
+    /// Mark `entry_symbol` as a global export if it is present in the symbol
+    /// table but not yet in `global_symbols`.  This ensures the ELF symtab
+    /// advertises the kernel entry so debuggers and QEMU can find it.
+    pub fn mark_entry_global(&mut self, entry_symbol: &str) {
+        if self.symbol_table.contains_key(entry_symbol)
+            && !self.global_symbols.contains(&entry_symbol.to_owned())
+        {
+            self.global_symbols.push(entry_symbol.to_owned());
+        }
     }
 }
 
