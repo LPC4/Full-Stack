@@ -133,6 +133,7 @@ fn writeback_csrrw() {
         rs1_uimm: 0,
         csr: addr::MSTATUS,
         operand: 0x5678,
+        old_val: 0x1234,
         next_pc: 0x8000_0004,
     };
     
@@ -159,6 +160,7 @@ fn writeback_csrrs_set_bits() {
         rs1_uimm: 11, // a1 register (non-zero means do write)
         csr: addr::MIE,
         operand: 0x800, // Set MTIE bit
+        old_val: 0x100,
         next_pc: 0x8000_0004,
     };
     
@@ -185,6 +187,7 @@ fn writeback_csrrc_clear_bits() {
         rs1_uimm: 12, // a2 register (non-zero means do write)
         csr: addr::MIP,
         operand: 0x800, // Clear MTIP bit
+        old_val: 0xF00,
         next_pc: 0x8000_0004,
     };
     
@@ -208,6 +211,7 @@ fn writeback_csrrwi_immediate() {
         rs1_uimm: 7, // Immediate value
         csr: addr::FRM,
         operand: 7,
+        old_val: 0,
         next_pc: 0x8000_0004,
     };
     
@@ -234,6 +238,7 @@ fn writeback_csrrsi_no_write_when_zero() {
         rs1_uimm: 0,
         csr: addr::MIE,
         operand: 0,
+        old_val: initial_mie,
         next_pc: 0x8000_0004,
     };
     
@@ -255,6 +260,7 @@ fn writeback_csr_read_only() {
         rs1_uimm: 0,
         csr: addr::MHARTID, // Read-only
         operand: 42,
+        old_val: 0,
         next_pc: 0x8000_0004,
     };
     

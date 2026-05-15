@@ -307,20 +307,20 @@ fn test_ecall_write_uart() {
 #[test]
 fn test_div_by_zero() {
     // divu a0, a1, x0 — divide by zero should yield u64::MAX in a0.
-    // We overwrite a0 with 0 before exit so the exit code is 0,
-    // then check a0 was u64::MAX via peek_reg before the overwrite.
-    // Instead, use a simpler approach: read the divu result directly via peek_reg.
+    // Save into s0 (x8, callee-saved) before overwriting a0 for exit.
+    // The ROM handler for sys_exit uses t0-t6 as scratch, so t0 (x5) would
+    // be clobbered; s0 (x8) is safe.
     let (vm, _outcome) = assemble_and_run(vec![
         ri(RealInstruction::Addi(Addi::new(11, 0, 42))),  // a1 = 42
         ri(RealInstruction::Divu(Divu::new(10, 11, 0))),  // a0 = divu(42, 0) = u64::MAX
-        // Save result to t0 before overwriting a0 for exit
-        ri(RealInstruction::Add(Add::new(5, 10, 0))),     // t0 = a0 (preserved)
+        // Save result to s0 (x8) before overwriting a0 for exit
+        ri(RealInstruction::Add(Add::new(8, 10, 0))),     // s0 = a0 (preserved across ecall)
         ri(RealInstruction::Addi(Addi::new(17, 0, 93))),  // a7 = 93
         ri(RealInstruction::Addi(Addi::new(10, 0, 0))),   // a0 = 0 (exit code)
         ri(RealInstruction::Ecall(Ecall::new())),
     ]);
-    // t0=x5 should hold u64::MAX from the divu
-    assert_eq!(vm.peek_reg(5), u64::MAX, "divu by zero should produce u64::MAX");
+    // s0=x8 should hold u64::MAX from the divu
+    assert_eq!(vm.peek_reg(8), u64::MAX, "divu by zero should produce u64::MAX");
 }
 
 #[test]

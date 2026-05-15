@@ -50,6 +50,11 @@ pub fn insn_rs1(insn: &DecodedInsn) -> usize {
         | DecodedInsn::FOp { rs1, .. }
         | DecodedInsn::FMac { rs1, .. }
         | DecodedInsn::Atomic { rs1, .. } => *rs1,
+        // CSR register instructions (funct3 1-3) use rs1_uimm as a register number.
+        // Immediate variants (funct3 5-7) use rs1_uimm as a literal — forwarding writes
+        // to that "register" temporarily but execute ignores it, and save/restore prevents
+        // permanent corruption, so it is safe to return rs1_uimm unconditionally.
+        DecodedInsn::Csr { rs1_uimm, .. } => *rs1_uimm,
         _ => 0,
     }
 }

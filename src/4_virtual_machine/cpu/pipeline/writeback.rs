@@ -48,8 +48,11 @@ pub fn writeback(
             rs1_uimm,
             csr,
             operand,
+            old_val: _,
             next_pc,
         } => {
+            // Re-read CSR at WB time for architectural correctness (e.g. instret
+            // increments between EX and WB; old_val is used only for forwarding).
             let old = csrs.read(csr)?;
 
             let (new_val, do_write) = match funct3 {
@@ -66,7 +69,7 @@ pub fn writeback(
                 csrs.write(csr, new_val)?;
             }
 
-            // Always write old value to rd
+            // Always write old (WB-time) value to rd
             regs.write_x(rd, old);
             Ok(next_pc)
         }

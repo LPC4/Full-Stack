@@ -77,6 +77,8 @@ pub enum ExecResult {
         rs1_uimm: usize,
         csr: u16,
         operand: u64,
+        /// Old CSR value read in EX stage, forwarded to downstream instructions.
+        old_val: u64,
         next_pc: u64,
     },
     Fence {
@@ -248,12 +250,14 @@ pub fn execute(
                 5 | 6 | 7 => *rs1_uimm as u64,
                 _ => return Err(VmError::IllegalInstruction(*funct3 as u32)),
             };
+            let old_val = csrs.read(*csr).unwrap_or(0);
             Ok(ExecResult::Csr {
                 funct3: *funct3,
                 rd: *rd,
                 rs1_uimm: *rs1_uimm,
                 csr: *csr,
                 operand,
+                old_val,
                 next_pc: pc.wrapping_add(4),
             })
         }

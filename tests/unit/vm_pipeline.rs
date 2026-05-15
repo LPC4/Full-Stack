@@ -1,12 +1,13 @@
-//! Unit tests for the 5-stage pipelined CPU.
+//! Unit tests for the 5-stage pipeline.
 //!
 //! Each test loads a minimal RISC-V binary into a SystemBus, runs it through
-//! the PipelinedCpu, and asserts on both the computed results and the pipeline
+//! the Pipeline, and asserts on both the computed results and the pipeline
 //! performance counters (stall cycles, flush cycles, retired instructions).
 
 use full_stack::virtual_machine::bus::{SystemBus, RAM_BASE};
-use full_stack::virtual_machine::cpu::pipelined::{PipelinedCpu, TickOutcome};
+use full_stack::virtual_machine::cpu::pipeline::{Pipeline, TickOutcome};
 use full_stack::virtual_machine::memory::MemoryAccess;
+use full_stack::virtual_machine::rom::generate_rom_image;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -15,21 +16,25 @@ use full_stack::virtual_machine::memory::MemoryAccess;
 const STACK_TOP: u64 = RAM_BASE + 4 * 1024 * 1024; // 4 MiB stack
 
 /// Write a sequence of 32-bit little-endian instruction words into the bus
-/// starting at `base`, then return a PipelinedCpu ready to run them.
-fn load_program(bus: &mut SystemBus, base: u64, words: &[u32]) -> PipelinedCpu {
+/// starting at `base`, then return a Pipeline ready to run them.
+fn load_program(bus: &mut SystemBus, base: u64, words: &[u32]) -> Pipeline {
     for (i, &w) in words.iter().enumerate() {
         let addr = base + (i as u64) * 4;
         let _ = bus.write_word(addr, w);
     }
-    PipelinedCpu::new(base, STACK_TOP)
+    Pipeline::new(base, STACK_TOP)
 }
 
 /// Run at most `max` cycles, returning the tick outcome.
-fn run_n(cpu: &mut PipelinedCpu, bus: &mut SystemBus, max: u64) -> TickOutcome {
+fn run_n(cpu: &mut Pipeline, bus: &mut SystemBus, max: u64) -> TickOutcome {
     for _ in 0..max {
         match cpu.tick(bus) {
             Ok(TickOutcome::Halted(code)) => return TickOutcome::Halted(code),
-            Ok(TickOutcome::Continue | TickOutcome::EcallSquash) => {}
+            Ok(TickOutcome::Continue | TickOutcome::EcallSquash) => {
+                if let Some(code) = bus.take_syscon_exit() {
+                    return TickOutcome::Halted(code);
+                }
+            }
             Err(_) => return TickOutcome::Halted(-1),
         }
     }
@@ -119,7 +124,7 @@ fn pipeline_basic_sequential_no_hazards() {
     // addi x2, x0, 2   ; x2 = 2
     // addi x3, x0, 3   ; x3 = 3
     // ecall(93, 0)      ; halt
-    let mut bus = SystemBus::new(Vec::new());
+    let mut bus = SystemBus::new(generate_rom_image());
     let prog = [
         addi(1, 0, 1),
         addi(2, 0, 2),
@@ -154,7 +159,7 @@ fn pipeline_raw_forwarding_no_stall() {
     // addi x1, x1, 5   ; x1 = 15  ← depends on previous x1, EX/MEM forward
     // addi x1, x1, 3   ; x1 = 18  ← depends on previous, MEM/WB forward
     // halt(x1 as exit code?)  — we'll just check x1 and zero stalls
-    let mut bus = SystemBus::new(Vec::new());
+    let mut bus = SystemBus::new(generate_rom_image());
     let prog = [
         addi(1, 0, 10),  // x1 = 10
         addi(1, 1, 5),   // x1 = 15 (depends on previous)
@@ -183,7 +188,7 @@ fn pipeline_load_use_stall() {
     //   sw   x1, 0(x2)       ; mem[x2] = 42 (x2 = 0 = invalid but we'll use a valid addr)
     // Better: use a known RAM address
 
-    let mut bus = SystemBus::new(Vec::new());
+    let mut bus = SystemBus::new(generate_rom_image());
     // We'll use x2 as a pointer into RAM
     let data_addr = RAM_BASE + 0x100;
 
@@ -221,7 +226,7 @@ fn pipeline_branch_not_taken_no_flush() {
     // beq x1, x2, +8  ; NOT taken (5 ≠ 6)
     // addi x3, x0, 1  ; should execute
     // halt
-    let mut bus = SystemBus::new(Vec::new());
+    let mut bus = SystemBus::new(generate_rom_image());
     let prog = [
         addi(1, 0, 5),       // x1 = 5
         addi(2, 0, 6),       // x2 = 6
@@ -253,7 +258,7 @@ fn pipeline_branch_taken_causes_flush() {
     // addi x3, x0, 99  ; should NOT execute (skipped)
     // addi x3, x0, 1   ; should execute (branch target)
     // halt
-    let mut bus = SystemBus::new(Vec::new());
+    let mut bus = SystemBus::new(generate_rom_image());
     let prog = [
         addi(1, 0, 5),       // [0]  x1 = 5
         addi(2, 0, 5),       // [4]  x2 = 5
@@ -287,7 +292,7 @@ fn pipeline_double_forwarding() {
     // addi x2, x0, 4  ; x2 = 4
     // add  x3, x1, x2 ; x3 = 7  (needs x1 via MEM/WB, x2 via EX/MEM)
     // halt
-    let mut bus = SystemBus::new(Vec::new());
+    let mut bus = SystemBus::new(generate_rom_image());
     let prog = [
         addi(1, 0, 3),       // x1 = 3
         addi(2, 0, 4),       // x2 = 4
@@ -321,7 +326,7 @@ fn pipeline_loop_sum_1_to_5() {
     //   bne  x2, x0, -8    ; if counter != 0, branch back
     // halt
 
-    let mut bus = SystemBus::new(Vec::new());
+    let mut bus = SystemBus::new(generate_rom_image());
     let prog = [
         addi(1, 0, 0),       // [0]  x1 = 0
         addi(2, 0, 5),       // [4]  x2 = 5
@@ -355,7 +360,7 @@ fn pipeline_loop_sum_1_to_5() {
 
 #[test]
 fn pipeline_cycle_count_geq_retired() {
-    let mut bus = SystemBus::new(Vec::new());
+    let mut bus = SystemBus::new(generate_rom_image());
     let prog = [
         addi(1, 0, 1),
         addi(2, 0, 2),
@@ -379,7 +384,7 @@ fn pipeline_cycle_count_geq_retired() {
 
 #[test]
 fn pipeline_store_load_correct() {
-    let mut bus = SystemBus::new(Vec::new());
+    let mut bus = SystemBus::new(generate_rom_image());
     // x2 = stack pointer (STACK_TOP)
     // Store x1=77 then load it back into x3
     let prog = [
@@ -407,7 +412,7 @@ fn pipeline_store_load_correct() {
 
 #[test]
 fn predictor_stats_tracked() {
-    let mut bus = SystemBus::new(Vec::new());
+    let mut bus = SystemBus::new(generate_rom_image());
     // A simple branch that is not taken (x1=1, x2=2, beq → not taken)
     let prog = [
         addi(1, 0, 1),

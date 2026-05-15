@@ -44,6 +44,7 @@ pub enum MemResult {
         rs1_uimm: usize,
         csr: u16,
         operand: u64,
+        old_val: u64,
         next_pc: u64,
     },
     Fence {
@@ -103,6 +104,7 @@ pub fn memory_stage(
             rs1_uimm,
             csr,
             operand,
+            old_val,
             next_pc,
         } => Ok(MemResult::Csr {
             funct3,
@@ -110,6 +112,7 @@ pub fn memory_stage(
             rs1_uimm,
             csr,
             operand,
+            old_val,
             next_pc,
         }),
         ExecResult::Fence { next_pc } => Ok(MemResult::Fence { next_pc }),

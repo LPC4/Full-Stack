@@ -3,11 +3,11 @@
 This project is already a compiler + VM stack. The goal of this list is to finish the foundations needed before starting an OS kernel proper.
 
 ## Phase 0: Decide the OS contract
-- [ ] Pick the first OS target: **bare metal on RISC-V RV64** running in the project VM and on QEMU.
-- [ ] Define the boot contract: firmware/bootloader → kernel entry → console init → memory init.
-- [ ] Decide whether the first OS will boot from a flat kernel binary, a kernel ELF, or both.
-- [ ] Define the minimum kernel ABI for the compiler/runtime: calling convention, stack layout, panic behavior, and trap entry.
-- [ ] Write the kernel bring-up goals in a separate spec so compiler/runtime changes stay aligned.
+- [x] Pick the first OS target: **bare metal on RISC-V RV64** running in the project VM and on QEMU.
+- [x] Define the boot contract: firmware/bootloader → kernel entry → console init → memory init.
+- [x] Decide whether the first OS will boot from a flat kernel binary, a kernel ELF, or both.
+- [x] Define the minimum kernel ABI for the compiler/runtime: calling convention, stack layout, panic behavior, and trap entry.
+- [x] Write the kernel bring-up goals in a separate spec so compiler/runtime changes stay aligned.
 
 ## Phase 1: Make the compiler truly freestanding
 - [ ] Add a dedicated **bare-metal target mode** for HLL.
@@ -53,7 +53,8 @@ This project is already a compiler + VM stack. The goal of this list is to finis
 - [ ] Finish CLINT behavior for timer and software interrupts.
 - [ ] Finish PLIC behavior for external interrupt routing.
 - [ ] Ensure UART behaves like a real serial console endpoint.
-- [ ] Add a boot ROM / firmware path if the OS expects one.
+- [x] Add a boot ROM / firmware path if the OS expects one.
+- [ ] **Implement full ROM firmware** with _boot entry, exception/interrupt dispatch, trap_fatal handler, and syscall implementations (see branch/POC in programs/rom/rom.s).
 - [ ] Complete Sv39 virtual memory behavior enough for kernel paging.
 - [ ] Add TLB behavior if needed for realistic kernel testing.
 - [ ] Add a device tree or equivalent machine description if the boot path needs one.

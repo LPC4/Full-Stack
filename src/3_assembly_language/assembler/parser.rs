@@ -3,7 +3,11 @@ use super::reg_parse::parse_int_reg;
 use super::section::SectionKind;
 use super::token::{AsmToken, BranchKind};
 use crate::assembly_language::real::RealInstruction;
-use crate::assembly_language::riscv::rv64i::{Addi, Ecall, Jalr, Lbu, Ld, Sb, Sd};
+use crate::assembly_language::riscv::rv64i::{
+    Add, Addi, Andi, Ecall, Jalr, Lb, Lbu, Ld, Mret, Or, Sb, Sd, Srl, Sub,
+};
+use crate::assembly_language::riscv::rv64m::{Divu, Remu};
+use crate::assembly_language::riscv::rv64zicsr::{Csrrw, Csrrs};
 /// Pass 0: parse `Vec<RvInstruction>` into `Vec<AsmToken>`.
 ///
 /// `RvInstruction` carries some untyped raw strings (branches emitted via
@@ -249,6 +253,78 @@ fn parse_instruction_line(line: &str, out: &mut Vec<AsmToken>) {
         return;
     }
 
+    // Load: `lb rd, imm(rs1)`
+    if mnemonic == "lb" {
+        if let Some((rd, rs1, imm)) = parse_load_mem(rest) {
+            out.push(AsmToken::Real(RealInstruction::Lb(Lb::new(rd, rs1, imm))));
+            return;
+        }
+        out.push(AsmToken::Comment(format!("unrecognised lb: {line}")));
+        return;
+    }
+
+    // `andi rd, rs1, imm`
+    if mnemonic == "andi" {
+        if let Some((rd, rs1, imm)) = parse_r_i_imm(rest) {
+            out.push(AsmToken::Real(RealInstruction::Andi(Andi::new(rd, rs1, imm))));
+            return;
+        }
+        out.push(AsmToken::Comment(format!("unrecognised andi: {line}")));
+        return;
+    }
+
+    // `mret`
+    if mnemonic == "mret" {
+        out.push(AsmToken::Real(RealInstruction::Mret(Mret::new())));
+        return;
+    }
+
+    // `csrr rd, csr`  ->  csrrs rd, csr, x0
+    if mnemonic == "csrr" {
+        if let Some(tok) = parse_csrr(rest) {
+            out.push(tok);
+            return;
+        }
+        out.push(AsmToken::Comment(format!("unrecognised csrr: {line}")));
+        return;
+    }
+
+    // `csrw csr, rs`  ->  csrrw x0, csr, rs
+    if mnemonic == "csrw" {
+        if let Some(tok) = parse_csrw(rest) {
+            out.push(tok);
+            return;
+        }
+        out.push(AsmToken::Comment(format!("unrecognised csrw: {line}")));
+        return;
+    }
+
+    // `beqz rs, label`  ->  beq rs, x0, label
+    if mnemonic == "beqz" {
+        if let Some(tok) = parse_branch_zero(BranchKind::Beq, rest) {
+            out.push(tok);
+            return;
+        }
+        out.push(AsmToken::Comment(format!("unrecognised beqz: {line}")));
+        return;
+    }
+
+    // `bnez rs, label`  ->  bne rs, x0, label
+    if mnemonic == "bnez" {
+        if let Some(tok) = parse_branch_zero(BranchKind::Bne, rest) {
+            out.push(tok);
+            return;
+        }
+        out.push(AsmToken::Comment(format!("unrecognised bnez: {line}")));
+        return;
+    }
+
+    // R-type instructions: `add`, `sub`, `srl`, `or`, `divu`, `remu`
+    if let Some(tok) = parse_r_type(mnemonic, rest) {
+        out.push(tok);
+        return;
+    }
+
     out.push(AsmToken::Comment(format!(
         "unrecognised instruction: {line}"
     )));
@@ -377,4 +453,72 @@ fn parse_la(operands: &str) -> Option<AsmToken> {
     } else {
         Some(AsmToken::La { rd, symbol })
     }
+}
+
+// ---------------------------------------------------------------------------
+// New instruction parsers
+// ---------------------------------------------------------------------------
+
+/// Parse `rs, label` for a zero-register branch (`beqz`/`bnez`).
+/// Expands to `beq/bne rs, x0, label`.
+fn parse_branch_zero(kind: BranchKind, operands: &str) -> Option<AsmToken> {
+    let comma = operands.find(',')?;
+    let rs1 = parse_int_reg(operands[..comma].trim())?;
+    let target = operands[comma + 1..].trim().to_owned();
+    if target.is_empty() {
+        return None;
+    }
+    Some(AsmToken::Branch { kind, rs1, rs2: 0, target })
+}
+
+/// Map a CSR name or numeric literal to its 12-bit address.
+fn parse_csr_name(name: &str) -> Option<u16> {
+    match name.trim() {
+        "mcause"   => Some(0x342),
+        "mepc"     => Some(0x341),
+        "mstatus"  => Some(0x300),
+        "mtvec"    => Some(0x305),
+        "mscratch" => Some(0x340),
+        s if s.starts_with("0x") || s.starts_with("0X") => {
+            u16::from_str_radix(&s[2..], 16).ok()
+        }
+        s => s.parse::<u16>().ok(),
+    }
+}
+
+/// Parse `rd, csr` for `csrr` (pseudo: csrrs rd, csr, x0).
+fn parse_csrr(operands: &str) -> Option<AsmToken> {
+    let comma = operands.find(',')?;
+    let rd = parse_int_reg(operands[..comma].trim())?;
+    let csr = parse_csr_name(operands[comma + 1..].trim())?;
+    Some(AsmToken::Real(RealInstruction::Csrrs(Csrrs::new(rd, csr, 0))))
+}
+
+/// Parse `csr, rs` for `csrw` (pseudo: csrrw x0, csr, rs).
+fn parse_csrw(operands: &str) -> Option<AsmToken> {
+    let comma = operands.find(',')?;
+    let csr = parse_csr_name(operands[..comma].trim())?;
+    let rs = parse_int_reg(operands[comma + 1..].trim())?;
+    Some(AsmToken::Real(RealInstruction::Csrrw(Csrrw::new(0, csr, rs))))
+}
+
+/// Parse `rd, rs1, rs2` for R-type instructions.
+fn parse_r_type(mnemonic: &str, operands: &str) -> Option<AsmToken> {
+    let parts: Vec<&str> = operands.splitn(3, ',').collect();
+    if parts.len() != 3 {
+        return None;
+    }
+    let rd  = parse_int_reg(parts[0].trim())?;
+    let rs1 = parse_int_reg(parts[1].trim())?;
+    let rs2 = parse_int_reg(parts[2].trim())?;
+    let real = match mnemonic {
+        "add"  => RealInstruction::Add(Add::new(rd, rs1, rs2)),
+        "sub"  => RealInstruction::Sub(Sub::new(rd, rs1, rs2)),
+        "srl"  => RealInstruction::Srl(Srl::new(rd, rs1, rs2)),
+        "or"   => RealInstruction::Or(Or::new(rd, rs1, rs2)),
+        "divu" => RealInstruction::Divu(Divu::new(rd, rs1, rs2)),
+        "remu" => RealInstruction::Remu(Remu::new(rd, rs1, rs2)),
+        _ => return None,
+    };
+    Some(AsmToken::Real(real))
 }

@@ -4,10 +4,11 @@ use crate::assembly_language::assembler::output::AssembledOutput;
 use crate::virtual_machine::bus::{
     ELF_LOAD_BASE, HEAP_PTR_ADDR, RAM_BASE, RAM_SIZE_DEFAULT, SystemBus,
 };
-use crate::virtual_machine::cpu::PipelinedCpu;
+use crate::virtual_machine::cpu::pipeline::TickOutcome;
+use crate::virtual_machine::cpu::Cpu;
 pub use crate::virtual_machine::cpu::StepOutcome;
 pub use crate::virtual_machine::cpu::csr::CsrSnapshot;
-pub use crate::virtual_machine::cpu::pipelined::{CpuPipelineFeed, PipelineStats, StageEntry};
+pub use crate::virtual_machine::cpu::pipeline::{CpuPipelineFeed, PipelineStats, StageEntry};
 use crate::virtual_machine::elf_parser::{ParsedElf, align_up};
 use crate::virtual_machine::error::VmError;
 use crate::virtual_machine::memory::MemoryAccess;
@@ -19,7 +20,7 @@ pub struct RunResult {
 }
 
 pub struct VirtualMachine {
-    cpu: PipelinedCpu,
+    cpu: Cpu,
     bus: SystemBus,
 }
 
@@ -37,7 +38,9 @@ impl VirtualMachine {
     /// Create a VM from a complete ELF-64 image by mapping every PT_LOAD segment.
     pub fn from_elf(bytes: &[u8]) -> Result<Self, VmError> {
         let elf = ParsedElf::parse(bytes)?;
-        let mut bus = SystemBus::new(Vec::new());
+
+        let rom_image = crate::virtual_machine::rom::generate_rom_image();
+        let mut bus = SystemBus::new(rom_image);
 
         let image_base = elf
             .load_segments
@@ -77,17 +80,13 @@ impl VirtualMachine {
             }
         }
 
-        // Write the initial heap bump-pointer value.
         let heap_base = align_up(highest_mapped, 0x1000);
         bus.write_doubleword(HEAP_PTR_ADDR, heap_base)?;
 
-        // Reset caches to cold state: the loader writes directly to physical memory on real
-        // hardware, so caches start empty. Stats and line states from loading are discarded.
         bus.cold_cache_reset();
 
-        // Stack pointer = top of RAM, 16-byte aligned.
         let stack_ptr = RAM_BASE + RAM_SIZE_DEFAULT as u64 - 16;
-        let cpu = PipelinedCpu::new(RAM_BASE + (elf.entry_point - image_base), stack_ptr);
+        let cpu = Cpu::new(RAM_BASE + (elf.entry_point - image_base), stack_ptr);
 
         Ok(Self { cpu, bus })
     }
@@ -99,9 +98,13 @@ impl VirtualMachine {
 
 impl VirtualMachine {
     pub fn step(&mut self) -> Result<StepOutcome, VmError> {
-        use crate::virtual_machine::cpu::pipelined::TickOutcome;
         match self.cpu.tick(&mut self.bus)? {
-            TickOutcome::Continue | TickOutcome::EcallSquash => Ok(StepOutcome::Continue),
+            TickOutcome::Continue | TickOutcome::EcallSquash => {
+                if let Some(code) = self.bus.take_syscon_exit() {
+                    return Ok(StepOutcome::Halted(code));
+                }
+                Ok(StepOutcome::Continue)
+            }
             TickOutcome::Halted(code) => Ok(StepOutcome::Halted(code)),
         }
     }
@@ -180,17 +183,17 @@ impl VirtualMachine {
 
     /// Raw pipeline stage feed from the most recent tick.
     pub fn pipeline_snapshot(&self) -> &CpuPipelineFeed {
-        &self.cpu.last_cycle
+        self.cpu.last_cycle()
     }
 
     /// Cumulative pipeline performance stats.
     pub fn pipeline_stats(&self) -> &PipelineStats {
-        &self.cpu.stats
+        self.cpu.stats()
     }
 
     /// Total instructions retired through WB since reset.
     pub fn insns_retired(&self) -> u64 {
-        self.cpu.stats.insns_retired
+        self.cpu.stats().insns_retired
     }
 
     // ---------------------------------------------------------------------------

@@ -15,6 +15,10 @@ pub const ROM_END: u64 = ROM_BASE + ROM_SIZE - 1;
 pub const UART_BASE: u64 = 0x1000_0000;
 pub const UART_SIZE: u64 = 0x1000;
 pub const UART_END: u64 = UART_BASE + UART_SIZE - 1;
+/// SYSCON power-off device. Writing any 8-byte value halts the VM with that exit code.
+pub const SYSCON_BASE: u64 = 0x1001_0000;
+pub const SYSCON_SIZE: u64 = 0x1000;
+pub const SYSCON_END: u64 = SYSCON_BASE + SYSCON_SIZE - 1;
 pub const CLINT_BASE: u64 = 0x0200_0000;
 pub const CLINT_SIZE: u64 = 0x10000;
 pub const CLINT_END: u64 = CLINT_BASE + CLINT_SIZE - 1;
@@ -32,6 +36,7 @@ pub struct SystemBus {
     uart: Uart,
     clint: Clint,
     plic: Plic,
+    syscon_exit: Option<i64>,
 }
 
 impl SystemBus {
@@ -79,17 +84,22 @@ impl SystemBus {
             uart,
             clint,
             plic,
+            syscon_exit: None,
         }
     }
 
-    /// Route memory accesses through L1 cache for RAM, direct for MMIO
+    /// Route memory accesses through L1 cache for RAM, direct for MMIO.
+    ///
+    /// IMPORTANT: UART, CLINT, and PLIC must be checked BEFORE ROM because their
+    /// IMPORTANT: physical addresses fall within the ROM range (0x0000_0000–0x0FFF_FFFF).
+    /// IMPORTANT: SYSCON writes are intercepted in the MemoryAccess impl below, not here.
     #[inline]
     fn route(&mut self, addr: u64) -> Option<(&mut dyn MemoryAccess, u64)> {
         match addr {
-            a if a >= ROM_BASE && a <= ROM_END => Some((&mut self.rom, addr)),
             a if a >= UART_BASE && a <= UART_END => Some((&mut self.uart, addr - UART_BASE)),
             a if a >= CLINT_BASE && a <= CLINT_END => Some((&mut self.clint, addr - CLINT_BASE)),
             a if a >= PLIC_BASE && a <= PLIC_END => Some((&mut self.plic, addr - PLIC_BASE)),
+            a if a >= ROM_BASE && a <= ROM_END => Some((&mut self.rom, addr)),
             _ => {
                 // Route all RAM accesses through L1 cache (which cascades to L2, L3, then RAM)
                 Some((&mut self.l1_cache, addr))
@@ -184,6 +194,11 @@ impl SystemBus {
     pub fn plic_mut(&mut self) -> &mut Plic {
         &mut self.plic
     }
+
+    /// Drain and return the SYSCON exit code, if sys_exit was called.
+    pub fn take_syscon_exit(&mut self) -> Option<i64> {
+        self.syscon_exit.take()
+    }
 }
 
 impl MemoryAccess for SystemBus {
@@ -213,24 +228,46 @@ impl MemoryAccess for SystemBus {
 
     #[inline]
     fn write_byte(&mut self, addr: u64, data: u8) -> Result<(), VmError> {
+        if addr >= SYSCON_BASE && addr <= SYSCON_END {
+            if addr == SYSCON_BASE {
+                self.syscon_exit = Some(data as i64);
+            }
+            return Ok(());
+        }
         let (dev, local) = self.route(addr).ok_or(VmError::BusError(addr))?;
         dev.write_byte(local, data)
     }
 
     #[inline]
     fn write_halfword(&mut self, addr: u64, data: u16) -> Result<(), VmError> {
+        if addr >= SYSCON_BASE && addr <= SYSCON_END {
+            if addr == SYSCON_BASE {
+                self.syscon_exit = Some(data as i64);
+            }
+            return Ok(());
+        }
         let (dev, local) = self.route(addr).ok_or(VmError::BusError(addr))?;
         dev.write_halfword(local, data)
     }
 
     #[inline]
     fn write_word(&mut self, addr: u64, data: u32) -> Result<(), VmError> {
+        if addr >= SYSCON_BASE && addr <= SYSCON_END {
+            if addr == SYSCON_BASE {
+                self.syscon_exit = Some(data as i64);
+            }
+            return Ok(());
+        }
         let (dev, local) = self.route(addr).ok_or(VmError::BusError(addr))?;
         dev.write_word(local, data)
     }
 
     #[inline]
     fn write_doubleword(&mut self, addr: u64, data: u64) -> Result<(), VmError> {
+        if addr >= SYSCON_BASE && addr <= SYSCON_END {
+            self.syscon_exit = Some(data as i64);
+            return Ok(());
+        }
         let (dev, local) = self.route(addr).ok_or(VmError::BusError(addr))?;
         dev.write_doubleword(local, data)
     }

@@ -515,6 +515,30 @@ impl Instruction for Ebreak {
     }
 }
 
+/// Mret — return from machine-mode trap (opcode 0x30200073)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Mret;
+
+impl Mret {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Instruction for Mret {
+    fn encode(&self) -> u32 {
+        0x30200073
+    }
+
+    fn to_asm(&self) -> String {
+        "mret".into()
+    }
+
+    fn mnemonic(&self) -> &'static str {
+        "mret"
+    }
+}
+
 /// `fence pred, succ` - memory ordering fence.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Fence {
