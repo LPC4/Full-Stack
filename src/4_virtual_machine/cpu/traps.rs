@@ -73,7 +73,18 @@ pub fn take_trap(
     let current_priv = regs.priv_mode;
 
     // Save exception PC (aligned to 4 bytes)
-    csrs.mepc = pc & !0x3u64;
+    // IMPORTANT: For nested traps, preserve the original MEPC if it points to user code (RAM).
+    // This prevents trap handlers from corrupting the return address when a speculative fetch
+    // past the end of ROM triggers an instruction access fault during MRET execution.
+    let new_mepc = pc & !0x3u64;
+    const RAM_BASE: u64 = 0x8000_0000;
+    if csrs.mepc >= RAM_BASE && new_mepc < RAM_BASE {
+        // Current MEPC points to RAM (user code), but new trap is in ROM/M-mode.
+        // Preserve the original MEPC so MRET can return to user code correctly.
+        // Don't update MEPC, but still update other CSRs
+    } else {
+        csrs.mepc = new_mepc;
+    }
     csrs.mcause = cause;
     csrs.mtval = tval;
 

@@ -92,6 +92,7 @@ impl Pipeline {
 
         let mut csrs = CsrFile::new();
         csrs.mtvec = 0x0000; // ROM_BASE + direct mode
+        csrs.mscratch = stack_ptr - 4096; // M-mode stack top, 4 KB below user stack
         Self {
             regs,
             csrs,
@@ -469,46 +470,46 @@ impl Pipeline {
         }))
     }
 
-    fn stage_wb(
-        &mut self,
-        mem_wb: Option<&MEMWBReg>,
-        bus: &mut SystemBus,
-    ) -> Result<TickOutcome, VmError> {
-        let mem_wb = match mem_wb {
-            Some(r) => r,
-            None => return Ok(TickOutcome::Continue),
-        };
+     fn stage_wb(
+         &mut self,
+         mem_wb: Option<&MEMWBReg>,
+         bus: &mut SystemBus,
+     ) -> Result<TickOutcome, VmError> {
+         let mem_wb = match mem_wb {
+             Some(r) => r,
+             None => return Ok(TickOutcome::Continue),
+         };
 
-        let next_pc =
-            match writeback::writeback(mem_wb.mem_result.clone(), &mut self.regs, &mut self.csrs) {
-                Ok(pc) => pc,
-                Err(VmError::Ecall) => return self.handle_ecall(bus),
-                Err(VmError::Ebreak) => {
-                    let pc = self.regs.pc;
-                    self.flush_pipeline();
-                    self.take_trap(traps::CAUSE_EBREAK, 0, pc);
-                    return Ok(TickOutcome::Continue);
-                }
-                Err(VmError::Mret) => {
-                    self.handle_mret();
-                    return Ok(TickOutcome::Continue);
-                }
-                Err(VmError::Sret) => {
-                    self.handle_sret();
-                    return Ok(TickOutcome::Continue);
-                }
-                Err(e) => {
-                    let pc = self.regs.pc;
-                    self.flush_and_trap(e, pc);
-                    return Ok(TickOutcome::Continue);
-                }
-            };
+         let next_pc =
+             match writeback::writeback(mem_wb.mem_result.clone(), &mut self.regs, &mut self.csrs) {
+                 Ok(pc) => pc,
+                 Err(VmError::Ecall) => return self.handle_ecall(bus),
+                 Err(VmError::Ebreak) => {
+                     let pc = self.regs.pc;
+                     self.flush_pipeline();
+                     self.take_trap(traps::CAUSE_EBREAK, 0, pc);
+                     return Ok(TickOutcome::Continue);
+                 }
+                 Err(VmError::Mret) => {
+                     self.handle_mret();
+                     return Ok(TickOutcome::EcallSquash);
+                 }
+                 Err(VmError::Sret) => {
+                     self.handle_sret();
+                     return Ok(TickOutcome::Continue);
+                 }
+                 Err(e) => {
+                     let pc = self.regs.pc;
+                     self.flush_and_trap(e, pc);
+                     return Ok(TickOutcome::Continue);
+                 }
+             };
 
-        self.regs.pc = next_pc;
-        self.csrs.increment_instret();
-        self.stats.insns_retired += 1;
-        Ok(TickOutcome::Continue)
-    }
+         self.regs.pc = next_pc;
+         self.csrs.increment_instret();
+         self.stats.insns_retired += 1;
+         Ok(TickOutcome::Continue)
+     }
 
     // -----------------------------------------------------------------------
     // Control flow resolution
