@@ -246,7 +246,8 @@ impl SemanticAnalyzer {
             Statement::AsmBlock { lines } => {
                 for line in lines {
                     let instr = line.split_whitespace().next().unwrap_or("");
-                    if instr.starts_with('.') {
+                    // Allow local labels (.Lname:) but reject data directives (.section, .word, etc.)
+                    if instr.starts_with('.') && !instr.ends_with(':') {
                         self.error(format!(
                             "data directives are not allowed in asm blocks: `{instr}`"
                         ));

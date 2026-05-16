@@ -101,6 +101,11 @@ pub struct CompilationPipeline {
     /// `None` uses the mode default (`LinkLayout::hosted()` or
     /// `LinkLayout::freestanding_kernel()`).
     pub link_layout: Option<LinkLayout>,
+    /// Prefix for rodata string-literal labels produced by this compilation
+    /// unit (e.g. `"str_"` → `str_0`, `str_1`, …).  When two units are linked
+    /// together, give each a distinct prefix so the assembler never sees
+    /// duplicate labels.  `None` uses the default `"str_"`.
+    pub string_prefix: Option<String>,
 }
 
 impl Default for CompilationPipeline {
@@ -117,6 +122,7 @@ impl CompilationPipeline {
             target_mode: TargetMode::Hosted,
             entry_point: None,
             link_layout: None,
+            string_prefix: None,
         }
     }
 
@@ -259,7 +265,8 @@ impl CompilationPipeline {
         &self,
         ast: &Program,
     ) -> Result<(IrProgram, Vec<Diagnostic>), CompilationError> {
-        let mut compiler = HighLevelCompiler::new();
+        let prefix = self.string_prefix.as_deref().unwrap_or("str_");
+        let mut compiler = HighLevelCompiler::with_string_prefix(prefix);
         let ir_program = compiler
             .compile_program(ast)
             .map_err(CompilationError::CompilerError)?;

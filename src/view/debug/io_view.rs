@@ -26,13 +26,13 @@ impl CompilerView for IoView {
             return;
         };
 
-        ui.heading("UART");
+        // Output section
+        ui.label(RichText::new("UART Output").strong());
         ui.add_space(4.0);
 
-        // ---- Output (RX from VM) ----
-        ui.label(RichText::new("Output (VM -> host)").strong());
         let output = String::from_utf8_lossy(&session.uart_output).into_owned();
-        let available = ui.available_height() - 80.0;
+        // Reserve ~52 px for the input row + label + spacing below
+        let output_height = (ui.available_height() - 52.0).max(40.0);
 
         Frame::NONE
             .fill(theme.surface)
@@ -41,7 +41,7 @@ impl CompilerView for IoView {
             .show(ui, |ui| {
                 ui.set_min_width(ui.available_width());
                 ScrollArea::vertical()
-                    .max_height(available.max(60.0))
+                    .max_height(output_height)
                     .stick_to_bottom(true)
                     .show(ui, |ui| {
                         if output.is_empty() {
@@ -54,13 +54,19 @@ impl CompilerView for IoView {
 
         ui.add_space(8.0);
 
-        // ---- Input (TX to VM) ----
-        ui.label(RichText::new("Input (host -> VM)").strong());
+        // Input section
+        ui.label(RichText::new("UART Input").strong());
+        ui.add_space(4.0);
         ui.horizontal(|ui| {
-            let resp = ui.text_edit_singleline(&mut self.tx_input);
-            let send = ui.button("Send").clicked()
-                || (resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
-            if send && !self.tx_input.is_empty() {
+            ui.add(
+                egui::TextEdit::singleline(&mut self.tx_input)
+                    .desired_width(ui.available_width() - 60.0)
+                    .hint_text("type and press Enter or Send"),
+            );
+            let resp = ui.button("Send")
+                .on_hover_text("Bytes are queued and delivered to the VM's UART RX on the next step.");
+            let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+            if (resp.clicked() || enter) && !self.tx_input.is_empty() {
                 let bytes: Vec<u8> = self
                     .tx_input
                     .bytes()
@@ -70,11 +76,6 @@ impl CompilerView for IoView {
                 self.tx_input.clear();
             }
         });
-
-        ui.add_space(2.0);
-        ui.label(
-            RichText::new("Bytes are queued and sent to the VM's UART RX on the next step.").weak(),
-        );
     }
 
     fn clone_box(&self) -> Box<dyn CompilerView> {

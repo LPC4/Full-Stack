@@ -1,0 +1,42 @@
+; Self-contained panic, no console.hll dependency, safe before any init.
+_kpanic: () -> () {
+    asm {
+        li   t0, 268435456
+        li   t1, 80
+        sb   t1, 0(t0)
+        li   t1, 65
+        sb   t1, 0(t0)
+        li   t1, 78
+        sb   t1, 0(t0)
+        li   t1, 73
+        sb   t1, 0(t0)
+        li   t1, 67
+        sb   t1, 0(t0)
+        li   t1, 33
+        sb   t1, 0(t0)
+        li   t1, 10
+        sb   t1, 0(t0)
+    .Lkpanic_loop:
+        wfi
+        j    .Lkpanic_loop
+    }
+}
+
+kpanic: (msg: u8*) -> () {
+    asm {
+        li   t0, 268435456
+        mv   t1, a0
+    .Lkpanic_str:
+        lb   t2, 0(t1)
+        beqz t2, .Lkpanic_nl
+        sb   t2, 0(t0)
+        addi t1, t1, 1
+        j    .Lkpanic_str
+    .Lkpanic_nl:
+        li   t2, 10
+        sb   t2, 0(t0)
+    .Lkpanic_wfi:
+        wfi
+        j    .Lkpanic_wfi
+    }
+}

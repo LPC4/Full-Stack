@@ -3,7 +3,7 @@
 //! Multi-byte accesses count one stat per unique cache block, not one per byte.
 
 use crate::virtual_machine::error::VmError;
-use crate::virtual_machine::memory::MemoryAccess;
+use crate::virtual_machine::memory::{MemoryAccess, PeekByteRaw};
 
 pub struct CacheParams {
     pub size: usize,
@@ -146,7 +146,7 @@ impl<Next: MemoryAccess> Cache<Next> {
             return Ok((set_idx, way_idx, false));
         }
 
-        // Miss: choose victim -- first invalid way, else true LRU (smallest age)
+        // Miss: choose victim (first invalid way, else true LRU with smallest age)
         let victim_idx = {
             let set = &self.sets[set_idx];
             set.ways.iter().position(|w| !w.valid).unwrap_or_else(|| {
@@ -198,7 +198,7 @@ impl<Next: MemoryAccess> Cache<Next> {
     }
 
     // ---------------------------------------------------------------------------
-    // Internal multi-byte helpers -- count one stat per unique cache block touched
+    // Internal multi-byte helpers: count one stat per unique cache block touched
     // ---------------------------------------------------------------------------
 
     fn read_n(&mut self, addr: u64, n: usize) -> Result<u64, VmError> {
@@ -335,6 +335,21 @@ pub struct CacheSnapshot {
     pub params: CacheParamsSnapshot,
     pub sets: Vec<Vec<CacheLineSnapshot>>,
     pub stats: CacheStats,
+}
+
+impl<Next: MemoryAccess + PeekByteRaw> PeekByteRaw for Cache<Next> {
+    fn peek_byte_raw(&self, addr: u64) -> Option<u8> {
+        let (tag, index, offset) = self.address_fields(addr);
+        let set_idx = index as usize;
+        if let Some(set) = self.sets.get(set_idx) {
+            for line in &set.ways {
+                if line.valid && line.tag == tag {
+                    return line.data.get(offset as usize).copied();
+                }
+            }
+        }
+        self.next.peek_byte_raw(addr)
+    }
 }
 
 impl<Next: MemoryAccess> Cache<Next> {

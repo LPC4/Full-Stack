@@ -52,8 +52,12 @@ impl CompilerView for PipelineView {
         ui.add_space(8.0);
 
         let available_w = ui.available_width();
-        let stage_w = (available_w - CYCLE_COL_W) / 5.0;
-        let total_h = HEADER_H + NUM_ROWS as f32 * ROW_H;
+        // Scale row height and cycle column to available space
+        let cycle_col_w = (available_w * 0.07).clamp(30.0, CYCLE_COL_W);
+        let stage_w = (available_w - cycle_col_w) / 5.0;
+        let available_h = ui.available_height();
+        let row_h = ((available_h - HEADER_H - 60.0) / NUM_ROWS as f32).clamp(20.0, ROW_H);
+        let total_h = HEADER_H + NUM_ROWS as f32 * row_h;
 
         let (area, _) = ui.allocate_exact_size(vec2(available_w, total_h), egui::Sense::hover());
         let p = ui.painter_at(area);
@@ -62,7 +66,7 @@ impl CompilerView for PipelineView {
 
         // -- Header --
         for (si, label) in STAGE_LABELS.iter().enumerate() {
-            let x = area.min.x + CYCLE_COL_W + si as f32 * stage_w;
+            let x = area.min.x + cycle_col_w + si as f32 * stage_w;
             let cell = Rect::from_min_size(pos2(x, area.min.y), vec2(stage_w, HEADER_H));
             p.line_segment(
                 [
@@ -82,7 +86,7 @@ impl CompilerView for PipelineView {
 
         // -- Grid --
         for row in 0..=NUM_ROWS {
-            let y = area.min.y + HEADER_H + row as f32 * ROW_H;
+            let y = area.min.y + HEADER_H + row as f32 * row_h;
             p.line_segment(
                 [pos2(area.min.x, y), pos2(area.max.x, y)],
                 Stroke::new(1.0, palette.grid),
@@ -90,9 +94,11 @@ impl CompilerView for PipelineView {
         }
 
         // -- Rows --
+        let mnemonic_size = (row_h * 0.27).clamp(8.0, 12.0);
+        let pc_size = (row_h * 0.21).clamp(7.0, 10.0);
         for row in 0..NUM_ROWS {
-            let row_y = area.min.y + HEADER_H + row as f32 * ROW_H;
-            let cyc_cell = Rect::from_min_size(pos2(area.min.x, row_y), vec2(CYCLE_COL_W, ROW_H));
+            let row_y = area.min.y + HEADER_H + row as f32 * row_h;
+            let cyc_cell = Rect::from_min_size(pos2(area.min.x, row_y), vec2(cycle_col_w, row_h));
             if let Some(c) = history.cycle_for_row(row) {
                 p.text(
                     cyc_cell.center(),
@@ -104,8 +110,8 @@ impl CompilerView for PipelineView {
             }
 
             for si in 0..5 {
-                let x = area.min.x + CYCLE_COL_W + si as f32 * stage_w;
-                let cell = Rect::from_min_size(pos2(x, row_y), vec2(stage_w, ROW_H)).shrink(2.0);
+                let x = area.min.x + cycle_col_w + si as f32 * stage_w;
+                let cell = Rect::from_min_size(pos2(x, row_y), vec2(stage_w, row_h)).shrink(2.0);
 
                 match history.slot(si, row) {
                     Some(SlotState::Normal(entry)) => {
@@ -117,18 +123,20 @@ impl CompilerView for PipelineView {
                         );
                         p.rect_filled(cell, CORNER, palette.cell);
 
+                        let pc_y = cell.min.y + row_h * 0.28;
+                        let mn_y = cell.min.y + row_h * 0.62;
                         p.text(
-                            pos2(cell.center().x, cell.min.y + 12.0),
+                            pos2(cell.center().x, pc_y),
                             Align2::CENTER_CENTER,
                             format!("{:#06x}", entry.pc & 0xFFFF),
-                            FontId::monospace(9.0),
+                            FontId::monospace(pc_size),
                             lerp_color(palette.stage[si], theme.text, 0.4),
                         );
                         p.text(
-                            pos2(cell.center().x, cell.min.y + 26.0),
+                            pos2(cell.center().x, mn_y),
                             Align2::CENTER_CENTER,
                             &entry.mnemonic,
-                            FontId::monospace(11.0),
+                            FontId::monospace(mnemonic_size),
                             Color32::WHITE,
                         );
                     }

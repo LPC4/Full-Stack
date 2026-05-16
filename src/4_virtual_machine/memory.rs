@@ -6,6 +6,14 @@ pub mod rom;
 
 use crate::virtual_machine::error::VmError;
 
+/// Read-only byte peeking that bypasses cache stats and mutation.
+/// Used by the debug framebuffer/memory views so they do not pollute cache statistics.
+/// The implementation must return the most current value (checking dirty cache lines before
+/// falling back to lower levels), or None for unmapped addresses.
+pub trait PeekByteRaw {
+    fn peek_byte_raw(&self, addr: u64) -> Option<u8>;
+}
+
 /// Every component in the memory hierarchy must implement this.
 pub trait MemoryAccess {
     fn read_byte(&mut self, addr: u64) -> Result<u8, VmError>;

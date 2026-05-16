@@ -38,7 +38,7 @@ impl CompilerView for MemoryView {
             return;
         };
 
-        // ---- Calculate Dynamic Layout based on Font Width ----
+        // Layout calculation based on font width
         let font_id = egui::TextStyle::Monospace.resolve(ui.style());
         let char_w = ui
             .painter()
@@ -66,7 +66,7 @@ impl CompilerView for MemoryView {
         // Snap current address to an 8-byte boundary to keep rows perfectly aligned
         self.current_addr &= !7;
 
-        // ---- Styled Top Toolbar ----
+        // Top toolbar
         egui::Frame::NONE
             .fill(theme.panel_alt)
             .corner_radius(6.0)
@@ -168,7 +168,7 @@ impl CompilerView for MemoryView {
 
         ui.add_space(8.0);
 
-        // ---- Fetch bytes from VM ----
+        // Fetch bytes from VM
         let bytes = session.peek_bytes(self.current_addr, page_size);
 
         // Debug info: show how many bytes were actually read
@@ -185,7 +185,7 @@ impl CompilerView for MemoryView {
         });
         ui.add_space(4.0);
 
-        // ---- Hex dump ----
+        // Hex dump
         ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {

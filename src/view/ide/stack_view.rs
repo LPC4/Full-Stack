@@ -254,10 +254,11 @@ fn draw_modern_function_stack(ui: &mut egui::Ui, func: &FunctionStack) {
         return;
     }
 
+    let bar_width = (ui.available_width() * 0.12).clamp(50.0, 100.0);
+    let bar_height = (ui.available_height() - 80.0).clamp(100.0, 480.0);
+
     ui.horizontal(|ui| {
         let frame_size = func.frame_size.max(1);
-        let bar_width = 80.0;
-        let bar_height = 350.0;
 
         let (rect, _response) = ui.allocate_exact_size(
             Vec2::new(bar_width + 80.0, bar_height + 30.0),

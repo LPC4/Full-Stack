@@ -180,16 +180,16 @@ fn draw_full_grid(ui: &mut Ui, snap: &CacheSnapshot) {
     let n_sets = snap.sets.len();
     let n_ways = snap.params.associativity;
 
-    // Each cell: cell_w wide × cell_h tall, 1px gap between cells
-    let cell_w = 14.0_f32;
-    let cell_h = 10.0_f32;
     let gap = 1.0_f32;
+    let label_w = 44.0_f32;
+
+    // Scale cells to fit available width; at least 3×3 px per cell
+    let avail_for_grid = (ui.available_width() - label_w - 24.0).max(60.0);
+    let cell_w = ((avail_for_grid / n_sets as f32) - gap).clamp(3.0, 20.0);
+    let cell_h = (cell_w * 0.7).clamp(3.0, 14.0);
 
     let grid_w = n_sets as f32 * (cell_w + gap) - gap;
     let grid_h = n_ways as f32 * (cell_h + gap) - gap;
-
-    // Row labels ("Way 0", "Way 1"), measure width first
-    let label_w = 44.0_f32;
 
     // Axis labels
     ui.horizontal(|ui| {
@@ -272,7 +272,7 @@ fn draw_way_bars(ui: &mut Ui, snap: &CacheSnapshot) {
         }
     }
 
-    let bar_w = 200.0_f32;
+    let bar_w = (ui.available_width() - 180.0).max(60.0);
     let bar_h = 8.0_f32;
 
     Grid::new("l2_way_bars")
@@ -359,12 +359,12 @@ fn draw_aggregate(ui: &mut Ui, snap: &CacheSnapshot) {
         0.0
     };
 
-    let bar_w = 200.0_f32;
+    let bar_w = (ui.available_width() - 100.0).max(60.0);
     let bar_h = 10.0_f32;
 
     ui.label(
         RichText::new(format!(
-            "{} total lines ({} sets × {} ways)",
+            "{} total lines ({} sets x {} ways)",
             total,
             snap.sets.len(),
             snap.params.associativity

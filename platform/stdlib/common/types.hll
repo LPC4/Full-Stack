@@ -1,0 +1,11 @@
+type Str = {
+    data: u8*,
+    length: u64,
+}
+
+type HeapBlock = {
+    next: HeapBlock*,
+    ptr: u8*,
+    size: u64,
+    is_free: u64,
+}

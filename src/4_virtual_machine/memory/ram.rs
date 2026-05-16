@@ -2,7 +2,7 @@
 //! (0x8000_0000 .. 0xFFFF_FFFF) by default.
 
 use crate::virtual_machine::error::VmError;
-use crate::virtual_machine::memory::MemoryAccess;
+use crate::virtual_machine::memory::{MemoryAccess, PeekByteRaw};
 
 pub struct Ram {
     data: Vec<u8>,
@@ -40,6 +40,12 @@ impl Ram {
     /// Peek at a byte without mutation (for debugging).
     pub fn peek_byte(&self, addr: u64) -> Option<u8> {
         self.index(addr).map(|idx| self.data[idx])
+    }
+}
+
+impl PeekByteRaw for Ram {
+    fn peek_byte_raw(&self, addr: u64) -> Option<u8> {
+        self.peek_byte(addr)
     }
 }
 

@@ -2,7 +2,7 @@ use crate::view::debug::snapshot::CpuSnapshot;
 use crate::view::{
     CompilationState, CompilerView, ProgramCatalog, auto_grid_columns_with_min_width, ui_theme,
 };
-use egui::{Color32, FontId, Grid, RichText, ScrollArea, Ui, vec2};
+use egui::{Color32, FontId, Frame, Grid, Margin, RichText, ScrollArea, Ui, vec2};
 
 const ABI_NAMES: [&str; 32] = [
     "zero", "ra", "sp", "gp", "tp", "t0", "t1", "t2", "s0", "s1", "a0", "a1", "a2", "a3", "a4",
@@ -45,70 +45,54 @@ impl CompilerView for CpuStateView {
                 ui.set_max_width(available_w);
 
                 pc_bar(ui, cpu.pc, available_w);
-                ui.add_space(8.0);
+                ui.add_space(6.0);
 
-                // Use a single global grid for all registers so their major columns perfectly align.
                 let num_cols = auto_grid_columns_with_min_width(ui, 320.0, 1, 4);
                 let col_width =
                     ((available_w - (num_cols - 1) as f32 * 16.0) / num_cols as f32).max(10.0);
 
-                Grid::new("global_cpu_state_grid")
+                section_bar(ui, "Integer Registers", available_w);
+                Grid::new("cpu_int_regs_grid")
                     .striped(true)
                     .num_columns(num_cols)
                     .spacing([16.0, 6.0])
                     .min_col_width(col_width)
                     .show(ui, |ui| {
-                        // --- Integer Registers Header ---
-                        ui.horizontal(|ui| {
-                            ui.label(
-                                RichText::new("Integer Registers")
-                                    .strong()
-                                    .color(theme.text_dim),
-                            );
-                        });
-                        for _ in 1..num_cols {
-                            ui.label("");
-                        }
-                        ui.end_row();
-
-                        // --- Integer Registers ---
                         integer_regs(ui, &cpu.xregs, &cpu.prev_xregs, num_cols);
+                    });
 
-                        // Spacer Row
-                        for _ in 0..num_cols {
-                            ui.label("");
-                        }
-                        ui.end_row();
+                ui.add_space(4.0);
 
-                        // --- FP Registers Header ---
+                let fp_bar_margin = Margin { left: 8, right: 4, top: 4, bottom: 4 };
+                Frame::NONE
+                    .fill(theme.surface_alt)
+                    .inner_margin(fp_bar_margin)
+                    .show(ui, |ui| {
+                        ui.set_min_width(available_w);
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("FP Registers").strong().color(theme.text_dim));
+                            ui.label(RichText::new("FP Registers").strong().small().color(theme.text_dim));
+                            ui.add_space(8.0);
                             ui.checkbox(&mut self.show_fp_as_float, "as float");
                         });
-                        for _ in 1..num_cols {
-                            ui.label("");
-                        }
-                        ui.end_row();
-
-                        // --- FP Registers ---
+                    });
+                Grid::new("cpu_fp_regs_grid")
+                    .striped(true)
+                    .num_columns(num_cols)
+                    .spacing([16.0, 6.0])
+                    .min_col_width(col_width)
+                    .show(ui, |ui| {
                         fp_regs(ui, &cpu.fregs, self.show_fp_as_float, num_cols);
+                    });
 
-                        // Spacer Row
-                        for _ in 0..num_cols {
-                            ui.label("");
-                        }
-                        ui.end_row();
+                ui.add_space(4.0);
 
-                        // --- CSRs Header ---
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new("CSRs").strong().color(theme.text_dim));
-                        });
-                        for _ in 1..num_cols {
-                            ui.label("");
-                        }
-                        ui.end_row();
-
-                        // --- CSRs ---
+                section_bar(ui, "CSRs", available_w);
+                Grid::new("cpu_csr_grid")
+                    .striped(true)
+                    .num_columns(num_cols)
+                    .spacing([16.0, 6.0])
+                    .min_col_width(col_width)
+                    .show(ui, |ui| {
                         csr_table(ui, cpu, num_cols);
                     });
             });
@@ -117,6 +101,17 @@ impl CompilerView for CpuStateView {
     fn clone_box(&self) -> Box<dyn CompilerView> {
         Box::new(self.clone())
     }
+}
+
+fn section_bar(ui: &mut Ui, label: &str, available_w: f32) {
+    let theme = ui_theme();
+    Frame::NONE
+        .fill(theme.surface_alt)
+        .inner_margin(Margin { left: 8, right: 4, top: 4, bottom: 4 })
+        .show(ui, |ui| {
+            ui.set_min_width(available_w);
+            ui.label(RichText::new(label).strong().small().color(theme.text_dim));
+        });
 }
 
 fn pc_bar(ui: &mut Ui, pc: u64, w: f32) {

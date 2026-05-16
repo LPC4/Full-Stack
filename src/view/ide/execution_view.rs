@@ -76,7 +76,17 @@ impl CompilerView for ExecutionView {
 
         #[cfg(not(all(not(target_arch = "wasm32"), target_os = "windows")))]
         {
-            ui.label(RichText::new("QEMU execution requires Windows with WSL.").weak());
+            let theme = crate::view::ui_theme();
+            egui::Frame::NONE
+                .fill(theme.warning.gamma_multiply(0.10))
+                .stroke(egui::Stroke::new(1.0, theme.warning.gamma_multiply(0.40)))
+                .inner_margin(8.0)
+                .show(ui, |ui| {
+                    ui.label(
+                        RichText::new("QEMU execution requires Windows with WSL.")
+                            .color(theme.warning),
+                    );
+                });
             ui.add_space(8.0);
         }
 

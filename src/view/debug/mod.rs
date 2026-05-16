@@ -315,6 +315,12 @@ impl DebugSession {
         self.vm.peek_bytes(addr, len)
     }
 
+    /// Read bytes without updating cache stats or LRU state.
+    /// Checks dirty cache lines for the latest data. Use this from render paths.
+    pub fn peek_bytes_raw(&self, addr: u64, len: usize) -> Vec<u8> {
+        self.vm.peek_bytes_raw(addr, len)
+    }
+
     /// Full cache snapshots (params + per-line state + stats) for the cache view.
     /// Only call this from the render path — it allocates ~1.3MB for L3.
     pub fn cache_snapshots(

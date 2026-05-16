@@ -35,27 +35,27 @@ This project is already a compiler + VM stack. The goal of this list is to finis
 - [x] Make the current assembly/ELF pipeline capable of building both hosted and freestanding images.
 
 ## Phase 3: Runtime foundation for an OS
-- [ ] Replace Linux syscall-based I/O with a console abstraction.
-- [ ] Provide a UART-backed console runtime for bare-metal boot.
-- [ ] Add panic/abort support that writes to the console and halts cleanly.
-- [ ] Add minimal formatting/printing support that does not depend on libc.
-- [ ] Add `memcpy`, `memmove`, `memset`, `memcmp`, and other core freestanding helpers if missing.
-- [ ] Make heap allocation usable in kernel mode, or replace it with a kernel allocator.
-- [ ] Add a simple logging layer for early boot diagnostics.
-- [ ] Add a minimal init/runtime split so the compiler runtime does not become the OS runtime.
+- [x] Replace Linux syscall-based I/O with a console abstraction.
+- [x] Provide a UART-backed console runtime for bare-metal boot.
+- [x] Add panic/abort support that writes to the console and halts cleanly.
+- [x] Add minimal formatting/printing support that does not depend on libc.
+- [x] Add `memcpy`, `memmove`, `memset`, `memcmp`, and other core freestanding helpers if missing.
+- [x] Make heap allocation usable in kernel mode, or replace it with a kernel allocator.
+- [x] Add a simple logging layer for early boot diagnostics.
+- [x] Add a minimal init/runtime split so the compiler runtime does not become the OS runtime.
 
 ## Phase 4: VM hardware completeness
-- [ ] Finish the RISC-V privilege model needed for a real OS.
-- [ ] Make Machine/Supervisor mode transitions work reliably.
-- [ ] Implement or verify trap entry/exit behavior.
-- [ ] Implement timer interrupts.
-- [ ] Implement external interrupts.
-- [ ] Finish CLINT behavior for timer and software interrupts.
-- [ ] Finish PLIC behavior for external interrupt routing.
-- [ ] Ensure UART behaves like a real serial console endpoint.
+- [x] Finish the RISC-V privilege model needed for a real OS.
+- [x] Make Machine/Supervisor mode transitions work reliably.
+- [x] Implement or verify trap entry/exit behavior.
+- [x] Implement timer interrupts.
+- [x] Implement external interrupts.
+- [x] Finish CLINT behavior for timer and software interrupts.
+- [x] Finish PLIC behavior for external interrupt routing.
+- [x] Ensure UART behaves like a real serial console endpoint.
 - [x] Add a boot ROM / firmware path if the OS expects one.
-- [ ] Implement full ROM firmware with _boot entry, exception/interrupt dispatch, trap_fatal handler, and syscall implementations (see branch/POC in programs/rom/rom.s).
-- [ ] Complete Sv39 virtual memory behavior enough for kernel paging.
+- [x] Implement full ROM firmware with _boot entry, exception/interrupt dispatch, trap_fatal handler, and syscall implementations.
+- [x] Complete Sv39 virtual memory behavior enough for kernel paging.
 - [ ] Add TLB behavior if needed for realistic kernel testing.
 - [ ] Add a device tree or equivalent machine description if the boot path needs one.
 - [ ] Add disk/storage emulation for kernel filesystems and user programs.
@@ -63,7 +63,7 @@ This project is already a compiler + VM stack. The goal of this list is to finis
 - [ ] Add reset-state tests so the VM starts in a predictable configuration.
 
 ## Phase 5: Kernel bring-up features
-- [ ] Boot to a visible serial console message.
+- [x] Boot to a visible serial console message.
 - [ ] Print CPU/board/memory information during early boot.
 - [ ] Initialize page tables and virtual memory in the kernel.
 - [ ] Add a physical frame allocator.
@@ -101,10 +101,10 @@ This project is already a compiler + VM stack. The goal of this list is to finis
 - [ ] Audit all examples and tests so they continue to compile under the chosen pre-OS contract.
 
 ## Done when
-- [ ] The compiler can build a freestanding kernel image without Linux runtime assumptions.
+- [x] The compiler can build a freestanding kernel image without Linux runtime assumptions.
 - [ ] The VM can boot that image, print to serial, handle traps, and use paging.
 - [ ] A minimal kernel can allocate memory, receive timer interrupts, and run at least one user process.
-- [ ] The project has a clear hosted-vs-freestanding split so OS development does not fight the compiler runtime.
+- [x] The project has a clear hosted-vs-freestanding split so OS development does not fight the compiler runtime.
 
 ## Nice-to-have after the OS starts
 - [ ] ELF loader for userland programs.

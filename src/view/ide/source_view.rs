@@ -1,6 +1,6 @@
 use crate::view::highlight_code;
 use crate::view::{CompilationState, CompilerView, ProgramCatalog, ui_theme};
-use egui::{Frame, TextEdit, TextStyle};
+use egui::{Color32, Frame, RichText, TextEdit, TextStyle};
 
 #[derive(Default, Clone)]
 pub struct SourceView;
@@ -23,19 +23,60 @@ impl CompilerView for SourceView {
             .current_program()
             .map(|p| p.is_stdlib())
             .unwrap_or(false);
+        let is_kernel = catalog
+            .current_program()
+            .map(|p| p.is_kernel())
+            .unwrap_or(false);
 
-        // Stdlib programs are read-only
+        // Compact info chip for read-only and kernel programs
         if is_stdlib {
-            ui.vertical(|ui| {
-                ui.heading("Standard Library (Read-Only)");
-                ui.add_space(4.0);
-                ui.label(
-                    egui::RichText::new("This is a read-only standard library file")
-                        .weak()
-                        .small(),
-                );
-                ui.add_space(8.0);
-            });
+            Frame::NONE
+                .fill(theme.surface_alt)
+                .inner_margin(6.0)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new("stdlib")
+                                .small()
+                                .strong()
+                                .color(theme.text_dim),
+                        );
+                        ui.label(RichText::new("|").small().color(theme.border));
+                        ui.label(
+                            RichText::new(
+                                "read-only: compile to inspect tokens, AST, IR, and assembly",
+                            )
+                            .small()
+                            .color(theme.text_dim),
+                        );
+                    });
+                });
+            ui.add_space(2.0);
+        }
+
+        if is_kernel {
+            Frame::NONE
+                .fill(theme.surface_alt)
+                .inner_margin(6.0)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new("kernel")
+                                .small()
+                                .strong()
+                                .color(Color32::from_rgb(80, 140, 200)),
+                        );
+                        ui.label(RichText::new("|").small().color(theme.border));
+                        ui.label(
+                            RichText::new(
+                                "define kmain: () -> () as entry point, boot via the Kernel panel",
+                            )
+                            .small()
+                            .color(theme.text_dim),
+                        );
+                    });
+                });
+            ui.add_space(2.0);
         }
 
         let mut layouter = |ui: &egui::Ui, string: &dyn egui::TextBuffer, _wrap: f32| {
@@ -46,8 +87,12 @@ impl CompilerView for SourceView {
 
         // Reserve space for error panel if there's an error.
         let has_error = state.error.is_some();
-        let error_panel_height = if has_error { 140.0 } else { 0.0 };
         let available = ui.available_size();
+        let error_panel_height = if has_error {
+            (available.y * 0.28).clamp(80.0, 220.0)
+        } else {
+            0.0
+        };
         let editor_height = (available.y - error_panel_height).max(50.0);
 
         let frame = Frame::NONE.fill(theme.panel).inner_margin(4.0);
@@ -67,7 +112,7 @@ impl CompilerView for SourceView {
                             .desired_width(f32::INFINITY)
                             .min_size(egui::vec2(available.x, editor_height))
                             .layouter(&mut layouter)
-                            .interactive(!is_stdlib), // Make read-only for stdlib
+                            .interactive(!is_stdlib), // stdlib is read-only; kernel is editable
                     );
 
                     if !is_stdlib && response.changed() {
@@ -87,7 +132,7 @@ impl CompilerView for SourceView {
 
                 egui::ScrollArea::vertical()
                     .id_salt(panel_id.with("error_scroll"))
-                    .max_height(error_panel_height - 30.0)
+                    .max_height((error_panel_height - 30.0).max(20.0))
                     .auto_shrink([false; 2])
                     .show(ui, |ui| {
                         for line in error_text.lines() {

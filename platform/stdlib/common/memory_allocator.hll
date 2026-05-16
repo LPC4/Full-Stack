@@ -1,14 +1,8 @@
-; 64 KB static heap buffer in BSS (zero-initialised by the loader).
 heap_buffer: u8[65536]
-
-; Byte offset of the next free slot inside heap_buffer.
 heap_bump: u64 = 0
-
-; Head of the free-list (HeapBlock nodes live inside heap_buffer).
 heap_list: HeapBlock* = null
 
-; Allocate n bytes from heap_buffer at the current bump offset.
-; Rounds up to the nearest 8-byte boundary; returns null on overflow.
+; Bump-allocates n bytes, rounded up to 8-byte alignment. Returns null on overflow.
 heap_raw_alloc: (n: u64) -> u8* {
     aligned: u64 = ((n + 7) / 8) * 8
     new_bump: u64 = heap_bump + aligned

@@ -7,6 +7,7 @@ pub enum ProgramKind {
     Example,
     Custom,
     Stdlib, // Read-only stdlib programs
+    Kernel, // Editable programs that link against the kernel stdlib
 }
 
 #[derive(Clone, serde::Deserialize, serde::Serialize, Debug)]
@@ -76,12 +77,28 @@ impl ProgramFile {
         }
     }
 
+    pub fn kernel(id: &str, name: &str, description: &str, source: &str) -> Self {
+        Self {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            kind: ProgramKind::Kernel,
+            source: source.to_owned(),
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
+            description: description.to_owned(),
+        }
+    }
+
     pub fn is_custom(&self) -> bool {
         matches!(self.kind, ProgramKind::Custom)
     }
 
     pub fn is_stdlib(&self) -> bool {
         matches!(self.kind, ProgramKind::Stdlib)
+    }
+
+    pub fn is_kernel(&self) -> bool {
+        matches!(self.kind, ProgramKind::Kernel)
     }
 }
 
@@ -170,6 +187,16 @@ fn built_in_programs() -> Vec<ProgramFile> {
                 "/programs/example/generics_and_strings.hll"
             )),
         ),
+        // Kernel programs (editable, link against kernel stdlib)
+        ProgramFile::kernel(
+            "kernel-boot",
+            "Kernel Boot",
+            "Minimal kernel: boot log, heap smoke-test, and shutdown. Use the Kernel panel to boot.",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/programs/example/kernel_boot.hll"
+            )),
+        ),
     ]
 }
 
@@ -211,12 +238,23 @@ impl ProgramCatalog {
                 .find(|program| program.id == built_in.id)
             {
                 let mut updated = existing.clone();
-                // For stdlib and examples, always update from embedded source (read-only)
-                if built_in.kind != ProgramKind::Custom {
-                    updated.name = built_in.name;
-                    updated.kind = built_in.kind;
-                    updated.source = built_in.source;
-                    updated.description = built_in.description;
+                match built_in.kind {
+                    ProgramKind::Custom => {
+                        // Custom programs: preserve everything — user-managed
+                    }
+                    ProgramKind::Kernel => {
+                        // Kernel programs: editable, so preserve user source; refresh metadata
+                        updated.name = built_in.name;
+                        updated.kind = built_in.kind;
+                        updated.description = built_in.description;
+                    }
+                    _ => {
+                        // Stdlib, Example: always refresh from embedded (read-only)
+                        updated.name = built_in.name;
+                        updated.kind = built_in.kind;
+                        updated.source = built_in.source;
+                        updated.description = built_in.description;
+                    }
                 }
                 merged_programs.push(updated);
             } else {

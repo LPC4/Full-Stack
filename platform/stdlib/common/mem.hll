@@ -1,0 +1,55 @@
+memset: (dst: u8*, value: u8, n: u64) -> u8* {
+    i: u64 = 0
+    while i < n {
+        dst[i] = value
+        i = i + 1
+    }
+    return dst
+}
+
+memcpy: (dst: u8*, src: u8*, n: u64) -> u8* {
+    i: u64 = 0
+    while i < n {
+        dst[i] = @(src + i)
+        i = i + 1
+    }
+    return dst
+}
+
+; Always copies backward (high-to-low index), which is safe when dst >= src.
+; For dst < src with overlap the caller should use memcpy instead.
+memmove: (dst: u8*, src: u8*, n: u64) -> u8* {
+    if n == 0 {
+        return dst
+    }
+    i: u64 = n
+    while i > 0 {
+        i = i - 1
+        dst[i] = @(src + i)
+    }
+    return dst
+}
+
+; Bytes >= 128 read as negative i32, so the sign-mismatch cases are handled
+; explicitly to get correct unsigned ordering.
+memcmp: (a: u8*, b: u8*, n: u64) -> i32 {
+    i: u64 = 0
+    while i < n {
+        ai: i32 = i32(@(a + i))
+        bi: i32 = i32(@(b + i))
+        if ai < 0 and bi >= 0 {
+            return 1
+        }
+        if ai >= 0 and bi < 0 {
+            return -1
+        }
+        if ai < bi {
+            return -1
+        }
+        if ai > bi {
+            return 1
+        }
+        i = i + 1
+    }
+    return 0
+}

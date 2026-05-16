@@ -3,7 +3,7 @@
 use crate::virtual_machine::devices::{clint::Clint, plic::Plic, uart::Uart};
 use crate::virtual_machine::error::VmError;
 use crate::virtual_machine::memory::{
-    MemoryAccess,
+    MemoryAccess, PeekByteRaw,
     cache::{Cache, CacheParams},
     ram::Ram,
     rom::Rom,
@@ -156,12 +156,12 @@ impl SystemBus {
         (l1, l2, l3)
     }
 
-    /// Read up to `len` bytes starting at `addr`, silently skipping unroutable addresses.
-    /// This is for debugging/inspection only and bypasses cache statistics.
+    /// Read bytes from the address space for debug inspection.
+    /// ROM and MMIO are read directly. RAM is read via the cache hierarchy, which updates
+    /// cache stats as a side effect (use peek_bytes_raw when that matters).
     pub fn peek_bytes(&mut self, addr: u64, len: usize) -> Vec<u8> {
         (0..len as u64)
             .map(|i| {
-                // Bypass cache stats by reading directly from the underlying memory
                 match addr + i {
                     a if a >= ROM_BASE && a <= ROM_END => self.rom.read_byte(a).unwrap_or(0),
                     a if a >= UART_BASE && a <= UART_END => {
@@ -173,14 +173,18 @@ impl SystemBus {
                     a if a >= PLIC_BASE && a <= PLIC_END => {
                         self.plic.read_byte(a - PLIC_BASE).unwrap_or(0)
                     }
-                    _ => {
-                        // For RAM, we need to access the actual RAM through the cache hierarchy
-                        // Since we can't directly access the underlying RAM, we'll use the cache's read_byte
-                        // but this will affect cache stats. For debug purposes, this is acceptable.
-                        self.l1_cache.read_byte(addr + i).unwrap_or(0)
-                    }
+                    _ => self.l1_cache.read_byte(addr + i).unwrap_or(0),
                 }
             })
+            .collect()
+    }
+
+    /// Read bytes without touching cache stats or LRU state.
+    /// Checks each cache level for the most current (possibly dirty) data before
+    /// falling through to RAM. Safe to call from the render path every frame.
+    pub fn peek_bytes_raw(&self, addr: u64, len: usize) -> Vec<u8> {
+        (0..len as u64)
+            .map(|i| self.l1_cache.peek_byte_raw(addr + i).unwrap_or(0))
             .collect()
     }
 

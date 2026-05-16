@@ -4,7 +4,9 @@ use egui::{Color32, CornerRadius, Pos2, Rect, Stroke, StrokeKind, Vec2};
 use std::collections::HashMap;
 
 #[derive(Default, Clone)]
-pub struct CfgView;
+pub struct CfgView {
+    show_all_instructions: bool,
+}
 
 struct BasicBlock {
     label: String,
@@ -77,11 +79,17 @@ impl CompilerView for CfgView {
 
         let blocks = parse_blocks(&state.asm);
 
+        ui.horizontal(|ui| {
+            ui.checkbox(&mut self.show_all_instructions, "Show all instructions");
+        });
+        ui.separator();
+
+        let show_all = self.show_all_instructions;
         egui::ScrollArea::both()
             .id_salt(ui.id())
             .auto_shrink([false; 2])
             .show(ui, |ui| {
-                draw_cfg(ui, &blocks);
+                draw_cfg(ui, &blocks, show_all);
             });
     }
 
@@ -107,7 +115,7 @@ fn draw_arrowhead(painter: &egui::Painter, tip: Pos2, dir: Vec2, color: Color32)
     painter.line_segment([tip, point_right], Stroke::new(1.5, color));
 }
 
-fn draw_cfg(ui: &mut egui::Ui, blocks: &[BasicBlock]) {
+fn draw_cfg(ui: &mut egui::Ui, blocks: &[BasicBlock], show_all: bool) {
     let theme = ui_theme();
     // Define the fixed widths and margins of our content
     let margin_left = 120.0; // Space for the curved branch arrows
@@ -120,10 +128,11 @@ fn draw_cfg(ui: &mut egui::Ui, blocks: &[BasicBlock]) {
     let top_margin = 20.0;
     let bottom_margin = 20.0;
 
+    let max_shown = if show_all { usize::MAX } else { 5 };
     let displayed_lines = |block: &BasicBlock| -> usize {
         let len = block.instructions.len();
-        if len > 5 {
-            6 // 5 instructions + "... +X more"
+        if len > max_shown {
+            max_shown + 1 // shown instructions + "... +X more"
         } else {
             len.max(1)
         }
@@ -192,8 +201,8 @@ fn draw_cfg(ui: &mut egui::Ui, blocks: &[BasicBlock]) {
             Stroke::new(1.0, theme.border_soft),
         );
 
-        let max_lines = block.instructions.len().min(5);
-        for (i, inst) in block.instructions.iter().take(max_lines).enumerate() {
+        let show_count = block.instructions.len().min(max_shown);
+        for (i, inst) in block.instructions.iter().take(show_count).enumerate() {
             painter.text(
                 b_rect.left_top() + Vec2::new(8.0, 30.0 + (i as f32 * line_height)),
                 egui::Align2::LEFT_TOP,
@@ -202,11 +211,11 @@ fn draw_cfg(ui: &mut egui::Ui, blocks: &[BasicBlock]) {
                 theme.text_soft,
             );
         }
-        if block.instructions.len() > 5 {
+        if block.instructions.len() > max_shown {
             painter.text(
-                b_rect.left_top() + Vec2::new(8.0, 30.0 + (5.0 * line_height)),
+                b_rect.left_top() + Vec2::new(8.0, 30.0 + (max_shown as f32 * line_height)),
                 egui::Align2::LEFT_TOP,
-                format!("... +{} more", block.instructions.len() - 5),
+                format!("... +{} more", block.instructions.len() - max_shown),
                 egui::FontId::monospace(12.0),
                 theme.text_dim,
             );

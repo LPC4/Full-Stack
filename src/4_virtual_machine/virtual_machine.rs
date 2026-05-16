@@ -35,6 +35,13 @@ impl VirtualMachine {
         Self::from_elf(&elf).unwrap_or_else(|e| panic!("failed to load assembled ELF: {e}"))
     }
 
+    /// Create a VM from a kernel assembled output.  Uses `_kernel_start` as the
+    /// ELF entry point instead of the default `_start` / `main` candidates.
+    pub fn new_kernel(assembled: &AssembledOutput) -> Self {
+        let elf = assembled.to_elf_with_entry(ELF_LOAD_BASE, "_kernel_start");
+        Self::from_elf(&elf).unwrap_or_else(|e| panic!("failed to load kernel ELF: {e}"))
+    }
+
     /// Create a VM from a complete ELF-64 image by mapping every PT_LOAD segment.
     pub fn from_elf(bytes: &[u8]) -> Result<Self, VmError> {
         let elf = ParsedElf::parse(bytes)?;
@@ -216,6 +223,12 @@ impl VirtualMachine {
     /// Unroutable addresses produce 0x00 bytes.
     pub fn peek_bytes(&mut self, addr: u64, len: usize) -> Vec<u8> {
         self.bus.peek_bytes(addr, len)
+    }
+
+    /// Like peek_bytes but does not update cache stats or LRU state.
+    /// Checks dirty cache lines for the latest data. Safe to call every render frame.
+    pub fn peek_bytes_raw(&self, addr: u64, len: usize) -> Vec<u8> {
+        self.bus.peek_bytes_raw(addr, len)
     }
 
     pub fn push_uart_rx(&mut self, byte: u8) {

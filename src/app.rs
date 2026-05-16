@@ -7,11 +7,11 @@ use crate::view::debug::{DebugSession, SessionStatus};
 use crate::view::ide::vm_execution_view::VmExecutionResult;
 use crate::view::{
     AssemblyView, AstView, CacheView, CfgView, CompilationState, CompilerView, CpuStateView,
-    DisassemblyView, ExecutionView, FramebufferView, IoView, IrView, MemoryMapView, MemoryView,
-    PipelineView, ProgramCatalog, ProgramKind, SourceView, StackView, TokensView, VmExecutionView,
-    apply_ui_theme, blank_custom_program_source, ui_theme,
+    DisassemblyView, ExecutionView, FramebufferView, IoView, IrView, KernelView, MemoryMapView,
+    MemoryView, PipelineView, ProgramCatalog, ProgramKind, SourceView, StackView, TokensView,
+    VmExecutionView, apply_ui_theme, blank_custom_program_source, ui_theme,
 };
-use egui::{Color32, Layout, RichText};
+use egui::{Color32, Frame, Layout, Margin, RichText, Stroke};
 use egui_dock::{DockState, NodeIndex};
 use std::fmt;
 use std::fs;
@@ -212,16 +212,17 @@ impl FullStackApp {
 
     fn reset_layout(&mut self) {
         let views = vec![
-            self.view::<SourceView>(),
-            self.view::<TokensView>(),
-            self.view::<AstView>(),
-            self.view::<IrView>(),
-            self.view::<AssemblyView>(),
-            self.view::<CfgView>(),
-            self.view::<StackView>(),
-            self.view::<MemoryMapView>(),
-            self.view::<ExecutionView>(),
-            self.view::<VmExecutionView>(),
+            self.view::<SourceView>(),    // 0
+            self.view::<TokensView>(),    // 1
+            self.view::<AstView>(),       // 2
+            self.view::<IrView>(),        // 3
+            self.view::<AssemblyView>(),  // 4
+            self.view::<CfgView>(),       // 5
+            self.view::<StackView>(),     // 6
+            self.view::<MemoryMapView>(), // 7
+            self.view::<ExecutionView>(), // 8
+            self.view::<VmExecutionView>(), // 9
+            self.view::<KernelView>(),    // 10
         ];
 
         let mut dock = DockState::new(vec![views[0].clone()]);
@@ -235,11 +236,12 @@ impl FullStackApp {
             right,
             0.5,
             vec![
-                views[4].clone(),
-                views[5].clone(),
-                views[6].clone(),
-                views[8].clone(),
-                views[9].clone(),
+                views[4].clone(),  // Assembly
+                views[5].clone(),  // CFG
+                views[6].clone(),  // Stack
+                views[8].clone(),  // Execution (QEMU)
+                views[9].clone(),  // VM Output
+                views[10].clone(), // Kernel
             ],
         );
         self.dock = dock;
@@ -580,8 +582,13 @@ impl FullStackApp {
 
             #[cfg(not(target_arch = "wasm32"))]
             ui.horizontal(|ui| {
+                let import_label = if self.show_import_controls {
+                    "Import v"
+                } else {
+                    "Import >"
+                };
                 if ui
-                    .button("Import")
+                    .button(import_label)
                     .on_hover_text("Import a .hll file from disk")
                     .clicked()
                 {
@@ -590,8 +597,13 @@ impl FullStackApp {
                         self.show_export_controls = false;
                     }
                 }
+                let export_label = if self.show_export_controls {
+                    "Export v"
+                } else {
+                    "Export >"
+                };
                 if ui
-                    .button("Export")
+                    .button(export_label)
                     .on_hover_text("Export the current program, assembly, or ELF image")
                     .clicked()
                 {
@@ -682,12 +694,21 @@ impl FullStackApp {
                 }
 
                 if let Some(message) = &self.catalog_message {
-                    ui.small(message);
+                    let theme = ui_theme();
+                    let lower = message.to_lowercase();
+                    let is_err = lower.starts_with("failed")
+                        || lower.starts_with("error")
+                        || lower.starts_with("no program")
+                        || lower.starts_with("enter a");
+                    let color = if is_err { theme.error } else { theme.success };
+                    ui.label(RichText::new(message).small().color(color));
                 }
             }
 
             ui.add_space(8.0);
             self.render_program_section(ui, ProgramKind::Stdlib, "Standard Library");
+            ui.separator();
+            self.render_program_section(ui, ProgramKind::Kernel, "Kernel Programs");
             ui.separator();
             self.render_program_section(ui, ProgramKind::Example, "Examples");
             ui.separator();
@@ -718,7 +739,8 @@ impl FullStackApp {
             return;
         }
 
-        egui::CollapsingHeader::new(title)
+        let header_label = format!("{title} ({})", entries.len());
+        egui::CollapsingHeader::new(header_label)
             .default_open(true)
             .show(ui, |ui| {
                 for (id, name) in &entries {
@@ -738,12 +760,18 @@ impl FullStackApp {
                         }
                     } else {
                         let selected = *id == self.catalog.selected_program_id;
-                        let response = ui.selectable_label(selected, name);
+                        let can_rename = kind == ProgramKind::Custom || kind == ProgramKind::Kernel;
+                        let response = if can_rename {
+                            ui.selectable_label(selected, name)
+                                .on_hover_text("double-click to rename")
+                        } else {
+                            ui.selectable_label(selected, name)
+                        };
                         if response.clicked() {
                             self.catalog.select_program(id);
                             self.compile();
                         }
-                        if response.double_clicked() && kind == ProgramKind::Custom {
+                        if response.double_clicked() && can_rename {
                             self.rename_buffer = name.clone();
                             self.rename_id = Some(id.clone());
                             ui.ctx().request_repaint();
@@ -834,6 +862,17 @@ impl eframe::App for FullStackApp {
 impl FullStackApp {
     fn ide_top_bar(&mut self, ui: &mut egui::Ui) {
         let theme = ui_theme();
+        let is_stdlib = self
+            .catalog
+            .current_program()
+            .map(|p| p.is_stdlib())
+            .unwrap_or(false);
+        let is_kernel = self
+            .catalog
+            .current_program()
+            .map(|p| p.is_kernel())
+            .unwrap_or(false);
+
         ui.set_min_size(egui::vec2(ui.available_width(), ui.available_height()));
         ui.horizontal(|ui| {
             // -- Left: Compile and Run actions --------------------------------
@@ -843,76 +882,84 @@ impl FullStackApp {
             {
                 self.compile();
             }
-            if ui
-                .add(
-                    egui::Button::new(RichText::new("Run in VM").strong())
-                        .fill(Color32::from_rgb(30, 110, 60))
-                        .min_size(egui::vec2(100.0, 35.0)),
-                )
-                .clicked()
-            {
-                if let Some(assembled) = &self.compilation_state.assembled {
-                    let entry = self.compilation_state.entry_symbol.clone();
-                    let base = self.compilation_state.load_base;
-                    self.compilation_state.vm_result = Some(run_in_vm(assembled, &entry, base));
+
+            // Run in VM — hidden for stdlib (no entry point) and kernel (use Boot in Kernel panel)
+            if !is_stdlib && !is_kernel {
+                if ui
+                    .add(
+                        egui::Button::new(RichText::new("Run in VM").strong())
+                            .fill(Color32::from_rgb(30, 110, 60))
+                            .min_size(egui::vec2(100.0, 35.0)),
+                    )
+                    .on_hover_text("Run the assembled program in the internal RISC-V VM")
+                    .clicked()
+                {
+                    if let Some(assembled) = &self.compilation_state.assembled {
+                        let entry = self.compilation_state.entry_symbol.clone();
+                        let base = self.compilation_state.load_base;
+                        self.compilation_state.vm_result =
+                            Some(run_in_vm(assembled, &entry, base));
+                    }
                 }
             }
 
-            // Target mode selector
-            ui.separator();
-            ui.label("Target:");
-            let prev_mode = self.target_mode;
-            egui::ComboBox::from_id_salt("target_mode_combo")
-                .selected_text(self.target_mode.label())
-                .width(110.0)
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(
-                        &mut self.target_mode,
-                        TargetMode::Hosted,
-                        TargetMode::Hosted.label(),
-                    );
-                    ui.selectable_value(
-                        &mut self.target_mode,
-                        TargetMode::Freestanding,
-                        TargetMode::Freestanding.label(),
-                    );
-                });
-            if self.target_mode != prev_mode {
-                let new_mode = self.target_mode;
-                // Reset target_mode to prev so set_target_mode sees a real change.
-                self.target_mode = prev_mode;
-                self.set_target_mode(new_mode);
-            }
-
-            // Entry-point and load-base inputs (freestanding only)
-            if self.target_mode == TargetMode::Freestanding {
-                ui.label("Entry:");
-                let ep_response = ui.add(
-                    egui::TextEdit::singleline(&mut self.entry_point)
-                        .desired_width(70.0)
-                        .font(egui::TextStyle::Monospace)
-                        .hint_text("kmain"),
-                );
-                if ep_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    let ep = self.entry_point.trim().to_owned();
-                    let ep = if ep.is_empty() {
-                        "kmain".to_owned()
-                    } else {
-                        ep
-                    };
-                    self.pipeline.entry_point = Some(ep);
-                    self.compile();
+            // Target mode selector — only meaningful for example/custom programs.
+            // Stdlib has no entry point; kernel uses its own fixed pipeline.
+            if !is_stdlib && !is_kernel {
+                ui.separator();
+                ui.label("Target:");
+                let prev_mode = self.target_mode;
+                egui::ComboBox::from_id_salt("target_mode_combo")
+                    .selected_text(self.target_mode.label())
+                    .width(110.0)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut self.target_mode,
+                            TargetMode::Hosted,
+                            TargetMode::Hosted.label(),
+                        );
+                        ui.selectable_value(
+                            &mut self.target_mode,
+                            TargetMode::Freestanding,
+                            TargetMode::Freestanding.label(),
+                        );
+                    });
+                if self.target_mode != prev_mode {
+                    let new_mode = self.target_mode;
+                    self.target_mode = prev_mode;
+                    self.set_target_mode(new_mode);
                 }
 
-                ui.label("Base:");
-                let lb_response = ui.add(
-                    egui::TextEdit::singleline(&mut self.load_base_input)
-                        .desired_width(90.0)
-                        .font(egui::TextStyle::Monospace)
-                        .hint_text("0x80200000"),
-                );
-                if lb_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    self.compile();
+                // Entry-point and load-base inputs (freestanding only)
+                if self.target_mode == TargetMode::Freestanding {
+                    ui.label("Entry:");
+                    let ep_response = ui.add(
+                        egui::TextEdit::singleline(&mut self.entry_point)
+                            .desired_width(70.0)
+                            .font(egui::TextStyle::Monospace)
+                            .hint_text("kmain"),
+                    );
+                    if ep_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        let ep = self.entry_point.trim().to_owned();
+                        let ep = if ep.is_empty() {
+                            "kmain".to_owned()
+                        } else {
+                            ep
+                        };
+                        self.pipeline.entry_point = Some(ep);
+                        self.compile();
+                    }
+
+                    ui.label("Base:");
+                    let lb_response = ui.add(
+                        egui::TextEdit::singleline(&mut self.load_base_input)
+                            .desired_width(90.0)
+                            .font(egui::TextStyle::Monospace)
+                            .hint_text("0x80200000"),
+                    );
+                    if lb_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        self.compile();
+                    }
                 }
             }
 
@@ -948,6 +995,7 @@ impl FullStackApp {
                         ("Memory Map", || Box::new(MemoryMapView::default())),
                         ("Execution (QEMU)", || Box::new(ExecutionView::default())),
                         ("VM Output", || Box::new(VmExecutionView::default())),
+                        ("Kernel", || Box::new(KernelView::default())),
                     ];
                     for (label, make) in view_entries {
                         if ui.button(*label).clicked() {
@@ -962,44 +1010,67 @@ impl FullStackApp {
             ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(8.0);
 
-                // Primary action - To Debugger
-                let can_debug = self.compilation_state.assembled.is_some();
-                if ui
-                    .add_enabled(
-                        can_debug,
-                        egui::Button::new(RichText::new("To Debugger").strong())
-                            .fill(theme.accent)
-                            .min_size(egui::vec2(100.0, 35.0)),
-                    )
-                    .on_disabled_hover_text("Compile successfully first")
-                    .clicked()
-                {
-                    self.enter_debug_mode();
+                // To Debugger — hidden for stdlib (nothing runnable to debug)
+                if !is_stdlib {
+                    let can_debug = self.compilation_state.assembled.is_some();
+                    if ui
+                        .add_enabled(
+                            can_debug,
+                            egui::Button::new(RichText::new("To Debugger").strong())
+                                .fill(theme.accent)
+                                .min_size(egui::vec2(100.0, 35.0)),
+                        )
+                        .on_disabled_hover_text("Compile successfully first")
+                        .clicked()
+                    {
+                        self.enter_debug_mode();
+                    }
                 }
 
                 ui.separator();
 
                 if let Some(program) = self.catalog.current_program() {
-                    let short_name: String = program.name.chars().take(24).collect();
-                    ui.label(RichText::new(short_name).strong());
-                    ui.label(
-                        RichText::new(match program.kind {
-                            ProgramKind::Example => "example",
-                            ProgramKind::Custom => "custom",
-                            ProgramKind::Stdlib => "stdlib",
-                        })
-                        .weak()
-                        .small(),
-                    );
-                    ui.separator();
+                    let full_name = program.name.clone();
+                    let short_name: String = full_name.chars().take(24).collect();
+                    let (kind_label, kind_color) = match program.kind {
+                        ProgramKind::Example => ("example", theme.text_dim),
+                        ProgramKind::Custom => ("custom", theme.text_dim),
+                        ProgramKind::Stdlib => ("stdlib", theme.text_dim),
+                        ProgramKind::Kernel => ("kernel", theme.text_dim),
+                    };
+                    // In RTL: kind placed first appears rightmost (adjacent to separator).
+                    // Name placed second appears to the left of kind.
+                    ui.label(RichText::new(kind_label).weak().small().color(kind_color));
+                    let name_resp = ui.label(RichText::new(&short_name).strong());
+                    if full_name.len() > 24 {
+                        name_resp.on_hover_text(&full_name);
+                    }
                 }
+
+                ui.add_space(20.0);
+
+                let pill_margin = Margin { left: 8, right: 8, top: 3, bottom: 3 };
                 match &self.compilation_state.error_summary.clone() {
                     Some(summary) => {
                         let short: String = summary.chars().take(40).collect();
-                        ui.colored_label(theme.error, format!("ERR: {short}"));
+                        Frame::NONE
+                            .fill(theme.error.gamma_multiply(0.15))
+                            .stroke(Stroke::new(1.0, theme.error))
+                            .inner_margin(pill_margin)
+                            .corner_radius(4.0)
+                            .show(ui, |ui| {
+                                ui.colored_label(theme.error, format!("ERR: {short}"));
+                            });
                     }
                     None => {
-                        ui.colored_label(theme.success, "OK");
+                        Frame::NONE
+                            .fill(theme.success.gamma_multiply(0.15))
+                            .stroke(Stroke::new(1.0, theme.success))
+                            .inner_margin(pill_margin)
+                            .corner_radius(4.0)
+                            .show(ui, |ui| {
+                                ui.colored_label(theme.success, "OK");
+                            });
                     }
                 }
             });
@@ -1021,7 +1092,8 @@ impl FullStackApp {
 
             ui.separator();
 
-            ui.label("N:");
+            ui.label("N:")
+                .on_hover_text("Number of instructions or cycles to advance per step button click");
             ui.add(
                 egui::TextEdit::singleline(&mut self.step_n_input)
                     .desired_width(36.0)
@@ -1092,14 +1164,9 @@ impl FullStackApp {
 
             // Follow PC toggle, shared with the disassembly view.
             let follow = &mut self.compilation_state.disasm_follow_pc;
-            let follow_color = if *follow {
-                Color32::from_rgb(90, 200, 120)
-            } else {
-                Color32::from_rgb(80, 88, 108)
-            };
             if ui
                 .add(
-                    egui::Button::new(RichText::new("Follow PC").color(follow_color))
+                    egui::Button::new("Follow PC")
                         .selected(*follow)
                         .min_size(egui::vec2(80.0, 35.0)),
                 )

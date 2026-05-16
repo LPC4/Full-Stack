@@ -26,41 +26,19 @@ impl CompilerView for VmExecutionView {
     ) {
         let theme = ui_theme();
         if let Some(result) = &state.vm_result {
-            // Prepare text for measurement
             let output = if result.uart_output.is_empty() {
-                "(no output)".to_owned()
+                "(no output)"
             } else {
-                result.uart_output.clone()
+                &result.uart_output
             };
-
-            let monospace_font = egui::FontId::monospace(12.0); // match the style used for output
-
-            // Measure text height (monospace, no wrap for simplicity)
-            let galley = ui.fonts_mut(|f| {
-                f.layout_no_wrap(
-                    output.clone(),
-                    monospace_font.clone(),
-                    ui.visuals().text_color(),
-                )
-            });
-
-            let frame_vpad = 20.0; // account for frame border + inner margin + label height
-            let label_height =
-                ui.fonts_mut(|f| f.row_height(&egui::TextStyle::Body.resolve(ui.style())));
-            let desired_uart_height = 4.0 + label_height + 4.0 + galley.size().y + frame_vpad; // 4 extra space after label
-
-            let summary_min_height = 82.0;
-            let spacing = 12.0;
-            let available_height = ui.available_height();
-            let max_uart_height = (available_height - summary_min_height - spacing).max(40.0);
-            let uart_height = desired_uart_height.min(max_uart_height);
 
             ui.vertical(|ui| {
                 ui.set_width(ui.available_width());
                 ui.heading("Virtual Machine Execution");
 
-                // Allocate exact height for UART area
-                let _uart_height = desired_uart_height.min(max_uart_height);
+                // UART output: auto-shrinks for short content, scrolls for long.
+                // Reserve ~100px for the summary section below.
+                let max_uart = (ui.available_height() - 112.0).max(60.0);
 
                 Frame::NONE
                     .fill(theme.surface)
@@ -68,26 +46,18 @@ impl CompilerView for VmExecutionView {
                     .inner_margin(8.0)
                     .show(ui, |ui| {
                         ui.set_min_width(ui.available_width());
-                        ui.set_min_height(uart_height);
                         ui.label(RichText::new("UART Output:").strong());
                         ui.add_space(4.0);
-                        if output == "(no output)"
-                            || galley.size().y <= max_uart_height - frame_vpad
-                        {
-                            // is short enough to display fully
-                            ui.label(RichText::new(&output).monospace());
-                        } else {
-                            ScrollArea::vertical()
-                                .max_height(max_uart_height - frame_vpad - label_height - 8.0)
-                                .show(ui, |ui| {
-                                    ui.label(RichText::new(&output).monospace());
-                                });
-                        }
+                        ScrollArea::vertical()
+                            .max_height(max_uart)
+                            .auto_shrink([false, true])
+                            .show(ui, |ui| {
+                                ui.label(RichText::new(output).monospace());
+                            });
                     });
 
-                ui.add_space(spacing);
+                ui.add_space(12.0);
 
-                // Execution summary
                 Frame::NONE
                     .fill(theme.panel_alt)
                     .stroke(Stroke::new(1.0, theme.border_soft))
@@ -117,22 +87,11 @@ impl CompilerView for VmExecutionView {
                     });
             });
         } else {
-            // Empty state (unchanged)
-            ui.vertical(|ui| {
-                ui.add_space(20.0);
-                ui.centered_and_justified(|ui| {
-                    ui.label(RichText::new("VM Execution Panel").heading());
-                });
-                ui.add_space(10.0);
-                ui.centered_and_justified(|ui| {
-                    ui.label(
-                        RichText::new("Click \"Run in VM\" to execute the assembled program")
-                            .weak(),
-                    );
-                });
-                ui.centered_and_justified(|ui| {
-                    ui.label(RichText::new("on the custom RISC-V virtual machine.").weak());
-                });
+            ui.centered_and_justified(|ui| {
+                ui.label(
+                    RichText::new("Click \"Run in VM\" to execute the assembled program.")
+                        .weak(),
+                );
             });
         }
     }

@@ -1,23 +1,8 @@
 //! ROM firmware: M-mode trap handler and syscall implementations.
 //!
-//! At VM startup, `generate_rom_image()` assembles `programs/rom/rom.s` (embedded
+//! At VM startup, `generate_rom_image()` assembles `platform/rom/rom.s` (embedded
 //! at compile time via `include_str!`) and loads the resulting bytes into the ROM
 //! region (base 0x0000_0000) so the CPU can execute them normally.
-//!
-//! # Memory layout (physical)
-//! ```text
-//! 0x0000_0000  ROM — trap handler entry (_trap_entry), dispatcher, syscall handlers
-//! 0x1000_0000  UART TX   — sb byte, 0(t0) emits one character
-//! 0x1001_0000  SYSCON    — sd exit_code, 0(t0) halts the VM
-//! 0x8000_0000  RAM       — ELF program image
-//! ```
-//!
-//! # Syscall ABI (Linux RV64 convention)
-//! | Reg | Role |
-//! |-----|------|
-//! | a7  | syscall number |
-//! | a0–a6 | arguments (a0 also carries return value) |
-//! | t0–t6 | scratch — clobbered by ROM handlers |
 
 use crate::assembly_language::assembler::Assembler;
 use crate::assembly_language::rv_instruction::RvInstruction;
@@ -38,7 +23,7 @@ pub mod syscall_numbers {
     pub const SYS_PRINTF: u64 = 1002;
 }
 
-static ROM_SOURCE: &str = include_str!("../../programs/rom/rom.s");
+static ROM_SOURCE: &str = include_str!("../../platform/rom/rom.s");
 
 /// Parse plain RISC-V assembly text into a `Vec<RvInstruction>`.
 ///
@@ -68,10 +53,10 @@ fn parse_asm_text(src: &str) -> Vec<RvInstruction> {
 /// The returned `Vec<u8>` starts at physical address `ROM_BASE` (0x0000_0000).
 ///
 /// # Panics
-/// Panics if the assembler rejects the ROM source (indicates a bug in programs/rom/rom.s).
+/// Panics if the assembler rejects the ROM source (indicates a bug in platform/rom/rom.s).
 pub fn generate_rom_image() -> Vec<u8> {
     let tokens = parse_asm_text(ROM_SOURCE);
     let output = Assembler::assemble(&tokens)
-        .expect("ROM assembly failed — check programs/rom/rom.s");
+        .expect("ROM assembly failed, check platform/rom/rom.s");
     output.text_bytes().to_vec()
 }

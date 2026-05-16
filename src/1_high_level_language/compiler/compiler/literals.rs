@@ -30,7 +30,7 @@ impl HighLevelCompiler {
                 is_unsigned: false,
             },
             Literal::String(content) => {
-                let string_name = format!("str_{}", self.pending_global_strings.len());
+                let string_name = format!("{}{}", self.string_prefix, self.pending_global_strings.len());
                 self.pending_global_strings.push(IrGlobalString {
                     name: string_name.clone(),
                     content: content.clone(),

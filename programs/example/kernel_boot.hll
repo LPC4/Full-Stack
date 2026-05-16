@@ -1,0 +1,44 @@
+; Minimal kernel example.
+; Open the Kernel Boot panel and press Boot to see the serial log.
+; This program does NOT work with the normal VM,  it requires the
+; kernel stdlib (_kernel_start entry, klog, kmalloc, kshutdown).
+
+external klog_ok:    (msg: u8*) -> ()
+external klog_warn:  (msg: u8*) -> ()
+external klog_error: (msg: u8*) -> ()
+external klog_int:   (label: u8*, val: i64) -> ()
+external kmalloc:    (size: u64) -> u8*
+external memset:     (dst: u8*, value: u8, n: u64) -> u8*
+external kshutdown:  (code: i64) -> ()
+
+; Build a null-terminated string from individual character codes.
+make_str: (a: u8, b: u8, c: u8, d: u8) -> u8* {
+    buf: u8* = kmalloc(5)
+    buf[0] = a
+    buf[1] = b
+    buf[2] = c
+    buf[3] = d
+    buf[4] = 0
+    return buf
+}
+
+; Init subsystems and report status via the serial log.
+kmain: () -> () {
+    klog_ok("kernel starting".data)
+    klog_ok("console online".data)
+
+    ; Heap smoke-test: allocate and zero a 64-byte region.
+    probe: u8* = kmalloc(64)
+    memset(probe, 0, 64)
+    klog_ok("heap ready".data)
+
+    ; Build a small dynamic string from character codes and log it.
+    greeting: u8* = make_str(72, 101, 108, 111)   ; H e l o
+    klog_ok(greeting)
+
+    klog_int("hart id".data, 0)
+    klog_int("ram MB".data, 128)
+    klog_warn("single hart, no SMP".data)
+    klog_ok("boot complete".data)
+    kshutdown(0)
+}

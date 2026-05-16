@@ -14,9 +14,6 @@
     .section .text
     .globl _trap_entry
 
-# ------------------------------------------------------------------ #
-#  _trap_entry: M-mode trap handler entry (mtvec points here)        #
-# ------------------------------------------------------------------ #
 _trap_entry:
     csrr t0, mcause
     li t1, 8
@@ -27,10 +24,6 @@ _trap_entry:
     beq t0, t1, _dispatch_ecall
     mret
 
-
-# ------------------------------------------------------------------ #
-#  _dispatch_ecall: read a7 and branch to the right handler          #
-# ------------------------------------------------------------------ #
 _dispatch_ecall:
     li t0, 64
     beq a7, t0, sys_write
@@ -46,18 +39,13 @@ _dispatch_ecall:
     beq a7, t0, sys_printf
     j sys_unknown
 
-# ------------------------------------------------------------------ #
-#  sys_putchar(a0 = byte)                                            #
-# ------------------------------------------------------------------ #
 sys_putchar:
     li t0, 268435456
     sb a0, 0(t0)
     li a0, 0
     j _advance_mepc_and_mret
 
-# ------------------------------------------------------------------ #
-#  sys_write(fd=a0, buf=a1, len=a2) -> a0 = bytes written           #
-# ------------------------------------------------------------------ #
+# sys_write(fd=a0, buf=a1, len=a2) -> bytes written
 sys_write:
     li t0, 1
     bne a0, t0, _write_error
@@ -79,9 +67,7 @@ _write_error:
     li a0, -1
     j _advance_mepc_and_mret
 
-# ------------------------------------------------------------------ #
-#  sys_puts(ptr=a0) — print null-terminated string + newline        #
-# ------------------------------------------------------------------ #
+# sys_puts(ptr=a0) — null-terminated string + newline
 sys_puts:
     li t0, 268435456
     mv t1, a0
@@ -97,34 +83,27 @@ _puts_newline:
     li a0, 0
     j _advance_mepc_and_mret
 
-# ------------------------------------------------------------------ #
-#  sys_exit(code=a0) — write to SYSCON, bus halts VM                #
-# ------------------------------------------------------------------ #
+# sys_exit(code=a0) — write to SYSCON, bus halts VM
 sys_exit:
     li t0, 268500992
     sd a0, 0(t0)
     j _advance_mepc_and_mret
 
-# ------------------------------------------------------------------ #
-#  sys_unknown — return -1                                           #
-# ------------------------------------------------------------------ #
 sys_unknown:
     li a0, -1
     j _advance_mepc_and_mret
 
-# ------------------------------------------------------------------ #
-#  sys_printf(fmt=a0, a1..a6 = up to 6 args)                        #
-#                                                                    #
-#  Register discipline in the outer loop:                            #
-#    t0 = UART_BASE (fixed)                                          #
-#    t1 = fmt_ptr (advances through format string)                   #
-#    t2 = arg_slot_offset (0, 8, 16, 24, 32, 40 for a1..a6)         #
-#    t3 = current char / specifier                                   #
-#    t4 = current argument value                                     #
-#    t5, t6 = scratch                                                #
-#                                                                    #
-#  Sub-handlers that need more regs save/restore t1+t2 on the stack #
-# ------------------------------------------------------------------ #
+# sys_printf(fmt=a0, a1..a6 = up to 6 args)
+#
+# Register discipline in the outer loop:
+#   t0 = UART_BASE (fixed)
+#   t1 = fmt_ptr (advances through format string)
+#   t2 = arg_slot_offset (0, 8, 16, 24, 32, 40 for a1..a6)
+#   t3 = current char / specifier
+#   t4 = current argument value
+#   t5, t6 = scratch
+#
+# Sub-handlers save/restore t1+t2 on the stack when they need more regs.
 sys_printf:
     addi sp, sp, -48
     sd a1, 0(sp)
@@ -190,7 +169,7 @@ _printf_fmt_unknown:
     sb t3, 0(t0)
     j _printf_loop
 
-# --- %d / %i : signed decimal ---
+# %d / %i : signed decimal
 _printf_fmt_d:
     bge t4, x0, _printf_fmt_u
     li t5, 45
@@ -198,7 +177,7 @@ _printf_fmt_d:
     sub t4, x0, t4
     j _printf_fmt_u
 
-# --- %u : unsigned decimal ---
+# %u : unsigned decimal
 _printf_fmt_u:
     bnez t4, _printf_uint_nonzero
     li t5, 48
@@ -235,7 +214,7 @@ _printf_uint_done:
     addi sp, sp, 40
     j _printf_loop
 
-# --- %x / %X : lowercase hex ---
+# %x / %X : lowercase hex
 _printf_fmt_x:
     addi sp, sp, -16
     sd t1, 8(sp)
@@ -270,7 +249,7 @@ _printf_hex_done:
     addi sp, sp, 16
     j _printf_loop
 
-# --- %p : "0x" prefix then hex ---
+# %p : "0x" prefix then hex
 _printf_fmt_p:
     li t5, 48
     sb t5, 0(t0)
@@ -278,15 +257,11 @@ _printf_fmt_p:
     sb t5, 0(t0)
     j _printf_fmt_x
 
-# --- printf done ---
 _printf_done:
     addi sp, sp, 48
     li a0, 0
     j _advance_mepc_and_mret
 
-# ------------------------------------------------------------------ #
-#  Shared epilogue: advance mepc past ecall, then mret               #
-# ------------------------------------------------------------------ #
 _advance_mepc_and_mret:
     csrr t0, mepc
     addi t0, t0, 4

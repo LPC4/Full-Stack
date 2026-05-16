@@ -1,0 +1,68 @@
+; NS16550A UART at 0x10000000, write to THR (offset 0) to transmit a byte.
+
+console_putchar: (c: i32) -> () {
+    asm {
+        li t0, 268435456
+        sb a0, 0(t0)
+    }
+}
+
+console_write: (str: u8*) -> () {
+    i: u64 = 0
+    c: i32 = i32(@(str + i))
+    while c != 0 {
+        console_putchar(c)
+        i = i + 1
+        c = i32(@(str + i))
+    }
+}
+
+console_writeln: (str: u8*) -> () {
+    console_write(str)
+    console_putchar(10)
+}
+
+console_print_int_rec: (n: i64) -> () {
+    if n == 0 {
+        return
+    }
+    console_print_int_rec(n / 10)
+    console_putchar(i32(n % 10) + 48)
+}
+
+console_print_int: (n: i64) -> () {
+    if n == 0 {
+        console_putchar(48)
+        return
+    }
+    if n < 0 {
+        console_putchar(45)
+        console_print_int_rec(-n)
+    } else {
+        console_print_int_rec(n)
+    }
+}
+
+console_print_hex: (n: u64) -> () {
+    buf: u8[16]
+    i: u64 = 16
+    v: u64 = n
+    while i > 0 {
+        i = i - 1
+        nibble: u64 = v % 16
+        v = v / 16
+        if nibble < 10 {
+            buf[i] = u8(i32(nibble) + 48)
+        } else {
+            buf[i] = u8(i32(nibble) - 10 + 97)
+        }
+    }
+    console_putchar(48)
+    console_putchar(120)
+    buf_ptr: u8* = buf[0]
+    j: u64 = 0
+    while j < 16 {
+        console_putchar(i32(@(buf_ptr + j)))
+        j = j + 1
+    }
+}

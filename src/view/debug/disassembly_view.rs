@@ -46,7 +46,7 @@ impl CompilerView for DisassemblyView {
             return;
         }
 
-        // ---- Build address maps from the linked symbol table ----------------
+        
         let lines: Vec<&str> = asm_text.lines().collect();
         let mut line_to_address: Vec<Option<u64>> = vec![None; lines.len()];
         let mut address_to_line: std::collections::HashMap<u64, usize> =
@@ -80,7 +80,7 @@ impl CompilerView for DisassemblyView {
 
         let pc_in_code = address_to_line.contains_key(&current_pc);
 
-        // ---- Current function context (nearest symbol <= PC) ----------------
+
         let fn_context: String = {
             let nearest = session
                 .symbols
@@ -110,7 +110,7 @@ impl CompilerView for DisassemblyView {
             None
         };
 
-        // ---- Toolbar --------------------------------------------------------
+
         ui.horizontal(|ui| {
             if pc_in_code {
                 ui.label(
@@ -141,7 +141,7 @@ impl CompilerView for DisassemblyView {
 
         ui.separator();
 
-        // ---- Symbol jump list -----------------------------------------------
+
         if self.show_symbols {
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Filter:").size(11.0).color(theme.text_dim));
@@ -153,6 +153,9 @@ impl CompilerView for DisassemblyView {
                 );
                 if ui.small_button("Clear").clicked() {
                     self.symbol_search.clear();
+                }
+                if ui.small_button("Close").clicked() {
+                    self.show_symbols = false;
                 }
             });
 
@@ -204,7 +207,7 @@ impl CompilerView for DisassemblyView {
             ui.separator();
         }
 
-        // ---- Main disassembly scroll area -----------------------------------
+
         ScrollArea::vertical()
             .id_salt("disasm_main")
             .auto_shrink([false, false])
@@ -215,6 +218,27 @@ impl CompilerView for DisassemblyView {
                     let trimmed = line.trim();
                     let line_addr = line_to_address[idx];
                     let is_current = line_addr.map_or(false, |a| a == current_pc);
+
+                    // Function-boundary divider before known symbol labels
+                    if idx > 0
+                        && trimmed.ends_with(':')
+                        && !trimmed.starts_with('.')
+                    {
+                        let label = trimmed.trim_end_matches(':');
+                        if session.symbols.contains_key(label) {
+                            ui.add_space(6.0);
+                            let (hr, _) = ui.allocate_exact_size(
+                                egui::vec2(ui.available_width(), 1.0),
+                                egui::Sense::hover(),
+                            );
+                            ui.painter().hline(
+                                hr.x_range(),
+                                hr.center().y,
+                                Stroke::new(1.0, theme.border_soft),
+                            );
+                            ui.add_space(2.0);
+                        }
+                    }
 
                     let bg_slot = ui.painter().add(egui::Shape::Noop);
 

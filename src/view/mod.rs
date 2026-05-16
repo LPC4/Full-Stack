@@ -28,6 +28,7 @@ pub use crate::view::ide::AstView;
 pub use crate::view::ide::CfgView;
 pub use crate::view::ide::ExecutionView;
 pub use crate::view::ide::IrView;
+pub use crate::view::ide::KernelView;
 pub use crate::view::ide::MemoryMapView;
 pub use crate::view::ide::SourceView;
 pub use crate::view::ide::StackView;

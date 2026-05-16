@@ -55,7 +55,7 @@ enum DeferredAction {
     Expr(Expression),
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct HighLevelCompiler {
     context: LoweringContext,
     next_temp: u32,
@@ -75,10 +75,21 @@ pub struct HighLevelCompiler {
     pending_global_strings: Vec<IrGlobalString>,
     /// Global variables declared at module scope: name -> IR type
     global_vars: std::collections::HashMap<String, IrType>,
+    /// Prefix used when naming rodata string-literal labels (e.g. `"str_"` →
+    /// `str_0`, `str_1`, …).  Set per compilation unit so that two units linked
+    /// together never produce duplicate label names.
+    pub string_prefix: String,
 }
 
 impl HighLevelCompiler {
     pub fn new() -> Self {
+        Self::with_string_prefix("str_")
+    }
+
+    /// Create a compiler that names string literals with a custom prefix.
+    /// Use distinct prefixes for each compilation unit that will be linked
+    /// together so the assembler never sees duplicate rodata labels.
+    pub fn with_string_prefix(prefix: &str) -> Self {
         Self {
             context: LoweringContext::new(),
             next_temp: 0,
@@ -94,9 +105,18 @@ impl HighLevelCompiler {
             function_declarations: std::collections::HashMap::new(),
             pending_global_strings: Vec::new(),
             global_vars: std::collections::HashMap::new(),
+            string_prefix: prefix.to_owned(),
         }
     }
+}
 
+impl Default for HighLevelCompiler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl HighLevelCompiler {
     pub fn compile_program(&mut self, program: &Program) -> Result<IrProgram, CompilerError> {
         log::info!(
             "Starting IR compilation for {} declarations",

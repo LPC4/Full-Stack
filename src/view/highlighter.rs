@@ -1085,18 +1085,19 @@ pub fn highlight_assembly(theme: &egui::Style, code: &str) -> LayoutJob {
                 continue;
             }
 
-            // Characters like ',' '(' ')' etc.
-            // Just consume one char
-            let ch = line[start..start + 1].to_owned();
+            // Fallthrough: consume one Unicode code point so multi-byte chars
+            // (e.g. em-dash in string literals) never cause a byte-boundary panic.
+            let c = line[start..].chars().next().unwrap();
+            let char_len = c.len_utf8();
             job.append(
-                &ch,
+                &line[start..start + char_len],
                 0.0,
                 egui::TextFormat {
                     font_id: font_id.clone(),
                     ..Default::default()
                 },
             );
-            start += 1;
+            start += char_len;
         }
 
         if has_newline {
