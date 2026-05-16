@@ -78,6 +78,10 @@ pub struct Pipeline {
     ex_mem: Option<EXMEMReg>,
     mem_wb: Option<MEMWBReg>,
 
+    /// Flag to prevent speculative fetch when MRET/SRET is in flight.
+    /// Set in ID stage when MRET/SRET is decoded, cleared after WB flushes.
+    mret_in_flight: bool,
+
     predictor: BranchPredictor,
     pub stats: PipelineStats,
     /// Snapshot of the pipeline state produced by the most recent tick.
@@ -102,6 +106,7 @@ impl Pipeline {
             id_ex: None,
             ex_mem: None,
             mem_wb: None,
+            mret_in_flight: false,
             predictor: BranchPredictor::new(),
             stats: PipelineStats::default(),
             last_cycle: CpuPipelineFeed {
@@ -215,7 +220,9 @@ impl Pipeline {
         };
 
         // ---- IF stage -------------------------------------------------------
-        let new_if_id = if stall {
+        let new_if_id = if stall || self.mret_in_flight {
+            // Stall IF when there's a load-use hazard OR when MRET/SRET is in flight
+            // This prevents speculative fetch past control-flow changing instructions
             old_if_id
         } else if flush {
             self.fetch_pc = redirect_pc;
@@ -321,6 +328,11 @@ impl Pipeline {
         let is_fp_dest = insn_is_fp_dest(&insn);
         let is_load = insn_is_load(&insn);
         let is_fp_load = matches!(insn, DecodedInsn::FLoad { .. });
+
+        // Detect MRET/SRET to prevent speculative fetch past these instructions
+        if matches!(insn, DecodedInsn::Mret | DecodedInsn::Sret) {
+            self.mret_in_flight = true;
+        }
 
         let (frs1, frs2) = match &insn {
             DecodedInsn::FStore { rs2, .. } => (rs1, *rs2),
@@ -582,6 +594,7 @@ impl Pipeline {
         self.fetch_pc = new_pc;
         self.regs.pc = new_pc;
         self.flush_pipeline();
+        self.mret_in_flight = false; // Clear the flag after MRET completes
         self.csrs.increment_instret();
         self.stats.insns_retired += 1;
     }
@@ -592,6 +605,7 @@ impl Pipeline {
                 self.fetch_pc = new_pc;
                 self.regs.pc = new_pc;
                 self.flush_pipeline();
+                self.mret_in_flight = false; // Clear the flag after SRET completes
                 self.csrs.increment_instret();
                 self.stats.insns_retired += 1;
             }
