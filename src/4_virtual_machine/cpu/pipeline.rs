@@ -21,7 +21,7 @@ use crate::virtual_machine::cpu::pipeline::execute::ExecResult;
 use crate::virtual_machine::cpu::pipeline::memory::MemResult;
 use crate::virtual_machine::cpu::pipeline::registers::{EXMEMReg, IDEXReg, IFIDReg, MEMWBReg};
 use crate::virtual_machine::cpu::predictor::BranchPredictor;
-use crate::virtual_machine::cpu::registers::Registers;
+use crate::virtual_machine::cpu::registers::{PrivilegeMode, Registers};
 use crate::virtual_machine::cpu::traps;
 use crate::virtual_machine::error::VmError;
 
@@ -174,6 +174,22 @@ impl Pipeline {
         self.stats.cycles += 1;
         self.csrs.increment_cycle();
 
+        // Advance CLINT timer and sync hardware interrupt bits into mip.
+        {
+            let clint = bus.clint_mut();
+            clint.tick();
+            if clint.timer_irq_pending() {
+                self.csrs.mip |= 1u64 << 7; // MTIP
+            } else {
+                self.csrs.mip &= !(1u64 << 7);
+            }
+            if clint.software_irq_pending() {
+                self.csrs.mip |= 1u64 << 3; // MSIP
+            } else {
+                self.csrs.mip &= !(1u64 << 3);
+            }
+        }
+
         // Snapshot pipeline state at the START of this cycle (before any stage runs).
         let snap_wb_entry: StageEntry = self.mem_wb.as_ref().map(|r| (r.pc, r.mnemonic));
         let snap_mem_entry: StageEntry = self.ex_mem.as_ref().map(|r| (r.pc, r.mnemonic));
@@ -197,6 +213,20 @@ impl Pipeline {
                 return Ok(TickOutcome::Continue);
             }
             TickOutcome::Continue => {}
+        }
+
+        // ---- Interrupt check (precise: after WB retires, before MEM executes) ----
+        // In-flight instructions (old_ex_mem, old_id_ex, old_if_id) are squashed if
+        // an interrupt fires; their pipeline registers are already taken out of self.
+        if let Some((irq_cause, irq_tval, irq_pc)) = self.check_pending_interrupt() {
+            // old_ex_mem / old_id_ex / old_if_id drop here — no memory side-effects yet.
+            self.take_trap(irq_cause, irq_tval, irq_pc);
+            self.last_cycle = CpuPipelineFeed {
+                stages: [None, snap_id_entry, snap_ex_entry, snap_mem_entry, snap_wb_entry],
+                stalled: false,
+                flushed: true,
+            };
+            return Ok(TickOutcome::Continue);
         }
 
         // ---- MEM stage ------------------------------------------------------
@@ -279,7 +309,7 @@ impl Pipeline {
     fn stage_if(&mut self, bus: &mut SystemBus) -> Result<Option<IFIDReg>, VmError> {
         let pc = self.fetch_pc;
 
-        let raw = match fetch::fetch(bus, pc, self.csrs.satp, self.regs.priv_mode) {
+        let raw = match fetch::fetch(bus, pc, self.csrs.satp, self.regs.priv_mode, self.csrs.mstatus) {
             Ok(r) => r,
             Err(e) => {
                 self.flush_and_trap(e, pc);
@@ -462,6 +492,7 @@ impl Pipeline {
             &mut self.reservation,
             self.csrs.satp,
             self.regs.priv_mode,
+            self.csrs.mstatus,
         ) {
             Ok(r) => r,
             Err(e) => {
@@ -621,15 +652,52 @@ impl Pipeline {
     fn handle_ecall(&mut self, _bus: &mut SystemBus) -> Result<TickOutcome, VmError> {
         let ecall_pc = self.regs.pc;
         let cause = match self.regs.priv_mode {
-            crate::virtual_machine::cpu::registers::PrivilegeMode::User => traps::CAUSE_ECALL_U,
-            crate::virtual_machine::cpu::registers::PrivilegeMode::Supervisor => {
-                traps::CAUSE_ECALL_S
-            }
-            crate::virtual_machine::cpu::registers::PrivilegeMode::Machine => traps::CAUSE_ECALL_M,
+            PrivilegeMode::User => traps::CAUSE_ECALL_U,
+            PrivilegeMode::Supervisor => traps::CAUSE_ECALL_S,
+            PrivilegeMode::Machine => traps::CAUSE_ECALL_M,
         };
         self.take_trap(cause, 0, ecall_pc);
         self.flush_pipeline();
         Ok(TickOutcome::EcallSquash)
+    }
+
+    /// Check whether a pending interrupt should be taken right now.
+    ///
+    /// Returns `Some((cause, tval, pc))` when an interrupt is ready to fire.
+    /// Priority order per spec: MEI(11) > MSI(3) > MTI(7), then SEI(9) > SSI(1) > STI(5).
+    fn check_pending_interrupt(&self) -> Option<(u64, u64, u64)> {
+        let pending = self.csrs.mip & self.csrs.mie;
+        if pending == 0 {
+            return None;
+        }
+
+        let in_m = self.regs.priv_mode == PrivilegeMode::Machine;
+        let in_s = self.regs.priv_mode == PrivilegeMode::Supervisor;
+        let mie_global = (self.csrs.mstatus >> 3) & 1; // mstatus.MIE
+        let sie_global = (self.csrs.mstatus >> 1) & 1; // mstatus.SIE
+
+        // M-mode interrupts: not delegated to S-mode.
+        // Taken if: not in M-mode (lower modes are always preempted), or MIE=1 in M-mode.
+        let m_pending = pending & !self.csrs.mideleg;
+        if m_pending != 0 && (!in_m || mie_global == 1) {
+            let cause_idx = if m_pending & (1 << 11) != 0 { 11u64 }
+                else if m_pending & (1 << 3) != 0 { 3u64 }
+                else if m_pending & (1 << 7) != 0 { 7u64 }
+                else { m_pending.trailing_zeros() as u64 };
+            return Some(((1u64 << 63) | cause_idx, 0, self.regs.pc));
+        }
+
+        // S-mode interrupts: delegated; only relevant when not in M-mode.
+        let s_pending = pending & self.csrs.mideleg;
+        if s_pending != 0 && !in_m && (!in_s || sie_global == 1) {
+            let cause_idx = if s_pending & (1 << 9) != 0 { 9u64 }
+                else if s_pending & (1 << 1) != 0 { 1u64 }
+                else if s_pending & (1 << 5) != 0 { 5u64 }
+                else { s_pending.trailing_zeros() as u64 };
+            return Some(((1u64 << 63) | cause_idx, 0, self.regs.pc));
+        }
+
+        None
     }
 
     // -----------------------------------------------------------------------

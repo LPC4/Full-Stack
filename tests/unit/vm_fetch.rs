@@ -18,7 +18,7 @@ fn fetch_aligned_word() {
     let _ = bus.write_byte(0x8000_0002, 0x00);
     let _ = bus.write_byte(0x8000_0003, 0x00); // addi x0, x0, 0 (nop)
     
-    let result = fetch(&mut bus, 0x8000_0000, 0, PrivilegeMode::Machine);
+    let result = fetch(&mut bus, 0x8000_0000, 0, PrivilegeMode::Machine, 0);
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), 0x0000_0013);
 }
@@ -28,7 +28,7 @@ fn fetch_misaligned_halfword() {
     let mut bus = SystemBus::new(Vec::new());
     
     // PC not aligned to 4 bytes
-    let result = fetch(&mut bus, 0x8000_0002, 0, PrivilegeMode::Machine);
+    let result = fetch(&mut bus, 0x8000_0002, 0, PrivilegeMode::Machine, 0);
     assert!(matches!(result, Err(VmError::InstructionAccessFault(0x8000_0002))));
 }
 
@@ -36,7 +36,7 @@ fn fetch_misaligned_halfword() {
 fn fetch_misaligned_byte() {
     let mut bus = SystemBus::new(Vec::new());
     
-    let result = fetch(&mut bus, 0x8000_0001, 0, PrivilegeMode::Machine);
+    let result = fetch(&mut bus, 0x8000_0001, 0, PrivilegeMode::Machine, 0);
     assert!(matches!(result, Err(VmError::InstructionAccessFault(0x8000_0001))));
 }
 
@@ -45,6 +45,6 @@ fn fetch_out_of_bounds() {
     let mut bus = SystemBus::new(Vec::new());
     
     // Address outside any mapped region
-    let result = fetch(&mut bus, 0xFFFF_FFFF, 0, PrivilegeMode::Machine);
+    let result = fetch(&mut bus, 0xFFFF_FFFF, 0, PrivilegeMode::Machine, 0);
     assert!(matches!(result, Err(VmError::InstructionAccessFault(0xFFFF_FFFF))));
 }

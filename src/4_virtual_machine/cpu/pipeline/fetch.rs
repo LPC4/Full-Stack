@@ -13,13 +13,13 @@ pub fn fetch(
     pc: u64,
     satp: u64,
     priv_mode: PrivilegeMode,
+    mstatus: u64,
 ) -> Result<u32, VmError> {
     if pc & 0x3 != 0 {
         return Err(VmError::InstructionAccessFault(pc));
     }
 
-    // Translate virtual address to physical address using MMU
-    let phys_addr = mmu::translate(pc, satp, priv_mode, bus, false, true)?;
+    let phys_addr = mmu::translate(pc, satp, priv_mode, mstatus, bus, false, true)?;
 
     bus.read_word(phys_addr)
         .map_err(|_| VmError::InstructionAccessFault(pc))

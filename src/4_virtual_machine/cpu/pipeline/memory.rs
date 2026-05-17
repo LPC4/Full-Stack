@@ -70,6 +70,7 @@ pub fn memory_stage(
     reservation: &mut Option<u64>,
     satp: u64,
     priv_mode: PrivilegeMode,
+    mstatus: u64,
 ) -> Result<MemResult, VmError> {
     match result {
         // Pass-through variants
@@ -130,7 +131,7 @@ pub fn memory_stage(
             funct3,
             next_pc,
         } => {
-            let phys_addr = mmu::translate(addr, satp, priv_mode, bus, false, false)?;
+            let phys_addr = mmu::translate(addr, satp, priv_mode, mstatus, bus, false, false)?;
             let val = load_int(bus, phys_addr, funct3)?;
             Ok(MemResult::WriteInt { rd, val, next_pc })
         }
@@ -142,7 +143,7 @@ pub fn memory_stage(
             funct3,
             next_pc,
         } => {
-            let phys_addr = mmu::translate(addr, satp, priv_mode, bus, true, false)?;
+            let phys_addr = mmu::translate(addr, satp, priv_mode, mstatus, bus, true, false)?;
             store_int(bus, phys_addr, val, funct3)?;
             Ok(MemResult::Jump { next_pc })
         }
@@ -154,7 +155,7 @@ pub fn memory_stage(
             funct3,
             next_pc,
         } => {
-            let phys_addr = mmu::translate(addr, satp, priv_mode, bus, false, false)?;
+            let phys_addr = mmu::translate(addr, satp, priv_mode, mstatus, bus, false, false)?;
             let bits = load_fp(bus, phys_addr, funct3)?;
             Ok(MemResult::WriteFp { rd, bits, next_pc })
         }
@@ -166,7 +167,7 @@ pub fn memory_stage(
             funct3,
             next_pc,
         } => {
-            let phys_addr = mmu::translate(addr, satp, priv_mode, bus, true, false)?;
+            let phys_addr = mmu::translate(addr, satp, priv_mode, mstatus, bus, true, false)?;
             store_fp(bus, phys_addr, bits, funct3)?;
             Ok(MemResult::Jump { next_pc })
         }
@@ -182,7 +183,7 @@ pub fn memory_stage(
             val,
             next_pc,
         } => {
-            let phys_addr = mmu::translate(addr, satp, priv_mode, bus, true, false)?;
+            let phys_addr = mmu::translate(addr, satp, priv_mode, mstatus, bus, true, false)?;
             let result_val = handle_atomic(bus, reservation, funct5, funct3, rd, phys_addr, val)?;
             Ok(MemResult::WriteInt {
                 rd,

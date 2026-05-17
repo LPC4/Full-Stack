@@ -8,9 +8,15 @@ use full_stack::virtual_machine::cpu::csr::{CsrFile, addr};
 fn csr_mstatus_read_write() {
     let mut csrs = CsrFile::new();
     assert_eq!(csrs.read(addr::MSTATUS).unwrap(), 0);
-    
-    csrs.write(addr::MSTATUS, 0x1234_5678).unwrap();
-    assert_eq!(csrs.read(addr::MSTATUS).unwrap(), 0x1234_5678);
+
+    // 0x1234_4678: MPP[12:11]=0 (User, valid) — round-trips unchanged
+    csrs.write(addr::MSTATUS, 0x1234_4678).unwrap();
+    assert_eq!(csrs.read(addr::MSTATUS).unwrap(), 0x1234_4678);
+
+    // WARL: MPP=2 (reserved) must be mapped to 3 (Machine)
+    csrs.write(addr::MSTATUS, 0x1234_5678).unwrap(); // MPP=2 in bits[12:11]
+    let stored = csrs.read(addr::MSTATUS).unwrap();
+    assert_eq!((stored >> 11) & 3, 3, "WARL must map reserved MPP=2 to MPP=3");
 }
 
 #[test]
@@ -54,9 +60,14 @@ fn csr_mie_read_write() {
 #[test]
 fn csr_mip_read_write() {
     let mut csrs = CsrFile::new();
-    
-    csrs.write(addr::MIP, 0x800).unwrap(); // Set MTIP
-    assert_eq!(csrs.read(addr::MIP).unwrap(), 0x800);
+
+    // SSIP (bit 1) is software-writable; MTIP/MEIP are hardware-driven read-only
+    csrs.write(addr::MIP, 0x2).unwrap(); // Set SSIP
+    assert_eq!(csrs.read(addr::MIP).unwrap(), 0x2);
+
+    // Writing a hardware-only bit (MTIP=bit7) must be silently ignored
+    csrs.write(addr::MIP, 0x80).unwrap();
+    assert_eq!(csrs.read(addr::MIP).unwrap(), 0, "MTIP is read-only via software writes");
 }
 
 // ---------------------------------------------------------------------------

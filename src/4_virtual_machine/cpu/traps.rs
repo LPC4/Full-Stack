@@ -1,10 +1,10 @@
 //! Trap and interrupt handling for the RISC-V CPU.
 //!
-//! This module implements the RISC-V privilege specification for handling:
+//! Implements the RISC-V privilege specification for:
 //! - Synchronous exceptions (illegal instructions, access faults, breakpoints)
 //! - Asynchronous interrupts (timer, software, external)
-//! - Trap entry (saving state, updating CSRs, jumping to handler)
-//! - Trap return (MRET/SRET instructions)
+//! - Trap entry: saves state, updates CSRs, jumps to handler (with medeleg/mideleg delegation)
+//! - Trap return: MRET restores M-mode state; SRET properly restores SPP/SPIE
 
 use crate::virtual_machine::cpu::csr::CsrFile;
 use crate::virtual_machine::cpu::registers::{PrivilegeMode, Registers};
@@ -51,18 +51,13 @@ pub const CAUSE_M_EXTERNAL_IRQ: u64 = (1u64 << 63) | 11;
 // Trap entry
 // ---------------------------------------------------------------------------
 
-/// Enter a trap: saves state, updates CSRs, jumps to handler.
-/// This handles both M-mode and S-mode traps.
+/// Enter a trap: saves state, updates CSRs, jumps to the appropriate handler.
 ///
-/// # Arguments
-/// * `regs` - CPU registers (will be modified)
-/// * `csrs` - CSR file (will be modified)
-/// * `cause` - The trap cause (mcause value)
-/// * `tval` - The trap value (mtval)
-/// * `pc` - The PC where the trap occurred
+/// Delegation: if the current privilege is U or S and the corresponding bit in
+/// medeleg (exceptions) or mideleg (interrupts) is set, the trap is delivered
+/// to S-mode using sepc/scause/stval/sstatus/stvec.  Otherwise it goes to M-mode.
 ///
-/// # Returns
-/// The new PC to jump to (trap handler address)
+/// Returns the new PC (trap handler entry address).
 pub fn take_trap(
     regs: &mut Registers,
     csrs: &mut CsrFile,
@@ -71,40 +66,69 @@ pub fn take_trap(
     pc: u64,
 ) -> u64 {
     let current_priv = regs.priv_mode;
+    let is_interrupt = (cause & (1u64 << 63)) != 0;
+    let cause_idx = cause & !(1u64 << 63);
 
-    // Save exception PC (aligned to 4 bytes)
-    csrs.mepc = pc & !0x3u64;
-    csrs.mcause = cause;
-    csrs.mtval = tval;
-
-    // Save MIE -> MPIE; clear MIE
-    let mie_bit = (csrs.mstatus >> 3) & 1;
-    csrs.mstatus &= !(1u64 << 7); // clear MPIE
-    csrs.mstatus |= mie_bit << 7; // MPIE = old MIE
-    csrs.mstatus &= !(1u64 << 3); // clear MIE
-
-    // Set MPP based on current privilege
-    csrs.mstatus &= !(0x3u64 << 11);
-    csrs.mstatus |= (current_priv as u64) << 11;
-
-    // Jump to mtvec (with optional vectored mode)
-    let mtvec = csrs.mtvec;
-    let mode = mtvec & 0x3;
-    let base = mtvec & !0x3u64;
-
-    let trap_handler_pc = if mode == 1 && (cause & (1u64 << 63)) != 0 {
-        // Vectored mode: base + 4 * cause_index
-        let idx = cause & !(1u64 << 63);
-        base + 4 * idx
-    } else {
-        // Direct mode: always jump to base
-        base
+    // Determine whether to delegate to S-mode.
+    // M-mode traps always stay in M-mode.
+    let delegate = match current_priv {
+        PrivilegeMode::User | PrivilegeMode::Supervisor => {
+            if is_interrupt {
+                (csrs.mideleg >> cause_idx) & 1 == 1
+            } else {
+                (csrs.medeleg >> cause_idx) & 1 == 1
+            }
+        }
+        PrivilegeMode::Machine => false,
     };
 
-    // Switch to M-mode (all traps go to M-mode unless delegated)
-    regs.priv_mode = PrivilegeMode::Machine;
+    if delegate {
+        // Deliver to S-mode.
+        csrs.sepc = pc & !0x3u64;
+        csrs.scause = cause;
+        csrs.stval = tval;
 
-    trap_handler_pc
+        // sstatus bits live inside mstatus:
+        //   SPIE = old SIE; SIE = 0; SPP = current_priv (0=U, 1=S)
+        let sie = (csrs.mstatus >> 1) & 1;
+        csrs.mstatus = (csrs.mstatus & !(1u64 << 5)) | (sie << 5); // SPIE = old SIE
+        csrs.mstatus &= !(1u64 << 1);                               // SIE = 0
+        let spp: u64 = if current_priv == PrivilegeMode::User { 0 } else { 1 };
+        csrs.mstatus = (csrs.mstatus & !(1u64 << 8)) | (spp << 8); // SPP = current_priv
+
+        regs.priv_mode = PrivilegeMode::Supervisor;
+
+        // Jump to stvec (direct or vectored).
+        let stvec = csrs.stvec;
+        let base = stvec & !0x3u64;
+        if (stvec & 0x3) == 1 && is_interrupt {
+            base + 4 * cause_idx
+        } else {
+            base
+        }
+    } else {
+        // Deliver to M-mode.
+        csrs.mepc = pc & !0x3u64;
+        csrs.mcause = cause;
+        csrs.mtval = tval;
+
+        // mstatus: MPIE = old MIE; MIE = 0; MPP = current_priv
+        let mie = (csrs.mstatus >> 3) & 1;
+        csrs.mstatus = (csrs.mstatus & !(1u64 << 7)) | (mie << 7); // MPIE = old MIE
+        csrs.mstatus &= !(1u64 << 3);                               // MIE = 0
+        csrs.mstatus = (csrs.mstatus & !(0x3u64 << 11)) | ((current_priv as u64) << 11); // MPP
+
+        regs.priv_mode = PrivilegeMode::Machine;
+
+        // Jump to mtvec (direct or vectored).
+        let mtvec = csrs.mtvec;
+        let base = mtvec & !0x3u64;
+        if (mtvec & 0x3) == 1 && is_interrupt {
+            base + 4 * cause_idx
+        } else {
+            base
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -113,7 +137,7 @@ pub fn take_trap(
 
 /// Map a `VmError` to a trap cause/tval pair.
 /// Returns `Some((cause, tval))` if the error should trigger a trap,
-/// or `None` if it's a fatal error that can't be trapped.
+/// or `None` if it is a fatal error that cannot be trapped.
 pub fn error_to_trap_cause(e: &VmError) -> Option<(u64, u64)> {
     match e {
         VmError::InstructionAccessFault(addr) => Some((CAUSE_INSN_ACCESS_FAULT, *addr)),
@@ -122,77 +146,75 @@ pub fn error_to_trap_cause(e: &VmError) -> Option<(u64, u64)> {
             Some((CAUSE_LOAD_ACCESS_FAULT, *addr))
         }
         VmError::StoreAccessFault(addr) => Some((CAUSE_STORE_ACCESS_FAULT, *addr)),
-        VmError::PageFault(addr) => {
-            // Determine page fault type based on context
-            // For simplicity, default to load page fault
-            Some((CAUSE_PAGE_FAULT_LOAD, *addr))
-        }
-        _ => None, // Fatal errors that can't be trapped
+        VmError::PageFault(addr) => Some((CAUSE_PAGE_FAULT_LOAD, *addr)),
+        _ => None,
     }
 }
 
 // ---------------------------------------------------------------------------
-// Trap return (MRET/SRET)
+// Trap return (MRET / SRET)
 // ---------------------------------------------------------------------------
 
-/// Handle MRET instruction - return from machine-mode trap.
+/// Handle MRET — return from machine-mode trap.
 ///
-/// # Arguments
-/// * `regs` - CPU registers (will be modified)
-/// * `csrs` - CSR file (will be modified)
-///
-/// # Returns
-/// The PC to jump to (MEPC value)
+/// Restores MIE from MPIE, sets MPIE=1, restores privilege from MPP, sets MPP=User.
+/// Returns the PC to jump to (MEPC).
 pub fn handle_mret(regs: &mut Registers, csrs: &mut CsrFile) -> u64 {
-    // Restore MIE from MPIE
+    // MIE = old MPIE; MPIE = 1
     let mpie = (csrs.mstatus >> 7) & 1;
-    csrs.mstatus &= !(1u64 << 3); // clear MIE
-    csrs.mstatus |= mpie << 3; // MIE = old MPIE
+    csrs.mstatus = (csrs.mstatus & !(1u64 << 3)) | (mpie << 3); // MIE = old MPIE
+    csrs.mstatus |= 1u64 << 7;                                   // MPIE = 1
 
-    // Set MPIE to 1
-    csrs.mstatus |= 1u64 << 7;
-
-    // Restore previous privilege mode from MPP
+    // Restore privilege from MPP [12:11], then set MPP = User (0).
     let mpp = (csrs.mstatus >> 11) & 0x3;
     let prev_priv = match mpp {
         0 => PrivilegeMode::User,
         1 => PrivilegeMode::Supervisor,
         3 => PrivilegeMode::Machine,
-        _ => PrivilegeMode::Machine, // default to M-mode
+        _ => PrivilegeMode::Machine, // reserved value; treat as Machine
     };
-
     regs.priv_mode = prev_priv;
+    csrs.mstatus &= !(0x3u64 << 11); // MPP = User
 
-    // Set MPP to User mode (least privileged)
-    csrs.mstatus &= !(0x3u64 << 11);
-    csrs.mstatus |= 0u64 << 11;
+    // Clear MPRV if returning below M-mode.
+    if prev_priv != PrivilegeMode::Machine {
+        csrs.mstatus &= !(1u64 << 17);
+    }
 
-    // Jump to MEPC
     csrs.mepc
 }
 
-/// Handle SRET instruction - return from supervisor-mode trap.
+/// Handle SRET — return from supervisor-mode trap.
 ///
-/// # Arguments
-/// * `regs` - CPU registers (will be modified)
-/// * `csrs` - CSR file (will be modified)
-///
-/// # Returns
-/// The PC to jump to (SEPC value), or error if SRET is illegal
+/// Restores SIE from SPIE, sets SPIE=1, restores privilege from SPP, sets SPP=User.
+/// Returns the PC to jump to (SEPC), or Err if SRET is illegal in the current mode.
 pub fn handle_sret(regs: &mut Registers, csrs: &mut CsrFile) -> Result<u64, VmError> {
-    // Check if SRET is allowed (not in U-mode)
+    // SRET is illegal from U-mode.
     if regs.priv_mode == PrivilegeMode::User {
-        return Err(VmError::IllegalInstruction(0x102));
+        return Err(VmError::IllegalInstruction(0x1020_0073));
+    }
+    // TSR bit (mstatus[22]): if set while in S-mode, SRET raises illegal instruction.
+    if regs.priv_mode == PrivilegeMode::Supervisor && (csrs.mstatus >> 22) & 1 == 1 {
+        return Err(VmError::IllegalInstruction(0x1020_0073));
     }
 
-    // For now, we'll implement basic SRET similar to MRET but using sstatus/sepc
-    // In a full implementation, this would use sstatus fields
+    // SIE = old SPIE; SPIE = 1
+    let spie = (csrs.mstatus >> 5) & 1;
+    csrs.mstatus = (csrs.mstatus & !(1u64 << 1)) | (spie << 1); // SIE = old SPIE
+    csrs.mstatus |= 1u64 << 5;                                   // SPIE = 1
 
-    // Restore previous privilege mode
-    // For simplicity, assume returning to U-mode
-    regs.priv_mode = PrivilegeMode::User;
+    // Restore privilege from SPP (mstatus[8]), then set SPP = User (0).
+    let spp = (csrs.mstatus >> 8) & 1;
+    let prev_priv = if spp == 0 {
+        PrivilegeMode::User
+    } else {
+        PrivilegeMode::Supervisor
+    };
+    regs.priv_mode = prev_priv;
+    csrs.mstatus &= !(1u64 << 8); // SPP = User (0)
 
-    // Jump to SEPC
+    // Clear MPRV (not returning to M-mode).
+    csrs.mstatus &= !(1u64 << 17);
+
     Ok(csrs.sepc)
 }
-

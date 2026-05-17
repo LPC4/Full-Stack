@@ -21,7 +21,7 @@ fn memory_load_byte_sign_extend() {
     };
     
     let mut reservation = None;
-    let result = memory_stage(exec_result, &mut bus, &mut reservation, 0, PrivilegeMode::Machine).unwrap();
+    let result = memory_stage(exec_result, &mut bus, &mut reservation, 0, PrivilegeMode::Machine, 0).unwrap();
     
     if let MemResult::WriteInt { val, .. } = result {
         // Should be sign-extended: 0xFF -> 0xFFFF_FFFF_FFFF_FFFF
@@ -44,7 +44,7 @@ fn memory_load_byte_zero_extend() {
     };
     
     let mut reservation = None;
-    let result = memory_stage(exec_result, &mut bus, &mut reservation, 0, PrivilegeMode::Machine).unwrap();
+    let result = memory_stage(exec_result, &mut bus, &mut reservation, 0, PrivilegeMode::Machine, 0).unwrap();
     
     if let MemResult::WriteInt { val, .. } = result {
         // Should be zero-extended: 0xFF -> 0x0000_0000_0000_00FF
@@ -67,7 +67,7 @@ fn memory_load_halfword_sign_extend() {
     };
     
     let mut reservation = None;
-    let result = memory_stage(exec_result, &mut bus, &mut reservation, 0, PrivilegeMode::Machine).unwrap();
+    let result = memory_stage(exec_result, &mut bus, &mut reservation, 0, PrivilegeMode::Machine, 0).unwrap();
     
     if let MemResult::WriteInt { val, .. } = result {
         assert_eq!(val, 0xFFFF_FFFF_FFFF_FFFFu64);
@@ -89,7 +89,7 @@ fn memory_load_word_sign_extend() {
     };
     
     let mut reservation = None;
-    let result = memory_stage(exec_result, &mut bus, &mut reservation, 0, PrivilegeMode::Machine).unwrap();
+    let result = memory_stage(exec_result, &mut bus, &mut reservation, 0, PrivilegeMode::Machine, 0).unwrap();
     
     if let MemResult::WriteInt { val, .. } = result {
         assert_eq!(val, 0xFFFF_FFFF_FFFF_FFFFu64);
@@ -112,7 +112,7 @@ fn memory_load_doubleword() {
     };
     
     let mut reservation = None;
-    let result = memory_stage(exec_result, &mut bus, &mut reservation, 0, PrivilegeMode::Machine).unwrap();
+    let result = memory_stage(exec_result, &mut bus, &mut reservation, 0, PrivilegeMode::Machine, 0).unwrap();
     
     if let MemResult::WriteInt { val, .. } = result {
         assert_eq!(val, value);
@@ -137,7 +137,7 @@ fn memory_store_byte() {
     };
     
     let mut reservation = None;
-    let result = memory_stage(exec_result, &mut bus, &mut reservation, 0, PrivilegeMode::Machine).unwrap();
+    let result = memory_stage(exec_result, &mut bus, &mut reservation, 0, PrivilegeMode::Machine, 0).unwrap();
     
     assert!(matches!(result, MemResult::Jump { .. }));
     
@@ -157,7 +157,7 @@ fn memory_store_halfword() {
     };
     
     let mut reservation = None;
-    let result = memory_stage(exec_result, &mut bus, &mut reservation, 0, PrivilegeMode::Machine).unwrap();
+    let result = memory_stage(exec_result, &mut bus, &mut reservation, 0, PrivilegeMode::Machine, 0).unwrap();
     
     assert!(matches!(result, MemResult::Jump { .. }));
     
@@ -177,7 +177,7 @@ fn memory_store_word() {
     };
     
     let mut reservation = None;
-    let result = memory_stage(exec_result, &mut bus, &mut reservation, 0, PrivilegeMode::Machine).unwrap();
+    let result = memory_stage(exec_result, &mut bus, &mut reservation, 0, PrivilegeMode::Machine, 0).unwrap();
     
     assert!(matches!(result, MemResult::Jump { .. }));
     
@@ -198,7 +198,7 @@ fn memory_store_doubleword() {
     };
     
     let mut reservation = None;
-    let result = memory_stage(exec_result, &mut bus, &mut reservation, 0, PrivilegeMode::Machine).unwrap();
+    let result = memory_stage(exec_result, &mut bus, &mut reservation, 0, PrivilegeMode::Machine, 0).unwrap();
     
     assert!(matches!(result, MemResult::Jump { .. }));
     
@@ -221,7 +221,7 @@ fn memory_pass_through_write_int() {
         next_pc: 0x8000_0004,
     };
     
-    let result = memory_stage(exec_result, &mut bus, &mut reservation, 0, PrivilegeMode::Machine).unwrap();
+    let result = memory_stage(exec_result, &mut bus, &mut reservation, 0, PrivilegeMode::Machine, 0).unwrap();
     
     if let MemResult::WriteInt { rd, val, next_pc } = result {
         assert_eq!(rd, 1);
@@ -241,7 +241,7 @@ fn memory_pass_through_jump() {
         next_pc: 0x8000_0100,
     };
     
-    let result = memory_stage(exec_result, &mut bus, &mut reservation, 0, PrivilegeMode::Machine).unwrap();
+    let result = memory_stage(exec_result, &mut bus, &mut reservation, 0, PrivilegeMode::Machine, 0).unwrap();
     
     if let MemResult::Jump { next_pc } = result {
         assert_eq!(next_pc, 0x8000_0100);
@@ -259,7 +259,7 @@ fn memory_pass_through_fence() {
         next_pc: 0x8000_0004,
     };
     
-    let result = memory_stage(exec_result, &mut bus, &mut reservation, 0, PrivilegeMode::Machine).unwrap();
+    let result = memory_stage(exec_result, &mut bus, &mut reservation, 0, PrivilegeMode::Machine, 0).unwrap();
     
     assert!(matches!(result, MemResult::Fence { .. }));
 }
@@ -271,7 +271,7 @@ fn memory_pass_through_ecall() {
     
     let exec_result = ExecResult::Ecall;
     
-    let result = memory_stage(exec_result, &mut bus, &mut reservation, 0, PrivilegeMode::Machine).unwrap();
+    let result = memory_stage(exec_result, &mut bus, &mut reservation, 0, PrivilegeMode::Machine, 0).unwrap();
     
     assert!(matches!(result, MemResult::Ecall));
 }
@@ -283,7 +283,7 @@ fn memory_pass_through_ebreak() {
     
     let exec_result = ExecResult::Ebreak;
     
-    let result = memory_stage(exec_result, &mut bus, &mut reservation, 0, PrivilegeMode::Machine).unwrap();
+    let result = memory_stage(exec_result, &mut bus, &mut reservation, 0, PrivilegeMode::Machine, 0).unwrap();
     
     assert!(matches!(result, MemResult::Ebreak));
 }

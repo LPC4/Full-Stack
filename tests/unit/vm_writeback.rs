@@ -124,25 +124,25 @@ fn writeback_csrrw() {
     let mut regs = Registers::new();
     let mut csrs = CsrFile::new();
     
-    // Set initial MSTATUS
-    csrs.write(addr::MSTATUS, 0x1234).unwrap();
-    
+    // Set initial MSTATUS: 0x0234 has MPP[12:11]=0 (User, valid) — no WARL change
+    csrs.write(addr::MSTATUS, 0x0234).unwrap();
+
     let mem_result = MemResult::Csr {
         funct3: 1, // CSRRW
         rd: 5,
         rs1_uimm: 0,
         csr: addr::MSTATUS,
-        operand: 0x5678,
-        old_val: 0x1234,
+        operand: 0x4678, // MPP[12:11]=0 (valid), no WARL change
+        old_val: 0x0234,
         next_pc: 0x8000_0004,
     };
-    
+
     let next_pc = writeback(mem_result, &mut regs, &mut csrs).unwrap();
-    
+
     // Old value written to rd
-    assert_eq!(regs.read_x(5), 0x1234);
+    assert_eq!(regs.read_x(5), 0x0234);
     // New value written to CSR
-    assert_eq!(csrs.read(addr::MSTATUS).unwrap(), 0x5678);
+    assert_eq!(csrs.read(addr::MSTATUS).unwrap(), 0x4678);
     assert_eq!(next_pc, 0x8000_0004);
 }
 
@@ -177,26 +177,26 @@ fn writeback_csrrs_set_bits() {
 fn writeback_csrrc_clear_bits() {
     let mut regs = Registers::new();
     let mut csrs = CsrFile::new();
-    
-    // Initial MIP = 0xF00
-    csrs.write(addr::MIP, 0xF00).unwrap();
-    
+
+    // Use MIE instead of MIP: MIE has no WARL restrictions so all bits round-trip
+    csrs.write(addr::MIE, 0xF00).unwrap();
+
     let mem_result = MemResult::Csr {
         funct3: 3, // CSRRC
         rd: 5,
         rs1_uimm: 12, // a2 register (non-zero means do write)
-        csr: addr::MIP,
-        operand: 0x800, // Clear MTIP bit
+        csr: addr::MIE,
+        operand: 0x800, // Clear MEIE bit
         old_val: 0xF00,
         next_pc: 0x8000_0004,
     };
-    
+
     let next_pc = writeback(mem_result, &mut regs, &mut csrs).unwrap();
-    
+
     // Old value returned
     assert_eq!(regs.read_x(5), 0xF00);
     // Bits cleared: 0xF00 & !0x800 = 0x700
-    assert_eq!(csrs.read(addr::MIP).unwrap(), 0x700);
+    assert_eq!(csrs.read(addr::MIE).unwrap(), 0x700);
     assert_eq!(next_pc, 0x8000_0004);
 }
 

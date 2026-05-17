@@ -23,6 +23,10 @@ impl Clint {
         self.mtime >= self.mtimecmp
     }
 
+    pub fn software_irq_pending(&self) -> bool {
+        self.msip != 0
+    }
+
     pub fn set_mtime(&mut self, value: u64) {
         self.mtime = value;
     }
