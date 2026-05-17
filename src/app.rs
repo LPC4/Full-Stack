@@ -7,8 +7,9 @@ use crate::view::debug::{DebugSession, SessionStatus};
 use crate::view::ide::vm_execution_view::VmExecutionResult;
 use crate::view::{
     AssemblyView, AstView, CacheView, CfgView, CompilationState, CompilerView, CpuStateView,
-    DisassemblyView, ExecutionView, FramebufferView, IoView, IrView, KernelView, MemoryMapView,
-    MemoryView, PipelineView, ProgramCatalog, ProgramKind, SourceView, StackView, TokensView,
+    DisassemblyView, ExecutionView, FramebufferView, IoView, IrView, KernelView,
+    InterruptView, MemoryView, PageTableView, PipelineView, PrivilegeView, ProgramCatalog, ProgramKind,
+    SourceView, StackView, SyscallTraceView, TokensView, TrapView,
     VmExecutionView, apply_ui_theme, blank_custom_program_source, ui_theme,
 };
 use egui::{Color32, Frame, Layout, Margin, RichText, Stroke};
@@ -219,10 +220,9 @@ impl FullStackApp {
             self.view::<AssemblyView>(),  // 4
             self.view::<CfgView>(),       // 5
             self.view::<StackView>(),     // 6
-            self.view::<MemoryMapView>(), // 7
-            self.view::<ExecutionView>(), // 8
-            self.view::<VmExecutionView>(), // 9
-            self.view::<KernelView>(),    // 10
+            self.view::<ExecutionView>(), // 7
+            self.view::<VmExecutionView>(), // 8
+            self.view::<KernelView>(),    // 9
         ];
 
         let mut dock = DockState::new(vec![views[0].clone()]);
@@ -239,9 +239,9 @@ impl FullStackApp {
                 views[4].clone(),  // Assembly
                 views[5].clone(),  // CFG
                 views[6].clone(),  // Stack
-                views[8].clone(),  // Execution (QEMU)
-                views[9].clone(),  // VM Output
-                views[10].clone(), // Kernel
+                views[7].clone(),  // Execution (QEMU)
+                views[8].clone(),  // VM Output
+                views[9].clone(),  // Kernel
             ],
         );
         self.dock = dock;
@@ -564,8 +564,6 @@ impl FullStackApp {
         ui.vertical(|ui| {
             ui.heading("Files");
             ui.add_space(6.0);
-            ui.small("Examples are embedded; your files stay in memory.");
-            ui.add_space(8.0);
 
             ui.horizontal(|ui| {
                 if ui.button("New File").clicked() {
@@ -585,7 +583,7 @@ impl FullStackApp {
                 let import_label = if self.show_import_controls {
                     "Import v"
                 } else {
-                    "Import >"
+                    "Import"
                 };
                 if ui
                     .button(import_label)
@@ -600,7 +598,7 @@ impl FullStackApp {
                 let export_label = if self.show_export_controls {
                     "Export v"
                 } else {
-                    "Export >"
+                    "Export"
                 };
                 if ui
                     .button(export_label)
@@ -992,12 +990,27 @@ impl FullStackApp {
                         ("Assembly", || Box::new(AssemblyView::default())),
                         ("CFG", || Box::new(CfgView::default())),
                         ("Stack", || Box::new(StackView::default())),
-                        ("Memory Map", || Box::new(MemoryMapView::default())),
                         ("Execution (QEMU)", || Box::new(ExecutionView::default())),
                         ("VM Output", || Box::new(VmExecutionView::default())),
                         ("Kernel", || Box::new(KernelView::default())),
                     ];
                     for (label, make) in view_entries {
+                        if ui.button(*label).clicked() {
+                            self.pending_new_view =
+                                Some(ViewWrapper::new(make(), &mut self.next_view_id));
+                            ui.close();
+                        }
+                    }
+                    ui.separator();
+                    ui.label(RichText::new("OS Views").small().weak());
+                    let os_entries: &[(&str, fn() -> Box<dyn CompilerView>)] = &[
+                        ("Trap Inspector", || Box::new(TrapView)),
+                        ("Privilege Timeline", || Box::new(PrivilegeView)),
+                        ("Syscall Trace", || Box::new(SyscallTraceView)),
+                        ("Page Table Walker", || Box::new(PageTableView)),
+                        ("Interrupt Controller", || Box::new(InterruptView)),
+                    ];
+                    for (label, make) in os_entries {
                         if ui.button(*label).clicked() {
                             self.pending_new_view =
                                 Some(ViewWrapper::new(make(), &mut self.next_view_id));
@@ -1193,6 +1206,22 @@ impl FullStackApp {
                         ("Framebuffer", || Box::new(FramebufferView::default())),
                     ];
                     for (label, make) in entries {
+                        if ui.button(*label).clicked() {
+                            self.pending_new_view =
+                                Some(ViewWrapper::new(make(), &mut self.next_view_id));
+                            ui.close();
+                        }
+                    }
+                    ui.separator();
+                    ui.label(RichText::new("OS Views").small().weak());
+                    let os_entries: &[(&str, fn() -> Box<dyn CompilerView>)] = &[
+                        ("Trap Inspector", || Box::new(TrapView)),
+                        ("Privilege Timeline", || Box::new(PrivilegeView)),
+                        ("Syscall Trace", || Box::new(SyscallTraceView)),
+                        ("Page Table Walker", || Box::new(PageTableView)),
+                        ("Interrupt Controller", || Box::new(InterruptView)),
+                    ];
+                    for (label, make) in os_entries {
                         if ui.button(*label).clicked() {
                             self.pending_new_view =
                                 Some(ViewWrapper::new(make(), &mut self.next_view_id));

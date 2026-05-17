@@ -1,17 +1,17 @@
 pub mod common;
 pub mod compilation_state;
 pub mod debug;
-pub mod highlighter;
 pub mod layout;
+pub mod os;
 pub mod program_catalog;
 pub mod viewtrait;
 
 pub use common::{
     MemoryPalette, PipelinePalette, StackPalette, SyntaxPalette, UiTheme, ViewType, apply_ui_theme,
-    ui_theme,
+    ui_theme, centered_placeholder, scrollable_code,
+    highlight_assembly, highlight_ast, highlight_code, highlight_ir,
 };
 pub use compilation_state::CompilationState;
-pub use highlighter::{highlight_assembly, highlight_ast, highlight_code, highlight_ir};
 pub use layout::{
     auto_grid_columns, auto_grid_columns_with_min_width, estimated_monospace_char_width,
     split_rect_into_grid,
@@ -29,11 +29,12 @@ pub use crate::view::ide::CfgView;
 pub use crate::view::ide::ExecutionView;
 pub use crate::view::ide::IrView;
 pub use crate::view::ide::KernelView;
-pub use crate::view::ide::MemoryMapView;
 pub use crate::view::ide::SourceView;
 pub use crate::view::ide::StackView;
 pub use crate::view::ide::TokensView;
 pub use crate::view::ide::VmExecutionView;
+
+pub use crate::view::os::{InterruptView, PageTableView, PrivilegeView, SyscallTraceView, TrapView};
 
 pub(crate) fn blank_custom_program_source() -> String {
     "; Write your program here\n".to_owned()
