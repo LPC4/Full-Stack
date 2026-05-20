@@ -1,0 +1,12 @@
+[package]
+name = "asm_to_binary"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.92"
+
+[lib]
+name = "asm_to_binary"
+path = "src/lib.rs"
+
+[lints]
+workspace = true

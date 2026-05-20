@@ -1,6 +1,6 @@
-// Program file management and catalog
+﻿// Program file management and catalog
 
-use crate::high_level_language::stdlib::get_stdlib_source;
+use hll_to_ir::stdlib::get_stdlib_source;
 
 #[derive(Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Debug)]
 pub enum ProgramKind {
@@ -240,7 +240,7 @@ impl ProgramCatalog {
                 let mut updated = existing.clone();
                 match built_in.kind {
                     ProgramKind::Custom => {
-                        // Custom programs: preserve everything — user-managed
+                        // Custom programs: preserve everything - user-managed
                     }
                     ProgramKind::Kernel => {
                         // Kernel programs: editable, so preserve user source; refresh metadata

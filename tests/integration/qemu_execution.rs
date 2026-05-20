@@ -1,4 +1,4 @@
-/// QEMU execution integration tests.
+﻿/// QEMU execution integration tests.
 ///
 /// Each test compiles an HLL program all the way to RISC-V assembly or ELF,
 /// then runs it under qemu-riscv64 inside WSL and verifies the exit code and
@@ -7,9 +7,9 @@
 /// If the WSL toolchain is absent the tests print a diagnostic with the exact
 /// missing prerequisite and return without failing, so CI on machines without
 /// the cross-toolchain stays green.
-use full_stack::high_level_language::compilation_pipeline::CompilationPipeline;
-use full_stack::high_level_language::stdlib::get_stdlib_source;
-use full_stack::virtual_machine::bus::ELF_LOAD_BASE;
+use full_stack::compilation_pipeline::CompilationPipeline;
+use hll_to_ir::stdlib::get_stdlib_source;
+use virtual_machine::bus::ELF_LOAD_BASE;
 use std::fmt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -172,7 +172,7 @@ fn win_path_to_wsl(path: &std::path::Path) -> String {
         let rest = s[2..].replace('\\', "/");
         (drive, rest)
     } else {
-        // Not a drive-rooted path — best-effort conversion
+        // Not a drive-rooted path - best-effort conversion
         return s.replace('\\', "/");
     };
     format!("/mnt/{drive}{rest}")
@@ -190,7 +190,7 @@ fn run_elf_via_qemu(elf: &[u8]) -> Result<QemuResult, QemuSkipReason> {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-        // Write ELF to a unique Windows temp file — avoids both binary-mode
+        // Write ELF to a unique Windows temp file - avoids both binary-mode
         // issues with stdin piping and races between parallel test threads.
         static COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
         let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);

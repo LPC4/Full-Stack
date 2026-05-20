@@ -1,13 +1,13 @@
-//! Live debug session: wraps a running VirtualMachine and exposes a plain-data
+﻿//! Live debug session: wraps a running VirtualMachine and exposes a plain-data
 //! snapshot that all debug panels render from.
 
 use std::collections::HashMap;
 
-use crate::assembly_language::assembler::output::AssembledOutput;
-use crate::virtual_machine::bus::{
+use asm_to_binary::assembler::output::AssembledOutput;
+use virtual_machine::bus::{
     CLINT_BASE, PLIC_BASE, RAM_BASE, ROM_BASE, UART_BASE,
 };
-use crate::virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
+use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 
 // ---------------------------------------------------------------------------
 // Re-exports
@@ -176,7 +176,7 @@ impl DebugSession {
 
     /// Execute up to `n` pipeline cycles, stopping early on halt/error.
     ///
-    /// Runs the inner loop without snapshotting — snapshots once at the end.
+    /// Runs the inner loop without snapshotting - snapshots once at the end.
     /// Use `step()` for single-step interactive debugging.
     pub fn step_n(&mut self, n: u64) {
         if self.status != SessionStatus::Running {
@@ -190,7 +190,7 @@ impl DebugSession {
 
     /// Execute until `n` instructions have retired through WB, stopping early on halt/error.
     ///
-    /// Runs the inner loop without snapshotting — snapshots once at the end.
+    /// Runs the inner loop without snapshotting - snapshots once at the end.
     pub fn step_n_instructions(&mut self, n: u64) {
         if self.status != SessionStatus::Running {
             return;
@@ -248,7 +248,7 @@ impl DebugSession {
 
     /// Tight inner loop: step the VM up to `max` times, stopping early if halted/errored
     /// or if `insn_target` retired instructions have been reached.
-    /// Does NOT snapshot or drain UART — callers handle that.
+    /// Does NOT snapshot or drain UART - callers handle that.
     fn run_inner(&mut self, max: u64, insn_target: Option<u64>) {
         for _ in 0..max {
             for byte in self.uart_tx_pending.drain(..) {
@@ -322,13 +322,13 @@ impl DebugSession {
     }
 
     /// Full cache snapshots (params + per-line state + stats) for the cache view.
-    /// Only call this from the render path — it allocates ~1.3MB for L3.
+    /// Only call this from the render path - it allocates ~1.3MB for L3.
     pub fn cache_snapshots(
         &self,
     ) -> (
-        crate::virtual_machine::memory::cache::CacheSnapshot,
-        crate::virtual_machine::memory::cache::CacheSnapshot,
-        crate::virtual_machine::memory::cache::CacheSnapshot,
+        virtual_machine::memory::cache::CacheSnapshot,
+        virtual_machine::memory::cache::CacheSnapshot,
+        virtual_machine::memory::cache::CacheSnapshot,
     ) {
         self.vm.get_cache_snapshots()
     }

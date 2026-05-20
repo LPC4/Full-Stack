@@ -1,56 +1,56 @@
+[workspace]
+members = [
+    "crates/asm-to-binary",
+    "crates/virtual-machine",
+    "crates/hll-to-ir",
+    "crates/ir-to-asm",
+]
+resolver = "2"
+
 [package]
 name = "full_stack"
 version = "1.0.0"
 authors = ["Liam DK"]
 edition = "2024"
-license = "MIT OR Apache-2.0"
-include = ["LICENSE-APACHE", "LICENSE-MIT", "**/*.rs", "programs/**/*.hll", "Cargo.toml"]
 rust-version = "1.92"
-build = "build.rs"
 
-[package.metadata.docs.rs]
-all-features = true
-targets = ["x86_64-unknown-linux-gnu", "wasm32-unknown-unknown"]
+[[bin]]
+name = "full_stack"
+path = "src/main.rs"
+
+[[bin]]
+name = "fsc"
+path = "src/cli/main.rs"
 
 [dependencies]
-egui = "0.34.1"
-eframe = { version = "0.34.1", features = ["persistence"] }
-log = "0.4.27"
-egui_dock = "0.19.1"
+hll_to_ir       = { path = "crates/hll-to-ir" }
+ir_to_asm       = { path = "crates/ir-to-asm" }
+asm_to_binary   = { path = "crates/asm-to-binary" }
+virtual_machine = { path = "crates/virtual-machine" }
+egui            = "0.34.1"
+eframe          = { version = "0.34.1", features = ["persistence"] }
+egui_dock       = "0.19.1"
+serde           = { version = "1.0.219", features = ["derive"] }
+log             = "0.4.27"
 
-# You only need serde if you want app persistence:
-serde = { version = "1.0.219", features = ["derive"] }
+[dev-dependencies]
+hll_to_ir       = { path = "crates/hll-to-ir" }
+ir_to_asm       = { path = "crates/ir-to-asm" }
+asm_to_binary   = { path = "crates/asm-to-binary" }
+virtual_machine = { path = "crates/virtual-machine" }
 
-# native:
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 env_logger = "0.11.8"
 
-# web:
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen-futures = "0.4.50"
-web-sys = "0.3.70"              # to access the DOM (to hide the loading text)
+web-sys = "0.3.70"
 
 [profile.release]
-opt-level = 2 # fast and small wasm
-
-# Optimize all dependencies even in debug builds:
-[profile.dev.package."*"]
 opt-level = 2
 
-
-[patch.crates-io]
-
-# If you want to use the bleeding edge version of egui and eframe:
-# egui = { git = "https://github.com/emilk/egui", branch = "main" }
-# eframe = { git = "https://github.com/emilk/egui", branch = "main" }
-
-# If you fork https://github.com/emilk/egui you can test with:
-# egui = { path = "../egui/crates/egui" }
-# eframe = { path = "../egui/crates/eframe" }
-
-
-# ----------------------------------------------------------------------------------------
-# Lints:
+[profile.dev.package."*"]
+opt-level = 2
 
 [lints]
 workspace = true
@@ -66,7 +66,7 @@ rust_2021_prelude_collisions = "warn"
 semicolon_in_expressions_from_macros = "warn"
 trivial_numeric_casts = "warn"
 unexpected_cfgs = "warn"
-unsafe_op_in_unsafe_fn = "warn" # `unsafe_op_in_unsafe_fn` may become the default in future Rust versions: https://github.com/rust-lang/rust/issues/71668
+unsafe_op_in_unsafe_fn = "warn"
 unused_extern_crates = "warn"
 unused_import_braces = "warn"
 unused_lifetimes = "warn"
@@ -79,7 +79,6 @@ all = "warn"
 broken_intra_doc_links = "warn"
 missing_crate_level_docs = "warn"
 
-# See also clippy.toml
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
 
@@ -100,11 +99,11 @@ dbg_macro = "warn"
 debug_assert_with_mut_call = "warn"
 default_union_representation = "warn"
 derive_partial_eq_without_eq = "warn"
-disallowed_macros = "warn" # See clippy.toml
-disallowed_methods = "warn" # See clippy.toml
-disallowed_names = "warn" # See clippy.toml
-disallowed_script_idents = "warn" # See clippy.toml
-disallowed_types = "warn" # See clippy.toml
+disallowed_macros = "warn"
+disallowed_methods = "warn"
+disallowed_names = "warn"
+disallowed_script_idents = "warn"
+disallowed_types = "warn"
 doc_broken_link = "warn"
 doc_comment_double_space_linebreaks = "warn"
 doc_include_without_cfg = "warn"
@@ -265,8 +264,8 @@ wildcard_dependencies = "warn"
 wildcard_imports = "warn"
 zero_sized_map_values = "warn"
 
-assigning_clones = "allow" # No please
-manual_range_contains = "allow" # this one is just worse imho
-map_unwrap_or = "allow" # so is this one
-self_named_module_files = "allow" # Disabled waiting on https://github.com/rust-lang/rust-clippy/issues/9602
-significant_drop_tightening = "allow" # Too many false positives
+assigning_clones = "allow"
+manual_range_contains = "allow"
+map_unwrap_or = "allow"
+self_named_module_files = "allow"
+significant_drop_tightening = "allow"

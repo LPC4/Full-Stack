@@ -1,5 +1,5 @@
-use crate::high_level_language::compilation_pipeline::CompilationPipeline;
-use crate::high_level_language::stdlib::get_kernel_stdlib_source;
+use crate::compilation_pipeline::CompilationPipeline;
+use hll_to_ir::stdlib::get_kernel_stdlib_source;
 use crate::view::ide::vm_execution_view::VmExecutionResult;
 use crate::view::{CompilationState, CompilerView, ProgramCatalog};
 use egui::{Color32, Frame, RichText};
@@ -13,8 +13,8 @@ const TERM_DIM: Color32 = Color32::from_rgb(100, 120, 100);
 const TERM_PANIC: Color32 = Color32::from_rgb(255, 60, 80);
 
 fn run_kernel_boot(user_source: &str) -> VmExecutionResult {
-    use crate::virtual_machine::cpu::StepOutcome;
-    use crate::virtual_machine::virtual_machine::VirtualMachine;
+    use virtual_machine::cpu::StepOutcome;
+    use virtual_machine::virtual_machine::VirtualMachine;
 
     const MAX_STEPS: u64 = 10_000_000;
 
@@ -55,7 +55,7 @@ fn run_kernel_boot(user_source: &str) -> VmExecutionResult {
         Ok(a) => a,
         Err(e) => {
             let msg = if e.message.contains("kmain") {
-                "undefined label `kmain` — your kernel must define:\n  kmain: () -> () { ... }"
+                "undefined label `kmain` - your kernel must define:\n  kmain: () -> () { ... }"
                     .to_owned()
             } else {
                 e.message.clone()

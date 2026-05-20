@@ -1,7 +1,7 @@
 <component name="ProjectRunConfigurationManager">
-  <configuration default="false" name="Run full_stack (native)" type="CargoCommandRunConfiguration" factoryName="Cargo Command">
+  <configuration default="false" name="Run (native)" type="CargoCommandRunConfiguration" factoryName="Cargo Command">
     <option name="buildProfileId" value="dev" />
-    <option name="command" value="run --package full_stack --bin full_stack" />
+    <option name="command" value="run --bin full_stack" />
     <option name="workingDirectory" value="file://$PROJECT_DIR$" />
     <envs>
       <env name="RUST_LOG" value="info" />

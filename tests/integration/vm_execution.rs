@@ -1,12 +1,12 @@
-use full_stack::assembly_language::assembler::Assembler;
-use full_stack::assembly_language::real::RealInstruction;
-use full_stack::assembly_language::riscv::rv64i::*;
-use full_stack::assembly_language::riscv::rv64m::*;
-use full_stack::assembly_language::riscv::rv64zicsr::Csrrs;
-use full_stack::assembly_language::rv_instruction::RvInstruction;
-use full_stack::high_level_language::compilation_pipeline::CompilationPipeline;
-use full_stack::high_level_language::stdlib::get_stdlib_source;
-use full_stack::virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
+﻿use asm_to_binary::assembler::Assembler;
+use asm_to_binary::real::RealInstruction;
+use asm_to_binary::riscv::rv64i::*;
+use asm_to_binary::riscv::rv64m::*;
+use asm_to_binary::riscv::rv64zicsr::Csrrs;
+use asm_to_binary::rv_instruction::RvInstruction;
+use full_stack::compilation_pipeline::CompilationPipeline;
+use hll_to_ir::stdlib::get_stdlib_source;
+use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 
 // ---------------------------------------------------------------------------
 // Full HLL pipeline helpers
@@ -212,8 +212,8 @@ fn test_memory_store_load() {
     let (_, outcome) = assemble_and_run(vec![
         ri(RealInstruction::Addi(Addi::new(5, 0, 99))),   // t0 = 99
         ri(RealInstruction::Addi(Addi::new(6, 2, -8))),   // t1 = sp - 8 (scratch address)
-        ri(RealInstruction::Sd(Sd::new(6, 5, 0))),        // sd t0, 0(t1)  — store 99
-        ri(RealInstruction::Ld(Ld::new(10, 6, 0))),       // ld a0, 0(t1)  — load 99
+        ri(RealInstruction::Sd(Sd::new(6, 5, 0))),        // sd t0, 0(t1)  - store 99
+        ri(RealInstruction::Ld(Ld::new(10, 6, 0))),       // ld a0, 0(t1)  - load 99
         ri(RealInstruction::Addi(Addi::new(17, 0, 93))),  // a7 = 93
         ri(RealInstruction::Ecall(Ecall::new())),
     ]);
@@ -306,7 +306,7 @@ fn test_ecall_write_uart() {
 
 #[test]
 fn test_div_by_zero() {
-    // divu a0, a1, x0 — divide by zero should yield u64::MAX in a0.
+    // divu a0, a1, x0 - divide by zero should yield u64::MAX in a0.
     // Save into s0 (x8, callee-saved) before overwriting a0 for exit.
     // The ROM handler for sys_exit uses t0-t6 as scratch, so t0 (x5) would
     // be clobbered; s0 (x8) is safe.
@@ -331,7 +331,7 @@ fn test_csr_instret() {
         ri(RealInstruction::Addi(Addi::new(0, 0, 0))),    // nop 1
         ri(RealInstruction::Addi(Addi::new(0, 0, 0))),    // nop 2
         ri(RealInstruction::Addi(Addi::new(0, 0, 0))),    // nop 3
-        // csrrs a0, instret (0xC02), x0  — read instret, no write
+        // csrrs a0, instret (0xC02), x0  - read instret, no write
         ri(RealInstruction::Csrrs(Csrrs::new(10, 0xC02, 0))),
         ri(RealInstruction::Addi(Addi::new(17, 0, 93))),  // a7 = 93
         ri(RealInstruction::Ecall(Ecall::new())),

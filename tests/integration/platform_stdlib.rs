@@ -1,15 +1,15 @@
-use full_stack::high_level_language::compilation_pipeline::CompilationPipeline;
-use full_stack::high_level_language::stdlib::{get_kernel_stdlib_source, get_stdlib_source};
-use full_stack::virtual_machine::rom::generate_rom_image;
-use full_stack::virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
+﻿use full_stack::compilation_pipeline::CompilationPipeline;
+use hll_to_ir::stdlib::{get_kernel_stdlib_source, get_stdlib_source};
+use virtual_machine::rom::generate_rom_image;
+use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 
 const MEM_SRC: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/platform/stdlib/common/mem.hll"
+    "/crates/hll-to-ir/platform/stdlib/common/mem.hll"
 ));
 const KLOG_SRC: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/platform/stdlib/common/klog.hll"
+    "/crates/hll-to-ir/platform/stdlib/common/klog.hll"
 ));
 
 fn run_hll(src: &str) -> (String, Option<i64>) {
@@ -405,7 +405,7 @@ fn kernel_boot_missing_kmain_is_assemble_error() {
     let (_, stdlib_tokens) =
         stdlib_pipeline.compile_ir_to_assembly_with_tokens(&stdlib.ir_program);
 
-    // A hosted `main` program — no `kmain` defined.
+    // A hosted `main` program - no `kmain` defined.
     let user_pipeline = CompilationPipeline::new();
     let user = user_pipeline
         .compile("main: () -> i32 { return 0 }")

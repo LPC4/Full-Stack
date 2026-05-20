@@ -1,7 +1,7 @@
 #[path = "../common/golden_support.rs"]
 mod golden_support;
 
-use full_stack::high_level_language::compilation_pipeline::CompilationPipeline;
+use full_stack::compilation_pipeline::CompilationPipeline;
 use std::fs;
 use std::path::PathBuf;
 

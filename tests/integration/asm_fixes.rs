@@ -4,7 +4,7 @@
 /// (store widths, epilogue structure, float instructions, register allocation,
 /// struct return conventions).  Exact output correctness is covered by the
 /// golden-file suites (compiler_suite.rs, assembly_golden_suite.rs).
-use full_stack::high_level_language::compilation_pipeline::CompilationPipeline;
+use full_stack::compilation_pipeline::CompilationPipeline;
 use std::fs;
 use std::path::PathBuf;
 

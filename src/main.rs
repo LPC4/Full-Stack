@@ -2,6 +2,8 @@
 #![warn(rust_2018_idioms)]
 #![windows_subsystem = "windows"]
 
+mod app;
+
 // When compiling natively:
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result {
@@ -12,17 +14,13 @@ fn main() -> eframe::Result {
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1100.0, 860.0])
-            .with_min_inner_size([900.0, 680.0])
-            .with_icon(
-                eframe::icon_data::from_png_bytes(&include_bytes!("../assets/icon/icon.png")[..])
-                    .expect("Failed to load icon"),
-            ),
+            .with_min_inner_size([900.0, 680.0]),
         ..Default::default()
     };
     eframe::run_native(
         "Full-Stack",
         native_options,
-        Box::new(|cc| Ok(Box::new(full_stack::FullStackApp::new(cc)))),
+        Box::new(|cc| Ok(Box::new(app::FullStackApp::new(cc)))),
     )
 }
 
@@ -31,7 +29,6 @@ fn main() -> eframe::Result {
 fn main() {
     use eframe::wasm_bindgen::JsCast as _;
 
-    // Redirect `log` message to `console.log` and friends:
     eframe::WebLogger::init(log::LevelFilter::Debug).ok();
 
     let web_options = eframe::WebOptions::default();
@@ -52,11 +49,10 @@ fn main() {
             .start(
                 canvas,
                 web_options,
-                Box::new(|cc| Ok(Box::new(full_stack::FullStackApp::new(cc)))),
+                Box::new(|cc| Ok(Box::new(app::FullStackApp::new(cc)))),
             )
             .await;
 
-        // Remove the loading text and spinner:
         if let Some(loading_text) = document.get_element_by_id("loading_text") {
             match start_result {
                 Ok(_) => {

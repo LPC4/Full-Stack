@@ -5,6 +5,20 @@
       <sourceFolder url="file://$MODULE_DIR$/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/tests" isTestSource="true" />
       <sourceFolder url="file://$MODULE_DIR$/examples" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/asm-to-binary/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/asm-to-binary/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/asm-to-binary/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/hll-to-ir/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/hll-to-ir/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/ir-to-asm/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/ir-to-asm/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/virtual-machine/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/virtual-machine/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/visualizer/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/hll-to-ir/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/ir-to-asm/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/virtual-machine/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/visualizer/src" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>
     <orderEntry type="inheritedJdk" />

@@ -1,5 +1,5 @@
-use full_stack::intermediate_language::asm_compiler::compiler_rv64::CompilerRv64;
-use full_stack::intermediate_language::{
+use ir_to_asm::compiler::compiler_rv64::CompilerRv64;
+use hll_to_ir::{
     IrBlock, IrFunction, IrInstruction, IrLabel, IrParam, IrProgram, IrRegister, IrTerminator,
     IrType, IrValue, IntWidth,
 };

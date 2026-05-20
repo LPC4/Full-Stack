@@ -1,7 +1,7 @@
-use full_stack::high_level_language::compilation_pipeline::CompilationPipeline;
-use full_stack::high_level_language::stdlib::get_stdlib_source;
-use full_stack::virtual_machine::bus::ELF_LOAD_BASE;
-use full_stack::virtual_machine::virtual_machine::VirtualMachine;
+﻿use full_stack::compilation_pipeline::CompilationPipeline;
+use hll_to_ir::stdlib::get_stdlib_source;
+use virtual_machine::bus::ELF_LOAD_BASE;
+use virtual_machine::virtual_machine::VirtualMachine;
 
 // ---------------------------------------------------------------------------
 // Linking helper
@@ -10,7 +10,7 @@ use full_stack::virtual_machine::virtual_machine::VirtualMachine;
 //   1. Compile stdlib once → Vec<RvInstruction> token stream
 //   2. Compile user source independently → Vec<RvInstruction> token stream
 //   3. Token-level link: [stdlib_tokens..., user_tokens...]
-//   4. assemble()  — no injected stubs; all runtime is in stdlib (runtime.hll)
+//   4. assemble()  - no injected stubs; all runtime is in stdlib (runtime.hll)
 //   5. Load ELF into VM and run
 //
 // To link with a different runtime (custom allocator, bare-metal glue, or a
@@ -18,7 +18,7 @@ use full_stack::virtual_machine::virtual_machine::VirtualMachine;
 // defines malloc/free and whatever other symbols user code calls as external.
 // ---------------------------------------------------------------------------
 fn link_stdlib_and_run(user_src: &str) -> (String, Option<i64>) {
-    use full_stack::virtual_machine::virtual_machine::StepOutcome;
+    use virtual_machine::virtual_machine::StepOutcome;
 
     let pipeline = CompilationPipeline::new();
     let stdlib_result = pipeline
@@ -55,7 +55,7 @@ fn stdlib_provides_malloc() {
     let (_, tokens) = pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program);
     assert!(!tokens.is_empty(), "stdlib token stream must not be empty");
     let has_malloc = tokens.iter().any(|t| {
-        use full_stack::assembly_language::rv_instruction::RvInstruction;
+        use asm_to_binary::rv_instruction::RvInstruction;
         matches!(t, RvInstruction::Label(n) if n == "malloc")
     });
     assert!(has_malloc, "stdlib must define malloc");
@@ -134,7 +134,7 @@ fn stdlib_provides_runtime() {
         .compile(&get_stdlib_source())
         .expect("stdlib compile");
     let (_, tokens) = pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program);
-    use full_stack::assembly_language::rv_instruction::RvInstruction;
+    use asm_to_binary::rv_instruction::RvInstruction;
     let has = |name: &str| {
         tokens
             .iter()

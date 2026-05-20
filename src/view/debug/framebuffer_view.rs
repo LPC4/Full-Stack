@@ -1,5 +1,5 @@
 use crate::view::{CompilationState, CompilerView, ProgramCatalog, ui_theme};
-use crate::virtual_machine::bus::RAM_BASE;
+use virtual_machine::bus::RAM_BASE;
 use egui::{Color32, ColorImage, Frame, RichText, Stroke, TextureHandle, TextureOptions, Ui};
 
 const TERM_BG: Color32 = Color32::from_rgb(7, 9, 12);

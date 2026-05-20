@@ -1,4 +1,4 @@
-use full_stack::high_level_language::compilation_pipeline::CompilationPipeline;
+use full_stack::compilation_pipeline::CompilationPipeline;
 
 #[test]
 fn rejects_address_of_dereference_expression() {

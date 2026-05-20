@@ -1,0 +1,15 @@
+[package]
+name = "hll_to_ir"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.92"
+
+[lib]
+name = "hll_to_ir"
+path = "src/lib.rs"
+
+[dependencies]
+log = "0.4.27"
+
+[lints]
+workspace = true

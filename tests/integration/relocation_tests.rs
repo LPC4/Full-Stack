@@ -1,9 +1,9 @@
 /// Integration tests for symbol relocation with pseudo-instructions (call, tail, la).
-use full_stack::assembly_language::assembler::Assembler;
-use full_stack::assembly_language::rv_instruction::RvInstruction;
-use full_stack::assembly_language::pseudo::PseudoInstruction;
-use full_stack::assembly_language::real::RealInstruction;
-use full_stack::assembly_language::riscv::rv64i::{Addi, Jalr};
+use asm_to_binary::assembler::Assembler;
+use asm_to_binary::rv_instruction::RvInstruction;
+use asm_to_binary::pseudo::PseudoInstruction;
+use asm_to_binary::real::RealInstruction;
+use asm_to_binary::riscv::rv64i::{Addi, Jalr};
 
 #[test]
 fn test_relocation_with_call_tail_and_la_pseudos() {

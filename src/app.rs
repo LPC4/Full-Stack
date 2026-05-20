@@ -1,11 +1,11 @@
-use crate::assembly_language::assembler::link_layout::LinkLayout;
-use crate::high_level_language::compilation_pipeline::{CompilationPipeline, TargetMode};
-use crate::high_level_language::lexer::Lexer;
-use crate::high_level_language::stdlib::get_stdlib_source_for_mode;
-use crate::high_level_language::token::Token;
-use crate::view::debug::{DebugSession, SessionStatus};
-use crate::view::ide::vm_execution_view::VmExecutionResult;
-use crate::view::{
+﻿use asm_to_binary::assembler::link_layout::LinkLayout;
+use full_stack::compilation_pipeline::{CompilationPipeline, TargetMode};
+use hll_to_ir::lexer::Lexer;
+use hll_to_ir::stdlib::get_stdlib_source_for_mode;
+use hll_to_ir::token::Token;
+use full_stack::view::debug::{DebugSession, SessionStatus};
+use full_stack::view::ide::vm_execution_view::VmExecutionResult;
+use full_stack::view::{
     AssemblyView, AstView, CacheView, CfgView, CompilationState, CompilerView, CpuStateView,
     DisassemblyView, ExecutionView, FramebufferView, IoView, IrView, KernelView,
     InterruptView, MemoryView, PageTableView, PipelineView, PrivilegeView, ProgramCatalog, ProgramKind,
@@ -131,7 +131,7 @@ pub struct FullStackApp {
     #[serde(skip)]
     step_n_input: String,
     #[serde(skip)]
-    stdlib_tokens: Vec<crate::assembly_language::rv_instruction::RvInstruction>,
+    stdlib_tokens: Vec<asm_to_binary::rv_instruction::RvInstruction>,
     #[serde(skip)]
     stdlib_asm: String,
     #[serde(skip)]
@@ -881,7 +881,7 @@ impl FullStackApp {
                 self.compile();
             }
 
-            // Run in VM — hidden for stdlib (no entry point) and kernel (use Boot in Kernel panel)
+            // Run in VM - hidden for stdlib (no entry point) and kernel (use Boot in Kernel panel)
             if !is_stdlib && !is_kernel {
                 if ui
                     .add(
@@ -901,7 +901,7 @@ impl FullStackApp {
                 }
             }
 
-            // Target mode selector — only meaningful for example/custom programs.
+            // Target mode selector - only meaningful for example/custom programs.
             // Stdlib has no entry point; kernel uses its own fixed pipeline.
             if !is_stdlib && !is_kernel {
                 ui.separator();
@@ -1023,7 +1023,7 @@ impl FullStackApp {
             ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(8.0);
 
-                // To Debugger — hidden for stdlib (nothing runnable to debug)
+                // To Debugger - hidden for stdlib (nothing runnable to debug)
                 if !is_stdlib {
                     let can_debug = self.compilation_state.assembled.is_some();
                     if ui
@@ -1306,7 +1306,7 @@ impl egui_dock::TabViewer for DockTabViewer<'_> {
 // Internal VM runner
 // ------------------------------------------------------------
 
-/// Parse a number that may be a `0x…` hex literal or a plain decimal integer.
+/// Parse a number that may be a `0x...` hex literal or a plain decimal integer.
 fn parse_hex_or_dec(s: &str) -> Option<u64> {
     let s = s.trim();
     if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
@@ -1317,12 +1317,12 @@ fn parse_hex_or_dec(s: &str) -> Option<u64> {
 }
 
 fn run_in_vm(
-    assembled: &crate::assembly_language::assembler::output::AssembledOutput,
+    assembled: &asm_to_binary::assembler::output::AssembledOutput,
     entry_symbol: &str,
     load_base: u64,
 ) -> VmExecutionResult {
-    use crate::virtual_machine::cpu::StepOutcome;
-    use crate::virtual_machine::virtual_machine::VirtualMachine;
+    use virtual_machine::cpu::StepOutcome;
+    use virtual_machine::virtual_machine::VirtualMachine;
 
     const MAX_STEPS: u64 = 5_000_000;
     let elf = assembled.to_elf_with_entry(load_base, entry_symbol);

@@ -1,5 +1,5 @@
 use crate::view::{CompilationState, CompilerView, ProgramCatalog, ui_theme};
-use crate::virtual_machine::memory::cache::{CacheParamsSnapshot, CacheSnapshot};
+use virtual_machine::memory::cache::{CacheParamsSnapshot, CacheSnapshot};
 use egui::{Color32, Frame, Grid, Rect, RichText, ScrollArea, Sense, Stroke, Ui, Vec2};
 
 // State colors for cache lines

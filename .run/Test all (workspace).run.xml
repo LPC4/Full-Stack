@@ -1,10 +1,10 @@
 <component name="ProjectRunConfigurationManager">
   <configuration default="false" name="Test all (workspace)" type="CargoCommandRunConfiguration" factoryName="Cargo Command">
     <option name="buildProfileId" value="test" />
-    <option name="command" value="test --workspace --all-targets --all-features" />
+    <option name="command" value="test --workspace" />
     <option name="workingDirectory" value="file://$PROJECT_DIR$" />
     <envs>
-      <env name="RUST_LOG" value="info" />
+      <env name="RUST_LOG" value="warn" />
     </envs>
     <option name="emulateTerminal" value="false" />
     <option name="channel" value="DEFAULT" />

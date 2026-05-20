@@ -1,4 +1,4 @@
-use full_stack::high_level_language::compilation_pipeline::CompilationPipeline;
+use full_stack::compilation_pipeline::CompilationPipeline;
 use std::fs;
 use std::path::{Path, PathBuf};
 fn integration_root() -> PathBuf {

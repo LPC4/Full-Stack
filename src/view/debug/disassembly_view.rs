@@ -1,4 +1,4 @@
-//! Interactive disassembly view that tracks the current PC during debugging.
+﻿//! Interactive disassembly view that tracks the current PC during debugging.
 
 use crate::view::{CompilationState, CompilerView, ProgramCatalog, ui_theme};
 use egui::{Align, RichText, ScrollArea, Stroke, Ui};
@@ -193,7 +193,7 @@ impl CompilerView for DisassemblyView {
                         );
                         if resp.clicked() {
                             self.show_symbols = false;
-                            // Handled below via address_to_line lookup — store for next frame.
+                            // Handled below via address_to_line lookup - store for next frame.
                             // (We can't scroll from inside this closure easily, so close the
                             // panel; the user can use Follow PC to re-centre.)
                             let _ = addr;

@@ -1,5 +1,5 @@
 use crate::view::{CompilationState, CompilerView, ProgramCatalog};
-use crate::virtual_machine::bus::ELF_LOAD_BASE;
+use virtual_machine::bus::ELF_LOAD_BASE;
 use egui::{RichText, ScrollArea};
 
 #[derive(Default)]

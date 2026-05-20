@@ -1,8 +1,8 @@
 //! Plain-data snapshot types that the debug panels render from.
 //! No VM references live here, everything is Clone.
 
-use crate::virtual_machine::cpu::csr::CsrSnapshot;
-use crate::virtual_machine::memory::cache::CacheStats;
+use virtual_machine::cpu::csr::CsrSnapshot;
+use virtual_machine::memory::cache::CacheStats;
 
 // ---------------------------------------------------------------------------
 // CPU snapshot

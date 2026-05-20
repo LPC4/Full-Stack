@@ -36,6 +36,6 @@ pub use crate::view::ide::VmExecutionView;
 
 pub use crate::view::os::{InterruptView, PageTableView, PrivilegeView, SyscallTraceView, TrapView};
 
-pub(crate) fn blank_custom_program_source() -> String {
+pub fn blank_custom_program_source() -> String {
     "; Write your program here\n".to_owned()
 }
