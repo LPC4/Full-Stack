@@ -4,7 +4,7 @@ use crate::bus::SystemBus;
 use crate::cpu::mmu;
 use crate::cpu::registers::PrivilegeMode;
 use crate::error::VmError;
-use crate::memory::MemoryAccess;
+use crate::memory::MemoryAccess as _;
 
 /// Fetch the 32-bit instruction word at `pc`.
 /// Returns `InstructionAccessFault` on misalignment or bus error.
@@ -21,7 +21,9 @@ pub fn fetch_with_pmp(
         return Err(VmError::InstructionAccessFault(pc));
     }
 
-    let phys_addr = mmu::translate_with_pmp(pc, satp, priv_mode, mstatus, bus, false, true, pmpcfg0, pmpaddr0)?;
+    let phys_addr = mmu::translate_with_pmp(
+        pc, satp, priv_mode, mstatus, bus, false, true, pmpcfg0, pmpaddr0,
+    )?;
 
     bus.read_word(phys_addr)
         .map_err(|_| VmError::InstructionAccessFault(pc))
@@ -37,4 +39,3 @@ pub fn fetch(
 ) -> Result<u32, VmError> {
     fetch_with_pmp(bus, pc, satp, priv_mode, mstatus, 0, 0)
 }
-

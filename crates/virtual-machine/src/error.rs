@@ -34,20 +34,20 @@ pub enum VmError {
 impl fmt::Display for VmError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            VmError::BusError(addr) => write!(f, "bus error at address {addr:#010x}"),
-            VmError::WriteToRom => write!(f, "write to read-only memory"),
-            VmError::InstructionAccessFault(addr) => {
+            Self::BusError(addr) => write!(f, "bus error at address {addr:#010x}"),
+            Self::WriteToRom => write!(f, "write to read-only memory"),
+            Self::InstructionAccessFault(addr) => {
                 write!(f, "instruction access fault at {addr:#010x}")
             }
-            VmError::LoadAccessFault(addr) => write!(f, "load access fault at {addr:#010x}"),
-            VmError::StoreAccessFault(addr) => write!(f, "store access fault at {addr:#010x}"),
-            VmError::IllegalInstruction(word) => write!(f, "illegal instruction {word:#010x}"),
-            VmError::Ecall => write!(f, "environment call"),
-            VmError::Ebreak => write!(f, "breakpoint"),
-            VmError::PageFault(addr) => write!(f, "page fault at {addr:#010x}"),
-            VmError::Mret => write!(f, "return from machine-mode trap (MRET)"),
-            VmError::Sret => write!(f, "return from supervisor-mode trap (SRET)"),
-            VmError::Other(msg) => write!(f, "{msg}"),
+            Self::LoadAccessFault(addr) => write!(f, "load access fault at {addr:#010x}"),
+            Self::StoreAccessFault(addr) => write!(f, "store access fault at {addr:#010x}"),
+            Self::IllegalInstruction(word) => write!(f, "illegal instruction {word:#010x}"),
+            Self::Ecall => write!(f, "environment call"),
+            Self::Ebreak => write!(f, "breakpoint"),
+            Self::PageFault(addr) => write!(f, "page fault at {addr:#010x}"),
+            Self::Mret => write!(f, "return from machine-mode trap (MRET)"),
+            Self::Sret => write!(f, "return from supervisor-mode trap (SRET)"),
+            Self::Other(msg) => write!(f, "{msg}"),
         }
     }
 }

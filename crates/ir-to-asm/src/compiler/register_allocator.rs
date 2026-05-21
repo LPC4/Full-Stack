@@ -119,7 +119,10 @@ impl RegisterAllocator {
         vregs: &mut Vec<(hll_to_ir::IrRegister, IrType)>,
         function_return_types: &HashMap<String, IrType>,
     ) {
-        use IrInstruction::*;
+        use IrInstruction::{
+            Alloc, Call, Cast, Cmp, GlobalRef, HeapAlloc, Index, Load, Math, Offset, Phi, ReadReg,
+            Unary,
+        };
 
         match inst {
             Alloc { dest, ty, .. } => {
@@ -144,14 +147,14 @@ impl RegisterAllocator {
                 }
             }
             Call { dest, function, .. } => {
-                if let Some(dest) = dest {
-                    if !vregs.iter().any(|(r, _)| r == dest) {
-                        let ret_ty = function_return_types
-                            .get(function)
-                            .cloned()
-                            .unwrap_or(IrType::Integer(hll_to_ir::IntWidth::I64));
-                        vregs.push((dest.clone(), ret_ty));
-                    }
+                if let Some(dest) = dest
+                    && !vregs.iter().any(|(r, _)| r == dest)
+                {
+                    let ret_ty = function_return_types
+                        .get(function)
+                        .cloned()
+                        .unwrap_or(IrType::Integer(hll_to_ir::IntWidth::I64));
+                    vregs.push((dest.clone(), ret_ty));
                 }
             }
             Phi { dest, ty, .. } => {
@@ -191,20 +194,20 @@ impl RegisterAllocator {
         term: &IrTerminator,
         vregs: &mut Vec<(hll_to_ir::IrRegister, IrType)>,
     ) {
-        use IrTerminator::*;
+        use IrTerminator::{Branch, Return};
         match term {
             Return(Some(val)) => {
-                if let IrValue::Register(reg) = val {
-                    if !vregs.iter().any(|(r, _)| r == reg) {
-                        vregs.push((reg.clone(), IrType::Integer(hll_to_ir::IntWidth::I64)));
-                    }
+                if let IrValue::Register(reg) = val
+                    && !vregs.iter().any(|(r, _)| r == reg)
+                {
+                    vregs.push((reg.clone(), IrType::Integer(hll_to_ir::IntWidth::I64)));
                 }
             }
             Branch { cond, .. } => {
-                if let IrValue::Register(reg) = cond {
-                    if !vregs.iter().any(|(r, _)| r == reg) {
-                        vregs.push((reg.clone(), IrType::Integer(hll_to_ir::IntWidth::I1)));
-                    }
+                if let IrValue::Register(reg) = cond
+                    && !vregs.iter().any(|(r, _)| r == reg)
+                {
+                    vregs.push((reg.clone(), IrType::Integer(hll_to_ir::IntWidth::I1)));
                 }
             }
             _ => {}
@@ -260,7 +263,9 @@ impl RegisterAllocator {
         pos: usize,
         intervals: &mut HashMap<hll_to_ir::IrRegister, (usize, usize)>,
     ) {
-        use IrInstruction::*;
+        use IrInstruction::{
+            Call, Cast, Cmp, HeapFree, Index, Load, Math, Offset, Phi, Store, Unary,
+        };
 
         let mut update_interval = |reg: &hll_to_ir::IrRegister| {
             let entry = intervals.entry(reg.clone()).or_insert((pos, pos));
@@ -334,7 +339,10 @@ impl RegisterAllocator {
         pos: usize,
         intervals: &mut HashMap<hll_to_ir::IrRegister, (usize, usize)>,
     ) {
-        use IrInstruction::*;
+        use IrInstruction::{
+            Alloc, Call, Cast, Cmp, GlobalRef, HeapAlloc, Index, Load, Math, Offset, Phi, ReadReg,
+            Unary,
+        };
 
         let mut update_interval = |reg: &hll_to_ir::IrRegister| {
             let entry = intervals.entry(reg.clone()).or_insert((pos, pos));
@@ -373,7 +381,7 @@ impl RegisterAllocator {
         pos: usize,
         intervals: &mut HashMap<hll_to_ir::IrRegister, (usize, usize)>,
     ) {
-        use IrTerminator::*;
+        use IrTerminator::{Branch, Return};
 
         let mut update_interval = |reg: &hll_to_ir::IrRegister| {
             let entry = intervals.entry(reg.clone()).or_insert((pos, pos));

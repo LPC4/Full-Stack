@@ -8,7 +8,7 @@ use crate::cpu::pipeline::TickOutcome;
 pub use crate::cpu::pipeline::{CpuPipelineFeed, PipelineStats, StageEntry};
 use crate::elf_parser::{ParsedElf, align_up};
 use crate::error::VmError;
-use crate::memory::MemoryAccess;
+use crate::memory::MemoryAccess as _;
 use asm_to_binary::AssembledOutput;
 
 pub struct RunResult {
@@ -48,7 +48,7 @@ impl VirtualMachine {
         vm
     }
 
-    /// Create a VM from a complete ELF-64 image by mapping every PT_LOAD segment.
+    /// Create a VM from a complete ELF-64 image by mapping every `PT_LOAD` segment.
     pub fn from_elf(bytes: &[u8]) -> Result<Self, VmError> {
         let elf = ParsedElf::parse(bytes)?;
 
@@ -77,10 +77,10 @@ impl VirtualMachine {
             let file_end = segment
                 .offset
                 .checked_add(segment.file_size)
-                .ok_or_else(|| VmError::Other("ELF segment file range overflow".to_string()))?;
+                .ok_or_else(|| VmError::Other("ELF segment file range overflow".to_owned()))?;
             let data = bytes
                 .get(segment.offset as usize..file_end as usize)
-                .ok_or_else(|| VmError::Other("ELF PT_LOAD range outside file".to_string()))?;
+                .ok_or_else(|| VmError::Other("ELF PT_LOAD range outside file".to_owned()))?;
 
             for (i, &byte) in data.iter().enumerate() {
                 bus.write_byte(mapped_vaddr + i as u64, byte)?;
@@ -230,7 +230,7 @@ impl VirtualMachine {
         self.bus.peek_bytes(addr, len)
     }
 
-    /// Like peek_bytes but does not update cache stats or LRU state.
+    /// Like `peek_bytes` but does not update cache stats or LRU state.
     /// Checks dirty cache lines for the latest data. Safe to call every render frame.
     pub fn peek_bytes_raw(&self, addr: u64, len: usize) -> Vec<u8> {
         self.bus.peek_bytes_raw(addr, len)

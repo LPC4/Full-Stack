@@ -1,5 +1,5 @@
 /// A parsed assembler directive line (e.g. `.section .text`, `.globl main`).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Directive {
     Section(String),
     Globl(String),

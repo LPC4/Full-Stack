@@ -34,7 +34,7 @@ pub enum TickOutcome {
     Continue,
     Halted(i64),
     /// An ecall was serviced in WB. The pipeline was squashed; remaining stages
-    /// must not commit their results. tick() early-returns after seeing this.
+    /// must not commit their results. `tick()` early-returns after seeing this.
     EcallSquash,
 }
 
@@ -123,7 +123,7 @@ impl Pipeline {
 
     /// Reset the program counter and flush the pipeline.
     ///
-    /// Used by `VirtualMachine::new_kernel` to redirect the CPU to ROM_BASE
+    /// Used by `VirtualMachine::new_kernel` to redirect the CPU to `ROM_BASE`
     /// after the ELF has been loaded into RAM, so that the ROM's `_start`
     /// boot stub runs first.
     pub fn reset_pc(&mut self, pc: u64) {
@@ -198,9 +198,18 @@ impl Pipeline {
             let clint = bus.clint_mut();
             clint.tick();
             if clint.timer_irq_pending() {
-                self.csrs.mip |= 1u64 << 7; // MTIP
+                // When the supervisor timer interrupt is delegated to S-mode (mideleg[5]=1),
+                // deliver the CLINT timer directly as STIP (bit 5) without routing through
+                // M-mode. Otherwise use the standard MTIP (bit 7) path.
+                if (self.csrs.mideleg >> 5) & 1 == 1 {
+                    self.csrs.mip |= 1u64 << 5; // STIP — S-mode timer pending
+                    self.csrs.mip &= !(1u64 << 7); // no MTIP when using delegation
+                } else {
+                    self.csrs.mip |= 1u64 << 7; // MTIP — M-mode timer pending
+                }
             } else {
-                self.csrs.mip &= !(1u64 << 7);
+                self.csrs.mip &= !(1u64 << 7); // clear MTIP
+                self.csrs.mip &= !(1u64 << 5); // clear STIP
             }
             if clint.software_irq_pending() {
                 self.csrs.mip |= 1u64 << 3; // MSIP
@@ -574,7 +583,7 @@ impl Pipeline {
                 }
                 Err(VmError::Sret) => {
                     self.handle_sret();
-                    return Ok(TickOutcome::Continue);
+                    return Ok(TickOutcome::EcallSquash);
                 }
                 Err(e) => {
                     let pc = self.regs.pc;

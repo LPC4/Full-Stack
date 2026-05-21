@@ -60,14 +60,15 @@ impl CompilerView for DisassemblyView {
                     line_to_address[idx] = Some(addr);
                     address_to_line.entry(addr).or_insert(idx);
                 }
-            } else if !trimmed.is_empty() && !trimmed.starts_with('.') && !trimmed.starts_with(';')
+            } else if !trimmed.is_empty()
+                && !trimmed.starts_with('.')
+                && !trimmed.starts_with(';')
+                && let Some(base) = block_base
             {
-                if let Some(base) = block_base {
-                    let addr = base + insn_offset;
-                    line_to_address[idx] = Some(addr);
-                    address_to_line.entry(addr).or_insert(idx);
-                    insn_offset += 4;
-                }
+                let addr = base + insn_offset;
+                line_to_address[idx] = Some(addr);
+                address_to_line.entry(addr).or_insert(idx);
+                insn_offset += 4;
             }
         }
 
@@ -86,13 +87,13 @@ impl CompilerView for DisassemblyView {
                         if offset == 0 {
                             name.clone()
                         } else {
-                            format!("{}  +{:#x}", name, offset)
+                            format!("{name}  +{offset:#x}")
                         }
                     } else {
-                        format!("pc = {:#010x}  (firmware)", current_pc)
+                        format!("pc = {current_pc:#010x}  (firmware)")
                     }
                 }
-                None => format!("pc = {:#010x}  (firmware)", current_pc),
+                None => format!("pc = {current_pc:#010x}  (firmware)"),
             }
         };
 
@@ -112,7 +113,7 @@ impl CompilerView for DisassemblyView {
                 );
             } else {
                 ui.label(
-                    RichText::new(format!("pc = {:#010x}  (firmware)", current_pc))
+                    RichText::new(format!("pc = {current_pc:#010x}  (firmware)"))
                         .monospace()
                         .size(11.0)
                         .color(theme.warning),
@@ -173,7 +174,7 @@ impl CompilerView for DisassemblyView {
                         let is_active = pc_in_code && Some(*addr) == current_fn_addr;
                         let resp = ui.selectable_label(
                             is_active,
-                            RichText::new(format!("{:#010x}  {}", addr, name))
+                            RichText::new(format!("{addr:#010x}  {name}"))
                                 .monospace()
                                 .size(11.0),
                         );
@@ -202,7 +203,7 @@ impl CompilerView for DisassemblyView {
                 for (idx, line) in lines.iter().enumerate() {
                     let trimmed = line.trim();
                     let line_addr = line_to_address[idx];
-                    let is_current = line_addr.map_or(false, |a| a == current_pc);
+                    let is_current = line_addr == Some(current_pc);
 
                     // Function-boundary divider before known symbol labels
                     if idx > 0 && trimmed.ends_with(':') && !trimmed.starts_with('.') {
@@ -242,7 +243,7 @@ impl CompilerView for DisassemblyView {
                                         theme.text_dim
                                     };
                                     ui.label(
-                                        RichText::new(format!("{:#010x}", addr))
+                                        RichText::new(format!("{addr:#010x}"))
                                             .monospace()
                                             .size(11.0)
                                             .color(addr_color),
@@ -291,7 +292,7 @@ impl CompilerView for DisassemblyView {
                         );
                     }
 
-                    if scroll_to.zip(line_addr).map_or(false, |(t, a)| t == a) {
+                    if scroll_to.zip(line_addr).is_some_and(|(t, a)| t == a) {
                         row_resp.scroll_to_me(Some(Align::Center));
                     }
                 }

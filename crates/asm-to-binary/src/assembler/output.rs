@@ -171,9 +171,9 @@ impl AssembledOutput {
     ///
     /// Layout: ELF header · 1 program header · section data · section headers · strtab · symtab
     ///
-    /// A single combined PT_LOAD segment covers all sections.  This avoids the
+    /// A single combined `PT_LOAD` segment covers all sections.  This avoids the
     /// QEMU page-permission conflict that arises when .text (R X) and .bss (R W)
-    /// share the same 4 KB page: with one PT_LOAD there is no conflicting mapping.
+    /// share the same 4 KB page: with one `PT_LOAD` there is no conflicting mapping.
     /// Since all code uses PC-relative addressing, the single-segment layout is
     /// identical to what the assembler compiled against.
     ///
@@ -190,7 +190,12 @@ impl AssembledOutput {
     }
 
     fn to_elf_with_candidates(&self, load_base: u64, candidates: &[&str]) -> Vec<u8> {
-        use elf64::*;
+        use elf64::{
+            ELF64_HDR_SIZE, ELF64_PHDR_SIZE, ELF64_SHDR_SIZE, ELF64_SYM_SIZE, ELFCLASS64,
+            ELFDATA2LSB, ELFMAG, EM_RISCV, ET_EXEC, EV_CURRENT, PF_R, PF_W, PF_X, PT_LOAD,
+            SHF_ALLOC, SHF_EXECINSTR, SHF_WRITE, SHN_ABS, SHT_NOBITS, SHT_PROGBITS, SHT_STRTAB,
+            SHT_SYMTAB, STB_GLOBAL, STB_LOCAL, STT_NOTYPE,
+        };
 
         // ---- Collect sections with their load addresses ----
         struct ElfSec<'a> {
@@ -288,7 +293,7 @@ impl AssembledOutput {
         let mut sorted_syms: Vec<(&String, &u64)> = self.symbol_table.iter().collect();
         sorted_syms.sort_by_key(|&(_, &addr)| addr);
 
-        for &(ref name, &addr) in &sorted_syms {
+        for &(name, &addr) in &sorted_syms {
             let name_off = strtab.len() as u32;
             strtab.extend_from_slice(name.as_bytes());
             strtab.push(0);
@@ -386,7 +391,7 @@ impl AssembledOutput {
 
         // Pad from end of program header to page-aligned section data start.
         debug_assert_eq!(buf.len() as u64, header_end);
-        buf.extend(std::iter::repeat(0u8).take(header_padding as usize));
+        buf.extend(std::iter::repeat_n(0u8, header_padding as usize));
 
         // ---- Emit section data ----
         for (i, es) in elf_secs.iter().enumerate() {
@@ -504,7 +509,7 @@ impl AssembledOutput {
     /// the symbol table so kernel startup code can zero BSS, set the stack
     /// pointer, and initialise the heap without hard-coding addresses.
     ///
-    /// Symbols are stored as section-relative offsets (load_base is added by
+    /// Symbols are stored as section-relative offsets (`load_base` is added by
     /// the ELF writer).  If `layout.stack_top > 0` the value stored is
     /// `layout.stack_top - layout.load_base` so that after load-base adjustment
     /// the ELF symbol value equals `layout.stack_top`.

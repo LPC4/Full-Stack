@@ -3,9 +3,9 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LinkLayout {
     /// Virtual base address where the image is loaded.
-    /// - Hosted userspace: 0x0001_0000 (ELF_LOAD_BASE).
-    /// - Bare-metal RISC-V after SBI handoff: 0x8020_0000.
-    /// - Bare-metal without SBI: 0x8000_0000.
+    /// - Hosted userspace: `0x0001_0000` (`ELF_LOAD_BASE`).
+    /// - Bare-metal RISC-V after SBI handoff: `0x8020_0000`.
+    /// - Bare-metal without SBI: `0x8000_0000`.
     pub load_base: u64,
 
     /// If `true`, inject these boundary symbols into the output after assembly:
@@ -56,7 +56,7 @@ impl LinkLayout {
 
     /// Bare-metal RISC-V kernel defaults.
     ///
-    /// Assumes OpenSBI places the kernel at `0x8020_0000`, 128 MiB RAM from
+    /// Assumes `OpenSBI` places the kernel at `0x8020_0000`, 128 MiB RAM from
     /// `0x8000_0000`, a 6 MiB stack, and a 4 MiB heap.
     pub fn freestanding_kernel() -> Self {
         Self {

@@ -15,6 +15,7 @@ pub fn get_stdlib_source_for_mode(mode: TargetMode) -> String {
     match mode {
         TargetMode::Hosted => get_stdlib_source(),
         TargetMode::Freestanding => get_freestanding_stdlib_source(),
+        TargetMode::Kernel => get_kernel_stdlib_source(),
     }
 }
 
@@ -27,9 +28,21 @@ pub fn get_stdlib_source() -> String {
         + 256;
     let mut combined = String::with_capacity(capacity);
     append_section(&mut combined, "; --- stdlib: types ---\n", stdlib::TYPES);
-    append_section(&mut combined, "; --- stdlib: memory_allocator ---\n", stdlib::MEMORY_ALLOCATOR);
-    append_section(&mut combined, "; --- stdlib: string_utils ---\n", stdlib::STRING_UTILS);
-    append_section(&mut combined, "; --- stdlib: runtime ---\n", stdlib::HOSTED_RUNTIME);
+    append_section(
+        &mut combined,
+        "; --- stdlib: memory_allocator ---\n",
+        stdlib::MEMORY_ALLOCATOR,
+    );
+    append_section(
+        &mut combined,
+        "; --- stdlib: string_utils ---\n",
+        stdlib::STRING_UTILS,
+    );
+    append_section(
+        &mut combined,
+        "; --- stdlib: runtime ---\n",
+        stdlib::HOSTED_RUNTIME,
+    );
     combined
 }
 
@@ -51,13 +64,33 @@ pub fn get_kernel_stdlib_source() -> String {
         + 512;
     let mut combined = String::with_capacity(capacity);
     append_section(&mut combined, "; --- stdlib: types ---\n", stdlib::TYPES);
-    append_section(&mut combined, "; --- stdlib: memory_allocator ---\n", stdlib::MEMORY_ALLOCATOR);
-    append_section(&mut combined, "; --- stdlib: string_utils ---\n", stdlib::STRING_UTILS);
+    append_section(
+        &mut combined,
+        "; --- stdlib: memory_allocator ---\n",
+        stdlib::MEMORY_ALLOCATOR,
+    );
+    append_section(
+        &mut combined,
+        "; --- stdlib: string_utils ---\n",
+        stdlib::STRING_UTILS,
+    );
     append_section(&mut combined, "; --- stdlib: mem ---\n", stdlib::MEM);
-    append_section(&mut combined, "; --- stdlib: runtime (freestanding) ---\n", stdlib::FREESTANDING_RUNTIME);
-    append_section(&mut combined, "; --- stdlib: console (freestanding) ---\n", stdlib::FREESTANDING_CONSOLE);
+    append_section(
+        &mut combined,
+        "; --- stdlib: runtime (freestanding) ---\n",
+        stdlib::FREESTANDING_RUNTIME,
+    );
+    append_section(
+        &mut combined,
+        "; --- stdlib: console (freestanding) ---\n",
+        stdlib::FREESTANDING_CONSOLE,
+    );
     append_section(&mut combined, "; --- stdlib: klog ---\n", stdlib::KLOG);
-    append_section(&mut combined, "; --- stdlib: kernel runtime ---\n", kernel::RUNTIME);
+    append_section(
+        &mut combined,
+        "; --- stdlib: kernel runtime ---\n",
+        kernel::RUNTIME,
+    );
     combined
 }
 
@@ -70,8 +103,20 @@ fn get_freestanding_stdlib_source() -> String {
         + 256;
     let mut combined = String::with_capacity(capacity);
     append_section(&mut combined, "; --- stdlib: types ---\n", stdlib::TYPES);
-    append_section(&mut combined, "; --- stdlib: memory_allocator ---\n", stdlib::MEMORY_ALLOCATOR);
-    append_section(&mut combined, "; --- stdlib: string_utils ---\n", stdlib::STRING_UTILS);
-    append_section(&mut combined, "; --- stdlib: runtime (freestanding) ---\n", stdlib::FREESTANDING_RUNTIME);
+    append_section(
+        &mut combined,
+        "; --- stdlib: memory_allocator ---\n",
+        stdlib::MEMORY_ALLOCATOR,
+    );
+    append_section(
+        &mut combined,
+        "; --- stdlib: string_utils ---\n",
+        stdlib::STRING_UTILS,
+    );
+    append_section(
+        &mut combined,
+        "; --- stdlib: runtime (freestanding) ---\n",
+        stdlib::FREESTANDING_RUNTIME,
+    );
     combined
 }

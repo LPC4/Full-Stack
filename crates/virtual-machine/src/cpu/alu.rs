@@ -776,8 +776,10 @@ pub fn fp_fclass_s(a: f32) -> u64 {
         if sign { 1 << 3 } else { 1 << 4 }
     } else if (bits & 0x7F80_0000) == 0 {
         if sign { 1 << 2 } else { 1 << 5 }
+    } else if sign {
+        1 << 1
     } else {
-        if sign { 1 << 1 } else { 1 << 6 }
+        1 << 6
     }
 }
 
@@ -792,8 +794,10 @@ pub fn fp_fclass_d(a: f64) -> u64 {
         if sign { 1 << 3 } else { 1 << 4 }
     } else if (bits & 0x7FF0_0000_0000_0000) == 0 {
         if sign { 1 << 2 } else { 1 << 5 }
+    } else if sign {
+        1 << 1
     } else {
-        if sign { 1 << 1 } else { 1 << 6 }
+        1 << 6
     }
 }
 

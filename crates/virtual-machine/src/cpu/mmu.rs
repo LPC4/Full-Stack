@@ -205,7 +205,7 @@ pub fn translate_with_pmp(
     Err(VmError::PageFault(vaddr))
 }
 
-/// Backwards-compatible wrapper keeping the original translate() signature.
+/// Backwards-compatible wrapper keeping the original `translate()` signature.
 /// Calls the extended translator with PMP disabled (pmpcfg0=0, pmpaddr0=0).
 pub fn translate(
     vaddr: u64,
@@ -216,9 +216,10 @@ pub fn translate(
     is_write: bool,
     is_execute: bool,
 ) -> Result<u64, VmError> {
-    translate_with_pmp(vaddr, satp, priv_mode, mstatus, bus, is_write, is_execute, 0, 0)
+    translate_with_pmp(
+        vaddr, satp, priv_mode, mstatus, bus, is_write, is_execute, 0, 0,
+    )
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -279,7 +280,9 @@ mod tests {
             pmpaddr0,
         );
 
-        assert!(matches!(res, Err(crate::error::VmError::InstructionAccessFault(_))));
+        assert!(matches!(
+            res,
+            Err(crate::error::VmError::InstructionAccessFault(_))
+        ));
     }
 }
-

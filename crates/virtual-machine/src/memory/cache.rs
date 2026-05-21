@@ -128,7 +128,7 @@ impl<Next: MemoryAccess> Cache<Next> {
         (tag << (self.block_bits + self.set_bits)) | (index << self.block_bits)
     }
 
-    /// Resolve an address to a (set_idx, way_idx, was_miss) tuple.
+    /// Resolve an address to a (`set_idx`, `way_idx`, `was_miss`) tuple.
     /// On a miss the block is fetched from the next level; dirty victims are written back.
     /// On a hit or after a fill, the LRU age of the line is updated.
     fn resolve_line(&mut self, addr: u64) -> Result<(usize, usize, bool), VmError> {

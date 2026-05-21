@@ -86,7 +86,7 @@ impl CompilerView for MemoryView {
                     for (label, addr) in &session.snapshot.section_presets {
                         if ui.small_button(*label).clicked() {
                             self.current_addr = addr & !7;
-                            self.addr_input = format!("{:#010x}", addr);
+                            self.addr_input = format!("{addr:#010x}");
                         }
                     }
 

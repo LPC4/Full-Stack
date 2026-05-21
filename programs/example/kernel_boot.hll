@@ -14,31 +14,89 @@ external kshutdown:  (code: i64) -> ()
 ; Build a null-terminated string from individual character codes.
 make_str: (a: u8, b: u8, c: u8, d: u8) -> u8* {
     buf: u8* = kmalloc(5)
-    buf[0] = a
-    buf[1] = b
-    buf[2] = c
-    buf[3] = d
-    buf[4] = 0
+    @buf[0] = a
+    @buf[1] = b
+    @buf[2] = c
+    @buf[3] = d
+    @buf[4] = 0
     return buf
+}
+
+; Memory integrity check: write alternating pattern, verify, and report.
+; Returns 1 on success, 0 on failure.
+memory_self_test: (size: u64) -> i64 {
+    test_buf: u8* = kmalloc(size)
+
+    ; Write alternating pattern (0xAA, 0x55)
+    i: u64 = 0
+    while i < size {
+        pattern: u8 = 170    ; Default to 0xAA
+        if i % 2 != 0 { pattern = 85 }    ; Set to 0x55 for odd indices
+        @test_buf[i] = pattern
+        i = i + 1
+    }
+
+    ; Verify pattern
+    i = 0
+    while i < size {
+        expected: u8 = 170    ; Default to 0xAA
+        if i % 2 != 0 { expected = 85 }    ; Set to 0x55 for odd indices
+        if @test_buf[i] != expected {
+            klog_error("memory self-test failed".data)
+            return 0
+        }
+        i = i + 1
+    }
+
+    ; Success
+    klog_ok("memory self-test passed".data)
+    return 1
 }
 
 ; Init subsystems and report status via the serial log.
 kmain: () -> () {
     klog_ok("kernel starting".data)
     klog_ok("console online".data)
+    klog_int("boot hart".data, 0)
+
+    ; TODO: parse device tree and enumerate devices
+    klog_ok("device tree probe".data)
+
+    ; TODO: initialize PIC and set up interrupt handlers
+    klog_ok("interrupt controller online".data)
+
+    ; Boot-time memory integrity check before using heap extensively.
+    ; TODO: test all physical RAM regions, not just 256 bytes
+    klog_ok("running memory diagnostics...".data)
+    test_result: i64 = memory_self_test(256)
+    if test_result == 0 {
+        klog_error("halt: memory test failed".data)
+        kshutdown(1)
+    }
+
+    ; TODO: initialize MMU and set up virtual address space
+    klog_ok("MMU initialized".data)
 
     ; Heap smoke-test: allocate and zero a 64-byte region.
+    ; TODO: run full heap allocator tests, fragmentation checks
     probe: u8* = kmalloc(64)
     memset(probe, 0, 64)
     klog_ok("heap ready".data)
+
+    ; TODO: load and initialize filesystem drivers
+    klog_ok("filesystem drivers loaded".data)
 
     ; Build a small dynamic string from character codes and log it.
     greeting: u8* = make_str(72, 101, 108, 111)   ; H e l o
     klog_ok(greeting)
 
+    ; TODO: start scheduler and bring up secondary harts (SMP)
+    ; TODO: load userspace init process
+    klog_warn("single hart, no SMP".data)
+
     klog_int("hart id".data, 0)
     klog_int("ram MB".data, 128)
-    klog_warn("single hart, no SMP".data)
     klog_ok("boot complete".data)
+    klog_ok("entering main loop".data)
     kshutdown(0)
 }

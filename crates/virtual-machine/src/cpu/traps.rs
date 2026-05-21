@@ -31,12 +31,10 @@ pub const CAUSE_ECALL_S: u64 = 9;
 /// Environment call from M-mode
 pub const CAUSE_ECALL_M: u64 = 11;
 /// Instruction page fault
-#[allow(dead_code)]
 pub const CAUSE_PAGE_FAULT_INST: u64 = 12;
 /// Load page fault
 pub const CAUSE_PAGE_FAULT_LOAD: u64 = 13;
 /// Store/AMO page fault
-#[allow(dead_code)]
 pub const CAUSE_PAGE_FAULT_STORE: u64 = 15;
 
 // Interrupt causes have bit 63 set.
@@ -87,11 +85,7 @@ pub fn take_trap(regs: &mut Registers, csrs: &mut CsrFile, cause: u64, tval: u64
         let sie = (csrs.mstatus >> 1) & 1;
         csrs.mstatus = (csrs.mstatus & !(1u64 << 5)) | (sie << 5); // SPIE = old SIE
         csrs.mstatus &= !(1u64 << 1); // SIE = 0
-        let spp: u64 = if current_priv == PrivilegeMode::User {
-            0
-        } else {
-            1
-        };
+        let spp: u64 = u64::from(current_priv != PrivilegeMode::User);
         csrs.mstatus = (csrs.mstatus & !(1u64 << 8)) | (spp << 8); // SPP = current_priv
 
         regs.priv_mode = PrivilegeMode::Supervisor;

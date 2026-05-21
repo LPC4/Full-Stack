@@ -33,6 +33,12 @@ pub struct CompilerRv64 {
     function_return_types: HashMap<String, IrType>,
 }
 
+impl Default for CompilerRv64 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CompilerRv64 {
     pub fn new() -> Self {
         Self {
@@ -652,7 +658,7 @@ impl CompilerRv64 {
                             )));
                         }
                         let align = self.type_alignment(&resolved_field_ty);
-                        field_offset = ((field_offset + align - 1) / align * align) + field_size;
+                        field_offset = (field_offset.div_ceil(align) * align) + field_size;
                     }
                 } else {
                     let size = self.type_size(&resolved_ret_ty);
@@ -667,16 +673,14 @@ impl CompilerRv64 {
                     }
                 }
             }
-        } else if !is_agg_return {
-            if let Some(dest) = dest {
-                let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
-                let resolved_return_ty = self.resolve_ir_type(&func_return_type);
-                self.emitter
-                    .emit_store_from_tmp(SP, A0, &resolved_return_ty, dest_slot as i32);
-                // If dest has a physical register allocation, also store there
-                if let Some(Allocation::Physical(phys_reg)) = alloc.get_allocation(dest) {
-                    self.emitter.emit_mv(*phys_reg, A0);
-                }
+        } else if !is_agg_return && let Some(dest) = dest {
+            let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
+            let resolved_return_ty = self.resolve_ir_type(&func_return_type);
+            self.emitter
+                .emit_store_from_tmp(SP, A0, &resolved_return_ty, dest_slot as i32);
+            // If dest has a physical register allocation, also store there
+            if let Some(Allocation::Physical(phys_reg)) = alloc.get_allocation(dest) {
+                self.emitter.emit_mv(*phys_reg, A0);
             }
         }
         self.emitter
@@ -838,7 +842,7 @@ impl CompilerRv64 {
                                 .emit_lb(ret_reg, SP, (slot + field_offset) as i32);
                         }
                         let align = self.type_alignment(&resolved_field_ty);
-                        field_offset = ((field_offset + align - 1) / align * align) + field_size;
+                        field_offset = (field_offset.div_ceil(align) * align) + field_size;
                     }
                 } else {
                     let size = self.type_size(&resolved_val);
@@ -880,20 +884,20 @@ impl CompilerRv64 {
         alloc: &RegisterAllocator,
     ) -> Reg {
         // Check if pointer is in a physical register
-        if let Some(alloc_result) = alloc.get_allocation(ptr) {
-            if let Allocation::Physical(phys_reg) = alloc_result {
-                let tmp = self.emitter.alloc_temp_reg();
-                if let Some(off) = byte_offset {
-                    if off != 0 {
-                        self.emitter.emit_add_imm(tmp, *phys_reg, off as i64);
-                    } else {
-                        self.emitter.emit_mv(tmp, *phys_reg);
-                    }
+        if let Some(alloc_result) = alloc.get_allocation(ptr)
+            && let Allocation::Physical(phys_reg) = alloc_result
+        {
+            let tmp = self.emitter.alloc_temp_reg();
+            if let Some(off) = byte_offset {
+                if off != 0 {
+                    self.emitter.emit_add_imm(tmp, *phys_reg, off as i64);
                 } else {
                     self.emitter.emit_mv(tmp, *phys_reg);
                 }
-                return tmp;
+            } else {
+                self.emitter.emit_mv(tmp, *phys_reg);
             }
+            return tmp;
         }
 
         // Fall back to stack slot
@@ -905,10 +909,10 @@ impl CompilerRv64 {
             self.emitter.emit_add_imm(tmp, SP, total_offset);
         } else {
             self.emitter.emit_ld(tmp, SP, slot as i32);
-            if let Some(off) = byte_offset {
-                if off != 0 {
-                    self.emitter.emit_add_imm(tmp, tmp, off as i64);
-                }
+            if let Some(off) = byte_offset
+                && off != 0
+            {
+                self.emitter.emit_add_imm(tmp, tmp, off as i64);
             }
         }
         tmp
@@ -985,25 +989,25 @@ impl CompilerRv64 {
         match val {
             IrValue::Register(reg) => {
                 // Check if this register has a physical register allocation
-                if let Some(alloc_result) = alloc.get_allocation(reg) {
-                    if let Allocation::Physical(phys_reg) = alloc_result {
-                        // Value is in a physical register, copy it to our temp
-                        // For floats, we need to use the appropriate move instruction
-                        let ty = ctx
-                            .type_for_reg(reg)
-                            .unwrap_or(IrType::Float(hll_to_ir::FloatWidth::F32));
-                        match ty {
-                            IrType::Float(hll_to_ir::FloatWidth::F32) => {
-                                self.emitter.emit_fmv_s(temp, *phys_reg);
-                            }
-                            IrType::Float(hll_to_ir::FloatWidth::F64) => {
-                                self.emitter
-                                    .emit_inst(RealInstruction::FsgnjD(fmv_d(temp, *phys_reg)));
-                            }
-                            _ => panic!("Expected float type"),
+                if let Some(alloc_result) = alloc.get_allocation(reg)
+                    && let Allocation::Physical(phys_reg) = alloc_result
+                {
+                    // Value is in a physical register, copy it to our temp
+                    // For floats, we need to use the appropriate move instruction
+                    let ty = ctx
+                        .type_for_reg(reg)
+                        .unwrap_or(IrType::Float(hll_to_ir::FloatWidth::F32));
+                    match ty {
+                        IrType::Float(hll_to_ir::FloatWidth::F32) => {
+                            self.emitter.emit_fmv_s(temp, *phys_reg);
                         }
-                        return temp;
+                        IrType::Float(hll_to_ir::FloatWidth::F64) => {
+                            self.emitter
+                                .emit_inst(RealInstruction::FsgnjD(fmv_d(temp, *phys_reg)));
+                        }
+                        _ => panic!("Expected float type"),
                     }
+                    return temp;
                 }
 
                 // Load from stack
@@ -1039,12 +1043,12 @@ impl CompilerRv64 {
     ) -> Reg {
         let temp = self.emitter.alloc_temp_reg();
         // Check if this register has a physical register allocation
-        if let Some(alloc_result) = alloc.get_allocation(reg) {
-            if let Allocation::Physical(phys_reg) = alloc_result {
-                // Value is in a physical register, copy it to our temp
-                self.emitter.emit_mv(temp, *phys_reg);
-                return temp;
-            }
+        if let Some(alloc_result) = alloc.get_allocation(reg)
+            && let Allocation::Physical(phys_reg) = alloc_result
+        {
+            // Value is in a physical register, copy it to our temp
+            self.emitter.emit_mv(temp, *phys_reg);
+            return temp;
         }
 
         // Load from stack
@@ -1067,7 +1071,7 @@ impl CompilerRv64 {
                     self.emitter.emit_addiw(rd, rs, 0);
                 }
                 IrType::Integer(hll_to_ir::IntWidth::I64) | IrType::Pointer(_) => {
-                    self.emitter.emit_mv(rd, rs)
+                    self.emitter.emit_mv(rd, rs);
                 }
                 IrType::Integer(hll_to_ir::IntWidth::I16) => {
                     self.emitter.emit_slli(rd, rs, 48);

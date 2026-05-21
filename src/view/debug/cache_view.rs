@@ -90,7 +90,7 @@ fn format_bytes(n: usize) -> String {
     } else if n >= 1024 {
         format!("{}KB", n / 1024)
     } else {
-        format!("{}B", n)
+        format!("{n}B")
     }
 }
 
@@ -194,7 +194,7 @@ fn draw_full_grid(ui: &mut Ui, snap: &CacheSnapshot) {
     // Axis labels
     ui.horizontal(|ui| {
         ui.add_space(label_w + 4.0);
-        ui.label(RichText::new(format!("← {} sets →", n_sets)).small().weak());
+        ui.label(RichText::new(format!("← {n_sets} sets →")).small().weak());
     });
 
     ui.horizontal(|ui| {
@@ -229,21 +229,21 @@ fn draw_full_grid(ui: &mut Ui, snap: &CacheSnapshot) {
         }
 
         // Tooltip: find hovered cell
-        if resp.hovered() {
-            if let Some(pos) = resp.hover_pos() {
-                let col = ((pos.x - rect.min.x) / (cell_w + gap)).floor() as usize;
-                let row = ((pos.y - rect.min.y) / (cell_h + gap)).floor() as usize;
-                if col < n_sets && row < n_ways {
-                    let line = &snap.sets[col][row];
-                    let desc = if !line.valid {
-                        "invalid".to_string()
-                    } else if line.dirty {
-                        format!("dirty  tag={:#010x}", line.tag)
-                    } else {
-                        format!("clean  tag={:#010x}", line.tag)
-                    };
-                    resp.on_hover_text(format!("Set {:3}  Way {}  {}", col, row, desc));
-                }
+        if resp.hovered()
+            && let Some(pos) = resp.hover_pos()
+        {
+            let col = ((pos.x - rect.min.x) / (cell_w + gap)).floor() as usize;
+            let row = ((pos.y - rect.min.y) / (cell_h + gap)).floor() as usize;
+            if col < n_sets && row < n_ways {
+                let line = &snap.sets[col][row];
+                let desc = if !line.valid {
+                    "invalid".to_owned()
+                } else if line.dirty {
+                    format!("dirty  tag={:#010x}", line.tag)
+                } else {
+                    format!("clean  tag={:#010x}", line.tag)
+                };
+                resp.on_hover_text(format!("Set {col:3}  Way {row}  {desc}"));
             }
         }
     });

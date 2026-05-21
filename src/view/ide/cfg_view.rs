@@ -17,7 +17,7 @@ struct BasicBlock {
 fn parse_blocks(asm: &str) -> Vec<BasicBlock> {
     let mut blocks = Vec::new();
     let mut current_block = BasicBlock {
-        label: "entry".to_string(),
+        label: "entry".to_owned(),
         instructions: vec![],
         targets: vec![],
     };
@@ -37,18 +37,19 @@ fn parse_blocks(asm: &str) -> Vec<BasicBlock> {
                 blocks.push(current_block);
             }
             current_block = BasicBlock {
-                label: trimmed.trim_end_matches(':').to_string(),
+                label: trimmed.trim_end_matches(':').to_owned(),
                 instructions: vec![],
                 targets: vec![],
             };
         } else {
-            current_block.instructions.push(trimmed.to_string());
+            current_block.instructions.push(trimmed.to_owned());
 
             let parts: Vec<&str> = trimmed.split_whitespace().collect();
-            if !parts.is_empty() && branch_mnemonics.contains(&parts[0]) {
-                if let Some(target) = parts.last() {
-                    current_block.targets.push(target.to_string());
-                }
+            if !parts.is_empty()
+                && branch_mnemonics.contains(&parts[0])
+                && let Some(target) = parts.last()
+            {
+                current_block.targets.push(target.to_string());
             }
         }
     }

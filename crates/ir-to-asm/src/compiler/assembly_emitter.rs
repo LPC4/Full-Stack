@@ -79,10 +79,10 @@ impl AssemblyEmitter {
     pub fn start_function(&mut self, name: &str) {
         self.switch_section(".text");
         self.lines
-            .push(format!("\t; ========================================"));
+            .push("\t; ========================================".to_owned());
         self.lines.push(format!("\t; Function: {name}"));
         self.lines
-            .push(format!("\t; ========================================"));
+            .push("\t; ========================================".to_owned());
         self.lines.push(format!(".globl {name}"));
         self.lines.push(format!("{name}:"));
         self.tokens
@@ -93,7 +93,7 @@ impl AssemblyEmitter {
     }
 
     pub fn end_function(&mut self) {
-        self.lines.push(format!("\t; End of function"));
+        self.lines.push("\t; End of function".to_owned());
         self.lines.push(String::new());
         self.tokens
             .push(RvInstruction::Comment("End of function".to_owned()));
@@ -353,7 +353,7 @@ impl AssemblyEmitter {
         match ty {
             IrType::Integer(w) => match w {
                 hll_to_ir::IntWidth::I1 | hll_to_ir::IntWidth::I8 => {
-                    self.emit_lb(rd, 2, slot as i32)
+                    self.emit_lb(rd, 2, slot as i32);
                 }
                 hll_to_ir::IntWidth::I16 => self.emit_lh(rd, 2, slot as i32),
                 hll_to_ir::IntWidth::I32 => self.emit_lw(rd, 2, slot as i32),

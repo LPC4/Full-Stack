@@ -1,5 +1,5 @@
 //! PLIC - Platform-Level Interrupt Controller.
-//! Base address 0x0C00_0000.
+//! Base address `0x0C00_0000`.
 
 use crate::error::VmError;
 use crate::memory::MemoryAccess;
@@ -9,19 +9,25 @@ const MAX_CONTEXTS: usize = 1;
 
 pub struct Plic {
     priority: [u32; MAX_SOURCES],
-    pending: [u32; (MAX_SOURCES + 31) / 32],
-    enable: [u32; (MAX_SOURCES + 31) / 32 * MAX_CONTEXTS],
+    pending: [u32; MAX_SOURCES.div_ceil(32)],
+    enable: [u32; MAX_SOURCES.div_ceil(32) * MAX_CONTEXTS],
     threshold: [u32; MAX_CONTEXTS],
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     claim_complete: [u32; MAX_CONTEXTS],
+}
+
+impl Default for Plic {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Plic {
     pub fn new() -> Self {
         Self {
             priority: [0; MAX_SOURCES],
-            pending: [0; (MAX_SOURCES + 31) / 32],
-            enable: [0; (MAX_SOURCES + 31) / 32 * MAX_CONTEXTS],
+            pending: [0; MAX_SOURCES.div_ceil(32)],
+            enable: [0; MAX_SOURCES.div_ceil(32) * MAX_CONTEXTS],
             threshold: [0; MAX_CONTEXTS],
             claim_complete: [0; MAX_CONTEXTS],
         }

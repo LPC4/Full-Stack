@@ -81,7 +81,7 @@ impl CompilerView for VmExecutionView {
 
                         ui.colored_label(status_color, status_text);
                         if let Some(code) = result.exit_code {
-                            ui.label(format!("Exit code: {}", code));
+                            ui.label(format!("Exit code: {code}"));
                         }
                         ui.label(format!("Steps executed: {}", result.steps));
                     });

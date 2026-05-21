@@ -1,11 +1,11 @@
-//! Memory access stage, resolves Load/Store/Atomic ExecResults against the system bus.
+//! Memory access stage, resolves Load/Store/Atomic `ExecResults` against the system bus.
 
 use crate::bus::SystemBus;
 use crate::cpu::mmu;
 use crate::cpu::pipeline::execute::ExecResult;
 use crate::cpu::registers::PrivilegeMode;
 use crate::error::VmError;
-use crate::memory::MemoryAccess;
+use crate::memory::MemoryAccess as _;
 
 // ---------------------------------------------------------------------------
 // Public result type
@@ -135,7 +135,9 @@ pub fn memory_stage_with_pmp(
             funct3,
             next_pc,
         } => {
-            let phys_addr = mmu::translate_with_pmp(addr, satp, priv_mode, mstatus, bus, false, false, pmpcfg0, pmpaddr0)?;
+            let phys_addr = mmu::translate_with_pmp(
+                addr, satp, priv_mode, mstatus, bus, false, false, pmpcfg0, pmpaddr0,
+            )?;
             let val = load_int(bus, phys_addr, funct3)?;
             Ok(MemResult::WriteInt { rd, val, next_pc })
         }
@@ -147,7 +149,9 @@ pub fn memory_stage_with_pmp(
             funct3,
             next_pc,
         } => {
-            let phys_addr = mmu::translate_with_pmp(addr, satp, priv_mode, mstatus, bus, true, false, pmpcfg0, pmpaddr0)?;
+            let phys_addr = mmu::translate_with_pmp(
+                addr, satp, priv_mode, mstatus, bus, true, false, pmpcfg0, pmpaddr0,
+            )?;
             store_int(bus, phys_addr, val, funct3)?;
             Ok(MemResult::Jump { next_pc })
         }
@@ -159,7 +163,9 @@ pub fn memory_stage_with_pmp(
             funct3,
             next_pc,
         } => {
-            let phys_addr = mmu::translate_with_pmp(addr, satp, priv_mode, mstatus, bus, false, false, pmpcfg0, pmpaddr0)?;
+            let phys_addr = mmu::translate_with_pmp(
+                addr, satp, priv_mode, mstatus, bus, false, false, pmpcfg0, pmpaddr0,
+            )?;
             let bits = load_fp(bus, phys_addr, funct3)?;
             Ok(MemResult::WriteFp { rd, bits, next_pc })
         }
@@ -171,7 +177,9 @@ pub fn memory_stage_with_pmp(
             funct3,
             next_pc,
         } => {
-            let phys_addr = mmu::translate_with_pmp(addr, satp, priv_mode, mstatus, bus, true, false, pmpcfg0, pmpaddr0)?;
+            let phys_addr = mmu::translate_with_pmp(
+                addr, satp, priv_mode, mstatus, bus, true, false, pmpcfg0, pmpaddr0,
+            )?;
             store_fp(bus, phys_addr, bits, funct3)?;
             Ok(MemResult::Jump { next_pc })
         }
@@ -187,7 +195,9 @@ pub fn memory_stage_with_pmp(
             val,
             next_pc,
         } => {
-            let phys_addr = mmu::translate_with_pmp(addr, satp, priv_mode, mstatus, bus, true, false, pmpcfg0, pmpaddr0)?;
+            let phys_addr = mmu::translate_with_pmp(
+                addr, satp, priv_mode, mstatus, bus, true, false, pmpcfg0, pmpaddr0,
+            )?;
             let result_val = handle_atomic(bus, reservation, funct5, funct3, rd, phys_addr, val)?;
             Ok(MemResult::WriteInt {
                 rd,
@@ -345,7 +355,7 @@ fn handle_atomic(
 
     // Natural alignment is required for all atomics: 4-byte for .W, 8-byte for .D.
     let align = if is_word { 4u64 } else { 8u64 };
-    if addr % align != 0 {
+    if !addr.is_multiple_of(align) {
         return Err(VmError::StoreAccessFault(addr));
     }
 

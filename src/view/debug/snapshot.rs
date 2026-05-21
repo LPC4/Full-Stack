@@ -31,9 +31,10 @@ pub struct PipelineEntry {
 }
 
 /// What a single stage slot holds in a given cycle.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub enum SlotState {
     /// Pipeline has not filled this stage yet (early cycles).
+    #[default]
     Empty,
     /// A real instruction is in this stage.
     Normal(PipelineEntry),
@@ -41,12 +42,6 @@ pub enum SlotState {
     StallBubble,
     /// A bubble injected because of a branch mispredict flush.
     FlushBubble,
-}
-
-impl Default for SlotState {
-    fn default() -> Self {
-        Self::Empty
-    }
 }
 
 /// Full 5-stage pipeline state captured for one clock cycle.

@@ -11,7 +11,7 @@ use super::token::{AsmToken, BranchKind};
 /// encode the final machine words.
 use crate::real::RealInstruction;
 use crate::riscv::rv64i::{Addi, Auipc, Beq, Bge, Bgeu, Blt, Bltu, Bne, Jal as JalInst, Jalr};
-use crate::traits::Instruction;
+use crate::traits::Instruction as _;
 
 /// Encode all tokens into an `AssembledOutput` using layout information for
 /// label resolution.
@@ -174,7 +174,7 @@ pub fn encode(tokens: &[AsmToken], layout: &Layout) -> Result<AssembledOutput, A
                 let sec = sections
                     .entry(current_kind.clone())
                     .or_insert_with(|| SectionData::new(current_kind.clone()));
-                sec.bytes.extend(std::iter::repeat(0u8).take(*n as usize));
+                sec.bytes.extend(std::iter::repeat_n(0u8, *n as usize));
                 current_addr += n;
             }
 
@@ -380,7 +380,7 @@ fn encode_la(
     // Find the absolute address by checking which section owns this symbol.
     // Order doesn't matter - we break on the first match.
     let mut target_abs_addr = None;
-    #[allow(clippy::iter_over_hash_type)]
+    #[expect(clippy::iter_over_hash_type)]
     for (section_name, base) in section_bases {
         let qualified_name = format!("{}@{}", symbol, section_name.name());
         if symbols.resolve(&qualified_name).is_some() {

@@ -95,6 +95,7 @@ pub struct PipelineResult {
     pub ir: Option<IrOutput>,
     pub asm: Option<AsmOutput>,
     pub binary: Option<BinaryOutput>,
+    pub assembler_error: Option<String>,
     pub exec: Option<ExecOutput>,
 }
 
@@ -103,6 +104,10 @@ impl PipelineResult {
         self.diagnostics
             .iter()
             .any(|d| d.level == DiagnosticLevel::Error)
+    }
+
+    pub fn has_assembler_error(&self) -> bool {
+        self.assembler_error.is_some()
     }
 
     pub fn format_diagnostics(&self) -> String {
@@ -189,7 +194,7 @@ impl CompilationPipeline {
         } else {
             match self.target_mode {
                 TargetMode::Hosted => LinkLayout::hosted(),
-                TargetMode::Freestanding => LinkLayout::freestanding_kernel(),
+                TargetMode::Freestanding | TargetMode::Kernel => LinkLayout::freestanding_kernel(),
             }
         }
     }
@@ -207,6 +212,7 @@ impl CompilationPipeline {
             match self.target_mode {
                 TargetMode::Hosted => "_start",
                 TargetMode::Freestanding => "kmain",
+                TargetMode::Kernel => "_kernel_start",
             }
         }
     }
@@ -250,6 +256,7 @@ impl CompilationPipeline {
             .map_err(CompilationError::DiagnosticErrors)?;
 
         // Entry-point presence check for freestanding builds.
+        // Kernel mode skips this: `_kernel_start` is provided by the kernel stdlib, not user code.
         if self.target_mode == TargetMode::Freestanding {
             let entry = self.effective_entry_point();
             let entry_defined = out.ir.functions.iter().any(|f| f.name == entry);
@@ -311,6 +318,7 @@ impl CompilationPipeline {
                     ir: None,
                     asm: None,
                     binary: None,
+                    assembler_error: None,
                     exec: None,
                 };
             }
@@ -319,6 +327,7 @@ impl CompilationPipeline {
         let mut diagnostics = out.diagnostics;
 
         // Entry-point presence check for freestanding builds.
+        // Kernel mode skips this: `_kernel_start` is provided by the kernel stdlib, not user code.
         if self.target_mode == TargetMode::Freestanding {
             let entry = self.effective_entry_point();
             if !out.ir.functions.iter().any(|f| f.name == entry)
@@ -357,13 +366,12 @@ impl CompilationPipeline {
             display: asm_text,
         });
 
-        let binary = {
-            let mut all_tokens: Vec<RvInstruction> =
-                stdlib_tokens.map(|s| s.to_vec()).unwrap_or_default();
-            all_tokens.extend(user_tokens);
-            self.assemble_linked(&all_tokens)
-                .ok()
-                .map(|assembled| BinaryOutput { assembled })
+        let mut all_tokens: Vec<RvInstruction> =
+            stdlib_tokens.map(|s| s.to_vec()).unwrap_or_default();
+        all_tokens.extend(user_tokens);
+        let (binary, assembler_error) = match self.assemble_linked(&all_tokens) {
+            Ok(assembled) => (Some(BinaryOutput { assembled }), None),
+            Err(e) => (None, Some(format!("assembler error: {}", e.message))),
         };
 
         PipelineResult {
@@ -373,6 +381,7 @@ impl CompilationPipeline {
             ir,
             asm,
             binary,
+            assembler_error,
             exec: None,
         }
     }

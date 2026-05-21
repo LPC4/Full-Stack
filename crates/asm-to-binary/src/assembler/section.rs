@@ -81,7 +81,7 @@ impl SectionData {
         let rem = self.bytes.len() % alignment;
         if rem != 0 {
             let padding = alignment - rem;
-            self.bytes.extend(std::iter::repeat(0u8).take(padding));
+            self.bytes.extend(std::iter::repeat_n(0u8, padding));
         }
     }
 

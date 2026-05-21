@@ -3,6 +3,7 @@
 #![windows_subsystem = "windows"]
 
 mod app;
+mod machine_window;
 
 // When compiling natively:
 #[cfg(not(target_arch = "wasm32"))]

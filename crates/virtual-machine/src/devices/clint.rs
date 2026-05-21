@@ -1,5 +1,5 @@
 //! CLINT - Core-Local Interruptor (timer + software interrupts).
-//! Memory-mapped at 0x0200_0000.
+//! Memory-mapped at `0x0200_0000`.
 
 use crate::error::VmError;
 use crate::memory::MemoryAccess;
@@ -8,6 +8,12 @@ pub struct Clint {
     pub mtime: u64,
     mtimecmp: u64,
     msip: u32,
+}
+
+impl Default for Clint {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Clint {

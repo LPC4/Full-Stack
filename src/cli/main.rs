@@ -257,7 +257,7 @@ fn cmd_run(args: &Args) -> Result<ExitCode, CliError> {
     match result.outcome {
         StepOutcome::Halted(code) => {
             eprintln!("fsc: program exited with code {code}");
-            #[allow(
+            #[expect(
                 clippy::cast_possible_truncation,
                 reason = "POSIX exit codes are 0-255"
             )]
@@ -356,7 +356,7 @@ fn make_pipeline(mode: TargetMode, string_prefix: &str) -> CompilationPipeline {
 // I/O helpers
 // ---------------------------------------------------------------------------
 
-fn require_input<'a>(args: &'a Args) -> Result<&'a str, CliError> {
+fn require_input(args: &Args) -> Result<&str, CliError> {
     args.input.as_deref().ok_or_else(|| {
         CliError::Usage("an input file is required\n\nRun `fsc help` for usage.".to_owned())
     })
@@ -371,12 +371,11 @@ fn has_extension(path: &str, ext: &str) -> bool {
 }
 
 fn write_or_print(output: Option<&str>, content: &str) -> Result<(), CliError> {
-    match output {
-        Some(path) => Ok(fs::write(path, content)?),
-        None => {
-            println!("{content}");
-            Ok(())
-        }
+    if let Some(path) = output {
+        Ok(fs::write(path, content)?)
+    } else {
+        println!("{content}");
+        Ok(())
     }
 }
 

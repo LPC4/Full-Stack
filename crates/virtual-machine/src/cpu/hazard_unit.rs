@@ -1,4 +1,4 @@
-﻿//! Hazard detection and data forwarding for the 5-stage pipeline.
+//! Hazard detection and data forwarding for the 5-stage pipeline.
 //!
 //! Two kinds of hazards are handled:
 //! - **Load-use**: a load in ID/EX whose result is needed by the instruction
@@ -137,43 +137,44 @@ pub fn compute_forwarding(
     let mut frs2 = id_ex.frs2_val;
 
     // MEM/WB -> EX (lower priority)
-    if let Some(mw) = mem_wb {
-        if mw.rd != 0 {
-            if !mw.is_fp_dest {
-                if mw.rd == id_ex.rs1 {
-                    rs1 = mw.fwd_val;
-                }
-                if mw.rd == id_ex.rs2 {
-                    rs2 = mw.fwd_val;
-                }
-            } else {
-                if mw.rd == id_ex.frs1 {
-                    frs1 = mw.fwd_val;
-                }
-                if mw.rd == id_ex.frs2 {
-                    frs2 = mw.fwd_val;
-                }
+    if let Some(mw) = mem_wb
+        && mw.rd != 0
+    {
+        if !mw.is_fp_dest {
+            if mw.rd == id_ex.rs1 {
+                rs1 = mw.fwd_val;
+            }
+            if mw.rd == id_ex.rs2 {
+                rs2 = mw.fwd_val;
+            }
+        } else {
+            if mw.rd == id_ex.frs1 {
+                frs1 = mw.fwd_val;
+            }
+            if mw.rd == id_ex.frs2 {
+                frs2 = mw.fwd_val;
             }
         }
     }
 
     // EX/MEM -> EX (higher priority, load results excluded)
-    if let Some(em) = ex_mem {
-        if em.rd != 0 && !em.is_load {
-            if !em.is_fp_dest {
-                if em.rd == id_ex.rs1 {
-                    rs1 = em.fwd_val;
-                }
-                if em.rd == id_ex.rs2 {
-                    rs2 = em.fwd_val;
-                }
-            } else {
-                if em.rd == id_ex.frs1 {
-                    frs1 = em.fwd_val;
-                }
-                if em.rd == id_ex.frs2 {
-                    frs2 = em.fwd_val;
-                }
+    if let Some(em) = ex_mem
+        && em.rd != 0
+        && !em.is_load
+    {
+        if !em.is_fp_dest {
+            if em.rd == id_ex.rs1 {
+                rs1 = em.fwd_val;
+            }
+            if em.rd == id_ex.rs2 {
+                rs2 = em.fwd_val;
+            }
+        } else {
+            if em.rd == id_ex.frs1 {
+                frs1 = em.fwd_val;
+            }
+            if em.rd == id_ex.frs2 {
+                frs2 = em.fwd_val;
             }
         }
     }

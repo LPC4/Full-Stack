@@ -30,7 +30,7 @@ pub fn auto_grid_columns(ui: &egui::Ui, pane_count: usize) -> usize {
 }
 
 /// Calculates responsive column count based on minimum column width.
-/// Returns a value between min_cols and max_cols based on available width.
+/// Returns a value between `min_cols` and `max_cols` based on available width.
 pub fn auto_grid_columns_with_min_width(
     ui: &egui::Ui,
     min_column_width: f32,

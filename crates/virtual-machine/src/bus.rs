@@ -3,7 +3,7 @@
 use crate::devices::{clint::Clint, plic::Plic, uart::Uart};
 use crate::error::VmError;
 use crate::memory::{
-    MemoryAccess, PeekByteRaw,
+    MemoryAccess, PeekByteRaw as _,
     cache::{Cache, CacheParams},
     ram::Ram,
     rom::Rom,
@@ -92,7 +92,7 @@ impl SystemBus {
     ///
     /// IMPORTANT: UART, CLINT, and PLIC must be checked BEFORE ROM because their
     /// IMPORTANT: physical addresses fall within the ROM range (0x0000_0000-0x0FFF_FFFF).
-    /// IMPORTANT: SYSCON writes are intercepted in the MemoryAccess impl below, not here.
+    /// IMPORTANT: SYSCON writes are intercepted in the `MemoryAccess` impl below, not here.
     #[inline]
     fn route(&mut self, addr: u64) -> Option<(&mut dyn MemoryAccess, u64)> {
         match addr {
@@ -158,7 +158,7 @@ impl SystemBus {
 
     /// Read bytes from the address space for debug inspection.
     /// ROM and MMIO are read directly. RAM is read via the cache hierarchy, which updates
-    /// cache stats as a side effect (use peek_bytes_raw when that matters).
+    /// cache stats as a side effect (use `peek_bytes_raw` when that matters).
     pub fn peek_bytes(&mut self, addr: u64, len: usize) -> Vec<u8> {
         (0..len as u64)
             .map(|i| match addr + i {
@@ -197,7 +197,7 @@ impl SystemBus {
         &mut self.plic
     }
 
-    /// Drain and return the SYSCON exit code, if sys_exit was called.
+    /// Drain and return the SYSCON exit code, if `sys_exit` was called.
     pub fn take_syscon_exit(&mut self) -> Option<i64> {
         self.syscon_exit.take()
     }

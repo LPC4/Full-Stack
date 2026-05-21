@@ -114,8 +114,11 @@ impl HllCompiler {
                 .collect());
         }
 
-        // Phase 5: Freestanding validation (warnings/errors from asm blocks)
-        if self.config.target == TargetMode::Freestanding {
+        // Phase 5: Freestanding / kernel validation (warnings/errors from asm blocks)
+        if matches!(
+            self.config.target,
+            TargetMode::Freestanding | TargetMode::Kernel
+        ) {
             let freestanding_diags = check_freestanding_asm(&ast);
             let fs_errors: Vec<Diagnostic> = freestanding_diags
                 .iter()

@@ -7,14 +7,17 @@ pub(crate) mod parser;
 pub mod stdlib;
 pub(crate) mod token;
 
-/// Whether the compiled output targets a hosted OS process or a bare-metal environment.
+/// Whether the compiled output targets a hosted OS process, a bare-metal program, or a kernel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TargetMode {
-    /// Linux userspace - runtime.hll is linked, `_start` calls `main`.
+    /// Linux userspace — `_start` calls `main`, Linux syscalls via ecall.
     #[default]
     Hosted,
-    /// Bare-metal / freestanding - freestanding runtime is linked instead.
+    /// Bare-metal / freestanding — freestanding runtime, no Linux syscalls.
     Freestanding,
+    /// Supervisor-mode kernel — kernel stdlib linked, entry point is `_kernel_start`,
+    /// VM boots via ROM `_start` (PMP + medeleg + mret into S-mode).
+    Kernel,
 }
 
 impl TargetMode {
@@ -22,6 +25,7 @@ impl TargetMode {
         match self {
             Self::Hosted => "Hosted",
             Self::Freestanding => "Freestanding",
+            Self::Kernel => "Kernel",
         }
     }
 }

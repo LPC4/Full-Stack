@@ -59,7 +59,7 @@ impl FunctionContext {
         slot
     }
 
-    /// Allocate a stack slot for an `Alloc` (stack_alloc) instruction.
+    /// Allocate a stack slot for an `Alloc` (`stack_alloc`) instruction.
     /// Uses the actual inner type size rather than pointer size so structs get enough space.
     pub fn alloc_slot_for_alloc(
         &mut self,

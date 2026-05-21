@@ -10,11 +10,11 @@
 
 use asm_to_binary::assembler::Assembler;
 use asm_to_binary::rv_instruction::RvInstruction;
+use virtual_machine::VirtualMachine;
 use virtual_machine::bus::{RAM_BASE, SystemBus};
+use virtual_machine::cpu::StepOutcome;
 use virtual_machine::cpu::pipeline::Pipeline;
 use virtual_machine::rom::{M_TRAP_ADDR, ROM_BASE, generate_rom_image};
-use virtual_machine::cpu::StepOutcome;
-use virtual_machine::VirtualMachine;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -79,7 +79,11 @@ fn m_trap_addr_is_256() {
 
 #[test]
 fn m_trap_addr_is_4_byte_aligned() {
-    assert_eq!(M_TRAP_ADDR % 4, 0, "_m_trap address must be 4-byte aligned for mtvec");
+    assert_eq!(
+        M_TRAP_ADDR % 4,
+        0,
+        "_m_trap address must be 4-byte aligned for mtvec"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -187,7 +191,10 @@ fn kernel_uart_output_via_smode_ecall() {
     ";
     let (uart, code) = run_kernel(src, 1000);
     assert_eq!(code, 0);
-    assert_eq!(uart, "A", "kernel should have written 'A' to UART via sys_putchar");
+    assert_eq!(
+        uart, "A",
+        "kernel should have written 'A' to UART via sys_putchar"
+    );
 }
 
 #[test]
@@ -226,7 +233,10 @@ fn hosted_program_mtvec_still_works_after_rom_change() {
         StepOutcome::Halted(c) => c,
         StepOutcome::Continue => i64::MIN,
     };
-    assert_eq!(code, 7, "hosted program must still reach M-mode trap handler");
+    assert_eq!(
+        code, 7,
+        "hosted program must still reach M-mode trap handler"
+    );
 }
 
 #[test]

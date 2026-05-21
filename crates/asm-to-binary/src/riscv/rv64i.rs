@@ -186,8 +186,7 @@ impl Slli {
 }
 impl Instruction for Slli {
     fn encode(&self) -> u32 {
-        let imm = (self.shamt as i32)        // shamt already validated to be 0..63
-            | (0x00i32 << 5); // funct7 = 0x00
+        let imm = self.shamt as i32; // funct7 = 0x00
         IType {
             opcode: 0x13,
             rd: self.rd,
@@ -227,7 +226,7 @@ impl Srli {
 }
 impl Instruction for Srli {
     fn encode(&self) -> u32 {
-        let imm = (self.shamt as i32) | (0x00i32 << 5);
+        let imm = self.shamt as i32;
         IType {
             opcode: 0x13,
             rd: self.rd,
@@ -308,8 +307,7 @@ impl Slliw {
 }
 impl Instruction for Slliw {
     fn encode(&self) -> u32 {
-        let imm = (self.shamt as i32)        // shamt already validated to be 0..31
-            | (0x00i32 << 5); // funct7 = 0x00
+        let imm = self.shamt as i32; // funct7 = 0x00
         IType {
             opcode: 0x1B,
             rd: self.rd,
@@ -349,7 +347,7 @@ impl Srliw {
 }
 impl Instruction for Srliw {
     fn encode(&self) -> u32 {
-        let imm = (self.shamt as i32) | (0x00i32 << 5);
+        let imm = self.shamt as i32;
         IType {
             opcode: 0x1B,
             rd: self.rd,
@@ -457,6 +455,12 @@ impl Instruction for Jalr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ecall;
 
+impl Default for Ecall {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Ecall {
     pub fn new() -> Self {
         Self
@@ -487,6 +491,12 @@ impl Instruction for Ecall {
 /// Ebreak
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ebreak;
+
+impl Default for Ebreak {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl Ebreak {
     pub fn new() -> Self {
@@ -519,6 +529,12 @@ impl Instruction for Ebreak {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Mret;
 
+impl Default for Mret {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Mret {
     pub fn new() -> Self {
         Self
@@ -536,6 +552,36 @@ impl Instruction for Mret {
 
     fn mnemonic(&self) -> &'static str {
         "mret"
+    }
+}
+
+/// Sret - return from supervisor-mode trap (opcode 0x10200073)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Sret;
+
+impl Default for Sret {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Sret {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Instruction for Sret {
+    fn encode(&self) -> u32 {
+        0x10200073
+    }
+
+    fn to_asm(&self) -> String {
+        "sret".into()
+    }
+
+    fn mnemonic(&self) -> &'static str {
+        "sret"
     }
 }
 
@@ -614,6 +660,12 @@ impl Instruction for Fence {
 /// `fence.i` - synchronize the instruction stream.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FenceI;
+
+impl Default for FenceI {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl FenceI {
     pub fn new() -> Self {

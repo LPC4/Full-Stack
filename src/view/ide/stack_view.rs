@@ -70,17 +70,15 @@ fn parse_assembly(asm: &str) -> Vec<FunctionStack> {
                     kind: StackElementKind::ReturnAddress,
                     offset,
                 });
-            } else if let Some(rest) = line.strip_prefix("; Save callee-saved register s") {
-                if let Some((reg_str, tail)) = rest.split_once(" at offset") {
-                    if let (Ok(reg), Ok(offset)) =
-                        (reg_str.trim().parse::<u8>(), tail.trim().parse::<usize>())
-                    {
-                        func.elements.push(StackElement {
-                            kind: StackElementKind::SavedRegister { reg },
-                            offset,
-                        });
-                    }
-                }
+            } else if let Some(rest) = line.strip_prefix("; Save callee-saved register s")
+                && let Some((reg_str, tail)) = rest.split_once(" at offset")
+                && let (Ok(reg), Ok(offset)) =
+                    (reg_str.trim().parse::<u8>(), tail.trim().parse::<usize>())
+            {
+                func.elements.push(StackElement {
+                    kind: StackElementKind::SavedRegister { reg },
+                    offset,
+                });
             }
 
             if let Some(stripped) = line.strip_prefix("; local var:") {
@@ -96,76 +94,76 @@ fn parse_assembly(asm: &str) -> Vec<FunctionStack> {
             if (pending_local_var.is_some() || pending_param.is_some()) && line.starts_with("addi")
             {
                 let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() >= 4 && parts[2] == "sp," {
-                    if let Ok(offset) = parts[3].parse::<usize>() {
-                        if let Some((var_name, _)) = pending_local_var.take() {
-                            func.elements.push(StackElement {
-                                kind: StackElementKind::LocalVariable {
-                                    name: var_name,
-                                    type_name: String::new(),
-                                    size: 0,
-                                },
-                                offset,
-                            });
-                        } else if let Some((param_name, _)) = pending_param.take() {
-                            func.elements.push(StackElement {
-                                kind: StackElementKind::Parameter {
-                                    name: param_name,
-                                    type_name: String::new(),
-                                    size: 0,
-                                },
-                                offset,
-                            });
-                        }
+                if parts.len() >= 4
+                    && parts[2] == "sp,"
+                    && let Ok(offset) = parts[3].parse::<usize>()
+                {
+                    if let Some((var_name, _)) = pending_local_var.take() {
+                        func.elements.push(StackElement {
+                            kind: StackElementKind::LocalVariable {
+                                name: var_name,
+                                type_name: String::new(),
+                                size: 0,
+                            },
+                            offset,
+                        });
+                    } else if let Some((param_name, _)) = pending_param.take() {
+                        func.elements.push(StackElement {
+                            kind: StackElementKind::Parameter {
+                                name: param_name,
+                                type_name: String::new(),
+                                size: 0,
+                            },
+                            offset,
+                        });
                     }
                 }
             }
 
-            if let Some(ref mut elem) = func.elements.last_mut() {
-                if line.starts_with("sw ")
+            if let Some(ref mut elem) = func.elements.last_mut()
+                && (line.starts_with("sw ")
                     || line.starts_with("sd ")
                     || line.starts_with("fsw ")
                     || line.starts_with("fsd ")
                     || line.starts_with("sh ")
-                    || line.starts_with("sb ")
-                {
-                    let parts: Vec<&str> = line.split_whitespace().collect();
-                    if parts.len() >= 3 {
-                        let store_op = parts[0];
-                        let (type_name, size) = match store_op {
-                            "sw" => ("i32", 4),
-                            "sd" => ("i64", 8),
-                            "fsw" => ("f32", 4),
-                            "fsd" => ("f64", 8),
-                            "sh" => ("i16", 2),
-                            "sb" => ("i8", 1),
-                            _ => ("", 0),
-                        };
+                    || line.starts_with("sb "))
+            {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 3 {
+                    let store_op = parts[0];
+                    let (type_name, size) = match store_op {
+                        "sw" => ("i32", 4),
+                        "sd" => ("i64", 8),
+                        "fsw" => ("f32", 4),
+                        "fsd" => ("f64", 8),
+                        "sh" => ("i16", 2),
+                        "sb" => ("i8", 1),
+                        _ => ("", 0),
+                    };
 
-                        if size > 0 {
-                            match &mut elem.kind {
-                                StackElementKind::LocalVariable {
-                                    type_name: tn,
-                                    size: sz,
-                                    ..
-                                } => {
-                                    if *sz == 0 {
-                                        *tn = type_name.to_owned();
-                                        *sz = size;
-                                    }
+                    if size > 0 {
+                        match &mut elem.kind {
+                            StackElementKind::LocalVariable {
+                                type_name: tn,
+                                size: sz,
+                                ..
+                            } => {
+                                if *sz == 0 {
+                                    *tn = type_name.to_owned();
+                                    *sz = size;
                                 }
-                                StackElementKind::Parameter {
-                                    type_name: tn,
-                                    size: sz,
-                                    ..
-                                } => {
-                                    if *sz == 0 {
-                                        *tn = type_name.to_owned();
-                                        *sz = size;
-                                    }
-                                }
-                                _ => {}
                             }
+                            StackElementKind::Parameter {
+                                type_name: tn,
+                                size: sz,
+                                ..
+                            } => {
+                                if *sz == 0 {
+                                    *tn = type_name.to_owned();
+                                    *sz = size;
+                                }
+                            }
+                            _ => {}
                         }
                     }
                 }

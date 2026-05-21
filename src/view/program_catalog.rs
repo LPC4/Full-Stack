@@ -7,7 +7,6 @@ pub enum ProgramKind {
     Example,
     Custom,
     Stdlib, // Read-only stdlib programs
-    Kernel, // Editable programs that link against the kernel stdlib
 }
 
 #[derive(Clone, serde::Deserialize, serde::Serialize, Debug)]
@@ -77,28 +76,12 @@ impl ProgramFile {
         }
     }
 
-    pub fn kernel(id: &str, name: &str, description: &str, source: &str) -> Self {
-        Self {
-            id: id.to_owned(),
-            name: name.to_owned(),
-            kind: ProgramKind::Kernel,
-            source: source.to_owned(),
-            undo_stack: Vec::new(),
-            redo_stack: Vec::new(),
-            description: description.to_owned(),
-        }
-    }
-
     pub fn is_custom(&self) -> bool {
         matches!(self.kind, ProgramKind::Custom)
     }
 
     pub fn is_stdlib(&self) -> bool {
         matches!(self.kind, ProgramKind::Stdlib)
-    }
-
-    pub fn is_kernel(&self) -> bool {
-        matches!(self.kind, ProgramKind::Kernel)
     }
 }
 
@@ -187,11 +170,10 @@ fn built_in_programs() -> Vec<ProgramFile> {
                 "/programs/example/generics_and_strings.hll"
             )),
         ),
-        // Kernel programs (editable, link against kernel stdlib)
-        ProgramFile::kernel(
+        ProgramFile::example(
             "kernel-boot",
-            "Kernel Boot",
-            "Minimal kernel: boot log, heap smoke-test, and shutdown. Use the Kernel panel to boot.",
+            "kernel_boot.hll",
+            "Minimal kernel: boot log, heap smoke-test, and shutdown. Select Kernel target mode to run.",
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
                 "/programs/example/kernel_boot.hll"
@@ -238,23 +220,14 @@ impl ProgramCatalog {
                 .find(|program| program.id == built_in.id)
             {
                 let mut updated = existing.clone();
-                match built_in.kind {
-                    ProgramKind::Custom => {
-                        // Custom programs: preserve everything - user-managed
-                    }
-                    ProgramKind::Kernel => {
-                        // Kernel programs: editable, so preserve user source; refresh metadata
-                        updated.name = built_in.name;
-                        updated.kind = built_in.kind;
-                        updated.description = built_in.description;
-                    }
-                    _ => {
-                        // Stdlib, Example: always refresh from embedded (read-only)
-                        updated.name = built_in.name;
-                        updated.kind = built_in.kind;
-                        updated.source = built_in.source;
-                        updated.description = built_in.description;
-                    }
+                if built_in.kind == ProgramKind::Custom {
+                    // Custom programs: preserve everything - user-managed
+                } else {
+                    // Stdlib, Example: always refresh from embedded (read-only)
+                    updated.name = built_in.name;
+                    updated.kind = built_in.kind;
+                    updated.source = built_in.source;
+                    updated.description = built_in.description;
                 }
                 merged_programs.push(updated);
             } else {
@@ -320,12 +293,12 @@ impl ProgramCatalog {
     }
 
     pub fn replace_selected_source_with_history(&mut self, source: String) {
-        if let Some(program) = self.current_program_mut() {
-            if program.source != source {
-                program.undo_stack.push(program.source.clone());
-                program.redo_stack.clear();
-                program.source = source;
-            }
+        if let Some(program) = self.current_program_mut()
+            && program.source != source
+        {
+            program.undo_stack.push(program.source.clone());
+            program.redo_stack.clear();
+            program.source = source;
         }
     }
 

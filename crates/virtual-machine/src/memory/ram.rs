@@ -1,5 +1,5 @@
 //! Main memory (DRAM). Occupies the top half of the address space
-//! (0x8000_0000 .. 0xFFFF_FFFF) by default.
+//! (`0x8000_0000` .. `0xFFFF_FFFF`) by default.
 
 use crate::error::VmError;
 use crate::memory::{MemoryAccess, PeekByteRaw};

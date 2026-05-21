@@ -157,7 +157,7 @@ fn integer_regs(ui: &mut Ui, regs: &[u64; 32], prev: &[u64; 32], num_cols: usize
     let normal = theme.text;
     let dec_color = theme.text_soft;
 
-    let regs_per_col = (32 + num_cols - 1) / num_cols;
+    let regs_per_col = 32_usize.div_ceil(num_cols);
 
     for row in 0..regs_per_col {
         for col in 0..num_cols {
@@ -192,7 +192,7 @@ fn fp_regs(ui: &mut Ui, regs: &[u64; 32], as_float: bool, num_cols: usize) {
     let dim = theme.text_dim;
     let normal = theme.text_soft;
 
-    let regs_per_col = (32 + num_cols - 1) / num_cols;
+    let regs_per_col = 32_usize.div_ceil(num_cols);
 
     for row in 0..regs_per_col {
         for col in 0..num_cols {
@@ -203,7 +203,7 @@ fn fp_regs(ui: &mut Ui, regs: &[u64; 32], as_float: bool, num_cols: usize) {
                     ui.spacing_mut().item_spacing.x = 8.0;
 
                     // Pad 'f' + number out to exactly 8 characters to perfectly align with Int/CSR
-                    let name_text = format!("f{:<7}", i);
+                    let name_text = format!("f{i:<7}");
                     ui.label(RichText::new(name_text).monospace().color(dim));
 
                     if as_float {
@@ -253,7 +253,7 @@ fn csr_table(ui: &mut Ui, cpu: &CpuSnapshot, num_cols: usize) {
     let dim = theme.text_dim;
     let val_color = theme.text_soft;
 
-    let items_per_col = (csrs.len() + num_cols - 1) / num_cols;
+    let items_per_col = csrs.len().div_ceil(num_cols);
 
     for row in 0..items_per_col {
         for col in 0..num_cols {

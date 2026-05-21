@@ -1,6 +1,6 @@
 use crate::view::highlight_code;
 use crate::view::{CompilationState, CompilerView, ProgramCatalog, ui_theme};
-use egui::{Color32, Frame, RichText, TextEdit, TextStyle};
+use egui::{Frame, RichText, TextEdit, TextStyle};
 
 #[derive(Default, Clone)]
 pub struct SourceView;
@@ -23,10 +23,6 @@ impl CompilerView for SourceView {
             .current_program()
             .map(|p| p.is_stdlib())
             .unwrap_or(false);
-        let is_kernel = catalog
-            .current_program()
-            .map(|p| p.is_kernel())
-            .unwrap_or(false);
 
         // Compact info chip for read-only and kernel programs
         if is_stdlib {
@@ -45,31 +41,6 @@ impl CompilerView for SourceView {
                         ui.label(
                             RichText::new(
                                 "read-only: compile to inspect tokens, AST, IR, and assembly",
-                            )
-                            .small()
-                            .color(theme.text_dim),
-                        );
-                    });
-                });
-            ui.add_space(2.0);
-        }
-
-        if is_kernel {
-            Frame::NONE
-                .fill(theme.surface_alt)
-                .inner_margin(6.0)
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("kernel")
-                                .small()
-                                .strong()
-                                .color(Color32::from_rgb(80, 140, 200)),
-                        );
-                        ui.label(RichText::new("|").small().color(theme.border));
-                        ui.label(
-                            RichText::new(
-                                "define kmain: () -> () as entry point, boot via the Kernel panel",
                             )
                             .small()
                             .color(theme.text_dim),

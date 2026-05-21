@@ -1,5 +1,5 @@
 //! Simple memory-mapped UART (NS16550A subset).
-//! Base address: 0x1000_0000 (typical RISC-V virt machine).
+//! Base address: `0x1000_0000` (typical RISC-V virt machine).
 
 use crate::error::VmError;
 use crate::memory::MemoryAccess;
@@ -29,6 +29,12 @@ pub struct Uart {
     scr: u8,
     pub rx_buf: std::collections::VecDeque<u8>,
     pub tx_out: Vec<u8>,
+}
+
+impl Default for Uart {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Uart {

@@ -1,5 +1,5 @@
 //! Read-Only Memory - holds boot code and fixed firmware.
-//! Mapped at the bottom of the address space (0x0000_0000 .. 0x0FFF_FFFF).
+//! Mapped at the bottom of the address space (`0x0000_0000` .. `0x0FFF_FFFF`).
 
 use crate::error::VmError;
 use crate::memory::MemoryAccess;
@@ -13,7 +13,7 @@ pub struct Rom {
 
 impl Rom {
     /// Create a ROM from a byte vector. `base` is the start address in the system
-    /// memory map (normally 0x0000_0000).
+    /// memory map (normally `0x0000_0000`).
     pub fn new(base: u64, data: Vec<u8>) -> Self {
         let size = data.len() as u64;
         Self { data, base, size }

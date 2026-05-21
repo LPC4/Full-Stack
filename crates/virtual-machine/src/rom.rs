@@ -2,7 +2,7 @@
 //!
 //! At VM startup, `generate_rom_image()` assembles `firmware::ROM_SOURCE`
 //! (the M-mode boot stub + trap handler from `crates/firmware/boot/rom.s`) and
-//! loads the resulting bytes into the ROM region (base 0x0000_0000).
+//! loads the resulting bytes into the ROM region (base `0x0000_0000`).
 
 use asm_to_binary::assembler::Assembler;
 use asm_to_binary::rv_instruction::RvInstruction;
@@ -36,9 +36,9 @@ fn parse_asm_text(src: &str) -> Vec<RvInstruction> {
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
         .map(|l| {
             if let Some(name) = l.strip_suffix(':') {
-                RvInstruction::Label(name.to_string())
+                RvInstruction::Label(name.to_owned())
             } else if l.starts_with('.') {
-                RvInstruction::Directive(l.to_string())
+                RvInstruction::Directive(l.to_owned())
             } else {
                 RvInstruction::Directive(format!("\t{l}"))
             }
@@ -48,12 +48,13 @@ fn parse_asm_text(src: &str) -> Vec<RvInstruction> {
 
 /// Assemble the ROM firmware and return the raw bytes.
 ///
-/// The returned `Vec<u8>` starts at physical address `ROM_BASE` (0x0000_0000).
+/// The returned `Vec<u8>` starts at physical address `ROM_BASE` (`0x0000_0000`).
 ///
 /// # Panics
 /// Panics if the assembler rejects the ROM source (indicates a bug in `crates/firmware/boot/rom.s`).
 pub fn generate_rom_image() -> Vec<u8> {
     let tokens = parse_asm_text(firmware::ROM_SOURCE);
-    let output = Assembler::assemble(&tokens).expect("ROM assembly failed — check crates/firmware/boot/rom.s");
+    let output = Assembler::assemble(&tokens)
+        .expect("ROM assembly failed — check crates/firmware/boot/rom.s");
     output.text_bytes().to_vec()
 }

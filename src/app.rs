@@ -1,3 +1,4 @@
+use crate::machine_window::MachineWindow;
 use asm_to_binary::AssembledOutput;
 use asm_to_binary::assembler::link_layout::LinkLayout;
 use asm_to_binary::rv_instruction::RvInstruction;
@@ -8,9 +9,9 @@ use full_stack::view::debug::{DebugSession, SessionStatus};
 use full_stack::view::ide::vm_execution_view::VmExecutionResult;
 use full_stack::view::{
     AssemblyView, AstView, CacheView, CfgView, CompilationState, CompilerView, CpuStateView,
-    DisassemblyView, ExecutionView, FramebufferView, InterruptView, IoView, IrView, KernelView,
-    MemoryView, PageTableView, PipelineView, PrivilegeView, ProgramCatalog, ProgramKind,
-    SourceView, StackView, SyscallTraceView, TokensView, TrapView, VmExecutionView, apply_ui_theme,
+    DisassemblyView, ExecutionView, FramebufferView, InterruptView, IoView, IrView, MemoryView,
+    PageTableView, PipelineView, PrivilegeView, ProgramCatalog, ProgramKind, SourceView, StackView,
+    SyscallTraceView, TokensView, TrapView, VmExecutionView, apply_ui_theme,
     blank_custom_program_source, ui_theme,
 };
 use hll_to_ir::stdlib::get_stdlib_source_for_mode;
@@ -142,6 +143,8 @@ pub struct FullStackApp {
     entry_point: String,
     #[serde(skip)]
     load_base_input: String,
+    #[serde(skip)]
+    machine_window: MachineWindow,
 }
 
 impl Default for FullStackApp {
@@ -170,6 +173,7 @@ impl Default for FullStackApp {
             target_mode: TargetMode::Hosted,
             entry_point: "kmain".to_owned(),
             load_base_input: format!("{:#010x}", LinkLayout::freestanding_kernel().load_base),
+            machine_window: MachineWindow::default(),
         };
         app.reset_layout();
         app.reset_debug_layout();
@@ -192,10 +196,23 @@ impl FullStackApp {
     }
 
     fn init_stdlib_cache(&mut self) {
-        // Compile the stdlib appropriate for the current target mode.
-        // The pipeline's target_mode is set before this is called.
-        let stdlib_src = get_stdlib_source_for_mode(self.pipeline.target_mode());
-        match self.pipeline.compile(&stdlib_src) {
+        let mode = self.pipeline.target_mode();
+        let stdlib_src = get_stdlib_source_for_mode(mode);
+
+        // Kernel stdlib must use a distinct string prefix so its rodata labels
+        // ("str_0", "str_1", …) don't collide with user-code labels.
+        if mode == TargetMode::Kernel {
+            self.pipeline
+                .set_string_prefix(Some("__kern_str_".to_owned()));
+        }
+
+        let result = self.pipeline.compile(&stdlib_src);
+
+        if mode == TargetMode::Kernel {
+            self.pipeline.set_string_prefix(None);
+        }
+
+        match result {
             Ok(result) => {
                 let (asm_text, tokens) = self
                     .pipeline
@@ -224,7 +241,6 @@ impl FullStackApp {
             self.view::<StackView>(),       // 6
             self.view::<ExecutionView>(),   // 7
             self.view::<VmExecutionView>(), // 8
-            self.view::<KernelView>(),      // 9
         ];
 
         let mut dock = DockState::new(vec![views[0].clone()]);
@@ -243,7 +259,6 @@ impl FullStackApp {
                 views[6].clone(), // Stack
                 views[7].clone(), // Execution (QEMU)
                 views[8].clone(), // VM Output
-                views[9].clone(), // Kernel
             ],
         );
         self.dock = dock;
@@ -278,27 +293,34 @@ impl FullStackApp {
         }
         self.target_mode = mode;
         self.pipeline.set_target_mode(mode);
-        // Update the entry point field to the mode default when switching,
-        // unless the user has already overridden it for that mode.
-        if mode == TargetMode::Hosted {
-            self.pipeline.set_entry_point(None); // use "_start"
-            self.pipeline.set_link_layout(Some(LinkLayout::hosted()));
-        } else {
-            // Keep whatever the user typed; default is "kmain".
-            let ep = if self.entry_point.trim().is_empty() {
-                "kmain".to_owned()
-            } else {
-                self.entry_point.clone()
-            };
-            self.pipeline.set_entry_point(Some(ep));
-            // Reset load base to kernel default if the user hasn't customised it.
-            let kernel_default = LinkLayout::freestanding_kernel();
-            if self.load_base_input.is_empty()
-                || parse_hex_or_dec(&self.load_base_input) == Some(LinkLayout::hosted().load_base)
-            {
-                self.load_base_input = format!("{:#010x}", kernel_default.load_base);
+        match mode {
+            TargetMode::Hosted => {
+                self.pipeline.set_entry_point(None);
+                self.pipeline.set_link_layout(Some(LinkLayout::hosted()));
             }
-            self.pipeline.set_link_layout(Some(kernel_default));
+            TargetMode::Kernel => {
+                self.pipeline
+                    .set_entry_point(Some("_kernel_start".to_owned()));
+                let layout = LinkLayout::freestanding_kernel();
+                self.load_base_input = format!("{:#010x}", layout.load_base);
+                self.pipeline.set_link_layout(Some(layout));
+            }
+            TargetMode::Freestanding => {
+                let ep = if self.entry_point.trim().is_empty() {
+                    "kmain".to_owned()
+                } else {
+                    self.entry_point.clone()
+                };
+                self.pipeline.set_entry_point(Some(ep));
+                let kernel_default = LinkLayout::freestanding_kernel();
+                if self.load_base_input.is_empty()
+                    || parse_hex_or_dec(&self.load_base_input)
+                        == Some(LinkLayout::hosted().load_base)
+                {
+                    self.load_base_input = format!("{:#010x}", kernel_default.load_base);
+                }
+                self.pipeline.set_link_layout(Some(kernel_default));
+            }
         }
         self.init_stdlib_cache();
         self.compile();
@@ -307,10 +329,14 @@ impl FullStackApp {
     fn enter_debug_mode(&mut self) {
         if let Some(assembled) = self.compilation_state.assembled() {
             let assembled = assembled.clone();
-            let entry = self.compilation_state.entry_symbol.clone();
-            let base = self.compilation_state.load_base;
-            self.compilation_state.debug_session =
-                Some(DebugSession::new(&assembled, base, &entry));
+            let session = if self.target_mode == TargetMode::Kernel {
+                DebugSession::new_kernel(&assembled)
+            } else {
+                let entry = self.compilation_state.entry_symbol.clone();
+                let base = self.compilation_state.load_base;
+                DebugSession::new(&assembled, base, &entry)
+            };
+            self.compilation_state.debug_session = Some(session);
             self.compilation_state.disasm_follow_pc = true;
             self.reset_debug_layout();
             self.mode = AppMode::Debug;
@@ -325,26 +351,30 @@ impl FullStackApp {
     fn compile(&mut self) {
         // Sync pipeline config with current UI state.
         self.pipeline.set_target_mode(self.target_mode);
-        if self.target_mode == TargetMode::Freestanding {
-            let ep = self.entry_point.trim().to_owned();
-            self.pipeline.set_entry_point(Some(if ep.is_empty() {
-                "kmain".to_owned()
-            } else {
-                ep
-            }));
-        } else {
-            self.pipeline.set_entry_point(None);
-        }
-
-        // Sync link layout from UI state.
-        if self.target_mode == TargetMode::Freestanding {
-            let load_base = parse_hex_or_dec(&self.load_base_input)
-                .unwrap_or_else(|| LinkLayout::freestanding_kernel().load_base);
-            let mut layout = LinkLayout::freestanding_kernel();
-            layout.load_base = load_base;
-            self.pipeline.set_link_layout(Some(layout));
-        } else {
-            self.pipeline.set_link_layout(Some(LinkLayout::hosted()));
+        match self.target_mode {
+            TargetMode::Hosted => {
+                self.pipeline.set_entry_point(None);
+                self.pipeline.set_link_layout(Some(LinkLayout::hosted()));
+            }
+            TargetMode::Kernel => {
+                self.pipeline
+                    .set_entry_point(Some("_kernel_start".to_owned()));
+                self.pipeline
+                    .set_link_layout(Some(LinkLayout::freestanding_kernel()));
+            }
+            TargetMode::Freestanding => {
+                let ep = self.entry_point.trim().to_owned();
+                self.pipeline.set_entry_point(Some(if ep.is_empty() {
+                    "kmain".to_owned()
+                } else {
+                    ep
+                }));
+                let load_base = parse_hex_or_dec(&self.load_base_input)
+                    .unwrap_or_else(|| LinkLayout::freestanding_kernel().load_base);
+                let mut layout = LinkLayout::freestanding_kernel();
+                layout.load_base = load_base;
+                self.pipeline.set_link_layout(Some(layout));
+            }
         }
 
         // Keep entry_symbol and load_base in sync so VM and ELF export always use the right values.
@@ -371,6 +401,18 @@ impl FullStackApp {
                 .set_error(result.format_diagnostics());
             self.compilation_state.pipeline = Some(result);
             self.compilation_state.linked_asm_text = String::new();
+            self.compilation_state.just_compiled = false;
+        } else if let Some(ref asm_err) = result.assembler_error.clone() {
+            // HLL compiled OK but the assembler/linker step failed (e.g. duplicate labels,
+            // undefined symbols, branch out of range). Surface it like a compile error so
+            // it's never silently swallowed.
+            self.compilation_state.set_error(format!("- {asm_err}"));
+            self.compilation_state.linked_asm_text = result
+                .asm
+                .as_ref()
+                .map(|a| format!("{}\n{}", self.stdlib_asm, a.display))
+                .unwrap_or_default();
+            self.compilation_state.pipeline = Some(result);
             self.compilation_state.just_compiled = false;
         } else {
             // Build the linked assembly text for the Disassembly view.
@@ -646,8 +688,6 @@ impl FullStackApp {
             ui.add_space(8.0);
             self.render_program_section(ui, ProgramKind::Stdlib, "Standard Library");
             ui.separator();
-            self.render_program_section(ui, ProgramKind::Kernel, "Kernel Programs");
-            ui.separator();
             self.render_program_section(ui, ProgramKind::Example, "Examples");
             ui.separator();
             self.render_program_section(ui, ProgramKind::Custom, "Your programs");
@@ -690,7 +730,7 @@ impl FullStackApp {
                         if response.lost_focus() || enter_pressed {
                             if let Some(program) = self.catalog.current_program_mut() {
                                 if program.id == *id {
-                                    program.name = self.rename_buffer.trim().to_string();
+                                    program.name = self.rename_buffer.trim().to_owned();
                                 }
                             }
                             self.rename_id = None;
@@ -698,7 +738,7 @@ impl FullStackApp {
                         }
                     } else {
                         let selected = *id == self.catalog.selected_program_id;
-                        let can_rename = kind == ProgramKind::Custom || kind == ProgramKind::Kernel;
+                        let can_rename = kind == ProgramKind::Custom;
                         let response = if can_rename {
                             ui.selectable_label(selected, name)
                                 .on_hover_text("double-click to rename")
@@ -786,6 +826,28 @@ impl eframe::App for FullStackApp {
                 });
             }
         }
+
+        // Machine window — independent egui::Window, available whenever open.
+        let has_kernel = self.target_mode == TargetMode::Kernel
+            && self.compilation_state.assembled().is_some()
+            && self.compilation_state.error_summary.is_none();
+        let mut mw_open = self.machine_window.open;
+        egui::Window::new("Machine")
+            .open(&mut mw_open)
+            .default_size([860.0, 560.0])
+            .min_size([500.0, 320.0])
+            .resizable(true)
+            .show(ui.ctx(), |ui| {
+                self.machine_window.ui(ui, has_kernel);
+            });
+        self.machine_window.open = mw_open;
+
+        if self.machine_window.boot_requested {
+            self.machine_window.boot_requested = false;
+            if let Some(assembled) = self.compilation_state.assembled().cloned() {
+                self.machine_window.boot(&assembled);
+            }
+        }
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
@@ -805,11 +867,7 @@ impl FullStackApp {
             .current_program()
             .map(|p| p.is_stdlib())
             .unwrap_or(false);
-        let is_kernel = self
-            .catalog
-            .current_program()
-            .map(|p| p.is_kernel())
-            .unwrap_or(false);
+        let is_kernel = self.target_mode == TargetMode::Kernel;
 
         ui.set_min_size(egui::vec2(ui.available_width(), ui.available_height()));
         ui.horizontal(|ui| {
@@ -821,7 +879,7 @@ impl FullStackApp {
                 self.compile();
             }
 
-            // Run in VM - hidden for stdlib (no entry point) and kernel (use Boot in Kernel panel)
+            // Run in VM — hidden for stdlib and kernel (kernel uses the Machine window)
             if !is_stdlib && !is_kernel {
                 if ui
                     .add(
@@ -842,9 +900,26 @@ impl FullStackApp {
                 }
             }
 
-            // Target mode selector - only meaningful for example/custom programs.
-            // Stdlib has no entry point; kernel uses its own fixed pipeline.
-            if !is_stdlib && !is_kernel {
+            // Machine button — opens the Machine window (kernel mode only)
+            if is_kernel {
+                let has_assembled = self.compilation_state.assembled().is_some();
+                if ui
+                    .add_enabled(
+                        has_assembled,
+                        egui::Button::new(RichText::new("Machine").strong())
+                            .fill(Color32::from_rgb(60, 30, 100))
+                            .min_size(egui::vec2(90.0, 35.0)),
+                    )
+                    .on_disabled_hover_text("Compile a Kernel program first")
+                    .on_hover_text("Open the Machine window to boot and observe the kernel")
+                    .clicked()
+                {
+                    self.machine_window.open = true;
+                }
+            }
+
+            // Target mode selector — hidden for stdlib (no entry point)
+            if !is_stdlib {
                 ui.separator();
                 ui.label("Target:");
                 let prev_mode = self.target_mode;
@@ -861,6 +936,11 @@ impl FullStackApp {
                             &mut self.target_mode,
                             TargetMode::Freestanding,
                             TargetMode::Freestanding.label(),
+                        );
+                        ui.selectable_value(
+                            &mut self.target_mode,
+                            TargetMode::Kernel,
+                            TargetMode::Kernel.label(),
                         );
                     });
                 if self.target_mode != prev_mode {
@@ -933,7 +1013,6 @@ impl FullStackApp {
                         ("Stack", || Box::new(StackView::default())),
                         ("Execution (QEMU)", || Box::new(ExecutionView::default())),
                         ("VM Output", || Box::new(VmExecutionView::default())),
-                        ("Kernel", || Box::new(KernelView::default())),
                     ];
                     for (label, make) in view_entries {
                         if ui.button(*label).clicked() {
@@ -964,7 +1043,7 @@ impl FullStackApp {
             ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(8.0);
 
-                // To Debugger - hidden for stdlib (nothing runnable to debug)
+                // To Debugger — hidden for stdlib (nothing runnable to debug)
                 if !is_stdlib {
                     let can_debug = self.compilation_state.assembled().is_some();
                     if ui
@@ -990,7 +1069,6 @@ impl FullStackApp {
                         ProgramKind::Example => ("example", theme.text_dim),
                         ProgramKind::Custom => ("custom", theme.text_dim),
                         ProgramKind::Stdlib => ("stdlib", theme.text_dim),
-                        ProgramKind::Kernel => ("kernel", theme.text_dim),
                     };
                     // In RTL: kind placed first appears rightmost (adjacent to separator).
                     // Name placed second appears to the left of kind.

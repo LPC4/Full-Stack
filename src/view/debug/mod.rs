@@ -1,4 +1,4 @@
-﻿//! Live debug session: wraps a running VirtualMachine and exposes a plain-data
+//! Live debug session: wraps a running `VirtualMachine` and exposes a plain-data
 //! snapshot that all debug panels render from.
 
 use std::collections::HashMap;
@@ -100,6 +100,8 @@ pub struct DebugSession {
     load_base: u64,
     /// Entry-point symbol name used when generating the ELF.
     entry_symbol: String,
+    /// Whether this session uses kernel boot (`new_kernel`) instead of `from_elf`.
+    is_kernel: bool,
 }
 
 impl DebugSession {
@@ -130,9 +132,41 @@ impl DebugSession {
             uart_tx_pending: Vec::new(),
             load_base,
             entry_symbol: entry_symbol.to_owned(),
+            is_kernel: false,
         };
 
         // Capture the initial CPU state (before any steps).
+        session.refresh_snapshot();
+        session
+    }
+
+    /// Create a kernel debug session. The VM boots via ROM `_start` (PMP + mret into S-mode)
+    /// before the debugger can step into kernel code. PC starts at `ROM_BASE`.
+    pub fn new_kernel(assembled: &AssembledOutput) -> Self {
+        let symbols: HashMap<String, u64> = assembled
+            .symbols_iter()
+            .map(|(name, offset)| (name.to_owned(), RAM_BASE + offset))
+            .collect();
+
+        let mut initial_snapshot = DebugSnapshot::default();
+        fill_section_presets(&mut initial_snapshot, &symbols);
+
+        let vm = VirtualMachine::new_kernel(assembled);
+
+        let mut session = Self {
+            vm,
+            assembled: assembled.clone(),
+            step_count: 0,
+            status: SessionStatus::Running,
+            snapshot: initial_snapshot,
+            symbols,
+            uart_output: Vec::new(),
+            uart_tx_pending: Vec::new(),
+            load_base: virtual_machine::bus::ELF_LOAD_BASE,
+            entry_symbol: "_kernel_start".to_owned(),
+            is_kernel: true,
+        };
+
         session.refresh_snapshot();
         session
     }
@@ -269,10 +303,10 @@ impl DebugSession {
                 }
             }
 
-            if let Some(target) = insn_target {
-                if self.vm.insns_retired() >= target {
-                    return;
-                }
+            if let Some(target) = insn_target
+                && self.vm.insns_retired() >= target
+            {
+                return;
             }
         }
     }
@@ -284,11 +318,15 @@ impl DebugSession {
             .symbols_iter()
             .map(|(name, offset)| (name.to_owned(), RAM_BASE + offset))
             .collect();
-        let elf = self
-            .assembled
-            .to_elf_with_entry(self.load_base, &self.entry_symbol);
-        self.vm = VirtualMachine::from_elf(&elf)
-            .unwrap_or_else(|e| panic!("failed to reload debug ELF: {e}"));
+        self.vm = if self.is_kernel {
+            VirtualMachine::new_kernel(&self.assembled)
+        } else {
+            let elf = self
+                .assembled
+                .to_elf_with_entry(self.load_base, &self.entry_symbol);
+            VirtualMachine::from_elf(&elf)
+                .unwrap_or_else(|e| panic!("failed to reload debug ELF: {e}"))
+        };
         self.step_count = 0;
         self.status = SessionStatus::Running;
         self.uart_output.clear();

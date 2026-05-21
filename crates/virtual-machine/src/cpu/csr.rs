@@ -1,4 +1,4 @@
-﻿//! Machine-mode Control and Status Register (CSR) file for the RV64 CPU.
+//! Machine-mode Control and Status Register (CSR) file for the RV64 CPU.
 
 use crate::error::VmError;
 
@@ -128,7 +128,11 @@ impl CsrFile {
     }
 
     pub fn read(&self, addr: u16) -> Result<u64, VmError> {
-        use addr::*;
+        use addr::{
+            CYCLE, FCSR, FFLAGS, FRM, INSTRET, MCAUSE, MCOUNTEREN, MEDELEG, MEPC, MHARTID, MIDELEG,
+            MIE, MIP, MISA, MSCRATCH, MSTATUS, MTVAL, MTVEC, SATP, SCAUSE, SCOUNTEREN, SEPC, SIE,
+            SIP, SSCRATCH, SSTATUS, STVAL, STVEC, TIME,
+        };
         match addr {
             FFLAGS => Ok(u64::from(self.fflags)),
             FRM => Ok(u64::from(self.frm)),
@@ -175,7 +179,11 @@ impl CsrFile {
     }
 
     pub fn write(&mut self, addr: u16, val: u64) -> Result<(), VmError> {
-        use addr::*;
+        use addr::{
+            CYCLE, FCSR, FFLAGS, FRM, INSTRET, MCAUSE, MCOUNTEREN, MEDELEG, MEPC, MHARTID, MIDELEG,
+            MIE, MIP, MISA, MSCRATCH, MSTATUS, MTVAL, MTVEC, SATP, SCAUSE, SCOUNTEREN, SEPC, SIE,
+            SIP, SSCRATCH, SSTATUS, STVAL, STVEC,
+        };
         match addr {
             FFLAGS => {
                 self.fflags = (val & 0x1F) as u8;
@@ -258,10 +266,10 @@ impl CsrFile {
             }
             // PMP CSRs: simple writable storage
             0x3A0 => {
-                self.pmpcfg0 = val & 0xFFFF_FFFF_FFFF_FFFFu64;
+                self.pmpcfg0 = val;
             }
             0x3B0 => {
-                self.pmpaddr0 = val & 0xFFFF_FFFF_FFFF_FFFFu64;
+                self.pmpaddr0 = val;
             }
             MIP => {
                 // WARL: MTIP(7) and MEIP(11) are read-only (hardware-driven).

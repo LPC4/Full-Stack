@@ -12,7 +12,7 @@ pub struct ParsedElf {
     pub load_segments: Vec<ElfLoadSegment>,
 }
 
-/// A loadable segment from an ELF PT_LOAD program header
+/// A loadable segment from an ELF `PT_LOAD` program header
 #[derive(Debug)]
 pub struct ElfLoadSegment {
     pub offset: u64,
@@ -33,16 +33,16 @@ impl ParsedElf {
         const PT_LOAD: u32 = 1;
 
         if bytes.len() < 64 {
-            return Err(VmError::Other("ELF image is too small".to_string()));
+            return Err(VmError::Other("ELF image is too small".to_owned()));
         }
         if &bytes[0..4] != ELF_MAGIC {
-            return Err(VmError::Other("ELF magic header missing".to_string()));
+            return Err(VmError::Other("ELF magic header missing".to_owned()));
         }
         if bytes[4] != ELFCLASS64 {
-            return Err(VmError::Other("ELF image is not 64-bit".to_string()));
+            return Err(VmError::Other("ELF image is not 64-bit".to_owned()));
         }
         if bytes[5] != ELFDATA2LSB {
-            return Err(VmError::Other("ELF image is not little-endian".to_string()));
+            return Err(VmError::Other("ELF image is not little-endian".to_owned()));
         }
 
         let entry_point = read_u64(bytes, 24)?;
@@ -52,7 +52,7 @@ impl ParsedElf {
 
         if phentsize < 56 {
             return Err(VmError::Other(
-                "ELF program header size is invalid".to_string(),
+                "ELF program header size is invalid".to_owned(),
             ));
         }
 
@@ -60,14 +60,14 @@ impl ParsedElf {
         for i in 0..phnum {
             let base = phoff
                 .checked_add(i * phentsize)
-                .ok_or_else(|| VmError::Other("ELF program header overflow".to_string()))?;
+                .ok_or_else(|| VmError::Other("ELF program header overflow".to_owned()))?;
             let ph = base as usize;
             let end = ph
                 .checked_add(phentsize as usize)
-                .ok_or_else(|| VmError::Other("ELF program header slice overflow".to_string()))?;
+                .ok_or_else(|| VmError::Other("ELF program header slice overflow".to_owned()))?;
             let header = bytes
                 .get(ph..end)
-                .ok_or_else(|| VmError::Other("ELF program header outside file".to_string()))?;
+                .ok_or_else(|| VmError::Other("ELF program header outside file".to_owned()))?;
 
             let p_type = read_u32(header, 0)?;
             if p_type != PT_LOAD {
@@ -84,7 +84,7 @@ impl ParsedElf {
 
         if load_segments.is_empty() {
             return Err(VmError::Other(
-                "ELF contains no PT_LOAD segments".to_string(),
+                "ELF contains no PT_LOAD segments".to_owned(),
             ));
         }
 
@@ -99,10 +99,10 @@ impl ParsedElf {
 fn read_u16(bytes: &[u8], offset: usize) -> Result<u16, VmError> {
     let end = offset
         .checked_add(2)
-        .ok_or_else(|| VmError::Other("ELF read overflow".to_string()))?;
+        .ok_or_else(|| VmError::Other("ELF read overflow".to_owned()))?;
     let slice = bytes
         .get(offset..end)
-        .ok_or_else(|| VmError::Other("ELF read out of bounds".to_string()))?;
+        .ok_or_else(|| VmError::Other("ELF read out of bounds".to_owned()))?;
     Ok(u16::from_le_bytes([slice[0], slice[1]]))
 }
 
@@ -110,10 +110,10 @@ fn read_u16(bytes: &[u8], offset: usize) -> Result<u16, VmError> {
 fn read_u32(bytes: &[u8], offset: usize) -> Result<u32, VmError> {
     let end = offset
         .checked_add(4)
-        .ok_or_else(|| VmError::Other("ELF read overflow".to_string()))?;
+        .ok_or_else(|| VmError::Other("ELF read overflow".to_owned()))?;
     let slice = bytes
         .get(offset..end)
-        .ok_or_else(|| VmError::Other("ELF read out of bounds".to_string()))?;
+        .ok_or_else(|| VmError::Other("ELF read out of bounds".to_owned()))?;
     Ok(u32::from_le_bytes([slice[0], slice[1], slice[2], slice[3]]))
 }
 
@@ -121,10 +121,10 @@ fn read_u32(bytes: &[u8], offset: usize) -> Result<u32, VmError> {
 fn read_u64(bytes: &[u8], offset: usize) -> Result<u64, VmError> {
     let end = offset
         .checked_add(8)
-        .ok_or_else(|| VmError::Other("ELF read overflow".to_string()))?;
+        .ok_or_else(|| VmError::Other("ELF read overflow".to_owned()))?;
     let slice = bytes
         .get(offset..end)
-        .ok_or_else(|| VmError::Other("ELF read out of bounds".to_string()))?;
+        .ok_or_else(|| VmError::Other("ELF read out of bounds".to_owned()))?;
     Ok(u64::from_le_bytes([
         slice[0], slice[1], slice[2], slice[3], slice[4], slice[5], slice[6], slice[7],
     ]))

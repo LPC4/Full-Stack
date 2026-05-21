@@ -3,7 +3,9 @@ use super::reg_parse::parse_int_reg;
 use super::section::SectionKind;
 use super::token::{AsmToken, BranchKind};
 use crate::real::RealInstruction;
-use crate::riscv::rv64i::{Add, Addi, Andi, Ecall, Jalr, Lb, Lbu, Ld, Mret, Or, Sb, Sd, Slli, Srl, Sub};
+use crate::riscv::rv64i::{
+    Add, Addi, And, Andi, Ecall, Jalr, Lb, Lbu, Ld, Mret, Or, Ori, Sb, Sd, Slli, Srl, Sret, Sub,
+};
 use crate::riscv::rv64m::{Divu, Remu};
 use crate::riscv::rv64zicsr::{Csrrs, Csrrw};
 /// Pass 0: parse `Vec<RvInstruction>` into `Vec<AsmToken>`.
@@ -43,6 +45,18 @@ pub fn parse(tokens: &[RvInstruction]) -> Vec<AsmToken> {
 // ---------------------------------------------------------------------------
 
 fn parse_directive_or_instruction(raw: &str, out: &mut Vec<AsmToken>) {
+    // Strip trailing inline `;` comments before any classification.
+    // Exception: `.asciz` lines may contain `;` inside the string literal and
+    // are handled by the directive parser which already understands quoting.
+    let raw = if raw.trim_start().starts_with(".asciz") {
+        raw
+    } else {
+        match raw.find(';') {
+            Some(i) => raw[..i].trim_end(),
+            None => raw,
+        }
+    };
+
     let trimmed = raw.trim();
 
     if trimmed.is_empty() {
@@ -50,11 +64,12 @@ fn parse_directive_or_instruction(raw: &str, out: &mut Vec<AsmToken>) {
     }
 
     // Label lines emitted by data section: `name:` (no spaces in name)
-    if let Some(label) = trimmed.strip_suffix(':') {
-        if !label.is_empty() && !label.contains(|c: char| c.is_whitespace()) {
-            out.push(AsmToken::Label(label.to_owned()));
-            return;
-        }
+    if let Some(label) = trimmed.strip_suffix(':')
+        && !label.is_empty()
+        && !label.contains(|c: char| c.is_whitespace())
+    {
+        out.push(AsmToken::Label(label.to_owned()));
+        return;
     }
 
     // Assembler directives start with `.`
@@ -108,6 +123,14 @@ fn push_directive(dir: Directive, out: &mut Vec<AsmToken>) {
 /// May push more than one token (e.g. `li` expands to up to two real instructions).
 /// Unrecognised mnemonics are emitted as `AsmToken::Comment` so nothing is silently lost.
 fn parse_instruction_line(line: &str, out: &mut Vec<AsmToken>) {
+    // Strip inline `;` comments before any operand parsing.
+    let line = match line.find(';') {
+        Some(i) => line[..i].trim_end(),
+        None => line,
+    };
+    if line.is_empty() {
+        return;
+    }
     let (mnemonic, rest) = split_mnemonic(line);
 
     // Branch instructions: `bne rs1, rs2, label`
@@ -175,13 +198,12 @@ fn parse_instruction_line(line: &str, out: &mut Vec<AsmToken>) {
 
     // `li rd, imm`  (pseudo: expands to addi or lui+addi)
     if mnemonic == "li" {
-        if let Some((rd, imm)) = parse_two_fields(rest) {
-            if let Some(rd) = parse_int_reg(rd) {
-                if let Ok(imm) = imm.parse::<i64>() {
-                    expand_li(rd, imm, out);
-                    return;
-                }
-            }
+        if let Some((rd, imm)) = parse_two_fields(rest)
+            && let Some(rd) = parse_int_reg(rd)
+            && let Some(imm) = parse_imm_i64(imm)
+        {
+            expand_li(rd, imm, out);
+            return;
         }
         out.push(AsmToken::Comment(format!("unrecognised li: {line}")));
         return;
@@ -189,11 +211,11 @@ fn parse_instruction_line(line: &str, out: &mut Vec<AsmToken>) {
 
     // `mv rd, rs`  →  addi rd, rs, 0
     if mnemonic == "mv" {
-        if let Some((rd_str, rs_str)) = parse_two_fields(rest) {
-            if let (Some(rd), Some(rs)) = (parse_int_reg(rd_str), parse_int_reg(rs_str)) {
-                out.push(AsmToken::Real(RealInstruction::Addi(Addi::new(rd, rs, 0))));
-                return;
-            }
+        if let Some((rd_str, rs_str)) = parse_two_fields(rest)
+            && let (Some(rd), Some(rs)) = (parse_int_reg(rd_str), parse_int_reg(rs_str))
+        {
+            out.push(AsmToken::Real(RealInstruction::Addi(Addi::new(rd, rs, 0))));
+            return;
         }
         out.push(AsmToken::Comment(format!("unrecognised mv: {line}")));
         return;
@@ -279,17 +301,33 @@ fn parse_instruction_line(line: &str, out: &mut Vec<AsmToken>) {
         return;
     }
 
+    // `sret`
+    if mnemonic == "sret" {
+        out.push(AsmToken::Real(RealInstruction::Sret(Sret::new())));
+        return;
+    }
+
+    // `ori rd, rs1, imm`
+    if mnemonic == "ori" {
+        if let Some((rd, rs1, imm)) = parse_r_i_imm(rest) {
+            out.push(AsmToken::Real(RealInstruction::Ori(Ori::new(rd, rs1, imm))));
+            return;
+        }
+        out.push(AsmToken::Comment(format!("unrecognised ori: {line}")));
+        return;
+    }
+
     // `slli rd, rs1, shamt`
     if mnemonic == "slli" {
-        if let Some((rd, rs1, shamt)) = parse_r_i_imm(rest) {
-            if (0..=63).contains(&shamt) {
-                out.push(AsmToken::Real(RealInstruction::Slli(Slli::new(
-                    rd,
-                    rs1,
-                    shamt as u8,
-                ))));
-                return;
-            }
+        if let Some((rd, rs1, shamt)) = parse_r_i_imm(rest)
+            && (0..=63).contains(&shamt)
+        {
+            out.push(AsmToken::Real(RealInstruction::Slli(Slli::new(
+                rd,
+                rs1,
+                shamt as u8,
+            ))));
+            return;
         }
         out.push(AsmToken::Comment(format!("unrecognised slli: {line}")));
         return;
@@ -370,22 +408,32 @@ fn expand_li(rd: u8, imm: i64, out: &mut Vec<AsmToken>) {
     }
 }
 
+/// Parse an integer immediate: decimal, or `0x`/`0X` hex prefix.
+fn parse_imm_i64(s: &str) -> Option<i64> {
+    let s = s.trim();
+    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        i64::from_str_radix(hex, 16).ok()
+    } else {
+        s.parse::<i64>().ok()
+    }
+}
+
 /// Split `"rd, rest"` into `(rd_str, rest_str)`.
 fn parse_two_fields(operands: &str) -> Option<(&str, &str)> {
     let comma = operands.find(',')?;
     Some((operands[..comma].trim(), operands[comma + 1..].trim()))
 }
 
-/// Parse `"rd, rs1, imm"` → (rd_reg, rs1_reg, imm_i32).
+/// Parse `"rd, rs1, imm"` → (`rd_reg`, `rs1_reg`, `imm_i32`).
 fn parse_r_i_imm(operands: &str) -> Option<(u8, u8, i32)> {
     let mut parts = operands.splitn(3, ',');
     let rd = parse_int_reg(parts.next()?.trim())?;
     let rs1 = parse_int_reg(parts.next()?.trim())?;
-    let imm: i32 = parts.next()?.trim().parse().ok()?;
+    let imm = parse_imm_i64(parts.next()?.trim())? as i32;
     Some((rd, rs1, imm))
 }
 
-/// Parse `"rs2, imm(rs1)"` → (rs2_reg, rs1_reg, imm_i32).  Used by stores.
+/// Parse `"rs2, imm(rs1)"` → (`rs2_reg`, `rs1_reg`, `imm_i32`).  Used by stores.
 fn parse_store_mem(operands: &str) -> Option<(u8, u8, i32)> {
     let comma = operands.find(',')?;
     let rs2 = parse_int_reg(operands[..comma].trim())?;
@@ -393,7 +441,7 @@ fn parse_store_mem(operands: &str) -> Option<(u8, u8, i32)> {
     Some((rs2, rs1, imm))
 }
 
-/// Parse `"rd, imm(rs1)"` → (rd_reg, rs1_reg, imm_i32).  Used by loads.
+/// Parse `"rd, imm(rs1)"` → (`rd_reg`, `rs1_reg`, `imm_i32`).  Used by loads.
 fn parse_load_mem(operands: &str) -> Option<(u8, u8, i32)> {
     let comma = operands.find(',')?;
     let rd = parse_int_reg(operands[..comma].trim())?;
@@ -401,11 +449,11 @@ fn parse_load_mem(operands: &str) -> Option<(u8, u8, i32)> {
     Some((rd, rs1, imm))
 }
 
-/// Parse `"imm(rs1)"` → (rs1_reg, imm_i32).
+/// Parse `"imm(rs1)"` → (`rs1_reg`, `imm_i32`).
 fn parse_mem_ref(s: &str) -> Option<(u8, i32)> {
     let lparen = s.find('(')?;
     let rparen = s.find(')')?;
-    let imm: i32 = s[..lparen].trim().parse().ok()?;
+    let imm = parse_imm_i64(s[..lparen].trim())? as i32;
     let rs1 = parse_int_reg(s[lparen + 1..rparen].trim())?;
     Some((rs1, imm))
 }
@@ -496,29 +544,29 @@ fn parse_branch_zero(kind: BranchKind, operands: &str) -> Option<AsmToken> {
 fn parse_csr_name(name: &str) -> Option<u16> {
     match name.trim() {
         // Machine-mode CSRs
-        "mstatus"  => Some(0x300),
-        "misa"     => Some(0x301),
-        "medeleg"  => Some(0x302),
-        "mideleg"  => Some(0x303),
-        "mie"      => Some(0x304),
-        "mtvec"    => Some(0x305),
+        "mstatus" => Some(0x300),
+        "misa" => Some(0x301),
+        "medeleg" => Some(0x302),
+        "mideleg" => Some(0x303),
+        "mie" => Some(0x304),
+        "mtvec" => Some(0x305),
         "mscratch" => Some(0x340),
-        "mepc"     => Some(0x341),
-        "mcause"   => Some(0x342),
-        "mtval"    => Some(0x343),
-        "mip"      => Some(0x344),
-        "pmpcfg0"  => Some(0x3A0),
+        "mepc" => Some(0x341),
+        "mcause" => Some(0x342),
+        "mtval" => Some(0x343),
+        "mip" => Some(0x344),
+        "pmpcfg0" => Some(0x3A0),
         "pmpaddr0" => Some(0x3B0),
         // Supervisor-mode CSRs
-        "sstatus"  => Some(0x100),
-        "sie"      => Some(0x104),
-        "stvec"    => Some(0x105),
+        "sstatus" => Some(0x100),
+        "sie" => Some(0x104),
+        "stvec" => Some(0x105),
         "sscratch" => Some(0x140),
-        "sepc"     => Some(0x141),
-        "scause"   => Some(0x142),
-        "stval"    => Some(0x143),
-        "sip"      => Some(0x144),
-        "satp"     => Some(0x180),
+        "sepc" => Some(0x141),
+        "scause" => Some(0x142),
+        "stval" => Some(0x143),
+        "sip" => Some(0x144),
+        "satp" => Some(0x180),
         // Hex / decimal fallback
         s if s.starts_with("0x") || s.starts_with("0X") => u16::from_str_radix(&s[2..], 16).ok(),
         s => s.parse::<u16>().ok(),
@@ -557,6 +605,7 @@ fn parse_r_type(mnemonic: &str, operands: &str) -> Option<AsmToken> {
     let real = match mnemonic {
         "add" => RealInstruction::Add(Add::new(rd, rs1, rs2)),
         "sub" => RealInstruction::Sub(Sub::new(rd, rs1, rs2)),
+        "and" => RealInstruction::And(And::new(rd, rs1, rs2)),
         "srl" => RealInstruction::Srl(Srl::new(rd, rs1, rs2)),
         "or" => RealInstruction::Or(Or::new(rd, rs1, rs2)),
         "divu" => RealInstruction::Divu(Divu::new(rd, rs1, rs2)),

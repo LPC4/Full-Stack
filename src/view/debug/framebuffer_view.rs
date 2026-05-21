@@ -20,7 +20,7 @@ pub struct FramebufferView {
     width_input: String,
     height_input: String,
     mode: FbMode,
-    #[allow(clippy::option_option)]
+    #[expect(clippy::option_option)]
     texture: Option<TextureHandle>,
 }
 

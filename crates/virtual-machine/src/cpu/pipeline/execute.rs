@@ -246,8 +246,8 @@ pub fn execute(
             csr,
         } => {
             let operand = match funct3 {
-                1 | 2 | 3 => regs.read_x(*rs1_uimm),
-                5 | 6 | 7 => *rs1_uimm as u64,
+                1..=3 => regs.read_x(*rs1_uimm),
+                5..=7 => *rs1_uimm as u64,
                 _ => return Err(VmError::IllegalInstruction(*funct3 as u32)),
             };
             let old_val = csrs.read(*csr).unwrap_or(0);
@@ -713,20 +713,8 @@ fn exec_fp_op(
                     };
                     // Detect NX for large integer -> f64 conversions that lose bits.
                     let fflags: u8 = match rs2 {
-                        2 => {
-                            if (result as i64) != (src as i64) {
-                                0x01
-                            } else {
-                                0
-                            }
-                        }
-                        3 => {
-                            if (result as u64) != src {
-                                0x01
-                            } else {
-                                0
-                            }
-                        }
+                        2 => u8::from((result as i64) != (src as i64)),
+                        3 => u8::from((result as u64) != src),
                         _ => 0,
                     };
                     (result.to_bits(), fflags)
@@ -927,7 +915,7 @@ fn sat_f32_to_u64(val: f32, rm: u8) -> (u64, u8) {
         return (0, NV);
     }
     // 2^64 as f32
-    if val >= 1.844_674_407_370_955e19f32 {
+    if val >= 1.844_674_4e19_f32 {
         return (u64::MAX, NV);
     }
     let rounded = alu::round_f32(val, rm);
