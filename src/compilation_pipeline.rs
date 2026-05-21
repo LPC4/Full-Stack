@@ -1,12 +1,8 @@
 use asm_to_binary::assembler::link_layout::LinkLayout;
-use hll_to_ir::ast::{Block, DeclNode, Program, Statement};
-use hll_to_ir::compiler::{
-    CompilerError, Diagnostic, DiagnosticLevel, HighLevelCompiler, SemanticAnalyzer,
-};
-use hll_to_ir::lexer::Lexer;
-use hll_to_ir::parser::{Parser, ParserError};
-use hll_to_ir::token::Token;
-use hll_to_ir::IrProgram;
+use asm_to_binary::assembler::{Assembler, AssemblerError};
+use asm_to_binary::rv_instruction::RvInstruction;
+use asm_to_binary::AssembledOutput;
+use hll_to_ir::{CompileConfig, Diagnostic, DiagnosticLevel, HllCompiler, IrProgram};
 use ir_to_asm::compiler::compiler_rv64::CompilerRv64;
 
 // ---------------------------------------------------------------------------
@@ -21,24 +17,17 @@ pub use hll_to_ir::TargetMode;
 
 #[derive(Debug, Clone)]
 pub enum CompilationError {
-    LexerError(String),
-    ParseError(ParserError),
-    CompilerError(CompilerError),
-    SemanticErrors(Vec<String>),
-    /// Errors emitted by the freestanding validator.
+    DiagnosticErrors(Vec<Diagnostic>),
+    /// Errors emitted by the entry-point validator.
     FreestandingErrors(Vec<String>),
 }
 
 impl std::fmt::Display for CompilationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::LexerError(msg) => write!(f, "Lexer error: {msg}"),
-            Self::ParseError(err) => write!(f, "Parse error: {err}"),
-            Self::CompilerError(err) => write!(f, "Compiler error: {err:?}"),
-            Self::SemanticErrors(errors) => {
-                writeln!(f, "Semantic errors:")?;
-                for error in errors {
-                    writeln!(f, "  - {error}")?;
+            Self::DiagnosticErrors(diags) => {
+                for d in diags {
+                    writeln!(f, "{}", d.format_full())?;
                 }
                 Ok(())
             }
@@ -61,9 +50,92 @@ impl std::error::Error for CompilationError {}
 
 #[derive(Debug)]
 pub struct CompilationResult {
-    pub ast: Program,
+    /// Debug-formatted token list (for the Tokens panel).
+    pub tokens_display: String,
+    /// Debug-formatted AST (for the AST panel).
+    pub ast_display: String,
     pub ir_program: IrProgram,
     pub diagnostics: Vec<Diagnostic>,
+}
+
+// ---------------------------------------------------------------------------
+// Stage-typed pipeline output
+// ---------------------------------------------------------------------------
+
+pub struct LexOutput {
+    pub display: String,
+}
+
+pub struct ParseOutput {
+    pub display: String,
+}
+
+pub struct IrOutput {
+    pub display: String,
+}
+
+pub struct AsmOutput {
+    pub tokens: Vec<RvInstruction>,
+    pub display: String,
+}
+
+pub struct BinaryOutput {
+    pub assembled: AssembledOutput,
+}
+
+pub struct ExecOutput {
+    pub uart_output: String,
+    pub exit_code: Option<i64>,
+}
+
+pub struct PipelineResult {
+    pub diagnostics: Vec<Diagnostic>,
+    pub lex: Option<LexOutput>,
+    pub parse: Option<ParseOutput>,
+    pub ir: Option<IrOutput>,
+    pub asm: Option<AsmOutput>,
+    pub binary: Option<BinaryOutput>,
+    pub exec: Option<ExecOutput>,
+}
+
+impl PipelineResult {
+    pub fn has_errors(&self) -> bool {
+        self.diagnostics.iter().any(|d| d.level == DiagnosticLevel::Error)
+    }
+
+    pub fn format_diagnostics(&self) -> String {
+        self.diagnostics
+            .iter()
+            .map(|d| d.format_full())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Pipeline config
+// ---------------------------------------------------------------------------
+
+pub struct PipelineConfig {
+    pub run_semantic_analysis: bool,
+    pub strict_semantics: bool,
+    pub target_mode: TargetMode,
+    pub entry_point: Option<String>,
+    pub link_layout: Option<LinkLayout>,
+    pub string_prefix: Option<String>,
+}
+
+impl Default for PipelineConfig {
+    fn default() -> Self {
+        Self {
+            run_semantic_analysis: true,
+            strict_semantics: false,
+            target_mode: TargetMode::Hosted,
+            entry_point: None,
+            link_layout: None,
+            string_prefix: None,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -71,23 +143,12 @@ pub struct CompilationResult {
 // ---------------------------------------------------------------------------
 
 pub struct CompilationPipeline {
-    pub run_semantic_analysis: bool,
-    pub strict_semantics: bool,
-    /// Target environment.
-    pub target_mode: TargetMode,
-    /// Entry-point symbol to verify and use when building ELF images.
-    /// `None` means "use the mode default" (`_start` for Hosted, `kmain` for
-    /// Freestanding).
-    pub entry_point: Option<String>,
-    /// Memory layout for the output image.
-    /// `None` uses the mode default (`LinkLayout::hosted()` or
-    /// `LinkLayout::freestanding_kernel()`).
-    pub link_layout: Option<LinkLayout>,
-    /// Prefix for rodata string-literal labels produced by this compilation
-    /// unit (e.g. `"str_"` → `str_0`, `str_1`, ...).  When two units are linked
-    /// together, give each a distinct prefix so the assembler never sees
-    /// duplicate labels.  `None` uses the default `"str_"`.
-    pub string_prefix: Option<String>,
+    run_semantic_analysis: bool,
+    strict_semantics: bool,
+    target_mode: TargetMode,
+    entry_point: Option<String>,
+    link_layout: Option<LinkLayout>,
+    string_prefix: Option<String>,
 }
 
 impl Default for CompilationPipeline {
@@ -105,6 +166,17 @@ impl CompilationPipeline {
             entry_point: None,
             link_layout: None,
             string_prefix: None,
+        }
+    }
+
+    pub fn from_config(config: PipelineConfig) -> Self {
+        Self {
+            run_semantic_analysis: config.run_semantic_analysis,
+            strict_semantics: config.strict_semantics,
+            target_mode: config.target_mode,
+            entry_point: config.entry_point,
+            link_layout: config.link_layout,
+            string_prefix: config.string_prefix,
         }
     }
 
@@ -137,140 +209,153 @@ impl CompilationPipeline {
         }
     }
 
+    pub fn target_mode(&self) -> TargetMode {
+        self.target_mode
+    }
+
+    pub fn set_target_mode(&mut self, mode: TargetMode) {
+        self.target_mode = mode;
+    }
+
+    pub fn set_entry_point(&mut self, entry: Option<String>) {
+        self.entry_point = entry;
+    }
+
+    pub fn set_link_layout(&mut self, layout: Option<LinkLayout>) {
+        self.link_layout = layout;
+    }
+
+    pub fn set_run_semantic_analysis(&mut self, enabled: bool) {
+        self.run_semantic_analysis = enabled;
+    }
+
+    pub fn set_string_prefix(&mut self, prefix: Option<String>) {
+        self.string_prefix = prefix;
+    }
+
     /// source -> tokens -> AST -> IR, with mode-specific validation.
     pub fn compile(&self, source: &str) -> Result<CompilationResult, CompilationError> {
         log::info!("Starting compilation pipeline");
 
-        // Phase 1: Lexing
-        log::info!("Phase 1: Lexing source code");
-        let tokens = self.lex_internal(source)?;
-        log::info!("Lexed {} tokens", tokens.len());
+        let compiler = HllCompiler::new(CompileConfig {
+            target: self.target_mode,
+            strict: self.run_semantic_analysis,
+            string_prefix: self.string_prefix.clone(),
+        });
 
-        // Phase 2: Parsing
-        log::info!("Phase 2: Parsing tokens to AST");
-        let ast = self.parse(tokens)?;
-        log::info!(
-            "Parsed program with {} declarations",
-            ast.declarations.len()
-        );
+        let out = compiler
+            .compile(source)
+            .map_err(CompilationError::DiagnosticErrors)?;
 
-        // Phase 3: Semantic Analysis
-        if self.run_semantic_analysis {
-            log::info!("Phase 3: Running semantic analysis");
-            self.semantic_analysis(&ast)?;
-        }
-
-        // Phase 4: Compilation to IR
-        log::info!("Phase 4: Compiling to intermediate representation");
-        let (ir_program, mut diagnostics) = self.compile_to_ir(&ast)?;
-        log::info!("Compilation complete");
-
-        // Phase 5: Freestanding validation
+        // Entry-point presence check for freestanding builds.
         if self.target_mode == TargetMode::Freestanding {
-            log::info!("Phase 5: Running freestanding validation");
-            let freestanding_diags = self.check_freestanding(&ast);
-
-            let errors: Vec<String> = freestanding_diags
-                .iter()
-                .filter(|d| matches!(d.level, DiagnosticLevel::Error))
-                .map(|d| d.format_full())
-                .collect();
-
-            if !errors.is_empty() {
-                return Err(CompilationError::FreestandingErrors(errors));
+            let entry = self.effective_entry_point();
+            let entry_defined = out.ir.functions.iter().any(|f| f.name == entry);
+            if !entry_defined && entry != "_start" && entry != "main" {
+                let mut warnings = out.diagnostics.clone();
+                warnings.push(
+                    Diagnostic::new(
+                        DiagnosticLevel::Warning,
+                        format!(
+                            "configured entry point `{entry}` is not defined as an HLL function"
+                        ),
+                    )
+                    .with_note(
+                        "if the entry point is defined via an `asm { }` label, \
+                         this warning can be ignored",
+                    ),
+                );
+                return Ok(CompilationResult {
+                    tokens_display: out.tokens_display,
+                    ast_display: out.ast_display,
+                    ir_program: out.ir,
+                    diagnostics: warnings,
+                });
             }
-
-            // Warnings are surfaced as diagnostics in the result.
-            diagnostics.extend(freestanding_diags);
         }
 
+        log::info!("Compilation complete");
         Ok(CompilationResult {
-            ast,
-            ir_program,
-            diagnostics,
+            tokens_display: out.tokens_display,
+            ast_display: out.ast_display,
+            ir_program: out.ir,
+            diagnostics: out.diagnostics,
         })
     }
 
-    fn lex_internal<'a>(
+    /// Run all pipeline stages, returning typed per-stage outputs.
+    ///
+    /// `stdlib_tokens` — when `Some`, prepended before the user's assembly tokens
+    /// before assembling (the standard link mode for user programs).  Pass `None`
+    /// when compiling stdlib or kernel sources standalone.
+    pub fn run_full(
         &self,
-        source: &'a str,
-    ) -> Result<Vec<(Token<'a>, hll_to_ir::token::Span)>, CompilationError> {
-        let token_spans = Lexer::tokenize(source);
-        if let Some((Token::Error(msg), _)) = token_spans
-            .iter()
-            .find(|(t, _)| matches!(t, Token::Error(_)))
-        {
-            return Err(CompilationError::LexerError(msg.clone()));
-        }
-        Ok(token_spans)
-    }
+        source: &str,
+        stdlib_tokens: Option<&[RvInstruction]>,
+    ) -> PipelineResult {
+        let compiler = HllCompiler::new(CompileConfig {
+            target: self.target_mode,
+            strict: self.run_semantic_analysis,
+            string_prefix: self.string_prefix.clone(),
+        });
 
-    pub fn parse(
-        &self,
-        token_spans: Vec<(Token<'_>, hll_to_ir::token::Span)>,
-    ) -> Result<Program, CompilationError> {
-        let mut parser = Parser::new_with_spans(token_spans);
-        parser.parse_program().map_err(CompilationError::ParseError)
-    }
-
-    pub fn semantic_analysis(&self, ast: &Program) -> Result<(), CompilationError> {
-        let mut semantic_analyzer = SemanticAnalyzer::new();
-
-        if let Ok(_) = semantic_analyzer.analyze_program(ast) {
-            let errors: Vec<_> = semantic_analyzer
-                .diagnostics()
-                .iter()
-                .filter(|d| {
-                    matches!(
-                        d.level,
-                        hll_to_ir::compiler::DiagnosticLevel::Error
-                    )
-                })
-                .map(|d| d.message.clone())
-                .collect();
-
-            if !errors.is_empty() {
-                return Err(CompilationError::SemanticErrors(errors));
+        let out = match compiler.compile(source) {
+            Ok(out) => out,
+            Err(diags) => {
+                return PipelineResult {
+                    diagnostics: diags,
+                    lex: None,
+                    parse: None,
+                    ir: None,
+                    asm: None,
+                    binary: None,
+                    exec: None,
+                }
             }
-            Ok(())
-        } else {
-            let errors: Vec<_> = semantic_analyzer
-                .diagnostics()
-                .iter()
-                .map(|d| d.message.clone())
-                .collect();
-            Err(CompilationError::SemanticErrors(errors))
-        }
-    }
+        };
 
-    pub fn compile_to_ir(
-        &self,
-        ast: &Program,
-    ) -> Result<(IrProgram, Vec<Diagnostic>), CompilationError> {
-        let prefix = self.string_prefix.as_deref().unwrap_or("str_");
-        let mut compiler = HighLevelCompiler::with_string_prefix(prefix);
-        let ir_program = compiler
-            .compile_program(ast)
-            .map_err(CompilationError::CompilerError)?;
+        let mut diagnostics = out.diagnostics;
 
-        let diagnostics = compiler.diagnostics().to_vec();
-
-        let errors: Vec<_> = diagnostics
-            .iter()
-            .filter(|d| {
-                matches!(
-                    d.level,
-                    DiagnosticLevel::Error
-                )
-            })
-            .map(|d| d.message.clone())
-            .collect();
-
-        if !errors.is_empty() {
-            return Err(CompilationError::SemanticErrors(errors));
+        // Entry-point presence check for freestanding builds.
+        if self.target_mode == TargetMode::Freestanding {
+            let entry = self.effective_entry_point();
+            if !out.ir.functions.iter().any(|f| f.name == entry)
+                && entry != "_start"
+                && entry != "main"
+            {
+                diagnostics.push(
+                    Diagnostic::new(
+                        DiagnosticLevel::Warning,
+                        format!(
+                            "configured entry point `{entry}` is not defined as an HLL function"
+                        ),
+                    )
+                    .with_note(
+                        "if the entry point is defined via an `asm { }` label, \
+                         this warning can be ignored",
+                    ),
+                );
+            }
         }
 
-        Ok((ir_program, diagnostics))
+        let lex = Some(LexOutput { display: out.tokens_display });
+        let parse = Some(ParseOutput { display: out.ast_display });
+        let ir_display = out.ir.to_string();
+        let ir = Some(IrOutput { display: ir_display });
+
+        let (asm_text, user_tokens) = self.compile_ir_to_assembly_with_tokens(&out.ir);
+        let asm = Some(AsmOutput { tokens: user_tokens.clone(), display: asm_text });
+
+        let binary = {
+            let mut all_tokens: Vec<RvInstruction> =
+                stdlib_tokens.map(|s| s.to_vec()).unwrap_or_default();
+            all_tokens.extend(user_tokens);
+            self.assemble_linked(&all_tokens)
+                .ok()
+                .map(|assembled| BinaryOutput { assembled })
+        };
+
+        PipelineResult { diagnostics, lex, parse, ir, asm, binary, exec: None }
     }
 
     /// Compile and return only the IR program.
@@ -289,10 +374,7 @@ impl CompilationPipeline {
     pub fn compile_ir_to_assembly_with_tokens(
         &self,
         ir: &IrProgram,
-    ) -> (
-        String,
-        Vec<asm_to_binary::rv_instruction::RvInstruction>,
-    ) {
+    ) -> (String, Vec<RvInstruction>) {
         let mut compiler = CompilerRv64::new();
         compiler.compile_with_tokens(ir)
     }
@@ -300,12 +382,9 @@ impl CompilationPipeline {
     /// Assemble a token stream into machine code.
     pub fn assemble(
         &self,
-        tokens: &[asm_to_binary::rv_instruction::RvInstruction],
-    ) -> Result<
-        asm_to_binary::assembler::output::AssembledOutput,
-        asm_to_binary::assembler::AssemblerError,
-    > {
-        asm_to_binary::assembler::Assembler::assemble(tokens)
+        tokens: &[RvInstruction],
+    ) -> Result<AssembledOutput, AssemblerError> {
+        Assembler::assemble(tokens)
     }
 
     /// Assemble and apply full link-time post-processing:
@@ -316,201 +395,14 @@ impl CompilationPipeline {
     /// for boot or debugging.
     pub fn assemble_linked(
         &self,
-        tokens: &[asm_to_binary::rv_instruction::RvInstruction],
-    ) -> Result<
-        asm_to_binary::assembler::output::AssembledOutput,
-        asm_to_binary::assembler::AssemblerError,
-    > {
-        let mut out = asm_to_binary::assembler::Assembler::assemble(tokens)?;
+        tokens: &[RvInstruction],
+    ) -> Result<AssembledOutput, AssemblerError> {
+        let mut out = Assembler::assemble(tokens)?;
         let layout = self.effective_link_layout();
         if layout.emit_layout_symbols {
             out.inject_layout_symbols(&layout);
         }
         out.mark_entry_global(self.effective_entry_point());
         Ok(out)
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Freestanding validator
-// ---------------------------------------------------------------------------
-
-/// Linux RV64 userspace syscall numbers that are invalid in freestanding mode.
-/// These are the numbers from runtime.hll and close relatives.
-const LINUX_USERSPACE_SYSCALLS: &[(u64, &str)] = &[
-    (17, "sys_getcwd"),
-    (23, "sys_dup"),
-    (29, "sys_ioctl"),
-    (34, "sys_mkdirat"),
-    (35, "sys_unlinkat"),
-    (48, "sys_faccessat"),
-    (49, "sys_chdir"),
-    (56, "sys_openat"),
-    (57, "sys_close"),
-    (62, "sys_lseek"),
-    (63, "sys_read"),
-    (64, "sys_write"),
-    (65, "sys_readv"),
-    (66, "sys_writev"),
-    (80, "sys_fstat"),
-    (93, "sys_exit"),
-    (94, "sys_exit_group"),
-    (96, "sys_set_tid_address"),
-    (160, "sys_uname"),
-    (172, "sys_getpid"),
-    (214, "sys_brk"),
-    (222, "sys_mmap"),
-    (226, "sys_mprotect"),
-];
-
-impl CompilationPipeline {
-    /// Walk the AST and emit diagnostics for hosted-only constructs that are
-    /// unsafe or meaningless in freestanding mode.
-    fn check_freestanding(&self, program: &Program) -> Vec<Diagnostic> {
-        let mut diags: Vec<Diagnostic> = Vec::new();
-
-        // Collect the names of all defined functions so we can validate the
-        // configured entry point.
-        let mut defined_fn_names: Vec<&str> = Vec::new();
-        let mut has_external_main = false;
-
-        for decl in &program.declarations {
-            match &decl.decl {
-                DeclNode::Function {
-                    name,
-                    is_extern,
-                    body,
-                    ..
-                } => {
-                    if *is_extern && name == "main" {
-                        has_external_main = true;
-                    }
-                    if body.is_some() {
-                        defined_fn_names.push(name.as_str());
-                    }
-                    if let Some(block) = body {
-                        check_asm_in_block(block, &mut diags);
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        // `external main` in freestanding mode signals an unconverted hosted
-        // dependency (usually copied from a hosted program).
-        if has_external_main {
-            diags.push(
-                Diagnostic::new(
-                    DiagnosticLevel::Warning,
-                    "`external main` declaration found in freestanding mode",
-                )
-                .with_note(
-                    "freestanding builds do not call `main`; \
-                     use a custom entry point (e.g., `kmain`) instead",
-                ),
-            );
-        }
-
-        // Verify that the configured entry point is actually defined, so the
-        // user gets an early, actionable message instead of a silent wrong-entry ELF.
-        let entry = self.effective_entry_point();
-        let entry_defined = defined_fn_names.contains(&entry);
-
-        // Also accept an asm-block defined label (we can't verify those here,
-        // so only warn when no HLL function matches AND we are sure the entry
-        // point matters).
-        if !entry_defined && entry != "_start" && entry != "main" {
-            diags.push(
-                Diagnostic::new(
-                    DiagnosticLevel::Warning,
-                    format!(
-                        "configured entry point `{entry}` is not defined as an HLL function"
-                    ),
-                )
-                .with_note(
-                    "if the entry point is defined via an `asm { }` label, \
-                     this warning can be ignored",
-                ),
-            );
-        }
-
-        diags
-    }
-}
-
-// ---------------------------------------------------------------------------
-// ASM-block walker helpers (free functions to avoid borrow conflicts)
-// ---------------------------------------------------------------------------
-
-fn check_asm_in_block(block: &Block, diags: &mut Vec<Diagnostic>) {
-    for stmt in &block.statements {
-        check_asm_in_stmt(stmt, diags);
-    }
-}
-
-fn check_asm_in_stmt(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
-    match stmt {
-        Statement::AsmBlock { lines } => check_asm_lines(lines, diags),
-        Statement::Block(b) => check_asm_in_block(b, diags),
-        Statement::If {
-            then_block,
-            else_branch,
-            ..
-        } => {
-            check_asm_in_block(then_block, diags);
-            if let Some(else_stmt) = else_branch {
-                check_asm_in_stmt(else_stmt, diags);
-            }
-        }
-        Statement::While { body, .. } => check_asm_in_block(body, diags),
-        _ => {}
-    }
-}
-
-/// Scan the lines of an `asm { }` block for Linux userspace syscall patterns.
-///
-/// We look for `li a7, <number>` (with optional whitespace / commas) where the
-/// number matches a known Linux userspace syscall.  SBI ecalls use extension
-/// IDs passed in `a7` as well, but those are typically large or negative values
-/// that do not overlap the Linux syscall table checked here.
-fn check_asm_lines(lines: &[String], diags: &mut Vec<Diagnostic>) {
-    // Track whether this block will execute an ecall so we avoid false
-    // positives on blocks that load a7 for other purposes.
-    let has_ecall = lines
-        .iter()
-        .any(|l| l.split_whitespace().next() == Some("ecall"));
-
-    if !has_ecall {
-        return;
-    }
-
-    for line in lines {
-        let trimmed = line.trim();
-        // Match `li a7, <number>` or `li a7,<number>` (case-insensitive on mnemonic).
-        if let Some(rest) = trimmed
-            .to_lowercase()
-            .strip_prefix("li")
-            .and_then(|s| s.trim_start().strip_prefix("a7"))
-            .and_then(|s| s.trim_start().strip_prefix(','))
-        {
-            let num_str = rest.trim();
-            if let Ok(n) = num_str.parse::<u64>() {
-                if let Some(&(_, name)) = LINUX_USERSPACE_SYSCALLS.iter().find(|&&(id, _)| id == n)
-                {
-                    diags.push(
-                        Diagnostic::new(
-                            DiagnosticLevel::Warning,
-                            format!(
-                                "asm block invokes Linux userspace syscall {n} ({name}) via ecall"
-                            ),
-                        )
-                        .with_note(
-                            "freestanding builds run without an OS; use MMIO or SBI ecalls \
-                             (extension IDs ≥ 0x10) instead of Linux userspace syscall numbers",
-                        ),
-                    );
-                }
-            }
-        }
     }
 }

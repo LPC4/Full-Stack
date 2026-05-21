@@ -753,7 +753,7 @@ impl CompilerRv64 {
         ctx: &mut FunctionContext,
         alloc: &RegisterAllocator,
     ) {
-        use asm_to_binary::assembler::reg_parse::parse_int_reg;
+        use asm_to_binary::parse_int_reg;
         self.emitter.reset_temp_counter();
         let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
         let src_hw = parse_int_reg(reg).expect("asm_reg: register validated by semantic analysis");

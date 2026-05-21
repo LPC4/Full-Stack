@@ -33,11 +33,7 @@ impl CompilerView for DisassemblyView {
         let current_pc = session.snapshot.cpu.pc;
         let follow_pc = state.disasm_follow_pc;
 
-        let asm_text: &str = if !state.linked_asm.is_empty() {
-            &state.linked_asm
-        } else {
-            &state.asm
-        };
+        let asm_text: &str = state.linked_asm();
 
         if asm_text.is_empty() {
             ui.centered_and_justified(|ui| {

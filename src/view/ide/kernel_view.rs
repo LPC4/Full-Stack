@@ -19,7 +19,7 @@ fn run_kernel_boot(user_source: &str) -> VmExecutionResult {
     const MAX_STEPS: u64 = 10_000_000;
 
     let mut kern = CompilationPipeline::new();
-    kern.string_prefix = Some("__kern_str_".to_owned());
+    kern.set_string_prefix(Some("__kern_str_".to_owned()));
 
     let stdlib_ir = match kern.compile(&get_kernel_stdlib_source()) {
         Ok(r) => r,

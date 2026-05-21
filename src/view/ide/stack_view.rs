@@ -196,7 +196,7 @@ impl CompilerView for StackView {
         state: &mut CompilationState,
         _catalog: &mut ProgramCatalog,
     ) {
-        let functions = parse_assembly(&state.asm);
+        let functions = parse_assembly(state.asm());
         if functions.is_empty() {
             ui.centered_and_justified(|ui| {
                 ui.label(RichText::new("No stack frames generated yet.").weak());

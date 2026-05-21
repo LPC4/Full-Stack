@@ -1,10 +1,12 @@
 ﻿use asm_to_binary::assembler::link_layout::LinkLayout;
+use asm_to_binary::rv_instruction::RvInstruction;
+use asm_to_binary::AssembledOutput;
 use full_stack::compilation_pipeline::{CompilationPipeline, TargetMode};
-use hll_to_ir::lexer::Lexer;
 use hll_to_ir::stdlib::get_stdlib_source_for_mode;
-use hll_to_ir::token::Token;
 use full_stack::view::debug::{DebugSession, SessionStatus};
 use full_stack::view::ide::vm_execution_view::VmExecutionResult;
+use virtual_machine::cpu::StepOutcome;
+use virtual_machine::virtual_machine::VirtualMachine;
 use full_stack::view::{
     AssemblyView, AstView, CacheView, CfgView, CompilationState, CompilerView, CpuStateView,
     DisassemblyView, ExecutionView, FramebufferView, IoView, IrView, KernelView,
@@ -131,7 +133,7 @@ pub struct FullStackApp {
     #[serde(skip)]
     step_n_input: String,
     #[serde(skip)]
-    stdlib_tokens: Vec<asm_to_binary::rv_instruction::RvInstruction>,
+    stdlib_tokens: Vec<RvInstruction>,
     #[serde(skip)]
     stdlib_asm: String,
     #[serde(skip)]
@@ -192,7 +194,7 @@ impl FullStackApp {
     fn init_stdlib_cache(&mut self) {
         // Compile the stdlib appropriate for the current target mode.
         // The pipeline's target_mode is set before this is called.
-        let stdlib_src = get_stdlib_source_for_mode(self.pipeline.target_mode);
+        let stdlib_src = get_stdlib_source_for_mode(self.pipeline.target_mode());
         match self.pipeline.compile(&stdlib_src) {
             Ok(result) => {
                 let (asm_text, tokens) = self
@@ -275,12 +277,12 @@ impl FullStackApp {
             return;
         }
         self.target_mode = mode;
-        self.pipeline.target_mode = mode;
+        self.pipeline.set_target_mode(mode);
         // Update the entry point field to the mode default when switching,
         // unless the user has already overridden it for that mode.
         if mode == TargetMode::Hosted {
-            self.pipeline.entry_point = None; // use "_start"
-            self.pipeline.link_layout = Some(LinkLayout::hosted());
+            self.pipeline.set_entry_point(None); // use "_start"
+            self.pipeline.set_link_layout(Some(LinkLayout::hosted()));
         } else {
             // Keep whatever the user typed; default is "kmain".
             let ep = if self.entry_point.trim().is_empty() {
@@ -288,7 +290,7 @@ impl FullStackApp {
             } else {
                 self.entry_point.clone()
             };
-            self.pipeline.entry_point = Some(ep);
+            self.pipeline.set_entry_point(Some(ep));
             // Reset load base to kernel default if the user hasn't customised it.
             let kernel_default = LinkLayout::freestanding_kernel();
             if self.load_base_input.is_empty()
@@ -297,18 +299,19 @@ impl FullStackApp {
             {
                 self.load_base_input = format!("{:#010x}", kernel_default.load_base);
             }
-            self.pipeline.link_layout = Some(kernel_default);
+            self.pipeline.set_link_layout(Some(kernel_default));
         }
         self.init_stdlib_cache();
         self.compile();
     }
 
     fn enter_debug_mode(&mut self) {
-        if let Some(assembled) = &self.compilation_state.assembled {
+        if let Some(assembled) = self.compilation_state.assembled() {
+            let assembled = assembled.clone();
             let entry = self.compilation_state.entry_symbol.clone();
             let base = self.compilation_state.load_base;
             self.compilation_state.debug_session =
-                Some(DebugSession::new(assembled, base, &entry));
+                Some(DebugSession::new(&assembled, base, &entry));
             self.compilation_state.disasm_follow_pc = true;
             self.reset_debug_layout();
             self.mode = AppMode::Debug;
@@ -322,16 +325,16 @@ impl FullStackApp {
 
     fn compile(&mut self) {
         // Sync pipeline config with current UI state.
-        self.pipeline.target_mode = self.target_mode;
+        self.pipeline.set_target_mode(self.target_mode);
         if self.target_mode == TargetMode::Freestanding {
             let ep = self.entry_point.trim().to_owned();
-            self.pipeline.entry_point = Some(if ep.is_empty() {
+            self.pipeline.set_entry_point(Some(if ep.is_empty() {
                 "kmain".to_owned()
             } else {
                 ep
-            });
+            }));
         } else {
-            self.pipeline.entry_point = None;
+            self.pipeline.set_entry_point(None);
         }
 
         // Sync link layout from UI state.
@@ -340,9 +343,9 @@ impl FullStackApp {
                 .unwrap_or_else(|| LinkLayout::freestanding_kernel().load_base);
             let mut layout = LinkLayout::freestanding_kernel();
             layout.load_base = load_base;
-            self.pipeline.link_layout = Some(layout);
+            self.pipeline.set_link_layout(Some(layout));
         } else {
-            self.pipeline.link_layout = Some(LinkLayout::hosted());
+            self.pipeline.set_link_layout(Some(LinkLayout::hosted()));
         }
 
         // Keep entry_symbol and load_base in sync so VM and ELF export always use the right values.
@@ -357,100 +360,27 @@ impl FullStackApp {
             .map(|p| p.is_stdlib())
             .unwrap_or(false);
 
-        // For stdlib programs, just compile and display them
-        if is_stdlib {
-            let mut lexer = Lexer::new(user_source);
-            let mut tokens = Vec::new();
+        // stdlib programs compile standalone; user programs link with the cached stdlib.
+        let stdlib_tokens = if is_stdlib { None } else { Some(self.stdlib_tokens.as_slice()) };
+        let result = self.pipeline.run_full(user_source, stdlib_tokens);
 
-            loop {
-                let token = lexer.next_token();
-                if let Token::Error(message) = &token {
-                    self.compilation_state.tokens = format!("LEXER ERROR: {message}");
-                    self.compilation_state
-                        .set_error(format!("Lexer error: {message}"));
-                    self.compilation_state.just_compiled = false;
-                    return;
-                }
-                let is_eof = matches!(token, Token::Eof);
-                tokens.push(token);
-                if is_eof {
-                    break;
-                }
-            }
-
-            self.compilation_state.tokens = format!("{tokens:#?}");
-
-            match self.pipeline.compile(user_source) {
-                Ok(result) => {
-                    self.compilation_state.ast = format!("{:#?}", result.ast);
-                    self.compilation_state.ir = result.ir_program.to_string();
-                    let (asm_text, asm_tokens) = self
-                        .pipeline
-                        .compile_ir_to_assembly_with_tokens(&result.ir_program);
-                    self.compilation_state.linked_asm = asm_text.clone();
-                    self.compilation_state.asm = asm_text;
-                    self.compilation_state.assembled = self.pipeline.assemble(&asm_tokens).ok();
-                    self.compilation_state.assembly_tokens = asm_tokens;
-                    self.compilation_state.clear_error();
-                    self.compilation_state.just_compiled = true;
-                }
-                Err(error) => {
-                    self.compilation_state.set_error(error.to_string());
-                    self.compilation_state.just_compiled = false;
-                }
-            }
-            return;
-        }
-
-        // For user programs: compile WITHOUT stdlib for IR/ASM views
-        let mut lexer = Lexer::new(user_source);
-        let mut tokens = Vec::new();
-
-        loop {
-            let token = lexer.next_token();
-            if let Token::Error(message) = &token {
-                self.compilation_state.tokens = format!("LEXER ERROR: {message}");
-                self.compilation_state
-                    .set_error(format!("Lexer error: {message}"));
-                self.compilation_state.just_compiled = false;
-                return;
-            }
-            let is_eof = matches!(token, Token::Eof);
-            tokens.push(token);
-            if is_eof {
-                break;
-            }
-        }
-
-        self.compilation_state.tokens = format!("{tokens:#?}");
-
-        // Compile user code; IR/ASM panels show user-only code.
-        // Execution uses token-level linking with cached stdlib tokens.
-        match self.pipeline.compile(user_source) {
-            Ok(result) => {
-                self.compilation_state.ast = format!("{:#?}", result.ast);
-                self.compilation_state.ir = result.ir_program.to_string();
-                let (asm_text, user_tokens) = self
-                    .pipeline
-                    .compile_ir_to_assembly_with_tokens(&result.ir_program);
-                self.compilation_state.asm = asm_text.clone();
-                self.compilation_state.linked_asm =
-                    format!("{}\n{}", self.stdlib_asm, asm_text);
-                self.compilation_state.assembly_tokens = user_tokens.clone();
-
-                // Token-level link: prepend cached stdlib tokens, then assemble once.
-                let mut linked = self.stdlib_tokens.clone();
-                linked.extend(user_tokens);
-                self.compilation_state.assembled =
-                    self.pipeline.assemble_linked(&linked).ok();
-
-                self.compilation_state.clear_error();
-                self.compilation_state.just_compiled = true;
-            }
-            Err(error) => {
-                self.compilation_state.set_error(error.to_string());
-                self.compilation_state.just_compiled = false;
-            }
+        if result.has_errors() {
+            self.compilation_state.set_error(result.format_diagnostics());
+            self.compilation_state.pipeline = Some(result);
+            self.compilation_state.linked_asm_text = String::new();
+            self.compilation_state.just_compiled = false;
+        } else {
+            // Build the linked assembly text for the Disassembly view.
+            self.compilation_state.linked_asm_text = if is_stdlib {
+                result.asm.as_ref().map(|a| a.display.clone()).unwrap_or_default()
+            } else {
+                result.asm.as_ref()
+                    .map(|a| format!("{}\n{}", self.stdlib_asm, a.display))
+                    .unwrap_or_default()
+            };
+            self.compilation_state.pipeline = Some(result);
+            self.compilation_state.clear_error();
+            self.compilation_state.just_compiled = true;
         }
     }
 
@@ -473,7 +403,7 @@ impl FullStackApp {
                     .map(|_| format!("exported `{}` to `{path}`", program.name))
             }
             CatalogExportKind::Asm => {
-                if self.compilation_state.assembled.is_none() {
+                if self.compilation_state.assembled().is_none() {
                     self.catalog_message =
                         Some("compile successfully before exporting assembly".to_owned());
                     return;
@@ -485,11 +415,11 @@ impl FullStackApp {
                     return;
                 }
 
-                fs::write(&path, self.compilation_state.asm.as_bytes())
+                fs::write(&path, self.compilation_state.asm().as_bytes())
                     .map(|_| format!("exported assembly to `{path}`"))
             }
             CatalogExportKind::Elf => {
-                let Some(assembled) = self.compilation_state.assembled.as_ref() else {
+                let Some(assembled) = self.compilation_state.assembled() else {
                     self.catalog_message =
                         Some("compile successfully before exporting an ELF image".to_owned());
                     return;
@@ -501,14 +431,15 @@ impl FullStackApp {
                     return;
                 }
 
-                let entry = &self.compilation_state.entry_symbol;
+                let entry = self.compilation_state.entry_symbol.clone();
                 let base = self.compilation_state.load_base;
-                fs::write(&path, assembled.to_elf_with_entry(base, entry))
+                let elf = assembled.to_elf_with_entry(base, &entry);
+                fs::write(&path, elf)
                     .map(|_| format!("exported ELF image to `{path}` (load base {base:#010x})"))
             }
 
             CatalogExportKind::Bin => {
-                let Some(assembled) = self.compilation_state.assembled.as_ref() else {
+                let Some(assembled) = self.compilation_state.assembled() else {
                     self.catalog_message =
                         Some("compile successfully before exporting a flat binary".to_owned());
                     return;
@@ -520,7 +451,8 @@ impl FullStackApp {
                     return;
                 }
 
-                fs::write(&path, assembled.to_flat_binary())
+                let bin = assembled.to_flat_binary();
+                fs::write(&path, bin)
                     .map(|_| format!("exported flat binary to `{path}`"))
             }
         };
@@ -674,7 +606,7 @@ impl FullStackApp {
                             | CatalogExportKind::Elf
                             | CatalogExportKind::Bin => {
                                 self.compilation_state.just_compiled
-                                    && self.compilation_state.assembled.is_some()
+                                    && self.compilation_state.assembled().is_some()
                             }
                         };
                     let export_label = match self.export_kind {
@@ -892,11 +824,12 @@ impl FullStackApp {
                     .on_hover_text("Run the assembled program in the internal RISC-V VM")
                     .clicked()
                 {
-                    if let Some(assembled) = &self.compilation_state.assembled {
+                    if let Some(assembled) = self.compilation_state.assembled() {
+                        let assembled = assembled.clone();
                         let entry = self.compilation_state.entry_symbol.clone();
                         let base = self.compilation_state.load_base;
                         self.compilation_state.vm_result =
-                            Some(run_in_vm(assembled, &entry, base));
+                            Some(run_in_vm(&assembled, &entry, base));
                     }
                 }
             }
@@ -944,7 +877,7 @@ impl FullStackApp {
                         } else {
                             ep
                         };
-                        self.pipeline.entry_point = Some(ep);
+                        self.pipeline.set_entry_point(Some(ep));
                         self.compile();
                     }
 
@@ -1025,7 +958,7 @@ impl FullStackApp {
 
                 // To Debugger - hidden for stdlib (nothing runnable to debug)
                 if !is_stdlib {
-                    let can_debug = self.compilation_state.assembled.is_some();
+                    let can_debug = self.compilation_state.assembled().is_some();
                     if ui
                         .add_enabled(
                             can_debug,
@@ -1317,13 +1250,10 @@ fn parse_hex_or_dec(s: &str) -> Option<u64> {
 }
 
 fn run_in_vm(
-    assembled: &asm_to_binary::assembler::output::AssembledOutput,
+    assembled: &AssembledOutput,
     entry_symbol: &str,
     load_base: u64,
 ) -> VmExecutionResult {
-    use virtual_machine::cpu::StepOutcome;
-    use virtual_machine::virtual_machine::VirtualMachine;
-
     const MAX_STEPS: u64 = 5_000_000;
     let elf = assembled.to_elf_with_entry(load_base, entry_symbol);
     let mut vm = match VirtualMachine::from_elf(&elf) {

@@ -8,19 +8,18 @@ use hll_to_ir::stdlib::get_stdlib_source;
 use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 
 // ---------------------------------------------------------------------------
-// Shared helpers (mirrors src/cli/main.rs logic)
+// Shared helpers
 // ---------------------------------------------------------------------------
 
 const STDLIB_PREFIX: &str = "_s_";
 const USER_PREFIX: &str = "_u_";
 
 fn make_pipeline(mode: TargetMode, prefix: &str) -> CompilationPipeline {
-    CompilationPipeline {
-        target_mode: mode,
-        string_prefix: Some(prefix.to_owned()),
-        run_semantic_analysis: false,
-        ..CompilationPipeline::new()
-    }
+    let mut p = CompilationPipeline::new();
+    p.set_target_mode(mode);
+    p.set_string_prefix(Some(prefix.to_owned()));
+    p.set_run_semantic_analysis(false);
+    p
 }
 
 /// Compile HLL + hosted stdlib → assembled output → run → (uart, exit_code).

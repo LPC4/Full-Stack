@@ -1,19 +1,12 @@
-// Shared compilation state
-
+use asm_to_binary::AssembledOutput;
+use crate::compilation_pipeline::PipelineResult;
 use crate::view::debug::DebugSession;
 use crate::view::ide::vm_execution_view::VmExecutionResult;
 
 #[derive(Default)]
 pub struct CompilationState {
-    pub tokens: String,
-    pub ast: String,
-    pub ir: String,
-    pub asm: String,
-    pub linked_asm: String,
-    pub stdlib_ir: String,
-    pub stdlib_asm: String,
-    pub assembly_tokens: Vec<asm_to_binary::rv_instruction::RvInstruction>,
-    pub assembled: Option<asm_to_binary::assembler::output::AssembledOutput>,
+    pub pipeline: Option<PipelineResult>,
+    pub linked_asm_text: String,
     pub error: Option<String>,
     pub error_summary: Option<String>,
     pub just_compiled: bool,
@@ -26,15 +19,60 @@ pub struct CompilationState {
 }
 
 impl CompilationState {
+    pub fn tokens(&self) -> &str {
+        self.pipeline
+            .as_ref()
+            .and_then(|p| p.lex.as_ref())
+            .map(|l| l.display.as_str())
+            .unwrap_or("")
+    }
+
+    pub fn ast(&self) -> &str {
+        self.pipeline
+            .as_ref()
+            .and_then(|p| p.parse.as_ref())
+            .map(|p| p.display.as_str())
+            .unwrap_or("")
+    }
+
+    pub fn ir(&self) -> &str {
+        self.pipeline
+            .as_ref()
+            .and_then(|p| p.ir.as_ref())
+            .map(|i| i.display.as_str())
+            .unwrap_or("")
+    }
+
+    pub fn asm(&self) -> &str {
+        self.pipeline
+            .as_ref()
+            .and_then(|p| p.asm.as_ref())
+            .map(|a| a.display.as_str())
+            .unwrap_or("")
+    }
+
+    pub fn linked_asm(&self) -> &str {
+        if !self.linked_asm_text.is_empty() {
+            &self.linked_asm_text
+        } else {
+            self.asm()
+        }
+    }
+
+    pub fn assembled(&self) -> Option<&AssembledOutput> {
+        self.pipeline
+            .as_ref()
+            .and_then(|p| p.binary.as_ref())
+            .map(|b| &b.assembled)
+    }
+
     pub fn set_error(&mut self, full: String) {
-        // Try to find the first bulleted error line; fallback to the first non-empty line.
         let first_meaningful_line = full
             .lines()
-            .find(|l| l.trim_start().starts_with("- ") || l.trim_start().starts_with("-"))
+            .find(|l| l.trim_start().starts_with("- ") || l.trim_start().starts_with('-'))
             .or_else(|| full.lines().find(|l| !l.trim().is_empty()))
             .unwrap_or("Compilation error");
 
-        // Clean up the line (remove leading whitespace and the bullet dash) and cap at 80 chars.
         let summary = first_meaningful_line
             .trim_start_matches(|c: char| c.is_whitespace() || c == '-')
             .trim()

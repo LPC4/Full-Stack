@@ -1,4 +1,4 @@
-﻿use asm_to_binary::assembler::section::SectionKind;
+﻿use asm_to_binary::AssembledOutput;
 use crate::view::{CompilationState, CompilerView, ProgramCatalog, ui_theme};
 use egui::{Color32, Frame, Grid, Rect, RichText, Sense, Stroke, Vec2};
 
@@ -29,49 +29,38 @@ fn format_size(bytes: usize) -> String {
     }
 }
 
-fn section_color(kind: &SectionKind) -> Color32 {
-    match kind {
-        SectionKind::Text => COLOR_TEXT,
-        SectionKind::RoData => COLOR_RODATA,
-        SectionKind::Data => COLOR_DATA,
-        SectionKind::Bss => COLOR_BSS,
-        SectionKind::Custom(_) => Color32::from_rgb(140, 140, 140),
+fn section_color(name: &str) -> Color32 {
+    match name {
+        ".text" => COLOR_TEXT,
+        ".rodata" => COLOR_RODATA,
+        ".data" => COLOR_DATA,
+        ".bss" => COLOR_BSS,
+        _ => Color32::from_rgb(140, 140, 140),
     }
 }
 
-fn collect_sections(
-    assembled: &asm_to_binary::assembler::output::AssembledOutput,
-    load_base: u64,
-) -> Vec<SectionEntry> {
+fn collect_sections(assembled: &AssembledOutput, load_base: u64) -> Vec<SectionEntry> {
     let mut entries = Vec::new();
     let mut running = load_base;
-    // Non-BSS first (mirrors ELF layout)
-    for pass_bss in [false, true] {
-        for sec in &assembled.sections {
-            if let Some(kind) = &sec.kind {
-                if matches!(kind, SectionKind::Bss) != pass_bss {
-                    continue;
-                }
-                let start = running;
-                let end = start + sec.bytes.len() as u64;
-                entries.push(SectionEntry {
-                    name: kind.name().to_owned(),
-                    start,
-                    end,
-                    color: section_color(kind),
-                });
-                running = end;
-            }
-        }
+
+    for info in assembled.sections_iter() {
+        let start = running;
+        let end = start + info.bytes.len() as u64;
+        entries.push(SectionEntry {
+            name: info.name.to_owned(),
+            start,
+            end,
+            color: section_color(info.name),
+        });
+        running = end;
     }
 
     // Heap (from symbol table)
-    if let Some(&heap_off) = assembled.symbol_table.get("__heap_start") {
+    if let Some(heap_off) = assembled.symbol_address("__heap_start") {
         let heap_start = load_base + heap_off;
         let heap_end = assembled
-            .symbol_table
-            .get("__heap_end")
-            .map(|&o| load_base + o)
+            .symbol_address("__heap_end")
+            .map(|o| load_base + o)
             .unwrap_or(heap_start + 0x1_0000); // 64 KB default hint
         entries.push(SectionEntry {
             name: "heap".to_owned(),
@@ -82,7 +71,7 @@ fn collect_sections(
     }
 
     // Stack (from symbol table)
-    if let Some(&stack_off) = assembled.symbol_table.get("__stack_top") {
+    if let Some(stack_off) = assembled.symbol_address("__stack_top") {
         let stack_top = load_base + stack_off;
         entries.push(SectionEntry {
             name: "stack".to_owned(),
@@ -109,7 +98,7 @@ impl CompilerView for MemoryMapView {
     ) {
         let theme = ui_theme();
 
-        let Some(assembled) = &state.assembled else {
+        let Some(assembled) = state.assembled() else {
             ui.centered_and_justified(|ui| {
                 ui.label(RichText::new("Compile code to see the memory map.").weak());
             });
@@ -328,12 +317,12 @@ impl CompilerView for MemoryMapView {
                 ui.add_space(10.0);
 
                 // ---- Symbol summary ----
-                let n_syms = assembled.symbol_table.len();
+                let n_syms = assembled.symbol_count();
                 if n_syms > 0 {
                     ui.label(
                         RichText::new(format!(
                             "{n_syms} symbols  |  {} globals  |  total {}",
-                            assembled.global_symbols.len(),
+                            assembled.global_symbol_count(),
                             format_size(assembled.total_bytes())
                         ))
                         .small()

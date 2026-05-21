@@ -16,7 +16,7 @@ use crate::view::{highlight_assembly, highlight_ast, highlight_ir};
 /// - `$highlight` -- highlighter fn: `fn(&Style, &str) -> LayoutJob`
 /// - `$empty`     -- placeholder shown when the field is empty
 macro_rules! code_view {
-    ($name:ident, $title:literal, $field:ident, $highlight:expr, $empty:literal) => {
+    ($name:ident, $title:literal, $getter:ident, $highlight:expr, $empty:literal) => {
         #[derive(Default, Clone)]
         pub struct $name;
 
@@ -32,11 +32,12 @@ macro_rules! code_view {
                 state: &mut CompilationState,
                 _catalog: &mut ProgramCatalog,
             ) {
-                if state.$field.is_empty() {
+                let text = state.$getter();
+                if text.is_empty() {
                     centered_placeholder(ui, $empty);
                     return;
                 }
-                let mut job = $highlight(ui.style(), &state.$field);
+                let mut job = $highlight(ui.style(), text);
                 job.wrap.max_width = f32::INFINITY;
                 // Use the panel's own id as the salt so duplicate ide each
                 // get independent scroll state.

@@ -2,6 +2,7 @@
 
 use asm_to_binary::*;
 use asm_to_binary::encode_decode::*;
+use asm_to_binary::traits::Instruction;
 use asm_to_binary::pseudo::PseudoInstruction;
 use asm_to_binary::real::RealInstruction;
 use asm_to_binary::riscv::rv64a::*;

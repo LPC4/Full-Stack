@@ -249,7 +249,7 @@ main: () -> i32 {
 // its rodata labels never clash with user-code labels (which use "str_").
 fn run_kernel_hll(user_src: &str) -> (String, Option<i64>) {
     let mut stdlib_pipeline = CompilationPipeline::new();
-    stdlib_pipeline.string_prefix = Some("__kern_str_".to_owned());
+    stdlib_pipeline.set_string_prefix(Some("__kern_str_".to_owned()));
 
     let stdlib = stdlib_pipeline
         .compile(&get_kernel_stdlib_source())
@@ -398,7 +398,7 @@ fn kernel_boot_example_program() {
 #[test]
 fn kernel_boot_missing_kmain_is_assemble_error() {
     let mut stdlib_pipeline = CompilationPipeline::new();
-    stdlib_pipeline.string_prefix = Some("__kern_str_".to_owned());
+    stdlib_pipeline.set_string_prefix(Some("__kern_str_".to_owned()));
     let stdlib = stdlib_pipeline
         .compile(&get_kernel_stdlib_source())
         .expect("kernel stdlib compile");

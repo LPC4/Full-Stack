@@ -2,16 +2,25 @@ use super::link_layout::LinkLayout;
 use super::section::{SectionData, SectionKind};
 use std::collections::HashMap;
 
+/// A lightweight view of one section, returned by [`AssembledOutput::sections_iter`].
+#[derive(Debug, Clone, Copy)]
+pub struct SectionInfo<'a> {
+    /// The section name (e.g. `".text"`, `".data"`).
+    pub name: &'a str,
+    /// Raw byte content of the section.
+    pub bytes: &'a [u8],
+}
+
 /// The final output produced by the assembler -- one byte blob per section,
 /// plus a complete symbol table ready to hand to a linker or ELF writer.
 #[derive(Debug, Default, Clone)]
 pub struct AssembledOutput {
     /// Sections in emission order, keyed by kind.
-    pub sections: Vec<SectionData>,
+    pub(crate) sections: Vec<SectionData>,
     /// All resolved labels: name -> absolute address within the output blob.
-    pub symbol_table: HashMap<String, u64>,
+    pub(crate) symbol_table: HashMap<String, u64>,
     /// Names marked `.globl` (exported).
-    pub global_symbols: Vec<String>,
+    pub(crate) global_symbols: Vec<String>,
 }
 
 impl AssembledOutput {
@@ -47,6 +56,67 @@ impl AssembledOutput {
     /// Total encoded size across all sections.
     pub fn total_bytes(&self) -> usize {
         self.sections.iter().map(|s| s.bytes.len()).sum()
+    }
+
+    /// Returns `true` if at least one section was emitted.
+    pub fn has_sections(&self) -> bool {
+        !self.sections.is_empty()
+    }
+
+    /// Iterate sections in ELF load order: non-BSS first, BSS last.
+    pub fn sections_iter(&self) -> impl Iterator<Item = SectionInfo<'_>> + '_ {
+        let non_bss = self.sections.iter().filter(|s| {
+            s.kind.as_ref().is_some_and(|k| !matches!(k, SectionKind::Bss))
+        });
+        let bss = self
+            .sections
+            .iter()
+            .filter(|s| s.kind.as_ref().is_some_and(|k| matches!(k, SectionKind::Bss)));
+        non_bss.chain(bss).filter_map(|s| {
+            s.kind.as_ref().map(|k| SectionInfo {
+                name: k.name(),
+                bytes: &s.bytes,
+            })
+        })
+    }
+
+    // ---- Symbol table accessors ----
+
+    /// Look up a symbol by name; returns its section-relative address if present.
+    pub fn symbol_address(&self, name: &str) -> Option<u64> {
+        self.symbol_table.get(name).copied()
+    }
+
+    /// Returns `true` if `name` is in the symbol table.
+    pub fn has_symbol(&self, name: &str) -> bool {
+        self.symbol_table.contains_key(name)
+    }
+
+    /// Number of symbols in the table.
+    pub fn symbol_count(&self) -> usize {
+        self.symbol_table.len()
+    }
+
+    /// Iterate all symbols as `(name, section-relative address)` pairs.
+    pub fn symbols_iter(&self) -> impl Iterator<Item = (&str, u64)> {
+        self.symbol_table
+            .iter()
+            .map(|(name, &addr)| (name.as_str(), addr))
+    }
+
+    /// Names of symbols that were exported with `.globl`.
+    pub fn global_symbol_names(&self) -> impl Iterator<Item = &str> {
+        self.global_symbols.iter().map(String::as_str)
+    }
+
+    /// Number of globally-exported symbols.
+    pub fn global_symbol_count(&self) -> usize {
+        self.global_symbols.len()
+    }
+
+    /// Returns `true` if `name` was exported with `.globl`.
+    pub fn is_symbol_global(&self, name: &str) -> bool {
+        self.global_symbols.iter().any(|g| g == name)
     }
 }
 

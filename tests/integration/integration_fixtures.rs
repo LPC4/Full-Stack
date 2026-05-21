@@ -33,7 +33,7 @@ fn integration_hll_fixtures_compile() {
     );
     let mut pipeline = CompilationPipeline::new();
     // Integration fixtures exercise parser/lowering breadth; semantic generic resolution is still incomplete.
-    pipeline.run_semantic_analysis = false;
+    pipeline.set_run_semantic_analysis(false);
     for fixture in fixtures {
         let source = fs::read_to_string(&fixture)
             .unwrap_or_else(|err| panic!("failed to read fixture {fixture:?}: {err}"));

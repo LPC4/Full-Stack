@@ -70,14 +70,15 @@ impl CompilerView for CfgView {
         state: &mut CompilationState,
         _catalog: &mut ProgramCatalog,
     ) {
-        if state.asm.is_empty() {
+        let asm_text = state.asm();
+        if asm_text.is_empty() {
             ui.centered_and_justified(|ui| {
                 ui.label(egui::RichText::new("Compile code to generate CFG.").weak());
             });
             return;
         }
 
-        let blocks = parse_blocks(&state.asm);
+        let blocks = parse_blocks(asm_text);
 
         ui.horizontal(|ui| {
             ui.checkbox(&mut self.show_all_instructions, "Show all instructions");

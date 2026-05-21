@@ -34,7 +34,7 @@ fn u64_le(buf: &[u8], off: usize) -> u64 {
 }
 
 /// Build a minimal assembled program: _start calls main, main returns 42.
-fn minimal_output() -> asm_to_binary::assembler::output::AssembledOutput {
+fn minimal_output() -> asm_to_binary::AssembledOutput {
     let a7: u8 = 17;
     let a0: u8 = 10;
     let ra: u8 = 1;
@@ -89,7 +89,7 @@ fn elf_machine_is_riscv() {
 #[test]
 fn elf_entry_resolves_start_symbol() {
     let out = minimal_output();
-    let start_off = out.symbol_table["_start"];
+    let start_off = out.symbol_address("_start").expect("_start symbol");
     let elf = out.to_elf(LOAD_BASE);
     let entry = u64_le(&elf, E_ENTRY_OFF);
     assert_eq!(entry, LOAD_BASE + start_off, "e_entry should be load_base + _start offset");
@@ -182,14 +182,14 @@ fn assembled_output_text_bytes_not_empty() {
 #[test]
 fn assembled_output_symbol_table_has_start_and_main() {
     let out = minimal_output();
-    assert!(out.symbol_table.contains_key("_start"));
-    assert!(out.symbol_table.contains_key("main"));
+    assert!(out.has_symbol("_start"));
+    assert!(out.has_symbol("main"));
 }
 
 #[test]
 fn assembled_output_total_bytes_equals_sum() {
     let out = minimal_output();
-    let sum: usize = out.sections.iter().map(|s| s.bytes.len()).sum();
+    let sum: usize = out.sections_iter().map(|s| s.bytes.len()).sum();
     assert_eq!(out.total_bytes(), sum);
 }
 

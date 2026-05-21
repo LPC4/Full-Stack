@@ -3,10 +3,9 @@
 
 use std::collections::HashMap;
 
-use asm_to_binary::assembler::output::AssembledOutput;
-use virtual_machine::bus::{
-    CLINT_BASE, PLIC_BASE, RAM_BASE, ROM_BASE, UART_BASE,
-};
+use asm_to_binary::AssembledOutput;
+use virtual_machine::bus::{CLINT_BASE, PLIC_BASE, RAM_BASE, ROM_BASE, UART_BASE};
+use virtual_machine::memory::cache::CacheSnapshot;
 use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 
 // ---------------------------------------------------------------------------
@@ -108,9 +107,8 @@ impl DebugSession {
         // The VM always remaps ELF vaddrs to RAM_BASE + offset regardless of the
         // ELF load_base, so symbols must be in that same address space.
         let symbols: HashMap<String, u64> = assembled
-            .symbol_table
-            .iter()
-            .map(|(name, &offset)| (name.clone(), RAM_BASE + offset))
+            .symbols_iter()
+            .map(|(name, offset)| (name.to_owned(), RAM_BASE + offset))
             .collect();
         let elf = assembled.to_elf_with_entry(load_base, entry_symbol);
 
@@ -283,9 +281,8 @@ impl DebugSession {
     pub fn reset(&mut self) {
         self.symbols = self
             .assembled
-            .symbol_table
-            .iter()
-            .map(|(name, &offset)| (name.clone(), RAM_BASE + offset))
+            .symbols_iter()
+            .map(|(name, offset)| (name.to_owned(), RAM_BASE + offset))
             .collect();
         let elf = self
             .assembled
@@ -323,13 +320,7 @@ impl DebugSession {
 
     /// Full cache snapshots (params + per-line state + stats) for the cache view.
     /// Only call this from the render path - it allocates ~1.3MB for L3.
-    pub fn cache_snapshots(
-        &self,
-    ) -> (
-        virtual_machine::memory::cache::CacheSnapshot,
-        virtual_machine::memory::cache::CacheSnapshot,
-        virtual_machine::memory::cache::CacheSnapshot,
-    ) {
+    pub fn cache_snapshots(&self) -> (CacheSnapshot, CacheSnapshot, CacheSnapshot) {
         self.vm.get_cache_snapshots()
     }
 

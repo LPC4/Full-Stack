@@ -17,6 +17,7 @@
 #![warn(rust_2018_idioms)]
 
 use asm_to_binary::rv_instruction::RvInstruction;
+use asm_to_binary::AssembledOutput;
 use full_stack::compilation_pipeline::{CompilationPipeline, TargetMode};
 use hll_to_ir::stdlib::get_stdlib_source_for_mode;
 use std::fmt;
@@ -186,7 +187,7 @@ fn cmd_hll_to_ir(args: &Args) -> Result<ExitCode, CliError> {
     let src = fs::read_to_string(input)?;
 
     let mut pipeline = make_pipeline(args.mode, "_u_");
-    pipeline.run_semantic_analysis = false;
+    pipeline.set_run_semantic_analysis(false);
 
     let result = pipeline
         .compile(&src)
@@ -212,7 +213,7 @@ fn cmd_hll_to_asm(args: &Args) -> Result<ExitCode, CliError> {
     let src = fs::read_to_string(input)?;
 
     let mut pipeline = make_pipeline(args.mode, "_u_");
-    pipeline.run_semantic_analysis = false;
+    pipeline.set_run_semantic_analysis(false);
 
     let result = pipeline
         .compile(&src)
@@ -262,13 +263,13 @@ fn cmd_run(args: &Args) -> Result<ExitCode, CliError> {
 // ---------------------------------------------------------------------------
 
 /// Compile an HLL source file with the stdlib and return assembled output.
-fn assemble_from_hll_file(path: &str, mode: TargetMode) -> Result<asm_to_binary::assembler::output::AssembledOutput, CliError> {
+fn assemble_from_hll_file(path: &str, mode: TargetMode) -> Result<AssembledOutput, CliError> {
     let src = fs::read_to_string(path)?;
     compile_and_link(&src, mode)
 }
 
 /// Parse a `.s` text file as assembly tokens, link with stdlib, and assemble.
-fn assemble_from_s_file(path: &str, mode: TargetMode) -> Result<asm_to_binary::assembler::output::AssembledOutput, CliError> {
+fn assemble_from_s_file(path: &str, mode: TargetMode) -> Result<AssembledOutput, CliError> {
     let asm_text = fs::read_to_string(path)?;
     let stdlib_tokens = compile_stdlib_tokens(mode)?;
     let user_tokens = asm_text_to_tokens(&asm_text);
@@ -286,11 +287,11 @@ fn assemble_from_s_file(path: &str, mode: TargetMode) -> Result<asm_to_binary::a
 fn compile_and_link(
     src: &str,
     mode: TargetMode,
-) -> Result<asm_to_binary::assembler::output::AssembledOutput, CliError> {
+) -> Result<AssembledOutput, CliError> {
     let stdlib_tokens = compile_stdlib_tokens(mode)?;
 
     let mut user_pipeline = make_pipeline(mode, "_u_");
-    user_pipeline.run_semantic_analysis = false;
+    user_pipeline.set_run_semantic_analysis(false);
 
     let user_result = user_pipeline
         .compile(src)
@@ -311,7 +312,7 @@ fn compile_and_link(
 fn compile_stdlib_tokens(mode: TargetMode) -> Result<Vec<RvInstruction>, CliError> {
     let stdlib_src = get_stdlib_source_for_mode(mode);
     let mut stdlib_pipeline = make_pipeline(mode, "_s_");
-    stdlib_pipeline.run_semantic_analysis = false;
+    stdlib_pipeline.set_run_semantic_analysis(false);
 
     let stdlib_result = stdlib_pipeline
         .compile(&stdlib_src)
@@ -340,11 +341,10 @@ fn asm_text_to_tokens(text: &str) -> Vec<RvInstruction> {
 // ---------------------------------------------------------------------------
 
 fn make_pipeline(mode: TargetMode, string_prefix: &str) -> CompilationPipeline {
-    CompilationPipeline {
-        target_mode: mode,
-        string_prefix: Some(string_prefix.to_owned()),
-        ..CompilationPipeline::new()
-    }
+    let mut p = CompilationPipeline::new();
+    p.set_target_mode(mode);
+    p.set_string_prefix(Some(string_prefix.to_owned()));
+    p
 }
 
 // ---------------------------------------------------------------------------

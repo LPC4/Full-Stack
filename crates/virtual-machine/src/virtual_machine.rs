@@ -1,6 +1,6 @@
 ﻿//! Top-level virtual machine: ties together the CPU and memory bus.
 
-use asm_to_binary::assembler::output::AssembledOutput;
+use asm_to_binary::AssembledOutput;
 use crate::bus::{
     ELF_LOAD_BASE, HEAP_PTR_ADDR, RAM_BASE, RAM_SIZE_DEFAULT, SystemBus,
 };

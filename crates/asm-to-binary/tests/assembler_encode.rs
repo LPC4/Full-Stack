@@ -23,8 +23,8 @@ fn test_call_pseudo_relocation() {
 
     let output = result.unwrap();
     // Check that we have symbols
-    assert!(output.symbol_table.contains_key("start"));
-    assert!(output.symbol_table.contains_key("target_func"));
+    assert!(output.has_symbol("start"));
+    assert!(output.has_symbol("target_func"));
 }
 
 #[test]
@@ -46,7 +46,7 @@ fn test_la_pseudo_relocation() {
     assert!(result.is_ok(), "Assembly failed: {:?}", result.err());
 
     let output = result.unwrap();
-    assert!(output.symbol_table.contains_key("my_label"));
+    assert!(output.has_symbol("my_label"));
 }
 
 #[test]
@@ -67,7 +67,7 @@ fn test_tail_pseudo_relocation() {
     assert!(result.is_ok(), "Assembly failed: {:?}", result.err());
 
     let output = result.unwrap();
-    assert!(output.symbol_table.contains_key("end_func"));
+    assert!(output.has_symbol("end_func"));
 }
 
 // ---------------------------------------------------------------------------
@@ -106,10 +106,11 @@ fn auipc_hi20_is_shifted_for_la() {
     ];
 
     let output = Assembler::assemble(&tokens).expect("assembly should succeed");
-    let text = output.sections.iter().find(|s| s.kind.as_ref().map(|k| k.name()) == Some(".text")).expect(".text section");
+    let text = output.text_bytes();
+    assert!(!text.is_empty(), ".text section should not be empty");
 
     // Decode the first word (the AUIPC).
-    let word = u32::from_le_bytes(text.bytes[0..4].try_into().unwrap());
+    let word = u32::from_le_bytes(text[0..4].try_into().unwrap());
     // AUIPC opcode = 0x17; rd=5 → bits[11:7]=0b00101; imm[31:12] should be 17.
     let opcode = word & 0x7F;
     let rd = (word >> 7) & 0x1F;
@@ -138,9 +139,10 @@ fn auipc_hi20_is_shifted_for_call() {
     ];
 
     let output = Assembler::assemble(&tokens).expect("assembly should succeed");
-    let text = output.sections.iter().find(|s| s.kind.as_ref().map(|k| k.name()) == Some(".text")).expect(".text section");
+    let text = output.text_bytes();
+    assert!(!text.is_empty(), ".text section should not be empty");
 
-    let word = u32::from_le_bytes(text.bytes[0..4].try_into().unwrap());
+    let word = u32::from_le_bytes(text[0..4].try_into().unwrap());
     let opcode = word & 0x7F;
     let imm_upper = word & 0xFFFFF000;
 
@@ -165,9 +167,10 @@ fn auipc_hi20_is_shifted_for_tail() {
     ];
 
     let output = Assembler::assemble(&tokens).expect("assembly should succeed");
-    let text = output.sections.iter().find(|s| s.kind.as_ref().map(|k| k.name()) == Some(".text")).expect(".text section");
+    let text = output.text_bytes();
+    assert!(!text.is_empty(), ".text section should not be empty");
 
-    let word = u32::from_le_bytes(text.bytes[0..4].try_into().unwrap());
+    let word = u32::from_le_bytes(text[0..4].try_into().unwrap());
     let opcode = word & 0x7F;
     let imm_upper = word & 0xFFFFF000;
 

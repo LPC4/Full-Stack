@@ -1,10 +1,11 @@
-﻿pub mod ast;
-pub mod compiler;
+﻿pub(crate) mod ast;
+pub(crate) mod compiler;
 pub mod ir;
-pub mod lexer;
-pub mod parser;
+pub(crate) mod lexer;
+pub(crate) mod parser;
 pub mod stdlib;
-pub mod token;
+pub(crate) mod token;
+pub mod hll_compiler;
 
 /// Whether the compiled output targets a hosted OS process or a bare-metal environment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -24,6 +25,10 @@ impl TargetMode {
         }
     }
 }
+
+// Re-export public surface: HllCompiler, IR types, and diagnostics.
+pub use hll_compiler::{CompileConfig, HllCompiler, HllOutput};
+pub use compiler::{Diagnostic, DiagnosticLevel};
 
 // Re-export IR types so downstream crates (ir-to-asm, visualizer) can import them
 // from hll_to_ir:: directly.

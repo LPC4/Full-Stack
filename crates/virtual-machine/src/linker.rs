@@ -7,8 +7,7 @@
 //! can be added without a full rewrite.
 
 use super::bus::RAM_BASE;
-use asm_to_binary::assembler::output::AssembledOutput;
-use asm_to_binary::assembler::section::SectionKind;
+use asm_to_binary::AssembledOutput;
 use std::collections::HashMap;
 
 /// Linker configuration.
@@ -42,39 +41,36 @@ pub struct LinkedProgram {
     pub image_size: u64,
 }
 
-/// Canonical section load order: text -> rodata -> data -> bss -> custom.
-fn section_load_order() -> &'static [SectionKind] {
-    &[
-        SectionKind::Text,
-        SectionKind::RoData,
-        SectionKind::Data,
-        SectionKind::Bss,
-    ]
-}
+const STANDARD_SECTIONS: &[&str] = &[".text", ".rodata", ".data", ".bss"];
 
 /// Link an assembled output into a `LinkedProgram` at the given base address.
 pub fn link(assembled: &AssembledOutput, config: &LinkerConfig) -> LinkedProgram {
     let base = config.text_base;
     let mut bytes: Vec<u8> = Vec::new();
 
-    for kind in section_load_order() {
-        bytes.extend_from_slice(assembled.section_bytes(kind));
+    // Emit standard sections first in canonical order.
+    for name in STANDARD_SECTIONS {
+        bytes.extend_from_slice(match *name {
+            ".text" => assembled.text_bytes(),
+            ".rodata" => assembled.rodata_bytes(),
+            ".data" => assembled.data_bytes(),
+            ".bss" => assembled.bss_bytes(),
+            _ => &[],
+        });
     }
 
-    for section in &assembled.sections {
-        if let Some(kind) = &section.kind {
-            if !section_load_order().contains(kind) {
-                bytes.extend_from_slice(&section.bytes);
-            }
+    // Append any custom (non-standard) sections.
+    for info in assembled.sections_iter() {
+        if !STANDARD_SECTIONS.contains(&info.name) {
+            bytes.extend_from_slice(info.bytes);
         }
     }
 
     let image_size = bytes.len() as u64;
 
     let symbols: HashMap<String, u64> = assembled
-        .symbol_table
-        .iter()
-        .map(|(name, &offset)| (name.clone(), base + offset))
+        .symbols_iter()
+        .map(|(name, offset)| (name.to_owned(), base + offset))
         .collect();
 
     let entry_point = symbols

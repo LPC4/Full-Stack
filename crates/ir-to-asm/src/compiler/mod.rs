@@ -1,7 +1,7 @@
-pub mod assembly_emitter;
+pub(crate) mod assembly_emitter;
 pub mod compiler_rv64;
-pub mod data_section;
-pub mod frame_context;
-pub mod function_context;
-pub mod register_allocator;
-pub mod type_utils;
+pub(crate) mod data_section;
+pub(crate) mod frame_context;
+pub(crate) mod function_context;
+pub(crate) mod register_allocator;
+pub(crate) mod type_utils;

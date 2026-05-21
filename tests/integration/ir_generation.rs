@@ -29,11 +29,11 @@ fn assert_semantic_error(source: &str, fragment: &str) {
     let result = CompilationPipeline::new().compile(source);
     let err = result.expect_err("expected compilation to fail");
     match err {
-        CompilationError::SemanticErrors(errors) => assert!(
-            errors.iter().any(|m| m.contains(fragment)),
-            "expected semantic error containing `{fragment}`, got: {errors:?}"
+        CompilationError::DiagnosticErrors(diags) => assert!(
+            diags.iter().any(|d| d.message.contains(fragment)),
+            "expected diagnostic containing `{fragment}`, got: {diags:?}"
         ),
-        other => panic!("expected SemanticErrors, got: {other:?}"),
+        other => panic!("expected DiagnosticErrors, got: {other:?}"),
     }
 }
 
@@ -71,14 +71,14 @@ where
 #[test]
 fn compiles_minimal_valid_program() {
     let mut pipeline = CompilationPipeline::new();
-    pipeline.run_semantic_analysis = false;
+    pipeline.set_run_semantic_analysis(false);
     assert!(pipeline.compile("main: () -> i32 { return 42 }").is_ok());
 }
 
 #[test]
 fn rejects_invalid_tokens() {
     let result = CompilationPipeline::new().compile("@invalid_token!@#");
-    assert!(matches!(result.unwrap_err(), CompilationError::LexerError(_)));
+    assert!(matches!(result.unwrap_err(), CompilationError::DiagnosticErrors(_)));
 }
 
 #[test]

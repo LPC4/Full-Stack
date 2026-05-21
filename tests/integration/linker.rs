@@ -1,4 +1,4 @@
-use asm_to_binary::assembler::output::AssembledOutput;
+use asm_to_binary::AssembledOutput;
 use full_stack::compilation_pipeline::CompilationPipeline;
 use virtual_machine::bus::ELF_LOAD_BASE;
 
@@ -158,12 +158,10 @@ fn section_index_for_addr(sections: &[SectionHeader], addr: u64) -> usize {
 
 fn find_local_label(assembled: &AssembledOutput) -> String {
     assembled
-        .symbol_table
-        .keys()
-        .find(|name| {
-            !assembled.global_symbols.iter().any(|g| g == *name) && name.contains("__")
-        })
-        .cloned()
+        .symbols_iter()
+        .map(|(name, _)| name)
+        .find(|name| !assembled.is_symbol_global(name) && name.contains("__"))
+        .map(str::to_owned)
         .unwrap_or_else(|| panic!("expected at least one local control-flow label"))
 }
 

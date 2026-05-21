@@ -34,7 +34,8 @@ impl CompilerView for ExecutionView {
         {
             ui.horizontal(|ui| {
                 if ui.button("Run in QEMU").clicked() {
-                    let Some(assembled) = state.assembled.as_ref() else {
+                    let elf_bytes_opt = state.assembled().map(|a| a.to_elf(ELF_LOAD_BASE));
+                    let Some(elf_bytes) = elf_bytes_opt else {
                         state.execution_output = "Please compile first.".to_string();
                         return;
                     };
@@ -45,7 +46,6 @@ impl CompilerView for ExecutionView {
 
                     let (tx, rx) = std::sync::mpsc::channel();
                     self.wsl_receiver = Some(rx);
-                    let elf_bytes = assembled.to_elf(ELF_LOAD_BASE);
 
                     std::thread::spawn(move || {
                         let result = run_in_wsl(&elf_bytes);
