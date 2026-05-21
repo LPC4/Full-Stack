@@ -14,7 +14,7 @@ fn test_call_pseudo_relocation() {
         }),
         RvInstruction::Label("target_func".to_string()),
         RvInstruction::Real(asm_to_binary::real::RealInstruction::Addi(
-            asm_to_binary::riscv::rv64i::Addi::new(0, 0, 0)
+            asm_to_binary::riscv::rv64i::Addi::new(0, 0, 0),
         )),
     ];
 
@@ -38,7 +38,7 @@ fn test_la_pseudo_relocation() {
         }),
         RvInstruction::Label("my_label".to_string()),
         RvInstruction::Real(asm_to_binary::real::RealInstruction::Addi(
-            asm_to_binary::riscv::rv64i::Addi::new(0, 0, 0)
+            asm_to_binary::riscv::rv64i::Addi::new(0, 0, 0),
         )),
     ];
 
@@ -59,7 +59,7 @@ fn test_tail_pseudo_relocation() {
         }),
         RvInstruction::Label("end_func".to_string()),
         RvInstruction::Real(asm_to_binary::real::RealInstruction::Addi(
-            asm_to_binary::riscv::rv64i::Addi::new(0, 0, 0)
+            asm_to_binary::riscv::rv64i::Addi::new(0, 0, 0),
         )),
     ];
 

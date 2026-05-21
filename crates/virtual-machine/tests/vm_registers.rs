@@ -38,7 +38,10 @@ fn fp_nan_box_invalid_upper() {
     // Write raw bits where upper 32 bits are NOT all 1s, invalid NaN box
     regs.write_f_bits(0, 0x0000_0000_4048_F5C3); // upper = 0, lower = 3.14f32 bits
     let val = regs.read_f32(0);
-    assert!(val.is_nan(), "read_f32 with invalid NaN box should return NaN, got {val}");
+    assert!(
+        val.is_nan(),
+        "read_f32 with invalid NaN box should return NaN, got {val}"
+    );
 }
 
 #[test]

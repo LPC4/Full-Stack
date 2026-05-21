@@ -65,6 +65,7 @@ impl Assembler {
 
 #[cfg(test)]
 mod tests {
+    use super::Assembler;
     use super::directive::Directive;
     use super::encode::encode;
     use super::layout::compute_layout;
@@ -72,7 +73,6 @@ mod tests {
     use super::reg_parse::{parse_float_reg, parse_int_reg};
     use super::section::SectionKind;
     use super::token::{AsmToken, BranchKind};
-    use super::Assembler;
     use crate::real::RealInstruction;
     use crate::riscv::rv64i::Addi;
     use crate::rv_instruction::RvInstruction;
@@ -104,10 +104,22 @@ mod tests {
 
     #[test]
     fn directive_parse_section_shorthand() {
-        assert_eq!(Directive::parse(".text"), Some(Directive::Section(".text".to_owned())));
-        assert_eq!(Directive::parse(".data"), Some(Directive::Section(".data".to_owned())));
-        assert_eq!(Directive::parse(".rodata"), Some(Directive::Section(".rodata".to_owned())));
-        assert_eq!(Directive::parse(".bss"), Some(Directive::Section(".bss".to_owned())));
+        assert_eq!(
+            Directive::parse(".text"),
+            Some(Directive::Section(".text".to_owned()))
+        );
+        assert_eq!(
+            Directive::parse(".data"),
+            Some(Directive::Section(".data".to_owned()))
+        );
+        assert_eq!(
+            Directive::parse(".rodata"),
+            Some(Directive::Section(".rodata".to_owned()))
+        );
+        assert_eq!(
+            Directive::parse(".bss"),
+            Some(Directive::Section(".bss".to_owned()))
+        );
     }
 
     #[test]
@@ -249,7 +261,9 @@ mod tests {
 
     #[test]
     fn parser_real_instruction_passthrough() {
-        let tokens = parse(&[RvInstruction::Real(RealInstruction::Addi(Addi::new(10, 0, 42)))]);
+        let tokens = parse(&[RvInstruction::Real(RealInstruction::Addi(Addi::new(
+            10, 0, 42,
+        )))]);
         assert_eq!(tokens.len(), 1);
         assert!(matches!(tokens[0], AsmToken::Real(_)));
     }
@@ -343,7 +357,12 @@ mod tests {
             AsmToken::Section(SectionKind::Text),
             AsmToken::Label("start".to_owned()),
             nop_token(),
-            AsmToken::Branch { kind: BranchKind::Bne, rs1: 10, rs2: 11, target: "end".to_owned() },
+            AsmToken::Branch {
+                kind: BranchKind::Bne,
+                rs1: 10,
+                rs2: 11,
+                target: "end".to_owned(),
+            },
             nop_token(),
             AsmToken::Label("end".to_owned()),
             nop_token(),
@@ -369,7 +388,12 @@ mod tests {
             AsmToken::Section(SectionKind::Text),
             AsmToken::Label("top".to_owned()),
             nop_token(),
-            AsmToken::Branch { kind: BranchKind::Beq, rs1: 0, rs2: 0, target: "top".to_owned() },
+            AsmToken::Branch {
+                kind: BranchKind::Beq,
+                rs1: 0,
+                rs2: 0,
+                target: "top".to_owned(),
+            },
         ];
         let layout = compute_layout(&tokens).unwrap();
         let output = encode(&tokens, &layout).unwrap();
@@ -384,7 +408,10 @@ mod tests {
     fn encode_jal_resolves() {
         let tokens = vec![
             AsmToken::Section(SectionKind::Text),
-            AsmToken::Jal { rd: 1, target: "target".to_owned() },
+            AsmToken::Jal {
+                rd: 1,
+                target: "target".to_owned(),
+            },
             nop_token(),
             nop_token(),
             AsmToken::Label("target".to_owned()),
@@ -402,7 +429,12 @@ mod tests {
     fn encode_undefined_label_is_error() {
         let tokens = vec![
             AsmToken::Section(SectionKind::Text),
-            AsmToken::Branch { kind: BranchKind::Beq, rs1: 0, rs2: 0, target: "nowhere".to_owned() },
+            AsmToken::Branch {
+                kind: BranchKind::Beq,
+                rs1: 0,
+                rs2: 0,
+                target: "nowhere".to_owned(),
+            },
         ];
         let layout = compute_layout(&tokens).unwrap();
         assert!(encode(&tokens, &layout).is_err());
@@ -448,8 +480,19 @@ mod tests {
         assert_eq!(&elf[..4], b"\x7fELF");
         assert_eq!(elf[4], 2, "expected ELFCLASS64");
         assert_eq!(elf[5], 1, "expected little-endian ELF");
-        assert_eq!(u16::from_le_bytes(elf[16..18].try_into().unwrap()), 2, "expected ET_EXEC");
-        assert_eq!(u16::from_le_bytes(elf[18..20].try_into().unwrap()), 243, "expected EM_RISCV");
-        assert_eq!(u64::from_le_bytes(elf[24..32].try_into().unwrap()), 0x8000_0040);
+        assert_eq!(
+            u16::from_le_bytes(elf[16..18].try_into().unwrap()),
+            2,
+            "expected ET_EXEC"
+        );
+        assert_eq!(
+            u16::from_le_bytes(elf[18..20].try_into().unwrap()),
+            243,
+            "expected EM_RISCV"
+        );
+        assert_eq!(
+            u64::from_le_bytes(elf[24..32].try_into().unwrap()),
+            0x8000_0040
+        );
     }
 }

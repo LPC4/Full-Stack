@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/firmware",
     "crates/asm-to-binary",
     "crates/virtual-machine",
     "crates/hll-to-ir",

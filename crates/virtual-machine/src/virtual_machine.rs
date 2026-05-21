@@ -1,17 +1,15 @@
-﻿//! Top-level virtual machine: ties together the CPU and memory bus.
+//! Top-level virtual machine: ties together the CPU and memory bus.
 
-use asm_to_binary::AssembledOutput;
-use crate::bus::{
-    ELF_LOAD_BASE, HEAP_PTR_ADDR, RAM_BASE, RAM_SIZE_DEFAULT, SystemBus,
-};
-use crate::cpu::pipeline::TickOutcome;
+use crate::bus::{ELF_LOAD_BASE, HEAP_PTR_ADDR, RAM_BASE, RAM_SIZE_DEFAULT, SystemBus};
 use crate::cpu::Cpu;
 pub use crate::cpu::StepOutcome;
 pub use crate::cpu::csr::CsrSnapshot;
+use crate::cpu::pipeline::TickOutcome;
 pub use crate::cpu::pipeline::{CpuPipelineFeed, PipelineStats, StageEntry};
 use crate::elf_parser::{ParsedElf, align_up};
 use crate::error::VmError;
 use crate::memory::MemoryAccess;
+use asm_to_binary::AssembledOutput;
 
 pub struct RunResult {
     pub steps: u64,
@@ -35,11 +33,19 @@ impl VirtualMachine {
         Self::from_elf(&elf).unwrap_or_else(|e| panic!("failed to load assembled ELF: {e}"))
     }
 
-    /// Create a VM from a kernel assembled output.  Uses `_kernel_start` as the
-    /// ELF entry point instead of the default `_start` / `main` candidates.
+    /// Create a VM from a kernel assembled output.
+    ///
+    /// Loads the kernel ELF into RAM at `RAM_BASE`, then resets the CPU to
+    /// `ROM_BASE` (0x0) so the ROM `_start` boot stub runs first.  `_start`
+    /// sets up PMP + delegation and `mret`s into S-mode at `RAM_BASE`.
     pub fn new_kernel(assembled: &AssembledOutput) -> Self {
         let elf = assembled.to_elf_with_entry(ELF_LOAD_BASE, "_kernel_start");
-        Self::from_elf(&elf).unwrap_or_else(|e| panic!("failed to load kernel ELF: {e}"))
+        let mut vm =
+            Self::from_elf(&elf).unwrap_or_else(|e| panic!("failed to load kernel ELF: {e}"));
+        let entry = vm.cpu.peek_pc(); // ELF entry point (_kernel_start) resolved by from_elf
+        vm.cpu.reset_pc(crate::rom::ROM_BASE);
+        vm.cpu.set_boot_entry(entry); // a0 = _kernel_start; ROM _start does `csrw mepc, a0`
+        vm
     }
 
     /// Create a VM from a complete ELF-64 image by mapping every PT_LOAD segment.
@@ -149,7 +155,6 @@ impl VirtualMachine {
         }
     }
 }
-
 
 // ---------------------------------------------------------------------------
 // Peripheral / debug accessors

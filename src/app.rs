@@ -1,24 +1,24 @@
-﻿use asm_to_binary::assembler::link_layout::LinkLayout;
-use asm_to_binary::rv_instruction::RvInstruction;
 use asm_to_binary::AssembledOutput;
-use full_stack::compilation_pipeline::{CompilationPipeline, TargetMode};
-use hll_to_ir::stdlib::get_stdlib_source_for_mode;
-use full_stack::view::debug::{DebugSession, SessionStatus};
-use full_stack::view::ide::vm_execution_view::VmExecutionResult;
-use virtual_machine::cpu::StepOutcome;
-use virtual_machine::virtual_machine::VirtualMachine;
-use full_stack::view::{
-    AssemblyView, AstView, CacheView, CfgView, CompilationState, CompilerView, CpuStateView,
-    DisassemblyView, ExecutionView, FramebufferView, IoView, IrView, KernelView,
-    InterruptView, MemoryView, PageTableView, PipelineView, PrivilegeView, ProgramCatalog, ProgramKind,
-    SourceView, StackView, SyscallTraceView, TokensView, TrapView,
-    VmExecutionView, apply_ui_theme, blank_custom_program_source, ui_theme,
-};
+use asm_to_binary::assembler::link_layout::LinkLayout;
+use asm_to_binary::rv_instruction::RvInstruction;
 use egui::{Color32, Frame, Layout, Margin, RichText, Stroke};
 use egui_dock::{DockState, NodeIndex};
+use full_stack::compilation_pipeline::{CompilationPipeline, TargetMode};
+use full_stack::view::debug::{DebugSession, SessionStatus};
+use full_stack::view::ide::vm_execution_view::VmExecutionResult;
+use full_stack::view::{
+    AssemblyView, AstView, CacheView, CfgView, CompilationState, CompilerView, CpuStateView,
+    DisassemblyView, ExecutionView, FramebufferView, InterruptView, IoView, IrView, KernelView,
+    MemoryView, PageTableView, PipelineView, PrivilegeView, ProgramCatalog, ProgramKind,
+    SourceView, StackView, SyscallTraceView, TokensView, TrapView, VmExecutionView, apply_ui_theme,
+    blank_custom_program_source, ui_theme,
+};
+use hll_to_ir::stdlib::get_stdlib_source_for_mode;
 use std::fmt;
 use std::fs;
 use std::path::Path;
+use virtual_machine::cpu::StepOutcome;
+use virtual_machine::virtual_machine::VirtualMachine;
 
 #[derive(Default, Clone, PartialEq, Eq)]
 enum AppMode {
@@ -215,16 +215,16 @@ impl FullStackApp {
 
     fn reset_layout(&mut self) {
         let views = vec![
-            self.view::<SourceView>(),    // 0
-            self.view::<TokensView>(),    // 1
-            self.view::<AstView>(),       // 2
-            self.view::<IrView>(),        // 3
-            self.view::<AssemblyView>(),  // 4
-            self.view::<CfgView>(),       // 5
-            self.view::<StackView>(),     // 6
-            self.view::<ExecutionView>(), // 7
+            self.view::<SourceView>(),      // 0
+            self.view::<TokensView>(),      // 1
+            self.view::<AstView>(),         // 2
+            self.view::<IrView>(),          // 3
+            self.view::<AssemblyView>(),    // 4
+            self.view::<CfgView>(),         // 5
+            self.view::<StackView>(),       // 6
+            self.view::<ExecutionView>(),   // 7
             self.view::<VmExecutionView>(), // 8
-            self.view::<KernelView>(),    // 9
+            self.view::<KernelView>(),      // 9
         ];
 
         let mut dock = DockState::new(vec![views[0].clone()]);
@@ -238,12 +238,12 @@ impl FullStackApp {
             right,
             0.5,
             vec![
-                views[4].clone(),  // Assembly
-                views[5].clone(),  // CFG
-                views[6].clone(),  // Stack
-                views[7].clone(),  // Execution (QEMU)
-                views[8].clone(),  // VM Output
-                views[9].clone(),  // Kernel
+                views[4].clone(), // Assembly
+                views[5].clone(), // CFG
+                views[6].clone(), // Stack
+                views[7].clone(), // Execution (QEMU)
+                views[8].clone(), // VM Output
+                views[9].clone(), // Kernel
             ],
         );
         self.dock = dock;
@@ -294,8 +294,7 @@ impl FullStackApp {
             // Reset load base to kernel default if the user hasn't customised it.
             let kernel_default = LinkLayout::freestanding_kernel();
             if self.load_base_input.is_empty()
-                || parse_hex_or_dec(&self.load_base_input)
-                    == Some(LinkLayout::hosted().load_base)
+                || parse_hex_or_dec(&self.load_base_input) == Some(LinkLayout::hosted().load_base)
             {
                 self.load_base_input = format!("{:#010x}", kernel_default.load_base);
             }
@@ -349,8 +348,7 @@ impl FullStackApp {
         }
 
         // Keep entry_symbol and load_base in sync so VM and ELF export always use the right values.
-        self.compilation_state.entry_symbol =
-            self.pipeline.effective_entry_point().to_owned();
+        self.compilation_state.entry_symbol = self.pipeline.effective_entry_point().to_owned();
         self.compilation_state.load_base = self.pipeline.effective_load_base();
 
         let user_source = &self.catalog.get_selected_source();
@@ -361,20 +359,31 @@ impl FullStackApp {
             .unwrap_or(false);
 
         // stdlib programs compile standalone; user programs link with the cached stdlib.
-        let stdlib_tokens = if is_stdlib { None } else { Some(self.stdlib_tokens.as_slice()) };
+        let stdlib_tokens = if is_stdlib {
+            None
+        } else {
+            Some(self.stdlib_tokens.as_slice())
+        };
         let result = self.pipeline.run_full(user_source, stdlib_tokens);
 
         if result.has_errors() {
-            self.compilation_state.set_error(result.format_diagnostics());
+            self.compilation_state
+                .set_error(result.format_diagnostics());
             self.compilation_state.pipeline = Some(result);
             self.compilation_state.linked_asm_text = String::new();
             self.compilation_state.just_compiled = false;
         } else {
             // Build the linked assembly text for the Disassembly view.
             self.compilation_state.linked_asm_text = if is_stdlib {
-                result.asm.as_ref().map(|a| a.display.clone()).unwrap_or_default()
+                result
+                    .asm
+                    .as_ref()
+                    .map(|a| a.display.clone())
+                    .unwrap_or_default()
             } else {
-                result.asm.as_ref()
+                result
+                    .asm
+                    .as_ref()
                     .map(|a| format!("{}\n{}", self.stdlib_asm, a.display))
                     .unwrap_or_default()
             };
@@ -452,8 +461,7 @@ impl FullStackApp {
                 }
 
                 let bin = assembled.to_flat_binary();
-                fs::write(&path, bin)
-                    .map(|_| format!("exported flat binary to `{path}`"))
+                fs::write(&path, bin).map(|_| format!("exported flat binary to `{path}`"))
             }
         };
 
@@ -995,7 +1003,12 @@ impl FullStackApp {
 
                 ui.add_space(20.0);
 
-                let pill_margin = Margin { left: 8, right: 8, top: 3, bottom: 3 };
+                let pill_margin = Margin {
+                    left: 8,
+                    right: 8,
+                    top: 3,
+                    bottom: 3,
+                };
                 match &self.compilation_state.error_summary.clone() {
                     Some(summary) => {
                         let short: String = summary.chars().take(40).collect();
@@ -1249,11 +1262,7 @@ fn parse_hex_or_dec(s: &str) -> Option<u64> {
     }
 }
 
-fn run_in_vm(
-    assembled: &AssembledOutput,
-    entry_symbol: &str,
-    load_base: u64,
-) -> VmExecutionResult {
+fn run_in_vm(assembled: &AssembledOutput, entry_symbol: &str, load_base: u64) -> VmExecutionResult {
     const MAX_STEPS: u64 = 5_000_000;
     let elf = assembled.to_elf_with_entry(load_base, entry_symbol);
     let mut vm = match VirtualMachine::from_elf(&elf) {

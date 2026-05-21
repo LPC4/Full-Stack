@@ -1,7 +1,7 @@
-use asm_to_binary::traits::Instruction;
 use asm_to_binary::riscv::rv64i::*;
 use asm_to_binary::riscv::rv64m::*;
-use virtual_machine::cpu::decoder::{decode, DecodedInsn};
+use asm_to_binary::traits::Instruction;
+use virtual_machine::cpu::decoder::{DecodedInsn, decode};
 use virtual_machine::error::VmError;
 
 #[test]
@@ -17,7 +17,10 @@ fn decode_lui() {
         // The decoded imm is the full sign-extended 32-bit upper-immediate.
         // 0x12345000 as i32 = 0x12345000 (positive, fits in i32).
         let expected_imm = 0x12345_000i32 as i64;
-        assert_eq!(imm, expected_imm, "LUI immediate mismatch: got {imm:#x}, expected {expected_imm:#x}");
+        assert_eq!(
+            imm, expected_imm,
+            "LUI immediate mismatch: got {imm:#x}, expected {expected_imm:#x}"
+        );
     } else {
         panic!("expected DecodedInsn::Lui, got {decoded:?}");
     }
@@ -27,7 +30,14 @@ fn decode_lui() {
 fn decode_addi() {
     let encoded = Addi::new(1, 2, -42).encode();
     let decoded = decode(encoded).expect("should decode ADDI");
-    if let DecodedInsn::AluImm { rd, rs1, imm, funct3, .. } = decoded {
+    if let DecodedInsn::AluImm {
+        rd,
+        rs1,
+        imm,
+        funct3,
+        ..
+    } = decoded
+    {
         assert_eq!(rd, 1);
         assert_eq!(rs1, 2);
         assert_eq!(imm, -42);
@@ -41,7 +51,14 @@ fn decode_addi() {
 fn decode_add() {
     let encoded = Add::new(3, 1, 2).encode();
     let decoded = decode(encoded).expect("should decode ADD");
-    if let DecodedInsn::Alu { rd, rs1, rs2, funct3, funct7 } = decoded {
+    if let DecodedInsn::Alu {
+        rd,
+        rs1,
+        rs2,
+        funct3,
+        funct7,
+    } = decoded
+    {
         assert_eq!(rd, 3);
         assert_eq!(rs1, 1);
         assert_eq!(rs2, 2);
@@ -80,7 +97,13 @@ fn decode_lw() {
     // Lw::new(rd, base, offset)
     let encoded = Lw::new(5, 6, 100).encode();
     let decoded = decode(encoded).expect("should decode LW");
-    if let DecodedInsn::Load { funct3, rd, rs1, imm } = decoded {
+    if let DecodedInsn::Load {
+        funct3,
+        rd,
+        rs1,
+        imm,
+    } = decoded
+    {
         assert_eq!(funct3, 2, "LW funct3 must be 2");
         assert_eq!(rd, 5);
         assert_eq!(rs1, 6);
@@ -95,7 +118,13 @@ fn decode_sw() {
     // Sw::new(base, src, offset)
     let encoded = Sw::new(6, 7, -8).encode();
     let decoded = decode(encoded).expect("should decode SW");
-    if let DecodedInsn::Store { funct3, rs1, rs2, imm } = decoded {
+    if let DecodedInsn::Store {
+        funct3,
+        rs1,
+        rs2,
+        imm,
+    } = decoded
+    {
         assert_eq!(funct3, 2, "SW funct3 must be 2");
         assert_eq!(rs1, 6);
         assert_eq!(rs2, 7);
@@ -122,7 +151,10 @@ fn decode_beq() {
 fn decode_ecall() {
     let encoded = Ecall::new().encode();
     let decoded = decode(encoded).expect("should decode ECALL");
-    assert!(matches!(decoded, DecodedInsn::Ecall), "expected Ecall variant, got {decoded:?}");
+    assert!(
+        matches!(decoded, DecodedInsn::Ecall),
+        "expected Ecall variant, got {decoded:?}"
+    );
 }
 
 #[test]

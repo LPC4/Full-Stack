@@ -5,11 +5,11 @@ use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 
 const MEM_SRC: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/crates/hll-to-ir/platform/stdlib/common/mem.hll"
+    "/crates/firmware/stdlib/common/mem.hll"
 ));
 const KLOG_SRC: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/crates/hll-to-ir/platform/stdlib/common/klog.hll"
+    "/crates/firmware/stdlib/common/klog.hll"
 ));
 
 fn run_hll(src: &str) -> (String, Option<i64>) {

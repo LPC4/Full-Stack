@@ -1,9 +1,7 @@
 use hll_to_ir::ir::block::IrBlock;
 use hll_to_ir::ir::instruction::{IrInstruction, IrTerminator};
 use hll_to_ir::ir::ops::IrMathOp;
-use hll_to_ir::ir::program::{
-    IrFunction, IrGlobalString, IrParam, IrProgram, IrTypeAlias,
-};
+use hll_to_ir::ir::program::{IrFunction, IrGlobalString, IrParam, IrProgram, IrTypeAlias};
 use hll_to_ir::ir::types::{FloatWidth, IntWidth, IrType};
 use hll_to_ir::ir::values::{IrRegister, IrValue};
 

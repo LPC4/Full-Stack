@@ -1,20 +1,104 @@
-# ROM firmware: M-mode trap handler and syscall implementations.
+# ROM firmware (M-mode).
 #
-# Memory layout (physical):
-#   0x00000000  ROM — this file
-#   0x10000000  UART TX   — sb byte, 0(t0) emits one character
-#   0x10010000  SYSCON    — sd exit_code, 0(t0) halts the VM
-#   0x80000000  RAM       — ELF program image
+# Memory map:
+#   0x00000000  ROM — this file (256 KiB region)
+#   0x02000000  CLINT
+#   0x0C000000  PLIC
+#   0x10000000  UART TX   (sb byte, 0(t0) emits one character)
+#   0x10010000  SYSCON    (sd exit_code, 0(t0) halts the VM)
+#   0x80000000  RAM       (ELF / kernel image)
 #
-# Syscall ABI (Linux RV64 convention):
+# ROM layout:
+#   0x000  _start    — kernel boot stub (runs when CPU starts at ROM_BASE)
+#                      Sets PMP, delegates exceptions/interrupts, mrets to S-mode.
+#                      Padded to exactly 0x100 bytes.
+#   0x100  _m_trap   — M-mode trap handler (mtvec target for all non-kernel use
+#                      and for SBI ecalls from the kernel in S-mode).
+#
+# Syscall ABI (Linux RV64 + custom extensions):
 #   a7       = syscall number
-#   a0-a6    = arguments (a0 also carries return value)
+#   a0-a6    = arguments (a0 also holds return value)
 #   t0-t6    = scratch, clobbered by ROM handlers
 
     .section .text
-    .globl _trap_entry
+    .globl _start
+    .globl _m_trap
 
-_trap_entry:
+# ============================================================
+# _start: M-mode kernel boot stub (offset 0x000)
+#
+# Runs when new_kernel() starts the CPU at ROM_BASE.
+# Does exactly four things, then mrets into S-mode:
+#   1. PMP  — grant S/U-mode RWX access to the full address space.
+#   2. medeleg — delegate page faults + U-mode ecall to S-mode.
+#   3. mideleg — delegate supervisor interrupts to S-mode.
+#   4. mret into Supervisor mode at RAM_BASE (0x80000000).
+#
+# After mret the ROM is done until the kernel makes an SBI call
+# (ecall from S-mode → cause=9 → _m_trap below).
+# ============================================================
+_start:
+    # 1. PMP: single entry covering the full address space, RWX.
+    #    pmpaddr0 = -1  (TOR upper bound = all ones = entire space)
+    #    pmpcfg0  = 0x1F (A=11=NAPOT, X=1, W=1, R=1)
+    li t0, -1
+    csrw pmpaddr0, t0
+    li t0, 31
+    csrw pmpcfg0, t0
+
+    # 2. medeleg: delegate to S-mode.
+    #    bit  8 = ecall from U-mode   (user syscalls → kernel)
+    #    bit 12 = instruction page fault
+    #    bit 13 = load page fault
+    #    bit 15 = store page fault
+    #    decimal: 256 + 4096 + 8192 + 32768 = 45312
+    li t0, 45312
+    csrw medeleg, t0
+
+    # 3. mideleg: delegate to S-mode.
+    #    bit 1 = supervisor software interrupt
+    #    bit 5 = supervisor timer interrupt  (scheduler tick)
+    #    bit 9 = supervisor external interrupt (PLIC / devices)
+    #    decimal: 2 + 32 + 512 = 546
+    li t0, 546
+    csrw mideleg, t0
+
+    # 4a. Point mtvec at _m_trap (offset 0x100 = 256 from ROM base).
+    li t0, 256
+    csrw mtvec, t0
+
+    # 4b. mstatus: set MPP=01 (Supervisor) so mret drops to S-mode.
+    #     mstatus=0 at reset; bit 11 = MPP low bit → MPP=01.
+    li t0, 1
+    slli t0, t0, 11
+    csrw mstatus, t0
+
+    # 4c. mepc = kernel entry point.
+    #     a0 is set to the ELF entry address by VirtualMachine::new_kernel
+    #     before the CPU starts running, so _start never needs to know the
+    #     actual address at ROM assembly time.
+    csrw mepc, a0
+
+    mret                        # drops to S-mode, jumps to kernel entry
+
+    # Pad _start to exactly 0x100 bytes so _m_trap lands at offset 0x100.
+    # _start is 64 bytes (15 instructions, with li 45312 expanding to lui+addi).
+    # Padding = 256 - 64 = 192 bytes.
+    .space 192
+
+# ============================================================
+# _m_trap: M-mode trap handler (offset 0x100)
+#
+# mtvec is set to 0x100 by Pipeline::new (for hosted programs)
+# and by _start (for kernel mode) before mret.
+#
+# Handles:
+#   cause  8 = ecall from U-mode  (hosted programs running in M-mode)
+#   cause  9 = ecall from S-mode  (SBI calls from the kernel)
+#   cause 11 = ecall from M-mode  (hosted programs running in M-mode)
+#   anything else → mret (let the pipeline's trap logic deal with it)
+# ============================================================
+_m_trap:
     csrr t0, mcause
     li t1, 8
     beq t0, t1, _dispatch_ecall
@@ -94,16 +178,6 @@ sys_unknown:
     j _advance_mepc_and_mret
 
 # sys_printf(fmt=a0, a1..a6 = up to 6 args)
-#
-# Register discipline in the outer loop:
-#   t0 = UART_BASE (fixed)
-#   t1 = fmt_ptr (advances through format string)
-#   t2 = arg_slot_offset (0, 8, 16, 24, 32, 40 for a1..a6)
-#   t3 = current char / specifier
-#   t4 = current argument value
-#   t5, t6 = scratch
-#
-# Sub-handlers save/restore t1+t2 on the stack when they need more regs.
 sys_printf:
     addi sp, sp, -48
     sd a1, 0(sp)

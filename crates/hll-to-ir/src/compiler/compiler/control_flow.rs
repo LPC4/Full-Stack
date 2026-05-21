@@ -173,9 +173,10 @@ impl HighLevelCompiler {
                 });
             }
             Statement::Defer(expr) => {
-                if let Expression::Primary(
-                    crate::ast::PrimaryExpr::FunctionCall { name, arguments },
-                ) = expr
+                if let Expression::Primary(crate::ast::PrimaryExpr::FunctionCall {
+                    name,
+                    arguments,
+                }) = expr
                 {
                     let mut captured_args = Vec::new();
                     for arg in arguments {

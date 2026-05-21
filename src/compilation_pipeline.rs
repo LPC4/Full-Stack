@@ -1,7 +1,7 @@
+use asm_to_binary::AssembledOutput;
 use asm_to_binary::assembler::link_layout::LinkLayout;
 use asm_to_binary::assembler::{Assembler, AssemblerError};
 use asm_to_binary::rv_instruction::RvInstruction;
-use asm_to_binary::AssembledOutput;
 use hll_to_ir::{CompileConfig, Diagnostic, DiagnosticLevel, HllCompiler, IrProgram};
 use ir_to_asm::compiler::compiler_rv64::CompilerRv64;
 
@@ -100,7 +100,9 @@ pub struct PipelineResult {
 
 impl PipelineResult {
     pub fn has_errors(&self) -> bool {
-        self.diagnostics.iter().any(|d| d.level == DiagnosticLevel::Error)
+        self.diagnostics
+            .iter()
+            .any(|d| d.level == DiagnosticLevel::Error)
     }
 
     pub fn format_diagnostics(&self) -> String {
@@ -310,7 +312,7 @@ impl CompilationPipeline {
                     asm: None,
                     binary: None,
                     exec: None,
-                }
+                };
             }
         };
 
@@ -338,13 +340,22 @@ impl CompilationPipeline {
             }
         }
 
-        let lex = Some(LexOutput { display: out.tokens_display });
-        let parse = Some(ParseOutput { display: out.ast_display });
+        let lex = Some(LexOutput {
+            display: out.tokens_display,
+        });
+        let parse = Some(ParseOutput {
+            display: out.ast_display,
+        });
         let ir_display = out.ir.to_string();
-        let ir = Some(IrOutput { display: ir_display });
+        let ir = Some(IrOutput {
+            display: ir_display,
+        });
 
         let (asm_text, user_tokens) = self.compile_ir_to_assembly_with_tokens(&out.ir);
-        let asm = Some(AsmOutput { tokens: user_tokens.clone(), display: asm_text });
+        let asm = Some(AsmOutput {
+            tokens: user_tokens.clone(),
+            display: asm_text,
+        });
 
         let binary = {
             let mut all_tokens: Vec<RvInstruction> =
@@ -355,7 +366,15 @@ impl CompilationPipeline {
                 .map(|assembled| BinaryOutput { assembled })
         };
 
-        PipelineResult { diagnostics, lex, parse, ir, asm, binary, exec: None }
+        PipelineResult {
+            diagnostics,
+            lex,
+            parse,
+            ir,
+            asm,
+            binary,
+            exec: None,
+        }
     }
 
     /// Compile and return only the IR program.
@@ -380,10 +399,7 @@ impl CompilationPipeline {
     }
 
     /// Assemble a token stream into machine code.
-    pub fn assemble(
-        &self,
-        tokens: &[RvInstruction],
-    ) -> Result<AssembledOutput, AssemblerError> {
+    pub fn assemble(&self, tokens: &[RvInstruction]) -> Result<AssembledOutput, AssemblerError> {
         Assembler::assemble(tokens)
     }
 

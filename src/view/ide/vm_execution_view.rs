@@ -89,8 +89,7 @@ impl CompilerView for VmExecutionView {
         } else {
             ui.centered_and_justified(|ui| {
                 ui.label(
-                    RichText::new("Click \"Run in VM\" to execute the assembled program.")
-                        .weak(),
+                    RichText::new("Click \"Run in VM\" to execute the assembled program.").weak(),
                 );
             });
         }

@@ -63,14 +63,24 @@ impl CompilerView for CpuStateView {
 
                 ui.add_space(4.0);
 
-                let fp_bar_margin = Margin { left: 8, right: 4, top: 4, bottom: 4 };
+                let fp_bar_margin = Margin {
+                    left: 8,
+                    right: 4,
+                    top: 4,
+                    bottom: 4,
+                };
                 Frame::NONE
                     .fill(theme.surface_alt)
                     .inner_margin(fp_bar_margin)
                     .show(ui, |ui| {
                         ui.set_min_width(available_w);
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("FP Registers").strong().small().color(theme.text_dim));
+                            ui.label(
+                                RichText::new("FP Registers")
+                                    .strong()
+                                    .small()
+                                    .color(theme.text_dim),
+                            );
                             ui.add_space(8.0);
                             ui.checkbox(&mut self.show_fp_as_float, "as float");
                         });
@@ -107,7 +117,12 @@ fn section_bar(ui: &mut Ui, label: &str, available_w: f32) {
     let theme = ui_theme();
     Frame::NONE
         .fill(theme.surface_alt)
-        .inner_margin(Margin { left: 8, right: 4, top: 4, bottom: 4 })
+        .inner_margin(Margin {
+            left: 8,
+            right: 4,
+            top: 4,
+            bottom: 4,
+        })
         .show(ui, |ui| {
             ui.set_min_width(available_w);
             ui.label(RichText::new(label).strong().small().color(theme.text_dim));

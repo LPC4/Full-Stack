@@ -8,8 +8,8 @@ pub mod viewtrait;
 
 pub use common::{
     MemoryPalette, PipelinePalette, StackPalette, SyntaxPalette, UiTheme, ViewType, apply_ui_theme,
-    ui_theme, centered_placeholder, scrollable_code,
-    highlight_assembly, highlight_ast, highlight_code, highlight_ir,
+    centered_placeholder, highlight_assembly, highlight_ast, highlight_code, highlight_ir,
+    scrollable_code, ui_theme,
 };
 pub use compilation_state::CompilationState;
 pub use layout::{
@@ -34,7 +34,9 @@ pub use crate::view::ide::StackView;
 pub use crate::view::ide::TokensView;
 pub use crate::view::ide::VmExecutionView;
 
-pub use crate::view::os::{InterruptView, PageTableView, PrivilegeView, SyscallTraceView, TrapView};
+pub use crate::view::os::{
+    InterruptView, PageTableView, PrivilegeView, SyscallTraceView, TrapView,
+};
 
 pub fn blank_custom_program_source() -> String {
     "; Write your program here\n".to_owned()

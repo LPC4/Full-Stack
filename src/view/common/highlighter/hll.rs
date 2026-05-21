@@ -148,8 +148,8 @@ fn is_register_word(word: &str) -> bool {
 
     const ABI_FP_REGS: &[&str] = &[
         "ft0", "ft1", "ft2", "ft3", "ft4", "ft5", "ft6", "ft7", "fs0", "fs1", "fs2", "fs3", "fs4",
-        "fs5", "fs6", "fs7", "fs8", "fs9", "fs10", "fs11", "fa0", "fa1", "fa2", "fa3", "fa4", "fa5",
-        "fa6", "fa7",
+        "fs5", "fs6", "fs7", "fs8", "fs9", "fs10", "fs11", "fa0", "fa1", "fa2", "fa3", "fa4",
+        "fa5", "fa6", "fa7",
     ];
 
     ABI_INT_REGS.contains(&word)

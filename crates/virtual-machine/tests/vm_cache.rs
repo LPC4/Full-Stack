@@ -1,6 +1,6 @@
-﻿use virtual_machine::memory::cache::{Cache, CacheParams};
-use virtual_machine::memory::ram::Ram;
 use virtual_machine::memory::MemoryAccess;
+use virtual_machine::memory::cache::{Cache, CacheParams};
+use virtual_machine::memory::ram::Ram;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -12,7 +12,13 @@ const RAM_SIZE: usize = 1 * 1024 * 1024; // 1 MiB
 fn make_cache(size: usize, block_size: usize, ways: usize, write_back: bool) -> Cache<Ram> {
     let ram = Ram::new(RAM_BASE, RAM_SIZE);
     Cache::new(
-        CacheParams { size, block_size, associativity: ways, write_back, read_only: false },
+        CacheParams {
+            size,
+            block_size,
+            associativity: ways,
+            write_back,
+            read_only: false,
+        },
         ram,
     )
 }
@@ -46,7 +52,7 @@ fn first_read_is_a_miss() {
 #[test]
 fn second_read_same_block_is_a_hit() {
     let mut c = make_cache(256, 64, 2, true);
-    let _ = c.read_byte(RAM_BASE).unwrap();     // cold miss
+    let _ = c.read_byte(RAM_BASE).unwrap(); // cold miss
     let _ = c.read_byte(RAM_BASE + 1).unwrap(); // same 64-byte block → hit
     assert_eq!(c.stats().read_misses, 1);
     assert_eq!(c.stats().read_hits, 1);
@@ -55,7 +61,7 @@ fn second_read_same_block_is_a_hit() {
 #[test]
 fn different_blocks_each_count_as_a_miss() {
     let mut c = make_cache(256, 64, 2, true);
-    let _ = c.read_byte(RAM_BASE).unwrap();      // block 0
+    let _ = c.read_byte(RAM_BASE).unwrap(); // block 0
     let _ = c.read_byte(RAM_BASE + 64).unwrap(); // block 1
     let _ = c.read_byte(RAM_BASE + 128).unwrap(); // block 2
     assert_eq!(c.stats().read_misses, 3);
@@ -71,7 +77,7 @@ fn halfword_read_counts_as_one_access() {
     let mut c = make_cache(256, 64, 2, true);
     // Store known bytes first via RAM (bypass cache)
     let _ = c.write_byte(RAM_BASE, 0x01).unwrap(); // miss
-    let _ = c.read_halfword(RAM_BASE).unwrap();    // should hit (already loaded)
+    let _ = c.read_halfword(RAM_BASE).unwrap(); // should hit (already loaded)
     // Stats: 1 write miss + 1 write hit? No - the write_byte is a miss.
     // Then read_halfword: both bytes in same block → 1 read hit
     assert_eq!(c.stats().read_hits, 1);
@@ -105,7 +111,7 @@ fn word_spanning_two_blocks_counts_as_two_reads() {
     // Read a "word" that crosses a 4-byte block boundary (offset 2)
     // bytes at RAM_BASE+2 and RAM_BASE+3 are in block 0; +4 and +5 in block 1
     let _ = c.read_halfword(RAM_BASE + 2).unwrap(); // two bytes, same block OK
-    let _ = c.read_word(RAM_BASE + 2).unwrap();     // 4 bytes: blocks 0 and 1
+    let _ = c.read_word(RAM_BASE + 2).unwrap(); // 4 bytes: blocks 0 and 1
     // First halfword: 1 miss (cold)
     // The word: 2 bytes in block 0 (hit) + 2 bytes in block 1 (miss) = 1 hit + 1 miss
     assert_eq!(c.stats().read_misses, 2);
@@ -154,7 +160,13 @@ fn write_back_dirty_eviction_propagates_to_next_level() {
 fn write_through_propagates_immediately() {
     let ram = Ram::new(RAM_BASE, RAM_SIZE);
     let mut c = Cache::new(
-        CacheParams { size: 256, block_size: 64, associativity: 2, write_back: false, read_only: false },
+        CacheParams {
+            size: 256,
+            block_size: 64,
+            associativity: 2,
+            write_back: false,
+            read_only: false,
+        },
         ram,
     );
     let _ = c.write_byte(RAM_BASE, 0xCD).unwrap();
@@ -203,10 +215,18 @@ fn lru_evicts_least_recently_used_way() {
     // b0 should still be cached (hit)
     let stats_before = c.stats().clone();
     let _ = c.read_byte(b0).unwrap();
-    assert_eq!(c.stats().read_hits, stats_before.read_hits + 1, "b0 must still be cached after b2 eviction");
+    assert_eq!(
+        c.stats().read_hits,
+        stats_before.read_hits + 1,
+        "b0 must still be cached after b2 eviction"
+    );
     // b2 should have been evicted (miss)
     let _ = c.read_byte(b2).unwrap();
-    assert_eq!(c.stats().read_misses, stats_before.read_misses + 1, "b2 should have been evicted");
+    assert_eq!(
+        c.stats().read_misses,
+        stats_before.read_misses + 1,
+        "b2 should have been evicted"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -217,11 +237,23 @@ fn lru_evicts_least_recently_used_way() {
 fn three_level_hierarchy_read_write() {
     let ram = Ram::new(RAM_BASE, RAM_SIZE);
     let l2 = Cache::new(
-        CacheParams { size: 512, block_size: 64, associativity: 4, write_back: true, read_only: false },
+        CacheParams {
+            size: 512,
+            block_size: 64,
+            associativity: 4,
+            write_back: true,
+            read_only: false,
+        },
         ram,
     );
     let mut l1 = Cache::new(
-        CacheParams { size: 128, block_size: 64, associativity: 2, write_back: true, read_only: false },
+        CacheParams {
+            size: 128,
+            block_size: 64,
+            associativity: 2,
+            write_back: true,
+            read_only: false,
+        },
         l2,
     );
 

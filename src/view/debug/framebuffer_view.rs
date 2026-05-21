@@ -1,6 +1,6 @@
 use crate::view::{CompilationState, CompilerView, ProgramCatalog, ui_theme};
-use virtual_machine::bus::RAM_BASE;
 use egui::{Color32, ColorImage, Frame, RichText, Stroke, TextureHandle, TextureOptions, Ui};
+use virtual_machine::bus::RAM_BASE;
 
 const TERM_BG: Color32 = Color32::from_rgb(7, 9, 12);
 const TERM_FG: Color32 = Color32::from_rgb(185, 210, 185);
@@ -74,9 +74,7 @@ impl CompilerView for FramebufferView {
                             .font(egui::TextStyle::Monospace)
                             .hint_text("0x80000000"),
                     );
-                    if addr_resp.lost_focus()
-                        && ui.input(|i| i.key_pressed(egui::Key::Enter))
-                    {
+                    if addr_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                         let s = self.addr_input.trim().trim_start_matches("0x");
                         if let Ok(addr) = u64::from_str_radix(s, 16) {
                             self.base_addr = addr;
@@ -121,28 +119,23 @@ impl CompilerView for FramebufferView {
                     ui.selectable_value(&mut self.mode, FbMode::Pixel, "Pixel");
 
                     // Dimension and memory info on right
-                    ui.with_layout(
-                        egui::Layout::right_to_left(egui::Align::Center),
-                        |ui| {
-                            let info = match self.mode {
-                                FbMode::Pixel => {
-                                    let bytes = self.width * self.height * 4;
-                                    format!(
-                                        "{}x{}  4 bpp  {}KB",
-                                        self.width,
-                                        self.height,
-                                        bytes / 1024
-                                    )
-                                }
-                                FbMode::Text => {
-                                    format!("{}x{}", self.width, self.height)
-                                }
-                            };
-                            ui.label(
-                                RichText::new(info).small().monospace().color(theme.text_dim),
-                            );
-                        },
-                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let info = match self.mode {
+                            FbMode::Pixel => {
+                                let bytes = self.width * self.height * 4;
+                                format!("{}x{}  4 bpp  {}KB", self.width, self.height, bytes / 1024)
+                            }
+                            FbMode::Text => {
+                                format!("{}x{}", self.width, self.height)
+                            }
+                        };
+                        ui.label(
+                            RichText::new(info)
+                                .small()
+                                .monospace()
+                                .color(theme.text_dim),
+                        );
+                    });
                 });
             });
 

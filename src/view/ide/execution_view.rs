@@ -1,6 +1,6 @@
 use crate::view::{CompilationState, CompilerView, ProgramCatalog};
-use virtual_machine::bus::ELF_LOAD_BASE;
 use egui::{RichText, ScrollArea};
+use virtual_machine::bus::ELF_LOAD_BASE;
 
 #[derive(Default)]
 pub struct ExecutionView {

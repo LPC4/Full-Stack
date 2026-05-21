@@ -19,6 +19,7 @@
       <sourceFolder url="file://$MODULE_DIR$/ir-to-asm/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/virtual-machine/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/visualizer/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/firmware/src" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>
     <orderEntry type="inheritedJdk" />

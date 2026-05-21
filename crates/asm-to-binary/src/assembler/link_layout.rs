@@ -1,4 +1,4 @@
-﻿/// Controls how the linker places the image in virtual memory and what
+/// Controls how the linker places the image in virtual memory and what
 /// auxiliary symbols to inject into the assembled output.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LinkLayout {
@@ -62,7 +62,7 @@ impl LinkLayout {
         Self {
             load_base: 0x8020_0000,
             emit_layout_symbols: true,
-            stack_top: 0x8060_0000, // 6 MiB into RAM
+            stack_top: 0x8060_0000,     // 6 MiB into RAM
             heap_size: 4 * 1024 * 1024, // 4 MiB heap
         }
     }

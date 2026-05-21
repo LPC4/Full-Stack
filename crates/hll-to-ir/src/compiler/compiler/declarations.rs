@@ -320,12 +320,8 @@ impl HighLevelCompiler {
         context: &mut ConstEvalContext,
     ) -> Result<Literal, String> {
         match expr {
-            Expression::Primary(crate::ast::PrimaryExpr::Literal(lit)) => {
-                Ok(lit.clone())
-            }
-            Expression::Primary(crate::ast::PrimaryExpr::Identifier(
-                ident,
-            )) => {
+            Expression::Primary(crate::ast::PrimaryExpr::Literal(lit)) => Ok(lit.clone()),
+            Expression::Primary(crate::ast::PrimaryExpr::Identifier(ident)) => {
                 // First check env, then compile_time_consts
                 if let Some(lit) = env.get(ident) {
                     Ok(lit.clone())
@@ -340,15 +336,9 @@ impl HighLevelCompiler {
             Expression::Unary { op, expr: inner } => {
                 let lit = self.eval_const_expr_with_env_and_context(inner, env, context)?;
                 match (op, lit) {
-                    (crate::ast::UnaryOp::Negate, Literal::Integer(i)) => {
-                        Ok(Literal::Integer(-i))
-                    }
-                    (crate::ast::UnaryOp::Negate, Literal::Float(f)) => {
-                        Ok(Literal::Float(-f))
-                    }
-                    (crate::ast::UnaryOp::Not, Literal::Boolean(b)) => {
-                        Ok(Literal::Boolean(!b))
-                    }
+                    (crate::ast::UnaryOp::Negate, Literal::Integer(i)) => Ok(Literal::Integer(-i)),
+                    (crate::ast::UnaryOp::Negate, Literal::Float(f)) => Ok(Literal::Float(-f)),
+                    (crate::ast::UnaryOp::Not, Literal::Boolean(b)) => Ok(Literal::Boolean(!b)),
                     _ => Err("Unsupported compile-time unary operation".to_owned()),
                 }
             }
@@ -356,37 +346,23 @@ impl HighLevelCompiler {
                 let l = self.eval_const_expr_with_env_and_context(left, env, context)?;
                 let r = self.eval_const_expr_with_env_and_context(right, env, context)?;
                 match (op, l, r) {
-                    (
-                        crate::ast::BinaryOp::Add,
-                        Literal::Integer(a),
-                        Literal::Integer(b),
-                    ) => Ok(Literal::Integer(a + b)),
-                    (
-                        crate::ast::BinaryOp::Sub,
-                        Literal::Integer(a),
-                        Literal::Integer(b),
-                    ) => Ok(Literal::Integer(a - b)),
-                    (
-                        crate::ast::BinaryOp::Mul,
-                        Literal::Integer(a),
-                        Literal::Integer(b),
-                    ) => Ok(Literal::Integer(a * b)),
-                    (
-                        crate::ast::BinaryOp::Div,
-                        Literal::Integer(a),
-                        Literal::Integer(b),
-                    ) => {
+                    (crate::ast::BinaryOp::Add, Literal::Integer(a), Literal::Integer(b)) => {
+                        Ok(Literal::Integer(a + b))
+                    }
+                    (crate::ast::BinaryOp::Sub, Literal::Integer(a), Literal::Integer(b)) => {
+                        Ok(Literal::Integer(a - b))
+                    }
+                    (crate::ast::BinaryOp::Mul, Literal::Integer(a), Literal::Integer(b)) => {
+                        Ok(Literal::Integer(a * b))
+                    }
+                    (crate::ast::BinaryOp::Div, Literal::Integer(a), Literal::Integer(b)) => {
                         if b == 0 {
                             Err("Division by zero in compile-time evaluation".to_owned())
                         } else {
                             Ok(Literal::Integer(a / b))
                         }
                     }
-                    (
-                        crate::ast::BinaryOp::Mod,
-                        Literal::Integer(a),
-                        Literal::Integer(b),
-                    ) => {
+                    (crate::ast::BinaryOp::Mod, Literal::Integer(a), Literal::Integer(b)) => {
                         if b == 0 {
                             Err("Modulo by zero in compile-time evaluation".to_owned())
                         } else {
@@ -394,99 +370,61 @@ impl HighLevelCompiler {
                         }
                     }
                     // Comparison operators for integers
-                    (
-                        crate::ast::BinaryOp::Eq,
-                        Literal::Integer(a),
-                        Literal::Integer(b),
-                    ) => Ok(Literal::Boolean(a == b)),
-                    (
-                        crate::ast::BinaryOp::Neq,
-                        Literal::Integer(a),
-                        Literal::Integer(b),
-                    ) => Ok(Literal::Boolean(a != b)),
-                    (
-                        crate::ast::BinaryOp::Lt,
-                        Literal::Integer(a),
-                        Literal::Integer(b),
-                    ) => Ok(Literal::Boolean(a < b)),
-                    (
-                        crate::ast::BinaryOp::Lte,
-                        Literal::Integer(a),
-                        Literal::Integer(b),
-                    ) => Ok(Literal::Boolean(a <= b)),
-                    (
-                        crate::ast::BinaryOp::Gt,
-                        Literal::Integer(a),
-                        Literal::Integer(b),
-                    ) => Ok(Literal::Boolean(a > b)),
-                    (
-                        crate::ast::BinaryOp::Gte,
-                        Literal::Integer(a),
-                        Literal::Integer(b),
-                    ) => Ok(Literal::Boolean(a >= b)),
+                    (crate::ast::BinaryOp::Eq, Literal::Integer(a), Literal::Integer(b)) => {
+                        Ok(Literal::Boolean(a == b))
+                    }
+                    (crate::ast::BinaryOp::Neq, Literal::Integer(a), Literal::Integer(b)) => {
+                        Ok(Literal::Boolean(a != b))
+                    }
+                    (crate::ast::BinaryOp::Lt, Literal::Integer(a), Literal::Integer(b)) => {
+                        Ok(Literal::Boolean(a < b))
+                    }
+                    (crate::ast::BinaryOp::Lte, Literal::Integer(a), Literal::Integer(b)) => {
+                        Ok(Literal::Boolean(a <= b))
+                    }
+                    (crate::ast::BinaryOp::Gt, Literal::Integer(a), Literal::Integer(b)) => {
+                        Ok(Literal::Boolean(a > b))
+                    }
+                    (crate::ast::BinaryOp::Gte, Literal::Integer(a), Literal::Integer(b)) => {
+                        Ok(Literal::Boolean(a >= b))
+                    }
                     // Float comparisons
-                    (
-                        crate::ast::BinaryOp::Eq,
-                        Literal::Float(a),
-                        Literal::Float(b),
-                    ) => Ok(Literal::Boolean((a - b).abs() < f64::EPSILON)),
-                    (
-                        crate::ast::BinaryOp::Neq,
-                        Literal::Float(a),
-                        Literal::Float(b),
-                    ) => Ok(Literal::Boolean((a - b).abs() >= f64::EPSILON)),
-                    (
-                        crate::ast::BinaryOp::Lt,
-                        Literal::Float(a),
-                        Literal::Float(b),
-                    ) => Ok(Literal::Boolean(a < b)),
-                    (
-                        crate::ast::BinaryOp::Lte,
-                        Literal::Float(a),
-                        Literal::Float(b),
-                    ) => Ok(Literal::Boolean(a <= b)),
-                    (
-                        crate::ast::BinaryOp::Gt,
-                        Literal::Float(a),
-                        Literal::Float(b),
-                    ) => Ok(Literal::Boolean(a > b)),
-                    (
-                        crate::ast::BinaryOp::Gte,
-                        Literal::Float(a),
-                        Literal::Float(b),
-                    ) => Ok(Literal::Boolean(a >= b)),
+                    (crate::ast::BinaryOp::Eq, Literal::Float(a), Literal::Float(b)) => {
+                        Ok(Literal::Boolean((a - b).abs() < f64::EPSILON))
+                    }
+                    (crate::ast::BinaryOp::Neq, Literal::Float(a), Literal::Float(b)) => {
+                        Ok(Literal::Boolean((a - b).abs() >= f64::EPSILON))
+                    }
+                    (crate::ast::BinaryOp::Lt, Literal::Float(a), Literal::Float(b)) => {
+                        Ok(Literal::Boolean(a < b))
+                    }
+                    (crate::ast::BinaryOp::Lte, Literal::Float(a), Literal::Float(b)) => {
+                        Ok(Literal::Boolean(a <= b))
+                    }
+                    (crate::ast::BinaryOp::Gt, Literal::Float(a), Literal::Float(b)) => {
+                        Ok(Literal::Boolean(a > b))
+                    }
+                    (crate::ast::BinaryOp::Gte, Literal::Float(a), Literal::Float(b)) => {
+                        Ok(Literal::Boolean(a >= b))
+                    }
                     // Boolean operations
-                    (
-                        crate::ast::BinaryOp::And,
-                        Literal::Boolean(a),
-                        Literal::Boolean(b),
-                    ) => Ok(Literal::Boolean(a && b)),
-                    (
-                        crate::ast::BinaryOp::Or,
-                        Literal::Boolean(a),
-                        Literal::Boolean(b),
-                    ) => Ok(Literal::Boolean(a || b)),
+                    (crate::ast::BinaryOp::And, Literal::Boolean(a), Literal::Boolean(b)) => {
+                        Ok(Literal::Boolean(a && b))
+                    }
+                    (crate::ast::BinaryOp::Or, Literal::Boolean(a), Literal::Boolean(b)) => {
+                        Ok(Literal::Boolean(a || b))
+                    }
                     // Float arithmetic
-                    (
-                        crate::ast::BinaryOp::Add,
-                        Literal::Float(a),
-                        Literal::Float(b),
-                    ) => Ok(Literal::Float(a + b)),
-                    (
-                        crate::ast::BinaryOp::Sub,
-                        Literal::Float(a),
-                        Literal::Float(b),
-                    ) => Ok(Literal::Float(a - b)),
-                    (
-                        crate::ast::BinaryOp::Mul,
-                        Literal::Float(a),
-                        Literal::Float(b),
-                    ) => Ok(Literal::Float(a * b)),
-                    (
-                        crate::ast::BinaryOp::Div,
-                        Literal::Float(a),
-                        Literal::Float(b),
-                    ) => {
+                    (crate::ast::BinaryOp::Add, Literal::Float(a), Literal::Float(b)) => {
+                        Ok(Literal::Float(a + b))
+                    }
+                    (crate::ast::BinaryOp::Sub, Literal::Float(a), Literal::Float(b)) => {
+                        Ok(Literal::Float(a - b))
+                    }
+                    (crate::ast::BinaryOp::Mul, Literal::Float(a), Literal::Float(b)) => {
+                        Ok(Literal::Float(a * b))
+                    }
+                    (crate::ast::BinaryOp::Div, Literal::Float(a), Literal::Float(b)) => {
                         if b.abs() < f64::EPSILON {
                             Err("Division by zero in compile-time evaluation".to_owned())
                         } else {
@@ -499,14 +437,12 @@ impl HighLevelCompiler {
             Expression::Primary(crate::ast::PrimaryExpr::Grouped(inner)) => {
                 self.eval_const_expr_with_env_and_context(inner, env, context)
             }
-            Expression::Primary(crate::ast::PrimaryExpr::FunctionCall {
-                name,
-                arguments,
-            }) => self.eval_const_function_call(name, arguments, env, context),
-            Expression::Primary(crate::ast::PrimaryExpr::FieldAccess {
-                expr: inner,
-                field,
-            }) => self.eval_const_field_access(inner, field, env, context),
+            Expression::Primary(crate::ast::PrimaryExpr::FunctionCall { name, arguments }) => {
+                self.eval_const_function_call(name, arguments, env, context)
+            }
+            Expression::Primary(crate::ast::PrimaryExpr::FieldAccess { expr: inner, field }) => {
+                self.eval_const_field_access(inner, field, env, context)
+            }
             Expression::Assignment { target: _, rvalue } => {
                 // For const eval, we only care about the value being assigned
                 self.eval_const_expr_with_env_and_context(rvalue, env, context)

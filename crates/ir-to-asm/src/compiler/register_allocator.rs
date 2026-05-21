@@ -140,18 +140,16 @@ impl RegisterAllocator {
             }
             Cmp { dest, .. } => {
                 if !vregs.iter().any(|(r, _)| r == dest) {
-                    vregs.push((
-                        dest.clone(),
-                        IrType::Integer(hll_to_ir::IntWidth::I1),
-                    ));
+                    vregs.push((dest.clone(), IrType::Integer(hll_to_ir::IntWidth::I1)));
                 }
             }
             Call { dest, function, .. } => {
                 if let Some(dest) = dest {
                     if !vregs.iter().any(|(r, _)| r == dest) {
-                        let ret_ty = function_return_types.get(function).cloned().unwrap_or(
-                            IrType::Integer(hll_to_ir::IntWidth::I64),
-                        );
+                        let ret_ty = function_return_types
+                            .get(function)
+                            .cloned()
+                            .unwrap_or(IrType::Integer(hll_to_ir::IntWidth::I64));
                         vregs.push((dest.clone(), ret_ty));
                     }
                 }
@@ -173,19 +171,14 @@ impl RegisterAllocator {
             }
             ReadReg { dest, .. } => {
                 if !vregs.iter().any(|(r, _)| r == dest) {
-                    vregs.push((
-                        dest.clone(),
-                        IrType::Integer(hll_to_ir::IntWidth::I64),
-                    ));
+                    vregs.push((dest.clone(), IrType::Integer(hll_to_ir::IntWidth::I64)));
                 }
             }
             GlobalRef { dest, .. } => {
                 if !vregs.iter().any(|(r, _)| r == dest) {
                     vregs.push((
                         dest.clone(),
-                        IrType::Pointer(Box::new(IrType::Integer(
-                            hll_to_ir::IntWidth::I8,
-                        ))),
+                        IrType::Pointer(Box::new(IrType::Integer(hll_to_ir::IntWidth::I8))),
                     ));
                 }
             }
@@ -203,20 +196,14 @@ impl RegisterAllocator {
             Return(Some(val)) => {
                 if let IrValue::Register(reg) = val {
                     if !vregs.iter().any(|(r, _)| r == reg) {
-                        vregs.push((
-                            reg.clone(),
-                            IrType::Integer(hll_to_ir::IntWidth::I64),
-                        ));
+                        vregs.push((reg.clone(), IrType::Integer(hll_to_ir::IntWidth::I64)));
                     }
                 }
             }
             Branch { cond, .. } => {
                 if let IrValue::Register(reg) = cond {
                     if !vregs.iter().any(|(r, _)| r == reg) {
-                        vregs.push((
-                            reg.clone(),
-                            IrType::Integer(hll_to_ir::IntWidth::I1),
-                        ));
+                        vregs.push((reg.clone(), IrType::Integer(hll_to_ir::IntWidth::I1)));
                     }
                 }
             }
@@ -524,10 +511,7 @@ impl RegisterAllocator {
     }
 
     /// Get the allocation for a virtual register
-    pub fn get_allocation(
-        &self,
-        reg: &hll_to_ir::IrRegister,
-    ) -> Option<&Allocation> {
+    pub fn get_allocation(&self, reg: &hll_to_ir::IrRegister) -> Option<&Allocation> {
         self.reg_mapping.get(reg)
     }
 }
@@ -547,8 +531,8 @@ mod tests {
         IrValue,
     };
 
-    use crate::compiler::function_context::FunctionContext;
     use super::{Allocation, RegisterAllocator};
+    use crate::compiler::function_context::FunctionContext;
 
     fn i64_ty() -> IrType {
         IrType::Integer(IntWidth::I64)
@@ -599,10 +583,22 @@ mod tests {
 
         let (allocator, ctx) = allocate_function(&func);
 
-        assert!(ctx.slot_for_reg(&reg("a")).is_some(), "stack slot should exist for a");
-        assert!(ctx.slot_for_reg(&reg("b")).is_some(), "stack slot should exist for b");
-        assert!(matches!(allocator.get_allocation(&reg("a")), Some(Allocation::Physical(_))));
-        assert!(matches!(allocator.get_allocation(&reg("b")), Some(Allocation::Physical(_))));
+        assert!(
+            ctx.slot_for_reg(&reg("a")).is_some(),
+            "stack slot should exist for a"
+        );
+        assert!(
+            ctx.slot_for_reg(&reg("b")).is_some(),
+            "stack slot should exist for b"
+        );
+        assert!(matches!(
+            allocator.get_allocation(&reg("a")),
+            Some(Allocation::Physical(_))
+        ));
+        assert!(matches!(
+            allocator.get_allocation(&reg("b")),
+            Some(Allocation::Physical(_))
+        ));
     }
 
     #[test]
@@ -633,14 +629,23 @@ mod tests {
         for index in 0..7 {
             let name = format!("t{index}");
             assert!(
-                matches!(allocator.get_allocation(&reg(&name)), Some(Allocation::Physical(_))),
+                matches!(
+                    allocator.get_allocation(&reg(&name)),
+                    Some(Allocation::Physical(_))
+                ),
                 "expected {name} to fit in a physical register"
             );
         }
 
         let spilled = reg("t7");
-        assert!(matches!(allocator.get_allocation(&spilled), Some(Allocation::StackSlot(_))));
-        assert!(ctx.slot_for_reg(&spilled).is_some(), "spilled register still needs a stack slot");
+        assert!(matches!(
+            allocator.get_allocation(&spilled),
+            Some(Allocation::StackSlot(_))
+        ));
+        assert!(
+            ctx.slot_for_reg(&spilled).is_some(),
+            "spilled register still needs a stack slot"
+        );
     }
 
     #[test]
@@ -663,8 +668,14 @@ mod tests {
 
         let (allocator, ctx) = allocate_function(&func);
 
-        assert!(ctx.is_stack_address(&reg("ptr")), "alloc destinations are stack addresses");
-        assert!(ctx.slot_for_reg(&reg("ptr")).is_some(), "stack address registers still need slots");
+        assert!(
+            ctx.is_stack_address(&reg("ptr")),
+            "alloc destinations are stack addresses"
+        );
+        assert!(
+            ctx.slot_for_reg(&reg("ptr")).is_some(),
+            "stack address registers still need slots"
+        );
         assert!(
             allocator.get_allocation(&reg("ptr")).is_none(),
             "stack address registers should not be assigned a physical register"
@@ -692,7 +703,10 @@ mod tests {
 
         match (first, second) {
             (Some(Allocation::Physical(a)), Some(Allocation::Physical(b))) => {
-                assert_eq!(a, b, "expired intervals should release their register for reuse");
+                assert_eq!(
+                    a, b,
+                    "expired intervals should release their register for reuse"
+                );
             }
             other => panic!("unexpected allocations: {other:?}"),
         }
@@ -731,7 +745,9 @@ mod tests {
 
         let (_, ctx) = allocate_function(&func);
 
-        let slot_block = ctx.slot_for_reg(&reg("block")).expect("block must have a slot");
+        let slot_block = ctx
+            .slot_for_reg(&reg("block"))
+            .expect("block must have a slot");
         let slot_ptr = ctx.slot_for_reg(&reg("ptr")).expect("ptr must have a slot");
 
         let block_end = slot_block + 32;

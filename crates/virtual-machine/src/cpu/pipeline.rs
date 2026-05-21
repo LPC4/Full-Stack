@@ -1,4 +1,4 @@
-﻿//! 5-stage pipeline: orchestrates Fetch -> Decode -> Execute -> Memory -> Writeback.
+//! 5-stage pipeline: orchestrates Fetch -> Decode -> Execute -> Memory -> Writeback.
 //!
 //! Implements data forwarding, load-use stall detection, and 2-bit bimodal
 //! branch prediction with BTB; 2-cycle flush on mispredict.
@@ -95,7 +95,7 @@ impl Pipeline {
         regs.write_x(2, stack_ptr);
 
         let mut csrs = CsrFile::new();
-        csrs.mtvec = 0x0000; // ROM_BASE + direct mode
+        csrs.mtvec = crate::rom::M_TRAP_ADDR; // _m_trap at ROM_BASE + 0x100
         csrs.mscratch = stack_ptr - 4096; // M-mode stack top, 4 KB below user stack
         Self {
             regs,
@@ -121,6 +121,25 @@ impl Pipeline {
         self.regs.write_x(1, ra);
     }
 
+    /// Reset the program counter and flush the pipeline.
+    ///
+    /// Used by `VirtualMachine::new_kernel` to redirect the CPU to ROM_BASE
+    /// after the ELF has been loaded into RAM, so that the ROM's `_start`
+    /// boot stub runs first.
+    pub fn reset_pc(&mut self, pc: u64) {
+        self.regs.pc = pc;
+        self.fetch_pc = pc;
+        self.if_id = None;
+        self.id_ex = None;
+        self.ex_mem = None;
+        self.mem_wb = None;
+    }
+
+    /// Set register a0 (x10) to the kernel entry point so ROM `_start` can
+    /// `csrw mepc, a0` without knowing the address at assembly time.
+    pub fn set_boot_entry(&mut self, entry: u64) {
+        self.regs.write_x(10, entry);
+    }
 
     pub fn write_csr_mtvec(&mut self, val: u64) {
         self.csrs.mtvec = val;
@@ -222,7 +241,13 @@ impl Pipeline {
             // old_ex_mem / old_id_ex / old_if_id drop here - no memory side-effects yet.
             self.take_trap(irq_cause, irq_tval, irq_pc);
             self.last_cycle = CpuPipelineFeed {
-                stages: [None, snap_id_entry, snap_ex_entry, snap_mem_entry, snap_wb_entry],
+                stages: [
+                    None,
+                    snap_id_entry,
+                    snap_ex_entry,
+                    snap_mem_entry,
+                    snap_wb_entry,
+                ],
                 stalled: false,
                 flushed: true,
             };
@@ -309,7 +334,15 @@ impl Pipeline {
     fn stage_if(&mut self, bus: &mut SystemBus) -> Result<Option<IFIDReg>, VmError> {
         let pc = self.fetch_pc;
 
-        let raw = match fetch::fetch(bus, pc, self.csrs.satp, self.regs.priv_mode, self.csrs.mstatus) {
+        let raw = match fetch::fetch_with_pmp(
+            bus,
+            pc,
+            self.csrs.satp,
+            self.regs.priv_mode,
+            self.csrs.mstatus,
+            self.csrs.pmpcfg0,
+            self.csrs.pmpaddr0,
+        ) {
             Ok(r) => r,
             Err(e) => {
                 self.flush_and_trap(e, pc);
@@ -486,13 +519,15 @@ impl Pipeline {
             None => return Ok(None),
         };
 
-        let mem_result = match memory::memory_stage(
+        let mem_result = match memory::memory_stage_with_pmp(
             ex_mem.exec_result.clone(),
             bus,
             &mut self.reservation,
             self.csrs.satp,
             self.regs.priv_mode,
             self.csrs.mstatus,
+            self.csrs.pmpcfg0,
+            self.csrs.pmpaddr0,
         ) {
             Ok(r) => r,
             Err(e) => {
@@ -513,46 +548,46 @@ impl Pipeline {
         }))
     }
 
-     fn stage_wb(
-         &mut self,
-         mem_wb: Option<&MEMWBReg>,
-         bus: &mut SystemBus,
-     ) -> Result<TickOutcome, VmError> {
-         let mem_wb = match mem_wb {
-             Some(r) => r,
-             None => return Ok(TickOutcome::Continue),
-         };
+    fn stage_wb(
+        &mut self,
+        mem_wb: Option<&MEMWBReg>,
+        bus: &mut SystemBus,
+    ) -> Result<TickOutcome, VmError> {
+        let mem_wb = match mem_wb {
+            Some(r) => r,
+            None => return Ok(TickOutcome::Continue),
+        };
 
-         let next_pc =
-             match writeback::writeback(mem_wb.mem_result.clone(), &mut self.regs, &mut self.csrs) {
-                 Ok(pc) => pc,
-                 Err(VmError::Ecall) => return self.handle_ecall(bus),
-                 Err(VmError::Ebreak) => {
-                     let pc = self.regs.pc;
-                     self.flush_pipeline();
-                     self.take_trap(traps::CAUSE_EBREAK, 0, pc);
-                     return Ok(TickOutcome::Continue);
-                 }
-                 Err(VmError::Mret) => {
-                     self.handle_mret();
-                     return Ok(TickOutcome::EcallSquash);
-                 }
-                 Err(VmError::Sret) => {
-                     self.handle_sret();
-                     return Ok(TickOutcome::Continue);
-                 }
-                 Err(e) => {
-                     let pc = self.regs.pc;
-                     self.flush_and_trap(e, pc);
-                     return Ok(TickOutcome::Continue);
-                 }
-             };
+        let next_pc =
+            match writeback::writeback(mem_wb.mem_result.clone(), &mut self.regs, &mut self.csrs) {
+                Ok(pc) => pc,
+                Err(VmError::Ecall) => return self.handle_ecall(bus),
+                Err(VmError::Ebreak) => {
+                    let pc = self.regs.pc;
+                    self.flush_pipeline();
+                    self.take_trap(traps::CAUSE_EBREAK, 0, pc);
+                    return Ok(TickOutcome::Continue);
+                }
+                Err(VmError::Mret) => {
+                    self.handle_mret();
+                    return Ok(TickOutcome::EcallSquash);
+                }
+                Err(VmError::Sret) => {
+                    self.handle_sret();
+                    return Ok(TickOutcome::Continue);
+                }
+                Err(e) => {
+                    let pc = self.regs.pc;
+                    self.flush_and_trap(e, pc);
+                    return Ok(TickOutcome::Continue);
+                }
+            };
 
-         self.regs.pc = next_pc;
-         self.csrs.increment_instret();
-         self.stats.insns_retired += 1;
-         Ok(TickOutcome::Continue)
-     }
+        self.regs.pc = next_pc;
+        self.csrs.increment_instret();
+        self.stats.insns_retired += 1;
+        Ok(TickOutcome::Continue)
+    }
 
     // -----------------------------------------------------------------------
     // Control flow resolution
@@ -680,20 +715,30 @@ impl Pipeline {
         // Taken if: not in M-mode (lower modes are always preempted), or MIE=1 in M-mode.
         let m_pending = pending & !self.csrs.mideleg;
         if m_pending != 0 && (!in_m || mie_global == 1) {
-            let cause_idx = if m_pending & (1 << 11) != 0 { 11u64 }
-                else if m_pending & (1 << 3) != 0 { 3u64 }
-                else if m_pending & (1 << 7) != 0 { 7u64 }
-                else { m_pending.trailing_zeros() as u64 };
+            let cause_idx = if m_pending & (1 << 11) != 0 {
+                11u64
+            } else if m_pending & (1 << 3) != 0 {
+                3u64
+            } else if m_pending & (1 << 7) != 0 {
+                7u64
+            } else {
+                m_pending.trailing_zeros() as u64
+            };
             return Some(((1u64 << 63) | cause_idx, 0, self.regs.pc));
         }
 
         // S-mode interrupts: delegated; only relevant when not in M-mode.
         let s_pending = pending & self.csrs.mideleg;
         if s_pending != 0 && !in_m && (!in_s || sie_global == 1) {
-            let cause_idx = if s_pending & (1 << 9) != 0 { 9u64 }
-                else if s_pending & (1 << 1) != 0 { 1u64 }
-                else if s_pending & (1 << 5) != 0 { 5u64 }
-                else { s_pending.trailing_zeros() as u64 };
+            let cause_idx = if s_pending & (1 << 9) != 0 {
+                9u64
+            } else if s_pending & (1 << 1) != 0 {
+                1u64
+            } else if s_pending & (1 << 5) != 0 {
+                5u64
+            } else {
+                s_pending.trailing_zeros() as u64
+            };
             return Some(((1u64 << 63) | cause_idx, 0, self.regs.pc));
         }
 

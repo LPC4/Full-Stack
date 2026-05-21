@@ -16,8 +16,8 @@
 )]
 #![warn(rust_2018_idioms)]
 
-use asm_to_binary::rv_instruction::RvInstruction;
 use asm_to_binary::AssembledOutput;
+use asm_to_binary::rv_instruction::RvInstruction;
 use full_stack::compilation_pipeline::{CompilationPipeline, TargetMode};
 use hll_to_ir::stdlib::get_stdlib_source_for_mode;
 use std::fmt;
@@ -135,9 +135,9 @@ fn parse_args() -> Result<Args, CliError> {
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "--output" | "-o" => {
-                let path = iter.next().ok_or_else(|| {
-                    CliError::Usage("--output requires a file path".to_owned())
-                })?;
+                let path = iter
+                    .next()
+                    .ok_or_else(|| CliError::Usage("--output requires a file path".to_owned()))?;
                 output = Some(path.clone());
             }
             "--mode" | "-m" => {
@@ -150,9 +150,9 @@ fn parse_args() -> Result<Args, CliError> {
                 let val = iter.next().ok_or_else(|| {
                     CliError::Usage("--max-steps requires a positive integer".to_owned())
                 })?;
-                max_steps = val.parse::<u64>().map_err(|_| {
-                    CliError::Usage(format!("`{val}` is not a valid step count"))
-                })?;
+                max_steps = val
+                    .parse::<u64>()
+                    .map_err(|_| CliError::Usage(format!("`{val}` is not a valid step count")))?;
             }
             other if !other.starts_with('-') => {
                 input = Some(other.to_owned());
@@ -165,7 +165,13 @@ fn parse_args() -> Result<Args, CliError> {
         }
     }
 
-    Ok(Args { subcmd, input, output, mode, max_steps })
+    Ok(Args {
+        subcmd,
+        input,
+        output,
+        mode,
+        max_steps,
+    })
 }
 
 fn parse_mode(s: &str) -> Result<TargetMode, CliError> {
@@ -251,7 +257,10 @@ fn cmd_run(args: &Args) -> Result<ExitCode, CliError> {
     match result.outcome {
         StepOutcome::Halted(code) => {
             eprintln!("fsc: program exited with code {code}");
-            #[allow(clippy::cast_possible_truncation, reason = "POSIX exit codes are 0-255")]
+            #[allow(
+                clippy::cast_possible_truncation,
+                reason = "POSIX exit codes are 0-255"
+            )]
             Ok(ExitCode::from((code & 0xFF) as u8))
         }
         StepOutcome::Continue => Err(CliError::Timeout(args.max_steps)),
@@ -284,10 +293,7 @@ fn assemble_from_s_file(path: &str, mode: TargetMode) -> Result<AssembledOutput,
 }
 
 /// Compile HLL source → IR → tokens, then link with stdlib and assemble.
-fn compile_and_link(
-    src: &str,
-    mode: TargetMode,
-) -> Result<AssembledOutput, CliError> {
+fn compile_and_link(src: &str, mode: TargetMode) -> Result<AssembledOutput, CliError> {
     let stdlib_tokens = compile_stdlib_tokens(mode)?;
 
     let mut user_pipeline = make_pipeline(mode, "_u_");
@@ -318,8 +324,7 @@ fn compile_stdlib_tokens(mode: TargetMode) -> Result<Vec<RvInstruction>, CliErro
         .compile(&stdlib_src)
         .map_err(|e| CliError::Compile(format!("stdlib: {e}")))?;
 
-    let (_, tokens) =
-        stdlib_pipeline.compile_ir_to_assembly_with_tokens(&stdlib_result.ir_program);
+    let (_, tokens) = stdlib_pipeline.compile_ir_to_assembly_with_tokens(&stdlib_result.ir_program);
 
     Ok(tokens)
 }

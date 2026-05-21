@@ -1,7 +1,7 @@
-use asm_to_binary::AssembledOutput;
 use crate::compilation_pipeline::PipelineResult;
 use crate::view::debug::DebugSession;
 use crate::view::ide::vm_execution_view::VmExecutionResult;
+use asm_to_binary::AssembledOutput;
 
 #[derive(Default)]
 pub struct CompilationState {

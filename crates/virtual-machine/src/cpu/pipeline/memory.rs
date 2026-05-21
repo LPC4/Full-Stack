@@ -64,14 +64,18 @@ pub enum MemResult {
 // Public entry point
 // ---------------------------------------------------------------------------
 
-pub fn memory_stage(
+pub fn memory_stage_with_pmp(
     result: ExecResult,
     bus: &mut SystemBus,
     reservation: &mut Option<u64>,
     satp: u64,
     priv_mode: PrivilegeMode,
     mstatus: u64,
+    pmpcfg0: u64,
+    pmpaddr0: u64,
 ) -> Result<MemResult, VmError> {
+    // Note: extended signature accepts PMP CSRs; a backward-compatible
+    // wrapper `memory_stage` is provided below for existing tests.
     match result {
         // Pass-through variants
         ExecResult::WriteInt { rd, val, next_pc } => Ok(MemResult::WriteInt { rd, val, next_pc }),
@@ -131,7 +135,7 @@ pub fn memory_stage(
             funct3,
             next_pc,
         } => {
-            let phys_addr = mmu::translate(addr, satp, priv_mode, mstatus, bus, false, false)?;
+            let phys_addr = mmu::translate_with_pmp(addr, satp, priv_mode, mstatus, bus, false, false, pmpcfg0, pmpaddr0)?;
             let val = load_int(bus, phys_addr, funct3)?;
             Ok(MemResult::WriteInt { rd, val, next_pc })
         }
@@ -143,7 +147,7 @@ pub fn memory_stage(
             funct3,
             next_pc,
         } => {
-            let phys_addr = mmu::translate(addr, satp, priv_mode, mstatus, bus, true, false)?;
+            let phys_addr = mmu::translate_with_pmp(addr, satp, priv_mode, mstatus, bus, true, false, pmpcfg0, pmpaddr0)?;
             store_int(bus, phys_addr, val, funct3)?;
             Ok(MemResult::Jump { next_pc })
         }
@@ -155,7 +159,7 @@ pub fn memory_stage(
             funct3,
             next_pc,
         } => {
-            let phys_addr = mmu::translate(addr, satp, priv_mode, mstatus, bus, false, false)?;
+            let phys_addr = mmu::translate_with_pmp(addr, satp, priv_mode, mstatus, bus, false, false, pmpcfg0, pmpaddr0)?;
             let bits = load_fp(bus, phys_addr, funct3)?;
             Ok(MemResult::WriteFp { rd, bits, next_pc })
         }
@@ -167,7 +171,7 @@ pub fn memory_stage(
             funct3,
             next_pc,
         } => {
-            let phys_addr = mmu::translate(addr, satp, priv_mode, mstatus, bus, true, false)?;
+            let phys_addr = mmu::translate_with_pmp(addr, satp, priv_mode, mstatus, bus, true, false, pmpcfg0, pmpaddr0)?;
             store_fp(bus, phys_addr, bits, funct3)?;
             Ok(MemResult::Jump { next_pc })
         }
@@ -183,7 +187,7 @@ pub fn memory_stage(
             val,
             next_pc,
         } => {
-            let phys_addr = mmu::translate(addr, satp, priv_mode, mstatus, bus, true, false)?;
+            let phys_addr = mmu::translate_with_pmp(addr, satp, priv_mode, mstatus, bus, true, false, pmpcfg0, pmpaddr0)?;
             let result_val = handle_atomic(bus, reservation, funct5, funct3, rd, phys_addr, val)?;
             Ok(MemResult::WriteInt {
                 rd,
@@ -192,6 +196,18 @@ pub fn memory_stage(
             })
         }
     }
+}
+
+/// Backwards-compatible wrapper for existing callers/tests that don't provide PMP CSRs.
+pub fn memory_stage(
+    result: ExecResult,
+    bus: &mut SystemBus,
+    reservation: &mut Option<u64>,
+    satp: u64,
+    priv_mode: PrivilegeMode,
+    mstatus: u64,
+) -> Result<MemResult, VmError> {
+    memory_stage_with_pmp(result, bus, reservation, satp, priv_mode, mstatus, 0, 0)
 }
 
 // ---------------------------------------------------------------------------

@@ -72,6 +72,9 @@ pub struct CsrFile {
     pub mcause: u64,
     pub mtval: u64,
     pub mip: u64,
+    // Physical Memory Protection CSRs (simple storage; enforcement is not implemented)
+    pub pmpcfg0: u64,
+    pub pmpaddr0: u64,
 
     // Supervisor-mode CSRs (truly independent S-mode registers)
     // sstatus, sie, sip are views into mstatus, mie, mip - not stored separately.
@@ -113,6 +116,8 @@ impl CsrFile {
             scause: 0,
             stval: 0,
             satp: 0, // Bare mode by default
+            pmpcfg0: 0,
+            pmpaddr0: 0,
 
             cycle: 0,
             instret: 0,
@@ -152,6 +157,9 @@ impl CsrFile {
             MISA => Ok(self.misa),
             MEDELEG => Ok(self.medeleg),
             MIDELEG => Ok(self.mideleg),
+            // PMP CSRs
+            0x3A0 => Ok(self.pmpcfg0),
+            0x3B0 => Ok(self.pmpaddr0),
             MIE => Ok(self.mie),
             MTVEC => Ok(self.mtvec),
             // MCOUNTEREN: stub - counters accessible from S/U modes.
@@ -248,6 +256,13 @@ impl CsrFile {
             MTVAL => {
                 self.mtval = val;
             }
+            // PMP CSRs: simple writable storage
+            0x3A0 => {
+                self.pmpcfg0 = val & 0xFFFF_FFFF_FFFF_FFFFu64;
+            }
+            0x3B0 => {
+                self.pmpaddr0 = val & 0xFFFF_FFFF_FFFF_FFFFu64;
+            }
             MIP => {
                 // WARL: MTIP(7) and MEIP(11) are read-only (hardware-driven).
                 // Only software-settable bits may be written.
@@ -310,6 +325,8 @@ pub struct CsrSnapshot {
     pub scause: u64,
     pub stval: u64,
     pub satp: u64,
+    pub pmpcfg0: u64,
+    pub pmpaddr0: u64,
     pub cycle: u64,
     pub instret: u64,
     pub fflags: u8,
@@ -337,6 +354,8 @@ impl CsrFile {
             scause: self.scause,
             stval: self.stval,
             satp: self.satp,
+            pmpcfg0: self.pmpcfg0,
+            pmpaddr0: self.pmpaddr0,
             cycle: self.cycle,
             instret: self.instret,
             fflags: self.fflags,

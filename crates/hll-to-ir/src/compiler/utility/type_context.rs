@@ -282,9 +282,9 @@ impl TypeContext {
 
 #[cfg(test)]
 mod tests {
+    use super::{TypeCheckError, TypeContext};
     use crate::ast::{BinaryOp, UnaryOp};
     use crate::ir::IrType;
-    use super::{TypeCheckError, TypeContext};
 
     #[test]
     fn allows_placeholder_arithmetic() {
@@ -304,8 +304,14 @@ mod tests {
     #[test]
     fn unary_dereference_and_address_of_round_trip() {
         let ctx = TypeContext::new();
-        assert_eq!(ctx.check_unary_op(&UnaryOp::AddressOf, "i32").unwrap(), "*i32");
-        assert_eq!(ctx.check_unary_op(&UnaryOp::Dereference, "*i32").unwrap(), "i32");
+        assert_eq!(
+            ctx.check_unary_op(&UnaryOp::AddressOf, "i32").unwrap(),
+            "*i32"
+        );
+        assert_eq!(
+            ctx.check_unary_op(&UnaryOp::Dereference, "*i32").unwrap(),
+            "i32"
+        );
     }
 
     #[test]

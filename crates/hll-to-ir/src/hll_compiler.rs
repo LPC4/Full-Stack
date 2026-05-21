@@ -1,10 +1,10 @@
+use crate::TargetMode;
 use crate::ast::{Block, DeclNode, Program, Statement};
 use crate::compiler::{Diagnostic, DiagnosticLevel, HighLevelCompiler, SemanticAnalyzer};
 use crate::ir::IrProgram;
 use crate::lexer::Lexer;
 use crate::parser::Parser;
 use crate::token::Token;
-use crate::TargetMode;
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -53,15 +53,15 @@ impl HllCompiler {
         let token_spans = Lexer::tokenize(source);
 
         // Check for lex errors before consuming the token stream.
-        if let Some((Token::Error(msg), _)) =
-            token_spans.iter().find(|(t, _)| matches!(t, Token::Error(_)))
+        if let Some((Token::Error(msg), _)) = token_spans
+            .iter()
+            .find(|(t, _)| matches!(t, Token::Error(_)))
         {
             let tokens_display = format!("LEXER ERROR: {msg}");
-            return Err(vec![Diagnostic::new(
-                DiagnosticLevel::Error,
-                format!("lexer error: {msg}"),
-            )
-            .with_note(tokens_display)]);
+            return Err(vec![
+                Diagnostic::new(DiagnosticLevel::Error, format!("lexer error: {msg}"))
+                    .with_note(tokens_display),
+            ]);
         }
 
         let tokens_display = format!("{token_spans:#?}");
@@ -69,9 +69,7 @@ impl HllCompiler {
         // Phase 2: Parse
         let ast = Parser::new_with_spans(token_spans)
             .parse_program()
-            .map_err(|e| {
-                vec![Diagnostic::new(DiagnosticLevel::Error, e.to_string())]
-            })?;
+            .map_err(|e| vec![Diagnostic::new(DiagnosticLevel::Error, e.to_string())])?;
 
         let ast_display = format!("{ast:#?}");
 
@@ -251,8 +249,7 @@ fn check_asm_lines(lines: &[String], diags: &mut Vec<Diagnostic>) {
         {
             let num_str = rest.trim();
             if let Ok(n) = num_str.parse::<u64>() {
-                if let Some(&(_, name)) =
-                    LINUX_USERSPACE_SYSCALLS.iter().find(|&&(id, _)| id == n)
+                if let Some(&(_, name)) = LINUX_USERSPACE_SYSCALLS.iter().find(|&&(id, _)| id == n)
                 {
                     diags.push(
                         Diagnostic::new(
@@ -368,7 +365,9 @@ mod tests {
                 "{path:?} did not end with EOF"
             );
             assert!(
-                tokens.iter().any(|token| matches!(token, Token::StatementTerminator)),
+                tokens
+                    .iter()
+                    .any(|token| matches!(token, Token::StatementTerminator)),
                 "{path:?} did not contain any statement terminators"
             );
         }
@@ -383,7 +382,11 @@ mod tests {
         assert!(contains_token(&tokens, |t| matches!(t, Token::Ident("z"))));
         assert!(contains_token(&tokens, |t| matches!(t, Token::Return)));
         assert!(
-            tokens.iter().filter(|t| matches!(t, Token::StatementTerminator)).count() >= 4
+            tokens
+                .iter()
+                .filter(|t| matches!(t, Token::StatementTerminator))
+                .count()
+                >= 4
         );
         assert!(matches!(tokens.last(), Some(Token::Eof)));
     }
@@ -418,7 +421,10 @@ mod tests {
     fn test4_hll_lexes_multi_return_and_destructuring() {
         let tokens = lex_fixture("parser/04_tuple_returns.hll");
 
-        assert!(contains_token(&tokens, |t| matches!(t, Token::Ident("divide"))));
+        assert!(contains_token(&tokens, |t| matches!(
+            t,
+            Token::Ident("divide")
+        )));
         assert!(contains_token(&tokens, |t| matches!(t, Token::Comma)));
         assert!(contains_token(&tokens, |t| matches!(t, Token::LBrace)));
         assert!(contains_token(&tokens, |t| matches!(t, Token::RBrace)));
@@ -430,11 +436,19 @@ mod tests {
 
     #[test]
     fn test1_hll_parser_success_and_ast_validation() {
-        let program = parse_fixture("lexer/01_comments_and_newlines.hll")
-            .expect("failed to parse test1.hll");
+        let program =
+            parse_fixture("lexer/01_comments_and_newlines.hll").expect("failed to parse test1.hll");
 
-        assert_eq!(program.declarations.len(), 3, "expected 3 declarations in test1.hll");
-        assert_eq!(program.statements.len(), 1, "expected 1 statement in test1.hll");
+        assert_eq!(
+            program.declarations.len(),
+            3,
+            "expected 3 declarations in test1.hll"
+        );
+        assert_eq!(
+            program.statements.len(),
+            1,
+            "expected 1 statement in test1.hll"
+        );
 
         use crate::ast::*;
 
@@ -475,10 +489,14 @@ mod tests {
 
     #[test]
     fn test2_hll_parser_success_and_ast_validation() {
-        let program = parse_fixture("parser/02_structs_and_pointers.hll")
-            .expect("failed to parse test2.hll");
+        let program =
+            parse_fixture("parser/02_structs_and_pointers.hll").expect("failed to parse test2.hll");
 
-        assert_eq!(program.declarations.len(), 2, "Expected 2 declarations (Node type, main function)");
+        assert_eq!(
+            program.declarations.len(),
+            2,
+            "Expected 2 declarations (Node type, main function)"
+        );
 
         use crate::ast::*;
 
@@ -503,7 +521,11 @@ mod tests {
         let program = parse_fixture("parser/03_nested_access_and_control_flow.hll")
             .expect("failed to parse test3.hll");
 
-        assert_eq!(program.declarations.len(), 2, "Expected Container, stress_test");
+        assert_eq!(
+            program.declarations.len(),
+            2,
+            "Expected Container, stress_test"
+        );
 
         use crate::ast::*;
 
@@ -528,7 +550,9 @@ mod tests {
         use crate::ast::*;
 
         match &program.declarations[0].decl {
-            DeclNode::Function { name, return_type, .. } => {
+            DeclNode::Function {
+                name, return_type, ..
+            } => {
                 assert_eq!(name, "divide");
                 assert!(
                     matches!(return_type, Some(ReturnType::Single(Type::Struct(_)))),
@@ -567,7 +591,11 @@ mod tests {
             DeclNode::Function { name, body, .. } => {
                 assert_eq!(name, "main");
                 let block = body.as_ref().expect("main should have a body");
-                assert_eq!(block.statements.len(), 3, "Expected two destructures and a return");
+                assert_eq!(
+                    block.statements.len(),
+                    3,
+                    "Expected two destructures and a return"
+                );
 
                 let first_assign = match &block.statements[0] {
                     Statement::Expression(Expression::Assignment { target, .. }) => target,
@@ -610,12 +638,18 @@ mod tests {
         let program = parser.parse_program().expect("failed to parse test1.hll");
 
         let mut compiler = HighLevelCompiler::new();
-        let ir_program = compiler.compile_program(&program).expect("failed to compile test1.hll");
+        let ir_program = compiler
+            .compile_program(&program)
+            .expect("failed to compile test1.hll");
 
         let ir_text = format!("{ir_program}");
         println!(
             "=== test1.hll IR OUTPUT ===\n{}",
-            if ir_text.is_empty() { "(empty - only declarations)" } else { &ir_text }
+            if ir_text.is_empty() {
+                "(empty - only declarations)"
+            } else {
+                &ir_text
+            }
         );
     }
 
@@ -631,10 +665,15 @@ mod tests {
         let program = parser.parse_program().expect("failed to parse test2.hll");
 
         let mut compiler = HighLevelCompiler::new();
-        let ir_program = compiler.compile_program(&program).expect("failed to compile test2.hll");
+        let ir_program = compiler
+            .compile_program(&program)
+            .expect("failed to compile test2.hll");
 
         let ir_text = format!("{ir_program}");
-        assert!(ir_text.contains("define i32 main("), "IR should contain main function");
+        assert!(
+            ir_text.contains("define i32 main("),
+            "IR should contain main function"
+        );
         assert!(
             ir_text.contains("*") || ir_text.contains("Node"),
             "IR should contain pointer types or struct references"
@@ -654,7 +693,9 @@ mod tests {
         let program = parser.parse_program().expect("failed to parse test3.hll");
 
         let mut compiler = HighLevelCompiler::new();
-        let ir_program = compiler.compile_program(&program).expect("failed to compile test3.hll");
+        let ir_program = compiler
+            .compile_program(&program)
+            .expect("failed to compile test3.hll");
 
         let ir_text = format!("{ir_program}");
         assert!(
@@ -680,11 +721,19 @@ mod tests {
         let program = parser.parse_program().expect("failed to parse test4.hll");
 
         let mut compiler = HighLevelCompiler::new();
-        let ir_program = compiler.compile_program(&program).expect("failed to compile test4.hll");
+        let ir_program = compiler
+            .compile_program(&program)
+            .expect("failed to compile test4.hll");
 
         let ir_text = format!("{ir_program}");
-        assert!(ir_text.contains(" divide("), "IR should contain divide function");
-        assert!(ir_text.contains("define void start("), "IR should contain start function");
+        assert!(
+            ir_text.contains(" divide("),
+            "IR should contain divide function"
+        );
+        assert!(
+            ir_text.contains("define void start("),
+            "IR should contain start function"
+        );
         println!("=== test4.hll IR OUTPUT ===\n{ir_text}");
     }
 }

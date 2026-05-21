@@ -1,4 +1,4 @@
-﻿//! Interactive disassembly view that tracks the current PC during debugging.
+//! Interactive disassembly view that tracks the current PC during debugging.
 
 use crate::view::{CompilationState, CompilerView, ProgramCatalog, ui_theme};
 use egui::{Align, RichText, ScrollArea, Stroke, Ui};
@@ -42,7 +42,6 @@ impl CompilerView for DisassemblyView {
             return;
         }
 
-        
         let lines: Vec<&str> = asm_text.lines().collect();
         let mut line_to_address: Vec<Option<u64>> = vec![None; lines.len()];
         let mut address_to_line: std::collections::HashMap<u64, usize> =
@@ -61,9 +60,7 @@ impl CompilerView for DisassemblyView {
                     line_to_address[idx] = Some(addr);
                     address_to_line.entry(addr).or_insert(idx);
                 }
-            } else if !trimmed.is_empty()
-                && !trimmed.starts_with('.')
-                && !trimmed.starts_with(';')
+            } else if !trimmed.is_empty() && !trimmed.starts_with('.') && !trimmed.starts_with(';')
             {
                 if let Some(base) = block_base {
                     let addr = base + insn_offset;
@@ -75,7 +72,6 @@ impl CompilerView for DisassemblyView {
         }
 
         let pc_in_code = address_to_line.contains_key(&current_pc);
-
 
         let fn_context: String = {
             let nearest = session
@@ -105,7 +101,6 @@ impl CompilerView for DisassemblyView {
         } else {
             None
         };
-
 
         ui.horizontal(|ui| {
             if pc_in_code {
@@ -137,7 +132,6 @@ impl CompilerView for DisassemblyView {
 
         ui.separator();
 
-
         if self.show_symbols {
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Filter:").size(11.0).color(theme.text_dim));
@@ -156,11 +150,8 @@ impl CompilerView for DisassemblyView {
             });
 
             let search_lower = self.symbol_search.to_lowercase();
-            let mut sorted_syms: Vec<(&String, u64)> = session
-                .symbols
-                .iter()
-                .map(|(n, &a)| (n, a))
-                .collect();
+            let mut sorted_syms: Vec<(&String, u64)> =
+                session.symbols.iter().map(|(n, &a)| (n, a)).collect();
             sorted_syms.sort_by_key(|(_, a)| *a);
 
             let current_fn_addr = sorted_syms
@@ -175,8 +166,7 @@ impl CompilerView for DisassemblyView {
                 .auto_shrink([false, true])
                 .show(ui, |ui| {
                     for (name, addr) in &sorted_syms {
-                        if !search_lower.is_empty()
-                            && !name.to_lowercase().contains(&search_lower)
+                        if !search_lower.is_empty() && !name.to_lowercase().contains(&search_lower)
                         {
                             continue;
                         }
@@ -203,7 +193,6 @@ impl CompilerView for DisassemblyView {
             ui.separator();
         }
 
-
         ScrollArea::vertical()
             .id_salt("disasm_main")
             .auto_shrink([false, false])
@@ -216,10 +205,7 @@ impl CompilerView for DisassemblyView {
                     let is_current = line_addr.map_or(false, |a| a == current_pc);
 
                     // Function-boundary divider before known symbol labels
-                    if idx > 0
-                        && trimmed.ends_with(':')
-                        && !trimmed.starts_with('.')
-                    {
+                    if idx > 0 && trimmed.ends_with(':') && !trimmed.starts_with('.') {
                         let label = trimmed.trim_end_matches(':');
                         if session.symbols.contains_key(label) {
                             ui.add_space(6.0);
@@ -250,8 +236,11 @@ impl CompilerView for DisassemblyView {
 
                             match line_addr {
                                 Some(addr) => {
-                                    let addr_color =
-                                        if is_current { theme.highlight } else { theme.text_dim };
+                                    let addr_color = if is_current {
+                                        theme.highlight
+                                    } else {
+                                        theme.text_dim
+                                    };
                                     ui.label(
                                         RichText::new(format!("{:#010x}", addr))
                                             .monospace()
@@ -260,11 +249,7 @@ impl CompilerView for DisassemblyView {
                                     );
                                 }
                                 None => {
-                                    ui.label(
-                                        RichText::new("            ")
-                                            .monospace()
-                                            .size(11.0),
-                                    );
+                                    ui.label(RichText::new("            ").monospace().size(11.0));
                                 }
                             }
                             ui.add_space(8.0);

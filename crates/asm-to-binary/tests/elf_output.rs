@@ -92,7 +92,11 @@ fn elf_entry_resolves_start_symbol() {
     let start_off = out.symbol_address("_start").expect("_start symbol");
     let elf = out.to_elf(LOAD_BASE);
     let entry = u64_le(&elf, E_ENTRY_OFF);
-    assert_eq!(entry, LOAD_BASE + start_off, "e_entry should be load_base + _start offset");
+    assert_eq!(
+        entry,
+        LOAD_BASE + start_off,
+        "e_entry should be load_base + _start offset"
+    );
 }
 
 // ---- PT_LOAD alignment constraint -----------------------------------------

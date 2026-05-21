@@ -59,7 +59,10 @@ fn rem_by_zero() {
 #[test]
 fn div_overflow() {
     // i64::MIN / -1 is undefined in two's-complement; RISC-V defines result = i64::MIN
-    assert_eq!(div(i64::MIN as u64, u64::MAX /* = -1 as i64 */), i64::MIN as u64);
+    assert_eq!(
+        div(i64::MIN as u64, u64::MAX /* = -1 as i64 */),
+        i64::MIN as u64
+    );
 }
 
 #[test]
@@ -107,7 +110,11 @@ fn fp_div_by_zero_flag() {
 fn fp_sqrt_negative_nv() {
     let (_, flags) = fp_sqrt_s(-1.0f32, RM_RNE);
     // NV flag = 0x10
-    assert_ne!(flags & 0x10, 0, "NV flag must be set for sqrt of negative number");
+    assert_ne!(
+        flags & 0x10,
+        0,
+        "NV flag must be set for sqrt of negative number"
+    );
 }
 
 #[test]
@@ -115,7 +122,10 @@ fn fp_min_nan_propagation() {
     // When one input is NaN, the non-NaN value should be returned
     let (bits, _flags) = fp_min_s(f32::NAN, 1.0f32);
     let result = f32::from_bits(bits as u32);
-    assert_eq!(result, 1.0f32, "fp_min with one NaN input should return the non-NaN value");
+    assert_eq!(
+        result, 1.0f32,
+        "fp_min with one NaN input should return the non-NaN value"
+    );
 }
 
 // ---------------------------------------------------------------------------

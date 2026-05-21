@@ -20,7 +20,8 @@ impl MockMemory {
 
     fn write_doubleword(&mut self, addr: u64, value: u64) {
         for i in 0..8 {
-            self.data.insert(addr + i, ((value >> (i * 8)) & 0xFF) as u8);
+            self.data
+                .insert(addr + i, ((value >> (i * 8)) & 0xFF) as u8);
         }
     }
 }
@@ -90,7 +91,15 @@ fn test_identity_mapping_in_m_mode() {
 
     // In M-mode, should use identity mapping regardless of SATP.
     let satp = 0; // Bare mode
-    let result = mmu::translate(0x12345, satp, PrivilegeMode::Machine, 0, &mut mem, false, false);
+    let result = mmu::translate(
+        0x12345,
+        satp,
+        PrivilegeMode::Machine,
+        0,
+        &mut mem,
+        false,
+        false,
+    );
     assert_eq!(result.unwrap(), 0x12345);
 }
 
@@ -100,7 +109,15 @@ fn test_identity_mapping_in_bare_mode() {
 
     // In S-mode with Bare mode (SATP.mode = 0), should use identity mapping.
     let satp = 0;
-    let result = mmu::translate(0x12345, satp, PrivilegeMode::Supervisor, 0, &mut mem, false, false);
+    let result = mmu::translate(
+        0x12345,
+        satp,
+        PrivilegeMode::Supervisor,
+        0,
+        &mut mem,
+        false,
+        false,
+    );
     assert_eq!(result.unwrap(), 0x12345);
 }
 
@@ -125,10 +142,26 @@ fn test_sv39_translation() {
 
     let satp = (8u64 << 60) | (0x1000 >> 12); // MODE=8 (Sv39), PPN=1
 
-    let result = mmu::translate(0x0, satp, PrivilegeMode::Supervisor, 0, &mut mem, false, false);
+    let result = mmu::translate(
+        0x0,
+        satp,
+        PrivilegeMode::Supervisor,
+        0,
+        &mut mem,
+        false,
+        false,
+    );
     assert_eq!(result.unwrap(), 0x0);
 
-    let result = mmu::translate(0x100, satp, PrivilegeMode::Supervisor, 0, &mut mem, false, false);
+    let result = mmu::translate(
+        0x100,
+        satp,
+        PrivilegeMode::Supervisor,
+        0,
+        &mut mem,
+        false,
+        false,
+    );
     assert_eq!(result.unwrap(), 0x100);
 }
 
@@ -145,7 +178,15 @@ fn test_sv39_permission_check_execute() {
 
     let satp = (8u64 << 60) | (0x1000 >> 12);
 
-    let result = mmu::translate(0x0, satp, PrivilegeMode::Supervisor, 0, &mut mem, false, true);
+    let result = mmu::translate(
+        0x0,
+        satp,
+        PrivilegeMode::Supervisor,
+        0,
+        &mut mem,
+        false,
+        true,
+    );
     assert!(result.is_ok());
 }
 
@@ -163,7 +204,15 @@ fn test_sv39_permission_check_no_execute() {
 
     let satp = (8u64 << 60) | (0x1000 >> 12);
 
-    let result = mmu::translate(0x0, satp, PrivilegeMode::Supervisor, 0, &mut mem, false, true);
+    let result = mmu::translate(
+        0x0,
+        satp,
+        PrivilegeMode::Supervisor,
+        0,
+        &mut mem,
+        false,
+        true,
+    );
     assert!(matches!(result, Err(VmError::InstructionAccessFault(_))));
 }
 
@@ -180,7 +229,15 @@ fn test_sv39_permission_check_write() {
 
     let satp = (8u64 << 60) | (0x1000 >> 12);
 
-    let result = mmu::translate(0x0, satp, PrivilegeMode::Supervisor, 0, &mut mem, true, false);
+    let result = mmu::translate(
+        0x0,
+        satp,
+        PrivilegeMode::Supervisor,
+        0,
+        &mut mem,
+        true,
+        false,
+    );
     assert!(result.is_ok());
 }
 
@@ -198,7 +255,15 @@ fn test_sv39_permission_check_no_write() {
 
     let satp = (8u64 << 60) | (0x1000 >> 12);
 
-    let result = mmu::translate(0x0, satp, PrivilegeMode::Supervisor, 0, &mut mem, true, false);
+    let result = mmu::translate(
+        0x0,
+        satp,
+        PrivilegeMode::Supervisor,
+        0,
+        &mut mem,
+        true,
+        false,
+    );
     assert!(matches!(result, Err(VmError::StoreAccessFault(_))));
 }
 
@@ -215,6 +280,14 @@ fn test_sv39_invalid_pte() {
 
     let satp = (8u64 << 60) | (0x1000 >> 12);
 
-    let result = mmu::translate(0x0, satp, PrivilegeMode::Supervisor, 0, &mut mem, false, false);
+    let result = mmu::translate(
+        0x0,
+        satp,
+        PrivilegeMode::Supervisor,
+        0,
+        &mut mem,
+        false,
+        false,
+    );
     assert!(matches!(result, Err(VmError::PageFault(_))));
 }

@@ -1,7 +1,7 @@
 use crate::view::debug::ADDRESS_PRESETS;
 use crate::view::{CompilationState, CompilerView, ProgramCatalog, ui_theme};
-use virtual_machine::bus::RAM_BASE;
 use egui::{Grid, RichText, ScrollArea, Ui};
+use virtual_machine::bus::RAM_BASE;
 
 #[derive(Clone)]
 pub struct MemoryView {

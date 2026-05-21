@@ -352,8 +352,9 @@ impl AssemblyEmitter {
     pub fn emit_load_from_slot(&mut self, rd: Reg, slot: usize, ty: &IrType) {
         match ty {
             IrType::Integer(w) => match w {
-                hll_to_ir::IntWidth::I1
-                | hll_to_ir::IntWidth::I8 => self.emit_lb(rd, 2, slot as i32),
+                hll_to_ir::IntWidth::I1 | hll_to_ir::IntWidth::I8 => {
+                    self.emit_lb(rd, 2, slot as i32)
+                }
                 hll_to_ir::IntWidth::I16 => self.emit_lh(rd, 2, slot as i32),
                 hll_to_ir::IntWidth::I32 => self.emit_lw(rd, 2, slot as i32),
                 hll_to_ir::IntWidth::I64 => self.emit_ld(rd, 2, slot as i32),
@@ -371,8 +372,7 @@ impl AssemblyEmitter {
         let tmp = self.alloc_temp_reg();
         match ty {
             IrType::Integer(w) => match w {
-                hll_to_ir::IntWidth::I1
-                | hll_to_ir::IntWidth::I8 => {
+                hll_to_ir::IntWidth::I1 | hll_to_ir::IntWidth::I8 => {
                     self.emit_inst(RealInstruction::Lb(Lb::new(tmp, addr_reg, offset)));
                 }
                 hll_to_ir::IntWidth::I16 => {
@@ -406,8 +406,7 @@ impl AssemblyEmitter {
     pub fn emit_store_from_tmp(&mut self, addr_reg: Reg, val_reg: Reg, ty: &IrType, offset: i32) {
         match ty {
             IrType::Integer(w) => match w {
-                hll_to_ir::IntWidth::I1
-                | hll_to_ir::IntWidth::I8 => {
+                hll_to_ir::IntWidth::I1 | hll_to_ir::IntWidth::I8 => {
                     self.emit_inst(RealInstruction::Sb(Sb::new(addr_reg, val_reg, offset)));
                 }
                 hll_to_ir::IntWidth::I16 => {

@@ -18,7 +18,7 @@ const LEVELS: usize = 3;
 /// Translate a virtual address to a physical address using Sv39 page tables.
 ///
 /// `mstatus` is needed for the SUM (bit 18) and MXR (bit 19) bits.
-pub fn translate(
+pub fn translate_with_pmp(
     vaddr: u64,
     satp: u64,
     priv_mode: PrivilegeMode,
@@ -26,13 +26,45 @@ pub fn translate(
     bus: &mut impl MemoryAccess,
     is_write: bool,
     is_execute: bool,
+    pmpcfg0: u64,
+    pmpaddr0: u64,
 ) -> Result<u64, VmError> {
     let mode = (satp >> 60) & 0xF;
     let ppn = satp & 0x0000_0FFF_FFFF_FFFF;
 
-    // Bare mode or M-mode: identity mapping (no translation).
-    if mode == 0 || priv_mode == PrivilegeMode::Machine {
+    // Bare mode handling: for MODE=0 we still treat vaddr as a physical
+    // address but must enforce PMP checks for non-Machine modes. For M-mode
+    // we bypass translation and PMP enforcement entirely.
+    if priv_mode == PrivilegeMode::Machine {
         return Ok(vaddr);
+    }
+
+    if mode == 0 {
+        // Identity mapping: vaddr is the physical address. Enforce PMP below
+        // (fall through to PMP checks and return physical address when allowed).
+        let phys_addr = vaddr;
+        // PMP enforcement for non-Machine modes
+        if pmpcfg0 != 0 {
+            let allow_r = (pmpcfg0 & 0x1) != 0;
+            let allow_w = (pmpcfg0 & 0x2) != 0;
+            let allow_x = (pmpcfg0 & 0x4) != 0;
+            // simple TOR-like semantics: pmpaddr0 == u64::MAX means match all
+            let pmp_match = pmpaddr0 == u64::MAX || phys_addr <= pmpaddr0;
+            if pmp_match {
+                if is_execute && !allow_x {
+                    return Err(VmError::InstructionAccessFault(vaddr));
+                }
+                if is_write && !allow_w {
+                    return Err(VmError::StoreAccessFault(vaddr));
+                }
+                if !is_write && !is_execute && !allow_r {
+                    return Err(VmError::LoadAccessFault(vaddr));
+                }
+            } else {
+                return Err(VmError::InstructionAccessFault(vaddr));
+            }
+        }
+        return Ok(phys_addr);
     }
 
     // Only Sv39 (mode = 8) is supported.
@@ -58,7 +90,9 @@ pub fn translate(
         let vpn = (vaddr >> vpn_shift) & 0x1FF;
         let pte_addr = (current_ppn << 12) | (vpn * PTE_SIZE);
 
-        let pte = bus.read_doubleword(pte_addr).map_err(|_| VmError::PageFault(vaddr))?;
+        let pte = bus
+            .read_doubleword(pte_addr)
+            .map_err(|_| VmError::PageFault(vaddr))?;
 
         // Valid bit must be set.
         if pte & 0x1 == 0 {
@@ -136,6 +170,28 @@ pub fn translate(
             let super_offset = vaddr & ((1u64 << offset_bits) - 1);
             let phys_addr = ((page_ppn >> lower_ppn_bits) << offset_bits) | super_offset;
 
+            // PMP enforcement (simple single-entry TOR-like semantics).
+            if pmpcfg0 != 0 {
+                let allow_r = (pmpcfg0 & 0x1) != 0;
+                let allow_w = (pmpcfg0 & 0x2) != 0;
+                let allow_x = (pmpcfg0 & 0x4) != 0;
+                // pmpaddr0 == u64::MAX matches entire space (ROM uses -1)
+                let pmp_match = pmpaddr0 == u64::MAX || phys_addr <= pmpaddr0;
+                if pmp_match {
+                    if is_execute && !allow_x {
+                        return Err(VmError::InstructionAccessFault(vaddr));
+                    }
+                    if is_write && !allow_w {
+                        return Err(VmError::StoreAccessFault(vaddr));
+                    }
+                    if !is_write && !is_execute && !allow_r {
+                        return Err(VmError::LoadAccessFault(vaddr));
+                    }
+                } else {
+                    return Err(VmError::PageFault(vaddr));
+                }
+            }
+
             return Ok(phys_addr);
         } else {
             // Non-leaf PTE: W=1 is reserved for non-leaf entries.
@@ -148,3 +204,82 @@ pub fn translate(
 
     Err(VmError::PageFault(vaddr))
 }
+
+/// Backwards-compatible wrapper keeping the original translate() signature.
+/// Calls the extended translator with PMP disabled (pmpcfg0=0, pmpaddr0=0).
+pub fn translate(
+    vaddr: u64,
+    satp: u64,
+    priv_mode: PrivilegeMode,
+    mstatus: u64,
+    bus: &mut impl MemoryAccess,
+    is_write: bool,
+    is_execute: bool,
+) -> Result<u64, VmError> {
+    translate_with_pmp(vaddr, satp, priv_mode, mstatus, bus, is_write, is_execute, 0, 0)
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bus::SystemBus;
+
+    #[test]
+    fn pmp_allows_supervisor_fetch_when_configured() {
+        let mut bus = SystemBus::new(vec![]);
+        // Write a NOP instruction at RAM_BASE
+        let instr: u32 = 0x0000_0013; // addi x0,x0,0
+        let _ = bus.write_word(crate::bus::RAM_BASE, instr);
+
+        // No SATP (bare mode) and Supervisor priv mode
+        let satp = 0u64;
+        let priv_mode = crate::cpu::registers::PrivilegeMode::Supervisor;
+        let mstatus = 0u64;
+
+        // Configure PMP to allow R/W/X for entire physical space
+        let pmpcfg0 = 0x7u64; // R/W/X bits in our simplified model
+        let pmpaddr0 = u64::MAX; // match all
+
+        let fetched = crate::cpu::pipeline::fetch::fetch_with_pmp(
+            &mut bus,
+            crate::bus::RAM_BASE,
+            satp,
+            priv_mode,
+            mstatus,
+            pmpcfg0,
+            pmpaddr0,
+        )
+        .expect("fetch should succeed");
+
+        assert_eq!(fetched, instr);
+    }
+
+    #[test]
+    fn pmp_blocks_execute_when_x_clear() {
+        let mut bus = SystemBus::new(vec![]);
+        let instr: u32 = 0x0000_0013; // addi x0,x0,0
+        let _ = bus.write_word(crate::bus::RAM_BASE, instr);
+
+        let satp = 0u64;
+        let priv_mode = crate::cpu::registers::PrivilegeMode::Supervisor;
+        let mstatus = 0u64;
+
+        // Configure PMP to allow R/W but not X
+        let pmpcfg0 = 0x3u64; // R/W
+        let pmpaddr0 = u64::MAX;
+
+        let res = crate::cpu::pipeline::fetch::fetch_with_pmp(
+            &mut bus,
+            crate::bus::RAM_BASE,
+            satp,
+            priv_mode,
+            mstatus,
+            pmpcfg0,
+            pmpaddr0,
+        );
+
+        assert!(matches!(res, Err(crate::error::VmError::InstructionAccessFault(_))));
+    }
+}
+

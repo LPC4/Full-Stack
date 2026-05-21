@@ -63,8 +63,9 @@ impl CompilerView for IoView {
                     .desired_width(ui.available_width() - 60.0)
                     .hint_text("type and press Enter or Send"),
             );
-            let resp = ui.button("Send")
-                .on_hover_text("Bytes are queued and delivered to the VM's UART RX on the next step.");
+            let resp = ui.button("Send").on_hover_text(
+                "Bytes are queued and delivered to the VM's UART RX on the next step.",
+            );
             let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
             if (resp.clicked() || enter) && !self.tx_input.is_empty() {
                 let bytes: Vec<u8> = self

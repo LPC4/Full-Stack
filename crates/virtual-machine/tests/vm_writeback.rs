@@ -1,7 +1,7 @@
-﻿use virtual_machine::cpu::pipeline::writeback::writeback;
-use virtual_machine::cpu::pipeline::memory::MemResult;
-use virtual_machine::cpu::registers::Registers;
 use virtual_machine::cpu::csr::{CsrFile, addr};
+use virtual_machine::cpu::pipeline::memory::MemResult;
+use virtual_machine::cpu::pipeline::writeback::writeback;
+use virtual_machine::cpu::registers::Registers;
 use virtual_machine::error::VmError;
 
 // ---------------------------------------------------------------------------
@@ -12,15 +12,15 @@ use virtual_machine::error::VmError;
 fn writeback_write_int() {
     let mut regs = Registers::new();
     let mut csrs = CsrFile::new();
-    
+
     let mem_result = MemResult::WriteInt {
         rd: 5,
         val: 0xDEAD_BEEF,
         next_pc: 0x8000_0004,
     };
-    
+
     let next_pc = writeback(mem_result, &mut regs, &mut csrs).unwrap();
-    
+
     assert_eq!(regs.read_x(5), 0xDEAD_BEEF);
     assert_eq!(next_pc, 0x8000_0004);
 }
@@ -29,15 +29,15 @@ fn writeback_write_int() {
 fn writeback_write_int_to_x0() {
     let mut regs = Registers::new();
     let mut csrs = CsrFile::new();
-    
+
     let mem_result = MemResult::WriteInt {
         rd: 0,
         val: 42,
         next_pc: 0x8000_0004,
     };
-    
+
     let next_pc = writeback(mem_result, &mut regs, &mut csrs).unwrap();
-    
+
     // x0 must always be zero
     assert_eq!(regs.read_x(0), 0);
     assert_eq!(next_pc, 0x8000_0004);
@@ -51,17 +51,17 @@ fn writeback_write_int_to_x0() {
 fn writeback_write_fp() {
     let mut regs = Registers::new();
     let mut csrs = CsrFile::new();
-    
+
     let bits = 0x4009_21FB_5444_2D18u64; // pi as f64
-    
+
     let mem_result = MemResult::WriteFp {
         rd: 10,
         bits,
         next_pc: 0x8000_0004,
     };
-    
+
     let next_pc = writeback(mem_result, &mut regs, &mut csrs).unwrap();
-    
+
     assert_eq!(regs.read_f_bits(10), bits);
     assert_eq!(next_pc, 0x8000_0004);
 }
@@ -74,16 +74,16 @@ fn writeback_write_fp() {
 fn writeback_write_int_with_flags() {
     let mut regs = Registers::new();
     let mut csrs = CsrFile::new();
-    
+
     let mem_result = MemResult::WriteIntFlags {
         rd: 5,
         val: 42,
         fflags: 0x11, // NV + NX
         next_pc: 0x8000_0004,
     };
-    
+
     let next_pc = writeback(mem_result, &mut regs, &mut csrs).unwrap();
-    
+
     assert_eq!(regs.read_x(5), 42);
     assert_eq!(csrs.fflags, 0x11);
     assert_eq!(next_pc, 0x8000_0004);
@@ -93,7 +93,7 @@ fn writeback_write_int_with_flags() {
 fn writeback_accumulate_fp_flags() {
     let mut regs = Registers::new();
     let mut csrs = CsrFile::new();
-    
+
     // First operation sets NX
     let mem_result1 = MemResult::WriteFpFlags {
         rd: 0,
@@ -103,7 +103,7 @@ fn writeback_accumulate_fp_flags() {
     };
     writeback(mem_result1, &mut regs, &mut csrs).unwrap();
     assert_eq!(csrs.fflags, 0x01);
-    
+
     // Second operation adds NV
     let mem_result2 = MemResult::WriteFpFlags {
         rd: 0,
@@ -123,7 +123,7 @@ fn writeback_accumulate_fp_flags() {
 fn writeback_csrrw() {
     let mut regs = Registers::new();
     let mut csrs = CsrFile::new();
-    
+
     // Set initial MSTATUS: 0x0234 has MPP[12:11]=0 (User, valid) - no WARL change
     csrs.write(addr::MSTATUS, 0x0234).unwrap();
 
@@ -150,10 +150,10 @@ fn writeback_csrrw() {
 fn writeback_csrrs_set_bits() {
     let mut regs = Registers::new();
     let mut csrs = CsrFile::new();
-    
+
     // Initial MIE = 0x100
     csrs.write(addr::MIE, 0x100).unwrap();
-    
+
     let mem_result = MemResult::Csr {
         funct3: 2, // CSRRS
         rd: 5,
@@ -163,9 +163,9 @@ fn writeback_csrrs_set_bits() {
         old_val: 0x100,
         next_pc: 0x8000_0004,
     };
-    
+
     let next_pc = writeback(mem_result, &mut regs, &mut csrs).unwrap();
-    
+
     // Old value returned
     assert_eq!(regs.read_x(5), 0x100);
     // Bits set: 0x100 | 0x800 = 0x900
@@ -204,7 +204,7 @@ fn writeback_csrrc_clear_bits() {
 fn writeback_csrrwi_immediate() {
     let mut regs = Registers::new();
     let mut csrs = CsrFile::new();
-    
+
     let mem_result = MemResult::Csr {
         funct3: 5, // CSRRWI
         rd: 5,
@@ -214,9 +214,9 @@ fn writeback_csrrwi_immediate() {
         old_val: 0,
         next_pc: 0x8000_0004,
     };
-    
+
     let next_pc = writeback(mem_result, &mut regs, &mut csrs).unwrap();
-    
+
     // Old value (0) returned
     assert_eq!(regs.read_x(5), 0);
     // New value written
@@ -228,9 +228,9 @@ fn writeback_csrrwi_immediate() {
 fn writeback_csrrsi_no_write_when_zero() {
     let mut regs = Registers::new();
     let mut csrs = CsrFile::new();
-    
+
     let initial_mie = csrs.read(addr::MIE).unwrap();
-    
+
     // rs1_uimm = 0 means don't write
     let mem_result = MemResult::Csr {
         funct3: 6, // CSRRSI
@@ -241,9 +241,9 @@ fn writeback_csrrsi_no_write_when_zero() {
         old_val: initial_mie,
         next_pc: 0x8000_0004,
     };
-    
+
     let next_pc = writeback(mem_result, &mut regs, &mut csrs).unwrap();
-    
+
     // CSR should be unchanged
     assert_eq!(csrs.read(addr::MIE).unwrap(), initial_mie);
     assert_eq!(next_pc, 0x8000_0004);
@@ -253,7 +253,7 @@ fn writeback_csrrsi_no_write_when_zero() {
 fn writeback_csr_read_only() {
     let mut regs = Registers::new();
     let mut csrs = CsrFile::new();
-    
+
     let mem_result = MemResult::Csr {
         funct3: 1, // CSRRW
         rd: 5,
@@ -263,9 +263,9 @@ fn writeback_csr_read_only() {
         old_val: 0,
         next_pc: 0x8000_0004,
     };
-    
+
     let next_pc = writeback(mem_result, &mut regs, &mut csrs).unwrap();
-    
+
     // Old value (0) returned
     assert_eq!(regs.read_x(5), 0);
     // MHARTID is still 0 (writes ignored)
@@ -281,11 +281,11 @@ fn writeback_csr_read_only() {
 fn writeback_jump() {
     let mut regs = Registers::new();
     let mut csrs = CsrFile::new();
-    
+
     let mem_result = MemResult::Jump {
         next_pc: 0x8000_0100,
     };
-    
+
     let next_pc = writeback(mem_result, &mut regs, &mut csrs).unwrap();
     assert_eq!(next_pc, 0x8000_0100);
 }
@@ -294,11 +294,11 @@ fn writeback_jump() {
 fn writeback_fence() {
     let mut regs = Registers::new();
     let mut csrs = CsrFile::new();
-    
+
     let mem_result = MemResult::Fence {
         next_pc: 0x8000_0004,
     };
-    
+
     let next_pc = writeback(mem_result, &mut regs, &mut csrs).unwrap();
     assert_eq!(next_pc, 0x8000_0004);
 }
@@ -307,11 +307,11 @@ fn writeback_fence() {
 fn writeback_fencei() {
     let mut regs = Registers::new();
     let mut csrs = CsrFile::new();
-    
+
     let mem_result = MemResult::FenceI {
         next_pc: 0x8000_0004,
     };
-    
+
     let next_pc = writeback(mem_result, &mut regs, &mut csrs).unwrap();
     assert_eq!(next_pc, 0x8000_0004);
 }
@@ -320,9 +320,9 @@ fn writeback_fencei() {
 fn writeback_ecall_error() {
     let mut regs = Registers::new();
     let mut csrs = CsrFile::new();
-    
+
     let mem_result = MemResult::Ecall;
-    
+
     let result = writeback(mem_result, &mut regs, &mut csrs);
     assert!(matches!(result, Err(VmError::Ecall)));
 }
@@ -331,9 +331,9 @@ fn writeback_ecall_error() {
 fn writeback_ebreak_error() {
     let mut regs = Registers::new();
     let mut csrs = CsrFile::new();
-    
+
     let mem_result = MemResult::Ebreak;
-    
+
     let result = writeback(mem_result, &mut regs, &mut csrs);
     assert!(matches!(result, Err(VmError::Ebreak)));
 }

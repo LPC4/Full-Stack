@@ -66,12 +66,15 @@ impl AssembledOutput {
     /// Iterate sections in ELF load order: non-BSS first, BSS last.
     pub fn sections_iter(&self) -> impl Iterator<Item = SectionInfo<'_>> + '_ {
         let non_bss = self.sections.iter().filter(|s| {
-            s.kind.as_ref().is_some_and(|k| !matches!(k, SectionKind::Bss))
+            s.kind
+                .as_ref()
+                .is_some_and(|k| !matches!(k, SectionKind::Bss))
         });
-        let bss = self
-            .sections
-            .iter()
-            .filter(|s| s.kind.as_ref().is_some_and(|k| matches!(k, SectionKind::Bss)));
+        let bss = self.sections.iter().filter(|s| {
+            s.kind
+                .as_ref()
+                .is_some_and(|k| matches!(k, SectionKind::Bss))
+        });
         non_bss.chain(bss).filter_map(|s| {
             s.kind.as_ref().map(|k| SectionInfo {
                 name: k.name(),
@@ -553,10 +556,8 @@ impl AssembledOutput {
                             self.symbol_table
                                 .insert("__heap_start".to_owned(), heap_start);
                             if layout.heap_size > 0 {
-                                self.symbol_table.insert(
-                                    "__heap_end".to_owned(),
-                                    heap_start + layout.heap_size,
-                                );
+                                self.symbol_table
+                                    .insert("__heap_end".to_owned(), heap_start + layout.heap_size);
                             }
                         }
                         _ => {}

@@ -52,10 +52,7 @@ impl CompilerRv64 {
     pub fn compile_with_tokens(
         &mut self,
         program: &IrProgram,
-    ) -> (
-        String,
-        Vec<asm_to_binary::rv_instruction::RvInstruction>,
-    ) {
+    ) -> (String, Vec<asm_to_binary::rv_instruction::RvInstruction>) {
         self.compile_inner(program);
         (self.emitter.finish(), self.emitter.finish_tokens())
     }
@@ -257,8 +254,7 @@ impl CompilerRv64 {
             let loaded_val = self.emitter.alloc_temp_reg();
             match &resolved_ty {
                 IrType::Integer(w) => match w {
-                    hll_to_ir::IntWidth::I1
-                    | hll_to_ir::IntWidth::I8 => {
+                    hll_to_ir::IntWidth::I1 | hll_to_ir::IntWidth::I8 => {
                         self.emitter
                             .emit_inst(RealInstruction::Lb(Lb::new(loaded_val, addr_tmp, 0)));
                     }
@@ -391,10 +387,7 @@ impl CompilerRv64 {
         let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
         self.emitter
             .emit_comment(&format!("{op} operation on {ty}"));
-        if matches!(
-            resolved_ty,
-            IrType::Float(hll_to_ir::FloatWidth::F32)
-        ) {
+        if matches!(resolved_ty, IrType::Float(hll_to_ir::FloatWidth::F32)) {
             let lhs_fp = self.load_float_value_to_temp(lhs, ctx, alloc);
             let rhs_fp = self.load_float_value_to_temp(rhs, ctx, alloc);
             let result_fp = self.emitter.alloc_float_temp_reg();
@@ -450,10 +443,7 @@ impl CompilerRv64 {
             panic!("Unary operations cannot be performed on aggregate/array type {resolved_ty:?}");
         }
         let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
-        if matches!(
-            resolved_ty,
-            IrType::Float(hll_to_ir::FloatWidth::F32)
-        ) {
+        if matches!(resolved_ty, IrType::Float(hll_to_ir::FloatWidth::F32)) {
             let val_fp = self.load_float_value_to_temp(value, ctx, alloc);
             let result_fp = self.emitter.alloc_float_temp_reg();
             match op {
@@ -500,10 +490,7 @@ impl CompilerRv64 {
         }
         let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
         let bool_ty = IrType::Integer(hll_to_ir::IntWidth::I1);
-        if matches!(
-            resolved_ty,
-            IrType::Float(hll_to_ir::FloatWidth::F32)
-        ) {
+        if matches!(resolved_ty, IrType::Float(hll_to_ir::FloatWidth::F32)) {
             let lhs_fp = self.load_float_value_to_temp(lhs, ctx, alloc);
             let rhs_fp = self.load_float_value_to_temp(rhs, ctx, alloc);
             let result_tmp = self.emitter.alloc_temp_reg();
@@ -949,9 +936,9 @@ impl CompilerRv64 {
                             if ctx.is_stack_address(reg) {
                                 self.emitter.emit_add_imm(temp, SP, *slot as i64);
                             } else {
-                                let ty = ctx.type_for_reg(reg).unwrap_or(IrType::Integer(
-                                    hll_to_ir::IntWidth::I64,
-                                ));
+                                let ty = ctx
+                                    .type_for_reg(reg)
+                                    .unwrap_or(IrType::Integer(hll_to_ir::IntWidth::I64));
                                 self.emitter.emit_load_from_slot(temp, *slot, &ty);
                             }
                             return temp;
@@ -1002,9 +989,9 @@ impl CompilerRv64 {
                     if let Allocation::Physical(phys_reg) = alloc_result {
                         // Value is in a physical register, copy it to our temp
                         // For floats, we need to use the appropriate move instruction
-                        let ty = ctx.type_for_reg(reg).unwrap_or(IrType::Float(
-                            hll_to_ir::FloatWidth::F32,
-                        ));
+                        let ty = ctx
+                            .type_for_reg(reg)
+                            .unwrap_or(IrType::Float(hll_to_ir::FloatWidth::F32));
                         match ty {
                             IrType::Float(hll_to_ir::FloatWidth::F32) => {
                                 self.emitter.emit_fmv_s(temp, *phys_reg);
@@ -1079,8 +1066,9 @@ impl CompilerRv64 {
                 IrType::Integer(hll_to_ir::IntWidth::I32) => {
                     self.emitter.emit_addiw(rd, rs, 0);
                 }
-                IrType::Integer(hll_to_ir::IntWidth::I64)
-                | IrType::Pointer(_) => self.emitter.emit_mv(rd, rs),
+                IrType::Integer(hll_to_ir::IntWidth::I64) | IrType::Pointer(_) => {
+                    self.emitter.emit_mv(rd, rs)
+                }
                 IrType::Integer(hll_to_ir::IntWidth::I16) => {
                     self.emitter.emit_slli(rd, rs, 48);
                     self.emitter.emit_srai(rd, rd, 48);
@@ -1108,9 +1096,9 @@ impl CompilerRv64 {
             IrValue::Bool(_) => IrType::Integer(hll_to_ir::IntWidth::I1),
             IrValue::Float(_) => IrType::Float(hll_to_ir::FloatWidth::F64),
             IrValue::Null => IrType::Pointer(Box::new(IrType::Void)),
-            IrValue::GlobalString(_) => IrType::Pointer(Box::new(IrType::Integer(
-                hll_to_ir::IntWidth::I8,
-            ))),
+            IrValue::GlobalString(_) => {
+                IrType::Pointer(Box::new(IrType::Integer(hll_to_ir::IntWidth::I8)))
+            }
         }
     }
 

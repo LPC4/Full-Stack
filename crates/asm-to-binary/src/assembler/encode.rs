@@ -1,4 +1,4 @@
-﻿use super::AssemblerError;
+use super::AssemblerError;
 use super::layout::Layout;
 use super::output::AssembledOutput;
 use super::section::{SectionData, SectionKind};
@@ -10,9 +10,7 @@ use super::token::{AsmToken, BranchKind};
 /// the running section base, then compute PC-relative branch/jump offsets and
 /// encode the final machine words.
 use crate::real::RealInstruction;
-use crate::riscv::rv64i::{
-    Addi, Auipc, Beq, Bge, Bgeu, Blt, Bltu, Bne, Jal as JalInst, Jalr,
-};
+use crate::riscv::rv64i::{Addi, Auipc, Beq, Bge, Bgeu, Blt, Bltu, Bne, Jal as JalInst, Jalr};
 use crate::traits::Instruction;
 
 /// Encode all tokens into an `AssembledOutput` using layout information for

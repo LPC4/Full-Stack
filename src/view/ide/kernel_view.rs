@@ -1,8 +1,8 @@
 use crate::compilation_pipeline::CompilationPipeline;
-use hll_to_ir::stdlib::get_kernel_stdlib_source;
 use crate::view::ide::vm_execution_view::VmExecutionResult;
 use crate::view::{CompilationState, CompilerView, ProgramCatalog};
 use egui::{Color32, Frame, RichText};
+use hll_to_ir::stdlib::get_kernel_stdlib_source;
 
 const TERM_BG: Color32 = Color32::from_rgb(7, 9, 12);
 const TERM_TEXT: Color32 = Color32::from_rgb(185, 210, 185);
@@ -106,10 +106,7 @@ impl CompilerView for KernelView {
 
         if !is_kernel {
             ui.centered_and_justified(|ui| {
-                ui.label(
-                    RichText::new("Select a kernel program to use this panel.")
-                        .weak(),
-                );
+                ui.label(RichText::new("Select a kernel program to use this panel.").weak());
             });
             return;
         }
@@ -158,50 +155,45 @@ impl CompilerView for KernelView {
                 ui.set_min_size(egui::vec2(ui.available_width(), avail));
                 egui::ScrollArea::vertical()
                     .stick_to_bottom(true)
-                    .show(ui, |ui| {
-                        match &self.boot_result {
-                            None => {
-                                ui.colored_label(
-                                    TERM_DIM,
-                                    "Press Boot to compile and run this kernel program.",
-                                );
-                            }
-                            Some(r) if r.uart_output.is_empty() => {
-                                ui.colored_label(TERM_DIM, "(no output)");
-                            }
-                            Some(r) => {
-                                let font = egui::FontId::monospace(12.0);
-                                let mut job = egui::text::LayoutJob::default();
-                                for line in r.uart_output.split('\n') {
-                                    let (tag, tag_col, rest_col) =
-                                        if line.starts_with("[  OK  ]") {
-                                            (Some("[  OK  ]"), TERM_OK, TERM_TEXT)
-                                        } else if line.starts_with("[ WARN ]") {
-                                            (Some("[ WARN ]"), TERM_WARN, TERM_WARN)
-                                        } else if line.starts_with("[ ERR  ]") {
-                                            (Some("[ ERR  ]"), TERM_ERR, TERM_ERR)
-                                        } else if line.starts_with("PANIC")
-                                            || line.starts_with("panic")
-                                        {
-                                            (None, TERM_PANIC, TERM_PANIC)
-                                        } else {
-                                            (None, TERM_TEXT, TERM_TEXT)
-                                        };
-                                    let fmt = |col: Color32| egui::TextFormat {
-                                        font_id: font.clone(),
-                                        color: col,
-                                        ..Default::default()
-                                    };
-                                    if let Some(t) = tag {
-                                        job.append(t, 0.0, fmt(tag_col));
-                                        job.append(&line[t.len()..], 0.0, fmt(rest_col));
-                                    } else {
-                                        job.append(line, 0.0, fmt(rest_col));
-                                    }
-                                    job.append("\n", 0.0, fmt(TERM_TEXT));
+                    .show(ui, |ui| match &self.boot_result {
+                        None => {
+                            ui.colored_label(
+                                TERM_DIM,
+                                "Press Boot to compile and run this kernel program.",
+                            );
+                        }
+                        Some(r) if r.uart_output.is_empty() => {
+                            ui.colored_label(TERM_DIM, "(no output)");
+                        }
+                        Some(r) => {
+                            let font = egui::FontId::monospace(12.0);
+                            let mut job = egui::text::LayoutJob::default();
+                            for line in r.uart_output.split('\n') {
+                                let (tag, tag_col, rest_col) = if line.starts_with("[  OK  ]") {
+                                    (Some("[  OK  ]"), TERM_OK, TERM_TEXT)
+                                } else if line.starts_with("[ WARN ]") {
+                                    (Some("[ WARN ]"), TERM_WARN, TERM_WARN)
+                                } else if line.starts_with("[ ERR  ]") {
+                                    (Some("[ ERR  ]"), TERM_ERR, TERM_ERR)
+                                } else if line.starts_with("PANIC") || line.starts_with("panic") {
+                                    (None, TERM_PANIC, TERM_PANIC)
+                                } else {
+                                    (None, TERM_TEXT, TERM_TEXT)
+                                };
+                                let fmt = |col: Color32| egui::TextFormat {
+                                    font_id: font.clone(),
+                                    color: col,
+                                    ..Default::default()
+                                };
+                                if let Some(t) = tag {
+                                    job.append(t, 0.0, fmt(tag_col));
+                                    job.append(&line[t.len()..], 0.0, fmt(rest_col));
+                                } else {
+                                    job.append(line, 0.0, fmt(rest_col));
                                 }
-                                ui.label(job);
+                                job.append("\n", 0.0, fmt(TERM_TEXT));
                             }
+                            ui.label(job);
                         }
                     });
             });

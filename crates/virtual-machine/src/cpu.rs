@@ -48,6 +48,13 @@ impl Cpu {
         self.pipeline.set_return_addr(ra);
     }
 
+    pub fn reset_pc(&mut self, pc: u64) {
+        self.pipeline.reset_pc(pc);
+    }
+
+    pub fn set_boot_entry(&mut self, entry: u64) {
+        self.pipeline.set_boot_entry(entry);
+    }
 
     pub fn write_csr_mtvec(&mut self, val: u64) {
         self.pipeline.write_csr_mtvec(val);

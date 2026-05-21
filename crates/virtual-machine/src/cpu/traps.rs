@@ -1,4 +1,4 @@
-﻿//! Trap and interrupt handling for the RISC-V CPU.
+//! Trap and interrupt handling for the RISC-V CPU.
 //!
 //! Implements the RISC-V privilege specification for:
 //! - Synchronous exceptions (illegal instructions, access faults, breakpoints)
@@ -58,13 +58,7 @@ pub const CAUSE_M_EXTERNAL_IRQ: u64 = (1u64 << 63) | 11;
 /// to S-mode using sepc/scause/stval/sstatus/stvec.  Otherwise it goes to M-mode.
 ///
 /// Returns the new PC (trap handler entry address).
-pub fn take_trap(
-    regs: &mut Registers,
-    csrs: &mut CsrFile,
-    cause: u64,
-    tval: u64,
-    pc: u64,
-) -> u64 {
+pub fn take_trap(regs: &mut Registers, csrs: &mut CsrFile, cause: u64, tval: u64, pc: u64) -> u64 {
     let current_priv = regs.priv_mode;
     let is_interrupt = (cause & (1u64 << 63)) != 0;
     let cause_idx = cause & !(1u64 << 63);
@@ -92,8 +86,12 @@ pub fn take_trap(
         //   SPIE = old SIE; SIE = 0; SPP = current_priv (0=U, 1=S)
         let sie = (csrs.mstatus >> 1) & 1;
         csrs.mstatus = (csrs.mstatus & !(1u64 << 5)) | (sie << 5); // SPIE = old SIE
-        csrs.mstatus &= !(1u64 << 1);                               // SIE = 0
-        let spp: u64 = if current_priv == PrivilegeMode::User { 0 } else { 1 };
+        csrs.mstatus &= !(1u64 << 1); // SIE = 0
+        let spp: u64 = if current_priv == PrivilegeMode::User {
+            0
+        } else {
+            1
+        };
         csrs.mstatus = (csrs.mstatus & !(1u64 << 8)) | (spp << 8); // SPP = current_priv
 
         regs.priv_mode = PrivilegeMode::Supervisor;
@@ -115,7 +113,7 @@ pub fn take_trap(
         // mstatus: MPIE = old MIE; MIE = 0; MPP = current_priv
         let mie = (csrs.mstatus >> 3) & 1;
         csrs.mstatus = (csrs.mstatus & !(1u64 << 7)) | (mie << 7); // MPIE = old MIE
-        csrs.mstatus &= !(1u64 << 3);                               // MIE = 0
+        csrs.mstatus &= !(1u64 << 3); // MIE = 0
         csrs.mstatus = (csrs.mstatus & !(0x3u64 << 11)) | ((current_priv as u64) << 11); // MPP
 
         regs.priv_mode = PrivilegeMode::Machine;
@@ -163,7 +161,7 @@ pub fn handle_mret(regs: &mut Registers, csrs: &mut CsrFile) -> u64 {
     // MIE = old MPIE; MPIE = 1
     let mpie = (csrs.mstatus >> 7) & 1;
     csrs.mstatus = (csrs.mstatus & !(1u64 << 3)) | (mpie << 3); // MIE = old MPIE
-    csrs.mstatus |= 1u64 << 7;                                   // MPIE = 1
+    csrs.mstatus |= 1u64 << 7; // MPIE = 1
 
     // Restore privilege from MPP [12:11], then set MPP = User (0).
     let mpp = (csrs.mstatus >> 11) & 0x3;
@@ -201,7 +199,7 @@ pub fn handle_sret(regs: &mut Registers, csrs: &mut CsrFile) -> Result<u64, VmEr
     // SIE = old SPIE; SPIE = 1
     let spie = (csrs.mstatus >> 5) & 1;
     csrs.mstatus = (csrs.mstatus & !(1u64 << 1)) | (spie << 1); // SIE = old SPIE
-    csrs.mstatus |= 1u64 << 5;                                   // SPIE = 1
+    csrs.mstatus |= 1u64 << 5; // SPIE = 1
 
     // Restore privilege from SPP (mstatus[8]), then set SPP = User (0).
     let spp = (csrs.mstatus >> 8) & 1;
@@ -217,4 +215,73 @@ pub fn handle_sret(regs: &mut Registers, csrs: &mut CsrFile) -> Result<u64, VmEr
     csrs.mstatus &= !(1u64 << 17);
 
     Ok(csrs.sepc)
+}
+
+// ---------------------------------------------------------------------------
+// Unit tests for trap behavior
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cpu::csr::CsrFile;
+    use crate::cpu::registers::{PrivilegeMode, Registers};
+
+    #[test]
+    fn test_mret_restores_privilege_and_pc() {
+        let mut regs = Registers::new();
+        let mut csrs = CsrFile::new();
+
+        // Simulate that MPP was Supervisor (1) in mstatus and MEPC set
+        csrs.mstatus = (1u64 << 11); // MPP = 1 (Supervisor)
+        csrs.mepc = 0x1000;
+
+        regs.priv_mode = PrivilegeMode::Machine;
+        let new_pc = handle_mret(&mut regs, &mut csrs);
+
+        assert_eq!(new_pc, 0x1000);
+        assert_eq!(regs.priv_mode, PrivilegeMode::Supervisor);
+        // MPP should be cleared to 0 (User)
+        assert_eq!((csrs.mstatus >> 11) & 0x3, 0);
+    }
+
+    #[test]
+    fn test_sret_restores_privilege_and_pc() {
+        let mut regs = Registers::new();
+        let mut csrs = CsrFile::new();
+
+        // Put the CPU in Supervisor mode and set SPP=Machine (1)
+        regs.priv_mode = PrivilegeMode::Supervisor;
+        csrs.mstatus = 1u64 << 8; // SPP = 1 (Supervisor)
+        csrs.sepc = 0x2000;
+
+        let r = handle_sret(&mut regs, &mut csrs);
+        assert!(r.is_ok());
+        let new_pc = r.unwrap();
+        assert_eq!(new_pc, 0x2000);
+        // After SRET, privilege should be restored from SPP
+        assert_eq!(regs.priv_mode, PrivilegeMode::Supervisor);
+        // SPP should be cleared to 0
+        assert_eq!((csrs.mstatus >> 8) & 1, 0);
+    }
+
+    #[test]
+    fn test_trap_delegation_to_s_mode() {
+        let mut regs = Registers::new();
+        let mut csrs = CsrFile::new();
+
+        // Set CPU to Supervisor and enable delegation for timer (code 7)
+        regs.priv_mode = PrivilegeMode::Supervisor;
+        csrs.mideleg = 1u64 << 7; // delegate MTI to S-mode
+        csrs.stvec = 0x3000; // S-mode trap vector
+
+        // Take a machine-visible timer interrupt cause (bit63|7)
+        let cause = (1u64 << 63) | 7;
+        let new_pc = take_trap(&mut regs, &mut csrs, cause, 0x0, 0x4000);
+
+        // Should be delivered to S-mode and jump to stvec base
+        assert_eq!(regs.priv_mode, PrivilegeMode::Supervisor);
+        assert_eq!(new_pc, 0x3000);
+        assert_eq!(csrs.sepc, 0x4000);
+        assert_eq!(csrs.scause, cause);
+    }
 }

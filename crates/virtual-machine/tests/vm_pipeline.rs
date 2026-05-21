@@ -1,10 +1,10 @@
-﻿//! Unit tests for the 5-stage pipeline.
+//! Unit tests for the 5-stage pipeline.
 //!
 //! Each test loads a minimal RISC-V binary into a SystemBus, runs it through
 //! the Pipeline, and asserts on both the computed results and the pipeline
 //! performance counters (stall cycles, flush cycles, retired instructions).
 
-use virtual_machine::bus::{SystemBus, RAM_BASE};
+use virtual_machine::bus::{RAM_BASE, SystemBus};
 use virtual_machine::cpu::pipeline::{Pipeline, TickOutcome};
 use virtual_machine::memory::MemoryAccess;
 use virtual_machine::rom::generate_rom_image;
@@ -143,7 +143,10 @@ fn pipeline_basic_sequential_no_hazards() {
     assert_eq!(cpu.peek_reg(3), 3);
 
     // No hazards: zero stall cycles
-    assert_eq!(cpu.stats.stall_cycles, 0, "no stalls expected for independent instructions");
+    assert_eq!(
+        cpu.stats.stall_cycles, 0,
+        "no stalls expected for independent instructions"
+    );
     // Instructions retired = 6 (3 addi + 2 halt setup + ecall)
     // (Note: ecall itself may not retire via the normal path)
     assert!(cpu.stats.insns_retired >= 5);
@@ -161,9 +164,9 @@ fn pipeline_raw_forwarding_no_stall() {
     // halt(x1 as exit code?)  - we'll just check x1 and zero stalls
     let mut bus = SystemBus::new(generate_rom_image());
     let prog = [
-        addi(1, 0, 10),  // x1 = 10
-        addi(1, 1, 5),   // x1 = 15 (depends on previous)
-        addi(1, 1, 3),   // x1 = 18 (depends on previous)
+        addi(1, 0, 10), // x1 = 10
+        addi(1, 1, 5),  // x1 = 15 (depends on previous)
+        addi(1, 1, 3),  // x1 = 18 (depends on previous)
         addi(17, 0, 93),
         addi(10, 0, 0),
         ecall(),
@@ -174,7 +177,10 @@ fn pipeline_raw_forwarding_no_stall() {
     assert!(matches!(outcome, TickOutcome::Halted(0)));
 
     assert_eq!(cpu.peek_reg(1), 18, "forwarding must produce correct value");
-    assert_eq!(cpu.stats.stall_cycles, 0, "RAW hazard must be resolved by forwarding without stalls");
+    assert_eq!(
+        cpu.stats.stall_cycles, 0,
+        "RAW hazard must be resolved by forwarding without stalls"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -196,10 +202,10 @@ fn pipeline_load_use_stall() {
     let _ = bus.write_word(data_addr, 42u32);
 
     let prog = [
-        addi(1, 0, 99),         // x1 = 99
-        sw(2, 1, -4),           // mem[sp-4] = 99  (x2 = STACK_TOP, set by PipelinedCpu::new)
-        lw(3, 2, -4),           // x3 = mem[sp-4]  ← LOAD
-        add(4, 3, 3),           // x4 = x3 + x3    ← load-use hazard on x3
+        addi(1, 0, 99), // x1 = 99
+        sw(2, 1, -4),   // mem[sp-4] = 99  (x2 = STACK_TOP, set by PipelinedCpu::new)
+        lw(3, 2, -4),   // x3 = mem[sp-4]  ← LOAD
+        add(4, 3, 3),   // x4 = x3 + x3    ← load-use hazard on x3
         addi(17, 0, 93),
         addi(10, 0, 0),
         ecall(),
@@ -213,7 +219,10 @@ fn pipeline_load_use_stall() {
     assert_eq!(cpu.peek_reg(1), 99);
     assert_eq!(cpu.peek_reg(3), 99, "load must produce correct value");
     assert_eq!(cpu.peek_reg(4), 198, "load-use result must be correct");
-    assert!(cpu.stats.stall_cycles >= 1, "load-use hazard must insert at least 1 stall");
+    assert!(
+        cpu.stats.stall_cycles >= 1,
+        "load-use hazard must insert at least 1 stall"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -228,10 +237,10 @@ fn pipeline_branch_not_taken_no_flush() {
     // halt
     let mut bus = SystemBus::new(generate_rom_image());
     let prog = [
-        addi(1, 0, 5),       // x1 = 5
-        addi(2, 0, 6),       // x2 = 6
-        beq(1, 2, 8),        // beq x1, x2, +8  (not taken)
-        addi(3, 0, 1),       // x3 = 1  (should execute)
+        addi(1, 0, 5), // x1 = 5
+        addi(2, 0, 6), // x2 = 6
+        beq(1, 2, 8),  // beq x1, x2, +8  (not taken)
+        addi(3, 0, 1), // x3 = 1  (should execute)
         addi(17, 0, 93),
         addi(10, 0, 0),
         ecall(),
@@ -241,7 +250,11 @@ fn pipeline_branch_not_taken_no_flush() {
     let outcome = run_n(&mut cpu, &mut bus, 60);
     assert!(matches!(outcome, TickOutcome::Halted(0)));
 
-    assert_eq!(cpu.peek_reg(3), 1, "instruction after not-taken branch must execute");
+    assert_eq!(
+        cpu.peek_reg(3),
+        1,
+        "instruction after not-taken branch must execute"
+    );
     // A not-taken branch with a predict-not-taken predictor has no flush
     // (the predictor might predict taken on later iterations if seen multiple times,
     // but on first encounter starts weakly-not-taken → correct prediction)
@@ -260,26 +273,33 @@ fn pipeline_branch_taken_causes_flush() {
     // halt
     let mut bus = SystemBus::new(generate_rom_image());
     let prog = [
-        addi(1, 0, 5),       // [0]  x1 = 5
-        addi(2, 0, 5),       // [4]  x2 = 5
-        beq(1, 2, 12),       // [8]  beq → skip [12], jump to [20]
-        addi(3, 0, 99),      // [12] skipped
-        nop(),               // [16] skipped
-        addi(3, 0, 1),       // [20] x3 = 1 (branch target)
-        addi(17, 0, 93),     // [24]
-        addi(10, 0, 0),      // [28]
-        ecall(),             // [32]
+        addi(1, 0, 5),   // [0]  x1 = 5
+        addi(2, 0, 5),   // [4]  x2 = 5
+        beq(1, 2, 12),   // [8]  beq → skip [12], jump to [20]
+        addi(3, 0, 99),  // [12] skipped
+        nop(),           // [16] skipped
+        addi(3, 0, 1),   // [20] x3 = 1 (branch target)
+        addi(17, 0, 93), // [24]
+        addi(10, 0, 0),  // [28]
+        ecall(),         // [32]
     ];
     let mut cpu = load_program(&mut bus, RAM_BASE, &prog);
 
     let outcome = run_n(&mut cpu, &mut bus, 80);
     assert!(matches!(outcome, TickOutcome::Halted(0)));
 
-    assert_eq!(cpu.peek_reg(3), 1, "only branch target instruction must execute");
+    assert_eq!(
+        cpu.peek_reg(3),
+        1,
+        "only branch target instruction must execute"
+    );
     assert_eq!(cpu.peek_reg(1), 5);
     assert_eq!(cpu.peek_reg(2), 5);
     // Branch was taken: at least one flush should have occurred
-    assert!(cpu.stats.flush_cycles > 0, "taken branch must cause pipeline flush");
+    assert!(
+        cpu.stats.flush_cycles > 0,
+        "taken branch must cause pipeline flush"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -294,9 +314,9 @@ fn pipeline_double_forwarding() {
     // halt
     let mut bus = SystemBus::new(generate_rom_image());
     let prog = [
-        addi(1, 0, 3),       // x1 = 3
-        addi(2, 0, 4),       // x2 = 4
-        add(3, 1, 2),        // x3 = 7 (EX/MEM fwd x2, MEM/WB fwd x1)
+        addi(1, 0, 3), // x1 = 3
+        addi(2, 0, 4), // x2 = 4
+        add(3, 1, 2),  // x3 = 7 (EX/MEM fwd x2, MEM/WB fwd x1)
         addi(17, 0, 93),
         addi(10, 0, 0),
         ecall(),
@@ -306,8 +326,15 @@ fn pipeline_double_forwarding() {
     let outcome = run_n(&mut cpu, &mut bus, 50);
     assert!(matches!(outcome, TickOutcome::Halted(0)));
 
-    assert_eq!(cpu.peek_reg(3), 7, "double forwarding must produce correct result");
-    assert_eq!(cpu.stats.stall_cycles, 0, "both hazards should be resolved by forwarding");
+    assert_eq!(
+        cpu.peek_reg(3),
+        7,
+        "double forwarding must produce correct result"
+    );
+    assert_eq!(
+        cpu.stats.stall_cycles, 0,
+        "both hazards should be resolved by forwarding"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -328,15 +355,15 @@ fn pipeline_loop_sum_1_to_5() {
 
     let mut bus = SystemBus::new(generate_rom_image());
     let prog = [
-        addi(1, 0, 0),       // [0]  x1 = 0
-        addi(2, 0, 5),       // [4]  x2 = 5
+        addi(1, 0, 0), // [0]  x1 = 0
+        addi(2, 0, 5), // [4]  x2 = 5
         // loop starts at [8]
-        add(1, 1, 2),        // [8]  x1 += x2
-        addi(2, 2, -1),      // [12] x2--
-        bne(2, 0, -8),       // [16] if x2 != 0, jump to [8]
-        addi(17, 0, 93),     // [20]
-        addi(10, 0, 0),      // [24]
-        ecall(),             // [28]
+        add(1, 1, 2),    // [8]  x1 += x2
+        addi(2, 2, -1),  // [12] x2--
+        bne(2, 0, -8),   // [16] if x2 != 0, jump to [8]
+        addi(17, 0, 93), // [20]
+        addi(10, 0, 0),  // [24]
+        ecall(),         // [28]
     ];
     let mut cpu = load_program(&mut bus, RAM_BASE, &prog);
 
@@ -388,11 +415,11 @@ fn pipeline_store_load_correct() {
     // x2 = stack pointer (STACK_TOP)
     // Store x1=77 then load it back into x3
     let prog = [
-        addi(1, 0, 77),      // x1 = 77
-        sw(2, 1, -8),        // mem[sp-8] = 77
-        nop(),               // gap (no load-use)
-        nop(),               // gap
-        lw(3, 2, -8),        // x3 = mem[sp-8]
+        addi(1, 0, 77), // x1 = 77
+        sw(2, 1, -8),   // mem[sp-8] = 77
+        nop(),          // gap (no load-use)
+        nop(),          // gap
+        lw(3, 2, -8),   // x3 = mem[sp-8]
         addi(17, 0, 93),
         addi(10, 0, 0),
         ecall(),
@@ -403,7 +430,11 @@ fn pipeline_store_load_correct() {
     assert!(matches!(outcome, TickOutcome::Halted(0)));
 
     assert_eq!(cpu.peek_reg(1), 77);
-    assert_eq!(cpu.peek_reg(3), 77, "load after store must read written value");
+    assert_eq!(
+        cpu.peek_reg(3),
+        77,
+        "load after store must read written value"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -417,7 +448,7 @@ fn predictor_stats_tracked() {
     let prog = [
         addi(1, 0, 1),
         addi(2, 0, 2),
-        beq(1, 2, 8),        // not taken
+        beq(1, 2, 8), // not taken
         addi(3, 0, 42),
         addi(17, 0, 93),
         addi(10, 0, 0),

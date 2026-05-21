@@ -112,11 +112,8 @@ impl SemanticAnalyzer {
                 for param in params {
                     let ir_ty = self.ast_type_to_ir_type(&param.ty);
                     let _ty_name = self.context.get_type_name(&ir_ty);
-                    self.symbols.insert(
-                        param.name.clone(),
-                        ir_ty,
-                        crate::ir::IrValue::Null,
-                    );
+                    self.symbols
+                        .insert(param.name.clone(), ir_ty, crate::ir::IrValue::Null);
                 }
 
                 // Check function body
@@ -131,11 +128,8 @@ impl SemanticAnalyzer {
             DeclNode::Type { .. } | DeclNode::Const { .. } => Ok(()),
             DeclNode::Variable { name, ty, init: _ } => {
                 let ir_ty = self.ast_type_to_ir_type(ty);
-                self.symbols.insert(
-                    name.clone(),
-                    ir_ty,
-                    crate::ir::IrValue::Null,
-                );
+                self.symbols
+                    .insert(name.clone(), ir_ty, crate::ir::IrValue::Null);
                 Ok(())
             }
         }
@@ -190,11 +184,8 @@ impl SemanticAnalyzer {
                     }
                 }
 
-                self.symbols.insert(
-                    name.clone(),
-                    ir_ty,
-                    crate::ir::IrValue::Null,
-                );
+                self.symbols
+                    .insert(name.clone(), ir_ty, crate::ir::IrValue::Null);
                 Ok(())
             }
             Statement::Block(block) => {
@@ -826,11 +817,8 @@ impl SemanticAnalyzer {
                 } else {
                     // New variable - register it
                     let ir_ty = self.parse_type_string(ty);
-                    self.symbols.insert(
-                        name.clone(),
-                        ir_ty,
-                        crate::ir::IrValue::Null,
-                    );
+                    self.symbols
+                        .insert(name.clone(), ir_ty, crate::ir::IrValue::Null);
                 }
                 Ok(())
             }
@@ -997,10 +985,7 @@ impl SemanticAnalyzer {
     }
 
     fn is_i32_type(ty: &IrType) -> bool {
-        matches!(
-            ty,
-            IrType::Integer(crate::ir::IntWidth::I32)
-        )
+        matches!(ty, IrType::Integer(crate::ir::IntWidth::I32))
     }
 
     fn is_literal_source(expr: &Expression) -> bool {

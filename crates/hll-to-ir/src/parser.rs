@@ -1486,9 +1486,9 @@ impl<'a> Parser<'a> {
 
 #[cfg(test)]
 mod tests {
+    use super::Parser;
     use crate::ast::{AssignTarget, DeclNode, Expression, ReturnType, Statement, Type};
     use crate::token::Token;
-    use super::Parser;
 
     #[test]
     fn parses_pointer_cast_syntax() {
@@ -1504,7 +1504,9 @@ mod tests {
         let mut parser = Parser::new(tokens);
         match parser.parse_expression().unwrap() {
             Expression::Cast { target_ty, expr } => {
-                assert!(matches!(&target_ty, Type::Pointer(inner) if matches!(inner.as_ref(), Type::Primitive(name) if name == "i8")));
+                assert!(
+                    matches!(&target_ty, Type::Pointer(inner) if matches!(inner.as_ref(), Type::Primitive(name) if name == "i8"))
+                );
                 match expr.as_ref() {
                     Expression::Primary(crate::ast::PrimaryExpr::Identifier(name)) => {
                         assert_eq!(name, "int_ptr");
@@ -1586,7 +1588,9 @@ mod tests {
         let program = parser.parse_program().unwrap();
 
         match &program.declarations[0].decl {
-            DeclNode::Function { is_extern, body, .. } => {
+            DeclNode::Function {
+                is_extern, body, ..
+            } => {
                 assert!(*is_extern);
                 assert!(body.is_none());
             }
@@ -1597,18 +1601,50 @@ mod tests {
     #[test]
     fn parses_struct_return_function_signature() {
         let tokens = vec![
-            Token::Ident("divide"), Token::Colon, Token::LParen,
-            Token::Ident("a"), Token::Colon, Token::I32, Token::Comma,
-            Token::Ident("b"), Token::Colon, Token::I32,
-            Token::RParen, Token::Minus, Token::Gt, Token::LBrace,
-            Token::Ident("quotient"), Token::Colon, Token::I32, Token::Comma,
-            Token::Ident("remainder"), Token::Colon, Token::I32,
-            Token::RBrace, Token::LBrace, Token::Return, Token::LBrace,
-            Token::Ident("quotient"), Token::Colon, Token::I32, Token::Assign,
-            Token::Ident("a"), Token::Slash, Token::Ident("b"), Token::Comma,
-            Token::Ident("remainder"), Token::Colon, Token::I32, Token::Assign,
-            Token::Ident("a"), Token::Percent, Token::Ident("b"),
-            Token::RBrace, Token::StatementTerminator, Token::RBrace, Token::Eof,
+            Token::Ident("divide"),
+            Token::Colon,
+            Token::LParen,
+            Token::Ident("a"),
+            Token::Colon,
+            Token::I32,
+            Token::Comma,
+            Token::Ident("b"),
+            Token::Colon,
+            Token::I32,
+            Token::RParen,
+            Token::Minus,
+            Token::Gt,
+            Token::LBrace,
+            Token::Ident("quotient"),
+            Token::Colon,
+            Token::I32,
+            Token::Comma,
+            Token::Ident("remainder"),
+            Token::Colon,
+            Token::I32,
+            Token::RBrace,
+            Token::LBrace,
+            Token::Return,
+            Token::LBrace,
+            Token::Ident("quotient"),
+            Token::Colon,
+            Token::I32,
+            Token::Assign,
+            Token::Ident("a"),
+            Token::Slash,
+            Token::Ident("b"),
+            Token::Comma,
+            Token::Ident("remainder"),
+            Token::Colon,
+            Token::I32,
+            Token::Assign,
+            Token::Ident("a"),
+            Token::Percent,
+            Token::Ident("b"),
+            Token::RBrace,
+            Token::StatementTerminator,
+            Token::RBrace,
+            Token::Eof,
         ];
 
         let mut parser = Parser::new(tokens);
@@ -1630,9 +1666,15 @@ mod tests {
     #[test]
     fn parses_if_else_and_while_statement() {
         let if_tokens = vec![
-            Token::If, Token::True, Token::LBrace,
-            Token::Break, Token::RBrace,
-            Token::Else, Token::LBrace, Token::Continue, Token::RBrace,
+            Token::If,
+            Token::True,
+            Token::LBrace,
+            Token::Break,
+            Token::RBrace,
+            Token::Else,
+            Token::LBrace,
+            Token::Continue,
+            Token::RBrace,
             Token::Eof,
         ];
         let mut if_parser = Parser::new(if_tokens);
@@ -1645,8 +1687,12 @@ mod tests {
         }
 
         let while_tokens = vec![
-            Token::While, Token::False, Token::LBrace,
-            Token::Return, Token::StatementTerminator, Token::RBrace,
+            Token::While,
+            Token::False,
+            Token::LBrace,
+            Token::Return,
+            Token::StatementTerminator,
+            Token::RBrace,
             Token::Eof,
         ];
         let mut while_parser = Parser::new(while_tokens);
@@ -1660,12 +1706,22 @@ mod tests {
     fn parses_struct_destructuring_assignment() {
         let tokens = vec![
             Token::LBrace,
-            Token::Ident("q"), Token::Colon, Token::I32, Token::Comma,
-            Token::Ident("r"), Token::Colon, Token::I32,
-            Token::RBrace, Token::Assign,
-            Token::Ident("divide"), Token::LParen,
-            Token::Integer("10"), Token::Comma, Token::Integer("3"),
-            Token::RParen, Token::Eof,
+            Token::Ident("q"),
+            Token::Colon,
+            Token::I32,
+            Token::Comma,
+            Token::Ident("r"),
+            Token::Colon,
+            Token::I32,
+            Token::RBrace,
+            Token::Assign,
+            Token::Ident("divide"),
+            Token::LParen,
+            Token::Integer("10"),
+            Token::Comma,
+            Token::Integer("3"),
+            Token::RParen,
+            Token::Eof,
         ];
 
         let mut parser = Parser::new(tokens);
@@ -1687,10 +1743,16 @@ mod tests {
     #[test]
     fn parses_generic_type_declaration() {
         let tokens = vec![
-            Token::Type, Token::Ident("Vector"),
-            Token::Lt, Token::Ident("T"), Token::Gt,
+            Token::Type,
+            Token::Ident("Vector"),
+            Token::Lt,
+            Token::Ident("T"),
+            Token::Gt,
             Token::Assign,
-            Token::Ident("Vector"), Token::Lt, Token::Ident("T"), Token::Gt,
+            Token::Ident("Vector"),
+            Token::Lt,
+            Token::Ident("T"),
+            Token::Gt,
             Token::Eof,
         ];
 
@@ -1701,7 +1763,9 @@ mod tests {
             DeclNode::Type { name, generics, ty } => {
                 assert_eq!(name, "Vector");
                 assert_eq!(generics, &vec!["T".to_string()]);
-                assert!(matches!(ty, Type::Named { name, args } if name == "Vector" && args.len() == 1));
+                assert!(
+                    matches!(ty, Type::Named { name, args } if name == "Vector" && args.len() == 1)
+                );
             }
             other => panic!("unexpected declaration: {other:?}"),
         }

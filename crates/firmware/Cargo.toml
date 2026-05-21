@@ -1,16 +1,12 @@
 [package]
-name = "hll_to_ir"
+name = "firmware"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.92"
 
 [lib]
-name = "hll_to_ir"
+name = "firmware"
 path = "src/lib.rs"
-
-[dependencies]
-firmware = { path = "../firmware" }
-log      = "0.4.27"
 
 [lints]
 workspace = true

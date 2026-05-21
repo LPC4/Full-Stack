@@ -31,6 +31,9 @@ println!("{}", result.uart_output);
 - Branch predictor
 - Sv39 MMU with bare-mode passthrough
 - M-mode CSRs and trap handling / `mret`
+ - Partial PMP CSR support (simple single-entry enforcement) to support ROM
+   handoff into S-mode. This implements storage and a basic allow/deny check
+   for R/W/X when configured; full PMP semantics are not yet implemented.
 
 ## Memory map
 

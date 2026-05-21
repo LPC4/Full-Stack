@@ -1,4 +1,4 @@
-﻿//! System bus, routes physical addresses to ROM, RAM, and MMIO devices.
+//! System bus, routes physical addresses to ROM, RAM, and MMIO devices.
 
 use crate::devices::{clint::Clint, plic::Plic, uart::Uart};
 use crate::error::VmError;
@@ -161,20 +161,18 @@ impl SystemBus {
     /// cache stats as a side effect (use peek_bytes_raw when that matters).
     pub fn peek_bytes(&mut self, addr: u64, len: usize) -> Vec<u8> {
         (0..len as u64)
-            .map(|i| {
-                match addr + i {
-                    a if a >= ROM_BASE && a <= ROM_END => self.rom.read_byte(a).unwrap_or(0),
-                    a if a >= UART_BASE && a <= UART_END => {
-                        self.uart.read_byte(a - UART_BASE).unwrap_or(0)
-                    }
-                    a if a >= CLINT_BASE && a <= CLINT_END => {
-                        self.clint.read_byte(a - CLINT_BASE).unwrap_or(0)
-                    }
-                    a if a >= PLIC_BASE && a <= PLIC_END => {
-                        self.plic.read_byte(a - PLIC_BASE).unwrap_or(0)
-                    }
-                    _ => self.l1_cache.read_byte(addr + i).unwrap_or(0),
+            .map(|i| match addr + i {
+                a if a >= ROM_BASE && a <= ROM_END => self.rom.read_byte(a).unwrap_or(0),
+                a if a >= UART_BASE && a <= UART_END => {
+                    self.uart.read_byte(a - UART_BASE).unwrap_or(0)
                 }
+                a if a >= CLINT_BASE && a <= CLINT_END => {
+                    self.clint.read_byte(a - CLINT_BASE).unwrap_or(0)
+                }
+                a if a >= PLIC_BASE && a <= PLIC_END => {
+                    self.plic.read_byte(a - PLIC_BASE).unwrap_or(0)
+                }
+                _ => self.l1_cache.read_byte(addr + i).unwrap_or(0),
             })
             .collect()
     }
