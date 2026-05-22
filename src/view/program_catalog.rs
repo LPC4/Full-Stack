@@ -7,6 +7,7 @@ pub enum ProgramKind {
     Example,
     Custom,
     Stdlib, // Read-only stdlib programs
+    Os,     // Read-only OS / kernel programs
 }
 
 #[derive(Clone, serde::Deserialize, serde::Serialize, Debug)]
@@ -15,6 +16,8 @@ pub struct ProgramFile {
     pub name: String,
     pub kind: ProgramKind,
     pub source: String,
+    #[serde(default)]
+    pub standalone: bool, // compile without linking stdlib (set for runtime/stdlib reference files)
     #[serde(default)]
     pub undo_stack: Vec<String>,
     #[serde(default)]
@@ -46,6 +49,7 @@ impl ProgramFile {
             name: Self::display_name_from_file_name(file_name),
             kind: ProgramKind::Example,
             source: source.to_owned(),
+            standalone: false,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             description: description.to_owned(),
@@ -58,6 +62,7 @@ impl ProgramFile {
             name,
             kind: ProgramKind::Custom,
             source,
+            standalone: false,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             description: String::from("Your personal in-memory program."),
@@ -70,6 +75,20 @@ impl ProgramFile {
             name: name.to_owned(),
             kind: ProgramKind::Stdlib,
             source: source.to_owned(),
+            standalone: false,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
+            description: description.to_owned(),
+        }
+    }
+
+    pub fn os(id: &str, name: &str, description: &str, source: &str) -> Self {
+        Self {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            kind: ProgramKind::Os,
+            source: source.to_owned(),
+            standalone: false,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             description: description.to_owned(),
@@ -82,6 +101,10 @@ impl ProgramFile {
 
     pub fn is_stdlib(&self) -> bool {
         matches!(self.kind, ProgramKind::Stdlib)
+    }
+
+    pub fn is_os(&self) -> bool {
+        matches!(self.kind, ProgramKind::Os)
     }
 }
 
@@ -96,6 +119,29 @@ fn built_in_programs() -> Vec<ProgramFile> {
             "Standard Library",
             "Read-only standard library (types, memory, strings, io, runtime)",
             &stdlib_combined,
+        ),
+        // OS / kernel programs (read-only)
+        {
+            let mut p = ProgramFile::os(
+                "os-kernel-runtime",
+                "Kernel Runtime",
+                "Read-only kernel boot runtime: _kernel_start, kmalloc, kshutdown.",
+                include_str!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/crates/firmware/kernel/kernel_runtime.hll"
+                )),
+            );
+            p.standalone = true;
+            p
+        },
+        ProgramFile::os(
+            "os-my-kernel",
+            "My Kernel",
+            "Minimal kernel: boot log, heap smoke-test, and shutdown. Select Kernel target mode to run.",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/programs/kernel/my_kernel.hll"
+            )),
         ),
         // Example programs
         ProgramFile::example(
@@ -170,15 +216,6 @@ fn built_in_programs() -> Vec<ProgramFile> {
                 "/programs/example/generics_and_strings.hll"
             )),
         ),
-        ProgramFile::example(
-            "kernel-boot",
-            "kernel_boot.hll",
-            "Minimal kernel: boot log, heap smoke-test, and shutdown. Select Kernel target mode to run.",
-            include_str!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/programs/example/kernel_boot.hll"
-            )),
-        ),
     ]
 }
 
@@ -223,11 +260,12 @@ impl ProgramCatalog {
                 if built_in.kind == ProgramKind::Custom {
                     // Custom programs: preserve everything - user-managed
                 } else {
-                    // Stdlib, Example: always refresh from embedded (read-only)
+                    // Stdlib, Example, Os: always refresh from embedded (read-only)
                     updated.name = built_in.name;
                     updated.kind = built_in.kind;
                     updated.source = built_in.source;
                     updated.description = built_in.description;
+                    updated.standalone = built_in.standalone;
                 }
                 merged_programs.push(updated);
             } else {

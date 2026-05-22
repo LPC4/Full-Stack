@@ -5,6 +5,7 @@ use asm_to_binary::rv_instruction::RvInstruction;
 use egui::{Color32, Frame, Layout, Margin, RichText, Stroke};
 use egui_dock::{DockState, NodeIndex};
 use full_stack::compilation_pipeline::{CompilationPipeline, TargetMode};
+use full_stack::target_mode::infer_target_mode_for_source;
 use full_stack::view::debug::{DebugSession, SessionStatus};
 use full_stack::view::ide::vm_execution_view::VmExecutionResult;
 use full_stack::view::{
@@ -349,6 +350,19 @@ impl FullStackApp {
     }
 
     fn compile(&mut self) {
+        let user_source = self.catalog.get_selected_source();
+        let is_stdlib = self
+            .catalog
+            .current_program()
+            .map(|p| p.is_stdlib() || p.standalone)
+            .unwrap_or(false);
+
+        let desired_mode = infer_target_mode_for_source(&user_source, is_stdlib, self.target_mode);
+        if desired_mode != self.target_mode {
+            self.set_target_mode(desired_mode);
+            return;
+        }
+
         // Sync pipeline config with current UI state.
         self.pipeline.set_target_mode(self.target_mode);
         match self.target_mode {
@@ -381,20 +395,13 @@ impl FullStackApp {
         self.compilation_state.entry_symbol = self.pipeline.effective_entry_point().to_owned();
         self.compilation_state.load_base = self.pipeline.effective_load_base();
 
-        let user_source = &self.catalog.get_selected_source();
-        let is_stdlib = self
-            .catalog
-            .current_program()
-            .map(|p| p.is_stdlib())
-            .unwrap_or(false);
-
         // stdlib programs compile standalone; user programs link with the cached stdlib.
         let stdlib_tokens = if is_stdlib {
             None
         } else {
             Some(self.stdlib_tokens.as_slice())
         };
-        let result = self.pipeline.run_full(user_source, stdlib_tokens);
+        let result = self.pipeline.run_full(&user_source, stdlib_tokens);
 
         if result.has_errors() {
             self.compilation_state
@@ -402,7 +409,7 @@ impl FullStackApp {
             self.compilation_state.pipeline = Some(result);
             self.compilation_state.linked_asm_text = String::new();
             self.compilation_state.just_compiled = false;
-        } else if let Some(ref asm_err) = result.assembler_error.clone() {
+        } else if !is_stdlib && let Some(ref asm_err) = result.assembler_error.clone() {
             // HLL compiled OK but the assembler/linker step failed (e.g. duplicate labels,
             // undefined symbols, branch out of range). Surface it like a compile error so
             // it's never silently swallowed.
@@ -688,6 +695,8 @@ impl FullStackApp {
             ui.add_space(8.0);
             self.render_program_section(ui, ProgramKind::Stdlib, "Standard Library");
             ui.separator();
+            self.render_program_section(ui, ProgramKind::Os, "OS");
+            ui.separator();
             self.render_program_section(ui, ProgramKind::Example, "Examples");
             ui.separator();
             self.render_program_section(ui, ProgramKind::Custom, "Your programs");
@@ -865,7 +874,7 @@ impl FullStackApp {
         let is_stdlib = self
             .catalog
             .current_program()
-            .map(|p| p.is_stdlib())
+            .map(|p| p.is_stdlib() || p.standalone)
             .unwrap_or(false);
         let is_kernel = self.target_mode == TargetMode::Kernel;
 
@@ -1069,6 +1078,7 @@ impl FullStackApp {
                         ProgramKind::Example => ("example", theme.text_dim),
                         ProgramKind::Custom => ("custom", theme.text_dim),
                         ProgramKind::Stdlib => ("stdlib", theme.text_dim),
+                        ProgramKind::Os => ("os", theme.text_dim),
                     };
                     // In RTL: kind placed first appears rightmost (adjacent to separator).
                     // Name placed second appears to the left of kind.
@@ -1366,3 +1376,4 @@ fn run_in_vm(assembled: &AssembledOutput, entry_symbol: &str, load_base: u64) ->
         max_steps_reached: matches!(result.outcome, StepOutcome::Continue),
     }
 }
+

@@ -1,7 +1,6 @@
 ; Minimal kernel example.
-; Open the Kernel Boot panel and press Boot to see the serial log.
-; This program does NOT work with the normal VM,  it requires the
-; kernel stdlib (_kernel_start entry, klog, kmalloc, kshutdown).
+; Open the Machine window and press Boot to see the serial log.
+; This program requires the kernel stdlib (_kernel_start entry, klog, kmalloc, kshutdown).
 
 external klog_ok:    (msg: u8*) -> ()
 external klog_warn:  (msg: u8*) -> ()
@@ -10,17 +9,6 @@ external klog_int:   (label: u8*, val: i64) -> ()
 external kmalloc:    (size: u64) -> u8*
 external memset:     (dst: u8*, value: u8, n: u64) -> u8*
 external kshutdown:  (code: i64) -> ()
-
-; Build a null-terminated string from individual character codes.
-make_str: (a: u8, b: u8, c: u8, d: u8) -> u8* {
-    buf: u8* = kmalloc(5)
-    @buf[0] = a
-    @buf[1] = b
-    @buf[2] = c
-    @buf[3] = d
-    @buf[4] = 0
-    return buf
-}
 
 ; Memory integrity check: write alternating pattern, verify, and report.
 ; Returns 1 on success, 0 on failure.
@@ -85,10 +73,6 @@ kmain: () -> () {
 
     ; TODO: load and initialize filesystem drivers
     klog_ok("filesystem drivers loaded".data)
-
-    ; Build a small dynamic string from character codes and log it.
-    greeting: u8* = make_str(72, 101, 108, 111)   ; H e l o
-    klog_ok(greeting)
 
     ; TODO: start scheduler and bring up secondary harts (SMP)
     ; TODO: load userspace init process

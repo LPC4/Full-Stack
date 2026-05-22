@@ -23,27 +23,35 @@ impl CompilerView for SourceView {
             .current_program()
             .map(|p| p.is_stdlib())
             .unwrap_or(false);
+        let is_os = catalog
+            .current_program()
+            .map(|p| p.is_os())
+            .unwrap_or(false);
+        let is_readonly = is_stdlib || is_os;
 
-        // Compact info chip for read-only and kernel programs
-        if is_stdlib {
+        // Compact info chip for read-only programs
+        if is_readonly {
+            let (chip_label, hint) = if is_os {
+                ("os", "read-only: select Kernel mode and open the Machine window to boot")
+            } else {
+                ("stdlib", "read-only: compile to inspect tokens, AST, IR, and assembly")
+            };
             Frame::NONE
                 .fill(theme.surface_alt)
                 .inner_margin(6.0)
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         ui.label(
-                            RichText::new("stdlib")
+                            RichText::new(chip_label)
                                 .small()
                                 .strong()
                                 .color(theme.text_dim),
                         );
                         ui.label(RichText::new("|").small().color(theme.border));
                         ui.label(
-                            RichText::new(
-                                "read-only: compile to inspect tokens, AST, IR, and assembly",
-                            )
-                            .small()
-                            .color(theme.text_dim),
+                            RichText::new(hint)
+                                .small()
+                                .color(theme.text_dim),
                         );
                     });
                 });
@@ -83,10 +91,10 @@ impl CompilerView for SourceView {
                             .desired_width(f32::INFINITY)
                             .min_size(egui::vec2(available.x, editor_height))
                             .layouter(&mut layouter)
-                            .interactive(!is_stdlib), // stdlib is read-only; kernel is editable
+                            .interactive(!is_readonly),
                     );
 
-                    if !is_stdlib && response.changed() {
+                    if !is_readonly && response.changed() {
                         catalog.replace_selected_source_with_history(source_code);
                     }
                 });

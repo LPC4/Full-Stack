@@ -371,24 +371,31 @@ kmain: () -> () {
     assert_eq!(exit, Some(0));
 }
 
-const KERNEL_BOOT_EXAMPLE: &str = include_str!(concat!(
+const MY_KERNEL_EXAMPLE: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/programs/example/kernel_boot.hll"
+    "/programs/kernel/my_kernel.hll"
 ));
 
 #[test]
-fn kernel_boot_example_program() {
-    let (uart, exit) = run_kernel_hll(KERNEL_BOOT_EXAMPLE);
+fn my_kernel_example_program() {
+    let (uart, exit) = run_kernel_hll(MY_KERNEL_EXAMPLE);
     assert_eq!(
         uart,
         "[  OK  ] kernel starting\n\
          [  OK  ] console online\n\
+         boot hart: 0\n\
+         [  OK  ] device tree probe\n\
+         [  OK  ] interrupt controller online\n\
+         [  OK  ] running memory diagnostics...\n\
+         [  OK  ] memory self-test passed\n\
+         [  OK  ] MMU initialized\n\
          [  OK  ] heap ready\n\
-         [  OK  ] Helo\n\
+         [  OK  ] filesystem drivers loaded\n\
+         [ WARN ] single hart, no SMP\n\
          hart id: 0\n\
          ram MB: 128\n\
-         [ WARN ] single hart, no SMP\n\
-         [  OK  ] boot complete\n"
+         [  OK  ] boot complete\n\
+         [  OK  ] entering main loop\n"
     );
     assert_eq!(exit, Some(0));
 }

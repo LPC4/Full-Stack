@@ -4,26 +4,35 @@
 //!
 //! ```text
 //! Power-on
-//!   └─ boot/rom.s          M-mode ROM firmware
-//!        PMP + delegation + mret → S-mode
-//!   └─ kernel/runtime_kernel.hll   Supervisor-mode kernel entry (_kernel_start)
-//!        kmain() / kpanic
+//!   boot/startup.s       M-mode ROM: PMP, delegation, mret to S-mode
+//!   boot/trap.s          M-mode ROM: trap handler, syscall dispatch
+//!   kernel/kernel_runtime.hll  S-mode kernel entry (_kernel_start -> kmain)
 //!
 //! Hosted / userspace programs
-//!   └─ stdlib/hosted/runtime.hll   _start → main() → sys_exit
-//!   └─ stdlib/freestanding/        bare-metal programs (no Linux syscalls)
-//!   └─ stdlib/common/              shared: types, malloc, string utils, mem, klog
+//!   stdlib/hosted/runtime.hll     _start -> main() -> sys_exit
+//!   stdlib/freestanding/          bare-metal programs (no Linux syscalls)
+//!   stdlib/common/                shared: types, malloc, string utils, mem, klog
 //! ```
 //!
 //! Consumers:
-//!   - [`virtual_machine`] — uses [`ROM_SOURCE`] to assemble the ROM image at startup.
-//!   - [`hll_to_ir`]       — uses [`stdlib`] and [`kernel`] constants to build stdlib bundles.
+//!   - [`virtual_machine`] assembles [`ROM_SOURCE`] into the ROM image at startup.
+//!   - [`hll_to_ir`] uses [`stdlib`] and [`kernel`] constants to build stdlib bundles.
 
-/// M-mode ROM firmware source (RISC-V assembly).
-///
-/// Assembled at VM startup by `virtual_machine::rom::generate_rom_image()`.
-/// Layout: `_start` at offset 0x000 (boot stub), `_m_trap` at offset 0x100 (trap handler).
-pub const ROM_SOURCE: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/boot/rom.s"));
+/// M-mode boot stub (RISC-V assembly): PMP, delegation, mret to S-mode.
+/// Placed at ROM offset 0x000, padded to 0x100 bytes.
+pub const BOOT_STARTUP: &str =
+    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/boot/startup.s"));
+
+/// M-mode trap handler (RISC-V assembly): ecall dispatch and syscall implementations.
+/// Placed at ROM offset 0x100, immediately after the `_start` padding.
+pub const BOOT_TRAP: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/boot/trap.s"));
+
+/// Full ROM source: `BOOT_STARTUP` concatenated with `BOOT_TRAP`.
+/// `_start` at 0x000, `_m_trap` at 0x100.
+pub const ROM_SOURCE: &str = concat!(
+    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/boot/startup.s")),
+    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/boot/trap.s")),
+);
 
 /// HLL standard library source fragments, one constant per file.
 ///
@@ -83,10 +92,9 @@ pub mod stdlib {
 /// Kernel-mode HLL source fragments.
 pub mod kernel {
     /// Kernel boot runtime: `_kernel_start`, `kmalloc`, `kshutdown`.
-    ///
     /// Entry point is `_kernel_start`; user code must define `kmain`.
     pub const RUNTIME: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/kernel/runtime_kernel.hll"
+        "/kernel/kernel_runtime.hll"
     ));
 }
