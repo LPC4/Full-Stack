@@ -146,7 +146,10 @@ pub struct FullStackApp {
     load_base_input: String,
     #[serde(skip)]
     machine_window: MachineWindow,
+    #[serde(skip)]
+    vm_output_view_id: u64,
 }
+
 
 impl Default for FullStackApp {
     fn default() -> Self {
@@ -175,6 +178,7 @@ impl Default for FullStackApp {
             entry_point: "kmain".to_owned(),
             load_base_input: format!("{:#010x}", LinkLayout::freestanding_kernel().load_base),
             machine_window: MachineWindow::default(),
+            vm_output_view_id: 0,
         };
         app.reset_layout();
         app.reset_debug_layout();
@@ -244,6 +248,9 @@ impl FullStackApp {
             self.view::<VmExecutionView>(), // 8
         ];
 
+        // Remember the VM Output view ID so we can activate its tab after Run in VM.
+        self.vm_output_view_id = views[8].id;
+
         let mut dock = DockState::new(vec![views[0].clone()]);
         let surface = dock.main_surface_mut();
         let [_left, right] = surface.split_right(
@@ -255,14 +262,25 @@ impl FullStackApp {
             right,
             0.5,
             vec![
+                views[8].clone(), // VM Output — first so it's the default visible tab
                 views[4].clone(), // Assembly
                 views[5].clone(), // CFG
                 views[6].clone(), // Stack
                 views[7].clone(), // Execution (QEMU)
-                views[8].clone(), // VM Output
             ],
         );
         self.dock = dock;
+    }
+
+    /// Switch the bottom-right panel to show the VM Output tab.
+    fn focus_vm_output_tab(&mut self) {
+        let needle = ViewWrapper {
+            id: self.vm_output_view_id,
+            view: Box::new(VmExecutionView::default()),
+        };
+        if let Some(tab_path) = self.dock.find_tab(&needle) {
+            let _ = self.dock.set_active_tab(tab_path);
+        }
     }
 
     fn reset_debug_layout(&mut self) {
@@ -357,7 +375,17 @@ impl FullStackApp {
             .map(|p| p.is_stdlib() || p.standalone)
             .unwrap_or(false);
 
-        let desired_mode = infer_target_mode_for_source(&user_source, is_stdlib, self.target_mode);
+        // OS programs always run as Kernel regardless of whatever mode is stored.
+        let is_os_program = self
+            .catalog
+            .current_program()
+            .map(|p| p.is_os() && !p.standalone)
+            .unwrap_or(false);
+        let desired_mode = if is_os_program {
+            TargetMode::Kernel
+        } else {
+            infer_target_mode_for_source(&user_source, is_stdlib, self.target_mode)
+        };
         if desired_mode != self.target_mode {
             self.set_target_mode(desired_mode);
             return;
@@ -878,6 +906,12 @@ impl FullStackApp {
             .current_program()
             .map(|p| p.is_stdlib() || p.standalone)
             .unwrap_or(false);
+        // OS programs always compile as Kernel; hide the target-mode selector.
+        let is_os = self
+            .catalog
+            .current_program()
+            .map(|p| p.is_os())
+            .unwrap_or(false);
         let is_kernel = self.target_mode == TargetMode::Kernel;
 
         ui.set_min_size(egui::vec2(ui.available_width(), ui.available_height()));
@@ -907,6 +941,7 @@ impl FullStackApp {
                         let base = self.compilation_state.load_base;
                         self.compilation_state.vm_result =
                             Some(run_in_vm(&assembled, &entry, base));
+                        self.focus_vm_output_tab();
                     }
                 }
             }
@@ -929,8 +964,8 @@ impl FullStackApp {
                 }
             }
 
-            // Target mode selector — hidden for stdlib (no entry point)
-            if !is_stdlib {
+            // Target mode selector — hidden for stdlib and OS programs (mode is fixed).
+            if !is_stdlib && !is_os {
                 ui.separator();
                 ui.label("Target:");
                 let prev_mode = self.target_mode;
