@@ -9,7 +9,7 @@ name = "virtual_machine"
 path = "src/lib.rs"
 
 [dependencies]
-firmware      = { path = "../firmware" }
+os_runtime    = { path = "../os-runtime" }
 asm_to_binary = { path = "../asm-to-binary" }
 
 [lints]

@@ -1,4 +1,4 @@
-use firmware::{kernel, stdlib};
+use os_runtime::{kernel, stdlib};
 
 use crate::TargetMode;
 

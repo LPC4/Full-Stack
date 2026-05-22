@@ -1,5 +1,5 @@
 use asm_to_binary::Assembler;
-use firmware::kernel;
+use os_runtime::kernel;
 use hll_to_ir::stdlib::get_kernel_stdlib_source;
 use hll_to_ir::{CompileConfig, HllCompiler, TargetMode};
 use ir_to_asm::CompilerRv64;
@@ -48,9 +48,9 @@ fn run_kernel_hll(user_src: &str) -> (String, Option<i64>) {
 
 #[test]
 fn rom_source_is_startup_concatenated_with_trap() {
-    let expected = format!("{}{}", firmware::BOOT_STARTUP, firmware::BOOT_TRAP);
+    let expected = format!("{}{}", os_runtime::BOOT_STARTUP, os_runtime::BOOT_TRAP);
     assert_eq!(
-        firmware::ROM_SOURCE,
+        os_runtime::ROM_SOURCE,
         expected,
         "ROM_SOURCE must equal BOOT_STARTUP + BOOT_TRAP"
     );
@@ -59,15 +59,15 @@ fn rom_source_is_startup_concatenated_with_trap() {
 #[test]
 fn boot_startup_mrets_into_smode() {
     assert!(
-        firmware::BOOT_STARTUP.contains("mret"),
+        os_runtime::BOOT_STARTUP.contains("mret"),
         "startup stub must mret into S-mode"
     );
     assert!(
-        firmware::BOOT_STARTUP.contains("medeleg"),
+        os_runtime::BOOT_STARTUP.contains("medeleg"),
         "startup stub must delegate exceptions via medeleg"
     );
     assert!(
-        firmware::BOOT_STARTUP.contains("mideleg"),
+        os_runtime::BOOT_STARTUP.contains("mideleg"),
         "startup stub must delegate interrupts via mideleg"
     );
 }
@@ -75,15 +75,15 @@ fn boot_startup_mrets_into_smode() {
 #[test]
 fn boot_trap_handles_ecalls() {
     assert!(
-        firmware::BOOT_TRAP.contains("_dispatch_ecall"),
+        os_runtime::BOOT_TRAP.contains("_dispatch_ecall"),
         "M-mode trap handler must dispatch ecalls"
     );
     assert!(
-        firmware::BOOT_TRAP.contains("sys_exit"),
+        os_runtime::BOOT_TRAP.contains("sys_exit"),
         "M-mode trap handler must implement sys_exit"
     );
     assert!(
-        firmware::BOOT_TRAP.contains("sys_write"),
+        os_runtime::BOOT_TRAP.contains("sys_write"),
         "M-mode trap handler must implement sys_write"
     );
 }

@@ -5,11 +5,11 @@ use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 
 const MEM_SRC: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/crates/firmware/stdlib/common/mem.hll"
+    "/crates/os-runtime/stdlib/common/mem.hll"
 ));
 const KLOG_SRC: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/crates/firmware/stdlib/common/klog.hll"
+    "/crates/os-runtime/stdlib/common/klog.hll"
 ));
 
 fn run_hll(src: &str) -> (String, Option<i64>) {
@@ -371,7 +371,7 @@ kmain: () -> () {
     assert_eq!(exit, Some(0));
 }
 
-const MY_KERNEL_EXAMPLE: &str = firmware::kernel::MY_KERNEL;
+const MY_KERNEL_EXAMPLE: &str = os_runtime::kernel::MY_KERNEL;
 
 #[test]
 fn my_kernel_example_program() {

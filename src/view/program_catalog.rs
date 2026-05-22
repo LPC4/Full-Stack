@@ -128,7 +128,7 @@ fn built_in_programs() -> Vec<ProgramFile> {
                 "Read-only kernel boot runtime: _kernel_start, kmalloc, kshutdown.",
                 include_str!(concat!(
                     env!("CARGO_MANIFEST_DIR"),
-                    "/crates/firmware/kernel/kernel_runtime.hll"
+                    "/crates/os-runtime/kernel/kernel_runtime.hll"
                 )),
             );
             p.standalone = true;
@@ -138,7 +138,7 @@ fn built_in_programs() -> Vec<ProgramFile> {
             "os-my-kernel",
             "My Kernel",
             "Minimal kernel: boot log, heap smoke-test, and shutdown. Select Kernel target mode to run.",
-            firmware::kernel::MY_KERNEL,
+            os_runtime::kernel::MY_KERNEL,
         ),
         // Example programs
         ProgramFile::example(

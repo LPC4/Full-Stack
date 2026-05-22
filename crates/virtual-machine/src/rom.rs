@@ -1,7 +1,7 @@
 //! ROM firmware: M-mode trap handler and syscall implementations.
 //!
-//! At VM startup, `generate_rom_image()` assembles `firmware::ROM_SOURCE`
-//! (the M-mode boot stub + trap handler from `crates/firmware/boot/rom.s`) and
+//! At VM startup, `generate_rom_image()` assembles `os_runtime::ROM_SOURCE`
+//! (the M-mode boot stub + trap handler from `crates/os-runtime/boot/rom.s`) and
 //! loads the resulting bytes into the ROM region (base `0x0000_0000`).
 
 use asm_to_binary::assembler::Assembler;
@@ -51,10 +51,10 @@ fn parse_asm_text(src: &str) -> Vec<RvInstruction> {
 /// The returned `Vec<u8>` starts at physical address `ROM_BASE` (`0x0000_0000`).
 ///
 /// # Panics
-/// Panics if the assembler rejects the ROM source (indicates a bug in `crates/firmware/boot/rom.s`).
+/// Panics if the assembler rejects the ROM source (indicates a bug in `crates/os-runtime/boot/rom.s`).
 pub fn generate_rom_image() -> Vec<u8> {
-    let tokens = parse_asm_text(firmware::ROM_SOURCE);
+    let tokens = parse_asm_text(os_runtime::ROM_SOURCE);
     let output = Assembler::assemble(&tokens)
-        .expect("ROM assembly failed — check crates/firmware/boot/rom.s");
+        .expect("ROM assembly failed — check crates/os-runtime/boot/rom.s");
     output.text_bytes().to_vec()
 }

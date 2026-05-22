@@ -1196,16 +1196,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
-name = "firmware"
-version = "0.1.0"
-dependencies = [
- "asm_to_binary",
- "hll_to_ir",
- "ir_to_asm",
- "virtual_machine",
-]
-
-[[package]]
 name = "flate2"
 version = "1.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1282,10 +1272,10 @@ dependencies = [
  "egui",
  "egui_dock",
  "env_logger",
- "firmware",
  "hll_to_ir",
  "ir_to_asm",
  "log",
+ "os_runtime",
  "serde",
  "virtual_machine",
  "wasm-bindgen-futures",
@@ -1565,8 +1555,8 @@ checksum = "dfa686283ad6dd069f105e5ab091b04c62850d3e4cf5d67debad1933f55023df"
 name = "hll_to_ir"
 version = "0.1.0"
 dependencies = [
- "firmware",
  "log",
+ "os_runtime",
 ]
 
 [[package]]
@@ -2434,6 +2424,16 @@ checksum = "9aa2b01e1d916879f73a53d01d1d6cee68adbb31d6d9177a8cfce093cced1d50"
 dependencies = [
  "futures-core",
  "pin-project-lite",
+]
+
+[[package]]
+name = "os_runtime"
+version = "0.1.0"
+dependencies = [
+ "asm_to_binary",
+ "hll_to_ir",
+ "ir_to_asm",
+ "virtual_machine",
 ]
 
 [[package]]
@@ -3515,7 +3515,7 @@ name = "virtual_machine"
 version = "0.1.0"
 dependencies = [
  "asm_to_binary",
- "firmware",
+ "os_runtime",
 ]
 
 [[package]]

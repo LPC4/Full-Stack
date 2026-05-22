@@ -9,7 +9,7 @@ name = "hll_to_ir"
 path = "src/lib.rs"
 
 [dependencies]
-firmware = { path = "../firmware" }
+os_runtime = { path = "../os-runtime" }
 log      = "0.4.27"
 
 [lints]

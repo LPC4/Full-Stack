@@ -21,6 +21,8 @@
       <sourceFolder url="file://$MODULE_DIR$/visualizer/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/crates/firmware/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/crates/firmware/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/os-runtime/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/os-runtime/tests" isTestSource="true" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>
     <orderEntry type="inheritedJdk" />

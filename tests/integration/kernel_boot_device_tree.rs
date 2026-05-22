@@ -1,4 +1,4 @@
-use firmware::kernel;
+use os_runtime::kernel;
 use full_stack::compilation_pipeline::CompilationPipeline;
 use hll_to_ir::stdlib::get_kernel_stdlib_source;
 use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};

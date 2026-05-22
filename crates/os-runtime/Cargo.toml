@@ -1,11 +1,11 @@
 [package]
-name = "firmware"
+name = "os_runtime"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.92"
 
 [lib]
-name = "firmware"
+name = "os_runtime"
 path = "src/lib.rs"
 
 [dev-dependencies]
