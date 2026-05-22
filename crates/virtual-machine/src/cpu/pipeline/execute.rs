@@ -245,6 +245,20 @@ pub fn execute(
             rs1_uimm,
             csr,
         } => {
+            // CSR address bits [9:8] encode the minimum privilege required (0=U,1=S,3=M).
+            let required_priv = ((*csr as u64) >> 8) & 0x3;
+            if (regs.priv_mode as u64) < required_priv {
+                return Err(VmError::IllegalInstruction(*csr as u32));
+            }
+            // Bits [11:10] == 0b11 marks a read-only CSR; writes are illegal.
+            let is_write = match funct3 {
+                1 | 5 => true,
+                2 | 3 | 6 | 7 => *rs1_uimm != 0,
+                _ => false,
+            };
+            if is_write && ((*csr as u64) >> 10) & 0x3 == 0x3 {
+                return Err(VmError::IllegalInstruction(*csr as u32));
+            }
             let operand = match funct3 {
                 1..=3 => regs.read_x(*rs1_uimm),
                 5..=7 => *rs1_uimm as u64,
