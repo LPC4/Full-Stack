@@ -1,8 +1,83 @@
 // Theme definitions and UI styling
 
-use std::sync::OnceLock;
+use std::sync::{LazyLock, Mutex};
 
 use egui::{Color32, Frame, Stroke};
+
+// ------------------------------------------------------------
+// Background presets
+// ------------------------------------------------------------
+
+#[derive(serde::Deserialize, serde::Serialize, Clone, Copy, PartialEq, Eq, Default, Debug)]
+pub enum BgPreset {
+    #[default]
+    Dark,
+    Darker,
+    Midnight,
+    Slate,
+    Warm,
+}
+
+impl BgPreset {
+    pub const ALL: &'static [Self] = &[
+        Self::Dark,
+        Self::Darker,
+        Self::Midnight,
+        Self::Slate,
+        Self::Warm,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Dark     => "Dark",
+            Self::Darker   => "Darker",
+            Self::Midnight => "Midnight",
+            Self::Slate    => "Slate",
+            Self::Warm     => "Warm",
+        }
+    }
+
+    pub fn palette(self) -> (Color32, Color32, Color32, Color32, Color32) {
+        // (canvas, panel, panel_alt, surface, surface_alt)
+        match self {
+            Self::Dark => (
+                Color32::from_rgb(13, 15, 20),
+                Color32::from_rgb(18, 20, 28),
+                Color32::from_rgb(24, 27, 37),
+                Color32::from_rgb(27, 31, 42),
+                Color32::from_rgb(33, 37, 50),
+            ),
+            Self::Darker => (
+                Color32::from_rgb(7, 8, 11),
+                Color32::from_rgb(10, 11, 16),
+                Color32::from_rgb(14, 16, 22),
+                Color32::from_rgb(17, 19, 27),
+                Color32::from_rgb(21, 24, 33),
+            ),
+            Self::Midnight => (
+                Color32::from_rgb(4, 4, 8),
+                Color32::from_rgb(8, 8, 14),
+                Color32::from_rgb(12, 13, 20),
+                Color32::from_rgb(16, 17, 26),
+                Color32::from_rgb(21, 22, 34),
+            ),
+            Self::Slate => (
+                Color32::from_rgb(14, 15, 19),
+                Color32::from_rgb(20, 22, 28),
+                Color32::from_rgb(26, 28, 36),
+                Color32::from_rgb(31, 34, 44),
+                Color32::from_rgb(38, 42, 54),
+            ),
+            Self::Warm => (
+                Color32::from_rgb(14, 11, 9),
+                Color32::from_rgb(20, 16, 13),
+                Color32::from_rgb(27, 22, 17),
+                Color32::from_rgb(33, 27, 21),
+                Color32::from_rgb(41, 34, 26),
+            ),
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct SyntaxPalette {
@@ -144,6 +219,22 @@ impl UiTheme {
         }
     }
 
+    pub fn with_accent(mut self, accent: Color32, accent_alt: Color32) -> Self {
+        self.accent = accent;
+        self.accent_alt = accent_alt;
+        self
+    }
+
+    pub fn with_background(mut self, bg: BgPreset) -> Self {
+        let (canvas, panel, panel_alt, surface, surface_alt) = bg.palette();
+        self.canvas = canvas;
+        self.panel = panel;
+        self.panel_alt = panel_alt;
+        self.surface = surface;
+        self.surface_alt = surface_alt;
+        self
+    }
+
     pub fn panel_frame(self) -> Frame {
         Frame::NONE
             .fill(self.panel)
@@ -166,10 +257,15 @@ impl UiTheme {
     }
 }
 
-static UI_THEME: OnceLock<UiTheme> = OnceLock::new();
+static UI_THEME: LazyLock<Mutex<UiTheme>> =
+    LazyLock::new(|| Mutex::new(UiTheme::dark()));
 
-pub fn ui_theme() -> &'static UiTheme {
-    UI_THEME.get_or_init(UiTheme::dark)
+pub fn ui_theme() -> UiTheme {
+    *UI_THEME.lock().expect("theme mutex poisoned")
+}
+
+pub fn set_ui_theme(theme: UiTheme) {
+    *UI_THEME.lock().expect("theme mutex poisoned") = theme;
 }
 
 pub fn apply_ui_theme(ctx: &egui::Context) {
@@ -178,11 +274,14 @@ pub fn apply_ui_theme(ctx: &egui::Context) {
     visuals.dark_mode = true;
     visuals.override_text_color = Some(theme.text);
     visuals.panel_fill = theme.panel;
-    visuals.window_fill = theme.panel;
+    visuals.window_fill = theme.panel_alt;
     visuals.extreme_bg_color = theme.canvas;
     visuals.faint_bg_color = theme.panel_alt;
     visuals.hyperlink_color = theme.info;
     visuals.selection.bg_fill = theme.accent.linear_multiply(0.35);
     visuals.selection.stroke = Stroke::new(1.0, theme.accent);
+    // Thin accent-tinted window border; minimal shadow
+    visuals.window_stroke = Stroke::new(1.0, theme.accent.gamma_multiply(0.45));
+    visuals.window_shadow = egui::Shadow::NONE;
     ctx.set_visuals(visuals);
 }

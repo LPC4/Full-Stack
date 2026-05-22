@@ -7,9 +7,9 @@ pub mod program_catalog;
 pub mod viewtrait;
 
 pub use common::{
-    MemoryPalette, PipelinePalette, StackPalette, SyntaxPalette, UiTheme, ViewType, apply_ui_theme,
-    centered_placeholder, highlight_assembly, highlight_ast, highlight_code, highlight_ir,
-    scrollable_code, ui_theme,
+    BgPreset, MemoryPalette, PipelinePalette, StackPalette, SyntaxPalette, UiTheme, ViewType,
+    apply_ui_theme, centered_placeholder, highlight_assembly, highlight_ast, highlight_code,
+    highlight_ir, scrollable_code, set_ui_theme, ui_theme,
 };
 pub use compilation_state::CompilationState;
 pub use layout::{
