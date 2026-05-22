@@ -394,7 +394,10 @@ fn my_kernel_example_program() {
          hart id: 0\n\
          ram MB: 128\n\
          [  OK  ] boot complete\n\
-         [  OK  ] entering main loop\n"
+         [  OK  ] entering idle loop\n\
+         timer tick: 1\n\
+         timer tick: 2\n\
+         timer tick: 3\n"
     );
     assert_eq!(exit, Some(0));
 }

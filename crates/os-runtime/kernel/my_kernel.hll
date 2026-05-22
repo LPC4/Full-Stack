@@ -2,15 +2,15 @@
 ; Open the Machine window and press Boot to see the serial log.
 ; Requires the kernel stdlib (_kernel_start entry, klog, kmalloc, kshutdown, trap_init, timer_set).
 
-external klog_ok:    (msg: u8*) -> ()
-external klog_warn:  (msg: u8*) -> ()
-external klog_error: (msg: u8*) -> ()
-external klog_int:   (label: u8*, val: i64) -> ()
-external kmalloc:    (size: u64) -> u8*
-external memset:     (dst: u8*, value: u8, n: u64) -> u8*
-external kshutdown:  (code: i64) -> ()
-external trap_init:  () -> ()
-external timer_set:  (interval: u64) -> ()
+external klog_ok:      (msg: u8*) -> ()
+external klog_warn:    (msg: u8*) -> ()
+external klog_error:   (msg: u8*) -> ()
+external klog_int:     (label: u8*, val: i64) -> ()
+external kmalloc:      (size: u64) -> u8*
+external memset:       (dst: u8*, value: u8, n: u64) -> u8*
+external kshutdown:    (code: i64) -> ()
+external trap_init:    () -> ()
+external timer_set:    (interval: u64) -> ()
 
 ; Memory integrity check: write alternating 0xAA/0x55 pattern, verify, and report.
 ; Returns 1 on success, 0 on failure.
@@ -49,8 +49,8 @@ kmain: () -> () {
     trap_init()
     klog_ok("trap handler installed".data)
 
-    ; Arm the first timer interrupt.
-    timer_set(10000000)
+    ; Arm the first timer interrupt (1 000 000 tick interval).
+    timer_set(1000000)
     klog_ok("timer armed".data)
 
     ; TODO: parse device tree and enumerate devices
@@ -83,6 +83,8 @@ kmain: () -> () {
     klog_int("hart id".data, 0)
     klog_int("ram MB".data, 128)
     klog_ok("boot complete".data)
-    klog_ok("entering main loop".data)
-    kshutdown(0)
+    klog_ok("entering idle loop".data)
+    while 1 == 1 {
+        asm { nop }
+    }
 }

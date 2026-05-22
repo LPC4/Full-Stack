@@ -22,7 +22,7 @@ entry:
 	$unsigned_result = stack_alloc i32
 	$3 = read i32 @ $unsigned_a
 	$4 = read i32 @ $unsigned_b
-	$5 = math div i32 $3, $4
+	$5 = math udiv i32 $3, $4
 	write i32 $5 @ $unsigned_result
 	; local var: signed_cmp
 	$signed_cmp = stack_alloc i1

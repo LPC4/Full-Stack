@@ -166,6 +166,22 @@ trap_init: () -> () {
     }
 }
 
+; Read sscratch CSR (repurposed as kernel tick counter).
+; Write sscratch CSR value to *out.
+; Caller passes the address of a local u64 variable; the asm block
+; reads sscratch and stores it there via the pointer in a0.
+sscratch_get_to: (out: u64*) -> () {
+    asm {
+        csrr t0, sscratch
+        sd   t0, 0(a0)
+    }
+}
+
+; Write sscratch CSR.
+sscratch_set: (val: u64) -> () {
+    asm { csrw sscratch, a0 }
+}
+
 ; Boot entry point.
 _kernel_start: () -> () {
     kmain()

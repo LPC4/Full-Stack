@@ -99,7 +99,7 @@ fn rejects_invalid_pointer_arithmetic() {
 fn unsigned_division_emits_udiv() {
     assert!(has_instruction(
         r#"main: () -> i32 { a: u32 = 10  b: u32 = 2  c: u32 = a / b  return i32(c) }"#,
-        |i| matches!(i, IrInstruction::Math { op, .. } if *op == IrMathOp::Div),
+        |i| matches!(i, IrInstruction::Math { op, .. } if *op == IrMathOp::UDiv),
     ));
 }
 
@@ -153,8 +153,8 @@ fn mixed_signed_unsigned_ops_both_emitted() {
         "expected SDiv"
     );
     assert!(
-        instrs.iter().any(|i| matches!(i, IrInstruction::Math { op, .. } if *op == IrMathOp::Div)),
-        "expected Div (unsigned)"
+        instrs.iter().any(|i| matches!(i, IrInstruction::Math { op, .. } if *op == IrMathOp::UDiv)),
+        "expected UDiv (unsigned)"
     );
     assert!(
         instrs.iter().any(|i| matches!(i, IrInstruction::Cmp { op, .. } if matches!(op, IrCmpOp::Slt | IrCmpOp::Sle | IrCmpOp::Sgt | IrCmpOp::Sge))),

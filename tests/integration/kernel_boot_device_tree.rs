@@ -22,7 +22,7 @@ fn run_kernel_hll(user_src: &str) -> (String, Option<i64>) {
     linked.extend(user_tokens);
     let assembled = user_pipeline.assemble(&linked).expect("assemble");
     let mut vm = VirtualMachine::new_kernel(&assembled);
-    let run = vm.run(5_000_000);
+    let run = vm.run(10_000_000);
     let exit = match run.outcome {
         StepOutcome::Halted(code) => Some(code),
         _ => None,
@@ -57,6 +57,45 @@ fn kernel_boot_full_init_sequence() {
     assert!(
         uart.contains("[  OK  ] boot complete\n"),
         "expected boot complete; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("[  OK  ] entering idle loop\n"),
+        "expected idle loop entry; uart={uart:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Timer interrupt fires 3 times and kernel exits cleanly
+// ---------------------------------------------------------------------------
+
+#[test]
+fn kernel_timer_fires_three_ticks() {
+    let (uart, exit) = run_kernel_hll(MY_KERNEL_SRC);
+    assert_eq!(exit, Some(0), "kernel must exit cleanly after 3 ticks; uart={uart:?}");
+    assert!(uart.contains("timer tick: 1\n"), "expected tick 1; uart={uart:?}");
+    assert!(uart.contains("timer tick: 2\n"), "expected tick 2; uart={uart:?}");
+    assert!(uart.contains("timer tick: 3\n"), "expected tick 3; uart={uart:?}");
+}
+
+#[test]
+fn kernel_timer_ticks_in_order() {
+    let (uart, exit) = run_kernel_hll(MY_KERNEL_SRC);
+    assert_eq!(exit, Some(0));
+    let pos1 = uart.find("timer tick: 1\n").expect("tick 1 missing");
+    let pos2 = uart.find("timer tick: 2\n").expect("tick 2 missing");
+    let pos3 = uart.find("timer tick: 3\n").expect("tick 3 missing");
+    assert!(pos1 < pos2 && pos2 < pos3, "ticks must appear in order 1 < 2 < 3");
+}
+
+#[test]
+fn kernel_timer_ticks_after_boot_complete() {
+    let (uart, exit) = run_kernel_hll(MY_KERNEL_SRC);
+    assert_eq!(exit, Some(0));
+    let boot_pos = uart.find("[  OK  ] boot complete\n").expect("boot complete missing");
+    let tick1_pos = uart.find("timer tick: 1\n").expect("tick 1 missing");
+    assert!(
+        boot_pos < tick1_pos,
+        "boot must complete before first timer tick fires; boot={boot_pos} tick1={tick1_pos}"
     );
 }
 

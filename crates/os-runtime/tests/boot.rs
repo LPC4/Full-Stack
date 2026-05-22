@@ -36,7 +36,7 @@ fn run_kernel_hll(user_src: &str) -> (String, Option<i64>) {
         Assembler::assemble(&tokens).unwrap_or_else(|e| panic!("assemble failed: {e}"));
 
     let mut vm = VirtualMachine::new_kernel(&assembled);
-    let run = vm.run(5_000_000);
+    let run = vm.run(10_000_000);
     let exit = match run.outcome {
         StepOutcome::Halted(code) => Some(code),
         _ => None,
@@ -254,6 +254,9 @@ fn full_boot_output_matches_expected() {
          hart id: 0\n\
          ram MB: 128\n\
          [  OK  ] boot complete\n\
-         [  OK  ] entering main loop\n"
+         [  OK  ] entering idle loop\n\
+         timer tick: 1\n\
+         timer tick: 2\n\
+         timer tick: 3\n"
     );
 }

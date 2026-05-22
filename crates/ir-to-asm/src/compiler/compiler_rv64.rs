@@ -419,6 +419,8 @@ impl CompilerRv64 {
                     self.emitter.emit_div(result_tmp, lhs_tmp, rhs_tmp);
                 }
                 IrMathOp::Mod => self.emitter.emit_rem(result_tmp, lhs_tmp, rhs_tmp),
+                IrMathOp::UDiv => self.emitter.emit_divu(result_tmp, lhs_tmp, rhs_tmp),
+                IrMathOp::UMod => self.emitter.emit_remu(result_tmp, lhs_tmp, rhs_tmp),
                 IrMathOp::Shl => self.emitter.emit_sll(result_tmp, lhs_tmp, rhs_tmp),
                 IrMathOp::Shr => self.emitter.emit_srl(result_tmp, lhs_tmp, rhs_tmp),
                 IrMathOp::And => self.emitter.emit_and(result_tmp, lhs_tmp, rhs_tmp),

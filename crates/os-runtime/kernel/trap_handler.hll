@@ -1,6 +1,8 @@
-external kpanic:   (msg: u8*) -> ()
-external klog_hex: (label: u8*, val: u64) -> ()
-external timer_set: (interval: u64) -> ()
+external kpanic:          (msg: u8*) -> ()
+external klog_hex:        (label: u8*, val: u64) -> ()
+external klog_int:        (label: u8*, val: i64) -> ()
+external kshutdown:       (code: i64) -> ()
+external timer_set:       (interval: u64) -> ()
 
 ; Trap frame layout (288 bytes on stack):
 ;   offsets 0-248  = GPRs x0..x31 (x0 always 0, x2=original sp)
@@ -14,6 +16,9 @@ external timer_set: (interval: u64) -> ()
 ; frame[34] = stval  (272 / 8)
 ; frame[35] = sstatus (280 / 8)
 
+; Persistent S-mode timer interrupt counter (zero-initialised by BSS).
+kernel_tick: u64
+
 trap_handler: (frame: u64*) -> () {
     scause_u: u64 = @frame[33]
     scause_i: i64 = i64(scause_u)
@@ -24,9 +29,15 @@ trap_handler: (frame: u64*) -> () {
         cause_code: u64 = scause_u % 16
 
         ; Supervisor Timer Interrupt (cause 5)
-        ; Rearm and return
+        ; Increment kernel_tick, log each one, shutdown after 3.
         if cause_code == 5 {
-            timer_set(10000000)
+            kernel_tick = kernel_tick + 1
+            klog_int("timer tick".data, i64(kernel_tick))
+            if kernel_tick >= 3 {
+                kshutdown(0)
+                return
+            }
+            timer_set(1000000)
             return
         }
 

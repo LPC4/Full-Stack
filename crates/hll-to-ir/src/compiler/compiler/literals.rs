@@ -153,12 +153,18 @@ impl HighLevelCompiler {
                     BinaryOp::Mul => IrMathOp::Mul,
                     BinaryOp::Div => {
                         if lhs.is_unsigned {
-                            IrMathOp::Div
+                            IrMathOp::UDiv
                         } else {
                             IrMathOp::SDiv
                         }
                     }
-                    BinaryOp::Mod => IrMathOp::Mod,
+                    BinaryOp::Mod => {
+                        if lhs.is_unsigned {
+                            IrMathOp::UMod
+                        } else {
+                            IrMathOp::Mod
+                        }
+                    }
                     BinaryOp::And => IrMathOp::And,
                     BinaryOp::Or => IrMathOp::Or,
                     _ => unreachable!(),

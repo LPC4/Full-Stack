@@ -843,10 +843,12 @@ impl eframe::App for FullStackApp {
         let mut mw_open = self.machine_window.open;
         egui::Window::new("Machine")
             .open(&mut mw_open)
-            .default_size([860.0, 560.0])
-            .min_size([500.0, 320.0])
+            .default_size([720.0, 480.0])
+            .min_size([600.0, 350.0])
+            .max_size([900.0, 700.0])
             .resizable(true)
             .show(ui.ctx(), |ui| {
+                ui.set_max_width(900.0);
                 self.machine_window.ui(ui, has_kernel);
             });
         self.machine_window.open = mw_open;
@@ -854,7 +856,7 @@ impl eframe::App for FullStackApp {
         if self.machine_window.boot_requested {
             self.machine_window.boot_requested = false;
             if let Some(assembled) = self.compilation_state.assembled().cloned() {
-                self.machine_window.boot(&assembled);
+                self.machine_window.start_boot(&assembled);
             }
         }
     }
@@ -1376,4 +1378,3 @@ fn run_in_vm(assembled: &AssembledOutput, entry_symbol: &str, load_base: u64) ->
         max_steps_reached: matches!(result.outcome, StepOutcome::Continue),
     }
 }
-

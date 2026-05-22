@@ -8,7 +8,7 @@ use asm_to_binary::riscv::rv64i::{
     Add, Addi, Addiw, And, Jalr, Lb, Ld, Lh, Lui, Lw, Or, Sb, Sd, Sh, Sll, Slli, Slt, Sltiu, Sltu,
     Srai, Srl, Sub, Sw, Xor, Xori,
 };
-use asm_to_binary::riscv::rv64m::{Div, Mul, Rem};
+use asm_to_binary::riscv::rv64m::{Div, Divu, Mul, Rem, Remu};
 use asm_to_binary::rv_instruction::RvInstruction;
 use asm_to_binary::utils::reg_name;
 use hll_to_ir::IrType;
@@ -171,6 +171,12 @@ impl AssemblyEmitter {
     }
     pub fn emit_rem(&mut self, rd: Reg, rs1: Reg, rs2: Reg) {
         self.emit_inst(RealInstruction::Rem(Rem::new(rd, rs1, rs2)));
+    }
+    pub fn emit_divu(&mut self, rd: Reg, rs1: Reg, rs2: Reg) {
+        self.emit_inst(RealInstruction::Divu(Divu::new(rd, rs1, rs2)));
+    }
+    pub fn emit_remu(&mut self, rd: Reg, rs1: Reg, rs2: Reg) {
+        self.emit_inst(RealInstruction::Remu(Remu::new(rd, rs1, rs2)));
     }
     pub fn emit_and(&mut self, rd: Reg, rs1: Reg, rs2: Reg) {
         self.emit_inst(RealInstruction::And(And::new(rd, rs1, rs2)));

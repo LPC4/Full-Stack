@@ -63,10 +63,10 @@ main__entry:
 	addi   t0, sp, 32
 	lw     t1, 0(t0)
 	sw     t1, 176(sp)
-	; div operation on i32
+	; udiv operation on i32
 	lw     t0, 172(sp)
 	lw     t1, 176(sp)
-	div    t2, t0, t1
+	divu   t2, t0, t1
 	sw     t2, 180(sp)
 	addi   t0, sp, 40
 	; Store i32 to memory
