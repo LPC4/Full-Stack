@@ -1,0 +1,68 @@
+external kpanic:   (msg: u8*) -> ()
+external klog_hex: (label: u8*, val: u64) -> ()
+external timer_set: (interval: u64) -> ()
+
+; Trap frame layout (288 bytes on stack):
+;   offsets 0-248  = GPRs x0..x31 (x0 always 0, x2=original sp)
+;   offset  256    = sepc
+;   offset  264    = scause
+;   offset  272    = stval
+;   offset  280    = sstatus
+;
+; frame[32] = sepc (256 / 8)
+; frame[33] = scause (264 / 8)
+; frame[34] = stval  (272 / 8)
+; frame[35] = sstatus (280 / 8)
+
+trap_handler: (frame: u64*) -> () {
+    scause_u: u64 = @frame[33]
+    scause_i: i64 = i64(scause_u)
+
+    ; Bit 63 set means interrupt; i64 interpretation gives negative value.
+    if scause_i < 0 {
+        ; cause_code = bits[62:0] % 16; for RISC-V standard causes (1,5,9) this is exact.
+        cause_code: u64 = scause_u % 16
+
+        ; Supervisor Timer Interrupt (cause 5)
+        ; Rearm and return
+        if cause_code == 5 {
+            timer_set(10000000)
+            return
+        }
+
+        ; Supervisor External Interrupt (cause 9)
+        ; Claim and complete via PLIC
+        if cause_code == 9 {
+            asm {
+                ; Claim: read PLIC S-mode claim register for hart 0 context 1
+                li   t0, 203423748
+                lw   t1, 0(t0)
+                ; Complete: write the same IRQ number back
+                sw   t1, 0(t0)
+            }
+            return
+        }
+
+        ; Supervisor Software Interrupt (cause 1)
+        ; Clear SSIP and return
+        if cause_code == 1 {
+            asm { csrw sip, x0 }
+            return
+        }
+
+        klog_hex("unhandled interrupt scause".data, scause_u)
+        kpanic("unhandled interrupt".data)
+        return
+    }
+
+    ; Exception: U-mode ecall (cause 8)
+    ; Advance sepc past the ecall instruction
+    if scause_u == 8 {
+        @frame[32] = @frame[32] + 4
+        return
+    }
+
+    klog_hex("exception scause".data, scause_u)
+    klog_hex("exception sepc".data, @frame[32])
+    kpanic("unhandled exception".data)
+}

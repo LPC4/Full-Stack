@@ -1,8 +1,9 @@
+use firmware::kernel;
 use full_stack::compilation_pipeline::CompilationPipeline;
 use hll_to_ir::stdlib::get_kernel_stdlib_source;
 use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 
-const MY_KERNEL_SRC: &str = include_str!("../../programs/kernel/my_kernel.hll");
+const MY_KERNEL_SRC: &str = kernel::MY_KERNEL;
 
 fn run_kernel_hll(user_src: &str) -> (String, Option<i64>) {
     let mut stdlib_pipeline = CompilationPipeline::new();
@@ -42,8 +43,8 @@ fn kernel_boot_full_init_sequence() {
         "expected boot banner; uart={uart:?}"
     );
     assert!(
-        uart.contains("[  OK  ] device tree probe\n"),
-        "expected device-tree probe; uart={uart:?}"
+        uart.contains("[ WARN ] device tree:"),
+        "expected device-tree probe warning; uart={uart:?}"
     );
     assert!(
         uart.contains("[  OK  ] memory self-test passed\n"),
@@ -73,8 +74,8 @@ fn device_tree_probe_logged() {
         .find("[  OK  ] console online\n")
         .expect("console online missing");
     let dt_pos = uart
-        .find("[  OK  ] device tree probe\n")
-        .expect("device tree probe missing");
+        .find("[ WARN ] device tree:")
+        .expect("device tree warn missing");
     let mem_pos = uart
         .find("[  OK  ] running memory diagnostics...\n")
         .expect("memory diagnostics missing");

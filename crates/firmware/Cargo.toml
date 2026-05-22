@@ -8,5 +8,11 @@ rust-version = "1.92"
 name = "firmware"
 path = "src/lib.rs"
 
+[dev-dependencies]
+hll_to_ir       = { path = "../hll-to-ir" }
+ir_to_asm       = { path = "../ir-to-asm" }
+asm_to_binary   = { path = "../asm-to-binary" }
+virtual_machine = { path = "../virtual-machine" }
+
 [lints]
 workspace = true

@@ -138,10 +138,7 @@ fn built_in_programs() -> Vec<ProgramFile> {
             "os-my-kernel",
             "My Kernel",
             "Minimal kernel: boot log, heap smoke-test, and shutdown. Select Kernel target mode to run.",
-            include_str!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/programs/kernel/my_kernel.hll"
-            )),
+            firmware::kernel::MY_KERNEL,
         ),
         // Example programs
         ProgramFile::example(

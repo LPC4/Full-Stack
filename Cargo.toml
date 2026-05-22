@@ -24,6 +24,7 @@ name = "fsc"
 path = "src/cli/main.rs"
 
 [dependencies]
+firmware        = { path = "crates/firmware" }
 hll_to_ir       = { path = "crates/hll-to-ir" }
 ir_to_asm       = { path = "crates/ir-to-asm" }
 asm_to_binary   = { path = "crates/asm-to-binary" }
@@ -35,6 +36,7 @@ serde           = { version = "1.0.219", features = ["derive"] }
 log             = "0.4.27"
 
 [dev-dependencies]
+firmware        = { path = "crates/firmware" }
 hll_to_ir       = { path = "crates/hll-to-ir" }
 ir_to_asm       = { path = "crates/ir-to-asm" }
 asm_to_binary   = { path = "crates/asm-to-binary" }

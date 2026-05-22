@@ -61,6 +61,7 @@ pub fn get_kernel_stdlib_source() -> String {
         + stdlib::FREESTANDING_CONSOLE.len()
         + stdlib::KLOG.len()
         + kernel::RUNTIME.len()
+        + kernel::TRAP_HANDLER.len()
         + 512;
     let mut combined = String::with_capacity(capacity);
     append_section(&mut combined, "; --- stdlib: types ---\n", stdlib::TYPES);
@@ -90,6 +91,11 @@ pub fn get_kernel_stdlib_source() -> String {
         &mut combined,
         "; --- stdlib: kernel runtime ---\n",
         kernel::RUNTIME,
+    );
+    append_section(
+        &mut combined,
+        "; --- stdlib: trap handler ---\n",
+        kernel::TRAP_HANDLER,
     );
     combined
 }

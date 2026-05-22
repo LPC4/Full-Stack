@@ -371,10 +371,7 @@ kmain: () -> () {
     assert_eq!(exit, Some(0));
 }
 
-const MY_KERNEL_EXAMPLE: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/programs/kernel/my_kernel.hll"
-));
+const MY_KERNEL_EXAMPLE: &str = firmware::kernel::MY_KERNEL;
 
 #[test]
 fn my_kernel_example_program() {
@@ -384,13 +381,15 @@ fn my_kernel_example_program() {
         "[  OK  ] kernel starting\n\
          [  OK  ] console online\n\
          boot hart: 0\n\
-         [  OK  ] device tree probe\n\
-         [  OK  ] interrupt controller online\n\
+         [  OK  ] trap handler installed\n\
+         [  OK  ] timer armed\n\
+         [ WARN ] device tree: not implemented\n\
+         [ WARN ] interrupt controller: not implemented\n\
          [  OK  ] running memory diagnostics...\n\
          [  OK  ] memory self-test passed\n\
-         [  OK  ] MMU initialized\n\
+         [ WARN ] MMU: not implemented\n\
          [  OK  ] heap ready\n\
-         [  OK  ] filesystem drivers loaded\n\
+         [ WARN ] filesystem: not implemented\n\
          [ WARN ] single hart, no SMP\n\
          hart id: 0\n\
          ram MB: 128\n\

@@ -1,6 +1,7 @@
-external kmain: () -> ()
-external malloc: (size: u64) -> u8*
-external kpanic: (msg: u8*) -> ()
+external kmain:        () -> ()
+external malloc:       (size: u64) -> u8*
+external kpanic:       (msg: u8*) -> ()
+external trap_handler: (frame: u64*) -> ()
 
 ; Panics on OOM instead of returning null.
 kmalloc: (size: u64) -> u8* {
@@ -16,6 +17,152 @@ kshutdown: (code: i64) -> () {
     asm {
         li   t0, 268500992
         sd   a0, 0(t0)
+    }
+}
+
+; Read MTIME counter from CLINT (0x0200BFF8).
+timer_get: () -> u64 {
+    result: u64 = 0
+    asm {
+        li   t0, 33603576
+        ld   a0, 0(t0)
+    }
+    return result
+}
+
+; Set the next timer interrupt to fire MTIME + interval ticks.
+; Writes MTIMECMP for hart 0 at CLINT+0x4000 (0x02004000).
+timer_set: (interval: u64) -> () {
+    asm {
+        li   t0, 33603576
+        ld   t1, 0(t0)
+        add  t1, t1, a0
+        li   t0, 33570816
+        sd   t1, 0(t0)
+    }
+}
+
+; S-mode trap entry stub.
+; This function exists solely to host the stvec_entry asm label.
+; stvec is pointed at stvec_entry (NOT at the HLL-generated prologue).
+; On trap entry the CPU jumps directly to stvec_entry, saving/restoring
+; all GPRs and the four S-mode CSRs, then calling trap_handler(frame).
+_s_trap_host: () -> () {
+    asm {
+        stvec_entry:
+
+        ; Allocate trap frame: 288 bytes (x0..x31 * 8 + sepc + scause + stval + sstatus)
+        addi sp, sp, -288
+
+        ; Save GPRs — x0 is always zero, skip it (offset 0 left as zero)
+        sd   x1,   8(sp)
+        ; x2 (sp): save original sp = sp + 288
+        addi t0,   sp, 288
+        sd   t0,   16(sp)
+        sd   x3,   24(sp)
+        sd   x4,   32(sp)
+        sd   x5,   40(sp)
+        sd   x6,   48(sp)
+        sd   x7,   56(sp)
+        sd   x8,   64(sp)
+        sd   x9,   72(sp)
+        sd   x10,  80(sp)
+        sd   x11,  88(sp)
+        sd   x12,  96(sp)
+        sd   x13,  104(sp)
+        sd   x14,  112(sp)
+        sd   x15,  120(sp)
+        sd   x16,  128(sp)
+        sd   x17,  136(sp)
+        sd   x18,  144(sp)
+        sd   x19,  152(sp)
+        sd   x20,  160(sp)
+        sd   x21,  168(sp)
+        sd   x22,  176(sp)
+        sd   x23,  184(sp)
+        sd   x24,  192(sp)
+        sd   x25,  200(sp)
+        sd   x26,  208(sp)
+        sd   x27,  216(sp)
+        sd   x28,  224(sp)
+        sd   x29,  232(sp)
+        sd   x30,  240(sp)
+        sd   x31,  248(sp)
+
+        ; Save S-mode CSRs at offsets 256-280
+        csrr t0, sepc
+        sd   t0, 256(sp)
+        csrr t0, scause
+        sd   t0, 264(sp)
+        csrr t0, stval
+        sd   t0, 272(sp)
+        csrr t0, sstatus
+        sd   t0, 280(sp)
+
+        ; Call trap_handler(frame = sp)
+        mv   a0, sp
+        call trap_handler
+
+        ; Restore S-mode CSRs
+        ld   t0, 256(sp)
+        csrw sepc, t0
+        ld   t0, 280(sp)
+        csrw sstatus, t0
+
+        ; Restore GPRs (x1 first, x2/sp last so we keep the frame valid)
+        ld   x1,   8(sp)
+        ld   x3,   24(sp)
+        ld   x4,   32(sp)
+        ld   x5,   40(sp)
+        ld   x6,   48(sp)
+        ld   x7,   56(sp)
+        ld   x8,   64(sp)
+        ld   x9,   72(sp)
+        ld   x10,  80(sp)
+        ld   x11,  88(sp)
+        ld   x12,  96(sp)
+        ld   x13,  104(sp)
+        ld   x14,  112(sp)
+        ld   x15,  120(sp)
+        ld   x16,  128(sp)
+        ld   x17,  136(sp)
+        ld   x18,  144(sp)
+        ld   x19,  152(sp)
+        ld   x20,  160(sp)
+        ld   x21,  168(sp)
+        ld   x22,  176(sp)
+        ld   x23,  184(sp)
+        ld   x24,  192(sp)
+        ld   x25,  200(sp)
+        ld   x26,  208(sp)
+        ld   x27,  216(sp)
+        ld   x28,  224(sp)
+        ld   x29,  232(sp)
+        ld   x30,  240(sp)
+        ld   x31,  248(sp)
+        ld   x2,   16(sp)
+
+        sret
+    }
+}
+
+; Install stvec_entry as the S-mode trap vector and enable S-mode interrupts.
+; Must be called from kmain before enabling anything that could trap.
+trap_init: () -> () {
+    asm {
+        ; Point stvec at stvec_entry (direct mode, bit[1:0]=00)
+        la   t0, stvec_entry
+        csrw stvec, t0
+
+        ; sie: set STIE (bit 5 = 32) and SEIE (bit 9 = 512) → 544
+        csrr t0, sie
+        ori  t0, t0, 544
+        csrw sie, t0
+
+        ; sstatus: set SIE (bit 1 = 2)
+        csrr t0, sstatus
+        ori  t0, t0, 2
+        csrw sstatus, t0
     }
 }
 

@@ -1,6 +1,6 @@
-; Minimal kernel example.
+; Reference kernel: demonstrates the full boot sequence with real and stub subsystems.
 ; Open the Machine window and press Boot to see the serial log.
-; This program requires the kernel stdlib (_kernel_start entry, klog, kmalloc, kshutdown).
+; Requires the kernel stdlib (_kernel_start entry, klog, kmalloc, kshutdown, trap_init, timer_set).
 
 external klog_ok:    (msg: u8*) -> ()
 external klog_warn:  (msg: u8*) -> ()
@@ -9,26 +9,26 @@ external klog_int:   (label: u8*, val: i64) -> ()
 external kmalloc:    (size: u64) -> u8*
 external memset:     (dst: u8*, value: u8, n: u64) -> u8*
 external kshutdown:  (code: i64) -> ()
+external trap_init:  () -> ()
+external timer_set:  (interval: u64) -> ()
 
-; Memory integrity check: write alternating pattern, verify, and report.
+; Memory integrity check: write alternating 0xAA/0x55 pattern, verify, and report.
 ; Returns 1 on success, 0 on failure.
 memory_self_test: (size: u64) -> i64 {
     test_buf: u8* = kmalloc(size)
 
-    ; Write alternating pattern (0xAA, 0x55)
     i: u64 = 0
     while i < size {
-        pattern: u8 = 170    ; Default to 0xAA
-        if i % 2 != 0 { pattern = 85 }    ; Set to 0x55 for odd indices
+        pattern: u8 = 170
+        if i % 2 != 0 { pattern = 85 }
         @test_buf[i] = pattern
         i = i + 1
     }
 
-    ; Verify pattern
     i = 0
     while i < size {
-        expected: u8 = 170    ; Default to 0xAA
-        if i % 2 != 0 { expected = 85 }    ; Set to 0x55 for odd indices
+        expected: u8 = 170
+        if i % 2 != 0 { expected = 85 }
         if @test_buf[i] != expected {
             klog_error("memory self-test failed".data)
             return 0
@@ -36,25 +36,29 @@ memory_self_test: (size: u64) -> i64 {
         i = i + 1
     }
 
-    ; Success
     klog_ok("memory self-test passed".data)
     return 1
 }
 
-; Init subsystems and report status via the serial log.
 kmain: () -> () {
     klog_ok("kernel starting".data)
     klog_ok("console online".data)
     klog_int("boot hart".data, 0)
 
+    ; Install S-mode trap handler and enable STIE + SEIE + SIE.
+    trap_init()
+    klog_ok("trap handler installed".data)
+
+    ; Arm the first timer interrupt.
+    timer_set(10000000)
+    klog_ok("timer armed".data)
+
     ; TODO: parse device tree and enumerate devices
-    klog_ok("device tree probe".data)
+    klog_warn("device tree: not implemented".data)
 
     ; TODO: initialize PIC and set up interrupt handlers
-    klog_ok("interrupt controller online".data)
+    klog_warn("interrupt controller: not implemented".data)
 
-    ; Boot-time memory integrity check before using heap extensively.
-    ; TODO: test all physical RAM regions, not just 256 bytes
     klog_ok("running memory diagnostics...".data)
     test_result: i64 = memory_self_test(256)
     if test_result == 0 {
@@ -63,19 +67,17 @@ kmain: () -> () {
     }
 
     ; TODO: initialize MMU and set up virtual address space
-    klog_ok("MMU initialized".data)
+    klog_warn("MMU: not implemented".data)
 
     ; Heap smoke-test: allocate and zero a 64-byte region.
-    ; TODO: run full heap allocator tests, fragmentation checks
     probe: u8* = kmalloc(64)
     memset(probe, 0, 64)
     klog_ok("heap ready".data)
 
     ; TODO: load and initialize filesystem drivers
-    klog_ok("filesystem drivers loaded".data)
+    klog_warn("filesystem: not implemented".data)
 
     ; TODO: start scheduler and bring up secondary harts (SMP)
-    ; TODO: load userspace init process
     klog_warn("single hart, no SMP".data)
 
     klog_int("hart id".data, 0)

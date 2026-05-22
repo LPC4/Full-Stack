@@ -91,10 +91,27 @@ pub mod stdlib {
 
 /// Kernel-mode HLL source fragments.
 pub mod kernel {
-    /// Kernel boot runtime: `_kernel_start`, `kmalloc`, `kshutdown`.
+    /// Kernel boot runtime: `_kernel_start`, `kmalloc`, `kshutdown`, `trap_init`,
+    /// `timer_set`, `timer_get`, and the `_s_trap_host` / `stvec_entry` trap stub.
     /// Entry point is `_kernel_start`; user code must define `kmain`.
     pub const RUNTIME: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/kernel/kernel_runtime.hll"
+    ));
+
+    /// S-mode trap dispatcher: `trap_handler(frame: u64*)`.
+    /// Reads scause from the trap frame and dispatches to timer/external/software
+    /// interrupt handlers or exception handlers.  Depends on `kpanic`, `klog_hex`,
+    /// and `timer_set` (all provided by the kernel stdlib bundle).
+    pub const TRAP_HANDLER: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/kernel/trap_handler.hll"
+    ));
+
+    /// Reference kernel: full boot sequence demonstrating real and stub subsystems.
+    /// Defines `kmain`; depends on the kernel stdlib bundle.
+    pub const MY_KERNEL: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/kernel/my_kernel.hll"
     ));
 }
