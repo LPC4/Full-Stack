@@ -118,6 +118,10 @@ impl CompilerRv64 {
         ctx.save_reg(S0);
         ctx.finalize();
 
+        for (index, param) in func.params.iter().enumerate() {
+            ctx.set_param_index(&param.register, index);
+        }
+
         for block in &func.blocks {
             ctx.map_label(&block.label, format!("{}__{}", func.name, block.label.0));
         }
@@ -129,7 +133,33 @@ impl CompilerRv64 {
             self.emitter.emit_mv(9, A0);
         }
 
-        if let Some(sret_slot) = sret_slot {
+        // Skip normal parameter spills for inline-asm-only functions.
+        // These functions need parameters to remain in a0-a7 / fa0-fa7 for the asm code to access them.
+        // Only Comment, Alloc, Phi, Store, and InlineAsm instructions are allowed.
+        let has_inline_asm = func.blocks.iter().any(|block| {
+            block.instructions.iter().any(|inst| matches!(inst, IrInstruction::InlineAsm { .. }))
+        });
+        let is_asm_only = has_inline_asm && func.blocks.iter().all(|block| {
+            block.instructions.iter().all(|inst| {
+                matches!(inst,
+                    IrInstruction::InlineAsm { .. }
+                    | IrInstruction::Comment(_)
+                    | IrInstruction::Alloc { .. }
+                    | IrInstruction::Store { .. }
+                    | IrInstruction::Phi { .. }
+                )
+            })
+        });
+
+        ctx.set_preserve_param_registers(is_asm_only);
+
+        if is_asm_only {
+            if let Some(sret_slot) = sret_slot {
+                ctx.emit_parameter_spills_with_sret_for_inline_asm(&mut self.emitter, func, sret_slot);
+            } else {
+                ctx.emit_parameter_spills_for_inline_asm(&mut self.emitter, func);
+            }
+        } else if let Some(sret_slot) = sret_slot {
             ctx.emit_parameter_spills_with_sret(&mut self.emitter, func, sret_slot);
         } else {
             ctx.emit_parameter_spills(&mut self.emitter, func);
@@ -929,6 +959,14 @@ impl CompilerRv64 {
         let temp = self.emitter.alloc_temp_reg();
         match val {
             IrValue::Register(reg) => {
+                if ctx.preserve_param_registers()
+                    && let Some(index) = ctx.param_index(reg)
+                    && index < 8
+                {
+                    self.emitter.emit_mv(temp, reg_for_arg(index));
+                    return temp;
+                }
+
                 // Check if this register has a physical register allocation
                 if let Some(alloc_result) = alloc.get_allocation(reg) {
                     match alloc_result {
@@ -990,6 +1028,28 @@ impl CompilerRv64 {
         let temp = self.emitter.alloc_float_temp_reg();
         match val {
             IrValue::Register(reg) => {
+                if ctx.preserve_param_registers()
+                    && let Some(index) = ctx.param_index(reg)
+                    && index < 8
+                {
+                    let ty = ctx
+                        .type_for_reg(reg)
+                        .unwrap_or(IrType::Float(hll_to_ir::FloatWidth::F32));
+                    match ty {
+                        IrType::Float(hll_to_ir::FloatWidth::F32) => {
+                            self.emitter.emit_fmv_s(temp, reg_for_arg(index));
+                        }
+                        IrType::Float(hll_to_ir::FloatWidth::F64) => {
+                            self.emitter.emit_inst(RealInstruction::FsgnjD(fmv_d(
+                                temp,
+                                reg_for_arg(index),
+                            )));
+                        }
+                        _ => panic!("Expected float type"),
+                    }
+                    return temp;
+                }
+
                 // Check if this register has a physical register allocation
                 if let Some(alloc_result) = alloc.get_allocation(reg)
                     && let Allocation::Physical(phys_reg) = alloc_result
@@ -1044,6 +1104,15 @@ impl CompilerRv64 {
         alloc: &RegisterAllocator,
     ) -> Reg {
         let temp = self.emitter.alloc_temp_reg();
+        // Check if this register has a physical register allocation
+        if ctx.preserve_param_registers()
+            && let Some(index) = ctx.param_index(reg)
+            && index < 8
+        {
+            self.emitter.emit_mv(temp, reg_for_arg(index));
+            return temp;
+        }
+
         // Check if this register has a physical register allocation
         if let Some(alloc_result) = alloc.get_allocation(reg)
             && let Allocation::Physical(phys_reg) = alloc_result

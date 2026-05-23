@@ -108,6 +108,13 @@ pub mod kernel {
         "/kernel/trap_handler.hll"
     ));
 
+    /// Physical Memory Manager: `pmm_init`, `pmm_alloc`, `pmm_free`.
+    /// 4 KiB page granularity; free-list + bump allocator.
+    pub const PMM: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/kernel/pmm.hll"
+    ));
+
     /// Reference kernel: full boot sequence demonstrating real and stub subsystems.
     /// Defines `kmain`; depends on the kernel stdlib bundle.
     pub const MY_KERNEL: &str = include_str!(concat!(

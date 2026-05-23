@@ -233,6 +233,16 @@ fn unimplemented_subsystems_warn() {
 }
 
 #[test]
+fn pmm_smoke_test_passes() {
+    let (uart, exit) = run_kernel_hll(kernel::MY_KERNEL);
+    assert_eq!(exit, Some(0), "kernel must exit cleanly; uart={uart:?}");
+    assert!(
+        uart.contains("[  OK  ] pmm ready\n"),
+        "PMM smoke-test must pass; uart={uart:?}"
+    );
+}
+
+#[test]
 fn full_boot_output_matches_expected() {
     let (uart, exit) = run_kernel_hll(kernel::MY_KERNEL);
     assert_eq!(exit, Some(0), "kernel must exit with code 0");
@@ -249,6 +259,7 @@ fn full_boot_output_matches_expected() {
          [  OK  ] memory self-test passed\n\
          [ WARN ] MMU: not implemented\n\
          [  OK  ] heap ready\n\
+         [  OK  ] pmm ready\n\
          [ WARN ] filesystem: not implemented\n\
          [ WARN ] single hart, no SMP\n\
          hart id: 0\n\

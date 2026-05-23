@@ -1,0 +1,61 @@
+; Physical Memory Manager, 4 KiB page granularity.
+; Manages a contiguous region of RAM above the kernel image.
+; Free list: each freed page's first 8 bytes store the next free page address.
+
+pmm_bump: u64 = 0
+pmm_end:  u64 = 0
+pmm_free_head: u64 = 0
+
+; DEBUG: Verify globals are declared
+; These should show up in the IR global_vars list
+
+; Set the managed region [start, end).  Aligns start up to a page boundary.
+pmm_init: (start: u64, end: u64) -> () {
+    page_size: u64 = 4096
+    remainder: u64 = start % page_size
+    pmm_bump = start + ((page_size - remainder) % page_size)
+    pmm_end = end
+    pmm_free_head = 0
+}
+
+; Allocate one 4 KiB page.  Returns null on OOM.
+; Checks the free list first; falls back to the bump range.
+; Return value is left in a0 by the asm block; no HLL return statement so
+; the implicit Return(None) epilogue preserves a0 unchanged.
+pmm_alloc: () -> u8* {
+    asm {
+        la   t0, pmm_free_head
+        ld   t1, 0(t0)              ; t1 = free list head (0 = empty)
+        beqz t1, .Lpmm_alloc_bump
+        ld   t2, 0(t1)              ; t2 = next (stored in freed page's first word)
+        sd   t2, 0(t0)              ; pmm_free_head = next
+        mv   a0, t1
+        j    .Lpmm_alloc_done
+    .Lpmm_alloc_bump:
+        la   t0, pmm_bump
+        ld   t1, 0(t0)              ; t1 = current bump pointer
+        la   t2, pmm_end
+        ld   t2, 0(t2)
+        bgeu t1, t2, .Lpmm_alloc_oom
+        li   t3, 4096
+        add  t4, t1, t3
+        sd   t4, 0(t0)              ; pmm_bump += 4096
+        mv   a0, t1
+        j    .Lpmm_alloc_done
+    .Lpmm_alloc_oom:
+        li   a0, 0
+    .Lpmm_alloc_done:
+    }
+}
+
+; Return a page to the free list.  Null is silently ignored.
+pmm_free: (page: u8*) -> () {
+    asm {
+        beqz a0, .Lpmm_free_null
+        la   t0, pmm_free_head
+        ld   t1, 0(t0)              ; t1 = old free head
+        sd   t1, 0(a0)              ; *page = old head (link into list)
+        sd   a0, 0(t0)              ; pmm_free_head = page
+    .Lpmm_free_null:
+    }
+}

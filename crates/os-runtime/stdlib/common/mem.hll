@@ -16,8 +16,7 @@ memcpy: (dst: u8*, src: u8*, n: u64) -> u8* {
     return dst
 }
 
-; Always copies backward (high-to-low index), which is safe when dst >= src.
-; For dst < src with overlap the caller should use memcpy instead.
+; Backward copy (high→low): safe when dst >= src; use memcpy when dst < src with overlap.
 memmove: (dst: u8*, src: u8*, n: u64) -> u8* {
     if n == 0 {
         return dst
@@ -30,8 +29,7 @@ memmove: (dst: u8*, src: u8*, n: u64) -> u8* {
     return dst
 }
 
-; Bytes >= 128 read as negative i32, so the sign-mismatch cases are handled
-; explicitly to get correct unsigned ordering.
+; Bytes >= 128 are negative as i32; sign-mismatch cases handled for correct unsigned ordering.
 memcmp: (a: u8*, b: u8*, n: u64) -> i32 {
     i: u64 = 0
     while i < n {

@@ -389,6 +389,7 @@ fn my_kernel_example_program() {
          [  OK  ] memory self-test passed\n\
          [ WARN ] MMU: not implemented\n\
          [  OK  ] heap ready\n\
+         [  OK  ] pmm ready\n\
          [ WARN ] filesystem: not implemented\n\
          [ WARN ] single hart, no SMP\n\
          hart id: 0\n\

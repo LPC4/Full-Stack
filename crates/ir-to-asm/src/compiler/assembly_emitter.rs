@@ -6,7 +6,7 @@ use asm_to_binary::riscv::rv64fd::{
 };
 use asm_to_binary::riscv::rv64i::{
     Add, Addi, Addiw, And, Jalr, Lb, Ld, Lh, Lui, Lw, Or, Sb, Sd, Sh, Sll, Slli, Slt, Sltiu, Sltu,
-    Srai, Srl, Sub, Sw, Xor, Xori,
+    Srai, Srl, Srli, Sub, Sw, Xor, Xori,
 };
 use asm_to_binary::riscv::rv64m::{Div, Divu, Mul, Rem, Remu};
 use asm_to_binary::rv_instruction::RvInstruction;
@@ -208,6 +208,9 @@ impl AssemblyEmitter {
     pub fn emit_slli(&mut self, rd: Reg, rs1: Reg, shamt: u8) {
         self.emit_inst(RealInstruction::Slli(Slli::new(rd, rs1, shamt)));
     }
+    pub fn emit_srli(&mut self, rd: Reg, rs1: Reg, shamt: u8) {
+        self.emit_inst(RealInstruction::Srli(Srli::new(rd, rs1, shamt)));
+    }
     pub fn emit_srai(&mut self, rd: Reg, rs1: Reg, shamt: u8) {
         self.emit_inst(RealInstruction::Srai(Srai::new(rd, rs1, shamt)));
     }
@@ -222,6 +225,24 @@ impl AssemblyEmitter {
     pub fn emit_li(&mut self, rd: Reg, imm: i64) {
         if imm >= -2048 && imm <= 2047 {
             self.emit_addi(rd, ZERO, imm as i32);
+        } else if imm >= 0 && imm <= 0xFFFF_FFFF {
+            // 32-bit positive value: LUI sign-extends to 64 bits if bit 31 is set,
+            // so use LUI+ADDI then zero-extend with slli/srli when needed.
+            let hi = ((imm >> 12) & 0xFFFFF) as i32;
+            let lo = (imm & 0xFFF) as i32;
+            let lo_signed = if lo >= 0x800 { lo - 0x1000 } else { lo };
+            let hi_adj = if lo_signed < 0 { hi + 1 } else { hi };
+            self.emit_inst(RealInstruction::Lui(Lui::new(rd, hi_adj << 12)));
+            if lo_signed != 0 {
+                self.emit_addi(rd, rd, lo_signed);
+            }
+            // If bit 31 of the encoded value is set, LUI sign-extends to 64 bits.
+            // Zero-extend by shifting left then right 32 bits.
+            let encoded_32bit = (hi_adj << 12).wrapping_add(lo_signed) as u32;
+            if encoded_32bit >= 0x8000_0000 {
+                self.emit_slli(rd, rd, 32);
+                self.emit_srli(rd, rd, 32);
+            }
         } else {
             let hi = ((imm >> 12) & 0xFFFFF) as i32;
             let lo = (imm & 0xFFF) as i32;

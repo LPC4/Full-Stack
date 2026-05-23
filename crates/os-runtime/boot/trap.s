@@ -3,18 +3,9 @@
 # Concatenated after startup.s to form the complete ROM image.
 # _m_trap lands at offset 0x100 due to the .space 192 pad in startup.s.
 
-# ============================================================
-# _m_trap: M-mode trap handler (offset 0x100)
-#
-# mtvec is set to 0x100 by Pipeline::new (for hosted programs)
-# and by _start (for kernel mode) before mret.
-#
-# Handles:
-#   cause  8 = ecall from U-mode  (hosted programs running in M-mode)
-#   cause  9 = ecall from S-mode  (SBI calls from the kernel)
-#   cause 11 = ecall from M-mode  (hosted programs running in M-mode)
-#   anything else → mret (let the pipeline's trap logic deal with it)
-# ============================================================
+# _m_trap: M-mode trap handler at ROM offset 0x100.
+# Handles ecall from U/S/M-mode (causes 8, 9, 11); all other traps → mret.
+# mtvec is loaded by _start (kernel) or directly by Pipeline::new (hosted).
 _m_trap:
     csrr t0, mcause
     li t1, 8
@@ -95,6 +86,9 @@ sys_unknown:
     j _advance_mepc_and_mret
 
 # sys_printf(fmt=a0, a1..a6 = up to 6 args)
+# a1..a6 are spilled to 0..40(sp) before the loop. t2 is the byte offset
+# into that spill area (0, 8, 16, ...), advanced by 8 each time a format
+# specifier consumes an argument. t0 = UART, t1 = fmt pointer.
 sys_printf:
     addi sp, sp, -48
     sd a1, 0(sp)
@@ -103,9 +97,9 @@ sys_printf:
     sd a4, 24(sp)
     sd a5, 32(sp)
     sd a6, 40(sp)
-    li t0, 268435456
-    mv t1, a0
-    li t2, 0
+    li t0, 268435456    # UART base
+    mv t1, a0           # fmt pointer
+    li t2, 0            # arg byte offset
 _printf_loop:
     lb t3, 0(t1)
     addi t1, t1, 1
@@ -160,15 +154,16 @@ _printf_fmt_unknown:
     sb t3, 0(t0)
     j _printf_loop
 
-# %d / %i : signed decimal
+# %d / %i : print '-' if negative, then fall through to %u
 _printf_fmt_d:
     bge t4, x0, _printf_fmt_u
-    li t5, 45
+    li t5, 45           # '-'
     sb t5, 0(t0)
-    sub t4, x0, t4
+    sub t4, x0, t4      # negate
     j _printf_fmt_u
 
-# %u : unsigned decimal
+# %u : extract digits via divu/remu into a scratch buffer on the stack
+#      (written low-to-high), then emit in reverse for correct order
 _printf_fmt_u:
     bnez t4, _printf_uint_nonzero
     li t5, 48
@@ -205,7 +200,8 @@ _printf_uint_done:
     addi sp, sp, 40
     j _printf_loop
 
-# %x / %X : lowercase hex
+# %x / %X : scan nibbles from bit 60 down to 0, skipping leading zeros
+#           (t2 tracks whether any nonzero nibble has been seen yet)
 _printf_fmt_x:
     addi sp, sp, -16
     sd t1, 8(sp)

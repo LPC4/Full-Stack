@@ -1,6 +1,5 @@
-; Reference kernel: demonstrates the full boot sequence with real and stub subsystems.
-; Open the Machine window and press Boot to see the serial log.
-; Requires the kernel stdlib (_kernel_start entry, klog, kmalloc, kshutdown, trap_init, timer_set).
+; Kernel.
+; Requires the kernel runtime (_kernel_start entry, klog, kmalloc, kshutdown, trap_init, timer_set).
 
 external klog_ok:      (msg: u8*) -> ()
 external klog_warn:    (msg: u8*) -> ()
@@ -11,34 +10,9 @@ external memset:       (dst: u8*, value: u8, n: u64) -> u8*
 external kshutdown:    (code: i64) -> ()
 external trap_init:    () -> ()
 external timer_set:    (interval: u64) -> ()
-
-; Memory integrity check: write alternating 0xAA/0x55 pattern, verify, and report.
-; Returns 1 on success, 0 on failure.
-memory_self_test: (size: u64) -> i64 {
-    test_buf: u8* = kmalloc(size)
-
-    i: u64 = 0
-    while i < size {
-        pattern: u8 = 170
-        if i % 2 != 0 { pattern = 85 }
-        @test_buf[i] = pattern
-        i = i + 1
-    }
-
-    i = 0
-    while i < size {
-        expected: u8 = 170
-        if i % 2 != 0 { expected = 85 }
-        if @test_buf[i] != expected {
-            klog_error("memory self-test failed".data)
-            return 0
-        }
-        i = i + 1
-    }
-
-    klog_ok("memory self-test passed".data)
-    return 1
-}
+external pmm_init:     (start: u64, end: u64) -> ()
+external pmm_alloc:    () -> u8*
+external pmm_free:     (page: u8*) -> ()
 
 kmain: () -> () {
     klog_ok("kernel starting".data)
@@ -74,6 +48,21 @@ kmain: () -> () {
     memset(probe, 0, 64)
     klog_ok("heap ready".data)
 
+    ; PMM: manage RAM from 1 MiB above kernel load to 1 MiB below stack.
+    pmm_init(0x80100000, 0x87F00000)
+    page1: u8* = pmm_alloc()
+    if page1 == null {
+        klog_error("halt: pmm alloc failed".data)
+        kshutdown(1)
+    }
+    pmm_free(page1)
+    page2: u8* = pmm_alloc()
+    if page2 != page1 {
+        klog_error("halt: pmm free list failed".data)
+        kshutdown(1)
+    }
+    klog_ok("pmm ready".data)
+
     ; TODO: load and initialize filesystem drivers
     klog_warn("filesystem: not implemented".data)
 
@@ -84,7 +73,39 @@ kmain: () -> () {
     klog_int("ram MB".data, 128)
     klog_ok("boot complete".data)
     klog_ok("entering idle loop".data)
-    while 1 == 1 {
-        asm { nop }
+    asm {
+    .Lkmain_idle:
+        nop
+        j    .Lkmain_idle
     }
+}
+
+; Memory integrity check:
+; Returns:
+;  - 1 on success
+;  - 0 on failure
+memory_self_test: (size: u64) -> i64 {
+    test_buf: u8* = kmalloc(size)
+
+    i: u64 = 0
+    while i < size {
+        pattern: u8 = 170
+        if i % 2 != 0 { pattern = 85 }
+        @test_buf[i] = pattern
+        i = i + 1
+    }
+
+    i = 0
+    while i < size {
+        expected: u8 = 170
+        if i % 2 != 0 { expected = 85 }
+        if @test_buf[i] != expected {
+            klog_error("memory self-test failed".data)
+            return 0
+        }
+        i = i + 1
+    }
+
+    klog_ok("memory self-test passed".data)
+    return 1
 }

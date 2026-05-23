@@ -12,20 +12,20 @@ use std::time::Duration;
 
 use asm_to_binary::AssembledOutput;
 use egui::{Color32, Frame, Margin, RichText, Stroke, Vec2};
+use full_stack::view::ui_theme;
 use virtual_machine::bus::RAM_BASE;
 use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 
 // ── Palette ──────────────────────────────────────────────────────────────────
 
 const TERM_BG: Color32 = Color32::from_rgb(7, 9, 12);
-const TERM_TEXT: Color32 = Color32::from_rgb(185, 210, 185);
+const TERM_TEXT: Color32 = Color32::from_rgb(200, 208, 218); // neutral, no green tint
 const TERM_OK: Color32 = Color32::from_rgb(72, 200, 100);
 const TERM_WARN: Color32 = Color32::from_rgb(220, 178, 60);
 const TERM_ERR: Color32 = Color32::from_rgb(230, 80, 80);
-const TERM_DIM: Color32 = Color32::from_rgb(80, 100, 80);
+const TERM_DIM: Color32 = Color32::from_rgb(88, 100, 112);   // neutral dim
 const TERM_PANIC: Color32 = Color32::from_rgb(255, 60, 80);
-const TERM_RUNNING: Color32 = Color32::from_rgb(80, 160, 220);
-const TERM_BORDER: Color32 = Color32::from_rgb(25, 45, 25);
+const TERM_BORDER: Color32 = Color32::from_rgb(28, 34, 46);  // neutral dark border
 const TOOLBAR_BG: Color32 = Color32::from_rgb(10, 14, 18);
 
 // ── Tuning ───────────────────────────────────────────────────────────────────
@@ -277,7 +277,7 @@ impl MachineWindow {
     fn status_info(&self) -> (&'static str, Color32, u64, Option<i64>) {
         match &self.phase {
             BootPhase::Idle => ("IDLE", TERM_DIM, 0, None),
-            BootPhase::Running { steps, .. } => ("RUNNING", TERM_RUNNING, *steps, None),
+            BootPhase::Running { steps, .. } => ("RUNNING", ui_theme().accent, *steps, None),
             BootPhase::Done(r) if r.max_steps_reached => ("TIMEOUT", TERM_WARN, r.steps, r.exit_code),
             BootPhase::Done(r) if r.exit_code == Some(0) => ("OK", TERM_OK, r.steps, r.exit_code),
             BootPhase::Done(r) if r.exit_code.is_some() => ("ERR", TERM_ERR, r.steps, r.exit_code),
@@ -402,7 +402,7 @@ impl MachineWindow {
                 ui.set_min_height(INPUT_H);
                 ui.horizontal(|ui| {
                     ui.colored_label(
-                        if is_running { TERM_OK } else { TERM_DIM },
+                        if is_running { ui_theme().accent } else { TERM_DIM },
                         RichText::new("IN>").monospace().size(11.0),
                     );
 

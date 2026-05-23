@@ -41,7 +41,6 @@ _start:
     #    bit 12 = instruction page fault
     #    bit 13 = load page fault
     #    bit 15 = store page fault
-    #    decimal: 256 + 4096 + 8192 + 32768 = 45312
     li t0, 45312
     csrw medeleg, t0
 
@@ -49,7 +48,6 @@ _start:
     #    bit 1 = supervisor software interrupt
     #    bit 5 = supervisor timer interrupt
     #    bit 9 = supervisor external interrupt (PLIC)
-    #    decimal: 2 + 32 + 512 = 546
     li t0, 546
     csrw mideleg, t0
 

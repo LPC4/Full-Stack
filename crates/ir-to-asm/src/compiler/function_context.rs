@@ -28,12 +28,16 @@ pub struct FunctionContext {
     type_aliases: HashMap<String, IrType>,
     /// Maps virtual registers to stack offsets.
     reg_slots: HashMap<IrRegister, usize>,
+    /// Maps virtual parameter registers to their ABI argument index.
+    param_indices: HashMap<IrRegister, usize>,
     /// Records the IR type associated with each virtual register.
     reg_types: HashMap<IrRegister, IrType>,
     /// Registers whose value is the address of their own stack slot.
     stack_address_regs: HashSet<IrRegister>,
     /// Maps IR labels to emitted assembly labels.
     label_map: HashMap<IrLabel, String>,
+    /// When true, incoming parameters may be read directly from a0-a7 / fa0-fa7.
+    preserve_param_registers: bool,
 }
 
 impl FunctionContext {
@@ -43,9 +47,11 @@ impl FunctionContext {
             frame: FrameContext::new(),
             type_aliases: type_aliases.clone(),
             reg_slots: HashMap::new(),
+            param_indices: HashMap::new(),
             reg_types: HashMap::new(),
             stack_address_regs: HashSet::new(),
             label_map: HashMap::new(),
+            preserve_param_registers: false,
         }
     }
 
@@ -115,6 +121,23 @@ impl FunctionContext {
     /// Record that a virtual register is a function parameter (already has a stack slot).
     pub fn set_param_slot(&mut self, reg: &IrRegister, slot: usize) {
         self.reg_slots.insert(reg.clone(), slot);
+    }
+
+    /// Record the ABI argument index for a function parameter register.
+    pub fn set_param_index(&mut self, reg: &IrRegister, index: usize) {
+        self.param_indices.insert(reg.clone(), index);
+    }
+
+    pub fn param_index(&self, reg: &IrRegister) -> Option<usize> {
+        self.param_indices.get(reg).copied()
+    }
+
+    pub fn set_preserve_param_registers(&mut self, preserve: bool) {
+        self.preserve_param_registers = preserve;
+    }
+
+    pub fn preserve_param_registers(&self) -> bool {
+        self.preserve_param_registers
     }
 
     pub fn set_reg_type(&mut self, reg: &IrRegister, ty: IrType) {
@@ -192,34 +215,7 @@ impl FunctionContext {
 
     /// Emit spills for function parameters that arrive in registers or on the stack.
     pub fn emit_parameter_spills(&self, backend: &mut impl Rv64Backend, func: &IrFunction) {
-        if func.params.is_empty() {
-            return;
-        }
-
-        backend.emit_comment("--- Function Parameter Spills ---");
-        let frame_size = self.frame_size() as i64;
-        let caller_sp = backend.alloc_temp_reg();
-        backend.emit_add_imm(caller_sp, S0, frame_size);
-
-        for (index, param) in func.params.iter().enumerate() {
-            let slot = self.slot_for_reg(&param.register).expect("param slot");
-            let ty = self.frame.resolve_type(&param.ty, &self.type_aliases);
-            if index < 8 {
-                backend.emit_comment(&format!(
-                    "Spill parameter '{}' from register a{} to stack slot {}",
-                    param.register, index, slot
-                ));
-                backend.emit_store_from_tmp(SP, arg_reg(index), &ty, slot as i32);
-            } else {
-                let offset = ((index - 8) * 8) as i32;
-                backend.emit_comment(&format!(
-                    "Spill parameter '{}' from caller's stack (offset {}) to slot {}",
-                    param.register, offset, slot
-                ));
-                backend.emit_load_to_slot(slot, caller_sp, &ty, offset);
-            }
-        }
-        backend.emit_comment("--- End Parameter Spills ---");
+        self.emit_parameter_spills_from_index(backend, func, 0, "--- Function Parameter Spills ---");
     }
 
     /// Emit spills for function parameters when the function has an sret (hidden pointer) parameter.
@@ -244,9 +240,90 @@ impl FunctionContext {
             sret_slot as i32,
         );
 
-        // Now spill the regular parameters (skip index 0 which is __sret, already handled above)
-        if func.params.is_empty() {
-            backend.emit_comment("--- End Parameter Spills ---");
+        self.emit_parameter_spills_from_index_with_header(backend, func, 1, "--- End Parameter Spills ---");
+    }
+
+    /// Emit spills for inline-asm-only functions.
+    ///
+    /// The first eight integer/floating-point parameters must remain in their
+    /// arrival registers so the asm block can use them directly; only stack-
+    /// passed arguments need to be copied into slots for the synthesized
+    /// parameter-binding stores.
+    pub fn emit_parameter_spills_for_inline_asm(
+        &self,
+        backend: &mut impl Rv64Backend,
+        func: &IrFunction,
+    ) {
+        self.emit_parameter_spills_from_index(backend, func, 8, "--- Function Parameter Spills (asm-only) ---");
+    }
+
+    /// Emit spills for inline-asm-only functions that also use the hidden sret pointer.
+    pub fn emit_parameter_spills_with_sret_for_inline_asm(
+        &self,
+        backend: &mut impl Rv64Backend,
+        func: &IrFunction,
+        sret_slot: usize,
+    ) {
+        backend.emit_comment("--- Function Parameter Spills (with sret, asm-only) ---");
+        let sret_ptr = arg_reg(0);
+        backend.emit_comment(&format!(
+            "Save sret pointer from a0 to stack slot {sret_slot}"
+        ));
+        backend.emit_store_from_tmp(
+            SP,
+            sret_ptr,
+            &IrType::Pointer(Box::new(IrType::Void)),
+            sret_slot as i32,
+        );
+        self.emit_parameter_spills_from_index(backend, func, 8, "--- End Parameter Spills ---");
+    }
+
+    fn emit_parameter_spills_from_index(
+        &self,
+        backend: &mut impl Rv64Backend,
+        func: &IrFunction,
+        start_index: usize,
+        header: &str,
+    ) {
+        if func.params.len() <= start_index {
+            return;
+        }
+
+        backend.emit_comment(header);
+        let frame_size = self.frame_size() as i64;
+        let caller_sp = backend.alloc_temp_reg();
+        backend.emit_add_imm(caller_sp, S0, frame_size);
+
+        for (index, param) in func.params.iter().enumerate().skip(start_index) {
+            let slot = self.slot_for_reg(&param.register).expect("param slot");
+            let ty = self.frame.resolve_type(&param.ty, &self.type_aliases);
+            if index < 8 {
+                backend.emit_comment(&format!(
+                    "Spill parameter '{}' from register a{} to stack slot {}",
+                    param.register, index, slot
+                ));
+                backend.emit_store_from_tmp(SP, arg_reg(index), &ty, slot as i32);
+            } else {
+                let offset = ((index - 8) * 8) as i32;
+                backend.emit_comment(&format!(
+                    "Spill parameter '{}' from caller's stack (offset {}) to slot {}",
+                    param.register, offset, slot
+                ));
+                backend.emit_load_to_slot(slot, caller_sp, &ty, offset);
+            }
+        }
+        backend.emit_comment("--- End Parameter Spills ---");
+    }
+
+    fn emit_parameter_spills_from_index_with_header(
+        &self,
+        backend: &mut impl Rv64Backend,
+        func: &IrFunction,
+        start_index: usize,
+        end_header: &str,
+    ) {
+        if func.params.len() <= start_index {
+            backend.emit_comment(end_header);
             return;
         }
 
@@ -254,11 +331,9 @@ impl FunctionContext {
         let caller_sp = backend.alloc_temp_reg();
         backend.emit_add_imm(caller_sp, S0, frame_size);
 
-        for (index, param) in func.params.iter().enumerate().skip(1) {
+        for (index, param) in func.params.iter().enumerate().skip(start_index) {
             let slot = self.slot_for_reg(&param.register).expect("param slot");
             let ty = self.frame.resolve_type(&param.ty, &self.type_aliases);
-            // index 1 = first real param = a1, index 2 = a2, etc.
-            // Use arg_reg(index) directly -- no shift needed
             if index < 8 {
                 backend.emit_comment(&format!(
                     "Spill parameter '{}' from register a{} to stack slot {}",

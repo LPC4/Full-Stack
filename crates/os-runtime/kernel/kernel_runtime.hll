@@ -30,8 +30,7 @@ timer_get: () -> u64 {
     return result
 }
 
-; Set the next timer interrupt to fire MTIME + interval ticks.
-; Writes MTIMECMP for hart 0 at CLINT+0x4000 (0x02004000).
+; Schedule next timer interrupt at MTIME + interval (MTIMECMP hart 0).
 timer_set: (interval: u64) -> () {
     asm {
         li   t0, 33603576
@@ -42,11 +41,7 @@ timer_set: (interval: u64) -> () {
     }
 }
 
-; S-mode trap entry stub.
-; This function exists solely to host the stvec_entry asm label.
-; stvec is pointed at stvec_entry (NOT at the HLL-generated prologue).
-; On trap entry the CPU jumps directly to stvec_entry, saving/restoring
-; all GPRs and the four S-mode CSRs, then calling trap_handler(frame).
+; Hosts stvec_entry; stvec points directly here, bypassing the HLL prologue.
 _s_trap_host: () -> () {
     asm {
         stvec_entry:
@@ -99,7 +94,6 @@ _s_trap_host: () -> () {
         csrr t0, sstatus
         sd   t0, 280(sp)
 
-        ; Call trap_handler(frame = sp)
         mv   a0, sp
         call trap_handler
 
@@ -146,8 +140,7 @@ _s_trap_host: () -> () {
     }
 }
 
-; Install stvec_entry as the S-mode trap vector and enable S-mode interrupts.
-; Must be called from kmain before enabling anything that could trap.
+; Point stvec at stvec_entry and enable STIE + SEIE + SIE.
 trap_init: () -> () {
     asm {
         ; Point stvec at stvec_entry (direct mode, bit[1:0]=00)
@@ -166,10 +159,7 @@ trap_init: () -> () {
     }
 }
 
-; Read sscratch CSR (repurposed as kernel tick counter).
-; Write sscratch CSR value to *out.
-; Caller passes the address of a local u64 variable; the asm block
-; reads sscratch and stores it there via the pointer in a0.
+; Read sscratch (tick counter) into *out.
 sscratch_get_to: (out: u64*) -> () {
     asm {
         csrr t0, sscratch

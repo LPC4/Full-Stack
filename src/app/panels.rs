@@ -119,7 +119,7 @@ impl FullStackApp {
                     .add_enabled(
                         has_assembled,
                         egui::Button::new(RichText::new("Machine").strong())
-                            .fill(theme.accent_alt)
+                            .fill(theme.accent)
                             .min_size(egui::vec2(90.0, 35.0)),
                     )
                     .on_disabled_hover_text("Compile a Kernel program first")
