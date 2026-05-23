@@ -1,8 +1,9 @@
 <component name="ProjectRunConfigurationManager">
   <configuration default="false" name="Build (release)" type="CargoCommandRunConfiguration" factoryName="Cargo Command">
     <option name="buildProfileId" value="release" />
-    <option name="command" value="build --release" />
+    <option name="command" value="build" />
     <option name="workingDirectory" value="file://$PROJECT_DIR$" />
+    <envs />
     <option name="emulateTerminal" value="false" />
     <option name="channel" value="DEFAULT" />
     <option name="requiredFeatures" value="false" />

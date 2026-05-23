@@ -6,9 +6,6 @@ pmm_bump: u64 = 0
 pmm_end:  u64 = 0
 pmm_free_head: u64 = 0
 
-; DEBUG: Verify globals are declared
-; These should show up in the IR global_vars list
-
 ; Set the managed region [start, end).  Aligns start up to a page boundary.
 pmm_init: (start: u64, end: u64) -> () {
     page_size: u64 = 4096

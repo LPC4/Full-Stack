@@ -132,7 +132,9 @@ fn many_locals_use_multiple_temp_registers() {
 // ── Struct return convention ──────────────────────────────────────────────────
 
 #[test]
-fn two_field_struct_return_uses_a0_and_a1() {
+fn two_field_i32_struct_return_packed_in_a0() {
+    // Two i32 fields total 8 bytes, which fit in a single 64-bit register.
+    // The callee packs both fields via `ld a0` and the caller unpacks via `sd a0`.
     let asm = compile_inline(r#"divide: (a: i32, b: i32) -> { quotient: i32, remainder: i32 } {
     return { .quotient = a / b, .remainder = a % b }
 }
@@ -141,12 +143,12 @@ main: () -> i32 {
     return result.quotient
 }"#);
     assert!(
-        asm.contains("lw     a0,") || asm.contains("ld     a0,"),
-        "expected first field in a0"
+        asm.contains("ld     a0,"),
+        "expected both i32 fields packed into a0 via ld"
     );
     assert!(
-        asm.contains("lw     a1,") || asm.contains("ld     a1,"),
-        "expected second field in a1"
+        asm.contains("sd     a0,"),
+        "expected caller to unpack 8 bytes from a0 via sd"
     );
 }
 

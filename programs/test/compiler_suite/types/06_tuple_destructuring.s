@@ -67,8 +67,7 @@ divide__entry:
 	; Store i32 to memory
 	lw     t1, 52(sp)
 	sw     t1, 0(t0)
-	lw     a0, 24(sp)
-	lw     a1, 28(sp)
+	ld     a0, 24(sp)
 	; --- Function Epilogue ---
 	; Restore callee-saved register s8 from offset 64
 	ld     s0, 64(sp)
@@ -107,8 +106,7 @@ test_tuple_destructuring__entry:
 	addi   a1, t1, 0
 	jal ra, divide
 	; Unpacking small aggregate return from a0/a1
-	sw     a0, 24(sp)
-	sw     a1, 28(sp)
+	sd     a0, 24(sp)
 	; --- End Function Call: divide ---
 	addi   t0, sp, 0
 	; Store {quotient: i32, remainder: i32} to memory

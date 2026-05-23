@@ -645,6 +645,8 @@ impl CompilerRv64 {
 
         self.emitter
             .emit_comment(&format!("Passing {} arguments", args.len()));
+        
+        // Pass first 8 arguments in registers a0-a7
         for arg in args {
             if arg_index >= 8 {
                 break;
@@ -653,55 +655,74 @@ impl CompilerRv64 {
             self.emitter.emit_mv(reg_for_arg(arg_index), arg_tmp);
             arg_index += 1;
         }
+        
+        // Push remaining arguments (9th and beyond) onto the stack
+        if args.len() > 8 {
+            self.emitter.emit_comment("Pushing excess arguments to stack");
+            // Calculate how many bytes we need to reserve on the stack
+            let excess_count = args.len() - 8;
+            let stack_bytes = (excess_count * 8) as i64;
+            
+            // Align stack to 16 bytes (RISC-V ABI requirement)
+            let aligned_bytes = if stack_bytes % 16 != 0 {
+                stack_bytes + (16 - stack_bytes % 16)
+            } else {
+                stack_bytes
+            };
+            
+            // Adjust SP to make room for stack arguments
+            self.emitter.emit_add_imm(SP, SP, -aligned_bytes);
+            
+            // Store each excess argument
+            for (i, arg) in args.iter().enumerate().skip(8) {
+                let arg_tmp = self.load_value_to_temp(arg, ctx, alloc);
+                let offset = ((i - 8) * 8) as i32;
+                self.emitter.emit_sd(SP, arg_tmp, offset);
+            }
+        }
 
         self.emitter.emit_jal(RA, function);
+        
+        // Restore SP after the call
+        if args.len() > 8 {
+            let excess_count = args.len() - 8;
+            let stack_bytes = (excess_count * 8) as i64;
+            let aligned_bytes = if stack_bytes % 16 != 0 {
+                stack_bytes + (16 - stack_bytes % 16)
+            } else {
+                stack_bytes
+            };
+            self.emitter.emit_add_imm(SP, SP, aligned_bytes);
+        }
 
         if is_agg_return && !needs_sret {
             self.emitter
                 .emit_comment("Unpacking small aggregate return from a0/a1");
             if let Some(dest_reg) = dest {
                 let dest_slot = ctx.slot_for_reg(dest_reg).expect("dest slot");
-                if let IrType::Aggregate(fields) = &resolved_ret_ty {
-                    let mut field_offset = 0;
-                    for (i, (_, field_ty)) in fields.iter().enumerate() {
-                        let resolved_field_ty = self.resolve_ir_type(field_ty);
-                        let field_size = self.type_size(&resolved_field_ty);
-                        let reg = if i == 0 { A0 } else { A1 };
-                        if field_size >= 8 {
-                            self.emitter
-                                .emit_sd(SP, reg, (dest_slot + field_offset) as i32);
-                        } else if field_size >= 4 {
-                            self.emitter.emit_inst(RealInstruction::Sw(Sw::new(
-                                SP,
-                                reg,
-                                (dest_slot + field_offset) as i32,
-                            )));
-                        } else if field_size >= 2 {
-                            self.emitter.emit_inst(RealInstruction::Sh(Sh::new(
-                                SP,
-                                reg,
-                                (dest_slot + field_offset) as i32,
-                            )));
-                        } else if field_size >= 1 {
-                            self.emitter.emit_inst(RealInstruction::Sb(Sb::new(
-                                SP,
-                                reg,
-                                (dest_slot + field_offset) as i32,
-                            )));
-                        }
-                        let align = self.type_alignment(&resolved_field_ty);
-                        field_offset = (field_offset.div_ceil(align) * align) + field_size;
-                    }
-                } else {
-                    let size = self.type_size(&resolved_ret_ty);
-                    if size >= 8 {
+                {
+                    let total_size = self.type_size(&resolved_ret_ty);
+                    let chunk0 = total_size.min(8);
+                    if chunk0 == 8 {
                         self.emitter.emit_sd(SP, A0, dest_slot as i32);
-                    } else if size >= 4 {
-                        self.emitter.emit_inst(RealInstruction::Sw(Sw::new(
-                            SP,
-                            A0,
-                            dest_slot as i32,
-                        )));
+                    } else if chunk0 >= 4 {
+                        self.emitter.emit_inst(RealInstruction::Sw(Sw::new(SP, A0, dest_slot as i32)));
+                    } else if chunk0 >= 2 {
+                        self.emitter.emit_inst(RealInstruction::Sh(Sh::new(SP, A0, dest_slot as i32)));
+                    } else {
+                        self.emitter.emit_inst(RealInstruction::Sb(Sb::new(SP, A0, dest_slot as i32)));
+                    }
+                    if total_size > 8 {
+                        let remaining = total_size - 8;
+                        if remaining >= 8 {
+                            self.emitter.emit_sd(SP, A1, (dest_slot + 8) as i32);
+                        } else if remaining >= 4 {
+                            self.emitter.emit_inst(RealInstruction::Sw(Sw::new(SP, A1, (dest_slot + 8) as i32)));
+                        } else if remaining >= 2 {
+                            self.emitter.emit_inst(RealInstruction::Sh(Sh::new(SP, A1, (dest_slot + 8) as i32)));
+                        } else {
+                            self.emitter.emit_inst(RealInstruction::Sb(Sb::new(SP, A1, (dest_slot + 8) as i32)));
+                        }
                     }
                 }
             }
@@ -854,34 +875,29 @@ impl CompilerRv64 {
                     panic!("Small aggregate return must be a register")
                 };
                 let slot = ctx.slot_for_reg(reg).expect("reg slot");
-                if let IrType::Aggregate(fields) = &resolved_val {
-                    let mut field_offset = 0;
-                    for (i, (_, field_ty)) in fields.iter().enumerate() {
-                        let resolved_field_ty = self.resolve_ir_type(field_ty);
-                        let field_size = self.type_size(&resolved_field_ty);
-                        let ret_reg = if i == 0 { A0 } else { A1 };
-                        if field_size >= 8 {
-                            self.emitter
-                                .emit_ld(ret_reg, SP, (slot + field_offset) as i32);
-                        } else if field_size >= 4 {
-                            self.emitter
-                                .emit_lw(ret_reg, SP, (slot + field_offset) as i32);
-                        } else if field_size >= 2 {
-                            self.emitter
-                                .emit_lh(ret_reg, SP, (slot + field_offset) as i32);
-                        } else if field_size >= 1 {
-                            self.emitter
-                                .emit_lb(ret_reg, SP, (slot + field_offset) as i32);
-                        }
-                        let align = self.type_alignment(&resolved_field_ty);
-                        field_offset = (field_offset.div_ceil(align) * align) + field_size;
-                    }
-                } else {
-                    let size = self.type_size(&resolved_val);
-                    if size >= 8 {
+                {
+                    let total_size = self.type_size(&resolved_val);
+                    let chunk0 = total_size.min(8);
+                    if chunk0 == 8 {
                         self.emitter.emit_ld(A0, SP, slot as i32);
-                    } else if size >= 4 {
+                    } else if chunk0 >= 4 {
                         self.emitter.emit_lw(A0, SP, slot as i32);
+                    } else if chunk0 >= 2 {
+                        self.emitter.emit_lh(A0, SP, slot as i32);
+                    } else if chunk0 >= 1 {
+                        self.emitter.emit_lb(A0, SP, slot as i32);
+                    }
+                    if total_size > 8 {
+                        let remaining = total_size - 8;
+                        if remaining >= 8 {
+                            self.emitter.emit_ld(A1, SP, (slot + 8) as i32);
+                        } else if remaining >= 4 {
+                            self.emitter.emit_lw(A1, SP, (slot + 8) as i32);
+                        } else if remaining >= 2 {
+                            self.emitter.emit_lh(A1, SP, (slot + 8) as i32);
+                        } else {
+                            self.emitter.emit_lb(A1, SP, (slot + 8) as i32);
+                        }
                     }
                 }
             } else {
@@ -1202,5 +1218,32 @@ fn reg_for_arg(i: usize) -> Reg {
         6 => 16,
         7 => 17,
         _ => 0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::reg_for_arg;
+
+    #[test]
+    fn reg_for_arg_maps_first_eight_to_a_regs() {
+        for (index, expected_reg) in [10u8, 11, 12, 13, 14, 15, 16, 17].iter().enumerate() {
+            assert_eq!(
+                reg_for_arg(index),
+                *expected_reg,
+                "arg {index} should map to register {expected_reg} (a{index})"
+            );
+        }
+    }
+
+    #[test]
+    fn reg_for_arg_ninth_and_beyond_returns_zero() {
+        for overflow_index in [8, 9, 15, 100] {
+            assert_eq!(
+                reg_for_arg(overflow_index),
+                0,
+                "arg {overflow_index} (beyond a7) should return x0 (stack-passed marker)"
+            );
+        }
     }
 }

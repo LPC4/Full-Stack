@@ -203,6 +203,8 @@ impl HighLevelCompiler {
 
                 let mut offset = 0i64;
                 for (_, field_value) in lowered_fields {
+                    let align = self.type_alignment_in_bytes(&field_value.ty) as i64;
+                    offset = Self::align_to(offset, align);
                     self.push_instruction(IrInstruction::Store {
                         ty: field_value.ty.clone(),
                         value: field_value.value,

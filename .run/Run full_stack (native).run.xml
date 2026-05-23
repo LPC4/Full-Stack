@@ -1,6 +1,6 @@
 <component name="ProjectRunConfigurationManager">
   <configuration default="false" name="Run (native)" type="CargoCommandRunConfiguration" factoryName="Cargo Command">
-    <option name="buildProfileId" value="dev" />
+    <option name="buildProfileId" value="release" />
     <option name="command" value="run --bin full_stack" />
     <option name="workingDirectory" value="file://$PROJECT_DIR$" />
     <envs>
