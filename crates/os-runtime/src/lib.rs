@@ -6,7 +6,7 @@
 //! Power-on
 //!   boot/startup.s       M-mode ROM: PMP, delegation, mret to S-mode
 //!   boot/trap.s          M-mode ROM: trap handler, syscall dispatch
-//!   kernel/kernel_runtime.hll  S-mode kernel entry (_kernel_start -> kmain)
+//!   kernel/entry.hll     S-mode kernel entry (_kernel_start -> kmain)
 //!
 //! Hosted / userspace programs
 //!   stdlib/hosted/runtime.hll     _start -> main() -> sys_exit
@@ -87,16 +87,24 @@ pub mod stdlib {
         env!("CARGO_MANIFEST_DIR"),
         "/stdlib/freestanding/console.hll"
     ));
+
+    /// Kernel helpers that are part of the kernel stdlib bundle: kmalloc, kshutdown,
+    /// timer helpers, trap prologue, and sscratch helpers. These are re-usable
+    /// fragments that belong in the stdlib (not the kernel entry file).
+    pub const KERNEL_UTILS: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/stdlib/kernel/utilities.hll"
+    ));
 }
 
 /// Kernel-mode HLL source fragments.
 pub mod kernel {
-    /// Kernel boot runtime: `_kernel_start`, `kmalloc`, `kshutdown`, `trap_init`,
-    /// `timer_set`, `timer_get`, and the `_s_trap_host` / `stvec_entry` trap stub.
-    /// Entry point is `_kernel_start`; user code must define `kmain`.
+    /// Kernel entry: minimal kernel entrypoint (`_kernel_start` -> `kmain`).
+    /// The larger set of reusable kernel helpers live in
+    /// `stdlib/kernel/utilities.hll` (exposed as `os_runtime::stdlib::KERNEL_UTILS`).
     pub const RUNTIME: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/kernel/kernel_runtime.hll"
+        "/kernel/entry.hll"
     ));
 
     /// S-mode trap dispatcher: `trap_handler(frame: u64*)`.

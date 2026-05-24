@@ -122,6 +122,27 @@ fn test_identity_mapping_in_bare_mode() {
 }
 
 #[test]
+fn test_sv39_noncanonical_address_faults() {
+    let mut mem = MockMemory::new();
+
+    // Bit 38 is set, but the upper bits are not sign-extended, so this is not canonical.
+    let vaddr = 0x0000_0040_0000_0000u64;
+    let satp = (8u64 << 60) | (0x1000 >> 12);
+
+    let result = mmu::translate(
+        vaddr,
+        satp,
+        PrivilegeMode::Supervisor,
+        0,
+        &mut mem,
+        false,
+        false,
+    );
+
+    assert!(matches!(result, Err(VmError::PageFault(addr)) if addr == vaddr));
+}
+
+#[test]
 fn test_sv39_translation() {
     let mut mem = MockMemory::new();
 

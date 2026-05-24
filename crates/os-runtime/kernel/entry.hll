@@ -1,0 +1,6 @@
+; Boot entry point
+_kernel_start: () -> () {
+    kmain()
+    kpanic("_kernel_start: kmain returned unexpectedly".data)
+}
+

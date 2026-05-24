@@ -4,7 +4,7 @@
 # _m_trap lands at offset 0x100 due to the .space 192 pad in startup.s.
 
 # _m_trap: M-mode trap handler at ROM offset 0x100.
-# Handles ecall from U/S/M-mode (causes 8, 9, 11); all other traps → mret.
+# Handles ecall from U/S/M-mode (causes 8, 9, 11); all other traps -> mret.
 # mtvec is loaded by _start (kernel) or directly by Pipeline::new (hosted).
 _m_trap:
     csrr t0, mcause
@@ -59,7 +59,7 @@ _write_error:
     li a0, -1
     j _advance_mepc_and_mret
 
-# sys_puts(ptr=a0) — null-terminated string + newline
+# sys_puts(ptr=a0) - null-terminated string + newline
 sys_puts:
     li t0, 268435456
     mv t1, a0
@@ -75,7 +75,7 @@ _puts_newline:
     li a0, 0
     j _advance_mepc_and_mret
 
-# sys_exit(code=a0) — write to SYSCON, bus halts VM
+# sys_exit(code=a0) - write to SYSCON, bus halts VM
 sys_exit:
     li t0, 268500992
     sd a0, 0(t0)

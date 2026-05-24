@@ -5,7 +5,7 @@ use hll_to_ir::{CompileConfig, HllCompiler, TargetMode};
 use ir_to_asm::CompilerRv64;
 use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 
-// ── helpers ──────────────────────────────────────────────────────────────────
+// -- helpers ------------------------------------------------------------------
 
 fn run_kernel_hll(user_src: &str) -> (String, Option<i64>) {
     let stdlib_compiler = HllCompiler::new(CompileConfig {
@@ -44,7 +44,7 @@ fn run_kernel_hll(user_src: &str) -> (String, Option<i64>) {
     (run.uart_output, exit)
 }
 
-// ── ROM / boot assembly source content ───────────────────────────────────────
+// -- ROM / boot assembly source content ---------------------------------------
 
 #[test]
 fn rom_source_is_startup_concatenated_with_trap() {
@@ -88,33 +88,33 @@ fn boot_trap_handles_ecalls() {
     );
 }
 
-// ── Kernel runtime source content ────────────────────────────────────────────
+// -- Kernel runtime source content --------------------------------------------
 
 #[test]
 fn kernel_runtime_exports_stvec_entry_label() {
     assert!(
-        kernel::RUNTIME.contains("stvec_entry:"),
-        "kernel runtime must define stvec_entry label for S-mode trap entry"
+        os_runtime::stdlib::KERNEL_UTILS.contains("stvec_entry:"),
+        "kernel stdlib utilities must define stvec_entry label for S-mode trap entry"
     );
 }
 
 #[test]
 fn kernel_runtime_defines_trap_init() {
     assert!(
-        kernel::RUNTIME.contains("trap_init:"),
-        "kernel runtime must define trap_init function"
+        os_runtime::stdlib::KERNEL_UTILS.contains("trap_init:"),
+        "kernel stdlib utilities must define trap_init function"
     );
 }
 
 #[test]
 fn kernel_runtime_defines_timer_set() {
     assert!(
-        kernel::RUNTIME.contains("timer_set:"),
-        "kernel runtime must define timer_set function"
+        os_runtime::stdlib::KERNEL_UTILS.contains("timer_set:"),
+        "kernel stdlib utilities must define timer_set function"
     );
 }
 
-// ── Trap handler source content ───────────────────────────────────────────────
+// -- Trap handler source content -----------------------------------------------
 
 #[test]
 fn trap_handler_rearms_timer_on_stip() {
@@ -132,7 +132,7 @@ fn trap_handler_advances_sepc_on_umode_ecall() {
     );
 }
 
-// ── Reference kernel source content ──────────────────────────────────────────
+// -- Reference kernel source content ------------------------------------------
 
 #[test]
 fn my_kernel_calls_trap_init() {
@@ -158,7 +158,7 @@ fn my_kernel_warns_for_unimplemented_device_tree() {
     );
 }
 
-// ── End-to-end kernel boot execution ─────────────────────────────────────────
+// -- End-to-end kernel boot execution -----------------------------------------
 
 #[test]
 fn kernel_boots_and_exits_cleanly() {
@@ -263,7 +263,7 @@ fn full_boot_output_matches_expected() {
          [  OK  ] vmm: initializing...\n\
          [  OK  ] vmm: root table allocated\n\
          [  OK  ] vmm: identity mappings created\n\
-         [  OK  ] vmm: using identity mapping (canonical VAs TODO)\n\
+         [  OK  ] vmm: using canonical lower-half identity mapping\n\
          [  OK  ] vmm: enabling MMU...\n\
          [  OK  ] mmu: sv39 enabled\n\
          [ WARN ] filesystem: not implemented\n\

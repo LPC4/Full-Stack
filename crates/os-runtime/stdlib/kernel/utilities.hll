@@ -172,8 +172,3 @@ sscratch_set: (val: u64) -> () {
     asm { csrw sscratch, a0 }
 }
 
-; Boot entry point.
-_kernel_start: () -> () {
-    kmain()
-    kpanic("_kernel_start: kmain returned unexpectedly".data)
-}

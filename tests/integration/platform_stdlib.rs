@@ -387,9 +387,15 @@ fn my_kernel_example_program() {
          [ WARN ] interrupt controller: not implemented\n\
          [  OK  ] running memory diagnostics...\n\
          [  OK  ] memory self-test passed\n\
-         [ WARN ] MMU: not implemented\n\
          [  OK  ] heap ready\n\
          [  OK  ] pmm ready\n\
+         [  OK  ] memory ops test passed\n\
+         [  OK  ] vmm: initializing...\n\
+         [  OK  ] vmm: root table allocated\n\
+         [  OK  ] vmm: identity mappings created\n\
+         [  OK  ] vmm: using canonical lower-half identity mapping\n\
+         [  OK  ] vmm: enabling MMU...\n\
+         [  OK  ] mmu: sv39 enabled\n\
          [ WARN ] filesystem: not implemented\n\
          [ WARN ] single hart, no SMP\n\
          hart id: 0\n\

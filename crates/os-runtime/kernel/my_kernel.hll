@@ -78,41 +78,32 @@ kmain: () -> () {
     pmm_free(test_page)
     klog_ok("memory ops test passed".data)
 
-    ; Initialize Sv39 MMU with proper canonical virtual addresses.
+    ; Initialize Sv39 MMU with canonical lower-half identity mappings.
     ; Must run after PMM is ready (vmm_init allocates the root page table via pmm_alloc).
-    ; 
-    ; Sv39 requires canonical addresses where bits [63:39] = bit 38.
-    ; We use the upper half (bit 38=1, bits[63:39]=all 1s) for kernel space.
-    ; Physical addresses are mapped to canonical virtual addresses:
-    ;   VA = 0xFFFF_FF80_0000_0000 + PA
     ;
-    ; For safe MMU enablement, we create TWO mappings:
-    ;   1. Identity mapping (PA = VA) for smooth transition
-    ;   2. Canonical mapping (VA = 0xFFFF_FF80_0000_0000 + PA) for proper operation
+    ; Sv39 requires canonical virtual addresses where bits [63:39] sign-extend bit 38.
+    ; The VM enforces that rule, so we keep the kernel in the canonical lower half and
+    ; map each physical range to the same virtual address (VA = PA).
     ;
     ; Flags: 38 = R(2)|W(4)|G(32),  46 = R(2)|W(4)|X(8)|G(32)
     klog_ok("vmm: initializing...".data)
     vmm_init()
     klog_ok("vmm: root table allocated".data)
     
-    ; Create identity mappings for MMU transition (required!)
+    ; Create identity mappings for MMU transition (already canonical in the lower half).
     vmm_map_1gib(0x00000000, 0, 38)               ; MMIO identity
     vmm_map_1gib(0x80000000, 0x80000000, 46)     ; RAM identity (code execution)
     vmm_map_1gib(0xC0000000, 0xC0000000, 46)     ; Stack/heap identity
     klog_ok("vmm: identity mappings created".data)
-    
-    ; Create canonical virtual address mappings for proper operation
-    ; Canonical upper half requires bits[63:39] = all 1s, bit 38 = 1
-    ; Since HLL doesn't support large u64 hex literals, we compute canonical VAs:
-    ;   VA = PA | 0xFFFF_FFFF_FF80_0000
-    ; We'll do this with bit manipulation after MMU enablement
-    ; For now, identity mapping is sufficient for MMU to work correctly
-    klog_ok("vmm: using identity mapping (canonical VAs TODO)".data)
-    
+
+    ; These identity mappings are canonical, so Sv39 can be enabled without
+    ; relocating the kernel or switching to a high-half address space.
+    klog_ok("vmm: using canonical lower-half identity mapping".data)
+
     klog_ok("vmm: enabling MMU...".data)
     vmm_enable()
     klog_ok("mmu: sv39 enabled".data)
-    
+
     ; Re-enable interrupts now that MMU is stable
     vmm_enable_interrupts()
 

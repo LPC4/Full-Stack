@@ -122,14 +122,14 @@ fn built_in_programs() -> Vec<ProgramFile> {
         ),
         // OS / kernel programs (read-only)
         {
-            let mut p = ProgramFile::os(
+                let mut p = ProgramFile::os(
                 "os-kernel-runtime",
                 "Kernel Runtime",
                 "Read-only kernel boot runtime: _kernel_start, kmalloc, kshutdown.",
-                include_str!(concat!(
-                    env!("CARGO_MANIFEST_DIR"),
-                    "/crates/os-runtime/kernel/kernel_runtime.hll"
-                )),
+                concat!(
+                    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/crates/os-runtime/stdlib/kernel/utilities.hll")),
+                    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/crates/os-runtime/kernel/entry.hll")),
+                ),
             );
             p.standalone = true;
             p

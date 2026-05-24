@@ -615,6 +615,37 @@ impl Instruction for SfenceVma {
     }
 }
 
+/// WFI - wait for interrupt (system instruction)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Wfi;
+
+impl Default for Wfi {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Wfi {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Instruction for Wfi {
+    fn encode(&self) -> u32 {
+        // Encoding for WFI (SYSTEM) -- instruction immediate 0x105, opcode 0x73
+        0x10500073
+    }
+
+    fn to_asm(&self) -> String {
+        "wfi".into()
+    }
+
+    fn mnemonic(&self) -> &'static str {
+        "wfi"
+    }
+}
+
 /// `fence pred, succ` - memory ordering fence.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Fence {

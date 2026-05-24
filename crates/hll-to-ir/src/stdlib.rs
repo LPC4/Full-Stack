@@ -60,7 +60,7 @@ pub fn get_kernel_stdlib_source() -> String {
         + stdlib::FREESTANDING_RUNTIME.len()
         + stdlib::FREESTANDING_CONSOLE.len()
         + stdlib::KLOG.len()
-        + kernel::RUNTIME.len()
+        + stdlib::KERNEL_UTILS.len()
         + kernel::TRAP_HANDLER.len()
         + kernel::PMM.len()
         + kernel::VMM.len()
@@ -89,9 +89,10 @@ pub fn get_kernel_stdlib_source() -> String {
         stdlib::FREESTANDING_CONSOLE,
     );
     append_section(&mut combined, "; --- stdlib: klog ---\n", stdlib::KLOG);
+    append_section(&mut combined, "; --- stdlib: kernel utils ---\n", stdlib::KERNEL_UTILS);
     append_section(
         &mut combined,
-        "; --- stdlib: kernel runtime ---\n",
+        "; --- stdlib: kernel entry (runtime) ---\n",
         kernel::RUNTIME,
     );
     append_section(

@@ -1,4 +1,4 @@
-﻿# RISC-V RV64 Bare-Metal Kernel Specification
+# RISC-V RV64 Bare-Metal Kernel Specification
 
 **Version:** 1.0.0  
 **Target Architecture:** RISC-V 64-bit (RV64IMAFD) with Machine/Supervisor Privilege and Sv39 Virtual Memory  
@@ -24,6 +24,28 @@ This specification establishes a clean separation between **hosted application c
 
 All platforms share the same memory map and device layout defined in Section 3.
 
+### 1.3 Layered view: ROM, Kernel, and the eventual OS
+
+To make the relationship between firmware, kernel and the higher-level OS clearer we adopt a layered view:
+
+- ROM (boot firmware)
+  - Role: Minimal, immutable code executed at reset. Sets initial CPU state, performs device initialization required to load a kernel (if present) and jumps to the kernel entry point. ROM runs in Machine mode and provides only the smallest infrastructure required by the platform.
+  - Where to find it in the repo: the VM embeds a small ROM image; the source-level assembly stubs used for tests/examples live in `crates/os-runtime/boot/` (e.g. `startup.s`, `trap.s`). The VM's ROM image is derived from these pieces for integration testing.
+  - What is implemented now: simple reset entry that sets registers and transfers control to `_start` (kernel entry). Future ROM work will include multi-stage boot support and optional recovery menus.
+
+- Kernel (freestanding runtime + core kernel code)
+  - Role: Initialize hardware (UART, timers, interrupt controllers), set up memory allocators, optionally initialize and enable paging (Sv39), configure trap/interrupt handling, and enter the main kernel loop. The kernel may choose to identity-map the canonical lower half or relocate itself depending on VM/real-hardware needs.
+  - Where to find it in the repo: `crates/os-runtime/kernel/` - contains `pmm.hll`, `vmm.hll`, `entry.hll` (minimal kernel entry) and `my_kernel.hll` (example kernel). Re-usable kernel helpers (kmalloc, timer helpers, trap prologue, etc.) live under `crates/os-runtime/stdlib/kernel/utilities.hll`. The freestanding stdlib used to build `_start` and minimal helpers lives under `crates/os-runtime/stdlib/freestanding/`.
+  - What is implemented now: `my_kernel.hll` demonstrates canonical lower-half identity mappings, basic PMM and VMM initialization, and UART-based startup logging. The runtime entry `_start` (provided by the compiler's freestanding runtime) sets up the initial stack and clears BSS.
+  - Planned kernel work: a pageable kernel configuration, richer allocators, more HAL drivers, and a small syscall surface for user processes.
+
+- Eventual OS (services, processes, drivers)
+  - Role: Layer that runs on top of the kernel: device drivers, userspace programs, filesystems, process management and scheduling, IPC and higher-level services.
+  - Where this lives in the repo: not yet implemented as a single module - future work will be placed under `crates/os-runtime/os/` or `crates/os/` depending on how the design evolves. Test programs that exercise kernel interfaces live in `programs/`.
+  - Planned items: a simple filesystem for tests, user-mode process support (with address-space isolation), syscall interface and a small set of user tools for integration testing.
+
+The remainder of this specification documents the machine model, calling conventions and ABI that the kernel and eventual OS must follow.
+
 ---
 
 ## 2. Compiler Target Modes
@@ -38,8 +60,8 @@ hllc --target=hosted program.hll -o program.elf
 **Characteristics:**
 - Links against full HLL stdlib (`runtime.hll`, `string_utils.hll`, etc.)
 - Uses Linux syscalls for I/O (`ecall` with `a7=64` for write, `a7=93` for exit)
-- Entry point: `_start` → calls `main()` → calls `exit(return_code)`
-- Heap allocation: `new(T)` → `call malloc`, `free(ptr)` → `call free`
+- Entry point: `_start` -> calls `main()` -> calls `exit(return_code)`
+- Heap allocation: `new(T)` -> `call malloc`, `free(ptr)` -> `call free`
 - Console output: `putchar`, `printf` use `sys_write(fd=1, ...)`
 - Process termination: `exit(code)` uses `sys_exit(code)`
 
@@ -53,7 +75,7 @@ hllc --target=riscv64-bare-metal --entry=kernel_main src/*.hll -o kernel.elf
 **Characteristics:**
 - Links against minimal freestanding runtime (intrinsics only)
 - **No syscalls:** All `ecall` instructions are explicit in user code
-- Entry point: `_start` (provided by runtime) → calls `kernel_main(a0, a1)`
+- Entry point: `_start` (provided by runtime) -> calls `kernel_main(a0, a1)`
 - Heap allocation: Not provided by runtime; kernel implements its own allocator
 - Console output: Kernel provides `platform_putc(c: i32)` primitive
 - No process termination: Kernel runs forever or halts explicitly
@@ -160,7 +182,7 @@ set_timer_interrupt: (interval_cycles: u64) -> () {
 **Purpose:** Routes external interrupts (e.g., UART RX, disk I/O) to CPU harts with priority arbitration.
 
 **Memory Layout:**
-- `0x0000-0x007C`: Priority registers (32 sources × 4 bytes)
+- `0x0000-0x007C`: Priority registers (32 sources x 4 bytes)
 - `0x1000-0x107C`: Pending bits (bitfield, 1 bit per source)
 - `0x2000-0x207C`: Enable bits (per-context, 1 bit per source)
 - `0x200000`: Threshold register (per-context)
@@ -169,8 +191,8 @@ set_timer_interrupt: (interval_cycles: u64) -> () {
 **Operation:**
 1. External device calls `plic_set_irq(source_id)` to assert interrupt
 2. CPU checks `plic_claim(hart_id)` before each instruction fetch
-3. Handler reads claim register → returns highest-priority pending IRQ
-4. Handler writes IRQ ID to complete register → clears pending bit
+3. Handler reads claim register -> returns highest-priority pending IRQ
+4. Handler writes IRQ ID to complete register -> clears pending bit
 
 **Example: Claim next interrupt**
 ```hll
@@ -334,27 +356,27 @@ The boot process follows this sequence:
 
 ```
 1. Boot ROM/Firmware
-   ├─ Loads kernel image from boot media (disk, network, etc.)
-   ├─ Copies image to RAM at 0x8000_0000
-   ├─ Sets a0 = hart_id, a1 = dtb_pointer (or 0)
-   └─ Jumps to _start (kernel entry point)
+   +- Loads kernel image from boot media (disk, network, etc.)
+   +- Copies image to RAM at 0x8000_0000
+   +- Sets a0 = hart_id, a1 = dtb_pointer (or 0)
+   +- Jumps to _start (kernel entry point)
 
 2. Kernel Entry Stub (_start) [provided by freestanding runtime]
-   ├─ Sets sp = __stack_top
-   ├─ Clears BSS (__bss_start to __bss_end)
-   ├─ (Optional) Initializes global constructors
-   └─ Calls kernel_main(a0, a1)
+   +- Sets sp = __stack_top
+   +- Clears BSS (__bss_start to __bss_end)
+   +- (Optional) Initializes global constructors
+   +- Calls kernel_main(a0, a1)
 
 3. kernel_main(a0: u64, a1: u64) [provided by kernel author]
-   ├─ Initializes platform primitives (uart_init, etc.)
-   ├─ Prints startup banner
-   ├─ Sets up trap handlers (mtvec, stvec)
-   ├─ Initializes memory allocators
-   ├─ Enables interrupts (if ready)
-   └─ Enters main loop (never returns)
+   +- Initializes platform primitives (uart_init, etc.)
+   +- Prints startup banner
+   +- Sets up trap handlers (mtvec, stvec)
+   +- Initializes memory allocators
+   +- Enables interrupts (if ready)
+   +- Enters main loop (never returns)
 
 4. If kernel_main returns [error condition]
-   └─ Entry stub calls platform_halt()
+   +- Entry stub calls platform_halt()
 ```
 
 ### 5.3 Entry Stub Implementation
@@ -443,15 +465,15 @@ The kernel uses the standard RISC-V calling convention without modification:
 **Frame Structure:**
 ```
 High addresses
-┌──────────────────────┐
-│   Caller's frame     │
-├──────────────────────┤
-│   Return address (ra)│ ← sp + N - 8
-│   Saved registers    │ ← sp + N - 16, sp + N - 24, ...
-│   Local variables    │ ← sp + 0, sp + 8, ...
-├──────────────────────┤
-│   Current frame      │ ← sp (16-byte aligned)
-└──────────────────────┘
++----------------------+
+|   Caller's frame     |
++----------------------+
+|   Return address (ra)| <- sp + N - 8
+|   Saved registers    | <- sp + N - 16, sp + N - 24, ...
+|   Local variables    | <- sp + 0, sp + 8, ...
++----------------------+
+|   Current frame      | <- sp (16-byte aligned)
++----------------------+
 Low addresses
 ```
 
@@ -497,9 +519,9 @@ The compiler provides two mutually exclusive runtime modes:
 **Entry Flow:**
 ```
 _start (from runtime.hll)
-  ↓
+  v
 main() (user-defined)
-  ↓
+  v
 exit(return_code) (syscall)
 ```
 
@@ -524,12 +546,12 @@ exit(return_code) (syscall)
 **Entry Flow:**
 ```
 _start (from freestanding runtime)
-  ↓
+  v
 Set sp = __stack_top
 Clear BSS
-  ↓
+  v
 kernel_main(a0, a1) (kernel-defined)
-  ↓
+  v
 [Never returns; if it does, call platform_halt()]
 ```
 
@@ -600,686 +622,3 @@ The kernel **must** provide a small set of platform primitives that replace host
 ; Platform Primitives for QEMU virt / Project VM
 ; ============================================================================
 
-; UART base address
-const UART_BASE = 0x10000000
-const UART_LSR = 0x05  ; Line Status Register offset
-const UART_THR = 0x00  ; Transmitter Holding Register offset
-
-; Output a single character to UART (blocking)
-platform_putc: (c: i32) -> () {
-    ; Wait until TX holding register is empty (LSR bit 5 = 1)
-    while (*((u8*)(UART_BASE + UART_LSR)) & 0x20) == 0 {
-        ; spin
-    }
-    ; Write character to THR
-    *((u8*)(UART_BASE + UART_THR)) = u8(c)
-}
-
-; Halt the system (infinite loop)
-platform_halt: () -> ! {
-    loop {
-        ; Optionally use WFI (wait for interrupt) to reduce power
-        asm {
-            wfi
-        }
-    }
-}
-
-; Read a character from UART (non-blocking)
-platform_getc: () -> i32 {
-    if (*((u8*)(UART_BASE + UART_LSR)) & 0x01) != 0 {
-        return i32(*((u8*)(UART_BASE + UART_THR)))
-    }
-    return -1
-}
-
-; Get timer frequency (hardcoded for QEMU virt)
-platform_timer_freq: () -> u64 {
-    return 10000000  ; 10 MHz
-}
-
-; Get current time from CLINT MTIME
-platform_get_time: () -> u64 {
-    return *((u64*)0x0200BFF8)
-}
-```
-
-### 8.4 Panic Implementation
-
-The freestanding runtime provides `panic` which uses the HAL primitives:
-
-```hll
-; Provided by freestanding runtime (compiler-built)
-panic: (message: u8*) -> ! {
-    ; Print "PANIC: " prefix
-    panic_prefix: u8* = "PANIC: "
-    i: u64 = 0
-    while @panic_prefix[i] != 0 {
-        platform_putc(i32(@panic_prefix[i]))
-        i = i + 1
-    }
-    
-    ; Print message
-    i = 0
-    while @message[i] != 0 {
-        platform_putc(i32(@message[i]))
-        i = i + 1
-    }
-    
-    ; Newline
-    platform_putc(10)
-    
-    ; Halt
-    platform_halt()
-}
-```
-
-**Usage in kernel code:**
-```hll
-kernel_main: (hart_id: u64, dtb_ptr: u64) -> () {
-    if hart_id != 0 {
-        panic("Only hart 0 is supported")
-    }
-    ; ... rest of kernel initialization
-}
-```
-
----
-
-## 9. Trap Handling
-
-### 9.1 Trap Types
-
-RISC-V distinguishes between **exceptions** (synchronous) and **interrupts** (asynchronous):
-
-**Exceptions (synchronous):**
-- Instruction address misaligned
-- Instruction access fault
-- Illegal instruction
-- Breakpoint (`ebreak`)
-- Load/store address misaligned
-- Load/store access fault
-- Environment call (`ecall`) from U/S/M mode
-- Instruction/load/store page fault (when Sv39 is enabled)
-
-**Interrupts (asynchronous):**
-- Machine software interrupt (MSIP in CLINT)
-- Machine timer interrupt (MTIMECMP in CLINT)
-- Machine external interrupt (PLIC)
-- Supervisor/user variants (if delegation is enabled)
-
-### 9.2 Trap Entry Sequence
-
-When a trap occurs in Machine mode:
-
-1. **Hardware saves state:**
-    - `mepc` ← PC of trapped instruction (or next instruction for async interrupts)
-    - `mcause` ← Exception/interrupt code (bit 63 = 1 for interrupts)
-    - `mtval` ← Fault address (for address faults) or faulting instruction (for illegal instruction)
-    - `mstatus.MPIE` ← `mstatus.MIE` (save interrupt enable)
-    - `mstatus.MIE` ← 0 (disable further interrupts)
-    - `mstatus.MPP` ← Current privilege mode (always 3 = M-mode in this spec)
-
-2. **Hardware jumps to handler:**
-    - If `mtvec.MODE` = 0 (direct): `pc` ← `mtvec.BASE`
-    - If `mtvec.MODE` = 1 (vectored) and interrupt: `pc` ← `mtvec.BASE + (mcause × 4)`
-    - If `mtvec.MODE` = 1 (vectored) and exception: `pc` ← `mtvec.BASE`
-
-3. **Software handler executes:**
-    - Save caller-saved registers to trap frame
-    - Call HLL trap handler: `trap_handler(cause, epc, tval, &frame)`
-    - Restore registers from returned frame
-    - Execute `mret` to return from trap
-
-### 9.3 Trap Frame Layout
-
-The kernel defines a `TrapFrame` struct to save register state:
-
-```hll
-type TrapFrame = {
-    regs: u64[32],      ; x0..x31 (general-purpose registers)
-    fregs: u64[32],     ; f0..f31 (floating-point registers, optional)
-    pc: u64,            ; Program counter (mepc)
-    mstatus: u64,       ; Machine status (mstatus)
-    mcause: u64,        ; Trap cause (mcause)
-    mtval: u64,         ; Trap value (mtval)
-}
-```
-
-**Memory Layout:**
-```
-Offset  Field
-0       regs[0]  (x0, hardwired to 0)
-8       regs[1]  (ra)
-16      regs[2]  (sp)
-...     ...
-248     regs[31] (t6)
-256     fregs[0] (ft0)
-...     ...
-512     pc
-520     mstatus
-528     mcause
-536     mtval
-Total: 544 bytes (without FP) or 800 bytes (with FP)
-```
-
-### 9.4 Trap Handler Implementation
-
-**Assembly Stub (entry point):**
-```assembly
-.global trap_entry
-trap_entry:
-    ; Allocate space for trap frame on stack
-    addi   sp, sp, -544
-    
-    ; Save general-purpose registers
-    sd     x0, 0(sp)      ; x0 is always 0, but save for consistency
-    sd     x1, 8(sp)      ; ra
-    sd     x2, 16(sp)     ; sp (will be restored later)
-    sd     x3, 24(sp)     ; gp
-    ; ... save x4-x31 ...
-    
-    ; Save CSRs
-    csrr   t0, mepc
-    sd     t0, 512(sp)    ; pc
-    csrr   t0, mstatus
-    sd     t0, 520(sp)    ; mstatus
-    csrr   t0, mcause
-    sd     t0, 528(sp)    ; mcause
-    csrr   t0, mtval
-    sd     t0, 536(sp)    ; mtval
-    
-    ; Prepare arguments for HLL handler
-    ; a0 = mcause, a1 = mepc, a2 = mtval, a3 = &frame
-    mv     a0, t0         ; a0 = mcause (already in t0)
-    ld     a1, 512(sp)    ; a1 = mepc
-    ld     a2, 536(sp)    ; a2 = mtval
-    addi   a3, sp, 0      ; a3 = &frame
-    
-    ; Call HLL trap handler
-    jal    ra, trap_handler
-    
-    ; Restore CSRs
-    ld     t0, 520(sp)    ; t0 = mstatus
-    csrw   mstatus, t0
-    ld     t0, 512(sp)    ; t0 = mepc
-    csrw   mepc, t0
-    
-    ; Restore general-purpose registers
-    ld     x1, 8(sp)      ; ra
-    ; ... restore x3-x31 ...
-    ld     x2, 16(sp)     ; sp (last, as we're deallocating stack)
-    
-    ; Return from trap
-    mret
-```
-
-**HLL Handler:**
-```hll
-trap_handler: (cause: u64, epc: u64, tval: u64, frame: &TrapFrame) -> TrapFrame {
-    is_interrupt: bool = (cause >> 63) != 0
-    exception_code: u64 = cause & 0x7FFFFFFFFFFFFFFF
-    
-    if is_interrupt {
-        handle_interrupt(exception_code, frame)
-    } else {
-        handle_exception(exception_code, epc, tval, frame)
-    }
-    
-    return *frame
-}
-
-handle_exception: (code: u64, epc: u64, tval: u64, frame: &TrapFrame) -> () {
-    case code {
-        2 => {
-            ; Illegal instruction
-            panic_with_regs("Illegal instruction", epc, frame)
-        }
-        11 => {
-            ; Environment call from M-mode
-            handle_ecall(frame)
-            frame.pc = frame.pc + 4  ; Skip ecall instruction
-        }
-        _ => {
-            panic_with_regs("Unhandled exception", epc, frame)
-        }
-    }
-}
-
-handle_interrupt: (code: u64, frame: &TrapFrame) -> () {
-    case code {
-        7 => {
-            ; Machine timer interrupt
-            handle_timer_interrupt()
-        }
-        11 => {
-            ; Machine external interrupt (PLIC)
-            handle_external_interrupt()
-        }
-        _ => {
-            panic_with_regs("Unhandled interrupt", frame.pc, frame)
-        }
-    }
-}
-```
-
-### 9.5 Setting Up Trap Vector
-
-The kernel must configure `mtvec` before enabling traps:
-
-```hll
-setup_traps: () -> () {
-    ; Set trap vector to trap_entry (direct mode)
-    asm {
-        la     t0, trap_entry
-        csrw   mtvec, t0
-    }
-    
-    ; Enable machine timer interrupt in mie
-    current_mie: u64 = asm_csr(mie)
-    asm {
-        csrs   mie, 0x80  ; Set MTIE bit (bit 7)
-    }
-    
-    ; Enable global interrupts in mstatus
-    asm {
-        csrs   mstatus, 0x8  ; Set MIE bit (bit 3)
-    }
-}
-```
-
----
-
-## 10. Memory Management
-
-### 10.1 Initial Memory Layout
-
-At kernel entry (after BSS is cleared):
-
-```
-Address                  Content
-0x00000000               Boot ROM (read-only, not part of kernel)
-...
-0x80000000               Kernel .text section (entry point _start)
-0x80000000 + text_size   Kernel .rodata section
-0x80000000 + rodata_size Kernel .data section
-0x80000000 + data_size   Kernel .bss section (zero-filled)
-__bss_end                End of kernel image
-__bss_end                Start of available memory
-...                      Free RAM for kernel allocators
-__stack_top - 64KB       Bottom of initial stack (grows downward)
-__stack_top              Top of initial stack (sp starts here)
-0xFFFFFFFF               End of RAM
-```
-
-**Available Memory Regions:**
-- **Heap:** From `__bss_end` to `__stack_top - 64KB` (kernel can adjust boundaries)
-- **Stack:** 64 KB region ending at `__stack_top` (initial stack only; kernel can allocate more)
-
-### 10.2 Physical Page Allocator
-
-The kernel should implement a simple physical page allocator before enabling virtual memory:
-
-**Bump Allocator (simplest):**
-```hll
-const PAGE_SIZE = 4096
-
-type PhysicalAllocator = {
-    next_page: u64,      ; Next available physical page
-    end_page: u64,       ; End of available memory
-}
-
-global_phys_alloc: PhysicalAllocator
-
-init_physical_allocator: () -> () {
-    global_phys_alloc.next_page = align_up(__bss_end, PAGE_SIZE)
-    global_phys_alloc.end_page = __stack_top - 0x10000  ; Reserve stack space
-}
-
-alloc_page: () -> u64 {
-    if global_phys_alloc.next_page >= global_phys_alloc.end_page {
-        panic("Out of physical memory")
-    }
-    page_addr: u64 = global_phys_alloc.next_page
-    global_phys_alloc.next_page = global_phys_alloc.next_page + PAGE_SIZE
-    return page_addr
-}
-
-free_page: (page_addr: u64) -> () {
-    ; Bump allocator doesn't support free (use more sophisticated allocator for production)
-    panic("free_page not implemented for bump allocator")
-}
-
-align_up: (addr: u64, alignment: u64) -> u64 {
-    return (addr + alignment - 1) & !(alignment - 1)
-}
-```
-
-### 10.3 Virtual Memory (Sv39)
-
-Once the physical allocator is ready, the kernel can enable Sv39 paging:
-
-**Page Table Structure:**
-- 3-level page table (L2 → L1 → L0)
-- Each page table occupies one 4 KB page
-- Each PTE (Page Table Entry) is 8 bytes
-- 512 PTEs per page table (4096 / 8)
-
-**Enabling Paging:**
-```hll
-enable_paging: () -> () {
-    ; Allocate root page table (L2)
-    root_pt: u64 = alloc_page()
-    
-    ; Map kernel image identity (virtual = physical)
-    map_region_identity(root_pt, 0x80000000, 0x80000000, kernel_image_size, READ | WRITE | EXECUTE)
-    
-    ; Map UART, CLINT, PLIC identity (MMIO devices)
-    map_region_identity(root_pt, 0x10000000, 0x10000000, 0x1000, READ | WRITE)
-    map_region_identity(root_pt, 0x02000000, 0x02000000, 0x10000, READ | WRITE)
-    map_region_identity(root_pt, 0x0C000000, 0x0C000000, 0x1000000, READ | WRITE)
-    
-    ; Set SATP to enable Sv39
-    satp_value: u64 = (8 << 60) | (root_pt >> 12)  ; MODE=8 (Sv39), PPN=root_pt/4096
-    asm {
-        csrw   satp, a0
-        sfence.vma  ; Flush TLB
-    }
-}
-```
-
-**Note:** After enabling paging, all addresses are virtual. The kernel must ensure its own mappings are correct before switching.
-
----
-
-## 11. Build System Integration
-
-### 11.1 Compiler Command-Line Interface
-
-**Basic kernel build:**
-```bash
-hllc --target=riscv64-bare-metal \
-     --entry=kernel_main \
-     -o kernel.elf \
-     src/kernel.hll src/platform.hll src/memory.hll
-```
-
-**With custom linker script:**
-```bash
-hllc --target=riscv64-bare-metal \
-     --entry=kernel_main \
-     --linker-script=kernel.ld \
-     -o kernel.elf \
-     src/*.hll
-```
-
-**Generate flat binary:**
-```bash
-hllc --target=riscv64-bare-metal \
-     --entry=kernel_main \
-     --binary \
-     -o kernel.bin \
-     src/*.hll
-```
-
-**Debug symbols:**
-```bash
-hllc --target=riscv64-bare-metal \
-     --entry=kernel_main \
-     --debug \
-     -o kernel.elf \
-     src/*.hll
-```
-
-### 11.2 Build Options
-
-| Option | Description | Default |
-|--------|-------------|---------|
-| `--target` | Target mode: `hosted` or `riscv64-bare-metal` | `hosted` |
-| `--entry` | Kernel entry function name | `kernel_main` |
-| `--linker-script` | Path to custom linker script | Built-in default |
-| `--binary` | Generate flat binary in addition to ELF | Disabled |
-| `--debug` | Include debug symbols in ELF | Disabled |
-| `-o` | Output file path | `a.out` or `a.bin` |
-
-### 11.3 IDE Integration
-
-The project's GUI should provide:
-- **Target selector dropdown:** Hosted vs. Bare-Metal
-- **Entry point field:** Configurable kernel entry function
-- **Build button:** Compiles with appropriate flags
-- **Output panel:** Shows compilation diagnostics
-- **Memory view:** Displays kernel image layout (sections, symbols)
-- **Serial console:** Captures UART output from VM execution
-
----
-
-## 12. Testing and Debugging
-
-### 12.1 Minimal Kernel Test
-
-A kernel that fulfills this contract must:
-
-1. Provide `platform_putc` and `platform_halt`
-2. Define `kernel_main(a0: u64, a1: u64)`
-3. Print a startup message to UART
-4. Enter an infinite loop (or halt)
-
-**Example:**
-```hll
-; ============================================================================
-; Minimal Kernel Test
-; ============================================================================
-
-external platform_putc: (c: i32) -> ()
-external platform_halt: () -> !
-
-; Print a string to UART
-print_string: (str: u8*) -> () {
-    i: u64 = 0
-    while @str[i] != 0 {
-        platform_putc(i32(@str[i]))
-        i = i + 1
-    }
-}
-
-; Kernel entry point
-kernel_main: (hart_id: u64, dtb_ptr: u64) -> () {
-    print_string("Hello from kernel!\n")
-    print_string("Hart ID: ")
-    print_digit(hart_id)
-    print_string("\n")
-    
-    ; Infinite loop
-    loop {
-        asm {
-            wfi
-        }
-    }
-}
-
-; Helper: Print a single digit (0-9)
-print_digit: (d: u64) -> () {
-    if d < 10 {
-        platform_putc(i32(d) + 48)
-    }
-}
-```
-
-**Expected Output:**
-```
-Hello from kernel!
-Hart ID: 0
-```
-
-### 12.2 QEMU Testing
-
-**Run kernel in QEMU:**
-```bash
-qemu-system-riscv64 \
-    -machine virt \
-    -nographic \
-    -kernel kernel.elf \
-    -m 2G
-```
-
-**Exit QEMU:** Press `Ctrl+A` then `X`
-
-### 12.3 VM Testing
-
-The project's built-in VM can load and execute the kernel:
-
-1. Compile kernel with `--target=riscv64-bare-metal`
-2. Load ELF into VM (parser reads sections, places at correct addresses)
-3. Set PC to `_start` symbol address
-4. Execute until `platform_halt()` is called (infinite loop detected)
-5. Capture UART output for display in GUI
-
-### 12.4 Debugging Techniques
-
-**Serial Debugging:**
-- Use `platform_putc` to print debug messages
-- Print register values, memory contents, trap causes
-- Add timestamps using `platform_get_time()`
-
-**Trap Inspection:**
-- On panic, print `mcause`, `mepc`, `mtval`
-- Dump trap frame registers
-- Decode exception type from `mcause`
-
-**Memory Inspection:**
-- Add commands to dump memory regions
-- Print page table entries (if paging is enabled)
-- Show allocator state (free lists, used pages)
-
----
-
-## Appendix A: Quick Reference
-
-### A.1 Memory Map Summary
-```
-0x00000000 - 0x0FFFFFFF : Boot ROM (256 MB)
-0x10000000 - 0x10000007 : UART (8 bytes)
-0x02000000 - 0x0200FFFF : CLINT (64 KB)
-0x0C000000 - 0x0CFFFFFF : PLIC (16 MB)
-0x80000000 - 0xFFFFFFFF : RAM (2 GB)
-```
-
-### A.2 Exception Codes
-```
-0  : Instruction address misaligned
-1  : Instruction access fault
-2  : Illegal instruction
-3  : Breakpoint
-4  : Load address misaligned
-5  : Load access fault
-6  : Store/AMO address misaligned
-7  : Store/AMO access fault
-8  : Environment call from U-mode
-11 : Environment call from M-mode
-12 : Instruction page fault (Sv39)
-13 : Load page fault (Sv39)
-15 : Store/AMO page fault (Sv39)
-```
-
-### A.3 Interrupt Codes (bit 63 set)
-```
-3  : Machine software interrupt
-7  : Machine timer interrupt
-11 : Machine external interrupt
-```
-
-### A.4 CSR Addresses
-```
-mstatus    = 0x300
-mie        = 0x304
-mtvec      = 0x305
-mscratch   = 0x340
-mepc       = 0x341
-mcause     = 0x342
-mtval      = 0x343
-mip        = 0x344
-satp       = 0x180
-mcycle     = 0xB00
-minstret   = 0xB02
-```
-
-### A.5 Build Commands
-```bash
-# ELF format
-hllc --target=riscv64-bare-metal --entry=kernel_main -o kernel.elf src/*.hll
-
-# Flat binary
-hllc --target=riscv64-bare-metal --entry=kernel_main --binary -o kernel.bin src/*.hll
-
-# QEMU execution
-qemu-system-riscv64 -machine virt -nographic -kernel kernel.elf -m 2G
-```
-
----
-
-## Appendix B: Migration Guide
-
-### B.1 Converting Hosted Code to Freestanding
-
-**Step 1: Replace I/O functions**
-```hll
-; Before (hosted)
-putchar(65)
-printf("Value: %d\n", x)
-
-; After (freestanding)
-platform_putc(65)
-print_string("Value: ")
-print_int(x)
-platform_putc(10)
-```
-
-**Step 2: Remove exit calls**
-```hll
-; Before (hosted)
-if error {
-    exit(1)
-}
-
-; After (freestanding)
-if error {
-    panic("Error occurred")
-}
-```
-
-**Step 3: Provide custom allocator**
-```hll
-; Before (hosted)
-ptr: i32* = new(i32)
-free(ptr)
-
-; After (freestanding)
-ptr: i32* = kernel_alloc(sizeof(i32))
-kernel_free(ptr)
-```
-
-**Step 4: Change entry point**
-```hll
-; Before (hosted)
-main: () -> i32 {
-    return 0
-}
-
-; After (freestanding)
-kernel_main: (hart_id: u64, dtb_ptr: u64) -> () {
-    ; Never returns
-}
-```
-
-### B.2 Common Pitfalls
-
-1. **Forgetting to clear BSS:** Uninitialized globals will contain garbage
-2. **Using hosted I/O by accident:** Compiler will catch this, but be aware
-3. **Stack overflow:** Initial stack is only 64 KB; allocate more if needed
-4. **Not setting up trap handlers:** Traps will jump to undefined addresses
-5. **Enabling interrupts too early:** Set up handlers before enabling interrupts
-
----
-
-**End of Specification**

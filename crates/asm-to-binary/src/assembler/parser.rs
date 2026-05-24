@@ -14,7 +14,7 @@ use super::section::SectionKind;
 use super::token::{AsmToken, BranchKind};
 use crate::real::RealInstruction;
 use crate::riscv::rv64i::{
-    Add, Addi, And, Andi, Ecall, Jalr, Lb, Lbu, Ld, Mret, Or, Ori, Sb, Sd, SfenceVma, Slli, Srl,
+    Add, Addi, And, Andi, Ecall, Jalr, Lb, Lbu, Ld, Mret, Wfi, Or, Ori, Sb, Sd, SfenceVma, Slli, Srl,
     Srli, Sret, Sub,
 };
 use crate::riscv::rv64m::{Divu, Remu};
@@ -56,13 +56,15 @@ pub fn parse(tokens: &[RvInstruction]) -> Vec<AsmToken> {
 // ---------------------------------------------------------------------------
 
 fn parse_directive_or_instruction(raw: &str, out: &mut Vec<AsmToken>) {
-    // Strip trailing inline `;` comments before any classification.
-    // Exception: `.asciz` lines may contain `;` inside the string literal and
-    // are handled by the directive parser which already understands quoting.
+    // Strip trailing inline `;` or `#` comments before any classification.
+    // Exception: `.asciz` lines may contain these characters inside the
+    // string literal and are handled by the directive parser which already
+    // understands quoting.
     let raw = if raw.trim_start().starts_with(".asciz") {
         raw
     } else {
-        match raw.find(';') {
+        // Find first of comment chars `;` or `#` and cut there.
+        match raw.find(|c| c == ';' || c == '#') {
             Some(i) => raw[..i].trim_end(),
             None => raw,
         }
@@ -132,8 +134,8 @@ fn push_directive(dir: Directive, out: &mut Vec<AsmToken>) {
 /// May push more than one token (e.g. `li` expands to up to two real instructions).
 /// Unrecognised mnemonics are emitted as `AsmToken::Comment` so nothing is silently lost.
 fn parse_instruction_line(line: &str, out: &mut Vec<AsmToken>) {
-    // Strip inline `;` comments before any operand parsing.
-    let line = match line.find(';') {
+    // Strip inline `;` or `#` comments before any operand parsing.
+    let line = match line.find(|c| c == ';' || c == '#') {
         Some(i) => line[..i].trim_end(),
         None => line,
     };
@@ -199,9 +201,21 @@ fn parse_instruction_line(line: &str, out: &mut Vec<AsmToken>) {
         return;
     }
 
+    // `wfi`
+    if mnemonic == "wfi" {
+        out.push(AsmToken::Real(RealInstruction::Wfi(Wfi::new())));
+        return;
+    }
+
     // `ret`  →  jalr x0, 0(ra)
     if mnemonic == "ret" {
         out.push(AsmToken::Real(RealInstruction::Jalr(Jalr::new(0, 1, 0))));
+        return;
+    }
+
+    // `nop` → addi x0, x0, 0
+    if mnemonic == "nop" {
+        out.push(AsmToken::Real(RealInstruction::Addi(Addi::new(0, 0, 0))));
         return;
     }
 
@@ -252,6 +266,17 @@ fn parse_instruction_line(line: &str, out: &mut Vec<AsmToken>) {
         return;
     }
 
+    // Store: `sw rs2, imm(rs1)`  (32-bit store)
+    if mnemonic == "sw" {
+        if let Some((rs2, rs1, imm)) = parse_store_mem(rest) {
+            use crate::riscv::rv64i::Sw;
+            out.push(AsmToken::Real(RealInstruction::Sw(Sw::new(rs1, rs2, imm))));
+            return;
+        }
+        asm_warn!(out, "unrecognised sw: {line}");
+        return;
+    }
+
     // Store: `sb rs2, imm(rs1)`
     if mnemonic == "sb" {
         if let Some((rs2, rs1, imm)) = parse_store_mem(rest) {
@@ -269,6 +294,17 @@ fn parse_instruction_line(line: &str, out: &mut Vec<AsmToken>) {
             return;
         }
         asm_warn!(out, "unrecognised ld: {line}");
+        return;
+    }
+
+    // Load: `lw rd, imm(rs1)`  (32-bit load)
+    if mnemonic == "lw" {
+        if let Some((rd, rs1, imm)) = parse_load_mem(rest) {
+            use crate::riscv::rv64i::Lw;
+            out.push(AsmToken::Real(RealInstruction::Lw(Lw::new(rd, rs1, imm))));
+            return;
+        }
+        asm_warn!(out, "unrecognised lw: {line}");
         return;
     }
 

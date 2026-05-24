@@ -12,7 +12,7 @@ use super::riscv::rv64fd::{
 };
 use super::riscv::rv64i::{
     Add, Addi, Addiw, Addw, And, Andi, Auipc, Beq, Bge, Bgeu, Blt, Bltu, Bne, Ebreak, Ecall, Fence,
-    FenceI, Jal, Jalr, Lb, Lbu, Ld, Lh, Lhu, Lui, Lw, Lwu, Mret, Or, Ori, Sb, Sd, Sh, SfenceVma,
+     FenceI, Jal, Jalr, Lb, Lbu, Ld, Lh, Lhu, Lui, Lw, Lwu, Mret, Wfi, Or, Ori, Sb, Sd, Sh, SfenceVma,
     Sll, Slli, Slliw, Sllw, Slt, Slti, Sltiu, Sltu, Sra, Srai, Sraiw, Sraw, Srl, Srli, Srliw,
     Srlw, Sret, Sub, Subw, Sw, Xor, Xori,
 };
@@ -108,6 +108,7 @@ pub enum RealInstruction {
     Mret(Mret),
     Sret(Sret),
     SfenceVma(SfenceVma),
+    Wfi(Wfi),
     Fence(Fence),
     FenceI(FenceI),
 
@@ -323,6 +324,7 @@ macro_rules! delegate {
             Self::Mret(i)      => i.$method($($arg),*),
             Self::Sret(i)      => i.$method($($arg),*),
             Self::SfenceVma(i) => i.$method($($arg),*),
+            Self::Wfi(i)       => i.$method($($arg),*),
             Self::Fence(i)     => i.$method($($arg),*),
             Self::FenceI(i)    => i.$method($($arg),*),
             Self::Mul(i)       => i.$method($($arg),*),

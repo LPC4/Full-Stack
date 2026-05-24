@@ -16,7 +16,7 @@ memcpy: (dst: u8*, src: u8*, n: u64) -> u8* {
     return dst
 }
 
-; Backward copy (high→low): safe when dst >= src; use memcpy when dst < src with overlap.
+; Backward copy (high->low): safe when dst >= src; use memcpy when dst < src with overlap.
 memmove: (dst: u8*, src: u8*, n: u64) -> u8* {
     if n == 0 {
         return dst
