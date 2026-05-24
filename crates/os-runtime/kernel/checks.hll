@@ -1,0 +1,57 @@
+; Kernel infrastructure checks and diagnostics.
+; These functions validate kernel systems during boot.
+
+external kmalloc:       (size: u64) -> u8*
+external klog_error:    (msg: u8*) -> ()
+external klog_ok:       (msg: u8*) -> ()
+external kshutdown:     (code: i64) -> ()
+external pmm_alloc:     () -> u8*
+external pmm_free:      (page: u8*) -> ()
+
+; Memory integrity check:
+; Returns:
+;  - 1 on success
+;  - 0 on failure
+memory_self_test: (size: u64) -> i64 {
+    test_buf: u8* = kmalloc(size)
+
+    i: u64 = 0
+    while i < size {
+        pattern: u8 = 170
+        if i % 2 != 0 { pattern = 85 }
+        @test_buf[i] = pattern
+        i = i + 1
+    }
+
+    i = 0
+    while i < size {
+        expected: u8 = 170
+        if i % 2 != 0 { expected = 85 }
+        if @test_buf[i] != expected {
+            klog_error("memory self-test failed".data)
+            return 0
+        }
+        i = i + 1
+    }
+
+    klog_ok("memory self-test passed".data)
+    return 1
+}
+
+; Test basic memory operations (PMM allocation, pointer write/read, deallocation).
+; Halts the kernel on failure.
+pmm_ops_test: () -> () {
+    test_page: u8* = pmm_alloc()
+    if test_page == null {
+        klog_error("halt: test alloc failed".data)
+        kshutdown(1)
+    }
+    @test_page[0] = 42
+    if @test_page[0] != 42 {
+        klog_error("halt: test write/read failed".data)
+        kshutdown(1)
+    }
+    pmm_free(test_page)
+    klog_ok("memory ops test passed".data)
+}
+

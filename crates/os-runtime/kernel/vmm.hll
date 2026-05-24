@@ -8,10 +8,6 @@
 ;   [53:10] PPN (physical page number)
 ;   [7] D dirty  [6] A accessed  [5] G global
 ;   [4] U user   [3] X execute   [2] W write   [1] R read   [0] V valid
-;
-; HLL notes:
-;  - Bitwise operators now available: `&` (AND), `|` (OR), `^` (XOR), `<<` (left shift), `>>` (right shift).
-;  - Use u64(...) to cast ptr to u64, and u64*(...) to cast u64 to ptr.
 
 external pmm_alloc: () -> u8*
 external memset:    (dst: u8*, value: u8, n: u64) -> u8*

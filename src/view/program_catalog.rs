@@ -127,7 +127,6 @@ fn built_in_programs() -> Vec<ProgramFile> {
                 "Kernel Runtime",
                 "Read-only kernel boot runtime: _kernel_start, kmalloc, kshutdown.",
                 concat!(
-                    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/crates/os-runtime/stdlib/kernel/utilities.hll")),
                     include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/crates/os-runtime/kernel/entry.hll")),
                 ),
             );

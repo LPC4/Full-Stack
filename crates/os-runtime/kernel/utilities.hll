@@ -1,7 +1,8 @@
-external kmain:        () -> ()
+; Kernel utilities: timer management, device init, trap setup, CSR helpers.
+; These are core kernel infrastructure functions.
+
 external malloc:       (size: u64) -> u8*
 external kpanic:       (msg: u8*) -> ()
-external trap_handler: (frame: u64*) -> ()
 
 ; Panics on OOM instead of returning null.
 kmalloc: (size: u64) -> u8* {
@@ -195,35 +196,5 @@ sscratch_get_to: (out: u64*) -> () {
 ; Write sscratch CSR.
 sscratch_set: (val: u64) -> () {
     asm { csrw sscratch, a0 }
-}
-
-; Memory integrity check:
-; Returns:
-;  - 1 on success
-;  - 0 on failure
-memory_self_test: (size: u64) -> i64 {
-    test_buf: u8* = kmalloc(size)
-
-    i: u64 = 0
-    while i < size {
-        pattern: u8 = 170
-        if i % 2 != 0 { pattern = 85 }
-        @test_buf[i] = pattern
-        i = i + 1
-    }
-
-    i = 0
-    while i < size {
-        expected: u8 = 170
-        if i % 2 != 0 { expected = 85 }
-        if @test_buf[i] != expected {
-            klog_error("memory self-test failed".data)
-            return 0
-        }
-        i = i + 1
-    }
-
-    klog_ok("memory self-test passed".data)
-    return 1
 }
 

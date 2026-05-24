@@ -1,59 +1,93 @@
-; Kernel.
-; Requires the kernel runtime (_kernel_start entry, klog, kmalloc, kshutdown, trap_init, timer_set).
+; Kernel initialization and boot orchestration.
 
-external klog_ok:      (msg: u8*) -> ()
-external klog_warn:    (msg: u8*) -> ()
-external klog_error:   (msg: u8*) -> ()
-external klog_int:     (label: u8*, val: i64) -> ()
-external kmalloc:      (size: u64) -> u8*
-external memset:       (dst: u8*, value: u8, n: u64) -> u8*
-external kshutdown:    (code: i64) -> ()
-external trap_init:    () -> ()
-external plic_init:    () -> ()
-external timer_set:    (interval: u64) -> ()
-external pmm_init:     (start: u64, end: u64) -> ()
-external pmm_alloc:    () -> u8*
-external pmm_free:     (page: u8*) -> ()
-external vmm_init:     () -> ()
-external vmm_map_1gib: (va: u64, pa: u64, flags: u64) -> ()
-external vmm_enable:   () -> ()
+external klog_ok:               (msg: u8*) -> ()
+external klog_warn:             (msg: u8*) -> ()
+external klog_error:            (msg: u8*) -> ()
+external klog_int:              (label: u8*, val: i64) -> ()
+external kmalloc:               (size: u64) -> u8*
+external memset:                (dst: u8*, value: u8, n: u64) -> u8*
+external kshutdown:             (code: i64) -> ()
+external trap_init:             () -> ()
+external plic_init:             () -> ()
+external timer_set:             (interval: u64) -> ()
+external pmm_init:              (start: u64, end: u64) -> ()
+external pmm_alloc:             () -> u8*
+external pmm_free:              (page: u8*) -> ()
+external vmm_init:              () -> ()
+external vmm_map_1gib:          (va: u64, pa: u64, flags: u64) -> ()
+external vmm_enable:            () -> ()
 external vmm_enable_interrupts: () -> ()
-external memory_self_test: (size: u64) -> i64
+external memory_self_test:      (size: u64) -> i64
+external pmm_ops_test:          () -> ()
 
+; Kernel entry point.
 kmain: () -> () {
-    klog_ok("kernel starting".data)
-    klog_ok("console online".data)
-    klog_int("boot hart".data, 0)
-
-    ; Install S-mode trap handler and enable STIE + SEIE + SIE.
-    trap_init()
-    klog_ok("trap handler installed".data)
-
-    ; Arm the first timer interrupt (1 000 000 tick interval).
-    timer_set(1000000)
-    klog_ok("timer armed".data)
+    boot_console()
+    boot_traps()
+    boot_timer()
 
     ; TODO: parse device tree and enumerate devices
     klog_warn("device tree: not implemented".data)
 
-    ; Initialize PLIC routing for S-mode external interrupts.
-    ; TODO: make real devices (e.g. UART RX) raise external IRQs end-to-end through PLIC -> SEIP -> trap cause 9.
+    boot_plic()
+    boot_memory_diagnostics()
+    boot_heap()
+    boot_pmm()
+    pmm_ops_test()
+    boot_vmm()
+    boot_interrupts()
+
+    ; TODO: load and initialize filesystem drivers
+    klog_warn("filesystem: not implemented".data)
+
+    ; TODO: start scheduler and bring up secondary harts (SMP)
+    klog_warn("single hart, no SMP".data)
+
+    boot_final()
+    asm {
+    .Lkmain_idle:
+        wfi
+        j    .Lkmain_idle
+    }
+}
+
+boot_console: () -> () {
+    klog_ok("kernel starting".data)
+    klog_ok("console online".data)
+    klog_int("boot hart".data, 0)
+}
+
+boot_traps: () -> () {
+    trap_init()
+    klog_ok("trap handler installed".data)
+}
+
+boot_timer: () -> () {
+    timer_set(1000000)
+    klog_ok("timer armed".data)
+}
+
+boot_plic: () -> () {
     plic_init()
     klog_ok("interrupt controller online".data)
+}
 
+boot_memory_diagnostics: () -> () {
     klog_ok("running memory diagnostics...".data)
     test_result: i64 = memory_self_test(256)
     if test_result == 0 {
         klog_error("halt: memory test failed".data)
         kshutdown(1)
     }
+}
 
-    ; Heap smoke-test: allocate and zero a 64-byte region.
+boot_heap: () -> () {
     probe: u8* = kmalloc(64)
     memset(probe, 0, 64)
     klog_ok("heap ready".data)
+}
 
-    ; PMM: manage RAM from 1 MiB above kernel load to 1 MiB below stack.
+boot_pmm: () -> () {
     pmm_init(0x80100000, 0x87F00000)
     page1: u8* = pmm_alloc()
     if page1 == null {
@@ -67,55 +101,32 @@ kmain: () -> () {
         kshutdown(1)
     }
     klog_ok("pmm ready".data)
+}
 
-    ; Test basic memory operations before MMU setup
-    test_page: u8* = pmm_alloc()
-    if test_page == null {
-        klog_error("halt: test alloc failed".data)
-        kshutdown(1)
-    }
-    @test_page[0] = 42
-    if @test_page[0] != 42 {
-        klog_error("halt: test write/read failed".data)
-        kshutdown(1)
-    }
-    pmm_free(test_page)
-    klog_ok("memory ops test passed".data)
-
-    ; Initialize Sv39 MMU with canonical lower-half identity mappings.
+boot_vmm: () -> () {
     klog_ok("vmm: initializing...".data)
     vmm_init()
     klog_ok("vmm: root table allocated".data)
-    
-    ; Create identity mappings for MMU transition (already canonical in the lower half).
-    vmm_map_1gib(0x00000000, 0, 38)               ; MMIO identity
+
+    ; Create identity mappings for MMU transition (already canonical in lower half).
+    vmm_map_1gib(0x00000000, 0, 38)              ; MMIO identity
     vmm_map_1gib(0x80000000, 0x80000000, 46)     ; RAM identity (code execution)
     vmm_map_1gib(0xC0000000, 0xC0000000, 46)     ; Stack/heap identity
     klog_ok("vmm: identity mappings created".data)
 
-    ; These identity mappings are canonical, so Sv39 can be enabled without
-    ; relocating the kernel or switching to a high-half address space.
     klog_ok("vmm: using canonical lower-half identity mapping".data)
     klog_ok("vmm: enabling MMU...".data)
     vmm_enable()
     klog_ok("mmu: sv39 enabled".data)
+}
 
-    ; Re-enable interrupts now that MMU is stable
+boot_interrupts: () -> () {
     vmm_enable_interrupts()
+}
 
-    ; TODO: load and initialize filesystem drivers
-    klog_warn("filesystem: not implemented".data)
-
-    ; TODO: start scheduler and bring up secondary harts (SMP)
-    klog_warn("single hart, no SMP".data)
-
+boot_final: () -> () {
     klog_int("hart id".data, 0)
     klog_int("ram MB".data, 128)
     klog_ok("boot complete".data)
     klog_ok("entering idle loop".data)
-    asm {
-    .Lkmain_idle:
-        wfi
-        j    .Lkmain_idle
-    }
 }

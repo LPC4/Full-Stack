@@ -87,24 +87,28 @@ pub mod stdlib {
         env!("CARGO_MANIFEST_DIR"),
         "/stdlib/freestanding/console.hll"
     ));
-
-    /// Kernel helpers that are part of the kernel stdlib bundle: kmalloc, kshutdown,
-    /// timer helpers, trap prologue, and sscratch helpers. These are re-usable
-    /// fragments that belong in the stdlib (not the kernel entry file).
-    pub const KERNEL_UTILS: &str = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/stdlib/kernel/utilities.hll"
-    ));
 }
 
 /// Kernel-mode HLL source fragments.
 pub mod kernel {
     /// Kernel entry: minimal kernel entrypoint (`_kernel_start` -> `kmain`).
-    /// The larger set of reusable kernel helpers live in
-    /// `stdlib/kernel/utilities.hll` (exposed as `os_runtime::stdlib::KERNEL_UTILS`).
     pub const RUNTIME: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/kernel/entry.hll"
+    ));
+
+    /// Kernel utilities: timer management, device init, trap setup, CSR helpers.
+    /// These are core kernel infrastructure functions that use externs.
+    pub const UTILITIES: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/kernel/utilities.hll"
+    ));
+
+    /// Kernel checks and diagnostics: memory_self_test, etc.
+    /// Called during boot to validate kernel systems.
+    pub const CHECKS: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/kernel/checks.hll"
     ));
 
     /// S-mode trap dispatcher: `trap_handler(frame: u64*)`.

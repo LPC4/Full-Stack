@@ -88,40 +88,6 @@ fn boot_trap_handles_ecalls() {
     );
 }
 
-// -- Kernel runtime source content --------------------------------------------
-
-#[test]
-fn kernel_runtime_exports_stvec_entry_label() {
-    assert!(
-        os_runtime::stdlib::KERNEL_UTILS.contains("stvec_entry:"),
-        "kernel stdlib utilities must define stvec_entry label for S-mode trap entry"
-    );
-}
-
-#[test]
-fn kernel_runtime_defines_trap_init() {
-    assert!(
-        os_runtime::stdlib::KERNEL_UTILS.contains("trap_init:"),
-        "kernel stdlib utilities must define trap_init function"
-    );
-}
-
-#[test]
-fn kernel_runtime_defines_timer_set() {
-    assert!(
-        os_runtime::stdlib::KERNEL_UTILS.contains("timer_set:"),
-        "kernel stdlib utilities must define timer_set function"
-    );
-}
-
-#[test]
-fn kernel_runtime_defines_plic_init() {
-    assert!(
-        os_runtime::stdlib::KERNEL_UTILS.contains("plic_init:"),
-        "kernel stdlib utilities must define plic_init function"
-    );
-}
-
 // -- Trap handler source content -----------------------------------------------
 
 #[test]

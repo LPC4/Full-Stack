@@ -47,8 +47,8 @@ pub fn get_stdlib_source() -> String {
 }
 
 /// Kernel stdlib: types, allocator, strings, mem, freestanding panic/console,
-/// klog, and the kernel boot runtime.  No Linux syscalls.  Entry point is
-/// `_kernel_start`; user code must define `kmain`.
+/// klog, kernel utilities, kernel checks, and the kernel boot runtime.
+/// No Linux syscalls. Entry point is `_kernel_start`; user code must define `kmain`.
 ///
 /// Compile this with a distinct `string_prefix` (e.g. `"__kern_str_"`) so that
 /// rodata string-literal labels never clash with user-code labels.
@@ -60,7 +60,8 @@ pub fn get_kernel_stdlib_source() -> String {
         + stdlib::FREESTANDING_RUNTIME.len()
         + stdlib::FREESTANDING_CONSOLE.len()
         + stdlib::KLOG.len()
-        + stdlib::KERNEL_UTILS.len()
+        + kernel::UTILITIES.len()
+        + kernel::CHECKS.len()
         + kernel::TRAP_HANDLER.len()
         + kernel::PMM.len()
         + kernel::VMM.len()
@@ -89,25 +90,26 @@ pub fn get_kernel_stdlib_source() -> String {
         stdlib::FREESTANDING_CONSOLE,
     );
     append_section(&mut combined, "; --- stdlib: klog ---\n", stdlib::KLOG);
-    append_section(&mut combined, "; --- stdlib: kernel utils ---\n", stdlib::KERNEL_UTILS);
+    append_section(&mut combined, "; --- kernel: utilities ---\n", kernel::UTILITIES);
+    append_section(&mut combined, "; --- kernel: checks ---\n", kernel::CHECKS);
     append_section(
         &mut combined,
-        "; --- stdlib: kernel entry (runtime) ---\n",
+        "; --- kernel: entry (runtime) ---\n",
         kernel::RUNTIME,
     );
     append_section(
         &mut combined,
-        "; --- stdlib: trap handler ---\n",
+        "; --- kernel: trap handler ---\n",
         kernel::TRAP_HANDLER,
     );
     append_section(
         &mut combined,
-        "; --- stdlib: pmm ---\n",
+        "; --- kernel: pmm ---\n",
         kernel::PMM,
     );
     append_section(
         &mut combined,
-        "; --- stdlib: vmm ---\n",
+        "; --- kernel: vmm ---\n",
         kernel::VMM,
     );
     combined
