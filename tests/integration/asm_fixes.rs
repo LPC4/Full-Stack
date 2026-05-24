@@ -29,7 +29,7 @@ fn compile_inline(source: &str) -> String {
     pipeline.compile_ir_to_assembly(&result.ir_program)
 }
 
-// ── Store widths ──────────────────────────────────────────────────────────────
+// -- Store widths --------------------------------------------------------------
 
 #[test]
 fn i32_stores_use_sw_not_sd() {
@@ -48,7 +48,7 @@ fn bool_stores_use_sb() {
     assert!(asm.contains("sb"), "expected 'sb' for bool/i1 storage");
 }
 
-// ── Function epilogue ─────────────────────────────────────────────────────────
+// -- Function epilogue ---------------------------------------------------------
 
 #[test]
 fn epilogue_restores_ra_and_s0() {
@@ -64,7 +64,7 @@ fn single_function_has_exactly_one_epilogue() {
     assert_eq!(count, 1, "expected exactly 1 epilogue, found {count}");
 }
 
-// ── Conditional and loop control flow ────────────────────────────────────────
+// -- Conditional and loop control flow ----------------------------------------
 
 #[test]
 fn conditionals_emit_bne() {
@@ -78,7 +78,7 @@ fn loops_emit_multiple_labels_and_jumps() {
     assert!(asm.lines().count() > 10, "loop assembly should be substantial");
 }
 
-// ── Floating-point instructions ───────────────────────────────────────────────
+// -- Floating-point instructions -----------------------------------------------
 
 #[test]
 fn f32_uses_flw_and_fsw() {
@@ -112,7 +112,7 @@ fn f32_return_value_in_fa0() {
     assert!(asm.contains("fa0") || asm.contains("f10"), "expected float return in fa0");
 }
 
-// ── Register allocation ───────────────────────────────────────────────────────
+// -- Register allocation -------------------------------------------------------
 
 #[test]
 fn many_locals_use_multiple_temp_registers() {
@@ -129,7 +129,7 @@ fn many_locals_use_multiple_temp_registers() {
     assert!(used.len() >= 3, "expected multiple temp registers, got {used:?}");
 }
 
-// ── Struct return convention ──────────────────────────────────────────────────
+// -- Struct return convention --------------------------------------------------
 
 #[test]
 fn two_field_i32_struct_return_packed_in_a0() {

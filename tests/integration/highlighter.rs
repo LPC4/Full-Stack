@@ -15,7 +15,7 @@ fn highlight_assembly_multibyte_in_asciz_does_not_panic() {
 
 #[test]
 fn highlight_assembly_multibyte_in_ascii_does_not_panic() {
-    let asm = "    .ascii \"caf\u{00E9}\"\n"; // é U+00E9 (2 bytes)
+    let asm = "    .ascii \"caf\u{00E9}\"\n"; //  U+00E9 (2 bytes)
     let _ = highlight_assembly(&style(), asm);
 }
 

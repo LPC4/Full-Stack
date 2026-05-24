@@ -1,4 +1,4 @@
-﻿//! RV64I - base integer instructions.
+//! RV64I - base integer instructions.
 //!
 //! This module defines the concrete instruction structs used throughout the
 //! assembler. The reusable macro helpers live in `macros.rs`; here we simply

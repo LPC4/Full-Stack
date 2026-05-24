@@ -64,7 +64,7 @@ impl CompilerView for CacheView {
         ui.add_space(8.0);
 
         ScrollArea::vertical().show(ui, |ui| {
-            // L1: full set×way grid, small enough to show every line
+            // L1: full setxway grid, small enough to show every line
             cache_section(ui, "L1", &l1, GridDetail::Full);
             ui.add_space(12.0);
             // L2: per-way utilization bars, 512 sets, compact summary per way
@@ -173,7 +173,7 @@ fn cache_section(ui: &mut Ui, label: &str, snap: &CacheSnapshot, detail: GridDet
 }
 
 // ---------------------------------------------------------------------------
-// L1, full set×way pixel grid
+// L1, full setxway pixel grid
 // ---------------------------------------------------------------------------
 
 fn draw_full_grid(ui: &mut Ui, snap: &CacheSnapshot) {
@@ -183,7 +183,7 @@ fn draw_full_grid(ui: &mut Ui, snap: &CacheSnapshot) {
     let gap = 1.0_f32;
     let label_w = 44.0_f32;
 
-    // Scale cells to fit available width; at least 3×3 px per cell
+    // Scale cells to fit available width; at least 3x3 px per cell
     let avail_for_grid = (ui.available_width() - label_w - 24.0).max(60.0);
     let cell_w = ((avail_for_grid / n_sets as f32) - gap).clamp(3.0, 20.0);
     let cell_h = (cell_w * 0.7).clamp(3.0, 14.0);
@@ -194,7 +194,7 @@ fn draw_full_grid(ui: &mut Ui, snap: &CacheSnapshot) {
     // Axis labels
     ui.horizontal(|ui| {
         ui.add_space(label_w + 4.0);
-        ui.label(RichText::new(format!("← {n_sets} sets →")).small().weak());
+        ui.label(RichText::new(format!("<- {n_sets} sets ->")).small().weak());
     });
 
     ui.horizontal(|ui| {

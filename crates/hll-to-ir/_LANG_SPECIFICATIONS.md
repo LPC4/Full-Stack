@@ -1,4 +1,4 @@
-﻿## Language Specification v1.4.3
+## Language Specification v1.4.3
 
 **Design Philosophy:** Consistency-First Memory Model  
 **Target Domain:** Systems Programming
@@ -15,7 +15,7 @@ HLL enforces a 100% consistent pointer model. Memory operations are context-inde
 3. **Explicit address-of with `&`.** `&identifier` obtains a pointer to a stack variable, and stack-safe lvalues such as `&arr[index]` are also valid. `&@ptr` is invalid.
 4. **No mutable primitive parameters.** All parameters are pass-by-value. Mutation requires explicit pointer parameters (`T*`).
 
-**Duality Principle:** `@(&x) ≡ x` when `x` is a stack-safe lvalue. The reverse form is not a blanket identity; `&@ptr` is rejected.
+**Duality Principle:** `@(&x)  x` when `x` is a stack-safe lvalue. The reverse form is not a blanket identity; `&@ptr` is rejected.
 
 ---
 
@@ -81,13 +81,13 @@ HLL enforces a 100% consistent pointer model. Memory operations are context-inde
 ### 4.1 Core Operations
 | Operation | Syntax | Type Rule | Example |
 |-----------|--------|-----------|---------|
-| Read | `@ptr` | `T* → T` | `val: i32 = @x_ptr` |
-| Write | `@ptr = val` | `T* ← T` | `@x_ptr = 42` |
-| Address-of | `&val` | `T → T*` | `x_ptr: i32* = &x` |
-| Allocate | `new(T)` | `void → T*` | `p: Point* = new(Point)` |
-| Deallocate | `free(ptr)` | `T* → void` | `free(x_ptr)` |
-| Arithmetic | `@(ptr + offset)` | `T* → T` | `byte: u8 = @(raw_ptr + 3)` |
-| Cast | `TargetType(val)` | `S → T` | `u8*(ptr)` |
+| Read | `@ptr` | `T* -> T` | `val: i32 = @x_ptr` |
+| Write | `@ptr = val` | `T* <- T` | `@x_ptr = 42` |
+| Address-of | `&val` | `T -> T*` | `x_ptr: i32* = &x` |
+| Allocate | `new(T)` | `void -> T*` | `p: Point* = new(Point)` |
+| Deallocate | `free(ptr)` | `T* -> void` | `free(x_ptr)` |
+| Arithmetic | `@(ptr + offset)` | `T* -> T` | `byte: u8 = @(raw_ptr + 3)` |
+| Cast | `TargetType(val)` | `S -> T` | `u8*(ptr)` |
 
 ### 4.2 Pointer Arithmetic Constraints
 - Offsets using `+` are **always strictly in bytes**.
@@ -402,7 +402,7 @@ array_index    = expression "[" expression "]";
 
 ### 10.1 Formal Model
 - **Pointer Type `T*`:** Set of memory addresses containing values of type `T`.
-- **Dereference:** Partial functions `load: T* → T` and `store: T* × T → unit`, valid only for active pointers.
+- **Dereference:** Partial functions `load: T* -> T` and `store: T* x T -> unit`, valid only for active pointers.
 - **No Implicit Conversions:** Type system strictly separates `T` and `T*`. Casting requires explicit syntax.
 
 ### 10.2 Error Prevention Matrix

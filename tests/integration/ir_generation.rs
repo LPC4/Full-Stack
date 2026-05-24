@@ -1,11 +1,11 @@
-/// Unit tests for HLL → IR lowering.
+/// Unit tests for HLL -> IR lowering.
 ///
 /// Tests here verify:
 ///   - Compilation pipeline smoke tests
 ///   - IR instruction selection (signed/unsigned arithmetic and comparisons)
 ///   - Type cast lowering
 ///   - Heap allocation/free lowering
-///   - Control flow (if-else, while) → Branch terminators
+///   - Control flow (if-else, while) -> Branch terminators
 ///   - Function call lowering
 ///   - Global string constants
 ///   - Unary operations
@@ -66,7 +66,7 @@ where
         .count()
 }
 
-// ── Smoke tests ───────────────────────────────────────────────────────────────
+// -- Smoke tests ---------------------------------------------------------------
 
 #[test]
 fn compiles_minimal_valid_program() {
@@ -93,7 +93,7 @@ fn rejects_invalid_pointer_arithmetic() {
     );
 }
 
-// ── Signed / unsigned arithmetic lowering ────────────────────────────────────
+// -- Signed / unsigned arithmetic lowering ------------------------------------
 
 #[test]
 fn unsigned_division_emits_udiv() {
@@ -166,7 +166,7 @@ fn mixed_signed_unsigned_ops_both_emitted() {
     );
 }
 
-// ── Type cast lowering ────────────────────────────────────────────────────────
+// -- Type cast lowering --------------------------------------------------------
 
 #[test]
 fn cast_i32_to_i64_emits_cast() {
@@ -218,7 +218,7 @@ fn chained_casts_emit_multiple_cast_instructions() {
     );
 }
 
-// ── Heap allocation lowering ──────────────────────────────────────────────────
+// -- Heap allocation lowering --------------------------------------------------
 
 #[test]
 fn free_emits_heap_free_instruction() {
@@ -243,7 +243,7 @@ fn free_with_no_args_is_rejected() {
     );
 }
 
-// ── Control flow lowering ─────────────────────────────────────────────────────
+// -- Control flow lowering -----------------------------------------------------
 
 fn has_terminator<F>(source: &str, pred: F) -> bool
 where
@@ -310,7 +310,7 @@ fn if_without_else_still_compiles() {
     compile_ok(source);
 }
 
-// ── Function call lowering ────────────────────────────────────────────────────
+// -- Function call lowering ----------------------------------------------------
 
 #[test]
 fn function_call_emits_call_instruction() {
@@ -349,7 +349,7 @@ main: () -> i32 {
     }));
 }
 
-// ── Global string constants ───────────────────────────────────────────────────
+// -- Global string constants ---------------------------------------------------
 
 #[test]
 fn string_literal_creates_global_string() {
@@ -382,7 +382,7 @@ main: () -> i32 {
     assert!(found, "global string 'world' not found in IR");
 }
 
-// ── Unary operations ──────────────────────────────────────────────────────────
+// -- Unary operations ----------------------------------------------------------
 
 #[test]
 fn unary_negate_emits_unary_instruction() {
@@ -408,7 +408,7 @@ fn unary_not_emits_unary_instruction() {
     assert!(has_instruction(source, |i| matches!(i, IrInstruction::Unary { .. })));
 }
 
-// ── Stack allocation and pointer load/store ───────────────────────────────────
+// -- Stack allocation and pointer load/store -----------------------------------
 
 #[test]
 fn stack_variable_emits_alloc() {
@@ -444,7 +444,7 @@ fn pointer_store_emits_store_instruction() {
     assert!(has_instruction(source, |i| matches!(i, IrInstruction::Load { .. })));
 }
 
-// ── Multiple functions ────────────────────────────────────────────────────────
+// -- Multiple functions --------------------------------------------------------
 
 #[test]
 fn two_functions_both_appear_in_ir() {
@@ -461,7 +461,7 @@ main: () -> i32 {
     assert!(names.contains(&"main"), "main not in IR: {names:?}");
 }
 
-// ── Modulo operator ───────────────────────────────────────────────────────────
+// -- Modulo operator -----------------------------------------------------------
 
 #[test]
 fn modulo_emits_rem_op() {

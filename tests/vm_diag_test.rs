@@ -1,4 +1,4 @@
-﻿use full_stack::compilation_pipeline::CompilationPipeline;
+use full_stack::compilation_pipeline::CompilationPipeline;
 use hll_to_ir::stdlib::get_stdlib_source;
 use virtual_machine::bus::ELF_LOAD_BASE;
 use virtual_machine::virtual_machine::VirtualMachine;
@@ -20,7 +20,7 @@ fn kernel_asm_diag() {
     use os_runtime::kernel;
     use virtual_machine::virtual_machine::StepOutcome;
 
-    // ── compile stdlib ───────────────────────────────────────────────────────
+    // -- compile stdlib -------------------------------------------------------
     let stdlib_compiler = HllCompiler::new(CompileConfig {
         target: TargetMode::Kernel,
         strict: true,
@@ -32,7 +32,7 @@ fn kernel_asm_diag() {
     let mut stdlib_rv = CompilerRv64::new();
     let (stdlib_asm, stdlib_tokens) = stdlib_rv.compile_with_tokens(&stdlib_out.ir);
 
-    // ── compile user kernel ──────────────────────────────────────────────────
+    // -- compile user kernel --------------------------------------------------
     let user_compiler = HllCompiler::new(CompileConfig {
         target: TargetMode::Kernel,
         strict: true,
@@ -44,7 +44,7 @@ fn kernel_asm_diag() {
     let mut user_rv = CompilerRv64::new();
     let (user_asm, user_tokens) = user_rv.compile_with_tokens(&user_out.ir);
 
-    // ── print assembly around vmm_enable ────────────────────────────────────
+    // -- print assembly around vmm_enable ------------------------------------
     let full_asm = format!("{stdlib_asm}\n{user_asm}");
     eprintln!("\n=== KERNEL ASSEMBLY (vmm section) ===");
     let mut in_vmm = false;
@@ -64,7 +64,7 @@ fn kernel_asm_diag() {
         }
     }
 
-    // ── assemble and run with step trace ────────────────────────────────────
+    // -- assemble and run with step trace ------------------------------------
     let mut tokens = stdlib_tokens;
     tokens.extend(user_tokens);
 
@@ -115,8 +115,8 @@ fn kernel_asm_diag() {
 // Linking helper
 //
 // This is the canonical "link with stdlib" path used by the GUI and tests:
-//   1. Compile stdlib once → Vec<RvInstruction> token stream
-//   2. Compile user source independently → Vec<RvInstruction> token stream
+//   1. Compile stdlib once -> Vec<RvInstruction> token stream
+//   2. Compile user source independently -> Vec<RvInstruction> token stream
 //   3. Token-level link: [stdlib_tokens..., user_tokens...]
 //   4. assemble()  - no injected stubs; all runtime is in stdlib (runtime.hll)
 //   5. Load ELF into VM and run

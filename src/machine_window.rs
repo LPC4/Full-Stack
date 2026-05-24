@@ -16,7 +16,7 @@ use full_stack::view::ui_theme;
 use virtual_machine::bus::RAM_BASE;
 use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 
-// ── Palette ──────────────────────────────────────────────────────────────────
+// -- Palette ------------------------------------------------------------------
 
 const TERM_BG: Color32 = Color32::from_rgb(7, 9, 12);
 const TERM_TEXT: Color32 = Color32::from_rgb(200, 208, 218); // neutral, no green tint
@@ -28,10 +28,10 @@ const TERM_PANIC: Color32 = Color32::from_rgb(255, 60, 80);
 const TERM_BORDER: Color32 = Color32::from_rgb(28, 34, 46);  // neutral dark border
 const TOOLBAR_BG: Color32 = Color32::from_rgb(10, 14, 18);
 
-// ── Tuning ───────────────────────────────────────────────────────────────────
+// -- Tuning -------------------------------------------------------------------
 
 /// VM steps executed per UI frame while booting.
-/// At 60 fps this gives ~3 M steps/sec — enough for a fast boot
+/// At 60 fps this gives ~3 M steps/sec - enough for a fast boot
 /// while keeping each frame well under 16 ms.
 const STEPS_PER_TICK: u64 = 50_000;
 const MAX_STEPS: u64 = 10_000_000;
@@ -44,7 +44,7 @@ const TOOLBAR_H: f32 = 34.0;
 /// Always rendered so the content area never changes height when booting starts.
 const INPUT_H: f32 = 34.0;
 
-// ── Phase ────────────────────────────────────────────────────────────────────
+// -- Phase --------------------------------------------------------------------
 
 #[derive(Clone, Default)]
 pub struct BootResult {
@@ -80,7 +80,7 @@ impl Default for BootPhase {
     }
 }
 
-// ── Main struct ───────────────────────────────────────────────────────────────
+// -- Main struct ---------------------------------------------------------------
 
 #[derive(Default)]
 pub struct MachineWindow {
@@ -94,7 +94,7 @@ pub struct MachineWindow {
     log_cache_generation: u64,
 }
 
-// ── Public API ────────────────────────────────────────────────────────────────
+// -- Public API ----------------------------------------------------------------
 
 impl MachineWindow {
     /// Begin an incremental boot. The VM is ticked each frame via `ui()`.
@@ -143,7 +143,7 @@ impl MachineWindow {
     }
 }
 
-// ── VM tick ───────────────────────────────────────────────────────────────────
+// -- VM tick -------------------------------------------------------------------
 
 impl MachineWindow {
     fn maybe_tick(&mut self, ctx: &egui::Context) {
@@ -202,7 +202,7 @@ impl MachineWindow {
     }
 }
 
-// ── Rendering ─────────────────────────────────────────────────────────────────
+// -- Rendering -----------------------------------------------------------------
 
 impl MachineWindow {
     fn render_toolbar(&mut self, ui: &mut egui::Ui, has_kernel: bool, is_running: bool) {
@@ -214,7 +214,7 @@ impl MachineWindow {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 5.0;
 
-                    let boot_label = if is_running { "Booting…" } else { "Boot" };
+                    let boot_label = if is_running { "Booting..." } else { "Boot" };
                     if ui
                         .add_enabled(
                             has_kernel && !is_running,
@@ -340,7 +340,7 @@ impl MachineWindow {
                     ui.colored_label(TERM_DIM, "Press Boot to compile and run the kernel.");
                 }
                 LogState::BootingNoOutput(steps) => {
-                    ui.colored_label(TERM_DIM, format!("Booting… ({steps} steps)"));
+                    ui.colored_label(TERM_DIM, format!("Booting... ({steps} steps)"));
                 }
                 LogState::DoneEmpty => {
                     ui.colored_label(TERM_DIM, "(no output)");
@@ -445,7 +445,7 @@ impl MachineWindow {
     }
 }
 
-// ── Log colorizer ─────────────────────────────────────────────────────────────
+// -- Log colorizer -------------------------------------------------------------
 
 fn build_log_job(text: &str) -> egui::text::LayoutJob {
     let font = egui::FontId::monospace(12.0);

@@ -319,7 +319,7 @@ impl FullStackApp {
         let stdlib_src = get_stdlib_source_for_mode(mode);
 
         // Kernel stdlib must use a distinct string prefix so its rodata labels
-        // ("str_0", "str_1", …) don't collide with user-code labels.
+        // ("str_0", "str_1", ...) don't collide with user-code labels.
         if mode == TargetMode::Kernel {
             self.pipeline
                 .set_string_prefix(Some("__kern_str_".to_owned()));
@@ -375,7 +375,7 @@ impl FullStackApp {
             right,
             0.5,
             vec![
-                views[8].clone(), // VM Output — first so it's the default visible tab
+                views[8].clone(), // VM Output - first so it's the default visible tab
                 views[4].clone(), // Assembly
                 views[5].clone(), // CFG
                 views[6].clone(), // Stack

@@ -175,7 +175,7 @@ impl CompilerView for PipelineView {
                         p.text(
                             cell.center(),
                             Align2::CENTER_CENTER,
-                            "·",
+                            "",
                             FontId::monospace(12.0),
                             palette.grid,
                         );

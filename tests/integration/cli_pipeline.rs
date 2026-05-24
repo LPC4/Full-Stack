@@ -22,7 +22,7 @@ fn make_pipeline(mode: TargetMode, prefix: &str) -> CompilationPipeline {
     p
 }
 
-/// Compile HLL + hosted stdlib → assembled output → run → (uart, exit_code).
+/// Compile HLL + hosted stdlib -> assembled output -> run -> (uart, exit_code).
 fn run_hll(src: &str) -> (String, i64) {
     let stdlib_pipeline = make_pipeline(TargetMode::Hosted, STDLIB_PREFIX);
     let stdlib_result = stdlib_pipeline

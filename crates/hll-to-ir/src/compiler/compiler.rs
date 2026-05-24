@@ -75,7 +75,7 @@ pub struct HighLevelCompiler {
     pending_global_strings: Vec<IrGlobalString>,
     /// Global variables declared at module scope: name -> IR type
     global_vars: std::collections::HashMap<String, IrType>,
-    /// Prefix used when naming rodata string-literal labels (e.g. `"str_"` →
+    /// Prefix used when naming rodata string-literal labels (e.g. `"str_"` ->
     /// `str_0`, `str_1`, ...).  Set per compilation unit so that two units linked
     /// together never produce duplicate label names.
     pub string_prefix: String,

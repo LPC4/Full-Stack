@@ -42,7 +42,7 @@ main: () -> i32 {
 "#);
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
-        "i8 store 127 → load should read 127, got {outcome:?}"
+        "i8 store 127 -> load should read 127, got {outcome:?}"
     );
 }
 
@@ -65,7 +65,7 @@ main: () -> i32 {
 "#);
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
-        "i8 store -1 → load should read -1 (sign-extended), got {outcome:?}"
+        "i8 store -1 -> load should read -1 (sign-extended), got {outcome:?}"
     );
 }
 
@@ -88,7 +88,7 @@ main: () -> i32 {
 "#);
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
-        "i16 store 1000 → load should read 1000, got {outcome:?}"
+        "i16 store 1000 -> load should read 1000, got {outcome:?}"
     );
 }
 
@@ -111,7 +111,7 @@ main: () -> i32 {
 "#);
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
-        "i32 store 1234567 → load should read 1234567, got {outcome:?}"
+        "i32 store 1234567 -> load should read 1234567, got {outcome:?}"
     );
 }
 
@@ -137,7 +137,7 @@ main: () -> i32 {
 "#);
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
-        "i64 store 0x8010_0000 → load should read same value, got {outcome:?}"
+        "i64 store 0x8010_0000 -> load should read same value, got {outcome:?}"
     );
 }
 

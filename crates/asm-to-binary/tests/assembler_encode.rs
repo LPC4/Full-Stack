@@ -77,7 +77,7 @@ fn test_tail_pseudo_relocation() {
 // page number to Auipc::new instead of shifting it left by 12.  UType::encode
 // masks with 0xFFFFF000, so an unshifted value < 4096 encoded as imm=0.
 // That caused `la t0, far_label` at PC=0 with far_label at 0x11000 to produce
-// auipc t0, 0 instead of auipc t0, 0x11000 → the load address ended up below
+// auipc t0, 0 instead of auipc t0, 0x11000 -> the load address ended up below
 // RAM_BASE causing an infinite trap loop.
 // ---------------------------------------------------------------------------
 
@@ -87,7 +87,7 @@ fn test_tail_pseudo_relocation() {
 #[test]
 fn auipc_hi20_is_shifted_for_la() {
     // .text
-    // la t0, far_label          ; PC=0, offset=0x11000 → hi20=17, lo12=0
+    // la t0, far_label          ; PC=0, offset=0x11000 -> hi20=17, lo12=0
     // .space 0x10FF8            ; pad so that far_label lands at 0x11000
     //                           ; (la expands to 8 bytes, so 0x11000 - 8 = 0x10FF8)
     // far_label:
@@ -111,7 +111,7 @@ fn auipc_hi20_is_shifted_for_la() {
 
     // Decode the first word (the AUIPC).
     let word = u32::from_le_bytes(text[0..4].try_into().unwrap());
-    // AUIPC opcode = 0x17; rd=5 → bits[11:7]=0b00101; imm[31:12] should be 17.
+    // AUIPC opcode = 0x17; rd=5 -> bits[11:7]=0b00101; imm[31:12] should be 17.
     let opcode = word & 0x7F;
     let rd = (word >> 7) & 0x1F;
     let imm_upper = word & 0xFFFFF000;

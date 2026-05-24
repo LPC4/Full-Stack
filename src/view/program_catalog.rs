@@ -1,4 +1,4 @@
-﻿// Program file management and catalog
+// Program file management and catalog
 
 use hll_to_ir::stdlib::get_stdlib_source;
 

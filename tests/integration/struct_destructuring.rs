@@ -1,6 +1,6 @@
 /// Unit tests for struct destructuring lowering.
 ///
-/// Verifies that the HLL → IR pipeline handles every variant of struct
+/// Verifies that the HLL -> IR pipeline handles every variant of struct
 /// destructuring: small-struct ABI (function return), local variable
 /// address-mode path, partial destructuring, mixed field types, type aliases,
 /// and the single-evaluation guarantee (no double-evaluation of the rvalue).
@@ -24,7 +24,7 @@ fn call_count(result: &full_stack::compilation_pipeline::CompilationResult, name
         .count()
 }
 
-// ── Small-struct ABI (function return) ───────────────────────────────────────
+// -- Small-struct ABI (function return) ---------------------------------------
 
 /// Core regression: the callee must be invoked exactly once.
 /// Before the fix, the rvalue was evaluated twice (once for Address mode, once
@@ -105,7 +105,7 @@ main: () -> i32 {
 "#);
 }
 
-// ── Local variable (address-mode path) ───────────────────────────────────────
+// -- Local variable (address-mode path) ---------------------------------------
 
 #[test]
 fn local_struct_variable_destructured() {
@@ -118,7 +118,7 @@ main: () -> i32 {
 "#);
 }
 
-// ── Composition and context ───────────────────────────────────────────────────
+// -- Composition and context ---------------------------------------------------
 
 #[test]
 fn destructure_inside_if_branch() {

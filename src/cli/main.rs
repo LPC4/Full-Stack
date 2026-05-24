@@ -292,7 +292,7 @@ fn assemble_from_s_file(path: &str, mode: TargetMode) -> Result<AssembledOutput,
         .map_err(|e| CliError::Assemble(e.to_string()))
 }
 
-/// Compile HLL source → IR → tokens, then link with stdlib and assemble.
+/// Compile HLL source -> IR -> tokens, then link with stdlib and assemble.
 fn compile_and_link(src: &str, mode: TargetMode) -> Result<AssembledOutput, CliError> {
     let stdlib_tokens = compile_stdlib_tokens(mode)?;
 
@@ -332,7 +332,7 @@ fn compile_stdlib_tokens(mode: TargetMode) -> Result<Vec<RvInstruction>, CliErro
 /// Wrap each line of assembly text in a `Directive` token.
 ///
 /// The assembler's pass-0 parser recognises labels (`name:`), section
-/// directives (`.text`, `.asciz`, …) and most instruction mnemonics from
+/// directives (`.text`, `.asciz`, ...) and most instruction mnemonics from
 /// lines that begin with a tab or space.  Unrecognised mnemonics become
 /// no-op comments.
 fn asm_text_to_tokens(text: &str) -> Vec<RvInstruction> {

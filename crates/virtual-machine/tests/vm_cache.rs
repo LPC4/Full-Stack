@@ -53,7 +53,7 @@ fn first_read_is_a_miss() {
 fn second_read_same_block_is_a_hit() {
     let mut c = make_cache(256, 64, 2, true);
     let _ = c.read_byte(RAM_BASE).unwrap(); // cold miss
-    let _ = c.read_byte(RAM_BASE + 1).unwrap(); // same 64-byte block → hit
+    let _ = c.read_byte(RAM_BASE + 1).unwrap(); // same 64-byte block -> hit
     assert_eq!(c.stats().read_misses, 1);
     assert_eq!(c.stats().read_hits, 1);
 }
@@ -79,7 +79,7 @@ fn halfword_read_counts_as_one_access() {
     let _ = c.write_byte(RAM_BASE, 0x01).unwrap(); // miss
     let _ = c.read_halfword(RAM_BASE).unwrap(); // should hit (already loaded)
     // Stats: 1 write miss + 1 write hit? No - the write_byte is a miss.
-    // Then read_halfword: both bytes in same block → 1 read hit
+    // Then read_halfword: both bytes in same block -> 1 read hit
     assert_eq!(c.stats().read_hits, 1);
     assert_eq!(c.stats().read_misses, 0);
 }
@@ -106,7 +106,7 @@ fn doubleword_read_same_block_counts_as_one_stat() {
 
 #[test]
 fn word_spanning_two_blocks_counts_as_two_reads() {
-    // block_size = 4 → each word is its own block
+    // block_size = 4 -> each word is its own block
     let mut c = make_cache(64, 4, 2, true);
     // Read a "word" that crosses a 4-byte block boundary (offset 2)
     // bytes at RAM_BASE+2 and RAM_BASE+3 are in block 0; +4 and +5 in block 1
@@ -192,14 +192,14 @@ fn read_only_cache_rejects_writes() {
 
 #[test]
 fn lru_evicts_least_recently_used_way() {
-    // 2-way, 2-set cache (size=256, block=64, assoc=2 → 2 sets)
+    // 2-way, 2-set cache (size=256, block=64, assoc=2 -> 2 sets)
     let mut c = make_cache(256, 64, 2, true);
 
     // Fill both ways of set 0 (addresses map to set 0 when index = addr>>6 & 1 = 0 or 2)
     // With 2 sets: set = (addr >> 6) & 1
-    // Block 0: addr 0x8000_0000 → set 0
-    // Block 2: addr 0x8000_0080 → set 0
-    // Block 4: addr 0x8000_0100 → set 0 (will evict LRU)
+    // Block 0: addr 0x8000_0000 -> set 0
+    // Block 2: addr 0x8000_0080 -> set 0
+    // Block 4: addr 0x8000_0100 -> set 0 (will evict LRU)
     let b0 = RAM_BASE;
     let b2 = RAM_BASE + 128; // set 0 (128/64=2, 2&1=0)
     let b4 = RAM_BASE + 256; // set 0 (256/64=4, 4&1=0)
@@ -208,9 +208,9 @@ fn lru_evicts_least_recently_used_way() {
     let _ = c.write_byte(b0, 0x11).unwrap();
     // Load way 1 (LRU=2)
     let _ = c.write_byte(b2, 0x22).unwrap();
-    // Re-access b0 → LRU age updated (b0 now MRU, b2 is LRU)
+    // Re-access b0 -> LRU age updated (b0 now MRU, b2 is LRU)
     let _ = c.read_byte(b0).unwrap();
-    // Bring in b4 → evicts b2 (LRU)
+    // Bring in b4 -> evicts b2 (LRU)
     let _ = c.read_byte(b4).unwrap();
     // b0 should still be cached (hit)
     let stats_before = c.stats().clone();
@@ -230,7 +230,7 @@ fn lru_evicts_least_recently_used_way() {
 }
 
 // ---------------------------------------------------------------------------
-// Three-level hierarchy (L1 → L2 → RAM)
+// Three-level hierarchy (L1 -> L2 -> RAM)
 // ---------------------------------------------------------------------------
 
 #[test]

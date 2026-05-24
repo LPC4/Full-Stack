@@ -1,4 +1,4 @@
-﻿use asm_to_binary::assembler::Assembler;
+use asm_to_binary::assembler::Assembler;
 use asm_to_binary::real::RealInstruction;
 use asm_to_binary::riscv::rv64i::*;
 use asm_to_binary::riscv::rv64m::*;
@@ -13,8 +13,8 @@ use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 // ---------------------------------------------------------------------------
 
 /// Link stdlib and user code using two-stage compilation:
-/// 1. Compile stdlib independently → token stream
-/// 2. Compile user code independently → token stream
+/// 1. Compile stdlib independently -> token stream
+/// 2. Compile user code independently -> token stream
 /// 3. Link them together at token level: [stdlib_tokens..., user_tokens...]
 /// 4. Assemble the combined token stream
 fn run_hll_with_limit(src: &str, max_steps: u64) -> (VirtualMachine, StepOutcome, String) {

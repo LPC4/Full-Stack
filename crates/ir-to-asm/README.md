@@ -8,10 +8,10 @@ Lowers an `IrProgram` (SSA IR) to RISC-V RV64 assembly, producing a `Vec<RvInstr
 
 ```
 IrProgram
-  → Linear-scan register allocator
-  → Stack frame layout
-  → RV64 instruction selection
-  → Vec<RvInstruction>
+  -> Linear-scan register allocator
+  -> Stack frame layout
+  -> RV64 instruction selection
+  -> Vec<RvInstruction>
 ```
 
 ## Public API

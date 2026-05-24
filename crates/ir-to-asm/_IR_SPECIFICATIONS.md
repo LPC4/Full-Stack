@@ -1,4 +1,4 @@
-﻿# Intermediate Representation Specification v1.4.1
+# Intermediate Representation Specification v1.4.1
 
 **Version:** 1.4.1  
 **Design Philosophy:** Strongly-Typed, Static Single Assignment (SSA), "Fat" High-Level IR  

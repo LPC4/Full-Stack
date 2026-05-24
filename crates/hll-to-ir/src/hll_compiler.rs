@@ -263,7 +263,7 @@ fn check_asm_lines(lines: &[String], diags: &mut Vec<Diagnostic>) {
                         )
                         .with_note(
                             "freestanding builds run without an OS; use MMIO or SBI ecalls \
-                             (extension IDs ≥ 0x10) instead of Linux userspace syscall numbers",
+                             (extension IDs  0x10) instead of Linux userspace syscall numbers",
                         ),
                     );
                 }

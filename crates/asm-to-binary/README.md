@@ -1,4 +1,4 @@
-﻿# asm-to-binary
+# asm-to-binary
 
 **Stage 4 of the Full-Stack compiler pipeline.**
 
@@ -8,10 +8,10 @@ Three-pass assembler that converts a `Vec<RvInstruction>` token stream (or raw R
 
 ```
 Vec<RvInstruction>
-  → Pass 0 (parser)  - RvInstruction → Vec<AsmToken>
-  → Pass 1 (layout)  - compute label byte addresses
-  → Pass 2 (encode)  - emit bytes, resolve relocations
-  → AssembledOutput  (sections + symbol table)
+  -> Pass 0 (parser)  - RvInstruction -> Vec<AsmToken>
+  -> Pass 1 (layout)  - compute label byte addresses
+  -> Pass 2 (encode)  - emit bytes, resolve relocations
+  -> AssembledOutput  (sections + symbol table)
 ```
 
 ## Public API

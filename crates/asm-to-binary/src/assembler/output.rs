@@ -169,7 +169,7 @@ fn push_u64_le(buf: &mut Vec<u8>, v: u64) {
 impl AssembledOutput {
     /// Produce a minimal ELF-64 executable for RV64IMAFD (little-endian).
     ///
-    /// Layout: ELF header · 1 program header · section data · section headers · strtab · symtab
+    /// Layout: ELF header  1 program header  section data  section headers  strtab  symtab
     ///
     /// A single combined `PT_LOAD` segment covers all sections.  This avoids the
     /// QEMU page-permission conflict that arises when .text (R X) and .bss (R W)
@@ -323,7 +323,7 @@ impl AssembledOutput {
         let ehdr_size = ELF64_HDR_SIZE as u64;
         let phdrs_size = (ELF64_PHDR_SIZE as u64) * (n_phdrs as u64);
 
-        // Page-align the start of section data so p_vaddr ≡ p_offset (mod PAGE_SIZE)
+        // Page-align the start of section data so p_vaddr  p_offset (mod PAGE_SIZE)
         // holds for any PAGE_SIZE-aligned load_base.
         const PAGE_SIZE: u64 = 0x1000;
         let header_end = ehdr_size + phdrs_size;

@@ -55,6 +55,6 @@ fn parse_asm_text(src: &str) -> Vec<RvInstruction> {
 pub fn generate_rom_image() -> Vec<u8> {
     let tokens = parse_asm_text(os_runtime::ROM_SOURCE);
     let output = Assembler::assemble(&tokens)
-        .expect("ROM assembly failed — check crates/os-runtime/boot/rom.s");
+        .expect("ROM assembly failed - check crates/os-runtime/boot/rom.s");
     output.text_bytes().to_vec()
 }

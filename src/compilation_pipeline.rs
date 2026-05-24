@@ -294,7 +294,7 @@ impl CompilationPipeline {
 
     /// Run all pipeline stages, returning typed per-stage outputs.
     ///
-    /// `stdlib_tokens` — when `Some`, prepended before the user's assembly tokens
+    /// `stdlib_tokens` - when `Some`, prepended before the user's assembly tokens
     /// before assembling (the standard link mode for user programs).  Pass `None`
     /// when compiling stdlib or kernel sources standalone.
     pub fn run_full(

@@ -8,10 +8,10 @@ Compiles HLL (High Level Language) source code through lexing, parsing, semantic
 
 ```
 HLL Source
-  → Lexer         → tokens
-  → Parser        → AST
-  → Semantic      → diagnostics
-  → IR Compiler   → IrProgram
+  -> Lexer         -> tokens
+  -> Parser        -> AST
+  -> Semantic      -> diagnostics
+  -> IR Compiler   -> IrProgram
 ```
 
 ## Public API

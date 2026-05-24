@@ -11,7 +11,7 @@ use full_stack::view::{
 use super::{FullStackApp, ViewWrapper};
 
 // ---------------------------------------------------------------------------
-// View registry — single source of truth for every "Add View" menu
+// View registry - single source of truth for every "Add View" menu
 // ---------------------------------------------------------------------------
 
 const IDE_VIEWS: &[(&str, fn() -> Box<dyn CompilerView>)] = &[

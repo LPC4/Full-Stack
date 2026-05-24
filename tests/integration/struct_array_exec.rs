@@ -95,7 +95,7 @@ main: () -> i32 {
 "#);
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
-        "minmax(10,3) → lo=3,hi=10 → span=7, got {outcome:?}"
+        "minmax(10,3) -> lo=3,hi=10 -> span=7, got {outcome:?}"
     );
 }
 

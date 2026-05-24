@@ -177,7 +177,7 @@ fn kernel_boot_pmp_delegation_mret_smode_exit() {
 #[test]
 fn kernel_uart_output_via_smode_ecall() {
     // Kernel writes a single character ('A' = 65) via sys_putchar (syscall 1000).
-    // This ecall from S-mode → M-mode → sys_putchar → UART.
+    // This ecall from S-mode -> M-mode -> sys_putchar -> UART.
     let src = "
         .section .text
         .globl _kernel_start

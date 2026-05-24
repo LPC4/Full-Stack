@@ -1,4 +1,4 @@
-﻿/// QEMU execution integration tests.
+/// QEMU execution integration tests.
 ///
 /// Each test compiles an HLL program all the way to RISC-V assembly or ELF,
 /// then runs it under qemu-riscv64 inside WSL and verifies the exit code and
@@ -27,7 +27,7 @@ fn read_program(filename: &str) -> String {
         .unwrap_or_else(|e| panic!("failed to read {path:?}: {e}"))
 }
 
-/// Compile HLL source → assembly text, stripping inline comments so the
+/// Compile HLL source -> assembly text, stripping inline comments so the
 /// assembly can be passed safely through a shell heredoc.
 /// Uses two-stage compilation: compile stdlib and user code independently,
 /// then link them at the token level before generating assembly.
@@ -162,7 +162,7 @@ fn compile_to_elf(source: &str) -> Vec<u8> {
 }
 
 /// Convert a Windows absolute path to its WSL /mnt/... equivalent.
-/// e.g. `C:\Users\foo\bar.elf` → `/mnt/c/Users/foo/bar.elf`
+/// e.g. `C:\Users\foo\bar.elf` -> `/mnt/c/Users/foo/bar.elf`
 #[cfg(target_os = "windows")]
 fn win_path_to_wsl(path: &std::path::Path) -> String {
     let s = path.to_string_lossy();
@@ -178,7 +178,7 @@ fn win_path_to_wsl(path: &std::path::Path) -> String {
     format!("/mnt/{drive}{rest}")
 }
 
-/// Run a pre-compiled ELF image through WSL → qemu-riscv64.
+/// Run a pre-compiled ELF image through WSL -> qemu-riscv64.
 fn run_elf_via_qemu(elf: &[u8]) -> Result<QemuResult, QemuSkipReason> {
     #[cfg(not(target_os = "windows"))]
     {
@@ -370,7 +370,7 @@ fn qemu_04_pointers_and_memory() {
 
 /// Verifies iterative factorial and Fibonacci (with boundary values),
 /// is_prime (including edge cases 1, 2, even numbers), prime counting,
-/// power function, function composition (fib∘count_primes), and external
+/// power function, function composition (fibcount_primes), and external
 /// putchar I/O.  On success the program writes "PASS\n" to stdout and
 /// returns 0.
 #[test]
@@ -411,7 +411,7 @@ fn qemu_06_elf_export_and_execution() {
 
 
 // These run on every platform (no WSL needed) and confirm the full
-// HLL → IR → assembly pipeline doesn't panic or error on any of the five
+// HLL -> IR -> assembly pipeline doesn't panic or error on any of the five
 // programs.  They are cheap and always active.
 
 #[test]

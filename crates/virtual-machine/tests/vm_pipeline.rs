@@ -45,18 +45,18 @@ fn run_n(cpu: &mut Pipeline, bus: &mut SystemBus, max: u64) -> TickOutcome {
 // Instruction encodings (hand-assembled)
 // ---------------------------------------------------------------------------
 
-// addi rd, rs1, imm  → opcode=0x13, funct3=0
+// addi rd, rs1, imm  -> opcode=0x13, funct3=0
 fn addi(rd: u32, rs1: u32, imm: i32) -> u32 {
     let imm12 = (imm as u32) & 0xFFF;
     (imm12 << 20) | (rs1 << 15) | (rd << 7) | 0x13
 }
 
-// add rd, rs1, rs2  → opcode=0x33, funct3=0, funct7=0
+// add rd, rs1, rs2  -> opcode=0x33, funct3=0, funct7=0
 fn add(rd: u32, rs1: u32, rs2: u32) -> u32 {
     (rs2 << 20) | (rs1 << 15) | (rd << 7) | 0x33
 }
 
-// sw rs2, imm(rs1) → opcode=0x23, funct3=2
+// sw rs2, imm(rs1) -> opcode=0x23, funct3=2
 fn sw(rs1: u32, rs2: u32, imm: i32) -> u32 {
     let imm12 = (imm as u32) & 0xFFF;
     let imm_11_5 = imm12 >> 5;
@@ -64,7 +64,7 @@ fn sw(rs1: u32, rs2: u32, imm: i32) -> u32 {
     (imm_11_5 << 25) | (rs2 << 20) | (rs1 << 15) | (2 << 12) | (imm_4_0 << 7) | 0x23
 }
 
-// lw rd, imm(rs1) → opcode=0x03, funct3=2
+// lw rd, imm(rs1) -> opcode=0x03, funct3=2
 fn lw(rd: u32, rs1: u32, imm: i32) -> u32 {
     let imm12 = (imm as u32) & 0xFFF;
     (imm12 << 20) | (rs1 << 15) | (2 << 12) | (rd << 7) | 0x03
@@ -104,7 +104,7 @@ fn bne(rs1: u32, rs2: u32, imm: i32) -> u32 {
         | 0x63
 }
 
-// ecall → syscall
+// ecall -> syscall
 fn ecall() -> u32 {
     0x0000_0073
 }
@@ -159,8 +159,8 @@ fn pipeline_basic_sequential_no_hazards() {
 #[test]
 fn pipeline_raw_forwarding_no_stall() {
     // addi x1, x0, 10  ; x1 = 10
-    // addi x1, x1, 5   ; x1 = 15  ← depends on previous x1, EX/MEM forward
-    // addi x1, x1, 3   ; x1 = 18  ← depends on previous, MEM/WB forward
+    // addi x1, x1, 5   ; x1 = 15  <- depends on previous x1, EX/MEM forward
+    // addi x1, x1, 3   ; x1 = 18  <- depends on previous, MEM/WB forward
     // halt(x1 as exit code?)  - we'll just check x1 and zero stalls
     let mut bus = SystemBus::new(generate_rom_image());
     let prog = [
@@ -204,8 +204,8 @@ fn pipeline_load_use_stall() {
     let prog = [
         addi(1, 0, 99), // x1 = 99
         sw(2, 1, -4),   // mem[sp-4] = 99  (x2 = STACK_TOP, set by PipelinedCpu::new)
-        lw(3, 2, -4),   // x3 = mem[sp-4]  ← LOAD
-        add(4, 3, 3),   // x4 = x3 + x3    ← load-use hazard on x3
+        lw(3, 2, -4),   // x3 = mem[sp-4]  <- LOAD
+        add(4, 3, 3),   // x4 = x3 + x3    <- load-use hazard on x3
         addi(17, 0, 93),
         addi(10, 0, 0),
         ecall(),
@@ -232,7 +232,7 @@ fn pipeline_load_use_stall() {
 #[test]
 fn pipeline_branch_not_taken_no_flush() {
     // x1 = 5, x2 = 6
-    // beq x1, x2, +8  ; NOT taken (5 ≠ 6)
+    // beq x1, x2, +8  ; NOT taken (5  6)
     // addi x3, x0, 1  ; should execute
     // halt
     let mut bus = SystemBus::new(generate_rom_image());
@@ -257,7 +257,7 @@ fn pipeline_branch_not_taken_no_flush() {
     );
     // A not-taken branch with a predict-not-taken predictor has no flush
     // (the predictor might predict taken on later iterations if seen multiple times,
-    // but on first encounter starts weakly-not-taken → correct prediction)
+    // but on first encounter starts weakly-not-taken -> correct prediction)
 }
 
 // ---------------------------------------------------------------------------
@@ -275,7 +275,7 @@ fn pipeline_branch_taken_causes_flush() {
     let prog = [
         addi(1, 0, 5),   // [0]  x1 = 5
         addi(2, 0, 5),   // [4]  x2 = 5
-        beq(1, 2, 12),   // [8]  beq → skip [12], jump to [20]
+        beq(1, 2, 12),   // [8]  beq -> skip [12], jump to [20]
         addi(3, 0, 99),  // [12] skipped
         nop(),           // [16] skipped
         addi(3, 0, 1),   // [20] x3 = 1 (branch target)
@@ -373,7 +373,7 @@ fn pipeline_loop_sum_1_to_5() {
     assert_eq!(cpu.peek_reg(1), 15, "loop sum must be 15");
     assert_eq!(cpu.peek_reg(2), 0, "counter must reach 0");
 
-    // 5 iterations × 1 taken branch each = 5 branch mispredictions on first encounter
+    // 5 iterations x 1 taken branch each = 5 branch mispredictions on first encounter
     // with predictor warming up. At least some flushes expected.
     assert!(
         cpu.stats.flush_cycles > 0,
@@ -444,7 +444,7 @@ fn pipeline_store_load_correct() {
 #[test]
 fn predictor_stats_tracked() {
     let mut bus = SystemBus::new(generate_rom_image());
-    // A simple branch that is not taken (x1=1, x2=2, beq → not taken)
+    // A simple branch that is not taken (x1=1, x2=2, beq -> not taken)
     let prog = [
         addi(1, 0, 1),
         addi(2, 0, 2),

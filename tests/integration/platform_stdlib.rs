@@ -1,4 +1,4 @@
-﻿use full_stack::compilation_pipeline::CompilationPipeline;
+use full_stack::compilation_pipeline::CompilationPipeline;
 use hll_to_ir::stdlib::{get_kernel_stdlib_source, get_stdlib_source};
 use virtual_machine::rom::generate_rom_image;
 use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
@@ -36,7 +36,7 @@ fn run_with(extra: &str, user_src: &str) -> (String, Option<i64>) {
     run_hll(&format!("{extra}\n{user_src}"))
 }
 
-// ── ROM ─────────────────────────────────────────────────────────────────────
+// -- ROM ---------------------------------------------------------------------
 
 #[test]
 fn rom_image_assembles() {
@@ -45,7 +45,7 @@ fn rom_image_assembles() {
     assert_eq!(rom.len() % 4, 0, "ROM size must be word-aligned");
 }
 
-// ── mem.hll ─────────────────────────────────────────────────────────────────
+// -- mem.hll -----------------------------------------------------------------
 
 #[test]
 fn memset_fills_buffer() {
@@ -100,7 +100,7 @@ main: () -> i32 {
 #[test]
 fn memmove_dst_greater_than_src() {
     // memmove copies high-to-low, so dst > src overlaps are handled correctly.
-    // buf = [A,B,C,D,E]; memmove(buf[1], buf[0], 4) → [A,A,B,C,D]
+    // buf = [A,B,C,D,E]; memmove(buf[1], buf[0], 4) -> [A,A,B,C,D]
     let (uart, exit) = run_with(
         MEM_SRC,
         r#"
@@ -165,7 +165,7 @@ main: () -> i32 {
 
 #[test]
 fn memcmp_detects_difference() {
-    // a = "AB", b = "AC" → a < b, memcmp returns -1.
+    // a = "AB", b = "AC" -> a < b, memcmp returns -1.
     let (uart, exit) = run_with(
         MEM_SRC,
         r#"
@@ -195,7 +195,7 @@ main: () -> i32 {
     assert_eq!(exit, Some(0));
 }
 
-// ── klog.hll ────────────────────────────────────────────────────────────────
+// -- klog.hll ----------------------------------------------------------------
 
 #[test]
 fn klog_ok_output() {
@@ -242,7 +242,7 @@ main: () -> i32 {
     assert_eq!(exit, Some(0));
 }
 
-// ── Kernel boot ─────────────────────────────────────────────────────────────
+// -- Kernel boot -------------------------------------------------------------
 
 // Compile user code linked against the kernel stdlib.
 // The kernel stdlib is compiled with the "__kern_str_" string-label prefix so

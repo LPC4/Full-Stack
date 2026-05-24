@@ -1,4 +1,4 @@
-﻿use asm_to_binary::AssembledOutput;
+use asm_to_binary::AssembledOutput;
 use crate::view::{CompilationState, CompilerView, ProgramCatalog, ui_theme};
 use egui::{Color32, Frame, Grid, Rect, RichText, Sense, Stroke, Vec2};
 

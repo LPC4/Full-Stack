@@ -202,10 +202,10 @@ impl Pipeline {
                 // deliver the CLINT timer directly as STIP (bit 5) without routing through
                 // M-mode. Otherwise use the standard MTIP (bit 7) path.
                 if (self.csrs.mideleg >> 5) & 1 == 1 {
-                    self.csrs.mip |= 1u64 << 5; // STIP — S-mode timer pending
+                    self.csrs.mip |= 1u64 << 5; // STIP - S-mode timer pending
                     self.csrs.mip &= !(1u64 << 7); // no MTIP when using delegation
                 } else {
-                    self.csrs.mip |= 1u64 << 7; // MTIP — M-mode timer pending
+                    self.csrs.mip |= 1u64 << 7; // MTIP - M-mode timer pending
                 }
             } else {
                 self.csrs.mip &= !(1u64 << 7); // clear MTIP

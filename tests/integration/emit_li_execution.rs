@@ -24,7 +24,7 @@ fn run_hll(src: &str) -> (VirtualMachine, StepOutcome, String) {
     (vm, run.outcome, uart)
 }
 
-/// 42 — exercises the ADDI-only path (value in [-2048, 2047]).
+/// 42 - exercises the ADDI-only path (value in [-2048, 2047]).
 #[test]
 fn li_small_positive() {
     let (_, outcome, _) = run_hll(r#"
@@ -42,7 +42,7 @@ main: () -> i32 {
     );
 }
 
-/// 2047 — last value that fits in a single ADDI.
+/// 2047 - last value that fits in a single ADDI.
 #[test]
 fn li_boundary_2047() {
     let (_, outcome, _) = run_hll(r#"
@@ -60,7 +60,7 @@ main: () -> i32 {
     );
 }
 
-/// 2048 — first value that requires the LUI path.
+/// 2048 - first value that requires the LUI path.
 #[test]
 fn li_boundary_2048() {
     let (_, outcome, _) = run_hll(r#"
@@ -78,8 +78,8 @@ main: () -> i32 {
     );
 }
 
-/// 0x7FFF_FFFF — last value before the sign-extension danger zone.
-/// LUI + ADDI, bit 31 clear → no zero-extension needed.
+/// 0x7FFF_FFFF - last value before the sign-extension danger zone.
+/// LUI + ADDI, bit 31 clear -> no zero-extension needed.
 #[test]
 fn li_max_signed_32bit() {
     let (_, outcome, _) = run_hll(r#"
@@ -99,7 +99,7 @@ main: () -> i32 {
     );
 }
 
-/// 0x8000_0000 — first value where LUI sign-extends; zero-extension (slli/srli) is required.
+/// 0x8000_0000 - first value where LUI sign-extends; zero-extension (slli/srli) is required.
 /// Expected value built as 1048576 * 2048 = 2147483648.  Both factors are in the safe range
 /// (bit 31 clear) so they are loaded correctly regardless of the zero-extension bug.
 #[test]
@@ -122,7 +122,7 @@ main: () -> i32 {
     );
 }
 
-/// 0x8010_0000 — the exact pmm_init address that exposed the original kernel bug.
+/// 0x8010_0000 - the exact pmm_init address that exposed the original kernel bug.
 /// Expected value built as 1048576 * 2049 = 2148532224.
 #[test]
 fn li_original_bug_value() {
@@ -143,7 +143,7 @@ main: () -> i32 {
     );
 }
 
-/// 0xFFFF_FFFF — hi_adj overflows i32; the slli/srli sequence must still produce the right value.
+/// 0xFFFF_FFFF - hi_adj overflows i32; the slli/srli sequence must still produce the right value.
 /// Expected value built as 65535 * 65537 = 65536^2 - 1 = 4294967295.
 #[test]
 fn li_max_unsigned_32bit() {
@@ -165,7 +165,7 @@ main: () -> i32 {
     );
 }
 
-/// 0x1_0000_0000 — first true 64-bit value; previously produced 0 when the else branch was missing.
+/// 0x1_0000_0000 - first true 64-bit value; previously produced 0 when the else branch was missing.
 /// Expected value built as 65536 * 65536 = 4294967296.
 #[test]
 fn li_true_64bit_small() {

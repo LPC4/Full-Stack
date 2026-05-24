@@ -207,13 +207,13 @@ fn parse_instruction_line(line: &str, out: &mut Vec<AsmToken>) {
         return;
     }
 
-    // `ret`  →  jalr x0, 0(ra)
+    // `ret`  ->  jalr x0, 0(ra)
     if mnemonic == "ret" {
         out.push(AsmToken::Real(RealInstruction::Jalr(Jalr::new(0, 1, 0))));
         return;
     }
 
-    // `nop` → addi x0, x0, 0
+    // `nop` -> addi x0, x0, 0
     if mnemonic == "nop" {
         out.push(AsmToken::Real(RealInstruction::Addi(Addi::new(0, 0, 0))));
         return;
@@ -232,7 +232,7 @@ fn parse_instruction_line(line: &str, out: &mut Vec<AsmToken>) {
         return;
     }
 
-    // `mv rd, rs`  →  addi rd, rs, 0
+    // `mv rd, rs`  ->  addi rd, rs, 0
     if mnemonic == "mv" {
         if let Some((rd_str, rs_str)) = parse_two_fields(rest)
             && let (Some(rd), Some(rs)) = (parse_int_reg(rd_str), parse_int_reg(rs_str))
@@ -256,7 +256,7 @@ fn parse_instruction_line(line: &str, out: &mut Vec<AsmToken>) {
         return;
     }
 
-    // Store: `sd rs2, imm(rs1)`  →  Sd::new(base=rs1, src=rs2, offset=imm)
+    // Store: `sd rs2, imm(rs1)`  ->  Sd::new(base=rs1, src=rs2, offset=imm)
     if mnemonic == "sd" {
         if let Some((rs2, rs1, imm)) = parse_store_mem(rest) {
             out.push(AsmToken::Real(RealInstruction::Sd(Sd::new(rs1, rs2, imm))));
@@ -287,7 +287,7 @@ fn parse_instruction_line(line: &str, out: &mut Vec<AsmToken>) {
         return;
     }
 
-    // Load: `ld rd, imm(rs1)`  →  Ld::new(rd, base=rs1, offset=imm)
+    // Load: `ld rd, imm(rs1)`  ->  Ld::new(rd, base=rs1, offset=imm)
     if mnemonic == "ld" {
         if let Some((rd, rs1, imm)) = parse_load_mem(rest) {
             out.push(AsmToken::Real(RealInstruction::Ld(Ld::new(rd, rs1, imm))));
@@ -352,7 +352,7 @@ fn parse_instruction_line(line: &str, out: &mut Vec<AsmToken>) {
         return;
     }
 
-    // `sfence.vma [rs1 [, rs2]]` — always emitted as sfence.vma x0, x0
+    // `sfence.vma [rs1 [, rs2]]` - always emitted as sfence.vma x0, x0
     if mnemonic == "sfence.vma" {
         out.push(AsmToken::Real(RealInstruction::SfenceVma(SfenceVma::new())));
         return;
@@ -512,7 +512,7 @@ fn parse_two_fields(operands: &str) -> Option<(&str, &str)> {
     Some((operands[..comma].trim(), operands[comma + 1..].trim()))
 }
 
-/// Parse `"rd, rs1, imm"` → (`rd_reg`, `rs1_reg`, `imm_i32`).
+/// Parse `"rd, rs1, imm"` -> (`rd_reg`, `rs1_reg`, `imm_i32`).
 fn parse_r_i_imm(operands: &str) -> Option<(u8, u8, i32)> {
     let mut parts = operands.splitn(3, ',');
     let rd = parse_int_reg(parts.next()?.trim())?;
@@ -521,7 +521,7 @@ fn parse_r_i_imm(operands: &str) -> Option<(u8, u8, i32)> {
     Some((rd, rs1, imm))
 }
 
-/// Parse `"rs2, imm(rs1)"` → (`rs2_reg`, `rs1_reg`, `imm_i32`).  Used by stores.
+/// Parse `"rs2, imm(rs1)"` -> (`rs2_reg`, `rs1_reg`, `imm_i32`).  Used by stores.
 fn parse_store_mem(operands: &str) -> Option<(u8, u8, i32)> {
     let comma = operands.find(',')?;
     let rs2 = parse_int_reg(operands[..comma].trim())?;
@@ -529,7 +529,7 @@ fn parse_store_mem(operands: &str) -> Option<(u8, u8, i32)> {
     Some((rs2, rs1, imm))
 }
 
-/// Parse `"rd, imm(rs1)"` → (`rd_reg`, `rs1_reg`, `imm_i32`).  Used by loads.
+/// Parse `"rd, imm(rs1)"` -> (`rd_reg`, `rs1_reg`, `imm_i32`).  Used by loads.
 fn parse_load_mem(operands: &str) -> Option<(u8, u8, i32)> {
     let comma = operands.find(',')?;
     let rd = parse_int_reg(operands[..comma].trim())?;
@@ -537,7 +537,7 @@ fn parse_load_mem(operands: &str) -> Option<(u8, u8, i32)> {
     Some((rd, rs1, imm))
 }
 
-/// Parse `"imm(rs1)"` → (`rs1_reg`, `imm_i32`).
+/// Parse `"imm(rs1)"` -> (`rs1_reg`, `imm_i32`).
 fn parse_mem_ref(s: &str) -> Option<(u8, i32)> {
     let lparen = s.find('(')?;
     let rparen = s.find(')')?;

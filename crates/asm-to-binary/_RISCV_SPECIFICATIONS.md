@@ -1,4 +1,4 @@
-﻿# RISC-V RV64IMAFD Assembler Specification
+# RISC-V RV64IMAFD Assembler Specification
 
 **Version:** 1.0.1
 **Target Architecture:** RISC-V 64-bit Base Integer (RV64I) + Multiply/Divide (M) + Atomics (A) + Single/Double Precision Floating Point (F/D)  
@@ -51,7 +51,7 @@
 
 ---
 
-## 3. Instruction Formats (Bit 31 → 0)
+## 3. Instruction Formats (Bit 31 -> 0)
 
 ```
 R-type:  [funct7:31-25][rs2:24-20][rs1:19-15][funct3:14-12][rd:11-7][opcode:6-0]
@@ -99,7 +99,7 @@ target_pc = current_pc + sext(imm << 1)
 ```
 - `imm[0]` is always implicitly `0` (targets must be 2-byte aligned; 4-byte aligned without C extension)
 - `imm[12]` is the sign bit
-- **Valid byte offset range: `[-4096, +4094]`** (even values only; ±4096 in multiples of 2 means offset ∈ {-4096, -4094, ..., 0, ..., +4094})
+- **Valid byte offset range: `[-4096, +4094]`** (even values only; 4096 in multiples of 2 means offset  {-4096, -4094, ..., 0, ..., +4094})
 - Assembler must **error** if offset is outside this range or is odd.
 
 ### Jump Offset Calculation (J-type)
@@ -111,7 +111,7 @@ target_pc = current_pc + sext(imm << 1)
 
 ### `lui` / `auipc` Upper Immediate (U-type)
 - The 20-bit `imm[31:12]` is placed in bits 31-12 of the result; bits 11-0 are zero.
-- **Important:** If the 12-bit low part of a symbol's address has bit 11 set (value ≥ 0x800), the upper immediate must be incremented by 1 to compensate for sign extension.
+- **Important:** If the 12-bit low part of a symbol's address has bit 11 set (value  0x800), the upper immediate must be incremented by 1 to compensate for sign extension.
 
 ---
 
@@ -142,14 +142,14 @@ target_pc = current_pc + sext(imm << 1)
 | Mnemonic | funct3 | funct7/funct6 | Semantics | Notes |
 |----------|--------|---------------|-----------|-------|
 | `addi` | `0` | - | `rd = rs1 + sext(imm)` | `addi rd, x0, 0` = canonical NOP |
-| `slti` | `2` | - | `rd = (rs1 <ₛ sext(imm)) ? 1 : 0` | |
-| `sltiu` | `3` | - | `rd = (rs1 <ᵤ sext(imm)) ? 1 : 0` | imm is sign-extended then compared unsigned |
+| `slti` | `2` | - | `rd = (rs1 < sext(imm)) ? 1 : 0` | |
+| `sltiu` | `3` | - | `rd = (rs1 < sext(imm)) ? 1 : 0` | imm is sign-extended then compared unsigned |
 | `xori` | `4` | - | `rd = rs1 ^ sext(imm)` | `xori rd, rs1, -1` = bitwise NOT |
 | `ori` | `6` | - | `rd = rs1 \| sext(imm)` | |
 | `andi` | `7` | - | `rd = rs1 & sext(imm)` | |
 | `slli` | `1` | `funct6=0x00` (bits[31:26]=000000) | `rd = rs1 << imm[5:0]` | shamt is 6-bit |
-| `srli` | `5` | `funct6=0x00` (bits[31:26]=000000) | `rd = rs1 >>ᵤ imm[5:0]` | shamt is 6-bit |
-| `srai` | `5` | `funct6=0x10` (bit30=1, bits[31,29:26]=0) | `rd = rs1 >>ₛ imm[5:0]` | shamt is 6-bit |
+| `srli` | `5` | `funct6=0x00` (bits[31:26]=000000) | `rd = rs1 >> imm[5:0]` | shamt is 6-bit |
+| `srai` | `5` | `funct6=0x10` (bit30=1, bits[31,29:26]=0) | `rd = rs1 >> imm[5:0]` | shamt is 6-bit |
 
 #### Integer Register-Register (R-type, opcode `0x33`)
 | Mnemonic | funct3 | funct7 | Semantics |
@@ -157,25 +157,25 @@ target_pc = current_pc + sext(imm << 1)
 | `add` | `0` | `0x00` | `rd = rs1 + rs2` |
 | `sub` | `0` | `0x20` | `rd = rs1 - rs2` |
 | `sll` | `1` | `0x00` | `rd = rs1 << rs2[5:0]` |
-| `slt` | `2` | `0x00` | `rd = (rs1 <ₛ rs2) ? 1 : 0` |
-| `sltu` | `3` | `0x00` | `rd = (rs1 <ᵤ rs2) ? 1 : 0` |
+| `slt` | `2` | `0x00` | `rd = (rs1 < rs2) ? 1 : 0` |
+| `sltu` | `3` | `0x00` | `rd = (rs1 < rs2) ? 1 : 0` |
 | `xor` | `4` | `0x00` | `rd = rs1 ^ rs2` |
-| `srl` | `5` | `0x00` | `rd = rs1 >>ᵤ rs2[5:0]` |
-| `sra` | `5` | `0x20` | `rd = rs1 >>ₛ rs2[5:0]` |
+| `srl` | `5` | `0x00` | `rd = rs1 >> rs2[5:0]` |
+| `sra` | `5` | `0x20` | `rd = rs1 >> rs2[5:0]` |
 | `or` | `6` | `0x00` | `rd = rs1 \| rs2` |
 | `and` | `7` | `0x00` | `rd = rs1 & rs2` |
 
 #### Control Transfer
 | Mnemonic | Type | Opcode | funct3 | Semantics | Notes |
 |----------|------|--------|--------|-----------|-------|
-| `jal` | J | `0x6F` | - | `rd = pc+4; pc += sext(imm<<1)` | offset range ±1MiB (even) |
+| `jal` | J | `0x6F` | - | `rd = pc+4; pc += sext(imm<<1)` | offset range 1MiB (even) |
 | `jalr` | I | `0x67` | `0` | `rd = pc+4; pc = (rs1+sext(imm)) & ~1` | clears bit 0 |
 | `beq` | B | `0x63` | `0` | `if rs1==rs2: pc += sext(imm<<1)` | |
 | `bne` | B | `0x63` | `1` | `if rs1!=rs2: pc += sext(imm<<1)` | |
-| `blt` | B | `0x63` | `4` | `if rs1<ₛrs2: pc += sext(imm<<1)` | |
-| `bge` | B | `0x63` | `5` | `if rs1>=ₛrs2: pc += sext(imm<<1)` | |
-| `bltu` | B | `0x63` | `6` | `if rs1<ᵤrs2: pc += sext(imm<<1)` | |
-| `bgeu` | B | `0x63` | `7` | `if rs1>=ᵤrs2: pc += sext(imm<<1)` | |
+| `blt` | B | `0x63` | `4` | `if rs1<rs2: pc += sext(imm<<1)` | |
+| `bge` | B | `0x63` | `5` | `if rs1>=rs2: pc += sext(imm<<1)` | |
+| `bltu` | B | `0x63` | `6` | `if rs1<rs2: pc += sext(imm<<1)` | |
+| `bgeu` | B | `0x63` | `7` | `if rs1>=rs2: pc += sext(imm<<1)` | |
 
 #### Upper Immediate
 | Mnemonic | Type | Opcode | Semantics |
@@ -198,13 +198,13 @@ target_pc = current_pc + sext(imm << 1)
 |----------|------|--------|--------|--------|-----------|
 | `addiw` | I | `0x1B` | `0` | - | `rd = sext32(rs1[31:0] + sext(imm))` |
 | `slliw` | I | `0x1B` | `1` | `0x00` | `rd = sext32(rs1[31:0] << shamt[4:0])`; shamt[5] must be 0 |
-| `srliw` | I | `0x1B` | `5` | `0x00` | `rd = sext32(rs1[31:0] >>ᵤ shamt[4:0])`; shamt[5] must be 0 |
-| `sraiw` | I | `0x1B` | `5` | `0x20` | `rd = sext32(rs1[31:0] >>ₛ shamt[4:0])`; shamt[5] must be 0 |
+| `srliw` | I | `0x1B` | `5` | `0x00` | `rd = sext32(rs1[31:0] >> shamt[4:0])`; shamt[5] must be 0 |
+| `sraiw` | I | `0x1B` | `5` | `0x20` | `rd = sext32(rs1[31:0] >> shamt[4:0])`; shamt[5] must be 0 |
 | `addw` | R | `0x3B` | `0` | `0x00` | `rd = sext32(rs1[31:0] + rs2[31:0])` |
 | `subw` | R | `0x3B` | `0` | `0x20` | `rd = sext32(rs1[31:0] - rs2[31:0])` |
 | `sllw` | R | `0x3B` | `1` | `0x00` | `rd = sext32(rs1[31:0] << rs2[4:0])` |
-| `srlw` | R | `0x3B` | `5` | `0x00` | `rd = sext32(rs1[31:0] >>ᵤ rs2[4:0])` |
-| `sraw` | R | `0x3B` | `5` | `0x20` | `rd = sext32(rs1[31:0] >>ₛ rs2[4:0])` |
+| `srlw` | R | `0x3B` | `5` | `0x00` | `rd = sext32(rs1[31:0] >> rs2[4:0])` |
+| `sraw` | R | `0x3B` | `5` | `0x20` | `rd = sext32(rs1[31:0] >> rs2[4:0])` |
 
 ---
 
@@ -215,25 +215,25 @@ All R-type. Non-W instructions: opcode `0x33`, `funct7=0x01`. W instructions: op
 #### 64-bit Operations (opcode `0x33`)
 | Mnemonic | funct3 | Semantics | Notes |
 |----------|--------|-----------|-------|
-| `mul` | `0` | `rd = (rs1 × rs2)[63:0]` | Low 64 bits of full product |
-| `mulh` | `1` | `rd = (rs1 ×ₛₛ rs2)[127:64]` | Signed × signed, upper 64 bits |
-| `mulhsu` | `2` | `rd = (rs1 ×ₛᵤ rs2)[127:64]` | Signed × unsigned, upper 64 bits |
-| `mulhu` | `3` | `rd = (rs1 ×ᵤᵤ rs2)[127:64]` | Unsigned × unsigned, upper 64 bits |
-| `div` | `4` | `rd = rs1 /ₛ rs2` | div/0 → −1; overflow (INT64_MIN/−1) → INT64_MIN |
-| `divu` | `5` | `rd = rs1 /ᵤ rs2` | div/0 → 2⁶⁴−1 |
-| `rem` | `6` | `rd = rs1 %ₛ rs2` | div/0 → rs1; overflow → 0 |
-| `remu` | `7` | `rd = rs1 %ᵤ rs2` | div/0 → rs1 |
+| `mul` | `0` | `rd = (rs1 x rs2)[63:0]` | Low 64 bits of full product |
+| `mulh` | `1` | `rd = (rs1 x rs2)[127:64]` | Signed x signed, upper 64 bits |
+| `mulhsu` | `2` | `rd = (rs1 x rs2)[127:64]` | Signed x unsigned, upper 64 bits |
+| `mulhu` | `3` | `rd = (rs1 x rs2)[127:64]` | Unsigned x unsigned, upper 64 bits |
+| `div` | `4` | `rd = rs1 / rs2` | div/0 -> -1; overflow (INT64_MIN/-1) -> INT64_MIN |
+| `divu` | `5` | `rd = rs1 / rs2` | div/0 -> 2-1 |
+| `rem` | `6` | `rd = rs1 % rs2` | div/0 -> rs1; overflow -> 0 |
+| `remu` | `7` | `rd = rs1 % rs2` | div/0 -> rs1 |
 
 #### 32-bit Word Operations (opcode `0x3B`)
 *Operate on lower 32 bits; result sign-extended to 64 bits.*
 
 | Mnemonic | funct3 | Semantics |
 |----------|--------|-----------|
-| `mulw` | `0` | `rd = sext32((rs1[31:0] × rs2[31:0])[31:0])` |
-| `divw` | `4` | `rd = sext32(rs1[31:0] /ₛ rs2[31:0])` |
-| `divuw` | `5` | `rd = sext32(rs1[31:0] /ᵤ rs2[31:0])` |
-| `remw` | `6` | `rd = sext32(rs1[31:0] %ₛ rs2[31:0])` |
-| `remuw` | `7` | `rd = sext32(rs1[31:0] %ᵤ rs2[31:0])` |
+| `mulw` | `0` | `rd = sext32((rs1[31:0] x rs2[31:0])[31:0])` |
+| `divw` | `4` | `rd = sext32(rs1[31:0] / rs2[31:0])` |
+| `divuw` | `5` | `rd = sext32(rs1[31:0] / rs2[31:0])` |
+| `remw` | `6` | `rd = sext32(rs1[31:0] % rs2[31:0])` |
+| `remuw` | `7` | `rd = sext32(rs1[31:0] % rs2[31:0])` |
 
 ---
 
@@ -298,11 +298,11 @@ All FP ALU ops: `funct5` selects operation, `fmt` selects precision.
 | `fsub.s/d` | `00001` | dynamic | `fd = fs1 - fs2` | |
 | `fmul.s/d` | `00010` | dynamic | `fd = fs1 * fs2` | |
 | `fdiv.s/d` | `00011` | dynamic | `fd = fs1 / fs2` | |
-| `fsqrt.s/d` | `01011` | dynamic | `fd = √fs1`; `rs2=00000` | |
+| `fsqrt.s/d` | `01011` | dynamic | `fd = fs1`; `rs2=00000` | |
 | `fsgnj.s/d` | `00100` | `000` | `fd = {fs2.sign, fs1.exp, fs1.mantissa}` | sign from rs2 |
 | `fsgnjn.s/d` | `00100` | `001` | `fd = {~fs2.sign, fs1.exp, fs1.mantissa}` | inverted sign from rs2 |
 | `fsgnjx.s/d` | `00100` | `010` | `fd = {fs1.sign^fs2.sign, fs1.exp, fs1.mantissa}` | XOR sign |
-| `fmin.s/d` | `00101` | `000` | `fd = min(fs1, fs2)` | −0 < +0; NaN handling per IEEE |
+| `fmin.s/d` | `00101` | `000` | `fd = min(fs1, fs2)` | -0 < +0; NaN handling per IEEE |
 | `fmax.s/d` | `00101` | `001` | `fd = max(fs1, fs2)` | |
 
 **Note:** `fsgnj`, `fsgnjn`, `fsgnjx` share **the same `funct5=00100`**, distinguished by `rm`. Likewise `fmin`/`fmax` share `funct5=00101`, distinguished by `rm=000`/`001`.
@@ -312,29 +312,29 @@ These instructions transfer bit patterns without conversion. `rs2` must be `0000
 
 | Mnemonic | funct5 | fmt | rm | Semantics |
 |----------|--------|-----|----|-----------|
-| `fmv.x.w` | `11100` | `00` | `000` | `rd = sext32(fs1[31:0])` - FP→int, single bits |
-| `fmv.w.x` | `11110` | `00` | `000` | `fd = NaN-box(rs1[31:0])` - int→FP, single bits |
-| `fmv.x.d` | `11100` | `01` | `000` | `rd = fs1[63:0]` - FP→int, double bits (RV64 only) |
-| `fmv.d.x` | `11110` | `01` | `000` | `fd = rs1[63:0]` - int→FP, double bits (RV64 only) |
+| `fmv.x.w` | `11100` | `00` | `000` | `rd = sext32(fs1[31:0])` - FP->int, single bits |
+| `fmv.w.x` | `11110` | `00` | `000` | `fd = NaN-box(rs1[31:0])` - int->FP, single bits |
+| `fmv.x.d` | `11100` | `01` | `000` | `rd = fs1[63:0]` - FP->int, double bits (RV64 only) |
+| `fmv.d.x` | `11110` | `01` | `000` | `fd = rs1[63:0]` - int->FP, double bits (RV64 only) |
 
 #### FP Compare and Classify (R-type, opcode `0x53`)
 | Mnemonic | funct5 | rm/funct3 | Semantics | Notes |
 |----------|--------|-----------|-----------|-------|
-| `feq.s/d` | `10100` | `010` | `rd = (fs1 == fs2) ? 1 : 0` | Quiet NaN → 0, sets no flag |
-| `flt.s/d` | `10100` | `001` | `rd = (fs1 < fs2) ? 1 : 0` | sNaN → invalid flag |
-| `fle.s/d` | `10100` | `000` | `rd = (fs1 <= fs2) ? 1 : 0` | sNaN → invalid flag |
+| `feq.s/d` | `10100` | `010` | `rd = (fs1 == fs2) ? 1 : 0` | Quiet NaN -> 0, sets no flag |
+| `flt.s/d` | `10100` | `001` | `rd = (fs1 < fs2) ? 1 : 0` | sNaN -> invalid flag |
+| `fle.s/d` | `10100` | `000` | `rd = (fs1 <= fs2) ? 1 : 0` | sNaN -> invalid flag |
 | `fclass.s/d` | `11100` | `001` | `rd = classify(fs1)` (bitmask) | **`rs2` must be `x0`/`f0`; assembler must error otherwise** |
 
 `fclass` result bitmask (bits 9-0):
-- bit 0: −∞, bit 1: negative normal, bit 2: negative subnormal, bit 3: −0
-- bit 4: +0, bit 5: positive subnormal, bit 6: positive normal, bit 7: +∞
+- bit 0: -, bit 1: negative normal, bit 2: negative subnormal, bit 3: -0
+- bit 4: +0, bit 5: positive subnormal, bit 6: positive normal, bit 7: +
 - bit 8: signaling NaN, bit 9: quiet NaN
 
 #### FP Conversion Instructions (R-type, opcode `0x53`)
 
-**Key principle:** `funct5` encodes the conversion **direction** only. The `rs2` field (bits 24-20) encodes the **integer type** for FP↔int conversions. For FP↔FP conversions, `rs2` encodes the source format.
+**Key principle:** `funct5` encodes the conversion **direction** only. The `rs2` field (bits 24-20) encodes the **integer type** for FPint conversions. For FPFP conversions, `rs2` encodes the source format.
 
-##### Integer type codes (rs2 field for FP↔int)
+##### Integer type codes (rs2 field for FPint)
 | rs2 value | Integer type |
 |-----------|-------------|
 | `00000` | `w` - 32-bit signed |
@@ -342,7 +342,7 @@ These instructions transfer bit patterns without conversion. `rs2` must be `0000
 | `00010` | `l` - 64-bit signed (RV64 only) |
 | `00011` | `lu` - 64-bit unsigned (RV64 only) |
 
-##### FP → Integer Conversions (`funct5 = 11000`, result in integer `rd`)
+##### FP -> Integer Conversions (`funct5 = 11000`, result in integer `rd`)
 `fmt` selects the source FP type; `rs2` selects the integer destination type.
 
 | Mnemonic | fmt | rs2 | Semantics |
@@ -356,7 +356,7 @@ These instructions transfer bit patterns without conversion. `rs2` must be `0000
 | `fcvt.l.d` | `01` | `00010` | `rd = (int64_t)fs1` (RV64 only) |
 | `fcvt.lu.d` | `01` | `00011` | `rd = (uint64_t)fs1` (RV64 only) |
 
-##### Integer → FP Conversions (`funct5 = 11010`, result in FP `fd`)
+##### Integer -> FP Conversions (`funct5 = 11010`, result in FP `fd`)
 `fmt` selects the destination FP type; `rs2` selects the integer source type.
 
 | Mnemonic | fmt | rs2 | Semantics |
@@ -370,26 +370,26 @@ These instructions transfer bit patterns without conversion. `rs2` must be `0000
 | `fcvt.d.l` | `01` | `00010` | `fd = (double)rs1` (from int64, RV64 only) |
 | `fcvt.d.lu` | `01` | `00011` | `fd = (double)rs1` (from uint64, RV64 only) |
 
-##### FP ↔ FP Conversions (opcode `0x53`)
+##### FP  FP Conversions (opcode `0x53`)
 The `fmt` field encodes the **destination** format; `rs2` encodes the **source** format.
 
 | Mnemonic | funct5 | fmt | rs2 | Semantics |
 |----------|--------|-----|-----|-----------|
-| `fcvt.s.d` | `01000` | `00` (S dest) | `00001` (D src) | `fd = (float)fs1` (double→single, may round) |
-| `fcvt.d.s` | `01001` | `01` (D dest) | `00000` (S src) | `fd = (double)fs1` (single→double, exact) |
+| `fcvt.s.d` | `01000` | `00` (S dest) | `00001` (D src) | `fd = (float)fs1` (double->single, may round) |
+| `fcvt.d.s` | `01001` | `01` (D dest) | `00000` (S src) | `fd = (double)fs1` (single->double, exact) |
 
 **Validation:** Assembler must reject `fcvt.<T>.<T>` where source and destination types are identical (e.g., `fcvt.s.s`, `fcvt.w.w`).
 
 #### FMAC Instructions (R4-type)
-`fd = ±(fs1 × fs2) ± fs3`
+`fd = (fs1 x fs2)  fs3`
 Format: `[rs3:31-27][fmt:26-25][rs2:24-20][rs1:19-15][rm:14-12][rd:11-7][opcode:6-0]`
 
 | Mnemonic | opcode | Semantics |
 |----------|--------|-----------|
-| `fmadd.s/d` | `0x43` | `fd = (fs1 × fs2) + fs3` |
-| `fmsub.s/d` | `0x47` | `fd = (fs1 × fs2) − fs3` |
-| `fnmsub.s/d` | `0x4B` | `fd = −(fs1 × fs2) + fs3` |
-| `fnmadd.s/d` | `0x4F` | `fd = −(fs1 × fs2) − fs3` |
+| `fmadd.s/d` | `0x43` | `fd = (fs1 x fs2) + fs3` |
+| `fmsub.s/d` | `0x47` | `fd = (fs1 x fs2) - fs3` |
+| `fnmsub.s/d` | `0x4B` | `fd = -(fs1 x fs2) + fs3` |
+| `fnmadd.s/d` | `0x4F` | `fd = -(fs1 x fs2) - fs3` |
 
 ---
 
@@ -434,7 +434,7 @@ I-type, opcode `0x73`. `csr` is the 12-bit CSR address (bits 31-20). For immedia
 | `not rd, rs` | `xori rd, rs, -1` | Bitwise NOT |
 | `neg rd, rs` | `sub rd, x0, rs` | Two's complement negation |
 | `negw rd, rs` | `subw rd, x0, rs` | 32-bit negation, sign-extend |
-| `sext.w rd, rs` | `addiw rd, rs, 0` | Sign-extend 32→64 |
+| `sext.w rd, rs` | `addiw rd, rs, 0` | Sign-extend 32->64 |
 | `seqz rd, rs` | `sltiu rd, rs, 1` | Set if equal to zero |
 | `snez rd, rs` | `sltu rd, x0, rs` | Set if not equal to zero |
 | `sltz rd, rs` | `slt rd, rs, x0` | Set if less than zero |
@@ -446,9 +446,9 @@ I-type, opcode `0x73`. `csr` is the 12-bit CSR address (bits 31-20). For immedia
 | `bltz rs, L` | `blt rs, x0, L` | Branch if less than zero |
 | `bgtz rs, L` | `blt x0, rs, L` | Branch if greater than zero |
 | `bgt rs1, rs2, L` | `blt rs2, rs1, L` | Branch if rs1 > rs2 (signed) |
-| `ble rs1, rs2, L` | `bge rs2, rs1, L` | Branch if rs1 ≤ rs2 (signed) |
+| `ble rs1, rs2, L` | `bge rs2, rs1, L` | Branch if rs1  rs2 (signed) |
 | `bgtu rs1, rs2, L` | `bltu rs2, rs1, L` | Branch if rs1 > rs2 (unsigned) |
-| `bleu rs1, rs2, L` | `bgeu rs2, rs1, L` | Branch if rs1 ≤ rs2 (unsigned) |
+| `bleu rs1, rs2, L` | `bgeu rs2, rs1, L` | Branch if rs1  rs2 (unsigned) |
 | `j L` | `jal x0, L` | Unconditional jump (no link) |
 | `jr rs` | `jalr x0, 0(rs)` | Jump to register |
 | `ret` | `jalr x0, 0(ra)` | Return from function |
@@ -475,7 +475,7 @@ I-type, opcode `0x73`. `csr` is the 12-bit CSR address (bits 31-20). For immedia
 ### Argument Passing
 - **Integer / Pointer:** `a0`-`a7` (`x10`-`x17`)
 - **Floating Point:** `fa0`-`fa7` (`f10`-`f17`)
-- **Small structs/aggregates (≤ 16 bytes):** May be passed in up to two registers (integer or FP as applicable)
+- **Small structs/aggregates ( 16 bytes):** May be passed in up to two registers (integer or FP as applicable)
 - **Large structs (> 16 bytes):** Passed by reference (pointer in integer register)
 - **Variadic / `va_list` arguments:** Per the RISC-V C ABI, all floating-point arguments that fall within the variable portion of a variadic argument list must be passed in **integer registers** (or on the stack), not FP registers. This applies regardless of available FP register slots.
 
@@ -484,9 +484,9 @@ I-type, opcode `0x73`. `csr` is the 12-bit CSR address (bits 31-20). For immedia
 - **FP Single/Double:** `fa0`, `fa1` (`f10`, `f11`)
 
 ### Stack Frame
-- **Alignment:** 16-byte aligned at all call boundaries (sp must be ≡ 0 mod 16 on function entry)
+- **Alignment:** 16-byte aligned at all call boundaries (sp must be  0 mod 16 on function entry)
 - **Direction:** Grows downward
-- **Layout (high → low):** saved registers → local variables → outgoing argument overflow area (if >8 int args or >8 FP args)
+- **Layout (high -> low):** saved registers -> local variables -> outgoing argument overflow area (if >8 int args or >8 FP args)
 
 ### Callee-Saved Registers
 - Integer: `sp`, `gp`, `tp`, `s0`-`s11` (`x2`-`x4`, `x8`-`x9`, `x18`-`x27`)
@@ -502,13 +502,13 @@ I-type, opcode `0x73`. `csr` is the 12-bit CSR address (bits 31-20). For immedia
 1. **Register Names:** Accept both `xN` (0-31) and ABI names (`ra`, `sp`, `a0`, `ft0`, `fa0`, etc.). Reject register numbers > 31. ABI names for FP registers use the same `f0`-`f31` namespace.
 
 2. **Two-Pass Assembly:**
-    - **Pass 1:** Scan all labels; record symbol → address mapping. Record section sizes.
+    - **Pass 1:** Scan all labels; record symbol -> address mapping. Record section sizes.
     - **Pass 2:** Resolve label references, compute PC-relative offsets, emit machine code and relocations.
 
 3. **Immediate Validation:**
     - I-type / S-type: signed 12-bit: `[-2048, +2047]`
-    - B-type: signed 13-bit even: `[-4096, +4094]` ← *(note: upper bound is +4094, not +4096)*
-    - J-type: signed 21-bit even: `[-1048576, +1048574]` ← *(note: upper bound is +1048574)*
+    - B-type: signed 13-bit even: `[-4096, +4094]` <- *(note: upper bound is +4094, not +4096)*
+    - J-type: signed 21-bit even: `[-1048576, +1048574]` <- *(note: upper bound is +1048574)*
     - U-type: any value where bits 31-12 fit (upper 20 bits)
     - Non-`*W` shift amounts (`slli`, `srli`, `srai`): `[0, 63]` (6-bit); error on values > 63
     - `*W` shift amounts (`slliw`, `srliw`, `sraiw`, `sllw`, `srlw`, `sraw`): `[0, 31]` (5-bit); error if bit 5 is set; **do not silently mask**
@@ -533,9 +533,9 @@ I-type, opcode `0x73`. `csr` is the 12-bit CSR address (bits 31-20). For immedia
 | `.data` | Switch to data section |
 | `.bss` | Switch to BSS (zero-initialized) section |
 | `.rodata` | Switch to read-only data section |
-| `.align n` | Align to 2ⁿ byte boundary |
+| `.align n` | Align to 2 byte boundary |
 | `.balign n` | Align to n byte boundary |
-| `.p2align n` | Align to 2ⁿ boundary (GAS synonym) |
+| `.p2align n` | Align to 2 boundary (GAS synonym) |
 | `.byte v` | Emit 8-bit value |
 | `.half v` / `.2byte v` | Emit 16-bit value |
 | `.word v` / `.4byte v` | Emit 32-bit value |
@@ -596,7 +596,7 @@ I-type, opcode `0x73`. `csr` is the 12-bit CSR address (bits 31-20). For immedia
 - **`lr` `rs2` field:** Must be `00000`. Error if assembler source supplies a second register.
 - **`fclass` `rs2` field:** Must be `00000`. Error if a second argument is supplied.
 - **`fcvt` type validity:** `fcvt.<dst>.<src>` where source and destination FP types are identical is illegal (e.g., `fcvt.s.s`). The assembler must reject this.
-- **FP instructions:** Require `mstatus.fs ≠ 0` (FP enabled) at runtime. The assembler does not enforce this but may warn.
+- **FP instructions:** Require `mstatus.fs  0` (FP enabled) at runtime. The assembler does not enforce this but may warn.
 - **CSR addresses:** Must be in `[0x000, 0xFFF]`.
 - **`sltiu` sign extension:** The assembler must sign-extend the 12-bit immediate to 64 bits for validation purposes (not zero-extend), because the hardware does so before the unsigned comparison.
 - **Atomic alignment:** `lr.w`/`sc.w` require 4-byte-aligned address; `lr.d`/`sc.d` require 8-byte-aligned address. Assembler cannot enforce this statically in general but may warn on obvious violations.
@@ -646,7 +646,7 @@ Varargs FP: passed in integer regs / stack
 
 4. **`fsgnjn`/`fsgnjx` vs `fsgnj`:** These three share `funct5=00100`. They are distinguished by `rm`: `000`/`001`/`010`. Incorrect encoding of a separate funct5 would produce garbage instructions.
 
-5. **B-type maximum offset is +4094, not +4096:** The encoding cannot represent +4096 (bit 12 would be 1, but that is the sign bit giving −4096). The effective range is −4096 to +4094.
+5. **B-type maximum offset is +4094, not +4096:** The encoding cannot represent +4096 (bit 12 would be 1, but that is the sign bit giving -4096). The effective range is -4096 to +4094.
 
 6. **`%pcrel_lo` references the `auipc` label, not the register:** Assembler must emit `R_RISCV_PCREL_LO12_I` pointing to the symbol of the paired `auipc` instruction label.
 

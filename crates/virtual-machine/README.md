@@ -8,8 +8,8 @@ A 5-stage in-order RISC-V RV64IMAFD pipeline emulator with caches, MMU (Sv39), M
 
 ```
 AssembledOutput / ELF bytes
-  → VirtualMachine::new() / from_elf()
-  → run(max_steps) → RunResult { uart_output, outcome }
+  -> VirtualMachine::new() / from_elf()
+  -> run(max_steps) -> RunResult { uart_output, outcome }
 ```
 
 ## Public API
@@ -25,7 +25,7 @@ println!("{}", result.uart_output);
 
 ## Pipeline stages
 
-`fetch → decode → execute → memory → writeback`
+`fetch -> decode -> execute -> memory -> writeback`
 
 - Hazard unit handles data hazards (stall + forwarding)
 - Branch predictor

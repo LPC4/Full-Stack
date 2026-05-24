@@ -113,7 +113,7 @@ pub fn get_kernel_stdlib_source() -> String {
     combined
 }
 
-/// Freestanding stdlib: types, allocator, strings — no Linux syscalls, no `_start`.
+/// Freestanding stdlib: types, allocator, strings - no Linux syscalls, no `_start`.
 fn get_freestanding_stdlib_source() -> String {
     let capacity = stdlib::TYPES.len()
         + stdlib::MEMORY_ALLOCATOR.len()

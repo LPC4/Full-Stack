@@ -1,4 +1,4 @@
-﻿# RISC-V RV64IMAFD Virtual Machine Specification
+# RISC-V RV64IMAFD Virtual Machine Specification
 
 **Version:** 1.1.0  
 **Target Architecture:** RISC-V 64-bit (RV64IMAFD) with Machine/Supervisor-mode Privilege and Sv39 Virtual Memory  
@@ -9,7 +9,7 @@
 ## 1. Architecture Overview
 
 ### 1.1 VM Components
-- **CPU Core:** In-order, single-issue pipeline (Fetch → Decode → Execute → Memory → Writeback)
+- **CPU Core:** In-order, single-issue pipeline (Fetch -> Decode -> Execute -> Memory -> Writeback)
 - **Memory System:** Byte-addressable, little-endian, flat physical address space with optional Sv39 virtual memory translation
 - **MMU:** Sv39 page-based virtual memory (3-level page table, 39-bit virtual addresses)
 - **CSR File:** Machine-mode and Supervisor-mode Control & Status Registers (Zicsr extension)
@@ -45,7 +45,7 @@
 The VM implements the RISC-V Sv39 virtual memory scheme:
 - **Virtual Address Space:** 39-bit addresses (512 GB)
 - **Physical Address Space:** Up to 56-bit addresses (implementation supports full 64-bit)
-- **Page Size:** 4 KB (2¹² bytes)
+- **Page Size:** 4 KB (2 bytes)
 - **Page Table Levels:** 3-level hierarchical page table
 - **Translation:** Automatic in Fetch and Memory pipeline stages
 
@@ -97,12 +97,12 @@ Sv39 divides the virtual address as follows:
 
 **Translation Algorithm:**
 1. Start with root page table at `SATP.PPN << 12`
-2. For each level (2 → 1 → 0):
-   - Calculate PTE address: `(current_ppn << 12) | (vpn[level] × 8)`
+2. For each level (2 -> 1 -> 0):
+   - Calculate PTE address: `(current_ppn << 12) | (vpn[level] x 8)`
    - Read PTE from physical memory
-   - If V=0 → Page Fault
-   - If R=1 or X=1 → Leaf PTE found, proceed to step 3
-   - If W=1 → Malformed PTE (W=1 but R=X=0), Page Fault
+   - If V=0 -> Page Fault
+   - If R=1 or X=1 -> Leaf PTE found, proceed to step 3
+   - If W=1 -> Malformed PTE (W=1 but R=X=0), Page Fault
    - Otherwise, extract next-level PPN and continue
 3. At leaf PTE:
    - Check permissions based on access type (read/write/execute)
@@ -134,7 +134,7 @@ The MMU enforces the following permission checks:
 Sv39 requires that virtual addresses be "canonical": bits [63:39] must all equal bit 38.
 - Valid: `0x0000_0000_0000_0000` to `0x0000_007F_FFFF_FFFF` (lower half)
 - Valid: `0xFFFF_FF80_0000_0000` to `0xFFFF_FFFF_FFFF_FFFF` (upper half)
-- Invalid: Any address where bits [63:39] ≠ 0 and ≠ 0x1FFFFF
+- Invalid: Any address where bits [63:39]  0 and  0x1FFFFF
 
 Non-canonical addresses trigger a Page Fault before translation begins.
 
@@ -204,8 +204,8 @@ let instruction = bus.read_word(phys_addr)
 - **R4-type:** FP fused multiply-add/subtract
 
 **Special Cases:**
-- `opcode=0x00` → Illegal instruction
-- Unrecognized `funct3`/`funct7` combinations → Illegal instruction
+- `opcode=0x00` -> Illegal instruction
+- Unrecognized `funct3`/`funct7` combinations -> Illegal instruction
 
 ---
 
@@ -263,8 +263,8 @@ target = (rs1 + sext(imm)) & !1
 
 **Outputs:**
 - `MemResult`: Transformed result ready for writeback
-  - Converts `Load` → `WriteInt` (with loaded value)
-  - Converts `Store` → `Jump` (after storing)
+  - Converts `Load` -> `WriteInt` (with loaded value)
+  - Converts `Store` -> `Jump` (after storing)
   - Passes through non-memory operations unchanged
 
 **MMU Integration:**
@@ -323,7 +323,7 @@ store_int(bus, phys_addr, val, funct3)?;
 
 **FP Register Writes:**
 - NaN-boxing enforced on 32-bit writes (upper 32 bits = 0xFFFF_FFFF)
-- Invalid NaN-box detection on reads (returns NaN if upper bits ≠ 0xFFFF_FFFF)
+- Invalid NaN-box detection on reads (returns NaN if upper bits  0xFFFF_FFFF)
 
 **CSR Operations:**
 ```rust
@@ -343,10 +343,10 @@ regs.write_x(rd, old_val); // Always write old value to rd
 ```
 
 **Special Instructions:**
-- `ecall` → Return `Err(Ecall)` (trap to M-mode handler)
-- `ebreak` → Return `Err(Ebreak)` (debug breakpoint)
-- `fence` → No-op in single-core VM (memory already sequentially consistent)
-- `fence.i` → No-op (no instruction cache in this VM)
+- `ecall` -> Return `Err(Ecall)` (trap to M-mode handler)
+- `ebreak` -> Return `Err(Ebreak)` (debug breakpoint)
+- `fence` -> No-op in single-core VM (memory already sequentially consistent)
+- `fence.i` -> No-op (no instruction cache in this VM)
 
 ---
 
@@ -409,7 +409,7 @@ csrs.write(addr::SATP, satp);
 csrs.write(addr::SATP, 0); // MODE=0 (Bare)
 ```
 
-**Note:** When SATP.MODE ≠ 0 and privilege mode ≠ Machine, all memory accesses go through the MMU for address translation.
+**Note:** When SATP.MODE  0 and privilege mode  Machine, all memory accesses go through the MMU for address translation.
 
 #### `mstatus` Fields (bit positions)
 - `[3]` **MPIE**: Previous M-mode interrupt enable (set on trap, restored on return)
@@ -487,8 +487,8 @@ csrs.write(addr::SATP, 0); // MODE=0 (Bare)
 #### `frm` Rounding Modes
 - `0` = RNE (Round to Nearest, ties to Even)
 - `1` = RTZ (Round toward Zero)
-- `2` = RDN (Round Down, toward −∞)
-- `3` = RUP (Round Up, toward +∞)
+- `2` = RDN (Round Down, toward -)
+- `3` = RUP (Round Up, toward +)
 - `4` = RMM (Round to Nearest, ties to Max Magnitude)
 - `5-6` = Reserved (illegal)
 - `7` = Dynamic (use frm field in instruction)
@@ -508,7 +508,7 @@ csrs.write(addr::SATP, 0); // MODE=0 (Bare)
 - `mcycle` increments every clock cycle (approximated by instruction count in this VM)
 - `minstret` increments every retired instruction
 - Aliases (`cycle`, `instret`) mirror the machine-mode counters
-- Counters wrap on overflow (modulo 2⁶⁴)
+- Counters wrap on overflow (modulo 2)
 
 ---
 
@@ -635,7 +635,7 @@ if enabled && pending != 0 {
 **Purpose:** Route external interrupts to harts with priority arbitration
 
 **Memory Layout:**
-- `0x0000-0x007C`: Priority registers (32 sources × 4 bytes)
+- `0x0000-0x007C`: Priority registers (32 sources x 4 bytes)
 - `0x1000-0x107C`: Pending bits (bitfield, 1 bit per source)
 - `0x2000-0x207C`: Enable bits (per-context, 1 bit per source)
 - `0x200000`: Threshold register (per-context)
@@ -644,13 +644,13 @@ if enabled && pending != 0 {
 **Operation:**
 1. **Set IRQ:** External device calls `plic.set_irq(source_id)`
 2. **Arbitration:** VM checks `plic.next_irq(hart_id)` before each instruction
-3. **Claim:** Handler reads claim register → returns highest-priority pending IRQ
-4. **Complete:** Handler writes IRQ ID to complete register → clears pending bit
+3. **Claim:** Handler reads claim register -> returns highest-priority pending IRQ
+4. **Complete:** Handler writes IRQ ID to complete register -> clears pending bit
 
 **Priority Rules:**
 - Sources with priority > threshold are eligible
 - Highest-priority eligible source wins
-- Equal priority → lowest source ID wins
+- Equal priority -> lowest source ID wins
 - Reading claim register automatically clears pending bit
 
 **VM Integration:**
@@ -673,7 +673,7 @@ fn route(&mut self, addr: u64) -> Option<&mut dyn MemoryAccess> {
         0x0200_0000..=0x0200_FFFF => Some(&mut self.clint),
         0x0C00_0000..=0x0CFF_FFFF => Some(&mut self.plic),
         0x8000_0000..=0xFFFF_FFFF => Some(&mut self.ram),
-        _ => None, // Unmapped → BusError
+        _ => None, // Unmapped -> BusError
     }
 }
 ```
@@ -748,10 +748,10 @@ enum VmError {
 
 ### 8.2 Error Propagation
 - **Pipeline stages** return `Result<T, VmError>`
-- **Fetch errors** → `InstructionAccessFault` trap
-- **Decode errors** → `IllegalInstruction` trap
-- **Memory errors** → `LoadAccessFault` or `StoreAccessFault` trap
-- **Ecall/Ebreak** → Special trap (not an error, but a controlled exit)
+- **Fetch errors** -> `InstructionAccessFault` trap
+- **Decode errors** -> `IllegalInstruction` trap
+- **Memory errors** -> `LoadAccessFault` or `StoreAccessFault` trap
+- **Ecall/Ebreak** -> Special trap (not an error, but a controlled exit)
 
 ### 8.3 Trap vs. Error
 - **Traps** (exceptions/interrupts): Saved to CSRs, handler invoked
@@ -763,13 +763,13 @@ enum VmError {
 
 ### 9.1 Cycle Counter
 - `mcycle` increments once per instruction fetch
-- Approximation: 1 instruction ≈ 1 cycle (no pipelining/stalling modeled)
-- Wraps to 0 on overflow (2⁶⁴)
+- Approximation: 1 instruction  1 cycle (no pipelining/stalling modeled)
+- Wraps to 0 on overflow (2)
 
 ### 9.2 Instruction Retire Counter
 - `minstret` increments after successful writeback
 - Not incremented for trapped instructions
-- Wraps to 0 on overflow (2⁶⁴)
+- Wraps to 0 on overflow (2)
 
 ### 9.3 Time Counter
 - `mtime` (in CLINT) increments once per cycle
@@ -788,13 +788,13 @@ let mut vm = VirtualMachine::new(assembled_program);
 **Steps:**
 1. Create system bus with ROM data
 2. Load program sections into RAM at `RAM_BASE` (0x8000_0000)
-   - `.text` → code
-   - `.rodata` → read-only data
-   - `.data` → initialized data
-   - `.bss` → zero-initialized data
+   - `.text` -> code
+   - `.rodata` -> read-only data
+   - `.data` -> initialized data
+   - `.bss` -> zero-initialized data
 3. Determine entry point:
-   - If `_start` symbol exists → use its address
-   - Otherwise → use `RAM_BASE`
+   - If `_start` symbol exists -> use its address
+   - Otherwise -> use `RAM_BASE`
 4. Initialize CPU:
    - `pc = entry_point`
    - `sp = RAM_BASE + RAM_SIZE` (stack grows downward)

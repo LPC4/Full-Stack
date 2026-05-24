@@ -1,4 +1,4 @@
-﻿/// Primitive linker for RISC-V assembly programs.
+/// Primitive linker for RISC-V assembly programs.
 ///
 /// Combines assembly sources with runtime glue (`_start`, `putchar`, `puts`,
 /// `print_int`, `printf`) and produces a single linked assembly output ready

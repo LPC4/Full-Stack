@@ -5,10 +5,10 @@
 ;
 ; Returns 100 on full success, composed of five sub-results:
 ;   category  =  3   (x=15 falls in the 10..20 bucket)
-;   sum       = 55   (1+2+…+10)
+;   sum       = 55   (1+2+...+10)
 ;   break_val =  7   (loop exited when counter reached 7)
 ;   evens     = 10   (even numbers in [1..20])
-;   inner_sum = 25   (5×5 nested-loop counter)
+;   inner_sum = 25   (5x5 nested-loop counter)
 ;   total: 3+55+7+10+25 = 100
 
 const BUCKET_LO = 10
@@ -64,7 +64,7 @@ main: () -> i32 {
         evens = evens + 1
     }
 
-    ; --- nested loops: 5×5 = 25 iterations ---
+    ; --- nested loops: 5x5 = 25 iterations ---
     outer: i32 = 0
     inner_sum: i32 = 0
     while outer < 5 {

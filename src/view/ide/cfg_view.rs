@@ -227,7 +227,7 @@ fn draw_cfg(ui: &mut egui::Ui, blocks: &[BasicBlock], show_all: bool) {
         current_y += block_height + block_spacing;
     }
 
-    // Draw explicit branch edges (Bézier curves to the left)
+    // Draw explicit branch edges (Bzier curves to the left)
     for block in blocks {
         if let Some(src_rect) = block_rects.get(&block.label) {
             let start_pos = src_rect.left_center();
@@ -243,7 +243,7 @@ fn draw_cfg(ui: &mut egui::Ui, blocks: &[BasicBlock], show_all: bool) {
                     let c1 = start_pos - Vec2::new(control_dist, 0.0);
                     let c2 = end_pos - Vec2::new(control_dist, 0.0);
 
-                    // Draw the Bézier curve
+                    // Draw the Bzier curve
                     let shape = egui::epaint::CubicBezierShape {
                         points: [start_pos, c1, c2, end_pos],
                         closed: false,

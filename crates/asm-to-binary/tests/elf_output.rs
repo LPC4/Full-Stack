@@ -154,7 +154,7 @@ fn elf_pt_load_alignment_field_is_page_size() {
 
 #[test]
 fn elf_vaddr_offset_congruence() {
-    // ELF spec: p_vaddr ≡ p_offset (mod p_align) for every PT_LOAD
+    // ELF spec: p_vaddr  p_offset (mod p_align) for every PT_LOAD
     let elf = minimal_output().to_elf(LOAD_BASE);
     let phoff = u64_le(&elf, E_PHOFF_OFF) as usize;
     let phnum = u16_le(&elf, E_PHNUM_OFF) as usize;
@@ -169,7 +169,7 @@ fn elf_vaddr_offset_congruence() {
             assert_eq!(
                 p_vaddr % p_align,
                 p_offset % p_align,
-                "PT_LOAD[{i}]: p_vaddr ({p_vaddr:#x}) ≢ p_offset ({p_offset:#x}) mod p_align ({p_align:#x})"
+                "PT_LOAD[{i}]: p_vaddr ({p_vaddr:#x})  p_offset ({p_offset:#x}) mod p_align ({p_align:#x})"
             );
         }
     }
