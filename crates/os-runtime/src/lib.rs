@@ -115,6 +115,13 @@ pub mod kernel {
         "/kernel/pmm.hll"
     ));
 
+    /// Sv39 Virtual Memory Manager: `vmm_init`, `vmm_enable`, `vmm_map`,
+    /// `vmm_map_1gib`, `vmm_map_range`. Depends on `pmm_alloc` and `memset`.
+    pub const VMM: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/kernel/vmm.hll"
+    ));
+
     /// Reference kernel: full boot sequence demonstrating real and stub subsystems.
     /// Defines `kmain`; depends on the kernel stdlib bundle.
     pub const MY_KERNEL: &str = include_str!(concat!(

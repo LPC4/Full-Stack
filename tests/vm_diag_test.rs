@@ -4,6 +4,114 @@ use virtual_machine::bus::ELF_LOAD_BASE;
 use virtual_machine::virtual_machine::VirtualMachine;
 
 // ---------------------------------------------------------------------------
+// Kernel diagnostic: compile + dump assembly, then step-trace the VM
+// ---------------------------------------------------------------------------
+// Run with:  cargo test kernel_asm_diag -- --nocapture
+//
+// Shows:
+//  1. Full stdlib+kernel assembly (grep for "vmm_enable" / "vmm_map_1gib")
+//  2. UART output and step trace up to the hang point
+#[test]
+fn kernel_asm_diag() {
+    use asm_to_binary::rv_instruction::RvInstruction;
+    use hll_to_ir::stdlib::get_kernel_stdlib_source;
+    use hll_to_ir::{CompileConfig, HllCompiler, TargetMode};
+    use ir_to_asm::CompilerRv64;
+    use os_runtime::kernel;
+    use virtual_machine::virtual_machine::StepOutcome;
+
+    // ── compile stdlib ───────────────────────────────────────────────────────
+    let stdlib_compiler = HllCompiler::new(CompileConfig {
+        target: TargetMode::Kernel,
+        strict: true,
+        string_prefix: Some("__kern_str_".to_owned()),
+    });
+    let stdlib_out = stdlib_compiler
+        .compile(&get_kernel_stdlib_source())
+        .expect("stdlib compile");
+    let mut stdlib_rv = CompilerRv64::new();
+    let (stdlib_asm, stdlib_tokens) = stdlib_rv.compile_with_tokens(&stdlib_out.ir);
+
+    // ── compile user kernel ──────────────────────────────────────────────────
+    let user_compiler = HllCompiler::new(CompileConfig {
+        target: TargetMode::Kernel,
+        strict: true,
+        string_prefix: None,
+    });
+    let user_out = user_compiler
+        .compile(kernel::MY_KERNEL)
+        .expect("user compile");
+    let mut user_rv = CompilerRv64::new();
+    let (user_asm, user_tokens) = user_rv.compile_with_tokens(&user_out.ir);
+
+    // ── print assembly around vmm_enable ────────────────────────────────────
+    let full_asm = format!("{stdlib_asm}\n{user_asm}");
+    eprintln!("\n=== KERNEL ASSEMBLY (vmm section) ===");
+    let mut in_vmm = false;
+    for line in full_asm.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("vmm_") || trimmed.starts_with("vmm_enable") {
+            in_vmm = true;
+        }
+        if in_vmm {
+            eprintln!("{line}");
+            // stop after a blank line following a ret/jr
+            if (trimmed == "ret" || trimmed.starts_with("jr")) && {
+                in_vmm = false;
+                true
+            } {
+            }
+        }
+    }
+
+    // ── assemble and run with step trace ────────────────────────────────────
+    let mut tokens = stdlib_tokens;
+    tokens.extend(user_tokens);
+
+    // Print any unrecognised-instruction comments from the assembler
+    eprintln!("\n=== UNRECOGNISED INSTRUCTIONS ===");
+    let mut found_unrecognised = false;
+    for tok in &tokens {
+        if let RvInstruction::Comment(s) = tok {
+            if s.contains("unrecognised") {
+                eprintln!("  {s}");
+                found_unrecognised = true;
+            }
+        }
+    }
+    if !found_unrecognised {
+        eprintln!("  (none)");
+    }
+
+    let assembled = asm_to_binary::Assembler::assemble(&tokens).expect("assemble");
+    let mut vm = VirtualMachine::new_kernel(&assembled);
+
+    eprintln!("\n=== STEP TRACE (first 5000 steps) ===");
+    let mut uart_so_far = String::new();
+    for step in 0..500_000 {
+        match vm.step() {
+            Ok(StepOutcome::Halted(code)) => {
+                eprintln!("  [step {step}] HALTED with code {code}");
+                break;
+            }
+            Ok(StepOutcome::Continue) => {}
+            Err(e) => {
+                eprintln!("  [step {step}] ERROR: {e:?}");
+                break;
+            }
+        }
+        // drain UART each step so we can see where output stops
+        let new_output = String::from_utf8_lossy(&vm.drain_uart_output()).into_owned();
+        if !new_output.is_empty() {
+            uart_so_far.push_str(&new_output);
+            eprint!("{new_output}");
+        }
+    }
+
+    eprintln!("\n=== UART OUTPUT SO FAR ===\n{uart_so_far}");
+}
+
+// ---------------------------------------------------------------------------
 // Linking helper
 //
 // This is the canonical "link with stdlib" path used by the GUI and tests:

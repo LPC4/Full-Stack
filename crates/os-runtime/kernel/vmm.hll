@@ -1,0 +1,133 @@
+; Sv39 Virtual Memory Manager
+; 3-level page tables (L2 -> L1 -> L0), 4 KiB pages, 512 u64 entries per table.
+;
+; PTE layout (64-bit):
+;   [63:54] reserved
+;   [53:10] PPN (physical page number)
+;   [7] D dirty  [6] A accessed  [5] G global
+;   [4] U user   [3] X execute   [2] W write   [1] R read   [0] V valid
+;
+; HLL notes:
+;  - No shift ops: shifts use * / powers-of-2 (e.g. `>> 12` = `/ 4096`).
+;  - `and`/`or` are boolean-only; use `%` for bit-masking (e.g. `% 512` = `& 0x1FF`).
+;  - No int<->ptr casts: two asm helpers (vmm_ptr_to_u64 / vmm_u64_to_ptr) bridge the gap.
+
+external pmm_alloc: () -> u8*
+external memset:    (dst: u8*, value: u8, n: u64) -> u8*
+external kpanic:    (msg: u8*) -> ()
+
+const VMM_V = 1
+const VMM_R = 2
+const VMM_W = 4
+const VMM_X = 8
+const VMM_U = 16
+const VMM_G = 32
+
+; Physical address of the Sv39 root (L2) page table (0 = uninitialised).
+vmm_root: u64 = 0
+
+; On RV64, a pointer and u64 are the same width; these two helpers are no-ops at
+; the machine level (a0 enters holding one type, returns unchanged as the other).
+
+vmm_ptr_to_u64: (ptr: u64*) -> u64 {
+    asm { }
+}
+
+vmm_u64_to_ptr: (addr: u64) -> u64* {
+    asm { }
+}
+
+; Allocate a zeroed 4 KiB page and return it as a u64* table pointer.
+vmm_alloc_pt: () -> u64* {
+    page: u8* = pmm_alloc()
+    if page == null {
+        kpanic("vmm: out of memory for page table".data)
+    }
+    memset(page, 0, 4096)
+    return u64*(page)
+}
+
+; Return the next-level page table pointed to by `table[vpn]`.
+; If the entry is not valid, allocates and links a new page table first.
+vmm_walk_or_alloc: (table: u64*, vpn: u64) -> u64* {
+    pte: u64 = @table[vpn]
+    if pte % 2 != 0 {
+        return vmm_u64_to_ptr((pte / 1024) * 4096)
+    }
+    t: u64* = vmm_alloc_pt()
+    @table[vpn] = vmm_ptr_to_u64(t) / 4096 * 1024 + VMM_V
+    return t
+}
+
+; Map one 4 KiB page: virtual `va` -> physical `pa`.
+; `flags`: combine VMM_R / VMM_W / VMM_X / VMM_U / VMM_G (VMM_V is added internally).
+vmm_map: (va: u64, pa: u64, flags: u64) -> () {
+    ; VPN fields: VPN[2] = va >> 30, VPN[1] = va >> 21, VPN[0] = va >> 12
+    ; `% 512` masks to 9 bits (= `& 0x1FF`).
+    vpn2: u64 = (va / 1073741824) % 512
+    vpn1: u64 = (va / 2097152)    % 512
+    vpn0: u64 = (va / 4096)       % 512
+
+    l2: u64* = vmm_u64_to_ptr(vmm_root)
+    l1: u64* = vmm_walk_or_alloc(l2, vpn2)
+    l0: u64* = vmm_walk_or_alloc(l1, vpn1)
+    @l0[vpn0] = pa / 4096 * 1024 + flags + VMM_V
+}
+
+; Map a 1 GiB superpage (single L2 leaf): `va` and `pa` must be 1 GiB-aligned.
+vmm_map_1gib: (va: u64, pa: u64, flags: u64) -> () {
+    vpn2: u64 = (va / 1073741824) % 512
+    l2: u64* = vmm_u64_to_ptr(vmm_root)
+    @l2[vpn2] = pa / 4096 * 1024 + flags + VMM_V
+}
+
+; Identity-map every 4 KiB page in [start, end) with `flags`.
+vmm_map_range: (start: u64, end: u64, flags: u64) -> () {
+    page_start: u64 = (start / 4096) * 4096
+    page_end:   u64 = ((end + 4095) / 4096) * 4096
+    addr: u64 = page_start
+    while addr < page_end {
+        vmm_map(addr, addr, flags)
+        addr = addr + 4096
+    }
+}
+
+; Allocate the root page table and record its physical address in vmm_root.
+vmm_init: () -> () {
+    root: u64* = vmm_alloc_pt()
+    vmm_root = vmm_ptr_to_u64(root)
+}
+
+; Enable Sv39 MMU with identity mapping.
+; This function MUST be called after setting up all page table mappings.
+vmm_enable: () -> () {
+    ; Disable interrupts during MMU transition
+    asm {
+        csrr t0, sstatus
+        andi t0, t0, -3  ; Clear SIE
+        csrw sstatus, t0
+    }
+    
+    ; Write SATP to enable MMU
+    asm {
+        la   t0, vmm_root
+        ld   t0, 0(t0)          ; Load root page table physical address
+        srli t0, t0, 12         ; Extract PPN (shift right by 12)
+        li   t1, 0xFFFFFFFF     ; Mask to 32 bits
+        and  t0, t0, t1         ; Clear upper bits
+        li   t1, 8
+        slli t1, t1, 60         ; MODE=8 (Sv39)
+        or   t0, t0, t1         ; Construct SATP value
+        csrw 0x180, t0          ; Write SATP CSR
+        sfence.vma x0, x0       ; Flush TLB
+    }
+}
+
+; Re-enable S-mode interrupts after MMU is stable.
+vmm_enable_interrupts: () -> () {
+    asm {
+        csrr t0, sstatus
+        ori  t0, t0, 2           ; Set SIE
+        csrw sstatus, t0
+    }
+}

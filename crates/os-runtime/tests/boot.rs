@@ -223,8 +223,8 @@ fn unimplemented_subsystems_warn() {
         "interrupt controller stub must emit warn; uart={uart:?}"
     );
     assert!(
-        uart.contains("[ WARN ] MMU:"),
-        "MMU stub must emit warn; uart={uart:?}"
+        uart.contains("[  OK  ] mmu: sv39 enabled"),
+        "MMU must be enabled; uart={uart:?}"
     );
     assert!(
         uart.contains("[ WARN ] filesystem:"),
@@ -257,9 +257,15 @@ fn full_boot_output_matches_expected() {
          [ WARN ] interrupt controller: not implemented\n\
          [  OK  ] running memory diagnostics...\n\
          [  OK  ] memory self-test passed\n\
-         [ WARN ] MMU: not implemented\n\
          [  OK  ] heap ready\n\
          [  OK  ] pmm ready\n\
+         [  OK  ] memory ops test passed\n\
+         [  OK  ] vmm: initializing...\n\
+         [  OK  ] vmm: root table allocated\n\
+         [  OK  ] vmm: identity mappings created\n\
+         [  OK  ] vmm: using identity mapping (canonical VAs TODO)\n\
+         [  OK  ] vmm: enabling MMU...\n\
+         [  OK  ] mmu: sv39 enabled\n\
          [ WARN ] filesystem: not implemented\n\
          [ WARN ] single hart, no SMP\n\
          hart id: 0\n\

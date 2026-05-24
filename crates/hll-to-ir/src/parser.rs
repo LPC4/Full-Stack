@@ -949,8 +949,11 @@ impl<'a> Parser<'a> {
         match self.peek() {
             Some(Token::HexInteger(text)) => {
                 let trimmed = text.trim_start_matches("0x").trim_start_matches("0X");
-                let value = i64::from_str_radix(trimmed, 16)
+                // Parse as u64 first to handle large addresses, then cast to i64
+                let value_u64 = u64::from_str_radix(trimmed, 16)
                     .map_err(|_| self.error("invalid hex literal"))?;
+                // Cast to i64 (preserves bit pattern for two's complement)
+                let value = value_u64 as i64;
                 self.advance();
                 Ok(value)
             }

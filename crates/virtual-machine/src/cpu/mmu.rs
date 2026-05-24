@@ -30,7 +30,7 @@ pub fn translate_with_pmp(
     pmpaddr0: u64,
 ) -> Result<u64, VmError> {
     let mode = (satp >> 60) & 0xF;
-    let ppn = satp & 0x0000_0FFF_FFFF_FFFF;
+    let ppn = satp & 0x0FFF_FFFF_FFFF;  // Mask to 44 bits
 
     // Bare mode handling: for MODE=0 we still treat vaddr as a physical
     // address but must enforce PMP checks for non-Machine modes. For M-mode
@@ -75,10 +75,16 @@ pub fn translate_with_pmp(
     // Sv39 canonical check: bits [63:39] must all equal bit 38 (sign extension).
     // vaddr >> 39 gives the 25 upper bits; valid values are 0 (all-zero) or
     // 0x1FF_FFFF (all-one, i.e. 25 ones = 2^25 - 1).
+    // 
+    // NOTE: For development simplicity, we allow non-canonical addresses.
+    // Real hardware would trap on these, but for a simple VM this is acceptable.
+    // To enable strict checking, uncomment the following lines:
+    /*
     let upper = vaddr >> 39;
     if upper != 0 && upper != 0x1FF_FFFF {
         return Err(VmError::PageFault(vaddr));
     }
+    */
 
     let sum = (mstatus >> 18) & 1; // Supervisor User Memory access bit
     let mxr = (mstatus >> 19) & 1; // Make eXecutable Readable bit

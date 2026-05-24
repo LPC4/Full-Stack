@@ -1,10 +1,21 @@
+/// Emit an assembler warning to stderr and push an `AsmToken::Comment` so the
+/// unrecognised text is preserved in the token stream without being assembled.
+macro_rules! asm_warn {
+    ($out:expr, $($arg:tt)*) => {{
+        let msg = format!($($arg)*);
+        eprintln!("asm warning: {msg}");
+        $out.push(AsmToken::Comment(msg));
+    }};
+}
+
 use super::directive::Directive;
 use super::reg_parse::parse_int_reg;
 use super::section::SectionKind;
 use super::token::{AsmToken, BranchKind};
 use crate::real::RealInstruction;
 use crate::riscv::rv64i::{
-    Add, Addi, And, Andi, Ecall, Jalr, Lb, Lbu, Ld, Mret, Or, Ori, Sb, Sd, Slli, Srl, Sret, Sub,
+    Add, Addi, And, Andi, Ecall, Jalr, Lb, Lbu, Ld, Mret, Or, Ori, Sb, Sd, SfenceVma, Slli, Srl,
+    Srli, Sret, Sub,
 };
 use crate::riscv::rv64m::{Divu, Remu};
 use crate::riscv::rv64zicsr::{Csrrs, Csrrw};
@@ -77,9 +88,7 @@ fn parse_directive_or_instruction(raw: &str, out: &mut Vec<AsmToken>) {
         if let Some(dir) = Directive::parse(trimmed) {
             push_directive(dir, out);
         } else {
-            out.push(AsmToken::Comment(format!(
-                "unrecognised directive: {trimmed}"
-            )));
+            asm_warn!(out, "unrecognised directive: {trimmed}");
         }
         return;
     }
@@ -205,7 +214,7 @@ fn parse_instruction_line(line: &str, out: &mut Vec<AsmToken>) {
             expand_li(rd, imm, out);
             return;
         }
-        out.push(AsmToken::Comment(format!("unrecognised li: {line}")));
+        asm_warn!(out, "unrecognised li: {line}");
         return;
     }
 
@@ -217,7 +226,7 @@ fn parse_instruction_line(line: &str, out: &mut Vec<AsmToken>) {
             out.push(AsmToken::Real(RealInstruction::Addi(Addi::new(rd, rs, 0))));
             return;
         }
-        out.push(AsmToken::Comment(format!("unrecognised mv: {line}")));
+        asm_warn!(out, "unrecognised mv: {line}");
         return;
     }
 
@@ -229,7 +238,7 @@ fn parse_instruction_line(line: &str, out: &mut Vec<AsmToken>) {
             ))));
             return;
         }
-        out.push(AsmToken::Comment(format!("unrecognised addi: {line}")));
+        asm_warn!(out, "unrecognised addi: {line}");
         return;
     }
 
@@ -239,7 +248,7 @@ fn parse_instruction_line(line: &str, out: &mut Vec<AsmToken>) {
             out.push(AsmToken::Real(RealInstruction::Sd(Sd::new(rs1, rs2, imm))));
             return;
         }
-        out.push(AsmToken::Comment(format!("unrecognised sd: {line}")));
+        asm_warn!(out, "unrecognised sd: {line}");
         return;
     }
 
@@ -249,7 +258,7 @@ fn parse_instruction_line(line: &str, out: &mut Vec<AsmToken>) {
             out.push(AsmToken::Real(RealInstruction::Sb(Sb::new(rs1, rs2, imm))));
             return;
         }
-        out.push(AsmToken::Comment(format!("unrecognised sb: {line}")));
+        asm_warn!(out, "unrecognised sb: {line}");
         return;
     }
 
@@ -259,7 +268,7 @@ fn parse_instruction_line(line: &str, out: &mut Vec<AsmToken>) {
             out.push(AsmToken::Real(RealInstruction::Ld(Ld::new(rd, rs1, imm))));
             return;
         }
-        out.push(AsmToken::Comment(format!("unrecognised ld: {line}")));
+        asm_warn!(out, "unrecognised ld: {line}");
         return;
     }
 
@@ -269,7 +278,7 @@ fn parse_instruction_line(line: &str, out: &mut Vec<AsmToken>) {
             out.push(AsmToken::Real(RealInstruction::Lbu(Lbu::new(rd, rs1, imm))));
             return;
         }
-        out.push(AsmToken::Comment(format!("unrecognised lbu: {line}")));
+        asm_warn!(out, "unrecognised lbu: {line}");
         return;
     }
 
@@ -279,7 +288,7 @@ fn parse_instruction_line(line: &str, out: &mut Vec<AsmToken>) {
             out.push(AsmToken::Real(RealInstruction::Lb(Lb::new(rd, rs1, imm))));
             return;
         }
-        out.push(AsmToken::Comment(format!("unrecognised lb: {line}")));
+        asm_warn!(out, "unrecognised lb: {line}");
         return;
     }
 
@@ -291,7 +300,7 @@ fn parse_instruction_line(line: &str, out: &mut Vec<AsmToken>) {
             ))));
             return;
         }
-        out.push(AsmToken::Comment(format!("unrecognised andi: {line}")));
+        asm_warn!(out, "unrecognised andi: {line}");
         return;
     }
 
@@ -307,13 +316,19 @@ fn parse_instruction_line(line: &str, out: &mut Vec<AsmToken>) {
         return;
     }
 
+    // `sfence.vma [rs1 [, rs2]]` — always emitted as sfence.vma x0, x0
+    if mnemonic == "sfence.vma" {
+        out.push(AsmToken::Real(RealInstruction::SfenceVma(SfenceVma::new())));
+        return;
+    }
+
     // `ori rd, rs1, imm`
     if mnemonic == "ori" {
         if let Some((rd, rs1, imm)) = parse_r_i_imm(rest) {
             out.push(AsmToken::Real(RealInstruction::Ori(Ori::new(rd, rs1, imm))));
             return;
         }
-        out.push(AsmToken::Comment(format!("unrecognised ori: {line}")));
+        asm_warn!(out, "unrecognised ori: {line}");
         return;
     }
 
@@ -329,7 +344,23 @@ fn parse_instruction_line(line: &str, out: &mut Vec<AsmToken>) {
             ))));
             return;
         }
-        out.push(AsmToken::Comment(format!("unrecognised slli: {line}")));
+        asm_warn!(out, "unrecognised slli: {line}");
+        return;
+    }
+
+    // `srli rd, rs1, shamt`
+    if mnemonic == "srli" {
+        if let Some((rd, rs1, shamt)) = parse_r_i_imm(rest)
+            && (0..=63).contains(&shamt)
+        {
+            out.push(AsmToken::Real(RealInstruction::Srli(Srli::new(
+                rd,
+                rs1,
+                shamt as u8,
+            ))));
+            return;
+        }
+        asm_warn!(out, "unrecognised srli: {line}");
         return;
     }
 
@@ -339,7 +370,7 @@ fn parse_instruction_line(line: &str, out: &mut Vec<AsmToken>) {
             out.push(tok);
             return;
         }
-        out.push(AsmToken::Comment(format!("unrecognised csrr: {line}")));
+        asm_warn!(out, "unrecognised csrr: {line}");
         return;
     }
 
@@ -349,7 +380,7 @@ fn parse_instruction_line(line: &str, out: &mut Vec<AsmToken>) {
             out.push(tok);
             return;
         }
-        out.push(AsmToken::Comment(format!("unrecognised csrw: {line}")));
+        asm_warn!(out, "unrecognised csrw: {line}");
         return;
     }
 
@@ -359,7 +390,7 @@ fn parse_instruction_line(line: &str, out: &mut Vec<AsmToken>) {
             out.push(tok);
             return;
         }
-        out.push(AsmToken::Comment(format!("unrecognised beqz: {line}")));
+        asm_warn!(out, "unrecognised beqz: {line}");
         return;
     }
 
@@ -369,7 +400,7 @@ fn parse_instruction_line(line: &str, out: &mut Vec<AsmToken>) {
             out.push(tok);
             return;
         }
-        out.push(AsmToken::Comment(format!("unrecognised bnez: {line}")));
+        asm_warn!(out, "unrecognised bnez: {line}");
         return;
     }
 
@@ -379,33 +410,54 @@ fn parse_instruction_line(line: &str, out: &mut Vec<AsmToken>) {
         return;
     }
 
-    out.push(AsmToken::Comment(format!(
-        "unrecognised instruction: {line}"
-    )));
+    asm_warn!(out, "unrecognised instruction: {line}");
 }
 
-/// Expand `li rd, imm` into addi (1-instr) or lui+addi (2-instr).
+/// Expand `li rd, imm` into the minimal real instruction sequence.
+/// Handles 12-bit, 32-bit signed, and full 64-bit immediates.
 fn expand_li(rd: u8, imm: i64, out: &mut Vec<AsmToken>) {
-    use crate::riscv::rv64i::Lui;
-    if (-2048..=2047).contains(&imm) {
-        out.push(AsmToken::Real(RealInstruction::Addi(Addi::new(
-            rd, 0, imm as i32,
-        ))));
-    } else {
-        let hi = ((imm >> 12) & 0xFFFFF) as i32;
-        let lo = (imm & 0xFFF) as i32;
-        let lo_signed = if lo >= 0x800 { lo - 0x1000 } else { lo };
-        let hi_adj = if lo_signed < 0 { hi + 1 } else { hi };
-        out.push(AsmToken::Real(RealInstruction::Lui(Lui::new(
-            rd,
-            hi_adj << 12,
-        ))));
-        if lo_signed != 0 {
-            out.push(AsmToken::Real(RealInstruction::Addi(Addi::new(
-                rd, rd, lo_signed,
-            ))));
+    use crate::riscv::rv64i::{Lui, Srli};
+
+    // Helper: emit lui+addi for a signed 32-bit value into `rd`.
+    let mut load32 = |reg: u8, val32: i32, out: &mut Vec<AsmToken>| {
+        if (-2048..=2047).contains(&(val32 as i64)) {
+            out.push(AsmToken::Real(RealInstruction::Addi(Addi::new(reg, 0, val32))));
+            return;
         }
+        let lo12 = val32 & 0xFFF;
+        let lo12_signed = if lo12 >= 0x800 { lo12 - 0x1000 } else { lo12 };
+        let hi20 = val32.wrapping_sub(lo12_signed);
+        out.push(AsmToken::Real(RealInstruction::Lui(Lui::new(reg, hi20))));
+        if lo12_signed != 0 {
+            out.push(AsmToken::Real(RealInstruction::Addi(Addi::new(reg, reg, lo12_signed))));
+        }
+    };
+
+    // 12-bit signed
+    if (-2048..=2047).contains(&imm) {
+        out.push(AsmToken::Real(RealInstruction::Addi(Addi::new(rd, 0, imm as i32))));
+        return;
     }
+
+    // 32-bit signed
+    if (-2_147_483_648..=2_147_483_647).contains(&imm) {
+        load32(rd, imm as i32, out);
+        return;
+    }
+
+    // 64-bit: split into high32 and low32, combine with shifts.
+    // Uses t1 (x6) as a temporary for the high half.
+    const T1: u8 = 6;
+    let low32 = (imm & 0xFFFF_FFFF) as i32;
+    let high32 = ((imm >> 32) & 0xFFFF_FFFF) as i32;
+
+    load32(T1, high32, out);
+    out.push(AsmToken::Real(RealInstruction::Slli(Slli::new(T1, T1, 32))));
+    load32(rd, low32, out);
+    // zero-extend low32 into rd (clear sign-extension from load32)
+    out.push(AsmToken::Real(RealInstruction::Slli(Slli::new(rd, rd, 32))));
+    out.push(AsmToken::Real(RealInstruction::Srli(Srli::new(rd, rd, 32))));
+    out.push(AsmToken::Real(RealInstruction::Or(Or::new(rd, rd, T1))));
 }
 
 /// Parse an integer immediate: decimal, or `0x`/`0X` hex prefix.

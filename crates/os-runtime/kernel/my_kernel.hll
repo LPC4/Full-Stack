@@ -13,6 +13,10 @@ external timer_set:    (interval: u64) -> ()
 external pmm_init:     (start: u64, end: u64) -> ()
 external pmm_alloc:    () -> u8*
 external pmm_free:     (page: u8*) -> ()
+external vmm_init:     () -> ()
+external vmm_map_1gib: (va: u64, pa: u64, flags: u64) -> ()
+external vmm_enable:   () -> ()
+external vmm_enable_interrupts: () -> ()
 
 kmain: () -> () {
     klog_ok("kernel starting".data)
@@ -40,9 +44,6 @@ kmain: () -> () {
         kshutdown(1)
     }
 
-    ; TODO: initialize MMU and set up virtual address space
-    klog_warn("MMU: not implemented".data)
-
     ; Heap smoke-test: allocate and zero a 64-byte region.
     probe: u8* = kmalloc(64)
     memset(probe, 0, 64)
@@ -62,6 +63,58 @@ kmain: () -> () {
         kshutdown(1)
     }
     klog_ok("pmm ready".data)
+
+    ; Test basic memory operations before MMU setup
+    test_page: u8* = pmm_alloc()
+    if test_page == null {
+        klog_error("halt: test alloc failed".data)
+        kshutdown(1)
+    }
+    @test_page[0] = 42
+    if @test_page[0] != 42 {
+        klog_error("halt: test write/read failed".data)
+        kshutdown(1)
+    }
+    pmm_free(test_page)
+    klog_ok("memory ops test passed".data)
+
+    ; Initialize Sv39 MMU with proper canonical virtual addresses.
+    ; Must run after PMM is ready (vmm_init allocates the root page table via pmm_alloc).
+    ; 
+    ; Sv39 requires canonical addresses where bits [63:39] = bit 38.
+    ; We use the upper half (bit 38=1, bits[63:39]=all 1s) for kernel space.
+    ; Physical addresses are mapped to canonical virtual addresses:
+    ;   VA = 0xFFFF_FF80_0000_0000 + PA
+    ;
+    ; For safe MMU enablement, we create TWO mappings:
+    ;   1. Identity mapping (PA = VA) for smooth transition
+    ;   2. Canonical mapping (VA = 0xFFFF_FF80_0000_0000 + PA) for proper operation
+    ;
+    ; Flags: 38 = R(2)|W(4)|G(32),  46 = R(2)|W(4)|X(8)|G(32)
+    klog_ok("vmm: initializing...".data)
+    vmm_init()
+    klog_ok("vmm: root table allocated".data)
+    
+    ; Create identity mappings for MMU transition (required!)
+    vmm_map_1gib(0x00000000, 0, 38)               ; MMIO identity
+    vmm_map_1gib(0x80000000, 0x80000000, 46)     ; RAM identity (code execution)
+    vmm_map_1gib(0xC0000000, 0xC0000000, 46)     ; Stack/heap identity
+    klog_ok("vmm: identity mappings created".data)
+    
+    ; Create canonical virtual address mappings for proper operation
+    ; Canonical upper half requires bits[63:39] = all 1s, bit 38 = 1
+    ; Since HLL doesn't support large u64 hex literals, we compute canonical VAs:
+    ;   VA = PA | 0xFFFF_FFFF_FF80_0000
+    ; We'll do this with bit manipulation after MMU enablement
+    ; For now, identity mapping is sufficient for MMU to work correctly
+    klog_ok("vmm: using identity mapping (canonical VAs TODO)".data)
+    
+    klog_ok("vmm: enabling MMU...".data)
+    vmm_enable()
+    klog_ok("mmu: sv39 enabled".data)
+    
+    ; Re-enable interrupts now that MMU is stable
+    vmm_enable_interrupts()
 
     ; TODO: load and initialize filesystem drivers
     klog_warn("filesystem: not implemented".data)

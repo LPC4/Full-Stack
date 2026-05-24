@@ -585,6 +585,36 @@ impl Instruction for Sret {
     }
 }
 
+/// SfenceVma - supervisor fence (opcode 0x12000073, sfence.vma x0, x0)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SfenceVma;
+
+impl Default for SfenceVma {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SfenceVma {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Instruction for SfenceVma {
+    fn encode(&self) -> u32 {
+        0x12000073
+    }
+
+    fn to_asm(&self) -> String {
+        "sfence.vma x0, x0".into()
+    }
+
+    fn mnemonic(&self) -> &'static str {
+        "sfence.vma"
+    }
+}
+
 /// `fence pred, succ` - memory ordering fence.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Fence {
