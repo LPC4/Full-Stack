@@ -23,7 +23,8 @@ pub const CLINT_BASE: u64 = 0x0200_0000;
 pub const CLINT_SIZE: u64 = 0x10000;
 pub const CLINT_END: u64 = CLINT_BASE + CLINT_SIZE - 1;
 pub const PLIC_BASE: u64 = 0x0C00_0000;
-pub const PLIC_SIZE: u64 = 0x20_0000;
+// Include context threshold/claim region at offsets 0x200000/0x200004.
+pub const PLIC_SIZE: u64 = 0x0100_0000;
 pub const PLIC_END: u64 = PLIC_BASE + PLIC_SIZE - 1;
 pub const RAM_BASE: u64 = 0x8000_0000;
 pub const RAM_SIZE_DEFAULT: usize = 128 * 1024 * 1024; // 128 MiB

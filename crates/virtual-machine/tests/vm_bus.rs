@@ -1,4 +1,4 @@
-use virtual_machine::bus::{RAM_BASE, ROM_BASE, SystemBus};
+use virtual_machine::bus::{PLIC_BASE, RAM_BASE, ROM_BASE, SystemBus};
 use virtual_machine::error::VmError;
 use virtual_machine::memory::MemoryAccess;
 
@@ -175,6 +175,20 @@ fn bus_plic_mut_access() {
 
     let _plic = bus.plic_mut();
     // Just checking we can get mutable reference
+}
+
+#[test]
+fn bus_plic_context_threshold_is_mapped() {
+    let mut bus = SystemBus::new(Vec::new());
+
+    let threshold_addr = PLIC_BASE + 0x200000;
+    bus.write_word(threshold_addr, 3)
+        .expect("PLIC threshold write should be mapped");
+
+    let threshold = bus
+        .read_word(threshold_addr)
+        .expect("PLIC threshold read should be mapped");
+    assert_eq!(threshold, 3);
 }
 
 // ---------------------------------------------------------------------------

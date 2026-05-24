@@ -135,8 +135,39 @@ impl TypeContext {
         }
 
         match op {
-            // Arithmetic operations require numeric types
-            BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod => {
+            // Arithmetic operations require numeric types (include shifts)
+            BinaryOp::Add
+            | BinaryOp::Sub
+            | BinaryOp::Mul
+            | BinaryOp::Div
+            | BinaryOp::Mod
+            | BinaryOp::Shl
+            | BinaryOp::Shr => {
+                let effective_type = if lhs_unknown {
+                    rhs_type
+                } else if rhs_unknown {
+                    lhs_type
+                } else if lhs_placeholder && !rhs_placeholder {
+                    rhs_type
+                } else {
+                    lhs_type
+                };
+                if !self.is_numeric(effective_type)
+                    && !self.is_unknown_like(effective_type)
+                    && !self.is_placeholder_like(effective_type)
+                {
+                    return Err(TypeCheckError::InvalidOperation {
+                        op: format!("{op:?}"),
+                        lhs: lhs_type.to_owned(),
+                        rhs: rhs_type.to_owned(),
+                    });
+                }
+
+                Ok(effective_type.to_owned())
+            }
+
+            // Bitwise operations require numeric types
+            BinaryOp::BitwiseAnd | BinaryOp::BitwiseXor | BinaryOp::BitwiseOr => {
                 let effective_type = if lhs_unknown {
                     rhs_type
                 } else if rhs_unknown {

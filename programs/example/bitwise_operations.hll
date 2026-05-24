@@ -1,0 +1,75 @@
+; Example demonstrating bitwise operators, shifts, and pointer/integer casts.
+
+external print: (value: i64) -> ()
+external print_hex: (value: i64) -> ()
+
+test_bitwise_and: () -> () {
+    x: i64 = 0xFF
+    y: i64 = 0x0F
+    result: i64 = x & y  ; Should be 0x0F = 15
+    print(result)
+}
+
+test_bitwise_or: () -> () {
+    x: i64 = 0xF0
+    y: i64 = 0x0F
+    result: i64 = x | y  ; Should be 0xFF = 255
+    print(result)
+}
+
+test_bitwise_xor: () -> () {
+    x: i64 = 0xFF
+    y: i64 = 0x0F
+    result: i64 = x ^ y  ; Should be 0xF0 = 240
+    print(result)
+}
+
+test_shift_left: () -> () {
+    x: i64 = 1
+    result: i64 = x << 4  ; Should be 16
+    print(result)
+}
+
+test_shift_right: () -> () {
+    x: i64 = 256
+    result: i64 = x >> 4  ; Should be 16
+    print(result)
+}
+
+test_pointer_cast: () -> () {
+    ; Create a value on the stack and get its address
+    value: i64 = 42
+    addr: i64* = &value
+
+    ; Cast pointer to u64
+    addr_as_u64: i64 = u64(addr)
+    print(addr_as_u64)
+
+    ; Cast u64 back to pointer
+    recovered_ptr: i64* = i64*(addr_as_u64)
+
+    ; Dereference to verify it still points to 42
+    recovered_value: i64 = @recovered_ptr
+    print(recovered_value)
+}
+
+main: () -> () {
+    print(1)   ; test_bitwise_and
+    test_bitwise_and()
+
+    print(2)   ; test_bitwise_or
+    test_bitwise_or()
+
+    print(3)   ; test_bitwise_xor
+    test_bitwise_xor()
+
+    print(4)   ; test_shift_left
+    test_shift_left()
+
+    print(5)   ; test_shift_right
+    test_shift_right()
+
+    print(6)   ; test_pointer_cast
+    test_pointer_cast()
+}
+

@@ -4,11 +4,6 @@ use asm_to_binary::assembler::{Assembler, AssemblerError};
 use asm_to_binary::rv_instruction::RvInstruction;
 use hll_to_ir::{CompileConfig, Diagnostic, DiagnosticLevel, HllCompiler, IrProgram};
 use ir_to_asm::compiler::compiler_rv64::CompilerRv64;
-
-// ---------------------------------------------------------------------------
-// Target mode (canonical definition lives in hll_to_ir)
-// ---------------------------------------------------------------------------
-
 pub use hll_to_ir::TargetMode;
 
 // ---------------------------------------------------------------------------
@@ -50,9 +45,7 @@ impl std::error::Error for CompilationError {}
 
 #[derive(Debug)]
 pub struct CompilationResult {
-    /// Debug-formatted token list (for the Tokens panel).
     pub tokens_display: String,
-    /// Debug-formatted AST (for the AST panel).
     pub ast_display: String,
     pub ir_program: IrProgram,
     pub diagnostics: Vec<Diagnostic>,

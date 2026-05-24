@@ -114,6 +114,14 @@ fn kernel_runtime_defines_timer_set() {
     );
 }
 
+#[test]
+fn kernel_runtime_defines_plic_init() {
+    assert!(
+        os_runtime::stdlib::KERNEL_UTILS.contains("plic_init:"),
+        "kernel stdlib utilities must define plic_init function"
+    );
+}
+
 // -- Trap handler source content -----------------------------------------------
 
 #[test]
@@ -147,6 +155,14 @@ fn my_kernel_arms_timer() {
     assert!(
         kernel::MY_KERNEL.contains("timer_set("),
         "reference kernel must arm the CLINT timer via timer_set"
+    );
+}
+
+#[test]
+fn my_kernel_initializes_interrupt_controller() {
+    assert!(
+        kernel::MY_KERNEL.contains("plic_init()"),
+        "reference kernel must initialize the interrupt controller via plic_init"
     );
 }
 
@@ -219,8 +235,8 @@ fn unimplemented_subsystems_warn() {
         "device tree stub must emit warn; uart={uart:?}"
     );
     assert!(
-        uart.contains("[ WARN ] interrupt controller:"),
-        "interrupt controller stub must emit warn; uart={uart:?}"
+        uart.contains("[  OK  ] interrupt controller online\n"),
+        "interrupt controller must initialize and report online; uart={uart:?}"
     );
     assert!(
         uart.contains("[  OK  ] mmu: sv39 enabled"),
@@ -254,7 +270,7 @@ fn full_boot_output_matches_expected() {
          [  OK  ] trap handler installed\n\
          [  OK  ] timer armed\n\
          [ WARN ] device tree: not implemented\n\
-         [ WARN ] interrupt controller: not implemented\n\
+         [  OK  ] interrupt controller online\n\
          [  OK  ] running memory diagnostics...\n\
          [  OK  ] memory self-test passed\n\
          [  OK  ] heap ready\n\

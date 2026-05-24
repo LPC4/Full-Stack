@@ -9,6 +9,7 @@ external kmalloc:      (size: u64) -> u8*
 external memset:       (dst: u8*, value: u8, n: u64) -> u8*
 external kshutdown:    (code: i64) -> ()
 external trap_init:    () -> ()
+external plic_init:    () -> ()
 external timer_set:    (interval: u64) -> ()
 external pmm_init:     (start: u64, end: u64) -> ()
 external pmm_alloc:    () -> u8*
@@ -17,6 +18,7 @@ external vmm_init:     () -> ()
 external vmm_map_1gib: (va: u64, pa: u64, flags: u64) -> ()
 external vmm_enable:   () -> ()
 external vmm_enable_interrupts: () -> ()
+external memory_self_test: (size: u64) -> i64
 
 kmain: () -> () {
     klog_ok("kernel starting".data)
@@ -34,8 +36,10 @@ kmain: () -> () {
     ; TODO: parse device tree and enumerate devices
     klog_warn("device tree: not implemented".data)
 
-    ; TODO: initialize PIC and set up interrupt handlers
-    klog_warn("interrupt controller: not implemented".data)
+    ; Initialize PLIC routing for S-mode external interrupts.
+    ; TODO: make real devices (e.g. UART RX) raise external IRQs end-to-end through PLIC -> SEIP -> trap cause 9.
+    plic_init()
+    klog_ok("interrupt controller online".data)
 
     klog_ok("running memory diagnostics...".data)
     test_result: i64 = memory_self_test(256)
@@ -79,13 +83,6 @@ kmain: () -> () {
     klog_ok("memory ops test passed".data)
 
     ; Initialize Sv39 MMU with canonical lower-half identity mappings.
-    ; Must run after PMM is ready (vmm_init allocates the root page table via pmm_alloc).
-    ;
-    ; Sv39 requires canonical virtual addresses where bits [63:39] sign-extend bit 38.
-    ; The VM enforces that rule, so we keep the kernel in the canonical lower half and
-    ; map each physical range to the same virtual address (VA = PA).
-    ;
-    ; Flags: 38 = R(2)|W(4)|G(32),  46 = R(2)|W(4)|X(8)|G(32)
     klog_ok("vmm: initializing...".data)
     vmm_init()
     klog_ok("vmm: root table allocated".data)
@@ -99,7 +96,6 @@ kmain: () -> () {
     ; These identity mappings are canonical, so Sv39 can be enabled without
     ; relocating the kernel or switching to a high-half address space.
     klog_ok("vmm: using canonical lower-half identity mapping".data)
-
     klog_ok("vmm: enabling MMU...".data)
     vmm_enable()
     klog_ok("mmu: sv39 enabled".data)
@@ -119,37 +115,7 @@ kmain: () -> () {
     klog_ok("entering idle loop".data)
     asm {
     .Lkmain_idle:
-        nop
+        wfi
         j    .Lkmain_idle
     }
-}
-
-; Memory integrity check:
-; Returns:
-;  - 1 on success
-;  - 0 on failure
-memory_self_test: (size: u64) -> i64 {
-    test_buf: u8* = kmalloc(size)
-
-    i: u64 = 0
-    while i < size {
-        pattern: u8 = 170
-        if i % 2 != 0 { pattern = 85 }
-        @test_buf[i] = pattern
-        i = i + 1
-    }
-
-    i = 0
-    while i < size {
-        expected: u8 = 170
-        if i % 2 != 0 { expected = 85 }
-        if @test_buf[i] != expected {
-            klog_error("memory self-test failed".data)
-            return 0
-        }
-        i = i + 1
-    }
-
-    klog_ok("memory self-test passed".data)
-    return 1
 }

@@ -218,6 +218,30 @@ impl Pipeline {
             }
         }
 
+        // Check PLIC for external interrupts and sync SEIP into mip.
+        // If PLIC has a pending interrupt and it's delegated to S-mode, set SEIP (bit 9).
+        {
+            // Check if UART RX interrupt is pending and inject into PLIC if so
+            let uart_rx_pending = bus.uart_mut().rx_irq_pending();
+            if uart_rx_pending {
+                bus.plic_mut()
+                    .set_irq(crate::devices::uart::UART_RX_IRQ_SOURCE);
+            }
+
+            // Check if any PLIC interrupt is pending
+            if bus.plic_mut().next_irq(0).is_some() {
+                // PLIC has a pending interrupt for hart 0 (context 1)
+                if (self.csrs.mideleg >> 9) & 1 == 1 {
+                    self.csrs.mip |= 1u64 << 9;     // SEIP - S-mode external interrupt pending
+                } else {
+                    self.csrs.mip |= 1u64 << 11;    // MEIP - M-mode external interrupt pending
+                }
+            } else {
+                self.csrs.mip &= !(1u64 << 11);     // clear MEIP
+                self.csrs.mip &= !(1u64 << 9);      // clear SEIP
+            }
+        }
+
         // Snapshot pipeline state at the START of this cycle (before any stage runs).
         let snap_wb_entry: StageEntry = self.mem_wb.as_ref().map(|r| (r.pc, r.mnemonic));
         let snap_mem_entry: StageEntry = self.ex_mem.as_ref().map(|r| (r.pc, r.mnemonic));

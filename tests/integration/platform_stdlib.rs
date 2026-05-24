@@ -384,7 +384,7 @@ fn my_kernel_example_program() {
          [  OK  ] trap handler installed\n\
          [  OK  ] timer armed\n\
          [ WARN ] device tree: not implemented\n\
-         [ WARN ] interrupt controller: not implemented\n\
+         [  OK  ] interrupt controller online\n\
          [  OK  ] running memory diagnostics...\n\
          [  OK  ] memory self-test passed\n\
          [  OK  ] heap ready\n\

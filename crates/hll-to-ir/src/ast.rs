@@ -144,6 +144,8 @@ pub enum BinaryOp {
     Mul,
     Div,
     Mod,
+    Shl,
+    Shr,
     Eq,
     Neq,
     Lt,
@@ -152,6 +154,9 @@ pub enum BinaryOp {
     Gte,
     And,
     Or,
+    BitwiseAnd,
+    BitwiseXor,
+    BitwiseOr,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

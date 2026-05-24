@@ -41,6 +41,31 @@ timer_set: (interval: u64) -> () {
     }
 }
 
+; Initialize a minimal PLIC setup for S-mode on hart 0.
+; - source 10: UART RX
+; - priority[source10] = 1
+; - enable bit for source10 in context 1
+; - threshold = 0 (allow all priority>0)
+plic_init: () -> () {
+    asm {
+        ; PLIC priority[source10] at 0x0C00_0000 + (9 * 4)
+        li   t0, 201326628
+        li   t1, 1
+        sw   t1, 0(t0)
+
+        ; PLIC enable bitmap for S-context 1 at 0x0C00_2000
+        ; source10 -> bit 9 -> 1 << 9 = 512
+        li   t0, 201334784
+        li   t1, 512
+        sw   t1, 0(t0)
+
+        ; PLIC threshold for context 1 at 0x0C20_0000
+        li   t0, 203423744
+        sw   x0, 0(t0)
+
+    }
+}
+
 ; Hosts stvec_entry; stvec points directly here, bypassing the HLL prologue.
 _s_trap_host: () -> () {
     asm {
@@ -170,5 +195,35 @@ sscratch_get_to: (out: u64*) -> () {
 ; Write sscratch CSR.
 sscratch_set: (val: u64) -> () {
     asm { csrw sscratch, a0 }
+}
+
+; Memory integrity check:
+; Returns:
+;  - 1 on success
+;  - 0 on failure
+memory_self_test: (size: u64) -> i64 {
+    test_buf: u8* = kmalloc(size)
+
+    i: u64 = 0
+    while i < size {
+        pattern: u8 = 170
+        if i % 2 != 0 { pattern = 85 }
+        @test_buf[i] = pattern
+        i = i + 1
+    }
+
+    i = 0
+    while i < size {
+        expected: u8 = 170
+        if i % 2 != 0 { expected = 85 }
+        if @test_buf[i] != expected {
+            klog_error("memory self-test failed".data)
+            return 0
+        }
+        i = i + 1
+    }
+
+    klog_ok("memory self-test passed".data)
+    return 1
 }
 

@@ -665,6 +665,14 @@ impl HighLevelCompiler {
             (IrType::Integer(_), IrType::Float(_)) => IrCastMode::I2f,
             (IrType::Float(_), IrType::Float(_)) => IrCastMode::Bitcast,
             (IrType::Pointer(_), IrType::Pointer(_)) => IrCastMode::Bitcast,
+            (IrType::Pointer(_), IrType::Integer(_)) => {
+                // Allow pointer -> integer bitcast
+                IrCastMode::Bitcast
+            }
+            (IrType::Integer(_), IrType::Pointer(_)) => {
+                // Allow integer -> pointer bitcast
+                IrCastMode::Bitcast
+            }
             _ if source_resolved == target_resolved => return Some(source_value),
             _ => {
                 self.context.error(format!(

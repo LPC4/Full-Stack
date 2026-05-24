@@ -971,6 +971,13 @@ impl SemanticAnalyzer {
             return true;
         }
 
+        // Allow pointer to integer casts
+        let source_is_pointer = matches!(source, IrType::Pointer(_));
+        let target_is_pointer = matches!(target, IrType::Pointer(_));
+        if (source_is_pointer && target_is_numeric) || (source_is_numeric && target_is_pointer) {
+            return true;
+        }
+
         // Allow same-type casts (identity)
         if source == target {
             return true;

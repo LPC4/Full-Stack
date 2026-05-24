@@ -99,12 +99,10 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     Token::Or
                 } else {
-                    Token::Error(format!(
-                        "Unexpected character: {} at position {}",
-                        c, self.pos
-                    ))
+                    Token::Pipe
                 }
             }
+            '^' => Token::Caret,
             '(' => Token::LParen,
             ')' => Token::RParen,
             '{' => Token::LBrace,
@@ -130,7 +128,10 @@ impl<'a> Lexer<'a> {
                 }
             }
             '<' => {
-                if self.peek_is('=') {
+                if self.peek_is('<') {
+                    self.advance();
+                    Token::Shl
+                } else if self.peek_is('=') {
                     self.advance();
                     Token::Lte
                 } else {
@@ -138,7 +139,10 @@ impl<'a> Lexer<'a> {
                 }
             }
             '>' => {
-                if self.peek_is('=') {
+                if self.peek_is('>') {
+                    self.advance();
+                    Token::Shr
+                } else if self.peek_is('=') {
                     self.advance();
                     Token::Gte
                 } else {
@@ -453,18 +457,15 @@ mod tests {
         assert_eq!(lexer.next_token(), Token::Ident("c"));
         assert_eq!(lexer.next_token(), Token::Ampersand);
         assert_eq!(lexer.next_token(), Token::Ident("d"));
-        assert_eq!(
-            lexer.next_token(),
-            Token::Error("Unexpected character: | at position 17".to_string())
-        );
+        // Single | is now the bitwise OR operator (Token::Pipe)
+        assert_eq!(lexer.next_token(), Token::Pipe);
+        assert_eq!(lexer.next_token(), Token::Ident("e"));
     }
 
     #[test]
-    fn test_single_pipe_is_invalid() {
+    fn test_single_pipe_is_bitwise_or() {
         let mut lexer = Lexer::new("|");
-        assert_eq!(
-            lexer.next_token(),
-            Token::Error("Unexpected character: | at position 1".to_string())
-        );
+        // Single | is now the bitwise OR operator (Token::Pipe)
+        assert_eq!(lexer.next_token(), Token::Pipe);
     }
 }

@@ -37,6 +37,9 @@ impl Default for Uart {
     }
 }
 
+/// PLIC source ID used for UART RX external interrupts.
+pub const UART_RX_IRQ_SOURCE: u32 = 10;
+
 impl Uart {
     pub fn new() -> Self {
         Self {
@@ -56,6 +59,11 @@ impl Uart {
     pub fn receive(&mut self, byte: u8) {
         self.rx_buf.push_back(byte);
         self.lsr |= 0x01; // Data Ready
+    }
+
+    /// True when UART RX interrupt should be raised.
+    pub fn rx_irq_pending(&self) -> bool {
+        (self.ier & 0x01) != 0 && !self.rx_buf.is_empty()
     }
 
     pub fn drain_output(&mut self) -> Vec<u8> {

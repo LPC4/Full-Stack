@@ -85,12 +85,16 @@ pub enum Token<'a> {
     Neq,
     Lt,
     Lte,
+    Shl,
+    Shr,
     Gt,
     Gte,
     Not,
 
     // Operators
     Ampersand,
+    Caret,
+    Pipe,
     At,
     LParen,
     RParen,

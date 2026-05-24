@@ -26,6 +26,7 @@ pub struct Parser<'a> {
     pub tokens: Vec<Token<'a>>,
     pub spans: Vec<Span>,
     pub pos: usize,
+    pub pending_gt_from_shr: bool,  // Track if we have a virtual `>` waiting from a split `>>`
 }
 
 impl<'a> Parser<'a> {
@@ -35,6 +36,7 @@ impl<'a> Parser<'a> {
             tokens,
             spans,
             pos: 0,
+            pending_gt_from_shr: false,
         }
     }
 
@@ -44,6 +46,7 @@ impl<'a> Parser<'a> {
             tokens,
             spans,
             pos: 0,
+            pending_gt_from_shr: false,
         }
     }
 
@@ -394,12 +397,54 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_and(&mut self) -> Result<Expression, ParserError> {
-        let mut expr = self.parse_equality()?;
+        let mut expr = self.parse_bitwise_or()?;
         while self.match_and() {
+            self.consume_terminators();
+            let right = self.parse_bitwise_or()?;
+            expr = Expression::Binary {
+                op: BinaryOp::And,
+                left: Box::new(expr),
+                right: Box::new(right),
+            };
+        }
+        Ok(expr)
+    }
+
+    fn parse_bitwise_or(&mut self) -> Result<Expression, ParserError> {
+        let mut expr = self.parse_bitwise_xor()?;
+        while self.match_bitwise_or() {
+            self.consume_terminators();
+            let right = self.parse_bitwise_xor()?;
+            expr = Expression::Binary {
+                op: BinaryOp::BitwiseOr,
+                left: Box::new(expr),
+                right: Box::new(right),
+            };
+        }
+        Ok(expr)
+    }
+
+    fn parse_bitwise_xor(&mut self) -> Result<Expression, ParserError> {
+        let mut expr = self.parse_bitwise_and()?;
+        while self.match_bitwise_xor() {
+            self.consume_terminators();
+            let right = self.parse_bitwise_and()?;
+            expr = Expression::Binary {
+                op: BinaryOp::BitwiseXor,
+                left: Box::new(expr),
+                right: Box::new(right),
+            };
+        }
+        Ok(expr)
+    }
+
+    fn parse_bitwise_and(&mut self) -> Result<Expression, ParserError> {
+        let mut expr = self.parse_equality()?;
+        while self.match_bitwise_and() {
             self.consume_terminators();
             let right = self.parse_equality()?;
             expr = Expression::Binary {
-                op: BinaryOp::And,
+                op: BinaryOp::BitwiseAnd,
                 left: Box::new(expr),
                 right: Box::new(right),
             };
@@ -432,7 +477,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_comparison(&mut self) -> Result<Expression, ParserError> {
-        let mut expr = self.parse_additive()?;
+        let mut expr = self.parse_shift()?;
         loop {
             self.consume_terminators();
             let op = if self.match_lt() {
@@ -443,6 +488,30 @@ impl<'a> Parser<'a> {
                 Some(BinaryOp::Gt)
             } else if self.match_gte() {
                 Some(BinaryOp::Gte)
+            } else {
+                None
+            };
+
+            let Some(op) = op else { break };
+            self.consume_terminators();
+            let right = self.parse_additive()?;
+            expr = Expression::Binary {
+                op,
+                left: Box::new(expr),
+                right: Box::new(right),
+            };
+        }
+        Ok(expr)
+    }
+
+    fn parse_shift(&mut self) -> Result<Expression, ParserError> {
+        let mut expr = self.parse_additive()?;
+        loop {
+            self.consume_terminators();
+            let op = if self.match_shl() {
+                Some(BinaryOp::Shl)
+            } else if self.match_shr() {
+                Some(BinaryOp::Shr)
             } else {
                 None
             };
@@ -672,19 +741,48 @@ impl<'a> Parser<'a> {
                 let name = self.expect_ident()?;
                 let args = if self.match_lt() {
                     let mut args = Vec::new();
-                    if !self.check_gt() {
+                    // Check for closing bracket, accounting for `>>` in nested generics
+                    let should_close = self.check_gt_or_shr();
+
+                    if !should_close {
                         loop {
                             args.push(self.parse_type()?);
-                            if self.match_comma() {
-                                if self.check_gt() {
+                            // After parsing a type, check what's next
+                            match self.peek() {
+                                Some(Token::Comma) => {
+                                    self.advance(); // consume comma
+                                    // Check if we're at closing bracket now
+                                    if self.check_gt_or_shr() {
+                                        break;
+                                    }
+                                }
+                                Some(Token::Gt) | Some(Token::Shr) | Some(Token::Gte) => {
                                     break;
                                 }
-                                continue;
+                               _ => {
+                                   if self.pending_gt_from_shr {
+                                       break;
+                                   }
+                               }
                             }
-                            break;
                         }
                     }
-                    self.expect_gt()?;
+
+                    // Consume the closing bracket
+                    if self.pending_gt_from_shr {
+                        // We have a pending virtual >
+                        self.pending_gt_from_shr = false;
+                    } else if self.match_gt() {
+                        // Simple case: plain >
+                    } else if matches!(self.peek(), Some(Token::Shr) | Some(Token::Gte)) {
+                        // In nested generic, >> and >= both contain a closing >
+                        // Consume and set flag for virtual second >
+                        self.advance();
+                        self.pending_gt_from_shr = true;
+                    } else {
+                        return Err(self.error("expected `>` to close generic parameters"));
+                    }
+
                     args
                 } else {
                     Vec::new()
@@ -752,11 +850,15 @@ impl<'a> Parser<'a> {
         }
 
         let mut params = Vec::new();
-        if !self.check_gt() {
+
+        // Check for closing bracket
+        let should_close = self.check_gt_or_shr();
+
+        if !should_close {
             loop {
                 params.push(self.expect_ident()?);
                 if self.match_comma() {
-                    if self.check_gt() {
+                    if self.check_gt_or_shr() {
                         break;
                     }
                     continue;
@@ -765,7 +867,19 @@ impl<'a> Parser<'a> {
             }
         }
 
-        self.expect_gt()?;
+        // Consume the closing bracket
+        if self.pending_gt_from_shr {
+            // Virtual > available from previous Shr split
+            self.pending_gt_from_shr = false;
+        } else if self.match_gt() {
+            // plain >
+        } else if matches!(self.peek(), Some(Token::Shr) | Some(Token::Gte)) {
+            self.advance();
+            self.pending_gt_from_shr = true;
+        } else {
+            return Err(self.error("expected `>` to close generic parameters"));
+        }
+
         Ok(params)
     }
 
@@ -1108,6 +1222,15 @@ impl<'a> Parser<'a> {
         matches!(self.peek(), Some(Token::Gt))
     }
 
+    fn check_gt_or_shr(&self) -> bool {
+        // Used in type contexts where `>>` can close nested generics
+        // Also check for pending virtual > from a split >>
+        if self.pending_gt_from_shr {
+            return true;
+        }
+        matches!(self.peek(), Some(Token::Gt) | Some(Token::Shr) | Some(Token::Gte))
+    }
+
     fn match_assign(&mut self) -> bool {
         self.match_variant(|t| matches!(t, Token::Assign))
     }
@@ -1380,6 +1503,14 @@ impl<'a> Parser<'a> {
         self.match_variant(|t| matches!(t, Token::Lte))
     }
 
+    fn match_shl(&mut self) -> bool {
+        self.match_variant(|t| matches!(t, Token::Shl))
+    }
+
+    fn match_shr(&mut self) -> bool {
+        self.match_variant(|t| matches!(t, Token::Shr))
+    }
+
     fn match_gt(&mut self) -> bool {
         self.match_variant(|t| matches!(t, Token::Gt))
     }
@@ -1390,6 +1521,23 @@ impl<'a> Parser<'a> {
 
     fn expect_gt(&mut self) -> Result<(), ParserError> {
         if self.match_gt() {
+            Ok(())
+        } else if matches!(self.peek(), Some(Token::Shr) | Some(Token::Gte)) {
+            // In type context, `>>` and `>=` can close an inner generic
+            // Just consume the token - the remaining `>` will be seen on next check_gt_or_shr
+            self.advance();
+            Ok(())
+        } else {
+            Err(self.error("expected `>`"))
+        }
+    }
+
+    fn expect_gt_in_type(&mut self) -> Result<(), ParserError> {
+        if self.match_gt() {
+            Ok(())
+        } else if matches!(self.peek(), Some(Token::Shr) | Some(Token::Gte)) {
+            // Consume Shr/Gte as a closing bracket for nested generics
+            self.advance();
             Ok(())
         } else {
             Err(self.error("expected `>`"))
@@ -1402,6 +1550,18 @@ impl<'a> Parser<'a> {
 
     fn match_ampersand(&mut self) -> bool {
         self.match_variant(|t| matches!(t, Token::Ampersand))
+    }
+
+    fn match_bitwise_and(&mut self) -> bool {
+        self.match_variant(|t| matches!(t, Token::Ampersand))
+    }
+
+    fn match_bitwise_or(&mut self) -> bool {
+        self.match_variant(|t| matches!(t, Token::Pipe))
+    }
+
+    fn match_bitwise_xor(&mut self) -> bool {
+        self.match_variant(|t| matches!(t, Token::Caret))
     }
 
     fn match_at(&mut self) -> bool {

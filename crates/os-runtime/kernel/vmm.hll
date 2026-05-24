@@ -10,9 +10,8 @@
 ;   [4] U user   [3] X execute   [2] W write   [1] R read   [0] V valid
 ;
 ; HLL notes:
-;  - No shift ops: shifts use * / powers-of-2 (e.g. `>> 12` = `/ 4096`).
-;  - `and`/`or` are boolean-only; use `%` for bit-masking (e.g. `% 512` = `& 0x1FF`).
-;  - No int<->ptr casts: two asm helpers (vmm_ptr_to_u64 / vmm_u64_to_ptr) bridge the gap.
+;  - Bitwise operators now available: `&` (AND), `|` (OR), `^` (XOR), `<<` (left shift), `>>` (right shift).
+;  - Use u64(...) to cast ptr to u64, and u64*(...) to cast u64 to ptr.
 
 external pmm_alloc: () -> u8*
 external memset:    (dst: u8*, value: u8, n: u64) -> u8*
@@ -27,17 +26,6 @@ const VMM_G = 32
 
 ; Physical address of the Sv39 root (L2) page table (0 = uninitialised).
 vmm_root: u64 = 0
-
-; On RV64, a pointer and u64 are the same width; these two helpers are no-ops at
-; the machine level (a0 enters holding one type, returns unchanged as the other).
-
-vmm_ptr_to_u64: (ptr: u64*) -> u64 {
-    asm { }
-}
-
-vmm_u64_to_ptr: (addr: u64) -> u64* {
-    asm { }
-}
 
 ; Allocate a zeroed 4 KiB page and return it as a u64* table pointer.
 vmm_alloc_pt: () -> u64* {
@@ -54,10 +42,10 @@ vmm_alloc_pt: () -> u64* {
 vmm_walk_or_alloc: (table: u64*, vpn: u64) -> u64* {
     pte: u64 = @table[vpn]
     if pte % 2 != 0 {
-        return vmm_u64_to_ptr((pte / 1024) * 4096)
+        return u64*((pte >> 10) << 12)
     }
     t: u64* = vmm_alloc_pt()
-    @table[vpn] = vmm_ptr_to_u64(t) / 4096 * 1024 + VMM_V
+    @table[vpn] = ((u64(t) >> 12) << 10) + VMM_V
     return t
 }
 
@@ -65,23 +53,23 @@ vmm_walk_or_alloc: (table: u64*, vpn: u64) -> u64* {
 ; `flags`: combine VMM_R / VMM_W / VMM_X / VMM_U / VMM_G (VMM_V is added internally).
 vmm_map: (va: u64, pa: u64, flags: u64) -> () {
     ; VPN fields: VPN[2] = va >> 30, VPN[1] = va >> 21, VPN[0] = va >> 12
-    ; `% 512` masks to 9 bits (= `& 0x1FF`).
-    vpn2: u64 = (va / 1073741824) % 512
-    vpn1: u64 = (va / 2097152)    % 512
-    vpn0: u64 = (va / 4096)       % 512
+    ; Mask to 9 bits (0x1FF = 512 entries per page table level).
+    vpn2: u64 = (va >> 30) & 0x1FF
+    vpn1: u64 = (va >> 21) & 0x1FF
+    vpn0: u64 = (va >> 12) & 0x1FF
 
-    l2: u64* = vmm_u64_to_ptr(vmm_root)
+    l2: u64* = u64*(vmm_root)
     l1: u64* = vmm_walk_or_alloc(l2, vpn2)
     l0: u64* = vmm_walk_or_alloc(l1, vpn1)
-    @l0[vpn0] = pa / 4096 * 1024 + flags + VMM_V
+    @l0[vpn0] = ((pa >> 12) << 10) + flags + VMM_V
 }
 
 ; Map a 1 GiB superpage (single L2 leaf): `va` and `pa` must be 1 GiB-aligned.
 ; This is used for the kernel's canonical identity-mapped boot ranges.
 vmm_map_1gib: (va: u64, pa: u64, flags: u64) -> () {
-    vpn2: u64 = (va / 1073741824) % 512
-    l2: u64* = vmm_u64_to_ptr(vmm_root)
-    @l2[vpn2] = pa / 4096 * 1024 + flags + VMM_V
+    vpn2: u64 = (va >> 30) & 0x1FF
+    l2: u64* = u64*(vmm_root)
+    @l2[vpn2] = ((pa >> 12) << 10) + flags + VMM_V
 }
 
 ; Identity-map every 4 KiB page in [start, end) with `flags`.
@@ -99,7 +87,7 @@ vmm_map_range: (start: u64, end: u64, flags: u64) -> () {
 ; Allocate the root page table and record its physical address in vmm_root.
 vmm_init: () -> () {
     root: u64* = vmm_alloc_pt()
-    vmm_root = vmm_ptr_to_u64(root)
+    vmm_root = u64(root)
 }
 
 ; Enable Sv39 MMU after setting up all page table mappings.
