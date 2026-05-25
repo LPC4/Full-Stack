@@ -6,7 +6,7 @@ use egui::text::LayoutJob;
 const HLL_KEYWORDS: &[&str] = &[
     "type", "const", "if", "else", "while", "return", "defer", "new", "free", "and", "or", "true",
     "false", "null", "main", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64",
-    "bool", "asm",
+    "bool", "asm", "external",
 ];
 
 fn find_comment_start_outside_string(line: &str) -> Option<usize> {
@@ -99,10 +99,40 @@ fn append_hll_code_part(job: &mut LayoutJob, theme: &egui::Style, code_part: &st
             continue;
         }
 
-        // number
+        // number (decimal, hex 0x..., binary 0b..., octal 0o...)
         if bytes[start].is_ascii_digit() {
-            while end < len && bytes[end].is_ascii_digit() {
-                end += 1;
+            end = start + 1;
+            // detect hex, binary, or octal prefix
+            if bytes[start] == b'0' && end < len {
+                match bytes[end] {
+                    b'x' | b'X' => {
+                        end += 1;
+                        while end < len && bytes[end].is_ascii_hexdigit() {
+                            end += 1;
+                        }
+                    }
+                    b'b' | b'B' => {
+                        end += 1;
+                        while end < len && (bytes[end] == b'0' || bytes[end] == b'1') {
+                            end += 1;
+                        }
+                    }
+                    b'o' | b'O' => {
+                        end += 1;
+                        while end < len && (b'0'..=b'7').contains(&bytes[end]) {
+                            end += 1;
+                        }
+                    }
+                    _ => {
+                        while end < len && bytes[end].is_ascii_digit() {
+                            end += 1;
+                        }
+                    }
+                }
+            } else {
+                while end < len && bytes[end].is_ascii_digit() {
+                    end += 1;
+                }
             }
             job.append(
                 &code_part[start..end],

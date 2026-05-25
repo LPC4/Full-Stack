@@ -20,13 +20,17 @@ use hll_to_ir::{IrCmpOp, IrInstruction, IrMathOp};
 use hll_to_ir::ir::instruction::IrTerminator;
 
 fn compile_ok(source: &str) -> full_stack::compilation_pipeline::CompilationResult {
-    CompilationPipeline::new()
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_write_artifacts(false);
+    pipeline
         .compile(source)
         .unwrap_or_else(|e| panic!("expected compilation to succeed, got: {e}"))
 }
 
 fn assert_semantic_error(source: &str, fragment: &str) {
-    let result = CompilationPipeline::new().compile(source);
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_write_artifacts(false);
+    let result = pipeline.compile(source);
     let err = result.expect_err("expected compilation to fail");
     match err {
         CompilationError::DiagnosticErrors(diags) => assert!(
@@ -71,6 +75,7 @@ where
 #[test]
 fn compiles_minimal_valid_program() {
     let mut pipeline = CompilationPipeline::new();
+    pipeline.set_write_artifacts(false);
     pipeline.set_run_semantic_analysis(false);
     assert!(pipeline.compile("main: () -> i32 { return 42 }").is_ok());
 }
@@ -470,3 +475,4 @@ fn modulo_emits_rem_op() {
         |i| matches!(i, IrInstruction::Math { op, .. } if *op == IrMathOp::Mod),
     ));
 }
+

@@ -157,6 +157,7 @@ impl FullStackApp {
                 if self.target_mode != prev_mode {
                     let new_mode = self.target_mode;
                     self.target_mode = prev_mode;
+                    self.user_set_target_mode = true;
                     self.set_target_mode(new_mode);
                 }
 

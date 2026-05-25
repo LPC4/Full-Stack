@@ -1,14 +1,15 @@
-use super::AssemblerError;
-use super::layout::Layout;
-use super::output::AssembledOutput;
-use super::section::{SectionData, SectionKind};
-use super::token::{AsmToken, BranchKind};
 /// Pass 2: encode the typed token stream to bytes, resolving all label references.
 ///
 /// At this point the `SymbolTable` from the layout pass contains every label's
 /// section-relative address.  We convert those to absolute addresses by adding
 /// the running section base, then compute PC-relative branch/jump offsets and
 /// encode the final machine words.
+
+use super::AssemblerError;
+use super::layout::Layout;
+use super::output::{AssembledOutput, RelocationKind, RelocationRecord};
+use super::section::{SectionData, SectionKind};
+use super::token::{AsmToken, BranchKind};
 use crate::real::RealInstruction;
 use crate::riscv::rv64i::{Addi, Auipc, Beq, Bge, Bgeu, Blt, Bltu, Bne, Jal as JalInst, Jalr};
 use crate::traits::Instruction as _;
@@ -110,21 +111,38 @@ pub fn encode(tokens: &[AsmToken], layout: &Layout) -> Result<AssembledOutput, A
             }
 
             AsmToken::Jal { rd, target } => {
-                let word = encode_jal(*rd, target, current_addr, &layout.symbols)?;
-                push_u32(
-                    sections
-                        .entry(current_kind.clone())
-                        .or_insert_with(|| SectionData::new(current_kind.clone())),
-                    word,
-                    &mut current_addr,
-                );
+                let sec = sections
+                    .entry(current_kind.clone())
+                    .or_insert_with(|| SectionData::new(current_kind.clone()));
+                if let Ok(word) = encode_jal(*rd, target, current_addr, &layout.symbols) {
+                    push_u32(sec, word, &mut current_addr);
+                } else {
+                    let reloc_offset = sec.current_offset();
+                    sec.push_u32_le(RealInstruction::Jal(JalInst::new(*rd, 0)).encode());
+                    out.relocations.push(RelocationRecord {
+                        section: current_kind.name().to_owned(),
+                        offset: reloc_offset,
+                        symbol: target.clone(),
+                        kind: RelocationKind::Jal,
+                        addend: 0,
+                    });
+                    current_addr += 4;
+                }
             }
 
             AsmToken::Call { symbol } => {
                 let sec = sections
                     .entry(current_kind.clone())
                     .or_insert_with(|| SectionData::new(current_kind.clone()));
-                encode_call(sec, symbol, current_addr, &layout.symbols)?;
+                encode_call(
+                    sec,
+                    symbol,
+                    current_addr,
+                    &layout.symbols,
+                    &section_bases,
+                    &mut out.relocations,
+                    current_kind.name(),
+                );
                 current_addr += 8; // 2 instructions
             }
 
@@ -132,7 +150,15 @@ pub fn encode(tokens: &[AsmToken], layout: &Layout) -> Result<AssembledOutput, A
                 let sec = sections
                     .entry(current_kind.clone())
                     .or_insert_with(|| SectionData::new(current_kind.clone()));
-                encode_tail(sec, symbol, current_addr, &layout.symbols)?;
+                encode_tail(
+                    sec,
+                    symbol,
+                    current_addr,
+                    &layout.symbols,
+                    &section_bases,
+                    &mut out.relocations,
+                    current_kind.name(),
+                );
                 current_addr += 8; // 2 instructions
             }
 
@@ -147,6 +173,8 @@ pub fn encode(tokens: &[AsmToken], layout: &Layout) -> Result<AssembledOutput, A
                     current_addr,
                     &layout.symbols,
                     &section_bases,
+                    &mut out.relocations,
+                    current_kind.name(),
                 )?;
                 current_addr += 8; // 2 instructions
             }
@@ -323,14 +351,21 @@ fn pcrel_split(offset: i64) -> (i32, i32) {
     (hi20, lo12)
 }
 
-/// Resolve a symbol to its absolute address, returning an error if missing.
-fn resolve_symbol(
+fn resolve_absolute_symbol(
     symbol: &str,
     symbols: &super::symbol_table::SymbolTable,
-) -> Result<u64, AssemblerError> {
-    symbols
-        .resolve(symbol)
-        .ok_or_else(|| AssemblerError::new(format!("undefined symbol `{symbol}`")))
+    section_bases: &std::collections::HashMap<SectionKind, u64>,
+) -> Option<u64> {
+    if let Some(&addr) = symbols.all().get(symbol) {
+        for (section_kind, base) in section_bases {
+            let qualified_name = format!("{}@{}", symbol, section_kind.name());
+            if let Some(&offset) = symbols.all().get(&qualified_name) {
+                return Some(*base + offset);
+            }
+        }
+        return Some(addr);
+    }
+    None
 }
 
 /// Compute the PC-relative pair for a target address and current instruction address.
@@ -344,12 +379,28 @@ fn encode_call(
     symbol: &str,
     current_addr: u64,
     symbols: &super::symbol_table::SymbolTable,
-) -> Result<(), AssemblerError> {
-    let target_addr = resolve_symbol(symbol, symbols)?;
-    let (hi20, lo12) = pcrel_offsets(target_addr, current_addr);
-    sec.push_u32_le(Auipc::new(1, hi20 << 12).encode()); // auipc ra, hi20
-    sec.push_u32_le(Jalr::new(1, 1, lo12).encode()); // jalr ra, ra, lo12
-    Ok(())
+    section_bases: &std::collections::HashMap<SectionKind, u64>,
+    relocations: &mut Vec<RelocationRecord>,
+    section_name: &str,
+) {
+    if let Some(target_addr) = resolve_absolute_symbol(symbol, symbols, section_bases) {
+        let (hi20, lo12) = pcrel_offsets(target_addr, current_addr);
+        sec.push_u32_le(Auipc::new(1, hi20 << 12).encode()); // auipc ra, hi20
+        sec.push_u32_le(Jalr::new(1, 1, lo12).encode()); // jalr ra, ra, lo12
+        return;
+    }
+
+    // Leave immediates zeroed and emit a relocation for the linker.
+    let reloc_offset = sec.current_offset();
+    sec.push_u32_le(Auipc::new(1, 0).encode());
+    sec.push_u32_le(Jalr::new(1, 1, 0).encode());
+    relocations.push(RelocationRecord {
+        section: section_name.to_owned(),
+        offset: reloc_offset,
+        symbol: symbol.to_owned(),
+        kind: RelocationKind::CallPlt,
+        addend: 0,
+    });
 }
 
 /// Encode `tail symbol` -> `auipc t1, %pcrel_hi(symbol); jalr x0, t1, %pcrel_lo(symbol)`
@@ -358,12 +409,27 @@ fn encode_tail(
     symbol: &str,
     current_addr: u64,
     symbols: &super::symbol_table::SymbolTable,
-) -> Result<(), AssemblerError> {
-    let target_addr = resolve_symbol(symbol, symbols)?;
-    let (hi20, lo12) = pcrel_offsets(target_addr, current_addr);
-    sec.push_u32_le(Auipc::new(6, hi20 << 12).encode()); // auipc t1, hi20
-    sec.push_u32_le(Jalr::new(0, 6, lo12).encode()); // jalr x0, t1, lo12 (no return)
-    Ok(())
+    section_bases: &std::collections::HashMap<SectionKind, u64>,
+    relocations: &mut Vec<RelocationRecord>,
+    section_name: &str,
+) {
+    if let Some(target_addr) = resolve_absolute_symbol(symbol, symbols, section_bases) {
+        let (hi20, lo12) = pcrel_offsets(target_addr, current_addr);
+        sec.push_u32_le(Auipc::new(6, hi20 << 12).encode()); // auipc t1, hi20
+        sec.push_u32_le(Jalr::new(0, 6, lo12).encode()); // jalr x0, t1, lo12 (no return)
+        return;
+    }
+
+    let reloc_offset = sec.current_offset();
+    sec.push_u32_le(Auipc::new(6, 0).encode());
+    sec.push_u32_le(Jalr::new(0, 6, 0).encode());
+    relocations.push(RelocationRecord {
+        section: section_name.to_owned(),
+        offset: reloc_offset,
+        symbol: symbol.to_owned(),
+        kind: RelocationKind::CallPlt,
+        addend: 0,
+    });
 }
 
 /// Encode `la rd, symbol` -> `auipc rd, %pcrel_hi(symbol); addi rd, rd, %pcrel_lo(symbol)`
@@ -374,25 +440,22 @@ fn encode_la(
     current_addr: u64,
     symbols: &super::symbol_table::SymbolTable,
     section_bases: &std::collections::HashMap<SectionKind, u64>,
+    relocations: &mut Vec<RelocationRecord>,
+    section_name: &str,
 ) -> Result<(), AssemblerError> {
-    let section_offset = resolve_symbol(symbol, symbols)?;
-
-    // Find the absolute address by checking which section owns this symbol.
-    // Order doesn't matter - we break on the first match.
-    let mut target_abs_addr = None;
-    #[expect(clippy::iter_over_hash_type)]
-    for (section_name, base) in section_bases {
-        let qualified_name = format!("{}@{}", symbol, section_name.name());
-        if symbols.resolve(&qualified_name).is_some() {
-            target_abs_addr = Some(base + section_offset);
-            break;
-        }
-    }
-    // Fallback: treat symbol value as already absolute (same-section case).
-    let target_addr = target_abs_addr.unwrap_or(section_offset);
-
-    let (hi20, lo12) = pcrel_offsets(target_addr, current_addr);
+    let target_abs_addr = resolve_absolute_symbol(symbol, symbols, section_bases);
+    let (hi20, lo12) = pcrel_offsets(target_abs_addr.unwrap_or(0), current_addr);
+    let reloc_offset = sec.current_offset();
     sec.push_u32_le(Auipc::new(rd, hi20 << 12).encode()); // auipc rd, hi20
     sec.push_u32_le(Addi::new(rd, rd, lo12).encode()); // addi rd, rd, lo12
+    // Always emit a relocation: section merging may change cross-section distances
+    // even for local symbols, so the linker must re-evaluate every `la`.
+    relocations.push(RelocationRecord {
+        section: section_name.to_owned(),
+        offset: reloc_offset,
+        symbol: symbol.to_owned(),
+        kind: RelocationKind::La,
+        addend: 0,
+    });
     Ok(())
 }

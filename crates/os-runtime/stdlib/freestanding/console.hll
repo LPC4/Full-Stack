@@ -2,8 +2,12 @@
 
 console_putchar: (c: i32) -> () {
     asm {
-        li t0, 268435456
-        sb a0, 0(t0)
+        li   t0, 268435456           ; UART base 0x10000000
+    .Lputchar_wait:
+        lbu  t1, 5(t0)              ; LSR at base+5
+        andi t1, t1, 0x20           ; bit 5 = THR empty
+        beqz t1, .Lputchar_wait
+        sb   a0, 0(t0)              ; write char to THR
     }
 }
 

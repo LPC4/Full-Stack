@@ -120,23 +120,82 @@ fn built_in_programs() -> Vec<ProgramFile> {
             "Read-only standard library (types, memory, strings, io, runtime)",
             &stdlib_combined,
         ),
-        // OS / kernel programs (read-only)
+        // OS / kernel source files (read-only, for reference — not individually compilable)
         {
-                let mut p = ProgramFile::os(
-                "os-kernel-runtime",
-                "Kernel Runtime",
-                "Read-only kernel boot runtime: _kernel_start, kmalloc, kshutdown.",
-                concat!(
-                    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/crates/os-runtime/kernel/entry.hll")),
-                ),
+            let mut p = ProgramFile::os(
+                "os-kernel-entry",
+                "Entry",
+                "Kernel entry point: _kernel_start → kmain.",
+                os_runtime::kernel::RUNTIME,
             );
             p.standalone = true;
             p
         },
+        {
+            let mut p = ProgramFile::os(
+                "os-kernel-checks",
+                "Checks",
+                "Boot-time diagnostics: memory self-test and system validation.",
+                os_runtime::kernel::CHECKS,
+            );
+            p.standalone = true;
+            p
+        },
+        {
+            let mut p = ProgramFile::os(
+                "os-kernel-utilities",
+                "Utilities",
+                "Kernel platform helpers: kmalloc, kshutdown, timer, PLIC init.",
+                os_runtime::kernel::UTILITIES,
+            );
+            p.standalone = true;
+            p
+        },
+        {
+            let mut p = ProgramFile::os(
+                "os-kernel-trap-entry",
+                "Trap Entry",
+                "S-mode trap entry: stvec prologue/epilogue, trap_init, sscratch helpers.",
+                os_runtime::kernel::TRAP_ENTRY,
+            );
+            p.standalone = true;
+            p
+        },
+        {
+            let mut p = ProgramFile::os(
+                "os-kernel-trap-handler",
+                "Trap Handler",
+                "S-mode trap dispatcher: scause-based routing to interrupt/exception handlers.",
+                os_runtime::kernel::TRAP_HANDLER,
+            );
+            p.standalone = true;
+            p
+        },
+        {
+            let mut p = ProgramFile::os(
+                "os-kernel-pmm",
+                "PMM",
+                "Physical Memory Manager: pmm_init, pmm_alloc, pmm_free (4 KiB pages).",
+                os_runtime::kernel::PMM,
+            );
+            p.standalone = true;
+            p
+        },
+        {
+            let mut p = ProgramFile::os(
+                "os-kernel-vmm",
+                "VMM",
+                "Sv39 Virtual Memory Manager: vmm_init, vmm_enable, vmm_map, vmm_map_range.",
+                os_runtime::kernel::VMM,
+            );
+            p.standalone = true;
+            p
+        },
+        // Compilable kernel: select this to build the full OS
         ProgramFile::os(
             "os-my-kernel",
             "My Kernel",
-            "Minimal kernel: boot log, heap smoke-test, and shutdown. Select Kernel target mode to run.",
+            "Compilable kernel: ties Entry, Checks, Utilities, PMM, VMM, and trap modules together. Select Kernel target mode to run.",
             os_runtime::kernel::MY_KERNEL,
         ),
         // Example programs

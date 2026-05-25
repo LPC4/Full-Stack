@@ -1,6 +1,7 @@
 use super::link_layout::LinkLayout;
 use super::section::{SectionData, SectionKind};
 use std::collections::HashMap;
+use std::path::Path;
 
 /// A lightweight view of one section, returned by [`AssembledOutput::sections_iter`].
 #[derive(Debug, Clone, Copy)]
@@ -9,6 +10,32 @@ pub struct SectionInfo<'a> {
     pub name: &'a str,
     /// Raw byte content of the section.
     pub bytes: &'a [u8],
+}
+
+/// Relocation kinds currently emitted by the assembler for object output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RelocationKind {
+    /// Pair relocation for `auipc + jalr` call/tail stubs.
+    CallPlt,
+    /// J-type relocation for unresolved `jal`/`j` targets.
+    Jal,
+    /// PC-relative `la` expansion (`auipc` + `addi`).
+    La,
+}
+
+/// One unresolved relocation emitted during assembly.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RelocationRecord {
+    /// Section name containing the relocation site (e.g. `.text`).
+    pub section: String,
+    /// Byte offset within `section` where relocation is applied.
+    pub offset: u64,
+    /// Referenced symbol name.
+    pub symbol: String,
+    /// Architecture relocation kind.
+    pub kind: RelocationKind,
+    /// Explicit relocation addend.
+    pub addend: i64,
 }
 
 /// The final output produced by the assembler -- one byte blob per section,
@@ -21,6 +48,8 @@ pub struct AssembledOutput {
     pub(crate) symbol_table: HashMap<String, u64>,
     /// Names marked `.globl` (exported).
     pub(crate) global_symbols: Vec<String>,
+    /// Unresolved relocation records for object-file emission.
+    pub(crate) relocations: Vec<RelocationRecord>,
 }
 
 impl AssembledOutput {
@@ -121,6 +150,16 @@ impl AssembledOutput {
     pub fn is_symbol_global(&self, name: &str) -> bool {
         self.global_symbols.iter().any(|g| g == name)
     }
+
+    /// Iterate relocation records collected during encoding.
+    pub fn relocations_iter(&self) -> impl Iterator<Item = &RelocationRecord> {
+        self.relocations.iter()
+    }
+
+    /// Number of relocation records.
+    pub fn relocation_count(&self) -> usize {
+        self.relocations.len()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -133,6 +172,7 @@ mod elf64 {
     pub const ELFCLASS64: u8 = 2;
     pub const ELFDATA2LSB: u8 = 1; // little-endian
     pub const ET_EXEC: u16 = 2;
+    pub const ET_REL: u16 = 1;
     pub const EM_RISCV: u16 = 243;
     pub const EV_CURRENT: u32 = 1;
     pub const PT_LOAD: u32 = 1;
@@ -143,6 +183,7 @@ mod elf64 {
     pub const SHT_SYMTAB: u32 = 2;
     pub const SHT_STRTAB: u32 = 3;
     pub const SHT_NOBITS: u32 = 8;
+    pub const SHT_RELA: u32 = 4;
     pub const SHF_ALLOC: u64 = 2;
     pub const SHF_EXECINSTR: u64 = 4;
     pub const SHF_WRITE: u64 = 1;
@@ -154,6 +195,10 @@ mod elf64 {
     pub const ELF64_PHDR_SIZE: u16 = 56;
     pub const ELF64_SHDR_SIZE: u16 = 64;
     pub const ELF64_SYM_SIZE: usize = 24;
+    pub const ELF64_RELA_SIZE: usize = 24;
+    pub const R_RISCV_CALL_PLT: u32 = 19;
+    pub const R_RISCV_JAL: u32 = 17;
+    pub const R_RISCV_PCREL_HI20: u32 = 23;
 }
 
 fn push_u16_le(buf: &mut Vec<u8>, v: u16) {
@@ -164,6 +209,11 @@ fn push_u32_le(buf: &mut Vec<u8>, v: u32) {
 }
 fn push_u64_le(buf: &mut Vec<u8>, v: u64) {
     buf.extend_from_slice(&v.to_le_bytes());
+}
+
+fn align_up_to(v: u64, align: u64) -> u64 {
+    let a = align.max(1);
+    (v + a - 1) & !(a - 1)
 }
 
 impl AssembledOutput {
@@ -477,6 +527,388 @@ impl AssembledOutput {
         push_u64_le(&mut buf, ELF64_SYM_SIZE as u64);
 
         buf
+    }
+
+    /// Produce a relocatable ELF-64 object (`ET_REL`) suitable for external linking.
+    pub fn to_object(&self, object_name: &str) -> Vec<u8> {
+        let _ = object_name;
+        use elf64::{
+            ELF64_HDR_SIZE, ELF64_SHDR_SIZE, ELF64_SYM_SIZE, ELFCLASS64, ELFDATA2LSB, ELFMAG,
+            EM_RISCV, ET_REL, EV_CURRENT, R_RISCV_CALL_PLT, R_RISCV_JAL, SHF_ALLOC,
+            SHF_EXECINSTR, SHF_WRITE,
+            R_RISCV_PCREL_HI20, SHT_NOBITS, SHT_PROGBITS, SHT_RELA, SHT_STRTAB, SHT_SYMTAB,
+            STB_GLOBAL, STB_LOCAL, STT_NOTYPE,
+        };
+
+        #[derive(Clone)]
+        struct ObjSec {
+            kind: SectionKind,
+            name: String,
+            bytes: Vec<u8>,
+            sh_type: u32,
+            sh_flags: u64,
+            sh_addralign: u64,
+        }
+
+        #[derive(Clone)]
+        struct RelaSec {
+            name: String,
+            target_index: u16,
+            bytes: Vec<u8>,
+        }
+
+        #[derive(Clone)]
+        struct SymRow {
+            name: String,
+            bind: u8,
+            shndx: u16,
+            value: u64,
+        }
+
+        let mut prog_secs: Vec<ObjSec> = Vec::new();
+        for sec in &self.sections {
+            let Some(kind) = &sec.kind else {
+                continue;
+            };
+            let (sh_type, sh_flags) = if matches!(kind, SectionKind::Bss) {
+                (SHT_NOBITS, SHF_ALLOC | SHF_WRITE)
+            } else if kind.is_executable() {
+                (SHT_PROGBITS, SHF_ALLOC | SHF_EXECINSTR)
+            } else if matches!(kind, SectionKind::Data) {
+                (SHT_PROGBITS, SHF_ALLOC | SHF_WRITE)
+            } else {
+                (SHT_PROGBITS, SHF_ALLOC)
+            };
+            prog_secs.push(ObjSec {
+                kind: kind.clone(),
+                name: kind.name().to_owned(),
+                bytes: sec.bytes.clone(),
+                sh_type,
+                sh_flags,
+                sh_addralign: 4,
+            });
+        }
+
+        let mut ranges: Vec<(String, u64, u64)> = Vec::new();
+        let mut running = 0u64;
+        for pass_bss in [false, true] {
+            for sec in &prog_secs {
+                if matches!(sec.kind, SectionKind::Bss) != pass_bss {
+                    continue;
+                }
+                let start = running;
+                let end = start + sec.bytes.len() as u64;
+                ranges.push((sec.name.clone(), start, end));
+                running = end;
+            }
+        }
+
+        let mut section_indices: HashMap<String, u16> = HashMap::new();
+        for (i, sec) in prog_secs.iter().enumerate() {
+            section_indices.insert(sec.name.clone(), (1 + i) as u16);
+        }
+
+        let mut relocs_by_section: HashMap<String, Vec<&RelocationRecord>> = HashMap::new();
+        for reloc in &self.relocations {
+            relocs_by_section
+                .entry(reloc.section.clone())
+                .or_default()
+                .push(reloc);
+        }
+
+        let mut local_syms: Vec<SymRow> = Vec::new();
+        let mut global_syms: Vec<SymRow> = Vec::new();
+
+        let mut sorted_defined: Vec<(&String, &u64)> = self.symbol_table.iter().collect();
+        sorted_defined.sort_by_key(|&(name, addr)| (*addr, name));
+        for (name, addr) in sorted_defined {
+            let mut shndx = 0u16;
+            let mut value = 0u64;
+            for (sec_name, start, end) in &ranges {
+                let in_range = if start == end {
+                    *addr == *start
+                } else {
+                    *addr >= *start && *addr < *end
+                };
+                if in_range {
+                    shndx = *section_indices.get(sec_name).unwrap_or(&0);
+                    value = addr.saturating_sub(*start);
+                    break;
+                }
+            }
+            let row = SymRow {
+                name: name.clone(),
+                bind: if self.global_symbols.contains(name) {
+                    STB_GLOBAL
+                } else {
+                    STB_LOCAL
+                },
+                shndx,
+                value,
+            };
+            if row.bind == STB_GLOBAL {
+                global_syms.push(row);
+            } else {
+                local_syms.push(row);
+            }
+        }
+
+        let mut extern_names: Vec<String> = self
+            .relocations
+            .iter()
+            .map(|r| r.symbol.clone())
+            .filter(|sym| !self.symbol_table.contains_key(sym))
+            .collect();
+        extern_names.sort();
+        extern_names.dedup();
+        for name in extern_names {
+            global_syms.push(SymRow {
+                name,
+                bind: STB_GLOBAL,
+                shndx: 0,
+                value: 0,
+            });
+        }
+
+        let mut strtab: Vec<u8> = vec![0];
+        let mut symtab: Vec<u8> = vec![0u8; ELF64_SYM_SIZE];
+        let mut sym_index_by_name: HashMap<String, u32> = HashMap::new();
+
+        let mut push_sym = |row: &SymRow, symtab: &mut Vec<u8>| {
+            let st_name = strtab.len() as u32;
+            strtab.extend_from_slice(row.name.as_bytes());
+            strtab.push(0);
+
+            let idx = (symtab.len() / ELF64_SYM_SIZE) as u32;
+            sym_index_by_name.insert(row.name.clone(), idx);
+
+            push_u32_le(symtab, st_name);
+            symtab.push((row.bind << 4) | STT_NOTYPE);
+            symtab.push(0);
+            push_u16_le(symtab, row.shndx);
+            push_u64_le(symtab, row.value);
+            push_u64_le(symtab, 0);
+        };
+
+        for row in &local_syms {
+            push_sym(row, &mut symtab);
+        }
+        let first_global = (symtab.len() / ELF64_SYM_SIZE) as u32;
+        for row in &global_syms {
+            push_sym(row, &mut symtab);
+        }
+
+        let mut rela_secs: Vec<RelaSec> = Vec::new();
+        for sec in &prog_secs {
+            let Some(rels) = relocs_by_section.get(&sec.name) else {
+                continue;
+            };
+            if rels.is_empty() {
+                continue;
+            }
+            let mut bytes = Vec::with_capacity(rels.len() * elf64::ELF64_RELA_SIZE);
+            for reloc in rels {
+                let sym_index = sym_index_by_name.get(&reloc.symbol).copied().unwrap_or(0);
+                let r_type = match reloc.kind {
+                    RelocationKind::CallPlt => R_RISCV_CALL_PLT,
+                    RelocationKind::Jal => R_RISCV_JAL,
+                    RelocationKind::La => R_RISCV_PCREL_HI20,
+                };
+                let r_info = ((sym_index as u64) << 32) | (r_type as u64);
+                push_u64_le(&mut bytes, reloc.offset);
+                push_u64_le(&mut bytes, r_info);
+                push_u64_le(&mut bytes, reloc.addend as u64);
+            }
+            if let Some(target_index) = section_indices.get(&sec.name).copied() {
+                rela_secs.push(RelaSec {
+                    name: format!(".rela{}", sec.name),
+                    target_index,
+                    bytes,
+                });
+            }
+        }
+
+        let mut shstrtab: Vec<u8> = vec![0];
+        let mut sec_name_offs: Vec<u32> = Vec::new();
+        for sec in &prog_secs {
+            sec_name_offs.push(shstrtab.len() as u32);
+            shstrtab.extend_from_slice(sec.name.as_bytes());
+            shstrtab.push(0);
+        }
+        let mut rela_name_offs: Vec<u32> = Vec::new();
+        for sec in &rela_secs {
+            rela_name_offs.push(shstrtab.len() as u32);
+            shstrtab.extend_from_slice(sec.name.as_bytes());
+            shstrtab.push(0);
+        }
+        let shstrtab_name = shstrtab.len() as u32;
+        shstrtab.extend_from_slice(b".shstrtab\0");
+        let strtab_name = shstrtab.len() as u32;
+        shstrtab.extend_from_slice(b".strtab\0");
+        let symtab_name = shstrtab.len() as u32;
+        shstrtab.extend_from_slice(b".symtab\0");
+
+        let shnum = 1usize + prog_secs.len() + rela_secs.len() + 3;
+        let ehdr_size = ELF64_HDR_SIZE as u64;
+        let mut file_off = ehdr_size;
+
+        let mut sec_offsets: Vec<u64> = Vec::new();
+        for sec in &prog_secs {
+            file_off = align_up_to(file_off, sec.sh_addralign);
+            sec_offsets.push(file_off);
+            if !matches!(sec.kind, SectionKind::Bss) {
+                file_off += sec.bytes.len() as u64;
+            }
+        }
+
+        let mut rela_offsets: Vec<u64> = Vec::new();
+        for sec in &rela_secs {
+            file_off = align_up_to(file_off, 8);
+            rela_offsets.push(file_off);
+            file_off += sec.bytes.len() as u64;
+        }
+
+        file_off = align_up_to(file_off, 1);
+        let shstrtab_off = file_off;
+        file_off += shstrtab.len() as u64;
+        let strtab_off = file_off;
+        file_off += strtab.len() as u64;
+        let symtab_off = align_up_to(file_off, 8);
+        file_off = symtab_off + symtab.len() as u64;
+        let shoff = align_up_to(file_off, 8);
+
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&ELFMAG);
+        buf.push(ELFCLASS64);
+        buf.push(ELFDATA2LSB);
+        buf.push(EV_CURRENT as u8);
+        buf.push(0);
+        buf.extend_from_slice(&[0u8; 8]);
+
+        push_u16_le(&mut buf, ET_REL);
+        push_u16_le(&mut buf, EM_RISCV);
+        push_u32_le(&mut buf, EV_CURRENT);
+        push_u64_le(&mut buf, 0);
+        push_u64_le(&mut buf, 0);
+        push_u64_le(&mut buf, shoff);
+        push_u32_le(&mut buf, 0x0005);
+        push_u16_le(&mut buf, ELF64_HDR_SIZE);
+        push_u16_le(&mut buf, 0);
+        push_u16_le(&mut buf, 0);
+        push_u16_le(&mut buf, ELF64_SHDR_SIZE);
+        push_u16_le(&mut buf, shnum as u16);
+        push_u16_le(&mut buf, (1 + prog_secs.len() + rela_secs.len()) as u16);
+
+        for (i, sec) in prog_secs.iter().enumerate() {
+            let want = sec_offsets[i] as usize;
+            if buf.len() < want {
+                buf.resize(want, 0);
+            }
+            if !matches!(sec.kind, SectionKind::Bss) {
+                buf.extend_from_slice(&sec.bytes);
+            }
+        }
+        for (i, sec) in rela_secs.iter().enumerate() {
+            let want = rela_offsets[i] as usize;
+            if buf.len() < want {
+                buf.resize(want, 0);
+            }
+            buf.extend_from_slice(&sec.bytes);
+        }
+
+        if buf.len() < shstrtab_off as usize {
+            buf.resize(shstrtab_off as usize, 0);
+        }
+        buf.extend_from_slice(&shstrtab);
+        if buf.len() < strtab_off as usize {
+            buf.resize(strtab_off as usize, 0);
+        }
+        buf.extend_from_slice(&strtab);
+        if buf.len() < symtab_off as usize {
+            buf.resize(symtab_off as usize, 0);
+        }
+        buf.extend_from_slice(&symtab);
+        if buf.len() < shoff as usize {
+            buf.resize(shoff as usize, 0);
+        }
+
+        buf.extend_from_slice(&[0u8; 64]);
+        for (i, sec) in prog_secs.iter().enumerate() {
+            let size = sec.bytes.len() as u64;
+            let file_size = if matches!(sec.kind, SectionKind::Bss) {
+                0
+            } else {
+                size
+            };
+            push_u32_le(&mut buf, sec_name_offs[i]);
+            push_u32_le(&mut buf, sec.sh_type);
+            push_u64_le(&mut buf, sec.sh_flags);
+            push_u64_le(&mut buf, 0);
+            push_u64_le(&mut buf, sec_offsets[i]);
+            push_u64_le(&mut buf, file_size.max(size));
+            push_u32_le(&mut buf, 0);
+            push_u32_le(&mut buf, 0);
+            push_u64_le(&mut buf, sec.sh_addralign);
+            push_u64_le(&mut buf, 0);
+        }
+        let symtab_shndx = 1 + prog_secs.len() + rela_secs.len() + 2;
+        for (i, sec) in rela_secs.iter().enumerate() {
+            push_u32_le(&mut buf, rela_name_offs[i]);
+            push_u32_le(&mut buf, SHT_RELA);
+            push_u64_le(&mut buf, 0);
+            push_u64_le(&mut buf, 0);
+            push_u64_le(&mut buf, rela_offsets[i]);
+            push_u64_le(&mut buf, sec.bytes.len() as u64);
+            push_u32_le(&mut buf, symtab_shndx as u32);
+            push_u32_le(&mut buf, sec.target_index as u32);
+            push_u64_le(&mut buf, 8);
+            push_u64_le(&mut buf, elf64::ELF64_RELA_SIZE as u64);
+        }
+
+        push_u32_le(&mut buf, shstrtab_name);
+        push_u32_le(&mut buf, SHT_STRTAB);
+        push_u64_le(&mut buf, 0);
+        push_u64_le(&mut buf, 0);
+        push_u64_le(&mut buf, shstrtab_off);
+        push_u64_le(&mut buf, shstrtab.len() as u64);
+        push_u32_le(&mut buf, 0);
+        push_u32_le(&mut buf, 0);
+        push_u64_le(&mut buf, 1);
+        push_u64_le(&mut buf, 0);
+
+        push_u32_le(&mut buf, strtab_name);
+        push_u32_le(&mut buf, SHT_STRTAB);
+        push_u64_le(&mut buf, 0);
+        push_u64_le(&mut buf, 0);
+        push_u64_le(&mut buf, strtab_off);
+        push_u64_le(&mut buf, strtab.len() as u64);
+        push_u32_le(&mut buf, 0);
+        push_u32_le(&mut buf, 0);
+        push_u64_le(&mut buf, 1);
+        push_u64_le(&mut buf, 0);
+
+        let strtab_shndx = 1 + prog_secs.len() + rela_secs.len() + 1;
+        push_u32_le(&mut buf, symtab_name);
+        push_u32_le(&mut buf, SHT_SYMTAB);
+        push_u64_le(&mut buf, 0);
+        push_u64_le(&mut buf, 0);
+        push_u64_le(&mut buf, symtab_off);
+        push_u64_le(&mut buf, symtab.len() as u64);
+        push_u32_le(&mut buf, strtab_shndx as u32);
+        push_u32_le(&mut buf, first_global);
+        push_u64_le(&mut buf, 8);
+        push_u64_le(&mut buf, ELF64_SYM_SIZE as u64);
+
+        buf
+    }
+
+    /// Write an `ET_REL` object file to disk.
+    pub fn write_object_file(&self, path: &Path) -> std::io::Result<()> {
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("out.o");
+        std::fs::write(path, self.to_object(name))
     }
 
     // ---------------------------------------------------------------------------

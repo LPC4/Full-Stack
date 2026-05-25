@@ -19,7 +19,10 @@ main: () -> i32 {
 }
 
 fn compile_sample() -> (AssembledOutput, Vec<u8>) {
-    let pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_write_artifacts(false);
+    
+    pipeline.set_write_artifacts(false);
     let result = pipeline
         .compile(sample_source())
         .unwrap_or_else(|e| panic!("failed to compile sample source: {e}"));
@@ -220,3 +223,4 @@ fn elf_symbol_table_marks_globals_and_locals() {
         "local label `{local_name}` should reference the section that contains its address"
     );
 }
+

@@ -29,6 +29,10 @@ impl SemanticAnalyzer {
         }
     }
 
+    pub fn seed_types(&mut self, types: &[(String, IrType)]) {
+        self.context.register_types(types);
+    }
+
     fn error(&mut self, message: impl Into<String>) {
         let msg = message.into();
         let full = match &self.current_function {

@@ -70,6 +70,12 @@ impl TypeContext {
         self.named_types.insert(name_str, ty);
     }
 
+    pub fn register_types(&mut self, types: &[(String, IrType)]) {
+        for (name, ty) in types {
+            self.register_type(name.clone(), ty.clone());
+        }
+    }
+
     pub fn resolve(&self, name: &str) -> Option<&IrType> {
         self.named_types.get(name)
     }

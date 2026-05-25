@@ -16,7 +16,10 @@ fn compile_fixture(subdir: &str, name: &str) -> String {
     let path = suite_root().join(subdir).join(format!("{name}.hll"));
     let source = fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("failed to read fixture {path:?}: {e}"));
-    let pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_write_artifacts(false);
+    
+    pipeline.set_write_artifacts(false);
     let result = pipeline
         .compile(&source)
         .unwrap_or_else(|e| panic!("compilation error in {subdir}/{name}: {e}"));
@@ -24,7 +27,10 @@ fn compile_fixture(subdir: &str, name: &str) -> String {
 }
 
 fn compile_inline(source: &str) -> String {
-    let pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_write_artifacts(false);
+    
+    pipeline.set_write_artifacts(false);
     let result = pipeline.compile(source).expect("compilation failed");
     pipeline.compile_ir_to_assembly(&result.ir_program)
 }
@@ -157,3 +163,4 @@ fn tuple_destructuring_emits_function_call() {
     let asm = compile_fixture("types", "06_tuple_destructuring");
     assert!(asm.contains("jal"), "expected 'jal' for function call");
 }
+

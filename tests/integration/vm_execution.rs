@@ -13,12 +13,14 @@ use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 // ---------------------------------------------------------------------------
 
 /// Link stdlib and user code using two-stage compilation:
-/// 1. Compile stdlib independently -> token stream
-/// 2. Compile user code independently -> token stream
-/// 3. Link them together at token level: [stdlib_tokens..., user_tokens...]
-/// 4. Assemble the combined token stream
+/// 1. Compile stdlib independently -> object file
+/// 2. Compile user code independently -> object file
+/// 3. Link the objects with the linker pipeline
 fn run_hll_with_limit(src: &str, max_steps: u64) -> (VirtualMachine, StepOutcome, String) {
-    let pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_write_artifacts(false);
+    
+    pipeline.set_write_artifacts(false); // Don't create gigabytes of files during tests
 
     // Stage 1: Compile stdlib
     let stdlib_result = pipeline.compile(&get_stdlib_source()).expect("stdlib compile failed");
@@ -29,12 +31,11 @@ fn run_hll_with_limit(src: &str, max_steps: u64) -> (VirtualMachine, StepOutcome
     let user_result = pipeline.compile(src).expect("user compile failed");
     let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program);
 
-    // Stage 3: Link at token level
-    let mut linked = stdlib_tokens;
-    linked.extend(user_tokens);
-
-    // Stage 4: Assemble
-    let assembled = pipeline.assemble(&linked).expect("assemble failed");
+    let stdlib_obj = pipeline.assemble(&stdlib_tokens).expect("stdlib assemble failed");
+    let user_obj = pipeline.assemble(&user_tokens).expect("user assemble failed");
+    let assembled = pipeline
+        .link_assembled_objects(&[("stdlib", &stdlib_obj), ("user", &user_obj)])
+        .expect("link failed");
     let mut vm = VirtualMachine::new(&assembled);
     let run = vm.run(max_steps);
     let uart = run.uart_output.clone();
@@ -441,7 +442,10 @@ main: () -> i32 {
     return v
 }
 "#;
-    let pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_write_artifacts(false);
+    
+    pipeline.set_write_artifacts(false);
 
     // Two-stage compilation: link stdlib and user code
     let stdlib_result = pipeline.compile(&get_stdlib_source()).expect("stdlib compile failed");
@@ -520,4 +524,5 @@ fn examples_exit_zero_in_vm() {
         );
     }
 }
+
 

@@ -270,6 +270,8 @@ pub fn set_ui_theme(theme: UiTheme) {
 
 pub fn apply_ui_theme(ctx: &egui::Context) {
     let theme = ui_theme();
+
+    // -- Visuals ---------------------------------------------------------------
     let mut visuals = egui::Visuals::dark();
     visuals.dark_mode = true;
     visuals.override_text_color = Some(theme.text);
@@ -280,8 +282,38 @@ pub fn apply_ui_theme(ctx: &egui::Context) {
     visuals.hyperlink_color = theme.info;
     visuals.selection.bg_fill = theme.accent.linear_multiply(0.35);
     visuals.selection.stroke = Stroke::new(1.0, theme.accent);
-    // Thin accent-tinted window border; minimal shadow
     visuals.window_stroke = Stroke::new(1.0, theme.accent.gamma_multiply(0.45));
     visuals.window_shadow = egui::Shadow::NONE;
+
+    // Style interactive widgets (buttons, combo-box buttons, etc.)
+    // so they match the theme instead of default gray.
+    let accent_mult = |f: f32| theme.accent.linear_multiply(f);
+    let surface_mult = |f: f32| theme.surface.linear_multiply(f);
+
+    visuals.widgets.inactive.bg_fill = theme.surface_alt;
+    visuals.widgets.inactive.weak_bg_fill = theme.surface;
+    visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, theme.text_soft);
+
+    visuals.widgets.hovered.bg_fill = accent_mult(0.22);
+    visuals.widgets.hovered.weak_bg_fill = accent_mult(0.14);
+    visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, theme.text);
+
+    visuals.widgets.active.bg_fill = accent_mult(0.35);
+    visuals.widgets.active.weak_bg_fill = accent_mult(0.25);
+    visuals.widgets.active.fg_stroke = Stroke::new(1.0, theme.text);
+
+    visuals.widgets.open.bg_fill = accent_mult(0.22);
+    visuals.widgets.open.weak_bg_fill = accent_mult(0.14);
+    visuals.widgets.open.fg_stroke = Stroke::new(1.0, theme.text);
+
+    visuals.widgets.noninteractive.bg_fill = surface_mult(0.60);
+    visuals.widgets.noninteractive.weak_bg_fill = surface_mult(0.45);
+    visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, theme.text_dim);
+
     ctx.set_visuals(visuals);
+
+    // -- Style ----------------------------------------------------------------
+    let mut style = (*ctx.global_style()).clone();
+    style.spacing.item_spacing = egui::vec2(6.0, 4.0);
+    ctx.set_global_style(style);
 }

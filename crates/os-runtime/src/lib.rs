@@ -97,8 +97,15 @@ pub mod kernel {
         "/kernel/entry.hll"
     ));
 
-    /// Kernel utilities: timer management, device init, trap setup, CSR helpers.
-    /// These are core kernel infrastructure functions that use externs.
+    /// S-mode trap entry: stvec prologue/epilogue, trap_init, sscratch helpers.
+    /// The entry-point for all S-mode traps and interrupts.
+    pub const TRAP_ENTRY: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/kernel/trap_entry.hll"
+    ));
+
+    /// Kernel platform helpers: kmalloc, kshutdown, timer, PLIC init.
+    /// Core kernel infrastructure functions that use externs.
     pub const UTILITIES: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/kernel/utilities.hll"

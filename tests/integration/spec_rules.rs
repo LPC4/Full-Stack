@@ -11,7 +11,10 @@ main: () -> i32 {
 }
 "#;
 
-    let pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_write_artifacts(false);
+    
+    pipeline.set_write_artifacts(false);
     let result = pipeline.compile(source);
     assert!(result.is_err(), "expected `&@ptr` to be rejected");
 }
@@ -27,7 +30,10 @@ main: () -> i32 {
 }
 "#;
 
-    let pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_write_artifacts(false);
+    
+    pipeline.set_write_artifacts(false);
     let result = pipeline.compile(source);
     assert!(
         result.is_ok(),
@@ -55,7 +61,10 @@ main: () -> i32 {
 }
 "#;
 
-    let pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_write_artifacts(false);
+    
+    pipeline.set_write_artifacts(false);
     let result = pipeline.compile(source);
     assert!(
         result.is_ok(),
@@ -73,7 +82,10 @@ main: () -> i32 {
 }
 "#;
 
-    let pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_write_artifacts(false);
+    
+    pipeline.set_write_artifacts(false);
     let result = pipeline.compile(source);
     assert!(
         result.is_ok(),
@@ -95,7 +107,10 @@ main: () -> i32 {
 }
 "#;
 
-    let pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_write_artifacts(false);
+    
+    pipeline.set_write_artifacts(false);
     let result = pipeline.compile(source);
     assert!(
         result.is_ok(),
@@ -125,7 +140,10 @@ main: () -> i32 {
 }
 "#;
 
-    let pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_write_artifacts(false);
+    
+    pipeline.set_write_artifacts(false);
     let result = pipeline.compile(source);
     assert!(
         result.is_ok(),
@@ -149,7 +167,10 @@ main: () -> i32 {
 }
 "#;
 
-    let pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_write_artifacts(false);
+    
+    pipeline.set_write_artifacts(false);
     let result = pipeline.compile(source);
     assert!(
         result.is_ok(),
@@ -168,7 +189,10 @@ main: () -> i32 {
 }
 "#;
 
-    let pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_write_artifacts(false);
+    
+    pipeline.set_write_artifacts(false);
     let result = pipeline.compile(source);
     assert!(
         result.is_ok(),
@@ -195,7 +219,10 @@ main: () -> i32 {
 }
 "#;
 
-    let pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_write_artifacts(false);
+    
+    pipeline.set_write_artifacts(false);
     let result = pipeline.compile(source);
     assert!(
         result.is_ok(),
@@ -211,7 +238,10 @@ fn allows_array_literals_through_assembly() {
         "/programs/example/array_initialization.hll"
     ));
 
-    let pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_write_artifacts(false);
+    
+    pipeline.set_write_artifacts(false);
     let result = pipeline
         .compile(source)
         .expect("array literal example should compile to IR");
@@ -237,7 +267,10 @@ main: () -> i32 {
 }
 "#;
 
-    let pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_write_artifacts(false);
+    
+    pipeline.set_write_artifacts(false);
     let result = pipeline
         .compile(source)
         .expect("named struct alias example should compile to IR");
@@ -262,7 +295,10 @@ main: () -> i32 {
 }
 "#;
 
-    let pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_write_artifacts(false);
+    
+    pipeline.set_write_artifacts(false);
     let result = pipeline
         .compile(source)
         .expect("signed comparison example should compile to IR");
@@ -288,7 +324,10 @@ main: () -> i32 {
 }
 "#;
 
-    let pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_write_artifacts(false);
+    
+    pipeline.set_write_artifacts(false);
     let result = pipeline.compile(source);
     assert!(
         result.is_ok(),
@@ -344,7 +383,10 @@ fn all_launch_examples_compile() {
         ),
     ];
 
-    let pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_write_artifacts(false);
+    
+    pipeline.set_write_artifacts(false);
     for (name, source) in examples {
         let result = pipeline.compile(source);
         assert!(
@@ -369,7 +411,10 @@ main: () -> i32 {
 }
 "#;
 
-    let pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_write_artifacts(false);
+    
+    pipeline.set_write_artifacts(false);
     let result = pipeline.compile(source);
     assert!(
         result.is_err(),
@@ -389,7 +434,10 @@ main: () -> i32 {
 }
 "#;
 
-    let pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_write_artifacts(false);
+    
+    pipeline.set_write_artifacts(false);
     let result = pipeline.compile(source);
     assert!(
         result.is_ok(),
@@ -407,7 +455,10 @@ leak: () -> i32* {
 }
 "#;
 
-    let pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_write_artifacts(false);
+    
+    pipeline.set_write_artifacts(false);
     let result = pipeline.compile(source);
     assert!(
         result.is_err(),
@@ -429,7 +480,10 @@ leak: () -> i32* {
 }
 "#;
 
-    let pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_write_artifacts(false);
+    
+    pipeline.set_write_artifacts(false);
     let result = pipeline.compile(source);
     assert!(
         result.is_err(),
@@ -446,10 +500,14 @@ leak: () -> i32* {
 }
 "#;
 
-    let pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_write_artifacts(false);
+    
+    pipeline.set_write_artifacts(false);
     let result = pipeline.compile(source);
     assert!(
         result.is_err(),
         "expected returning the address of a local array element to be rejected"
     );
 }
+

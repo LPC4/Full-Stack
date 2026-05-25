@@ -180,6 +180,59 @@ cargo test
 
 ---
 
+## CLI (`fsc`)
+
+The native build includes a command-line interface, `fsc`, for compiling and executing HLL programs without the GUI.
+
+```bash
+# Build the CLI binary
+cargo build --release --bin fsc
+```
+
+### Subcommands
+
+| Command | Description |
+|---------|-------------|
+| `fsc hll-to-ir <file.hll>` | Compile HLL source to IR (printed to stdout) |
+| `fsc hll-to-asm <file.hll>` | Compile HLL source to RISC-V assembly |
+| `fsc link <file.hll>...` | Compile and link multiple HLL sources into an ELF |
+| `fsc run <file>` | Compile and run through the built-in VM |
+| `fsc help` | Show usage |
+
+### Options
+
+| Flag | Description |
+|------|-------------|
+| `-o, --output <path>` | Write output to file instead of stdout |
+| `-m, --mode <hosted\|freestanding>` | Target mode (default: hosted) |
+| `--emit-o` | For `hll-to-asm`, emit a relocatable `.o` file |
+| `--max-steps <n>` | VM step limit for `run` (default: 50000000) |
+
+### Examples
+
+```bash
+# Compile to IR
+fsc hll-to-ir  program.hll
+fsc hll-to-ir  program.hll -o program.ir
+
+# Compile to assembly
+fsc hll-to-asm program.hll
+fsc hll-to-asm program.hll -o program.s
+fsc hll-to-asm program.hll --emit-o -o program.o
+
+# Multi-file link
+fsc link       main.hll utils.hll -o program.elf
+fsc link       main.hll lib1.hll lib2.hll --mode freestanding -o kernel.elf
+
+# Compile and run
+fsc run        program.hll
+fsc run        program.hll --max-steps 1000000
+fsc run        program.hll --mode freestanding
+fsc run        program.s
+```
+
+---
+
 ## Testing
 
 Golden-file tests compare generated IR and assembly against expected snapshots.

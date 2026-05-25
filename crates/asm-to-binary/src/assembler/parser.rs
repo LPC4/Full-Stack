@@ -1,5 +1,3 @@
-/// Emit an assembler warning to stderr and push an `AsmToken::Comment` so the
-/// unrecognised text is preserved in the token stream without being assembled.
 macro_rules! asm_warn {
     ($out:expr, $($arg:tt)*) => {{
         let msg = format!($($arg)*);
@@ -8,10 +6,17 @@ macro_rules! asm_warn {
     }};
 }
 
+/// Pass 0: parse `Vec<RvInstruction>` into `Vec<AsmToken>`.
+///
+/// `RvInstruction` carries some untyped raw strings (branches emitted via
+/// `emit_raw`, data-section directives, etc.).  This pass converts every token
+/// into a fully-typed `AsmToken` so subsequent passes never touch raw strings.
+
 use super::directive::Directive;
 use super::reg_parse::parse_int_reg;
 use super::section::SectionKind;
 use super::token::{AsmToken, BranchKind};
+use crate::pseudo::PseudoInstruction;
 use crate::real::RealInstruction;
 use crate::riscv::rv64i::{
     Add, Addi, And, Andi, Ecall, Jalr, Lb, Lbu, Ld, Mret, Wfi, Or, Ori, Sb, Sd, SfenceVma, Slli, Srl,
@@ -19,11 +24,6 @@ use crate::riscv::rv64i::{
 };
 use crate::riscv::rv64m::{Divu, Remu};
 use crate::riscv::rv64zicsr::{Csrrs, Csrrw};
-/// Pass 0: parse `Vec<RvInstruction>` into `Vec<AsmToken>`.
-///
-/// `RvInstruction` carries some untyped raw strings (branches emitted via
-/// `emit_raw`, data-section directives, etc.).  This pass converts every token
-/// into a fully-typed `AsmToken` so subsequent passes never touch raw strings.
 use crate::rv_instruction::RvInstruction;
 
 /// Convert a `RvInstruction` stream to a typed `AsmToken` stream.
@@ -36,9 +36,24 @@ pub fn parse(tokens: &[RvInstruction]) -> Vec<AsmToken> {
         match tok {
             RvInstruction::Real(inst) => out.push(AsmToken::Real(inst.clone())),
             RvInstruction::Pseudo(p) => {
-                // Expand pseudos that have no unresolved symbol references.
-                for real in p.expand() {
-                    out.push(AsmToken::Real(real));
+                match p {
+                    // Keep symbol-bearing pseudos unresolved so pass-2 can
+                    // either resolve them immediately or emit relocation records.
+                    PseudoInstruction::Call { symbol } => out.push(AsmToken::Call {
+                        symbol: symbol.clone(),
+                    }),
+                    PseudoInstruction::Tail { symbol } => out.push(AsmToken::Tail {
+                        symbol: symbol.clone(),
+                    }),
+                    PseudoInstruction::La { rd, symbol } => out.push(AsmToken::La {
+                        rd: *rd,
+                        symbol: symbol.clone(),
+                    }),
+                    _ => {
+                        for real in p.expand() {
+                            out.push(AsmToken::Real(real));
+                        }
+                    }
                 }
             }
             RvInstruction::Label(name) => out.push(AsmToken::Label(name.clone())),

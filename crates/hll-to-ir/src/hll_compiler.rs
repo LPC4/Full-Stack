@@ -1,7 +1,7 @@
 use crate::TargetMode;
 use crate::ast::{Block, DeclNode, Program, Statement};
 use crate::compiler::{Diagnostic, DiagnosticLevel, HighLevelCompiler, SemanticAnalyzer};
-use crate::ir::IrProgram;
+use crate::ir::{IrProgram, IrType};
 use crate::lexer::Lexer;
 use crate::parser::Parser;
 use crate::token::Token;
@@ -14,6 +14,7 @@ pub struct CompileConfig {
     pub target: TargetMode,
     pub strict: bool,
     pub string_prefix: Option<String>,
+    pub type_prelude: Vec<(String, IrType)>,
 }
 
 impl Default for CompileConfig {
@@ -22,6 +23,7 @@ impl Default for CompileConfig {
             target: TargetMode::Hosted,
             strict: false,
             string_prefix: None,
+            type_prelude: Vec::new(),
         }
     }
 }
@@ -76,6 +78,7 @@ impl HllCompiler {
         // Phase 3: Semantic analysis (when strict mode enabled)
         if self.config.strict {
             let mut analyzer = SemanticAnalyzer::new();
+            analyzer.seed_types(&self.config.type_prelude);
             if analyzer.analyze_program(&ast).is_err()
                 || analyzer
                     .diagnostics()
@@ -95,6 +98,7 @@ impl HllCompiler {
         // Phase 4: IR lowering
         let prefix = self.config.string_prefix.as_deref().unwrap_or("str_");
         let mut compiler = HighLevelCompiler::with_string_prefix(prefix);
+        compiler.set_type_prelude(self.config.type_prelude.clone());
         let ir = compiler
             .compile_program(&ast)
             .map_err(|e| vec![Diagnostic::new(DiagnosticLevel::Error, format!("{e:?}"))])?;

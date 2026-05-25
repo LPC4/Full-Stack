@@ -28,6 +28,7 @@ pub fn highlight_ir(theme: &egui::Style, code: &str) -> LayoutJob {
         "cmp",
         "cast",
         "unary",
+        "const",
     ];
 
     for segment in code.split_inclusive('\n') {
@@ -67,6 +68,57 @@ pub fn highlight_ir(theme: &egui::Style, code: &str) -> LayoutJob {
 
         while start < len {
             let mut end = start;
+
+            // String literals: c"..." or "..."
+            if bytes[start] == b'c' && start + 1 < len && bytes[start + 1] == b'"' {
+                end = start + 2;
+                while end < len && bytes[end] != b'"' {
+                    if bytes[end] == b'\\' && end + 1 < len {
+                        end += 2; // skip escape
+                    } else {
+                        end += 1;
+                    }
+                }
+                if end < len {
+                    end += 1; // include closing quote
+                }
+                job.append(
+                    &line[start..end],
+                    0.0,
+                    egui::TextFormat {
+                        font_id: font_id.clone(),
+                        color: palette.string,
+                        ..Default::default()
+                    },
+                );
+                start = end;
+                continue;
+            }
+            if bytes[start] == b'"' {
+                end = start + 1;
+                while end < len && bytes[end] != b'"' {
+                    if bytes[end] == b'\\' && end + 1 < len {
+                        end += 2; // skip escape
+                    } else {
+                        end += 1;
+                    }
+                }
+                if end < len {
+                    end += 1; // include closing quote
+                }
+                job.append(
+                    &line[start..end],
+                    0.0,
+                    egui::TextFormat {
+                        font_id: font_id.clone(),
+                        color: palette.string,
+                        ..Default::default()
+                    },
+                );
+                start = end;
+                continue;
+            }
+
             if bytes[start].is_ascii_alphabetic() || bytes[start] == b'_' || bytes[start] == b'@' {
                 if bytes[start] == b'@' {
                     end += 1;

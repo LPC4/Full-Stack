@@ -64,21 +64,18 @@ pub struct HighLevelCompiler {
     current_block: Option<IrBlock>,
     defers: Vec<DeferredAction>,
     compile_time_consts: std::collections::HashMap<String, Literal>,
-    /// Stack of (`continue_label`, `break_label`) for nested loops
     loop_labels: Vec<(IrLabel, IrLabel)>,
-    /// Cache of specialized generic types: (`original_name`, `type_args`) -> `specialized_name`
     generic_type_cache: std::collections::HashMap<(String, Vec<IrType>), String>,
     generic_type_defs: std::collections::HashMap<String, GenericTypeDef>,
     function_return_types: std::collections::HashMap<String, IrType>,
-    /// Store function declarations for compile-time evaluation
     function_declarations: std::collections::HashMap<String, FunctionDecl>,
     pending_global_strings: Vec<IrGlobalString>,
-    /// Global variables declared at module scope: name -> IR type
     global_vars: std::collections::HashMap<String, IrType>,
     /// Prefix used when naming rodata string-literal labels (e.g. `"str_"` ->
     /// `str_0`, `str_1`, ...).  Set per compilation unit so that two units linked
     /// together never produce duplicate label names.
     pub string_prefix: String,
+    prelude_types: Vec<(String, IrType)>,
 }
 
 impl HighLevelCompiler {
@@ -106,7 +103,12 @@ impl HighLevelCompiler {
             pending_global_strings: Vec::new(),
             global_vars: std::collections::HashMap::new(),
             string_prefix: prefix.to_owned(),
+            prelude_types: Vec::new(),
         }
+    }
+
+    pub fn set_type_prelude(&mut self, types: Vec<(String, IrType)>) {
+        self.prelude_types = types;
     }
 }
 
@@ -135,6 +137,7 @@ impl HighLevelCompiler {
         }
 
         self.context.reset_for_program();
+        self.context.types.register_types(&self.prelude_types);
         self.next_temp = 0;
         self.next_label = 0;
         self.pending_global_strings.clear();

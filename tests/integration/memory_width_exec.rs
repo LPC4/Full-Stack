@@ -8,15 +8,20 @@ use hll_to_ir::stdlib::get_stdlib_source;
 use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 
 fn run_hll(src: &str) -> (VirtualMachine, StepOutcome, String) {
-    let pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_write_artifacts(false);
+    
+    pipeline.set_write_artifacts(false);
     let stdlib_result = pipeline.compile(&get_stdlib_source()).expect("stdlib compile failed");
     let (_, stdlib_tokens) =
         pipeline.compile_ir_to_assembly_with_tokens(&stdlib_result.ir_program);
     let user_result = pipeline.compile(src).expect("user compile failed");
     let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program);
-    let mut linked = stdlib_tokens;
-    linked.extend(user_tokens);
-    let assembled = pipeline.assemble(&linked).expect("assemble failed");
+    let stdlib_obj = pipeline.assemble(&stdlib_tokens).expect("stdlib assemble failed");
+    let user_obj = pipeline.assemble(&user_tokens).expect("user assemble failed");
+    let assembled = pipeline
+        .link_assembled_objects(&[("stdlib", &stdlib_obj), ("user", &user_obj)])
+        .expect("link failed");
     let mut vm = VirtualMachine::new(&assembled);
     let run = vm.run(5_000_000);
     let uart = run.uart_output.clone();
@@ -164,3 +169,4 @@ main: () -> i32 {
         "second write should overwrite first; expected 42, got {outcome:?}"
     );
 }
+

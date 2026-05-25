@@ -25,6 +25,7 @@ fn kernel_asm_diag() {
         target: TargetMode::Kernel,
         strict: true,
         string_prefix: Some("__kern_str_".to_owned()),
+        type_prelude: Vec::new(),
     });
     let stdlib_out = stdlib_compiler
         .compile(&get_kernel_stdlib_source())
@@ -37,6 +38,7 @@ fn kernel_asm_diag() {
         target: TargetMode::Kernel,
         strict: true,
         string_prefix: None,
+        type_prelude: Vec::new(),
     });
     let user_out = user_compiler
         .compile(kernel::MY_KERNEL)
@@ -117,9 +119,9 @@ fn kernel_asm_diag() {
 // This is the canonical "link with stdlib" path used by the GUI and tests:
 //   1. Compile stdlib once -> Vec<RvInstruction> token stream
 //   2. Compile user source independently -> Vec<RvInstruction> token stream
-//   3. Token-level link: [stdlib_tokens..., user_tokens...]
-//   4. assemble()  - no injected stubs; all runtime is in stdlib (runtime.hll)
-//   5. Load ELF into VM and run
+//   3. Assemble stdlib + user into relocatable objects
+//   4. Link the objects and inject the kernel layout symbols
+//   5. Load the resulting ELF into VM and run
 //
 // To link with a different runtime (custom allocator, bare-metal glue, or a
 // future C stdlib path) substitute step 1 with any Vec<RvInstruction> that
@@ -128,7 +130,10 @@ fn kernel_asm_diag() {
 fn link_stdlib_and_run(user_src: &str) -> (String, Option<i64>) {
     use virtual_machine::virtual_machine::StepOutcome;
 
-    let pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_write_artifacts(false);
+    
+    pipeline.set_write_artifacts(false);
     let stdlib_result = pipeline
         .compile(&get_stdlib_source())
         .expect("stdlib compile");
@@ -137,10 +142,11 @@ fn link_stdlib_and_run(user_src: &str) -> (String, Option<i64>) {
     let user_result = pipeline.compile(user_src).expect("user compile");
     let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program);
 
-    let mut linked = stdlib_tokens;
-    linked.extend(user_tokens);
-
-    let assembled = pipeline.assemble(&linked).expect("assemble");
+    let stdlib_obj = pipeline.assemble(&stdlib_tokens).expect("stdlib assemble");
+    let user_obj = pipeline.assemble(&user_tokens).expect("user assemble");
+    let assembled = pipeline
+        .link_assembled_objects(&[("stdlib", &stdlib_obj), ("user", &user_obj)])
+        .expect("link");
     let elf = assembled.to_elf(ELF_LOAD_BASE);
     let mut vm = VirtualMachine::from_elf(&elf).expect("load elf");
     let run = vm.run(5_000_000);
@@ -156,7 +162,10 @@ fn link_stdlib_and_run(user_src: &str) -> (String, Option<i64>) {
 // is required by any user code that calls new(T) or free(ptr).
 #[test]
 fn stdlib_provides_malloc() {
-    let pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_write_artifacts(false);
+    
+    pipeline.set_write_artifacts(false); // Don't create gigabytes of files during tests
     let result = pipeline
         .compile(&get_stdlib_source())
         .expect("stdlib compile");
@@ -237,7 +246,10 @@ main: () -> i32 {
 // Verify that the stdlib token stream contains the HLL-defined runtime symbols.
 #[test]
 fn stdlib_provides_runtime() {
-    let pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_write_artifacts(false);
+    
+    pipeline.set_write_artifacts(false); // Don't create gigabytes of files during tests
     let result = pipeline
         .compile(&get_stdlib_source())
         .expect("stdlib compile");
@@ -331,3 +343,4 @@ main: () -> i32 {
     assert_eq!(uart.trim_end_matches('\n'), "Hi");
     assert_eq!(exit, Some(0));
 }
+

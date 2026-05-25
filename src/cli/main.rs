@@ -1,6 +1,7 @@
 //! `fsc` -- Full Stack CLI
 //!
 //! Subcommands:
+//!   link       Compile and link multiple HLL source files into an ELF.
 //!   hll-to-ir  Compile an HLL source file and print the IR.
 //!   hll-to-asm Compile an HLL source file and print the RISC-V assembly.
 //!   run        Compile (or load) a program and execute it in the VM.
@@ -19,7 +20,7 @@
 use asm_to_binary::AssembledOutput;
 use asm_to_binary::rv_instruction::RvInstruction;
 use full_stack::compilation_pipeline::{CompilationPipeline, TargetMode};
-use hll_to_ir::stdlib::get_stdlib_source_for_mode;
+use hll_to_ir::stdlib::{get_stdlib_modules_for_mode, get_stdlib_type_prelude};
 use std::fmt;
 use std::fs;
 use std::path::Path;
@@ -45,7 +46,7 @@ impl fmt::Display for CliError {
             Self::Usage(msg) => write!(f, "{msg}"),
             Self::Io(err) => write!(f, "I/O error: {err}"),
             Self::Compile(msg) => write!(f, "compilation error: {msg}"),
-            Self::Assemble(msg) => write!(f, "assembler error: {msg}"),
+            Self::Assemble(msg) => write!(f, "linker/assembler error: {msg}"),
             Self::Timeout(steps) => write!(f, "execution timed out after {steps} steps"),
         }
     }
@@ -65,6 +66,7 @@ impl From<std::io::Error> for CliError {
 
 #[derive(Debug)]
 enum Subcommand {
+    Link,
     HllToIr,
     HllToAsm,
     Run,
@@ -74,10 +76,17 @@ enum Subcommand {
 #[derive(Debug)]
 struct Args {
     subcmd: Subcommand,
-    input: Option<String>,
+    inputs: Vec<String>,
     output: Option<String>,
     mode: TargetMode,
     max_steps: u64,
+    emit_object: bool,
+}
+
+impl Args {
+    fn first_input(&self) -> Option<&str> {
+        self.inputs.first().map(|s| s.as_str())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -97,6 +106,7 @@ fn main() -> ExitCode {
 fn run_cli() -> Result<ExitCode, CliError> {
     let args = parse_args()?;
     match args.subcmd {
+        Subcommand::Link => cmd_link(&args),
         Subcommand::HllToIr => cmd_hll_to_ir(&args),
         Subcommand::HllToAsm => cmd_hll_to_asm(&args),
         Subcommand::Run => cmd_run(&args),
@@ -116,6 +126,7 @@ fn parse_args() -> Result<Args, CliError> {
     let mut iter = raw.iter();
 
     let subcmd = match iter.next().map(|s| s.as_str()) {
+        Some("link") => Subcommand::Link,
         Some("hll-to-ir") => Subcommand::HllToIr,
         Some("hll-to-asm") => Subcommand::HllToAsm,
         Some("run") => Subcommand::Run,
@@ -127,10 +138,11 @@ fn parse_args() -> Result<Args, CliError> {
         }
     };
 
-    let mut input: Option<String> = None;
+    let mut inputs: Vec<String> = Vec::new();
     let mut output: Option<String> = None;
     let mut mode = TargetMode::Hosted;
     let mut max_steps = 50_000_000u64;
+    let mut emit_object = false;
 
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -154,8 +166,11 @@ fn parse_args() -> Result<Args, CliError> {
                     .parse::<u64>()
                     .map_err(|_| CliError::Usage(format!("`{val}` is not a valid step count")))?;
             }
+            "--emit-o" => {
+                emit_object = true;
+            }
             other if !other.starts_with('-') => {
-                input = Some(other.to_owned());
+                inputs.push(other.to_owned());
             }
             other => {
                 return Err(CliError::Usage(format!(
@@ -167,10 +182,11 @@ fn parse_args() -> Result<Args, CliError> {
 
     Ok(Args {
         subcmd,
-        input,
+        inputs,
         output,
         mode,
         max_steps,
+        emit_object,
     })
 }
 
@@ -185,15 +201,92 @@ fn parse_mode(s: &str) -> Result<TargetMode, CliError> {
 }
 
 // ---------------------------------------------------------------------------
+// link
+// ---------------------------------------------------------------------------
+
+fn cmd_link(args: &Args) -> Result<ExitCode, CliError> {
+    if args.inputs.is_empty() {
+        return Err(CliError::Usage(
+            "`link` requires at least one input file\n\nRun `fsc help` for usage.".to_owned(),
+        ));
+    }
+
+    // Compile stdlib modules for the target mode.
+    let stdlib_objects = compile_stdlib_objects(args.mode)?;
+
+    // Compile each input HLL file to its own object.
+    let user_objects = compile_user_objects(&args.inputs, args.mode)?;
+
+    // Build module list: stdlib first, then user modules.
+    let mut modules: Vec<(&str, &AssembledOutput)> = stdlib_objects
+        .iter()
+        .map(|(n, o)| (n.as_str(), o))
+        .collect();
+    for (name, obj) in &user_objects {
+        modules.push((name.as_str(), obj));
+    }
+
+    // Determine the output stem.
+    let stem = args
+        .first_input()
+        .map(|p| source_stem(p, "linked"))
+        .unwrap_or_else(|| "linked".to_owned());
+
+    let mut pipeline = make_pipeline(args.mode, "_u_");
+    pipeline.set_artifact_stem(Some(stem.clone()));
+
+    let linked = pipeline
+        .link_assembled_objects_named(&stem, &modules)
+        .map_err(|e| CliError::Assemble(e.to_string()))?;
+
+    let elf_bytes = linked.to_elf_with_entry(
+        pipeline.effective_load_base(),
+        pipeline.effective_entry_point(),
+    );
+
+    let output_path = args.output.as_deref().unwrap_or("out.elf");
+    fs::write(output_path, &elf_bytes)?;
+    eprintln!("fsc: wrote linked ELF to `{output_path}`");
+
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Compile a list of HLL source files into independent assembled objects.
+fn compile_user_objects(
+    paths: &[String],
+    mode: TargetMode,
+) -> Result<Vec<(String, AssembledOutput)>, CliError> {
+    let mut result = Vec::with_capacity(paths.len());
+    for path in paths {
+        let src = fs::read_to_string(path)?;
+        let stem = source_stem(path, "module");
+        let mut pipeline = make_pipeline(mode, "_u_");
+        pipeline.set_run_semantic_analysis(false);
+        pipeline.set_artifact_stem(Some(stem.clone()));
+        let compile_result = pipeline
+            .compile(&src)
+            .map_err(|e| CliError::Compile(e.to_string()))?;
+        let (_, tokens) =
+            pipeline.compile_ir_to_assembly_with_tokens(&compile_result.ir_program);
+        let obj = pipeline
+            .assemble_named(&stem, &tokens)
+            .map_err(|e| CliError::Assemble(e.to_string()))?;
+        result.push((stem, obj));
+    }
+    Ok(result)
+}
+
+// ---------------------------------------------------------------------------
 // hll-to-ir
 // ---------------------------------------------------------------------------
 
 fn cmd_hll_to_ir(args: &Args) -> Result<ExitCode, CliError> {
-    let input = require_input(args)?;
+    let input = require_single_input(args)?;
     let src = fs::read_to_string(input)?;
 
     let mut pipeline = make_pipeline(args.mode, "_u_");
     pipeline.set_run_semantic_analysis(false);
+    pipeline.set_artifact_stem(Some(source_stem(input, "module")));
 
     let result = pipeline
         .compile(&src)
@@ -215,19 +308,35 @@ fn cmd_hll_to_ir(args: &Args) -> Result<ExitCode, CliError> {
 // ---------------------------------------------------------------------------
 
 fn cmd_hll_to_asm(args: &Args) -> Result<ExitCode, CliError> {
-    let input = require_input(args)?;
+    let input = require_single_input(args)?;
     let src = fs::read_to_string(input)?;
 
     let mut pipeline = make_pipeline(args.mode, "_u_");
     pipeline.set_run_semantic_analysis(false);
+    pipeline.set_artifact_stem(Some(source_stem(input, "module")));
 
     let result = pipeline
         .compile(&src)
         .map_err(|e| CliError::Compile(e.to_string()))?;
+    let (_, tokens) = pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program);
+    let assembled = pipeline
+        .assemble(&tokens)
+        .map_err(|e| CliError::Assemble(e.to_string()))?;
 
-    let asm_text = pipeline.compile_ir_to_assembly(&result.ir_program);
-
-    write_or_print(args.output.as_deref(), &asm_text)?;
+    if args.emit_object {
+        let object_name = Path::new(input)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("module.o");
+        let object_bytes = assembled.to_object(object_name);
+        let output_path = args.output.as_deref().ok_or_else(|| {
+            CliError::Usage("--emit-o requires --output <path> to write the object file".to_owned())
+        })?;
+        fs::write(output_path, object_bytes)?;
+    } else {
+        let asm_text = pipeline.compile_ir_to_assembly(&result.ir_program);
+        write_or_print(args.output.as_deref(), &asm_text)?;
+    }
 
     Ok(ExitCode::SUCCESS)
 }
@@ -237,7 +346,7 @@ fn cmd_hll_to_asm(args: &Args) -> Result<ExitCode, CliError> {
 // ---------------------------------------------------------------------------
 
 fn cmd_run(args: &Args) -> Result<ExitCode, CliError> {
-    let input = require_input(args)?;
+    let input = require_single_input(args)?;
 
     let assembled = if has_extension(input, "s") {
         eprintln!(
@@ -274,30 +383,39 @@ fn cmd_run(args: &Args) -> Result<ExitCode, CliError> {
 /// Compile an HLL source file with the stdlib and return assembled output.
 fn assemble_from_hll_file(path: &str, mode: TargetMode) -> Result<AssembledOutput, CliError> {
     let src = fs::read_to_string(path)?;
-    compile_and_link(&src, mode)
+    compile_and_link(&src, mode, &source_stem(path, "module"))
 }
 
 /// Parse a `.s` text file as assembly tokens, link with stdlib, and assemble.
 fn assemble_from_s_file(path: &str, mode: TargetMode) -> Result<AssembledOutput, CliError> {
     let asm_text = fs::read_to_string(path)?;
-    let stdlib_tokens = compile_stdlib_tokens(mode)?;
+    let stdlib_objects = compile_stdlib_objects(mode)?;
     let user_tokens = asm_text_to_tokens(&asm_text);
+    let mut pipeline = make_pipeline(mode, "_u_");
+    pipeline.set_artifact_stem(Some(source_stem(path, "module")));
 
-    let mut linked = stdlib_tokens;
-    linked.extend(user_tokens);
+    let user_obj = pipeline
+        .assemble_named(&source_stem(path, "module"), &user_tokens)
+        .map_err(|e| CliError::Assemble(format!("user object assembly failed: {e}")))?;
 
-    let pipeline = make_pipeline(mode, "_u_");
+    let mut modules: Vec<(&str, &AssembledOutput)> = stdlib_objects
+        .iter()
+        .map(|(n, o)| (n.as_str(), o))
+        .collect();
+    modules.push(("user", &user_obj));
+
     pipeline
-        .assemble_linked(&linked)
+        .link_assembled_objects_named(&source_stem(path, "module"), &modules)
         .map_err(|e| CliError::Assemble(e.to_string()))
 }
 
 /// Compile HLL source -> IR -> tokens, then link with stdlib and assemble.
-fn compile_and_link(src: &str, mode: TargetMode) -> Result<AssembledOutput, CliError> {
-    let stdlib_tokens = compile_stdlib_tokens(mode)?;
+fn compile_and_link(src: &str, mode: TargetMode, stem: &str) -> Result<AssembledOutput, CliError> {
+    let stdlib_objects = compile_stdlib_objects(mode)?;
 
     let mut user_pipeline = make_pipeline(mode, "_u_");
     user_pipeline.set_run_semantic_analysis(false);
+    user_pipeline.set_artifact_stem(Some(stem.to_owned()));
 
     let user_result = user_pipeline
         .compile(src)
@@ -306,27 +424,44 @@ fn compile_and_link(src: &str, mode: TargetMode) -> Result<AssembledOutput, CliE
     let (_, user_tokens) =
         user_pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program);
 
-    let mut linked = stdlib_tokens;
-    linked.extend(user_tokens);
+    let user_obj = user_pipeline
+        .assemble_named(stem, &user_tokens)
+        .map_err(|e| CliError::Assemble(format!("user object assembly failed: {e}")))?;
+
+    // Build the module list: stdlib objects first, then user object.
+    let mut modules: Vec<(&str, &AssembledOutput)> = stdlib_objects
+        .iter()
+        .map(|(n, o)| (n.as_str(), o))
+        .collect();
+    modules.push(("user", &user_obj));
 
     user_pipeline
-        .assemble_linked(&linked)
+        .link_assembled_objects_named(stem, &modules)
         .map_err(|e| CliError::Assemble(e.to_string()))
 }
 
-/// Compile the platform stdlib for `mode` and return the assembly token stream.
-fn compile_stdlib_tokens(mode: TargetMode) -> Result<Vec<RvInstruction>, CliError> {
-    let stdlib_src = get_stdlib_source_for_mode(mode);
-    let mut stdlib_pipeline = make_pipeline(mode, "_s_");
-    stdlib_pipeline.set_run_semantic_analysis(false);
+/// Compile each stdlib module independently and return (name, object) pairs.
+/// No source concatenation: each HLL file becomes its own object.
+fn compile_stdlib_objects(mode: TargetMode) -> Result<Vec<(String, AssembledOutput)>, CliError> {
+    let mut pipeline = make_pipeline(mode, "_s_");
+    pipeline.set_run_semantic_analysis(false);
+    pipeline.set_type_prelude(get_stdlib_type_prelude());
+    if mode == TargetMode::Kernel {
+        pipeline.set_string_prefix(Some("__kern_str_".to_owned()));
+    }
 
-    let stdlib_result = stdlib_pipeline
-        .compile(&stdlib_src)
+    let modules: Vec<(&str, &str)> = get_stdlib_modules_for_mode(mode);
+    let objs = pipeline
+        .compile_modules(&modules)
         .map_err(|e| CliError::Compile(format!("stdlib: {e}")))?;
 
-    let (_, tokens) = stdlib_pipeline.compile_ir_to_assembly_with_tokens(&stdlib_result.ir_program);
+    let named: Vec<(String, AssembledOutput)> = modules
+        .into_iter()
+        .map(|(n, _)| n.to_owned())
+        .zip(objs.into_iter())
+        .collect();
 
-    Ok(tokens)
+    Ok(named)
 }
 
 /// Wrap each line of assembly text in a `Directive` token.
@@ -352,12 +487,32 @@ fn make_pipeline(mode: TargetMode, string_prefix: &str) -> CompilationPipeline {
     p
 }
 
+fn source_stem(path: &str, default: &str) -> String {
+    Path::new(path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or(default)
+        .to_owned()
+}
+
 // ---------------------------------------------------------------------------
 // I/O helpers
 // ---------------------------------------------------------------------------
 
-fn require_input(args: &Args) -> Result<&str, CliError> {
-    args.input.as_deref().ok_or_else(|| {
+fn require_single_input(args: &Args) -> Result<&str, CliError> {
+    if args.inputs.len() > 1 {
+        return Err(CliError::Usage(format!(
+            "expected exactly one input file, got {}\n\nRun `fsc help` for usage.",
+            args.inputs.len()
+        )));
+    }
+    require_any_input(args)
+}
+
+/// Require at least one input file (for commands that accept one or more).
+fn require_any_input(args: &Args) -> Result<&str, CliError> {
+    args.first_input().ok_or_else(|| {
         CliError::Usage("an input file is required\n\nRun `fsc help` for usage.".to_owned())
     })
 }
@@ -393,6 +548,7 @@ fn print_help() {
          \n\
          SUBCOMMANDS\n\
          \n\
+             link        <file.hll>...     Compile and link multiple HLL sources into an ELF\n\
              hll-to-ir  <input.hll>   Compile HLL source to IR (printed to stdout)\n\
              hll-to-asm <input.hll>   Compile HLL source to RISC-V assembly\n\
              run        <input>       Compile and run through the VM\n\
@@ -401,24 +557,41 @@ fn print_help() {
          OPTIONS\n\
          \n\
              -o, --output <path>          Write output to <path> instead of stdout\n\
+         \n\
              -m, --mode   hosted|freestanding\n\
-                                          Target mode (default: hosted)\n\
+                                           Target mode (default: hosted)\n\
+         \n\
+                 --emit-o                 For `hll-to-asm`, emit a relocatable `.o` file\n\
                  --max-steps <n>          VM step limit for `run` (default: 50000000)\n\
          \n\
          EXAMPLES\n\
          \n\
              fsc hll-to-ir  program.hll\n\
              fsc hll-to-ir  program.hll -o program.ir\n\
+         \n\
+             fsc hll-to-asm program.hll\n\
              fsc hll-to-asm program.hll -o program.s\n\
+             fsc hll-to-asm program.hll --emit-o -o program.o\n\
+         \n\
+             fsc link       main.hll utils.hll -o program.elf\n\
+             fsc link       main.hll lib1.hll lib2.hll --mode freestanding -o kernel.elf\n\
+         \n\
              fsc run        program.hll\n\
-             fsc run        program.s   --max-steps 1000000\n\
+             fsc run        program.hll --max-steps 1000000\n\
              fsc run        program.hll --mode freestanding\n\
+             fsc run        program.s\n\
+         \n\
+         LINK\n\
+         \n\
+             `link` compiles each input HLL file independently, assembles them\n\
+             into separate object files, links them together alongside the stdlib\n\
+             for the target mode, and writes a standalone ELF executable.\n\
          \n\
          NOTE\n\
          \n\
              `run program.s` parses the assembly text with a built-in subset parser.\n\
              Some instructions may be silently skipped.  Prefer `run program.hll`\n\
              for reliable results.\n\
-        "
+         "
     );
 }

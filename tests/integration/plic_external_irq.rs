@@ -54,9 +54,11 @@ fn compile_and_run_kernel(kernel_src: &str) -> (String, Option<i64>, u64) {
     let user = user_pipeline.compile(kernel_src).expect("kernel compile");
     let (_, user_tokens) = user_pipeline.compile_ir_to_assembly_with_tokens(&user.ir_program);
 
-    let mut linked = stdlib_tokens;
-    linked.extend(user_tokens);
-    let assembled = user_pipeline.assemble(&linked).expect("assemble");
+    let stdlib_obj = stdlib_pipeline.assemble(&stdlib_tokens).expect("stdlib assemble");
+    let user_obj = user_pipeline.assemble(&user_tokens).expect("user assemble");
+    let assembled = user_pipeline
+        .link_assembled_objects(&[("kernel_stdlib", &stdlib_obj), ("user", &user_obj)])
+        .expect("link");
     let mut vm = VirtualMachine::new_kernel(&assembled);
 
     // Run for a bit to let kernel boot

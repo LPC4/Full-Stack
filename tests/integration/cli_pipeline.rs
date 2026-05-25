@@ -19,6 +19,7 @@ fn make_pipeline(mode: TargetMode, prefix: &str) -> CompilationPipeline {
     p.set_target_mode(mode);
     p.set_string_prefix(Some(prefix.to_owned()));
     p.set_run_semantic_analysis(false);
+    p.set_write_artifacts(false);
     p
 }
 
@@ -36,12 +37,16 @@ fn run_hll(src: &str) -> (String, i64) {
     let (_, user_tokens) =
         user_pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program);
 
-    let mut linked = stdlib_tokens;
-    linked.extend(user_tokens);
+    let stdlib_obj = stdlib_pipeline
+        .assemble(&stdlib_tokens)
+        .expect("assemble stdlib object failed");
+    let user_obj = user_pipeline
+        .assemble(&user_tokens)
+        .expect("assemble user object failed");
 
     let assembled = user_pipeline
-        .assemble_linked(&linked)
-        .expect("assemble failed");
+        .link_assembled_objects(&[("stdlib", &stdlib_obj), ("user", &user_obj)])
+        .expect("object link failed");
 
     let mut vm = VirtualMachine::new(&assembled);
     let result = vm.run(5_000_000);

@@ -1,6 +1,14 @@
 ; Physical Memory Manager, 4 KiB page granularity.
 ; Manages a contiguous region of RAM above the kernel image.
-; Free list: each freed page's first 8 bytes store the next free page address.
+;
+; Free list layout (per freed page):
+;   bytes 0-7:  next free page address (linked list)
+;   bytes 8-15: PMM_FREE_MAGIC (guard against double-free / use-after-free)
+;
+; On allocation, the magic is verified.  If the magic doesn't match, the page
+; is treated as corrupt and silently skipped (leaked).
+
+const PMM_FREE_MAGIC = 0xCAFE
 
 pmm_bump: u64 = 0
 pmm_end:  u64 = 0
@@ -24,6 +32,9 @@ pmm_alloc: () -> u8* {
         la   t0, pmm_free_head
         ld   t1, 0(t0)              ; t1 = free list head (0 = empty)
         beqz t1, .Lpmm_alloc_bump
+        ld   t2, 8(t1)              ; load magic guard from page+8
+        li   t3, 0xCAFE
+        bne  t2, t3, .Lpmm_alloc_bump ; magic mismatch: skip corrupt page
         ld   t2, 0(t1)              ; t2 = next (stored in freed page's first word)
         sd   t2, 0(t0)              ; pmm_free_head = next
         mv   a0, t1
@@ -52,6 +63,8 @@ pmm_free: (page: u8*) -> () {
         la   t0, pmm_free_head
         ld   t1, 0(t0)              ; t1 = old free head
         sd   t1, 0(a0)              ; *page = old head (link into list)
+        li   t1, 0xCAFE
+        sd   t1, 8(a0)              ; store magic guard at page+8
         sd   a0, 0(t0)              ; pmm_free_head = page
     .Lpmm_free_null:
     }

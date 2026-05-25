@@ -1,4 +1,5 @@
-use asm_to_binary::Assembler;
+use asm_to_binary::assembler::link_layout::LinkLayout;
+use asm_to_binary::{Assembler, ObjectLinker};
 use os_runtime::kernel;
 use hll_to_ir::stdlib::get_kernel_stdlib_source;
 use hll_to_ir::{CompileConfig, HllCompiler, TargetMode};
@@ -12,6 +13,7 @@ fn run_kernel_hll(user_src: &str) -> (String, Option<i64>) {
         target: TargetMode::Kernel,
         strict: true,
         string_prefix: Some("__kern_str_".to_owned()),
+        type_prelude: Vec::new(),
     });
     let stdlib_out = stdlib_compiler
         .compile(&get_kernel_stdlib_source())
@@ -23,6 +25,7 @@ fn run_kernel_hll(user_src: &str) -> (String, Option<i64>) {
         target: TargetMode::Kernel,
         strict: true,
         string_prefix: None,
+        type_prelude: Vec::new(),
     });
     let user_out = user_compiler
         .compile(user_src)
@@ -30,10 +33,17 @@ fn run_kernel_hll(user_src: &str) -> (String, Option<i64>) {
     let mut user_rv = CompilerRv64::new();
     let (_, user_tokens) = user_rv.compile_with_tokens(&user_out.ir);
 
-    let mut tokens = stdlib_tokens;
-    tokens.extend(user_tokens);
-    let assembled =
-        Assembler::assemble(&tokens).unwrap_or_else(|e| panic!("assemble failed: {e}"));
+    let stdlib_obj = Assembler::assemble(&stdlib_tokens)
+        .unwrap_or_else(|e| panic!("stdlib assemble failed: {e}"));
+    let user_obj = Assembler::assemble(&user_tokens)
+        .unwrap_or_else(|e| panic!("user assemble failed: {e}"));
+    let mut assembled = ObjectLinker::link(&[("kernel_stdlib", &stdlib_obj), ("user", &user_obj)])
+        .unwrap_or_else(|e| panic!("link failed: {e}"));
+    let layout = LinkLayout::freestanding_kernel();
+    if layout.emit_layout_symbols {
+        assembled.inject_layout_symbols(&layout);
+    }
+    assembled.mark_entry_global("_kernel_start");
 
     let mut vm = VirtualMachine::new_kernel(&assembled);
     let run = vm.run(10_000_000);
@@ -253,9 +263,6 @@ fn full_boot_output_matches_expected() {
          hart id: 0\n\
          ram MB: 128\n\
          [  OK  ] boot complete\n\
-         [  OK  ] entering idle loop\n\
-         timer tick: 1\n\
-         timer tick: 2\n\
-         timer tick: 3\n"
+         [  OK  ] entering idle loop\n"
     );
 }

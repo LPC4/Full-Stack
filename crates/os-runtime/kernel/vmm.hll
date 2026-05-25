@@ -20,6 +20,21 @@ const VMM_X = 8
 const VMM_U = 16
 const VMM_G = 32
 
+; Sv39 requires bits [63:39] to be copies of bit 38.  Panics on violation.
+assert_canonical: (va: u64) -> () {
+    bit38: u64 = (va >> 38) & 1
+    if bit38 == 0 {
+        if (va >> 39) != 0 {
+            kpanic("vmm: non-canonical virtual address (upper bits not zero)".data)
+        }
+    } else {
+        ; 25 bits of 1s = 0x1FF_FFFF
+        if (va >> 39) != 0x1FFFFFF {
+            kpanic("vmm: non-canonical virtual address (upper bits not all ones)".data)
+        }
+    }
+}
+
 ; Physical address of the Sv39 root (L2) page table (0 = uninitialised).
 vmm_root: u64 = 0
 
@@ -48,6 +63,7 @@ vmm_walk_or_alloc: (table: u64*, vpn: u64) -> u64* {
 ; Map one 4 KiB page: virtual `va` -> physical `pa`.
 ; `flags`: combine VMM_R / VMM_W / VMM_X / VMM_U / VMM_G (VMM_V is added internally).
 vmm_map: (va: u64, pa: u64, flags: u64) -> () {
+    assert_canonical(va)
     ; VPN fields: VPN[2] = va >> 30, VPN[1] = va >> 21, VPN[0] = va >> 12
     ; Mask to 9 bits (0x1FF = 512 entries per page table level).
     vpn2: u64 = (va >> 30) & 0x1FF
@@ -63,6 +79,7 @@ vmm_map: (va: u64, pa: u64, flags: u64) -> () {
 ; Map a 1 GiB superpage (single L2 leaf): `va` and `pa` must be 1 GiB-aligned.
 ; This is used for the kernel's canonical identity-mapped boot ranges.
 vmm_map_1gib: (va: u64, pa: u64, flags: u64) -> () {
+    assert_canonical(va)
     vpn2: u64 = (va >> 30) & 0x1FF
     l2: u64* = u64*(vmm_root)
     @l2[vpn2] = ((pa >> 12) << 10) + flags + VMM_V
@@ -71,6 +88,8 @@ vmm_map_1gib: (va: u64, pa: u64, flags: u64) -> () {
 ; Identity-map every 4 KiB page in [start, end) with `flags`.
 ; The caller must pass canonical addresses.
 vmm_map_range: (start: u64, end: u64, flags: u64) -> () {
+    assert_canonical(start)
+    assert_canonical(end - 1)
     page_start: u64 = (start / 4096) * 4096
     page_end:   u64 = ((end + 4095) / 4096) * 4096
     addr: u64 = page_start
@@ -100,19 +119,17 @@ vmm_enable: () -> () {
     asm {
         la   t0, vmm_root
         ld   t0, 0(t0)          ; Load root page table physical address
-        srli t0, t0, 12         ; Extract PPN (shift right by 12)
-        li   t1, 0xFFFFFFFF     ; Mask to 32 bits
-        and  t0, t0, t1         ; Clear upper bits
+        srli t0, t0, 12         ; Extract PPN (physical address >> 12)
         li   t1, 8
         slli t1, t1, 60         ; MODE=8 (Sv39)
-        or   t0, t0, t1         ; Construct SATP value
+        or   t0, t0, t1         ; SATP = (MODE << 60) | PPN
         csrw 0x180, t0          ; Write SATP CSR
         sfence.vma x0, x0       ; Flush TLB
     }
 }
 
 ; Re-enable S-mode interrupts after MMU is stable.
-vmm_enable_interrupts: () -> () {
+s_enable_interrupts: () -> () {
     asm {
         csrr t0, sstatus
         ori  t0, t0, 2           ; Set SIE

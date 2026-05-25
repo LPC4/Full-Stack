@@ -8,7 +8,7 @@ use asm_to_binary::assembler::link_layout::LinkLayout;
 use asm_to_binary::rv_instruction::RvInstruction;
 use egui::Color32;
 use egui_dock::{DockState, NodeIndex};
-use full_stack::compilation_pipeline::{CompilationPipeline, TargetMode};
+use full_stack::compilation_pipeline::{AsmOutput, BinaryOutput, CompilationPipeline, IrOutput, PipelineResult, TargetMode};
 use full_stack::target_mode::infer_target_mode_for_source;
 use full_stack::view::debug::DebugSession;
 use full_stack::view::ide::vm_execution_view::VmExecutionResult;
@@ -18,7 +18,7 @@ use full_stack::view::{
     PipelineView, ProgramCatalog, SourceView, StackView, TokensView, UiTheme, VmExecutionView,
     apply_ui_theme,
 };
-use hll_to_ir::stdlib::get_stdlib_source_for_mode;
+use hll_to_ir::stdlib::{get_stdlib_source_for_mode, get_stdlib_type_prelude};
 use std::fmt;
 use virtual_machine::cpu::StepOutcome;
 use virtual_machine::virtual_machine::VirtualMachine;
@@ -79,7 +79,7 @@ enum AccentPreset {
 }
 
 impl AccentPreset {
-    const ALL: &'static [Self] = &[
+    const ALL: &'static [Self] = & [
         Self::Blue,
         Self::Purple,
         Self::Teal,
@@ -248,6 +248,8 @@ pub struct FullStackApp {
     #[serde(skip)]
     stdlib_asm: String,
     #[serde(skip)]
+    stdlib_objects: Vec<(String, AssembledOutput)>,
+    #[serde(skip)]
     target_mode: TargetMode,
     #[serde(skip)]
     entry_point: String,
@@ -260,6 +262,10 @@ pub struct FullStackApp {
     settings: AppSettings,
     #[serde(skip)]
     show_settings: bool,
+    #[serde(skip)]
+    user_set_target_mode: bool,
+    #[serde(skip)]
+    last_compile_program_id: String,
 }
 
 impl Default for FullStackApp {
@@ -285,6 +291,7 @@ impl Default for FullStackApp {
             step_n_input: "1".to_owned(),
             stdlib_tokens: Vec::new(),
             stdlib_asm: String::new(),
+            stdlib_objects: Vec::new(),
             target_mode: TargetMode::Hosted,
             entry_point: "kmain".to_owned(),
             load_base_input: format!("{:#010x}", LinkLayout::freestanding_kernel().load_base),
@@ -292,6 +299,8 @@ impl Default for FullStackApp {
             vm_output_view_id: 0,
             settings: AppSettings::default(),
             show_settings: false,
+            user_set_target_mode: false,
+            last_compile_program_id: String::new(),
         };
         app.reset_layout();
         app.reset_debug_layout();
@@ -316,31 +325,48 @@ impl FullStackApp {
 
     fn init_stdlib_cache(&mut self) {
         let mode = self.pipeline.target_mode();
-        let stdlib_src = get_stdlib_source_for_mode(mode);
+        self.stdlib_tokens.clear();
+        self.stdlib_asm.clear();
 
-        // Kernel stdlib must use a distinct string prefix so its rodata labels
-        // ("str_0", "str_1", ...) don't collide with user-code labels.
+        // Compile each stdlib HLL as an independent module so that we produce
+        // per-HLL `.ir`, `.s`, and `.o` artifacts with no concatenation.
+        let modules = hll_to_ir::stdlib::get_stdlib_modules_for_mode(mode);
+        let mut std_pipeline = CompilationPipeline::new();
+        std_pipeline.set_target_mode(mode);
+        std_pipeline.set_type_prelude(get_stdlib_type_prelude());
         if mode == TargetMode::Kernel {
-            self.pipeline
-                .set_string_prefix(Some("__kern_str_".to_owned()));
+            std_pipeline.set_string_prefix(Some("__kern_str_".to_owned()));
         }
 
-        let result = self.pipeline.compile(&stdlib_src);
-
-        if mode == TargetMode::Kernel {
-            self.pipeline.set_string_prefix(None);
-        }
-
-        match result {
-            Ok(result) => {
-                let (asm_text, tokens) = self
-                    .pipeline
-                    .compile_ir_to_assembly_with_tokens(&result.ir_program);
-                self.stdlib_tokens = tokens;
-                self.stdlib_asm = asm_text;
+        match std_pipeline.compile_modules(&modules.iter().map(|(n, s)| (*n, *s)).collect::<Vec<_>>()) {
+            Ok(objs) => {
+                self.stdlib_objects = modules
+                    .iter()
+                    .map(|(n, _)| n.to_string())
+                    .zip(objs.into_iter())
+                    .collect();
             }
             Err(e) => {
-                log::error!("stdlib compilation failed: {e}");
+                log::error!("stdlib multi-module compilation failed: {e:?}");
+                self.stdlib_objects.clear();
+            }
+        }
+
+        // Also compile the concatenated stdlib source once to populate
+        // `stdlib_tokens` for the token-level run_full() path used by hosted programs.
+        let full_source = get_stdlib_source_for_mode(mode);
+        std_pipeline.set_artifact_stem(Some("stdlib_concat".to_owned()));
+        match std_pipeline.compile(&full_source) {
+            Ok(result) => {
+                let (_, tokens) =
+                    std_pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program);
+                self.stdlib_tokens = tokens;
+                self.stdlib_asm = result.ir_program.to_string();
+            }
+            Err(e) => {
+                log::error!("stdlib concatenated compile failed: {e:?}");
+                self.stdlib_tokens.clear();
+                self.stdlib_asm.clear();
             }
         }
     }
@@ -350,7 +376,7 @@ impl FullStackApp {
     }
 
     fn reset_layout(&mut self) {
-        let views = vec![
+        let views = vec! [
             self.view::<SourceView>(),      // 0
             self.view::<TokensView>(),      // 1
             self.view::<AstView>(),         // 2
@@ -374,7 +400,7 @@ impl FullStackApp {
         surface.split_below(
             right,
             0.5,
-            vec![
+            vec! [
                 views[8].clone(), // VM Output - first so it's the default visible tab
                 views[4].clone(), // Assembly
                 views[5].clone(), // CFG
@@ -477,6 +503,104 @@ impl FullStackApp {
         self.mode = AppMode::Ide;
     }
 
+    fn compile_kernel_with_modules(&mut self) {
+        // Reuse the cached per-module stdlib objects. If the cache is empty,
+        // rebuild it once using the same no-concat module flow as init_stdlib_cache.
+        if self.stdlib_objects.is_empty() {
+            self.init_stdlib_cache();
+        }
+        if self.stdlib_objects.is_empty() {
+            self.compilation_state
+                .set_error("kernel stdlib cache is empty after module compilation".to_owned());
+            self.compilation_state.just_compiled = false;
+            return;
+        }
+
+        // Get the user's kernel module (e.g., my_kernel.hll)
+        let user_source = self.catalog.get_selected_source();
+        let module_name = self
+            .catalog
+            .current_program()
+            .map(|p| p.name.trim().to_string())
+            .unwrap_or_else(|| "kernel".to_owned());
+
+        // Compile user kernel module in its own pipeline, also without concatenation.
+        let mut kernel_user_pipeline = CompilationPipeline::new();
+        kernel_user_pipeline.set_target_mode(TargetMode::Kernel);
+        kernel_user_pipeline.set_type_prelude(get_stdlib_type_prelude());
+        kernel_user_pipeline.set_entry_point(Some("_kernel_start".to_owned()));
+        kernel_user_pipeline.set_link_layout(Some(LinkLayout::freestanding_kernel()));
+        let kernel_modules = vec![(&module_name as &str, user_source.as_str())];
+
+        let kernel_objects = match kernel_user_pipeline.compile_modules(&kernel_modules) {
+            Ok(objs) => objs,
+            Err(e) => {
+                self.compilation_state.set_error(format!("kernel module compile error: {e}"));
+                self.compilation_state.just_compiled = false;
+                return;
+            }
+        };
+
+        // Link kernel modules with each stdlib module at object level (no prior concatenation)
+        let all_names: Vec<&str> = self
+            .stdlib_objects
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .chain(kernel_modules.iter().map(|(n, _)| *n))
+            .collect();
+        let mut object_refs: Vec<&AssembledOutput> = Vec::new();
+        object_refs.extend(self.stdlib_objects.iter().map(|(_, obj)| obj));
+        for obj in &kernel_objects {
+            object_refs.push(obj);
+        }
+
+        let final_assembled = match kernel_user_pipeline.link_assembled_objects_named(
+            &all_names.join("_"),
+            &all_names.iter().zip(object_refs.iter()).map(|(n, o)| (*n, *o)).collect::<Vec<_>>()
+        ) {
+            Ok(asm) => asm,
+            Err(e) => {
+                self.compilation_state.set_error(format!("kernel link error: {}", e.message));
+                self.compilation_state.just_compiled = false;
+                return;
+            }
+        };
+
+        // Store linked kernel for display and execution
+        // For display, use the single-bundle stdlib assembly cached earlier (if any).
+        self.compilation_state.linked_asm_text = self.stdlib_asm.clone();
+
+        // Compile the user kernel source again purely for IR/ASM display.
+        // The module compilation above already produced valid objects; this
+        // second pass gives us the text outputs the IDE panels need.
+        let (user_ir_display, user_asm_display) =
+            match self.pipeline.compile(&user_source) {
+                Ok(compile_result) => {
+                    let ir_display = compile_result.ir_program.to_string();
+                    let asm_display = self.pipeline.compile_ir_to_assembly(&compile_result.ir_program);
+                    (Some(ir_display), Some(asm_display))
+                }
+                Err(_) => (None, None),
+            };
+
+        let binary_out = BinaryOutput {
+            assembled: final_assembled,
+        };
+        self.compilation_state.pipeline = Some(PipelineResult {
+            diagnostics: vec![],
+            lex: None,
+            parse: None,
+            ir: user_ir_display.map(|display| IrOutput { display }),
+            asm: user_asm_display.map(|display| AsmOutput { tokens: vec![], display }),
+            binary: Some(binary_out),
+            assembler_error: None,
+            exec: None,
+        });
+
+        self.compilation_state.clear_error();
+        self.compilation_state.just_compiled = true;
+    }
+
     fn compile(&mut self) {
         let user_source = self.catalog.get_selected_source();
         let is_stdlib = self
@@ -490,17 +614,41 @@ impl FullStackApp {
             .current_program()
             .map(|p| p.is_os() && !p.standalone)
             .unwrap_or(false);
-        let desired_mode = if is_os_program {
-            TargetMode::Kernel
-        } else {
-            infer_target_mode_for_source(&user_source, is_stdlib, self.target_mode)
-        };
-        if desired_mode != self.target_mode {
-            self.set_target_mode(desired_mode);
-            return;
+
+        // Detect program change: reset user-set target mode when switching to a different file
+        let current_id = self.catalog.selected_program_id.clone();
+        if self.last_compile_program_id != current_id {
+            self.user_set_target_mode = false;
+            self.last_compile_program_id = current_id;
+        }
+
+        // Only auto-infer target mode if the user hasn't manually changed it
+        if !self.user_set_target_mode {
+            let desired_mode = if is_os_program {
+                TargetMode::Kernel
+            } else {
+                infer_target_mode_for_source(&user_source, is_stdlib, self.target_mode)
+            };
+            if desired_mode != self.target_mode {
+                self.set_target_mode(desired_mode);
+                return;
+            }
         }
 
         self.pipeline.set_target_mode(self.target_mode);
+        let artifact_stem = self
+            .catalog
+            .current_program()
+            .map(|program| {
+                let name = program.name.trim();
+                if name.is_empty() {
+                    program.id.clone()
+                } else {
+                    name.to_owned()
+                }
+            })
+            .unwrap_or_else(|| "program".to_owned());
+        self.pipeline.set_artifact_stem(Some(artifact_stem));
         match self.target_mode {
             TargetMode::Hosted => {
                 self.pipeline.set_entry_point(None);
@@ -529,6 +677,12 @@ impl FullStackApp {
 
         self.compilation_state.entry_symbol = self.pipeline.effective_entry_point().to_owned();
         self.compilation_state.load_base = self.pipeline.effective_load_base();
+
+        // Special handling for kernel OS programs: use multi-module compilation
+        if is_os_program && self.target_mode == TargetMode::Kernel {
+            self.compile_kernel_with_modules();
+            return;
+        }
 
         let stdlib_tokens = if is_stdlib {
             None

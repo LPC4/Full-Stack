@@ -2,30 +2,18 @@
 
 use std::fmt;
 
-/// All errors that can occur inside the virtual machine.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VmError {
-    /// Physical address is not mapped to any device.
     BusError(u64),
-    /// Attempt to write to ROM or a read-only cache.
     WriteToRom,
-    /// Instruction fetch from non-executable memory or protection fault.
     InstructionAccessFault(u64),
-    /// Load from memory caused an exception.
     LoadAccessFault(u64),
-    /// Store to memory caused an exception.
     StoreAccessFault(u64),
-    /// Unrecognised or unsupported opcode.
     IllegalInstruction(u32),
-    /// Environment call (ecall).
     Ecall,
-    /// Breakpoint (ebreak).
     Ebreak,
-    /// Page fault - virtual address translation failed
     PageFault(u64),
-    /// Return from machine-mode trap (MRET)
     Mret,
-    /// Return from supervisor-mode trap (SRET)
     Sret,
     /// Other runtime error with a descriptive message.
     Other(String),

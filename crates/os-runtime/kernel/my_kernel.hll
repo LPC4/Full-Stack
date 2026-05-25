@@ -16,7 +16,7 @@ external pmm_free:              (page: u8*) -> ()
 external vmm_init:              () -> ()
 external vmm_map_1gib:          (va: u64, pa: u64, flags: u64) -> ()
 external vmm_enable:            () -> ()
-external vmm_enable_interrupts: () -> ()
+external s_enable_interrupts: () -> ()
 external memory_self_test:      (size: u64) -> i64
 external pmm_ops_test:          () -> ()
 
@@ -44,11 +44,7 @@ kmain: () -> () {
     klog_warn("single hart, no SMP".data)
 
     boot_final()
-    asm {
-    .Lkmain_idle:
-        wfi
-        j    .Lkmain_idle
-    }
+    kshutdown(0)
 }
 
 boot_console: () -> () {
@@ -121,7 +117,7 @@ boot_vmm: () -> () {
 }
 
 boot_interrupts: () -> () {
-    vmm_enable_interrupts()
+    s_enable_interrupts()
 }
 
 boot_final: () -> () {

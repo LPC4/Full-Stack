@@ -30,7 +30,7 @@ fn read_program(filename: &str) -> String {
 /// Compile HLL source -> assembly text, stripping inline comments so the
 /// assembly can be passed safely through a shell heredoc.
 /// Uses two-stage compilation: compile stdlib and user code independently,
-/// then link them at the token level before generating assembly.
+/// then assemble them into objects and link the objects before generating ELF.
 fn compile_to_asm(source: &str) -> String {
     let pipeline = CompilationPipeline::new();
 
@@ -133,7 +133,7 @@ fn require_qemu_result(test_name: &'static str, result: Result<QemuResult, QemuS
 /// Compile HLL source to the final assembled output and export it as an ELF
 /// image ready for qemu-riscv64.
 /// Uses two-stage compilation: compile stdlib and user code independently,
-/// then link them at the token level before assembling.
+/// then assemble them into objects and link the objects through the linker pipeline.
 fn compile_to_elf(source: &str) -> Vec<u8> {
     let pipeline = CompilationPipeline::new();
 
@@ -150,14 +150,15 @@ fn compile_to_elf(source: &str) -> Vec<u8> {
         .unwrap_or_else(|e| panic!("HLL compilation failed: {e}"));
     let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program);
 
-    // Stage 3: Link at token level
-    let mut linked = stdlib_tokens;
-    linked.extend(user_tokens);
-
-    // Stage 4: Assemble
+    let stdlib_obj = pipeline
+        .assemble(&stdlib_tokens)
+        .unwrap_or_else(|e| panic!("stdlib assembly failed: {e}"));
+    let user_obj = pipeline
+        .assemble(&user_tokens)
+        .unwrap_or_else(|e| panic!("user assembly failed: {e}"));
     let assembled = pipeline
-        .assemble(&linked)
-        .unwrap_or_else(|e| panic!("assembly failed: {e}"));
+        .link_assembled_objects(&[("stdlib", &stdlib_obj), ("user", &user_obj)])
+        .unwrap_or_else(|e| panic!("link failed: {e}"));
     assembled.to_elf(ELF_LOAD_BASE)
 }
 

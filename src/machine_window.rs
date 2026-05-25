@@ -18,15 +18,16 @@ use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 
 // -- Palette ------------------------------------------------------------------
 
-const TERM_BG: Color32 = Color32::from_rgb(7, 9, 12);
-const TERM_TEXT: Color32 = Color32::from_rgb(200, 208, 218); // neutral, no green tint
-const TERM_OK: Color32 = Color32::from_rgb(72, 200, 100);
-const TERM_WARN: Color32 = Color32::from_rgb(220, 178, 60);
-const TERM_ERR: Color32 = Color32::from_rgb(230, 80, 80);
-const TERM_DIM: Color32 = Color32::from_rgb(88, 100, 112);   // neutral dim
-const TERM_PANIC: Color32 = Color32::from_rgb(255, 60, 80);
-const TERM_BORDER: Color32 = Color32::from_rgb(28, 34, 46);  // neutral dark border
-const TOOLBAR_BG: Color32 = Color32::from_rgb(10, 14, 18);
+// The terminal area uses a slightly darker variant of the theme canvas.
+fn term_bg() -> Color32 { ui_theme().canvas.linear_multiply(0.55) }
+fn term_text() -> Color32 { ui_theme().text }
+fn term_ok() -> Color32 { ui_theme().success }
+fn term_warn() -> Color32 { ui_theme().warning }
+fn term_err() -> Color32 { ui_theme().error }
+fn term_dim() -> Color32 { ui_theme().text_dim }
+fn term_panic() -> Color32 { Color32::from_rgb(255, 60, 80) }
+fn term_border() -> Color32 { ui_theme().border_soft }
+fn toolbar_bg() -> Color32 { ui_theme().panel }
 
 // -- Tuning -------------------------------------------------------------------
 
@@ -126,8 +127,8 @@ impl MachineWindow {
         };
 
         Frame::NONE
-            .fill(TERM_BG)
-            .stroke(Stroke::new(1.0, TERM_BORDER))
+            .fill(term_bg())
+            .stroke(Stroke::new(1.0, term_border()))
             .inner_margin(Margin::same(8))
             .show(ui, |ui| {
                 ui.set_min_size(Vec2::new(ui.available_width(), content_h));
@@ -207,7 +208,7 @@ impl MachineWindow {
 impl MachineWindow {
     fn render_toolbar(&mut self, ui: &mut egui::Ui, has_kernel: bool, is_running: bool) {
         Frame::NONE
-            .fill(TOOLBAR_BG)
+            .fill(toolbar_bg())
             .inner_margin(Margin::symmetric(8, 4))
             .show(ui, |ui| {
                 ui.set_min_height(TOOLBAR_H);
@@ -256,12 +257,12 @@ impl MachineWindow {
                         ui.colored_label(col, RichText::new(label).strong().monospace().size(11.0));
                         if let Some(code) = exit_code {
                             ui.colored_label(
-                                TERM_DIM,
+                                term_dim(),
                                 RichText::new(format!("exit:{code}")).monospace().size(11.0),
                             );
                         }
                         ui.colored_label(
-                            TERM_DIM,
+                            term_dim(),
                             RichText::new(format!("{steps} steps")).monospace().size(11.0),
                         );
                     }
@@ -276,12 +277,12 @@ impl MachineWindow {
 
     fn status_info(&self) -> (&'static str, Color32, u64, Option<i64>) {
         match &self.phase {
-            BootPhase::Idle => ("IDLE", TERM_DIM, 0, None),
+            BootPhase::Idle => ("IDLE", term_dim(), 0, None),
             BootPhase::Running { steps, .. } => ("RUNNING", ui_theme().accent, *steps, None),
-            BootPhase::Done(r) if r.max_steps_reached => ("TIMEOUT", TERM_WARN, r.steps, r.exit_code),
-            BootPhase::Done(r) if r.exit_code == Some(0) => ("OK", TERM_OK, r.steps, r.exit_code),
-            BootPhase::Done(r) if r.exit_code.is_some() => ("ERR", TERM_ERR, r.steps, r.exit_code),
-            BootPhase::Done(r) => ("HALTED", TERM_DIM, r.steps, r.exit_code),
+            BootPhase::Done(r) if r.max_steps_reached => ("TIMEOUT", term_warn(), r.steps, r.exit_code),
+            BootPhase::Done(r) if r.exit_code == Some(0) => ("OK", term_ok(), r.steps, r.exit_code),
+            BootPhase::Done(r) if r.exit_code.is_some() => ("ERR", term_err(), r.steps, r.exit_code),
+            BootPhase::Done(r) => ("HALTED", term_dim(), r.steps, r.exit_code),
         }
     }
 
@@ -337,13 +338,13 @@ impl MachineWindow {
             .auto_shrink([false, false])
             .show(ui, |ui| match state {
                 LogState::Idle => {
-                    ui.colored_label(TERM_DIM, "Press Boot to compile and run the kernel.");
+                    ui.colored_label(term_dim(), "Press Boot to compile and run the kernel.");
                 }
                 LogState::BootingNoOutput(steps) => {
-                    ui.colored_label(TERM_DIM, format!("Booting... ({steps} steps)"));
+                    ui.colored_label(term_dim(), format!("Booting... ({steps} steps)"));
                 }
                 LogState::DoneEmpty => {
-                    ui.colored_label(TERM_DIM, "(no output)");
+                    ui.colored_label(term_dim(), "(no output)");
                 }
                 LogState::HasText { text, generation } => {
                     // Rebuild the LayoutJob only when new UART has arrived.
@@ -367,10 +368,10 @@ impl MachineWindow {
 
         match fb {
             None => {
-                ui.colored_label(TERM_DIM, "Boot the kernel to see framebuffer contents.");
+                ui.colored_label(term_dim(), "Boot the kernel to see framebuffer contents.");
             }
             Some(ref bytes) if bytes.is_empty() || bytes.iter().all(|&b| b == 0) => {
-                ui.colored_label(TERM_DIM, "(no framebuffer data)");
+                ui.colored_label(term_dim(), "(no framebuffer data)");
             }
             Some(bytes) => {
                 let mut text = String::with_capacity(FB_COLS * FB_ROWS + FB_ROWS);
@@ -388,7 +389,7 @@ impl MachineWindow {
                     .id_salt("mw_framebuffer")
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        ui.label(RichText::new(text).monospace().color(TERM_TEXT).size(12.0));
+                        ui.label(RichText::new(text).monospace().color(term_text()).size(12.0));
                     });
             }
         }
@@ -396,13 +397,13 @@ impl MachineWindow {
 
     fn render_input(&mut self, ui: &mut egui::Ui, is_running: bool) {
         Frame::NONE
-            .fill(TOOLBAR_BG)
+            .fill(toolbar_bg())
             .inner_margin(Margin::symmetric(8, 4))
             .show(ui, |ui| {
                 ui.set_min_height(INPUT_H);
                 ui.horizontal(|ui| {
                     ui.colored_label(
-                        if is_running { ui_theme().accent } else { TERM_DIM },
+                        if is_running { ui_theme().accent } else { term_dim() },
                         RichText::new("IN>").monospace().size(11.0),
                     );
 
@@ -453,15 +454,15 @@ fn build_log_job(text: &str) -> egui::text::LayoutJob {
 
     for line in text.split('\n') {
         let (tag, tag_col, rest_col) = if line.starts_with("[  OK  ]") {
-            (Some("[  OK  ]"), TERM_OK, TERM_TEXT)
+            (Some("[  OK  ]"), term_ok(), term_text())
         } else if line.starts_with("[ WARN ]") {
-            (Some("[ WARN ]"), TERM_WARN, TERM_WARN)
+            (Some("[ WARN ]"), term_warn(), term_warn())
         } else if line.starts_with("[ ERR  ]") {
-            (Some("[ ERR  ]"), TERM_ERR, TERM_ERR)
+            (Some("[ ERR  ]"), term_err(), term_err())
         } else if line.starts_with("PANIC") || line.starts_with("panic") {
-            (None, TERM_PANIC, TERM_PANIC)
+            (None, term_panic(), term_panic())
         } else {
-            (None, TERM_TEXT, TERM_TEXT)
+            (None, term_text(), term_text())
         };
 
         let fmt = |col: Color32| egui::TextFormat {
@@ -476,7 +477,7 @@ fn build_log_job(text: &str) -> egui::text::LayoutJob {
         } else {
             job.append(line, 0.0, fmt(rest_col));
         }
-        job.append("\n", 0.0, fmt(TERM_TEXT));
+        job.append("\n", 0.0, fmt(term_text()));
     }
 
     job
