@@ -1,0 +1,57 @@
+; Syscall dispatch layer.
+
+const SYSCALL_EXIT  = 93
+const SYSCALL_WRITE = 64
+const SYSCALL_YIELD = 2
+
+const SYSACT_CONTINUE     = 0
+const SYSACT_SCHEDULE     = 1
+const SYSACT_EXIT_SCHEDULE = 2
+
+external klog_int:     (label: u8*, val: i64) -> ()
+external klog_error:   (msg: u8*) -> ()
+external console_putchar: (c: i32) -> ()
+
+
+; Write len bytes from buf to UART (0x10000000).
+; fd is ignored
+sys_write_impl: (fd: u64, buf: u8*, len: u64) -> u64 {
+    written: u64 = 0
+    while written < len {
+        c: i32 = i32(@(buf + written))
+        console_putchar(c)
+        written = written + 1
+    }
+    return written
+}
+
+; Dispatch a U-mode ecall.  Reads a7 for the syscall number and
+; a0–a2 for the first three arguments.  Writes the return value
+; into the frame's a0 slot.
+syscall_dispatch: (frame: u64*) -> u64 {
+    num: u64 = @frame[17]
+
+    if num == SYSCALL_EXIT {
+        code: u64 = @frame[10]
+        klog_int("sys_exit code".data, i64(code))
+        return SYSACT_EXIT_SCHEDULE
+    }
+
+    if num == SYSCALL_WRITE {
+        fd:  u64 = @frame[10]
+        buf: u8* = u8*(@frame[11])
+        len: u64 = @frame[12]
+        result: u64 = sys_write_impl(fd, buf, len)
+        @frame[10] = result
+        return SYSACT_CONTINUE
+    }
+
+    if num == SYSCALL_YIELD {
+        return SYSACT_SCHEDULE
+    }
+
+    ; Unknown syscall
+    klog_int("syscall: unknown number".data, i64(num))
+    @frame[10] = 0xFFFFFFFFFFFFFFFF
+    return SYSACT_CONTINUE
+}

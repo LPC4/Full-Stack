@@ -173,6 +173,18 @@ impl SemanticAnalyzer {
                         self.resolve_type_string(&self.context.get_type_name(&ir_ty));
                     let resolved_init_ty = self.resolve_type_string(&init_ty);
 
+                    log::debug!(
+                        "Variable '{}': declared as {:?}, inferred init as {}",
+                        name,
+                        ir_ty,
+                        init_ty
+                    );
+                    log::debug!(
+                        "  resolved_decl_ty={:?}, resolved_init_ty={:?}",
+                        resolved_decl_ty,
+                        resolved_init_ty
+                    );
+
                     // Allow integer literal widening
                     let is_literal_widening_allowed = Self::is_integer_type(&resolved_decl_ty)
                         && Self::is_i32_type(&resolved_init_ty)
@@ -180,9 +192,14 @@ impl SemanticAnalyzer {
 
                     if resolved_decl_ty != resolved_init_ty && !is_literal_widening_allowed {
                         self.error(format!(
-                            "Type mismatch in variable initialization: expected {}, found {}",
+                            "Type mismatch in variable initialization '{}': declared as {}, but expression yields {} (inferred_str: {}, resolved_decl: {:?}, resolved_init: {:?}, is_widening_allowed: {})",
+                            name,
                             self.context.get_type_name(&ir_ty),
-                            init_ty
+                            init_ty,
+                            init_ty,
+                            resolved_decl_ty,
+                            resolved_init_ty,
+                            is_literal_widening_allowed
                         ));
                         return Err(());
                     }
@@ -302,11 +319,34 @@ impl SemanticAnalyzer {
                     for arg in arguments {
                         let _ = self.infer_expression_type(arg)?;
                     }
+
+                    // Check if this is a type cast (e.g., u64(...), i32(...), etc.)
+                    // Type casts are recognized by checking if the name is a known type
+                    let cast_return_type = match name.as_str() {
+                        "i32" => Some("i32".to_owned()),
+                        "i64" => Some("i64".to_owned()),
+                        "u32" => Some("u32".to_owned()),
+                        "u64" => Some("u64".to_owned()),
+                        "i16" => Some("i16".to_owned()),
+                        "u16" => Some("u16".to_owned()),
+                        "i8" => Some("i8".to_owned()),
+                        "u8" => Some("u8".to_owned()),
+                        "f32" => Some("f32".to_owned()),
+                        "f64" => Some("f64".to_owned()),
+                        "bool" => Some("i1".to_owned()),
+                        _ => None,
+                    };
+
+                    if let Some(cast_type) = cast_return_type {
+                        return Ok(cast_type);
+                    }
+
                     // Look up the function's return type
                     if let Some(return_ty) = self.function_signatures.get(name) {
                         Ok(return_ty.clone())
                     } else {
                         // Unknown function, return unknown
+                        log::warn!("Unknown function/type cast: {}", name);
                         Ok("unknown".to_owned())
                     }
                 }

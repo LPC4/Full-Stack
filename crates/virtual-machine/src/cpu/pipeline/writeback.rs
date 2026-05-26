@@ -86,7 +86,12 @@ pub fn writeback(
         MemResult::SfenceVma => {
             // SFENCE.VMA is a no-op in our simple implementation (no TLB)
             // Just advance PC by 4
-            Ok(regs.pc.wrapping_add(4))
+            let pc = regs.pc;
+            Ok(pc.wrapping_add(4))
+        }
+        MemResult::Wfi { next_pc } => {
+            // WFI is a no-op in our simple implementation
+            Ok(next_pc)
         }
     }
 }

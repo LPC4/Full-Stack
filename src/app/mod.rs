@@ -258,6 +258,8 @@ pub struct FullStackApp {
     #[serde(skip)]
     machine_window: MachineWindow,
     #[serde(skip)]
+    selected_inject_program_id: String,
+    #[serde(skip)]
     vm_output_view_id: u64,
     settings: AppSettings,
     #[serde(skip)]
@@ -296,6 +298,7 @@ impl Default for FullStackApp {
             entry_point: "kmain".to_owned(),
             load_base_input: format!("{:#010x}", LinkLayout::freestanding_kernel().load_base),
             machine_window: MachineWindow::default(),
+            selected_inject_program_id: String::new(),
             vm_output_view_id: 0,
             settings: AppSettings::default(),
             show_settings: false,
@@ -461,12 +464,7 @@ impl FullStackApp {
                 self.pipeline.set_link_layout(Some(layout));
             }
             TargetMode::Freestanding => {
-                let ep = if self.entry_point.trim().is_empty() {
-                    "kmain".to_owned()
-                } else {
-                    self.entry_point.clone()
-                };
-                self.pipeline.set_entry_point(Some(ep));
+                self.pipeline.set_entry_point(Some("_start".to_owned()));
                 let kernel_default = LinkLayout::freestanding_kernel();
                 if self.load_base_input.is_empty()
                     || parse_hex_or_dec(&self.load_base_input)
@@ -566,9 +564,11 @@ impl FullStackApp {
             }
         };
 
-        // Store linked kernel for display and execution
-        // For display, use the single-bundle stdlib assembly cached earlier (if any).
-        self.compilation_state.linked_asm_text = self.stdlib_asm.clone();
+        // Store linked kernel for display and execution.
+        // Prepend the ROM firmware assembly so the disassembly view can
+        // follow the PC through the boot sequence into kernel code.
+        self.compilation_state.linked_asm_text =
+            format!("{}{}", os_runtime::ROM_SOURCE, self.stdlib_asm);
 
         // Compile the user kernel source again purely for IR/ASM display.
         // The module compilation above already produced valid objects; this
@@ -661,12 +661,7 @@ impl FullStackApp {
                     .set_link_layout(Some(LinkLayout::freestanding_kernel()));
             }
             TargetMode::Freestanding => {
-                let ep = self.entry_point.trim().to_owned();
-                self.pipeline.set_entry_point(Some(if ep.is_empty() {
-                    "kmain".to_owned()
-                } else {
-                    ep
-                }));
+                self.pipeline.set_entry_point(Some("_start".to_owned()));
                 let load_base = parse_hex_or_dec(&self.load_base_input)
                     .unwrap_or_else(|| LinkLayout::freestanding_kernel().load_base);
                 let mut layout = LinkLayout::freestanding_kernel();
@@ -724,6 +719,41 @@ impl FullStackApp {
             self.compilation_state.clear_error();
             self.compilation_state.just_compiled = true;
         }
+    }
+
+    /// Compile the program with id `program_id` as Hosted and store the assembled
+    /// result in `compilation_state.last_hosted_binary` on success.
+    fn compile_and_store_hosted(&mut self, program_id: &str) -> Result<(), String> {
+        use full_stack::view::ProgramKind;
+        // Find program source by id
+        let program_opt = self.catalog.all_programs().iter().find(|p| p.id == program_id);
+        let program = match program_opt {
+            Some(p) => p,
+            None => return Err(format!("program id not found: {}", program_id)),
+        };
+
+        // Build pipeline and compile concatenated stdlib + program source
+        let mut user_pipeline = CompilationPipeline::new();
+        user_pipeline.set_target_mode(TargetMode::Hosted);
+        user_pipeline.set_write_artifacts(false);
+        user_pipeline.set_type_prelude(get_stdlib_type_prelude());
+
+        let user_source = format!("{}\n{}", get_stdlib_source_for_mode(TargetMode::Hosted), program.source);
+        let result = match user_pipeline.run_full(&user_source, None) {
+            r if r.has_errors() => return Err(r.format_diagnostics()),
+            r => r,
+        };
+
+        if let Some(ref asm_err) = result.assembler_error {
+            return Err(format!("assembler error: {}", asm_err));
+        }
+
+        if let Some(bin) = result.binary.as_ref() {
+            self.compilation_state.last_hosted_binary = Some(bin.assembled.clone());
+            return Ok(());
+        }
+
+        Err("no assembled binary produced".to_owned())
     }
 
     fn save_state(&self, storage: &mut dyn eframe::Storage) {
@@ -805,6 +835,57 @@ impl eframe::App for FullStackApp {
             .resizable(true)
             .show(ui.ctx(), |ui| {
                 ui.set_max_width(900.0);
+                // Small controls above the Machine view to select user injection.
+                ui.horizontal(|ui| {
+                    // Program selector for injection: list Example and Custom programs.
+                    use full_stack::view::ProgramKind;
+                    let programs: Vec<_> = self
+                        .catalog
+                        .all_programs()
+                        .iter()
+                        .filter(|p| p.kind == ProgramKind::Example || p.kind == ProgramKind::Custom)
+                        .cloned()
+                        .collect();
+
+                    let mut selected_label = "None".to_owned();
+                    if !self.selected_inject_program_id.is_empty() {
+                        if let Some(p) = programs.iter().find(|p| p.id == self.selected_inject_program_id) {
+                            selected_label = p.name.clone();
+                        }
+                    }
+
+                    egui::ComboBox::from_id_source("inject_program_list")
+                        .selected_text(selected_label.clone())
+                        .show_ui(ui, |ui| {
+                            if ui.selectable_label(self.selected_inject_program_id.is_empty(), "None").clicked() {
+                                self.selected_inject_program_id.clear();
+                            }
+                            for p in &programs {
+                                let is_selected = self.selected_inject_program_id == p.id;
+                                if ui.selectable_label(is_selected, &p.name).clicked() {
+                                    self.selected_inject_program_id = p.id.clone();
+                                    // Auto-compile the selected program into last_hosted_binary
+                                    match self.compile_and_store_hosted(&p.id) {
+                                        Ok(()) => {
+                                            // enable injection flag on machine
+                                            self.machine_window.selected_user_inject = true;
+                                        }
+                                        Err(e) => {
+                                            self.compilation_state.set_error(format!("hosted compile failed: {}", e));
+                                        }
+                                    }
+                                }
+                            }
+                        });
+
+                    if self.selected_inject_program_id.is_empty() {
+                        ui.colored_label(full_stack::view::ui_theme().text_dim, "(none selected)");
+                    } else if let Some(ref asm) = self.compilation_state.last_hosted_binary {
+                        let size = asm.text_bytes().len() + asm.rodata_bytes().len() + asm.data_bytes().len();
+                        ui.label(format!("size: {} bytes", size));
+                    }
+                });
+
                 self.machine_window.ui(ui, has_kernel);
             });
         self.machine_window.open = mw_open;
@@ -812,7 +893,12 @@ impl eframe::App for FullStackApp {
         if self.machine_window.boot_requested {
             self.machine_window.boot_requested = false;
             if let Some(assembled) = self.compilation_state.assembled().cloned() {
-                self.machine_window.start_boot(&assembled);
+                let user_bin = if self.machine_window.selected_user_inject {
+                    self.compilation_state.last_hosted_binary.as_ref()
+                } else {
+                    None
+                };
+                self.machine_window.start_boot(&assembled, user_bin);
             }
         }
 

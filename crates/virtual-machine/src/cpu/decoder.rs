@@ -94,6 +94,7 @@ pub enum DecodedInsn {
     Mret,
     Sret,
     SfenceVma,
+    Wfi,
     Csr {
         funct3: u8,
         rd: usize,
@@ -259,6 +260,7 @@ impl DecodedInsn {
             Self::Mret => "mret",
             Self::Sret => "sret",
             Self::SfenceVma => "sfence.vma",
+            Self::Wfi => "wfi",
             Self::Csr { funct3, .. } => match funct3 {
                 1 => "csrrw",
                 2 => "csrrs",
@@ -445,6 +447,7 @@ fn decode_system(word: u32) -> Result<DecodedInsn, VmError> {
             0x302 => Ok(DecodedInsn::Mret),
             0x102 => Ok(DecodedInsn::Sret),
             0x120 => Ok(DecodedInsn::SfenceVma), // SFENCE.VMA
+            0x105 => Ok(DecodedInsn::Wfi),       // WFI
             _ => Err(VmError::IllegalInstruction(word)),
         }
     } else {

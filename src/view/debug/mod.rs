@@ -143,10 +143,15 @@ impl DebugSession {
     /// Create a kernel debug session. The VM boots via ROM `_start` (PMP + mret into S-mode)
     /// before the debugger can step into kernel code. PC starts at `ROM_BASE`.
     pub fn new_kernel(assembled: &AssembledOutput) -> Self {
-        let symbols: HashMap<String, u64> = assembled
+        let mut symbols: HashMap<String, u64> = assembled
             .symbols_iter()
             .map(|(name, offset)| (name.to_owned(), RAM_BASE + offset))
             .collect();
+
+        // Add ROM firmware symbols so the disassembly view can track the PC
+        // through the boot sequence (ROM_BASE → _start → _m_trap → mret → kernel).
+        symbols.insert("_start".to_owned(), ROM_BASE);
+        symbols.insert("_m_trap".to_owned(), ROM_BASE + 0x100);
 
         let mut initial_snapshot = DebugSnapshot::default();
         fill_section_presets(&mut initial_snapshot, &symbols);
@@ -318,6 +323,10 @@ impl DebugSession {
             .symbols_iter()
             .map(|(name, offset)| (name.to_owned(), RAM_BASE + offset))
             .collect();
+        if self.is_kernel {
+            self.symbols.insert("_start".to_owned(), ROM_BASE);
+            self.symbols.insert("_m_trap".to_owned(), ROM_BASE + 0x100);
+        }
         self.vm = if self.is_kernel {
             VirtualMachine::new_kernel(&self.assembled)
         } else {

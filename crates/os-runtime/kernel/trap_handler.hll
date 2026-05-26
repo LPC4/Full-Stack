@@ -1,13 +1,20 @@
 external kpanic:          (msg: u8*) -> ()
+external klog_int:        (label: u8*, val: i64) -> ()
 external klog_hex:        (label: u8*, val: u64) -> ()
 external timer_set:       (interval: u64) -> ()
-
-; frame[32]=sepc, frame[33]=scause, frame[34]=stval, frame[35]=sstatus
-
-; Persistent S-mode timer interrupt counter (zero-initialised by BSS).
+external syscall_dispatch: (frame: u64*) -> u64
+external schedule:        (frame: u64*, action: u64) -> ()
 kernel_tick: u64
 
 trap_handler: (frame: u64*) -> () {
+    ; Ensure S-mode can access U-flagged pages (needed for syscall buffer reads).
+    asm {
+        csrr t0, sstatus
+        li   t1, 0x40000        ; SUM = bit 18
+        or   t0, t0, t1
+        csrw sstatus, t0
+    }
+
     scause_u: u64 = @frame[33]
     scause_i: i64 = i64(scause_u)
 
@@ -15,10 +22,12 @@ trap_handler: (frame: u64*) -> () {
     if scause_i < 0 {
         cause_code: u64 = scause_u % 16
 
-        ; Timer interrupt (cause 5).
+        ; Timer interrupt (cause 5): tick and reschedule.
         if cause_code == 5 {
             kernel_tick = kernel_tick + 1
             timer_set(1000000)
+            klog_int("tick".data, i64(kernel_tick))
+            schedule(frame, 1)  ; SYSACT_SCHEDULE
             return
         }
 
@@ -45,13 +54,19 @@ trap_handler: (frame: u64*) -> () {
         return
     }
 
-    ; U-mode ecall (cause 8): skip past the ecall.
+    ; U-mode ecall (cause 8): dispatch to syscall layer.
+    ; Always advance sepc past the ecall; non-zero actions trigger schedule.
     if scause_u == 8 {
+        action: u64 = syscall_dispatch(frame)
         @frame[32] = @frame[32] + 4
+        if action != 0 {
+            schedule(frame, action)
+        }
         return
     }
 
     klog_hex("exception scause".data, scause_u)
     klog_hex("exception sepc".data, @frame[32])
+    klog_hex("exception stval".data, @frame[34])
     kpanic("unhandled exception".data)
 }

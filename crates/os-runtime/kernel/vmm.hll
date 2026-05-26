@@ -132,7 +132,7 @@ vmm_enable: () -> () {
 s_enable_interrupts: () -> () {
     asm {
         csrr t0, sstatus
-        ori  t0, t0, 2           ; Set SIE
+        ori  t0, t0, 3           ; Set UIE and SIE
         csrw sstatus, t0
     }
 }

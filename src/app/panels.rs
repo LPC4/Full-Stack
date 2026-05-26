@@ -7,12 +7,7 @@ use full_stack::view::{
     PrivilegeView, SourceView, StackView, SyscallTraceView, TokensView, TrapView, VmExecutionView,
     ui_theme,
 };
-
 use super::{FullStackApp, ViewWrapper};
-
-// ---------------------------------------------------------------------------
-// View registry - single source of truth for every "Add View" menu
-// ---------------------------------------------------------------------------
 
 const IDE_VIEWS: &[(&str, fn() -> Box<dyn CompilerView>)] = &[
     ("Source",           || Box::new(SourceView::default())),
@@ -162,20 +157,6 @@ impl FullStackApp {
                 }
 
                 if self.target_mode == TargetMode::Freestanding {
-                    ui.label("Entry:");
-                    let ep_response = ui.add(
-                        egui::TextEdit::singleline(&mut self.entry_point)
-                            .desired_width(70.0)
-                            .font(egui::TextStyle::Monospace)
-                            .hint_text("kmain"),
-                    );
-                    if ep_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                        let ep = self.entry_point.trim().to_owned();
-                        let ep = if ep.is_empty() { "kmain".to_owned() } else { ep };
-                        self.pipeline.set_entry_point(Some(ep));
-                        self.compile();
-                    }
-
                     ui.label("Base:");
                     let lb_response = ui.add(
                         egui::TextEdit::singleline(&mut self.load_base_input)
@@ -227,7 +208,7 @@ impl FullStackApp {
             ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(8.0);
 
-                if !is_stdlib {
+                if !is_stdlib && !is_kernel {
                     let can_debug = self.compilation_state.assembled().is_some();
                     if ui
                         .add_enabled(

@@ -58,6 +58,9 @@ pub enum MemResult {
     Mret,
     Sret,
     SfenceVma,
+    Wfi {
+        next_pc: u64,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -127,6 +130,7 @@ pub fn memory_stage_with_pmp(
         ExecResult::Mret => Ok(MemResult::Mret),
         ExecResult::Sret => Ok(MemResult::Sret),
         ExecResult::SfenceVma => Ok(MemResult::SfenceVma),
+        ExecResult::Wfi { next_pc } => Ok(MemResult::Wfi { next_pc }),
 
         // Integer Load
         ExecResult::Load {

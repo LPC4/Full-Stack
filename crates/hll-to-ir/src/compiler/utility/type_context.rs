@@ -155,6 +155,11 @@ impl TypeContext {
                     lhs_type
                 } else if lhs_placeholder && !rhs_placeholder {
                     rhs_type
+                } else if !lhs_placeholder && rhs_placeholder {
+                    lhs_type
+                } else if Self::is_integer_typename(lhs_type) && Self::is_integer_typename(rhs_type) {
+                    // Mixed integer widths: promote to wider type
+                    Self::promote_integer_types(lhs_type, rhs_type)
                 } else {
                     lhs_type
                 };
@@ -180,6 +185,11 @@ impl TypeContext {
                     lhs_type
                 } else if lhs_placeholder && !rhs_placeholder {
                     rhs_type
+                } else if !lhs_placeholder && rhs_placeholder {
+                    lhs_type
+                } else if Self::is_integer_typename(lhs_type) && Self::is_integer_typename(rhs_type) {
+                    // Mixed integer widths: promote to wider type
+                    Self::promote_integer_types(lhs_type, rhs_type)
                 } else {
                     lhs_type
                 };
@@ -269,6 +279,31 @@ impl TypeContext {
             ty,
             "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64"
         )
+    }
+
+    /// Promote two integer types to the wider/higher-priority type for mixed-width operations.
+    /// Priority (highest to lowest): u64, i64, u32, i32, u16, i16, u8, i8
+    fn promote_integer_types<'a>(lhs: &'a str, rhs: &'a str) -> &'a str {
+        if lhs == rhs {
+            return lhs;
+        }
+
+        let width_priority = |ty: &str| match ty {
+            "u64" => 8,
+            "i64" => 7,
+            "u32" => 6,
+            "i32" => 5,
+            "u16" => 4,
+            "i16" => 3,
+            "u8" => 2,
+            "i8" => 1,
+            _ => 0,
+        };
+
+        let lhs_pri = width_priority(lhs);
+        let rhs_pri = width_priority(rhs);
+
+        if lhs_pri >= rhs_pri { lhs } else { rhs }
     }
 
     fn is_numeric(&self, ty: &str) -> bool {

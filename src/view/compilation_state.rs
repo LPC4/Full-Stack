@@ -16,6 +16,7 @@ pub struct CompilationState {
     pub disasm_follow_pc: bool,
     pub entry_symbol: String,
     pub load_base: u64,
+    pub last_hosted_binary: Option<AssembledOutput>,
 }
 
 impl CompilationState {

@@ -90,7 +90,7 @@ pub struct MachineWindow {
     phase: BootPhase,
     pub active_tab: FbTab,
     uart_input: String,
-    /// Cached LayoutJob for the boot log; avoids rebuilding every frame.
+    pub selected_user_inject: bool,
     log_cache: Option<egui::text::LayoutJob>,
     log_cache_generation: u64,
 }
@@ -99,9 +99,34 @@ pub struct MachineWindow {
 
 impl MachineWindow {
     /// Begin an incremental boot. The VM is ticked each frame via `ui()`.
-    pub fn start_boot(&mut self, assembled: &AssembledOutput) {
+    pub fn start_boot(&mut self, assembled: &AssembledOutput, user_binary: Option<&AssembledOutput>) {
+        let mut vm = Box::new(VirtualMachine::new_kernel(assembled));
+
+        // Inject user program into RAM if provided.
+        if let Some(user_asm) = user_binary {
+            let mut flat = Vec::new();
+            flat.extend_from_slice(user_asm.text_bytes());
+            flat.extend_from_slice(user_asm.rodata_bytes());
+            flat.extend_from_slice(user_asm.data_bytes());
+            let page_size = 4096usize;
+            let padded = (flat.len() + page_size - 1) / page_size * page_size;
+            flat.resize(padded, 0u8);
+
+            const USER_CODE_VA: u64 = 0x4000_0000;
+            if let Some(entry_off) = user_asm.symbol_address("_start") {
+                let entry_va = USER_CODE_VA + entry_off;
+                const USER_BINARY_PA: u64 = 0x87F0_0000;
+                const USER_META_PA:   u64 = 0x87EF_F000;
+                let user_size = flat.len() as u64;
+
+                let _ = vm.write_ram(USER_META_PA, &entry_va.to_le_bytes());
+                let _ = vm.write_ram(USER_META_PA + 8, &user_size.to_le_bytes());
+                let _ = vm.write_ram(USER_BINARY_PA, &flat);
+            }
+        }
+
         self.phase = BootPhase::Running {
-            vm: Box::new(VirtualMachine::new_kernel(assembled)),
+            vm,
             steps: 0,
             uart_text: String::new(),
             log_generation: 0,

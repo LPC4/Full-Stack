@@ -12,7 +12,7 @@ impl Clone for ExecutionView {
     fn clone(&self) -> Self {
         Self {
             #[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
-            wsl_receiver: None, // Don't clone the receiver
+            wsl_receiver: None,
         }
     }
 }
@@ -29,7 +29,6 @@ impl CompilerView for ExecutionView {
         state: &mut CompilationState,
         _catalog: &mut ProgramCatalog,
     ) {
-        // Button to run in QEMU via WSL
         #[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
         {
             ui.horizontal(|ui| {

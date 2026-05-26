@@ -1,0 +1,82 @@
+; Round-robin scheduler with a single ready queue.
+;
+; current_process: u64*     PCB of the currently-running process (null = idle).
+; ready_queue_head: u64*    linked-list head of READY processes  (null = empty).
+;
+; PCB offsets used here (see process.hll):
+;   [1] state          READY=0, EXITED=3
+;   [2] next           linked-list pointer
+;
+; scheduler_add(pcb)        append to ready queue.
+; schedule(frame, action)   save/restore trap frame and switch processes.
+;   action: 1 = yield (current stays READY), 2 = exit (current -> EXITED).
+;
+; Constants PROC_READY, PROC_EXITED are defined in process.hll.
+; Constants SYSACT_SCHEDULE, SYSACT_EXIT_SCHEDULE are defined in syscall.hll.
+
+external memcpy:     (dst: u8*, src: u8*, n: u64) -> u8*
+external kpanic:     (msg: u8*) -> ()
+external klog_ok:    (msg: u8*) -> ()
+external klog_int:   (label: u8*, val: i64) -> ()
+external klog_error: (msg: u8*) -> ()
+
+current_process:  u64* = null
+ready_queue_head: u64* = null
+
+scheduler_init: () -> () {
+    current_process  = null
+    ready_queue_head = null
+    klog_ok("scheduler ready".data)
+}
+
+; Append pcb to the tail of the ready queue.
+scheduler_add: (pcb: u64*) -> () {
+    @pcb[2] = 0
+    if ready_queue_head == null {
+        ready_queue_head = pcb
+        return
+    }
+    curr: u64* = ready_queue_head
+    while @curr[2] != 0 {
+        curr = u64*(@curr[2])
+    }
+    @curr[2] = u64(pcb)
+}
+
+; ----------------------------------------------------------------
+; Core context-switch routine.
+;
+; 1. Saves the current process's trap frame into its PCB.
+;    If  action == SYSACT_EXIT_SCHEDULE, marks it EXITED (not re-enqueued).
+;    If  action == SYSACT_SCHEDULE, marks it READY and re-appends to queue.
+; 2. Dequeues the next READY process.
+; 3. Restores its trap frame over the kernel stack.
+;
+; The caller (trap_handler) must NOT modify sepc after this call, the
+; restored frame already contains the correct sepc for the next process.
+; ----------------------------------------------------------------
+schedule: (frame: u64*, action: u64) -> () {
+    ; save current
+    if current_process != null {
+        memcpy(u8*(u64(current_process) + 40), u8*(frame), 288)
+
+        if action == 2 {                        ; SYSACT_EXIT_SCHEDULE
+            @current_process[1] = 3             ; PROC_EXITED
+        } else {
+            @current_process[1] = 0             ; PROC_READY
+            scheduler_add(current_process)
+        }
+    }
+
+    ; pick next
+    next: u64* = ready_queue_head
+    if next == null {
+        return  ; idle: no processes to run yet
+    }
+    ready_queue_head = u64*(@next[2])
+    @next[2] = 0
+
+    ; restore
+    current_process = next
+    memcpy(u8*(frame), u8*(u64(next) + 40), 288)
+}

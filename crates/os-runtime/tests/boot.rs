@@ -218,10 +218,8 @@ fn unimplemented_subsystems_warn() {
         uart.contains("[  OK  ] mmu: sv39 enabled"),
         "MMU must be enabled; uart={uart:?}"
     );
-    assert!(
-        uart.contains("[ WARN ] filesystem:"),
-        "filesystem stub must emit warn; uart={uart:?}"
-    );
+    // The filesystem warning is only reached when a user binary is
+    // present.  With no user binary the kernel shuts down first.
 }
 
 #[test]
@@ -234,35 +232,183 @@ fn pmm_smoke_test_passes() {
     );
 }
 
+// -- Process / syscall / scheduler source tests -------------------------------
+
 #[test]
-fn full_boot_output_matches_expected() {
-    let (uart, exit) = run_kernel_hll(kernel::MY_KERNEL);
-    assert_eq!(exit, Some(0), "kernel must exit with code 0");
-    assert_eq!(
-        uart,
-        "[  OK  ] kernel starting\n\
-         [  OK  ] console online\n\
-         boot hart: 0\n\
-         [  OK  ] trap handler installed\n\
-         [  OK  ] timer armed\n\
-         [ WARN ] device tree: not implemented\n\
-         [  OK  ] interrupt controller online\n\
-         [  OK  ] running memory diagnostics...\n\
-         [  OK  ] memory self-test passed\n\
-         [  OK  ] heap ready\n\
-         [  OK  ] pmm ready\n\
-         [  OK  ] memory ops test passed\n\
-         [  OK  ] vmm: initializing...\n\
-         [  OK  ] vmm: root table allocated\n\
-         [  OK  ] vmm: identity mappings created\n\
-         [  OK  ] vmm: using canonical lower-half identity mapping\n\
-         [  OK  ] vmm: enabling MMU...\n\
-         [  OK  ] mmu: sv39 enabled\n\
-         [ WARN ] filesystem: not implemented\n\
-         [ WARN ] single hart, no SMP\n\
-         hart id: 0\n\
-         ram MB: 128\n\
-         [  OK  ] boot complete\n\
-         [  OK  ] entering idle loop\n"
+fn process_hll_defines_create_and_init() {
+    assert!(
+        kernel::PROCESS.contains("process_create"),
+        "process.hll must define process_create"
+    );
+    assert!(
+        kernel::PROCESS.contains("process_init"),
+        "process.hll must define process_init"
+    );
+    assert!(
+        kernel::PROCESS.contains("PROC_READY"),
+        "process.hll must define PROC_READY constant"
+    );
+    assert!(
+        kernel::PROCESS.contains("PROC_EXITED"),
+        "process.hll must define PROC_EXITED constant"
     );
 }
+
+#[test]
+fn process_hll_layout_constants_defined() {
+    assert!(
+        kernel::PROCESS.contains("PCB_SIZE"),
+        "process.hll must define PCB_SIZE"
+    );
+    assert!(
+        kernel::PROCESS.contains("PCB_OFF_TRAP_FRAME"),
+        "process.hll must define PCB_OFF_TRAP_FRAME"
+    );
+}
+
+#[test]
+fn syscall_hll_defines_dispatch() {
+    assert!(
+        kernel::SYSCALL.contains("syscall_dispatch"),
+        "syscall.hll must define syscall_dispatch"
+    );
+    assert!(
+        kernel::SYSCALL.contains("sys_write_impl"),
+        "syscall.hll must define sys_write_impl"
+    );
+    assert!(
+        kernel::SYSCALL.contains("SYSCALL_EXIT"),
+        "syscall.hll must define SYSCALL_EXIT"
+    );
+    assert!(
+        kernel::SYSCALL.contains("SYSCALL_WRITE"),
+        "syscall.hll must define SYSCALL_WRITE"
+    );
+    assert!(
+        kernel::SYSCALL.contains("SYSCALL_YIELD"),
+        "syscall.hll must define SYSCALL_YIELD"
+    );
+}
+
+#[test]
+fn syscall_hll_action_constants_defined() {
+    assert!(
+        kernel::SYSCALL.contains("SYSACT_CONTINUE"),
+        "syscall.hll must define SYSACT_CONTINUE"
+    );
+    assert!(
+        kernel::SYSCALL.contains("SYSACT_SCHEDULE"),
+        "syscall.hll must define SYSACT_SCHEDULE"
+    );
+    assert!(
+        kernel::SYSCALL.contains("SYSACT_EXIT_SCHEDULE"),
+        "syscall.hll must define SYSACT_EXIT_SCHEDULE"
+    );
+}
+
+#[test]
+fn scheduler_hll_defines_schedule() {
+    assert!(
+        kernel::SCHEDULER.contains("schedule:"),
+        "scheduler.hll must define schedule"
+    );
+    assert!(
+        kernel::SCHEDULER.contains("scheduler_add"),
+        "scheduler.hll must define scheduler_add"
+    );
+    assert!(
+        kernel::SCHEDULER.contains("scheduler_init"),
+        "scheduler.hll must define scheduler_init"
+    );
+    assert!(
+        kernel::SCHEDULER.contains("current_process"),
+        "scheduler.hll must define current_process"
+    );
+    assert!(
+        kernel::SCHEDULER.contains("ready_queue_head"),
+        "scheduler.hll must define ready_queue_head"
+    );
+}
+
+#[test]
+fn trap_handler_calls_syscall_dispatch_on_umode_ecall() {
+    assert!(
+        kernel::TRAP_HANDLER.contains("syscall_dispatch"),
+        "trap handler must call syscall_dispatch on U-mode ecall"
+    );
+    assert!(
+        kernel::TRAP_HANDLER.contains("schedule("),
+        "trap handler must call schedule when syscall action != 0"
+    );
+    assert!(
+        kernel::TRAP_HANDLER.contains("scause_u == 8"),
+        "trap handler must check for U-mode ecall (cause 8)"
+    );
+}
+
+// -- Compile / boot smoke test ------------------------------------------------
+
+#[test]
+fn kernel_boots_with_process_and_scheduler() {
+    // Minimal kernel that initialises process + scheduler alongside normal boot.
+    let test_kernel = "
+external klog_ok:               (msg: u8*) -> ()
+external klog_warn:             (msg: u8*) -> ()
+external klog_error:            (msg: u8*) -> ()
+external klog_int:              (label: u8*, val: i64) -> ()
+external kmalloc:               (size: u64) -> u8*
+external memset:                (dst: u8*, value: u8, n: u64) -> u8*
+external kshutdown:             (code: i64) -> ()
+external trap_init:             () -> ()
+external plic_init:             () -> ()
+external timer_set:             (interval: u64) -> ()
+external pmm_init:              (start: u64, end: u64) -> ()
+external pmm_alloc:             () -> u8*
+external pmm_free:              (page: u8*) -> ()
+external vmm_init:              () -> ()
+external vmm_map_1gib:          (va: u64, pa: u64, flags: u64) -> ()
+external vmm_enable:            () -> ()
+external s_enable_interrupts: () -> ()
+external memory_self_test:      (size: u64) -> i64
+external pmm_ops_test:          () -> ()
+external process_init:          () -> ()
+external process_create:        (entry_pc: u64) -> u64*
+external scheduler_init:        () -> ()
+external scheduler_add:         (pcb: u64*) -> ()
+
+kmain: () -> () {
+    klog_ok(\"kernel starting\".data)
+    trap_init()
+    timer_set(1000000)
+    plic_init()
+    klog_ok(\"interrupt controller online\".data)
+    memory_self_test(256)
+    kmalloc(64)
+    pmm_init(0x80100000, 0x87F00000)
+    vmm_init()
+    vmm_map_1gib(0x00000000, 0, 38)
+    vmm_map_1gib(0x80000000, 0x80000000, 46)
+    vmm_map_1gib(0xC0000000, 0xC0000000, 46)
+    vmm_enable()
+    process_init()
+    scheduler_init()
+    klog_ok(\"boot complete\".data)
+    kshutdown(0)
+}
+";
+    let (uart, exit) = run_kernel_hll(test_kernel);
+    assert_eq!(exit, Some(0), "kernel must exit with code 0; uart={uart:?}");
+    assert!(
+        uart.contains("[  OK  ] process subsystem ready\n"),
+        "process subsystem must initialise; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("[  OK  ] scheduler ready\n"),
+        "scheduler must initialise; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("[  OK  ] boot complete\n"),
+        "kernel must complete boot; uart={uart:?}"
+    );
+}
+

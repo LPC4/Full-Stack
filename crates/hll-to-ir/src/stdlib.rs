@@ -38,6 +38,8 @@ pub fn get_stdlib_modules_for_mode(mode: TargetMode) -> Vec<(&'static str, &'sta
             ("memory_allocator", stdlib::MEMORY_ALLOCATOR),
             ("string_utils", stdlib::STRING_UTILS),
             ("runtime", stdlib::FREESTANDING_RUNTIME),
+            ("console", stdlib::FREESTANDING_CONSOLE),
+            ("entry", stdlib::FREESTANDING_ENTRY),
         ],
         TargetMode::Kernel => vec![
             ("types", stdlib::TYPES),
@@ -54,6 +56,9 @@ pub fn get_stdlib_modules_for_mode(mode: TargetMode) -> Vec<(&'static str, &'sta
             ("trap_handler", kernel::TRAP_HANDLER),
             ("pmm", kernel::PMM),
             ("vmm", kernel::VMM),
+            ("process", kernel::PROCESS),
+            ("syscall", kernel::SYSCALL),
+            ("scheduler", kernel::SCHEDULER),
         ],
     }
 }
@@ -138,6 +143,9 @@ pub fn get_kernel_stdlib_source() -> String {
         + kernel::TRAP_HANDLER.len()
         + kernel::PMM.len()
         + kernel::VMM.len()
+        + kernel::PROCESS.len()
+        + kernel::SYSCALL.len()
+        + kernel::SCHEDULER.len()
         + 512;
     let mut combined = String::with_capacity(capacity);
     append_section(&mut combined, "; --- stdlib: types ---\n", stdlib::TYPES);
@@ -186,15 +194,32 @@ pub fn get_kernel_stdlib_source() -> String {
         "; --- kernel: vmm ---\n",
         kernel::VMM,
     );
+    append_section(
+        &mut combined,
+        "; --- kernel: process ---\n",
+        kernel::PROCESS,
+    );
+    append_section(
+        &mut combined,
+        "; --- kernel: syscall ---\n",
+        kernel::SYSCALL,
+    );
+    append_section(
+        &mut combined,
+        "; --- kernel: scheduler ---\n",
+        kernel::SCHEDULER,
+    );
     combined
 }
 
-/// Freestanding stdlib: types, allocator, strings - no Linux syscalls, no `_start`.
+/// Freestanding stdlib: types, allocator, strings, panic, and `_start` entry wrapper.
 fn get_freestanding_stdlib_source() -> String {
     let capacity = stdlib::TYPES.len()
         + stdlib::MEMORY_ALLOCATOR.len()
         + stdlib::STRING_UTILS.len()
         + stdlib::FREESTANDING_RUNTIME.len()
+        + stdlib::FREESTANDING_CONSOLE.len()
+        + stdlib::FREESTANDING_ENTRY.len()
         + 256;
     let mut combined = String::with_capacity(capacity);
     append_section(&mut combined, "; --- stdlib: types ---\n", stdlib::TYPES);
@@ -212,6 +237,16 @@ fn get_freestanding_stdlib_source() -> String {
         &mut combined,
         "; --- stdlib: runtime (freestanding) ---\n",
         stdlib::FREESTANDING_RUNTIME,
+    );
+    append_section(
+        &mut combined,
+        "; --- stdlib: console (freestanding) ---\n",
+        stdlib::FREESTANDING_CONSOLE,
+    );
+    append_section(
+        &mut combined,
+        "; --- stdlib: entry (_start) ---\n",
+        stdlib::FREESTANDING_ENTRY,
     );
     combined
 }

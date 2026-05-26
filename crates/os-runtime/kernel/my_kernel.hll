@@ -4,8 +4,10 @@ external klog_ok:               (msg: u8*) -> ()
 external klog_warn:             (msg: u8*) -> ()
 external klog_error:            (msg: u8*) -> ()
 external klog_int:              (label: u8*, val: i64) -> ()
+external klog_hex:             (label: u8*, val: u64) -> ()
 external kmalloc:               (size: u64) -> u8*
 external memset:                (dst: u8*, value: u8, n: u64) -> u8*
+external memcpy:                (dst: u8*, src: u8*, n: u64) -> u8*
 external kshutdown:             (code: i64) -> ()
 external trap_init:             () -> ()
 external plic_init:             () -> ()
@@ -14,11 +16,30 @@ external pmm_init:              (start: u64, end: u64) -> ()
 external pmm_alloc:             () -> u8*
 external pmm_free:              (page: u8*) -> ()
 external vmm_init:              () -> ()
+external vmm_map:               (va: u64, pa: u64, flags: u64) -> ()
 external vmm_map_1gib:          (va: u64, pa: u64, flags: u64) -> ()
 external vmm_enable:            () -> ()
-external s_enable_interrupts: () -> ()
+external s_enable_interrupts:   () -> ()
 external memory_self_test:      (size: u64) -> i64
 external pmm_ops_test:          () -> ()
+external process_init:          () -> ()
+external process_create:        (entry_pc: u64) -> u64*
+external scheduler_init:        () -> ()
+external scheduler_add:         (pcb: u64*) -> ()
+
+; Physical addresses where the test harness places user binary metadata.
+const USER_BINARY_PA = 0x87F00000
+const USER_META_PA   = 0x87EFF000   ; [0]=entry_va (u64), [8]=size_bytes (u64)
+const USER_CODE_VA   = 0x40000000
+
+; Scratch globals for spawn_user_process (asm blocks can reference globals).
+user_entry: u64 = 0
+user_size:  u64 = 0
+user_spawned: u64 = 0
+
+user_entry_value: () -> u64 {
+    return user_entry
+}
 
 ; Kernel entry point.
 kmain: () -> () {
@@ -35,16 +56,30 @@ kmain: () -> () {
     boot_pmm()
     pmm_ops_test()
     boot_vmm()
+
+    process_init()
+    scheduler_init()
+
+    spawn_user_process()
+
+    if user_spawned == 0 {
+        kshutdown(i64(0))
+    }
+
+    boot_final()
+
+    ; Enable interrupts only after a runnable process exists in the
+    ; scheduler queue, otherwise the first timer tick panics.
     boot_interrupts()
 
     ; TODO: load and initialize filesystem drivers
     klog_warn("filesystem: not implemented".data)
 
-    ; TODO: start scheduler and bring up secondary harts (SMP)
-    klog_warn("single hart, no SMP".data)
-
-    boot_final()
-    kshutdown(0)
+    ; Idle loop, the scheduler takes over via timer preemption / yield.
+    klog_ok("entering scheduler idle loop".data)
+    while 1 == 1 {
+        asm { wfi }
+    }
 }
 
 boot_console: () -> () {
@@ -56,6 +91,7 @@ boot_console: () -> () {
 boot_traps: () -> () {
     trap_init()
     klog_ok("trap handler installed".data)
+    klog_ok("syscall handler online".data)
 }
 
 boot_timer: () -> () {
@@ -73,7 +109,7 @@ boot_memory_diagnostics: () -> () {
     test_result: i64 = memory_self_test(256)
     if test_result == 0 {
         klog_error("halt: memory test failed".data)
-        kshutdown(1)
+        kshutdown(i64(1))
     }
 }
 
@@ -88,13 +124,13 @@ boot_pmm: () -> () {
     page1: u8* = pmm_alloc()
     if page1 == null {
         klog_error("halt: pmm alloc failed".data)
-        kshutdown(1)
+        kshutdown(i64(1))
     }
     pmm_free(page1)
     page2: u8* = pmm_alloc()
     if page2 != page1 {
         klog_error("halt: pmm free list failed".data)
-        kshutdown(1)
+        kshutdown(i64(1))
     }
     klog_ok("pmm ready".data)
 }
@@ -104,10 +140,9 @@ boot_vmm: () -> () {
     vmm_init()
     klog_ok("vmm: root table allocated".data)
 
-    ; Create identity mappings for MMU transition (already canonical in lower half).
-    vmm_map_1gib(0x00000000, 0, 38)              ; MMIO identity
-    vmm_map_1gib(0x80000000, 0x80000000, 46)     ; RAM identity (code execution)
-    vmm_map_1gib(0xC0000000, 0xC0000000, 46)     ; Stack/heap identity
+    vmm_map_1gib(0x00000000, 0, 38)
+    vmm_map_1gib(0x80000000, 0x80000000, 46)
+    vmm_map_1gib(0xC0000000, 0xC0000000, 46)
     klog_ok("vmm: identity mappings created".data)
 
     klog_ok("vmm: using canonical lower-half identity mapping".data)
@@ -124,5 +159,95 @@ boot_final: () -> () {
     klog_int("hart id".data, 0)
     klog_int("ram MB".data, 128)
     klog_ok("boot complete".data)
-    klog_ok("entering idle loop".data)
+}
+
+spawn_user_process: () -> () {
+    klog_ok("spawn_user_process: entry".data)
+
+    ; Construct the base address
+    binary_pa: u64 = u64(0x87F00000)
+    klog_hex("spawn: computed USER_BINARY_PA".data, binary_pa)
+
+    ; Use computed value for actual address
+    src_user_pa: u64 = binary_pa
+
+    ; Probe: read the first qword at USER_BINARY_PA.
+    ; If it is 0, there is no user binary loaded.
+    header_ptr: u64* = u64*(USER_BINARY_PA)
+    if @header_ptr[0] == 0 {
+        klog_warn("no user binary, skipping user process".data)
+        return
+    }
+
+    ; Read entry VA and total size from the metadata page.
+    klog_ok("spawn: reading metadata asm...".data)
+    asm {
+        li   t0, 0x87EFF000     ; USER_META_PA
+        ld   t0, 0(t0)           ; entry VA
+        la   t1, user_entry
+        sd   t0, 0(t1)
+
+        li   t0, 0x87EFF008     ; USER_META_PA + 8
+        ld   t0, 0(t0)           ; size bytes
+        la   t1, user_size
+        sd   t0, 0(t1)
+    }
+    klog_hex("spawn: user_entry_va".data, user_entry)
+    klog_hex("spawn: user_size (bytes)".data, user_size)
+
+    if user_entry == 0 {
+        klog_warn("spawn: user_entry is 0, skipping".data)
+        return
+    }
+
+    if user_size == 0 {
+        klog_warn("spawn: user_size is 0, skipping".data)
+        return
+    }
+
+    ; Copy all user pages into newly allocated physical pages and map them.
+    page_size: u64 = 4096
+    rounded_size: u64 = (user_size + page_size - 1) / page_size
+    pages: u64 = rounded_size
+    klog_hex("spawn: calculated page count".data, pages)
+
+    i: u64 = 0
+    while i < pages {
+        klog_hex("spawn: processing page".data, i)
+
+        dst_page: u8* = pmm_alloc()
+        if dst_page == null {
+            klog_error("halt: user page alloc failed".data)
+            kshutdown(i64(1))
+        }
+        klog_hex("spawn:   allocated physical page".data, u64(dst_page))
+
+        ; Compute source address for this page
+        offset: u64 = i * page_size
+        src_page_pa: u64 = src_user_pa + offset
+        klog_hex("spawn:   source page PA".data, src_page_pa)
+
+        ; For identity-mapped kernel VA, the physical address IS the VA
+        ; So we can safely pass it to memcpy and it will work through the MMU
+        klog_hex("spawn:   copying to dest".data, u64(dst_page))
+        memcpy(dst_page, u8*(src_page_pa), page_size)
+        klog_ok("spawn:   memcpy done".data)
+
+        user_va: u64 = USER_CODE_VA + offset
+        klog_hex("spawn:   mapping user VA".data, user_va)
+        klog_hex("spawn:   mapping to phys PA".data, u64(dst_page))
+
+        vmm_map(user_va, u64(dst_page), u64(30))  ; 30 = R+W+X+U (VMM_V added by vmm_map) for user writable executable code
+
+        i = i + u64(1)
+    }
+
+    klog_ok("spawn: all pages mapped".data)
+    pcb: u64* = process_create(user_entry)
+    klog_ok("spawn: pcb created".data)
+    scheduler_add(pcb)
+    klog_ok("spawn: pcb added to scheduler".data)
+
+    user_spawned = 1
+    klog_ok("user process spawned".data)
 }

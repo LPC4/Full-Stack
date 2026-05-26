@@ -660,7 +660,8 @@ impl Pipeline {
             | ExecResult::Ebreak
             | ExecResult::Mret
             | ExecResult::Sret
-            | ExecResult::SfenceVma => (pc.wrapping_add(4), false, false),
+            | ExecResult::SfenceVma
+            | ExecResult::Wfi { .. } => (pc.wrapping_add(4), false, false),
         }
     }
 

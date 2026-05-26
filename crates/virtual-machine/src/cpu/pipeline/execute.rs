@@ -92,6 +92,9 @@ pub enum ExecResult {
     Mret,
     Sret,
     SfenceVma,
+    Wfi {
+        next_pc: u64,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -238,6 +241,10 @@ pub fn execute(
         DecodedInsn::Sret => Ok(ExecResult::Sret),
 
         DecodedInsn::SfenceVma => Ok(ExecResult::SfenceVma),
+
+        DecodedInsn::Wfi => Ok(ExecResult::Wfi {
+            next_pc: pc.wrapping_add(4),
+        }),
 
         DecodedInsn::Csr {
             funct3,

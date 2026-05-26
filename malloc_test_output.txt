@@ -1,0 +1,282 @@
+warning: variable does not need to be mutable
+   --> crates\asm-to-binary\src\assembler\parser.rs:473:9
+    |
+473 |     let mut load32 = |reg: u8, val32: i32, out: &mut Vec<AsmToken>| {
+    |         ----^^^^^^
+    |         |
+    |         help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `parse_float_reg` is never used
+  --> crates\asm-to-binary\src\assembler\reg_parse.rs:46:8
+   |
+46 | pub fn parse_float_reg(name: &str) -> Option<Reg> {
+   |        ^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `0` is never read
+   --> crates\asm-to-binary\src\assembler\token.rs:103:13
+    |
+103 |     Comment(String),
+    |     ------- ^^^^^^
+    |     |
+    |     field in this variant
+    |
+    = note: `AsmToken` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+help: consider changing the field to be of unit type to suppress this warning while preserving the field numbering, or remove the field
+    |
+103 -     Comment(String),
+103 +     Comment(()),
+    |
+
+warning: method `is_code` is never used
+   --> crates\asm-to-binary\src\assembler\token.rs:128:12
+    |
+106 | impl AsmToken {
+    | ------------- method in this implementation
+...
+128 |     pub fn is_code(&self) -> bool {
+    |            ^^^^^^^
+
+warning: `asm_to_binary` (lib) generated 4 warnings (run `cargo fix --lib -p asm_to_binary` to apply 1 suggestion)
+warning: unused import: `CompilerError`
+ --> crates\hll-to-ir\src\compiler\mod.rs:4:20
+  |
+4 | pub use compiler::{CompilerError, HighLevelCompiler};
+  |                    ^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused imports: `Diagnostics`, `LoweringContext`, `SymbolInfo`, `SymbolTable`, and `TypeContext`
+ --> crates\hll-to-ir\src\compiler\mod.rs:6:34
+  |
+6 |     Diagnostic, DiagnosticLevel, Diagnostics, LoweringContext, SemanticAnalyzer, SymbolInfo,
+  |                                  ^^^^^^^^^^^  ^^^^^^^^^^^^^^^                    ^^^^^^^^^^
+7 |     SymbolTable, TypeContext,
+  |     ^^^^^^^^^^^  ^^^^^^^^^^^
+
+warning: fields `name`, `generics`, and `return_type` are never read
+  --> crates\hll-to-ir\src\compiler\compiler.rs:29:9
+   |
+28 | pub struct FunctionDecl {
+   |            ------------ fields in this struct
+29 |     pub name: String,
+   |         ^^^^
+30 |     pub generics: Vec<String>,
+   |         ^^^^^^^^
+31 |     pub params: Vec<crate::ast::Parameter>,
+32 |     pub return_type: Option<ReturnType>,
+   |         ^^^^^^^^^^^
+   |
+   = note: `FunctionDecl` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: variant `UnsupportedFeature` is never constructed
+  --> crates\hll-to-ir\src\compiler\compiler.rs:39:5
+   |
+37 | pub enum CompilerError {
+   |          ------------- variant in this enum
+38 |     UnsupportedDeclaration(String),
+39 |     UnsupportedFeature(&'static str),
+   |     ^^^^^^^^^^^^^^^^^^
+   |
+   = note: `CompilerError` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: methods `warn_at` and `error_at` are never used
+  --> crates\hll-to-ir\src\compiler\utility\diagnostics.rs:82:12
+   |
+62 | impl Diagnostics {
+   | ---------------- methods in this implementation
+...
+82 |     pub fn warn_at(&mut self, span: Span, message: impl Into<String>) {
+   |            ^^^^^^^
+...
+88 |     pub fn error_at(&mut self, span: Span, message: impl Into<String>) {
+   |            ^^^^^^^^
+
+warning: method `get_block_exit_values` is never used
+  --> crates\hll-to-ir\src\compiler\utility\lowering_context.rs:80:12
+   |
+21 | impl LoweringContext {
+   | -------------------- method in this implementation
+...
+80 |     pub fn get_block_exit_values(&self, label: &IrLabel) -> Option<HashMap<String, IrValue>> {
+   |            ^^^^^^^^^^^^^^^^^^^^^
+
+warning: variants `UndefinedType` and `InvalidCast` are never constructed
+  --> crates\hll-to-ir\src\compiler\utility\type_context.rs:11:5
+   |
+ 6 | pub enum TypeCheckError {
+   |          -------------- variants in this enum
+...
+11 |     UndefinedType(String),
+   |     ^^^^^^^^^^^^^
+...
+21 |     InvalidCast {
+   |     ^^^^^^^^^^^
+   |
+   = note: `TypeCheckError` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: associated items `new`, `check_gt`, `expect_gt`, and `expect_gt_in_type` are never used
+    --> crates\hll-to-ir\src\parser.rs:33:12
+     |
+  32 | impl<'a> Parser<'a> {
+     | ------------------- associated items in this implementation
+  33 |     pub fn new(tokens: Vec<Token<'a>>) -> Self {
+     |            ^^^
+...
+1221 |     fn check_gt(&self) -> bool {
+     |        ^^^^^^^^
+...
+1522 |     fn expect_gt(&mut self) -> Result<(), ParserError> {
+     |        ^^^^^^^^^
+...
+1535 |     fn expect_gt_in_type(&mut self) -> Result<(), ParserError> {
+     |        ^^^^^^^^^^^^^^^^^
+
+warning: variant `Semicolon` is never constructed
+  --> crates\hll-to-ir\src\token.rs:70:5
+   |
+31 | pub enum Token<'a> {
+   |          ----- variant in this enum
+...
+70 |     Semicolon, // Starts comment
+   |     ^^^^^^^^^
+   |
+   = note: `Token` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: `hll_to_ir` (lib) generated 9 warnings (run `cargo fix --lib -p hll_to_ir` to apply 2 suggestions)
+warning: methods `emit_fsd` and `copy_bytes_from_slot_to_addr` are never used
+   --> crates\ir-to-asm\src\compiler\assembly_emitter.rs:394:12
+    |
+ 33 | impl AssemblyEmitter {
+    | -------------------- methods in this implementation
+...
+394 |     pub fn emit_fsd(&mut self, base: Reg, src: Reg, offset: i32) {
+    |            ^^^^^^^^
+...
+547 |     pub fn copy_bytes_from_slot_to_addr(
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `type_alignment` is never used
+    --> crates\ir-to-asm\src\compiler\compiler_rv64.rs:1202:8
+     |
+  42 | impl CompilerRv64 {
+     | ----------------- method in this implementation
+...
+1202 |     fn type_alignment(&self, ty: &IrType) -> usize {
+     |        ^^^^^^^^^^^^^^
+
+warning: method `emit_li` is never used
+  --> crates\ir-to-asm\src\compiler\function_context.rs:18:8
+   |
+11 | pub trait Rv64Backend {
+   |           ----------- method in this trait
+...
+18 |     fn emit_li(&mut self, rd: Reg, imm: i64);
+   |        ^^^^^^^
+
+warning: field `name` is never read
+  --> crates\ir-to-asm\src\compiler\function_context.rs:26:9
+   |
+25 | pub struct FunctionContext {
+   |            --------------- field in this struct
+26 |     pub name: String,
+   |         ^^^^
+
+warning: methods `set_param_slot`, `set_reg_type`, and `resolve_type` are never used
+   --> crates\ir-to-asm\src\compiler\function_context.rs:122:12
+    |
+ 43 | impl FunctionContext {
+    | -------------------- methods in this implementation
+...
+122 |     pub fn set_param_slot(&mut self, reg: &IrRegister, slot: usize) {
+    |            ^^^^^^^^^^^^^^
+...
+143 |     pub fn set_reg_type(&mut self, reg: &IrRegister, ty: IrType) {
+    |            ^^^^^^^^^^^^
+...
+152 |     pub fn resolve_type(&self, ty: &IrType) -> IrType {
+    |            ^^^^^^^^^^^^
+
+warning: constant `AVAILABLE_REGS` is never used
+  --> crates\ir-to-asm\src\compiler\register_allocator.rs:10:7
+   |
+10 | const AVAILABLE_REGS: [Reg; 7] = [5, 6, 7, 28, 29, 30, 31]; // t0-t2, t3-t6
+   |       ^^^^^^^^^^^^^^
+
+warning: variants `Physical` and `StackSlot` are never constructed
+  --> crates\ir-to-asm\src\compiler\register_allocator.rs:27:5
+   |
+26 | pub enum Allocation {
+   |          ---------- variants in this enum
+27 |     Physical(Reg),
+   |     ^^^^^^^^
+28 |     StackSlot(usize),
+   |     ^^^^^^^^^
+   |
+   = note: `Allocation` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: methods `allocate_slots`, `linear_scan_allocate`, `is_allocatable_interval`, `expire_old_intervals`, and `spill_at_interval` are never used
+   --> crates\ir-to-asm\src\compiler\register_allocator.rs:39:12
+    |
+ 31 | impl RegisterAllocator {
+    | ---------------------- methods in this implementation
+...
+ 39 |     pub fn allocate_slots(
+    |            ^^^^^^^^^^^^^^
+...
+407 |     fn linear_scan_allocate(
+    |        ^^^^^^^^^^^^^^^^^^^^
+...
+440 |     fn is_allocatable_interval(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^
+...
+459 |     fn expire_old_intervals(
+    |        ^^^^^^^^^^^^^^^^^^^^
+...
+481 |     fn spill_at_interval(
+    |        ^^^^^^^^^^^^^^^^^
+
+warning: `ir_to_asm` (lib) generated 8 warnings
+warning: unused import: `TargetMode`
+ --> C:\Users\liamd\RustroverProjects\Full-Stack\tests\integration\platform_stdlib.rs:1:61
+  |
+1 | use full_stack::compilation_pipeline::{CompilationPipeline, TargetMode};
+  |                                                             ^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `full_stack::view::ProgramKind`
+   --> src\app\mod.rs:727:13
+    |
+727 |         use full_stack::view::ProgramKind;
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: use of deprecated associated function `egui::ComboBox::from_id_source`: Renamed from_id_salt
+   --> src\app\mod.rs:857:37
+    |
+857 |                     egui::ComboBox::from_id_source("inject_program_list")
+    |                                     ^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: `full_stack` (test "all") generated 1 warning (run `cargo fix --test "all" -p full_stack` to apply 1 suggestion)
+warning: `full_stack` (bin "full_stack") generated 2 warnings (run `cargo fix --bin "full_stack" -p full_stack` to apply 1 suggestion)
+warning: `full_stack` (bin "full_stack" test) generated 2 warnings (2 duplicates)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.56s
+     Running unittests src\lib.rs (target\debug\deps\full_stack-7be9483b9955199c.exe)
+     Running unittests src\cli\main.rs (target\debug\deps\fsc-e81f0461f14d213a.exe)
+     Running unittests src\main.rs (target\debug\deps\full_stack-d15950dbbc350472.exe)
+     Running tests\all.rs (target\debug\deps\all-f531c89a8dd689cd.exe)
+
+thread 'tests_integration_vm_execution::debug_malloc_ir' (18936) panicked at C:\Users\liamd\RustroverProjects\Full-Stack\tests\integration\vm_execution.rs:490:5:
+expected Halted(42), got Continue
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+error: test failed, to rerun pass `-p full_stack --test all`

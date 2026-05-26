@@ -2,8 +2,6 @@
 ; The assembly stvec_entry is the raw entry point pointed to by stvec.
 ; It saves all GPRs + S-mode CSRs into a 288-byte frame on the stack,
 ; calls trap_handler(frame), then restores state and returns via sret.
-;
-; Depends on: trap_handler (from trap_handler.hll, in the kernel stdlib bundle).
 
 external trap_handler: (frame: u64*) -> ()
 
@@ -11,6 +9,13 @@ external trap_handler: (frame: u64*) -> ()
 _s_trap_host: () -> () {
     asm {
         stvec_entry:
+
+        ; Set SUM so S-mode can access the user stack page when sp
+        ; belongs to a user process (after a context switch).
+        csrr t0, sstatus
+        li   t1, 0x40000        ; SUM = bit 18
+        or   t0, t0, t1
+        csrw sstatus, t0
 
         ; Allocate trap frame: 288 bytes (x0..x31 * 8 + sepc + scause + stval + sstatus)
         addi sp, sp, -288
@@ -118,9 +123,9 @@ trap_init: () -> () {
         ori  t0, t0, 544
         csrw sie, t0
 
-        ; sstatus: set SIE (bit 1 = 2)
+        ; sstatus: set UIE (bit 0) and SIE (bit 1)
         csrr t0, sstatus
-        ori  t0, t0, 2
+        ori  t0, t0, 3          ; UIE=1, SIE=1
         csrw sstatus, t0
     }
 }

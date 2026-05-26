@@ -236,6 +236,18 @@ impl VirtualMachine {
         self.bus.peek_bytes_raw(addr, len)
     }
 
+    /// Write raw bytes into physical RAM at `addr`.  Used to inject
+    /// pre-compiled user binaries alongside a loaded kernel image.
+    /// Flushes the L1/L2/L3 cache hierarchy afterward so subsequent
+    /// CPU reads see the new data.
+    pub fn write_ram(&mut self, addr: u64, data: &[u8]) -> Result<(), VmError> {
+        for (i, &byte) in data.iter().enumerate() {
+            self.bus.write_byte(addr + i as u64, byte)?;
+        }
+        self.bus.cold_cache_reset();
+        Ok(())
+    }
+
     pub fn push_uart_rx(&mut self, byte: u8) {
         self.bus.uart_mut().receive(byte);
     }

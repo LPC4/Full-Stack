@@ -87,6 +87,13 @@ pub mod stdlib {
         env!("CARGO_MANIFEST_DIR"),
         "/stdlib/freestanding/console.hll"
     ));
+
+    /// Freestanding entry wrapper: `_start` calls `main`, then halts via SYSCON.
+    /// ONLY included in pure freestanding mode, kernel has its own `_kernel_start`.
+    pub const FREESTANDING_ENTRY: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/stdlib/freestanding/entry.hll"
+    ));
 }
 
 /// Kernel-mode HLL source fragments.
@@ -141,6 +148,27 @@ pub mod kernel {
         "/kernel/vmm.hll"
     ));
 
+    /// Process Control Block and lifecycle: `process_init`, `process_create`.
+    /// Depends on `pmm_alloc`, `vmm_map`, `kmalloc`, `memset`, `memcpy`.
+    pub const PROCESS: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/kernel/process.hll"
+    ));
+
+    /// Syscall dispatch: `syscall_dispatch`, `sys_write_impl`.
+    /// Depends on `klog_int`, `klog_error`.
+    pub const SYSCALL: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/kernel/syscall.hll"
+    ));
+
+    /// Round-robin scheduler: `scheduler_init`, `scheduler_add`, `schedule`.
+    /// Depends on `memcpy`, `kpanic`, `klog_*`.
+    pub const SCHEDULER: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/kernel/scheduler.hll"
+    ));
+
     /// Reference kernel: full boot sequence demonstrating real and stub subsystems.
     /// Defines `kmain`; depends on the kernel stdlib bundle.
     pub const MY_KERNEL: &str = include_str!(concat!(
@@ -148,3 +176,13 @@ pub mod kernel {
         "/kernel/my_kernel.hll"
     ));
 }
+
+/// User-space example programs.
+pub mod user {
+    /// Hello-world user program: writes a greeting via ecall, then yields forever.
+    pub const USER_HELLO: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/user/user_hello.hll"
+    ));
+}
+
