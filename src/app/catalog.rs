@@ -1,5 +1,5 @@
 use egui::RichText;
-use full_stack::view::{ui_theme, ProgramKind};
+use full_stack::view::{ProgramKind, ui_theme};
 
 use super::{CatalogExportKind, FullStackApp};
 
@@ -27,7 +27,11 @@ impl FullStackApp {
 
             #[cfg(not(target_arch = "wasm32"))]
             ui.horizontal(|ui| {
-                let import_label = if self.show_import_controls { "Import v" } else { "Import" };
+                let import_label = if self.show_import_controls {
+                    "Import v"
+                } else {
+                    "Import"
+                };
                 if ui
                     .button(import_label)
                     .on_hover_text("Import a .hll file from disk")
@@ -38,7 +42,11 @@ impl FullStackApp {
                         self.show_export_controls = false;
                     }
                 }
-                let export_label = if self.show_export_controls { "Export v" } else { "Export" };
+                let export_label = if self.show_export_controls {
+                    "Export v"
+                } else {
+                    "Export"
+                };
                 if ui
                     .button(export_label)
                     .on_hover_text("Export the current program, assembly, or ELF image")
@@ -222,8 +230,7 @@ impl FullStackApp {
     fn export_selected_output_to_disk(&mut self) {
         let path = self.export_disk_path.trim().to_owned();
         if path.is_empty() {
-            self.catalog_message =
-                Some("enter a file path to export the selected file".to_owned());
+            self.catalog_message = Some("enter a file path to export the selected file".to_owned());
             return;
         }
 

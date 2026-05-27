@@ -58,5 +58,3 @@ pub fn generate_rom_image() -> Vec<u8> {
         .expect("ROM assembly failed - check crates/os-runtime/boot/rom.s");
     output.text_bytes().to_vec()
 }
-
-

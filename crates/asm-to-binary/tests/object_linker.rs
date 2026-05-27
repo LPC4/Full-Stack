@@ -47,12 +47,20 @@ fn links_two_objects_and_resolves_call_relocation() {
     let user_obj = Assembler::assemble(&user_tokens).expect("assemble user object");
     let stdlib_obj = Assembler::assemble(&stdlib_tokens).expect("assemble stdlib object");
 
-    assert_eq!(user_obj.relocation_count(), 1, "user object should contain unresolved call relocation");
+    assert_eq!(
+        user_obj.relocation_count(),
+        1,
+        "user object should contain unresolved call relocation"
+    );
 
     let linked = ObjectLinker::link(&[("stdlib", &stdlib_obj), ("user", &user_obj)])
         .expect("link should resolve puts from stdlib");
 
-    assert_eq!(linked.relocation_count(), 0, "linked output should be fully resolved");
+    assert_eq!(
+        linked.relocation_count(),
+        0,
+        "linked output should be fully resolved"
+    );
     assert!(linked.has_symbol("main"));
     assert!(linked.has_symbol("puts"));
 
@@ -65,8 +73,7 @@ fn links_two_objects_and_resolves_call_relocation() {
     let lo = sign_extend_12(jalr >> 20);
     let resolved_target = (main as i64) + hi + lo;
     assert_eq!(
-        resolved_target,
-        puts as i64,
+        resolved_target, puts as i64,
         "linked call pair should resolve to `puts`"
     );
 }
@@ -81,7 +88,8 @@ fn linking_fails_for_undefined_external_symbol() {
     ];
 
     let obj = Assembler::assemble(&tokens).expect("assemble object with unresolved external");
-    let err = ObjectLinker::link(&[("user", &obj)]).expect_err("link should fail on undefined symbol");
+    let err =
+        ObjectLinker::link(&[("user", &obj)]).expect_err("link should fail on undefined symbol");
     assert!(
         err.to_string().contains("missing_symbol"),
         "error should mention unresolved symbol name"
@@ -106,7 +114,8 @@ fn links_unresolved_jal_between_objects() {
     let user_obj = Assembler::assemble(&user_tokens).expect("assemble user object");
     let lib_obj = Assembler::assemble(&lib_tokens).expect("assemble library object");
 
-    let linked = ObjectLinker::link(&[("lib", &lib_obj), ("user", &user_obj)]).expect("link objects");
+    let linked =
+        ObjectLinker::link(&[("lib", &lib_obj), ("user", &user_obj)]).expect("link objects");
 
     let main = linked.symbol_address("main").expect("main symbol") as usize;
     let target = linked.symbol_address("target_ext").expect("target symbol") as i64;
@@ -120,8 +129,8 @@ fn links_unresolved_jal_between_objects() {
         offset -= 1 << 21;
     }
     let resolved = (main as i64) + (offset as i64);
-    assert_eq!(resolved, target, "JAL relocation should resolve to external target");
+    assert_eq!(
+        resolved, target,
+        "JAL relocation should resolve to external target"
+    );
 }
-
-
-

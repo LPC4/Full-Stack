@@ -61,8 +61,7 @@ fn kernel_asm_diag() {
             if (trimmed == "ret" || trimmed.starts_with("jr")) && {
                 in_vmm = false;
                 true
-            } {
-            }
+            } {}
         }
     }
 
@@ -132,7 +131,7 @@ fn link_stdlib_and_run(user_src: &str) -> (String, Option<i64>) {
 
     let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
-    
+
     pipeline.set_write_artifacts(false);
     let stdlib_result = pipeline
         .compile(&get_stdlib_source())
@@ -164,7 +163,7 @@ fn link_stdlib_and_run(user_src: &str) -> (String, Option<i64>) {
 fn stdlib_provides_malloc() {
     let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
-    
+
     pipeline.set_write_artifacts(false); // Don't create gigabytes of files during tests
     let result = pipeline
         .compile(&get_stdlib_source())
@@ -248,7 +247,7 @@ main: () -> i32 {
 fn stdlib_provides_runtime() {
     let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
-    
+
     pipeline.set_write_artifacts(false); // Don't create gigabytes of files during tests
     let result = pipeline
         .compile(&get_stdlib_source())
@@ -343,4 +342,3 @@ main: () -> i32 {
     assert_eq!(uart.trim_end_matches('\n'), "Hi");
     assert_eq!(exit, Some(0));
 }
-

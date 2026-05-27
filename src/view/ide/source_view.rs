@@ -32,9 +32,15 @@ impl CompilerView for SourceView {
         // Compact info chip for read-only programs
         if is_readonly {
             let (chip_label, hint) = if is_os {
-                ("os", "read-only: select Kernel mode and open the Machine window to boot")
+                (
+                    "os",
+                    "read-only: select Kernel mode and open the Machine window to boot",
+                )
             } else {
-                ("stdlib", "read-only: compile to inspect tokens, AST, IR, and assembly")
+                (
+                    "stdlib",
+                    "read-only: compile to inspect tokens, AST, IR, and assembly",
+                )
             };
             Frame::NONE
                 .fill(theme.surface_alt)
@@ -48,11 +54,7 @@ impl CompilerView for SourceView {
                                 .color(theme.text_dim),
                         );
                         ui.label(RichText::new("|").small().color(theme.border));
-                        ui.label(
-                            RichText::new(hint)
-                                .small()
-                                .color(theme.text_dim),
-                        );
+                        ui.label(RichText::new(hint).small().color(theme.text_dim));
                     });
                 });
             ui.add_space(2.0);

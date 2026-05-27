@@ -232,13 +232,13 @@ impl Pipeline {
             if bus.plic_mut().next_irq(0).is_some() {
                 // PLIC has a pending interrupt for hart 0 (context 1)
                 if (self.csrs.mideleg >> 9) & 1 == 1 {
-                    self.csrs.mip |= 1u64 << 9;     // SEIP - S-mode external interrupt pending
+                    self.csrs.mip |= 1u64 << 9; // SEIP - S-mode external interrupt pending
                 } else {
-                    self.csrs.mip |= 1u64 << 11;    // MEIP - M-mode external interrupt pending
+                    self.csrs.mip |= 1u64 << 11; // MEIP - M-mode external interrupt pending
                 }
             } else {
-                self.csrs.mip &= !(1u64 << 11);     // clear MEIP
-                self.csrs.mip &= !(1u64 << 9);      // clear SEIP
+                self.csrs.mip &= !(1u64 << 11); // clear MEIP
+                self.csrs.mip &= !(1u64 << 9); // clear SEIP
             }
         }
 

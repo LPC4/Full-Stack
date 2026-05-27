@@ -534,10 +534,9 @@ impl AssembledOutput {
         let _ = object_name;
         use elf64::{
             ELF64_HDR_SIZE, ELF64_SHDR_SIZE, ELF64_SYM_SIZE, ELFCLASS64, ELFDATA2LSB, ELFMAG,
-            EM_RISCV, ET_REL, EV_CURRENT, R_RISCV_CALL_PLT, R_RISCV_JAL, SHF_ALLOC,
-            SHF_EXECINSTR, SHF_WRITE,
-            R_RISCV_PCREL_HI20, SHT_NOBITS, SHT_PROGBITS, SHT_RELA, SHT_STRTAB, SHT_SYMTAB,
-            STB_GLOBAL, STB_LOCAL, STT_NOTYPE,
+            EM_RISCV, ET_REL, EV_CURRENT, R_RISCV_CALL_PLT, R_RISCV_JAL, R_RISCV_PCREL_HI20,
+            SHF_ALLOC, SHF_EXECINSTR, SHF_WRITE, SHT_NOBITS, SHT_PROGBITS, SHT_RELA, SHT_STRTAB,
+            SHT_SYMTAB, STB_GLOBAL, STB_LOCAL, STT_NOTYPE,
         };
 
         #[derive(Clone)]
@@ -904,10 +903,7 @@ impl AssembledOutput {
 
     /// Write an `ET_REL` object file to disk.
     pub fn write_object_file(&self, path: &Path) -> std::io::Result<()> {
-        let name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("out.o");
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("out.o");
         std::fs::write(path, self.to_object(name))
     }
 

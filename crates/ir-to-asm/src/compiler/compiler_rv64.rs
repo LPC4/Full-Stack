@@ -137,25 +137,34 @@ impl CompilerRv64 {
         // These functions need parameters to remain in a0-a7 / fa0-fa7 for the asm code to access them.
         // Only Comment, Alloc, Phi, Store, and InlineAsm instructions are allowed.
         let has_inline_asm = func.blocks.iter().any(|block| {
-            block.instructions.iter().any(|inst| matches!(inst, IrInstruction::InlineAsm { .. }))
+            block
+                .instructions
+                .iter()
+                .any(|inst| matches!(inst, IrInstruction::InlineAsm { .. }))
         });
-        let is_asm_only = has_inline_asm && func.blocks.iter().all(|block| {
-            block.instructions.iter().all(|inst| {
-                matches!(inst,
-                    IrInstruction::InlineAsm { .. }
-                    | IrInstruction::Comment(_)
-                    | IrInstruction::Alloc { .. }
-                    | IrInstruction::Store { .. }
-                    | IrInstruction::Phi { .. }
-                )
-            })
-        });
+        let is_asm_only = has_inline_asm
+            && func.blocks.iter().all(|block| {
+                block.instructions.iter().all(|inst| {
+                    matches!(
+                        inst,
+                        IrInstruction::InlineAsm { .. }
+                            | IrInstruction::Comment(_)
+                            | IrInstruction::Alloc { .. }
+                            | IrInstruction::Store { .. }
+                            | IrInstruction::Phi { .. }
+                    )
+                })
+            });
 
         ctx.set_preserve_param_registers(is_asm_only);
 
         if is_asm_only {
             if let Some(sret_slot) = sret_slot {
-                ctx.emit_parameter_spills_with_sret_for_inline_asm(&mut self.emitter, func, sret_slot);
+                ctx.emit_parameter_spills_with_sret_for_inline_asm(
+                    &mut self.emitter,
+                    func,
+                    sret_slot,
+                );
             } else {
                 ctx.emit_parameter_spills_for_inline_asm(&mut self.emitter, func);
             }
@@ -645,7 +654,7 @@ impl CompilerRv64 {
 
         self.emitter
             .emit_comment(&format!("Passing {} arguments", args.len()));
-        
+
         // Pass first 8 arguments in registers a0-a7
         for arg in args {
             if arg_index >= 8 {
@@ -655,24 +664,25 @@ impl CompilerRv64 {
             self.emitter.emit_mv(reg_for_arg(arg_index), arg_tmp);
             arg_index += 1;
         }
-        
+
         // Push remaining arguments (9th and beyond) onto the stack
         if args.len() > 8 {
-            self.emitter.emit_comment("Pushing excess arguments to stack");
+            self.emitter
+                .emit_comment("Pushing excess arguments to stack");
             // Calculate how many bytes we need to reserve on the stack
             let excess_count = args.len() - 8;
             let stack_bytes = (excess_count * 8) as i64;
-            
+
             // Align stack to 16 bytes (RISC-V ABI requirement)
             let aligned_bytes = if stack_bytes % 16 != 0 {
                 stack_bytes + (16 - stack_bytes % 16)
             } else {
                 stack_bytes
             };
-            
+
             // Adjust SP to make room for stack arguments
             self.emitter.emit_add_imm(SP, SP, -aligned_bytes);
-            
+
             // Store each excess argument
             for (i, arg) in args.iter().enumerate().skip(8) {
                 let arg_tmp = self.load_value_to_temp(arg, ctx, alloc);
@@ -682,7 +692,7 @@ impl CompilerRv64 {
         }
 
         self.emitter.emit_jal(RA, function);
-        
+
         // Restore SP after the call
         if args.len() > 8 {
             let excess_count = args.len() - 8;
@@ -706,22 +716,46 @@ impl CompilerRv64 {
                     if chunk0 == 8 {
                         self.emitter.emit_sd(SP, A0, dest_slot as i32);
                     } else if chunk0 >= 4 {
-                        self.emitter.emit_inst(RealInstruction::Sw(Sw::new(SP, A0, dest_slot as i32)));
+                        self.emitter.emit_inst(RealInstruction::Sw(Sw::new(
+                            SP,
+                            A0,
+                            dest_slot as i32,
+                        )));
                     } else if chunk0 >= 2 {
-                        self.emitter.emit_inst(RealInstruction::Sh(Sh::new(SP, A0, dest_slot as i32)));
+                        self.emitter.emit_inst(RealInstruction::Sh(Sh::new(
+                            SP,
+                            A0,
+                            dest_slot as i32,
+                        )));
                     } else {
-                        self.emitter.emit_inst(RealInstruction::Sb(Sb::new(SP, A0, dest_slot as i32)));
+                        self.emitter.emit_inst(RealInstruction::Sb(Sb::new(
+                            SP,
+                            A0,
+                            dest_slot as i32,
+                        )));
                     }
                     if total_size > 8 {
                         let remaining = total_size - 8;
                         if remaining >= 8 {
                             self.emitter.emit_sd(SP, A1, (dest_slot + 8) as i32);
                         } else if remaining >= 4 {
-                            self.emitter.emit_inst(RealInstruction::Sw(Sw::new(SP, A1, (dest_slot + 8) as i32)));
+                            self.emitter.emit_inst(RealInstruction::Sw(Sw::new(
+                                SP,
+                                A1,
+                                (dest_slot + 8) as i32,
+                            )));
                         } else if remaining >= 2 {
-                            self.emitter.emit_inst(RealInstruction::Sh(Sh::new(SP, A1, (dest_slot + 8) as i32)));
+                            self.emitter.emit_inst(RealInstruction::Sh(Sh::new(
+                                SP,
+                                A1,
+                                (dest_slot + 8) as i32,
+                            )));
                         } else {
-                            self.emitter.emit_inst(RealInstruction::Sb(Sb::new(SP, A1, (dest_slot + 8) as i32)));
+                            self.emitter.emit_inst(RealInstruction::Sb(Sb::new(
+                                SP,
+                                A1,
+                                (dest_slot + 8) as i32,
+                            )));
                         }
                     }
                 }

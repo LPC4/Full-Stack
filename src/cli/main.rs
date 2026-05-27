@@ -266,8 +266,7 @@ fn compile_user_objects(
         let compile_result = pipeline
             .compile(&src)
             .map_err(|e| CliError::Compile(e.to_string()))?;
-        let (_, tokens) =
-            pipeline.compile_ir_to_assembly_with_tokens(&compile_result.ir_program);
+        let (_, tokens) = pipeline.compile_ir_to_assembly_with_tokens(&compile_result.ir_program);
         let obj = pipeline
             .assemble_named(&stem, &tokens)
             .map_err(|e| CliError::Assemble(e.to_string()))?;
@@ -458,7 +457,7 @@ fn compile_stdlib_objects(mode: TargetMode) -> Result<Vec<(String, AssembledOutp
     let named: Vec<(String, AssembledOutput)> = modules
         .into_iter()
         .map(|(n, _)| n.to_owned())
-        .zip(objs.into_iter())
+        .zip(objs)
         .collect();
 
     Ok(named)

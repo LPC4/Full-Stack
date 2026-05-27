@@ -4,7 +4,11 @@ use super::{AccentPreset, AppSettings, FontScale, FullStackApp};
 
 impl FullStackApp {
     pub(super) fn apply_settings(&self, ctx: &egui::Context) {
-        let theme = self.settings.accent.theme().with_background(self.settings.bg);
+        let theme = self
+            .settings
+            .accent
+            .theme()
+            .with_background(self.settings.bg);
         set_ui_theme(theme);
         apply_ui_theme(ctx);
         ctx.set_zoom_factor(self.settings.font_scale.zoom());
@@ -132,7 +136,10 @@ impl FullStackApp {
             let painter = ui.painter();
             // Canvas strip
             painter.rect_filled(
-                egui::Rect::from_min_size(preview_rect.min, egui::vec2(preview_w * 0.20, preview_h)),
+                egui::Rect::from_min_size(
+                    preview_rect.min,
+                    egui::vec2(preview_w * 0.20, preview_h),
+                ),
                 0.0,
                 theme.canvas,
             );

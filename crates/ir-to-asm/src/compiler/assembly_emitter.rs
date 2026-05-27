@@ -249,7 +249,7 @@ impl AssemblyEmitter {
             // True 64-bit value: load upper 32 bits, shift left 32, OR in lower 32 bits
             let upper_32 = (imm >> 32) as u32;
             let lower_32 = (imm & 0xFFFF_FFFF) as u32;
-            
+
             // Load upper 32 bits into register
             let hi = ((upper_32 >> 12) & 0xFFFFF) as i32;
             let lo = (upper_32 & 0xFFF) as i32;
@@ -266,15 +266,19 @@ impl AssemblyEmitter {
                 self.emit_slli(rd, rd, 32);
                 self.emit_srli(rd, rd, 32);
             }
-            
+
             // Shift left 32 bits to make room for lower 32 bits
             self.emit_slli(rd, rd, 32);
-            
+
             // Load lower 32 bits into a temp register
             let tmp = self.alloc_temp_reg();
             let lo_hi = ((lower_32 >> 12) & 0xFFFFF) as i32;
             let lo_lo = (lower_32 & 0xFFF) as i32;
-            let lo_lo_signed = if lo_lo >= 0x800 { lo_lo - 0x1000 } else { lo_lo };
+            let lo_lo_signed = if lo_lo >= 0x800 {
+                lo_lo - 0x1000
+            } else {
+                lo_lo
+            };
             let lo_hi_adj = if lo_lo_signed < 0 { lo_hi + 1 } else { lo_hi };
             let lo_lui_imm = (lo_hi_adj as i64) << 12;
             self.emit_inst(RealInstruction::Lui(Lui::new(tmp, lo_lui_imm as i32)));
@@ -287,7 +291,7 @@ impl AssemblyEmitter {
                 self.emit_slli(tmp, tmp, 32);
                 self.emit_srli(tmp, tmp, 32);
             }
-            
+
             // OR the lower 32 bits into the result
             self.emit_or(rd, rd, tmp);
         }
@@ -736,7 +740,11 @@ mod tests {
     #[test]
     fn li_boundary_2047() {
         let insns = real_insns_for_li(2047);
-        assert_eq!(insns.len(), 1, "2047 (last addi-only value) should emit a single ADDI");
+        assert_eq!(
+            insns.len(),
+            1,
+            "2047 (last addi-only value) should emit a single ADDI"
+        );
         assert!(
             matches!(&insns[0], RealInstruction::Addi(a) if a.imm == 2047),
             "expected ADDI imm=2047, got {:?}",
@@ -747,7 +755,11 @@ mod tests {
     #[test]
     fn li_boundary_2048() {
         let insns = real_insns_for_li(2048);
-        assert_eq!(insns.len(), 2, "2048 (first LUI value) should emit LUI + ADDI");
+        assert_eq!(
+            insns.len(),
+            2,
+            "2048 (first LUI value) should emit LUI + ADDI"
+        );
         assert!(
             matches!(&insns[0], RealInstruction::Lui(_)),
             "first instruction should be LUI, got {:?}",
@@ -763,7 +775,11 @@ mod tests {
     #[test]
     fn li_max_signed_32bit() {
         let insns = real_insns_for_li(0x7FFF_FFFF);
-        assert_eq!(insns.len(), 2, "0x7FFF_FFFF should emit LUI + ADDI (no zero-extend)");
+        assert_eq!(
+            insns.len(),
+            2,
+            "0x7FFF_FFFF should emit LUI + ADDI (no zero-extend)"
+        );
         assert!(
             matches!(&insns[0], RealInstruction::Lui(_)),
             "first instruction should be LUI, got {:?}",
@@ -779,7 +795,11 @@ mod tests {
     #[test]
     fn li_sign_extend_boundary() {
         let insns = real_insns_for_li(0x8000_0000);
-        assert_eq!(insns.len(), 3, "0x8000_0000 should emit LUI + SLLI(32) + SRLI(32) for zero-extension");
+        assert_eq!(
+            insns.len(),
+            3,
+            "0x8000_0000 should emit LUI + SLLI(32) + SRLI(32) for zero-extension"
+        );
         assert!(
             matches!(&insns[0], RealInstruction::Lui(_)),
             "first instruction should be LUI, got {:?}",
@@ -800,7 +820,11 @@ mod tests {
     #[test]
     fn li_original_bug_value() {
         let insns = real_insns_for_li(0x8010_0000);
-        assert_eq!(insns.len(), 3, "0x8010_0000 should emit LUI + SLLI(32) + SRLI(32) for zero-extension");
+        assert_eq!(
+            insns.len(),
+            3,
+            "0x8010_0000 should emit LUI + SLLI(32) + SRLI(32) for zero-extension"
+        );
         assert!(
             matches!(&insns[0], RealInstruction::Lui(_)),
             "first instruction should be LUI, got {:?}",
@@ -822,7 +846,11 @@ mod tests {
     fn li_max_unsigned_32bit() {
         // 0xFFFF_FFFF: hi_adj overflows i32, but slli/srli sequence still produces the right value.
         let insns = real_insns_for_li(0xFFFF_FFFF);
-        assert_eq!(insns.len(), 4, "0xFFFF_FFFF should emit LUI + ADDI + SLLI(32) + SRLI(32)");
+        assert_eq!(
+            insns.len(),
+            4,
+            "0xFFFF_FFFF should emit LUI + ADDI + SLLI(32) + SRLI(32)"
+        );
         assert!(
             matches!(&insns[0], RealInstruction::Lui(_)),
             "first instruction should be LUI, got {:?}",
@@ -850,7 +878,11 @@ mod tests {
         // 0x1_0000_0000: falls into the else (true 64-bit) branch.
         // Expected sequence: LUI(rd,0) ADDI(rd,rd,1) SLLI(rd,rd,32) LUI(tmp,0) OR(rd,rd,tmp)
         let insns = real_insns_for_li(0x1_0000_0000);
-        assert_eq!(insns.len(), 5, "0x1_0000_0000 should emit 5-instruction 64-bit sequence");
+        assert_eq!(
+            insns.len(),
+            5,
+            "0x1_0000_0000 should emit 5-instruction 64-bit sequence"
+        );
         assert!(
             matches!(&insns[0], RealInstruction::Lui(_)),
             "insn[0] should be LUI (upper 32), got {:?}",

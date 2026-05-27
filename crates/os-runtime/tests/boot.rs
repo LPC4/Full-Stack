@@ -1,11 +1,11 @@
 use asm_to_binary::assembler::link_layout::LinkLayout;
-use asm_to_binary::{Assembler, AssembledOutput, ObjectLinker};
-use os_runtime::kernel;
+use asm_to_binary::{AssembledOutput, Assembler, ObjectLinker};
 use hll_to_ir::stdlib::get_kernel_stdlib_source;
 use hll_to_ir::{CompileConfig, HllCompiler, TargetMode};
 use ir_to_asm::CompilerRv64;
-use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
+use os_runtime::kernel;
 use std::sync::OnceLock;
+use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 
 // --- Helpers ---
 
@@ -43,8 +43,8 @@ fn run_kernel_hll(user_src: &str) -> (String, Option<i64>) {
     let mut user_rv = CompilerRv64::new();
     let (_, user_tokens) = user_rv.compile_with_tokens(&user_out.ir);
 
-    let user_obj = Assembler::assemble(&user_tokens)
-        .unwrap_or_else(|e| panic!("user assemble failed: {e}"));
+    let user_obj =
+        Assembler::assemble(&user_tokens).unwrap_or_else(|e| panic!("user assemble failed: {e}"));
     let mut assembled = ObjectLinker::link(&[("kernel_stdlib", &stdlib_obj), ("user", &user_obj)])
         .unwrap_or_else(|e| panic!("link failed: {e}"));
     let layout = LinkLayout::freestanding_kernel();
@@ -430,7 +430,8 @@ external kshutdown: (code: i64) -> ()
 
 #[test]
 fn malloc_returns_non_null_for_small_allocation() {
-    let src = MALLOC_PRELUDE.to_owned() + r#"
+    let src = MALLOC_PRELUDE.to_owned()
+        + r#"
 kmain: () -> () {
     p: u8* = malloc(8)
     if p == null {
@@ -446,7 +447,8 @@ kmain: () -> () {
 
 #[test]
 fn malloc_zero_size_returns_non_null() {
-    let src = MALLOC_PRELUDE.to_owned() + r#"
+    let src = MALLOC_PRELUDE.to_owned()
+        + r#"
 kmain: () -> () {
     p: u8* = malloc(0)
     if p == null {
@@ -457,12 +459,17 @@ kmain: () -> () {
 }
 "#;
     let (_, exit) = run_kernel_hll(&src);
-    assert_eq!(exit, Some(0), "malloc(0) must be coerced to malloc(1) and return non-null");
+    assert_eq!(
+        exit,
+        Some(0),
+        "malloc(0) must be coerced to malloc(1) and return non-null"
+    );
 }
 
 #[test]
 fn malloc_write_read_roundtrip() {
-    let src = MALLOC_PRELUDE.to_owned() + r#"
+    let src = MALLOC_PRELUDE.to_owned()
+        + r#"
 kmain: () -> () {
     p: i64* = i64*(malloc(8))
     if p == null {
@@ -478,12 +485,17 @@ kmain: () -> () {
 }
 "#;
     let (_, exit) = run_kernel_hll(&src);
-    assert_eq!(exit, Some(0), "write to and read back from malloc'd memory must round-trip");
+    assert_eq!(
+        exit,
+        Some(0),
+        "write to and read back from malloc'd memory must round-trip"
+    );
 }
 
 #[test]
 fn malloc_multiple_allocations_are_distinct() {
-    let src = MALLOC_PRELUDE.to_owned() + r#"
+    let src = MALLOC_PRELUDE.to_owned()
+        + r#"
 kmain: () -> () {
     a: u8* = malloc(8)
     b: u8* = malloc(8)
@@ -516,12 +528,17 @@ kmain: () -> () {
 }
 "#;
     let (_, exit) = run_kernel_hll(&src);
-    assert_eq!(exit, Some(0), "three consecutive malloc calls must return distinct pointers");
+    assert_eq!(
+        exit,
+        Some(0),
+        "three consecutive malloc calls must return distinct pointers"
+    );
 }
 
 #[test]
 fn free_marks_block_reusable_on_next_same_size_malloc() {
-    let src = MALLOC_PRELUDE.to_owned() + r#"
+    let src = MALLOC_PRELUDE.to_owned()
+        + r#"
 kmain: () -> () {
     p: u8* = malloc(64)
     if p == null {
@@ -551,19 +568,25 @@ kmain: () -> () {
 
 #[test]
 fn free_null_is_a_noop() {
-    let src = MALLOC_PRELUDE.to_owned() + r#"
+    let src = MALLOC_PRELUDE.to_owned()
+        + r#"
 kmain: () -> () {
     free(null)
     kshutdown(0)
 }
 "#;
     let (_, exit) = run_kernel_hll(&src);
-    assert_eq!(exit, Some(0), "free(null) must be a silent no-op and not crash");
+    assert_eq!(
+        exit,
+        Some(0),
+        "free(null) must be a silent no-op and not crash"
+    );
 }
 
 #[test]
 fn malloc_large_allocation_succeeds() {
-    let src = MALLOC_PRELUDE.to_owned() + r#"
+    let src = MALLOC_PRELUDE.to_owned()
+        + r#"
 kmain: () -> () {
     p: u8* = malloc(1024)
     if p == null {
@@ -574,12 +597,17 @@ kmain: () -> () {
 }
 "#;
     let (_, exit) = run_kernel_hll(&src);
-    assert_eq!(exit, Some(0), "malloc(1024) must succeed within the 64 KiB heap");
+    assert_eq!(
+        exit,
+        Some(0),
+        "malloc(1024) must succeed within the 64 KiB heap"
+    );
 }
 
 #[test]
 fn malloc_exhaustion_returns_null() {
-    let src = MALLOC_PRELUDE.to_owned() + r#"
+    let src = MALLOC_PRELUDE.to_owned()
+        + r#"
 kmain: () -> () {
     got_null: u64 = 0
     i: u64 = 0
@@ -705,9 +733,18 @@ kmain: () -> () {
 "#;
     let (uart, exit) = run_kernel_hll(src);
     assert_eq!(exit, Some(0), "kernel must exit cleanly; uart={uart:?}");
-    assert!(uart.contains("0"), "console_print_int(0) must output '0'; uart={uart:?}");
-    assert!(uart.contains("42"), "console_print_int(42) must output '42'; uart={uart:?}");
-    assert!(uart.contains("-7"), "console_print_int(-7) must output '-7'; uart={uart:?}");
+    assert!(
+        uart.contains("0"),
+        "console_print_int(0) must output '0'; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("42"),
+        "console_print_int(42) must output '42'; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("-7"),
+        "console_print_int(-7) must output '-7'; uart={uart:?}"
+    );
 }
 
 #[test]
@@ -732,4 +769,3 @@ kmain: () -> () {
         "console_print_hex(0) must output '0x0000000000000000'; uart={uart:?}"
     );
 }
-
