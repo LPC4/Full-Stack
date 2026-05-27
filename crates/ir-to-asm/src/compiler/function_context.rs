@@ -215,7 +215,12 @@ impl FunctionContext {
 
     /// Emit spills for function parameters that arrive in registers or on the stack.
     pub fn emit_parameter_spills(&self, backend: &mut impl Rv64Backend, func: &IrFunction) {
-        self.emit_parameter_spills_from_index(backend, func, 0, "--- Function Parameter Spills ---");
+        self.emit_parameter_spills_from_index(
+            backend,
+            func,
+            0,
+            "--- Function Parameter Spills ---",
+        );
     }
 
     /// Emit spills for function parameters when the function has an sret (hidden pointer) parameter.
@@ -240,7 +245,12 @@ impl FunctionContext {
             sret_slot as i32,
         );
 
-        self.emit_parameter_spills_from_index_with_header(backend, func, 1, "--- End Parameter Spills ---");
+        self.emit_parameter_spills_from_index_with_header(
+            backend,
+            func,
+            1,
+            "--- End Parameter Spills ---",
+        );
     }
 
     /// Emit spills for inline-asm-only functions.
@@ -254,7 +264,12 @@ impl FunctionContext {
         backend: &mut impl Rv64Backend,
         func: &IrFunction,
     ) {
-        self.emit_parameter_spills_from_index(backend, func, 8, "--- Function Parameter Spills (asm-only) ---");
+        self.emit_parameter_spills_from_index(
+            backend,
+            func,
+            8,
+            "--- Function Parameter Spills (asm-only) ---",
+        );
     }
 
     /// Emit spills for inline-asm-only functions that also use the hidden sret pointer.

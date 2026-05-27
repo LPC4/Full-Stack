@@ -157,7 +157,8 @@ impl TypeContext {
                     rhs_type
                 } else if !lhs_placeholder && rhs_placeholder {
                     lhs_type
-                } else if Self::is_integer_typename(lhs_type) && Self::is_integer_typename(rhs_type) {
+                } else if Self::is_integer_typename(lhs_type) && Self::is_integer_typename(rhs_type)
+                {
                     // Mixed integer widths: promote to wider type
                     Self::promote_integer_types(lhs_type, rhs_type)
                 } else {
@@ -187,7 +188,8 @@ impl TypeContext {
                     rhs_type
                 } else if !lhs_placeholder && rhs_placeholder {
                     lhs_type
-                } else if Self::is_integer_typename(lhs_type) && Self::is_integer_typename(rhs_type) {
+                } else if Self::is_integer_typename(lhs_type) && Self::is_integer_typename(rhs_type)
+                {
                     // Mixed integer widths: promote to wider type
                     Self::promote_integer_types(lhs_type, rhs_type)
                 } else {

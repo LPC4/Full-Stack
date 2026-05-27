@@ -1,3 +1,4 @@
+use super::{FullStackApp, ViewWrapper};
 use egui::{Frame, Layout, Margin, RichText, Stroke};
 use full_stack::compilation_pipeline::TargetMode;
 use full_stack::view::debug::SessionStatus;
@@ -7,34 +8,33 @@ use full_stack::view::{
     PrivilegeView, SourceView, StackView, SyscallTraceView, TokensView, TrapView, VmExecutionView,
     ui_theme,
 };
-use super::{FullStackApp, ViewWrapper};
 
 const IDE_VIEWS: &[(&str, fn() -> Box<dyn CompilerView>)] = &[
-    ("Source",           || Box::new(SourceView::default())),
-    ("Tokens",           || Box::new(TokensView::default())),
-    ("AST",              || Box::new(AstView::default())),
-    ("IR",               || Box::new(IrView::default())),
-    ("Assembly",         || Box::new(AssemblyView::default())),
-    ("CFG",              || Box::new(CfgView::default())),
-    ("Stack",            || Box::new(StackView::default())),
+    ("Source", || Box::new(SourceView::default())),
+    ("Tokens", || Box::new(TokensView::default())),
+    ("AST", || Box::new(AstView::default())),
+    ("IR", || Box::new(IrView::default())),
+    ("Assembly", || Box::new(AssemblyView::default())),
+    ("CFG", || Box::new(CfgView::default())),
+    ("Stack", || Box::new(StackView::default())),
     ("Execution (QEMU)", || Box::new(ExecutionView::default())),
-    ("VM Output",        || Box::new(VmExecutionView::default())),
+    ("VM Output", || Box::new(VmExecutionView::default())),
 ];
 
 const DEBUG_VIEWS: &[(&str, fn() -> Box<dyn CompilerView>)] = &[
-    ("CPU State",   || Box::new(CpuStateView::default())),
-    ("Pipeline",    || Box::new(PipelineView::default())),
-    ("Memory",      || Box::new(MemoryView::default())),
-    ("IO",          || Box::new(IoView::default())),
-    ("Cache",       || Box::new(CacheView::default())),
+    ("CPU State", || Box::new(CpuStateView::default())),
+    ("Pipeline", || Box::new(PipelineView::default())),
+    ("Memory", || Box::new(MemoryView::default())),
+    ("IO", || Box::new(IoView::default())),
+    ("Cache", || Box::new(CacheView::default())),
     ("Framebuffer", || Box::new(FramebufferView::default())),
 ];
 
 const OS_VIEWS: &[(&str, fn() -> Box<dyn CompilerView>)] = &[
-    ("Trap Inspector",       || Box::new(TrapView)),
-    ("Privilege Timeline",   || Box::new(PrivilegeView)),
-    ("Syscall Trace",        || Box::new(SyscallTraceView)),
-    ("Page Table Walker",    || Box::new(PageTableView)),
+    ("Trap Inspector", || Box::new(TrapView)),
+    ("Privilege Timeline", || Box::new(PrivilegeView)),
+    ("Syscall Trace", || Box::new(SyscallTraceView)),
+    ("Page Table Walker", || Box::new(PageTableView)),
     ("Interrupt Controller", || Box::new(InterruptView)),
 ];
 
@@ -183,8 +183,9 @@ impl FullStackApp {
                     if ui.button("Reset File").clicked() {
                         if let Some(program) = self.catalog.current_program() {
                             if program.is_custom() {
-                                self.catalog
-                                    .set_selected_source(full_stack::view::blank_custom_program_source());
+                                self.catalog.set_selected_source(
+                                    full_stack::view::blank_custom_program_source(),
+                                );
                             } else {
                                 self.catalog.ensure_consistency();
                             }
@@ -198,10 +199,22 @@ impl FullStackApp {
                     }
                     ui.separator();
                     ui.label(RichText::new("Add View").small().weak());
-                    add_view_menu(ui, "IDE", IDE_VIEWS, &mut self.pending_new_view, &mut self.next_view_id);
+                    add_view_menu(
+                        ui,
+                        "IDE",
+                        IDE_VIEWS,
+                        &mut self.pending_new_view,
+                        &mut self.next_view_id,
+                    );
                     ui.separator();
                     ui.label(RichText::new("OS Views").small().weak());
-                    add_view_menu(ui, "OS", OS_VIEWS, &mut self.pending_new_view, &mut self.next_view_id);
+                    add_view_menu(
+                        ui,
+                        "OS",
+                        OS_VIEWS,
+                        &mut self.pending_new_view,
+                        &mut self.next_view_id,
+                    );
                 });
             });
 
@@ -244,7 +257,12 @@ impl FullStackApp {
 
                 ui.add_space(20.0);
 
-                let pill_margin = Margin { left: 8, right: 8, top: 3, bottom: 3 };
+                let pill_margin = Margin {
+                    left: 8,
+                    right: 8,
+                    top: 3,
+                    bottom: 3,
+                };
                 match &self.compilation_state.error_summary.clone() {
                     Some(summary) => {
                         let short: String = summary.chars().take(40).collect();
@@ -287,9 +305,8 @@ impl FullStackApp {
 
             ui.separator();
 
-            ui.label("N:").on_hover_text(
-                "Number of instructions or cycles to advance per step button click",
-            );
+            ui.label("N:")
+                .on_hover_text("Number of instructions or cycles to advance per step button click");
             ui.add(
                 egui::TextEdit::singleline(&mut self.step_n_input)
                     .desired_width(36.0)
@@ -387,10 +404,22 @@ impl FullStackApp {
                     }
                     ui.separator();
                     ui.label(RichText::new("Add View").small().weak());
-                    add_view_menu(ui, "Debug", DEBUG_VIEWS, &mut self.pending_new_view, &mut self.next_view_id);
+                    add_view_menu(
+                        ui,
+                        "Debug",
+                        DEBUG_VIEWS,
+                        &mut self.pending_new_view,
+                        &mut self.next_view_id,
+                    );
                     ui.separator();
                     ui.label(RichText::new("OS Views").small().weak());
-                    add_view_menu(ui, "OS", OS_VIEWS, &mut self.pending_new_view, &mut self.next_view_id);
+                    add_view_menu(
+                        ui,
+                        "OS",
+                        OS_VIEWS,
+                        &mut self.pending_new_view,
+                        &mut self.next_view_id,
+                    );
                 });
             });
 

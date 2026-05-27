@@ -8,7 +8,9 @@ use asm_to_binary::assembler::link_layout::LinkLayout;
 use asm_to_binary::rv_instruction::RvInstruction;
 use egui::Color32;
 use egui_dock::{DockState, NodeIndex};
-use full_stack::compilation_pipeline::{AsmOutput, BinaryOutput, CompilationPipeline, IrOutput, PipelineResult, TargetMode};
+use full_stack::compilation_pipeline::{
+    AsmOutput, BinaryOutput, CompilationPipeline, IrOutput, PipelineResult, TargetMode,
+};
 use full_stack::target_mode::infer_target_mode_for_source;
 use full_stack::view::debug::DebugSession;
 use full_stack::view::ide::vm_execution_view::VmExecutionResult;
@@ -75,7 +77,7 @@ enum AccentPreset {
 }
 
 impl AccentPreset {
-    const ALL: &'static [Self] = & [
+    const ALL: &'static [Self] = &[
         Self::Blue,
         Self::Purple,
         Self::Teal,
@@ -86,23 +88,41 @@ impl AccentPreset {
 
     fn colors(self) -> (Color32, Color32) {
         match self {
-            Self::Blue   => (Color32::from_rgb(80, 120, 220), Color32::from_rgb(126, 104, 240)),
-            Self::Purple => (Color32::from_rgb(140, 90, 220),  Color32::from_rgb(170, 120, 240)),
-            Self::Teal   => (Color32::from_rgb(40, 180, 160),  Color32::from_rgb(70, 210, 190)),
-            Self::Green  => (Color32::from_rgb(50, 185, 90),   Color32::from_rgb(80, 215, 130)),
-            Self::Rose   => (Color32::from_rgb(215, 75, 110),  Color32::from_rgb(235, 105, 145)),
-            Self::Amber  => (Color32::from_rgb(215, 158, 40),  Color32::from_rgb(235, 185, 70)),
+            Self::Blue => (
+                Color32::from_rgb(80, 120, 220),
+                Color32::from_rgb(126, 104, 240),
+            ),
+            Self::Purple => (
+                Color32::from_rgb(140, 90, 220),
+                Color32::from_rgb(170, 120, 240),
+            ),
+            Self::Teal => (
+                Color32::from_rgb(40, 180, 160),
+                Color32::from_rgb(70, 210, 190),
+            ),
+            Self::Green => (
+                Color32::from_rgb(50, 185, 90),
+                Color32::from_rgb(80, 215, 130),
+            ),
+            Self::Rose => (
+                Color32::from_rgb(215, 75, 110),
+                Color32::from_rgb(235, 105, 145),
+            ),
+            Self::Amber => (
+                Color32::from_rgb(215, 158, 40),
+                Color32::from_rgb(235, 185, 70),
+            ),
         }
     }
 
     fn label(self) -> &'static str {
         match self {
-            Self::Blue   => "Blue",
+            Self::Blue => "Blue",
             Self::Purple => "Purple",
-            Self::Teal   => "Teal",
-            Self::Green  => "Green",
-            Self::Rose   => "Rose",
-            Self::Amber  => "Amber",
+            Self::Teal => "Teal",
+            Self::Green => "Green",
+            Self::Rose => "Rose",
+            Self::Amber => "Amber",
         }
     }
 
@@ -124,18 +144,18 @@ enum FontScale {
 impl FontScale {
     fn zoom(self) -> f32 {
         match self {
-            Self::Small  => 0.85,
+            Self::Small => 0.85,
             Self::Medium => 1.0,
-            Self::Large  => 1.2,
+            Self::Large => 1.2,
             Self::Larger => 1.5,
         }
     }
 
     fn label(self) -> &'static str {
         match self {
-            Self::Small  => "S",
+            Self::Small => "S",
             Self::Medium => "M",
-            Self::Large  => "L",
+            Self::Large => "L",
             Self::Larger => "XL",
         }
     }
@@ -332,7 +352,9 @@ impl FullStackApp {
             std_pipeline.set_string_prefix(Some("__kern_str_".to_owned()));
         }
 
-        match std_pipeline.compile_modules(&modules.iter().map(|(n, s)| (*n, *s)).collect::<Vec<_>>()) {
+        match std_pipeline
+            .compile_modules(&modules.iter().map(|(n, s)| (*n, *s)).collect::<Vec<_>>())
+        {
             Ok(objs) => {
                 self.stdlib_objects = modules
                     .iter()
@@ -369,7 +391,7 @@ impl FullStackApp {
     }
 
     fn reset_layout(&mut self) {
-        let views = vec! [
+        let views = vec![
             self.view::<SourceView>(),      // 0
             self.view::<TokensView>(),      // 1
             self.view::<AstView>(),         // 2
@@ -393,7 +415,7 @@ impl FullStackApp {
         surface.split_below(
             right,
             0.5,
-            vec! [
+            vec![
                 views[8].clone(), // VM Output - first so it's the default visible tab
                 views[4].clone(), // Assembly
                 views[5].clone(), // CFG
@@ -508,7 +530,7 @@ impl FullStackApp {
         let module_name = self
             .catalog
             .current_program()
-            .map(|p| p.name.trim().to_string())
+            .map(|p| p.name.trim().to_owned())
             .unwrap_or_else(|| "kernel".to_owned());
 
         // Compile the user kernel module in its own pipeline without concatenation.
@@ -522,7 +544,8 @@ impl FullStackApp {
         let kernel_objects = match kernel_user_pipeline.compile_modules(&kernel_modules) {
             Ok(objs) => objs,
             Err(e) => {
-                self.compilation_state.set_error(format!("kernel module compile error: {e}"));
+                self.compilation_state
+                    .set_error(format!("kernel module compile error: {e}"));
                 self.compilation_state.just_compiled = false;
                 return;
             }
@@ -543,11 +566,16 @@ impl FullStackApp {
 
         let final_assembled = match kernel_user_pipeline.link_assembled_objects_named(
             &all_names.join("_"),
-            &all_names.iter().zip(object_refs.iter()).map(|(n, o)| (*n, *o)).collect::<Vec<_>>()
+            &all_names
+                .iter()
+                .zip(object_refs.iter())
+                .map(|(n, o)| (*n, *o))
+                .collect::<Vec<_>>(),
         ) {
             Ok(asm) => asm,
             Err(e) => {
-                self.compilation_state.set_error(format!("kernel link error: {}", e.message));
+                self.compilation_state
+                    .set_error(format!("kernel link error: {}", e.message));
                 self.compilation_state.just_compiled = false;
                 return;
             }
@@ -558,15 +586,16 @@ impl FullStackApp {
             format!("{}{}", os_runtime::ROM_SOURCE, self.stdlib_asm);
 
         // Compile user source again for IR/ASM display; module objects are already built above.
-        let (user_ir_display, user_asm_display) =
-            match self.pipeline.compile(&user_source) {
-                Ok(compile_result) => {
-                    let ir_display = compile_result.ir_program.to_string();
-                    let asm_display = self.pipeline.compile_ir_to_assembly(&compile_result.ir_program);
-                    (Some(ir_display), Some(asm_display))
-                }
-                Err(_) => (None, None),
-            };
+        let (user_ir_display, user_asm_display) = match self.pipeline.compile(&user_source) {
+            Ok(compile_result) => {
+                let ir_display = compile_result.ir_program.to_string();
+                let asm_display = self
+                    .pipeline
+                    .compile_ir_to_assembly(&compile_result.ir_program);
+                (Some(ir_display), Some(asm_display))
+            }
+            Err(_) => (None, None),
+        };
 
         let binary_out = BinaryOutput {
             assembled: final_assembled,
@@ -576,7 +605,10 @@ impl FullStackApp {
             lex: None,
             parse: None,
             ir: user_ir_display.map(|display| IrOutput { display }),
-            asm: user_asm_display.map(|display| AsmOutput { tokens: vec![], display }),
+            asm: user_asm_display.map(|display| AsmOutput {
+                tokens: vec![],
+                display,
+            }),
             binary: Some(binary_out),
             assembler_error: None,
             exec: None,
@@ -709,12 +741,16 @@ impl FullStackApp {
     /// Compile the program with the given id as Hosted and store the result in
     /// `compilation_state.last_hosted_binary` on success.
     fn compile_and_store_hosted(&mut self, program_id: &str) -> Result<(), String> {
-        use full_stack::view::ProgramKind;
+        
         // Find program source by id
-        let program_opt = self.catalog.all_programs().iter().find(|p| p.id == program_id);
+        let program_opt = self
+            .catalog
+            .all_programs()
+            .iter()
+            .find(|p| p.id == program_id);
         let program = match program_opt {
             Some(p) => p,
-            None => return Err(format!("program id not found: {}", program_id)),
+            None => return Err(format!("program id not found: {program_id}")),
         };
 
         // Build pipeline and compile concatenated stdlib + program source
@@ -723,14 +759,18 @@ impl FullStackApp {
         user_pipeline.set_write_artifacts(false);
         user_pipeline.set_type_prelude(get_stdlib_type_prelude());
 
-        let user_source = format!("{}\n{}", get_stdlib_source_for_mode(TargetMode::Hosted), program.source);
+        let user_source = format!(
+            "{}\n{}",
+            get_stdlib_source_for_mode(TargetMode::Hosted),
+            program.source
+        );
         let result = match user_pipeline.run_full(&user_source, None) {
             r if r.has_errors() => return Err(r.format_diagnostics()),
             r => r,
         };
 
         if let Some(ref asm_err) = result.assembler_error {
-            return Err(format!("assembler error: {}", asm_err));
+            return Err(format!("assembler error: {asm_err}"));
         }
 
         if let Some(bin) = result.binary.as_ref() {
@@ -832,7 +872,10 @@ impl eframe::App for FullStackApp {
 
                     let mut selected_label = "None".to_owned();
                     if !self.selected_inject_program_id.is_empty() {
-                        if let Some(p) = programs.iter().find(|p| p.id == self.selected_inject_program_id) {
+                        if let Some(p) = programs
+                            .iter()
+                            .find(|p| p.id == self.selected_inject_program_id)
+                        {
                             selected_label = p.name.clone();
                         }
                     }
@@ -840,7 +883,13 @@ impl eframe::App for FullStackApp {
                     egui::ComboBox::from_id_source("inject_program_list")
                         .selected_text(selected_label.clone())
                         .show_ui(ui, |ui| {
-                            if ui.selectable_label(self.selected_inject_program_id.is_empty(), "None").clicked() {
+                            if ui
+                                .selectable_label(
+                                    self.selected_inject_program_id.is_empty(),
+                                    "None",
+                                )
+                                .clicked()
+                            {
                                 self.selected_inject_program_id.clear();
                             }
                             for p in &programs {
@@ -854,7 +903,8 @@ impl eframe::App for FullStackApp {
                                             self.machine_window.selected_user_inject = true;
                                         }
                                         Err(e) => {
-                                            self.compilation_state.set_error(format!("hosted compile failed: {}", e));
+                                            self.compilation_state
+                                                .set_error(format!("hosted compile failed: {e}"));
                                         }
                                     }
                                 }
@@ -865,7 +915,7 @@ impl eframe::App for FullStackApp {
                         ui.colored_label(full_stack::view::ui_theme().text_dim, "(none selected)");
                     } else if let Some(ref asm) = self.compilation_state.last_hosted_binary {
                         let size = asm.to_flat_binary().len();
-                        ui.label(format!("size: {} bytes", size));
+                        ui.label(format!("size: {size} bytes"));
                     }
                 });
 
@@ -890,10 +940,7 @@ impl eframe::App for FullStackApp {
             .open(&mut show_settings)
             .resizable(false)
             .default_width(280.0)
-            .default_pos(egui::pos2(
-                ui.ctx().content_rect().right() - 300.0,
-                54.0,
-            ))
+            .default_pos(egui::pos2(ui.ctx().content_rect().right() - 300.0, 54.0))
             .show(ui.ctx(), |ui| {
                 self.settings_window_ui(ui);
             });

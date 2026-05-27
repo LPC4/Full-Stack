@@ -26,7 +26,7 @@ pub struct Parser<'a> {
     pub tokens: Vec<Token<'a>>,
     pub spans: Vec<Span>,
     pub pos: usize,
-    pub pending_gt_from_shr: bool,  // Track if we have a virtual `>` waiting from a split `>>`
+    pub pending_gt_from_shr: bool, // Track if we have a virtual `>` waiting from a split `>>`
 }
 
 impl<'a> Parser<'a> {
@@ -759,11 +759,11 @@ impl<'a> Parser<'a> {
                                 Some(Token::Gt) | Some(Token::Shr) | Some(Token::Gte) => {
                                     break;
                                 }
-                               _ => {
-                                   if self.pending_gt_from_shr {
-                                       break;
-                                   }
-                               }
+                                _ => {
+                                    if self.pending_gt_from_shr {
+                                        break;
+                                    }
+                                }
                             }
                         }
                     }
@@ -1228,7 +1228,10 @@ impl<'a> Parser<'a> {
         if self.pending_gt_from_shr {
             return true;
         }
-        matches!(self.peek(), Some(Token::Gt) | Some(Token::Shr) | Some(Token::Gte))
+        matches!(
+            self.peek(),
+            Some(Token::Gt) | Some(Token::Shr) | Some(Token::Gte)
+        )
     }
 
     fn match_assign(&mut self) -> bool {

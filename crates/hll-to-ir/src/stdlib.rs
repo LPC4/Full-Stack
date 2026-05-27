@@ -1,7 +1,7 @@
 use os_runtime::{kernel, stdlib};
 
-use crate::ir::{IntWidth, IrType};
 use crate::TargetMode;
+use crate::ir::{IntWidth, IrType};
 
 fn append_section(buf: &mut String, header: &str, content: &str) {
     buf.push_str(header);
@@ -171,8 +171,16 @@ pub fn get_kernel_stdlib_source() -> String {
         stdlib::FREESTANDING_CONSOLE,
     );
     append_section(&mut combined, "; --- stdlib: klog ---\n", stdlib::KLOG);
-    append_section(&mut combined, "; --- kernel: trap entry ---\n", kernel::TRAP_ENTRY);
-    append_section(&mut combined, "; --- kernel: utilities ---\n", kernel::UTILITIES);
+    append_section(
+        &mut combined,
+        "; --- kernel: trap entry ---\n",
+        kernel::TRAP_ENTRY,
+    );
+    append_section(
+        &mut combined,
+        "; --- kernel: utilities ---\n",
+        kernel::UTILITIES,
+    );
     append_section(&mut combined, "; --- kernel: checks ---\n", kernel::CHECKS);
     append_section(
         &mut combined,
@@ -184,16 +192,8 @@ pub fn get_kernel_stdlib_source() -> String {
         "; --- kernel: trap handler ---\n",
         kernel::TRAP_HANDLER,
     );
-    append_section(
-        &mut combined,
-        "; --- kernel: pmm ---\n",
-        kernel::PMM,
-    );
-    append_section(
-        &mut combined,
-        "; --- kernel: vmm ---\n",
-        kernel::VMM,
-    );
+    append_section(&mut combined, "; --- kernel: pmm ---\n", kernel::PMM);
+    append_section(&mut combined, "; --- kernel: vmm ---\n", kernel::VMM);
     append_section(
         &mut combined,
         "; --- kernel: process ---\n",

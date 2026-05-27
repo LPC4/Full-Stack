@@ -140,45 +140,45 @@ impl HighLevelCompiler {
     ) -> Option<LoweredValue> {
         let dest = self.new_temp();
         match op {
-             BinaryOp::Add
-             | BinaryOp::Sub
-             | BinaryOp::Mul
-             | BinaryOp::Div
-             | BinaryOp::Mod
-             | BinaryOp::And
-             | BinaryOp::Or
-             | BinaryOp::Shl
-             | BinaryOp::Shr
-             | BinaryOp::BitwiseAnd
-             | BinaryOp::BitwiseXor
-             | BinaryOp::BitwiseOr => {
-                 let ir_op = match op {
-                     BinaryOp::Add => IrMathOp::Add,
-                     BinaryOp::Sub => IrMathOp::Sub,
-                     BinaryOp::Mul => IrMathOp::Mul,
-                     BinaryOp::Div => {
-                         if lhs.is_unsigned {
-                             IrMathOp::UDiv
-                         } else {
-                             IrMathOp::SDiv
-                         }
-                     }
-                     BinaryOp::Mod => {
-                         if lhs.is_unsigned {
-                             IrMathOp::UMod
-                         } else {
-                             IrMathOp::Mod
-                         }
-                     }
-                     BinaryOp::And => IrMathOp::And,
-                     BinaryOp::Or => IrMathOp::Or,
-                     BinaryOp::Shl => IrMathOp::Shl,
-                     BinaryOp::Shr => IrMathOp::Shr,
-                     BinaryOp::BitwiseAnd => IrMathOp::And,
-                     BinaryOp::BitwiseOr => IrMathOp::Or,
-                     BinaryOp::BitwiseXor => IrMathOp::Xor,
-                     _ => unreachable!(),
-                 };
+            BinaryOp::Add
+            | BinaryOp::Sub
+            | BinaryOp::Mul
+            | BinaryOp::Div
+            | BinaryOp::Mod
+            | BinaryOp::And
+            | BinaryOp::Or
+            | BinaryOp::Shl
+            | BinaryOp::Shr
+            | BinaryOp::BitwiseAnd
+            | BinaryOp::BitwiseXor
+            | BinaryOp::BitwiseOr => {
+                let ir_op = match op {
+                    BinaryOp::Add => IrMathOp::Add,
+                    BinaryOp::Sub => IrMathOp::Sub,
+                    BinaryOp::Mul => IrMathOp::Mul,
+                    BinaryOp::Div => {
+                        if lhs.is_unsigned {
+                            IrMathOp::UDiv
+                        } else {
+                            IrMathOp::SDiv
+                        }
+                    }
+                    BinaryOp::Mod => {
+                        if lhs.is_unsigned {
+                            IrMathOp::UMod
+                        } else {
+                            IrMathOp::Mod
+                        }
+                    }
+                    BinaryOp::And => IrMathOp::And,
+                    BinaryOp::Or => IrMathOp::Or,
+                    BinaryOp::Shl => IrMathOp::Shl,
+                    BinaryOp::Shr => IrMathOp::Shr,
+                    BinaryOp::BitwiseAnd => IrMathOp::And,
+                    BinaryOp::BitwiseOr => IrMathOp::Or,
+                    BinaryOp::BitwiseXor => IrMathOp::Xor,
+                    _ => unreachable!(),
+                };
                 self.push_instruction(IrInstruction::Math {
                     dest: dest.clone(),
                     op: ir_op,

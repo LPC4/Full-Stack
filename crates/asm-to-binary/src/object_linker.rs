@@ -44,10 +44,8 @@ impl ObjectLinker {
 
         // The canonical output order: Text -> RoData -> Data -> Custom(...) -> Bss.
         let all_kinds = collect_ordered_kinds(modules);
-        let mut kind_contribs: Vec<(&SectionKind, Vec<Contrib<'_>>)> = all_kinds
-            .iter()
-            .map(|k| (k, Vec::new()))
-            .collect();
+        let mut kind_contribs: Vec<(&SectionKind, Vec<Contrib<'_>>)> =
+            all_kinds.iter().map(|k| (k, Vec::new())).collect();
 
         for (mi, (_name, module)) in modules.iter().enumerate() {
             let ordered = ordered_sections(module);
@@ -283,11 +281,7 @@ fn collect_ordered_kinds(modules: &[(&str, &AssembledOutput)]) -> Vec<SectionKin
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
 
-    let preferred = [
-        SectionKind::Text,
-        SectionKind::RoData,
-        SectionKind::Data,
-    ];
+    let preferred = [SectionKind::Text, SectionKind::RoData, SectionKind::Data];
 
     for kind in &preferred {
         for (_name, module) in modules {
@@ -313,10 +307,11 @@ fn collect_ordered_kinds(modules: &[(&str, &AssembledOutput)]) -> Vec<SectionKin
     }
 
     // BSS always last
-    if modules
-        .iter()
-        .any(|(_, m)| m.sections.iter().any(|s| matches!(&s.kind, Some(SectionKind::Bss))))
-    {
+    if modules.iter().any(|(_, m)| {
+        m.sections
+            .iter()
+            .any(|s| matches!(&s.kind, Some(SectionKind::Bss)))
+    }) {
         out.push(SectionKind::Bss);
     }
 
@@ -379,8 +374,7 @@ fn find_symbol_section_name_via_map<'a>(
 // ---------------------------------------------------------------------------
 
 fn pcrel_split(offset: i64) -> (i32, i32) {
-    let lo12 =
-        ((offset & 0xFFF) as i32).wrapping_sub(if offset & 0x800 != 0 { 0x1000 } else { 0 });
+    let lo12 = ((offset & 0xFFF) as i32).wrapping_sub(if offset & 0x800 != 0 { 0x1000 } else { 0 });
     let hi20 = ((offset - lo12 as i64) >> 12) as i32;
     (hi20, lo12)
 }
@@ -426,10 +420,8 @@ fn patch_call_pair(
         .wrapping_sub(site_abs as i64);
     let (hi20, lo12) = pcrel_split(offset);
 
-    let auipc_patched =
-        (auipc_word & 0x0000_0FFF) | (((hi20 << 12) as u32) & 0xFFFF_F000);
-    let jalr_patched =
-        (jalr_word & !(0xFFF << 20)) | (((lo12 as u32) & 0xFFF) << 20);
+    let auipc_patched = (auipc_word & 0x0000_0FFF) | (((hi20 << 12) as u32) & 0xFFFF_F000);
+    let jalr_patched = (jalr_word & !(0xFFF << 20)) | (((lo12 as u32) & 0xFFF) << 20);
 
     write_u32_at(section_bytes, site, auipc_patched)?;
     write_u32_at(section_bytes, site + 4, jalr_patched)?;
@@ -485,8 +477,7 @@ fn patch_la(
         .wrapping_sub(site_abs as i64);
     let (hi20, lo12) = pcrel_split(offset);
 
-    let auipc_patched =
-        (auipc_word & 0x0000_0FFF) | (((hi20 << 12) as u32) & 0xFFFF_F000);
+    let auipc_patched = (auipc_word & 0x0000_0FFF) | (((hi20 << 12) as u32) & 0xFFFF_F000);
     let addi_patched = (addi_word & !0xFFF0_0000) | (((lo12 as u32) & 0xFFF) << 20);
 
     write_u32_at(section_bytes, site, auipc_patched)?;

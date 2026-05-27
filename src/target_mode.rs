@@ -30,38 +30,34 @@ mod tests {
 
     #[test]
     fn hosted_is_default_for_main_programs() {
-        let mode = infer_target_mode_for_source(
-            "main: () -> i32 { return 0 }",
-            false,
-            TargetMode::Kernel,
-        );
+        let mode =
+            infer_target_mode_for_source("main: () -> i32 { return 0 }", false, TargetMode::Kernel);
         assert_eq!(mode, TargetMode::Hosted);
     }
 
     #[test]
     fn kernel_mode_is_selected_for_kmain_programs() {
-        let mode = infer_target_mode_for_source(
-            "kmain: () -> () { return }",
-            false,
-            TargetMode::Hosted,
-        );
+        let mode =
+            infer_target_mode_for_source("kmain: () -> () { return }", false, TargetMode::Hosted);
         assert_eq!(mode, TargetMode::Kernel);
     }
 
     #[test]
     fn stdlib_always_uses_hosted_mode() {
-        let mode = infer_target_mode_for_source(
-            "kmain: () -> () { return }",
-            true,
-            TargetMode::Kernel,
-        );
+        let mode =
+            infer_target_mode_for_source("kmain: () -> () { return }", true, TargetMode::Kernel);
         assert_eq!(mode, TargetMode::Hosted);
     }
 
     #[test]
     fn comments_do_not_trigger_detection() {
-        assert!(!source_declares_entry("; kmain: () -> () { return }", "kmain"));
-        assert!(!source_declares_entry("; main: () -> i32 { return 0 }", "main"));
+        assert!(!source_declares_entry(
+            "; kmain: () -> () { return }",
+            "kmain"
+        ));
+        assert!(!source_declares_entry(
+            "; main: () -> i32 { return 0 }",
+            "main"
+        ));
     }
 }
-

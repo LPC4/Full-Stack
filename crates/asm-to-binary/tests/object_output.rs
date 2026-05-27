@@ -26,4 +26,3 @@ fn unresolved_call_emits_relocation_and_object_is_et_rel() {
         "expected .rela.text section in object"
     );
 }
-

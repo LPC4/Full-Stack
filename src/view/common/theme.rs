@@ -29,11 +29,11 @@ impl BgPreset {
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::Dark     => "Dark",
-            Self::Darker   => "Darker",
+            Self::Dark => "Dark",
+            Self::Darker => "Darker",
             Self::Midnight => "Midnight",
-            Self::Slate    => "Slate",
-            Self::Warm     => "Warm",
+            Self::Slate => "Slate",
+            Self::Warm => "Warm",
         }
     }
 
@@ -257,8 +257,7 @@ impl UiTheme {
     }
 }
 
-static UI_THEME: LazyLock<Mutex<UiTheme>> =
-    LazyLock::new(|| Mutex::new(UiTheme::dark()));
+static UI_THEME: LazyLock<Mutex<UiTheme>> = LazyLock::new(|| Mutex::new(UiTheme::dark()));
 
 pub fn ui_theme() -> UiTheme {
     *UI_THEME.lock().expect("theme mutex poisoned")

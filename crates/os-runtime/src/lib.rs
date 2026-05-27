@@ -20,8 +20,7 @@
 
 /// M-mode boot stub (RISC-V assembly): PMP, delegation, mret to S-mode.
 /// Placed at ROM offset 0x000, padded to 0x100 bytes.
-pub const BOOT_STARTUP: &str =
-    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/boot/startup.s"));
+pub const BOOT_STARTUP: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/boot/startup.s"));
 
 /// M-mode trap handler (RISC-V assembly): ecall dispatch and syscall implementations.
 /// Placed at ROM offset 0x100, immediately after the `_start` padding.
@@ -99,10 +98,8 @@ pub mod stdlib {
 /// Kernel-mode HLL source fragments.
 pub mod kernel {
     /// Kernel entry: minimal kernel entrypoint (`_kernel_start` -> `kmain`).
-    pub const RUNTIME: &str = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/kernel/entry.hll"
-    ));
+    pub const RUNTIME: &str =
+        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/kernel/entry.hll"));
 
     /// S-mode trap entry: stvec prologue/epilogue, trap_init, sscratch helpers.
     /// The entry-point for all S-mode traps and interrupts.
@@ -113,17 +110,13 @@ pub mod kernel {
 
     /// Kernel platform helpers: kmalloc, kshutdown, timer, PLIC init.
     /// Core kernel infrastructure functions that use externs.
-    pub const UTILITIES: &str = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/kernel/utilities.hll"
-    ));
+    pub const UTILITIES: &str =
+        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/kernel/utilities.hll"));
 
     /// Kernel checks and diagnostics: memory_self_test, etc.
     /// Called during boot to validate kernel systems.
-    pub const CHECKS: &str = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/kernel/checks.hll"
-    ));
+    pub const CHECKS: &str =
+        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/kernel/checks.hll"));
 
     /// S-mode trap dispatcher: `trap_handler(frame: u64*)`.
     /// Reads scause from the trap frame and dispatches to timer/external/software
@@ -136,53 +129,36 @@ pub mod kernel {
 
     /// Physical Memory Manager: `pmm_init`, `pmm_alloc`, `pmm_free`.
     /// 4 KiB page granularity; free-list + bump allocator.
-    pub const PMM: &str = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/kernel/pmm.hll"
-    ));
+    pub const PMM: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/kernel/pmm.hll"));
 
     /// Sv39 Virtual Memory Manager: `vmm_init`, `vmm_enable`, `vmm_map`,
     /// `vmm_map_1gib`, `vmm_map_range`. Depends on `pmm_alloc` and `memset`.
-    pub const VMM: &str = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/kernel/vmm.hll"
-    ));
+    pub const VMM: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/kernel/vmm.hll"));
 
     /// Process Control Block and lifecycle: `process_init`, `process_create`.
     /// Depends on `pmm_alloc`, `vmm_map`, `kmalloc`, `memset`, `memcpy`.
-    pub const PROCESS: &str = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/kernel/process.hll"
-    ));
+    pub const PROCESS: &str =
+        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/kernel/process.hll"));
 
     /// Syscall dispatch: `syscall_dispatch`, `sys_write_impl`.
     /// Depends on `klog_int`, `klog_error`.
-    pub const SYSCALL: &str = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/kernel/syscall.hll"
-    ));
+    pub const SYSCALL: &str =
+        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/kernel/syscall.hll"));
 
     /// Round-robin scheduler: `scheduler_init`, `scheduler_add`, `schedule`.
     /// Depends on `memcpy`, `kpanic`, `klog_*`.
-    pub const SCHEDULER: &str = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/kernel/scheduler.hll"
-    ));
+    pub const SCHEDULER: &str =
+        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/kernel/scheduler.hll"));
 
     /// Reference kernel: full boot sequence demonstrating real and stub subsystems.
     /// Defines `kmain`; depends on the kernel stdlib bundle.
-    pub const MY_KERNEL: &str = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/kernel/my_kernel.hll"
-    ));
+    pub const MY_KERNEL: &str =
+        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/kernel/my_kernel.hll"));
 }
 
 /// User-space example programs.
 pub mod user {
     /// Hello-world user program: writes a greeting via ecall, then yields forever.
-    pub const USER_HELLO: &str = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/user/user_hello.hll"
-    ));
+    pub const USER_HELLO: &str =
+        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/user/user_hello.hll"));
 }
-

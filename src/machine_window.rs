@@ -11,15 +11,33 @@ use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 // --- Palette ---
 
 // The terminal area uses a slightly darker variant of the theme canvas.
-fn term_bg() -> Color32 { ui_theme().canvas.linear_multiply(0.55) }
-fn term_text() -> Color32 { ui_theme().text }
-fn term_ok() -> Color32 { ui_theme().success }
-fn term_warn() -> Color32 { ui_theme().warning }
-fn term_err() -> Color32 { ui_theme().error }
-fn term_dim() -> Color32 { ui_theme().text_dim }
-fn term_panic() -> Color32 { Color32::from_rgb(255, 60, 80) }
-fn term_border() -> Color32 { ui_theme().border_soft }
-fn toolbar_bg() -> Color32 { ui_theme().panel }
+fn term_bg() -> Color32 {
+    ui_theme().canvas.linear_multiply(0.55)
+}
+fn term_text() -> Color32 {
+    ui_theme().text
+}
+fn term_ok() -> Color32 {
+    ui_theme().success
+}
+fn term_warn() -> Color32 {
+    ui_theme().warning
+}
+fn term_err() -> Color32 {
+    ui_theme().error
+}
+fn term_dim() -> Color32 {
+    ui_theme().text_dim
+}
+fn term_panic() -> Color32 {
+    Color32::from_rgb(255, 60, 80)
+}
+fn term_border() -> Color32 {
+    ui_theme().border_soft
+}
+fn toolbar_bg() -> Color32 {
+    ui_theme().panel
+}
 
 // --- Tuning ---
 
@@ -61,7 +79,7 @@ enum BootPhase {
         vm: Box<VirtualMachine>,
         steps: u64,
         uart_text: String,
-        /// Incremented every time new UART arrives; used to skip LayoutJob rebuilds.
+        /// Incremented every time new UART arrives; used to skip `LayoutJob` rebuilds.
         log_generation: u64,
     },
     Done(BootResult),
@@ -91,7 +109,11 @@ pub struct MachineWindow {
 
 impl MachineWindow {
     /// Begin an incremental boot. The VM is ticked each frame via `ui()`.
-    pub fn start_boot(&mut self, assembled: &AssembledOutput, user_binary: Option<&AssembledOutput>) {
+    pub fn start_boot(
+        &mut self,
+        assembled: &AssembledOutput,
+        user_binary: Option<&AssembledOutput>,
+    ) {
         let mut vm = Box::new(VirtualMachine::new_kernel(assembled));
 
         // Inject user program into RAM if provided.
@@ -106,7 +128,7 @@ impl MachineWindow {
             if let Some(entry_off) = user_asm.symbol_address("_start") {
                 let entry_va = USER_CODE_VA + entry_off;
                 const USER_BINARY_PA: u64 = 0x87F0_0000;
-                const USER_META_PA:   u64 = 0x87EF_F000;
+                const USER_META_PA: u64 = 0x87EF_F000;
                 let user_size = flat.len() as u64;
 
                 let _ = vm.write_ram(USER_META_PA, &entry_va.to_le_bytes());
@@ -164,7 +186,12 @@ impl MachineWindow {
 impl MachineWindow {
     fn maybe_tick(&mut self, ctx: &egui::Context) {
         let transition = match &mut self.phase {
-            BootPhase::Running { vm, steps, uart_text, log_generation } => {
+            BootPhase::Running {
+                vm,
+                steps,
+                uart_text,
+                log_generation,
+            } => {
                 let mut halted: Option<i64> = None;
                 let mut timed_out = false;
 
@@ -278,7 +305,9 @@ impl MachineWindow {
                         }
                         ui.colored_label(
                             term_dim(),
-                            RichText::new(format!("{steps} steps")).monospace().size(11.0),
+                            RichText::new(format!("{steps} steps"))
+                                .monospace()
+                                .size(11.0),
                         );
                     }
 
@@ -294,16 +323,25 @@ impl MachineWindow {
         match &self.phase {
             BootPhase::Idle => ("IDLE", term_dim(), 0, None),
             BootPhase::Running { steps, .. } => ("RUNNING", ui_theme().accent, *steps, None),
-            BootPhase::Done(r) if r.max_steps_reached => ("TIMEOUT", term_warn(), r.steps, r.exit_code),
+            BootPhase::Done(r) if r.max_steps_reached => {
+                ("TIMEOUT", term_warn(), r.steps, r.exit_code)
+            }
             BootPhase::Done(r) if r.exit_code == Some(0) => ("OK", term_ok(), r.steps, r.exit_code),
-            BootPhase::Done(r) if r.exit_code.is_some() => ("ERR", term_err(), r.steps, r.exit_code),
+            BootPhase::Done(r) if r.exit_code.is_some() => {
+                ("ERR", term_err(), r.steps, r.exit_code)
+            }
             BootPhase::Done(r) => ("HALTED", term_dim(), r.steps, r.exit_code),
         }
     }
 
     fn do_stop(&mut self) {
         let result = match &mut self.phase {
-            BootPhase::Running { vm, steps, uart_text, .. } => {
+            BootPhase::Running {
+                vm,
+                steps,
+                uart_text,
+                ..
+            } => {
                 let fb_bytes = vm.peek_bytes_raw(RAM_BASE, FB_COLS * FB_ROWS);
                 Some(BootResult {
                     uart_output: std::mem::take(uart_text),
@@ -331,18 +369,29 @@ impl MachineWindow {
 
         let state = match &self.phase {
             BootPhase::Idle => LogState::Idle,
-            BootPhase::Running { uart_text, steps, log_generation, .. } => {
+            BootPhase::Running {
+                uart_text,
+                steps,
+                log_generation,
+                ..
+            } => {
                 if uart_text.is_empty() {
                     LogState::BootingNoOutput(*steps)
                 } else {
-                    LogState::HasText { text: uart_text.as_str(), generation: *log_generation }
+                    LogState::HasText {
+                        text: uart_text.as_str(),
+                        generation: *log_generation,
+                    }
                 }
             }
             BootPhase::Done(r) => {
                 if r.uart_output.is_empty() {
                     LogState::DoneEmpty
                 } else {
-                    LogState::HasText { text: r.uart_output.as_str(), generation: u64::MAX }
+                    LogState::HasText {
+                        text: r.uart_output.as_str(),
+                        generation: u64::MAX,
+                    }
                 }
             }
         };
@@ -404,7 +453,12 @@ impl MachineWindow {
                     .id_salt("mw_framebuffer")
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        ui.label(RichText::new(text).monospace().color(term_text()).size(12.0));
+                        ui.label(
+                            RichText::new(text)
+                                .monospace()
+                                .color(term_text())
+                                .size(12.0),
+                        );
                     });
             }
         }
@@ -418,7 +472,11 @@ impl MachineWindow {
                 ui.set_min_height(INPUT_H);
                 ui.horizontal(|ui| {
                     ui.colored_label(
-                        if is_running { ui_theme().accent } else { term_dim() },
+                        if is_running {
+                            ui_theme().accent
+                        } else {
+                            term_dim()
+                        },
                         RichText::new("IN>").monospace().size(11.0),
                     );
 

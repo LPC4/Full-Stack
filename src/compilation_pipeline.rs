@@ -1,16 +1,16 @@
-use asm_to_binary::{AssembledOutput, LinkerError, ObjectLinker};
 use asm_to_binary::assembler::link_layout::LinkLayout;
 use asm_to_binary::assembler::{Assembler, AssemblerError};
 use asm_to_binary::rv_instruction::RvInstruction;
+use asm_to_binary::{AssembledOutput, LinkerError, ObjectLinker};
+pub use hll_to_ir::TargetMode;
 use hll_to_ir::{CompileConfig, Diagnostic, DiagnosticLevel, HllCompiler, IrProgram, IrType};
 use ir_to_asm::compiler::compiler_rv64::CompilerRv64;
 use std::cell::RefCell;
 use std::collections::hash_map::DefaultHasher;
 use std::fs;
-use std::hash::{Hash, Hasher};
+use std::hash::{Hash as _, Hasher as _};
 use std::panic::Location;
 use std::path::{Path, PathBuf};
-pub use hll_to_ir::TargetMode;
 
 // Compilation pipeline: HLL source -> IR -> ASM -> OBJ -> ELF.
 //
@@ -276,7 +276,12 @@ impl CompilationPipeline {
             .or_else(|| self.last_artifact_stem.borrow().clone())
     }
 
-    fn default_artifact_stem(&self, caller: &'static Location<'static>, hint: &str, seed: &str) -> String {
+    fn default_artifact_stem(
+        &self,
+        caller: &'static Location<'static>,
+        hint: &str,
+        seed: &str,
+    ) -> String {
         let mut hasher = DefaultHasher::new();
         caller.file().hash(&mut hasher);
         caller.line().hash(&mut hasher);
@@ -299,12 +304,11 @@ impl CompilationPipeline {
             .artifact_root
             .join(subdir)
             .join(format!("{stem}{extension}"));
-        if let Some(parent) = path.parent() {
-            if let Err(err) = fs::create_dir_all(parent) {
+        if let Some(parent) = path.parent()
+            && let Err(err) = fs::create_dir_all(parent) {
                 log::warn!("failed to create artifact directory `{parent:?}`: {err}");
                 return;
             }
-        }
         if let Err(err) = fs::write(&path, content) {
             log::warn!("failed to write artifact `{path:?}`: {err}");
         }
@@ -319,12 +323,11 @@ impl CompilationPipeline {
             .artifact_root
             .join(subdir)
             .join(format!("{stem}{extension}"));
-        if let Some(parent) = path.parent() {
-            if let Err(err) = fs::create_dir_all(parent) {
+        if let Some(parent) = path.parent()
+            && let Err(err) = fs::create_dir_all(parent) {
                 log::warn!("failed to create artifact directory `{parent:?}`: {err}");
                 return;
             }
-        }
         if let Err(err) = fs::write(&path, bytes) {
             log::warn!("failed to write artifact `{path:?}`: {err}");
         }
@@ -460,11 +463,10 @@ impl CompilationPipeline {
         let ir_display = out.ir.to_string();
 
         // Write IR to disk
-        let ir_stem = self
-            .artifact_stem
-            .borrow()
-            .clone()
-            .unwrap_or_else(|| self.default_artifact_stem(Location::caller(), "ir", &ir_display));
+        let ir_stem =
+            self.artifact_stem.borrow().clone().unwrap_or_else(|| {
+                self.default_artifact_stem(Location::caller(), "ir", &ir_display)
+            });
         *self.last_artifact_stem.borrow_mut() = Some(sanitize_artifact_component(&ir_stem));
         #[cfg(not(target_arch = "wasm32"))]
         self.write_text_artifact("ir", &ir_stem, ".ir", &ir_display);
@@ -479,9 +481,9 @@ impl CompilationPipeline {
             display: asm_text,
         });
 
-        let user_stem = self
-            .current_artifact_stem()
-            .unwrap_or_else(|| self.default_artifact_stem(Location::caller(), "user", &out.ir.to_string()));
+        let user_stem = self.current_artifact_stem().unwrap_or_else(|| {
+            self.default_artifact_stem(Location::caller(), "user", &out.ir.to_string())
+        });
 
         let user_obj = match self.assemble_named(&user_stem, &user_tokens) {
             Ok(obj) => obj,
@@ -529,10 +531,11 @@ impl CompilationPipeline {
             modules.insert(0, ("stdlib", stdlib));
         }
 
-        let (binary, assembler_error) = match self.link_assembled_objects_named(&user_stem, &modules) {
-            Ok(assembled) => (Some(BinaryOutput { assembled }), None),
-            Err(e) => (None, Some(format!("linker error: {}", e.message))),
-        };
+        let (binary, assembler_error) =
+            match self.link_assembled_objects_named(&user_stem, &modules) {
+                Ok(assembled) => (Some(BinaryOutput { assembled }), None),
+                Err(e) => (None, Some(format!("linker error: {}", e.message))),
+            };
 
         PipelineResult {
             diagnostics,
@@ -567,13 +570,10 @@ impl CompilationPipeline {
     ) -> (String, Vec<RvInstruction>) {
         let mut compiler = CompilerRv64::new();
         let (asm, tokens) = compiler.compile_with_tokens(ir);
-        let stem = match self.current_artifact_stem() {
-            Some(existing) => existing,
-            None => {
-                let stem = self.default_artifact_stem(Location::caller(), "asm", &asm);
-                *self.last_artifact_stem.borrow_mut() = Some(stem.clone());
-                stem
-            }
+        let stem = if let Some(existing) = self.current_artifact_stem() { existing } else {
+            let stem = self.default_artifact_stem(Location::caller(), "asm", &asm);
+            *self.last_artifact_stem.borrow_mut() = Some(stem.clone());
+            stem
         };
         #[cfg(not(target_arch = "wasm32"))]
         self.write_text_artifact("asm", &stem, ".s", &asm);
@@ -583,9 +583,9 @@ impl CompilationPipeline {
     /// Assemble a token stream into machine code.
     #[track_caller]
     pub fn assemble(&self, tokens: &[RvInstruction]) -> Result<AssembledOutput, AssemblerError> {
-        let stem = self
-            .current_artifact_stem()
-            .unwrap_or_else(|| self.default_artifact_stem(Location::caller(), "obj", &format!("{}", tokens.len())));
+        let stem = self.current_artifact_stem().unwrap_or_else(|| {
+            self.default_artifact_stem(Location::caller(), "obj", &format!("{}", tokens.len()))
+        });
         self.assemble_named(&stem, tokens)
     }
 
@@ -599,10 +599,14 @@ impl CompilationPipeline {
         let stem = sanitize_artifact_component(stem);
         *self.last_artifact_stem.borrow_mut() = Some(stem.clone());
         #[cfg(not(target_arch = "wasm32"))]
-        self.write_bytes_artifact("obj", &stem, ".o", &assembled.to_object(&format!("{stem}.o")));
+        self.write_bytes_artifact(
+            "obj",
+            &stem,
+            ".o",
+            &assembled.to_object(&format!("{stem}.o")),
+        );
         Ok(assembled)
     }
-
 
     /// Link already-assembled objects into a single executable image and apply
     /// layout post-processing (boundary symbols + global entry export).
@@ -611,9 +615,17 @@ impl CompilationPipeline {
         &self,
         modules: &[(&str, &AssembledOutput)],
     ) -> Result<AssembledOutput, LinkerError> {
-        let stem = self
-            .current_artifact_stem()
-            .unwrap_or_else(|| self.default_artifact_stem(Location::caller(), "elf", &modules.iter().map(|(name, _)| *name).collect::<Vec<_>>().join("+")));
+        let stem = self.current_artifact_stem().unwrap_or_else(|| {
+            self.default_artifact_stem(
+                Location::caller(),
+                "elf",
+                &modules
+                    .iter()
+                    .map(|(name, _)| *name)
+                    .collect::<Vec<_>>()
+                    .join("+"),
+            )
+        });
         self.link_assembled_objects_named(&stem, modules)
     }
 
@@ -672,8 +684,16 @@ impl CompilationPipeline {
     ///
     /// Returns the linked output ready to load into a VM.
     #[track_caller]
-    pub fn link_modules(&self, module_names: &[&str], objects: &[&AssembledOutput]) -> Result<AssembledOutput, LinkerError> {
-        let modules: Vec<(&str, &AssembledOutput)> = module_names.iter().zip(objects.iter()).map(|(n, o)| (*n, *o)).collect();
+    pub fn link_modules(
+        &self,
+        module_names: &[&str],
+        objects: &[&AssembledOutput],
+    ) -> Result<AssembledOutput, LinkerError> {
+        let modules: Vec<(&str, &AssembledOutput)> = module_names
+            .iter()
+            .zip(objects.iter())
+            .map(|(n, o)| (*n, *o))
+            .collect();
         let combined_stem = module_names.join("_");
         self.link_assembled_objects_named(&combined_stem, &modules)
     }
@@ -698,11 +718,17 @@ impl CompilationPipeline {
         object_refs.extend(kernel_refs);
 
         let combined_stem = module_names.join("_");
-        self.link_assembled_objects_named(&combined_stem,
-            &module_names.iter().zip(object_refs.iter())
+        self.link_assembled_objects_named(
+            &combined_stem,
+            &module_names
+                .iter()
+                .zip(object_refs.iter())
                 .map(|(n, o)| (*n, *o))
-                .collect::<Vec<_>>())
-            .map_err(|e| CompilationError::FreestandingErrors(vec![format!("linker error: {}", e.message)]))
+                .collect::<Vec<_>>(),
+        )
+        .map_err(|e| {
+            CompilationError::FreestandingErrors(vec![format!("linker error: {}", e.message)])
+        })
     }
 }
 

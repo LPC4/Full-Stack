@@ -36,7 +36,7 @@ pub fn translate_with_pmp(
     pmpaddr0: u64,
 ) -> Result<u64, VmError> {
     let mode = (satp >> 60) & 0xF;
-    let ppn = satp & 0x0FFF_FFFF_FFFF;  // Mask to 44 bits
+    let ppn = satp & 0x0FFF_FFFF_FFFF; // Mask to 44 bits
 
     // Bare mode handling: for MODE=0 we still treat vaddr as a physical
     // address but must enforce PMP checks for non-Machine modes. For M-mode

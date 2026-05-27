@@ -4,7 +4,6 @@
 /// section-relative address.  We convert those to absolute addresses by adding
 /// the running section base, then compute PC-relative branch/jump offsets and
 /// encode the final machine words.
-
 use super::AssemblerError;
 use super::layout::Layout;
 use super::output::{AssembledOutput, RelocationKind, RelocationRecord};

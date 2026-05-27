@@ -11,7 +11,6 @@ macro_rules! asm_warn {
 /// `RvInstruction` carries some untyped raw strings (branches emitted via
 /// `emit_raw`, data-section directives, etc.).  This pass converts every token
 /// into a fully-typed `AsmToken` so subsequent passes never touch raw strings.
-
 use super::directive::Directive;
 use super::reg_parse::parse_int_reg;
 use super::section::SectionKind;
@@ -19,8 +18,8 @@ use super::token::{AsmToken, BranchKind};
 use crate::pseudo::PseudoInstruction;
 use crate::real::RealInstruction;
 use crate::riscv::rv64i::{
-    Add, Addi, And, Andi, Ecall, Jalr, Lb, Lbu, Ld, Mret, Wfi, Or, Ori, Sb, Sd, SfenceVma, Slli, Srl,
-    Srli, Sret, Sub,
+    Add, Addi, And, Andi, Ecall, Jalr, Lb, Lbu, Ld, Mret, Or, Ori, Sb, Sd, SfenceVma, Slli, Sret,
+    Srl, Srli, Sub, Wfi,
 };
 use crate::riscv::rv64m::{Divu, Remu};
 use crate::riscv::rv64zicsr::{Csrrs, Csrrw};
@@ -472,7 +471,9 @@ fn expand_li(rd: u8, imm: i64, out: &mut Vec<AsmToken>) {
     // Helper: emit lui+addi for a signed 32-bit value into `rd`.
     let mut load32 = |reg: u8, val32: i32, out: &mut Vec<AsmToken>| {
         if (-2048..=2047).contains(&(val32 as i64)) {
-            out.push(AsmToken::Real(RealInstruction::Addi(Addi::new(reg, 0, val32))));
+            out.push(AsmToken::Real(RealInstruction::Addi(Addi::new(
+                reg, 0, val32,
+            ))));
             return;
         }
         let lo12 = val32 & 0xFFF;
@@ -480,13 +481,19 @@ fn expand_li(rd: u8, imm: i64, out: &mut Vec<AsmToken>) {
         let hi20 = val32.wrapping_sub(lo12_signed);
         out.push(AsmToken::Real(RealInstruction::Lui(Lui::new(reg, hi20))));
         if lo12_signed != 0 {
-            out.push(AsmToken::Real(RealInstruction::Addi(Addi::new(reg, reg, lo12_signed))));
+            out.push(AsmToken::Real(RealInstruction::Addi(Addi::new(
+                reg,
+                reg,
+                lo12_signed,
+            ))));
         }
     };
 
     // 12-bit signed
     if (-2048..=2047).contains(&imm) {
-        out.push(AsmToken::Real(RealInstruction::Addi(Addi::new(rd, 0, imm as i32))));
+        out.push(AsmToken::Real(RealInstruction::Addi(Addi::new(
+            rd, 0, imm as i32,
+        ))));
         return;
     }
 
