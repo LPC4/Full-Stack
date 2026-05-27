@@ -741,7 +741,6 @@ impl FullStackApp {
     /// Compile the program with the given id as Hosted and store the result in
     /// `compilation_state.last_hosted_binary` on success.
     fn compile_and_store_hosted(&mut self, program_id: &str) -> Result<(), String> {
-        
         // Find program source by id
         let program_opt = self
             .catalog

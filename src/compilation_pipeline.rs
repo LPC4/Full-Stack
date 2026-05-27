@@ -305,10 +305,11 @@ impl CompilationPipeline {
             .join(subdir)
             .join(format!("{stem}{extension}"));
         if let Some(parent) = path.parent()
-            && let Err(err) = fs::create_dir_all(parent) {
-                log::warn!("failed to create artifact directory `{parent:?}`: {err}");
-                return;
-            }
+            && let Err(err) = fs::create_dir_all(parent)
+        {
+            log::warn!("failed to create artifact directory `{parent:?}`: {err}");
+            return;
+        }
         if let Err(err) = fs::write(&path, content) {
             log::warn!("failed to write artifact `{path:?}`: {err}");
         }
@@ -324,10 +325,11 @@ impl CompilationPipeline {
             .join(subdir)
             .join(format!("{stem}{extension}"));
         if let Some(parent) = path.parent()
-            && let Err(err) = fs::create_dir_all(parent) {
-                log::warn!("failed to create artifact directory `{parent:?}`: {err}");
-                return;
-            }
+            && let Err(err) = fs::create_dir_all(parent)
+        {
+            log::warn!("failed to create artifact directory `{parent:?}`: {err}");
+            return;
+        }
         if let Err(err) = fs::write(&path, bytes) {
             log::warn!("failed to write artifact `{path:?}`: {err}");
         }
@@ -570,7 +572,9 @@ impl CompilationPipeline {
     ) -> (String, Vec<RvInstruction>) {
         let mut compiler = CompilerRv64::new();
         let (asm, tokens) = compiler.compile_with_tokens(ir);
-        let stem = if let Some(existing) = self.current_artifact_stem() { existing } else {
+        let stem = if let Some(existing) = self.current_artifact_stem() {
+            existing
+        } else {
             let stem = self.default_artifact_stem(Location::caller(), "asm", &asm);
             *self.last_artifact_stem.borrow_mut() = Some(stem.clone());
             stem
