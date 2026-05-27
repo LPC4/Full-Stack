@@ -4,7 +4,7 @@ main: () -> i32 {
     console_writeln("hello from user mode!".data)
     while 1 == 1 {
         asm {
-            li   a7, 2      ; yield syscall
+            li   a7, 2      ; yield
             ecall
         }
     }

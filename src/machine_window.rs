@@ -1,12 +1,4 @@
 //! Machine window: secondary egui window for booting and observing kernel programs.
-//!
-//! The VM is ticked incrementally each UI frame (`maybe_tick`), keeping the interface
-//! live. Key improvements over the original:
-//!
-//! - Repaint is rate-limited to ~60 fps via `request_repaint_after` (was unlimited).
-//! - Layout is fixed-height so nothing jumps when booting starts.
-//! - The stdin strip is always rendered (just disabled when idle).
-//! - The log `LayoutJob` is rebuilt only when new UART output arrives.
 
 use std::time::Duration;
 
@@ -16,7 +8,7 @@ use full_stack::view::ui_theme;
 use virtual_machine::bus::RAM_BASE;
 use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 
-// -- Palette ------------------------------------------------------------------
+// --- Palette ---
 
 // The terminal area uses a slightly darker variant of the theme canvas.
 fn term_bg() -> Color32 { ui_theme().canvas.linear_multiply(0.55) }
@@ -29,10 +21,10 @@ fn term_panic() -> Color32 { Color32::from_rgb(255, 60, 80) }
 fn term_border() -> Color32 { ui_theme().border_soft }
 fn toolbar_bg() -> Color32 { ui_theme().panel }
 
-// -- Tuning -------------------------------------------------------------------
+// --- Tuning ---
 
 /// VM steps executed per UI frame while booting.
-/// At 60 fps this gives ~3 M steps/sec - enough for a fast boot
+/// At 60 fps this gives roughly 3 M steps/sec, enough for a fast boot
 /// while keeping each frame well under 16 ms.
 const STEPS_PER_TICK: u64 = 50_000;
 const MAX_STEPS: u64 = 10_000_000;
@@ -42,10 +34,10 @@ const FB_ROWS: usize = 25;
 /// Fixed height of the top toolbar row (boot / stop / clear + status).
 const TOOLBAR_H: f32 = 34.0;
 /// Fixed height of the stdin strip at the bottom.
-/// Always rendered so the content area never changes height when booting starts.
+/// Always rendered so the content area stays the same height when booting starts.
 const INPUT_H: f32 = 34.0;
 
-// -- Phase --------------------------------------------------------------------
+// --- Phase ---
 
 #[derive(Clone, Default)]
 pub struct BootResult {
@@ -81,7 +73,7 @@ impl Default for BootPhase {
     }
 }
 
-// -- Main struct ---------------------------------------------------------------
+// --- Main struct ---
 
 #[derive(Default)]
 pub struct MachineWindow {
@@ -95,7 +87,7 @@ pub struct MachineWindow {
     log_cache_generation: u64,
 }
 
-// -- Public API ----------------------------------------------------------------
+// --- Public API ---
 
 impl MachineWindow {
     /// Begin an incremental boot. The VM is ticked each frame via `ui()`.
@@ -104,10 +96,8 @@ impl MachineWindow {
 
         // Inject user program into RAM if provided.
         if let Some(user_asm) = user_binary {
-            let mut flat = Vec::new();
-            flat.extend_from_slice(user_asm.text_bytes());
-            flat.extend_from_slice(user_asm.rodata_bytes());
-            flat.extend_from_slice(user_asm.data_bytes());
+            // Include BSS (zero-filled globals like heap_buffer) so malloc works in user space.
+            let mut flat = user_asm.to_flat_binary();
             let page_size = 4096usize;
             let padded = (flat.len() + page_size - 1) / page_size * page_size;
             flat.resize(padded, 0u8);
@@ -144,8 +134,8 @@ impl MachineWindow {
 
         self.render_toolbar(ui, has_kernel, is_running);
 
-        // Fixed content height: subtracts the stdin strip unconditionally so
-        // the frame never resizes when booting starts.
+        // Fixed content height: subtract the stdin strip height regardless of state
+        // so the frame never jumps when booting starts.
         let content_h = {
             let sp = ui.spacing().item_spacing.y;
             (ui.available_height() - INPUT_H - sp).max(100.0)
@@ -164,12 +154,12 @@ impl MachineWindow {
                 }
             });
 
-        // Always rendered so height is stable; disabled when not running.
+        // Always rendered so height is stable; interactive only when running.
         self.render_input(ui, is_running);
     }
 }
 
-// -- VM tick -------------------------------------------------------------------
+// --- VM tick ---
 
 impl MachineWindow {
     fn maybe_tick(&mut self, ctx: &egui::Context) {
@@ -214,7 +204,7 @@ impl MachineWindow {
                         fb_bytes,
                     })
                 } else {
-                    // Rate-limit repaints to ~60 fps to avoid saturating the CPU.
+                    // Rate-limit repaints to roughly 60 fps to avoid saturating the CPU.
                     ctx.request_repaint_after(Duration::from_millis(16));
                     None
                 }
@@ -228,7 +218,7 @@ impl MachineWindow {
     }
 }
 
-// -- Rendering -----------------------------------------------------------------
+// --- Rendering ---
 
 impl MachineWindow {
     fn render_toolbar(&mut self, ui: &mut egui::Ui, has_kernel: bool, is_running: bool) {
@@ -372,7 +362,7 @@ impl MachineWindow {
                     ui.colored_label(term_dim(), "(no output)");
                 }
                 LogState::HasText { text, generation } => {
-                    // Rebuild the LayoutJob only when new UART has arrived.
+                    // Rebuild the layout job only when new UART output has arrived.
                     if self.log_cache.is_none() || self.log_cache_generation != generation {
                         self.log_cache = Some(build_log_job(text));
                         self.log_cache_generation = generation;
@@ -471,7 +461,7 @@ impl MachineWindow {
     }
 }
 
-// -- Log colorizer -------------------------------------------------------------
+// --- Log colorizer ---
 
 fn build_log_job(text: &str) -> egui::text::LayoutJob {
     let font = egui::FontId::monospace(12.0);

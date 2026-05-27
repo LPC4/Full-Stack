@@ -13,8 +13,8 @@ impl HighLevelCompiler {
 
     /// Unified expression lowering.
     ///
-    /// `EvalMode::Value`   -> produce the loaded/computed value.
-    /// `EvalMode::Address` -> produce a pointer (`Pointer(T)`) to the storage location.
+    /// `EvalMode::Value` produces the loaded/computed value.
+    /// `EvalMode::Address` produces a pointer (`Pointer(T)`) to the storage location.
     pub(super) fn lower_expr(
         &mut self,
         expression: &Expression,
@@ -98,7 +98,7 @@ impl HighLevelCompiler {
                 })
             }
             PrimaryExpr::FunctionCall { name, arguments } => {
-                // Function call results are rvalues; they have no storage address.
+                // Function call results are rvalues with no addressable storage.
                 if mode == EvalMode::Address {
                     return None;
                 }
@@ -110,13 +110,17 @@ impl HighLevelCompiler {
                         return None;
                     }
                     let arg = self.lower_expr(&arguments[0], EvalMode::Value)?;
-                    if let IrValue::Register(ptr_reg) = arg.value {
-                        self.push_instruction(IrInstruction::HeapFree { ptr: ptr_reg });
-                    } else {
-                        self.context
-                            .diagnostics
-                            .error("free() argument must be a pointer value".to_owned());
-                        return None;
+                    match arg.value {
+                        IrValue::Register(ptr_reg) => {
+                            self.push_instruction(IrInstruction::HeapFree { ptr: ptr_reg });
+                        }
+                        IrValue::Null => {}
+                        _ => {
+                            self.context
+                                .diagnostics
+                                .error("free() argument must be a pointer value".to_owned());
+                            return None;
+                        }
                     }
                     return Some(LoweredValue {
                         value: IrValue::Null,
@@ -228,8 +232,7 @@ impl HighLevelCompiler {
         if let Some(info) = info {
             match mode {
                 EvalMode::Address => {
-                    // The symbol table stores locals as Pointer(T) stack slots.
-                    // In Address mode, return the slot pointer directly.
+                    // Locals are stored as Pointer(T) stack slots; return the slot pointer directly.
                     Some(LoweredValue {
                         value: info.value,
                         ty: info.ty,
@@ -263,7 +266,7 @@ impl HighLevelCompiler {
         } else if let Some(const_val) = self.compile_time_consts.get(name).cloned() {
             Some(self.lower_literal(&const_val))
         } else if let Some(gv_ty) = self.global_vars.get(name).cloned() {
-            // Global variable: emit `la dest, name` to get its address.
+            // Global variable: emit `la dest, name` to load its address.
             let addr_reg = self.new_temp();
             self.push_instruction(IrInstruction::GlobalRef {
                 dest: addr_reg.clone(),
@@ -304,10 +307,8 @@ impl HighLevelCompiler {
         field: &str,
         mode: EvalMode,
     ) -> Option<LoweredValue> {
-        // `@ptr.field` (parser form: FieldAccess(Dereference(ptr), field)):
-        //   evaluate the inner pointer in Value mode -- its register IS the base pointer.
-        // `x.field` (ordinary form):
-        //   evaluate the base in Address mode -- the slot pointer IS the aggregate pointer.
+        // `@ptr.field`: evaluate the inner pointer in Value mode -- its register is the base pointer.
+        // `x.field`: evaluate the base in Address mode -- the slot pointer is the aggregate pointer.
         let base_addr = match expr {
             Expression::Unary {
                 op: UnaryOp::Dereference,
@@ -328,9 +329,9 @@ impl HighLevelCompiler {
 
         // Resolve the aggregate pointer and field list from the base type.
         // Three shapes are valid:
-        //   Aggregate(fields)              -> base_addr.value is the pointer to the aggregate
-        //   Pointer(Aggregate(fields))     -> base_addr.value is the pointer to the aggregate
-        //   Pointer(Pointer(Aggregate))    -> load from base_addr.value first (heap-ptr in stack slot)
+        //   Aggregate(fields)           -- base_addr.value is the pointer to the aggregate
+        //   Pointer(Aggregate(fields))  -- base_addr.value is the pointer to the aggregate
+        //   Pointer(Pointer(Aggregate)) -- load from base_addr.value first (heap-ptr in stack slot)
         let (agg_ptr, fields) = match resolved_ty {
             IrType::Aggregate(fields) => {
                 let reg = match &base_addr.value {
@@ -363,8 +364,7 @@ impl HighLevelCompiler {
                                 ptr: slot_reg,
                                 offset: None,
                             });
-                            // ptr.field always yields *field_T per spec.
-                            // Return the field address; @ is required to load the value.
+                            // Field access yields *field_T; the caller must use @ to load the value.
                             let (offset, field_ty) =
                                 self.aggregate_field_offset_and_type(&fields, field)?;
                             let dest = self.new_temp();
@@ -440,15 +440,13 @@ impl HighLevelCompiler {
                 op: UnaryOp::Dereference,
                 expr: inner,
             } => {
-                // `@arr[i]`: evaluate arr in Value mode to get the heap pointer;
-                // respect the requested mode for load-vs-address.
+                // `@arr[i]`: evaluate arr in Value mode to get the heap pointer.
                 let base = self.lower_expr(inner, EvalMode::Value)?;
                 let idx = self.lower_expr(index, EvalMode::Value)?;
                 self.lower_array_index_mode(&base, &idx, mode)
             }
             _ => {
-                // `arr[i]`: non-dereference base always returns the element pointer (Address),
-                // preserving the old "array element is an lvalue" semantics.
+                // `arr[i]`: always returns the element pointer (Address).
                 // Callers must apply `@` to load the value.
                 let base = self.lower_expr(expr, EvalMode::Address)?;
                 let idx = self.lower_expr(index, EvalMode::Value)?;
@@ -465,7 +463,7 @@ impl HighLevelCompiler {
     ) -> Option<LoweredValue> {
         let resolved_ty = self.resolve_named_type(&base.ty);
 
-        // Determine the pointer that directly addresses the first element and the element type.
+        // Find the pointer that addresses the first element and the element type.
         let (indexable_ptr, element_ty) = match resolved_ty {
             // Direct array (pointer to array storage)
             IrType::Array { element, .. } => {
@@ -478,7 +476,7 @@ impl HighLevelCompiler {
             IrType::Pointer(inner) => {
                 let inner_resolved = self.resolve_named_type(&inner);
                 match inner_resolved {
-                    // Pointer -> Array: base.value points directly to the array data
+                    // Pointer to Array: base.value points directly to the array data.
                     IrType::Array { element, .. } => {
                         let reg = match &base.value {
                             IrValue::Register(r) => r.clone(),
@@ -486,7 +484,7 @@ impl HighLevelCompiler {
                         };
                         (reg, *element)
                     }
-                    // Pointer -> Pointer -> something: load the inner pointer first
+                    // Pointer to Pointer: load the inner pointer first.
                     IrType::Pointer(inner_inner) => {
                         let inner_inner_resolved = self.resolve_named_type(&inner_inner);
                         let element_ty = match inner_inner_resolved {
@@ -506,7 +504,7 @@ impl HighLevelCompiler {
                         });
                         (loaded, element_ty)
                     }
-                    // Pointer -> T: base.value is a pointer to elements of type T
+                    // Pointer to T: base.value is a pointer to elements of type T.
                     other => {
                         let reg = match &base.value {
                             IrValue::Register(r) => r.clone(),
@@ -575,7 +573,7 @@ impl HighLevelCompiler {
                     );
                     return None;
                 }
-                // `&x` -- evaluate x in Address mode; the result already is a Pointer(T).
+                // `&x`: evaluate x in Address mode; the result is already a Pointer(T).
                 self.lower_expr(expr, EvalMode::Address)
             }
             UnaryOp::Dereference => {
@@ -591,7 +589,7 @@ impl HighLevelCompiler {
                 };
                 match mode {
                     EvalMode::Address => {
-                        // `@x` in Address mode: the pointer value itself is the address of the pointee.
+                        // `@x` in Address mode: the pointer value is the address of the pointee.
                         Some(LoweredValue {
                             value: ptr_val.value,
                             ty: ptr_val.ty,
@@ -665,14 +663,8 @@ impl HighLevelCompiler {
             (IrType::Integer(_), IrType::Float(_)) => IrCastMode::I2f,
             (IrType::Float(_), IrType::Float(_)) => IrCastMode::Bitcast,
             (IrType::Pointer(_), IrType::Pointer(_)) => IrCastMode::Bitcast,
-            (IrType::Pointer(_), IrType::Integer(_)) => {
-                // Allow pointer -> integer bitcast
-                IrCastMode::Bitcast
-            }
-            (IrType::Integer(_), IrType::Pointer(_)) => {
-                // Allow integer -> pointer bitcast
-                IrCastMode::Bitcast
-            }
+            (IrType::Pointer(_), IrType::Integer(_)) => IrCastMode::Bitcast,
+            (IrType::Integer(_), IrType::Pointer(_)) => IrCastMode::Bitcast,
             _ if source_resolved == target_resolved => return Some(source_value),
             _ => {
                 self.context.error(format!(
@@ -704,14 +696,13 @@ impl HighLevelCompiler {
     ) -> Option<LoweredValue> {
         self.push_instruction(IrInstruction::Comment("assignment".to_owned()));
 
-        // Struct destructuring is the one target form that doesn't have a single address.
+        // Struct destructuring does not have a single lvalue address.
         if let AssignTarget::StructDestructure(fields) = target {
-            // 1) Try Address mode - works for local variables, field accesses, etc.
+            // Try Address mode first (works for locals, field accesses, etc.).
             if let Some(addr) = self.lower_expr(rvalue, EvalMode::Address) {
                 return self.lower_struct_destructuring_from_addr(fields, &addr);
             }
-            // 2) Fallback: spill the rvalue to stack and use that address.
-            //    Evaluate exactly once here; do NOT call lower_expr again below.
+            // Fallback: spill the rvalue to the stack. Evaluate exactly once here.
             let lowered = self.lower_expr(rvalue, EvalMode::Value)?;
             let spill = self.new_temp();
             self.push_instruction(IrInstruction::Alloc {

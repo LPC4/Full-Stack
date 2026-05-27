@@ -18,9 +18,10 @@
 ## Overview
 
 Full-Stack is a self-contained compiler pipeline for a custom systems language.
-Every stage -- lexing, parsing, semantic analysis, IR generation, register allocation, RISC-V code emission, and three-pass assembly to machine code -- runs directly in the browser (or natively) and is visualised in real time.
+Every stage -- lexing, parsing, semantic analysis, IR generation, register allocation, RISC-V code emission, assembly, and object-level linking -- runs directly in the browser (or natively) and is visualised in real time.
 
-The pipeline compiles HLL source all the way to RV64IMAFD machine code (ELF-ready section blobs).
+The pipeline compiles HLL source all the way to RV64IMAFD machine code (ELF with full relocation support).
+Three compilation modes are supported: hosted (Linux syscall ABI), freestanding (bare-metal, no OS), and kernel (S-mode with an included boot ROM, PMM, Sv39 VMM, process model, round-robin scheduler, and syscall dispatch).
 Execution uses a built-in 5-stage pipelined CPU with data forwarding, load-use hazard detection, and 2-bit branch prediction backed by a three-level write-back cache hierarchy.
 All components are written in Rust and exposed through an egui interface.
 
@@ -38,18 +39,18 @@ HLL Source
   -> Semantic Analysis     diagnostics
   -> IR Compiler           typed SSA IR
   -> RISC-V Emitter        Vec<RvInstruction>  ->  assembly text
-  -> Token-level Link      [stdlib_tokens..., user_tokens...]
-  -> Three-pass Assembler  AssembledOutput  (.text / .data / .rodata / .bss + symbol table)
+  -> Assembler  (per file) .o objects  (.text / .data / .rodata / .bss + symbol table)
+  -> ObjectLinker          symbol resolution + relocation -> final ELF
   -> VM                    5-stage pipelined CPU
 ```
 
 ### Runtime and linking
 
-- The stdlib is compiled from HLL source (`types.hll`, `memory_allocator.hll`, `string_utils.hll`, `runtime.hll`) into `Vec<RvInstruction>`.
-- User code is compiled independently into its own token stream.
-- The linker unit is the token stream: stdlib tokens are prepended to user tokens before `assemble()`.
-- `assemble()` performs parse/layout/encode only; it does **not** inject extern stubs.
-- Runtime symbols (`putchar`, `puts`, `print_int`, `printf`, `exit`, `_start`) are provided by `programs/stdlib/runtime.hll`.
+- Each HLL file (stdlib modules and user sources) is compiled independently to its own `.o` object.
+- The stdlib is compiled with a distinct string-literal prefix (`__kern_str_` for kernel mode, `str_` for hosted) to avoid duplicate rodata labels at link time.
+- `ObjectLinker::link()` resolves cross-object symbol references and applies relocations to produce a single linked binary.
+- Hosted runtime symbols (`putchar`, `puts`, `print_int`, `printf`, `exit`, `_start`) come from `crates/os-runtime/stdlib/hosted/runtime.hll`.
+- Kernel mode uses the full kernel stdlib bundle (trap entry, PMM, VMM, process, scheduler, syscall dispatch); see `crates/os-runtime/`.
 
 | Stage | View | What you see |
 |-------|------|--------------|
@@ -151,16 +152,17 @@ main: () -> i32 {
 }
 ```
 
-For the full specification, see the [language reference](src/1_high_level_language/_LANG_SPECIFICATIONS.md).
+For the full specification, see the [language reference](crates/hll-to-ir/_LANG_SPECIFICATIONS.md).
 
 ---
 
 ## Documentation
 
-- [Language specification](src/1_high_level_language/_LANG_SPECIFICATIONS.md)
-- [IR design](src/2_intermediate_language/_IR_SPECIFICATIONS.md)
-- [RISC-V backend](src/3_assembly_language/_RISCV_SPECIFICATIONS.md)
-- [VM / CPU specification](src/4_virtual_machine/_VM_SPECIFICATION.md)
+- [Language specification](crates/hll-to-ir/_LANG_SPECIFICATIONS.md)
+- [IR design](crates/ir-to-asm/_IR_SPECIFICATIONS.md)
+- [RISC-V backend](crates/asm-to-binary/_RISCV_SPECIFICATIONS.md)
+- [VM / CPU specification](crates/virtual-machine/_VM_SPECIFICATION.md)
+- [OS / kernel runtime](crates/os-runtime/_OS_SPECIFICATION.md)
 
 ---
 

@@ -23,9 +23,7 @@ use std::fmt;
 use virtual_machine::cpu::StepOutcome;
 use virtual_machine::virtual_machine::VirtualMachine;
 
-// ------------------------------------------------------------
-// Enums
-// ------------------------------------------------------------
+// --- Enums ---
 
 #[derive(Default, Clone, PartialEq, Eq)]
 enum AppMode {
@@ -63,9 +61,7 @@ impl CatalogExportKind {
     }
 }
 
-// ------------------------------------------------------------
-// Settings
-// ------------------------------------------------------------
+// --- Settings ---
 
 #[derive(serde::Deserialize, serde::Serialize, Clone, Copy, PartialEq, Eq, Default, Debug)]
 enum AccentPreset {
@@ -165,9 +161,7 @@ impl Default for AppSettings {
     }
 }
 
-// ------------------------------------------------------------
-// Unique wrapper so every tab has its own identity
-// ------------------------------------------------------------
+// --- View wrapper (gives every tab a unique identity) ---
 
 struct ViewWrapper {
     id: u64,
@@ -203,9 +197,7 @@ impl fmt::Display for ViewWrapper {
     }
 }
 
-// ------------------------------------------------------------
-// Application state
-// ------------------------------------------------------------
+// --- Application state ---
 
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)]
@@ -331,8 +323,7 @@ impl FullStackApp {
         self.stdlib_tokens.clear();
         self.stdlib_asm.clear();
 
-        // Compile each stdlib HLL as an independent module so that we produce
-        // per-HLL `.ir`, `.s`, and `.o` artifacts with no concatenation.
+        // Compile each stdlib HLL independently so we get per-module artifacts with no concatenation.
         let modules = hll_to_ir::stdlib::get_stdlib_modules_for_mode(mode);
         let mut std_pipeline = CompilationPipeline::new();
         std_pipeline.set_target_mode(mode);
@@ -355,8 +346,7 @@ impl FullStackApp {
             }
         }
 
-        // Also compile the concatenated stdlib source once to populate
-        // `stdlib_tokens` for the token-level run_full() path used by hosted programs.
+        // Also compile the concatenated stdlib source for the token-level run_full() path used by hosted programs.
         let full_source = get_stdlib_source_for_mode(mode);
         std_pipeline.set_artifact_stem(Some("stdlib_concat".to_owned()));
         match std_pipeline.compile(&full_source) {
@@ -502,8 +492,7 @@ impl FullStackApp {
     }
 
     fn compile_kernel_with_modules(&mut self) {
-        // Reuse the cached per-module stdlib objects. If the cache is empty,
-        // rebuild it once using the same no-concat module flow as init_stdlib_cache.
+        // Reuse cached per-module stdlib objects; rebuild if the cache is empty.
         if self.stdlib_objects.is_empty() {
             self.init_stdlib_cache();
         }
@@ -514,7 +503,7 @@ impl FullStackApp {
             return;
         }
 
-        // Get the user's kernel module (e.g., my_kernel.hll)
+        // Get the user's kernel module source.
         let user_source = self.catalog.get_selected_source();
         let module_name = self
             .catalog
@@ -522,7 +511,7 @@ impl FullStackApp {
             .map(|p| p.name.trim().to_string())
             .unwrap_or_else(|| "kernel".to_owned());
 
-        // Compile user kernel module in its own pipeline, also without concatenation.
+        // Compile the user kernel module in its own pipeline without concatenation.
         let mut kernel_user_pipeline = CompilationPipeline::new();
         kernel_user_pipeline.set_target_mode(TargetMode::Kernel);
         kernel_user_pipeline.set_type_prelude(get_stdlib_type_prelude());
@@ -539,7 +528,7 @@ impl FullStackApp {
             }
         };
 
-        // Link kernel modules with each stdlib module at object level (no prior concatenation)
+        // Link kernel modules with stdlib at object level (no source concatenation).
         let all_names: Vec<&str> = self
             .stdlib_objects
             .iter()
@@ -564,15 +553,11 @@ impl FullStackApp {
             }
         };
 
-        // Store linked kernel for display and execution.
-        // Prepend the ROM firmware assembly so the disassembly view can
-        // follow the PC through the boot sequence into kernel code.
+        // Prepend ROM firmware assembly so the disassembly view can follow the PC through boot.
         self.compilation_state.linked_asm_text =
             format!("{}{}", os_runtime::ROM_SOURCE, self.stdlib_asm);
 
-        // Compile the user kernel source again purely for IR/ASM display.
-        // The module compilation above already produced valid objects; this
-        // second pass gives us the text outputs the IDE panels need.
+        // Compile user source again for IR/ASM display; module objects are already built above.
         let (user_ir_display, user_asm_display) =
             match self.pipeline.compile(&user_source) {
                 Ok(compile_result) => {
@@ -615,14 +600,14 @@ impl FullStackApp {
             .map(|p| p.is_os() && !p.standalone)
             .unwrap_or(false);
 
-        // Detect program change: reset user-set target mode when switching to a different file
+        // Reset user-set target mode when the selected program changes.
         let current_id = self.catalog.selected_program_id.clone();
         if self.last_compile_program_id != current_id {
             self.user_set_target_mode = false;
             self.last_compile_program_id = current_id;
         }
 
-        // Only auto-infer target mode if the user hasn't manually changed it
+        // Only auto-infer target mode if the user has not manually changed it.
         if !self.user_set_target_mode {
             let desired_mode = if is_os_program {
                 TargetMode::Kernel
@@ -673,7 +658,7 @@ impl FullStackApp {
         self.compilation_state.entry_symbol = self.pipeline.effective_entry_point().to_owned();
         self.compilation_state.load_base = self.pipeline.effective_load_base();
 
-        // Special handling for kernel OS programs: use multi-module compilation
+        // Kernel OS programs use multi-module compilation.
         if is_os_program && self.target_mode == TargetMode::Kernel {
             self.compile_kernel_with_modules();
             return;
@@ -721,8 +706,8 @@ impl FullStackApp {
         }
     }
 
-    /// Compile the program with id `program_id` as Hosted and store the assembled
-    /// result in `compilation_state.last_hosted_binary` on success.
+    /// Compile the program with the given id as Hosted and store the result in
+    /// `compilation_state.last_hosted_binary` on success.
     fn compile_and_store_hosted(&mut self, program_id: &str) -> Result<(), String> {
         use full_stack::view::ProgramKind;
         // Find program source by id
@@ -761,9 +746,7 @@ impl FullStackApp {
     }
 }
 
-// ------------------------------------------------------------
-// eframe::App
-// ------------------------------------------------------------
+// --- eframe::App ---
 
 impl eframe::App for FullStackApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -864,10 +847,10 @@ impl eframe::App for FullStackApp {
                                 let is_selected = self.selected_inject_program_id == p.id;
                                 if ui.selectable_label(is_selected, &p.name).clicked() {
                                     self.selected_inject_program_id = p.id.clone();
-                                    // Auto-compile the selected program into last_hosted_binary
+                                    // Compile the selected program into last_hosted_binary.
                                     match self.compile_and_store_hosted(&p.id) {
                                         Ok(()) => {
-                                            // enable injection flag on machine
+                                            // Enable the injection flag on the machine window.
                                             self.machine_window.selected_user_inject = true;
                                         }
                                         Err(e) => {
@@ -881,7 +864,7 @@ impl eframe::App for FullStackApp {
                     if self.selected_inject_program_id.is_empty() {
                         ui.colored_label(full_stack::view::ui_theme().text_dim, "(none selected)");
                     } else if let Some(ref asm) = self.compilation_state.last_hosted_binary {
-                        let size = asm.text_bytes().len() + asm.rodata_bytes().len() + asm.data_bytes().len();
+                        let size = asm.to_flat_binary().len();
                         ui.label(format!("size: {} bytes", size));
                     }
                 });
@@ -922,9 +905,7 @@ impl eframe::App for FullStackApp {
     }
 }
 
-// ------------------------------------------------------------
-// DockTabViewer
-// ------------------------------------------------------------
+// --- DockTabViewer ---
 
 struct DockTabViewer<'a> {
     state: &'a mut CompilationState,
@@ -948,9 +929,7 @@ impl egui_dock::TabViewer for DockTabViewer<'_> {
     }
 }
 
-// ------------------------------------------------------------
-// Helpers
-// ------------------------------------------------------------
+// --- Helpers ---
 
 fn parse_hex_or_dec(s: &str) -> Option<u64> {
     let s = s.trim();

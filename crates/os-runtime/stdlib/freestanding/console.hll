@@ -1,23 +1,30 @@
-; NS16550A UART at 0x10000000, write to THR (offset 0) to transmit a byte.
+; Console I/O via direct NS16550A UART write (0x10000000).
+; Direct MMIO access from S-mode avoids the ecall/stack-buffer approach,
+; which is unsafe when sp points to user virtual address space (e.g. inside
+; the syscall handler where M-mode would treat the virtual stack address as
+; a physical address and read garbage).
 
+; Write a single character directly to UART TX.
+; a0 holds the char value; no stack slot needed.
 console_putchar: (c: i32) -> () {
     asm {
-        li   t0, 268435456           ; UART base 0x10000000
-    .Lputchar_wait:
-        lbu  t1, 5(t0)              ; LSR at base+5
-        andi t1, t1, 0x20           ; bit 5 = THR empty
-        beqz t1, .Lputchar_wait
-        sb   a0, 0(t0)              ; write char to THR
+        li   t0, 0x10000000
+        sb   a0, 0(t0)
     }
 }
 
+; Write a null-terminated string directly to UART.
 console_write: (str: u8*) -> () {
-    i: u64 = 0
-    c: i32 = i32(@(str + i))
-    while c != 0 {
-        console_putchar(c)
-        i = i + 1
-        c = i32(@(str + i))
+    asm {
+        mv   t0, a0
+        li   t2, 0x10000000
+    .Lcw_loop:
+        lb   t1, 0(t0)
+        beqz t1, .Lcw_done
+        sb   t1, 0(t2)
+        addi t0, t0, 1
+        j    .Lcw_loop
+    .Lcw_done:
     }
 }
 

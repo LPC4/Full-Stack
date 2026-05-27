@@ -68,8 +68,8 @@ kmain: () -> () {
 
     boot_final()
 
-    ; Enable interrupts only after a runnable process exists in the
-    ; scheduler queue, otherwise the first timer tick panics.
+    ; Enable interrupts only after a runnable process is in the scheduler queue,
+    ; otherwise the first timer tick panics.
     boot_interrupts()
 
     ; TODO: load and initialize filesystem drivers
@@ -164,15 +164,9 @@ boot_final: () -> () {
 spawn_user_process: () -> () {
     klog_ok("spawn_user_process: entry".data)
 
-    ; Construct the base address
-    binary_pa: u64 = u64(0x87F00000)
-    klog_hex("spawn: computed USER_BINARY_PA".data, binary_pa)
+    src_user_pa: u64 = u64(USER_BINARY_PA)
 
-    ; Use computed value for actual address
-    src_user_pa: u64 = binary_pa
-
-    ; Probe: read the first qword at USER_BINARY_PA.
-    ; If it is 0, there is no user binary loaded.
+    ; Probe the first qword at USER_BINARY_PA. If it is 0, no user binary is loaded.
     header_ptr: u64* = u64*(USER_BINARY_PA)
     if @header_ptr[0] == 0 {
         klog_warn("no user binary, skipping user process".data)
@@ -211,6 +205,20 @@ spawn_user_process: () -> () {
     pages: u64 = rounded_size
     klog_hex("spawn: calculated page count".data, pages)
 
+    ; Quick heap sanity check: allocate and verify before the loop.
+    pre_loop_buf: u8* = kmalloc(4)
+    if pre_loop_buf == null {
+        klog_error("pre-loop kmalloc null".data)
+        kshutdown(1)
+    }
+    @pre_loop_buf[0] = 88
+    chk: u8 = @pre_loop_buf[0]
+    if chk != 88 {
+        klog_error("pre-loop heap corrupted".data)
+        kshutdown(1)
+    }
+    klog_ok("pre-loop heap ok".data)
+
     i: u64 = 0
     while i < pages {
         klog_hex("spawn: processing page".data, i)
@@ -220,29 +228,24 @@ spawn_user_process: () -> () {
             klog_error("halt: user page alloc failed".data)
             kshutdown(i64(1))
         }
-        klog_hex("spawn:   allocated physical page".data, u64(dst_page))
 
-        ; Compute source address for this page
+        ; Compute source address for this page.
         offset: u64 = i * page_size
         src_page_pa: u64 = src_user_pa + offset
-        klog_hex("spawn:   source page PA".data, src_page_pa)
 
-        ; For identity-mapped kernel VA, the physical address IS the VA
-        ; So we can safely pass it to memcpy and it will work through the MMU
-        klog_hex("spawn:   copying to dest".data, u64(dst_page))
+        ; The kernel VA is identity-mapped, so the physical address equals the VA.
+        ; We can pass it directly to memcpy.
         memcpy(dst_page, u8*(src_page_pa), page_size)
         klog_ok("spawn:   memcpy done".data)
 
         user_va: u64 = USER_CODE_VA + offset
-        klog_hex("spawn:   mapping user VA".data, user_va)
-        klog_hex("spawn:   mapping to phys PA".data, u64(dst_page))
-
-        vmm_map(user_va, u64(dst_page), u64(30))  ; 30 = R+W+X+U (VMM_V added by vmm_map) for user writable executable code
+        vmm_map(user_va, u64(dst_page), u64(30))  ; flags 30 = R+W+X+U (VMM_V added internally)
 
         i = i + u64(1)
     }
 
     klog_ok("spawn: all pages mapped".data)
+
     pcb: u64* = process_create(user_entry)
     klog_ok("spawn: pcb created".data)
     scheduler_add(pcb)

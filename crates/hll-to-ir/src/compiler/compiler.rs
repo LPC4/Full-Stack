@@ -71,9 +71,8 @@ pub struct HighLevelCompiler {
     function_declarations: std::collections::HashMap<String, FunctionDecl>,
     pending_global_strings: Vec<IrGlobalString>,
     global_vars: std::collections::HashMap<String, IrType>,
-    /// Prefix used when naming rodata string-literal labels (e.g. `"str_"` ->
-    /// `str_0`, `str_1`, ...).  Set per compilation unit so that two units linked
-    /// together never produce duplicate label names.
+    /// Prefix for rodata string-literal labels (e.g. `str_` produces `str_0`, `str_1`, ...).
+    /// Set per compilation unit so that two units linked together never produce duplicate label names.
     pub string_prefix: String,
     prelude_types: Vec<(String, IrType)>,
 }
@@ -83,9 +82,8 @@ impl HighLevelCompiler {
         Self::with_string_prefix("str_")
     }
 
-    /// Create a compiler that names string literals with a custom prefix.
-    /// Use distinct prefixes for each compilation unit that will be linked
-    /// together so the assembler never sees duplicate rodata labels.
+    /// Create a compiler with a custom string-literal label prefix.
+    /// Use distinct prefixes per compilation unit to avoid duplicate rodata labels at link time.
     pub fn with_string_prefix(prefix: &str) -> Self {
         Self {
             context: LoweringContext::new(),
@@ -129,7 +127,7 @@ impl HighLevelCompiler {
         if let Err(_) = semantic_analyzer.analyze_program(program) {
             // Collect semantic errors and emit them as diagnostics
             for diagnostic in semantic_analyzer.diagnostics() {
-                self.context.diagnostics.error(diagnostic.message.clone()); // re-emitted from semantic analysis
+                self.context.diagnostics.error(diagnostic.message.clone());
             }
             log::warn!(
                 "Semantic analysis found errors, continuing with compilation for diagnostics"
@@ -143,6 +141,14 @@ impl HighLevelCompiler {
         self.pending_global_strings.clear();
         self.global_vars.clear();
         let mut ir_program = IrProgram::new("ir_program");
+        // Emit prelude types so the IR-to-ASM backend can resolve IrType::Named references
+        // in modules that lack their own type declarations.
+        for (name, ty) in &self.prelude_types {
+            ir_program.push_type_alias(IrTypeAlias {
+                name: name.clone(),
+                ty: ty.clone(),
+            });
+        }
 
         for declaration in &program.declarations {
             if let DeclNode::Function {
@@ -170,7 +176,7 @@ impl HighLevelCompiler {
             self.lower_declaration(&mut ir_program, declaration)?;
         }
 
-        // Add all pending global strings to the IR program
+        // Add all pending global strings to the IR program.
         for global_string in self.pending_global_strings.drain(..) {
             ir_program.push_global_string(global_string);
         }

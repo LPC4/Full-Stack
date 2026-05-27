@@ -122,7 +122,7 @@ fn run_with(extra: &str, user_src: &str) -> (String, Option<i64>) {
     run_hll(&format!("{extra}\n{user_src}"))
 }
 
-// -- ROM ---------------------------------------------------------------------
+// --- ROM ---
 
 #[test]
 fn rom_image_assembles() {
@@ -131,7 +131,7 @@ fn rom_image_assembles() {
     assert_eq!(rom.len() % 4, 0, "ROM size must be word-aligned");
 }
 
-// -- mem.hll -----------------------------------------------------------------
+// --- mem.hll ---
 
 #[test]
 fn memset_fills_buffer() {
@@ -185,8 +185,8 @@ main: () -> i32 {
 
 #[test]
 fn memmove_dst_greater_than_src() {
-    // memmove copies high-to-low, so dst > src overlaps are handled correctly.
-    // buf = [A,B,C,D,E]; memmove(buf[1], buf[0], 4) -> [A,A,B,C,D]
+    // Copies bytes high-to-low (memmove), so dst > src overlaps are safe.
+    // buf = [A,B,C,D,E]; memmove(buf+1, buf, 4) -> [A,A,B,C,D]
     let (uart, exit) = run_with(
         MEM_SRC,
         r#"
@@ -251,7 +251,7 @@ main: () -> i32 {
 
 #[test]
 fn memcmp_detects_difference() {
-    // a = "AB", b = "AC" -> a < b, memcmp returns -1.
+    // a = "AB", b = "AC": a < b, so memcmp returns -1.
     let (uart, exit) = run_with(
         MEM_SRC,
         r#"
@@ -281,7 +281,7 @@ main: () -> i32 {
     assert_eq!(exit, Some(0));
 }
 
-// -- klog.hll ----------------------------------------------------------------
+// --- klog.hll ---
 
 #[test]
 fn klog_ok_output() {
@@ -328,11 +328,11 @@ main: () -> i32 {
     assert_eq!(exit, Some(0));
 }
 
-// -- Kernel boot -------------------------------------------------------------
+// --- Kernel boot ---
 
 // Compile user code linked against the kernel stdlib.
-// The kernel stdlib is compiled with the "__kern_str_" string-label prefix so
-// its rodata labels never clash with user-code labels (which use "str_").
+// The kernel stdlib uses the "__kern_str_" string-label prefix so rodata labels
+// never clash with user-code labels (which use "str_").
 fn run_kernel_hll(user_src: &str) -> (String, Option<i64>) {
     let mut stdlib_pipeline = CompilationPipeline::new();
     stdlib_pipeline.set_string_prefix(Some("__kern_str_".to_owned()));
@@ -532,9 +532,7 @@ kmain: () -> () {
     assert_eq!(exit, Some(0));
 }
 
-// ---------------------------------------------------------------------------
-// Cross-module linking tests
-// ---------------------------------------------------------------------------
+// --- Cross-module linking tests ---
 
 /// Compile and link two simple modules (plus stdlib): one provides a function,
 /// the other calls it.  Verifies CallPlt relocations resolve correctly.
@@ -758,15 +756,12 @@ fn cross_module_chain_three_works() {
     assert_eq!(exit, Some(42), "3-module chain should return 42");
 }
 
-// ---------------------------------------------------------------------------
-// Kernel subsystem runtime tests
+// --- Kernel subsystem runtime tests ---
 //
-// Each test exercises one kernel subsystem in isolation using the minimal
-// kernel boot helper.  Failures here pinpoint which subsystem is broken
-// without running the full boot + user-process pipeline.
-// ---------------------------------------------------------------------------
+// Each test exercises one subsystem in isolation.  Failures here pinpoint which
+// subsystem is broken without running the full boot + user-process pipeline.
 
-// -- PMM (Physical Memory Manager) ------------------------------------------
+// --- PMM (Physical Memory Manager) ---
 
 /// PMM can allocate one page from a small region and returns a non-null pointer.
 #[test]
@@ -949,9 +944,9 @@ kmain: () -> () {
     assert_eq!(exit, Some(0));
 }
 
-// -- VMM (Virtual Memory Manager) -------------------------------------------
+// --- VMM (Virtual Memory Manager) ---
 
-/// vmm_init allocates a root table and vmm_map does not crash for a simple mapping.
+/// Checks that vmm_init allocates a root table and vmm_map does not crash.
 #[test]
 fn vmm_init_and_map_no_crash() {
     let (uart, exit) = run_kernel_hll(
@@ -977,7 +972,7 @@ kmain: () -> () {
     assert_eq!(exit, Some(0));
 }
 
-/// vmm_map_1gib maps a gigapage without crashing.
+/// Checks that vmm_map_1gib maps a gigapage without crashing (smoke test).
 #[test]
 fn vmm_map_1gib_no_crash() {
     let (uart, exit) = run_kernel_hll(
@@ -1001,9 +996,9 @@ kmain: () -> () {
     assert_eq!(exit, Some(0));
 }
 
-// -- Process + Scheduler -----------------------------------------------------
+// --- Process + Scheduler ---
 
-/// process_create returns a non-null PCB, and scheduler_add accepts it.
+/// Checks that process_create returns a non-null PCB and scheduler_add accepts it.
 #[test]
 fn process_create_and_scheduler_add() {
     let (uart, exit) = run_kernel_hll(
@@ -1044,7 +1039,7 @@ kmain: () -> () {
     assert_eq!(exit, Some(0));
 }
 
-/// process_create assigns increasing PIDs.
+/// Checks that process_create assigns sequentially increasing PIDs.
 #[test]
 fn process_create_increments_pid() {
     let (uart, exit) = run_kernel_hll(
@@ -1089,9 +1084,9 @@ kmain: () -> () {
     assert_eq!(exit, Some(0));
 }
 
-// -- Syscall dispatch --------------------------------------------------------
+// --- Syscall dispatch ---
 
-/// sys_write (ecall 64) emitted from a kernel-mode inline asm block is handled
+/// Ecall 64 (sys_write) emitted from a kernel-mode inline asm block is handled
 /// by the kernel's own trap vector and writes characters via console_putchar.
 ///
 /// In this test the kernel acts as its own "user": we arm the trap handler,
@@ -1124,9 +1119,9 @@ kmain: () -> () {
     assert_eq!(exit, Some(0));
 }
 
-// -- Memory self-test isolation ----------------------------------------------
+// --- Memory self-test isolation ---
 
-/// memory_self_test returns 1 (success) for a small buffer.
+/// Memory self-test passes (returns 1) for a small 64-byte buffer.
 #[test]
 fn memory_self_test_small_buf_passes() {
     let (uart, exit) = run_kernel_hll(
@@ -1155,7 +1150,7 @@ kmain: () -> () {
     assert_eq!(exit, Some(0));
 }
 
-/// memory_self_test returns 1 for a larger 512-byte buffer.
+/// Memory self-test passes (returns 1) for a larger 512-byte buffer.
 #[test]
 fn memory_self_test_large_buf_passes() {
     let (uart, exit) = run_kernel_hll(
@@ -1184,9 +1179,9 @@ kmain: () -> () {
     assert_eq!(exit, Some(0));
 }
 
-// -- kmalloc -----------------------------------------------------------------
+// --- kmalloc ---
 
-/// kmalloc allocations across a loop all return distinct, non-null pointers.
+/// Multiple kmalloc calls in a loop all return distinct, non-null pointers.
 #[test]
 fn kmalloc_multiple_allocs_are_distinct() {
     let (uart, exit) = run_kernel_hll(
@@ -1258,5 +1253,241 @@ kmain: () -> () {
 "#,
     );
     assert_eq!(uart, "[  OK  ] kmalloc data stable\n", "uart={uart:?}");
+    assert_eq!(exit, Some(0));
+}
+
+// --- Regression: heap integrity after VM setup + process_create ---
+//
+// These tests ensure the heap stays usable after operations that allocate page-table pages
+// and PCBs.  A past bug caused kmalloc to return a pointer into .rodata after the spawn loop
+// when certain klog calls were removed, producing a load page-fault in memset with stval that
+// decoded to "9 enable" (from the string "mmu: sv39 enabled").
+
+/// After process_create (which allocates a PCB via kmalloc + a user-stack page
+/// via pmm_alloc + calls vmm_map), a follow-up kmalloc must return a distinct,
+/// writable pointer.
+#[test]
+fn heap_survives_process_create() {
+    let (uart, exit) = run_kernel_hll(
+        r#"
+external klog_ok:       (msg: u8*) -> ()
+external klog_error:    (msg: u8*) -> ()
+external kshutdown:     (code: i64) -> ()
+external pmm_init:      (start: u64, end: u64) -> ()
+external vmm_init:      () -> ()
+external process_init:  () -> ()
+external process_create: (entry_pc: u64) -> u64*
+external kmalloc:       (size: u64) -> u8*
+
+kmain: () -> () {
+    pmm_init(0x84000000, 0x86000000)
+    vmm_init()
+    process_init()
+
+    ; Allocate a PCB (exercises kmalloc + vmm_map internally).
+    pcb: u64* = process_create(0x40000000)
+    if pcb == null {
+        klog_error("pcb null".data)
+        kshutdown(1)
+    }
+
+    ; Heap must still be usable.
+    buf: u8* = kmalloc(16)
+    if buf == null {
+        klog_error("kmalloc after process_create returned null".data)
+        kshutdown(1)
+    }
+    ; Write and read back byte-by-byte to isolate any corruption.
+    @buf[0] = 42
+    @buf[1] = 43
+    v0: u8 = @buf[0]
+    v1: u8 = @buf[1]
+    if v0 != 42 {
+        klog_error("buf[0] corrupted".data)
+        kshutdown(2)
+    }
+    if v1 != 43 {
+        klog_error("buf[1] corrupted".data)
+        kshutdown(3)
+    }
+    klog_ok("heap ok after process_create".data)
+    kshutdown(0)
+}
+"#,
+    );
+    assert!(
+        uart.contains("[  OK  ] heap ok after process_create\n"),
+        "uart={uart:?}"
+    );
+    assert_eq!(exit, Some(0));
+}
+
+/// Simulate the spawn_user_process page-copy loop (many pmm_alloc + vmm_map
+/// calls) then call process_create.  A follow-up kmalloc must still work.
+#[test]
+fn spawn_like_workload_then_process_create() {
+    let (uart, exit) = run_kernel_hll(
+        r#"
+external klog_ok:       (msg: u8*) -> ()
+external klog_error:    (msg: u8*) -> ()
+external kshutdown:     (code: i64) -> ()
+external pmm_init:      (start: u64, end: u64) -> ()
+external pmm_alloc:     () -> u8*
+external vmm_init:      () -> ()
+external vmm_map:       (va: u64, pa: u64, flags: u64) -> ()
+external process_init:  () -> ()
+external process_create: (entry_pc: u64) -> u64*
+external kmalloc:       (size: u64) -> u8*
+
+kmain: () -> () {
+    pmm_init(0x84000000, 0x86000000)
+    vmm_init()
+    process_init()
+
+    ; Simulate the spawn loop: allocate 18 pages and map them.
+    page_size: u64 = 4096
+    pages: u64 = 18
+    i: u64 = 0
+    while i < pages {
+        dst_page: u8* = pmm_alloc()
+        if dst_page == null {
+            klog_error("pmm_alloc null".data)
+            kshutdown(1)
+        }
+        va: u64 = 0x40000000 + i * page_size
+        vmm_map(va, u64(dst_page), 30)
+        i = i + 1
+    }
+
+    ; Now create a process — this exercises kmalloc + vmm_map internally.
+    pcb: u64* = process_create(0x40001000)
+    if pcb == null {
+        klog_error("pcb null after spawn-like workload".data)
+        kshutdown(2)
+    }
+
+    ; Heap must still be usable after all that allocation.
+    buf: u8* = kmalloc(32)
+    if buf == null {
+        klog_error("kmalloc null after spawn-like workload".data)
+        kshutdown(3)
+    }
+    @buf[0] = 42
+    @buf[1] = 43
+    v0: u8 = @buf[0]
+    v1: u8 = @buf[1]
+    if v0 != 42 {
+        klog_error("buf[0] corrupted after workload".data)
+        kshutdown(4)
+    }
+    if v1 != 43 {
+        klog_error("buf[1] corrupted after workload".data)
+        kshutdown(5)
+    }
+    klog_ok("heap ok after spawn-like workload".data)
+    kshutdown(0)
+}
+"#,
+    );
+    assert!(
+        uart.contains("[  OK  ] heap ok after spawn-like workload\n"),
+        "uart={uart:?}"
+    );
+    assert_eq!(exit, Some(0));
+}
+
+/// Create several processes, then verify the heap still delivers distinct,
+/// writable allocations.
+#[test]
+fn heap_stress_after_multiple_process_creates() {
+    let (uart, exit) = run_kernel_hll(
+        r#"
+external klog_ok:       (msg: u8*) -> ()
+external klog_error:    (msg: u8*) -> ()
+external kshutdown:     (code: i64) -> ()
+external pmm_init:      (start: u64, end: u64) -> ()
+external vmm_init:      () -> ()
+external process_init:  () -> ()
+external process_create: (entry_pc: u64) -> u64*
+external kmalloc:       (size: u64) -> u8*
+
+kmain: () -> () {
+    pmm_init(0x84000000, 0x86000000)
+    vmm_init()
+    process_init()
+
+    ; Create 5 processes (each allocates a PCB + stack page).
+    j: u64 = 0
+    while j < 5 {
+        pcb: u64* = process_create(0x40000000 + j * 4096)
+        if pcb == null {
+            klog_error("pcb null in loop".data)
+            kshutdown(1)
+        }
+        j = j + 1
+    }
+
+    ; Now allocate 4 buffers and verify they are distinct and writable.
+    a: u8* = kmalloc(16)
+    b: u8* = kmalloc(16)
+    c: u8* = kmalloc(16)
+    d: u8* = kmalloc(16)
+    if a == null {
+        klog_error("a null".data)
+        kshutdown(2)
+    }
+    if b == null {
+        klog_error("b null".data)
+        kshutdown(3)
+    }
+    if c == null {
+        klog_error("c null".data)
+        kshutdown(4)
+    }
+    if d == null {
+        klog_error("d null".data)
+        kshutdown(5)
+    }
+    if a == b {
+        klog_error("a == b".data)
+        kshutdown(6)
+    }
+    if b == c {
+        klog_error("b == c".data)
+        kshutdown(7)
+    }
+    if c == d {
+        klog_error("c == d".data)
+        kshutdown(8)
+    }
+    @a[0] = 1
+    @b[0] = 2
+    @c[0] = 3
+    @d[0] = 4
+    if @a[0] != 1 {
+        klog_error("a corrupted".data)
+        kshutdown(9)
+    }
+    if @b[0] != 2 {
+        klog_error("b corrupted".data)
+        kshutdown(10)
+    }
+    if @c[0] != 3 {
+        klog_error("c corrupted".data)
+        kshutdown(11)
+    }
+    if @d[0] != 4 {
+        klog_error("d corrupted".data)
+        kshutdown(12)
+    }
+    klog_ok("heap ok after 5 process creates".data)
+    kshutdown(0)
+}
+"#,
+    );
+    assert!(
+        uart.contains("[  OK  ] heap ok after 5 process creates\n"),
+        "uart={uart:?}"
+    );
     assert_eq!(exit, Some(0));
 }

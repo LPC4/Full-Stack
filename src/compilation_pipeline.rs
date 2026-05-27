@@ -12,59 +12,18 @@ use std::panic::Location;
 use std::path::{Path, PathBuf};
 pub use hll_to_ir::TargetMode;
 
-// # Compilation Pipeline with File-Based Artifact Output
+// Compilation pipeline: HLL source -> IR -> ASM -> OBJ -> ELF.
 //
-// The `CompilationPipeline` compiles HLL (High-Level Language) source code through multiple stages,
-// writing intermediate artifacts to disk at each stage for debugging and incremental builds.
+// Stages:
+//   1. HLL -> IR   (compile / compile_to_ir_only / run_full)   -> out/ir/*.ir
+//   2. IR  -> ASM  (compile_ir_to_assembly)                    -> out/asm/*.s
+//   3. ASM -> OBJ  (assemble / assemble_named)                 -> out/obj/*.o
+//   4. OBJ -> ELF  (link_assembled_objects)                    -> out/elf/total_*.elf
 //
-// ## Compilation Stages
-//
-// The pipeline performs the following transformations:
-//
-// 1. **HLL → IR (Intermediate Representation)**
-//    - Source: `.hll` files
-//    - Output: `out/ir/*.ir`
-//    - Method: `compile()`, `compile_to_ir_only()`, or `run_full()`
-//
-// 2. **IR → ASM (RISC-V Assembly)**
-//    - Source: `IrProgram`
-//    - Output: `out/asm/*.s`
-//    - Method: `compile_ir_to_assembly()` or `compile_ir_to_assembly_with_tokens()`
-//
-// 3. **ASM → OBJ (Object Files)**
-//    - Source: `Vec<RvInstruction>` token stream
-//    - Output: `out/obj/*.o`
-//    - Method: `assemble()` or `assemble_named()`
-//
-// 4. **OBJ → ELF (Executable)**
-//    - Source: Multiple object files
-//    - Output: `out/elf/total_*.elf`
-//    - Method: `link_assembled_objects()` or `link_assembled_objects_named()`
-//
-// ## File Output Structure
-//
-// Artifacts are organized in the following directory structure:
-//
-// ```
-// out/
-//   ir/          Intermediate representation files (.ir)
-//   asm/         RISC-V assembly text files (.s)
-//   obj/         Relocatable object files (.o)
-//   elf/         Final executable images (.elf)
-// ```
-//
-// ## Multi-File Linking
-//
-// Each HLL source file is independently compiled to its own `.o` file, enabling proper linking:
-//
-// - No concatenation: Assembly is never concatenated before assembling
-// - Proper linking: Object files are linked together with relocation support
-// - Incremental builds: Already-compiled `.o` files can be reused
-// - Separate namespaces: Each module has its own symbol namespace
+// Each HLL file compiles to its own .o, so no source concatenation happens before
+// assembly.  Object files are linked together with full relocation support.
 
-// ---------------------------------------------------------------------------
-// Errors
-// ---------------------------------------------------------------------------
+// --- Errors ---
 
 #[derive(Debug, Clone)]
 pub enum CompilationError {
@@ -95,9 +54,7 @@ impl std::fmt::Display for CompilationError {
 
 impl std::error::Error for CompilationError {}
 
-// ---------------------------------------------------------------------------
-// Result
-// ---------------------------------------------------------------------------
+// --- Result ---
 
 #[derive(Debug)]
 pub struct CompilationResult {
@@ -107,9 +64,7 @@ pub struct CompilationResult {
     pub diagnostics: Vec<Diagnostic>,
 }
 
-// ---------------------------------------------------------------------------
-// Stage-typed pipeline output
-// ---------------------------------------------------------------------------
+// --- Stage-typed pipeline output ---
 
 pub struct LexOutput {
     pub display: String,
@@ -168,9 +123,7 @@ impl PipelineResult {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Pipeline config
-// ---------------------------------------------------------------------------
+// --- Pipeline config ---
 
 pub struct PipelineConfig {
     pub run_semantic_analysis: bool,
@@ -194,9 +147,7 @@ impl Default for PipelineConfig {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Pipeline
-// ---------------------------------------------------------------------------
+// --- Pipeline ---
 
 pub struct CompilationPipeline {
     run_semantic_analysis: bool,
@@ -208,7 +159,6 @@ pub struct CompilationPipeline {
     artifact_root: PathBuf,
     artifact_stem: RefCell<Option<String>>,
     last_artifact_stem: RefCell<Option<String>>,
-    /// If false, artifacts are not written to disk (useful for tests to avoid file bloat)
     write_artifacts: bool,
 }
 
@@ -380,7 +330,7 @@ impl CompilationPipeline {
         }
     }
 
-    /// source -> tokens -> AST -> IR, with mode-specific validation.
+    /// Source -> tokens -> AST -> IR, with mode-specific validation.
     #[track_caller]
     pub fn compile(&self, source: &str) -> Result<CompilationResult, CompilationError> {
         log::info!("Starting compilation pipeline");
@@ -691,17 +641,9 @@ impl CompilationPipeline {
         Ok(out)
     }
 
-    /// Compile multiple named modules independently, getting separate `.s` and `.o` files for each.
-    /// This is useful for compiling kernel modules or multi-file programs where each module
-    /// should have its own artifact files instead of being concatenated.
+    /// Compile multiple named modules independently, producing one `.o` per module.
     ///
-    /// # Arguments
-    /// * `modules` - A list of (module_name, source_code) tuples
-    /// * `first_module_is_entry` - If true, the first module becomes the entry point module
-    ///
-    /// # Returns
-    /// A list of assembled objects ready to link, in the same order as input modules.
-    /// On error, returns the diagnostics from the first failed module.
+    /// Returns assembled objects in input order, or the diagnostics from the first failed module.
     #[track_caller]
     pub fn compile_modules(
         &mut self,
@@ -710,16 +652,12 @@ impl CompilationPipeline {
         let mut result = Vec::with_capacity(modules.len());
 
         for (module_name, source) in modules {
-            // Set stem for this module
             self.set_artifact_stem(Some(module_name.to_string()));
 
-            // Compile HLL -> IR
             let compile_result = self.compile(source)?;
 
-            // Compile IR -> ASM with tokens
             let (_, tokens) = self.compile_ir_to_assembly_with_tokens(&compile_result.ir_program);
 
-            // Assemble ASM -> OBJ
             let assembled = self
                 .assemble_named(module_name, &tokens)
                 .map_err(|e| CompilationError::FreestandingErrors(vec![e.message]))?;
@@ -730,15 +668,9 @@ impl CompilationPipeline {
         Ok(result)
     }
 
-    /// Link multiple compiled objects as modules, applying layout post-processing.
-    /// This is the final step after compiling multiple modules.
+    /// Link multiple compiled objects and apply layout post-processing.
     ///
-    /// # Arguments
-    /// * `module_names` - Names of the modules (for diagnostics and artifact naming)
-    /// * `objects` - The assembled objects to link
-    ///
-    /// # Returns
-    /// The linked ELF-format assembled output, ready to load into a VM.
+    /// Returns the linked output ready to load into a VM.
     #[track_caller]
     pub fn link_modules(&self, module_names: &[&str], objects: &[&AssembledOutput]) -> Result<AssembledOutput, LinkerError> {
         let modules: Vec<(&str, &AssembledOutput)> = module_names.iter().zip(objects.iter()).map(|(n, o)| (*n, *o)).collect();
@@ -746,37 +678,25 @@ impl CompilationPipeline {
         self.link_assembled_objects_named(&combined_stem, &modules)
     }
 
-    /// Compile kernel modules separately and link them with the kernel stdlib.
-    /// Each kernel module (entry, utilities, checks, trap_handler, pmm, vmm, my_kernel)
-    /// gets its own .ir, .s, and .o file.
+    /// Compile kernel modules and link them with the provided stdlib object.
     ///
-    /// # Arguments
-    /// * `kernel_modules` - A list of (module_name, source_code) tuples
-    /// * `stdlib_object` - The assembled kernel stdlib object for linking
-    ///
-    /// # Returns
-    /// A fully linked kernel ELF ready to load into a VM.
+    /// Returns a fully linked kernel image ready to load into a VM.
     #[track_caller]
     pub fn compile_kernel_modules_with_stdlib(
         &mut self,
         kernel_modules: &[(&str, &str)],
         stdlib_object: &AssembledOutput,
     ) -> Result<AssembledOutput, CompilationError> {
-        // Compile all kernel modules to object files
         let kernel_objects = self.compile_modules(kernel_modules)?;
 
-        // Build list of all modules to link: stdlib first, then kernel modules
         let mut module_names = vec!["kernel_stdlib"];
         let mut object_refs = vec![stdlib_object];
-
-        // Add kernel modules in order
         for (module_name, _) in kernel_modules {
             module_names.push(*module_name);
         }
         let kernel_refs: Vec<&AssembledOutput> = kernel_objects.iter().collect();
         object_refs.extend(kernel_refs);
 
-        // Link everything together in one operation
         let combined_stem = module_names.join("_");
         self.link_assembled_objects_named(&combined_stem,
             &module_names.iter().zip(object_refs.iter())

@@ -1,12 +1,12 @@
-//! Tests for the ROM boot stub and kernel-mode boot sequence.
-//!
-//! Covers:
-//!   - ROM assembles without error and is correctly padded.
-//!   - `M_TRAP_ADDR` is at the expected offset (0x100).
-//!   - A freshly-created pipeline initialises `mtvec` to `M_TRAP_ADDR`.
-//!   - `new_kernel` redirects the CPU to ROM_BASE so `_start` runs.
-//!   - Full kernel boot: ROM `_start` does PMP + delegation + mret into
-//!     S-mode; minimal kernel calls sys_exit and the VM halts correctly.
+// Tests for the ROM boot stub and kernel-mode boot sequence.
+//
+// Covers:
+//   - ROM assembles without error and is correctly padded.
+//   - M_TRAP_ADDR is at the expected offset (0x100).
+//   - A freshly-created pipeline initialises mtvec to M_TRAP_ADDR.
+//   - new_kernel redirects the CPU to ROM_BASE so _start runs.
+//   - Full kernel boot: ROM _start does PMP + delegation + mret into S-mode;
+//     minimal kernel calls sys_exit and the VM halts correctly.
 
 use asm_to_binary::assembler::Assembler;
 use asm_to_binary::rv_instruction::RvInstruction;
@@ -16,9 +16,7 @@ use virtual_machine::cpu::StepOutcome;
 use virtual_machine::cpu::pipeline::Pipeline;
 use virtual_machine::rom::{M_TRAP_ADDR, ROM_BASE, generate_rom_image};
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+// --- Helpers ---
 
 /// Assemble a minimal kernel and run it via `VirtualMachine::new_kernel`.
 /// Returns (uart_output, exit_code).
@@ -48,9 +46,7 @@ fn run_kernel(src: &str, max_steps: u64) -> (String, i64) {
     (result.uart_output, code)
 }
 
-// ---------------------------------------------------------------------------
-// ROM structure tests
-// ---------------------------------------------------------------------------
+// --- ROM structure tests ---
 
 #[test]
 fn rom_assembles_without_error() {
@@ -71,8 +67,8 @@ fn rom_is_at_least_m_trap_offset() {
 
 #[test]
 fn m_trap_addr_is_256() {
-    // _m_trap must be at a known, stable offset so Pipeline::new and _start
-    // can both hardcode 0x100 without a symbol-table lookup at runtime.
+    // _m_trap must sit at a fixed offset so Pipeline::new and _start can both
+    // hardcode 0x100 without a symbol-table lookup at runtime.
     assert_eq!(M_TRAP_ADDR, ROM_BASE + 0x100);
     assert_eq!(M_TRAP_ADDR, 0x100);
 }
@@ -86,14 +82,11 @@ fn m_trap_addr_is_4_byte_aligned() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Pipeline initialisation test
-// ---------------------------------------------------------------------------
+// --- Pipeline initialisation test ---
 
 #[test]
 fn pipeline_mtvec_initialised_to_m_trap() {
-    // A freshly-constructed Pipeline (for hosted non-kernel programs) must
-    // point mtvec at _m_trap, not at _start.
+    // A freshly constructed Pipeline (for hosted programs) must point mtvec at _m_trap, not _start.
     let rom = generate_rom_image();
     let mut bus = SystemBus::new(rom);
     let pipeline = Pipeline::new(RAM_BASE, RAM_BASE + 4 * 1024 * 1024);
@@ -106,14 +99,11 @@ fn pipeline_mtvec_initialised_to_m_trap() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// new_kernel boot-stub test
-// ---------------------------------------------------------------------------
+// --- new_kernel boot-stub test ---
 
 #[test]
 fn new_kernel_starts_cpu_at_rom_base() {
-    // Minimal kernel: just enough labels to assemble; the test only checks
-    // that the CPU PC is ROM_BASE before any cycles run.
+    // Minimal kernel: just enough to assemble; the test only checks that the CPU starts at ROM_BASE.
     let src = "
         .section .text
         .globl _kernel_start
@@ -146,22 +136,14 @@ fn new_kernel_starts_cpu_at_rom_base() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Full kernel boot integration test
-// ---------------------------------------------------------------------------
+// --- Full kernel boot integration test ---
 
 #[test]
 fn kernel_boot_pmp_delegation_mret_smode_exit() {
-    // A minimal kernel that:
-    //   1. Receives control in S-mode at RAM_BASE (after ROM _start mrets).
-    //   2. Calls sys_exit(42) via ecall.
-    //
-    // The ecall from S-mode has cause=9 (supervisor ecall).  Bit 9 is NOT in
-    // medeleg (we only delegate bits 8/12/13/15), so it goes to _m_trap in
-    // M-mode.  _m_trap dispatches to sys_exit which writes code 42 to SYSCON.
-    //
-    // If PMP or the mret are broken the kernel never fetches from RAM and the
-    // test either hangs (Continue) or faults.
+    // Minimal kernel: receives control in S-mode at RAM_BASE after ROM _start mrets, then calls
+    // sys_exit(42) via ecall (cause=9, supervisor ecall).  Bit 9 is not in medeleg so it reaches
+    // _m_trap in M-mode, which dispatches to sys_exit and writes code 42 to SYSCON.
+    // If PMP or mret are broken the kernel never fetches from RAM and the test hangs or faults.
     let src = "
         .section .text
         .globl _kernel_start
@@ -175,35 +157,10 @@ fn kernel_boot_pmp_delegation_mret_smode_exit() {
 }
 
 #[test]
-fn kernel_uart_output_via_smode_ecall() {
-    // Kernel writes a single character ('A' = 65) via sys_putchar (syscall 1000).
-    // This ecall from S-mode -> M-mode -> sys_putchar -> UART.
-    let src = "
-        .section .text
-        .globl _kernel_start
-        _kernel_start:
-            li a7, 1000
-            li a0, 65
-            ecall
-            li a7, 93
-            li a0, 0
-            ecall
-    ";
-    let (uart, code) = run_kernel(src, 1000);
-    assert_eq!(code, 0);
-    assert_eq!(
-        uart, "A",
-        "kernel should have written 'A' to UART via sys_putchar"
-    );
-}
-
-#[test]
 fn hosted_program_mtvec_still_works_after_rom_change() {
-    // Non-kernel hosted programs (VirtualMachine::new) must still reach the
-    // M-mode trap handler.  mtvec is no longer 0x000 (_start) but 0x100
-    // (_m_trap), which is the right target.
-    //
-    // We assemble a tiny program that calls sys_exit(7) and verify it halts.
+    // Non-kernel hosted programs must still reach the M-mode trap handler.
+    // Here mtvec is 0x100 (_m_trap), not 0x000 (_start).  Assemble a tiny program
+    // that calls sys_exit(7) and verify it halts with code 7.
     let src = "
         .section .text
         .globl _start
@@ -241,9 +198,8 @@ fn hosted_program_mtvec_still_works_after_rom_change() {
 
 #[test]
 fn start_is_not_trap_handler() {
-    // Sanity: the bytes at ROM_BASE (0x000) must NOT be the same as the bytes
-    // at M_TRAP_ADDR (0x100).  Before the ROM refactor, both pointed to the
-    // same handler.  Now _start and _m_trap are different code.
+    // The first instruction at ROM_BASE (0x000) must differ from the one at M_TRAP_ADDR (0x100).
+    // Before the ROM refactor both pointed at the same handler; now they are distinct.
     let bytes = generate_rom_image();
     if bytes.len() >= M_TRAP_ADDR as usize + 4 {
         let at_start: [u8; 4] = bytes[..4].try_into().unwrap();

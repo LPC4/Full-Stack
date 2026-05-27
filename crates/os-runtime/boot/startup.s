@@ -5,11 +5,6 @@
     .globl _m_trap
 
 # _start: M-mode boot stub (offset 0x000)
-#
-# 1. PMP     - grant S/U-mode RWX access to full address space
-# 2. medeleg - delegate page faults and U-mode ecall to S-mode
-# 3. mideleg - delegate supervisor interrupts to S-mode
-# 4. mret into S-mode at kernel entry (address in a0)
 _start:
     # PMP: single entry, full address space, RWX.
     #    pmpaddr0 = -1  (TOR upper bound = all ones)

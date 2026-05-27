@@ -29,20 +29,20 @@ All platforms share the same memory map and device layout defined in Section 3.
 To make the relationship between firmware, kernel and the higher-level OS clearer we adopt a layered view:
 
 - ROM (boot firmware)
-  - Role: Minimal, immutable code executed at reset. Sets initial CPU state, performs device initialization required to load a kernel (if present) and jumps to the kernel entry point. ROM runs in Machine mode and provides only the smallest infrastructure required by the platform.
-  - Where to find it in the repo: the VM embeds a small ROM image; the source-level assembly stubs used for tests/examples live in `crates/os-runtime/boot/` (e.g. `startup.s`, `trap.s`). The VM's ROM image is derived from these pieces for integration testing.
-  - What is implemented now: simple reset entry that sets registers and transfers control to `_start` (kernel entry). Future ROM work will include multi-stage boot support and optional recovery menus.
+  - Role: Minimal, immutable code executed at reset. Configures CPU state (PMP, exception/interrupt delegation), sets up the M-mode trap vector, and drops to Supervisor mode via `mret`. ROM runs in Machine mode and handles hosted `sys_write` and `sys_exit` ecalls for non-kernel programs.
+  - Where to find it in the repo: `crates/os-runtime/boot/startup.s` (M-mode entry, offset 0x000) and `boot/trap.s` (M-mode trap handler, offset 0x100). The VM assembles these into its ROM image at startup.
+  - What is implemented: full PMP grant, `medeleg`/`mideleg` delegation to S-mode, `mtvec` setup, `mepc` set to the kernel entry address, and `mret` into S-mode. `trap.s` handles `sys_write` (UART write loop) and `sys_exit` (SYSCON halt) for the hosted runtime.
 
-- Kernel (freestanding runtime + core kernel code)
-  - Role: Initialize hardware (UART, timers, interrupt controllers), set up memory allocators, optionally initialize and enable paging (Sv39), configure trap/interrupt handling, and enter the main kernel loop. The kernel may choose to identity-map the canonical lower half or relocate itself depending on VM/real-hardware needs.
-  - Where to find it in the repo: `crates/os-runtime/kernel/` - contains `pmm.hll`, `vmm.hll`, `entry.hll` (minimal kernel entry) and `my_kernel.hll` (example kernel). Re-usable kernel helpers (kmalloc, timer helpers, trap prologue, etc.) live under `crates/os-runtime/stdlib/kernel/utilities.hll`. The freestanding stdlib used to build `_start` and minimal helpers lives under `crates/os-runtime/stdlib/freestanding/`.
-  - What is implemented now: `my_kernel.hll` demonstrates canonical lower-half identity mappings, basic PMM and VMM initialization, and UART-based startup logging. The runtime entry `_start` (provided by the compiler's freestanding runtime) sets up the initial stack and clears BSS.
-  - Planned kernel work: a pageable kernel configuration, richer allocators, more HAL drivers, and a small syscall surface for user processes.
+- Kernel (S-mode kernel code)
+  - Role: Initialize hardware (UART, CLINT, PLIC), set up the heap and PMM, configure and enable Sv39 paging, install the S-mode trap handler, spawn user processes, and enter the preemptive scheduler idle loop.
+  - Where to find it in the repo: `crates/os-runtime/kernel/` -- `entry.hll` (S-mode entry stub), `my_kernel.hll` (reference kernel / `kmain`), `trap_entry.hll` (stvec prologue/epilogue), `trap_handler.hll`, `utilities.hll` (kmalloc, timer, PLIC), `checks.hll` (boot diagnostics), `pmm.hll`, `vmm.hll`, `process.hll`, `syscall.hll`, `scheduler.hll`. Shared stdlib lives under `crates/os-runtime/stdlib/`.
+  - What is implemented: full boot sequence including MMU enable (Sv39 canonical lower-half identity mapping), PCB-based process creation with VMM-mapped user pages, round-robin preemptive scheduler driven by CLINT timer interrupts, and syscall dispatch (`sys_exit`, `sys_write`, `yield`).
 
-- Eventual OS (services, processes, drivers)
-  - Role: Layer that runs on top of the kernel: device drivers, userspace programs, filesystems, process management and scheduling, IPC and higher-level services.
-  - Where this lives in the repo: not yet implemented as a single module - future work will be placed under `crates/os-runtime/os/` or `crates/os/` depending on how the design evolves. Test programs that exercise kernel interfaces live in `programs/`.
-  - Planned items: a simple filesystem for tests, user-mode process support (with address-space isolation), syscall interface and a small set of user tools for integration testing.
+- User processes and services
+  - Role: User-mode programs that run under kernel supervision with address-space isolation. Communicate with the kernel via ecall.
+  - Where to find it in the repo: `crates/os-runtime/user/` (example programs). The test harness injects user binaries by placing them at physical address 0x87F00000; the kernel reads metadata, copies pages, maps them, creates a PCB, and adds it to the scheduler.
+  - What is implemented: `user_hello.hll` (prints a greeting via `sys_write`, then yields in a loop). The injection mechanism and user-process lifecycle (create, run, exit) work end-to-end in integration tests.
+  - Not yet implemented: filesystem, block devices, signals, multi-hart support.
 
 The remainder of this specification documents the machine model, calling conventions and ABI that the kernel and eventual OS must follow.
 
@@ -50,43 +50,50 @@ The remainder of this specification documents the machine model, calling convent
 
 ## 2. Compiler Target Modes
 
-The HLL compiler operates in two distinct modes, selected via the `--target` flag:
+The HLL compiler operates in three modes, selected via `TargetMode` in the API or `--mode` on the `fsc` CLI:
 
 ### 2.1 Hosted Mode (Default)
 ```bash
-hllc --target=hosted program.hll -o program.elf
+fsc run program.hll --mode hosted
 ```
 
 **Characteristics:**
-- Links against full HLL stdlib (`runtime.hll`, `string_utils.hll`, etc.)
-- Uses Linux syscalls for I/O (`ecall` with `a7=64` for write, `a7=93` for exit)
-- Entry point: `_start` -> calls `main()` -> calls `exit(return_code)`
-- Heap allocation: `new(T)` -> `call malloc`, `free(ptr)` -> `call free`
-- Console output: `putchar`, `printf` use `sys_write(fd=1, ...)`
-- Process termination: `exit(code)` uses `sys_exit(code)`
+- Links against the hosted stdlib (`types`, `memory_allocator`, `string_utils`, `runtime`).
+- Uses Linux syscalls for I/O (`ecall` with `a7=64` for write, `a7=93` for exit).
+- Entry point: `_start` (from `stdlib/hosted/runtime.hll`) calls `main()`, then `exit(return_code)`.
+- Console output: `putchar`, `printf` use `sys_write(fd=1, ...)`.
+- Heap allocation via `malloc`/`free` provided by `memory_allocator.hll`.
 
-**Use Case:** User-space applications, testing, educational examples
+**Use Case:** User-space applications, algorithm tests, educational examples.
 
-### 2.2 Freestanding (Bare-Metal) Mode
+### 2.2 Freestanding Mode
 ```bash
-hllc --target=riscv64-bare-metal --entry=kernel_main src/*.hll -o kernel.elf
+fsc run program.hll --mode freestanding
 ```
 
 **Characteristics:**
-- Links against minimal freestanding runtime (intrinsics only)
-- **No syscalls:** All `ecall` instructions are explicit in user code
-- Entry point: `_start` (provided by runtime) -> calls `kernel_main(a0, a1)`
-- Heap allocation: Not provided by runtime; kernel implements its own allocator
-- Console output: Kernel provides `platform_putc(c: i32)` primitive
-- No process termination: Kernel runs forever or halts explicitly
+- Links against the freestanding stdlib (`types`, `memory_allocator`, `string_utils`, `runtime`, `console`, `entry`).
+- Entry point: `_start` (from `stdlib/freestanding/entry.hll`) calls `main()`, then halts via SYSCON.
+- Console I/O via direct NS16550A UART MMIO writes (no ecall).
+- Panic via `kpanic` (direct UART write + WFI loop).
+- No Linux syscalls; all I/O is explicit.
 
-**Restrictions (compile-time errors if used):**
-- `external putchar`, `external printf`, `external puts` - use platform primitives instead
-- `external exit` - use `platform_halt()` instead
-- Implicit dependency on `malloc`/`free` symbols from libc
-- Any `external` declaration not provided by kernel or freestanding runtime
+**Use Case:** Bare-metal programs without a kernel, firmware utilities.
 
-**Use Case:** OS kernels, bootloaders, firmware, embedded systems
+### 2.3 Kernel Mode
+```bash
+fsc link src/*.hll --mode freestanding   # kernel images use Kernel internally
+```
+
+**Characteristics:**
+- Links against the full kernel stdlib bundle (`types`, `memory_allocator`, `string_utils`, `mem`,
+  `runtime`, `console`, `klog`, `trap_entry`, `utilities`, `checks`, `entry`, `trap_handler`,
+  `pmm`, `vmm`, `process`, `syscall`, `scheduler`).
+- Entry point: `_kernel_start` (from `kernel/entry.hll`) calls `kmain()`.
+- No Linux syscalls; all I/O and hardware access is via MMIO or the provided HAL primitives.
+- Full kernel infrastructure provided: PMM, Sv39 VMM, trap handling, scheduler, syscall dispatch.
+
+**Use Case:** OS kernels, the reference `my_kernel.hll`, integration tests.
 
 ---
 
@@ -355,73 +362,72 @@ When the boot ROM/firmware transfers control to the kernel:
 The boot process follows this sequence:
 
 ```
-1. Boot ROM/Firmware
-   +- Loads kernel image from boot media (disk, network, etc.)
-   +- Copies image to RAM at 0x8000_0000
-   +- Sets a0 = hart_id, a1 = dtb_pointer (or 0)
-   +- Jumps to _start (kernel entry point)
+1. VM / Hardware reset
+   +- PC set to ROM base (0x0000_0000)
+   +- Kernel ELF loaded into RAM at 0x8000_0000
 
-2. Kernel Entry Stub (_start) [provided by freestanding runtime]
-   +- Sets sp = __stack_top
-   +- Clears BSS (__bss_start to __bss_end)
-   +- (Optional) Initializes global constructors
-   +- Calls kernel_main(a0, a1)
+2. ROM _start (boot/startup.s, M-mode, offset 0x000)
+   +- PMP: open all-address grant (pmpaddr0 = -1, pmpcfg0 = 0x1F)
+   +- medeleg: delegate exception causes 8, 12, 13, 15 to S-mode
+   +- mideleg: delegate interrupt causes 1, 5, 9 to S-mode
+   +- mtvec = ROM offset 0x100 (_m_trap)
+   +- mstatus.MPP = Supervisor (01)
+   +- mepc = kernel entry address (passed in a0 by the VM loader)
+   +- mret -> drops to S-mode, jumps to kernel entry
 
-3. kernel_main(a0: u64, a1: u64) [provided by kernel author]
-   +- Initializes platform primitives (uart_init, etc.)
-   +- Prints startup banner
-   +- Sets up trap handlers (mtvec, stvec)
-   +- Initializes memory allocators
-   +- Enables interrupts (if ready)
-   +- Enters main loop (never returns)
+3. _kernel_start (kernel/entry.hll, S-mode)
+   +- Calls kmain()
+   +- If kmain returns: calls kpanic (should never happen)
 
-4. If kernel_main returns [error condition]
-   +- Entry stub calls platform_halt()
+4. kmain() (kernel/my_kernel.hll, S-mode)
+   +- boot_console: UART online, log initial banner
+   +- boot_traps:   install S-mode stvec (trap_init), enable STIE + SEIE
+   +- boot_timer:   arm CLINT timer via timer_set(1_000_000)
+   +- boot_plic:    enable UART IRQ on PLIC context 1
+   +- memory diagnostics: memory_self_test, pmm_ops_test
+   +- boot_heap:    smoke-test kmalloc
+   +- boot_pmm:     pmm_init(0x8010_0000, 0x87F0_0000); alloc/free probe
+   +- boot_vmm:     vmm_init; 1 GiB identity maps for low/RAM/high ranges;
+                    vmm_enable (write SATP, sfence.vma)
+   +- process_init, scheduler_init
+   +- spawn_user_process: read metadata, copy pages, map U-mode VAs,
+                          process_create, scheduler_add
+   +- boot_interrupts: s_enable_interrupts
+   +- Idle WFI loop (scheduler takes over via timer preemption)
+
+5. M-mode trap handler (boot/trap.s, offset 0x100)
+   +- Handles ecalls from hosted programs only (sys_write, sys_exit)
+   +- All other traps -> mret (passed back to S-mode handler)
 ```
 
-### 5.3 Entry Stub Implementation
+### 5.3 S-mode Trap Entry
 
-The freestanding runtime provides `_start` as an HLL function with inline assembly:
+The stvec is pointed at `stvec_entry` (inside `_s_trap_host` in `trap_entry.hll`).
+On any S-mode trap or interrupt the CPU jumps here:
 
-```hll
-; Entry point provided by freestanding runtime
-; This is automatically linked when --target=riscv64-bare-metal is used
-
-external kernel_main: (hart_id: u64, dtb_ptr: u64) -> ()
-
-_start: () -> () {
-    ; Set up stack pointer
-    asm {
-        la    sp, __stack_top
-    }
-    
-    ; Clear BSS section
-    bss_clear()
-    
-    ; Call kernel main function
-    ; Arguments already in a0 (hart_id) and a1 (dtb_ptr) from bootloader
-    kernel_main(asm_reg(a0), asm_reg(a1))
-    
-    ; If kernel_main returns, halt the system (should never happen)
-    platform_halt()
-}
-
-; Helper: Zero-fill BSS section
-bss_clear: () -> () {
-    start: u64 = asm_reg(a0)  ; Will be set by linker
-    end: u64 = asm_reg(a1)    ; Will be set by linker
-    
-    ; Actual implementation uses linker symbols
-    ; This is pseudocode to show the logic
-    addr: u64 = __bss_start
-    while addr < __bss_end {
-        *((u8*)addr) = 0
-        addr = addr + 1
-    }
-}
+```assembly
+; Allocate 288-byte trap frame on the kernel stack
+addi  sp, sp, -288
+; Save x1..x31 (x0 is always zero, skip)
+sd    x1, 8(sp)
+; x2 (sp): save original sp = sp + 288
+addi  t0, sp, 288
+sd    t0, 16(sp)
+; ... remaining registers ...
+; Save S-mode CSRs at offsets 256-280
+csrr  t0, sepc    ; offset 256
+csrr  t0, scause  ; offset 264
+csrr  t0, stval   ; offset 272
+csrr  t0, sstatus ; offset 280
+; Call HLL trap handler with frame pointer in a0
+mv    a0, sp
+call  trap_handler
+; Restore CSRs and GPRs, then sret
 ```
 
-**Note:** The actual BSS clearing uses linker-provided symbols and may be implemented in assembly for efficiency.
+The trap frame is also the process context: `schedule()` copies it in and out of the PCB to perform context switches.
+
+**Note:** The ROM `_start` stub does not clear BSS or set sp before mret. The kernel's HLL function prologues establish stack frames relative to sp, which the VM initialises to the top of RAM before execution begins.
 
 ---
 
@@ -503,96 +509,76 @@ The HLL compiler generates this automatically.
 
 ## 7. Runtime Split
 
-The compiler provides two mutually exclusive runtime modes:
+The compiler provides three mutually exclusive runtime bundles (see Section 2 for mode selection):
 
-### 7.1 Hosted Runtime (User-Space Applications)
+### 7.1 Hosted Runtime
 
-**Source:** `programs/stdlib/runtime.hll`, `programs/stdlib/string_utils.hll`, etc.
+**Source:** `stdlib/hosted/runtime.hll`, `stdlib/common/{types,memory_allocator,string_utils}.hll`
 
-**Features:**
-- Full HLL standard library
-- Linux syscall-based I/O (`ecall` with `a7=64` for write, `a7=93` for exit)
-- Dynamic memory allocation via `malloc`/`free` (linked from C runtime or provided by OS)
-- Console output: `putchar`, `puts`, `printf`, `print_int`
-- Process control: `exit(code)`
-
-**Entry Flow:**
+**Entry flow:**
 ```
-_start (from runtime.hll)
-  v
-main() (user-defined)
-  v
-exit(return_code) (syscall)
+_start (runtime.hll)  ->  main() (user code)  ->  exit(code) via sys_exit ecall
 ```
 
-**Use Case:** Educational examples, algorithm testing, user-space tools
+**Provided symbols:** `_start`, `putchar`, `puts`, `print_int`, `exit`, `malloc`, `free`, `str_*`.
 
-### 7.2 Freestanding Runtime (Kernel/Firmware)
+**Use Case:** Educational examples, algorithm tests, user-space tools.
 
-**Source:** Minimal runtime built into compiler (not from `runtime.hll`)
+### 7.2 Freestanding Runtime
 
-**Features:**
-- **Compiler intrinsics only:** `memcpy`, `memset`, `memmove`, `memcmp`, 64-bit arithmetic helpers
-- **Panic support:** `panic(message: u8*)` calls `platform_putc` and then `platform_halt`
-- **Entry stub:** `_start` sets up stack, clears BSS, calls `kernel_main`
-- **No I/O functions:** `putchar`, `printf`, etc. are **not** provided
-- **No dynamic allocation:** `new(T)` and `free(ptr)` are **not** linked (kernel provides its own allocator)
+**Source:** `stdlib/freestanding/{runtime,console,entry}.hll`, `stdlib/common/{types,memory_allocator,string_utils}.hll`
 
-**Restrictions:**
-- Using `external putchar`, `external printf`, etc. is a **compile-time error**
-- Using `external exit` is a **compile-time error**
-- `main()` is optional; the kernel defines `kernel_main` instead
-
-**Entry Flow:**
+**Entry flow:**
 ```
-_start (from freestanding runtime)
-  v
-Set sp = __stack_top
-Clear BSS
-  v
-kernel_main(a0, a1) (kernel-defined)
-  v
-[Never returns; if it does, call platform_halt()]
+_start (entry.hll)  ->  main() (user code)  ->  SYSCON halt
 ```
 
-**Provided Symbols:**
+**Provided symbols:**
+| Symbol | Description |
+|--------|-------------|
+| `_start` | Calls `main()`, then writes to SYSCON to halt |
+| `kpanic` | Writes message to UART (direct MMIO), then WFI loop |
+| `_kpanic` | Minimal panic with no message (pre-init safe) |
+| `console_putchar` | Single-byte write to NS16550A at 0x10000000 |
+| `console_write` | Null-terminated string write to UART |
+| `console_writeln` | `console_write` + newline |
+| `console_print_int` | Decimal integer to UART |
+| `console_print_hex` | 64-bit hex to UART (16 digits, `0x` prefix) |
+| `malloc` / `free` | Bump-pointer allocator with free-list |
+| `memset` / `memcpy` / `memmove` / `memcmp` | Low-level memory ops |
 
-| Symbol | Signature | Description |
-|--------|-----------|-------------|
-| `_start` | `() -> ()` | Entry stub (sets up stack, clears BSS, calls `kernel_main`) |
-| `panic` | `(message: u8*) -> !` | Print message and halt (calls `platform_putc` + `platform_halt`) |
-| `memcpy` | `(dest: u8*, src: u8*, n: u64) -> u8*` | Copy memory regions |
-| `memset` | `(dest: u8*, value: i32, n: u64) -> u8*` | Fill memory with byte value |
-| `memmove` | `(dest: u8*, src: u8*, n: u64) -> u8*` | Copy overlapping memory regions |
-| `memcmp` | `(s1: u8*, s2: u8*, n: u64) -> i32` | Compare memory regions |
+**Use Case:** Bare-metal programs, firmware utilities, simple MMIO tests.
 
-**Not Provided (kernel must implement):**
-- `platform_putc(c: i32) -> ()`
-- `platform_getc() -> i32` (optional)
-- `platform_halt() -> !`
-- `platform_timer_freq() -> u64` (optional)
-- `platform_get_time() -> u64` (optional)
-- Any heap allocator (`new`, `free`)
+### 7.3 Kernel Runtime
 
-### 7.3 Compiler Enforcement
+**Source:** All freestanding sources plus the full kernel bundle from `crates/os-runtime/kernel/`.
 
-When `--target=riscv64-bare-metal` is used, the compiler validates:
-
-1. **No hosted-only externals:** Rejects `external putchar`, `external printf`, `external exit`, etc.
-2. **No implicit libc dependencies:** Ensures `malloc`/`free` are not referenced unless kernel provides them
-3. **Entry point validation:** Verifies that `kernel_main` (or custom entry) is defined
-4. **Inline assembly safety:** Allows `asm { }` blocks but warns about clobbering critical registers
-
-**Error Example:**
+**Entry flow:**
 ```
-Error: 'putchar' is not available in freestanding mode
-  --> kernel.hll:42:5
-   |
-42 |     putchar(65)
-   |     ^^^^^^^
-   |
-   = Help: Use 'platform_putc(65)' instead, or define your own putchar wrapper
+_kernel_start (entry.hll)  ->  kmain() (my_kernel.hll / user kernel)
 ```
+
+Everything in the freestanding bundle plus:
+
+| Symbol | Source | Description |
+|--------|--------|-------------|
+| `_kernel_start` | `entry.hll` | S-mode entry; calls `kmain`, panics on return |
+| `klog_ok` / `klog_warn` / `klog_error` | `klog.hll` | Formatted kernel log to UART |
+| `klog_int` / `klog_hex` | `klog.hll` | Labelled integer/hex log |
+| `kmalloc` | `utilities.hll` | `malloc` wrapper that panics on OOM |
+| `kshutdown` | `utilities.hll` | Write exit code to SYSCON (halts VM/QEMU) |
+| `timer_get` / `timer_set` | `utilities.hll` | CLINT MTIME / MTIMECMP access |
+| `plic_init` | `utilities.hll` | PLIC S-mode setup for UART IRQ (source 10) |
+| `memory_self_test` / `pmm_ops_test` | `checks.hll` | Boot-time diagnostics |
+| `trap_init` | `trap_entry.hll` | Install stvec, enable STIE + SEIE |
+| `trap_handler` | `trap_handler.hll` | Timer / IRQ / ecall dispatcher |
+| `pmm_init` / `pmm_alloc` / `pmm_free` | `pmm.hll` | 4 KiB page allocator |
+| `vmm_init` / `vmm_enable` / `vmm_map` / `vmm_map_1gib` | `vmm.hll` | Sv39 page table management |
+| `process_init` / `process_create` | `process.hll` | PCB allocation and initialisation |
+| `syscall_dispatch` | `syscall.hll` | U-mode ecall handler (exit / write / yield) |
+| `scheduler_init` / `scheduler_add` / `schedule` | `scheduler.hll` | Round-robin preemptive scheduler |
+
+**Use Case:** OS kernels, integration tests, the reference `my_kernel.hll`.
 
 ---
 
@@ -600,25 +586,163 @@ Error: 'putchar' is not available in freestanding mode
 
 The kernel **must** provide a small set of platform primitives that replace hosted I/O functions. These are the only hardware-specific functions the compiler runtime depends on.
 
-### 8.1 Required Primitives
+### 8.1 Console and Halt Primitives
+
+These are provided by the kernel stdlib bundle (`console.hll`, `utilities.hll`).
+Kernel code calls them directly; they do not go through any syscall layer.
 
 | Symbol | Signature | Description |
 |--------|-----------|-------------|
-| `platform_putc` | `(c: i32) -> ()` | Output a single character to the console (UART). Blocking. |
-| `platform_halt` | `() -> !` | Halt execution (infinite loop or WFI). Never returns. |
+| `console_putchar` | `(c: i32) -> ()` | Write one byte to NS16550A UART TX (0x10000000). Direct MMIO, no ecall. |
+| `console_write` | `(str: u8*) -> ()` | Write null-terminated string to UART. |
+| `console_writeln` | `(str: u8*) -> ()` | `console_write` followed by a newline. |
+| `console_print_int` | `(n: i64) -> ()` | Decimal integer to UART. |
+| `console_print_hex` | `(n: u64) -> ()` | 64-bit hex to UART (`0x` prefix, 16 digits). |
+| `kshutdown` | `(code: i64) -> ()` | Write exit code to SYSCON (0x10010000); halts VM/QEMU. |
+| `kpanic` | `(msg: u8*) -> ()` | Write message to UART then WFI loop (never returns). |
 
-### 8.2 Optional Primitives
+### 8.2 Timer and Interrupt Primitives
 
 | Symbol | Signature | Description |
 |--------|-----------|-------------|
-| `platform_getc` | `() -> i32` | Read a character from UART. Returns -1 if no input available. |
-| `platform_timer_freq` | `() -> u64` | Returns the timer tick frequency (e.g., 10,000,000 for 10 MHz). |
-| `platform_get_time` | `() -> u64` | Returns current `mtime` value from CLINT. |
+| `timer_get` | `() -> u64` | Read current MTIME from CLINT (0x0200_BFF8). |
+| `timer_set` | `(interval: u64) -> ()` | Set MTIMECMP to MTIME + interval for hart 0. |
+| `plic_init` | `() -> ()` | Enable UART source 10 on PLIC S-mode context 1, threshold 0. |
+| `trap_init` | `() -> ()` | Point stvec at `stvec_entry`; enable STIE + SEIE in `sie`. |
 
 ### 8.3 Implementation Example
 
-```hll
-; ============================================================================
-; Platform Primitives for QEMU virt / Project VM
-; ============================================================================
+The HAL primitives are provided by the kernel stdlib bundle.
+The implementations below are from `utilities.hll` and `stdlib/freestanding/console.hll`.
 
+```hll
+; Write a single character directly to NS16550A UART TX (0x10000000).
+; Direct MMIO -- never use ecall here; S-mode sp may point at user VA space.
+console_putchar: (c: i32) -> () {
+    asm {
+        li   t0, 0x10000000
+        sb   a0, 0(t0)
+    }
+}
+
+; Halt by writing the exit code to SYSCON (0x10010000).
+; The VM stops on this write; the WFI loop is a safety net for real hardware.
+kshutdown: (code: i64) -> () {
+    asm {
+        li   t0, 268500992   ; 0x10010000
+        sd   a0, 0(t0)
+    .Lkshutdown_halt:
+        wfi
+        j    .Lkshutdown_halt
+    }
+}
+
+; Read MTIME counter from CLINT (0x0200_BFF8).
+timer_get: () -> u64 {
+    asm { li t0, 33603576 ; ld a0, 0(t0) }
+}
+
+; Set MTIMECMP for hart 0 to MTIME + interval cycles (0x0200_4000).
+timer_set: (interval: u64) -> () {
+    asm {
+        li  t0, 33603576    ; CLINT MTIME
+        ld  t1, 0(t0)
+        add t1, t1, a0
+        li  t0, 33570816    ; CLINT MTIMECMP hart 0
+        sd  t1, 0(t0)
+    }
+}
+```
+
+---
+
+## 9. Syscall Interface
+
+U-mode processes communicate with the kernel via the `ecall` instruction.
+The S-mode trap handler catches cause 8 (U-mode ecall), dispatches via `syscall_dispatch`,
+and advances `sepc` by 4 before returning.
+
+### 9.1 Calling Convention
+
+Syscall number in `a7`; up to three arguments in `a0`-`a2`; return value written back to `a0` in the trap frame.
+
+### 9.2 Syscall Table
+
+| Number | Name | Arguments | Return | Description |
+|--------|------|-----------|--------|-------------|
+| `64` | `sys_write` | `a0=fd`, `a1=buf*`, `a2=len` | bytes written | Write `len` bytes from `buf` to UART (fd is ignored) |
+| `93` | `sys_exit` | `a0=code` | -- | Terminate the calling process; triggers EXIT_SCHEDULE action |
+| `2` | `sys_yield` | -- | -- | Voluntarily yield the CPU; triggers SCHEDULE action |
+
+### 9.3 Scheduler Actions
+
+`syscall_dispatch` returns an action code that `trap_handler` passes to `schedule`:
+
+| Constant | Value | Meaning |
+|----------|-------|---------|
+| `SYSACT_CONTINUE` | 0 | Resume current process unchanged |
+| `SYSACT_SCHEDULE` | 1 | Yield: re-enqueue as READY, switch to next process |
+| `SYSACT_EXIT_SCHEDULE` | 2 | Exit: mark EXITED, do not re-enqueue, switch to next |
+
+---
+
+## 10. Process Model
+
+### 10.1 Process Control Block (PCB)
+
+Each process is represented by a 328-byte PCB allocated with `kmalloc`.
+
+```
+Offset  Size  Field
+------  ----  -----
+0       8     pid             (u64, assigned sequentially from 1)
+8       8     state           (0=READY, 1=RUNNING, 2=BLOCKED, 3=EXITED)
+16      8     next            (u64* to next PCB in ready queue, 0 = end)
+24      8     user_stack_pa   (physical address of the user-stack 4 KiB page)
+32      8     entry_pc        (user-space entry point virtual address)
+40      288   trap_frame      (36 u64s: x0..x31, sepc, scause, stval, sstatus)
+```
+
+The `trap_frame` layout matches the on-stack frame built by `stvec_entry`, so
+`schedule` can `memcpy(pcb+40, frame, 288)` to save and `memcpy(frame, pcb+40, 288)` to restore.
+
+### 10.2 Initial Trap Frame
+
+`process_create` pre-populates the trap frame so that the first `sret` drops into U-mode:
+
+- `frame[2]` (sp) = `0x8000_0000` (top of the 4 KiB user stack at VA `0x7FFFF000`)
+- `frame[32]` (sepc) = `entry_pc`
+- `frame[35]` (sstatus) = `0x13` (UIE=1, SIE=1, SPIE=1, SPP=0 for U-mode on `sret`)
+
+### 10.3 Scheduler
+
+The scheduler maintains a singly-linked FIFO ready queue (`ready_queue_head`) and a pointer
+to the currently-running process (`current_process`).
+
+`schedule(frame, action)`:
+1. If `current_process != null`: copy the live trap frame into `current_process.trap_frame`.
+   - `action == SYSACT_EXIT_SCHEDULE`: mark state EXITED (not re-enqueued).
+   - Otherwise: mark state READY and append to the tail of the ready queue.
+2. Dequeue the head of the ready queue as `next`.
+3. Copy `next.trap_frame` over the live trap frame; `sret` restores it.
+
+The CLINT timer interrupt (S-mode cause 5) calls `schedule(frame, SYSACT_SCHEDULE)` after
+re-arming MTIMECMP, implementing preemptive round-robin at 1,000,000-cycle intervals.
+
+### 10.4 User Process Injection
+
+The test harness places a user binary into physical RAM before the kernel starts:
+
+| Physical Address | Content |
+|-----------------|---------|
+| `0x87F0_0000` | User binary pages (raw, starting at offset 0) |
+| `0x87EF_F000` | Metadata: bytes `[0..8)` = entry VA, `[8..16)` = size in bytes |
+
+During `spawn_user_process` the kernel:
+1. Reads entry VA and size from the metadata page.
+2. Allocates `ceil(size/4096)` physical pages via `pmm_alloc`.
+3. Copies each source page with `memcpy`.
+4. Maps each page at user VA `0x4000_0000 + offset` with flags R+W+X+U (VMM_V added internally).
+5. Calls `process_create(entry_va)` then `scheduler_add(pcb)`.
+
+The first timer interrupt context-switches into the new process via `sret`.

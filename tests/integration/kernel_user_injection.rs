@@ -11,7 +11,7 @@ use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 fn run_kernel_with_injected_user() -> (String, StepOutcome) {
     eprintln!("=== Starting kernel + user_hello injection test ===");
 
-    // ---- 1. Compile kernel stdlib (as a single concatenated unit) ----
+    // --- 1. Compile kernel stdlib (as a single concatenated unit) ---
     let mut kernel_stdlib_pipeline = CompilationPipeline::new();
     kernel_stdlib_pipeline.set_string_prefix(Some("__kern_str_".to_owned()));
     kernel_stdlib_pipeline.set_write_artifacts(false);
@@ -23,7 +23,7 @@ fn run_kernel_with_injected_user() -> (String, StepOutcome) {
     let stdlib_obj = kernel_stdlib_pipeline.assemble(&stdlib_tokens).expect("stdlib assemble");
     eprintln!("Kernel stdlib compiled: {} bytes", stdlib_obj.text_bytes().len());
 
-    // ---- 2. Compile my_kernel module ----
+    // --- 2. Compile my_kernel module ---
     let mut kernel_pipeline = CompilationPipeline::new();
     kernel_pipeline.set_target_mode(TargetMode::Kernel);
     kernel_pipeline.set_write_artifacts(false);
@@ -34,7 +34,7 @@ fn run_kernel_with_injected_user() -> (String, StepOutcome) {
         .expect("kernel modules compile");
     eprintln!("Kernel module compiled: {} bytes", kernel_objects[0].text_bytes().len());
 
-    // ---- 3. Link kernel ----
+    // --- 3. Link kernel ---
     let module_names: Vec<&str> = kernel_modules.iter().map(|(n, _)| *n).collect();
     let mut all_names = vec!["kernel_stdlib"];
     all_names.extend(&module_names);
@@ -56,7 +56,7 @@ fn run_kernel_with_injected_user() -> (String, StepOutcome) {
         .expect("kernel link");
     eprintln!("Kernel linked: {} bytes total", final_assembled.text_bytes().len());
 
-    // ---- 4. Compile user_hello as Hosted ----
+    // --- 4. Compile user_hello as Hosted ---
     let mut user_pipeline = CompilationPipeline::new();
     user_pipeline.set_target_mode(TargetMode::Hosted);
     user_pipeline.set_write_artifacts(false);
@@ -72,17 +72,15 @@ fn run_kernel_with_injected_user() -> (String, StepOutcome) {
         .expect("user program assemble");
     eprintln!("User program compiled: {} bytes", user_assembled.text_bytes().len());
 
-    // ---- 5. Build a flat user binary (text + rodata + data, no page gaps) ----
-    let mut flat = Vec::new();
-    flat.extend_from_slice(user_assembled.text_bytes());
-    flat.extend_from_slice(user_assembled.rodata_bytes());
-    flat.extend_from_slice(user_assembled.data_bytes());
+    // --- 5. Build a flat user binary ---
+    // BSS must be included so heap_buffer (used by malloc) is mapped in user VA space.
+    let mut flat = user_assembled.to_flat_binary();
     let page_size = 4096usize;
     let padded = (flat.len() + page_size - 1) / page_size * page_size;
     flat.resize(padded, 0u8);
-    eprintln!("User flat binary: {} bytes, padded to {} bytes ({} pages)", flat.len() - (padded - (flat.len() - (padded % page_size))), padded, padded / page_size);
+    eprintln!("User flat binary: {} bytes padded to {} bytes ({} pages)", flat.len(), padded, padded / page_size);
 
-    // ---- 6. Compute entry VA ----
+    // --- 6. Compute entry VA ---
     const USER_CODE_VA: u64 = 0x4000_0000;
     let entry_off = user_assembled
         .symbol_address("_start")
@@ -90,7 +88,7 @@ fn run_kernel_with_injected_user() -> (String, StepOutcome) {
     let entry_va = USER_CODE_VA + entry_off;
     eprintln!("User entry: offset={:#x}, va={:#x}", entry_off, entry_va);
 
-    // ---- 7. Create VM and inject ----
+    // --- 7. Create VM and inject ---
     const USER_BINARY_PA: u64 = 0x87F0_0000;
     const USER_META_PA: u64 = 0x87EF_F000;
     let user_size = flat.len() as u64;
@@ -116,7 +114,7 @@ fn run_kernel_with_injected_user() -> (String, StepOutcome) {
     }
     eprintln!();
 
-    // ---- 8. Run ----
+    // --- 8. Run ---
     eprintln!("Running VM for 10M steps...");
     let run = vm.run(10_000_000);
     eprintln!("=== VM OUTPUT ===\n{}\n=== END ===", run.uart_output);
