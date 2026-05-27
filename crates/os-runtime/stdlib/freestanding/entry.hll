@@ -1,15 +1,11 @@
-; Freestanding entry wrapper: calls `main`, then halts the VM via SYSCON.
-; The entry symbol is set to `_start` so that returning from `main` exits cleanly
-; (writes the return value to the SYSCON MMIO halt register at 0x10010000).
+; Entry: calls main then halts the VM by writing the exit code to SYSCON (0x10010000).
 
 external main: () -> i32
 _start: () -> () {
     code: i32 = main()
     asm {
-        ; SYSCON_BASE = 0x10010000 = 268447744 decimal
-        li   t0, 268447744
+        li   t0, 268447744  ; SYSCON 0x10010000
         sd   a0, 0(t0)
-        ; Safety loop: the sd above halts the VM; if it doesn't, spin forever.
     .Lhalt:
         wfi
         j    .Lhalt

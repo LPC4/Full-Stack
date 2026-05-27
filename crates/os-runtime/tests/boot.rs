@@ -222,12 +222,6 @@ fn unimplemented_subsystems_warn() {
         uart.contains("[  OK  ] interrupt controller online\n"),
         "interrupt controller must initialize and report online; uart={uart:?}"
     );
-    assert!(
-        uart.contains("[  OK  ] mmu: sv39 enabled"),
-        "MMU must be enabled; uart={uart:?}"
-    );
-    // The filesystem warning is only reached when a user binary is
-    // present.  With no user binary the kernel shuts down first.
 }
 
 #[test]

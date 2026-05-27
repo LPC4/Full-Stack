@@ -136,19 +136,12 @@ boot_pmm: () -> () {
 }
 
 boot_vmm: () -> () {
-    klog_ok("vmm: initializing...".data)
     vmm_init()
-    klog_ok("vmm: root table allocated".data)
-
     vmm_map_1gib(0x00000000, 0, 38)
     vmm_map_1gib(0x80000000, 0x80000000, 46)
     vmm_map_1gib(0xC0000000, 0xC0000000, 46)
-    klog_ok("vmm: identity mappings created".data)
-
-    klog_ok("vmm: using canonical lower-half identity mapping".data)
-    klog_ok("vmm: enabling MMU...".data)
     vmm_enable()
-    klog_ok("mmu: sv39 enabled".data)
+    klog_ok("[ VMM ] sv39 enabled".data)
 }
 
 boot_interrupts: () -> () {
@@ -162,19 +155,18 @@ boot_final: () -> () {
 }
 
 spawn_user_process: () -> () {
-    klog_ok("spawn_user_process: entry".data)
-
-    src_user_pa: u64 = u64(USER_BINARY_PA)
-
     ; Probe the first qword at USER_BINARY_PA. If it is 0, no user binary is loaded.
     header_ptr: u64* = u64*(USER_BINARY_PA)
     if @header_ptr[0] == 0 {
-        klog_warn("no user binary, skipping user process".data)
+        klog_warn("[ PROC ] no user binary present".data)
         return
     }
 
+    klog_ok("[ PROC ] spawning user process".data)
+
+    src_user_pa: u64 = u64(USER_BINARY_PA)
+
     ; Read entry VA and total size from the metadata page.
-    klog_ok("spawn: reading metadata asm...".data)
     asm {
         li   t0, 0x87EFF000     ; USER_META_PA
         ld   t0, 0(t0)           ; entry VA
@@ -186,71 +178,46 @@ spawn_user_process: () -> () {
         la   t1, user_size
         sd   t0, 0(t1)
     }
-    klog_hex("spawn: user_entry_va".data, user_entry)
-    klog_hex("spawn: user_size (bytes)".data, user_size)
 
     if user_entry == 0 {
-        klog_warn("spawn: user_entry is 0, skipping".data)
+        klog_warn("[ PROC ] user entry is 0, skipping".data)
         return
     }
 
     if user_size == 0 {
-        klog_warn("spawn: user_size is 0, skipping".data)
+        klog_warn("[ PROC ] user size is 0, skipping".data)
         return
     }
 
     ; Copy all user pages into newly allocated physical pages and map them.
     page_size: u64 = 4096
-    rounded_size: u64 = (user_size + page_size - 1) / page_size
-    pages: u64 = rounded_size
-    klog_hex("spawn: calculated page count".data, pages)
-
-    ; Quick heap sanity check: allocate and verify before the loop.
-    pre_loop_buf: u8* = kmalloc(4)
-    if pre_loop_buf == null {
-        klog_error("pre-loop kmalloc null".data)
-        kshutdown(1)
-    }
-    @pre_loop_buf[0] = 88
-    chk: u8 = @pre_loop_buf[0]
-    if chk != 88 {
-        klog_error("pre-loop heap corrupted".data)
-        kshutdown(1)
-    }
-    klog_ok("pre-loop heap ok".data)
+    pages: u64 = (user_size + page_size - 1) / page_size
 
     i: u64 = 0
     while i < pages {
-        klog_hex("spawn: processing page".data, i)
-
         dst_page: u8* = pmm_alloc()
         if dst_page == null {
-            klog_error("halt: user page alloc failed".data)
+            klog_error("[ PROC ] halt: user page alloc failed".data)
             kshutdown(i64(1))
         }
 
-        ; Compute source address for this page.
         offset: u64 = i * page_size
         src_page_pa: u64 = src_user_pa + offset
 
-        ; The kernel VA is identity-mapped, so the physical address equals the VA.
-        ; We can pass it directly to memcpy.
+        ; Identity-mapped: physical address == virtual address.
         memcpy(dst_page, u8*(src_page_pa), page_size)
-        klog_ok("spawn:   memcpy done".data)
 
         user_va: u64 = USER_CODE_VA + offset
-        vmm_map(user_va, u64(dst_page), u64(30))  ; flags 30 = R+W+X+U (VMM_V added internally)
+        vmm_map(user_va, u64(dst_page), u64(30))  ; R+W+X+U (VMM_V added internally)
 
         i = i + u64(1)
     }
 
-    klog_ok("spawn: all pages mapped".data)
+    klog_int("[ PROC ] mapped pages at 0x40000000, count".data, i64(pages))
 
     pcb: u64* = process_create(user_entry)
-    klog_ok("spawn: pcb created".data)
     scheduler_add(pcb)
-    klog_ok("spawn: pcb added to scheduler".data)
 
     user_spawned = 1
-    klog_ok("user process spawned".data)
+    klog_int("[ PROC ] pid 1 ready, entry".data, i64(user_entry))
 }

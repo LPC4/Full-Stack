@@ -1,13 +1,6 @@
-; Sv39 Virtual Memory Manager.
-; 3-level page tables (L2 -> L1 -> L0), 4 KiB pages, 512 u64 entries per table.
-; Canonical virtual addresses are required by the VM: bits [63:39] must sign-extend bit 38.
-; The boot kernel keeps its identity mappings in the canonical lower half (VA = PA).
-;
-; PTE layout (64-bit):
-;   [63:54] reserved
-;   [53:10] PPN (physical page number)
-;   [7] D dirty  [6] A accessed  [5] G global
-;   [4] U user   [3] X execute   [2] W write   [1] R read   [0] V valid
+; Sv39 VMM: 3-level tables (L2->L1->L0), 4 KiB pages, 512 entries per level.
+; VA bits [63:39] must sign-extend bit 38 (canonical); lower half is identity-mapped.
+; PTE bits: [53:10] PPN, [7] D, [6] A, [5] G, [4] U, [3] X, [2] W, [1] R, [0] V.
 
 external pmm_alloc: () -> u8*
 external memset:    (dst: u8*, value: u8, n: u64) -> u8*
@@ -20,7 +13,7 @@ const VMM_X = 8
 const VMM_U = 16
 const VMM_G = 32
 
-; Sv39 requires bits [63:39] to be copies of bit 38.  Panics on violation.
+; Panics if bits [63:39] are not copies of bit 38 (non-canonical address).
 assert_canonical: (va: u64) -> () {
     bit38: u64 = (va >> 38) & 1
     if bit38 == 0 {
@@ -28,7 +21,6 @@ assert_canonical: (va: u64) -> () {
             kpanic("vmm: non-canonical virtual address (upper bits not zero)".data)
         }
     } else {
-        ; 25 bits of 1s = 0x1FF_FFFF
         if (va >> 39) != 0x1FFFFFF {
             kpanic("vmm: non-canonical virtual address (upper bits not all ones)".data)
         }
@@ -61,11 +53,10 @@ vmm_walk_or_alloc: (table: u64*, vpn: u64) -> u64* {
 }
 
 ; Map one 4 KiB page: virtual `va` -> physical `pa`.
-; `flags`: combine VMM_R / VMM_W / VMM_X / VMM_U / VMM_G (VMM_V is added internally).
+; `flags`: combine VMM_R/W/X/U/G; VMM_V is OR-ed in internally.
 vmm_map: (va: u64, pa: u64, flags: u64) -> () {
     assert_canonical(va)
-    ; VPN fields: VPN[2] = va >> 30, VPN[1] = va >> 21, VPN[0] = va >> 12
-    ; Mask to 9 bits (0x1FF = 512 entries per page table level).
+    ; VPN[2..0] = va >> 30/21/12, masked to 9 bits (512 entries per level).
     vpn2: u64 = (va >> 30) & 0x1FF
     vpn1: u64 = (va >> 21) & 0x1FF
     vpn0: u64 = (va >> 12) & 0x1FF
@@ -108,23 +99,21 @@ vmm_init: () -> () {
 ; Enable Sv39 MMU after setting up all page table mappings.
 ; All mapped virtual addresses must already be canonical.
 vmm_enable: () -> () {
-    ; Disable interrupts during MMU transition
+    ; Disable interrupts before switching address spaces.
     asm {
         csrr t0, sstatus
-        andi t0, t0, -3  ; Clear SIE
+        andi t0, t0, -3
         csrw sstatus, t0
     }
-    
-    ; Write SATP to enable MMU
     asm {
         la   t0, vmm_root
-        ld   t0, 0(t0)          ; Load root page table physical address
-        srli t0, t0, 12         ; Extract PPN (physical address >> 12)
+        ld   t0, 0(t0)
+        srli t0, t0, 12         ; PPN = pa >> 12
         li   t1, 8
         slli t1, t1, 60         ; MODE=8 (Sv39)
         or   t0, t0, t1         ; SATP = (MODE << 60) | PPN
-        csrw 0x180, t0          ; Write SATP CSR
-        sfence.vma x0, x0       ; Flush TLB
+        csrw 0x180, t0
+        sfence.vma x0, x0       ; Flush TLB after SATP change.
     }
 }
 

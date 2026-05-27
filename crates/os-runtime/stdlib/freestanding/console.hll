@@ -1,11 +1,7 @@
-; Console I/O via direct NS16550A UART write (0x10000000).
-; Direct MMIO access from S-mode avoids the ecall/stack-buffer approach,
-; which is unsafe when sp points to user virtual address space (e.g. inside
-; the syscall handler where M-mode would treat the virtual stack address as
-; a physical address and read garbage).
+; Console I/O via direct NS16550A UART MMIO (0x10000000).
+; Direct writes avoid ecall so sp is never a user VA in M-mode (would read garbage).
 
-; Write a single character directly to UART TX.
-; a0 holds the char value; no stack slot needed.
+; No stack slot needed: a0 is written directly to UART.
 console_putchar: (c: i32) -> () {
     asm {
         li   t0, 0x10000000
@@ -13,7 +9,6 @@ console_putchar: (c: i32) -> () {
     }
 }
 
-; Write a null-terminated string directly to UART.
 console_write: (str: u8*) -> () {
     asm {
         mv   t0, a0

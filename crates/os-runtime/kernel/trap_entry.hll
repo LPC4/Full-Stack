@@ -1,17 +1,14 @@
-; S-mode trap entry: stvec prologue / epilogue, trap_init, sscratch helpers.
-; The assembly stvec_entry is the raw entry point pointed to by stvec.
-; It saves all GPRs + S-mode CSRs into a 288-byte frame on the stack,
-; calls trap_handler(frame), then restores state and returns via sret.
+; S-mode trap entry: saves all GPRs + CSRs to a 288-byte stack frame,
+; calls trap_handler(frame), restores, and sret.
 
 external trap_handler: (frame: u64*) -> ()
 
-; Hosts stvec_entry; stvec points directly here, bypassing the HLL prologue.
+; stvec points directly at stvec_entry, bypassing the HLL function prologue.
 _s_trap_host: () -> () {
     asm {
         stvec_entry:
 
-        ; Set SUM so S-mode can access the user stack page when sp
-        ; belongs to a user process (after a context switch).
+        ; SUM: S-mode must read user-VA stack pages during syscall handling.
         csrr t0, sstatus
         li   t1, 0x40000        ; SUM = bit 18
         or   t0, t0, t1
@@ -114,7 +111,7 @@ _s_trap_host: () -> () {
 ; Point stvec at stvec_entry and enable STIE + SEIE + SIE.
 trap_init: () -> () {
     asm {
-        ; Point stvec at stvec_entry (direct mode, bit[1:0]=00)
+        ; Direct mode: bit[1:0]=00.
         la   t0, stvec_entry
         csrw stvec, t0
 

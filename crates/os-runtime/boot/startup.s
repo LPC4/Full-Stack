@@ -14,18 +14,11 @@ _start:
     li t0, 31
     csrw pmpcfg0, t0
 
-    # medeleg: delegate to S-mode.
-    #    bit  8 = ecall from U-mode
-    #    bit 12 = instruction page fault
-    #    bit 13 = load page fault
-    #    bit 15 = store page fault
+    # medeleg: delegate U-ecall (8), insn pgfault (12), load pgfault (13), store pgfault (15) to S-mode.
     li t0, 45312
     csrw medeleg, t0
 
-    # mideleg: delegate to S-mode.
-    #    bit 1 = supervisor software interrupt
-    #    bit 5 = supervisor timer interrupt
-    #    bit 9 = supervisor external interrupt (PLIC)
+    # mideleg: delegate S-mode software (1), timer (5), and PLIC (9) interrupts.
     li t0, 546
     csrw mideleg, t0
 
@@ -34,7 +27,6 @@ _start:
     csrw mtvec, t0
 
     # mstatus: MPP=01 (Supervisor) so mret drops to S-mode.
-    #     bit 11 = MPP low bit
     li t0, 1
     slli t0, t0, 11
     csrw mstatus, t0

@@ -1,7 +1,5 @@
-# ROM firmware (M-mode) stage 2: trap handler and syscall dispatch.
-#
-# Concatenated after startup.s to form the complete ROM image.
-# _m_trap lands at offset 0x100 due to the .space 192 pad in startup.s.
+# M-mode trap handler; concatenated after startup.s to form the ROM image.
+# _m_trap is at ROM offset 0x100 because startup.s pads 192 bytes after _start.
 
 # _m_trap: M-mode trap handler at ROM offset 0x100.
 # Handles ecall from U/S/M-mode (causes 8, 9, 11); all other traps -> mret.

@@ -138,7 +138,7 @@ fn kernel_boot_full_init_sequence() {
     // tick that switches to the user process before kmain reaches that line.
     // It is not a required checkpoint.
     assert!(
-        uart.contains("[  OK  ] user process spawned\n"),
+        uart.contains("[ PROC ] pid 1 ready"),
         "expected user process spawn message; uart={uart:?}"
     );
 }
@@ -215,7 +215,7 @@ fn user_process_writes_hello() {
         StepOutcome::Halted(c) => panic!("unexpected halt with code {c}"),
     }
     assert!(
-        uart.contains("[  OK  ] user process spawned\n"),
+        uart.contains("[ PROC ] pid 1 ready"),
         "expected user process spawn; uart={uart:?}"
     );
     assert!(
@@ -381,11 +381,11 @@ fn kernel_boot_multi_module_no_user_binary() {
         other => panic!("expected clean shutdown, got {other:?}; uart={:?}", run.uart_output),
     }
     assert!(
-        run.uart_output.contains("[ WARN ] no user binary, skipping user process\n"),
+        run.uart_output.contains("[ PROC ] no user binary present"),
         "expected user binary skip; uart={:?}", run.uart_output
     );
     assert!(
-        run.uart_output.contains("[  OK  ] mmu: sv39 enabled\n"),
+        run.uart_output.contains("[ VMM ] sv39 enabled\n"),
         "expected MMU enable; uart={:?}", run.uart_output
     );
 }
@@ -402,7 +402,7 @@ fn kernel_boot_multi_module_kernel_boots() {
         "expected boot complete; uart={uart:?}"
     );
     assert!(
-        uart.contains("[  OK  ] user process spawned\n"),
+        uart.contains("[ PROC ] pid 1 ready"),
         "expected user process spawn; uart={uart:?}"
     );
     assert!(

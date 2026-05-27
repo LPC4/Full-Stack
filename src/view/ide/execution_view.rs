@@ -1,5 +1,7 @@
 use crate::view::{CompilationState, CompilerView, ProgramCatalog};
 use egui::{RichText, ScrollArea};
+#[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
+use virtual_machine::bus::ELF_LOAD_BASE;
 
 #[derive(Default)]
 pub struct ExecutionView {
@@ -24,7 +26,7 @@ impl CompilerView for ExecutionView {
     fn ui(
         &mut self,
         ui: &mut egui::Ui,
-        _ctx: &egui::Context,
+        ctx: &egui::Context,
         state: &mut CompilationState,
         _catalog: &mut ProgramCatalog,
     ) {

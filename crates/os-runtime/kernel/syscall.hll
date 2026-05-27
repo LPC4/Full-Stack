@@ -25,9 +25,7 @@ sys_write_impl: (fd: u64, buf: u8*, len: u64) -> u64 {
     return written
 }
 
-; Dispatch a U-mode ecall.  Reads a7 for the syscall number and
-; a0–a2 for the first three arguments.  Writes the return value
-; into the frame's a0 slot.
+; Dispatch a U-mode ecall: reads a7 (syscall number) and a0-a2 (args), writes result to frame a0.
 syscall_dispatch: (frame: u64*) -> u64 {
     num: u64 = @frame[17]
 

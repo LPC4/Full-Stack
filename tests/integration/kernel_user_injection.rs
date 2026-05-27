@@ -131,7 +131,7 @@ fn test_kernel_with_user_hello_injection() {
 
     // Check that user process was spawned
     assert!(
-        uart.contains("[  OK  ] user process spawned"),
+        uart.contains("[ PROC ] pid 1 ready"),
         "expected user spawned message\nuart={uart:?}"
     );
 

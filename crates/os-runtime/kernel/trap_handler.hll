@@ -26,7 +26,6 @@ trap_handler: (frame: u64*) -> () {
         if cause_code == 5 {
             kernel_tick = kernel_tick + 1
             timer_set(1000000)
-            klog_int("tick".data, i64(kernel_tick))
             schedule(frame, 1)  ; SYSACT_SCHEDULE
             return
         }

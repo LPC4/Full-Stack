@@ -1,34 +1,8 @@
-; Process Control Block and process lifecycle.
-;
-; PCB layout (41 × u64 = 328 bytes, allocated via kmalloc):
-;   [0]  pid
-;   [1]  state          READY=0, RUNNING=1, BLOCKED=2, EXITED=3
-;   [2]  next           scheduler linked-list pointer (0 = end)
-;   [3]  user_stack_pa  physical address of user-stack page
-;   [4]  entry_pc       user-space entry point
-;   [5..40] trap_frame  36 u64s matching stvec_entry save order:
-;        [5+0]  x0  (zero)
-;        [5+1]  ra  (x1)
-;        [5+2]  sp  (x2)
-;        [5+3]  gp  (x3)
-;        [5+4]  tp  (x4)
-;        [5+5]  t0  (x5)    [5+6]  t1  (x6)    [5+7]  t2  (x7)
-;        [5+8]  s0  (x8)    [5+9]  s1  (x9)
-;        [5+10] a0  (x10)   [5+11] a1  (x11)   [5+12] a2  (x12)
-;        [5+13] a3  (x13)   [5+14] a4  (x14)   [5+15] a5  (x15)
-;        [5+16] a6  (x16)   [5+17] a7  (x17)
-;        [5+18] s2  (x18)   [5+19] s3  (x19)   [5+20] s4  (x20)
-;        [5+21] s5  (x21)   [5+22] s6  (x22)   [5+23] s7  (x23)
-;        [5+24] s8  (x24)   [5+25] s9  (x25)   [5+26] s10 (x26)
-;        [5+27] s11 (x27)   [5+28] t3  (x28)   [5+29] t4  (x29)
-;        [5+30] t5  (x30)   [5+31] t6  (x31)
-;        [5+32] sepc
-;        [5+33] scause
-;        [5+34] stval
-;        [5+35] sstatus
-;
-; The trap_frame region occupies bytes [40..328) within the PCB.
-; Use memcpy(pcb_bytes + 40, frame, 288) to save/restore.
+; PCB layout (41 x u64 = 328 bytes):
+; [0] pid, [1] state (READY=0, RUNNING=1, BLOCKED=2, EXITED=3), [2] next (linked list),
+; [3] user_stack_pa, [4] entry_pc, [5..40] trap_frame (36 u64s).
+; Trap frame: x0-x31 at byte offsets 0-248, sepc=256, scause=264, stval=272, sstatus=280.
+; Save/restore: memcpy(pcb_bytes+40, frame, 288).
 
 const PROC_READY   = 0
 const PROC_RUNNING = 1
@@ -57,7 +31,6 @@ external pmm_alloc:    () -> u8*
 external vmm_map:      (va: u64, pa: u64, flags: u64) -> ()
 external kpanic:       (msg: u8*) -> ()
 external klog_ok:      (msg: u8*) -> ()
-external klog_int:     (label: u8*, val: i64) -> ()
 
 next_pid: u64 = 1
 
@@ -76,7 +49,6 @@ process_create: (entry_pc: u64) -> u64* {
     next_pid = next_pid + 1
     @pcb[1] = PROC_READY
 
-    ; Allocate and map user stack at VA 0x7FFFF000 (4 KiB page).
     stack_page: u8* = pmm_alloc()
     if stack_page == null {
         kpanic("process_create: out of memory for user stack".data)
@@ -84,17 +56,12 @@ process_create: (entry_pc: u64) -> u64* {
     @pcb[3] = u64(stack_page)
     @pcb[4] = entry_pc
 
-    ; Flags: R | W | U = 2+4+16 = 22 (vmm_map adds V internally)
-    vmm_map(0x7FFFF000, u64(stack_page), 22)
+    vmm_map(0x7FFFF000, u64(stack_page), 22)  ; R|W|U=22; vmm_map adds V.
 
-    ; Initial trap frame: sp, sepc, sstatus.
-    ; sp  = top of user-stack page (0x7FFFF000 + 0x1000 = 0x80000000)
-    ; sepc = entry_pc
-    ; sstatus = SIE=1 (bit 0) | SPIE=1 (bit 1) | UIE=1 (bit 4) | SPP=0 (bit 8, U-mode on sret)
+        ; Initial frame: sp = top of stack page, sepc = entry, sstatus = U-mode on sret with IRQs on.
     @pcb[5 + 2]  = 0x80000000
     @pcb[5 + 32] = entry_pc
     @pcb[5 + 35] = 0x13
 
-    klog_int("process created pid".data, i64(@pcb[0]))
     return pcb
 }

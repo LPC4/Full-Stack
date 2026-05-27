@@ -1,12 +1,6 @@
-; Physical Memory Manager, 4 KiB page granularity.
-; Manages a contiguous region of RAM above the kernel image.
-;
-; Free list layout (per freed page):
-;   bytes 0-7:  next free page address (linked list)
-;   bytes 8-15: PMM_FREE_MAGIC (guard against double-free / use-after-free)
-;
-; On allocation, the magic is verified.  If the magic doesn't match, the page
-; is treated as corrupt and silently skipped (leaked).
+; PMM: 4 KiB pages over a contiguous region of RAM above the kernel.
+; Freed pages store the next-ptr at byte 0 and PMM_FREE_MAGIC at byte 8.
+; Allocations verify the magic; corrupt (mismatched) pages are skipped (leaked).
 
 const PMM_FREE_MAGIC = 0xCAFE
 

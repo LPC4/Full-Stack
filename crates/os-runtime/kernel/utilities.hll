@@ -1,5 +1,4 @@
-; Kernel platform helpers: memory, shutdown, timer, interrupt controller.
-; These are core kernel infrastructure functions that use externs.
+; Kernel platform helpers: shutdown, timer, and interrupt controller.
 
 external malloc:       (size: u64) -> u8*
 external kpanic:       (msg: u8*) -> ()
@@ -49,27 +48,21 @@ timer_set: (interval: u64) -> () {
     }
 }
 
-; Initialize a minimal PLIC setup for S-mode on hart 0.
-; - source 10: UART RX
-; - priority[source10] = 1
-; - enable bit for source10 in context 1
-; - threshold = 0 (allow all priority>0)
+; PLIC minimal init: source 10 (UART RX), priority 1, S-mode hart 0 context, threshold 0.
 plic_init: () -> () {
     asm {
-        ; PLIC priority[source10] at 0x0C00_0000 + (9 * 4)
+        ; priority[10] at 0x0C000000 + 9*4
         li   t0, 201326628
         li   t1, 1
         sw   t1, 0(t0)
 
-        ; PLIC enable bitmap for S-context 1 at 0x0C00_2000
-        ; source10 -> bit 9 -> 1 << 9 = 512
+        ; enable bitmap for S-context 1 at 0x0C002000; source10 = bit 9 = 512
         li   t0, 201334784
         li   t1, 512
         sw   t1, 0(t0)
 
-        ; PLIC threshold for context 1 at 0x0C20_0000
+        ; threshold for context 1 at 0x0C200000 = 0 (allow all)
         li   t0, 203423744
         sw   x0, 0(t0)
-
     }
 }

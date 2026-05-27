@@ -110,7 +110,7 @@ fn kernel_boot_runs_with_separate_stdlib_objects() {
         other => panic!("kernel must halt with code 0, got {other:?}; uart={:?}", run.uart_output),
     }
     assert!(
-        run.uart_output.contains("[ WARN ] no user binary, skipping user process\n"),
+        run.uart_output.contains("[ PROC ] no user binary present"),
         "expected user binary skip; uart={:?}",
         run.uart_output
     );
@@ -469,8 +469,8 @@ fn my_kernel_example_program() {
     // When no user binary is present the kernel shuts down cleanly after
     // spawn_user_process returns.  Verify the critical checkpoints.
     assert!(uart.contains("[  OK  ] kernel starting\n"), "missing kernel start; uart={uart:?}");
-    assert!(uart.contains("[  OK  ] mmu: sv39 enabled\n"), "missing MMU enable; uart={uart:?}");
-    assert!(uart.contains("[ WARN ] no user binary, skipping user process\n"), "missing user binary skip; uart={uart:?}");
+    assert!(uart.contains("[ VMM ] sv39 enabled\n"), "missing MMU enable; uart={uart:?}");
+    assert!(uart.contains("[ PROC ] no user binary present"), "missing user binary skip; uart={uart:?}");
     assert_eq!(exit, Some(0), "kernel must exit with code 0; uart={uart:?}");
 }
 

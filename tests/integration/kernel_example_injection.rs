@@ -113,7 +113,7 @@ fn assert_user_exit_ok(uart: &str, outcome: &StepOutcome, label: &str) {
         "{label}: unhandled CPU exception; uart={uart:?}"
     );
     assert!(
-        uart.contains("[  OK  ] user process spawned"),
+        uart.contains("[ PROC ] pid 1 ready"),
         "{label}: user process was not spawned; uart={uart:?}"
     );
     assert!(
