@@ -152,8 +152,7 @@ pub mod kernel {
 
     /// Inode-based read-write filesystem: `fs_init`, `fs_open`, `fs_read`, `fs_write`,
     /// `fs_close`, `fs_create`, `fs_mkdir`, `fs_rename`.
-    pub const FS: &str =
-        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/kernel/fs.hll"));
+    pub const FS: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/kernel/fs.hll"));
 
     /// Reference kernel: full boot sequence demonstrating real and stub subsystems.
     /// Defines `kmain`; depends on the kernel stdlib bundle.

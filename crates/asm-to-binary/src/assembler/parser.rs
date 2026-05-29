@@ -777,18 +777,30 @@ mod tests {
     #[test]
     fn csrrw_full_form_swaps_via_rd_and_rs1() {
         // csrrw t0, sscratch, t1  -> rd=x5, rs1=x6, funct3=1
-        assert_eq!(encode_line("csrrw t0, sscratch, t1"), expect_csr_word(5, 6, 1));
+        assert_eq!(
+            encode_line("csrrw t0, sscratch, t1"),
+            expect_csr_word(5, 6, 1)
+        );
     }
 
     #[test]
     fn csrrw_swap_same_register() {
         // The kernel trap entry relies on `csrrw sp, sscratch, sp` (rd==rs1==x2).
-        assert_eq!(encode_line("csrrw sp, sscratch, sp"), expect_csr_word(2, 2, 1));
+        assert_eq!(
+            encode_line("csrrw sp, sscratch, sp"),
+            expect_csr_word(2, 2, 1)
+        );
     }
 
     #[test]
     fn csrrs_and_csrrc_full_forms() {
-        assert_eq!(encode_line("csrrs t0, sscratch, t1"), expect_csr_word(5, 6, 2));
-        assert_eq!(encode_line("csrrc t0, sscratch, t1"), expect_csr_word(5, 6, 3));
+        assert_eq!(
+            encode_line("csrrs t0, sscratch, t1"),
+            expect_csr_word(5, 6, 2)
+        );
+        assert_eq!(
+            encode_line("csrrc t0, sscratch, t1"),
+            expect_csr_word(5, 6, 3)
+        );
     }
 }

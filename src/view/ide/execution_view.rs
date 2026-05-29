@@ -26,7 +26,7 @@ impl CompilerView for ExecutionView {
     fn ui(
         &mut self,
         ui: &mut egui::Ui,
-        ctx: &egui::Context,
+        _ctx: &egui::Context,
         state: &mut CompilationState,
         _catalog: &mut ProgramCatalog,
     ) {

@@ -1948,12 +1948,7 @@ mod tests {
     #[test]
     fn parses_as_cast_operator() {
         use crate::token::Token;
-        let tokens = vec![
-            Token::Ident("x"),
-            Token::As,
-            Token::I32,
-            Token::Eof,
-        ];
+        let tokens = vec![Token::Ident("x"), Token::As, Token::I32, Token::Eof];
         let mut parser = Parser::new(tokens);
         match parser.parse_expression().unwrap() {
             Expression::Cast { target_ty, expr } => {
@@ -1972,11 +1967,7 @@ mod tests {
     #[test]
     fn parses_import_declaration() {
         use crate::token::Token;
-        let tokens = vec![
-            Token::Import,
-            Token::String(r#""core/io""#),
-            Token::Eof,
-        ];
+        let tokens = vec![Token::Import, Token::String(r#""core/io""#), Token::Eof];
         let mut parser = Parser::new(tokens);
         let program = parser.parse_program().unwrap();
         assert_eq!(program.declarations.len(), 1);

@@ -800,7 +800,7 @@ pub fn build_fs_image(entries: &[FsEntry<'_>]) -> Vec<u8> {
     let mut needed_data_blocks: usize = 56;
     for entry in entries {
         if let FsEntry::File { data, .. } = entry {
-            let file_blocks = (data.len() + BLOCK_SIZE - 1) / BLOCK_SIZE;
+            let file_blocks = data.len().div_ceil(BLOCK_SIZE);
             needed_data_blocks = needed_data_blocks.max(file_blocks + 10);
         }
     }
@@ -834,7 +834,7 @@ pub fn build_fs_image(entries: &[FsEntry<'_>]) -> Vec<u8> {
     };
 
     // next_inode and next_data_block are mutable state we thread through.
-    let mut next_inode: usize = 1;      // 0 = root
+    let mut next_inode: usize = 1; // 0 = root
     let mut next_data_block: usize = 0; // relative to DATA_BLOCK_START; absolute = + DATA_BLOCK_START
 
     // Allocate a data block and return its absolute block index.
@@ -864,8 +864,8 @@ pub fn build_fs_image(entries: &[FsEntry<'_>]) -> Vec<u8> {
     {
         let off = inode_offset(0);
         image[off + IN_TYPE] = 2; // directory
-        write_u16(&mut image, off + IN_PARENT, 0);  // root's parent = self
-        write_u32(&mut image, off + IN_SIZE, 0);    // entry count updated later
+        write_u16(&mut image, off + IN_PARENT, 0); // root's parent = self
+        write_u32(&mut image, off + IN_SIZE, 0); // entry count updated later
         write_name(&mut image, off + IN_NAME, "/");
         write_u16(&mut image, off + IN_BLOCKS, root_data_blk as u16);
     }
@@ -882,10 +882,8 @@ pub fn build_fs_image(entries: &[FsEntry<'_>]) -> Vec<u8> {
         ]) as usize;
 
         // Get first data block of directory.
-        let blk_idx = u16::from_le_bytes([
-            image[off + IN_BLOCKS],
-            image[off + IN_BLOCKS + 1],
-        ]) as usize;
+        let blk_idx =
+            u16::from_le_bytes([image[off + IN_BLOCKS], image[off + IN_BLOCKS + 1]]) as usize;
         let blk_off = block_offset(blk_idx);
         let de_off = blk_off + count * DIRENT_SIZE;
 
@@ -927,9 +925,7 @@ pub fn build_fs_image(entries: &[FsEntry<'_>]) -> Vec<u8> {
                     continue; // root already created
                 }
                 let (parent_path, name) = split_last_component(path);
-                let parent_inode = *path_to_inode
-                    .get(parent_path)
-                    .unwrap_or(&0);
+                let parent_inode = *path_to_inode.get(parent_path).unwrap_or(&0);
 
                 let dir_inode = alloc_inode(&mut next_inode);
                 let dir_data_blk = alloc_block(&mut next_data_block);
@@ -949,7 +945,7 @@ pub fn build_fs_image(entries: &[FsEntry<'_>]) -> Vec<u8> {
                 let parent_inode = *path_to_inode.get(parent_path).unwrap_or(&0);
 
                 let file_inode = alloc_inode(&mut next_inode);
-                let num_blocks = (data.len() + BLOCK_SIZE - 1) / BLOCK_SIZE;
+                let num_blocks = data.len().div_ceil(BLOCK_SIZE);
                 let num_blocks = num_blocks.max(1); // at least one block even for empty files
 
                 {
@@ -1028,7 +1024,7 @@ pub fn build_fs_image(entries: &[FsEntry<'_>]) -> Vec<u8> {
     image
 }
 
-/// Split an absolute path into (parent_path, last_component).
+/// Split an absolute path into (`parent_path`, `last_component`).
 /// "/bin/init" -> ("/bin", "init"), "/hello.txt" -> ("/", "hello.txt").
 fn split_last_component(path: &str) -> (&str, &str) {
     if let Some(pos) = path.rfind('/') {
