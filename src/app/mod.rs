@@ -930,7 +930,8 @@ impl eframe::App for FullStackApp {
                 } else {
                     None
                 };
-                self.machine_window.start_boot(&assembled, user_bin);
+                self.machine_window
+                    .start_boot(&assembled, user_bin, self.settings.max_vm_steps);
             }
         }
 

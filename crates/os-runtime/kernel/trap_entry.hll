@@ -1,31 +1,45 @@
-; S-mode trap entry: saves all GPRs + CSRs to a 288-byte stack frame,
-; calls trap_handler(frame), restores, and sret.
+; S-mode trap entry: switches to a dedicated kernel stack, saves all GPRs + CSRs
+; to a 288-byte frame, calls trap_handler(frame), restores, and sret.
 
 external trap_handler: (frame: u64*)
+
+; Per-hart kernel trap stack (16 KiB).
+; sscratch points just past the top (aligned down to 16 bytes).
+kernel_trap_stack: u64[2048]
 
 ; stvec points directly at stvec_entry, bypassing the HLL function prologue.
 _s_trap_host: () {
     asm {
         stvec_entry:
 
-        ; SUM: S-mode must read user-VA stack pages during syscall handling.
+        ; Switch to the kernel trap stack. sscratch holds its top; after the
+        ; swap, sp = kernel stack top and sscratch = the trap-time sp.
+        csrrw sp, sscratch, sp
+
+        ; Allocate the 288-byte trap frame.
+        addi sp, sp, -288
+
+        ; Save the two scratch registers we need up front (x5=t0, x6=t1).
+        sd   t0, 40(sp)
+        sd   t1, 48(sp)
+
+        ; Store the trap-time sp (held in sscratch) into the frame's x2 slot,
+        ; then restore sscratch to the kernel stack top for the next trap.
+        csrr t0, sscratch
+        sd   t0, 16(sp)
+        addi t0, sp, 288
+        csrw sscratch, t0
+
+        ; SUM: S-mode must read user-VA pages during syscall handling.
         csrr t0, sstatus
         li   t1, 0x40000        ; SUM = bit 18
         or   t0, t0, t1
         csrw sstatus, t0
 
-        ; Allocate trap frame: 288 bytes (x0..x31 * 8 + sepc + scause + stval + sstatus)
-        addi sp, sp, -288
-
-        ; Save GPRs - x0 is always zero, skip it (offset 0 left as zero)
+        ; Save the remaining GPRs (x0 is hard-wired zero; x2/x5/x6 already done).
         sd   x1,   8(sp)
-        ; x2 (sp): save original sp = sp + 288
-        addi t0,   sp, 288
-        sd   t0,   16(sp)
         sd   x3,   24(sp)
         sd   x4,   32(sp)
-        sd   x5,   40(sp)
-        sd   x6,   48(sp)
         sd   x7,   56(sp)
         sd   x8,   64(sp)
         sd   x9,   72(sp)
@@ -52,7 +66,7 @@ _s_trap_host: () {
         sd   x30,  240(sp)
         sd   x31,  248(sp)
 
-        ; Save S-mode CSRs at offsets 256-280
+        ; Save S-mode CSRs at offsets 256-280.
         csrr t0, sepc
         sd   t0, 256(sp)
         csrr t0, scause
@@ -65,13 +79,13 @@ _s_trap_host: () {
         mv   a0, sp
         call trap_handler
 
-        ; Restore S-mode CSRs
+        ; Restore S-mode CSRs.
         ld   t0, 256(sp)
         csrw sepc, t0
         ld   t0, 280(sp)
         csrw sstatus, t0
 
-        ; Restore GPRs (x1 first, x2/sp last so we keep the frame valid)
+        ; Restore GPRs (x2/sp last so the frame stays valid until the end).
         ld   x1,   8(sp)
         ld   x3,   24(sp)
         ld   x4,   32(sp)
@@ -108,9 +122,17 @@ _s_trap_host: () {
     }
 }
 
-; Point stvec at stvec_entry and enable STIE + SEIE + SIE.
+; Initialize sscratch (kernel trap-stack top) and stvec, then enable interrupts.
+; sscratch MUST be set before SIE is enabled so the first trap can switch stacks.
 trap_init: () {
     asm {
+        ; sscratch = top of kernel_trap_stack, aligned down to 16 bytes.
+        la   t0, kernel_trap_stack
+        li   t1, 16384
+        add  t0, t0, t1
+        andi t0, t0, -16
+        csrw sscratch, t0
+
         ; Direct mode: bit[1:0]=00.
         la   t0, stvec_entry
         csrw stvec, t0

@@ -22,7 +22,7 @@ use crate::riscv::rv64i::{
     Srl, Srli, Sub, Wfi,
 };
 use crate::riscv::rv64m::{Divu, Remu};
-use crate::riscv::rv64zicsr::{Csrrs, Csrrw};
+use crate::riscv::rv64zicsr::{Csrrc, Csrrs, Csrrw};
 use crate::rv_instruction::RvInstruction;
 
 /// Convert a `RvInstruction` stream to a typed `AsmToken` stream.
@@ -434,6 +434,16 @@ fn parse_instruction_line(line: &str, out: &mut Vec<AsmToken>) {
         return;
     }
 
+    // Full three-operand CSR read-modify-write forms: `csrrw/csrrs/csrrc rd, csr, rs1`.
+    if mnemonic == "csrrw" || mnemonic == "csrrs" || mnemonic == "csrrc" {
+        if let Some(tok) = parse_csr_rmw(mnemonic, rest) {
+            out.push(tok);
+            return;
+        }
+        asm_warn!(out, "unrecognised {mnemonic}: {line}");
+        return;
+    }
+
     // `beqz rs, label`  ->  beq rs, x0, label
     if mnemonic == "beqz" {
         if let Some(tok) = parse_branch_zero(BranchKind::Beq, rest) {
@@ -703,6 +713,24 @@ fn parse_csrw(operands: &str) -> Option<AsmToken> {
     ))))
 }
 
+/// Parse `rd, csr, rs1` for the full CSR read-modify-write instructions.
+fn parse_csr_rmw(mnemonic: &str, operands: &str) -> Option<AsmToken> {
+    let parts: Vec<&str> = operands.splitn(3, ',').collect();
+    if parts.len() != 3 {
+        return None;
+    }
+    let rd = parse_int_reg(parts[0].trim())?;
+    let csr = parse_csr_name(parts[1].trim())?;
+    let rs1 = parse_int_reg(parts[2].trim())?;
+    let inst = match mnemonic {
+        "csrrw" => RealInstruction::Csrrw(Csrrw::new(rd, csr, rs1)),
+        "csrrs" => RealInstruction::Csrrs(Csrrs::new(rd, csr, rs1)),
+        "csrrc" => RealInstruction::Csrrc(Csrrc::new(rd, csr, rs1)),
+        _ => return None,
+    };
+    Some(AsmToken::Real(inst))
+}
+
 /// Parse `rd, rs1, rs2` for R-type instructions.
 fn parse_r_type(mnemonic: &str, operands: &str) -> Option<AsmToken> {
     let parts: Vec<&str> = operands.splitn(3, ',').collect();
@@ -723,4 +751,44 @@ fn parse_r_type(mnemonic: &str, operands: &str) -> Option<AsmToken> {
         _ => return None,
     };
     Some(AsmToken::Real(real))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::assembler::token::AsmToken;
+
+    // Encode a single instruction line and return its 32-bit word.
+    fn encode_line(line: &str) -> u32 {
+        let mut out = Vec::new();
+        parse_instruction_line(line, &mut out);
+        assert_eq!(out.len(), 1, "expected exactly one token for `{line}`");
+        match &out[0] {
+            AsmToken::Real(inst) => inst.encode(),
+            other => panic!("expected a real instruction for `{line}`, got {other:?}"),
+        }
+    }
+
+    // sscratch is CSR 0x140; SYSTEM opcode is 0x73.
+    fn expect_csr_word(rd: u32, rs1: u32, funct3: u32) -> u32 {
+        (0x140 << 20) | (rs1 << 15) | (funct3 << 12) | (rd << 7) | 0x73
+    }
+
+    #[test]
+    fn csrrw_full_form_swaps_via_rd_and_rs1() {
+        // csrrw t0, sscratch, t1  -> rd=x5, rs1=x6, funct3=1
+        assert_eq!(encode_line("csrrw t0, sscratch, t1"), expect_csr_word(5, 6, 1));
+    }
+
+    #[test]
+    fn csrrw_swap_same_register() {
+        // The kernel trap entry relies on `csrrw sp, sscratch, sp` (rd==rs1==x2).
+        assert_eq!(encode_line("csrrw sp, sscratch, sp"), expect_csr_word(2, 2, 1));
+    }
+
+    #[test]
+    fn csrrs_and_csrrc_full_forms() {
+        assert_eq!(encode_line("csrrs t0, sscratch, t1"), expect_csr_word(5, 6, 2));
+        assert_eq!(encode_line("csrrc t0, sscratch, t1"), expect_csr_word(5, 6, 3));
+    }
 }

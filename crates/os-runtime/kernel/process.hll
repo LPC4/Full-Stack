@@ -49,10 +49,9 @@ process_create: (entry_pc: u64) -> u64* {
     next_pid = next_pid + 1
     @pcb[1] = PROC_READY
 
-    ; User stack: map several pages below 0x80000000 so deep kernel syscall
-    ; call chains (which run on the user stack) do not overflow a single page.
+    ; User stack: a few pages below 0x80000000.
     stack_top:    u64 = 0x80000000
-    stack_pages:  u64 = 16
+    stack_pages:  u64 = 4
     last_page_pa: u64 = 0
     sp_i: u64 = 0
     while sp_i < stack_pages {

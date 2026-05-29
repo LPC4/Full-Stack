@@ -45,7 +45,6 @@ fn toolbar_bg() -> Color32 {
 /// At 60 fps this gives roughly 3 M steps/sec, enough for a fast boot
 /// while keeping each frame well under 16 ms.
 const STEPS_PER_TICK: u64 = 50_000;
-const MAX_STEPS: u64 = 10_000_000;
 const FB_COLS: usize = 80;
 const FB_ROWS: usize = 25;
 
@@ -78,6 +77,8 @@ enum BootPhase {
     Running {
         vm: Box<VirtualMachine>,
         steps: u64,
+        /// Step budget before the boot is reported as timed out (from settings).
+        max_steps: u64,
         uart_text: String,
         /// Incremented every time new UART arrives; used to skip `LayoutJob` rebuilds.
         log_generation: u64,
@@ -109,10 +110,12 @@ pub struct MachineWindow {
 
 impl MachineWindow {
     /// Begin an incremental boot. The VM is ticked each frame via `ui()`.
+    /// `max_steps` is the step budget (from settings) before the boot times out.
     pub fn start_boot(
         &mut self,
         assembled: &AssembledOutput,
         user_binary: Option<&AssembledOutput>,
+        max_steps: u64,
     ) {
         let mut vm = Box::new(VirtualMachine::new_kernel(assembled));
 
@@ -140,6 +143,7 @@ impl MachineWindow {
         self.phase = BootPhase::Running {
             vm,
             steps: 0,
+            max_steps: max_steps.max(1),
             uart_text: String::new(),
             log_generation: 0,
         };
@@ -189,6 +193,7 @@ impl MachineWindow {
             BootPhase::Running {
                 vm,
                 steps,
+                max_steps,
                 uart_text,
                 log_generation,
             } => {
@@ -196,7 +201,7 @@ impl MachineWindow {
                 let mut timed_out = false;
 
                 for _ in 0..STEPS_PER_TICK {
-                    if *steps >= MAX_STEPS {
+                    if *steps >= *max_steps {
                         timed_out = true;
                         break;
                     }

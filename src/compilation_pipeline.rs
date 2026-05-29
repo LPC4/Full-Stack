@@ -399,9 +399,7 @@ impl CompilationPipeline {
 
     /// Run all pipeline stages, returning typed per-stage outputs.
     ///
-    /// `stdlib_tokens` - when `Some`, prepended before the user's assembly tokens
-    /// before assembling (the standard link mode for user programs).  Pass `None`
-    /// when compiling stdlib or kernel sources standalone.
+    /// `stdlib_tokens`: Pass `None` when compiling stdlib or kernel sources standalone.
     #[track_caller]
     pub fn run_full(
         &self,
@@ -765,7 +763,6 @@ pub enum FsEntry<'a> {
 
 /// Serialise `entries` into the on-disk filesystem image format and return the raw bytes.
 ///
-/// The format matches the spec in `FILESYSTEM.md`:
 ///   Block 0      Superblock (4096 bytes, first 64 bytes used)
 ///   Blocks 1-4   Inode table (256 x 64 bytes)
 ///   Block 5      Free-block bitmap (one bit per data block starting at block 6)
@@ -837,7 +834,7 @@ pub fn build_fs_image(entries: &[FsEntry<'_>]) -> Vec<u8> {
     };
 
     // next_inode and next_data_block are mutable state we thread through.
-    let mut next_inode: usize = 1; // 0 = root
+    let mut next_inode: usize = 1;      // 0 = root
     let mut next_data_block: usize = 0; // relative to DATA_BLOCK_START; absolute = + DATA_BLOCK_START
 
     // Allocate a data block and return its absolute block index.
@@ -862,18 +859,18 @@ pub fn build_fs_image(entries: &[FsEntry<'_>]) -> Vec<u8> {
         buf[off + len] = 0;
     };
 
-    // --- Root directory (inode 0) ---
+    // Root directory (inode 0)
     let root_data_blk = alloc_block(&mut next_data_block);
     {
         let off = inode_offset(0);
         image[off + IN_TYPE] = 2; // directory
-        write_u16(&mut image, off + IN_PARENT, 0); // root's parent = self
-        write_u32(&mut image, off + IN_SIZE, 0); // entry count updated later
+        write_u16(&mut image, off + IN_PARENT, 0);  // root's parent = self
+        write_u32(&mut image, off + IN_SIZE, 0);    // entry count updated later
         write_name(&mut image, off + IN_NAME, "/");
         write_u16(&mut image, off + IN_BLOCKS, root_data_blk as u16);
     }
 
-    // --- Helper: add a DirEntry to a directory inode's data block ---
+    // Add a DirEntry to a directory inode's data block
     // Returns false if block is full (not handled for simplicity; 113 entries per block).
     let add_dirent = |image: &mut Vec<u8>, dir_inode: usize, child_inode: usize, name: &str| {
         let off = inode_offset(dir_inode);
