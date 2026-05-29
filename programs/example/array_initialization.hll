@@ -2,9 +2,12 @@
 main: () -> i32 {
     source: i32[4] = [3, 5, 7, 11]
 
-    mirror: i32[4]* = new([4]i32)
+    mirror: i32* = new(i32, 4)
     defer free(mirror)
-    @mirror = [3, 5, 7, 11]
+    @mirror[0] = 3
+    @mirror[1] = 5
+    @mirror[2] = 7
+    @mirror[3] = 11
 
     total: i32 = @source[0] + @source[1] + @source[2] + @source[3]
     ; Exit 0 on success by subtracting the expected combined total.

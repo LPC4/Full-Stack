@@ -1,4 +1,4 @@
-## Language Specification v1.4.3
+## Language Specification v1.5.0
 
 **Design Philosophy:** Consistency-First Memory Model  
 **Target Domain:** Systems Programming
@@ -25,9 +25,9 @@ HLL enforces a 100% consistent pointer model. Memory operations are context-inde
 |---------|------|
 | Comments | Semicolon `;` (line comment; consumes the rest of the line) |
 | Statement Termination | Significant newlines (one statement per line) |
-| Whitespace | Insufficient except as token separator |
+| Whitespace | Insignificant except as token separator |
 | Type Annotations | `name: Type = value` |
-| Type Casting | Prefix syntax: `target_type(value)` |
+| Type Casting | Postfix `as`: `expr as TargetType`. Prefix form `TargetType(value)` also accepted. |
 
 ### 2.1 Syntax Examples
 <pre style="background:#282c34;color:#abb2bf;padding:12px;border-radius:6px;overflow-x:auto;font-family:monospace;font-size:14px;line-height:1.5;"><code><span style="color:#abb2bf">x</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span> <span style="color:#56b6c2">=</span> <span style="color:#98c379">42</span>
@@ -65,13 +65,20 @@ HLL enforces a 100% consistent pointer model. Memory operations are context-inde
 
 <span style="color:#7f848e;font-style:italic">; Heap allocation (zero-initialized)</span>
 <span style="color:#abb2bf">data_ptr</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span><span style="color:#56b6c2">*</span> <span style="color:#56b6c2">=</span> <span style="color:#c678dd">new</span><span style="color:#56b6c2">(</span><span style="color:#e5c07b">i32</span><span style="color:#56b6c2">)</span>
-<span style="color:#abb2bf">array_ptr</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span><span style="color:#56b6c2">[</span><span style="color:#98c379">10</span><span style="color:#56b6c2">]*</span> <span style="color:#56b6c2">=</span> <span style="color:#c678dd">new</span><span style="color:#56b6c2">([</span><span style="color:#98c379">10</span><span style="color:#56b6c2">]</span><span style="color:#e5c07b">i32</span><span style="color:#56b6c2">)</span>
+<span style="color:#abb2bf">array_ptr</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span><span style="color:#56b6c2">*</span> <span style="color:#56b6c2">=</span> <span style="color:#c678dd">new</span><span style="color:#56b6c2">(</span><span style="color:#e5c07b">i32</span><span style="color:#56b6c2">,</span> <span style="color:#98c379">10</span><span style="color:#56b6c2">)</span>
 
 <span style="color:#7f848e;font-style:italic">; Compile-time constant</span>
 <span style="color:#c678dd">const</span> <span style="color:#abb2bf">MAX_SIZE</span> <span style="color:#56b6c2">=</span> <span style="color:#98c379">100</span></code></pre>
+**Heap allocation rules (v1.5.0):**
+- `new(T)` allocates a single element of type `T`; returns `T*`.
+- `new(T, N)` allocates `N` contiguous elements of type `T`; returns `T*`. `N` may be a runtime expression.
+- `new([N]T)` is **removed**; use `new(T, N)` instead.
+- All heap allocations are zero-initialized.
+
+**String literals:** `"text"` evaluates to a compile-time inline struct `{ data: u8*, length: u64 }` equivalent to `Str`. Assignment `s: Str = "hello"` is valid; no wrapper call is needed.
+
 **Initialization Rules:**
 - Stack variables must be initialized unless explicitly declared as uninitialized buffers.
-- Heap allocations via `new(T)` are zero-initialized.
 - Reading uninitialized stack variables is a compile-time error.
 
 ---
@@ -87,7 +94,7 @@ HLL enforces a 100% consistent pointer model. Memory operations are context-inde
 | Allocate | `new(T)` | `void -> T*` | `p: Point* = new(Point)` |
 | Deallocate | `free(ptr)` | `T* -> void` | `free(x_ptr)` |
 | Arithmetic | `@(ptr + offset)` | `T* -> T` | `byte: u8 = @(raw_ptr + 3)` |
-| Cast | `TargetType(val)` | `S -> T` | `u8*(ptr)` |
+| Cast | `val as TargetType` | `S -> T` | `ptr as u8*` |
 
 ### 4.2 Pointer Arithmetic Constraints
 - Offsets using `+` are **always strictly in bytes**.
@@ -175,6 +182,20 @@ If you only need specific fields from a struct, you can omit the unwanted fields
 - Mutability requires `T*` parameters and `&` at call site.
 - Returning stack addresses (`return &x`) is a compile-time error.
 - Multiple returns use anonymous inline struct syntax.
+- **Void return:** Omit the `->` clause entirely. The `-> ()` form is accepted for compatibility but deprecated; prefer `name: () { }` over `name: () -> () { }`.
+
+### 6.0 Module System
+Modules are file-scoped. Each source file is one module.
+
+```hll
+import "path/to/module"   ; declare a module dependency
+export fn_name: () { }    ; mark a declaration as visible to importers
+```
+
+- `import` records the module path for the linker; the compiler pipeline resolves it.
+- `export` marks a declaration as publicly visible. Declarations without `export` are private by convention (the linker still sees them; the keyword serves as documentation and future enforcement).
+- A module implicitly imports the `core` builtins (primitive types, `new`, `free`, `defer`, `asm`).
+- Cyclic imports are rejected at compile time.
 
 <pre style="background:#282c34;color:#abb2bf;padding:12px;border-radius:6px;overflow-x:auto;font-family:monospace;font-size:14px;line-height:1.5;"><code><span style="color:#61afef">increment</span><span style="color:#56b6c2">:</span> <span style="color:#56b6c2">(</span><span style="color:#abb2bf">x_ptr</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span><span style="color:#56b6c2">*</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">-&gt;</span> <span style="color:#56b6c2">(</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">{</span>
     <span style="color:#56b6c2">@</span><span style="color:#abb2bf">x_ptr</span> <span style="color:#56b6c2">=</span> <span style="color:#56b6c2">@</span><span style="color:#abb2bf">x_ptr</span> <span style="color:#56b6c2">+</span> <span style="color:#98c379">1</span>
@@ -207,9 +228,15 @@ If you only need specific fields from a struct, you can omit the unwanted fields
 - No `for` loop syntax (avoids semantic conflicts with comments).
 
 ### 7.2 `defer` Statement
-- Executes when the enclosing scope exits (LIFO order).
-- Arguments are evaluated at declaration, not at execution.
+- Executes when the enclosing function exits (LIFO order).
+- **Arguments are captured at declaration time**, not at execution. Subsequent mutation of the captured variable does not affect the deferred call.
 - Cannot contain `return` statements.
+
+```hll
+; defer captures the value of `ptr` at this line, not when the function exits.
+defer free(ptr)
+ptr = new(i32)   ; reassigning ptr does not affect the deferred free
+```
 
 <pre style="background:#282c34;color:#abb2bf;padding:12px;border-radius:6px;overflow-x:auto;font-family:monospace;font-size:14px;line-height:1.5;"><code><span style="color:#61afef">process_data</span><span style="color:#56b6c2">()</span> <span style="color:#56b6c2">{</span>
     <span style="color:#abb2bf">file</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">File</span><span style="color:#56b6c2">*</span> <span style="color:#56b6c2">=</span> <span style="color:#61afef">open</span><span style="color:#56b6c2">(</span><span style="color:#98c379">"data.bin"</span><span style="color:#56b6c2">)</span>
@@ -272,9 +299,10 @@ _start: () {
 }
 ```
 
-**Allowed registers (both forms):** `sp`, `fp`/`s0`, `ra`, `a0`-`a7`, `s1`-`s11`.
+**Allowed registers (both forms):** `sp`, `fp`/`s0`, `ra`, `gp`, `tp`, `a0`-`a7`, `s1`-`s11`.
 
-Temp registers `t0`-`t6` are **not allowed** - the register allocator may hold live values in them at any asm site; clobbering them would silently corrupt surrounding compiled code.
+- `gp` (global pointer) and `tp` (thread pointer) are available for OS-level use.
+- Temp registers `t0`-`t6` are **not allowed** - the register allocator may hold live values in them at any asm site; clobbering them would silently corrupt surrounding compiled code.
 
 **Restrictions on `asm { }` blocks:**
 - No HLL variables or expressions inside - raw assembly text only.
@@ -338,7 +366,10 @@ newline     = "\n" | "\r\n";
 ### 9.2 Syntactic Grammar
 ```ebnf
 program        = { declaration };
-declaration    = variable_decl | function_decl | type_decl | const_decl;
+declaration    = variable_decl | function_decl | type_decl | const_decl
+               | import_decl | export_decl;
+import_decl    = "import" string;
+export_decl    = "export" declaration;
 variable_decl  = identifier [ ":" type ] [ "=" expression ];
 type_decl      = "type" identifier "=" type;
 const_decl     = "const" identifier "=" expression;
@@ -349,27 +380,32 @@ array_def      = "[" integer "]" type;
 pointer_type   = type "*";
 primitive_type = "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64"
                | "f32" | "f64" | "bool";
-function_decl  = identifier ":" "(" [ param_list ] ")" "->" return_type block;
+function_decl  = identifier ":" "(" [ param_list ] ")" [ "->" return_type ] block;
 param_list     = parameter { "," parameter };
 parameter      = identifier ":" type;
 return_type    = type;
 block          = "{" { statement } "}";
-statement      = expression ";" | if_stmt | while_stmt | return_stmt | defer_stmt | variable_decl ";" | asm_block;
+statement      = expression | if_stmt | while_stmt | return_stmt | defer_stmt
+               | variable_decl | asm_block;
 if_stmt        = "if" expression block [ "else" ( if_stmt | block ) ];
 while_stmt     = "while" expression block;
 return_stmt    = "return" [ expression ];
 defer_stmt     = "defer" expression;
 asm_block      = "asm" "{" { asm_line } "}";
 asm_line       = { any_char - newline } newline;
-expression     = assignment | binary_expr | unary_expr | primary_expr;
+expression     = assignment | binary_expr | cast_expr | unary_expr | postfix_expr;
+cast_expr      = expression "as" type;
 assignment     = lvalue "=" expression;
 lvalue         = struct_destructure | dereference | field_access | array_index | identifier;
 struct_destructure = "{" [ identifier ":" type { "," identifier ":" type } [ "," ] ] "}";
 unary_expr     = unary_op expression;
 unary_op       = "-" | "!" | "&" | "@";
-primary_expr   = identifier | literal | "(" expression ")" | function_call | array_literal | struct_literal | asm_reg_expr;
+postfix_expr   = primary_expr { "." identifier | "[" expression "]" | "as" type };
+primary_expr   = identifier | literal | "(" expression ")" | function_call | array_literal
+               | struct_literal | new_expr | asm_reg_expr;
+new_expr       = "new" "(" type [ "," expression ] ")";
 asm_reg_expr   = "asm_reg" "(" abi_reg ")";
-abi_reg        = "sp" | "fp" | "ra"
+abi_reg        = "sp" | "fp" | "ra" | "gp" | "tp"
                | "a0" | "a1" | "a2" | "a3" | "a4" | "a5" | "a6" | "a7"
                | "s1" | "s2" | "s3" | "s4" | "s5" | "s6" | "s7" | "s8" | "s9" | "s10" | "s11";
 struct_literal = "{" [ field_init { "," field_init } [ "," ] ] "}";
@@ -384,17 +420,33 @@ array_index    = expression "[" expression "]";
 ### 9.3 Operator Precedence
 | Level | Operators | Associativity |
 |-------|-----------|---------------|
-| 1 | `() [] .` | Left |
+| 1 | `() [] . as` | Left |
 | 2 | `@ & - !` (unary) | Right |
 | 3 | `* / %` | Left |
 | 4 | `+ -` | Left |
-| 5 | `< <= > >=` | Left |
-| 6 | `== !=` | Left |
-| 7 | `and` | Left |
-| 8 | `or` | Left |
-| 9 | `=` | Right |
+| 5 | `<< >>` | Left |
+| 6 | `< <= > >=` | Left |
+| 7 | `== !=` | Left |
+| 8 | `&` (bitwise) | Left |
+| 9 | `^` (bitwise) | Left |
+| 10 | `\|` (bitwise) | Left |
+| 11 | `and` | Left |
+| 12 | `or` | Left |
+| 13 | `=` | Right |
 
-**Validation Rule:** Boolean expressions follow standard operator precedence: `and` binds tighter than `or`. If an expression would only be understood by relying on ambiguous parse recovery, it must be parenthesized; the parser rejects ambiguous precedence instead of guessing.
+**Precedence is absolute.** Parentheses are required to override the default binding. The parser rejects ambiguous expressions rather than guessing intent.
+
+**Important: `as` vs `@` precedence.** Because `as` is at Level 1 (postfix) and `@` is at Level 2 (prefix), `@x as T` parses as `@(x as T)` — casting first, then dereferencing. To dereference and then cast, use explicit outer parentheses: `(@x) as T`. Example:
+
+```hll
+; WRONG: parses as @(ptr as i32) — dereferencing an i32!
+val: i32 = @ptr as i32
+
+; CORRECT: dereference the u8*, then cast the resulting u8 to i32
+val: i32 = (@ptr) as i32
+```
+
+**Evaluation order:** Binary expressions, function arguments, and struct literals are evaluated strictly left-to-right. `defer` cleanup runs in LIFO (last-in, first-out) order at the enclosing scope exit.
 
 ---
 
@@ -521,6 +573,34 @@ array_index    = expression "[" expression "]";
 - Exact type preservation for debugger visualization.
 - Lifetime ranges tracked for stack/heap regions.
 - Optimization builds maintain semantic equivalence with source-level mapping.
+
+---
+
+## Appendix A: Safety Semantics (Platform-Defined Behavior)
+
+The following behaviors are intentionally not enforced by the compiler. They defer to RISC-V hardware traps or the platform ABI:
+
+| Scenario | Behavior |
+|----------|----------|
+| Integer overflow | Wraps modulo 2^N (two's complement) |
+| Division by zero | Hardware trap (SIGFPE on hosted; synchronous exception in kernel mode) |
+| Dynamic array out-of-bounds | No runtime check; memory corruption or hardware trap |
+| Null pointer dereference | Hardware page-fault or trap |
+
+These are not compiler bugs. Use explicit range checks and null guards in application code.
+
+---
+
+## Appendix B: Migration Guide (v1.4.3 -> v1.5.0)
+
+| Old syntax | New syntax | Notes |
+|------------|-----------|-------|
+| `new([N]T)` | `new(T, N)` | Count is now the second argument; result type is `T*` not `T[N]*` |
+| `@x as T` | `(@x) as T` | Outer parens required: `as` binds tighter than `@` |
+| `-> ()` | (omit) | Void return: drop the `-> ()` clause entirely |
+| `Type(expr)` | `expr as Type` | Postfix cast is preferred; prefix form still accepted |
+| `;` as statement terminator | (newline) | Semicolon has always been a comment; no change needed |
+| `make_str("text")` | `"text"` | String literals are already `Str`-compatible inline structs |
 
 ---
 

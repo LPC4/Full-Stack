@@ -1,4 +1,4 @@
-external console_writeln: (str: u8*) -> ()
+external console_writeln: (str: u8*)
 
 main: () -> i32 {
     console_writeln("hello from user mode!".data)

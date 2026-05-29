@@ -107,4 +107,7 @@ pub enum Token<'a> {
     Eof,
     Const,
     Type,
+    As,
+    Import,
+    Export,
 }

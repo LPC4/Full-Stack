@@ -752,3 +752,293 @@ fn sanitize_artifact_component(value: &str) -> String {
         trimmed.to_owned()
     }
 }
+
+// --- Filesystem image builder ---
+
+/// An entry to include in a filesystem image built by [`build_fs_image`].
+pub enum FsEntry<'a> {
+    /// A directory at the given absolute path (e.g. `"/bin"`).
+    Dir { path: &'a str },
+    /// A file at the given absolute path with the given content.
+    File { path: &'a str, data: &'a [u8] },
+}
+
+/// Serialise `entries` into the on-disk filesystem image format and return the raw bytes.
+///
+/// The format matches the spec in `FILESYSTEM.md`:
+///   Block 0      Superblock (4096 bytes, first 64 bytes used)
+///   Blocks 1-4   Inode table (256 x 64 bytes)
+///   Block 5      Free-block bitmap (one bit per data block starting at block 6)
+///   Block 6+     Data blocks (4096 bytes each)
+pub fn build_fs_image(entries: &[FsEntry<'_>]) -> Vec<u8> {
+    const BLOCK_SIZE: usize = 4096;
+    const INODE_SIZE: usize = 64;
+    const INODE_COUNT: usize = 256;
+    const INODE_TABLE_BLOCKS: usize = 4; // 256 * 64 / 4096
+    const BITMAP_BLOCK: usize = 5;
+    const DATA_BLOCK_START: usize = 6;
+    const DIRENT_SIZE: usize = 36;
+    const DIRENTS_PER_BLOCK: usize = 113; // 4096 / 36
+
+    // Inode layout offsets.
+    const IN_TYPE: usize = 0;
+    const IN_PARENT: usize = 2;
+    const IN_SIZE: usize = 4;
+    const IN_NAME: usize = 8;
+    const IN_BLOCKS: usize = 40;
+
+    // Superblock layout offsets.
+    const SB_MAGIC: usize = 0;
+    const SB_VERSION: usize = 8;
+    const SB_INODE_COUNT: usize = 10;
+    const SB_BLOCK_COUNT: usize = 12;
+    const SB_ROOT_INODE: usize = 14;
+    const SB_FREE_INODES: usize = 16;
+    const SB_FREE_BLOCKS: usize = 20;
+    const SB_INODE_BITMAP: usize = 24;
+
+    // Pre-calculate the total number of data blocks needed.
+    // We allocate enough to hold all file contents plus directory blocks.
+    // Minimum 56 data blocks so there is always free space for FS operations.
+    let mut needed_data_blocks: usize = 56;
+    for entry in entries {
+        if let FsEntry::File { data, .. } = entry {
+            let file_blocks = (data.len() + BLOCK_SIZE - 1) / BLOCK_SIZE;
+            needed_data_blocks = needed_data_blocks.max(file_blocks + 10);
+        }
+    }
+    // Clamp to max 255 (spec: block 5 is bitmap, data starts at 6, max index 255+6=261).
+    // The spec says FS_MAX_BLOCKS=255 data blocks.
+    let total_data_blocks = needed_data_blocks.min(255);
+    let total_blocks = DATA_BLOCK_START + total_data_blocks;
+    let image_size = total_blocks * BLOCK_SIZE;
+
+    let mut image = vec![0u8; image_size];
+
+    // --- Helpers ---
+
+    let inode_offset = |idx: usize| -> usize { BLOCK_SIZE + idx * INODE_SIZE };
+    let block_offset = |blk: usize| -> usize { blk * BLOCK_SIZE };
+
+    let write_u16 = |buf: &mut Vec<u8>, off: usize, val: u16| {
+        buf[off] = (val & 0xFF) as u8;
+        buf[off + 1] = (val >> 8) as u8;
+    };
+    let write_u32 = |buf: &mut Vec<u8>, off: usize, val: u32| {
+        buf[off] = (val & 0xFF) as u8;
+        buf[off + 1] = ((val >> 8) & 0xFF) as u8;
+        buf[off + 2] = ((val >> 16) & 0xFF) as u8;
+        buf[off + 3] = ((val >> 24) & 0xFF) as u8;
+    };
+    let write_u64 = |buf: &mut Vec<u8>, off: usize, val: u64| {
+        for i in 0..8usize {
+            buf[off + i] = ((val >> (i * 8)) & 0xFF) as u8;
+        }
+    };
+
+    // next_inode and next_data_block are mutable state we thread through.
+    let mut next_inode: usize = 1; // 0 = root
+    let mut next_data_block: usize = 0; // relative to DATA_BLOCK_START; absolute = + DATA_BLOCK_START
+
+    // Allocate a data block and return its absolute block index.
+    let alloc_block = |next: &mut usize| -> usize {
+        let blk = DATA_BLOCK_START + *next;
+        *next += 1;
+        blk
+    };
+
+    // Allocate an inode index.
+    let alloc_inode = |next: &mut usize| -> usize {
+        let idx = *next;
+        *next += 1;
+        idx
+    };
+
+    // Write a name into a 32-byte field at buf[off..off+32].
+    let write_name = |buf: &mut Vec<u8>, off: usize, name: &str| {
+        let bytes = name.as_bytes();
+        let len = bytes.len().min(31);
+        buf[off..off + len].copy_from_slice(&bytes[..len]);
+        buf[off + len] = 0;
+    };
+
+    // --- Root directory (inode 0) ---
+    let root_data_blk = alloc_block(&mut next_data_block);
+    {
+        let off = inode_offset(0);
+        image[off + IN_TYPE] = 2; // directory
+        write_u16(&mut image, off + IN_PARENT, 0); // root's parent = self
+        write_u32(&mut image, off + IN_SIZE, 0); // entry count updated later
+        write_name(&mut image, off + IN_NAME, "/");
+        write_u16(&mut image, off + IN_BLOCKS, root_data_blk as u16);
+    }
+
+    // --- Helper: add a DirEntry to a directory inode's data block ---
+    // Returns false if block is full (not handled for simplicity; 113 entries per block).
+    let add_dirent = |image: &mut Vec<u8>, dir_inode: usize, child_inode: usize, name: &str| {
+        let off = inode_offset(dir_inode);
+        let count = u32::from_le_bytes([
+            image[off + IN_SIZE],
+            image[off + IN_SIZE + 1],
+            image[off + IN_SIZE + 2],
+            image[off + IN_SIZE + 3],
+        ]) as usize;
+
+        // Get first data block of directory.
+        let blk_idx = u16::from_le_bytes([
+            image[off + IN_BLOCKS],
+            image[off + IN_BLOCKS + 1],
+        ]) as usize;
+        let blk_off = block_offset(blk_idx);
+        let de_off = blk_off + count * DIRENT_SIZE;
+
+        // Write name field (32 bytes).
+        let name_bytes = name.as_bytes();
+        let name_len = name_bytes.len().min(31);
+        image[de_off..de_off + name_len].copy_from_slice(&name_bytes[..name_len]);
+        image[de_off + name_len] = 0;
+        // Write inode u16 at offset 32.
+        image[de_off + 32] = (child_inode & 0xFF) as u8;
+        image[de_off + 33] = ((child_inode >> 8) & 0xFF) as u8;
+
+        // Increment parent size.
+        let new_count = (count + 1) as u32;
+        image[off + IN_SIZE] = (new_count & 0xFF) as u8;
+        image[off + IN_SIZE + 1] = ((new_count >> 8) & 0xFF) as u8;
+        image[off + IN_SIZE + 2] = ((new_count >> 16) & 0xFF) as u8;
+        image[off + IN_SIZE + 3] = ((new_count >> 24) & 0xFF) as u8;
+    };
+
+    // --- Process entries in order (dirs before files) ---
+
+    // Map from absolute path -> inode index, seeded with root.
+    let mut path_to_inode: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    path_to_inode.insert("/".to_owned(), 0);
+
+    // Sort: directories first, then files, both sorted by path length so parents come first.
+    let mut sorted: Vec<&FsEntry<'_>> = entries.iter().collect();
+    sorted.sort_by_key(|e| match e {
+        FsEntry::Dir { path } => (0usize, path.len(), *path),
+        FsEntry::File { path, .. } => (1usize, path.len(), *path),
+    });
+
+    for entry in sorted {
+        match entry {
+            FsEntry::Dir { path } => {
+                if *path == "/" {
+                    continue; // root already created
+                }
+                let (parent_path, name) = split_last_component(path);
+                let parent_inode = *path_to_inode
+                    .get(parent_path)
+                    .unwrap_or(&0);
+
+                let dir_inode = alloc_inode(&mut next_inode);
+                let dir_data_blk = alloc_block(&mut next_data_block);
+                {
+                    let off = inode_offset(dir_inode);
+                    image[off + IN_TYPE] = 2;
+                    write_u16(&mut image, off + IN_PARENT, parent_inode as u16);
+                    write_u32(&mut image, off + IN_SIZE, 0);
+                    write_name(&mut image, off + IN_NAME, name);
+                    write_u16(&mut image, off + IN_BLOCKS, dir_data_blk as u16);
+                }
+                add_dirent(&mut image, parent_inode, dir_inode, name);
+                path_to_inode.insert(path.to_string(), dir_inode);
+            }
+            FsEntry::File { path, data } => {
+                let (parent_path, name) = split_last_component(path);
+                let parent_inode = *path_to_inode.get(parent_path).unwrap_or(&0);
+
+                let file_inode = alloc_inode(&mut next_inode);
+                let num_blocks = (data.len() + BLOCK_SIZE - 1) / BLOCK_SIZE;
+                let num_blocks = num_blocks.max(1); // at least one block even for empty files
+
+                {
+                    let off = inode_offset(file_inode);
+                    image[off + IN_TYPE] = 1;
+                    write_u16(&mut image, off + IN_PARENT, parent_inode as u16);
+                    write_u32(&mut image, off + IN_SIZE, data.len() as u32);
+                    write_name(&mut image, off + IN_NAME, name);
+
+                    for b in 0..num_blocks {
+                        let blk = alloc_block(&mut next_data_block);
+                        let blk_slot_off = off + IN_BLOCKS + b * 2;
+                        image[blk_slot_off] = (blk & 0xFF) as u8;
+                        image[blk_slot_off + 1] = ((blk >> 8) & 0xFF) as u8;
+
+                        let src_start = b * BLOCK_SIZE;
+                        let src_end = (src_start + BLOCK_SIZE).min(data.len());
+                        let blk_off = block_offset(blk);
+                        if src_start < data.len() {
+                            let chunk = &data[src_start..src_end];
+                            image[blk_off..blk_off + chunk.len()].copy_from_slice(chunk);
+                        }
+                    }
+                }
+                add_dirent(&mut image, parent_inode, file_inode, name);
+                path_to_inode.insert(path.to_string(), file_inode);
+            }
+        }
+    }
+
+    // --- Superblock ---
+    {
+        let off = 0usize;
+        // Magic: "HLLFS\0\1\0"
+        let magic: [u8; 8] = [0x48, 0x4C, 0x4C, 0x46, 0x53, 0x00, 0x01, 0x00];
+        image[off..off + 8].copy_from_slice(&magic);
+        write_u16(&mut image, off + SB_VERSION, 1);
+        write_u16(&mut image, off + SB_INODE_COUNT, INODE_COUNT as u16);
+        write_u16(&mut image, off + SB_BLOCK_COUNT, total_data_blocks as u16);
+        write_u16(&mut image, off + SB_ROOT_INODE, 0);
+
+        let used_inodes = next_inode;
+        let free_inodes = (INODE_COUNT - used_inodes) as u32;
+        write_u32(&mut image, off + SB_FREE_INODES, free_inodes);
+
+        let used_data_blocks = next_data_block;
+        let free_blocks = (total_data_blocks.saturating_sub(used_data_blocks)) as u32;
+        write_u32(&mut image, off + SB_FREE_BLOCKS, free_blocks);
+
+        // Inode bitmap: 256 bits (32 bytes). 1 = free.
+        for i in 0..INODE_COUNT {
+            let byte = i / 8;
+            let bit = i % 8;
+            if i >= used_inodes {
+                image[off + SB_INODE_BITMAP + byte] |= 1 << bit;
+            }
+        }
+    }
+
+    // --- Free-block bitmap (block 5) ---
+    // One bit per data block starting at block 6; bit 0 of byte 0 = block 6.
+    {
+        let bmap_off = block_offset(BITMAP_BLOCK);
+        for i in 0..total_data_blocks {
+            let byte = i / 8;
+            let bit = i % 8;
+            if i >= next_data_block {
+                image[bmap_off + byte] |= 1 << bit;
+            }
+        }
+    }
+
+    // Suppress unused-variable warnings from closures (write_u64 reserved for future use).
+    let _ = write_u64;
+
+    image
+}
+
+/// Split an absolute path into (parent_path, last_component).
+/// "/bin/init" -> ("/bin", "init"), "/hello.txt" -> ("/", "hello.txt").
+fn split_last_component(path: &str) -> (&str, &str) {
+    if let Some(pos) = path.rfind('/') {
+        let parent = if pos == 0 { "/" } else { &path[..pos] };
+        let name = &path[pos + 1..];
+        (parent, name)
+    } else {
+        ("/", path)
+    }
+}

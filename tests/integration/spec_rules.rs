@@ -210,7 +210,7 @@ main: () -> i32 {
     @stack[1] = 2
     @stack[2] = @stack[0] + @stack[1]
 
-    heap: i32[2]* = new([2]i32)
+    heap: i32* = new(i32, 2)
     defer free(heap)
     @heap[0] = @stack[2]
     @heap[1] = 4

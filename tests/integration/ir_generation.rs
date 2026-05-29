@@ -248,6 +248,43 @@ fn free_with_no_args_is_rejected() {
     );
 }
 
+#[test]
+fn new_with_runtime_count_emits_heap_alloc() {
+    let source = r#"
+main: () -> i32 {
+    n: i32 = 10
+    arr: i32* = new(i32, n)
+    defer free(arr)
+    return 0
+}"#;
+    assert!(has_instruction(source, |i| matches!(
+        i,
+        IrInstruction::HeapAlloc { count: Some(_), .. }
+    )));
+}
+
+#[test]
+fn as_cast_operator_emits_cast() {
+    let source = r#"
+main: () -> i32 {
+    x: i64 = 42
+    y: i32 = x as i32
+    return y
+}"#;
+    assert!(has_instruction(source, |i| matches!(i, IrInstruction::Cast { .. })));
+}
+
+#[test]
+fn new_with_array_type_is_rejected() {
+    assert!(
+        CompilationPipeline::new()
+            .compile(
+                r#"main: () -> i32 { arr: i32* = new([4]i32)  defer free(arr)  return 0 }"#
+            )
+            .is_err()
+    );
+}
+
 // -- Control flow lowering -----------------------------------------------------
 
 fn has_terminator<F>(source: &str, pred: F) -> bool

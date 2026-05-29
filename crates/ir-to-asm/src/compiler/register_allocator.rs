@@ -264,7 +264,7 @@ impl RegisterAllocator {
         intervals: &mut HashMap<hll_to_ir::IrRegister, (usize, usize)>,
     ) {
         use IrInstruction::{
-            Call, Cast, Cmp, HeapFree, Index, Load, Math, Offset, Phi, Store, Unary,
+            Call, Cast, Cmp, HeapAlloc, HeapFree, Index, Load, Math, Offset, Phi, Store, Unary,
         };
 
         let mut update_interval = |reg: &hll_to_ir::IrRegister| {
@@ -324,6 +324,11 @@ impl RegisterAllocator {
                     if let IrValue::Register(reg) = value {
                         update_interval(reg);
                     }
+                }
+            }
+            HeapAlloc { count, .. } => {
+                if let Some(IrValue::Register(reg)) = count {
+                    update_interval(reg);
                 }
             }
             HeapFree { ptr } => {

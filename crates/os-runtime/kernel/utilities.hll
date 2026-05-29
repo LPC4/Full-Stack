@@ -1,7 +1,7 @@
 ; Kernel platform helpers: shutdown, timer, and interrupt controller.
 
 external malloc:       (size: u64) -> u8*
-external kpanic:       (msg: u8*) -> ()
+external kpanic:       (msg: u8*)
 
 ; Panics on OOM instead of returning null.
 kmalloc: (size: u64) -> u8* {
@@ -14,7 +14,7 @@ kmalloc: (size: u64) -> u8* {
 
 ; Write exit code to SYSCON (0x10010000) to halt the VM or QEMU.
 ; Falls back to a WFI loop if the SYSCON write doesn't halt (real hardware).
-kshutdown: (code: i64) -> () {
+kshutdown: (code: i64) {
     asm {
         li   t0, 268500992
         sd   a0, 0(t0)
@@ -38,7 +38,7 @@ timer_get: () -> u64 {
 }
 
 ; Schedule next timer interrupt at MTIME + interval (MTIMECMP hart 0).
-timer_set: (interval: u64) -> () {
+timer_set: (interval: u64) {
     asm {
         li   t0, 33603576
         ld   t1, 0(t0)
@@ -49,7 +49,7 @@ timer_set: (interval: u64) -> () {
 }
 
 ; PLIC minimal init: source 10 (UART RX), priority 1, S-mode hart 0 context, threshold 0.
-plic_init: () -> () {
+plic_init: () {
     asm {
         ; priority[10] at 0x0C000000 + 9*4
         li   t0, 201326628

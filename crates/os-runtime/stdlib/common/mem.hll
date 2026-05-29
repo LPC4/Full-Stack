@@ -33,8 +33,8 @@ memmove: (dst: u8*, src: u8*, n: u64) -> u8* {
 memcmp: (a: u8*, b: u8*, n: u64) -> i32 {
     i: u64 = 0
     while i < n {
-        ai: i32 = i32(@(a + i))
-        bi: i32 = i32(@(b + i))
+        ai: i32 = (@(a + i)) as i32
+        bi: i32 = (@(b + i)) as i32
         if ai < 0 and bi >= 0 {
             return 1
         }

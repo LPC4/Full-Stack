@@ -30,7 +30,7 @@ factorial_while: (n: i32) -> i32 {
 const SUM_10 = sum_to_n(10)
 const FACT_7 = factorial_while(7)
 
-main: () -> () {
+main: () {
     print(SUM_10)   ; Should be 55
     print(FACT_7)   ; Should be 5040
 }

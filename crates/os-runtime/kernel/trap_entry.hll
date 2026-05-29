@@ -1,10 +1,10 @@
 ; S-mode trap entry: saves all GPRs + CSRs to a 288-byte stack frame,
 ; calls trap_handler(frame), restores, and sret.
 
-external trap_handler: (frame: u64*) -> ()
+external trap_handler: (frame: u64*)
 
 ; stvec points directly at stvec_entry, bypassing the HLL function prologue.
-_s_trap_host: () -> () {
+_s_trap_host: () {
     asm {
         stvec_entry:
 
@@ -109,7 +109,7 @@ _s_trap_host: () -> () {
 }
 
 ; Point stvec at stvec_entry and enable STIE + SEIE + SIE.
-trap_init: () -> () {
+trap_init: () {
     asm {
         ; Direct mode: bit[1:0]=00.
         la   t0, stvec_entry
@@ -128,7 +128,7 @@ trap_init: () -> () {
 }
 
 ; Read sscratch into *out.
-sscratch_get_to: (out: u64*) -> () {
+sscratch_get_to: (out: u64*) {
     asm {
         csrr t0, sscratch
         sd   t0, 0(a0)
@@ -136,6 +136,6 @@ sscratch_get_to: (out: u64*) -> () {
 }
 
 ; Write sscratch CSR.
-sscratch_set: (val: u64) -> () {
+sscratch_set: (val: u64) {
     asm { csrw sscratch, a0 }
 }

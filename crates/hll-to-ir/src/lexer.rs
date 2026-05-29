@@ -190,6 +190,9 @@ impl<'a> Lexer<'a> {
             "true" => Token::True,
             "false" => Token::False,
             "null" => Token::Null,
+            "as" => Token::As,
+            "import" => Token::Import,
+            "export" => Token::Export,
             // Types
             "i8" => Token::I8,
             "i16" => Token::I16,
@@ -467,5 +470,15 @@ mod tests {
         let mut lexer = Lexer::new("|");
         // Single | is now the bitwise OR operator (Token::Pipe)
         assert_eq!(lexer.next_token(), Token::Pipe);
+    }
+
+    #[test]
+    fn test_new_keywords_v150() {
+        let input = "as import export";
+        let mut lexer = Lexer::new(input);
+        assert_eq!(lexer.next_token(), Token::As);
+        assert_eq!(lexer.next_token(), Token::Import);
+        assert_eq!(lexer.next_token(), Token::Export);
+        assert_eq!(lexer.next_token(), Token::Eof);
     }
 }

@@ -1,5 +1,5 @@
 ; Self-contained panic, no console.hll dependency, safe before any init.
-_kpanic: () -> () {
+_kpanic: () {
     asm {
         li   t0, 268435456
         li   t1, 80
@@ -22,7 +22,7 @@ _kpanic: () -> () {
     }
 }
 
-kpanic: (msg: u8*) -> () {
+kpanic: (msg: u8*) {
     asm {
         li   t0, 268435456
         mv   t1, a0

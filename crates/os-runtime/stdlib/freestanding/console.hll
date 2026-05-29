@@ -2,14 +2,14 @@
 ; Direct writes avoid ecall so sp is never a user VA in M-mode (would read garbage).
 
 ; No stack slot needed: a0 is written directly to UART.
-console_putchar: (c: i32) -> () {
+console_putchar: (c: i32) {
     asm {
         li   t0, 0x10000000
         sb   a0, 0(t0)
     }
 }
 
-console_write: (str: u8*) -> () {
+console_write: (str: u8*) {
     asm {
         mv   t0, a0
         li   t2, 0x10000000
@@ -23,20 +23,20 @@ console_write: (str: u8*) -> () {
     }
 }
 
-console_writeln: (str: u8*) -> () {
+console_writeln: (str: u8*) {
     console_write(str)
     console_putchar(10)
 }
 
-console_print_int_rec: (n: i64) -> () {
+console_print_int_rec: (n: i64) {
     if n == 0 {
         return
     }
     console_print_int_rec(n / 10)
-    console_putchar(i32(n % 10) + 48)
+    console_putchar((n % 10) as i32 + 48)
 }
 
-console_print_int: (n: i64) -> () {
+console_print_int: (n: i64) {
     if n == 0 {
         console_putchar(48)
         return
@@ -49,7 +49,7 @@ console_print_int: (n: i64) -> () {
     }
 }
 
-console_print_hex: (n: u64) -> () {
+console_print_hex: (n: u64) {
     buf: u8[16]
     i: u64 = 16
     v: u64 = n
@@ -58,9 +58,9 @@ console_print_hex: (n: u64) -> () {
         nibble: u64 = v % 16
         v = v / 16
         if nibble < 10 {
-            buf[i] = u8(i32(nibble) + 48)
+            buf[i] = (nibble as i32 + 48) as u8
         } else {
-            buf[i] = u8(i32(nibble) - 10 + 97)
+            buf[i] = (nibble as i32 - 10 + 97) as u8
         }
     }
     console_putchar(48)
@@ -68,7 +68,7 @@ console_print_hex: (n: u64) -> () {
     buf_ptr: u8* = buf[0]
     j: u64 = 0
     while j < 16 {
-        console_putchar(i32(@(buf_ptr + j)))
+        console_putchar((@(buf_ptr + j)) as i32)
         j = j + 1
     }
 }

@@ -1,36 +1,36 @@
-external console_putchar: (c: i32) -> ()
-external console_write: (str: u8*) -> ()
-external console_writeln: (str: u8*) -> ()
-external console_print_int: (n: i64) -> ()
-external console_print_hex: (n: u64) -> ()
+external console_putchar: (c: i32)
+external console_write: (str: u8*)
+external console_writeln: (str: u8*)
+external console_print_int: (n: i64)
+external console_print_hex: (n: u64)
 
-klog: (msg: u8*) -> () {
+klog: (msg: u8*) {
     console_writeln(msg)
 }
 
-klog_ok: (msg: u8*) -> () {
+klog_ok: (msg: u8*) {
     console_write("[  OK  ] ".data)
     console_writeln(msg)
 }
 
-klog_warn: (msg: u8*) -> () {
+klog_warn: (msg: u8*) {
     console_write("[ WARN ] ".data)
     console_writeln(msg)
 }
 
-klog_error: (msg: u8*) -> () {
+klog_error: (msg: u8*) {
     console_write("[ ERR  ] ".data)
     console_writeln(msg)
 }
 
-klog_int: (label: u8*, val: i64) -> () {
+klog_int: (label: u8*, val: i64) {
     console_write(label)
     console_write(": ".data)
     console_print_int(val)
     console_putchar(10)
 }
 
-klog_hex: (label: u8*, val: u64) -> () {
+klog_hex: (label: u8*, val: u64) {
     console_write(label)
     console_write(": ".data)
     console_print_hex(val)

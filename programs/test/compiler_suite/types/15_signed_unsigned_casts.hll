@@ -7,42 +7,42 @@ main: () -> i32 {
     signed_a: i32 = 10
     signed_b: i32 = 3
     signed_result: i32 = signed_a / signed_b
-    
+
     ;  Test 2: Unsigned division
     unsigned_a: u32 = 10
     unsigned_b: u32 = 3
     unsigned_result: u32 = unsigned_a / unsigned_b
-    
+
     ;  Test 3: Signed comparison
     signed_cmp: bool = 5 < 10
-    
+
     ;  Test 4: Unsigned comparison
     ua: u32 = 5
     ub: u32 = 10
     unsigned_cmp: bool = ua < ub
-    
+
     ;  Test 5: Type casting - widening
     small: i32 = 42
-    big: i64 = i64(small)
-    
+    big: i64 = small as i64
+
     ;  Test 6: Type casting - narrowing
     large: i64 = 100
-    small_again: i32 = i32(large)
-    
+    small_again: i32 = large as i32
+
     ;  Test 7: Integer to float cast
     int_val: i32 = 42
-    float_val: f64 = f64(int_val)
-    
+    float_val: f64 = int_val as f64
+
     ;  Test 8: Heap allocation and deallocation
     ptr: i32* = new(i32)
     @ptr = 99
     heap_value: i32 = @ptr
     free(ptr)
-    
+
     ;  Test 9: Pointer to pointer cast
     int_ptr: i32* = new(i32)
-    byte_ptr: i8* = i8*(int_ptr)
+    byte_ptr: i8* = int_ptr as i8*
     free(int_ptr)
-    
-    return signed_result + i32(unsigned_result) + heap_value
+
+    return signed_result + unsigned_result as i32 + heap_value
 }

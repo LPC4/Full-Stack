@@ -3,19 +3,18 @@ external printf: (format: u8*, value: i32) -> i32
 
 main: () -> i32 {
     tiny: i8 = 21
-    wide: i32 = i32(tiny)
-    back: i8 = i8(wide + 21)
+    wide: i32 = tiny as i32
+    back: i8 = (wide + 21) as i8
 
     slot: i32 = 21
     slot_ptr: i32* = &slot
-    byte_ptr: u8* = u8*(slot_ptr)
-    round_trip: i32* = i32*(byte_ptr)
+    byte_ptr: u8* = slot_ptr as u8*
+    round_trip: i32* = byte_ptr as i32*
 
     printf("wide=%d\n".data, wide)
-    printf("back=%d\n".data, i32(back))
+    printf("back=%d\n".data, back as i32)
     printf("round_trip=%d\n".data, @round_trip)
 
     ; Exit 0 on success by subtracting the expected value (42).
-    return wide + i32(back) - @round_trip - 42
+    return wide + back as i32 - @round_trip - 42
 }
-

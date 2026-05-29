@@ -2,22 +2,22 @@
 ; schedule(frame, 1) = yield (re-enqueue as READY), schedule(frame, 2) = exit (mark EXITED).
 
 external memcpy:     (dst: u8*, src: u8*, n: u64) -> u8*
-external kpanic:     (msg: u8*) -> ()
-external klog_ok:    (msg: u8*) -> ()
-external klog_int:   (label: u8*, val: i64) -> ()
-external klog_error: (msg: u8*) -> ()
+external kpanic:     (msg: u8*)
+external klog_ok:    (msg: u8*)
+external klog_int:   (label: u8*, val: i64)
+external klog_error: (msg: u8*)
 
 current_process:  u64* = null
 ready_queue_head: u64* = null
 
-scheduler_init: () -> () {
+scheduler_init: () {
     current_process  = null
     ready_queue_head = null
     klog_ok("scheduler ready".data)
 }
 
 ; Append pcb to the tail of the ready queue.
-scheduler_add: (pcb: u64*) -> () {
+scheduler_add: (pcb: u64*) {
     @pcb[2] = 0
     if ready_queue_head == null {
         ready_queue_head = pcb
@@ -25,17 +25,17 @@ scheduler_add: (pcb: u64*) -> () {
     }
     curr: u64* = ready_queue_head
     while @curr[2] != 0 {
-        curr = u64*(@curr[2])
+        curr = (@curr[2]) as u64*
     }
-    @curr[2] = u64(pcb)
+    @curr[2] = pcb as u64
 }
 
 ; --- Context switch ---
 ; Saves the current trap frame into its PCB (action=2 marks EXITED, else re-enqueues as READY),
 ; then restores the next READY process. Caller must not touch sepc after this call.
-schedule: (frame: u64*, action: u64) -> () {
+schedule: (frame: u64*, action: u64) {
     if current_process != null {
-        memcpy(u8*(u64(current_process) + 40), u8*(frame), 288)
+        memcpy((current_process as u64 + 40) as u8*, frame as u8*, 288)
 
         if action == 2 {
             @current_process[1] = 3  ; EXITED
@@ -49,9 +49,9 @@ schedule: (frame: u64*, action: u64) -> () {
     if next == null {
         return
     }
-    ready_queue_head = u64*(@next[2])
+    ready_queue_head = (@next[2]) as u64*
     @next[2] = 0
 
     current_process = next
-    memcpy(u8*(frame), u8*(u64(next) + 40), 288)
+    memcpy(frame as u8*, (next as u64 + 40) as u8*, 288)
 }

@@ -48,21 +48,24 @@ impl HighLevelCompiler {
                 use crate::ir::IrInstruction;
                 let dest = self.new_temp();
                 let lowered_ty = self.lower_type(ty);
+
+                if matches!(lowered_ty, IrType::Array { .. }) {
+                    self.context.error(format!(
+                        "new([N]T) syntax is removed; use new(T, N) instead (e.g. new({}, N))",
+                        match &lowered_ty {
+                            IrType::Array { element, .. } => element.as_ref().clone(),
+                            other => other.clone(),
+                        }
+                    ));
+                    return None;
+                }
+
                 let count = match args.len() {
                     0 => None,
-                    1 => match &args[0] {
-                        Expression::Primary(PrimaryExpr::Literal(
-                            Literal::Integer(v) | Literal::HexInteger(v),
-                        )) if *v > 0 => Some(*v as usize),
-                        other => {
-                            self.context.error(format!(
-                                "new({}, count) requires a positive integer literal count; got `{}`",
-                                lowered_ty,
-                                self.format_expression(other)
-                            ));
-                            return None;
-                        }
-                    },
+                    1 => {
+                        let lowered_count = self.lower_expr(&args[0], EvalMode::Value)?;
+                        Some(lowered_count.value)
+                    }
                     n => {
                         self.context.error(format!(
                             "new({lowered_ty}, ...) expects at most one count argument, got {n}"

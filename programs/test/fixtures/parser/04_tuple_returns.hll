@@ -6,7 +6,7 @@ divide: (a: i32, b: i32) -> { result: i32, success: bool } {
     return { result: i32 = a / b, success: bool = true }
 }
 
-start: () -> () {
+start: () {
     ; Parsing challenge: Handling brace-based typed destructuring
     { result: i32, success: bool } = divide(10, 2)
 

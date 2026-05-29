@@ -59,6 +59,7 @@ pub fn get_stdlib_modules_for_mode(mode: TargetMode) -> Vec<(&'static str, &'sta
             ("process", kernel::PROCESS),
             ("syscall", kernel::SYSCALL),
             ("scheduler", kernel::SCHEDULER),
+            ("fs", kernel::FS),
         ],
     }
 }
@@ -146,6 +147,7 @@ pub fn get_kernel_stdlib_source() -> String {
         + kernel::PROCESS.len()
         + kernel::SYSCALL.len()
         + kernel::SCHEDULER.len()
+        + kernel::FS.len()
         + 512;
     let mut combined = String::with_capacity(capacity);
     append_section(&mut combined, "; --- stdlib: types ---\n", stdlib::TYPES);
@@ -209,6 +211,7 @@ pub fn get_kernel_stdlib_source() -> String {
         "; --- kernel: scheduler ---\n",
         kernel::SCHEDULER,
     );
+    append_section(&mut combined, "; --- kernel: fs ---\n", kernel::FS);
     combined
 }
 

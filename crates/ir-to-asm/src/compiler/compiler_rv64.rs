@@ -260,7 +260,7 @@ impl CompilerRv64 {
                 function,
                 args,
             } => self.lower_call(dest, function, args, ctx, alloc),
-            HeapAlloc { dest, ty, count } => self.lower_heap_alloc(dest, ty, *count, ctx, alloc),
+            HeapAlloc { dest, ty, count } => self.lower_heap_alloc(dest, ty, count, ctx, alloc),
             HeapFree { ptr } => self.lower_heap_free(ptr, ctx, alloc),
         }
     }
@@ -796,17 +796,38 @@ impl CompilerRv64 {
         &mut self,
         dest: &hll_to_ir::IrRegister,
         ty: &IrType,
-        count: Option<usize>,
+        count: &Option<IrValue>,
         ctx: &mut FunctionContext,
         alloc: &RegisterAllocator,
     ) {
         self.emitter.reset_temp_counter();
         let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
-        let bytes = self.type_size(ty).saturating_mul(count.unwrap_or(1));
-        self.emitter.emit_li(A0, bytes as i64);
+        let type_size = self.type_size(ty);
+
+        match count {
+            None => {
+                self.emitter.emit_li(A0, type_size as i64);
+            }
+            Some(IrValue::Integer(n)) => {
+                let bytes = type_size.saturating_mul(*n as usize);
+                self.emitter.emit_li(A0, bytes as i64);
+            }
+            Some(count_val) => {
+                // Dynamic count: compute sizeof(T) * count at runtime.
+                let count_tmp = self.load_value_to_temp(count_val, ctx, alloc);
+                let size_tmp = self.emitter.alloc_temp_reg();
+                self.emitter.emit_li(size_tmp, type_size as i64);
+                self.emitter.emit_raw(&format!(
+                    "\tmul {}, {}, {}",
+                    reg_name(A0, false),
+                    reg_name(count_tmp, false),
+                    reg_name(size_tmp, false)
+                ));
+            }
+        }
+
         self.emitter.emit_raw("\tcall malloc");
         self.emitter.emit_sd(SP, A0, dest_slot as i32);
-        // If dest has a physical register allocation, also store there
         if let Some(Allocation::Physical(phys_reg)) = alloc.get_allocation(dest) {
             self.emitter.emit_mv(*phys_reg, A0);
         }

@@ -88,6 +88,7 @@ pub fn take_trap(regs: &mut Registers, csrs: &mut CsrFile, cause: u64, tval: u64
         let spp: u64 = u64::from(current_priv != PrivilegeMode::User);
         csrs.mstatus = (csrs.mstatus & !(1u64 << 8)) | (spp << 8); // SPP = current_priv
 
+        // Switch to Supervisor for the trapped context.
         regs.priv_mode = PrivilegeMode::Supervisor;
 
         // Jump to stvec (direct or vectored).

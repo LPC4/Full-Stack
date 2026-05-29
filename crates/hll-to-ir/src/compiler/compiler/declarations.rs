@@ -28,6 +28,7 @@ impl HighLevelCompiler {
     ) -> Result<(), CompilerError> {
         log::debug!("lowering declaration: {:?}", declaration.decl);
         match &declaration.decl {
+            DeclNode::Import { .. } => return Ok(()),
             DeclNode::Type { name, ty, generics } => {
                 if !generics.is_empty() {
                     // This is a generic type definition, store it for later specialization

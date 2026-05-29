@@ -28,13 +28,13 @@ external kmalloc:      (size: u64) -> u8*
 external memset:       (dst: u8*, value: u8, n: u64) -> u8*
 external memcpy:       (dst: u8*, src: u8*, n: u64) -> u8*
 external pmm_alloc:    () -> u8*
-external vmm_map:      (va: u64, pa: u64, flags: u64) -> ()
-external kpanic:       (msg: u8*) -> ()
-external klog_ok:      (msg: u8*) -> ()
+external vmm_map:      (va: u64, pa: u64, flags: u64)
+external kpanic:       (msg: u8*)
+external klog_ok:      (msg: u8*)
 
 next_pid: u64 = 1
 
-process_init: () -> () {
+process_init: () {
     klog_ok("process subsystem ready".data)
 }
 
@@ -43,20 +43,30 @@ process_init: () -> () {
 process_create: (entry_pc: u64) -> u64* {
     pcb_bytes: u8* = kmalloc(PCB_SIZE)
     memset(pcb_bytes, 0, PCB_SIZE)
-    pcb: u64* = u64*(pcb_bytes)
+    pcb: u64* = pcb_bytes as u64*
 
     @pcb[0] = next_pid
     next_pid = next_pid + 1
     @pcb[1] = PROC_READY
 
-    stack_page: u8* = pmm_alloc()
-    if stack_page == null {
-        kpanic("process_create: out of memory for user stack".data)
+    ; User stack: map several pages below 0x80000000 so deep kernel syscall
+    ; call chains (which run on the user stack) do not overflow a single page.
+    stack_top:    u64 = 0x80000000
+    stack_pages:  u64 = 16
+    last_page_pa: u64 = 0
+    sp_i: u64 = 0
+    while sp_i < stack_pages {
+        page_pa: u8* = pmm_alloc()
+        if page_pa == null {
+            kpanic("process_create: out of memory for user stack".data)
+        }
+        page_va: u64 = stack_top - (sp_i + 1) * 0x1000
+        vmm_map(page_va, page_pa as u64, 22)  ; R|W|U=22; vmm_map adds V.
+        last_page_pa = page_pa as u64
+        sp_i = sp_i + 1
     }
-    @pcb[3] = u64(stack_page)
+    @pcb[3] = last_page_pa
     @pcb[4] = entry_pc
-
-    vmm_map(0x7FFFF000, u64(stack_page), 22)  ; R|W|U=22; vmm_map adds V.
 
         ; Initial frame: sp = top of stack page, sepc = entry, sstatus = U-mode on sret with IRQs on.
     @pcb[5 + 2]  = 0x80000000

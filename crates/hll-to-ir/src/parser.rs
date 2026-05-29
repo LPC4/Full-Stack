@@ -3,6 +3,7 @@ use super::ast::{
     Literal, Parameter, PrimaryExpr, Program, ReturnType, Statement, StructDestructureField, Type,
     UnaryOp,
 };
+
 use super::token::{Span, Token};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -92,6 +93,17 @@ impl<'a> Parser<'a> {
             Some(Token::External) => {
                 self.advance();
                 self.parse_function_decl(true)?
+            }
+            Some(Token::Import) => {
+                self.advance();
+                let path = self.expect_string_literal()?;
+                DeclNode::Import { path }
+            }
+            Some(Token::Export) => {
+                // Strip the `export` keyword and parse the underlying declaration.
+                self.advance();
+                self.consume_terminators();
+                return self.parse_declaration();
             }
             Some(Token::Ident(_)) => {
                 // Look ahead to determine if this is a function or variable declaration
@@ -659,6 +671,16 @@ impl<'a> Parser<'a> {
                 continue;
             }
 
+            if matches!(self.peek(), Some(Token::As)) {
+                self.advance();
+                let target_ty = self.parse_type()?;
+                expr = Expression::Cast {
+                    target_ty,
+                    expr: Box::new(expr),
+                };
+                continue;
+            }
+
             if self.match_lparen() {
                 let name = match expr {
                     Expression::Primary(PrimaryExpr::Identifier(name)) => name,
@@ -1180,7 +1202,9 @@ impl<'a> Parser<'a> {
 
     fn is_declaration_start(&self) -> bool {
         match self.peek() {
-            Some(Token::Const | Token::Type | Token::External) => true,
+            Some(Token::Const | Token::Type | Token::External | Token::Import | Token::Export) => {
+                true
+            }
             Some(Token::Ident(_)) => {
                 if self.peek_n(1) != Some(&Token::Colon) {
                     return false;
@@ -1595,6 +1619,21 @@ impl<'a> Parser<'a> {
         self.match_variant(|t| matches!(t, Token::StatementTerminator))
     }
 
+    fn expect_string_literal(&mut self) -> Result<String, ParserError> {
+        match self.peek() {
+            Some(Token::String(text)) => {
+                if text.len() < 2 || !text.starts_with('"') || !text.ends_with('"') {
+                    return Err(self.error("invalid string literal"));
+                }
+                let content = text[1..text.len() - 1].to_owned();
+                self.advance();
+                Ok(content)
+            }
+            Some(tok) => Err(self.error_with_token("expected string literal", tok)),
+            None => Err(self.error("unexpected end of input")),
+        }
+    }
+
     fn match_variant<F>(&mut self, predicate: F) -> bool
     where
         F: FnOnce(&Token<'a>) -> bool,
@@ -1903,6 +1942,47 @@ mod tests {
                 other => panic!("unexpected assignment target: {other:?}"),
             },
             other => panic!("unexpected expression: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_as_cast_operator() {
+        use crate::token::Token;
+        let tokens = vec![
+            Token::Ident("x"),
+            Token::As,
+            Token::I32,
+            Token::Eof,
+        ];
+        let mut parser = Parser::new(tokens);
+        match parser.parse_expression().unwrap() {
+            Expression::Cast { target_ty, expr } => {
+                assert!(matches!(target_ty, Type::Primitive(n) if n == "i32"));
+                match expr.as_ref() {
+                    Expression::Primary(crate::ast::PrimaryExpr::Identifier(n)) => {
+                        assert_eq!(n, "x");
+                    }
+                    other => panic!("expected identifier, got: {other:?}"),
+                }
+            }
+            other => panic!("expected Cast, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_import_declaration() {
+        use crate::token::Token;
+        let tokens = vec![
+            Token::Import,
+            Token::String(r#""core/io""#),
+            Token::Eof,
+        ];
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse_program().unwrap();
+        assert_eq!(program.declarations.len(), 1);
+        match &program.declarations[0].decl {
+            DeclNode::Import { path } => assert_eq!(path, "core/io"),
+            other => panic!("expected Import, got: {other:?}"),
         }
     }
 

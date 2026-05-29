@@ -1,4 +1,4 @@
-# os-runtime
+/# os-runtime
 
 Bare-metal boot firmware, S-mode kernel, and userspace sources for the Full-Stack VM.
 This is not a Rust library to link into other projects; it holds the assembly and HLL sources that the compiler pipeline assembles into a bootable kernel image.

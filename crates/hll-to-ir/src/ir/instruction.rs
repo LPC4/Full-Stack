@@ -14,7 +14,8 @@ pub enum IrInstruction {
     HeapAlloc {
         dest: IrRegister,
         ty: IrType,
-        count: Option<usize>,
+        // None = single element. Some = element count (may be a runtime register).
+        count: Option<IrValue>,
     },
     HeapFree {
         ptr: IrRegister,
@@ -107,7 +108,7 @@ impl fmt::Display for IrInstruction {
             Self::HeapAlloc { dest, ty, count } => {
                 write!(f, "{dest} = heap_alloc {ty}")?;
                 if let Some(count) = count {
-                    write!(f, " {count}")?;
+                    write!(f, " x{count}")?;
                 }
                 Ok(())
             }

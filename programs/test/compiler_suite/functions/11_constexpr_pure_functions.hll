@@ -42,7 +42,7 @@ const MAX_VAL = max_value(42, 17)
 ; Nested function calls
 const NESTED = factorial(fibonacci(6))
 
-main: () -> () {
+main: () {
     print(FACT_5)      ; Should be 120
     print(FACT_10)     ; Should be 3628800
     print(FIB_10)      ; Should be 55

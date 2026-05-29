@@ -47,8 +47,8 @@ main: () -> i32 {
     if rem  != 42 { return 4 }
 
     ; --- i64 cast roundtrip ---
-    big:  i64 = i64(prod)
-    back: i32 = i32(big)
+    big:  i64 = prod as i64
+    back: i32 = big as i32
     if back != 42 { return 5 }
 
     ; --- u32 unsigned arithmetic ---
@@ -56,8 +56,8 @@ main: () -> i32 {
     ub:   u32 = 5
     udiv: u32 = ua / ub        ; 42 unsigned
     umod: u32 = ua % ub        ; 0
-    if i32(udiv) != 42 { return 6 }
-    if i32(umod) !=  0 { return 7 }
+    if udiv as i32 != 42 { return 6 }
+    if umod as i32 !=  0 { return 7 }
 
     ; --- abs_val helper ---
     pos: i32 = abs_val(0 - 42)

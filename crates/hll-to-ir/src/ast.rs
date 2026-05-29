@@ -49,6 +49,9 @@ pub enum DeclNode {
         name: String,
         init: Expression,
     },
+    Import {
+        path: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

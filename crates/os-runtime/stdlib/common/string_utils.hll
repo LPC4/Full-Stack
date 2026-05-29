@@ -29,7 +29,7 @@ str_copy: (src: Str) -> Str* {
         data[i] = src.data[i]
         i = i + 1
     }
-    copy: Str* = Str*(malloc(16))
+    copy: Str* = malloc(16) as Str*
     @copy.data = data
     @copy.length = src.length
     return copy
@@ -48,7 +48,7 @@ str_concat: (left: Str, right: Str) -> Str* {
         data[left.length + j] = right.data[j]
         j = j + 1
     }
-    result: Str* = Str*(malloc(16))
+    result: Str* = malloc(16) as Str*
     @result = {
         .data   = data,
         .length = total,

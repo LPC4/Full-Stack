@@ -29,7 +29,7 @@ malloc: (size: u64) -> u8* {
         current = @current.next
     }
 
-    block: HeapBlock* = HeapBlock*(heap_raw_alloc(32))
+    block: HeapBlock* = heap_raw_alloc(32) as HeapBlock*
     if block == null {
         return null
     }
@@ -47,7 +47,7 @@ malloc: (size: u64) -> u8* {
     return payload
 }
 
-free: (ptr: u8*) -> () {
+free: (ptr: u8*) {
     if ptr == null {
         return
     }

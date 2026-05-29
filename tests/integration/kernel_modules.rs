@@ -101,6 +101,11 @@ fn kernel_scheduler_compiles() {
     assert_kernel_module_compiles("scheduler", kernel::SCHEDULER);
 }
 
+#[test]
+fn kernel_fs_compiles() {
+    assert_kernel_module_compiles("fs", kernel::FS);
+}
+
 // ---------------------------------------------------------------------------
 // Regression: my_kernel.hll must compile with all identifiers resolved.
 //
@@ -124,10 +129,10 @@ fn kernel_stdlib_has_expected_module_count() {
     let modules = get_stdlib_modules_for_mode(TargetMode::Kernel);
     // Kernel stdlib: types, memory_allocator, string_utils, mem, freestanding
     // runtime, console, klog, trap_entry, utilities, checks, entry, trap_handler,
-    // pmm, vmm, process, syscall, scheduler — at least 15 modules.
+    // pmm, vmm, process, syscall, scheduler, fs — at least 18 modules.
     assert!(
-        modules.len() >= 15,
-        "expected at least 15 kernel stdlib modules, got {}",
+        modules.len() >= 18,
+        "expected at least 18 kernel stdlib modules, got {}",
         modules.len()
     );
 }

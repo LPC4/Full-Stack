@@ -1,31 +1,32 @@
 ; Kernel initialization and boot orchestration.
 
-external klog_ok:               (msg: u8*) -> ()
-external klog_warn:             (msg: u8*) -> ()
-external klog_error:            (msg: u8*) -> ()
-external klog_int:              (label: u8*, val: i64) -> ()
-external klog_hex:             (label: u8*, val: u64) -> ()
+external klog_ok:               (msg: u8*)
+external klog_warn:             (msg: u8*)
+external klog_error:            (msg: u8*)
+external klog_int:              (label: u8*, val: i64)
+external klog_hex:              (label: u8*, val: u64)
 external kmalloc:               (size: u64) -> u8*
 external memset:                (dst: u8*, value: u8, n: u64) -> u8*
 external memcpy:                (dst: u8*, src: u8*, n: u64) -> u8*
-external kshutdown:             (code: i64) -> ()
-external trap_init:             () -> ()
-external plic_init:             () -> ()
-external timer_set:             (interval: u64) -> ()
-external pmm_init:              (start: u64, end: u64) -> ()
+external kshutdown:             (code: i64)
+external trap_init:             ()
+external plic_init:             ()
+external timer_set:             (interval: u64)
+external pmm_init:              (start: u64, end: u64)
 external pmm_alloc:             () -> u8*
-external pmm_free:              (page: u8*) -> ()
-external vmm_init:              () -> ()
-external vmm_map:               (va: u64, pa: u64, flags: u64) -> ()
-external vmm_map_1gib:          (va: u64, pa: u64, flags: u64) -> ()
-external vmm_enable:            () -> ()
-external s_enable_interrupts:   () -> ()
+external pmm_free:              (page: u8*)
+external vmm_init:              ()
+external vmm_map:               (va: u64, pa: u64, flags: u64)
+external vmm_map_1gib:          (va: u64, pa: u64, flags: u64)
+external vmm_enable:            ()
+external s_enable_interrupts:   ()
 external memory_self_test:      (size: u64) -> i64
-external pmm_ops_test:          () -> ()
-external process_init:          () -> ()
+external pmm_ops_test:          ()
+external process_init:          ()
 external process_create:        (entry_pc: u64) -> u64*
-external scheduler_init:        () -> ()
-external scheduler_add:         (pcb: u64*) -> ()
+external scheduler_init:        ()
+external scheduler_add:         (pcb: u64*)
+external fs_init:               (base_pa: u64, image_size: u64)
 
 ; Physical addresses where the test harness places user binary metadata.
 const USER_BINARY_PA = 0x87F00000
@@ -42,7 +43,7 @@ user_entry_value: () -> u64 {
 }
 
 ; Kernel entry point.
-kmain: () -> () {
+kmain: () {
     boot_console()
     boot_traps()
     boot_timer()
@@ -63,17 +64,16 @@ kmain: () -> () {
     spawn_user_process()
 
     if user_spawned == 0 {
-        kshutdown(i64(0))
+        kshutdown(0)
     }
 
     boot_final()
 
+    boot_filesystem()
+
     ; Enable interrupts only after a runnable process is in the scheduler queue,
     ; otherwise the first timer tick panics.
     boot_interrupts()
-
-    ; TODO: load and initialize filesystem drivers
-    klog_warn("filesystem: not implemented".data)
 
     ; Idle loop, the scheduler takes over via timer preemption / yield.
     klog_ok("entering scheduler idle loop".data)
@@ -82,60 +82,60 @@ kmain: () -> () {
     }
 }
 
-boot_console: () -> () {
+boot_console: () {
     klog_ok("kernel starting".data)
     klog_ok("console online".data)
     klog_int("boot hart".data, 0)
 }
 
-boot_traps: () -> () {
+boot_traps: () {
     trap_init()
     klog_ok("trap handler installed".data)
     klog_ok("syscall handler online".data)
 }
 
-boot_timer: () -> () {
+boot_timer: () {
     timer_set(1000000)
     klog_ok("timer armed".data)
 }
 
-boot_plic: () -> () {
+boot_plic: () {
     plic_init()
     klog_ok("interrupt controller online".data)
 }
 
-boot_memory_diagnostics: () -> () {
+boot_memory_diagnostics: () {
     klog_ok("running memory diagnostics...".data)
     test_result: i64 = memory_self_test(256)
     if test_result == 0 {
         klog_error("halt: memory test failed".data)
-        kshutdown(i64(1))
+        kshutdown(1)
     }
 }
 
-boot_heap: () -> () {
+boot_heap: () {
     probe: u8* = kmalloc(64)
     memset(probe, 0, 64)
     klog_ok("heap ready".data)
 }
 
-boot_pmm: () -> () {
+boot_pmm: () {
     pmm_init(0x80100000, 0x87F00000)
     page1: u8* = pmm_alloc()
     if page1 == null {
         klog_error("halt: pmm alloc failed".data)
-        kshutdown(i64(1))
+        kshutdown(1)
     }
     pmm_free(page1)
     page2: u8* = pmm_alloc()
     if page2 != page1 {
         klog_error("halt: pmm free list failed".data)
-        kshutdown(i64(1))
+        kshutdown(1)
     }
     klog_ok("pmm ready".data)
 }
 
-boot_vmm: () -> () {
+boot_vmm: () {
     vmm_init()
     vmm_map_1gib(0x00000000, 0, 38)
     vmm_map_1gib(0x80000000, 0x80000000, 46)
@@ -144,19 +144,28 @@ boot_vmm: () -> () {
     klog_ok("[ VMM ] sv39 enabled".data)
 }
 
-boot_interrupts: () -> () {
+boot_interrupts: () {
     s_enable_interrupts()
 }
 
-boot_final: () -> () {
+boot_final: () {
     klog_int("hart id".data, 0)
     klog_int("ram MB".data, 128)
     klog_ok("boot complete".data)
 }
 
-spawn_user_process: () -> () {
+boot_filesystem: () {
+    fs_meta: u64* = 0x87BFF000 as u64*
+    fs_pa:   u64  = @fs_meta[0]
+    fs_sz:   u64  = @fs_meta[1]
+    if fs_pa != 0 {
+        fs_init(fs_pa, fs_sz)
+    }
+}
+
+spawn_user_process: () {
     ; Probe the first qword at USER_BINARY_PA. If it is 0, no user binary is loaded.
-    header_ptr: u64* = u64*(USER_BINARY_PA)
+    header_ptr: u64* = USER_BINARY_PA as u64*
     if @header_ptr[0] == 0 {
         klog_warn("[ PROC ] no user binary present".data)
         return
@@ -164,7 +173,7 @@ spawn_user_process: () -> () {
 
     klog_ok("[ PROC ] spawning user process".data)
 
-    src_user_pa: u64 = u64(USER_BINARY_PA)
+    src_user_pa: u64 = USER_BINARY_PA as u64
 
     ; Read entry VA and total size from the metadata page.
     asm {
@@ -193,31 +202,35 @@ spawn_user_process: () -> () {
     page_size: u64 = 4096
     pages: u64 = (user_size + page_size - 1) / page_size
 
+    ; Debug: log the user_size and pages computed to help diagnose mapping faults.
+    klog_int("[ PROC ] user_size bytes".data, user_size as i64)
+    klog_int("[ PROC ] pages to map".data, pages as i64)
+
     i: u64 = 0
     while i < pages {
         dst_page: u8* = pmm_alloc()
         if dst_page == null {
             klog_error("[ PROC ] halt: user page alloc failed".data)
-            kshutdown(i64(1))
+            kshutdown(1)
         }
 
         offset: u64 = i * page_size
         src_page_pa: u64 = src_user_pa + offset
 
         ; Identity-mapped: physical address == virtual address.
-        memcpy(dst_page, u8*(src_page_pa), page_size)
+        memcpy(dst_page, src_page_pa as u8*, page_size)
 
         user_va: u64 = USER_CODE_VA + offset
-        vmm_map(user_va, u64(dst_page), u64(30))  ; R+W+X+U (VMM_V added internally)
+        vmm_map(user_va, dst_page as u64, 30)  ; R+W+X+U (VMM_V added internally)
 
-        i = i + u64(1)
+        i = i + 1
     }
 
-    klog_int("[ PROC ] mapped pages at 0x40000000, count".data, i64(pages))
+    klog_int("[ PROC ] mapped pages at 0x40000000, count".data, pages as i64)
 
     pcb: u64* = process_create(user_entry)
     scheduler_add(pcb)
 
     user_spawned = 1
-    klog_int("[ PROC ] pid 1 ready, entry".data, i64(user_entry))
+    klog_int("[ PROC ] pid 1 ready, entry".data, user_entry as i64)
 }

@@ -1,0 +1,747 @@
+; Inode-based read-write filesystem stored in a contiguous physical region.
+;
+; On-disk layout:
+;   Block 0      Superblock
+;   Blocks 1-4   Inode table (256 inodes x 64 bytes)
+;   Block 5      Free-block bitmap (bit i => data block FS_DATA_BLOCK_START + i)
+;   Blocks 6+    Data blocks
+
+; --- Layout constants ---
+
+const FS_MAX_FD            = 16
+const FS_NAME_LEN          = 32
+const FS_MAX_INODES        = 256
+const FS_BLOCK_SIZE        = 4096
+const FS_INODE_SIZE        = 64
+const FS_BITMAP_BLOCK      = 5
+const FS_DATA_BLOCK_START  = 6
+const FS_DIRENTS_PER_BLOCK = 113
+const FS_DIRENT_SIZE       = 36
+const FS_FD_ENTRY_SIZE     = 32
+const FS_INODE_BLOCKS      = 8
+
+; Open flags.
+const FS_OPEN_RO     = 0
+const FS_OPEN_RW     = 1
+const FS_OPEN_CREATE = 2
+
+; Inode types.
+const FS_TYPE_FREE = 0
+const FS_TYPE_FILE = 1
+const FS_TYPE_DIR  = 2
+
+; Magic = first 4 bytes of "HLLFS\0\1\0" as little-endian u32.
+const FS_MAGIC32 = 0x464C4C48
+
+; Superblock byte offsets.
+const FS_SB_BLOCK_COUNT  = 12
+const FS_SB_FREE_INODES  = 16
+const FS_SB_FREE_BLOCKS  = 20
+const FS_SB_INODE_BITMAP = 24
+
+; Inode byte offsets within each 64-byte record.
+const FS_IN_TYPE   = 0
+const FS_IN_PARENT = 2
+const FS_IN_SIZE   = 4
+const FS_IN_NAME   = 8
+const FS_IN_BLOCKS = 40
+
+; DirEntry byte offsets within each 36-byte record.
+const FS_DE_NAME  = 0
+const FS_DE_INODE = 32
+
+; FdEntry byte offsets (each field is u64).
+const FS_FDE_VALID = 0
+const FS_FDE_INODE = 8
+const FS_FDE_FLAGS = 16
+const FS_FDE_POS   = 24
+
+; Path separator '/' and string terminator.
+const FS_SLASH = 47
+
+; --- Externals ---
+
+external kmalloc:   (size: u64) -> u8*
+external memset:    (dst: u8*, value: u8, n: u64) -> u8*
+external memcpy:    (dst: u8*, src: u8*, n: u64) -> u8*
+external klog_warn: (msg: u8*)
+external klog_int:  (label: u8*, val: i64)
+
+; --- Global state ---
+
+fs_image_base:  u64 = 0
+fs_image_size:  u64 = 0
+fs_fd_table_pa: u64 = 0
+fs_ready:       u64 = 0
+
+; --- Typed memory access ---
+
+fs_rd16: (addr: u64) -> u64 {
+    p: u16* = addr as u16*
+    return (@p) as u64
+}
+
+fs_rd32: (addr: u64) -> u64 {
+    p: u32* = addr as u32*
+    return (@p) as u64
+}
+
+fs_rd64: (addr: u64) -> u64 {
+    p: u64* = addr as u64*
+    return @p
+}
+
+fs_wr8: (addr: u64, val: u64) {
+    p: u8* = addr as u8*
+    @p = val as u8
+}
+
+fs_wr16: (addr: u64, val: u64) {
+    p: u16* = addr as u16*
+    @p = val as u16
+}
+
+fs_wr32: (addr: u64, val: u64) {
+    p: u32* = addr as u32*
+    @p = val as u32
+}
+
+fs_wr64: (addr: u64, val: u64) {
+    p: u64* = addr as u64*
+    @p = val
+}
+
+; --- Address helpers ---
+
+fs_inode_pa: (idx: u64) -> u64 {
+    return fs_image_base + FS_BLOCK_SIZE + idx * FS_INODE_SIZE
+}
+
+fs_block_pa: (blk: u64) -> u64 {
+    return fs_image_base + blk * FS_BLOCK_SIZE
+}
+
+fs_dirent_pa: (blk: u64, slot: u64) -> u64 {
+    return fs_image_base + blk * FS_BLOCK_SIZE + slot * FS_DIRENT_SIZE
+}
+
+fs_fd_pa: (fd: u64) -> u64 {
+    return fs_fd_table_pa + fd * FS_FD_ENTRY_SIZE
+}
+
+; --- Inode field accessors ---
+
+fs_inode_type: (idx: u64) -> u64 {
+    return (fs_rd16(fs_inode_pa(idx) + FS_IN_TYPE)) % 256
+}
+
+fs_inode_size: (idx: u64) -> u64 {
+    return fs_rd32(fs_inode_pa(idx) + FS_IN_SIZE)
+}
+
+fs_inode_set_size: (idx: u64, sz: u64) {
+    fs_wr32(fs_inode_pa(idx) + FS_IN_SIZE, sz)
+}
+
+fs_inode_block: (idx: u64, slot: u64) -> u64 {
+    return fs_rd16(fs_inode_pa(idx) + FS_IN_BLOCKS + slot * 2)
+}
+
+fs_inode_set_block: (idx: u64, slot: u64, blk: u64) {
+    fs_wr16(fs_inode_pa(idx) + FS_IN_BLOCKS + slot * 2, blk)
+}
+
+; --- String helpers ---
+
+; Null-terminated compare. Returns 1 if equal, 0 otherwise.
+fs_streq: (a: u8*, b: u8*) -> i64 {
+    i: u64 = 0
+    while 1 == 1 {
+        ca: u8 = @(a + i)
+        cb: u8 = @(b + i)
+        if ca != cb {
+            return 0
+        }
+        if ca == 0 {
+            return 1
+        }
+        i = i + 1
+    }
+    return 0
+}
+
+; Copy at most n bytes from src to dst including the terminator, then ensure
+; the destination is null-terminated within its n-byte field.
+fs_strncpy: (dst: u8*, src: u8*, n: u64) {
+    i: u64 = 0
+    while i < n {
+        c: u8 = @(src + i)
+        dp: u8* = dst + i
+        @dp = c
+        if c == 0 {
+            return
+        }
+        i = i + 1
+    }
+    term: u8* = dst + (n - 1)
+    @term = 0 as u8
+}
+
+; --- Block allocation ---
+
+; Allocate a free data block. Returns block number (>= FS_DATA_BLOCK_START), or 0 if full.
+fs_alloc_block: () -> u64 {
+    bitmap_base: u64 = fs_image_base + FS_BITMAP_BLOCK * FS_BLOCK_SIZE
+    block_count: u64 = fs_rd16(fs_image_base + FS_SB_BLOCK_COUNT)
+    bit: u64 = 0
+    while bit < block_count {
+        byte_off: u64 = bit / 8
+        bit_off:  u64 = bit % 8
+        p: u8* = (bitmap_base + byte_off) as u8*
+        b: u8 = @p
+        mask: u64 = 1 << bit_off
+        if (b as u64 & mask) != 0 {
+            @p = (b as u64 & (255 ^ mask)) as u8
+            free: u64 = fs_rd32(fs_image_base + FS_SB_FREE_BLOCKS)
+            if free > 0 {
+                fs_wr32(fs_image_base + FS_SB_FREE_BLOCKS, free - 1)
+            }
+            return FS_DATA_BLOCK_START + bit
+        }
+        bit = bit + 1
+    }
+    return 0
+}
+
+; Return block blk to the free-block bitmap.
+fs_free_block: (blk: u64) {
+    if blk < FS_DATA_BLOCK_START {
+        return
+    }
+    bit: u64 = blk - FS_DATA_BLOCK_START
+    bitmap_base: u64 = fs_image_base + FS_BITMAP_BLOCK * FS_BLOCK_SIZE
+    p: u8* = (bitmap_base + bit / 8) as u8*
+    b: u8 = @p
+    @p = (b as u64 | (1 << (bit % 8))) as u8
+    free: u64 = fs_rd32(fs_image_base + FS_SB_FREE_BLOCKS)
+    fs_wr32(fs_image_base + FS_SB_FREE_BLOCKS, free + 1)
+}
+
+; --- Inode allocation ---
+
+; Allocate a free inode. Returns index, or -1 on failure.
+fs_alloc_inode: () -> i64 {
+    bitmap_base: u64 = fs_image_base + FS_SB_INODE_BITMAP
+    byte: u64 = 0
+    while byte < 32 {
+        p: u8* = (bitmap_base + byte) as u8*
+        b: u8 = @p
+        if b != 0 {
+            bit: u64 = 0
+            while bit < 8 {
+                mask: u64 = 1 << bit
+                if (b as u64 & mask) != 0 {
+                    @p = (b as u64 & (255 ^ mask)) as u8
+                    free: u64 = fs_rd32(fs_image_base + FS_SB_FREE_INODES)
+                    if free > 0 {
+                        fs_wr32(fs_image_base + FS_SB_FREE_INODES, free - 1)
+                    }
+                    return (byte * 8 + bit) as i64
+                }
+                bit = bit + 1
+            }
+        }
+        byte = byte + 1
+    }
+    return -1 as i64
+}
+
+; Return inode idx to the free-inode bitmap and mark it free.
+fs_free_inode: (idx: u64) {
+    bitmap_base: u64 = fs_image_base + FS_SB_INODE_BITMAP
+    p: u8* = (bitmap_base + idx / 8) as u8*
+    b: u8 = @p
+    @p = (b as u64 | (1 << (idx % 8))) as u8
+    free: u64 = fs_rd32(fs_image_base + FS_SB_FREE_INODES)
+    fs_wr32(fs_image_base + FS_SB_FREE_INODES, free + 1)
+    fs_wr8(fs_inode_pa(idx), FS_TYPE_FREE)
+}
+
+; --- Directory operations ---
+
+; Find entry `name` in directory dir_inode. Returns child inode, or -1.
+fs_find_in_dir: (dir_inode: u64, name: u8*) -> i64 {
+    if fs_inode_type(dir_inode) != FS_TYPE_DIR {
+        return -1 as i64
+    }
+    blk_slot: u64 = 0
+    while blk_slot < FS_INODE_BLOCKS {
+        blk: u64 = fs_inode_block(dir_inode, blk_slot)
+        if blk == 0 {
+            break
+        }
+        slot: u64 = 0
+        while slot < FS_DIRENTS_PER_BLOCK {
+            de: u64 = fs_dirent_pa(blk, slot)
+            np: u8* = de as u8*
+            if @np != 0 {
+                if fs_streq(np, name) == 1 {
+                    return fs_rd16(de + FS_DE_INODE) as i64
+                }
+            }
+            slot = slot + 1
+        }
+        blk_slot = blk_slot + 1
+    }
+    return -1 as i64
+}
+
+; Add a (child_name, child_inode) entry to directory dir_inode.
+; Returns 0 on success, -1 on failure.
+fs_add_dirent: (dir_inode: u64, child_name: u8*, child_inode: u64) -> i64 {
+    blk_slot: u64 = 0
+    while blk_slot < FS_INODE_BLOCKS {
+        blk: u64 = fs_inode_block(dir_inode, blk_slot)
+        if blk == 0 {
+            new_blk: u64 = fs_alloc_block()
+            if new_blk == 0 {
+                return -1 as i64
+            }
+            memset(fs_block_pa(new_blk) as u8*, 0, FS_BLOCK_SIZE)
+            fs_inode_set_block(dir_inode, blk_slot, new_blk)
+            blk = new_blk
+        }
+        slot: u64 = 0
+        while slot < FS_DIRENTS_PER_BLOCK {
+            de: u64 = fs_dirent_pa(blk, slot)
+            np: u8* = de as u8*
+            if @np == 0 {
+                fs_strncpy(np, child_name, FS_NAME_LEN)
+                fs_wr16(de + FS_DE_INODE, child_inode)
+                fs_inode_set_size(dir_inode, fs_inode_size(dir_inode) + 1)
+                return 0
+            }
+            slot = slot + 1
+        }
+        blk_slot = blk_slot + 1
+    }
+    return -1 as i64
+}
+
+; Remove entry `name` from directory dir_inode.
+; Returns 0 on success, -1 if not found.
+fs_remove_dirent: (dir_inode: u64, name: u8*) -> i64 {
+    blk_slot: u64 = 0
+    while blk_slot < FS_INODE_BLOCKS {
+        blk: u64 = fs_inode_block(dir_inode, blk_slot)
+        if blk == 0 {
+            break
+        }
+        slot: u64 = 0
+        while slot < FS_DIRENTS_PER_BLOCK {
+            de: u64 = fs_dirent_pa(blk, slot)
+            np: u8* = de as u8*
+            if @np != 0 {
+                if fs_streq(np, name) == 1 {
+                    @np = 0 as u8
+                    sz: u64 = fs_inode_size(dir_inode)
+                    if sz > 0 {
+                        fs_inode_set_size(dir_inode, sz - 1)
+                    }
+                    return 0
+                }
+            }
+            slot = slot + 1
+        }
+        blk_slot = blk_slot + 1
+    }
+    return -1 as i64
+}
+
+; --- Path resolution ---
+
+; Resolve an absolute path to an inode index. Returns -1 on error.
+; Root "/" is inode 0.
+fs_resolve: (path: u8*) -> i64 {
+    if @path != FS_SLASH {
+        return -1 as i64
+    }
+    cur: i64 = 0
+    pos: u64 = 1
+    while 1 == 1 {
+        ; Skip consecutive separators.
+        while @(path + pos) == FS_SLASH {
+            pos = pos + 1
+        }
+        if @(path + pos) == 0 {
+            return cur
+        }
+        ; Copy the next path component.
+        comp: u8[32]
+        len: u64 = 0
+        while len < FS_NAME_LEN - 1 {
+            c: u8 = @(path + pos + len)
+            if c == 0 {
+                break
+            }
+            if c == FS_SLASH {
+                break
+            }
+            @comp[len] = c
+            len = len + 1
+        }
+        @comp[len] = 0 as u8
+        if len == 0 {
+            return cur
+        }
+        pos = pos + len
+        found: i64 = fs_find_in_dir(cur as u64, comp[0])
+        if found < 0 {
+            return -1 as i64
+        }
+        cur = found
+    }
+    return -1 as i64
+}
+
+; Split an absolute path into its parent inode and leaf name.
+; The leaf name (max FS_NAME_LEN-1 chars) is written into name_buf.
+; Returns the parent inode, or -1 on error.
+fs_split_path: (path: u8*, name_buf: u8*) -> i64 {
+    path_len: u64 = 0
+    while @(path + path_len) != 0 {
+        path_len = path_len + 1
+    }
+    if path_len == 0 {
+        return -1 as i64
+    }
+    ; Find the last separator.
+    i: u64 = path_len
+    while i > 0 {
+        i = i - 1
+        if @(path + i) == FS_SLASH {
+            name_start: u64 = i + 1
+            name_len:   u64 = path_len - name_start
+            if name_len == 0 {
+                return -1 as i64
+            }
+            j: u64 = 0
+            while j < name_len && j < FS_NAME_LEN - 1 {
+                np: u8* = name_buf + j
+                @np = @(path + name_start + j)
+                j = j + 1
+            }
+            term: u8* = name_buf + j
+            @term = 0 as u8
+            ; Leaf directly under root.
+            if i == 0 {
+                return 0
+            }
+            ; Resolve the parent prefix "/a/b" up to (but excluding) the leaf.
+            parent_buf: u8[256]
+            k: u64 = 0
+            while k < i && k < 255 {
+                @parent_buf[k] = @(path + k)
+                k = k + 1
+            }
+            @parent_buf[k] = 0 as u8
+            return fs_resolve(parent_buf[0])
+        }
+    }
+    return -1 as i64
+}
+
+; Allocate a new inode of node_type under parent_inode with the given name.
+; Returns the new inode index, or -1 on error.
+fs_create_at: (parent_inode: u64, name: u8*, node_type: u64) -> i64 {
+    if fs_inode_type(parent_inode) != FS_TYPE_DIR {
+        return -1 as i64
+    }
+    new_idx: i64 = fs_alloc_inode()
+    if new_idx < 0 {
+        return -1 as i64
+    }
+    base: u64 = fs_inode_pa(new_idx as u64)
+    fs_wr8(base + FS_IN_TYPE, node_type)
+    fs_wr16(base + FS_IN_PARENT, parent_inode)
+    fs_wr32(base + FS_IN_SIZE, 0)
+    fs_strncpy((base + FS_IN_NAME) as u8*, name, FS_NAME_LEN)
+    slot: u64 = 0
+    while slot < FS_INODE_BLOCKS {
+        fs_inode_set_block(new_idx as u64, slot, 0)
+        slot = slot + 1
+    }
+    if fs_add_dirent(parent_inode, name, new_idx as u64) < 0 {
+        fs_free_inode(new_idx as u64)
+        return -1 as i64
+    }
+    return new_idx
+}
+
+; --- Public API ---
+
+; Mount the filesystem image at base_pa. Validates the magic number, allocates
+; the kernel fd table, and logs the inode census.
+fs_init: (base_pa: u64, image_size: u64) {
+    if fs_rd32(base_pa) != FS_MAGIC32 {
+        klog_warn("[ FS ] bad magic, not mounting".data)
+        return
+    }
+    fs_image_base = base_pa
+    fs_image_size = image_size
+
+    fd_table: u8* = kmalloc(FS_MAX_FD * FS_FD_ENTRY_SIZE)
+    fs_fd_table_pa = fd_table as u64
+    memset(fd_table, 0, FS_MAX_FD * FS_FD_ENTRY_SIZE)
+    fs_ready = 1
+
+    files: i64 = 0
+    dirs:  i64 = 0
+    idx: u64 = 0
+    while idx < FS_MAX_INODES {
+        t: u64 = fs_inode_type(idx)
+        if t == FS_TYPE_FILE {
+            files = files + 1
+        }
+        if t == FS_TYPE_DIR {
+            dirs = dirs + 1
+        }
+        idx = idx + 1
+    }
+    klog_int("[ FS ] mounted, files".data, files)
+    klog_int("[ FS ] dirs".data, dirs)
+}
+
+; Open a file by absolute path. flags: 0=RO, 1=RW, 2=create (implies RW).
+; Returns fd >= 2 on success, or -1 on error.
+fs_open: (path: u8*, flags: u64) -> i64 {
+    if fs_ready == 0 {
+        return -1 as i64
+    }
+    inode: i64 = fs_resolve(path)
+    if flags == FS_OPEN_CREATE {
+        if inode < 0 {
+            name_buf: u8[32]
+            parent: i64 = fs_split_path(path, name_buf[0])
+            if parent < 0 {
+                return -1 as i64
+            }
+            inode = fs_create_at(parent as u64, name_buf[0], FS_TYPE_FILE)
+            if inode < 0 {
+                return -1 as i64
+            }
+        }
+    } else {
+        if inode < 0 {
+            return -1 as i64
+        }
+    }
+    fd: u64 = 2
+    while fd < FS_MAX_FD {
+        slot: u64 = fs_fd_pa(fd)
+        if fs_rd64(slot + FS_FDE_VALID) == 0 {
+            fs_wr64(slot + FS_FDE_VALID, 1)
+            fs_wr64(slot + FS_FDE_INODE, inode as u64)
+            if flags == FS_OPEN_RO {
+                fs_wr64(slot + FS_FDE_FLAGS, FS_OPEN_RO)
+            } else {
+                fs_wr64(slot + FS_FDE_FLAGS, FS_OPEN_RW)
+            }
+            fs_wr64(slot + FS_FDE_POS, 0)
+            return fd as i64
+        }
+        fd = fd + 1
+    }
+    return -1 as i64
+}
+
+; Read up to len bytes from fd at the given byte offset into buf.
+; Returns bytes read, or -1 on error.
+fs_read: (fd: i64, buf: u8*, offset: u64, len: u64) -> i64 {
+    if fs_ready == 0 {
+        return -1 as i64
+    }
+    if fd < 2 {
+        return -1 as i64
+    }
+    if len == 0 {
+        return 0
+    }
+    slot: u64 = fs_fd_pa(fd as u64)
+    if fs_rd64(slot + FS_FDE_VALID) == 0 {
+        return -1 as i64
+    }
+    inode: u64 = fs_rd64(slot + FS_FDE_INODE)
+    size: u64 = fs_inode_size(inode)
+    if offset >= size {
+        return -1 as i64
+    }
+    to_read: u64 = len
+    if to_read > size - offset {
+        to_read = size - offset
+    }
+    done: u64 = 0
+    while done < to_read {
+        file_off: u64 = offset + done
+        blk_slot: u64 = file_off / FS_BLOCK_SIZE
+        blk_off:  u64 = file_off % FS_BLOCK_SIZE
+        if blk_slot >= FS_INODE_BLOCKS {
+            break
+        }
+        blk: u64 = fs_inode_block(inode, blk_slot)
+        if blk == 0 {
+            break
+        }
+        chunk: u64 = to_read - done
+        if chunk > FS_BLOCK_SIZE - blk_off {
+            chunk = FS_BLOCK_SIZE - blk_off
+        }
+        memcpy(buf + done, (fs_block_pa(blk) + blk_off) as u8*, chunk)
+        done = done + chunk
+    }
+    return done as i64
+}
+
+; Write len bytes from buf to fd at the given byte offset, extending the file
+; and allocating blocks as needed. Returns bytes written, or -1 on error.
+fs_write: (fd: i64, buf: u8*, offset: u64, len: u64) -> i64 {
+    if fs_ready == 0 {
+        return -1 as i64
+    }
+    if fd < 2 {
+        return -1 as i64
+    }
+    if len == 0 {
+        return 0
+    }
+    slot: u64 = fs_fd_pa(fd as u64)
+    if fs_rd64(slot + FS_FDE_VALID) == 0 {
+        return -1 as i64
+    }
+    if fs_rd64(slot + FS_FDE_FLAGS) == FS_OPEN_RO {
+        return -1 as i64
+    }
+    inode: u64 = fs_rd64(slot + FS_FDE_INODE)
+    done: u64 = 0
+    while done < len {
+        file_off: u64 = offset + done
+        blk_slot: u64 = file_off / FS_BLOCK_SIZE
+        blk_off:  u64 = file_off % FS_BLOCK_SIZE
+        if blk_slot >= FS_INODE_BLOCKS {
+            break
+        }
+        blk: u64 = fs_inode_block(inode, blk_slot)
+        if blk == 0 {
+            new_blk: u64 = fs_alloc_block()
+            if new_blk == 0 {
+                break
+            }
+            memset(fs_block_pa(new_blk) as u8*, 0, FS_BLOCK_SIZE)
+            fs_inode_set_block(inode, blk_slot, new_blk)
+            blk = new_blk
+        }
+        chunk: u64 = len - done
+        if chunk > FS_BLOCK_SIZE - blk_off {
+            chunk = FS_BLOCK_SIZE - blk_off
+        }
+        memcpy((fs_block_pa(blk) + blk_off) as u8*, buf + done, chunk)
+        done = done + chunk
+    }
+    end: u64 = offset + done
+    if end > fs_inode_size(inode) {
+        fs_inode_set_size(inode, end)
+    }
+    return done as i64
+}
+
+; Return the implicit sequential position for fd, or 0 if fd is invalid.
+fs_get_pos: (fd: i64) -> u64 {
+    if fd < 2 {
+        return 0
+    }
+    return fs_rd64(fs_fd_pa(fd as u64) + FS_FDE_POS)
+}
+
+; Set the implicit sequential position for fd.
+fs_set_pos: (fd: i64, pos: u64) {
+    if fd < 2 {
+        return
+    }
+    fs_wr64(fs_fd_pa(fd as u64) + FS_FDE_POS, pos)
+}
+
+; Release a file descriptor slot.
+fs_close: (fd: i64) {
+    if fs_ready == 0 {
+        return
+    }
+    if fd < 2 {
+        return
+    }
+    slot: u64 = fs_fd_pa(fd as u64)
+    fs_wr64(slot + FS_FDE_VALID, 0)
+    fs_wr64(slot + FS_FDE_INODE, 0)
+    fs_wr64(slot + FS_FDE_FLAGS, 0)
+    fs_wr64(slot + FS_FDE_POS, 0)
+}
+
+; Create a file (node_type=1) or directory (node_type=2) named `name` under
+; parent_path. Returns the new inode index, or -1 on error.
+fs_create: (parent_path: u8*, name: u8*, node_type: u8) -> i64 {
+    if fs_ready == 0 {
+        return -1 as i64
+    }
+    parent: i64 = fs_resolve(parent_path)
+    if parent < 0 {
+        return -1 as i64
+    }
+    return fs_create_at(parent as u64, name, node_type as u64)
+}
+
+; Create a directory at the given absolute path.
+; Returns the new inode index, or -1 on error.
+fs_mkdir: (path: u8*) -> i64 {
+    if fs_ready == 0 {
+        return -1 as i64
+    }
+    name_buf: u8[32]
+    parent: i64 = fs_split_path(path, name_buf[0])
+    if parent < 0 {
+        return -1 as i64
+    }
+    return fs_create_at(parent as u64, name_buf[0], FS_TYPE_DIR)
+}
+
+; Move a file or directory from old_path to new_path (cross-directory allowed).
+; Returns 0 on success, -1 on error.
+fs_rename: (old_path: u8*, new_path: u8*) -> i64 {
+    if fs_ready == 0 {
+        return -1 as i64
+    }
+    inode: i64 = fs_resolve(old_path)
+    if inode < 0 {
+        return -1 as i64
+    }
+    old_name: u8[32]
+    old_parent: i64 = fs_split_path(old_path, old_name[0])
+    if old_parent < 0 {
+        return -1 as i64
+    }
+    new_name: u8[32]
+    new_parent: i64 = fs_split_path(new_path, new_name[0])
+    if new_parent < 0 {
+        return -1 as i64
+    }
+    if fs_remove_dirent(old_parent as u64, old_name[0]) < 0 {
+        return -1 as i64
+    }
+    if fs_add_dirent(new_parent as u64, new_name[0], inode as u64) < 0 {
+        ; Roll back: re-add to the original parent.
+        fs_add_dirent(old_parent as u64, old_name[0], inode as u64)
+        return -1 as i64
+    }
+    base: u64 = fs_inode_pa(inode as u64)
+    fs_strncpy((base + FS_IN_NAME) as u8*, new_name[0], FS_NAME_LEN)
+    fs_wr16(base + FS_IN_PARENT, new_parent as u64)
+    return 0
+}
