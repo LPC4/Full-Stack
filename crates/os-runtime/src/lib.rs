@@ -165,4 +165,8 @@ pub mod user {
     /// Hello-world user program: writes a greeting via ecall, then yields forever.
     pub const USER_HELLO: &str =
         include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/user/user_hello.hll"));
+
+    /// Interactive shell: reads UART input and runs built-in commands
+    /// (`ls`, `cd`, `run`, `exit`). Compiled in hosted mode and booted as pid 1.
+    pub const SHELL: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/user/shell.hll"));
 }

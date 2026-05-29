@@ -1,9 +1,9 @@
-external kpanic:          (msg: u8*)
-external klog_int:        (label: u8*, val: i64)
-external klog_hex:        (label: u8*, val: u64)
-external timer_set:       (interval: u64)
-external syscall_dispatch: (frame: u64*) -> u64
-external schedule:        (frame: u64*, action: u64)
+external kpanic:            (msg: u8*)
+external klog_int:          (label: u8*, val: i64)
+external klog_hex:          (label: u8*, val: u64)
+external timer_set:         (interval: u64)
+external syscall_dispatch:  (frame: u64*) -> u64
+external schedule:          (frame: u64*, action: u64)
 kernel_tick: u64
 
 trap_handler: (frame: u64*) {

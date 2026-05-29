@@ -9,7 +9,8 @@ use asm_to_binary::rv_instruction::RvInstruction;
 use egui::Color32;
 use egui_dock::{DockState, NodeIndex};
 use full_stack::compilation_pipeline::{
-    AsmOutput, BinaryOutput, CompilationPipeline, IrOutput, PipelineResult, TargetMode,
+    AsmOutput, BinaryOutput, CompilationPipeline, FsEntry, IrOutput, PipelineResult, TargetMode,
+    assembled_to_exec_file, build_fs_image,
 };
 use full_stack::target_mode::infer_target_mode_for_source;
 use full_stack::view::debug::DebugSession;
@@ -272,6 +273,8 @@ pub struct FullStackApp {
     #[serde(skip)]
     selected_inject_program_id: String,
     #[serde(skip)]
+    shell_binary: Option<AssembledOutput>,
+    #[serde(skip)]
     vm_output_view_id: u64,
     settings: AppSettings,
     #[serde(skip)]
@@ -311,6 +314,7 @@ impl Default for FullStackApp {
             load_base_input: format!("{:#010x}", LinkLayout::freestanding_kernel().load_base),
             machine_window: MachineWindow::default(),
             selected_inject_program_id: String::new(),
+            shell_binary: None,
             vm_output_view_id: 0,
             settings: AppSettings::default(),
             show_settings: false,
@@ -780,6 +784,76 @@ impl FullStackApp {
         Err("no assembled binary produced".to_owned())
     }
 
+    /// Compile the bundled interactive shell as a hosted binary, caching the
+    /// result so repeated boots reuse it.
+    fn ensure_shell_binary(&mut self) -> Result<(), String> {
+        if self.shell_binary.is_some() {
+            return Ok(());
+        }
+        let mut pipeline = CompilationPipeline::new();
+        pipeline.set_target_mode(TargetMode::Hosted);
+        pipeline.set_write_artifacts(false);
+        pipeline.set_type_prelude(get_stdlib_type_prelude());
+
+        let source = format!(
+            "{}\n{}",
+            get_stdlib_source_for_mode(TargetMode::Hosted),
+            os_runtime::user::SHELL
+        );
+        let result = pipeline.run_full(&source, None);
+        if result.has_errors() {
+            return Err(result.format_diagnostics());
+        }
+        if let Some(ref asm_err) = result.assembler_error {
+            return Err(format!("assembler error: {asm_err}"));
+        }
+        match result.binary.as_ref() {
+            Some(bin) => {
+                self.shell_binary = Some(bin.assembled.clone());
+                Ok(())
+            }
+            None => Err("shell produced no binary".to_owned()),
+        }
+    }
+
+    /// Build the filesystem image the shell boots with: a `/home` directory and,
+    /// if a program is selected for injection, that program stored there as a
+    /// runnable executable file. A short readme is always present so `ls` has
+    /// something to show.
+    fn build_boot_fs_image(&self) -> Vec<u8> {
+        let readme: &[u8] = b"Type 'help' for commands. Use 'run <file>' to run a program.\n";
+
+        let mut entries = vec![
+            FsEntry::Dir { path: "/home" },
+            FsEntry::File {
+                path: "/readme.txt",
+                data: readme,
+            },
+        ];
+
+        // If a program is selected, write it into /home as an executable file.
+        let exec_holder;
+        let path_holder;
+        if let Some(asm) = self.compilation_state.last_hosted_binary.as_ref() {
+            let name = self
+                .catalog
+                .all_programs()
+                .iter()
+                .find(|p| p.id == self.selected_inject_program_id)
+                .map(|p| sanitize_program_filename(&p.name))
+                .unwrap_or_else(|| "program".to_owned());
+            path_holder = format!("/home/{name}.bin");
+            exec_holder = assembled_to_exec_file(asm);
+            entries.push(FsEntry::File {
+                path: &path_holder,
+                data: &exec_holder,
+            });
+            build_fs_image(&entries)
+        } else {
+            build_fs_image(&entries)
+        }
+    }
+
     fn save_state(&self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, eframe::APP_KEY, self);
     }
@@ -857,9 +931,12 @@ impl eframe::App for FullStackApp {
             .resizable(true)
             .show(ui.ctx(), |ui| {
                 ui.set_max_width(900.0);
-                // Small controls above the Machine view to select user injection.
+                // Booting drops into an interactive shell (ls / cd / run / exit).
+                // The selected program, if any, is placed in /home as a runnable
+                // file you can launch with `run <name>.bin`.
                 ui.horizontal(|ui| {
-                    // Program selector for injection: list Example and Custom programs.
+                    ui.label("Program in /home:");
+                    // Program selector: list Example and Custom programs.
                     use full_stack::view::ProgramKind;
                     let programs: Vec<_> = self
                         .catalog
@@ -925,13 +1002,28 @@ impl eframe::App for FullStackApp {
         if self.machine_window.boot_requested {
             self.machine_window.boot_requested = false;
             if let Some(assembled) = self.compilation_state.assembled().cloned() {
-                let user_bin = if self.machine_window.selected_user_inject {
-                    self.compilation_state.last_hosted_binary.as_ref()
-                } else {
-                    None
-                };
-                self.machine_window
-                    .start_boot(&assembled, user_bin, self.settings.max_vm_steps);
+                // Boot the interactive shell as pid 1, with a filesystem image
+                // that holds any selected program as a runnable file.
+                match self.ensure_shell_binary() {
+                    Ok(()) => {
+                        let fs_image = self.build_boot_fs_image();
+                        let shell = self.shell_binary.clone();
+                        // The shell idles waiting for keystrokes; give it a large
+                        // step budget so the session does not time out between
+                        // inputs (it ends when the user types `exit`).
+                        let max_steps = self.settings.max_vm_steps.max(1).saturating_mul(1000);
+                        self.machine_window.start_boot(
+                            &assembled,
+                            shell.as_ref(),
+                            Some(&fs_image),
+                            max_steps,
+                        );
+                    }
+                    Err(e) => {
+                        self.compilation_state
+                            .set_error(format!("shell compile failed: {e}"));
+                    }
+                }
             }
         }
 
@@ -984,6 +1076,28 @@ fn parse_hex_or_dec(s: &str) -> Option<u64> {
         u64::from_str_radix(hex, 16).ok()
     } else {
         s.parse::<u64>().ok()
+    }
+}
+
+/// Turn a program display name into a lowercase, filesystem-safe stem.
+/// Non-alphanumeric characters become underscores; empty results fall back
+/// to "program".
+fn sanitize_program_filename(name: &str) -> String {
+    let mapped: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let trimmed = mapped.trim_matches('_');
+    if trimmed.is_empty() {
+        "program".to_owned()
+    } else {
+        trimmed.to_owned()
     }
 }
 

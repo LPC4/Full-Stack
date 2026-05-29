@@ -1,4 +1,4 @@
-; Self-contained panic, no console.hll dependency, safe before any init.
+; Self-contained panic, safe before any init.
 _kpanic: () {
     asm {
         li   t0, 268435456

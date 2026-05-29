@@ -32,15 +32,30 @@ external vmm_map:      (va: u64, pa: u64, flags: u64)
 external kpanic:       (msg: u8*)
 external klog_ok:      (msg: u8*)
 
+; Base of the per-process user stack regions. Each process gets a 1 MiB slot
+; below this, so the shell and any program it launches never share stack VAs.
+; Programs are position-independent, so only the stack top and entry PC differ.
+const USER_STACK_BASE = 0x80000000
+const USER_STACK_SLOT = 0x100000
+
 next_pid: u64 = 1
 
 process_init: () {
+    ; Set the first pid explicitly; global data initializers are not reloaded
+    ; into the running image, so do not rely on the declaration above.
+    next_pid = 1
     klog_ok("process subsystem ready".data)
 }
 
-; Create a new user process.  Returns a u64* pointer to the PCB.
-; The caller should pass the PCB to scheduler_add() to make it runnable.
-process_create: (entry_pc: u64) -> u64* {
+; Return the pid that the next process_create call will assign.
+; sys_exec reads this to place a program's code at a matching per-pid VA slot.
+process_peek_pid: () -> u64 {
+    return next_pid
+}
+
+; Create a new user process whose stack lives at the given top VA.
+; Returns a u64* pointer to the PCB; the caller passes it to scheduler_add().
+process_create_at: (entry_pc: u64, stack_top: u64) -> u64* {
     pcb_bytes: u8* = kmalloc(PCB_SIZE)
     memset(pcb_bytes, 0, PCB_SIZE)
     pcb: u64* = pcb_bytes as u64*
@@ -49,8 +64,7 @@ process_create: (entry_pc: u64) -> u64* {
     next_pid = next_pid + 1
     @pcb[1] = PROC_READY
 
-    ; User stack: a few pages below 0x80000000.
-    stack_top:    u64 = 0x80000000
+    ; User stack: a few pages below stack_top.
     stack_pages:  u64 = 4
     last_page_pa: u64 = 0
     sp_i: u64 = 0
@@ -68,9 +82,16 @@ process_create: (entry_pc: u64) -> u64* {
     @pcb[4] = entry_pc
 
         ; Initial frame: sp = top of stack page, sepc = entry, sstatus = U-mode on sret with IRQs on.
-    @pcb[5 + 2]  = 0x80000000
+    @pcb[5 + 2]  = stack_top
     @pcb[5 + 32] = entry_pc
     @pcb[5 + 35] = 0x13
 
     return pcb
+}
+
+; Create a new user process with a per-pid stack region.
+; pid 1 (the boot process) keeps the original 0x80000000 stack top.
+process_create: (entry_pc: u64) -> u64* {
+    stack_top: u64 = USER_STACK_BASE - (next_pid - 1) * USER_STACK_SLOT
+    return process_create_at(entry_pc, stack_top)
 }

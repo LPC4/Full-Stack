@@ -10,9 +10,11 @@ use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 
 // --- Palette ---
 
-// The terminal area uses a slightly darker variant of the theme canvas.
 fn term_bg() -> Color32 {
-    ui_theme().canvas.linear_multiply(0.55)
+    Color32::from_rgb(1, 1, 5)
+}
+fn term_cursor() -> Color32 {
+    ui_theme().accent
 }
 fn term_text() -> Color32 {
     ui_theme().text
@@ -42,17 +44,12 @@ fn toolbar_bg() -> Color32 {
 // --- Tuning ---
 
 /// VM steps executed per UI frame while booting.
-/// At 60 fps this gives roughly 3 M steps/sec, enough for a fast boot
-/// while keeping each frame well under 16 ms.
 const STEPS_PER_TICK: u64 = 50_000;
 const FB_COLS: usize = 80;
 const FB_ROWS: usize = 25;
 
 /// Fixed height of the top toolbar row (boot / stop / clear + status).
 const TOOLBAR_H: f32 = 34.0;
-/// Fixed height of the stdin strip at the bottom.
-/// Always rendered so the content area stays the same height when booting starts.
-const INPUT_H: f32 = 34.0;
 
 // --- Phase ---
 
@@ -100,10 +97,11 @@ pub struct MachineWindow {
     pub boot_requested: bool,
     phase: BootPhase,
     pub active_tab: FbTab,
-    uart_input: String,
     pub selected_user_inject: bool,
+    terminal_focused: bool,
     log_cache: Option<egui::text::LayoutJob>,
     log_cache_generation: u64,
+    log_cache_cursor: bool,
 }
 
 // --- Public API ---
@@ -115,9 +113,20 @@ impl MachineWindow {
         &mut self,
         assembled: &AssembledOutput,
         user_binary: Option<&AssembledOutput>,
+        fs_image: Option<&[u8]>,
         max_steps: u64,
     ) {
         let mut vm = Box::new(VirtualMachine::new_kernel(assembled));
+
+        // Inject a filesystem image if provided. The kernel reads the image base
+        // and size from the metadata page at FS_META_PA during boot.
+        if let Some(image) = fs_image {
+            const FS_META_PA: u64 = 0x87BF_F000;
+            const FS_IMAGE_PA: u64 = 0x87C0_0000;
+            let _ = vm.write_ram(FS_META_PA, &FS_IMAGE_PA.to_le_bytes());
+            let _ = vm.write_ram(FS_META_PA + 8, &(image.len() as u64).to_le_bytes());
+            let _ = vm.write_ram(FS_IMAGE_PA, image);
+        }
 
         // Inject user program into RAM if provided.
         if let Some(user_asm) = user_binary {
@@ -160,28 +169,28 @@ impl MachineWindow {
 
         self.render_toolbar(ui, has_kernel, is_running);
 
-        // Fixed content height: subtract the stdin strip height regardless of state
-        // so the frame never jumps when booting starts.
-        let content_h = {
-            let sp = ui.spacing().item_spacing.y;
-            (ui.available_height() - INPUT_H - sp).max(100.0)
+        let content_h = ui.available_height().max(100.0);
+
+        let focused = self.terminal_focused && is_running;
+        let ring = if focused {
+            Stroke::new(1.5, term_cursor().gamma_multiply(0.7))
+        } else {
+            Stroke::new(1.0, term_border())
         };
 
         Frame::NONE
             .fill(term_bg())
-            .stroke(Stroke::new(1.0, term_border()))
-            .inner_margin(Margin::same(8))
+            .stroke(ring)
+            .corner_radius(4.0)
+            .inner_margin(Margin::same(10))
             .show(ui, |ui| {
                 ui.set_min_size(Vec2::new(ui.available_width(), content_h));
                 ui.set_max_height(content_h);
                 match self.active_tab {
-                    FbTab::BootLog => self.render_boot_log(ui),
+                    FbTab::BootLog => self.render_console(ui, is_running),
                     FbTab::Framebuffer => self.render_framebuffer(ui),
                 }
             });
-
-        // Always rendered so height is stable; interactive only when running.
-        self.render_input(ui, is_running);
     }
 }
 
@@ -222,7 +231,7 @@ impl MachineWindow {
 
                 let new_bytes = vm.drain_uart_output();
                 if !new_bytes.is_empty() {
-                    uart_text.push_str(&String::from_utf8_lossy(&new_bytes));
+                    append_uart_bytes(uart_text, &new_bytes);
                     *log_generation = log_generation.wrapping_add(1);
                 }
 
@@ -363,8 +372,40 @@ impl MachineWindow {
         }
     }
 
-    fn render_boot_log(&mut self, ui: &mut egui::Ui) {
-        // Extract what we need to decide rendering without a long borrow.
+    fn render_console(&mut self, ui: &mut egui::Ui, is_running: bool) {
+        // --- Focus handling: click the console to focus, click away to blur. ---
+        let rect = ui.max_rect();
+        let id = ui.make_persistent_id("mw_console_surface");
+        let resp = ui.interact(rect, id, egui::Sense::click());
+        if resp.clicked() {
+            self.terminal_focused = true;
+        }
+        if ui.input(|i| i.pointer.any_pressed()) {
+            let clicked_outside = ui
+                .input(|i| i.pointer.interact_pos())
+                .map(|p| !rect.contains(p))
+                .unwrap_or(false);
+            if clicked_outside {
+                self.terminal_focused = false;
+            }
+        }
+        let focused = self.terminal_focused && is_running;
+
+        // --- Send keystrokes straight to the VM's UART while focused. ---
+        if focused {
+            let bytes = collect_console_input(ui);
+            if !bytes.is_empty() {
+                if let BootPhase::Running { vm, .. } = &mut self.phase {
+                    for b in bytes {
+                        vm.push_uart_rx(b);
+                    }
+                }
+            }
+            // Keep the cursor blinking and input responsive.
+            ui.ctx().request_repaint_after(Duration::from_millis(120));
+        }
+
+        // --- Decide what to show. ---
         enum LogState<'a> {
             Idle,
             BootingNoOutput(u64),
@@ -401,8 +442,11 @@ impl MachineWindow {
             }
         };
 
+        // Blinking block cursor, shown only while the console is focused.
+        let cursor_on = focused && (ui.input(|i| i.time) * 2.0) as i64 % 2 == 0;
+
         egui::ScrollArea::vertical()
-            .id_salt("mw_boot_log")
+            .id_salt("mw_console")
             .stick_to_bottom(true)
             .auto_shrink([false, false])
             .show(ui, |ui| match state {
@@ -416,10 +460,14 @@ impl MachineWindow {
                     ui.colored_label(term_dim(), "(no output)");
                 }
                 LogState::HasText { text, generation } => {
-                    // Rebuild the layout job only when new UART output has arrived.
-                    if self.log_cache.is_none() || self.log_cache_generation != generation {
-                        self.log_cache = Some(build_log_job(text));
+                    // Rebuild the layout only when output advanced or the cursor toggled.
+                    if self.log_cache.is_none()
+                        || self.log_cache_generation != generation
+                        || self.log_cache_cursor != cursor_on
+                    {
+                        self.log_cache = Some(build_log_job(text, cursor_on));
                         self.log_cache_generation = generation;
+                        self.log_cache_cursor = cursor_on;
                     }
                     if let Some(job) = self.log_cache.clone() {
                         ui.label(job);
@@ -468,69 +516,66 @@ impl MachineWindow {
             }
         }
     }
+}
 
-    fn render_input(&mut self, ui: &mut egui::Ui, is_running: bool) {
-        Frame::NONE
-            .fill(toolbar_bg())
-            .inner_margin(Margin::symmetric(8, 4))
-            .show(ui, |ui| {
-                ui.set_min_height(INPUT_H);
-                ui.horizontal(|ui| {
-                    ui.colored_label(
-                        if is_running {
-                            ui_theme().accent
-                        } else {
-                            term_dim()
-                        },
-                        RichText::new("IN>").monospace().size(11.0),
-                    );
-
-                    let te = egui::TextEdit::singleline(&mut self.uart_input)
-                        .id_salt("mw_stdin")
-                        .desired_width(ui.available_width() - 58.0)
-                        .font(egui::TextStyle::Monospace)
-                        .hint_text(if is_running {
-                            "Enter to send"
-                        } else {
-                            "Start a boot first"
-                        })
-                        .interactive(is_running);
-                    let resp = ui.add(te);
-
-                    let send = ui
-                        .add_enabled(
-                            is_running,
-                            egui::Button::new("Send").min_size(egui::vec2(50.0, 26.0)),
-                        )
-                        .clicked();
-                    let enter = is_running
-                        && resp.lost_focus()
-                        && ui.input(|i| i.key_pressed(egui::Key::Enter));
-
-                    if (send || enter) && is_running {
-                        let mut line = std::mem::take(&mut self.uart_input);
-                        if !line.ends_with('\n') {
-                            line.push('\n');
-                        }
-                        if let BootPhase::Running { vm, .. } = &mut self.phase {
-                            for b in line.bytes() {
-                                vm.push_uart_rx(b);
-                            }
-                        }
-                        resp.request_focus();
-                    }
-                });
-            });
+/// Append UART output bytes to the console buffer, interpreting the control
+/// codes a terminal cares about. Backspace (0x08) erases the previous character
+/// so the shell's `BS space BS` erase sequence visibly deletes a character;
+/// carriage returns are dropped (the shell uses newlines).
+fn append_uart_bytes(buf: &mut String, bytes: &[u8]) {
+    for &b in bytes {
+        match b {
+            0x08 => {
+                // Erase one character, but never merge lines across a newline.
+                if !matches!(buf.chars().next_back(), None | Some('\n')) {
+                    buf.pop();
+                }
+            }
+            0x0d => {}
+            _ => buf.push(b as char),
+        }
     }
+}
+
+/// Translate this frame's keyboard events into bytes for the VM's UART receive
+/// buffer. Printable ASCII comes through `Text` events; Enter/Backspace/Tab are
+/// `Key` presses mapped to their control codes (the shell echoes them back).
+fn collect_console_input(ui: &egui::Ui) -> Vec<u8> {
+    let mut out = Vec::new();
+    ui.input(|i| {
+        for ev in &i.events {
+            match ev {
+                egui::Event::Text(t) => {
+                    for ch in t.chars() {
+                        let c = ch as u32;
+                        if (0x20..0x7f).contains(&c) {
+                            out.push(c as u8);
+                        }
+                    }
+                }
+                egui::Event::Key {
+                    key, pressed: true, ..
+                } => match key {
+                    egui::Key::Enter => out.push(b'\r'),
+                    egui::Key::Backspace => out.push(0x08),
+                    egui::Key::Tab => out.push(b'\t'),
+                    _ => {}
+                },
+                _ => {}
+            }
+        }
+    });
+    out
 }
 
 // --- Log colorizer ---
 
-fn build_log_job(text: &str) -> egui::text::LayoutJob {
+fn build_log_job(text: &str, cursor: bool) -> egui::text::LayoutJob {
     let font = egui::FontId::monospace(12.0);
     let mut job = egui::text::LayoutJob::default();
 
-    for line in text.split('\n') {
+    let mut lines = text.split('\n').peekable();
+    while let Some(line) = lines.next() {
         let (tag, tag_col, rest_col) = if line.starts_with("[  OK  ]") {
             (Some("[  OK  ]"), term_ok(), term_text())
         } else if line.starts_with("[ WARN ]") {
@@ -555,7 +600,24 @@ fn build_log_job(text: &str) -> egui::text::LayoutJob {
         } else {
             job.append(line, 0.0, fmt(rest_col));
         }
-        job.append("\n", 0.0, fmt(term_text()));
+        // No trailing newline after the final line, so the cursor can sit right
+        // after the prompt rather than on a blank line below it.
+        if lines.peek().is_some() {
+            job.append("\n", 0.0, fmt(term_text()));
+        }
+    }
+
+    // Block cursor in the accent colour, drawn at the end of the output.
+    if cursor {
+        job.append(
+            "\u{2588}",
+            0.0,
+            egui::TextFormat {
+                font_id: font.clone(),
+                color: term_cursor(),
+                ..Default::default()
+            },
+        );
     }
 
     job

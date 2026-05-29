@@ -63,7 +63,7 @@ impl CompilerView for ExecutionView {
                         self.wsl_receiver = None;
                     }
                     Err(std::sync::mpsc::TryRecvError::Empty) => {
-                        ctx.request_repaint();
+                        _ctx.request_repaint();
                     }
                     Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                         state.execution_output =

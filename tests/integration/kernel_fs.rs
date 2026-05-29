@@ -111,7 +111,11 @@ fn run_with_fs(fs_image: Option<&[u8]>, user_src: &str) -> (String, StepOutcome)
 }
 
 fn assert_clean_boot(uart: &str, outcome: &StepOutcome, label: &str) {
-    if let StepOutcome::Halted(c) = outcome {
+    // The last user process exiting now halts the VM via SYSCON; a zero exit
+    // code is the expected clean shutdown. A non-zero halt is a real failure.
+    if let StepOutcome::Halted(c) = outcome
+        && *c != 0
+    {
         panic!("{label}: unexpected VM halt with code {c}; uart={uart:?}");
     }
     assert!(!uart.contains("PANIC!"), "{label}: kernel panicked; uart={uart:?}");

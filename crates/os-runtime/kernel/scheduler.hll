@@ -55,3 +55,25 @@ schedule: (frame: u64*, action: u64) {
     current_process = next
     memcpy(frame as u8*, (next as u64 + 40) as u8*, 288)
 }
+
+; Return 1 if the ready queue is empty, 0 otherwise.
+; The exit syscall uses this to halt the VM once the last process leaves.
+scheduler_ready_empty: () -> u64 {
+    if ready_queue_head == null {
+        return 1
+    }
+    return 0
+}
+
+; Return 1 if a READY process with the given pid is still queued, 0 otherwise.
+; The shell polls this after exec to wait for a launched program to finish.
+scheduler_pid_in_queue: (pid: u64) -> u64 {
+    curr: u64* = ready_queue_head
+    while curr != null {
+        if @curr[0] == pid {
+            return 1
+        }
+        curr = (@curr[2]) as u64*
+    }
+    return 0
+}

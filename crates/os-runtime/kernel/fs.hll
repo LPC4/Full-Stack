@@ -2,9 +2,12 @@
 ;
 ; On-disk layout:
 ;   Block 0      Superblock
-;   Blocks 1-4   Inode table (256 inodes x 64 bytes)
-;   Block 5      Free-block bitmap (bit i => data block FS_DATA_BLOCK_START + i)
-;   Blocks 6+    Data blocks
+;   Blocks 1-8   Inode table (256 inodes x 128 bytes)
+;   Block 9      Free-block bitmap (bit i => data block FS_DATA_BLOCK_START + i)
+;   Blocks 10+   Data blocks
+;
+; Inodes are 128 bytes so each can index up to FS_INODE_BLOCKS direct data
+; blocks (44 -> 176 KiB max file), enough to store executable images.
 
 ; --- Layout constants ---
 
@@ -12,13 +15,13 @@ const FS_MAX_FD            = 16
 const FS_NAME_LEN          = 32
 const FS_MAX_INODES        = 256
 const FS_BLOCK_SIZE        = 4096
-const FS_INODE_SIZE        = 64
-const FS_BITMAP_BLOCK      = 5
-const FS_DATA_BLOCK_START  = 6
+const FS_INODE_SIZE        = 128
+const FS_BITMAP_BLOCK      = 9
+const FS_DATA_BLOCK_START  = 10
 const FS_DIRENTS_PER_BLOCK = 113
 const FS_DIRENT_SIZE       = 36
 const FS_FD_ENTRY_SIZE     = 32
-const FS_INODE_BLOCKS      = 8
+const FS_INODE_BLOCKS      = 44
 
 ; Open flags.
 const FS_OPEN_RO     = 0
@@ -696,6 +699,60 @@ fs_create: (parent_path: u8*, name: u8*, node_type: u8) -> i64 {
         return -1 as i64
     }
     return fs_create_at(parent as u64, name, node_type as u64)
+}
+
+; Return the inode type at an absolute path (1=file, 2=dir), or -1 if missing.
+; The shell uses this to validate cd targets.
+fs_stat: (path: u8*) -> i64 {
+    if fs_ready == 0 {
+        return -1 as i64
+    }
+    inode: i64 = fs_resolve(path)
+    if inode < 0 {
+        return -1 as i64
+    }
+    return fs_inode_type(inode as u64) as i64
+}
+
+; Look up the index-th valid entry of the directory at `path`.
+; Writes the entry name into name_buf (up to FS_NAME_LEN bytes) and returns the
+; entry's inode type (1=file, 2=dir). Returns -1 when index is past the end or
+; the path is not a directory. The shell calls this in a loop to implement ls.
+fs_readdir: (path: u8*, index: u64, name_buf: u8*) -> i64 {
+    if fs_ready == 0 {
+        return -1 as i64
+    }
+    dir_inode: i64 = fs_resolve(path)
+    if dir_inode < 0 {
+        return -1 as i64
+    }
+    if fs_inode_type(dir_inode as u64) != FS_TYPE_DIR {
+        return -1 as i64
+    }
+    count: u64 = 0
+    blk_slot: u64 = 0
+    while blk_slot < FS_INODE_BLOCKS {
+        blk: u64 = fs_inode_block(dir_inode as u64, blk_slot)
+        if blk == 0 {
+            break
+        }
+        slot: u64 = 0
+        while slot < FS_DIRENTS_PER_BLOCK {
+            de: u64 = fs_dirent_pa(blk, slot)
+            np: u8* = de as u8*
+            if @np != 0 {
+                if count == index {
+                    fs_strncpy(name_buf, np, FS_NAME_LEN)
+                    child: u64 = fs_rd16(de + FS_DE_INODE)
+                    return fs_inode_type(child) as i64
+                }
+                count = count + 1
+            }
+            slot = slot + 1
+        }
+        blk_slot = blk_slot + 1
+    }
+    return -1 as i64
 }
 
 ; Create a directory at the given absolute path.

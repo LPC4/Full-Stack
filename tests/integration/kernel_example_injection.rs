@@ -100,9 +100,12 @@ fn run_user_in_kernel(user_src: &str) -> (String, StepOutcome) {
 
 /// Assert that the user program exited with code 0.
 fn assert_user_exit_ok(uart: &str, outcome: &StepOutcome, label: &str) {
-    match outcome {
-        StepOutcome::Halted(c) => panic!("{label}: unexpected VM halt with code {c}; uart={uart:?}"),
-        StepOutcome::Continue => {}
+    // The last process exiting now halts the VM cleanly via SYSCON; a zero exit
+    // code is expected. Only a non-zero halt indicates a failure.
+    if let StepOutcome::Halted(c) = outcome
+        && *c != 0
+    {
+        panic!("{label}: unexpected VM halt with code {c}; uart={uart:?}");
     }
     assert!(
         !uart.contains("PANIC!"),

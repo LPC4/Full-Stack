@@ -769,13 +769,14 @@ pub enum FsEntry<'a> {
 ///   Block 6+     Data blocks (4096 bytes each)
 pub fn build_fs_image(entries: &[FsEntry<'_>]) -> Vec<u8> {
     const BLOCK_SIZE: usize = 4096;
-    const INODE_SIZE: usize = 64;
+    const INODE_SIZE: usize = 128;
     const INODE_COUNT: usize = 256;
-    const INODE_TABLE_BLOCKS: usize = 4; // 256 * 64 / 4096
-    const BITMAP_BLOCK: usize = 5;
-    const DATA_BLOCK_START: usize = 6;
+    const INODE_TABLE_BLOCKS: usize = 8; // 256 * 128 / 4096
+    const BITMAP_BLOCK: usize = 9;
+    const DATA_BLOCK_START: usize = 10;
     const DIRENT_SIZE: usize = 36;
     const DIRENTS_PER_BLOCK: usize = 113; // 4096 / 36
+    const MAX_DIRECT_BLOCKS: usize = 44; // (128 - IN_BLOCKS) / 2, matches FS_INODE_BLOCKS
 
     // Inode layout offsets.
     const IN_TYPE: usize = 0;
@@ -947,6 +948,12 @@ pub fn build_fs_image(entries: &[FsEntry<'_>]) -> Vec<u8> {
                 let file_inode = alloc_inode(&mut next_inode);
                 let num_blocks = data.len().div_ceil(BLOCK_SIZE);
                 let num_blocks = num_blocks.max(1); // at least one block even for empty files
+                assert!(
+                    num_blocks <= MAX_DIRECT_BLOCKS,
+                    "file {path:?} needs {num_blocks} blocks but the inode holds at most \
+                     {MAX_DIRECT_BLOCKS} direct blocks ({} bytes)",
+                    MAX_DIRECT_BLOCKS * BLOCK_SIZE
+                );
 
                 {
                     let off = inode_offset(file_inode);
@@ -1022,6 +1029,36 @@ pub fn build_fs_image(entries: &[FsEntry<'_>]) -> Vec<u8> {
     let _ = write_u64;
 
     image
+}
+
+// --- Executable file format (FEXE) ---
+
+/// Size of the executable header block. The payload starts at this offset so it
+/// stays 4 KiB-aligned for the kernel's page-by-page load.
+pub const EXEC_HEADER_SIZE: usize = 4096;
+
+/// Magic number identifying a FEXE executable file ("FEXE", little-endian).
+pub const FEXE_MAGIC: u32 = 0x4558_4546;
+
+/// Wrap a position-independent flat binary in the FEXE executable-file format
+/// understood by the kernel's `sys_exec`. The result is a header block (magic +
+/// entry offset) followed by the payload, suitable for storing as a regular file
+/// via [`build_fs_image`].
+pub fn build_exec_file(entry_off: u64, payload: &[u8]) -> Vec<u8> {
+    let mut out = vec![0u8; EXEC_HEADER_SIZE + payload.len()];
+    out[0..4].copy_from_slice(&FEXE_MAGIC.to_le_bytes());
+    out[8..16].copy_from_slice(&entry_off.to_le_bytes());
+    out[EXEC_HEADER_SIZE..].copy_from_slice(payload);
+    out
+}
+
+/// Build a FEXE executable file from an assembled hosted program. The entry
+/// offset is taken from `_start`; the payload is the flat binary (which already
+/// includes zero-filled BSS, so the program's globals are mapped on load).
+pub fn assembled_to_exec_file(assembled: &AssembledOutput) -> Vec<u8> {
+    let entry_off = assembled.symbol_address("_start").unwrap_or(0);
+    let payload = assembled.to_flat_binary();
+    build_exec_file(entry_off, &payload)
 }
 
 /// Split an absolute path into (`parent_path`, `last_component`).
