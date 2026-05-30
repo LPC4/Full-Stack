@@ -1,6 +1,6 @@
 # RISC-V RV64 Bare-Metal Kernel Specification
 
-**Version:** 1.0.0  
+**Version:** 1.1.0  
 **Target Architecture:** RISC-V 64-bit (RV64IMAFD) with Machine/Supervisor Privilege and Sv39 Virtual Memory  
 **Document Purpose:** Defines the contract between the HLL compiler/runtime and bare-metal kernel code. Covers boot protocol, image format, ABI, runtime split, and hardware abstraction layer for OS development.
 
@@ -35,14 +35,14 @@ To make the relationship between firmware, kernel and the higher-level OS cleare
 
 - Kernel (S-mode kernel code)
   - Role: Initialize hardware (UART, CLINT, PLIC), set up the heap and PMM, configure and enable Sv39 paging, install the S-mode trap handler, spawn user processes, and enter the preemptive scheduler idle loop.
-  - Where to find it in the repo: `crates/os-runtime/kernel/` -- `entry.hll` (S-mode entry stub), `my_kernel.hll` (reference kernel / `kmain`), `trap_entry.hll` (stvec prologue/epilogue), `trap_handler.hll`, `utilities.hll` (kmalloc, timer, PLIC), `checks.hll` (boot diagnostics), `pmm.hll`, `vmm.hll`, `process.hll`, `syscall.hll`, `scheduler.hll`. Shared stdlib lives under `crates/os-runtime/stdlib/`.
-  - What is implemented: full boot sequence including MMU enable (Sv39 canonical lower-half identity mapping), PCB-based process creation with VMM-mapped user pages, round-robin preemptive scheduler driven by CLINT timer interrupts, and syscall dispatch (`sys_exit`, `sys_write`, `yield`).
+  - Where to find it in the repo: `crates/os-runtime/kernel/` -- `entry.hll` (S-mode entry stub), `my_kernel.hll` (reference kernel / `kmain`), `trap_entry.hll` (stvec prologue/epilogue), `trap_handler.hll`, `utilities.hll` (kmalloc, timer, PLIC), `checks.hll` (boot diagnostics), `pmm.hll`, `vmm.hll`, `process.hll`, `syscall.hll`, `scheduler.hll`, `fs.hll` (filesystem). Shared stdlib lives under `crates/os-runtime/stdlib/`.
+  - What is implemented: full boot sequence including MMU enable (Sv39 canonical lower-half identity mapping), PCB-based process creation with per-pid VMM-mapped user stacks, round-robin preemptive scheduler driven by CLINT timer interrupts, an inode-based read-write filesystem mounted from an injected image, and syscall dispatch (process control, file I/O, directory listing, and program exec; see Section 9).
 
 - User processes and services
   - Role: User-mode programs that run under kernel supervision with address-space isolation. Communicate with the kernel via ecall.
   - Where to find it in the repo: `crates/os-runtime/user/` (example programs). The test harness injects user binaries by placing them at physical address 0x87F00000; the kernel reads metadata, copies pages, maps them, creates a PCB, and adds it to the scheduler.
-  - What is implemented: `user_hello.hll` (prints a greeting via `sys_write`, then yields in a loop). The injection mechanism and user-process lifecycle (create, run, exit) work end-to-end in integration tests.
-  - Not yet implemented: filesystem, block devices, signals, multi-hart support.
+  - What is implemented: `user_hello.hll` (prints a greeting via `sys_write`, then yields in a loop) and `shell.hll`, an interactive shell that boots as pid 1 and runs built-in commands (`ls`, `cd`, `run`, `exit`) against the filesystem. The injection mechanism and the full user-process lifecycle (create, run, exec a child, exit) work end-to-end in integration tests.
+  - Not yet implemented: block-device drivers (the filesystem lives in a RAM image), signals, and multi-hart support.
 
 The remainder of this specification documents the machine model, calling conventions and ABI that the kernel and eventual OS must follow.
 
@@ -88,7 +88,7 @@ fsc link src/*.hll --mode freestanding   # kernel images use Kernel internally
 **Characteristics:**
 - Links against the full kernel stdlib bundle (`types`, `memory_allocator`, `string_utils`, `mem`,
   `runtime`, `console`, `klog`, `trap_entry`, `utilities`, `checks`, `entry`, `trap_handler`,
-  `pmm`, `vmm`, `process`, `syscall`, `scheduler`).
+  `pmm`, `vmm`, `process`, `syscall`, `scheduler`, `fs`).
 - Entry point: `_kernel_start` (from `kernel/entry.hll`) calls `kmain()`.
 - No Linux syscalls; all I/O and hardware access is via MMIO or the provided HAL primitives.
 - Full kernel infrastructure provided: PMM, Sv39 VMM, trap handling, scheduler, syscall dispatch.
@@ -114,7 +114,7 @@ fsc link src/*.hll --mode freestanding   # kernel images use Kernel internally
 | `0x1000_0000` - `0x1000_0007` | UART | 8 bytes | NS16550A serial console |
 | `0x0200_0000` - `0x0200_FFFF` | CLINT | 64 KB | Core Local Interruptor (timer + IPI) |
 | `0x0C00_0000` - `0x0CFF_FFFF` | PLIC | 16 MB | Platform-Level Interrupt Controller |
-| `0x8000_0000` - `0xFFFF_FFFF` | RAM | 2 GB | Main memory (DRAM) |
+| `0x8000_0000` - ... | RAM | 128 MB | Main memory (DRAM); the built-in VM provides 128 MB |
 
 **Notes:**
 - All addresses are **physical** until the kernel enables Sv39 paging
@@ -391,8 +391,9 @@ The boot process follows this sequence:
                     vmm_enable (write SATP, sfence.vma)
    +- process_init, scheduler_init
    +- spawn_user_process: read metadata, copy pages, map U-mode VAs,
-                          process_create, scheduler_add
-   +- boot_interrupts: s_enable_interrupts
+                          process_create, scheduler_add (pid 1)
+   +- boot_filesystem: read FS metadata page, fs_init (mount the image)
+   +- boot_interrupts: s_enable_interrupts (only after pid 1 is enqueued)
    +- Idle WFI loop (scheduler takes over via timer preemption)
 
 5. M-mode trap handler (boot/trap.s, offset 0x100)
@@ -574,9 +575,12 @@ Everything in the freestanding bundle plus:
 | `trap_handler` | `trap_handler.hll` | Timer / IRQ / ecall dispatcher |
 | `pmm_init` / `pmm_alloc` / `pmm_free` | `pmm.hll` | 4 KiB page allocator |
 | `vmm_init` / `vmm_enable` / `vmm_map` / `vmm_map_1gib` | `vmm.hll` | Sv39 page table management |
-| `process_init` / `process_create` | `process.hll` | PCB allocation and initialisation |
-| `syscall_dispatch` | `syscall.hll` | U-mode ecall handler (exit / write / yield) |
+| `process_init` / `process_create` / `process_peek_pid` | `process.hll` | PCB allocation, per-pid stacks, next-pid query |
+| `syscall_dispatch` | `syscall.hll` | U-mode ecall handler (process control, file I/O, exec; see Section 9) |
 | `scheduler_init` / `scheduler_add` / `schedule` | `scheduler.hll` | Round-robin preemptive scheduler |
+| `scheduler_ready_empty` / `scheduler_pid_in_queue` | `scheduler.hll` | Ready-queue introspection used by exit and exec-wait |
+| `fs_init` / `fs_open` / `fs_read` / `fs_write` / `fs_close` | `fs.hll` | Inode filesystem: mount and file I/O |
+| `fs_create` / `fs_mkdir` / `fs_rename` / `fs_stat` / `fs_readdir` | `fs.hll` | Inode filesystem: namespace operations |
 
 **Use Case:** OS kernels, integration tests, the reference `my_kernel.hll`.
 
@@ -664,15 +668,32 @@ and advances `sepc` by 4 before returning.
 
 ### 9.1 Calling Convention
 
-Syscall number in `a7`; up to three arguments in `a0`-`a2`; return value written back to `a0` in the trap frame.
+Syscall number in `a7`; up to four arguments in `a0`-`a3`; return value written back to `a0`
+in the trap frame. Standard numbers follow the Linux RISC-V ABI; numbers in the 100-range are
+project-specific extensions added to support the interactive shell.
 
 ### 9.2 Syscall Table
 
 | Number | Name | Arguments | Return | Description |
 |--------|------|-----------|--------|-------------|
-| `64` | `sys_write` | `a0=fd`, `a1=buf*`, `a2=len` | bytes written | Write `len` bytes from `buf` to UART (fd is ignored) |
-| `93` | `sys_exit` | `a0=code` | -- | Terminate the calling process; triggers EXIT_SCHEDULE action |
-| `2` | `sys_yield` | -- | -- | Voluntarily yield the CPU; triggers SCHEDULE action |
+| `2` | `yield` | -- | -- | Voluntarily yield the CPU; triggers SCHEDULE action |
+| `56` | `open` | `a0=path*`, `a1=flags` | fd (>= 2) or -1 | Open a file by absolute path. flags: 0=RO, 1=RW, 2=create |
+| `57` | `close` | `a0=fd` | 0 | Release a file descriptor |
+| `63` | `read` | `a0=fd`, `a1=buf*`, `a2=offset`, `a3=len` | bytes read or -1 | Read from a filesystem fd at an explicit offset |
+| `64` | `write` | `a0=fd`, `a1=buf*`, `a2=len` | bytes written or -1 | fd 0/1 -> UART; fd >= 2 -> filesystem at the stored position |
+| `82` | `rename` | `a0=old*`, `a1=new*` | 0 or -1 | Move a file or directory (cross-directory allowed) |
+| `83` | `mkdir` | `a0=path*` | inode or -1 | Create a directory at an absolute path |
+| `93` | `exit` | `a0=code` | -- | Terminate the calling process; triggers EXIT_SCHEDULE. Halts the VM if it was the last runnable process |
+| `100` | `readchar` | -- | byte (0-255) or -1 | Read one byte from the UART receive buffer (non-blocking) |
+| `101` | `readdir` | `a0=path*`, `a1=index`, `a2=name_buf*` | entry type or -1 | Look up the index-th directory entry; writes its name |
+| `102` | `stat` | `a0=path*` | inode type or -1 | Inode type at a path (1=file, 2=dir) |
+| `103` | `exec` | `a0=path*` | new pid or -1 | Load an `FEXE` executable from the filesystem and enqueue it |
+| `104` | `pidalive` | `a0=pid` | 1 or 0 | 1 while a launched pid is still in the ready queue |
+
+`exec` reads a position-independent flat binary (4 KiB header + payload) from the filesystem and
+maps it at a per-pid 16 MiB code slot starting at `0x4000_0000` (pid 1 at the base), then calls
+`process_create` and `scheduler_add`. The shell pairs `exec` with `pidalive` to run a child and
+wait for it cooperatively.
 
 ### 9.3 Scheduler Actions
 
@@ -706,13 +727,22 @@ Offset  Size  Field
 The `trap_frame` layout matches the on-stack frame built by `stvec_entry`, so
 `schedule` can `memcpy(pcb+40, frame, 288)` to save and `memcpy(frame, pcb+40, 288)` to restore.
 
-### 10.2 Initial Trap Frame
+### 10.2 Per-Process Stacks and Initial Trap Frame
 
-`process_create` pre-populates the trap frame so that the first `sret` drops into U-mode:
+Each process gets its own user-stack region so the shell and any program it launches never
+share stack virtual addresses. `process_create` computes a stack top of
+`USER_STACK_BASE - (pid - 1) * USER_STACK_SLOT` (base `0x8000_0000`, slot 1 MiB, so pid 1 keeps
+`0x8000_0000`), then allocates 4 physical pages with `pmm_alloc` and maps them just below the
+stack top with flags R+W+U.
 
-- `frame[2]` (sp) = `0x8000_0000` (top of the 4 KiB user stack at VA `0x7FFFF000`)
+It then pre-populates the trap frame so the first `sret` drops into U-mode:
+
+- `frame[2]` (sp) = stack top for this pid
 - `frame[32]` (sepc) = `entry_pc`
 - `frame[35]` (sstatus) = `0x13` (UIE=1, SIE=1, SPIE=1, SPP=0 for U-mode on `sret`)
+
+`process_peek_pid` returns the pid that the next `process_create` will assign, which `sys_exec`
+uses to place a program's code at the matching per-pid `0x4000_0000` code slot before creating it.
 
 ### 10.3 Scheduler
 
@@ -729,20 +759,43 @@ to the currently-running process (`current_process`).
 The CLINT timer interrupt (S-mode cause 5) calls `schedule(frame, SYSACT_SCHEDULE)` after
 re-arming MTIMECMP, implementing preemptive round-robin at 1,000,000-cycle intervals.
 
-### 10.4 User Process Injection
+### 10.4 User Process and Filesystem Injection
 
-The test harness places a user binary into physical RAM before the kernel starts:
+The test harness places the pid-1 binary and (optionally) a filesystem image into physical RAM
+before the kernel starts:
 
 | Physical Address | Content |
 |-----------------|---------|
-| `0x87F0_0000` | User binary pages (raw, starting at offset 0) |
-| `0x87EF_F000` | Metadata: bytes `[0..8)` = entry VA, `[8..16)` = size in bytes |
+| `0x87F0_0000` | pid-1 user binary pages (raw, starting at offset 0); the shell or a test program |
+| `0x87EF_F000` | User metadata: bytes `[0..8)` = entry VA, `[8..16)` = size in bytes |
+| `0x87C0_0000` | Filesystem image (superblock, inode table, bitmap, data blocks) |
+| `0x87BF_F000` | Filesystem metadata: bytes `[0..8)` = image PA, `[8..16)` = image size |
 
 During `spawn_user_process` the kernel:
-1. Reads entry VA and size from the metadata page.
+1. Reads entry VA and size from the user metadata page.
 2. Allocates `ceil(size/4096)` physical pages via `pmm_alloc`.
 3. Copies each source page with `memcpy`.
 4. Maps each page at user VA `0x4000_0000 + offset` with flags R+W+X+U (VMM_V added internally).
 5. Calls `process_create(entry_va)` then `scheduler_add(pcb)`.
 
-The first timer interrupt context-switches into the new process via `sret`.
+`boot_filesystem` then reads the filesystem metadata page; if the image PA is non-zero it calls
+`fs_init(image_pa, image_size)` to validate the magic and mount it. The first timer interrupt
+context-switches into pid 1 via `sret`. When pid 1 is the shell, additional processes are created
+later at runtime through `sys_exec` rather than by injection.
+
+### 10.5 Filesystem Layout
+
+The filesystem image is a contiguous region with a fixed block layout (4 KiB blocks):
+
+| Block | Content |
+|-------|---------|
+| 0 | Superblock (magic `"HLLFS"`, block/inode/free counts, inode bitmap) |
+| 1-8 | Inode table (256 inodes x 128 bytes) |
+| 9 | Free-block bitmap (1 bit per data block) |
+| 10+ | Data blocks |
+
+Each 128-byte inode stores a type (free/file/dir), parent inode, size, a 32-byte name, and up to
+44 direct block pointers (176 KiB maximum file size, enough for executable images). Directories
+store 36-byte entries (32-byte name + inode index). Paths are absolute and resolved from the root
+directory at inode 0. Open files use a 16-slot kernel descriptor table; descriptors 0 and 1 are
+reserved for the UART, so filesystem fds start at 2.

@@ -1,6 +1,6 @@
 # RISC-V RV64IMAFD Virtual Machine Specification
 
-**Version:** 1.1.0  
+**Version:** 1.2.0  
 **Target Architecture:** RISC-V 64-bit (RV64IMAFD) with Machine/Supervisor-mode Privilege and Sv39 Virtual Memory  
 **Document Purpose:** Complete reference for implementing a RISC-V virtual machine. Covers CPU pipeline, memory model (physical and virtual), CSR behavior, trap handling, MMU implementation, and device emulation.
 
@@ -9,19 +9,21 @@
 ## 1. Architecture Overview
 
 ### 1.1 VM Components
-- **CPU Core:** In-order, single-issue pipeline (Fetch -> Decode -> Execute -> Memory -> Writeback)
+- **CPU Core:** In-order, single-issue 5-stage pipeline (Fetch -> Decode -> Execute -> Memory -> Writeback) with data forwarding, load-use hazard detection, and branch prediction
+- **Branch Predictor:** 2-bit bimodal predictor backed by a Branch Target Buffer (BTB)
+- **Cache Hierarchy:** Three levels (L1/L2/L3) of set-associative write-back caches in front of RAM; MMIO bypasses the caches
 - **Memory System:** Byte-addressable, little-endian, flat physical address space with optional Sv39 virtual memory translation
 - **MMU:** Sv39 page-based virtual memory (3-level page table, 39-bit virtual addresses)
-- **CSR File:** Machine-mode and Supervisor-mode Control & Status Registers (Zicsr extension)
-- **Devices:** UART (serial I/O), CLINT (timer/interprocessor interrupts), PLIC (platform-level interrupt controller)
+- **CSR File:** Machine-mode and Supervisor-mode Control & Status Registers (Zicsr extension), plus single-entry PMP storage
+- **Devices:** UART (serial I/O), CLINT (timer/software interrupts), PLIC (external interrupts), SYSCON (halt/exit)
 - **Bus:** Memory-mapped I/O with address decoding
 
 ### 1.2 Execution Model
-- **Privilege Modes:** Machine (M) and Supervisor (S) modes supported; User (U) mode accessible via SRET
-- **Virtual Memory:** Sv39 paging (optional, controlled by SATP CSR)
-- **Interrupts:** Synchronous traps (exceptions) and asynchronous interrupts (timer, external)
-- **Memory Ordering:** Sequential consistency (no weak ordering in this simple VM)
-- **Atomic Operations:** Load-reserved/store-conditional (LR/SC) via reservation set
+- **Privilege Modes:** Machine (M), Supervisor (S), and User (U) modes, with real privilege switching. The ROM boots in M-mode, delegates traps, and `mret`s into the S-mode kernel; the kernel `sret`s into U-mode processes.
+- **Virtual Memory:** Sv39 paging (optional, controlled by SATP CSR; bypassed in M-mode)
+- **Interrupts:** Synchronous traps (exceptions) and asynchronous interrupts (timer, software, external), delegatable to S-mode via `medeleg`/`mideleg`
+- **Memory Ordering:** Sequential consistency (no weak ordering in this VM)
+- **Atomic Operations:** Load-reserved/store-conditional (LR/SC) via reservation set, plus AMO read-modify-write
 
 ---
 
@@ -30,12 +32,16 @@
 | Address Range | Device | Size | Description |
 |---------------|--------|------|-------------|
 | `0x0000_0000` - `0x0FFF_FFFF` | ROM | 256 MB | Boot ROM / firmware (read-only) |
-| `0x1000_0000` - `0x1000_0007` | UART | 8 bytes | Serial console (NS16550A subset) |
+| `0x0010_0000` | SYSCON | 8 bytes | Halt/exit device (write exit code to stop the VM) |
+| `0x0200_0000` - `0x0200_FFFF` | CLINT | 64 KB | Core Local Interruptor (mtime, mtimecmp, msip) |
 | `0x0C00_0000` - `0x0CFF_FFFF` | PLIC | 16 MB | Platform-Level Interrupt Controller |
-| `0x0200_0000` - `0x0200_FFFF` | CLINT | 64 KB | Core Local Interruptor (mtime, mtimecmp) |
-| `0x8000_0000` - `0xFFFF_FFFF` | RAM | 2 GB | Main memory (DRAM) |
+| `0x1000_0000` - `0x1000_0007` | UART | 8 bytes | Serial console (NS16550A subset) |
+| `0x8000_0000` - ... | RAM | 128 MB | Main memory (DRAM); default size is 128 MB |
 
-**Note:** Addresses are physical when virtual memory is disabled (SATP.mode = 0/Bare). When Sv39 is enabled (SATP.mode = 8), all instruction fetches, loads, and stores use virtual address translation through the MMU.
+**Note:** Addresses are physical when virtual memory is disabled (SATP.mode = 0/Bare) or when the
+hart is in M-mode. When Sv39 is enabled (SATP.mode = 8) in S/U-mode, all instruction fetches,
+loads, and stores use virtual address translation through the MMU. RAM accesses pass through the
+L1/L2/L3 cache hierarchy; device (MMIO) accesses bypass the caches.
 
 ---
 
@@ -134,7 +140,7 @@ The MMU enforces the following permission checks:
 Sv39 requires that virtual addresses be "canonical": bits [63:39] must all equal bit 38.
 - Valid: `0x0000_0000_0000_0000` to `0x0000_007F_FFFF_FFFF` (lower half)
 - Valid: `0xFFFF_FF80_0000_0000` to `0xFFFF_FFFF_FFFF_FFFF` (upper half)
-- Invalid: Any address where bits [63:39]  0 and  0x1FFFFF
+- Invalid: Any address where bits [63:39] are neither all-0 nor all-1 (i.e. not 0 and not 0x1FFFFF)
 
 Non-canonical addresses trigger a Page Fault before translation begins.
 
@@ -323,7 +329,7 @@ store_int(bus, phys_addr, val, funct3)?;
 
 **FP Register Writes:**
 - NaN-boxing enforced on 32-bit writes (upper 32 bits = 0xFFFF_FFFF)
-- Invalid NaN-box detection on reads (returns NaN if upper bits  0xFFFF_FFFF)
+- Invalid NaN-box detection on reads (returns NaN if upper bits != 0xFFFF_FFFF)
 
 **CSR Operations:**
 ```rust
@@ -409,7 +415,7 @@ csrs.write(addr::SATP, satp);
 csrs.write(addr::SATP, 0); // MODE=0 (Bare)
 ```
 
-**Note:** When SATP.MODE  0 and privilege mode  Machine, all memory accesses go through the MMU for address translation.
+**Note:** When SATP.MODE != 0 and privilege mode is not Machine, all memory accesses go through the MMU for address translation.
 
 #### `mstatus` Fields (bit positions)
 - `[3]` **MPIE**: Previous M-mode interrupt enable (set on trap, restored on return)
@@ -464,8 +470,11 @@ csrs.write(addr::SATP, 0); // MODE=0 (Bare)
 - `10` = Reserved
 - `11` = Machine external interrupt (via PLIC)
 
-### 4.4 Machine Memory Protection (Not Implemented)
-- `pmpcfg0-15`, `pmpaddr0-63`: Physical memory protection (absent in this VM)
+### 4.4 Machine Memory Protection (Partial)
+- `pmpcfg0` (`0x3A0`) and `pmpaddr0` (`0x3B0`) are implemented as a single PMP entry: writable
+  storage plus a basic R/W/X allow/deny check when configured.
+- The remaining `pmpcfg`/`pmpaddr` registers are not implemented. This single-entry support is
+  enough for the ROM `_start` stub to open an all-address grant before delegating to S-mode.
 
 ### 4.5 Floating-Point CSRs
 
@@ -487,8 +496,8 @@ csrs.write(addr::SATP, 0); // MODE=0 (Bare)
 #### `frm` Rounding Modes
 - `0` = RNE (Round to Nearest, ties to Even)
 - `1` = RTZ (Round toward Zero)
-- `2` = RDN (Round Down, toward -)
-- `3` = RUP (Round Up, toward +)
+- `2` = RDN (Round Down, toward -infinity)
+- `3` = RUP (Round Up, toward +infinity)
 - `4` = RMM (Round to Nearest, ties to Max Magnitude)
 - `5-6` = Reserved (illegal)
 - `7` = Dynamic (use frm field in instruction)
@@ -508,7 +517,7 @@ csrs.write(addr::SATP, 0); // MODE=0 (Bare)
 - `mcycle` increments every clock cycle (approximated by instruction count in this VM)
 - `minstret` increments every retired instruction
 - Aliases (`cycle`, `instret`) mirror the machine-mode counters
-- Counters wrap on overflow (modulo 2)
+- Counters wrap on overflow (modulo 2^64)
 
 ---
 
@@ -551,10 +560,13 @@ The `mret` instruction reverses trap entry:
 cpu.pc = csrs.mepc;
 csrs.mstatus.MIE = csrs.mstatus.MPIE;
 csrs.mstatus.MPIE = 1;
-csrs.mstatus.MPP = 0; // Reset to U-mode (but VM stays in M)
+priv_mode = csrs.mstatus.MPP; // Drop to the saved previous privilege (e.g. S-mode)
+csrs.mstatus.MPP = 0;
 ```
 
-**Note:** This VM does not implement privilege mode switching, so MPP is informational only.
+**Note:** This VM implements real privilege switching. `mret` restores the privilege saved in
+`mstatus.MPP`, and `sret` restores the privilege saved in `sstatus.SPP`. The boot ROM uses `mret`
+to enter the S-mode kernel, and the kernel uses `sret` to enter U-mode processes.
 
 ### 5.3 Interrupt Checking
 Before each instruction fetch, check for pending interrupts:
@@ -571,6 +583,20 @@ if enabled && pending != 0 {
 ```
 
 **Priority:** Higher IRQ number = higher priority (machine external > timer > software).
+
+### 5.4 Supervisor-Mode Traps and Delegation
+
+The VM supports trap delegation so the S-mode kernel can handle its own traps without round-tripping
+through M-mode:
+
+- `medeleg` delegates selected exception causes (e.g. U-mode ecall, page faults) to S-mode.
+- `mideleg` delegates selected interrupt causes (software, timer, external) to S-mode.
+
+When a trap occurs in S/U-mode and its cause is delegated, the CPU traps to S-mode instead of
+M-mode: it writes `sepc`, `scause`, and `stval`; updates `sstatus.SPIE`/`sstatus.SPP`; clears
+`sstatus.SIE`; and jumps to `stvec`. `sret` reverses this, restoring `sstatus.SPP` as the new
+privilege mode. The boot ROM configures `medeleg`/`mideleg` so the kernel's `stvec` handler
+receives timer interrupts and U-mode ecalls directly.
 
 ---
 
@@ -660,6 +686,36 @@ if enabled && pending != 0 {
 
 ---
 
+### 6.4 SYSCON (Halt / Exit)
+**Base Address:** `0x0010_0000`  
+**Purpose:** Stop the machine and report an exit code.
+
+Writing a value to SYSCON latches an exit code and signals the run loop to halt. The kernel's
+`kshutdown` and the freestanding/hosted exit paths use this to terminate the VM; the integration
+harness reads the exit code from the final `RunResult`.
+
+---
+
+### 6.5 Cache Hierarchy
+
+RAM accesses pass through three levels of set-associative cache before reaching DRAM. MMIO device
+regions are never cached. All levels use 64-byte blocks, true LRU replacement, and a write-back /
+write-allocate policy.
+
+| Level | Size | Associativity |
+|-------|------|---------------|
+| L1 | 4 KB | 2-way |
+| L2 | 256 KB | 8-way |
+| L3 | 8 MB | 16-way |
+
+A miss at one level fetches the 64-byte block from the next level down (L1 -> L2 -> L3 -> RAM);
+write-back evictions push dirty blocks toward RAM. Each level tracks read/write hit and miss
+counts, exposed for the debugger's cache view. The caches are purely a performance/visualisation
+model: they are kept coherent with RAM for debug reads, and bulk injection of binaries flushes the
+hierarchy so the CPU observes the new bytes.
+
+---
+
 ## 7. System Bus
 
 ### 7.1 Address Routing
@@ -669,10 +725,11 @@ The bus routes memory accesses to the correct device based on address ranges:
 fn route(&mut self, addr: u64) -> Option<&mut dyn MemoryAccess> {
     match addr {
         0x0000_0000..=0x0FFF_FFFF => Some(&mut self.rom),
-        0x1000_0000..=0x1000_0007 => Some(&mut self.uart),
+        0x0010_0000..=0x0010_0007 => Some(&mut self.syscon),
         0x0200_0000..=0x0200_FFFF => Some(&mut self.clint),
         0x0C00_0000..=0x0CFF_FFFF => Some(&mut self.plic),
-        0x8000_0000..=0xFFFF_FFFF => Some(&mut self.ram),
+        0x1000_0000..=0x1000_0007 => Some(&mut self.uart),
+        0x8000_0000..=RAM_END     => Some(&mut self.ram), // RAM_END = RAM_BASE + RAM_SIZE
         _ => None, // Unmapped -> BusError
     }
 }
@@ -762,14 +819,16 @@ enum VmError {
 ## 9. Performance Counters & Timing
 
 ### 9.1 Cycle Counter
-- `mcycle` increments once per instruction fetch
-- Approximation: 1 instruction  1 cycle (no pipelining/stalling modeled)
-- Wraps to 0 on overflow (2)
+- `mcycle` advances as the pipeline ticks; stall and flush cycles are counted as cycles in which no
+  new instruction retires, so `mcycle` exceeds `minstret` under hazards.
+- The pipeline tracks cumulative stats (instructions retired, stall cycles, flush cycles, branch
+  mispredictions) separately, exposed through `pipeline_stats()` for the debugger.
+- Wraps to 0 on overflow (modulo 2^64)
 
 ### 9.2 Instruction Retire Counter
 - `minstret` increments after successful writeback
 - Not incremented for trapped instructions
-- Wraps to 0 on overflow (2)
+- Wraps to 0 on overflow (modulo 2^64)
 
 ### 9.3 Time Counter
 - `mtime` (in CLINT) increments once per cycle
@@ -781,25 +840,27 @@ enum VmError {
 ## 10. Initialization & Reset
 
 ### 10.1 VM Construction
+
 ```rust
-let mut vm = VirtualMachine::new(assembled_program);
+let mut vm = VirtualMachine::new(&assembled);          // flat program
+let mut vm = VirtualMachine::new_kernel(&assembled);   // kernel image (boots via ROM)
+let mut vm = VirtualMachine::from_elf(&elf_bytes)?;    // arbitrary ELF-64
 ```
 
-**Steps:**
-1. Create system bus with ROM data
-2. Load program sections into RAM at `RAM_BASE` (0x8000_0000)
-   - `.text` -> code
-   - `.rodata` -> read-only data
-   - `.data` -> initialized data
-   - `.bss` -> zero-initialized data
-3. Determine entry point:
-   - If `_start` symbol exists -> use its address
-   - Otherwise -> use `RAM_BASE`
-4. Initialize CPU:
-   - `pc = entry_point`
-   - `sp = RAM_BASE + RAM_SIZE` (stack grows downward)
-   - All other registers = 0
-   - All CSRs = 0 (except `misa`, `mhartid` which are read-only)
+**Steps (`new` / `from_elf`):**
+1. Generate the ROM image (from `os-runtime` boot sources) and create the system bus.
+2. Map every `PT_LOAD` segment into RAM starting at `RAM_BASE` (`0x8000_0000`), zero-filling any
+   `.bss` tail where `mem_size > file_size`.
+3. Record the heap base just past the highest mapped address.
+4. Initialize the CPU:
+   - `pc = entry_point` (from the ELF `e_entry`, e.g. `_start`)
+   - `sp = RAM_BASE + RAM_SIZE - 16` (stack grows downward)
+   - All other registers = 0; CSRs reset (except read-only `misa`, `mhartid`).
+
+**Kernel construction (`new_kernel`):** the kernel ELF is loaded the same way with `_kernel_start`
+as its entry, but the PC is then reset to `ROM_BASE` (`0x0`) and the resolved kernel entry is passed
+to the ROM boot stub. The ROM `_start` configures PMP and delegation, sets `mepc` to the kernel
+entry, and `mret`s into S-mode. See the OS specification for the full boot protocol.
 
 ### 10.2 Reset State
 - **Registers:** All integer/FP registers = 0 (except `sp`)
@@ -812,49 +873,38 @@ let mut vm = VirtualMachine::new(assembled_program);
 
 ## 11. Execution Loop
 
-### 11.1 Main Loop
-```rust
-loop {
-    // 1. Check for pending interrupts
-    if let Some(irq) = check_interrupts() {
-        take_trap(TrapCause::Interrupt(irq), cpu.pc);
-        continue;
-    }
-    
-    // 2. Fetch
-    let instruction = fetch(cpu.pc, &mut bus)?;
-    
-    // 3. Decode
-    let decoded = decode(instruction)?;
-    
-    // 4. Execute
-    let exec_result = execute(decoded, &regs, &csrs)?;
-    
-    // 5. Memory
-    let mem_result = memory_stage(exec_result, &mut bus, &mut reservation)?;
-    
-    // 6. Writeback
-    let next_pc = writeback(mem_result, &mut regs, &mut csrs)?;
-    
-    // 7. Update PC
-    cpu.pc = next_pc;
-    
-    // 8. Increment counters
-    csrs.increment_cycle();
-    csrs.increment_instret();
-    
-    // 9. Check for halt condition (ecall with specific exit code)
-    if halted {
-        break;
-    }
-}
+### 11.1 Pipelined Tick
+The VM advances one clock cycle per `step()`/`tick()`. Each cycle moves every in-flight
+instruction one stage forward, so up to five instructions are in flight at once. The five stage
+functions (Section 3) operate on pipeline registers (IF/ID, ID/EX, EX/MEM, MEM/WB) rather than a
+single instruction:
+
+```
+each tick:
+    WB   = writeback(MEM/WB)        // retire, commit registers/CSRs
+    MEM  = memory(EX/MEM)           // loads, stores, atomics via MMU + cache
+    EX   = execute(ID/EX)           // ALU, branch resolve, forwarded operands
+    ID   = decode(IF/ID)            // decode, read registers, detect hazards
+    IF   = fetch(pc)                // translate + read instruction word
+
+    // Hazard handling between stages:
+    //  - data forwarding: EX/MEM and MEM/WB results fed back into EX
+    //  - load-use stall:  hold IF/ID one cycle, inject a bubble after ID
+    //  - branch mispredict: squash IF/ID, redirect fetch (2-cycle penalty)
+    //  - the branch predictor (2-bit bimodal + BTB) supplies the next fetch PC
 ```
 
+Interrupts are checked at the fetch boundary; when one is taken (or an exception is raised) the
+pipeline is squashed and control transfers to the relevant trap vector (`mtvec` or, for delegated
+causes, `stvec`). An `ecall` serviced in WB likewise squashes the younger in-flight instructions
+before the handler runs.
+
 ### 11.2 Halt Condition
-The VM halts when:
-- `ecall` executed with `a7 = 93` (Linux exit syscall convention)
-- Exit code returned in `a0` (signed 64-bit integer)
-- Negative exit codes indicate errors
+The VM halts when a write to the SYSCON device (`0x0010_0000`) latches an exit code. Kernel code
+reaches this through `kshutdown`, and hosted/freestanding programs through their `exit` path
+(which the ROM or kernel turns into a SYSCON write). The exit code is a signed 64-bit integer;
+negative codes indicate errors. The host run loop also stops if a step returns an unrecoverable
+`VmError` or the `max_steps` budget is exhausted.
 
 ---
 

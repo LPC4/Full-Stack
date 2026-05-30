@@ -21,7 +21,7 @@ Full-Stack is a self-contained compiler pipeline for a custom systems language.
 Every stage -- lexing, parsing, semantic analysis, IR generation, register allocation, RISC-V code emission, assembly, and object-level linking -- runs directly in the browser (or natively) and is visualised in real time.
 
 The pipeline compiles HLL source all the way to RV64IMAFD machine code (ELF with full relocation support).
-Three compilation modes are supported: hosted (Linux syscall ABI), freestanding (bare-metal, no OS), and kernel (S-mode with an included boot ROM, PMM, Sv39 VMM, process model, round-robin scheduler, and syscall dispatch).
+Three compilation modes are supported: hosted (Linux syscall ABI), freestanding (bare-metal, no OS), and kernel (S-mode with an included boot ROM, PMM, Sv39 VMM, process model, round-robin scheduler, syscall dispatch, an inode-based read-write filesystem, and an interactive shell that boots as pid 1).
 Execution uses a built-in 5-stage pipelined CPU with data forwarding, load-use hazard detection, and 2-bit branch prediction backed by a three-level write-back cache hierarchy.
 All components are written in Rust and exposed through an egui interface.
 
@@ -50,7 +50,7 @@ HLL Source
 - The stdlib is compiled with a distinct string-literal prefix (`__kern_str_` for kernel mode, `str_` for hosted) to avoid duplicate rodata labels at link time.
 - `ObjectLinker::link()` resolves cross-object symbol references and applies relocations to produce a single linked binary.
 - Hosted runtime symbols (`putchar`, `puts`, `print_int`, `printf`, `exit`, `_start`) come from `crates/os-runtime/stdlib/hosted/runtime.hll`.
-- Kernel mode uses the full kernel stdlib bundle (trap entry, PMM, VMM, process, scheduler, syscall dispatch); see `crates/os-runtime/`.
+- Kernel mode uses the full kernel stdlib bundle (trap entry, PMM, VMM, process, scheduler, syscall dispatch, filesystem); see `crates/os-runtime/`.
 
 | Stage | View | What you see |
 |-------|------|--------------|
