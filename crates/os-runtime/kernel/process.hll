@@ -1,8 +1,10 @@
-; PCB layout (41 x u64 = 328 bytes):
+; PCB layout (44 x u64 = 352 bytes):
 ; [0] pid, [1] state (READY=0, RUNNING=1, BLOCKED=2, EXITED=3), [2] next (linked list),
-; [3] user_stack_pa, [4] entry_pc, [5..40] trap_frame (36 u64s).
+; [3] user_stack_pa, [4] entry_pc, [5..40] trap_frame (36 u64s), [41] page_root_pa,
+; [42] parent_pid, [43] exit_code.
 ; Trap frame: x0-x31 at byte offsets 0-248, sepc=256, scause=264, stval=272, sstatus=280.
-; Save/restore: memcpy(pcb_bytes+40, frame, 288).
+; Save/restore: memcpy(pcb_bytes+40, frame, 288). The trailing scalar fields all
+; sit after the trap frame so the 288-byte context copy never touches them.
 
 const PROC_READY   = 0
 const PROC_RUNNING = 1
@@ -16,7 +18,15 @@ const PCB_OFF_NEXT          = 16
 const PCB_OFF_USER_STACK_PA = 24
 const PCB_OFF_ENTRY_PC      = 32
 const PCB_OFF_TRAP_FRAME    = 40
-const PCB_SIZE              = 328
+const PCB_OFF_PAGE_ROOT     = 328
+const PCB_OFF_PARENT_PID    = 336
+const PCB_OFF_EXIT_CODE     = 344
+const PCB_SIZE              = 352
+
+; PCB field indices (u64 array view) for the trailing scalar fields.
+const PCB_IDX_PAGE_ROOT  = 41
+const PCB_IDX_PARENT_PID = 42
+const PCB_IDX_EXIT_CODE  = 43
 
 ; VMM flags for user-accessible pages.
 const VMM_U = 16
@@ -29,14 +39,15 @@ external memset:       (dst: u8*, value: u8, n: u64) -> u8*
 external memcpy:       (dst: u8*, src: u8*, n: u64) -> u8*
 external pmm_alloc:    () -> u8*
 external vmm_map:      (va: u64, pa: u64, flags: u64)
+external vmm_new_root: () -> u64
+external vmm_set_root: (root_pa: u64)
 external kpanic:       (msg: u8*)
 external klog_ok:      (msg: u8*)
 
-; Base of the per-process user stack regions. Each process gets a 1 MiB slot
-; below this, so the shell and any program it launches never share stack VAs.
-; Programs are position-independent, so only the stack top and entry PC differ.
+; Top of every process's user stack. Each process owns a private Sv39 root, so
+; all processes can share the same canonical stack VA without colliding; the
+; address spaces are kept disjoint physically rather than by VA slotting.
 const USER_STACK_BASE = 0x80000000
-const USER_STACK_SLOT = 0x100000
 
 next_pid: u64 = 1
 
@@ -64,6 +75,12 @@ process_create_at: (entry_pc: u64, stack_top: u64) -> u64* {
     next_pid = next_pid + 1
     @pcb[1] = PROC_READY
 
+    ; Give the process its own address space and make it the active root so the
+    ; user stack (and any code the caller maps afterwards) lands inside it.
+    root_pa: u64 = vmm_new_root()
+    @pcb[41] = root_pa
+    vmm_set_root(root_pa)
+
     ; User stack: a few pages below stack_top.
     stack_pages:  u64 = 4
     last_page_pa: u64 = 0
@@ -89,9 +106,66 @@ process_create_at: (entry_pc: u64, stack_top: u64) -> u64* {
     return pcb
 }
 
-; Create a new user process with a per-pid stack region.
-; pid 1 (the boot process) keeps the original 0x80000000 stack top.
+; Create a new user process with a stack at the canonical top. Isolation comes
+; from the per-process page-table root, not from per-pid VA slots.
 process_create: (entry_pc: u64) -> u64* {
-    stack_top: u64 = USER_STACK_BASE - (next_pid - 1) * USER_STACK_SLOT
-    return process_create_at(entry_pc, stack_top)
+    return process_create_at(entry_pc, USER_STACK_BASE)
+}
+
+; Allocate a zeroed PCB and assign the next pid, but build no address space and
+; map no stack. Used by fork, which supplies the child's root and copies the
+; parent's memory and trap frame itself.
+process_alloc: () -> u64* {
+    pcb_bytes: u8* = kmalloc(PCB_SIZE)
+    memset(pcb_bytes, 0, PCB_SIZE)
+    pcb: u64* = pcb_bytes as u64*
+    @pcb[0] = next_pid
+    next_pid = next_pid + 1
+    @pcb[1] = PROC_READY
+    return pcb
+}
+
+; --- PCB field accessors ---
+; Keep PCB layout knowledge in this module; callers use these instead of raw
+; index arithmetic.
+
+process_pid: (pcb: u64*) -> u64 {
+    return @pcb[0]
+}
+
+process_state: (pcb: u64*) -> u64 {
+    return @pcb[1]
+}
+
+process_set_state: (pcb: u64*, s: u64) {
+    @pcb[1] = s
+}
+
+process_root: (pcb: u64*) -> u64 {
+    return @pcb[PCB_IDX_PAGE_ROOT]
+}
+
+process_set_root: (pcb: u64*, root: u64) {
+    @pcb[PCB_IDX_PAGE_ROOT] = root
+}
+
+process_parent: (pcb: u64*) -> u64 {
+    return @pcb[PCB_IDX_PARENT_PID]
+}
+
+process_set_parent: (pcb: u64*, ppid: u64) {
+    @pcb[PCB_IDX_PARENT_PID] = ppid
+}
+
+process_exit_code: (pcb: u64*) -> i64 {
+    return (@pcb[PCB_IDX_EXIT_CODE]) as i64
+}
+
+process_set_exit_code: (pcb: u64*, code: i64) {
+    @pcb[PCB_IDX_EXIT_CODE] = code as u64
+}
+
+; Address of the embedded 288-byte trap frame, for context copies.
+process_frame_addr: (pcb: u64*) -> u64 {
+    return pcb as u64 + PCB_OFF_TRAP_FRAME
 }

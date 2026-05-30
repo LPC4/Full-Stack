@@ -77,4 +77,12 @@ impl BranchPredictor {
     pub fn stats(&self) -> &PredictorStats {
         &self.stats
     }
+
+    /// Clear all branch-history and target state (PHT + BTB), preserving stats.
+    /// Used when the address space changes so stale entries from another process
+    /// at the same virtual PCs cannot mispredict the resumed process.
+    pub fn clear(&mut self) {
+        self.pht = [1u8; PHT_SIZE];
+        self.btb.clear();
+    }
 }

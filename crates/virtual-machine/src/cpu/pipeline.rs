@@ -591,6 +591,15 @@ impl Pipeline {
             None => return Ok(TickOutcome::Continue),
         };
 
+        // SFENCE.VMA signals an address-space change. The branch predictor (BTB +
+        // PHT) is virtually indexed with no ASID, so entries from another process
+        // at the same virtual PCs would otherwise mispredict (and, for a PC that
+        // is not a branch in the resumed process, redirect fetch uncorrected).
+        // Flush it so each address space starts with clean prediction state.
+        if matches!(mem_wb.mem_result, MemResult::SfenceVma) {
+            self.predictor.clear();
+        }
+
         let next_pc =
             match writeback::writeback(mem_wb.mem_result.clone(), &mut self.regs, &mut self.csrs) {
                 Ok(pc) => pc,

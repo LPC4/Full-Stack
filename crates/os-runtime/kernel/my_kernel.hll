@@ -17,7 +17,8 @@ external pmm_alloc:             () -> u8*
 external pmm_free:              (page: u8*)
 external vmm_init:              ()
 external vmm_map:               (va: u64, pa: u64, flags: u64)
-external vmm_map_1gib:          (va: u64, pa: u64, flags: u64)
+external vmm_map_kernel:        (root: u64)
+external vmm_get_root:          () -> u64
 external vmm_enable:            ()
 external s_enable_interrupts:   ()
 external memory_self_test:      (size: u64) -> i64
@@ -137,9 +138,9 @@ boot_pmm: () {
 
 boot_vmm: () {
     vmm_init()
-    vmm_map_1gib(0x00000000, 0, 38)
-    vmm_map_1gib(0x80000000, 0x80000000, 46)
-    vmm_map_1gib(0xC0000000, 0xC0000000, 46)
+    ; Stamp the shared kernel/MMIO mappings into the boot root. The same routine
+    ; stamps them into every per-process root (see vmm_new_root).
+    vmm_map_kernel(vmm_get_root())
     vmm_enable()
     klog_ok("[ VMM ] sv39 enabled".data)
 }
@@ -206,6 +207,10 @@ spawn_user_process: () {
     klog_int("[ PROC ] user_size bytes".data, user_size as i64)
     klog_int("[ PROC ] pages to map".data, pages as i64)
 
+    ; Create the PCB first so its private page-table root becomes the active root;
+    ; the code pages below are then mapped into that per-process address space.
+    pcb: u64* = process_create(user_entry)
+
     i: u64 = 0
     while i < pages {
         dst_page: u8* = pmm_alloc()
@@ -228,7 +233,6 @@ spawn_user_process: () {
 
     klog_int("[ PROC ] mapped pages at 0x40000000, count".data, pages as i64)
 
-    pcb: u64* = process_create(user_entry)
     scheduler_add(pcb)
 
     user_spawned = 1

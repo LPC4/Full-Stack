@@ -14,6 +14,9 @@ const SYSCALL_READDIR  = 101   ; list directory entry by index
 const SYSCALL_STAT     = 102   ; inode type at a path (-1 if missing)
 const SYSCALL_EXEC     = 103   ; load and run an executable file from the FS
 const SYSCALL_PIDALIVE = 104   ; 1 if a launched pid is still runnable
+; Process-tree syscalls (Linux/RISC-V numbers).
+const SYSCALL_FORK     = 220   ; clone the current process; returns child pid / 0
+const SYSCALL_WAIT     = 260   ; reap an exited child; returns its exit code / -1
 
 const SYSACT_CONTINUE      = 0
 const SYSACT_SCHEDULE      = 1
@@ -27,10 +30,9 @@ const SYSACT_EXIT_SCHEDULE = 2
 const FEXE_MAGIC       = 0x45584546
 const EXEC_HEADER_SIZE = 4096
 
-; Per-pid user code regions. Programs are position-independent, so each one is
-; mapped at its own 16 MiB slot; pid 1 (the shell) lands at 0x40000000.
+; Canonical user code base. Every process owns a private page-table root, so all
+; programs map their code at the same VA; isolation comes from the separate roots.
 const USER_CODE_BASE = 0x40000000
-const USER_CODE_SLOT = 0x01000000
 ; R + W + X + U page flags (vmm_map adds V).
 const USER_PAGE_FLAGS = 30
 
@@ -40,14 +42,29 @@ external console_putchar:      (c: i32)
 external kshutdown:            (code: i64)
 external kmalloc:              (size: u64) -> u8*
 external memset:               (dst: u8*, value: u8, n: u64) -> u8*
+external memcpy:               (dst: u8*, src: u8*, n: u64) -> u8*
 external pmm_alloc:            () -> u8*
 external pmm_free:             (page: u8*)
 external vmm_map:              (va: u64, pa: u64, flags: u64)
+external vmm_new_root:         () -> u64
+external vmm_fork_copy:        (parent_root: u64, child_root: u64)
 external process_create:       (entry_pc: u64) -> u64*
 external process_peek_pid:     () -> u64
+external process_alloc:        () -> u64*
+external process_pid:          (pcb: u64*) -> u64
+external process_root:         (pcb: u64*) -> u64
+external process_set_root:     (pcb: u64*, root: u64)
+external process_set_parent:   (pcb: u64*, ppid: u64)
+external process_exit_code:    (pcb: u64*) -> i64
+external process_set_exit_code: (pcb: u64*, code: i64)
 external scheduler_add:        (pcb: u64*)
+external scheduler_current:    () -> u64*
 external scheduler_ready_empty: () -> u64
 external scheduler_pid_in_queue: (pid: u64) -> u64
+external scheduler_make_zombie: (pcb: u64*)
+external scheduler_find_zombie_child: (parent_pid: u64) -> u64*
+external scheduler_remove_zombie: (pcb: u64*)
+external scheduler_has_children: (parent_pid: u64) -> u64
 external fs_open:              (path: u8*, flags: u64) -> i64
 external fs_close:             (fd: i64)
 external fs_read:              (fd: i64, buf: u8*, offset: u64, len: u64) -> i64
@@ -96,8 +113,11 @@ sys_exec_impl: (path: u8*) -> i64 {
         return -1 as i64
     }
 
-    pid_now: u64 = process_peek_pid()
-    code_base: u64 = USER_CODE_BASE + (pid_now - 1) * USER_CODE_SLOT
+    ; Create the process first: process_create allocates the child's page-table
+    ; root and makes it the active root, so the payload pages below map into the
+    ; child's address space at the canonical code base.
+    entry: u64 = USER_CODE_BASE + entry_off
+    pcb: u64* = process_create(entry)
 
     ; Copy the payload into fresh physical pages and map them user-accessible.
     off: u64 = EXEC_HEADER_SIZE as u64
@@ -114,7 +134,7 @@ sys_exec_impl: (path: u8*) -> i64 {
             pmm_free(page_pa)
             break
         }
-        vmm_map(code_base + page_idx * 4096, page_pa as u64, USER_PAGE_FLAGS)
+        vmm_map(USER_CODE_BASE + page_idx * 4096, page_pa as u64, USER_PAGE_FLAGS)
         page_idx = page_idx + 1
         off = off + 4096
         if got < 4096 {
@@ -127,8 +147,6 @@ sys_exec_impl: (path: u8*) -> i64 {
         return -1 as i64
     }
 
-    entry: u64 = code_base + entry_off
-    pcb: u64* = process_create(entry)
     scheduler_add(pcb)
     return (@pcb[0]) as i64
 }
@@ -144,18 +162,104 @@ sys_write_impl: (fd: u64, buf: u8*, len: u64) -> u64 {
     return written
 }
 
+; Fork the current process. Allocates a child PCB and a fresh page-table root,
+; eagerly copies the parent's user pages into it, duplicates the trap frame, and
+; sets the child up to return 0 from the fork ecall. Returns the child pid to the
+; parent (or -1 if there is no running process).
+sys_fork_impl: (frame: u64*) -> i64 {
+    parent: u64* = scheduler_current()
+    if parent == null {
+        return -1 as i64
+    }
+    parent_root: u64 = process_root(parent)
+    ppid: u64 = process_pid(parent)
+
+    child: u64* = process_alloc()
+    child_root: u64 = vmm_new_root()
+    process_set_root(child, child_root)
+    process_set_parent(child, ppid)
+
+    ; Duplicate the parent's user address space (code + stack) into the child.
+    vmm_fork_copy(parent_root, child_root)
+
+    ; Copy the live parent context into the child, then adjust the child's return:
+    ; a0 = 0 (fork returns 0 in the child) and sepc past the ecall (the trap epilogue
+    ; only advances the parent's live frame, not this copy).
+    cframe_addr: u64 = child as u64 + 40
+    memcpy(cframe_addr as u8*, frame as u8*, 288)
+    cframe: u64* = cframe_addr as u64*
+    @cframe[10] = 0
+    @cframe[32] = @cframe[32] + 4
+
+    scheduler_add(child)
+    return process_pid(child) as i64
+}
+
+; Wait for any child to exit and reap its exit code. If a zombie child exists,
+; reap it and return its code. If children exist but none has exited, rewind sepc
+; and yield so the syscall re-runs after a context switch (cooperative poll). If
+; there are no children at all, return -1.
+sys_wait_impl: (frame: u64*) -> u64 {
+    parent: u64* = scheduler_current()
+    if parent == null {
+        @frame[10] = 0xFFFFFFFFFFFFFFFF
+        return SYSACT_CONTINUE
+    }
+    ppid: u64 = process_pid(parent)
+
+    z: u64* = scheduler_find_zombie_child(ppid)
+    if z != null {
+        code: i64 = process_exit_code(z)
+        scheduler_remove_zombie(z)
+        @frame[10] = code as u64
+        return SYSACT_CONTINUE
+    }
+
+    if scheduler_has_children(ppid) == 1 {
+        ; A child is still running: re-run this ecall after a reschedule. The trap
+        ; epilogue adds 4 to sepc, so subtract 4 first to land back on the ecall.
+        @frame[32] = @frame[32] - 4
+        return SYSACT_SCHEDULE
+    }
+
+    @frame[10] = 0xFFFFFFFFFFFFFFFF
+    return SYSACT_CONTINUE
+}
+
+; Handle SYSCALL_EXIT. Pid 1 (the shell) leaving halts the machine; any other
+; process becomes a zombie holding its exit code until its parent waits. Kept as
+; its own function so its locals do not enlarge syscall_dispatch's stack frame.
+sys_exit_impl: (frame: u64*) -> u64 {
+    code: u64 = @frame[10]
+    klog_int("sys_exit code".data, code as i64)
+    current: u64* = scheduler_current()
+    if current == null {
+        ; No process context: nothing to reap, just halt.
+        kshutdown(code as i64)
+    }
+    ; The shell (pid 1) leaving tears down the machine; a forked child exiting
+    ; must not, even when the ready queue momentarily empties.
+    if process_pid(current) == 1 {
+        kshutdown(code as i64)
+    }
+    ; Safety net: if nothing else is runnable, there is no process to switch to
+    ; (and no parent will ever reap this one), so halt rather than resume a dead
+    ; process. Normal wait flows keep the parent READY, so this stays false.
+    if scheduler_ready_empty() == 1 {
+        kshutdown(code as i64)
+    }
+    ; Record the exit code and keep the PCB as a zombie until the parent waits.
+    process_set_exit_code(current, code as i64)
+    scheduler_make_zombie(current)
+    return SYSACT_EXIT_SCHEDULE
+}
+
 ; Dispatch a U-mode ecall: reads a7 (syscall number) and a0-a2 (args), writes result to frame a0.
 syscall_dispatch: (frame: u64*) -> u64 {
     num: u64 = @frame[17]
 
     if num == SYSCALL_EXIT {
-        code: u64 = @frame[10]
-        klog_int("sys_exit code".data, code as i64)
-        ; If no other process is runnable, this is the last one: halt the VM.
-        if scheduler_ready_empty() == 1 {
-            kshutdown(code as i64)
-        }
-        return SYSACT_EXIT_SCHEDULE
+        return sys_exit_impl(frame)
     }
 
     if num == SYSCALL_WRITE {
@@ -250,6 +354,15 @@ syscall_dispatch: (frame: u64*) -> u64 {
         pid: u64 = @frame[10]
         @frame[10] = scheduler_pid_in_queue(pid)
         return SYSACT_CONTINUE
+    }
+
+    if num == SYSCALL_FORK {
+        @frame[10] = sys_fork_impl(frame) as u64
+        return SYSACT_CONTINUE
+    }
+
+    if num == SYSCALL_WAIT {
+        return sys_wait_impl(frame)
     }
 
     if num == SYSCALL_YIELD {
