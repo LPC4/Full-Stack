@@ -20,6 +20,7 @@ external console_writeln: (str: u8*)
 _a0:  u64 = 0
 _a1:  u64 = 0
 _a2:  u64 = 0
+_a3:  u64 = 0
 _ret: i64 = 0
 
 ; Read one byte from the UART. Returns the byte (0-255) or -1 if none pending.
@@ -68,18 +69,78 @@ sc_stat: (path: u8*) -> i64 {
     return _ret
 }
 
-; Load and run an executable file. Returns the new pid or -1 on error.
+; Load and run an executable file with no argument. Returns the new pid or -1.
 sc_exec: (path: u8*) -> i64 {
+    return sc_exec_arg(path, 0 as u8*)
+}
+
+; Load and run an executable file, passing `arg` (a null-terminated string the
+; program can read from USER_ARG_BASE). Returns the new pid or -1 on error.
+sc_exec_arg: (path: u8*, arg: u8*) -> i64 {
     _a0 = path as u64
+    _a1 = arg as u64
     asm {
         la t0, _a0
         ld a0, 0(t0)
+        la t0, _a1
+        ld a1, 0(t0)
         li a7, 103
         ecall
         la t0, _ret
         sd a0, 0(t0)
     }
     return _ret
+}
+
+; Open a file. flags: 0=RO, 1=RW, 2=create. Returns fd>=2 or -1.
+sc_open: (path: u8*, flags: u64) -> i64 {
+    _a0 = path as u64
+    _a1 = flags
+    asm {
+        la t0, _a0
+        ld a0, 0(t0)
+        la t0, _a1
+        ld a1, 0(t0)
+        li a7, 56
+        ecall
+        la t0, _ret
+        sd a0, 0(t0)
+    }
+    return _ret
+}
+
+; Read up to len bytes from fd at offset into buf. Returns bytes read or -1.
+sc_read: (fd: i64, buf: u8*, offset: u64, len: u64) -> i64 {
+    _a0 = fd as u64
+    _a1 = buf as u64
+    _a2 = offset
+    _a3 = len
+    asm {
+        la t0, _a0
+        ld a0, 0(t0)
+        la t0, _a1
+        ld a1, 0(t0)
+        la t0, _a2
+        ld a2, 0(t0)
+        la t0, _a3
+        ld a3, 0(t0)
+        li a7, 63
+        ecall
+        la t0, _ret
+        sd a0, 0(t0)
+    }
+    return _ret
+}
+
+; Close a file descriptor.
+sc_close: (fd: i64) {
+    _a0 = fd as u64
+    asm {
+        la t0, _a0
+        ld a0, 0(t0)
+        li a7, 57
+        ecall
+    }
 }
 
 ; Return 1 while the given pid is still runnable, 0 once it has exited.
@@ -341,6 +402,56 @@ cmd_run: (cwd: u8*, arg: u8*) {
     }
 }
 
+; Print a file's contents to the console.
+cmd_cat: (cwd: u8*, arg: u8*) {
+    if @arg == 0 {
+        console_writeln("cat: missing file name".data)
+        return
+    }
+    target: u8[256]
+    target_p: u8* = target[0]
+    sh_join_path(cwd, arg, target_p)
+    fd: i64 = sc_open(target_p, 0)
+    if fd < 0 {
+        console_write("cat: no such file: ".data)
+        console_writeln(arg)
+        return
+    }
+    buf: u8[128]
+    buf_p: u8* = buf[0]
+    off: u64 = 0
+    while 1 == 1 {
+        n: i64 = sc_read(fd, buf_p, off, 127)
+        if n <= 0 {
+            break
+        }
+        term: u8* = buf_p + n
+        @term = 0 as u8
+        console_write(buf_p)
+        off = off + n as u64
+    }
+    sc_close(fd)
+}
+
+; Launch the line editor on a file, passing the absolute path as its argument.
+cmd_edit: (cwd: u8*, arg: u8*) {
+    if @arg == 0 {
+        console_writeln("edit: missing file name".data)
+        return
+    }
+    target: u8[256]
+    target_p: u8* = target[0]
+    sh_join_path(cwd, arg, target_p)
+    pid: i64 = sc_exec_arg("/bin/edit".data, target_p)
+    if pid < 0 {
+        console_writeln("edit: cannot launch /bin/edit".data)
+        return
+    }
+    while sc_pidalive(pid as u64) == 1 {
+        sc_yield()
+    }
+}
+
 handle_command: (cwd: u8*, line: u8*) {
     if @line == 0 {
         return
@@ -354,7 +465,7 @@ handle_command: (cwd: u8*, line: u8*) {
         return
     }
     if sh_streq(line, "help".data) == 1 {
-        console_writeln("commands: ls, cd <dir>, run <file>, exit".data)
+        console_writeln("commands: ls, cd <dir>, run <file>, cat <file>, edit <file>, exit".data)
         return
     }
     if sh_starts_with(line, "cd ".data) == 1 {
@@ -363,6 +474,14 @@ handle_command: (cwd: u8*, line: u8*) {
     }
     if sh_starts_with(line, "run ".data) == 1 {
         cmd_run(cwd, line + 4)
+        return
+    }
+    if sh_starts_with(line, "cat ".data) == 1 {
+        cmd_cat(cwd, line + 4)
+        return
+    }
+    if sh_starts_with(line, "edit ".data) == 1 {
+        cmd_edit(cwd, line + 5)
         return
     }
     console_write("unknown command: ".data)

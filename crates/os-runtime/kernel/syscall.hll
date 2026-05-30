@@ -8,6 +8,7 @@ const SYSCALL_CLOSE    = 57
 const SYSCALL_READ     = 63
 const SYSCALL_RENAME   = 82
 const SYSCALL_MKDIR    = 83
+const SYSCALL_FTRUNCATE = 46   ; shrink a file to an exact length
 ; Project-specific syscalls for the interactive shell.
 const SYSCALL_READCHAR = 100   ; read one byte from the UART (-1 if none)
 const SYSCALL_READDIR  = 101   ; list directory entry by index
@@ -35,6 +36,17 @@ const EXEC_HEADER_SIZE = 4096
 const USER_CODE_BASE = 0x40000000
 ; R + W + X + U page flags (vmm_map adds V).
 const USER_PAGE_FLAGS = 30
+
+; One page mapped into every exec'd process holding the exec argument string (an
+; absolute path the program may read). A program that takes no argument finds an
+; empty (zeroed) string here. It must sit in the private per-process VA gap
+; (0x40000000-0x7FFFFFFF), not below 0x40000000 which the kernel identity-maps
+; with a 1 GiB superpage; mapping a 4 KiB page into a superpage region would
+; corrupt the page table. Placed well above code and below the user stack.
+const USER_ARG_BASE  = 0x7FF00000
+; R + W + U page flags (vmm_map adds V).
+const USER_ARG_FLAGS = 22
+const USER_ARG_MAX   = 4095
 
 external klog_int:             (label: u8*, val: i64)
 external klog_error:           (msg: u8*)
@@ -75,6 +87,7 @@ external fs_readdir:           (path: u8*, index: u64, name_buf: u8*) -> i64
 external fs_stat:              (path: u8*) -> i64
 external fs_get_pos:           (fd: i64) -> u64
 external fs_set_pos:           (fd: i64, pos: u64)
+external fs_truncate:          (fd: i64, len: u64) -> i64
 
 
 ; Read one byte from the NS16550A UART receive buffer (0x10000000).
@@ -89,12 +102,33 @@ sys_readchar_impl: () -> i64 {
     return c as i64
 }
 
-; Load an executable file from the FS and add it to the scheduler.
+; Load an executable file from the FS and add it to the scheduler. `arg` is an
+; optional null-terminated string (an absolute path the program may read); it is
+; copied into the child's USER_ARG_BASE page. Pass null for no argument.
 ; Returns the new pid on success, or -1 on any failure.
-sys_exec_impl: (path: u8*) -> i64 {
+sys_exec_impl: (path: u8*, arg: u8*) -> i64 {
     fd: i64 = fs_open(path, 0)
     if fd < 2 {
         return -1 as i64
+    }
+
+    ; Stage the argument into a kernel buffer while the caller's address space is
+    ; still active; process_create below switches to the child's root, after which
+    ; the caller's `arg` pointer is no longer mapped. The kernel buffer stays
+    ; reachable (identity-mapped in every root).
+    arg_buf: u8* = kmalloc(USER_ARG_MAX + 1)
+    memset(arg_buf, 0, USER_ARG_MAX + 1)
+    if arg != null {
+        ai: u64 = 0
+        while ai < USER_ARG_MAX {
+            c: u8 = @(arg + ai)
+            if c == 0 {
+                break
+            }
+            dp: u8* = arg_buf + ai
+            @dp = c
+            ai = ai + 1
+        }
     }
 
     ; Read and validate the header block.
@@ -118,6 +152,17 @@ sys_exec_impl: (path: u8*) -> i64 {
     ; child's address space at the canonical code base.
     entry: u64 = USER_CODE_BASE + entry_off
     pcb: u64* = process_create(entry)
+
+    ; Map the argument page into the child (its root is now the active root) and
+    ; copy the staged string in. Always mapped so a program can read USER_ARG_BASE
+    ; unconditionally; with no argument it sees an empty string.
+    arg_pa: u8* = pmm_alloc()
+    if arg_pa == null {
+        fs_close(fd)
+        return -1 as i64
+    }
+    memcpy(arg_pa, arg_buf, USER_ARG_MAX + 1)
+    vmm_map(USER_ARG_BASE, arg_pa as u64, USER_ARG_FLAGS)
 
     ; Copy the payload into fresh physical pages and map them user-accessible.
     off: u64 = EXEC_HEADER_SIZE as u64
@@ -254,6 +299,15 @@ sys_exit_impl: (frame: u64*) -> u64 {
     return SYSACT_EXIT_SCHEDULE
 }
 
+; Truncate the file behind a0 to a0=fd, a1=len. Factored out of syscall_dispatch
+; so its locals do not enlarge that function's already-large stack frame.
+sys_ftruncate_impl: (frame: u64*) -> u64 {
+    fd:  i64 = (@frame[10]) as i64
+    len: u64 = @frame[11]
+    @frame[10] = fs_truncate(fd, len) as u64
+    return SYSACT_CONTINUE
+}
+
 ; Dispatch a U-mode ecall: reads a7 (syscall number) and a0-a2 (args), writes result to frame a0.
 syscall_dispatch: (frame: u64*) -> u64 {
     num: u64 = @frame[17]
@@ -344,10 +398,14 @@ syscall_dispatch: (frame: u64*) -> u64 {
     }
 
     if num == SYSCALL_EXEC {
-        path: u8* = (@frame[10]) as u8*
-        result: i64 = sys_exec_impl(path)
+        ; Args read inline to keep syscall_dispatch's (already large) frame small.
+        result: i64 = sys_exec_impl((@frame[10]) as u8*, (@frame[11]) as u8*)
         @frame[10] = result as u64
         return SYSACT_CONTINUE
+    }
+
+    if num == SYSCALL_FTRUNCATE {
+        return sys_ftruncate_impl(frame)
     }
 
     if num == SYSCALL_PIDALIVE {

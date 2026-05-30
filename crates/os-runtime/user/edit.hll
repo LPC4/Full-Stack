@@ -1,0 +1,334 @@
+; Tiny line editor (ed-like) for the HLL kernel.
+;
+; Launched by the shell's `edit <file>` command. The absolute path to edit is
+; passed by the kernel in the USER_ARG_BASE page (see sys_exec_impl), which this
+; program reads directly. On start the file is loaded into an in-memory buffer;
+; commands then edit that buffer and write it back:
+;
+;   a   append: read lines until a single "." on its own line; append to buffer
+;   p   print the buffer with line numbers
+;   c   clear the buffer
+;   w   write the buffer back to the file (truncating to the exact length)
+;   q   quit
+
+
+external console_putchar:   (c: i32)
+external console_write:     (str: u8*)
+external console_writeln:   (str: u8*)
+external console_print_int: (n: i64)
+
+; Page the kernel maps with this program's argument string (the file path).
+; Must match USER_ARG_BASE in the kernel's syscall.hll.
+const ARG_BASE = 0x7FF00000
+; Maximum editable file size held in the buffer.
+const EDIT_CAP = 4096
+
+; --- Syscall argument marshalling (see shell.hll for the pattern) ---
+
+_a0:  u64 = 0
+_a1:  u64 = 0
+_a2:  u64 = 0
+_a3:  u64 = 0
+_ret: i64 = 0
+
+; Editor buffer and current length.
+edit_buf: u8[4096]
+edit_len: u64 = 0
+
+sc_readchar: () -> i64 {
+    asm {
+        li a7, 100
+        ecall
+        la t0, _ret
+        sd a0, 0(t0)
+    }
+    return _ret
+}
+
+sc_yield: () {
+    asm {
+        li a7, 2
+        ecall
+    }
+}
+
+sc_exit: (code: i64) {
+    _a0 = code as u64
+    asm {
+        la t0, _a0
+        ld a0, 0(t0)
+        li a7, 93
+        ecall
+    }
+}
+
+sc_open: (path: u8*, flags: u64) -> i64 {
+    _a0 = path as u64
+    _a1 = flags
+    asm {
+        la t0, _a0
+        ld a0, 0(t0)
+        la t0, _a1
+        ld a1, 0(t0)
+        li a7, 56
+        ecall
+        la t0, _ret
+        sd a0, 0(t0)
+    }
+    return _ret
+}
+
+sc_read: (fd: i64, buf: u8*, offset: u64, len: u64) -> i64 {
+    _a0 = fd as u64
+    _a1 = buf as u64
+    _a2 = offset
+    _a3 = len
+    asm {
+        la t0, _a0
+        ld a0, 0(t0)
+        la t0, _a1
+        ld a1, 0(t0)
+        la t0, _a2
+        ld a2, 0(t0)
+        la t0, _a3
+        ld a3, 0(t0)
+        li a7, 63
+        ecall
+        la t0, _ret
+        sd a0, 0(t0)
+    }
+    return _ret
+}
+
+; Write len bytes from buf to fd at its implicit position (0 after open).
+sc_write: (fd: i64, buf: u8*, len: u64) -> i64 {
+    _a0 = fd as u64
+    _a1 = buf as u64
+    _a2 = len
+    asm {
+        la t0, _a0
+        ld a0, 0(t0)
+        la t0, _a1
+        ld a1, 0(t0)
+        la t0, _a2
+        ld a2, 0(t0)
+        li a7, 64
+        ecall
+        la t0, _ret
+        sd a0, 0(t0)
+    }
+    return _ret
+}
+
+sc_close: (fd: i64) {
+    _a0 = fd as u64
+    asm {
+        la t0, _a0
+        ld a0, 0(t0)
+        li a7, 57
+        ecall
+    }
+}
+
+sc_ftruncate: (fd: i64, len: u64) -> i64 {
+    _a0 = fd as u64
+    _a1 = len
+    asm {
+        la t0, _a0
+        ld a0, 0(t0)
+        la t0, _a1
+        ld a1, 0(t0)
+        li a7, 46
+        ecall
+        la t0, _ret
+        sd a0, 0(t0)
+    }
+    return _ret
+}
+
+; --- Line input ---
+
+; Read a line from the UART into buf (max 255 chars), echoing as it is typed.
+; Yields while idle. Strips the terminating newline.
+ed_read_line: (buf: u8*) {
+    n: u64 = 0
+    done: i64 = 0
+    while done == 0 {
+        c: i64 = sc_readchar()
+        if c < 0 {
+            sc_yield()
+        } else {
+            if c == 10 {
+                console_putchar(10)
+                done = 1
+            } else {
+                if c == 13 {
+                    console_putchar(10)
+                    done = 1
+                } else {
+                    if c == 8 {
+                        if n > 0 {
+                            n = n - 1
+                            console_putchar(8)
+                            console_putchar(32)
+                            console_putchar(8)
+                        }
+                    } else {
+                        if n < 255 {
+                            d: u8* = buf + n
+                            @d = c as u8
+                            n = n + 1
+                            console_putchar(c as i32)
+                        }
+                    }
+                }
+            }
+        }
+    }
+    term: u8* = buf + n
+    @term = 0 as u8
+}
+
+; --- Buffer operations ---
+
+; Load the file at `path` into the buffer, replacing its contents.
+ed_load: (path: u8*) {
+    edit_len = 0
+    fd: i64 = sc_open(path, 2)
+    if fd < 0 {
+        return
+    }
+    bp: u8* = edit_buf[0]
+    off: u64 = 0
+    while off < EDIT_CAP {
+        n: i64 = sc_read(fd, bp + off, off, EDIT_CAP - off)
+        if n <= 0 {
+            break
+        }
+        off = off + n as u64
+    }
+    edit_len = off
+    sc_close(fd)
+}
+
+; Append one byte to the buffer if there is room.
+ed_push: (c: u8) {
+    if edit_len < EDIT_CAP {
+        bp: u8* = edit_buf[0]
+        d: u8* = bp + edit_len
+        @d = c
+        edit_len = edit_len + 1
+    }
+}
+
+; Append mode: read lines until a line that is exactly ".".
+ed_append: () {
+    line: u8[256]
+    lp: u8* = line[0]
+    while 1 == 1 {
+        ed_read_line(lp)
+        ; A lone "." on its own line ends append mode.
+        if @lp == 46 {
+            second: u8* = lp + 1
+            if @second == 0 {
+                return
+            }
+        }
+        i: u64 = 0
+        while @(lp + i) != 0 {
+            ed_push(@(lp + i))
+            i = i + 1
+        }
+        ed_push(10 as u8)
+    }
+}
+
+; Print the buffer with 1-based line numbers.
+ed_print: () {
+    if edit_len == 0 {
+        console_writeln("(empty)".data)
+        return
+    }
+    bp: u8* = edit_buf[0]
+    line_no: i64 = 1
+    console_print_int(line_no)
+    console_write(": ".data)
+    i: u64 = 0
+    while i < edit_len {
+        c: u8 = @(bp + i)
+        console_putchar(c as i32)
+        i = i + 1
+        if c == 10 {
+            if i < edit_len {
+                line_no = line_no + 1
+                console_print_int(line_no)
+                console_write(": ".data)
+            }
+        }
+    }
+    ; Guarantee a trailing newline after an unterminated last line.
+    last: u8* = bp + (edit_len - 1)
+    if @last != 10 {
+        console_putchar(10)
+    }
+}
+
+; Write the buffer back to `path`, truncating the file to the exact length.
+ed_write: (path: u8*) {
+    fd: i64 = sc_open(path, 2)
+    if fd < 0 {
+        console_writeln("edit: write failed (open)".data)
+        return
+    }
+    if edit_len > 0 {
+        bp: u8* = edit_buf[0]
+        n: i64 = sc_write(fd, bp, edit_len)
+        if n < 0 {
+            console_writeln("edit: write failed".data)
+            sc_close(fd)
+            return
+        }
+    }
+    sc_ftruncate(fd, edit_len)
+    sc_close(fd)
+    console_writeln("edit: written".data)
+}
+
+main: () -> i32 {
+    path: u8* = ARG_BASE as u8*
+    ed_load(path)
+
+    console_writeln("edit: a=append p=print c=clear w=write q=quit".data)
+
+    line: u8[256]
+    line_p: u8* = line[0]
+    while 1 == 1 {
+        ed_read_line(line_p)
+        c: u8 = @line_p
+        if c == 97 {
+            ed_append()
+        } else {
+            if c == 112 {
+                ed_print()
+            } else {
+                if c == 99 {
+                    edit_len = 0
+                    console_writeln("edit: cleared".data)
+                } else {
+                    if c == 119 {
+                        ed_write(path)
+                    } else {
+                        if c == 113 {
+                            sc_exit(0)
+                        } else {
+                            if c != 0 {
+                                console_writeln("edit: unknown command".data)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return 0
+}

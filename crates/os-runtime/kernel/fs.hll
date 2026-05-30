@@ -657,6 +657,43 @@ fs_write: (fd: i64, buf: u8*, offset: u64, len: u64) -> i64 {
     return done as i64
 }
 
+; Shrink (or formally fix) the file behind fd to exactly `len` bytes: set the
+; inode size and free every data block that falls entirely past `len`. Used by
+; the editor to truncate a file when its new contents are shorter than the old.
+; Returns 0 on success, -1 on error. Does not grow files (fs_write does that).
+fs_truncate: (fd: i64, len: u64) -> i64 {
+    if fs_ready == 0 {
+        return -1 as i64
+    }
+    if fd < 2 {
+        return -1 as i64
+    }
+    slot: u64 = fs_fd_pa(fd as u64)
+    if fs_rd64(slot + FS_FDE_VALID) == 0 {
+        return -1 as i64
+    }
+    if fs_rd64(slot + FS_FDE_FLAGS) == FS_OPEN_RO {
+        return -1 as i64
+    }
+    inode: u64 = fs_rd64(slot + FS_FDE_INODE)
+    if len >= fs_inode_size(inode) {
+        return 0
+    }
+    ; Number of blocks the truncated file still needs; free the rest.
+    keep: u64 = (len + FS_BLOCK_SIZE - 1) / FS_BLOCK_SIZE
+    blk_slot: u64 = keep
+    while blk_slot < FS_INODE_BLOCKS {
+        blk: u64 = fs_inode_block(inode, blk_slot)
+        if blk != 0 {
+            fs_free_block(blk)
+            fs_inode_set_block(inode, blk_slot, 0)
+        }
+        blk_slot = blk_slot + 1
+    }
+    fs_inode_set_size(inode, len)
+    return 0
+}
+
 ; Return the implicit sequential position for fd, or 0 if fd is invalid.
 fs_get_pos: (fd: i64) -> u64 {
     if fd < 2 {

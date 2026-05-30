@@ -84,6 +84,7 @@ sc_exec: (path: u8*) -> i64 {{
     asm {{
         la t0, _a0
         ld a0, 0(t0)
+        li a1, 0
         li a7, 103
         ecall
         la t0, _ret

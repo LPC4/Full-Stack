@@ -169,4 +169,9 @@ pub mod user {
     /// Interactive shell: reads UART input and runs built-in commands
     /// (`ls`, `cd`, `run`, `exit`). Compiled in hosted mode and booted as pid 1.
     pub const SHELL: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/user/shell.hll"));
+
+    /// Tiny line editor (ed-like). Reads its target path from USER_ARG_BASE,
+    /// loads the file, and edits it with append/print/clear/write/quit commands.
+    /// Compiled in hosted mode and launched by the shell's `edit` command.
+    pub const EDIT: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/user/edit.hll"));
 }
