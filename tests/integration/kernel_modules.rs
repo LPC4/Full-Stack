@@ -5,8 +5,8 @@
 /// `computed_binary_pa` bug in `my_kernel.hll`) is caught here before slower
 /// runtime tests run.
 ///
-/// The module is compiled in isolation — `external` declarations resolve at
-/// link time, so they don't cause errors.  Only truly undefined identifiers
+/// The module is compiled in isolation -- `external` declarations resolve at
+/// link time, so they don't cause errors. Only truly undefined identifiers
 /// (used but never declared) produce a compile-time error.
 use full_stack::compilation_pipeline::{CompilationPipeline, TargetMode};
 use hll_to_ir::stdlib::{get_kernel_stdlib_source, get_stdlib_modules_for_mode, get_stdlib_type_prelude};
@@ -129,7 +129,7 @@ fn kernel_stdlib_has_expected_module_count() {
     let modules = get_stdlib_modules_for_mode(TargetMode::Kernel);
     // Kernel stdlib: types, memory_allocator, string_utils, mem, freestanding
     // runtime, console, klog, trap_entry, utilities, checks, entry, trap_handler,
-    // pmm, vmm, process, syscall, scheduler, fs — at least 18 modules.
+    // pmm, vmm, process, syscall, scheduler, fs -- at least 18 modules.
     assert!(
         modules.len() >= 18,
         "expected at least 18 kernel stdlib modules, got {}",

@@ -277,9 +277,6 @@ impl CompilerView for MemoryMapView {
                                         Sense::hover(),
                                     );
                                     ui.painter().rect_filled(sw, 2.0, sec.color);
-                                    // HACK: that allocated to the wrong column - use a horizontal layout
-                                    // Redo: just use label with colored text
-                                    let _ = sw; // already painted
                                     ui.label(
                                         RichText::new(&sec.name)
                                             .monospace()

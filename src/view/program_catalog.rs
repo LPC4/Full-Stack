@@ -120,12 +120,12 @@ fn built_in_programs() -> Vec<ProgramFile> {
             "Read-only standard library (types, memory, strings, io, runtime)",
             &stdlib_combined,
         ),
-        // OS / kernel source files (read-only, for reference — not individually compilable)
+        // OS / kernel source files (read-only, for reference -- not individually compilable)
         {
             let mut p = ProgramFile::os(
                 "os-kernel-entry",
                 "Entry",
-                "Kernel entry point: _kernel_start → kmain.",
+                "Kernel entry point: _kernel_start -> kmain.",
                 os_runtime::kernel::RUNTIME,
             );
             p.standalone = true;

@@ -650,7 +650,7 @@ fn freestanding_console_contains_no_ecall() {
         .join("\n");
     assert!(
         !non_comment.contains("ecall"),
-        "freestanding console.hll must not use ecall as an instruction — direct UART MMIO only"
+        "freestanding console.hll must not use ecall as an instruction -- direct UART MMIO only"
     );
 }
 

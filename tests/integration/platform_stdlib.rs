@@ -907,7 +907,7 @@ kmain: () -> () {
 }
 
 /// Allocated pages can be written and read back correctly.
-/// Use values below 128 so u8→i32 comparison never sign-extends.
+/// Use values below 128 so u8 -> i32 comparison never sign-extends.
 #[test]
 fn pmm_alloc_page_is_writable() {
     let (uart, exit) = run_kernel_hll(
@@ -1359,7 +1359,7 @@ kmain: () -> () {
         i = i + 1
     }
 
-    ; Now create a process — this exercises kmalloc + vmm_map internally.
+    ; Now create a process -- this exercises kmalloc + vmm_map internally.
     pcb: u64* = process_create(0x40001000)
     if pcb == null {
         klog_error("pcb null after spawn-like workload".data)

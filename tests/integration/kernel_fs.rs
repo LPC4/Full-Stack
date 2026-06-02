@@ -315,7 +315,7 @@ fn kernel_fs_full_lifecycle() {
         "expected boot to complete; uart={uart:?}"
     );
     assert!(
-        uart.contains("[ FS ] mounted"),
+        uart.contains("[  FS  ] mounted"),
         "expected FS mount message; uart={uart:?}"
     );
     assert!(

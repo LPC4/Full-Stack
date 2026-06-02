@@ -1028,7 +1028,7 @@ impl SemanticAnalyzer {
             return true;
         }
 
-        // TODO: can still be improved
+        // No other cast forms are permitted.
         false
     }
 

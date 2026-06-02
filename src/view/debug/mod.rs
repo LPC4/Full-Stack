@@ -149,7 +149,7 @@ impl DebugSession {
             .collect();
 
         // Add ROM firmware symbols so the disassembly view can track the PC
-        // through the boot sequence (ROM_BASE → _start → _m_trap → mret → kernel).
+        // through the boot sequence (ROM_BASE -> _start -> _m_trap -> mret -> kernel).
         symbols.insert("_start".to_owned(), ROM_BASE);
         symbols.insert("_m_trap".to_owned(), ROM_BASE + 0x100);
 

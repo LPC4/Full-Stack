@@ -17,7 +17,7 @@ impl FullStackApp {
     pub(super) fn settings_window_ui(&mut self, ui: &mut egui::Ui) {
         let mut changed = false;
 
-        // ── Appearance ──────────────────────────────────────────────────
+        // --- Appearance ---
         ui.add_space(4.0);
         ui.heading("Appearance");
         ui.add_space(2.0);
@@ -119,7 +119,7 @@ impl FullStackApp {
             .weak(),
         );
 
-        // ── Theme preview ───────────────────────────────────────────────
+        // --- Theme preview ---
         ui.add_space(12.0);
         ui.separator();
         ui.add_space(6.0);
@@ -188,7 +188,7 @@ impl FullStackApp {
             );
         }
 
-        // ── Execution ───────────────────────────────────────────────────
+        // --- Execution ---
         ui.add_space(12.0);
         ui.separator();
         ui.add_space(6.0);
@@ -220,7 +220,7 @@ impl FullStackApp {
                 .weak(),
         );
 
-        // ── Reset ───────────────────────────────────────────────────────
+        // --- Reset ---
         ui.add_space(12.0);
         ui.separator();
         ui.add_space(8.0);
