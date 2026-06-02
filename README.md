@@ -1,203 +1,125 @@
-<div align="center">
-
-<img src="assets/icon/icon.svg" alt="Full-Stack icon" width="128" />
-
 # Full-Stack
 
-### Interactive compiler pipeline, from source to machine code
-
 [![Demo](https://img.shields.io/badge/Demo-GitHub_Pages-5e8c61?logo=github)](https://lpc4.github.io/Full-Stack/)
-[![Rust](https://img.shields.io/badge/Rust-1.92+-5e8c61?logo=rust)](https://www.rust-lang.org)
-[![License](https://img.shields.io/badge/License-MIT_%2F_Apache--2.0-5e8c61)](LICENSE)
-[![RISC-V](https://img.shields.io/badge/RISC--V-RV64IMAFD-5e8c61?logo=riscv)](https://riscv.org)
+[![License](https://img.shields.io/badge/License-MIT_%2F_Apache--2.0-5e8c61)](#license)
 
-</div>
+Full-Stack is a self-contained compiler pipeline for a small systems language (HLL).
+It carries source all the way to machine code and runs the result on a built-in
+RISC-V CPU, with every stage inspectable in a graphical UI:
 
----
+```
+HLL source -> IR -> RISC-V assembly -> ELF object -> virtual machine
+```
 
-## Overview
+The whole toolchain is written in Rust and runs either natively (egui desktop app
+and a `fsc` CLI) or in the browser via WebAssembly. Three target modes are
+supported: **hosted** (Linux syscall ABI), **freestanding** (bare-metal, no OS),
+and **kernel** (an S-mode kernel with boot ROM, paging, processes, a filesystem,
+and an interactive shell).
 
-Full-Stack is a self-contained compiler pipeline for a custom systems language.
-Every stage -- lexing, parsing, semantic analysis, IR generation, register allocation, RISC-V code emission, assembly, and object-level linking -- runs directly in the browser (or natively) and is visualised in real time.
 
-The pipeline compiles HLL source all the way to RV64IMAFD machine code (ELF with full relocation support).
-Three compilation modes are supported: hosted (Linux syscall ABI), freestanding (bare-metal, no OS), and kernel (S-mode with an included boot ROM, PMM, Sv39 VMM, process model, round-robin scheduler, syscall dispatch, an inode-based read-write filesystem, and an interactive shell that boots as pid 1).
-Execution uses a built-in 5-stage pipelined CPU with data forwarding, load-use hazard detection, and 2-bit branch prediction backed by a three-level write-back cache hierarchy.
-All components are written in Rust and exposed through an egui interface.
+## Features
 
-<p align="center">
-  <img src="assets/readme/ide.png" alt="Full-Stack IDE view" width="85%" />
-</p>
+- Complete front-to-back compiler: lexer, parser, semantic analysis, typed SSA IR,
+  register allocation, RV64IMAFD code generation, assembler, and an object linker
+  that emits ELF-64.
+- Per-file compilation: each source compiles to its own `.o` and is linked with
+  relocation, exactly like a real toolchain.
+- A cycle-accurate VM: 5-stage in-order pipeline (IF/ID/EX/MEM/WB) with data
+  forwarding, load-use hazard detection, and 2-bit branch prediction over a
+  three-level write-back cache hierarchy, plus an Sv39 MMU and M/S/U privilege modes.
+- A bundled OS runtime: boot firmware, a paging kernel, a round-robin scheduler, an
+  inode-based read-write filesystem, and a shell with `ls`/`cd`/`cat`/`run`/`edit`.
+- Every stage is visualised: tokens, AST, IR, assembly, CFG, memory map, and a
+  cycle-stepping debugger showing the pipeline, registers, caches, and I/O.
 
----
 
-## Compiler pipeline
+## Architecture
 
 ```
 HLL Source
   -> Lexer / Parser        tokens, AST
-  -> Semantic Analysis     diagnostics
+  -> Semantic Analysis     type checking, diagnostics
   -> IR Compiler           typed SSA IR
-  -> RISC-V Emitter        Vec<RvInstruction>  ->  assembly text
-  -> Assembler  (per file) .o objects  (.text / .data / .rodata / .bss + symbol table)
-  -> ObjectLinker          symbol resolution + relocation -> final ELF
-  -> VM                    5-stage pipelined CPU
+  -> RISC-V Emitter        register allocation, RV64IMAFD assembly
+  -> Assembler             per-file .o objects (.text/.data/.rodata/.bss + symbols)
+  -> ObjectLinker          symbol resolution + relocation -> ELF-64
+  -> Virtual Machine       5-stage pipelined CPU
 ```
 
-### Runtime and linking
+Each HLL file (the standard library modules and user sources alike) is compiled
+independently to its own object, then linked. The stdlib is compiled with a
+distinct string-literal prefix so its rodata labels never collide with user code at
+link time. The VM loads the linked image (or a kernel built from the `os-runtime`
+sources) and steps it one CPU cycle at a time.
 
-- Each HLL file (stdlib modules and user sources) is compiled independently to its own `.o` object.
-- The stdlib is compiled with a distinct string-literal prefix (`__kern_str_` for kernel mode, `str_` for hosted) to avoid duplicate rodata labels at link time.
-- `ObjectLinker::link()` resolves cross-object symbol references and applies relocations to produce a single linked binary.
-- Hosted runtime symbols (`putchar`, `puts`, `print_int`, `printf`, `exit`, `_start`) come from `crates/os-runtime/stdlib/hosted/runtime.hll`.
-- Kernel mode uses the full kernel stdlib bundle (trap entry, PMM, VMM, process, scheduler, syscall dispatch, filesystem); see `crates/os-runtime/`.
+See the [specifications](#documentation) for the full detail of each stage.
 
-| Stage | View | What you see |
-|-------|------|--------------|
-| **Source** | `Source` | Syntax-highlighted editor for HLL programs |
-| **Tokens** | `Tokens` | Raw token stream from the lexer |
-| **AST** | `AST` | Abstract syntax tree (pretty-printed) |
-| **IR** | `IR` | Typed, SSA-form intermediate representation |
-| **Assembly** | `Assembly` | Generated RISC-V assembly text (RV64IMAFD) |
-| **Stack** | `Stack` | Stack frame layout, saved registers, locals per function |
-| **CFG** | `CFG` | Control-flow graph |
-| **Memory map** | `Memory Map` | Section layout and symbol addresses |
 
-All panels are resizable and rearrangeable; the layout persists across sessions.
+## Getting started
 
----
+Requires a recent stable Rust toolchain.
 
-## Debug session
+```sh
+# Native desktop app (egui GUI)
+cargo build --release
+cargo run --release
 
-Starting a debug session compiles the current program and loads it into the built-in VM on native desktop builds.
-Step through execution one pipeline cycle at a time and inspect the full machine state.
+# Run the test suite
+cargo test
 
-<p align="center">
-  <img src="assets/readme/debugger.png" alt="Full-Stack debugger view" width="85%" />
-</p>
-
-| Panel | What you see |
-|-------|--------------|
-| **Pipeline** | Waterfall diagram with branch prediction accuracy in the footer |
-| **CPU State** | All 32 integer and 32 FP registers; highlighted on change |
-| **Disassembly** | Disassembled `.text` with the current PC marker |
-| **Memory** | Raw memory bytes with jump presets for each section |
-| **Cache** | L1 per-line grid, L2 per-way bars, L3 aggregate; hit-rate and access counts per level |
-| **I/O** | UART output from `ecall` write / putchar syscalls |
-
----
-
-## CPU: 5-stage pipelined RV64IMAFD
-
-The built-in virtual machine implements a classic in-order scalar pipeline:
-
-```
-IF  ->  ID  ->  EX  ->  MEM  ->  WB
+# Web build (requires trunk: cargo install trunk)
+trunk serve            # dev server with hot-reload
+trunk build --release  # static bundle in dist/
 ```
 
-**Hazard handling**
+> The browser build runs the compiler and UI client-side, but does not execute the
+> VM. Use the native build to run programs. A live build is hosted at
+> [lpc4.github.io/Full-Stack](https://lpc4.github.io/Full-Stack/).
 
-| Hazard | Mechanism |
-|--------|-----------|
-| RAW (register-to-register) | EX/MEM->EX and MEM/WB->EX forwarding |
-| Load-use | 1-cycle bubble; pipeline stalls (IF held, bubble injected after ID) |
-| Branch mispredict | 2-cycle flush; IF and ID squashed, fetch redirected |
 
-**Branch prediction**: 2-bit bimodal predictor with Branch Target Buffer (BTB).
+## Usage
 
-**Cache hierarchy**: L1 4 KB / L2 256 KB / L3 8 MB, all 64-byte lines, write-back write-allocate with true LRU replacement.
-
----
-
-## Live version
-
-No install required, the compiler and UI run client-side via WebAssembly.
-
-Note: browser builds do not currently run the VM. For execution, use the native desktop build.
-
-**[Open the live app ->](https://lpc4.github.io/Full-Stack/)**
-
----
-
-## The language
-
-The project includes a small systems language called HLL (High-Level Language).
-It was designed to make memory operations completely explicit and predictable.
-
-- **`T*` is a pointer, never implicitly dereferenced.**
-  Use `@ptr` to read/write, `&var` to take an address.
-- **Structs, arrays, generics, and inline aggregates** (multiple returns via structs).
-- **`defer`** for deterministic cleanup.
-- **Compile-time evaluation** -- pure functions, loops, recursion all resolved at build time.
-- **Manual memory management** with `new`/`free`.
-- **C interop** via `external` declarations.
-
-A small example:
+A minimal HLL program:
 
 ```hll
 type Point = { x: f32, y: f32 }
 
-calc_offset: (p: Point*, shift: f32) -> f32 {
-    @p.x = @p.x + shift
-    @p.y = @p.y + shift
-    return @p.x * @p.y
+scale: (p: Point*, factor: f32) -> f32 {
+    @p.x = @p.x * factor
+    @p.y = @p.y * factor
+    return @p.x + @p.y
 }
 
 main: () -> i32 {
     p: Point* = new(Point)
     @p = { .x = 3.0, .y = 4.0 }
-    result: f32 = calc_offset(p, 1.0)
+    scale(p, 2.0)
     free(p)
     return 0
 }
 ```
 
-For the full specification, see the [language reference](crates/hll-to-ir/_LANG_SPECIFICATIONS.md).
+The GUI compiles and runs programs interactively. The `fsc` CLI offers the same
+pipeline without the UI:
 
----
-
-## Documentation
-
-- [Language specification](crates/hll-to-ir/_LANG_SPECIFICATIONS.md)
-- [IR design](crates/ir-to-asm/_IR_SPECIFICATIONS.md)
-- [RISC-V backend](crates/asm-to-binary/_RISCV_SPECIFICATIONS.md)
-- [VM / CPU specification](crates/virtual-machine/_VM_SPECIFICATION.md)
-- [OS / kernel runtime](crates/os-runtime/_OS_SPECIFICATION.md)
-
----
-
-## Build and run
-
-```bash
-# Native desktop build (egui GUI)
-cargo build --release
-
-# Web (WebAssembly) build -- requires trunk
-trunk build --release
-trunk serve          # dev server with hot-reload
-
-# Run all tests
-cargo test
-```
-
----
-
-## CLI (`fsc`)
-
-The native build includes a command-line interface, `fsc`, for compiling and executing HLL programs without the GUI.
-
-```bash
-# Build the CLI binary
+```sh
 cargo build --release --bin fsc
+
+fsc hll-to-ir  program.hll              # compile to IR (stdout)
+fsc hll-to-asm program.hll -o out.s     # compile to RISC-V assembly
+fsc link       main.hll utils.hll -o program.elf
+fsc run        program.hll              # compile and run on the VM
+fsc run        program.hll --mode freestanding
 ```
 
 ### Subcommands
 
 | Command | Description |
 |---------|-------------|
-| `fsc hll-to-ir <file.hll>` | Compile HLL source to IR (printed to stdout) |
+| `fsc hll-to-ir <file.hll>` | Compile HLL source to IR |
 | `fsc hll-to-asm <file.hll>` | Compile HLL source to RISC-V assembly |
-| `fsc link <file.hll>...` | Compile and link multiple HLL sources into an ELF |
+| `fsc link <file.hll>...` | Compile and link multiple sources into an ELF |
 | `fsc run <file>` | Compile and run through the built-in VM |
 | `fsc help` | Show usage |
 
@@ -205,66 +127,73 @@ cargo build --release --bin fsc
 
 | Flag | Description |
 |------|-------------|
-| `-o, --output <path>` | Write output to file instead of stdout |
+| `-o, --output <path>` | Write output to a file instead of stdout |
 | `-m, --mode <hosted\|freestanding>` | Target mode (default: hosted) |
-| `--emit-o` | For `hll-to-asm`, emit a relocatable `.o` file |
+| `--emit-o` | For `hll-to-asm`, emit a relocatable `.o` |
 | `--max-steps <n>` | VM step limit for `run` (default: 50000000) |
 
-### Examples
 
-```bash
-# Compile to IR
-fsc hll-to-ir  program.hll
-fsc hll-to-ir  program.hll -o program.ir
+## The language
 
-# Compile to assembly
-fsc hll-to-asm program.hll
-fsc hll-to-asm program.hll -o program.s
-fsc hll-to-asm program.hll --emit-o -o program.o
+HLL is a small systems language built around explicit, predictable memory access.
 
-# Multi-file link
-fsc link       main.hll utils.hll -o program.elf
-fsc link       main.hll lib1.hll lib2.hll --mode freestanding -o kernel.elf
+- `T*` is a pointer and is never implicitly dereferenced: use `@ptr` to read or
+  write through it and `&var` to take an address.
+- Structs, arrays, generics, and inline aggregates (multiple returns via structs).
+- `defer` for deterministic cleanup, and `new` / `free` for manual memory.
+- Compile-time evaluation of pure functions, loops, and recursion.
+- C interop through `external` declarations.
 
-# Compile and run
-fsc run        program.hll
-fsc run        program.hll --max-steps 1000000
-fsc run        program.hll --mode freestanding
-fsc run        program.s
-```
+The full grammar and semantics are in the
+[language specification](crates/hll-to-ir/_LANG_SPECIFICATIONS.md).
 
----
+
+## Repository layout
+
+| Path | Contents |
+|------|----------|
+| `src/` | Application entry point, egui UI, and the compilation pipeline |
+| `crates/hll-to-ir/` | Lexer, parser, semantic analysis, IR compiler |
+| `crates/ir-to-asm/` | IR to RISC-V assembly lowering |
+| `crates/asm-to-binary/` | Assembler, linker, ELF output |
+| `crates/virtual-machine/` | VM: CPU pipeline, caches, MMU, devices |
+| `crates/os-runtime/` | Kernel sources, standard library, boot firmware |
+| `programs/` | Example programs and the golden compiler test suite |
+| `tests/` | Rust integration tests |
+
+
+## Documentation
+
+Each crate has a README describing its API, and a specification with the full detail.
+
+| Area | Specification |
+|------|---------------|
+| HLL language | [`_LANG_SPECIFICATIONS.md`](crates/hll-to-ir/_LANG_SPECIFICATIONS.md) |
+| IR design | [`_IR_SPECIFICATIONS.md`](crates/ir-to-asm/_IR_SPECIFICATIONS.md) |
+| RISC-V backend | [`_RISCV_SPECIFICATIONS.md`](crates/asm-to-binary/_RISCV_SPECIFICATIONS.md) |
+| VM and CPU | [`_VM_SPECIFICATION.md`](crates/virtual-machine/_VM_SPECIFICATION.md) |
+| OS and kernel runtime | [`_OS_SPECIFICATION.md`](crates/os-runtime/_OS_SPECIFICATION.md) |
+
 
 ## Testing
 
 Golden-file tests compare generated IR and assembly against expected snapshots.
-Integration tests compile and execute HLL programs through the full pipeline and assert on exit codes and UART output.
-This includes two-stage stdlib+user token linking in VM and QEMU integration paths.
+Integration tests compile and execute programs through the full pipeline and assert
+on exit codes and UART output, including the kernel boot path.
 
-```bash
+```sh
 cargo test
-cargo test -- --nocapture   # full output
+cargo test -- --nocapture   # show UART output
 ```
 
----
 
 ## Contributing
 
-Pull requests are welcome. For larger changes, please open an issue first to discuss the approach.
+Pull requests are welcome. For larger changes, please open an issue first to discuss
+the approach. Keep comments ASCII-only and follow the existing style.
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/your-change`)
-3. Commit with clear messages
-4. Push and open a PR
-
----
 
 ## License
 
-Dual-licensed under MIT and Apache 2.0 -- see [LICENSE-MIT](LICENSE-MIT) and [LICENSE-APACHE](LICENSE-APACHE).
-
----
-
-<div align="center">
-  <sub>Built with Rust and <a href="https://github.com/emilk/egui">egui</a></sub>
-</div>
+Dual-licensed under either of [MIT](LICENSE-MIT) or [Apache 2.0](LICENSE-APACHE),
+at your option.

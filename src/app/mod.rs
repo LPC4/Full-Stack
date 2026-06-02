@@ -275,6 +275,8 @@ pub struct FullStackApp {
     #[serde(skip)]
     shell_binary: Option<AssembledOutput>,
     #[serde(skip)]
+    edit_binary: Option<AssembledOutput>,
+    #[serde(skip)]
     vm_output_view_id: u64,
     settings: AppSettings,
     #[serde(skip)]
@@ -315,6 +317,7 @@ impl Default for FullStackApp {
             machine_window: MachineWindow::default(),
             selected_inject_program_id: String::new(),
             shell_binary: None,
+            edit_binary: None,
             vm_output_view_id: 0,
             settings: AppSettings::default(),
             show_settings: false,
@@ -816,6 +819,39 @@ impl FullStackApp {
         }
     }
 
+    /// Compile the bundled line editor as a hosted binary, caching the result
+    /// so repeated boots reuse it. Installed at `/bin/edit` by the boot image
+    /// builder so the shell's `edit` command can exec it.
+    fn ensure_edit_binary(&mut self) -> Result<(), String> {
+        if self.edit_binary.is_some() {
+            return Ok(());
+        }
+        let mut pipeline = CompilationPipeline::new();
+        pipeline.set_target_mode(TargetMode::Hosted);
+        pipeline.set_write_artifacts(false);
+        pipeline.set_type_prelude(get_stdlib_type_prelude());
+
+        let source = format!(
+            "{}\n{}",
+            get_stdlib_source_for_mode(TargetMode::Hosted),
+            os_runtime::user::EDIT
+        );
+        let result = pipeline.run_full(&source, None);
+        if result.has_errors() {
+            return Err(result.format_diagnostics());
+        }
+        if let Some(ref asm_err) = result.assembler_error {
+            return Err(format!("assembler error: {asm_err}"));
+        }
+        match result.binary.as_ref() {
+            Some(bin) => {
+                self.edit_binary = Some(bin.assembled.clone());
+                Ok(())
+            }
+            None => Err("editor produced no binary".to_owned()),
+        }
+    }
+
     /// Build the filesystem image the shell boots with: a `/home` directory and,
     /// if a program is selected for injection, that program stored there as a
     /// runnable executable file. A short readme is always present so `ls` has
@@ -830,6 +866,18 @@ impl FullStackApp {
                 data: readme,
             },
         ];
+
+        // Install the line editor at /bin/edit so the shell's `edit` command can
+        // exec it. Without this the editor is compiled but never reachable.
+        let edit_holder;
+        if let Some(asm) = self.edit_binary.as_ref() {
+            edit_holder = assembled_to_exec_file(asm);
+            entries.push(FsEntry::Dir { path: "/bin" });
+            entries.push(FsEntry::File {
+                path: "/bin/edit",
+                data: &edit_holder,
+            });
+        }
 
         // If a program is selected, write it into /home as an executable file.
         let exec_holder;
@@ -848,10 +896,9 @@ impl FullStackApp {
                 path: &path_holder,
                 data: &exec_holder,
             });
-            build_fs_image(&entries)
-        } else {
-            build_fs_image(&entries)
         }
+
+        build_fs_image(&entries)
     }
 
     fn save_state(&self, storage: &mut dyn eframe::Storage) {
@@ -1006,6 +1053,12 @@ impl eframe::App for FullStackApp {
                 // that holds any selected program as a runnable file.
                 match self.ensure_shell_binary() {
                     Ok(()) => {
+                        // Best-effort: install the editor so `edit` works. A
+                        // failure here should not stop the shell from booting.
+                        if let Err(e) = self.ensure_edit_binary() {
+                            self.compilation_state
+                                .set_error(format!("editor compile failed: {e}"));
+                        }
                         let fs_image = self.build_boot_fs_image();
                         let shell = self.shell_binary.clone();
                         // The shell idles waiting for keystrokes; give it a large

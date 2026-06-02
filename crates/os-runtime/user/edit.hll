@@ -223,9 +223,11 @@ ed_push: (c: u8) {
 
 ; Append mode: read lines until a line that is exactly ".".
 ed_append: () {
+    console_writeln("append mode - end with a single '.' on its own line".data)
     line: u8[256]
     lp: u8* = line[0]
     while 1 == 1 {
+        console_write("* ".data)
         ed_read_line(lp)
         ; A lone "." on its own line ends append mode.
         if @lp == 46 {
@@ -303,6 +305,7 @@ main: () -> i32 {
     line: u8[256]
     line_p: u8* = line[0]
     while 1 == 1 {
+        console_write("edit> ".data)
         ed_read_line(line_p)
         c: u8 = @line_p
         if c == 97 {
