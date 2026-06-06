@@ -1,10 +1,9 @@
 # RISC-V RV64 Bare-Metal Kernel Specification
 
-**Version:** 1.1.0  
-**Target Architecture:** RISC-V 64-bit (RV64IMAFD) with Machine/Supervisor Privilege and Sv39 Virtual Memory  
-**Document Purpose:** Defines the contract between the HLL compiler/runtime and bare-metal kernel code. Covers boot protocol, image format, ABI, runtime split, and hardware abstraction layer for OS development.
-
----
+This document defines the contract between the HLL compiler and runtime and the bare-metal
+kernel code that runs on the VM. It covers the boot protocol, kernel image format, the ABI,
+the three runtime bundles (hosted, freestanding, kernel), the hardware abstraction layer,
+the syscall interface, and the process and filesystem model of the reference kernel.
 
 ## 1. Overview
 
@@ -41,12 +40,11 @@ To make the relationship between firmware, kernel and the higher-level OS cleare
 - User processes and services
   - Role: User-mode programs that run under kernel supervision with address-space isolation. Communicate with the kernel via ecall.
   - Where to find it in the repo: `crates/os-runtime/user/` (example programs). The test harness injects user binaries by placing them at physical address 0x87F00000; the kernel reads metadata, copies pages, maps them, creates a PCB, and adds it to the scheduler.
-  - What is implemented: `user_hello.hll` (prints a greeting via `sys_write`, then yields in a loop) and `shell.hll`, an interactive shell that boots as pid 1 and runs built-in commands (`ls`, `cd`, `run`, `exit`) against the filesystem. The injection mechanism and the full user-process lifecycle (create, run, exec a child, exit) work end-to-end in integration tests.
+  - What is implemented: `user_hello.hll` (prints a greeting via `sys_write`, then yields in a loop) and `shell.hll`, an interactive shell that boots as pid 1 and runs built-in commands (`ls`, `cd`, `cat`, `edit`, `run`, `help`, `exit`) against the filesystem. The injection mechanism and the full user-process lifecycle (create, run, exec a child, exit) work end-to-end in integration tests.
   - Not yet implemented: block-device drivers (the filesystem lives in a RAM image), signals, and multi-hart support.
 
 The remainder of this specification documents the machine model, calling conventions and ABI that the kernel and eventual OS must follow.
 
----
 
 ## 2. Compiler Target Modes
 
@@ -95,7 +93,6 @@ fsc link src/*.hll --mode freestanding   # kernel images use Kernel internally
 
 **Use Case:** OS kernels, the reference `my_kernel.hll`, integration tests.
 
----
 
 ## 3. Hardware Platform
 
@@ -111,9 +108,10 @@ fsc link src/*.hll --mode freestanding   # kernel images use Kernel internally
 | Address Range | Device | Size | Description |
 |---------------|--------|------|-------------|
 | `0x0000_0000` - `0x0FFF_FFFF` | ROM | 256 MB | Boot ROM / firmware (read-only) |
-| `0x1000_0000` - `0x1000_0007` | UART | 8 bytes | NS16550A serial console |
 | `0x0200_0000` - `0x0200_FFFF` | CLINT | 64 KB | Core Local Interruptor (timer + IPI) |
 | `0x0C00_0000` - `0x0CFF_FFFF` | PLIC | 16 MB | Platform-Level Interrupt Controller |
+| `0x1000_0000` - `0x1000_0FFF` | UART | 4 KB | NS16550A serial console (8 registers at the low offsets) |
+| `0x1001_0000` - `0x1001_0FFF` | SYSCON | 4 KB | Halt/exit device (write an exit code to stop the VM) |
 | `0x8000_0000` - ... | RAM | 128 MB | Main memory (DRAM); the built-in VM provides 128 MB |
 
 **Notes:**
@@ -125,7 +123,7 @@ fsc link src/*.hll --mode freestanding   # kernel images use Kernel internally
 ### 3.3 UART (Serial Console)
 
 **Base Address:** `0x1000_0000`  
-**Model:** NS16550A subset (8 registers, 8-byte stride)
+**Model:** NS16550A subset (8 single-byte registers at offsets `0x00`-`0x07`)
 
 | Offset | Register | Access | Description |
 |--------|----------|--------|-------------|
@@ -138,24 +136,35 @@ fsc link src/*.hll --mode freestanding   # kernel images use Kernel internally
 | `0x06` | MSR | R | Modem Status Register |
 | `0x07` | SCR | R/W | Scratch Register |
 
-**Minimal Implementation:**
+Kernel code reaches MMIO through `asm { }` blocks (a raw `li` of the device address
+followed by a load or store), because in S-mode `sp` may point at user virtual addresses
+and an `ecall` is not available. The single argument arrives in `a0`; a value is returned
+in `a0`.
+
 ```hll
-; Write a byte to UART (blocking)
-uart_putchar: (c: i32) -> () {
-    ; Wait until TX holding register is empty (LSR bit 5 = 1)
-    while (u8(0x10000005) & 0x20) == 0 {
-        ; spin
+; Write a byte to the UART transmit register (0x10000000).
+; The VM keeps LSR bit 5 (THR empty) set, so no busy-wait is needed.
+uart_putchar: (c: i32) {
+    asm {
+        li   t0, 0x10000000
+        sb   a0, 0(t0)
     }
-    ; Write character to THR
-    u8(0x10000000) = u8(c)
 }
 
-; Read a byte from UART (non-blocking, returns -1 if empty)
+; Read a byte from the UART (non-blocking). Returns the byte (0-255), or -1 when
+; the receive buffer is empty (LSR bit 0 clear).
 uart_getchar: () -> i32 {
-    if (u8(0x10000005) & 0x01) != 0 {
-        return i32(u8(0x10000000))
+    asm {
+        li   t0, 0x10000000
+        lb   t1, 5(t0)        ; LSR at offset 5
+        andi t1, t1, 1        ; data-ready bit
+        beqz t1, .Lrx_empty
+        lbu  a0, 0(t0)        ; RBR at offset 0
+        j    .Lrx_done
+    .Lrx_empty:
+        li   a0, -1
+    .Lrx_done:
     }
-    return -1
 }
 ```
 
@@ -174,11 +183,17 @@ uart_getchar: () -> i32 {
 - When `MTIME >= MTIMECMP`, sets `MIP.MTIP` (machine timer interrupt pending)
 - Writing to `MTIMECMP` clears the interrupt if condition no longer holds
 
-**Example: Set timer interrupt for 1 second (assuming 10 MHz clock)**
+**Example: arm the timer `interval_cycles` from now**
 ```hll
-set_timer_interrupt: (interval_cycles: u64) -> () {
-    current_time: u64 = *((u64*)0x0200BFF8)
-    *((u64*)0x02004000) = current_time + interval_cycles
+; Set MTIMECMP (hart 0, 0x0200_4000) to MTIME (0x0200_BFF8) + interval_cycles.
+set_timer_interrupt: (interval_cycles: u64) {
+    asm {
+        li   t0, 0x0200BFF8   ; MTIME
+        ld   t1, 0(t0)
+        add  t1, t1, a0       ; a0 = interval_cycles
+        li   t0, 0x02004000   ; MTIMECMP, hart 0
+        sd   t1, 0(t0)
+    }
 }
 ```
 
@@ -196,25 +211,34 @@ set_timer_interrupt: (interval_cycles: u64) -> () {
 - `0x200004`: Claim/Complete register (per-context)
 
 **Operation:**
-1. External device calls `plic_set_irq(source_id)` to assert interrupt
-2. CPU checks `plic_claim(hart_id)` before each instruction fetch
-3. Handler reads claim register -> returns highest-priority pending IRQ
-4. Handler writes IRQ ID to complete register -> clears pending bit
+1. An external device asserts an interrupt source (the VM's UART RX uses source 10).
+2. The trap handler reads the claim register for its context to obtain the pending source.
+3. Reading the claim register returns the highest-priority pending source and clears its
+   pending bit.
+4. The handler writes the source id back to the complete register when it is done.
 
-**Example: Claim next interrupt**
+The reference kernel uses S-mode context 1 (hart 0). Its claim/complete register is at
+`0x0C20_0000 + context * 0x1000 + 4`, i.e. `0x0C20_1004` for context 1.
+
+**Example: claim and complete an interrupt**
 ```hll
-plic_claim: (hart_id: u64) -> u32 {
-    claim_addr: u64 = 0x0C200004 + (hart_id * 0x1000)
-    return *((u32*)claim_addr)
+; Read the claim/complete register for S-mode context 1; clears the pending bit.
+plic_claim: () -> u32 {
+    asm {
+        li   t0, 0x0C201004
+        lw   a0, 0(t0)
+    }
 }
 
-plic_complete: (hart_id: u64, irq_id: u32) -> () {
-    complete_addr: u64 = 0x0C200004 + (hart_id * 0x1000)
-    *((u32*)complete_addr) = irq_id
+; Signal completion by writing the source id back to the same register.
+plic_complete: (irq_id: u32) {
+    asm {
+        li   t0, 0x0C201004
+        sw   a0, 0(t0)        ; a0 = irq_id
+    }
 }
 ```
 
----
 
 ## 4. Kernel Image Format
 
@@ -326,7 +350,6 @@ SECTIONS {
 }
 ```
 
----
 
 ## 5. Boot Protocol
 
@@ -430,7 +453,6 @@ The trap frame is also the process context: `schedule()` copies it in and out of
 
 **Note:** The ROM `_start` stub does not clear BSS or set sp before mret. The kernel's HLL function prologues establish stack frames relative to sp, which the VM initialises to the top of RAM before execution begins.
 
----
 
 ## 6. Calling Convention and ABI
 
@@ -506,7 +528,6 @@ jalr   zero, 0(ra)         # Return to caller
 
 The HLL compiler generates this automatically.
 
----
 
 ## 7. Runtime Split
 
@@ -584,7 +605,6 @@ Everything in the freestanding bundle plus:
 
 **Use Case:** OS kernels, integration tests, the reference `my_kernel.hll`.
 
----
 
 ## 8. Hardware Abstraction Layer (HAL)
 
@@ -658,7 +678,6 @@ timer_set: (interval: u64) -> () {
 }
 ```
 
----
 
 ## 9. Syscall Interface
 
@@ -677,18 +696,21 @@ project-specific extensions added to support the interactive shell.
 | Number | Name | Arguments | Return | Description |
 |--------|------|-----------|--------|-------------|
 | `2` | `yield` | -- | -- | Voluntarily yield the CPU; triggers SCHEDULE action |
+| `46` | `ftruncate` | `a0=fd`, `a1=len` | 0 or -1 | Shrink a file to an exact length |
 | `56` | `open` | `a0=path*`, `a1=flags` | fd (>= 2) or -1 | Open a file by absolute path. flags: 0=RO, 1=RW, 2=create |
 | `57` | `close` | `a0=fd` | 0 | Release a file descriptor |
 | `63` | `read` | `a0=fd`, `a1=buf*`, `a2=offset`, `a3=len` | bytes read or -1 | Read from a filesystem fd at an explicit offset |
 | `64` | `write` | `a0=fd`, `a1=buf*`, `a2=len` | bytes written or -1 | fd 0/1 -> UART; fd >= 2 -> filesystem at the stored position |
 | `82` | `rename` | `a0=old*`, `a1=new*` | 0 or -1 | Move a file or directory (cross-directory allowed) |
 | `83` | `mkdir` | `a0=path*` | inode or -1 | Create a directory at an absolute path |
-| `93` | `exit` | `a0=code` | -- | Terminate the calling process; triggers EXIT_SCHEDULE. Halts the VM if it was the last runnable process |
+| `93` | `exit` | `a0=code` | -- | Terminate the calling process; triggers EXIT_SCHEDULE. The PCB lingers as a zombie holding the exit code until the parent waits. Halts the VM if it was the last runnable process |
 | `100` | `readchar` | -- | byte (0-255) or -1 | Read one byte from the UART receive buffer (non-blocking) |
 | `101` | `readdir` | `a0=path*`, `a1=index`, `a2=name_buf*` | entry type or -1 | Look up the index-th directory entry; writes its name |
 | `102` | `stat` | `a0=path*` | inode type or -1 | Inode type at a path (1=file, 2=dir) |
 | `103` | `exec` | `a0=path*` | new pid or -1 | Load an `FEXE` executable from the filesystem and enqueue it |
 | `104` | `pidalive` | `a0=pid` | 1 or 0 | 1 while a launched pid is still in the ready queue |
+| `220` | `fork` | -- | child pid (parent) / 0 (child) / -1 | Clone the caller: copy its address space and trap frame into a new child process |
+| `260` | `wait` | -- | exit code or -1 | Reap an exited child and return its exit code; -1 if there is no child to reap |
 
 `exec` reads a position-independent flat binary (4 KiB header + payload) from the filesystem and
 maps it at a per-pid 16 MiB code slot starting at `0x4000_0000` (pid 1 at the base), then calls
@@ -705,13 +727,12 @@ wait for it cooperatively.
 | `SYSACT_SCHEDULE` | 1 | Yield: re-enqueue as READY, switch to next process |
 | `SYSACT_EXIT_SCHEDULE` | 2 | Exit: mark EXITED, do not re-enqueue, switch to next |
 
----
 
 ## 10. Process Model
 
 ### 10.1 Process Control Block (PCB)
 
-Each process is represented by a 328-byte PCB allocated with `kmalloc`.
+Each process is represented by a 352-byte PCB allocated with `kmalloc`.
 
 ```
 Offset  Size  Field
@@ -722,6 +743,9 @@ Offset  Size  Field
 24      8     user_stack_pa   (physical address of the user-stack 4 KiB page)
 32      8     entry_pc        (user-space entry point virtual address)
 40      288   trap_frame      (36 u64s: x0..x31, sepc, scause, stval, sstatus)
+328     8     page_root       (physical address of this process's Sv39 root page table)
+336     8     parent_pid      (pid of the parent, set by fork; 0 if none)
+344     8     exit_code       (exit code recorded at exit, read by the parent's wait)
 ```
 
 The `trap_frame` layout matches the on-stack frame built by `stvec_entry`, so

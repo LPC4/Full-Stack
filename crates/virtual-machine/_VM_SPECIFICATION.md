@@ -1,12 +1,12 @@
 # RISC-V RV64IMAFD Virtual Machine Specification
 
-**Version:** 1.2.0  
-**Target Architecture:** RISC-V 64-bit (RV64IMAFD) with Machine/Supervisor-mode Privilege and Sv39 Virtual Memory  
-**Document Purpose:** Complete reference for implementing a RISC-V virtual machine. Covers CPU pipeline, memory model (physical and virtual), CSR behavior, trap handling, MMU implementation, and device emulation.
+This document specifies the `virtual-machine` crate: a cycle-stepped RV64IMAFD emulator with
+Machine, Supervisor, and User privilege modes and Sv39 virtual memory. It covers the CPU
+pipeline, the physical and virtual memory model, CSR behavior, trap handling, the MMU, and
+the emulated devices. It is the reference for both implementing against and understanding
+the VM's observable behavior.
 
----
-
-## 1. Architecture Overview
+## 1. Architecture overview
 
 ### 1.1 VM Components
 - **CPU Core:** In-order, single-issue 5-stage pipeline (Fetch -> Decode -> Execute -> Memory -> Writeback) with data forwarding, load-use hazard detection, and branch prediction
@@ -25,17 +25,16 @@
 - **Memory Ordering:** Sequential consistency (no weak ordering in this VM)
 - **Atomic Operations:** Load-reserved/store-conditional (LR/SC) via reservation set, plus AMO read-modify-write
 
----
 
 ## 2. Memory Map
 
 | Address Range | Device | Size | Description |
 |---------------|--------|------|-------------|
 | `0x0000_0000` - `0x0FFF_FFFF` | ROM | 256 MB | Boot ROM / firmware (read-only) |
-| `0x0010_0000` | SYSCON | 8 bytes | Halt/exit device (write exit code to stop the VM) |
 | `0x0200_0000` - `0x0200_FFFF` | CLINT | 64 KB | Core Local Interruptor (mtime, mtimecmp, msip) |
 | `0x0C00_0000` - `0x0CFF_FFFF` | PLIC | 16 MB | Platform-Level Interrupt Controller |
-| `0x1000_0000` - `0x1000_0007` | UART | 8 bytes | Serial console (NS16550A subset) |
+| `0x1000_0000` - `0x1000_0FFF` | UART | 4 KB | Serial console (NS16550A subset; 8 registers at the low offsets) |
+| `0x1001_0000` - `0x1001_0FFF` | SYSCON | 4 KB | Halt/exit device (write an exit code to stop the VM) |
 | `0x8000_0000` - ... | RAM | 128 MB | Main memory (DRAM); default size is 128 MB |
 
 **Note:** Addresses are physical when virtual memory is disabled (SATP.mode = 0/Bare) or when the
@@ -43,7 +42,6 @@ hart is in M-mode. When Sv39 is enabled (SATP.mode = 8) in S/U-mode, all instruc
 loads, and stores use virtual address translation through the MMU. RAM accesses pass through the
 L1/L2/L3 cache hierarchy; device (MMIO) accesses bypass the caches.
 
----
 
 ## 2.1 Virtual Memory (Sv39)
 
@@ -51,7 +49,7 @@ L1/L2/L3 cache hierarchy; device (MMIO) accesses bypass the caches.
 The VM implements the RISC-V Sv39 virtual memory scheme:
 - **Virtual Address Space:** 39-bit addresses (512 GB)
 - **Physical Address Space:** Up to 56-bit addresses (implementation supports full 64-bit)
-- **Page Size:** 4 KB (2 bytes)
+- **Page Size:** 4 KB (2^12 bytes)
 - **Page Table Levels:** 3-level hierarchical page table
 - **Translation:** Automatic in Fetch and Memory pipeline stages
 
@@ -150,7 +148,6 @@ Non-canonical addresses trigger a Page Fault before translation begins.
 - **Behavior:** No-op in this implementation (no TLB caching)
 - **Purpose:** Ensures subsequent memory accesses use updated page tables
 
----
 
 ## 3. CPU Pipeline Stages
 
@@ -188,7 +185,6 @@ let instruction = bus.read_word(phys_addr)
 
 **Performance Counter:** Increment `cycle` CSR each fetch.
 
----
 
 ### 3.2 Decode Stage
 **Responsibility:** Parse instruction into operation fields and operands.
@@ -213,7 +209,6 @@ let instruction = bus.read_word(phys_addr)
 - `opcode=0x00` -> Illegal instruction
 - Unrecognized `funct3`/`funct7` combinations -> Illegal instruction
 
----
 
 ### 3.3 Execute Stage
 **Responsibility:** Perform arithmetic/logic operations, calculate addresses, evaluate branches.
@@ -255,7 +250,6 @@ target = (rs1 + sext(imm)) & !1
 
 **Performance Counter:** Increment `instret` CSR after successful execution.
 
----
 
 ### 3.4 Memory Stage
 **Responsibility:** Execute load/store operations against system bus with virtual address translation.
@@ -309,7 +303,6 @@ store_int(bus, phys_addr, val, funct3)?;
 - `fsd`: Store all 64 bits
 - FP loads/stores also use MMU translation
 
----
 
 ### 3.5 Writeback Stage
 **Responsibility:** Commit results to register file and CSRs.
@@ -354,7 +347,6 @@ regs.write_x(rd, old_val); // Always write old value to rd
 - `fence` -> No-op in single-core VM (memory already sequentially consistent)
 - `fence.i` -> No-op (no instruction cache in this VM)
 
----
 
 ## 4. Control & Status Registers (CSRs)
 
@@ -519,7 +511,6 @@ csrs.write(addr::SATP, 0); // MODE=0 (Bare)
 - Aliases (`cycle`, `instret`) mirror the machine-mode counters
 - Counters wrap on overflow (modulo 2^64)
 
----
 
 ## 5. Trap Handling
 
@@ -598,13 +589,12 @@ M-mode: it writes `sepc`, `scause`, and `stval`; updates `sstatus.SPIE`/`sstatus
 privilege mode. The boot ROM configures `medeleg`/`mideleg` so the kernel's `stvec` handler
 receives timer interrupts and U-mode ecalls directly.
 
----
 
 ## 6. Device Emulation
 
 ### 6.1 UART (Universal Asynchronous Receiver/Transmitter)
 **Base Address:** `0x1000_0000`  
-**Model:** NS16550A subset (8 registers, 8-byte stride)
+**Model:** NS16550A subset (8 single-byte registers at offsets `0x00`-`0x07`)
 
 | Offset | Register | Access | Description |
 |--------|----------|--------|-------------|
@@ -628,7 +618,6 @@ receives timer interrupts and U-mode ecalls directly.
 - TX buffer accessible via `uart.drain_output()` for test verification
 - RX buffer populated via `uart.receive(byte)` for simulated input
 
----
 
 ### 6.2 CLINT (Core Local Interruptor)
 **Base Address:** `0x0200_0000`  
@@ -654,7 +643,6 @@ receives timer interrupts and U-mode ecalls directly.
 - `MTIMECMP` and `MSIP` are read/write
 - All accesses must be naturally aligned (8-byte for 64-bit registers)
 
----
 
 ### 6.3 PLIC (Platform-Level Interrupt Controller)
 **Base Address:** `0x0C00_0000`  
@@ -684,17 +672,15 @@ receives timer interrupts and U-mode ecalls directly.
 - `plic.next_irq(hart)` polled by CPU interrupt checker
 - Single-context implementation (hart 0 only)
 
----
 
 ### 6.4 SYSCON (Halt / Exit)
-**Base Address:** `0x0010_0000`  
+**Base Address:** `0x1001_0000`  
 **Purpose:** Stop the machine and report an exit code.
 
-Writing a value to SYSCON latches an exit code and signals the run loop to halt. The kernel's
+Writing an 8-byte value to SYSCON latches an exit code and signals the run loop to halt. The kernel's
 `kshutdown` and the freestanding/hosted exit paths use this to terminate the VM; the integration
 harness reads the exit code from the final `RunResult`.
 
----
 
 ### 6.5 Cache Hierarchy
 
@@ -714,7 +700,6 @@ counts, exposed for the debugger's cache view. The caches are purely a performan
 model: they are kept coherent with RAM for debug reads, and bulk injection of binaries flushes the
 hierarchy so the CPU observes the new bytes.
 
----
 
 ## 7. System Bus
 
@@ -722,20 +707,23 @@ hierarchy so the CPU observes the new bytes.
 The bus routes memory accesses to the correct device based on address ranges:
 
 ```rust
-fn route(&mut self, addr: u64) -> Option<&mut dyn MemoryAccess> {
+fn route(&mut self, addr: u64) -> Option<(&mut dyn MemoryAccess, u64)> {
     match addr {
-        0x0000_0000..=0x0FFF_FFFF => Some(&mut self.rom),
-        0x0010_0000..=0x0010_0007 => Some(&mut self.syscon),
-        0x0200_0000..=0x0200_FFFF => Some(&mut self.clint),
-        0x0C00_0000..=0x0CFF_FFFF => Some(&mut self.plic),
-        0x1000_0000..=0x1000_0007 => Some(&mut self.uart),
-        0x8000_0000..=RAM_END     => Some(&mut self.ram), // RAM_END = RAM_BASE + RAM_SIZE
-        _ => None, // Unmapped -> BusError
+        a if a >= UART_BASE  && a <= UART_END  => Some((&mut self.uart,  addr - UART_BASE)),
+        a if a >= CLINT_BASE && a <= CLINT_END => Some((&mut self.clint, addr - CLINT_BASE)),
+        a if a >= PLIC_BASE  && a <= PLIC_END  => Some((&mut self.plic,  addr - PLIC_BASE)),
+        a if a >= ROM_BASE   && a <= ROM_END   => Some((&mut self.rom,   addr)),
+        // Everything else routes to RAM through the L1 cache (which cascades to L2/L3/RAM).
+        _ => Some((&mut self.l1_cache, addr)),
     }
 }
 ```
 
-**Important:** ROM and RAM receive **absolute addresses** (devices subtract their own base internally). UART/CLINT/PLIC receive **local offsets** (base already subtracted by bus).
+UART, CLINT, and PLIC are checked before ROM because their physical addresses fall inside
+the ROM range. ROM and RAM receive absolute addresses (the device subtracts its own base
+internally); UART, CLINT, and PLIC receive a local offset (the bus subtracts the base).
+SYSCON is not in this table: its writes are intercepted in the bus `MemoryAccess` impl,
+which latches the exit code rather than dispatching to a device.
 
 ### 7.2 Memory Access Trait
 All devices implement the `MemoryAccess` trait:
@@ -775,7 +763,6 @@ byte3 = bus.read_byte(A + 3)?;
 word = byte0 | (byte1 << 8) | (byte2 << 16) | (byte3 << 24);
 ```
 
----
 
 ## 8. Error Handling
 
@@ -814,7 +801,6 @@ enum VmError {
 - **Traps** (exceptions/interrupts): Saved to CSRs, handler invoked
 - **Fatal errors** (e.g., bus routing failure): Halt VM with error message
 
----
 
 ## 9. Performance Counters & Timing
 
@@ -835,7 +821,6 @@ enum VmError {
 - Used for timer interrupts (compare with `mtimecmp`)
 - Monotonically increasing, never wraps (u64 is sufficient)
 
----
 
 ## 10. Initialization & Reset
 
@@ -869,7 +854,6 @@ entry, and `mret`s into S-mode. See the OS specification for the full boot proto
 - **Devices:** UART buffers empty, CLINT timers = 0, PLIC priorities = 0
 - **Reservation:** LR/SC reservation = None
 
----
 
 ## 11. Execution Loop
 
@@ -900,13 +884,12 @@ causes, `stvec`). An `ecall` serviced in WB likewise squashes the younger in-fli
 before the handler runs.
 
 ### 11.2 Halt Condition
-The VM halts when a write to the SYSCON device (`0x0010_0000`) latches an exit code. Kernel code
+The VM halts when a write to the SYSCON device (`0x1001_0000`) latches an exit code. Kernel code
 reaches this through `kshutdown`, and hosted/freestanding programs through their `exit` path
 (which the ROM or kernel turns into a SYSCON write). The exit code is a signed 64-bit integer;
 negative codes indicate errors. The host run loop also stops if a step returns an unrecoverable
 `VmError` or the `max_steps` budget is exhausted.
 
----
 
 ## 12. Testing & Verification
 
@@ -931,7 +914,6 @@ Compare assembled output against known-good binaries:
 - Validate section layout (text, rodata, data, bss)
 - Check symbol table correctness
 
----
 
 ## Appendix A: Quick Reference
 
@@ -987,13 +969,10 @@ fcsr       = 0x003
 
 ### A.4 Memory Map Summary
 ```
-0x0000_0000 - ROM (256 MB)
-0x0200_0000 - CLINT (64 KB)
-0x0C00_0000 - PLIC (16 MB)
-0x1000_0000 - UART (8 bytes)
-0x8000_0000 - RAM (2 GB)
+0x0000_0000 - ROM    (256 MB)
+0x0200_0000 - CLINT  (64 KB)
+0x0C00_0000 - PLIC   (16 MB)
+0x1000_0000 - UART   (4 KB)
+0x1001_0000 - SYSCON (4 KB)
+0x8000_0000 - RAM    (128 MB)
 ```
-
----
-
-**End of Specification**

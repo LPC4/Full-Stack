@@ -1,12 +1,12 @@
 # RISC-V RV64IMAFD Assembler Specification
 
-**Version:** 1.0.1
-**Target Architecture:** RISC-V 64-bit Base Integer (RV64I) + Multiply/Divide (M) + Atomics (A) + Single/Double Precision Floating Point (F/D)  
-**Document Purpose:** Complete reference for implementing a RISC-V assembler. All instructions, encodings, ABI rules, and validation constraints for RV64IMAFD are included.
+This document is the reference for the `asm-to-binary` assembler and linker. It covers the
+RV64IMAFD instruction set (base integer, multiply/divide, atomics, single and double
+floating point), all instruction encodings, the ABI and calling convention, and the
+validation rules the assembler enforces. Section 9 also records exactly which directives
+and relocations this implementation emits.
 
----
-
-## 1. Architecture Overview
+## 1. Architecture overview
 - **Base:** RV64I (64-bit integer registers, PC-relative branches/jumps, two's complement arithmetic)
 - **Extensions:** M (hardware mul/div), A (atomic memory ops), F (32-bit FP), D (64-bit FP)
 - **Zicsr / Zifencei:** CSR instructions (formerly implicit in I) now belong to the `Zicsr` extension; `fence.i` belongs to `Zifencei`. Assemblers targeting general-purpose RV64GC code should support both unconditionally.
@@ -15,7 +15,6 @@
 - **Memory Model:** RVWMO (Weak Memory Ordering). A-extension provides acquire/release ordering via `aq`/`rl` bits.
 - **Privilege:** Machine (M), Supervisor (S), User (U). Assembler targets U/S mode conventions by default.
 
----
 
 ## 2. Register File
 
@@ -49,7 +48,6 @@
 
 **Note:** With the D extension, each `f` register is 64 bits wide. Single-precision values are stored NaN-boxed in the lower 32 bits. There is **no** even/odd register restriction; any `f0`-`f31` is valid in any FP instruction.
 
----
 
 ## 3. Instruction Formats (Bit 31 -> 0)
 
@@ -81,7 +79,6 @@ For RV64IMAFD, only `00` (S) and `01` (D) are used.
 [funct5:31-27][aq:26][rl:25][rs2:24-20][rs1:19-15][funct3:14-12][rd:11-7][opcode:6-0]
 ```
 
----
 
 ## 4. Immediate Encoding & Offset Calculations
 
@@ -99,8 +96,8 @@ target_pc = current_pc + sext(imm << 1)
 ```
 - `imm[0]` is always implicitly `0` (targets must be 2-byte aligned; 4-byte aligned without C extension)
 - `imm[12]` is the sign bit
-- **Valid byte offset range: `[-4096, +4094]`** (even values only; 4096 in multiples of 2 means offset  {-4096, -4094, ..., 0, ..., +4094})
-- Assembler must **error** if offset is outside this range or is odd.
+- Valid byte offset range: `[-4096, +4094]`, even values only.
+- The assembler must error if the offset is outside this range or is odd.
 
 ### Jump Offset Calculation (J-type)
 ```
@@ -111,9 +108,8 @@ target_pc = current_pc + sext(imm << 1)
 
 ### `lui` / `auipc` Upper Immediate (U-type)
 - The 20-bit `imm[31:12]` is placed in bits 31-12 of the result; bits 11-0 are zero.
-- **Important:** If the 12-bit low part of a symbol's address has bit 11 set (value  0x800), the upper immediate must be incremented by 1 to compensate for sign extension.
+- If the 12-bit low part of a symbol's address has bit 11 set (value >= 0x800), the upper immediate must be incremented by 1 to compensate for sign extension.
 
----
 
 ## 5. Complete Instruction Reference
 
@@ -206,7 +202,6 @@ target_pc = current_pc + sext(imm << 1)
 | `srlw` | R | `0x3B` | `5` | `0x00` | `rd = sext32(rs1[31:0] >> rs2[4:0])` |
 | `sraw` | R | `0x3B` | `5` | `0x20` | `rd = sext32(rs1[31:0] >> rs2[4:0])` |
 
----
 
 ### 5.2 RV64M - Multiply/Divide Extension
 
@@ -220,7 +215,7 @@ All R-type. Non-W instructions: opcode `0x33`, `funct7=0x01`. W instructions: op
 | `mulhsu` | `2` | `rd = (rs1 x rs2)[127:64]` | Signed x unsigned, upper 64 bits |
 | `mulhu` | `3` | `rd = (rs1 x rs2)[127:64]` | Unsigned x unsigned, upper 64 bits |
 | `div` | `4` | `rd = rs1 / rs2` | div/0 -> -1; overflow (INT64_MIN/-1) -> INT64_MIN |
-| `divu` | `5` | `rd = rs1 / rs2` | div/0 -> 2-1 |
+| `divu` | `5` | `rd = rs1 / rs2` | div/0 -> 2^64 - 1 (all ones) |
 | `rem` | `6` | `rd = rs1 % rs2` | div/0 -> rs1; overflow -> 0 |
 | `remu` | `7` | `rd = rs1 % rs2` | div/0 -> rs1 |
 
@@ -235,7 +230,6 @@ All R-type. Non-W instructions: opcode `0x33`, `funct7=0x01`. W instructions: op
 | `remw` | `6` | `rd = sext32(rs1[31:0] % rs2[31:0])` |
 | `remuw` | `7` | `rd = sext32(rs1[31:0] % rs2[31:0])` |
 
----
 
 ### 5.3 RV64A - Atomics Extension
 
@@ -260,13 +254,12 @@ All R-type. Non-W instructions: opcode `0x33`, `funct7=0x01`. W instructions: op
 | `amominu.w/d` | `11000` | `0x18` | `t=M[rs1]; rd=t; M[rs1]=min(t, rs2)` (unsigned) |
 | `amomaxu.w/d` | `11100` | `0x1C` | `t=M[rs1]; rd=t; M[rs1]=max(t, rs2)` (unsigned) |
 
-**Critical notes:**
--  AMO semantics: `rs1` holds the **address**. The loaded value is captured into a temp, returned in `rd`, and the result of the operation is stored back. `rs1` itself is never used as an arithmetic operand.
+Critical notes:
+- AMO semantics: `rs1` holds the address. The loaded value is captured into a temp, returned in `rd`, and the result of the operation is stored back. `rs1` itself is never used as an arithmetic operand.
 - `sc` with `rd=x0` is valid; success/failure status is discarded.
 - `aq`/`rl` default to `0`. Assembler syntax supports `.aq`, `.rl`, `.aqrl` suffixes.
 - `lr`/`sc` addresses must be naturally aligned: 4 bytes for `.w`, 8 bytes for `.d`.
 
----
 
 ### 5.4 RV64F/D - Floating-Point Extensions
 
@@ -278,7 +271,7 @@ All R-type. Non-W instructions: opcode `0x33`, `funct7=0x01`. W instructions: op
 
 **`fmt` field (bits 26:25):** `00`=Single (`.s`), `01`=Double (`.d`). This is a **2-bit field**, not 1 bit.
 
-**Rounding mode (`rm`, bits 14-12):** `000`=RNE, `001`=RTZ, `010`=RDN, `011`=RUP, `100`=RMME, `111`=DYN (from `fcsr.frm`)
+Rounding mode (`rm`, bits 14-12): `000`=RNE, `001`=RTZ, `010`=RDN, `011`=RUP, `100`=RMM, `111`=DYN (from `fcsr.frm`).
 
 #### FP Loads/Stores (I-type / S-type)
 | Mnemonic | Opcode | funct3 | Semantics |
@@ -326,15 +319,17 @@ These instructions transfer bit patterns without conversion. `rs2` must be `0000
 | `fclass.s/d` | `11100` | `001` | `rd = classify(fs1)` (bitmask) | **`rs2` must be `x0`/`f0`; assembler must error otherwise** |
 
 `fclass` result bitmask (bits 9-0):
-- bit 0: -, bit 1: negative normal, bit 2: negative subnormal, bit 3: -0
-- bit 4: +0, bit 5: positive subnormal, bit 6: positive normal, bit 7: +
+- bit 0: negative infinity, bit 1: negative normal, bit 2: negative subnormal, bit 3: negative zero
+- bit 4: positive zero, bit 5: positive subnormal, bit 6: positive normal, bit 7: positive infinity
 - bit 8: signaling NaN, bit 9: quiet NaN
 
 #### FP Conversion Instructions (R-type, opcode `0x53`)
 
-**Key principle:** `funct5` encodes the conversion **direction** only. The `rs2` field (bits 24-20) encodes the **integer type** for FPint conversions. For FPFP conversions, `rs2` encodes the source format.
+The `funct5` field encodes the conversion direction only. The `rs2` field (bits 24-20)
+encodes the integer type for FP-to-integer conversions. For FP-to-FP conversions, `rs2`
+encodes the source format.
 
-##### Integer type codes (rs2 field for FPint)
+##### Integer type codes (rs2 field for FP-to-integer)
 | rs2 value | Integer type |
 |-----------|-------------|
 | `00000` | `w` - 32-bit signed |
@@ -370,7 +365,7 @@ These instructions transfer bit patterns without conversion. `rs2` must be `0000
 | `fcvt.d.l` | `01` | `00010` | `fd = (double)rs1` (from int64, RV64 only) |
 | `fcvt.d.lu` | `01` | `00011` | `fd = (double)rs1` (from uint64, RV64 only) |
 
-##### FP  FP Conversions (opcode `0x53`)
+##### FP-to-FP Conversions (opcode `0x53`)
 The `fmt` field encodes the **destination** format; `rs2` encodes the **source** format.
 
 | Mnemonic | funct5 | fmt | rs2 | Semantics |
@@ -381,7 +376,7 @@ The `fmt` field encodes the **destination** format; `rs2` encodes the **source**
 **Validation:** Assembler must reject `fcvt.<T>.<T>` where source and destination types are identical (e.g., `fcvt.s.s`, `fcvt.w.w`).
 
 #### FMAC Instructions (R4-type)
-`fd = (fs1 x fs2)  fs3`
+A fused multiply-add of the form `fd = +/-(fs1 x fs2) +/- fs3`.
 Format: `[rs3:31-27][fmt:26-25][rs2:24-20][rs1:19-15][rm:14-12][rd:11-7][opcode:6-0]`
 
 | Mnemonic | opcode | Semantics |
@@ -391,7 +386,6 @@ Format: `[rs3:31-27][fmt:26-25][rs2:24-20][rs1:19-15][rm:14-12][rd:11-7][opcode:
 | `fnmsub.s/d` | `0x4B` | `fd = -(fs1 x fs2) + fs3` |
 | `fnmadd.s/d` | `0x4F` | `fd = -(fs1 x fs2) - fs3` |
 
----
 
 ## 6. CSR Instructions (Zicsr Extension)
 I-type, opcode `0x73`. `csr` is the 12-bit CSR address (bits 31-20). For immediate variants (`csrrwi`, `csrrsi`, `csrrci`), the 5-bit zero-extended unsigned immediate (`uimm`) is in the `rs1` field (bits 19-15).
@@ -421,7 +415,6 @@ I-type, opcode `0x73`. `csr` is the 12-bit CSR address (bits 31-20). For immedia
 | `mcause` | `0x342` | Machine trap cause |
 | `mtval` | `0x343` | Machine bad address or instruction |
 
----
 
 ## 7. Standard Pseudo-Instructions
 
@@ -446,9 +439,9 @@ I-type, opcode `0x73`. `csr` is the 12-bit CSR address (bits 31-20). For immedia
 | `bltz rs, L` | `blt rs, x0, L` | Branch if less than zero |
 | `bgtz rs, L` | `blt x0, rs, L` | Branch if greater than zero |
 | `bgt rs1, rs2, L` | `blt rs2, rs1, L` | Branch if rs1 > rs2 (signed) |
-| `ble rs1, rs2, L` | `bge rs2, rs1, L` | Branch if rs1  rs2 (signed) |
+| `ble rs1, rs2, L` | `bge rs2, rs1, L` | Branch if rs1 <= rs2 (signed) |
 | `bgtu rs1, rs2, L` | `bltu rs2, rs1, L` | Branch if rs1 > rs2 (unsigned) |
-| `bleu rs1, rs2, L` | `bgeu rs2, rs1, L` | Branch if rs1  rs2 (unsigned) |
+| `bleu rs1, rs2, L` | `bgeu rs2, rs1, L` | Branch if rs1 <= rs2 (unsigned) |
 | `j L` | `jal x0, L` | Unconditional jump (no link) |
 | `jr rs` | `jalr x0, 0(rs)` | Jump to register |
 | `ret` | `jalr x0, 0(ra)` | Return from function |
@@ -468,14 +461,13 @@ I-type, opcode `0x73`. `csr` is the 12-bit CSR address (bits 31-20). For immedia
 
 **Removed pseudo:** `fmvp.s/d` - this is **not** a standard RISC-V pseudo-instruction and must not be used. Use `fmv.w.x` / `fmv.d.x` to move from integer to FP, or `fmv.s` / `fmv.d` to copy between FP registers.
 
----
 
 ## 8. RV64IMAFD ABI & Calling Convention
 
 ### Argument Passing
 - **Integer / Pointer:** `a0`-`a7` (`x10`-`x17`)
 - **Floating Point:** `fa0`-`fa7` (`f10`-`f17`)
-- **Small structs/aggregates ( 16 bytes):** May be passed in up to two registers (integer or FP as applicable)
+- **Small structs/aggregates (<= 16 bytes):** May be passed in up to two registers (integer or FP as applicable)
 - **Large structs (> 16 bytes):** Passed by reference (pointer in integer register)
 - **Variadic / `va_list` arguments:** Per the RISC-V C ABI, all floating-point arguments that fall within the variable portion of a variadic argument list must be passed in **integer registers** (or on the stack), not FP registers. This applies regardless of available FP register slots.
 
@@ -484,7 +476,7 @@ I-type, opcode `0x73`. `csr` is the 12-bit CSR address (bits 31-20). For immedia
 - **FP Single/Double:** `fa0`, `fa1` (`f10`, `f11`)
 
 ### Stack Frame
-- **Alignment:** 16-byte aligned at all call boundaries (sp must be  0 mod 16 on function entry)
+- **Alignment:** 16-byte aligned at all call boundaries (sp must be 0 mod 16 on function entry)
 - **Direction:** Grows downward
 - **Layout (high -> low):** saved registers -> local variables -> outgoing argument overflow area (if >8 int args or >8 FP args)
 
@@ -493,7 +485,6 @@ I-type, opcode `0x73`. `csr` is the 12-bit CSR address (bits 31-20). For immedia
 - FP: `fs0`-`fs11` (`f8`-`f9`, `f18`-`f27`)
 - All other registers are caller-saved (may be clobbered by callees).
 
----
 
 ## 9. Assembler Implementation Requirements
 
@@ -525,36 +516,35 @@ I-type, opcode `0x73`. `csr` is the 12-bit CSR address (bits 31-20). For immedia
 
 8. **`lr.w/d` rs2 field:** `lr` has no second source; the `rs2` field must be `00000`. Assembler should reject any attempt to supply rs2.
 
-### 9.2 Directive Support (Required for Complete Assembler)
+### 9.2 Directives
+
+These are the directives this assembler recognizes. Section-selecting and data-emitting
+directives behave as in GAS; several common aliases are accepted for the same operation.
 
 | Directive | Purpose |
 |-----------|---------|
-| `.text` | Switch to text (code) section |
-| `.data` | Switch to data section |
-| `.bss` | Switch to BSS (zero-initialized) section |
-| `.rodata` | Switch to read-only data section |
-| `.align n` | Align to 2 byte boundary |
-| `.balign n` | Align to n byte boundary |
-| `.p2align n` | Align to 2 boundary (GAS synonym) |
-| `.byte v` | Emit 8-bit value |
-| `.half v` / `.2byte v` | Emit 16-bit value |
-| `.word v` / `.4byte v` | Emit 32-bit value |
-| `.dword v` / `.8byte v` | Emit 64-bit value |
-| `.float f` | Emit IEEE 754 single-precision value |
-| `.double f` | Emit IEEE 754 double-precision value |
-| `.string s` / `.asciz s` | Emit null-terminated ASCII string |
-| `.ascii s` | Emit ASCII string (no null terminator) |
-| `.globl sym` | Mark symbol as globally visible |
-| `.local sym` | Mark symbol as local |
-| `.weak sym` | Mark symbol as weak |
-| `.type sym, @function` / `@object` | Set ELF symbol type |
-| `.size sym, expr` | Set ELF symbol size |
-| `.equ sym, val` | Define assembler constant |
-| `.set sym, val` | Synonym for `.equ` |
-| `.skip n` / `.space n` | Emit n zero bytes |
-| `.zero n` | Emit n zero bytes |
+| `.text` | Switch to the text (code) section |
+| `.data` | Switch to the data section |
+| `.bss` | Switch to the BSS (zero-initialized) section |
+| `.rodata` | Switch to the read-only data section |
+| `.section name` | Switch to a named section |
+| `.align n` / `.balign n` | Align to an `n`-byte boundary |
+| `.byte v` | Emit an 8-bit value |
+| `.half v` / `.short v` | Emit a 16-bit value |
+| `.word v` / `.long v` | Emit a 32-bit value |
+| `.dword v` / `.quad v` | Emit a 64-bit value |
+| `.string s` / `.asciz s` | Emit a null-terminated ASCII string |
+| `.globl sym` / `.global sym` | Mark a symbol as globally visible |
+| `.equ sym, val` / `.set sym, val` | Define an assembler constant |
+| `.space n` / `.zero n` | Emit `n` zero bytes |
 
 ### 9.3 Relocations (ELF `R_RISCV_*`)
+
+This assembler resolves most symbol references internally at link time and emits only three
+relocation kinds in its object output: `R_RISCV_JAL` (unresolved `jal`/`j` targets),
+`R_RISCV_CALL_PLT` (the `call`/`tail` `auipc`+`jalr` pair), and `R_RISCV_PCREL_HI20` (the
+`la` `auipc`+`addi` expansion). The remaining entries below are the standard RISC-V
+relocation set, listed for reference and for interoperability with external linkers.
 
 | Relocation | Format | Usage |
 |------------|--------|-------|
@@ -584,7 +574,6 @@ I-type, opcode `0x73`. `csr` is the 12-bit CSR address (bits 31-20). For immedia
     addi   a0, a0, %pcrel_lo(.Lpcrel_hi0)   # references the auipc label
 ```
 
----
 
 ## 10. Validation & Alignment Rules
 
@@ -596,13 +585,12 @@ I-type, opcode `0x73`. `csr` is the 12-bit CSR address (bits 31-20). For immedia
 - **`lr` `rs2` field:** Must be `00000`. Error if assembler source supplies a second register.
 - **`fclass` `rs2` field:** Must be `00000`. Error if a second argument is supplied.
 - **`fcvt` type validity:** `fcvt.<dst>.<src>` where source and destination FP types are identical is illegal (e.g., `fcvt.s.s`). The assembler must reject this.
-- **FP instructions:** Require `mstatus.fs  0` (FP enabled) at runtime. The assembler does not enforce this but may warn.
+- **FP instructions:** Require `mstatus.fs != 0` (FP enabled) at runtime. The assembler does not enforce this but may warn.
 - **CSR addresses:** Must be in `[0x000, 0xFFF]`.
 - **`sltiu` sign extension:** The assembler must sign-extend the 12-bit immediate to 64 bits for validation purposes (not zero-extend), because the hardware does so before the unsigned comparison.
 - **Atomic alignment:** `lr.w`/`sc.w` require 4-byte-aligned address; `lr.d`/`sc.d` require 8-byte-aligned address. Assembler cannot enforce this statically in general but may warn on obvious violations.
 - **`fence.i` encoding:** All other fields must be zero: `rs1=0`, `rd=0`, `imm=0`.
 
----
 
 ## Appendix A: Quick Encoding Reference
 
@@ -634,7 +622,6 @@ ABI ret:  a0-a1 (int), fa0-fa1 (fp)
 Varargs FP: passed in integer regs / stack
 ```
 
----
 
 ## Appendix B: Instruction Encoding Gotchas
 

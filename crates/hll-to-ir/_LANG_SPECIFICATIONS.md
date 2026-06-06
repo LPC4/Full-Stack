@@ -1,52 +1,58 @@
-## Language Specification v1.5.0
+# HLL Language Specification
 
-**Design Philosophy:** Consistency-First Memory Model  
-**Target Domain:** Systems Programming
+HLL is a small systems language built around a consistency-first memory model. Memory
+operations are explicit, context-independent, and deterministic: there are no implicit
+conversions, no context-dependent dereferencing, and no hidden ownership. This document
+defines the syntax, type system, and semantics that the `hll-to-ir` front end implements.
 
----
+## 1. Core design principles
 
-## 1. Core Design Principles
+HLL enforces a fully consistent pointer model.
 
-HLL enforces a 100% consistent pointer model. Memory operations are context-independent, explicit, and deterministic. The language eliminates implicit conversions, context-dependent dereferencing, and hidden ownership semantics.
+### 1.1 The four golden rules
 
-### 1.1 The Four Golden Rules
-1. **Pointers are always pointers.** If a type contains `*`, it is a pointer type. No implicit conversions between `T` and `T*`.
-2. **Explicit dereferencing with `@`.** `@ptr` reads the value. `@ptr = value` writes the value. Field access requires `@ptr.field`. Array indexing returns pointers.
-3. **Explicit address-of with `&`.** `&identifier` obtains a pointer to a stack variable, and stack-safe lvalues such as `&arr[index]` are also valid. `&@ptr` is invalid.
-4. **No mutable primitive parameters.** All parameters are pass-by-value. Mutation requires explicit pointer parameters (`T*`).
+1. Pointers are always pointers. If a type contains `*`, it is a pointer type. There are
+   no implicit conversions between `T` and `T*`.
+2. Dereference explicitly with `@`. `@ptr` reads the value, `@ptr = value` writes it, and
+   field access uses `@ptr.field`. Array indexing returns pointers.
+3. Take an address explicitly with `&`. `&identifier` is a pointer to a stack variable, and
+   stack-safe lvalues such as `&arr[index]` are also valid. `&@ptr` is invalid.
+4. No mutable primitive parameters. All parameters are pass-by-value; mutation requires an
+   explicit pointer parameter (`T*`).
 
-**Duality Principle:** `@(&x)  x` when `x` is a stack-safe lvalue. The reverse form is not a blanket identity; `&@ptr` is rejected.
+The duality principle: `@(&x)` equals `x` when `x` is a stack-safe lvalue. The reverse is
+not a blanket identity, and `&@ptr` is rejected.
 
----
-
-## 2. Syntax & Lexical Conventions
+## 2. Syntax and lexical conventions
 
 | Feature | Rule |
 |---------|------|
 | Comments | Semicolon `;` (line comment; consumes the rest of the line) |
-| Statement Termination | Significant newlines (one statement per line) |
-| Whitespace | Insignificant except as token separator |
-| Type Annotations | `name: Type = value` |
-| Type Casting | Postfix `as`: `expr as TargetType`. Prefix form `TargetType(value)` also accepted. |
+| Statement termination | Significant newlines (one statement per line) |
+| Whitespace | Insignificant except as a token separator |
+| Type annotations | `name: Type = value` |
+| Type casting | Postfix `as`: `expr as TargetType`. The prefix form `TargetType(value)` is also accepted. |
 
-### 2.1 Syntax Examples
-<pre style="background:#282c34;color:#abb2bf;padding:12px;border-radius:6px;overflow-x:auto;font-family:monospace;font-size:14px;line-height:1.5;"><code><span style="color:#abb2bf">x</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span> <span style="color:#56b6c2">=</span> <span style="color:#98c379">42</span>
-<span style="color:#abb2bf">y</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">f64</span> <span style="color:#56b6c2">=</span> <span style="color:#98c379">3.1415</span>
-<span style="color:#abb2bf">z</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span> <span style="color:#56b6c2">=</span> <span style="color:#98c379">42</span> <span style="color:#7f848e;font-style:italic">; Allowed trailing comment</span>
+### 2.1 Syntax examples
 
-<span style="color:#7f848e;font-style:italic">; Multi-line expression continuation</span>
-<span style="color:#abb2bf">w</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span> <span style="color:#56b6c2">=</span> <span style="color:#98c379">1</span> <span style="color:#56b6c2">+</span> <span style="color:#98c379">2</span>
-    <span style="color:#56b6c2">+</span> <span style="color:#98c379">3</span>
+```hll
+x: i32 = 42
+y: f64 = 3.1415
+z: i32 = 42        ; trailing comment
 
-<span style="color:#7f848e;font-style:italic">; Explicit casting</span>
-<span style="color:#abb2bf">ptr</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span><span style="color:#56b6c2">*</span> <span style="color:#56b6c2">=</span> <span style="color:#e5c07b">i32</span><span style="color:#56b6c2">*(</span><span style="color:#98c379">1000</span><span style="color:#56b6c2">)</span>
-<span style="color:#abb2bf">int_val</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span> <span style="color:#56b6c2">=</span> <span style="color:#e5c07b">i32</span><span style="color:#56b6c2">(</span><span style="color:#abb2bf">ptr</span><span style="color:#56b6c2">)</span></code></pre>
+; multi-line expression continuation
+w: i32 = 1 + 2
+    + 3
 
----
+; explicit casting
+ptr: i32* = i32*(1000)
+int_val: i32 = i32(ptr)
+```
 
-## 3. Type System & Declarations
+## 3. Type system and declarations
 
-### 3.1 Primitive Types
+### 3.1 Primitive types
+
 | Type | Description | Size | Default |
 |------|-------------|------|---------|
 | `i8`, `i16`, `i32`, `i64` | Signed integers | 1, 2, 4, 8 bytes | `0` |
@@ -54,39 +60,47 @@ HLL enforces a 100% consistent pointer model. Memory operations are context-inde
 | `f32`, `f64` | IEEE 754 floats | 4, 8 bytes | `0.0` |
 | `bool` | Boolean | 1 byte | `false` |
 
-**Note:** `Str` is **not** a primitive type. It is defined in the Standard Library as a struct containing a byte pointer and length (`data: u8*`, `length: u64`). String literals (e.g., `"text"`) evaluate to a compile-time anonymous inline struct with the exact shape `{ data: u8*, length: u64 }`, representing the read-only data pointer and its pre-calculated length. Anonymous inline structs are allowed anywhere a struct type is accepted.
+`Str` is not a primitive. It is a standard-library struct holding a byte pointer and a
+length (`data: u8*`, `length: u64`). A string literal such as `"text"` evaluates to a
+compile-time anonymous inline struct with the exact shape `{ data: u8*, length: u64 }`.
+Anonymous inline structs are allowed anywhere a struct type is accepted.
 
-### 3.2 Declaration & Initialization
-<pre style="background:#282c34;color:#abb2bf;padding:12px;border-radius:6px;overflow-x:auto;font-family:monospace;font-size:14px;line-height:1.5;"><code><span style="color:#7f848e;font-style:italic">; Initialized stack variable</span>
-<span style="color:#abb2bf">count</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span> <span style="color:#56b6c2">=</span> <span style="color:#98c379">10</span>
+### 3.2 Declaration and initialization
 
-<span style="color:#7f848e;font-style:italic">; Uninitialized stack array (contains undefined data)</span>
-<span style="color:#abb2bf">buffer</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">u8</span><span style="color:#56b6c2">[</span><span style="color:#98c379">1024</span><span style="color:#56b6c2">]</span>
+```hll
+; Initialized stack variable
+count: i32 = 10
 
-<span style="color:#7f848e;font-style:italic">; Heap allocation (zero-initialized)</span>
-<span style="color:#abb2bf">data_ptr</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span><span style="color:#56b6c2">*</span> <span style="color:#56b6c2">=</span> <span style="color:#c678dd">new</span><span style="color:#56b6c2">(</span><span style="color:#e5c07b">i32</span><span style="color:#56b6c2">)</span>
-<span style="color:#abb2bf">array_ptr</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span><span style="color:#56b6c2">*</span> <span style="color:#56b6c2">=</span> <span style="color:#c678dd">new</span><span style="color:#56b6c2">(</span><span style="color:#e5c07b">i32</span><span style="color:#56b6c2">,</span> <span style="color:#98c379">10</span><span style="color:#56b6c2">)</span>
+; Uninitialized stack array (contains undefined data)
+buffer: u8[1024]
 
-<span style="color:#7f848e;font-style:italic">; Compile-time constant</span>
-<span style="color:#c678dd">const</span> <span style="color:#abb2bf">MAX_SIZE</span> <span style="color:#56b6c2">=</span> <span style="color:#98c379">100</span></code></pre>
-**Heap allocation rules (v1.5.0):**
-- `new(T)` allocates a single element of type `T`; returns `T*`.
-- `new(T, N)` allocates `N` contiguous elements of type `T`; returns `T*`. `N` may be a runtime expression.
-- `new([N]T)` is **removed**; use `new(T, N)` instead.
+; Heap allocation (zero-initialized)
+data_ptr: i32* = new(i32)
+array_ptr: i32* = new(i32, 10)
+
+; Compile-time constant
+const MAX_SIZE = 100
+```
+
+Heap allocation rules:
+
+- `new(T)` allocates a single element of type `T` and returns `T*`.
+- `new(T, N)` allocates `N` contiguous elements of type `T` and returns `T*`. `N` may be a
+  runtime expression.
+- `new([N]T)` has been removed; use `new(T, N)` instead.
 - All heap allocations are zero-initialized.
 
-**String literals:** `"text"` evaluates to a compile-time inline struct `{ data: u8*, length: u64 }` equivalent to `Str`. Assignment `s: Str = "hello"` is valid; no wrapper call is needed.
+String literals: `"text"` evaluates to a compile-time inline struct `{ data: u8*, length: u64 }`
+equivalent to `Str`, so `s: Str = "hello"` is valid with no wrapper call.
 
-**Initialization Rules:**
-- Stack variables must be initialized unless explicitly declared as uninitialized buffers.
-- Reading uninitialized stack variables is a compile-time error.
+Initialization rules: stack variables must be initialized unless declared as an
+uninitialized buffer, and reading an uninitialized stack variable is a compile-time error.
 
----
+## 4. Pointer semantics
 
-## 4. Pointer Semantics
+### 4.1 Core operations
 
-### 4.1 Core Operations
-| Operation | Syntax | Type Rule | Example |
+| Operation | Syntax | Type rule | Example |
 |-----------|--------|-----------|---------|
 | Read | `@ptr` | `T* -> T` | `val: i32 = @x_ptr` |
 | Write | `@ptr = val` | `T* <- T` | `@x_ptr = 42` |
@@ -96,141 +110,170 @@ HLL enforces a 100% consistent pointer model. Memory operations are context-inde
 | Arithmetic | `@(ptr + offset)` | `T* -> T` | `byte: u8 = @(raw_ptr + 3)` |
 | Cast | `val as TargetType` | `S -> T` | `ptr as u8*` |
 
-### 4.2 Pointer Arithmetic Constraints
-- Offsets using `+` are **always strictly in bytes**.
+### 4.2 Pointer arithmetic constraints
+
+- Offsets using `+` are always strictly in bytes.
 - Only addition is permitted for dereferencing: `@(ptr + offset)`.
-- The array index operator `[]` is the **only** operator that performs type-scaled offsets.
+- The array index operator `[]` is the only operator that performs type-scaled offsets.
 - Pointer subtraction is invalid.
 - Pointer-to-pointer arithmetic is invalid.
 
----
-
-## 5. Composite Types
+## 5. Composite types
 
 ### 5.1 Arrays
-Array indexing **always returns a pointer** (`T*`), never a value.
-<pre style="background:#282c34;color:#abb2bf;padding:12px;border-radius:6px;overflow-x:auto;font-family:monospace;font-size:14px;line-height:1.5;"><code><span style="color:#abb2bf">local_arr</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span><span style="color:#56b6c2">[</span><span style="color:#98c379">5</span><span style="color:#56b6c2">]</span>
-<span style="color:#56b6c2">@</span><span style="color:#abb2bf">local_arr</span><span style="color:#56b6c2">[</span><span style="color:#98c379">0</span><span style="color:#56b6c2">]</span> <span style="color:#56b6c2">=</span> <span style="color:#98c379">10</span>          <span style="color:#7f848e;font-style:italic">; Write</span>
-<span style="color:#abb2bf">first</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span> <span style="color:#56b6c2">=</span> <span style="color:#56b6c2">@</span><span style="color:#abb2bf">local_arr</span><span style="color:#56b6c2">[</span><span style="color:#98c379">0</span><span style="color:#56b6c2">]</span>  <span style="color:#7f848e;font-style:italic">; Read</span>
 
-<span style="color:#abb2bf">heap_arr</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span><span style="color:#56b6c2">*</span> <span style="color:#56b6c2">=</span> <span style="color:#c678dd">new</span><span style="color:#56b6c2">(</span><span style="color:#e5c07b">i32</span><span style="color:#56b6c2">,</span> <span style="color:#98c379">10</span><span style="color:#56b6c2">)</span>
-<span style="color:#56b6c2">@</span><span style="color:#abb2bf">heap_arr</span><span style="color:#56b6c2">[</span><span style="color:#98c379">3</span><span style="color:#56b6c2">]</span> <span style="color:#56b6c2">=</span> <span style="color:#98c379">42</span>
-<span style="color:#abb2bf">value</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span> <span style="color:#56b6c2">=</span> <span style="color:#56b6c2">@</span><span style="color:#abb2bf">heap_arr</span><span style="color:#56b6c2">[</span><span style="color:#98c379">3</span><span style="color:#56b6c2">]</span>
+Array indexing always returns a pointer (`T*`), never a value.
 
-<span style="color:#7f848e;font-style:italic">; Array of structs</span>
-<span style="color:#abb2bf">points</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">Point</span><span style="color:#56b6c2">*</span> <span style="color:#56b6c2">=</span> <span style="color:#c678dd">new</span><span style="color:#56b6c2">(</span><span style="color:#e5c07b">Point</span><span style="color:#56b6c2">,</span> <span style="color:#98c379">5</span><span style="color:#56b6c2">)</span>
-<span style="color:#56b6c2">@</span><span style="color:#abb2bf">points</span><span style="color:#56b6c2">[</span><span style="color:#98c379">0</span><span style="color:#56b6c2">]</span> <span style="color:#56b6c2">=</span> <span style="color:#56b6c2">{</span> <span style="color:#abb2bf">x</span><span style="color:#56b6c2">:</span> <span style="color:#98c379">1.0</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">y</span><span style="color:#56b6c2">:</span> <span style="color:#98c379">2.0</span> <span style="color:#56b6c2">}</span>
-<span style="color:#abb2bf">x_val</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">f32</span> <span style="color:#56b6c2">=</span> <span style="color:#56b6c2">@</span><span style="color:#abb2bf">points</span><span style="color:#56b6c2">[</span><span style="color:#98c379">0</span><span style="color:#56b6c2">].</span><span style="color:#abb2bf">x</span></code></pre>
-**Rules:**
-- `arr[index]` yields `T*`. It is syntactic sugar for a type-scaled offset. (e.g., it scales by `sizeof(T)`).
-- Explicit `@` required for value operations (`@arr[index]`).
+```hll
+local_arr: i32[5]
+@local_arr[0] = 10          ; write
+first: i32 = @local_arr[0]  ; read
+
+heap_arr: i32* = new(i32, 10)
+@heap_arr[3] = 42
+value: i32 = @heap_arr[3]
+
+; Array of structs
+points: Point* = new(Point, 5)
+@points[0] = { x: 1.0, y: 2.0 }
+x_val: f32 = @points[0].x
+```
+
+Rules:
+
+- `arr[index]` yields `T*`. It is sugar for a type-scaled offset (it scales by `sizeof(T)`).
+- An explicit `@` is required for value operations (`@arr[index]`).
 - Raw pointer arithmetic `(ptr + offset)` is strictly byte-scaled.
-- Stack arrays: compile-time bounds checking. Heap arrays: no runtime bounds checking.
-- Stack arrays cannot decay to pointers. Use `&arr[0]` to obtain a pointer.
+- Stack arrays get compile-time bounds checking; heap arrays get no runtime bounds checking.
+- Stack arrays cannot decay to pointers; use `&arr[0]` to obtain a pointer.
 
 ### 5.2 Structs
-<pre style="background:#282c34;color:#abb2bf;padding:12px;border-radius:6px;overflow-x:auto;font-family:monospace;font-size:14px;line-height:1.5;"><code><span style="color:#c678dd">type</span> <span style="color:#e5c07b">Point</span> <span style="color:#56b6c2">=</span> <span style="color:#56b6c2">{</span>
-    <span style="color:#abb2bf">x</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">f32</span><span style="color:#56b6c2">,</span>
-    <span style="color:#abb2bf">y</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">f32</span>
-<span style="color:#56b6c2">}</span>
 
-<span style="color:#abb2bf">p1</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">Point</span> <span style="color:#56b6c2">=</span> <span style="color:#56b6c2">{</span> <span style="color:#56b6c2">.</span><span style="color:#abb2bf">x</span> <span style="color:#56b6c2">=</span> <span style="color:#98c379">1.0</span><span style="color:#56b6c2">,</span> <span style="color:#56b6c2">.</span><span style="color:#abb2bf">y</span> <span style="color:#56b6c2">=</span> <span style="color:#98c379">2.0</span> <span style="color:#56b6c2">}</span>
-<span style="color:#abb2bf">p1</span><span style="color:#56b6c2">.</span><span style="color:#abb2bf">x</span> <span style="color:#56b6c2">=</span> <span style="color:#98c379">3.0</span>                  <span style="color:#7f848e;font-style:italic">; Stack: direct access</span>
+```hll
+type Point = {
+    x: f32,
+    y: f32
+}
 
-<span style="color:#abb2bf">p2_ptr</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">Point</span><span style="color:#56b6c2">*</span> <span style="color:#56b6c2">=</span> <span style="color:#c678dd">new</span><span style="color:#56b6c2">(</span><span style="color:#e5c07b">Point</span><span style="color:#56b6c2">)</span>
-<span style="color:#56b6c2">@</span><span style="color:#abb2bf">p2_ptr</span> <span style="color:#56b6c2">=</span> <span style="color:#56b6c2">{</span> <span style="color:#56b6c2">.</span><span style="color:#abb2bf">x</span> <span style="color:#56b6c2">=</span> <span style="color:#98c379">3.0</span><span style="color:#56b6c2">,</span> <span style="color:#56b6c2">.</span><span style="color:#abb2bf">y</span> <span style="color:#56b6c2">=</span> <span style="color:#98c379">4.0</span> <span style="color:#56b6c2">}</span> <span style="color:#7f848e;font-style:italic">; Heap: full struct write</span>
-<span style="color:#56b6c2">@</span><span style="color:#abb2bf">p2_ptr</span><span style="color:#56b6c2">.</span><span style="color:#abb2bf">x</span> <span style="color:#56b6c2">=</span> <span style="color:#98c379">5.0</span>             <span style="color:#7f848e;font-style:italic">; Heap: field write (requires @)</span></code></pre>
-**Struct Type Rule:** Struct type fields are comma-separated. Commas are required between fields; trailing commas are allowed for multiline definitions.
+p1: Point = { .x = 1.0, .y = 2.0 }
+p1.x = 3.0                  ; stack: direct access
 
-**Struct Literal Rule:** Anonymous inline structs may be used anywhere a struct type is accepted. Struct literals support shorthand field initialization with `{ .field = expr }` and, where an explicit annotation is useful, the typed form `{ field: Type = expr }`.
+p2_ptr: Point* = new(Point)
+@p2_ptr = { .x = 3.0, .y = 4.0 } ; heap: full struct write
+@p2_ptr.x = 5.0             ; heap: field write (requires @)
+```
 
-**Field Access Rules:**
-- Stack struct: `struct.field`
-- Heap/Stack pointer to struct: `@ptr.field`
+Struct type rule: fields are comma-separated; commas are required between fields and a
+trailing comma is allowed for multi-line definitions.
 
-### 5.3 Inline Structs & Destructuring
-HLL uses anonymous inline structs for grouping multiple values, including multiple returns. Anonymous inline structs are allowed anywhere a struct type is accepted: variable declarations, parameters, return types, type aliases, and intermediate expressions. Inline structs can be assigned directly to variables or unpacked using explicit destructuring.
+Struct literal rule: anonymous inline structs may be used anywhere a struct type is
+accepted. Literals support shorthand field initialization with `{ .field = expr }` and,
+where an explicit annotation helps, the typed form `{ field: Type = expr }`.
 
-<pre style="background:#282c34;color:#abb2bf;padding:12px;border-radius:6px;overflow-x:auto;font-family:monospace;font-size:14px;line-height:1.5;"><code><span style="color:#7f848e;font-style:italic">; Inline struct return type</span>
-<span style="color:#61afef">get_coordinates</span><span style="color:#56b6c2">:</span> <span style="color:#56b6c2">(</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">-&gt;</span> <span style="color:#56b6c2">{</span> <span style="color:#abb2bf">x</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">f32</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">y</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">f32</span> <span style="color:#56b6c2">}</span> <span style="color:#56b6c2">{</span>
-    <span style="color:#c678dd">return</span> <span style="color:#56b6c2">{</span> <span style="color:#56b6c2">.</span><span style="color:#abb2bf">y</span> <span style="color:#56b6c2">=</span> <span style="color:#98c379">7.2</span><span style="color:#56b6c2">,</span> <span style="color:#56b6c2">.</span><span style="color:#abb2bf">x</span> <span style="color:#56b6c2">=</span> <span style="color:#98c379">3.5</span> <span style="color:#56b6c2">}</span>
-<span style="color:#56b6c2">}</span>
+Field access rules:
 
-<span style="color:#61afef">main</span><span style="color:#56b6c2">:</span> <span style="color:#56b6c2">(</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">-&gt;</span> <span style="color:#56b6c2">(</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">{</span>
-    <span style="color:#7f848e;font-style:italic">; Option 1: Direct Assignment</span>
-    <span style="color:#abb2bf">coords</span> <span style="color:#56b6c2">=</span> <span style="color:#61afef">get_coordinates</span><span style="color:#56b6c2">()</span>
-    <span style="color:#61afef">print</span><span style="color:#56b6c2">(</span><span style="color:#abb2bf">coords</span><span style="color:#56b6c2">.</span><span style="color:#abb2bf">x</span><span style="color:#56b6c2">)</span>
-    <span style="color:#61afef">print</span><span style="color:#56b6c2">(</span><span style="color:#abb2bf">coords</span><span style="color:#56b6c2">.</span><span style="color:#abb2bf">y</span><span style="color:#56b6c2">)</span>
+- Stack struct: `struct.field`.
+- Heap or stack pointer to struct: `@ptr.field`.
 
-    <span style="color:#7f848e;font-style:italic">; Option 2: Struct Destructuring (typed pattern)</span>
-    <span style="color:#7f848e;font-style:italic">; Field names are matched by name, not position, so the order may differ from the source struct</span>
-    <span style="color:#56b6c2">{</span> <span style="color:#abb2bf">y</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">f32</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">x</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">f32</span> <span style="color:#56b6c2">}</span> <span style="color:#56b6c2">=</span> <span style="color:#61afef">get_coordinates</span><span style="color:#56b6c2">()</span>
-    <span style="color:#61afef">print</span><span style="color:#56b6c2">(</span><span style="color:#abb2bf">x</span><span style="color:#56b6c2">)</span>
-<span style="color:#56b6c2">}</span></code></pre>
+### 5.3 Inline structs and destructuring
 
-**Partial Destructuring (Discarding Data)**
-If you only need specific fields from a struct, you can omit the unwanted fields from the destructuring braces. Omitted fields are discarded, and the listed field order does not need to match the source struct.
-<pre style="background:#282c34;color:#abb2bf;padding:12px;border-radius:6px;overflow-x:auto;font-family:monospace;font-size:14px;line-height:1.5;"><code><span style="color:#7f848e;font-style:italic">; Extracts 'value', implicitly discards 'success'</span>
-<span style="color:#56b6c2">{</span> <span style="color:#abb2bf">value</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span> <span style="color:#56b6c2">}</span> <span style="color:#56b6c2">=</span> <span style="color:#61afef">try_operation</span><span style="color:#56b6c2">()</span></code></pre>
+HLL uses anonymous inline structs to group multiple values, including multiple returns.
+They are allowed anywhere a struct type is accepted: declarations, parameters, return
+types, type aliases, and intermediate expressions. An inline struct can be assigned
+directly to a variable or unpacked with explicit destructuring.
 
----
+```hll
+; Inline struct return type
+get_coordinates: () -> { x: f32, y: f32 } {
+    return { .y = 7.2, .x = 3.5 }
+}
 
-## 6. Function Semantics
+main: () -> () {
+    ; Option 1: direct assignment
+    coords = get_coordinates()
+    print(coords.x)
+    print(coords.y)
 
-### 6.1 Parameters & Returns
+    ; Option 2: struct destructuring (typed pattern)
+    ; Fields are matched by name, not position, so the order may differ from the source.
+    { y: f32, x: f32 } = get_coordinates()
+    print(x)
+}
+```
+
+Partial destructuring discards data: list only the fields you need and omit the rest. The
+listed field order does not need to match the source struct.
+
+```hll
+; Extracts 'value', implicitly discards 'success'
+{ value: i32 } = try_operation()
+```
+
+## 6. Function semantics
+
+### 6.1 Parameters and returns
+
 - All parameters are pass-by-value.
-- Mutability requires `T*` parameters and `&` at call site.
-- Returning stack addresses (`return &x`) is a compile-time error.
+- Mutability requires a `T*` parameter and `&` at the call site.
+- Returning a stack address (`return &x`) is a compile-time error.
 - Multiple returns use anonymous inline struct syntax.
-- **Void return:** Omit the `->` clause entirely. The `-> ()` form is accepted for compatibility but deprecated; prefer `name: () { }` over `name: () -> () { }`.
+- Void return: omit the `->` clause entirely. The `-> ()` form is accepted for
+  compatibility but deprecated; prefer `name: () { }` over `name: () -> () { }`.
 
-### 6.0 Module System
-Modules are file-scoped. Each source file is one module.
+### 6.2 Module system
+
+Modules are file-scoped: each source file is one module.
 
 ```hll
 import "path/to/module"   ; declare a module dependency
 export fn_name: () { }    ; mark a declaration as visible to importers
 ```
 
-- `import` records the module path for the linker; the compiler pipeline resolves it.
-- `export` marks a declaration as publicly visible. Declarations without `export` are private by convention (the linker still sees them; the keyword serves as documentation and future enforcement).
-- A module implicitly imports the `core` builtins (primitive types, `new`, `free`, `defer`, `asm`).
+- `import` records the module path for the linker; the pipeline resolves it.
+- `export` marks a declaration as publicly visible. Declarations without `export` are
+  private by convention (the linker still sees them; the keyword documents intent and
+  enables future enforcement).
+- A module implicitly imports the `core` builtins (primitive types, `new`, `free`,
+  `defer`, `asm`).
 - Cyclic imports are rejected at compile time.
 
-<pre style="background:#282c34;color:#abb2bf;padding:12px;border-radius:6px;overflow-x:auto;font-family:monospace;font-size:14px;line-height:1.5;"><code><span style="color:#61afef">increment</span><span style="color:#56b6c2">:</span> <span style="color:#56b6c2">(</span><span style="color:#abb2bf">x_ptr</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span><span style="color:#56b6c2">*</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">-&gt;</span> <span style="color:#56b6c2">(</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">{</span>
-    <span style="color:#56b6c2">@</span><span style="color:#abb2bf">x_ptr</span> <span style="color:#56b6c2">=</span> <span style="color:#56b6c2">@</span><span style="color:#abb2bf">x_ptr</span> <span style="color:#56b6c2">+</span> <span style="color:#98c379">1</span>
-<span style="color:#56b6c2">}</span>
+```hll
+increment: (x_ptr: i32*) -> () {
+    @x_ptr = @x_ptr + 1
+}
 
-<span style="color:#61afef">main</span><span style="color:#56b6c2">:</span> <span style="color:#56b6c2">(</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">-&gt;</span> <span style="color:#56b6c2">(</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">{</span>
-    <span style="color:#abb2bf">x</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span> <span style="color:#56b6c2">=</span> <span style="color:#98c379">5</span>
-    <span style="color:#61afef">increment</span><span style="color:#56b6c2">(&</span><span style="color:#abb2bf">x</span><span style="color:#56b6c2">)</span>
-<span style="color:#56b6c2">}</span>
+main: () -> () {
+    x: i32 = 5
+    increment(&x)
+}
 
-<span style="color:#61afef">divide</span><span style="color:#56b6c2">:</span> <span style="color:#56b6c2">(</span><span style="color:#abb2bf">a</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">b</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">-&gt;</span> <span style="color:#56b6c2">{</span> <span style="color:#abb2bf">quotient</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">remainder</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span> <span style="color:#56b6c2">}</span> <span style="color:#56b6c2">{</span>
-    <span style="color:#c678dd">return</span> <span style="color:#56b6c2">{</span> <span style="color:#abb2bf">remainder</span><span style="color:#56b6c2">:</span> <span style="color:#abb2bf">a</span> <span style="color:#56b6c2">%</span> <span style="color:#abb2bf">b</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">quotient</span><span style="color:#56b6c2">:</span> <span style="color:#abb2bf">a</span> <span style="color:#56b6c2">/</span> <span style="color:#abb2bf">b</span> <span style="color:#56b6c2">}</span>
-<span style="color:#56b6c2">}</span>
+divide: (a: i32, b: i32) -> { quotient: i32, remainder: i32 } {
+    return { remainder: a % b, quotient: a / b }
+}
 
-<span style="color:#61afef">main</span><span style="color:#56b6c2">:</span> <span style="color:#56b6c2">(</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">-&gt;</span> <span style="color:#56b6c2">(</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">{</span>
-    <span style="color:#7f848e;font-style:italic">; Direct assignment</span>
-    <span style="color:#abb2bf">s</span> <span style="color:#56b6c2">=</span> <span style="color:#61afef">divide</span><span style="color:#56b6c2">(</span><span style="color:#98c379">10</span><span style="color:#56b6c2">,</span> <span style="color:#98c379">3</span><span style="color:#56b6c2">)</span>
-    <span style="color:#61afef">print</span><span style="color:#56b6c2">(</span><span style="color:#abb2bf">s</span><span style="color:#56b6c2">.</span><span style="color:#abb2bf">quotient</span><span style="color:#56b6c2">)</span>
+main: () -> () {
+    ; Direct assignment
+    s = divide(10, 3)
+    print(s.quotient)
 
-    <span style="color:#7f848e;font-style:italic">; Struct destructuring by name, with fields listed in any order</span>
-    <span style="color:#56b6c2">{</span> <span style="color:#abb2bf">remainder</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">quotient</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span> <span style="color:#56b6c2">}</span> <span style="color:#56b6c2">=</span> <span style="color:#61afef">divide</span><span style="color:#56b6c2">(</span><span style="color:#98c379">10</span><span style="color:#56b6c2">,</span> <span style="color:#98c379">3</span><span style="color:#56b6c2">)</span>
-<span style="color:#56b6c2">}</span></code></pre>
+    ; Struct destructuring by name, with fields listed in any order
+    { remainder: i32, quotient: i32 } = divide(10, 3)
+}
+```
 
----
+## 7. Control flow and resource management
 
-## 7. Control Flow & Resource Management
+### 7.1 Control flow
 
-### 7.1 Control Flow
-- `while`, `if`, `else`, `break`, `continue` are supported.
-- No `for` loop syntax (avoids semantic conflicts with comments).
+- `while`, `if`, `else`, `break`, and `continue` are supported.
+- There is no `for` loop syntax (it would conflict semantically with comments).
 
-### 7.2 `defer` Statement
-- Executes when the enclosing function exits (LIFO order).
-- **Arguments are captured at declaration time**, not at execution. Subsequent mutation of the captured variable does not affect the deferred call.
-- Cannot contain `return` statements.
+### 7.2 The defer statement
+
+- A deferred call runs when the enclosing function exits, in LIFO order.
+- Arguments are captured at declaration time, not at execution. Mutating a captured
+  variable afterward does not affect the deferred call.
+- A defer statement cannot contain a `return`.
 
 ```hll
 ; defer captures the value of `ptr` at this line, not when the function exits.
@@ -238,26 +281,32 @@ defer free(ptr)
 ptr = new(i32)   ; reassigning ptr does not affect the deferred free
 ```
 
-<pre style="background:#282c34;color:#abb2bf;padding:12px;border-radius:6px;overflow-x:auto;font-family:monospace;font-size:14px;line-height:1.5;"><code><span style="color:#61afef">process_data</span><span style="color:#56b6c2">()</span> <span style="color:#56b6c2">{</span>
-    <span style="color:#abb2bf">file</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">File</span><span style="color:#56b6c2">*</span> <span style="color:#56b6c2">=</span> <span style="color:#61afef">open</span><span style="color:#56b6c2">(</span><span style="color:#98c379">"data.bin"</span><span style="color:#56b6c2">)</span>
-    <span style="color:#c678dd">defer</span> <span style="color:#61afef">close</span><span style="color:#56b6c2">(</span><span style="color:#abb2bf">file</span><span style="color:#56b6c2">)</span>
+```hll
+process_data() {
+    file: File* = open("data.bin")
+    defer close(file)
 
-    <span style="color:#abb2bf">buffer</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">u8</span><span style="color:#56b6c2">[</span><span style="color:#98c379">1024</span><span style="color:#56b6c2">]</span>
-    <span style="color:#c678dd">while</span> <span style="color:#56b6c2">!</span><span style="color:#61afef">eof</span><span style="color:#56b6c2">(</span><span style="color:#abb2bf">file</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">{</span>
-        <span style="color:#61afef">read</span><span style="color:#56b6c2">(</span><span style="color:#abb2bf">file</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">buffer</span><span style="color:#56b6c2">,</span> <span style="color:#98c379">1024</span><span style="color:#56b6c2">)</span>
-        <span style="color:#c678dd">if</span> <span style="color:#abb2bf">error_occurred</span> <span style="color:#56b6c2">{</span> <span style="color:#c678dd">return</span> <span style="color:#56b6c2">}</span>
-        <span style="color:#61afef">process</span><span style="color:#56b6c2">(</span><span style="color:#abb2bf">buffer</span><span style="color:#56b6c2">)</span>
-    <span style="color:#56b6c2">}</span>
-<span style="color:#56b6c2">}</span></code></pre>
-**Resource Rule:** All heap allocations require matching `free()` or `defer free()`. No garbage collection.
+    buffer: u8[1024]
+    while !eof(file) {
+        read(file, buffer, 1024)
+        if error_occurred { return }
+        process(buffer)
+    }
+}
+```
 
-### 7.3 Inline Assembly
+Resource rule: every heap allocation needs a matching `free()` or `defer free()`. There is
+no garbage collection.
 
-Two forms of inline assembly let you emit raw RISC-V instructions or read hardware registers directly from HLL. They exist exclusively for low-level system code (`_start`, syscall wrappers, etc.); application code should not need them.
+### 7.3 Inline assembly
 
-**`asm_reg(name)` - register read expression**
+Two forms of inline assembly emit raw RISC-V instructions or read hardware registers
+directly from HLL. They exist only for low-level system code (`_start`, syscall wrappers,
+and similar); application code should not need them.
 
-Reads the current value of a named ABI register as an `i64`. Valid anywhere an expression is accepted, including conditions and arithmetic.
+`asm_reg(name)` is a register-read expression. It reads the current value of a named ABI
+register as an `i64` and is valid anywhere an expression is accepted, including conditions
+and arithmetic.
 
 ```hll
 stack_ok: () -> bool {
@@ -269,9 +318,9 @@ get_sp: () -> i64 {
 }
 ```
 
-**`asm { }` - verbatim assembly block**
-
-A statement that emits raw RISC-V instruction lines interleaved with surrounding compiled code. Each line is one instruction (whitespace-delimited, newline or semicolon terminated).
+`asm { }` is a verbatim assembly block. It emits raw RISC-V instruction lines interleaved
+with the surrounding compiled code. Each line is one instruction, whitespace-delimited and
+terminated by a newline or semicolon.
 
 ```hll
 putchar: (c: i32) -> i32 {
@@ -299,60 +348,67 @@ _start: () {
 }
 ```
 
-**Allowed registers (both forms):** `sp`, `fp`/`s0`, `ra`, `gp`, `tp`, `a0`-`a7`, `s1`-`s11`.
+Allowed registers (both forms): `sp`, `fp`, `ra`, `gp`, `tp`, `a0`-`a7`, `s1`-`s11`.
 
+- `fp` must be spelled `fp`; the `s0` alias is not accepted by name.
 - `gp` (global pointer) and `tp` (thread pointer) are available for OS-level use.
-- Temp registers `t0`-`t6` are **not allowed** - the register allocator may hold live values in them at any asm site; clobbering them would silently corrupt surrounding compiled code.
+- Temp registers `t0`-`t6` are not allowed. The register allocator may hold live values in
+  them at any asm site, so clobbering them would silently corrupt surrounding code.
 
-**Restrictions on `asm { }` blocks:**
-- No HLL variables or expressions inside - raw assembly text only.
-- No data directives (`.asciz`, `.word`, ...) - use HLL string/array literals for data.
-- Branches and labels within a block are permitted; they must not target labels outside the block.
-- Cannot be nested.
+Restrictions on `asm { }` blocks:
 
----
+- No HLL variables or expressions inside; raw assembly text only.
+- No data directives (`.asciz`, `.word`, and so on); use HLL string or array literals for data.
+- Branches and labels within a block are permitted but must not target labels outside it.
+- Blocks cannot be nested.
 
-## 8. Compile-Time Evaluation & Error Handling
+## 8. Compile-time evaluation and error handling
 
-### 8.1 Compile-Time Functions
+### 8.1 Compile-time functions
+
 - Must be pure (no I/O, no side effects).
 - Cannot use `defer`, `new`, or `free`.
-- Only operate on compile-time known values.
+- Operate only on compile-time known values.
 
-<pre style="background:#282c34;color:#abb2bf;padding:12px;border-radius:6px;overflow-x:auto;font-family:monospace;font-size:14px;line-height:1.5;"><code><span style="color:#c678dd">const</span> <span style="color:#abb2bf">FACTORIAL_10</span> <span style="color:#56b6c2">=</span> <span style="color:#61afef">compute_factorial</span><span style="color:#56b6c2">(</span><span style="color:#98c379">10</span><span style="color:#56b6c2">)</span>
-<span style="color:#61afef">compute_factorial</span><span style="color:#56b6c2">(</span><span style="color:#abb2bf">n</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span><span style="color:#56b6c2">):</span> <span style="color:#e5c07b">i32</span> <span style="color:#56b6c2">{</span>
-    <span style="color:#c678dd">if</span> <span style="color:#abb2bf">n</span> <span style="color:#56b6c2">&lt;=</span> <span style="color:#98c379">1</span> <span style="color:#56b6c2">{</span> <span style="color:#c678dd">return</span> <span style="color:#98c379">1</span> <span style="color:#56b6c2">}</span>
-    <span style="color:#c678dd">return</span> <span style="color:#abb2bf">n</span> <span style="color:#56b6c2">*</span> <span style="color:#61afef">compute_factorial</span><span style="color:#56b6c2">(</span><span style="color:#abb2bf">n</span> <span style="color:#56b6c2">-</span> <span style="color:#98c379">1</span><span style="color:#56b6c2">)</span>
-<span style="color:#56b6c2">}</span></code></pre>
+```hll
+const FACTORIAL_10 = compute_factorial(10)
+compute_factorial(n: i32): i32 {
+    if n <= 1 { return 1 }
+    return n * compute_factorial(n - 1)
+}
+```
 
-### 8.2 Error Handling
-- No exceptions. Errors are returned as structs `{ value: T, error: E }`.
+### 8.2 Error handling
+
+- There are no exceptions. Errors are returned as structs `{ value: T, error: E }`.
 - `null` indicates failure for pointer-returning functions.
-- Explicit handling required at each call site. Unwanted fields can be ignored via partial destructuring, and destructuring matches fields by name rather than position.
+- Handling is explicit at each call site. Unwanted fields can be dropped via partial
+  destructuring, which matches by name rather than position.
 
-<pre style="background:#282c34;color:#abb2bf;padding:12px;border-radius:6px;overflow-x:auto;font-family:monospace;font-size:14px;line-height:1.5;"><code><span style="color:#61afef">open_file</span><span style="color:#56b6c2">(</span><span style="color:#abb2bf">path</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">Str</span><span style="color:#56b6c2">*):</span> <span style="color:#56b6c2">{</span> <span style="color:#abb2bf">file</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">File</span><span style="color:#56b6c2">*</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">error</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">Str</span><span style="color:#56b6c2">*</span> <span style="color:#56b6c2">}</span> <span style="color:#56b6c2">{</span>
-    <span style="color:#c678dd">if</span> <span style="color:#61afef">invalid_path</span><span style="color:#56b6c2">(</span><span style="color:#abb2bf">path</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">{</span> 
-        <span style="color:#c678dd">return</span> <span style="color:#56b6c2">{</span> <span style="color:#abb2bf">file</span><span style="color:#56b6c2">:</span> <span style="color:#98c379">null</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">error</span><span style="color:#56b6c2">:</span> <span style="color:#61afef">make_str</span><span style="color:#56b6c2">(</span><span style="color:#98c379">"Invalid path"</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">}</span> 
-    <span style="color:#56b6c2">}</span>
-    <span style="color:#c678dd">return</span> <span style="color:#56b6c2">{</span> <span style="color:#abb2bf">file</span><span style="color:#56b6c2">:</span> <span style="color:#c678dd">new</span><span style="color:#56b6c2">(</span><span style="color:#e5c07b">File</span><span style="color:#56b6c2">),</span> <span style="color:#abb2bf">error</span><span style="color:#56b6c2">:</span> <span style="color:#98c379">null</span> <span style="color:#56b6c2">}</span>
-<span style="color:#56b6c2">}</span>
+```hll
+open_file(path: Str*): { file: File*, error: Str* } {
+    if invalid_path(path) {
+        return { file: null, error: make_str("Invalid path") }
+    }
+    return { file: new(File), error: null }
+}
 
-<span style="color:#61afef">main</span><span style="color:#56b6c2">:</span> <span style="color:#56b6c2">(</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">-&gt;</span> <span style="color:#56b6c2">(</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">{</span>
-    <span style="color:#abb2bf">path</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">Str</span><span style="color:#56b6c2">*</span> <span style="color:#56b6c2">=</span> <span style="color:#61afef">make_str</span><span style="color:#56b6c2">(</span><span style="color:#98c379">"data.txt"</span><span style="color:#56b6c2">)</span>
-    
-    <span style="color:#7f848e;font-style:italic">; We omit 'error' from the destructuring to implicitly discard it</span>
-    <span style="color:#56b6c2">{</span> <span style="color:#abb2bf">file</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">File</span><span style="color:#56b6c2">*</span> <span style="color:#56b6c2">}</span> <span style="color:#56b6c2">=</span> <span style="color:#61afef">open_file</span><span style="color:#56b6c2">(</span><span style="color:#abb2bf">path</span><span style="color:#56b6c2">)</span>
-    
-    <span style="color:#c678dd">if</span> <span style="color:#abb2bf">file</span> <span style="color:#56b6c2">==</span> <span style="color:#98c379">null</span> <span style="color:#56b6c2">{</span>
-        <span style="color:#7f848e;font-style:italic">; Handle failure</span>
-    <span style="color:#56b6c2">}</span>
-<span style="color:#56b6c2">}</span></code></pre>
+main: () -> () {
+    path: Str* = make_str("data.txt")
 
----
+    ; We omit 'error' from the destructuring to implicitly discard it
+    { file: File* } = open_file(path)
 
-## 9. Formal Grammar (EBNF)
+    if file == null {
+        ; Handle failure
+    }
+}
+```
 
-### 9.1 Lexical Grammar
+## 9. Formal grammar (EBNF)
+
+### 9.1 Lexical grammar
+
 ```ebnf
 ident       = letter { letter | digit | "_" };
 integer     = digit { digit };
@@ -363,7 +419,8 @@ comment     = ";" { any_char - newline };
 newline     = "\n" | "\r\n";
 ```
 
-### 9.2 Syntactic Grammar
+### 9.2 Syntactic grammar
+
 ```ebnf
 program        = { declaration };
 declaration    = variable_decl | function_decl | type_decl | const_decl
@@ -417,7 +474,8 @@ field_access   = expression "." identifier;
 array_index    = expression "[" expression "]";
 ```
 
-### 9.3 Operator Precedence
+### 9.3 Operator precedence
+
 | Level | Operators | Associativity |
 |-------|-----------|---------------|
 | 1 | `() [] . as` | Left |
@@ -434,185 +492,208 @@ array_index    = expression "[" expression "]";
 | 12 | `or` | Left |
 | 13 | `=` | Right |
 
-**Precedence is absolute.** Parentheses are required to override the default binding. The parser rejects ambiguous expressions rather than guessing intent.
+Precedence is absolute: parentheses are required to override the default binding, and the
+parser rejects ambiguous expressions rather than guessing intent.
 
-**Important: `as` vs `@` precedence.** Because `as` is at Level 1 (postfix) and `@` is at Level 2 (prefix), `@x as T` parses as `@(x as T)` — casting first, then dereferencing. To dereference and then cast, use explicit outer parentheses: `(@x) as T`. Example:
+The `as` and `@` interaction is a common trap. Because `as` is at level 1 (postfix) and `@`
+is at level 2 (prefix), `@x as T` parses as `@(x as T)` (cast first, then dereference). To
+dereference and then cast, use outer parentheses: `(@x) as T`.
 
 ```hll
-; WRONG: parses as @(ptr as i32) — dereferencing an i32!
+; WRONG: parses as @(ptr as i32) - dereferencing an i32!
 val: i32 = @ptr as i32
 
 ; CORRECT: dereference the u8*, then cast the resulting u8 to i32
 val: i32 = (@ptr) as i32
 ```
 
-**Evaluation order:** Binary expressions, function arguments, and struct literals are evaluated strictly left-to-right. `defer` cleanup runs in LIFO (last-in, first-out) order at the enclosing scope exit.
+Evaluation order: binary expressions, function arguments, and struct literals are evaluated
+strictly left to right. `defer` cleanup runs in LIFO order at the enclosing scope exit.
 
----
+## 10. Memory safety framework
 
-## 10. Memory Safety Framework
+### 10.1 Formal model
 
-### 10.1 Formal Model
-- **Pointer Type `T*`:** Set of memory addresses containing values of type `T`.
-- **Dereference:** Partial functions `load: T* -> T` and `store: T* x T -> unit`, valid only for active pointers.
-- **No Implicit Conversions:** Type system strictly separates `T` and `T*`. Casting requires explicit syntax.
+- Pointer type `T*` is the set of memory addresses holding values of type `T`.
+- Dereference is the partial functions `load: T* -> T` and `store: T* x T -> unit`, valid
+  only for active pointers.
+- There are no implicit conversions; the type system strictly separates `T` and `T*`, and
+  casting requires explicit syntax.
 
-### 10.2 Error Prevention Matrix
-| Error | Traditional Cause | HLL Prevention |
-|-------|------------------|------------------|
-| Null Dereference | Implicit assumptions | Explicit `@`, compile-time null tracking |
-| Use-After-Free | Hidden ownership | Mandatory `free()`, compiler lifetime tracking |
-| Buffer Overflow | Implicit bounds | Explicit indexing, stack bounds checks |
-| Memory Leak | Untracked allocations | `defer free()`, compiler warnings |
-| Dangling Pointers | Implicit copying | No stack address returns, static ownership tracking |
-| Data Races | Implicit sharing | All mutation via explicit pointers |
+### 10.2 Error prevention matrix
 
-**Theorem:** If a program compiles successfully, it contains no dangling pointer dereferences (single-threaded guarantee). Concurrency requires external synchronization primitives.
+| Error | Traditional cause | HLL prevention |
+|-------|-------------------|----------------|
+| Null dereference | Implicit assumptions | Explicit `@`, compile-time null tracking |
+| Use-after-free | Hidden ownership | Mandatory `free()`, compiler lifetime tracking |
+| Buffer overflow | Implicit bounds | Explicit indexing, stack bounds checks |
+| Memory leak | Untracked allocations | `defer free()`, compiler warnings |
+| Dangling pointers | Implicit copying | No stack-address returns, static ownership tracking |
+| Data races | Implicit sharing | All mutation via explicit pointers |
 
----
+If a program compiles successfully, it contains no dangling pointer dereferences (a
+single-threaded guarantee). Concurrency requires external synchronization primitives.
 
-## 11. Standard Library Reference
+## 11. Standard library reference
 
 ### 11.1 Strings
-<pre style="background:#282c34;color:#abb2bf;padding:12px;border-radius:6px;overflow-x:auto;font-family:monospace;font-size:14px;line-height:1.5;"><code><span style="color:#c678dd">type</span> <span style="color:#e5c07b">Str</span> <span style="color:#56b6c2">=</span> <span style="color:#56b6c2">{</span>
-    <span style="color:#abb2bf">data</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">u8</span><span style="color:#56b6c2">*</span><span style="color:#56b6c2">,</span>
-    <span style="color:#abb2bf">length</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">u64</span>
-<span style="color:#56b6c2">}</span>
 
-<span style="color:#7f848e;font-style:italic">; String literals like "Hello World" evaluate to compile-time anonymous inline structs with the exact shape: { data: u8*, length: u64 }</span>
-<span style="color:#61afef">make_str</span><span style="color:#56b6c2">:(</span><span style="color:#abb2bf">raw_str</span><span style="color:#56b6c2">:</span> <span style="color:#56b6c2">{</span> <span style="color:#abb2bf">data</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">u8</span><span style="color:#56b6c2">*</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">length</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">u64</span> <span style="color:#56b6c2">})</span> <span style="color:#56b6c2">-&gt;</span> <span style="color:#e5c07b">Str</span><span style="color:#56b6c2">*</span> <span style="color:#56b6c2">{</span>
-    <span style="color:#56b6c2">{</span> <span style="color:#abb2bf">data</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">u8</span><span style="color:#56b6c2">*</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">length</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">u64</span> <span style="color:#56b6c2">}</span> <span style="color:#56b6c2">=</span> <span style="color:#abb2bf">raw_str</span>
-    <span style="color:#abb2bf">str_ptr</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">Str</span><span style="color:#56b6c2">*</span> <span style="color:#56b6c2">=</span> <span style="color:#c678dd">new</span><span style="color:#56b6c2">(</span><span style="color:#e5c07b">Str</span><span style="color:#56b6c2">)</span>
-    <span style="color:#56b6c2">@</span><span style="color:#abb2bf">str_ptr</span> <span style="color:#56b6c2">=</span> <span style="color:#56b6c2">{</span> <span style="color:#abb2bf">data</span><span style="color:#56b6c2">:</span> <span style="color:#abb2bf">data</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">length</span><span style="color:#56b6c2">:</span> <span style="color:#abb2bf">length</span> <span style="color:#56b6c2">}</span>
-    <span style="color:#c678dd">return</span> <span style="color:#abb2bf">str_ptr</span>
-<span style="color:#56b6c2">}</span></code></pre>
+```hll
+type Str = {
+    data: u8*,
+    length: u64
+}
+
+; String literals like "Hello World" evaluate to compile-time anonymous inline
+; structs with the exact shape: { data: u8*, length: u64 }
+make_str: (raw_str: { data: u8*, length: u64 }) -> Str* {
+    { data: u8*, length: u64 } = raw_str
+    str_ptr: Str* = new(Str)
+    @str_ptr = { data: data, length: length }
+    return str_ptr
+}
+```
 
 ### 11.2 Vector
-<pre style="background:#282c34;color:#abb2bf;padding:12px;border-radius:6px;overflow-x:auto;font-family:monospace;font-size:14px;line-height:1.5;"><code><span style="color:#c678dd">type</span> <span style="color:#e5c07b">Vector</span><span style="color:#56b6c2">&lt;</span><span style="color:#abb2bf">T</span><span style="color:#56b6c2">&gt;</span> <span style="color:#56b6c2">=</span> <span style="color:#56b6c2">{</span>
-    <span style="color:#abb2bf">data</span><span style="color:#56b6c2">:</span> <span style="color:#abb2bf">T</span><span style="color:#56b6c2">*</span><span style="color:#56b6c2">,</span>
-    <span style="color:#abb2bf">length</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">u64</span><span style="color:#56b6c2">,</span>
-    <span style="color:#abb2bf">capacity</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">u64</span>
-<span style="color:#56b6c2">}</span>
 
-<span style="color:#61afef">new_vector</span><span style="color:#56b6c2">:</span> <span style="color:#56b6c2">&lt;</span><span style="color:#abb2bf">T</span><span style="color:#56b6c2">&gt;(</span><span style="color:#abb2bf">initial_capacity</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">u64</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">-&gt;</span> <span style="color:#e5c07b">Vector</span><span style="color:#56b6c2">&lt;</span><span style="color:#abb2bf">T</span><span style="color:#56b6c2">&gt;*</span> <span style="color:#56b6c2">{</span>
-    <span style="color:#abb2bf">vec</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">Vector</span><span style="color:#56b6c2">&lt;</span><span style="color:#abb2bf">T</span><span style="color:#56b6c2">&gt;*</span> <span style="color:#56b6c2">=</span> <span style="color:#c678dd">new</span><span style="color:#56b6c2">(</span><span style="color:#e5c07b">Vector</span><span style="color:#56b6c2">&lt;</span><span style="color:#abb2bf">T</span><span style="color:#56b6c2">&gt;)</span>
-    <span style="color:#56b6c2">@</span><span style="color:#abb2bf">vec</span><span style="color:#56b6c2">.</span><span style="color:#abb2bf">length</span> <span style="color:#56b6c2">=</span> <span style="color:#98c379">0</span>
-    <span style="color:#56b6c2">@</span><span style="color:#abb2bf">vec</span><span style="color:#56b6c2">.</span><span style="color:#abb2bf">capacity</span> <span style="color:#56b6c2">=</span> <span style="color:#abb2bf">initial_capacity</span>
-    <span style="color:#56b6c2">@</span><span style="color:#abb2bf">vec</span><span style="color:#56b6c2">.</span><span style="color:#abb2bf">data</span> <span style="color:#56b6c2">=</span> <span style="color:#c678dd">new</span><span style="color:#56b6c2">(</span><span style="color:#abb2bf">T</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">initial_capacity</span><span style="color:#56b6c2">)</span>
-    <span style="color:#c678dd">return</span> <span style="color:#abb2bf">vec</span>
-<span style="color:#56b6c2">}</span>
+```hll
+type Vector<T> = {
+    data: T*,
+    length: u64,
+    capacity: u64
+}
 
-<span style="color:#61afef">push</span><span style="color:#56b6c2">:</span> <span style="color:#56b6c2">&lt;</span><span style="color:#abb2bf">T</span><span style="color:#56b6c2">&gt;(</span><span style="color:#abb2bf">vec</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">Vector</span><span style="color:#56b6c2">&lt;</span><span style="color:#abb2bf">T</span><span style="color:#56b6c2">&gt;*</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">value</span><span style="color:#56b6c2">:</span> <span style="color:#abb2bf">T</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">-&gt;</span> <span style="color:#56b6c2">(</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">{</span>
-    <span style="color:#c678dd">if</span> <span style="color:#56b6c2">@</span><span style="color:#abb2bf">vec</span><span style="color:#56b6c2">.</span><span style="color:#abb2bf">length</span> <span style="color:#56b6c2">&gt;=</span> <span style="color:#56b6c2">@</span><span style="color:#abb2bf">vec</span><span style="color:#56b6c2">.</span><span style="color:#abb2bf">capacity</span> <span style="color:#56b6c2">{</span> <span style="color:#61afef">resize_vector</span><span style="color:#56b6c2">(</span><span style="color:#abb2bf">vec</span><span style="color:#56b6c2">,</span> <span style="color:#56b6c2">@</span><span style="color:#abb2bf">vec</span><span style="color:#56b6c2">.</span><span style="color:#abb2bf">capacity</span> <span style="color:#56b6c2">*</span> <span style="color:#98c379">2</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">}</span>
-    <span style="color:#56b6c2">@</span><span style="color:#abb2bf">vec</span><span style="color:#56b6c2">.</span><span style="color:#abb2bf">data</span><span style="color:#56b6c2">[</span><span style="color:#56b6c2">@</span><span style="color:#abb2bf">vec</span><span style="color:#56b6c2">.</span><span style="color:#abb2bf">length</span><span style="color:#56b6c2">]</span> <span style="color:#56b6c2">=</span> <span style="color:#abb2bf">value</span>
-    <span style="color:#56b6c2">@</span><span style="color:#abb2bf">vec</span><span style="color:#56b6c2">.</span><span style="color:#abb2bf">length</span> <span style="color:#56b6c2">=</span> <span style="color:#56b6c2">@</span><span style="color:#abb2bf">vec</span><span style="color:#56b6c2">.</span><span style="color:#abb2bf">length</span> <span style="color:#56b6c2">+</span> <span style="color:#98c379">1</span>
-<span style="color:#56b6c2">}</span>
+new_vector: <T>(initial_capacity: u64) -> Vector<T>* {
+    vec: Vector<T>* = new(Vector<T>)
+    @vec.length = 0
+    @vec.capacity = initial_capacity
+    @vec.data = new(T, initial_capacity)
+    return vec
+}
 
-<span style="color:#61afef">free_vector</span><span style="color:#56b6c2">:</span> <span style="color:#56b6c2">&lt;</span><span style="color:#abb2bf">T</span><span style="color:#56b6c2">&gt;(</span><span style="color:#abb2bf">vec</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">Vector</span><span style="color:#56b6c2">&lt;</span><span style="color:#abb2bf">T</span><span style="color:#56b6c2">&gt;*</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">-&gt;</span> <span style="color:#56b6c2">(</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">{</span>
-    <span style="color:#c678dd">free</span><span style="color:#56b6c2">(@</span><span style="color:#abb2bf">vec</span><span style="color:#56b6c2">.</span><span style="color:#abb2bf">data</span><span style="color:#56b6c2">)</span>
-    <span style="color:#c678dd">free</span><span style="color:#56b6c2">(</span><span style="color:#abb2bf">vec</span><span style="color:#56b6c2">)</span>
-<span style="color:#56b6c2">}</span></code></pre>
+push: <T>(vec: Vector<T>*, value: T) -> () {
+    if @vec.length >= @vec.capacity { resize_vector(vec, @vec.capacity * 2) }
+    @vec.data[@vec.length] = value
+    @vec.length = @vec.length + 1
+}
 
-### 11.3 Memory Allocators
-- **Arena:** `new_arena(size)`, `alloc_in_arena(arena, size)`, `free_arena(arena)`. Batch deallocation.
-- **Pool:** `new_pool<T>(count)`, `acquire<T>(pool)`, `release<T>(pool, obj)`. Fixed-size object recycling.
+free_vector: <T>(vec: Vector<T>*) -> () {
+    free(@vec.data)
+    free(vec)
+}
+```
 
-### 11.4 I/O Abstraction
-<pre style="background:#282c34;color:#abb2bf;padding:12px;border-radius:6px;overflow-x:auto;font-family:monospace;font-size:14px;line-height:1.5;"><code><span style="color:#c678dd">type</span> <span style="color:#e5c07b">File</span> <span style="color:#56b6c2">=</span> <span style="color:#56b6c2">{</span> <span style="color:#abb2bf">handle</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">u64</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">buffer</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">u8</span><span style="color:#56b6c2">*</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">buffer_size</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">u64</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">buffer_pos</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">u64</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">buffer_end</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">u64</span> <span style="color:#56b6c2">}</span>
-<span style="color:#61afef">open_file</span><span style="color:#56b6c2">:(</span><span style="color:#abb2bf">path</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">Str</span><span style="color:#56b6c2">*:</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">-&gt;</span> <span style="color:#56b6c2">{</span> <span style="color:#abb2bf">file</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">File</span><span style="color:#56b6c2">*</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">error</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">Str</span><span style="color:#56b6c2">*</span> <span style="color:#56b6c2">}</span>
-<span style="color:#61afef">read_byte</span><span style="color:#56b6c2">:(</span><span style="color:#abb2bf">f</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">File</span><span style="color:#56b6c2">*:</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">-&gt;</span> <span style="color:#56b6c2">{</span> <span style="color:#abb2bf">byte</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">u8</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">eof</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">bool</span> <span style="color:#56b6c2">}</span>
-<span style="color:#61afef">close_file</span><span style="color:#56b6c2">:(</span><span style="color:#abb2bf">f</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">File</span><span style="color:#56b6c2">*:</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">-&gt;</span> <span style="color:#56b6c2">(</span><span style="color:#56b6c2">)</span></code></pre>
-**Rule:** All resource-allocating functions return cleanup routines. Use `defer` for guaranteed release.
+### 11.3 Memory allocators
 
----
+- Arena: `new_arena(size)`, `alloc_in_arena(arena, size)`, `free_arena(arena)` for batch
+  deallocation.
+- Pool: `new_pool<T>(count)`, `acquire<T>(pool)`, `release<T>(pool, obj)` for fixed-size
+  object recycling.
 
-## 12. Interoperability & FFI
+### 11.4 I/O abstraction
 
-### 12.1 C ABI Compatibility
+```hll
+type File = { handle: u64, buffer: u8*, buffer_size: u64, buffer_pos: u64, buffer_end: u64 }
+open_file: (path: Str*) -> { file: File*, error: Str* }
+read_byte: (f: File*) -> { byte: u8, eof: bool }
+close_file: (f: File*) -> ()
+```
+
+Resource-allocating functions return cleanup routines; use `defer` for guaranteed release.
+
+## 12. Interoperability and FFI
+
+### 12.1 C ABI compatibility
+
 | HLL | C |
-|-------|---|
+|-----|---|
 | `i32` / `u32` | `int` / `unsigned int` |
 | `f32` / `f64` | `float` / `double` |
 | `bool` | `_Bool` |
 | Standard structs | `struct` |
 | Function pointers | Function pointers |
 
-### 12.2 Ownership Transfer Protocols
-1. **Caller Retains Ownership:** C reads/writes but does not free. HLL calls `free()` later.
-2. **Transfer to C:** HLL passes pointer, C assumes ownership. HLL must not call `free()`.
-3. **Transfer from C:** C allocates, returns pointer. HLL assumes ownership and must call `free()`.
-4. **Shared Reference Counting:** Both sides follow `atomic_increment`/`atomic_decrement` protocol. Last owner frees memory.
+### 12.2 Ownership transfer protocols
 
-### 12.3 FFI Wrapper Pattern
-<pre style="background:#282c34;color:#abb2bf;padding:12px;border-radius:6px;overflow-x:auto;font-family:monospace;font-size:14px;line-height:1.5;"><code><span style="color:#c678dd">external</span> <span style="color:#61afef">external_compute_sum</span><span style="color:#56b6c2">:(</span><span style="color:#abb2bf">values</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">f32</span><span style="color:#56b6c2">*</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">count</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">-&gt;</span> <span style="color:#e5c07b">f32</span>
+1. Caller retains ownership: C reads and writes but does not free; HLL calls `free()` later.
+2. Transfer to C: HLL passes a pointer and C assumes ownership; HLL must not call `free()`.
+3. Transfer from C: C allocates and returns a pointer; HLL assumes ownership and must call
+   `free()`.
+4. Shared reference counting: both sides follow an `atomic_increment` / `atomic_decrement`
+   protocol, and the last owner frees the memory.
 
-<span style="color:#61afef">compute_sum_wrapper</span><span style="color:#56b6c2">:(</span><span style="color:#abb2bf">values</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">f32</span><span style="color:#56b6c2">*</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">count</span><span style="color:#56b6c2">:</span> <span style="color:#e5c07b">i32</span><span style="color:#56b6c2">)</span> <span style="color:#56b6c2">-&gt;</span> <span style="color:#e5c07b">f32</span> <span style="color:#56b6c2">{</span>
-    <span style="color:#c678dd">return</span> <span style="color:#61afef">external_compute_sum</span><span style="color:#56b6c2">(</span><span style="color:#abb2bf">values</span><span style="color:#56b6c2">,</span> <span style="color:#abb2bf">count</span><span style="color:#56b6c2">)</span>
-<span style="color:#56b6c2">}</span></code></pre>
-**Rule:** Cross-boundary ownership must be explicitly documented. Compiler guarantees do not apply across FFI boundaries.
+### 12.3 FFI wrapper pattern
 
----
+```hll
+external external_compute_sum: (values: f32*, count: i32) -> f32
 
-## 13. Compiler Implementation Notes
+compute_sum_wrapper: (values: f32*, count: i32) -> f32 {
+    return external_compute_sum(values, count)
+}
+```
 
-### 13.1 Optimization Opportunities
-- **Alias Analysis:** Explicit pointer operations enable precise tracking.
-- **Dead Store Elimination:** Unambiguous write locations.
-- **Vectorization:** Array indexing consistently yields pointers, enabling SIMD lane generation.
-- **Escape Analysis:** `&` operator explicitly marks escaping variables.
+Cross-boundary ownership must be documented explicitly; compiler guarantees do not apply
+across FFI boundaries.
 
-### 13.2 Escape Analysis Rules
+## 13. Compiler implementation notes
+
+### 13.1 Optimization opportunities
+
+- Alias analysis: explicit pointer operations enable precise tracking.
+- Dead-store elimination: write locations are unambiguous.
+- Vectorization: array indexing consistently yields pointers, enabling SIMD lane generation.
+- Escape analysis: the `&` operator explicitly marks escaping variables.
+
+### 13.2 Escape analysis rules
+
 1. `&x` marks `x` as potentially escaping.
-2. Returning pointers to stack variables is a compile error.
-3. Storing stack pointers in heap/global memory marks escape.
-4. Functions storing pointer parameters in global state cause escape of pointed-to values.
-   **Result:** Non-escaping heap allocations can be promoted to stack allocation.
+2. Returning a pointer to a stack variable is a compile error.
+3. Storing a stack pointer in heap or global memory marks an escape.
+4. Functions that store pointer parameters in global state cause the pointed-to values to
+   escape. Non-escaping heap allocations can then be promoted to stack allocations.
 
-### 13.3 Debug Symbol Generation
-- Source location attached to every `@` and `&` operation.
-- Exact type preservation for debugger visualization.
-- Lifetime ranges tracked for stack/heap regions.
-- Optimization builds maintain semantic equivalence with source-level mapping.
+### 13.3 Debug symbol generation
 
----
+- A source location is attached to every `@` and `&` operation.
+- Types are preserved exactly for debugger visualization.
+- Lifetime ranges are tracked for stack and heap regions.
+- Optimized builds maintain semantic equivalence with a source-level mapping.
 
-## Appendix A: Safety Semantics (Platform-Defined Behavior)
+## Appendix A: Safety semantics (platform-defined behavior)
 
-The following behaviors are intentionally not enforced by the compiler. They defer to RISC-V hardware traps or the platform ABI:
+The following behaviors are intentionally not enforced by the compiler; they defer to
+RISC-V hardware traps or the platform ABI.
 
 | Scenario | Behavior |
 |----------|----------|
 | Integer overflow | Wraps modulo 2^N (two's complement) |
 | Division by zero | Hardware trap (SIGFPE on hosted; synchronous exception in kernel mode) |
 | Dynamic array out-of-bounds | No runtime check; memory corruption or hardware trap |
-| Null pointer dereference | Hardware page-fault or trap |
+| Null pointer dereference | Hardware page fault or trap |
 
 These are not compiler bugs. Use explicit range checks and null guards in application code.
 
----
-
-## Appendix B: Migration Guide (v1.4.3 -> v1.5.0)
+## Appendix B: Migration guide (v1.4.3 to v1.5.0)
 
 | Old syntax | New syntax | Notes |
 |------------|-----------|-------|
-| `new([N]T)` | `new(T, N)` | Count is now the second argument; result type is `T*` not `T[N]*` |
+| `new([N]T)` | `new(T, N)` | Count is now the second argument; the result type is `T*`, not `T[N]*` |
 | `@x as T` | `(@x) as T` | Outer parens required: `as` binds tighter than `@` |
 | `-> ()` | (omit) | Void return: drop the `-> ()` clause entirely |
-| `Type(expr)` | `expr as Type` | Postfix cast is preferred; prefix form still accepted |
+| `Type(expr)` | `expr as Type` | Postfix cast is preferred; the prefix form is still accepted |
 | `;` as statement terminator | (newline) | Semicolon has always been a comment; no change needed |
 | `make_str("text")` | `"text"` | String literals are already `Str`-compatible inline structs |
 
----
+## Appendix C: Implementation checklist
 
-## Appendix: Implementation Checklist
-
-1. **Pointer Typing:** `T*` is strictly a pointer. Never auto-dereference.
-2. **Dereference Syntax:** All value access requires `@`. `@ptr.field`, `@arr[i]`, `@ptr`.
-3. **Address Syntax:** `&` applies only to stack variables/array elements.
-4. **Indexing:** `arr[i]` evaluates to `T*`. Read/write requires `@arr[i]`.
-5. **Mutability:** Parameters are immutable copies. Use `T*` and `&` for mutation.
-6. **Resource Lifecycle:** `new()` requires `free()` or `defer free()`. No GC.
-7. **Error Flow:** Functions return `{ value, error }` structs. Handle explicitly.
-8. **Precedence:** Parenthesize ambiguous expressions. The compiler rejects ambiguous precedence rather than inferring it.
-9. **FFI Boundaries:** Document ownership transfer. Compiler safety does not cross language boundaries.
-10. **Compile-Time Functions:** Pure, deterministic, no memory allocation.
+1. Pointer typing: `T*` is strictly a pointer; never auto-dereference.
+2. Dereference syntax: all value access requires `@`, as in `@ptr.field`, `@arr[i]`, `@ptr`.
+3. Address syntax: `&` applies only to stack variables and array elements.
+4. Indexing: `arr[i]` evaluates to `T*`; read or write requires `@arr[i]`.
+5. Mutability: parameters are immutable copies; use `T*` and `&` for mutation.
+6. Resource lifecycle: `new()` requires `free()` or `defer free()`. No GC.
+7. Error flow: functions return `{ value, error }` structs; handle them explicitly.
+8. Precedence: parenthesize ambiguous expressions; the compiler rejects ambiguous
+   precedence rather than inferring it.
+9. FFI boundaries: document ownership transfer; compiler safety does not cross language
+   boundaries.

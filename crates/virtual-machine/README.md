@@ -69,10 +69,10 @@ RAM accesses cascade L1 -> L2 -> L3 -> RAM; MMIO regions bypass the caches.
 | Region | Base | Size |
 |--------|------|------|
 | ROM | `0x0000_0000` | 256 MB |
-| SYSCON | `0x0010_0000` | halt/exit device |
 | CLINT | `0x0200_0000` | 64 KB (mtime/mtimecmp/msip) |
 | PLIC | `0x0C00_0000` | 16 MB |
 | UART | `0x1000_0000` | NS16550A subset |
+| SYSCON | `0x1001_0000` | halt/exit device |
 | RAM | `0x8000_0000` | 128 MB |
 
 ## Module layout

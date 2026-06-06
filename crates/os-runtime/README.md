@@ -14,7 +14,7 @@ only exposes each source file as a compile-time string constant so `hll-to-ir` a
 boot/       M-mode ROM firmware (assembly): reset stub and hosted trap handler
 kernel/     S-mode kernel sources (HLL): traps, memory, processes, syscalls, fs
 stdlib/     shared HLL stdlib, split into common / hosted / freestanding bundles
-user/       example U-mode programs (HLL): hello world, interactive shell
+user/       example U-mode programs (HLL): hello world, interactive shell, file editor
 src/        thin Rust crate exposing every source file as a string constant
 tests/      Rust tests over ROM, boot sequence, allocator, PMM, and subsystems
 ```
@@ -57,7 +57,7 @@ running process every tick, and `sret` resumes whichever process is next in the 
 | `checks.hll` | Boot-time `memory_self_test`, `pmm_ops_test` diagnostics |
 | `pmm.hll` | Physical page allocator (4 KiB pages, bump + free-list, double-free guard) |
 | `vmm.hll` | Sv39 page tables: `vmm_init`, `vmm_enable`, `vmm_map`, `vmm_map_1gib`, `vmm_map_range` |
-| `process.hll` | 328-byte PCB, per-pid user stack slots, `process_create`, `process_peek_pid` |
+| `process.hll` | 352-byte PCB (pid, state, saved trap frame, page-table root, parent pid, exit code), per-pid user stack slots, `process_create`, `process_peek_pid` |
 | `scheduler.hll` | Round-robin ready queue, `schedule`, queue introspection for exec/wait |
 | `syscall.hll` | U-mode ecall dispatch table (see below) |
 | `fs.hll` | Inode-based read-write filesystem mounted from an injected image |
@@ -79,6 +79,7 @@ support the interactive shell.
 | Num | Name | Purpose |
 |-----|------|---------|
 | 2 | yield | voluntary reschedule |
+| 46 | ftruncate | shrink a file to an exact length |
 | 56 / 57 | open / close | file descriptors over the filesystem |
 | 63 / 64 | read / write | fd >= 2 hit the filesystem; fd 0/1 hit the UART |
 | 82 / 83 | rename / mkdir | filesystem mutation |
@@ -88,6 +89,8 @@ support the interactive shell.
 | 102 | stat | inode type at a path |
 | 103 | exec | load and run an `FEXE` executable from the filesystem |
 | 104 | pidalive | 1 while a launched pid is still runnable |
+| 220 | fork | clone the current process; returns the child pid to the parent, 0 to the child |
+| 260 | wait | reap an exited child; returns its exit code (-1 if none) |
 
 `sys_exec` loads a position-independent flat binary from the FS and maps it at a per-pid 16 MiB
 code slot starting at `0x4000_0000` (pid 1 lands at the base), then creates a PCB and enqueues
@@ -97,7 +100,10 @@ it. The shell uses `exec` + `pidalive` to run a child and wait for it cooperativ
 
 - `user_hello.hll` -- writes a greeting via `sys_write`, then yields forever.
 - `shell.hll` -- interactive shell booted as pid 1. Reads a line from the UART one byte at a
-  time (yielding while idle) and runs built-ins: `ls`, `cd <dir>`, `run <file>`, `help`, `exit`.
+  time (yielding while idle) and runs built-ins: `ls`, `cd <dir>`, `cat <file>`,
+  `edit <file>`, `run <file>`, `help`, `exit`.
+- `edit.hll` -- a small full-screen file editor launched by the shell's `edit` built-in;
+  loads a file from the filesystem, accepts edits over the UART, and writes it back.
 
 ## Image injection
 
