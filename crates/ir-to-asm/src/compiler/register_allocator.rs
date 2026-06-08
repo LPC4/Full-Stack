@@ -1,13 +1,13 @@
-//! Register allocator using linear scan algorithm.
-//! Allocates physical registers when possible, spills to stack when necessary.
+//! Linear-scan register allocator: assigns physical temporaries when possible,
+//! spills to stack slots otherwise. See the crate README.
 
 use super::function_context::FunctionContext;
 use asm_to_binary::encode_decode::Reg;
 use hll_to_ir::{IrFunction, IrInstruction, IrTerminator, IrType, IrValue};
 use std::collections::HashMap;
 
-/// Available physical registers for allocation (caller-saved temporaries)
-const AVAILABLE_REGS: [Reg; 7] = [5, 6, 7, 28, 29, 30, 31]; // t0-t2, t3-t6
+/// Caller-saved temporaries available for allocation: t0-t2, t3-t6.
+const AVAILABLE_REGS: [Reg; 7] = [5, 6, 7, 28, 29, 30, 31];
 
 #[derive(Debug, Clone)]
 struct LiveInterval {
@@ -18,7 +18,7 @@ struct LiveInterval {
 }
 
 pub struct RegisterAllocator {
-    /// Maps virtual registers to their assigned physical register or stack slot
+    /// Maps virtual registers to their assigned physical register or stack slot.
     reg_mapping: HashMap<hll_to_ir::IrRegister, Allocation>,
 }
 
@@ -46,10 +46,8 @@ impl RegisterAllocator {
         self.linear_scan_allocate(&intervals, ctx, func);
     }
 
-    /// Prepare stack slots for every live virtual register without assigning physical registers.
-    ///
-    /// This is used by the main code generator so emitted assembly remains stable even when the
-    /// linear allocator is exercised directly in tests.
+    /// Prepare stack slots for every live virtual register without assigning
+    /// physical registers. This is the path the main code generator uses.
     pub fn allocate_stack_slots(
         &mut self,
         func: &IrFunction,
@@ -67,14 +65,8 @@ impl RegisterAllocator {
     ) -> Vec<LiveInterval> {
         self.reg_mapping.clear();
 
-        // First pass: allocate stack slots for parameters (they always need slots for spilling)
-        for param in &func.params {
-            ctx.alloc_slot_for_reg(&param.register, &param.ty);
-        }
-
-        // Mark stack addresses from Alloc instructions and pre-allocate with the correct size.
-        // This must happen before the generic interval-based allocation so that struct Alloc
-        // registers get (type_size * count) bytes instead of the 8-byte pointer size.
+        // Pre-allocate Alloc destinations first so struct allocs get
+        // (type_size * count) bytes rather than the 8-byte pointer size.
         for block in &func.blocks {
             for inst in &block.instructions {
                 if let IrInstruction::Alloc { dest, ty, count } = inst {
@@ -86,7 +78,6 @@ impl RegisterAllocator {
 
         let mut vregs = Vec::new();
 
-        // Add params to vregs list
         for param in &func.params {
             vregs.push((param.register.clone(), param.ty.clone()));
         }
@@ -100,15 +91,12 @@ impl RegisterAllocator {
             }
         }
 
-        // Second pass: compute live intervals
+        // Live intervals feed the physical linear-scan path.
         let intervals = self.compute_live_intervals(func, &vregs);
 
-        // Ensure ALL registers have stack slots BEFORE allocation (needed for spilling)
-        for interval in &intervals {
-            if ctx.slot_for_reg(&interval.reg).is_none() {
-                ctx.alloc_slot_for_reg(&interval.reg, &interval.ty);
-            }
-        }
+        // Slot coloring gives every register a slot (sharing where live ranges
+        // allow), which the spill path relies on.
+        super::slot_coloring::assign_colored_slots(func, ctx, &vregs);
 
         intervals
     }
@@ -224,12 +212,8 @@ impl RegisterAllocator {
 
         for block in &func.blocks {
             for inst in &block.instructions {
-                // Process uses
                 self.record_uses(inst, pos, &mut intervals);
-
-                // Process defs
                 self.record_defs(inst, pos, &mut intervals);
-
                 pos += 1;
             }
 
@@ -239,7 +223,6 @@ impl RegisterAllocator {
             }
         }
 
-        // Create intervals for all vregs
         let mut result = Vec::new();
         for (reg, ty) in vregs {
             if let Some((start, end)) = intervals.get(reg) {
@@ -252,7 +235,7 @@ impl RegisterAllocator {
             }
         }
 
-        // Sort by start position and then by end position for deterministic allocation.
+        // Sort by (start, end) for deterministic allocation.
         result.sort_by_key(|i| (i.start, i.end));
         result
     }
@@ -408,7 +391,7 @@ impl RegisterAllocator {
         }
     }
 
-    /// Linear scan register allocation (only allocates integer registers to integer/pointer types)
+    /// Linear-scan allocation; only integer/pointer types get physical registers.
     fn linear_scan_allocate(
         &mut self,
         intervals: &[LiveInterval],
@@ -424,19 +407,15 @@ impl RegisterAllocator {
                 continue;
             }
 
-            // Expire old intervals.
             self.expire_old_intervals(interval, &mut active, &mut free_regs);
 
             if free_regs.is_empty() {
-                // Need to spill
                 self.spill_at_interval(interval, &mut active, ctx);
             } else {
-                // Allocate a register
                 let reg = free_regs.pop().unwrap();
                 self.reg_mapping
                     .insert(interval.reg.clone(), Allocation::Physical(reg));
                 active.push((interval.clone(), reg));
-                // Sort active list by end point
                 active.sort_by_key(|(i, _)| i.end);
             }
         }
@@ -477,7 +456,7 @@ impl RegisterAllocator {
             free_regs.push(*reg);
         }
 
-        // Remove expired intervals (in reverse order to maintain indices)
+        // Remove in reverse order to keep indices valid.
         for i in expired.into_iter().rev() {
             active.remove(i);
         }
@@ -489,41 +468,35 @@ impl RegisterAllocator {
         active: &mut Vec<(LiveInterval, Reg)>,
         ctx: &mut FunctionContext,
     ) {
-        // Find the interval with the furthest end point
+        // The active list is sorted by end point, so the last entry lives longest.
         if let Some(spill_candidate) = active.last() {
             if spill_candidate.0.end > current.end {
-                // Spill the candidate and give its register to current
+                // Spill the candidate and give its register to current.
                 let spilled_reg = spill_candidate.1;
                 let spilled_vreg = spill_candidate.0.reg.clone();
 
-                // Assign stack slot to spilled vreg
                 let slot = ctx.slot_for_reg(&spilled_vreg).expect("slot exists");
                 self.reg_mapping
                     .insert(spilled_vreg, Allocation::StackSlot(slot));
-
-                // Give register to current interval
                 self.reg_mapping
                     .insert(current.reg.clone(), Allocation::Physical(spilled_reg));
 
-                // Update active list
                 active.pop();
                 active.push((current.clone(), spilled_reg));
                 active.sort_by_key(|(i, _)| i.end);
             } else {
-                // Spill current interval
                 let slot = ctx.slot_for_reg(&current.reg).expect("slot exists");
                 self.reg_mapping
                     .insert(current.reg.clone(), Allocation::StackSlot(slot));
             }
         } else {
-            // No active intervals, spill current
             let slot = ctx.slot_for_reg(&current.reg).expect("slot exists");
             self.reg_mapping
                 .insert(current.reg.clone(), Allocation::StackSlot(slot));
         }
     }
 
-    /// Get the allocation for a virtual register
+    /// Get the allocation for a virtual register.
     pub fn get_allocation(&self, reg: &hll_to_ir::IrRegister) -> Option<&Allocation> {
         self.reg_mapping.get(reg)
     }

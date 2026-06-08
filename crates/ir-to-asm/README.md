@@ -35,6 +35,26 @@ let (asm, tokens): (String, Vec<RvInstruction>) = compiler.compile_with_tokens(&
 `compile_with_tokens` returns the same `RvInstruction` token type that `asm-to-binary`
 consumes, so stage 3 and stage 4 hand off without re-parsing text.
 
+## Register allocation and stack slots
+
+The code generator keeps every IR virtual register in a stack slot; it does not
+hand out physical registers for values. A naive one-slot-per-register layout
+makes frames grow without bound, wasting stack and pushing load/store offsets
+past the RISC-V immediate range on large functions.
+
+`slot_coloring` shrinks frames by letting registers whose live ranges never
+overlap share a slot. It runs live-variable analysis over the real control-flow
+graph (so loops are handled correctly), builds an interference graph among the
+scalar value registers, and colors it greedily; each color becomes one 8-byte
+slot. Function parameters are treated as simultaneous defs at the entry block so
+they never collapse together. Registers that escape (`Alloc` destinations and
+stack addresses) or need more than 8 bytes (aggregates, arrays) keep a dedicated
+slot.
+
+`register_allocator` also implements a linear-scan pass that assigns physical
+temporaries (`t0`-`t6`) with spill-to-slot fallback. It is exercised by tests
+but not used on the main codegen path, which stays stack-only for stable output.
+
 ## Module layout
 
 ```

@@ -14,6 +14,7 @@ use asm_to_binary::utils::reg_name;
 use hll_to_ir::IrType;
 
 const ZERO: Reg = 0;
+const SP: Reg = 2;
 const T0: Reg = 5;
 const T1: Reg = 6;
 const T2: Reg = 7;
@@ -53,7 +54,7 @@ impl AssemblyEmitter {
         self.temp_counter = 0;
     }
 
-    // ---------- section / label / comment utilities ----------
+    // --- Section, label, and comment utilities ---
     pub fn switch_section(&mut self, name: &str) {
         if self.current_section.as_deref() != Some(name) {
             self.current_section = Some(name.to_owned());
@@ -123,7 +124,7 @@ impl AssemblyEmitter {
         self.tokens.push(RvInstruction::Comment(text.to_owned()));
     }
 
-    // ---------- register allocation helpers ----------
+    // --- Register allocation helpers ---
     pub fn alloc_temp_reg(&mut self) -> Reg {
         let temps = [T0, T1, T2, T3, T4, T5, T6];
         let reg = temps[self.temp_counter % temps.len()];
@@ -132,13 +133,13 @@ impl AssemblyEmitter {
     }
 
     pub fn alloc_float_temp_reg(&mut self) -> Reg {
-        // Cycle through ft0-ft7 (regs 0-7)
-        let reg = self.float_temp_counter as Reg % 8; // ft0..ft7 are 0..7
+        // Cycle through ft0-ft7 (registers 0-7).
+        let reg = self.float_temp_counter as Reg % 8;
         self.float_temp_counter += 1;
         reg
     }
 
-    // ---------- base integer instructions ----------
+    // --- Base integer instructions ---
     pub fn emit_addi(&mut self, rd: Reg, rs1: Reg, imm: i32) {
         self.emit_inst(RealInstruction::Addi(Addi::new(rd, rs1, imm)));
     }
@@ -221,7 +222,7 @@ impl AssemblyEmitter {
         self.emit_inst(RealInstruction::Jalr(Jalr::new(rd, rs1, imm)));
     }
 
-    // ---------- convenience compound operations ----------
+    // --- Convenience compound operations ---
     pub fn emit_li(&mut self, rd: Reg, imm: i64) {
         if imm >= -2048 && imm <= 2047 {
             self.emit_addi(rd, ZERO, imm as i32);
@@ -246,11 +247,12 @@ impl AssemblyEmitter {
                 self.emit_srli(rd, rd, 32);
             }
         } else {
-            // True 64-bit value: load upper 32 bits, shift left 32, OR in lower 32 bits
+            // True 64-bit value: build the upper half in rd, shift it up, then OR
+            // in the lower half built in a temp. Each half is a zero-extended
+            // LUI+ADDI, matching the 32-bit path above.
             let upper_32 = (imm >> 32) as u32;
             let lower_32 = (imm & 0xFFFF_FFFF) as u32;
 
-            // Load upper 32 bits into register
             let hi = ((upper_32 >> 12) & 0xFFFFF) as i32;
             let lo = (upper_32 & 0xFFF) as i32;
             let lo_signed = if lo >= 0x800 { lo - 0x1000 } else { lo };
@@ -260,17 +262,14 @@ impl AssemblyEmitter {
             if lo_signed != 0 {
                 self.emit_addi(rd, rd, lo_signed);
             }
-            // Zero-extend if needed
             let encoded_upper = (hi_adj as i64 * 4096 + lo_signed as i64) as u32;
             if encoded_upper >= 0x8000_0000 {
                 self.emit_slli(rd, rd, 32);
                 self.emit_srli(rd, rd, 32);
             }
 
-            // Shift left 32 bits to make room for lower 32 bits
             self.emit_slli(rd, rd, 32);
 
-            // Load lower 32 bits into a temp register
             let tmp = self.alloc_temp_reg();
             let lo_hi = ((lower_32 >> 12) & 0xFFFFF) as i32;
             let lo_lo = (lower_32 & 0xFFF) as i32;
@@ -285,14 +284,12 @@ impl AssemblyEmitter {
             if lo_lo_signed != 0 {
                 self.emit_addi(tmp, tmp, lo_lo_signed);
             }
-            // Zero-extend if needed
             let encoded_lower = (lo_hi_adj as i64 * 4096 + lo_lo_signed as i64) as u32;
             if encoded_lower >= 0x8000_0000 {
                 self.emit_slli(tmp, tmp, 32);
                 self.emit_srli(tmp, tmp, 32);
             }
 
-            // OR the lower 32 bits into the result
             self.emit_or(rd, rd, tmp);
         }
     }
@@ -359,7 +356,7 @@ impl AssemblyEmitter {
         self.emit_seqz(rd, tmp);
     }
 
-    // ---------- branches / jumps ----------
+    // --- Branches and jumps ---
     pub fn emit_bne(&mut self, rs1: Reg, rs2: Reg, target: &str) {
         self.emit_raw(&format!(
             "\tbne {}, {}, {}",
@@ -376,7 +373,7 @@ impl AssemblyEmitter {
         }
     }
 
-    // ---------- floating-point instructions ----------
+    // --- Floating-point instructions ---
     pub fn emit_fmv_w_x(&mut self, fd: Reg, rs: Reg) {
         self.emit_inst(RealInstruction::FmvWX(FmvWX::new(fd, rs)));
     }
@@ -417,23 +414,23 @@ impl AssemblyEmitter {
         self.emit_inst(RealInstruction::FleqS(FleqS::new(rd, rs1, rs2)));
     }
 
-    // ---------- typed memory helpers ----------
+    // --- Typed memory helpers ---
     pub fn emit_load_from_slot(&mut self, rd: Reg, slot: usize, ty: &IrType) {
         match ty {
             IrType::Integer(w) => match w {
                 hll_to_ir::IntWidth::I1 | hll_to_ir::IntWidth::I8 => {
-                    self.emit_lb(rd, 2, slot as i32);
+                    self.emit_lb(rd, SP, slot as i32);
                 }
-                hll_to_ir::IntWidth::I16 => self.emit_lh(rd, 2, slot as i32),
-                hll_to_ir::IntWidth::I32 => self.emit_lw(rd, 2, slot as i32),
-                hll_to_ir::IntWidth::I64 => self.emit_ld(rd, 2, slot as i32),
+                hll_to_ir::IntWidth::I16 => self.emit_lh(rd, SP, slot as i32),
+                hll_to_ir::IntWidth::I32 => self.emit_lw(rd, SP, slot as i32),
+                hll_to_ir::IntWidth::I64 => self.emit_ld(rd, SP, slot as i32),
             },
             IrType::Float(w) => match w {
-                hll_to_ir::FloatWidth::F32 => self.emit_flw(rd, 2, slot as i32),
-                hll_to_ir::FloatWidth::F64 => self.emit_fld(rd, 2, slot as i32),
+                hll_to_ir::FloatWidth::F32 => self.emit_flw(rd, SP, slot as i32),
+                hll_to_ir::FloatWidth::F64 => self.emit_fld(rd, SP, slot as i32),
             },
-            IrType::Pointer(_) | IrType::Named(_) => self.emit_ld(rd, 2, slot as i32),
-            _ => self.emit_ld(rd, 2, slot as i32),
+            IrType::Pointer(_) | IrType::Named(_) => self.emit_ld(rd, SP, slot as i32),
+            _ => self.emit_ld(rd, SP, slot as i32),
         }
     }
 
@@ -469,7 +466,7 @@ impl AssemblyEmitter {
                 self.emit_inst(RealInstruction::Ld(Ld::new(tmp, addr_reg, offset)));
             }
         }
-        self.emit_store_from_tmp(2, tmp, ty, slot as i32);
+        self.emit_store_from_tmp(SP, tmp, ty, slot as i32);
     }
 
     pub fn emit_store_from_tmp(&mut self, addr_reg: Reg, val_reg: Reg, ty: &IrType, offset: i32) {
@@ -505,7 +502,7 @@ impl AssemblyEmitter {
         }
     }
 
-    // ---------- block-level memory copy helpers ----------
+    // --- Block-level memory copy helpers ---
     pub fn copy_bytes_from_addr_to_slot(
         &mut self,
         slot: usize,
@@ -520,7 +517,7 @@ impl AssemblyEmitter {
         while remaining >= 8 {
             let tmp = self.alloc_temp_reg();
             self.emit_inst(RealInstruction::Ld(Ld::new(tmp, addr_reg, current_offset)));
-            self.emit_inst(RealInstruction::Sd(Sd::new(2, tmp, current_slot as i32)));
+            self.emit_inst(RealInstruction::Sd(Sd::new(SP, tmp, current_slot as i32)));
             remaining -= 8;
             current_offset += 8;
             current_slot += 8;
@@ -528,7 +525,7 @@ impl AssemblyEmitter {
         while remaining >= 4 {
             let tmp = self.alloc_temp_reg();
             self.emit_inst(RealInstruction::Lw(Lw::new(tmp, addr_reg, current_offset)));
-            self.emit_inst(RealInstruction::Sw(Sw::new(2, tmp, current_slot as i32)));
+            self.emit_inst(RealInstruction::Sw(Sw::new(SP, tmp, current_slot as i32)));
             remaining -= 4;
             current_offset += 4;
             current_slot += 4;
@@ -541,7 +538,7 @@ impl AssemblyEmitter {
                 current_offset + i as i32,
             )));
             self.emit_inst(RealInstruction::Sb(Sb::new(
-                2,
+                SP,
                 byte_tmp,
                 current_slot as i32 + i as i32,
             )));
@@ -561,7 +558,7 @@ impl AssemblyEmitter {
 
         while remaining >= 8 {
             let tmp = self.alloc_temp_reg();
-            self.emit_inst(RealInstruction::Ld(Ld::new(tmp, 2, current_slot as i32)));
+            self.emit_inst(RealInstruction::Ld(Ld::new(tmp, SP, current_slot as i32)));
             self.emit_inst(RealInstruction::Sd(Sd::new(addr_reg, tmp, current_offset)));
             remaining -= 8;
             current_offset += 8;
@@ -569,7 +566,7 @@ impl AssemblyEmitter {
         }
         while remaining >= 4 {
             let tmp = self.alloc_temp_reg();
-            self.emit_inst(RealInstruction::Lw(Lw::new(tmp, 2, current_slot as i32)));
+            self.emit_inst(RealInstruction::Lw(Lw::new(tmp, SP, current_slot as i32)));
             self.emit_inst(RealInstruction::Sw(Sw::new(addr_reg, tmp, current_offset)));
             remaining -= 4;
             current_offset += 4;
@@ -579,7 +576,7 @@ impl AssemblyEmitter {
         for i in 0..remaining {
             self.emit_inst(RealInstruction::Lb(Lb::new(
                 byte_tmp,
-                2,
+                SP,
                 current_slot as i32 + i as i32,
             )));
             self.emit_inst(RealInstruction::Sb(Sb::new(

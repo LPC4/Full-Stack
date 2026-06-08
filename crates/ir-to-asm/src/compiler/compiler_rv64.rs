@@ -22,9 +22,7 @@ const SP: Reg = 2;
 const S0: Reg = 8;
 const A0: Reg = 10;
 const A1: Reg = 11;
-
-// Float register constants
-const FA0: Reg = 10; // fa0
+const FA0: Reg = 10;
 
 pub struct CompilerRv64 {
     emitter: AssemblyEmitter,
@@ -108,7 +106,7 @@ impl CompilerRv64 {
         let needs_sret = is_aggregate && !self.can_return_in_registers(&return_type);
 
         let sret_slot = if needs_sret {
-            ctx.save_reg(9); // s1 for sret pointer
+            ctx.save_reg(9); // s1 holds the sret pointer.
             Some(ctx.frame.alloc_slot(8, 8))
         } else {
             None
@@ -133,9 +131,8 @@ impl CompilerRv64 {
             self.emitter.emit_mv(9, A0);
         }
 
-        // Skip normal parameter spills for inline-asm-only functions.
-        // These functions need parameters to remain in a0-a7 / fa0-fa7 for the asm code to access them.
-        // Only Comment, Alloc, Phi, Store, and InlineAsm instructions are allowed.
+        // Inline-asm-only functions keep their params in a0-a7 / fa0-fa7 for the
+        // asm to read, so the normal spills are skipped.
         let has_inline_asm = func.blocks.iter().any(|block| {
             block
                 .instructions
@@ -295,7 +292,6 @@ impl CompilerRv64 {
                 self.type_size(&resolved_ty),
             );
         } else {
-            // Load value into a temp register first
             let loaded_val = self.emitter.alloc_temp_reg();
             match &resolved_ty {
                 IrType::Integer(w) => match w {
@@ -325,10 +321,8 @@ impl CompilerRv64 {
                         .emit_inst(RealInstruction::Ld(Ld::new(loaded_val, addr_tmp, 0)));
                 }
             }
-            // Store to stack slot
             self.emitter
                 .emit_store_from_tmp(SP, loaded_val, &resolved_ty, dest_slot as i32);
-            // If dest has a physical register allocation, also store there
             if let Some(Allocation::Physical(phys_reg)) = alloc.get_allocation(dest) {
                 self.emitter.emit_mv(*phys_reg, loaded_val);
             }
@@ -468,7 +462,6 @@ impl CompilerRv64 {
             }
             self.emitter
                 .emit_store_from_tmp(SP, result_tmp, &resolved_ty, dest_slot as i32);
-            // If dest has a physical register allocation, also store there for future uses
             if let Some(Allocation::Physical(phys_reg)) = alloc.get_allocation(dest) {
                 self.emitter.emit_mv(*phys_reg, result_tmp);
             }
@@ -511,7 +504,6 @@ impl CompilerRv64 {
             }
             self.emitter
                 .emit_store_from_tmp(SP, result_tmp, &resolved_ty, dest_slot as i32);
-            // If dest has a physical register allocation, also store there
             if let Some(Allocation::Physical(phys_reg)) = alloc.get_allocation(dest) {
                 self.emitter.emit_mv(*phys_reg, result_tmp);
             }
@@ -581,7 +573,6 @@ impl CompilerRv64 {
             }
             self.emitter
                 .emit_store_from_tmp(SP, result_tmp, &bool_ty, dest_slot as i32);
-            // If dest has a physical register allocation, also store there
             if let Some(Allocation::Physical(phys_reg)) = alloc.get_allocation(dest) {
                 self.emitter.emit_mv(*phys_reg, result_tmp);
             }
@@ -608,7 +599,6 @@ impl CompilerRv64 {
         self.lower_cast(result_tmp, src_tmp, mode, &resolved_ty);
         self.emitter
             .emit_store_from_tmp(SP, result_tmp, &resolved_ty, dest_slot as i32);
-        // If dest has a physical register allocation, also store there
         if let Some(Allocation::Physical(phys_reg)) = alloc.get_allocation(dest) {
             self.emitter.emit_mv(*phys_reg, result_tmp);
         }
@@ -655,7 +645,7 @@ impl CompilerRv64 {
         self.emitter
             .emit_comment(&format!("Passing {} arguments", args.len()));
 
-        // Pass first 8 arguments in registers a0-a7
+        // First 8 arguments go in a0-a7.
         for arg in args {
             if arg_index >= 8 {
                 break;
@@ -665,25 +655,19 @@ impl CompilerRv64 {
             arg_index += 1;
         }
 
-        // Push remaining arguments (9th and beyond) onto the stack
+        // Remaining arguments are pushed onto a 16-byte-aligned stack region.
         if args.len() > 8 {
             self.emitter
                 .emit_comment("Pushing excess arguments to stack");
-            // Calculate how many bytes we need to reserve on the stack
             let excess_count = args.len() - 8;
             let stack_bytes = (excess_count * 8) as i64;
-
-            // Align stack to 16 bytes (RISC-V ABI requirement)
             let aligned_bytes = if stack_bytes % 16 != 0 {
                 stack_bytes + (16 - stack_bytes % 16)
             } else {
                 stack_bytes
             };
-
-            // Adjust SP to make room for stack arguments
             self.emitter.emit_add_imm(SP, SP, -aligned_bytes);
 
-            // Store each excess argument
             for (i, arg) in args.iter().enumerate().skip(8) {
                 let arg_tmp = self.load_value_to_temp(arg, ctx, alloc);
                 let offset = ((i - 8) * 8) as i32;
@@ -693,7 +677,7 @@ impl CompilerRv64 {
 
         self.emitter.emit_jal(RA, function);
 
-        // Restore SP after the call
+        // Reclaim the stack space used for the excess arguments.
         if args.len() > 8 {
             let excess_count = args.len() - 8;
             let stack_bytes = (excess_count * 8) as i64;
@@ -765,7 +749,6 @@ impl CompilerRv64 {
             let resolved_return_ty = self.resolve_ir_type(&func_return_type);
             self.emitter
                 .emit_store_from_tmp(SP, A0, &resolved_return_ty, dest_slot as i32);
-            // If dest has a physical register allocation, also store there
             if let Some(Allocation::Physical(phys_reg)) = alloc.get_allocation(dest) {
                 self.emitter.emit_mv(*phys_reg, A0);
             }
@@ -978,7 +961,8 @@ impl CompilerRv64 {
         ctx.emit_epilogue(&mut self.emitter);
     }
 
-    // ---------- helpers that remain in the compiler (use emitter only) ----------
+    // --- Operand-loading helpers ---
+
     fn resolve_ptr_to_addr(
         &mut self,
         ptr: &hll_to_ir::IrRegister,
@@ -986,7 +970,6 @@ impl CompilerRv64 {
         byte_offset: Option<i32>,
         alloc: &RegisterAllocator,
     ) -> Reg {
-        // Check if pointer is in a physical register
         if let Some(alloc_result) = alloc.get_allocation(ptr)
             && let Allocation::Physical(phys_reg) = alloc_result
         {
@@ -1003,7 +986,6 @@ impl CompilerRv64 {
             return tmp;
         }
 
-        // Fall back to stack slot
         let slot = ctx.slot_for_reg(ptr).expect("ptr slot");
         let tmp = self.emitter.alloc_temp_reg();
 
@@ -1038,16 +1020,13 @@ impl CompilerRv64 {
                     return temp;
                 }
 
-                // Check if this register has a physical register allocation
                 if let Some(alloc_result) = alloc.get_allocation(reg) {
                     match alloc_result {
                         Allocation::Physical(phys_reg) => {
-                            // Value is in a physical register, copy it to our temp
                             self.emitter.emit_mv(temp, *phys_reg);
                             return temp;
                         }
                         Allocation::StackSlot(slot) => {
-                            // Load from stack slot
                             if ctx.is_stack_address(reg) {
                                 self.emitter.emit_add_imm(temp, SP, *slot as i64);
                             } else {
@@ -1061,7 +1040,7 @@ impl CompilerRv64 {
                     }
                 }
 
-                // Fallback to old behavior if no allocation found
+                // No allocation recorded: fall back to the register's stack slot.
                 let slot = ctx.slot_for_reg(reg).expect("reg slot");
                 if ctx.is_stack_address(reg) {
                     self.emitter.emit_add_imm(temp, SP, slot as i64);
@@ -1121,12 +1100,10 @@ impl CompilerRv64 {
                     return temp;
                 }
 
-                // Check if this register has a physical register allocation
                 if let Some(alloc_result) = alloc.get_allocation(reg)
                     && let Allocation::Physical(phys_reg) = alloc_result
                 {
-                    // Value is in a physical register, copy it to our temp
-                    // For floats, we need to use the appropriate move instruction
+                    // Float moves pick the move that matches the value width.
                     let ty = ctx
                         .type_for_reg(reg)
                         .unwrap_or(IrType::Float(hll_to_ir::FloatWidth::F32));
@@ -1143,7 +1120,6 @@ impl CompilerRv64 {
                     return temp;
                 }
 
-                // Load from stack
                 let slot = ctx.slot_for_reg(reg).expect("reg slot");
                 let ty = ctx
                     .type_for_reg(reg)
@@ -1175,7 +1151,6 @@ impl CompilerRv64 {
         alloc: &RegisterAllocator,
     ) -> Reg {
         let temp = self.emitter.alloc_temp_reg();
-        // Check if this register has a physical register allocation
         if ctx.preserve_param_registers()
             && let Some(index) = ctx.param_index(reg)
             && index < 8
@@ -1184,16 +1159,13 @@ impl CompilerRv64 {
             return temp;
         }
 
-        // Check if this register has a physical register allocation
         if let Some(alloc_result) = alloc.get_allocation(reg)
             && let Allocation::Physical(phys_reg) = alloc_result
         {
-            // Value is in a physical register, copy it to our temp
             self.emitter.emit_mv(temp, *phys_reg);
             return temp;
         }
 
-        // Load from stack
         let slot = ctx.slot_for_reg(reg).expect("reg slot");
         if ctx.is_stack_address(reg) {
             self.emitter.emit_add_imm(temp, SP, slot as i64);

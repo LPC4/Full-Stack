@@ -123,6 +123,12 @@ impl FunctionContext {
         self.reg_slots.insert(reg.clone(), slot);
     }
 
+    /// Point a virtual register at an already-reserved stack slot offset.
+    /// Used by slot coloring, where several registers share one slot.
+    pub fn set_reg_slot(&mut self, reg: &IrRegister, slot: usize) {
+        self.reg_slots.insert(reg.clone(), slot);
+    }
+
     /// Record the ABI argument index for a function parameter register.
     pub fn set_param_index(&mut self, reg: &IrRegister, index: usize) {
         self.param_indices.insert(reg.clone(), index);
@@ -219,12 +225,13 @@ impl FunctionContext {
             backend,
             func,
             0,
-            "--- Function Parameter Spills ---",
+            Some("--- Function Parameter Spills ---"),
+            None,
         );
     }
 
-    /// Emit spills for function parameters when the function has an sret (hidden pointer) parameter.
-    /// The sret pointer arrives in a0 and needs to be preserved before regular parameter spills.
+    /// Emit spills when the function has an sret (hidden pointer) parameter in a0,
+    /// which is saved before the regular parameter spills.
     pub fn emit_parameter_spills_with_sret(
         &self,
         backend: &mut impl Rv64Backend,
@@ -232,33 +239,18 @@ impl FunctionContext {
         sret_slot: usize,
     ) {
         backend.emit_comment("--- Function Parameter Spills (with sret) ---");
-        // First, save the sret pointer from a0 to its designated slot
-        // The sret pointer is already in a0 at function entry
-        let sret_ptr = arg_reg(0); // a0 contains the sret pointer
-        backend.emit_comment(&format!(
-            "Save sret pointer from a0 to stack slot {sret_slot}"
-        ));
-        backend.emit_store_from_tmp(
-            SP,
-            sret_ptr,
-            &IrType::Pointer(Box::new(IrType::Void)),
-            sret_slot as i32,
-        );
-
-        self.emit_parameter_spills_from_index_with_header(
+        self.emit_sret_save(backend, sret_slot);
+        self.emit_parameter_spills_from_index(
             backend,
             func,
             1,
-            "--- End Parameter Spills ---",
+            None,
+            Some("--- End Parameter Spills ---"),
         );
     }
 
-    /// Emit spills for inline-asm-only functions.
-    ///
-    /// The first eight integer/floating-point parameters must remain in their
-    /// arrival registers so the asm block can use them directly; only stack-
-    /// passed arguments need to be copied into slots for the synthesized
-    /// parameter-binding stores.
+    /// Emit spills for inline-asm-only functions. The first eight parameters
+    /// stay in their arrival registers; only stack-passed args are spilled.
     pub fn emit_parameter_spills_for_inline_asm(
         &self,
         backend: &mut impl Rv64Backend,
@@ -268,7 +260,8 @@ impl FunctionContext {
             backend,
             func,
             8,
-            "--- Function Parameter Spills (asm-only) ---",
+            Some("--- Function Parameter Spills (asm-only) ---"),
+            None,
         );
     }
 
@@ -280,68 +273,49 @@ impl FunctionContext {
         sret_slot: usize,
     ) {
         backend.emit_comment("--- Function Parameter Spills (with sret, asm-only) ---");
-        let sret_ptr = arg_reg(0);
-        backend.emit_comment(&format!(
-            "Save sret pointer from a0 to stack slot {sret_slot}"
-        ));
+        self.emit_sret_save(backend, sret_slot);
+        self.emit_parameter_spills_from_index(
+            backend,
+            func,
+            8,
+            Some("--- End Parameter Spills ---"),
+            None,
+        );
+    }
+
+    /// Save the sret pointer (in a0 on entry) into its stack slot.
+    fn emit_sret_save(&self, backend: &mut impl Rv64Backend, sret_slot: usize) {
+        backend.emit_comment(&format!("Save sret pointer from a0 to stack slot {sret_slot}"));
         backend.emit_store_from_tmp(
             SP,
-            sret_ptr,
+            arg_reg(0),
             &IrType::Pointer(Box::new(IrType::Void)),
             sret_slot as i32,
         );
-        self.emit_parameter_spills_from_index(backend, func, 8, "--- End Parameter Spills ---");
     }
 
+    /// Spill parameters from `start_index` onward into their stack slots.
+    ///
+    /// `start_header` is emitted before the spills when there is at least one;
+    /// `empty_header` is emitted instead when there are none.
     fn emit_parameter_spills_from_index(
         &self,
         backend: &mut impl Rv64Backend,
         func: &IrFunction,
         start_index: usize,
-        header: &str,
+        start_header: Option<&str>,
+        empty_header: Option<&str>,
     ) {
         if func.params.len() <= start_index {
-            return;
-        }
-
-        backend.emit_comment(header);
-        let frame_size = self.frame_size() as i64;
-        let caller_sp = backend.alloc_temp_reg();
-        backend.emit_add_imm(caller_sp, S0, frame_size);
-
-        for (index, param) in func.params.iter().enumerate().skip(start_index) {
-            let slot = self.slot_for_reg(&param.register).expect("param slot");
-            let ty = self.frame.resolve_type(&param.ty, &self.type_aliases);
-            if index < 8 {
-                backend.emit_comment(&format!(
-                    "Spill parameter '{}' from register a{} to stack slot {}",
-                    param.register, index, slot
-                ));
-                backend.emit_store_from_tmp(SP, arg_reg(index), &ty, slot as i32);
-            } else {
-                let offset = ((index - 8) * 8) as i32;
-                backend.emit_comment(&format!(
-                    "Spill parameter '{}' from caller's stack (offset {}) to slot {}",
-                    param.register, offset, slot
-                ));
-                backend.emit_load_to_slot(slot, caller_sp, &ty, offset);
+            if let Some(header) = empty_header {
+                backend.emit_comment(header);
             }
-        }
-        backend.emit_comment("--- End Parameter Spills ---");
-    }
-
-    fn emit_parameter_spills_from_index_with_header(
-        &self,
-        backend: &mut impl Rv64Backend,
-        func: &IrFunction,
-        start_index: usize,
-        end_header: &str,
-    ) {
-        if func.params.len() <= start_index {
-            backend.emit_comment(end_header);
             return;
         }
 
+        if let Some(header) = start_header {
+            backend.emit_comment(header);
+        }
         let frame_size = self.frame_size() as i64;
         let caller_sp = backend.alloc_temp_reg();
         backend.emit_add_imm(caller_sp, S0, frame_size);
