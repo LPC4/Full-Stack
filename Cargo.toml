@@ -55,6 +55,19 @@ opt-level = 2
 [profile.dev.package."*"]
 opt-level = 2
 
+# Optimize the heavy workspace crates in debug too. The cycle-accurate VM and
+# the compiler crates dominate test time; left unoptimized, the default
+# `cargo test` runs ~10x slower than `--release`. The root crate is left at the
+# default so app debugging stays usable.
+[profile.dev.package.virtual_machine]
+opt-level = 3
+[profile.dev.package.hll_to_ir]
+opt-level = 3
+[profile.dev.package.ir_to_asm]
+opt-level = 3
+[profile.dev.package.asm_to_binary]
+opt-level = 3
+
 [lints]
 workspace = true
 
