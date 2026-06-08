@@ -110,6 +110,70 @@ fn run_hll(src: &str) -> (VirtualMachine, StepOutcome, String) {
     run_hll_with_limit(src, 5_000_000)
 }
 
+/// Compile a user program with the peephole pass either on or off, returning the
+/// optimized-or-not token stream alongside the VM run (exit outcome + UART).
+fn run_hll_peephole(src: &str, peephole: bool) -> (StepOutcome, String, usize) {
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_write_artifacts(false);
+    pipeline.set_peephole(peephole);
+
+    let user_result = pipeline.compile(src).expect("user compile failed");
+    let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program);
+    let code_lines = user_tokens.iter().filter(|t| t.is_code()).count();
+    let user_obj = pipeline.assemble(&user_tokens).expect("user assemble failed");
+
+    let assembled = pipeline
+        .link_assembled_objects(&[("stdlib", cached_stdlib_obj()), ("user", &user_obj)])
+        .expect("link failed");
+    let mut vm = VirtualMachine::new(&assembled);
+    let run = vm.run(5_000_000);
+    (run.outcome, run.uart_output.clone(), code_lines)
+}
+
+// A program with disjoint branches and locals: lots of per-vreg store/reload
+// churn for the peephole to clean up, while exercising real control flow.
+const PEEPHOLE_PROGRAM: &str = r#"
+compute: (n: i64) -> i64 {
+    a: i64 = n + 1
+    b: i64 = a * 2
+    c: i64 = 0
+    if b > 10 {
+        c = b - a
+    } else {
+        c = a + b
+    }
+    d: i64 = c + a
+    return d
+}
+
+main: () -> i32 {
+    total: i64 = 0
+    i: i64 = 0
+    while i < 5 {
+        total = total + compute(i)
+        i = i + 1
+    }
+    return total as i32
+}
+"#;
+
+#[test]
+fn peephole_preserves_behavior_and_shrinks_code() {
+    let (base_outcome, base_uart, base_lines) = run_hll_peephole(PEEPHOLE_PROGRAM, false);
+    let (opt_outcome, opt_uart, opt_lines) = run_hll_peephole(PEEPHOLE_PROGRAM, true);
+
+    assert_eq!(
+        format!("{base_outcome:?}"),
+        format!("{opt_outcome:?}"),
+        "peephole changed the exit outcome"
+    );
+    assert_eq!(base_uart, opt_uart, "peephole changed UART output");
+    assert!(
+        opt_lines < base_lines,
+        "peephole should remove instructions: {base_lines} -> {opt_lines}"
+    );
+}
+
 #[test]
 fn hll_new_i32_and_return() {
     let (_, outcome, _) = run_hll(r#"

@@ -806,6 +806,77 @@ fs_mkdir: (path: u8*) -> i64 {
     return fs_create_at(parent as u64, name_buf[0], FS_TYPE_DIR)
 }
 
+; Free every data block held by inode, then return the inode to the free pool.
+; Shared by fs_unlink and fs_rmdir. Does not touch any directory entry.
+fs_release_inode: (inode: u64) {
+    blk_slot: u64 = 0
+    while blk_slot < FS_INODE_BLOCKS {
+        blk: u64 = fs_inode_block(inode, blk_slot)
+        if blk != 0 {
+            fs_free_block(blk)
+            fs_inode_set_block(inode, blk_slot, 0)
+        }
+        blk_slot = blk_slot + 1
+    }
+    fs_free_inode(inode)
+}
+
+; Remove the regular file at an absolute path: detach it from its parent
+; directory, free its data blocks, and free its inode. Refuses directories
+; (use fs_rmdir). Returns 0 on success, -1 on error.
+fs_unlink: (path: u8*) -> i64 {
+    if fs_ready == 0 {
+        return -1 as i64
+    }
+    inode: i64 = fs_resolve(path)
+    if inode < 0 {
+        return -1 as i64
+    }
+    if fs_inode_type(inode as u64) != FS_TYPE_FILE {
+        return -1 as i64
+    }
+    name_buf: u8[32]
+    parent: i64 = fs_split_path(path, name_buf[0])
+    if parent < 0 {
+        return -1 as i64
+    }
+    if fs_remove_dirent(parent as u64, name_buf[0]) < 0 {
+        return -1 as i64
+    }
+    fs_release_inode(inode as u64)
+    return 0
+}
+
+; Remove an empty directory at an absolute path. Refuses the root, non-empty
+; directories, and non-directories. Returns 0 on success, -1 on error.
+fs_rmdir: (path: u8*) -> i64 {
+    if fs_ready == 0 {
+        return -1 as i64
+    }
+    inode: i64 = fs_resolve(path)
+    ; inode 0 is the root; a negative result is an error. Neither is removable.
+    if inode <= 0 {
+        return -1 as i64
+    }
+    if fs_inode_type(inode as u64) != FS_TYPE_DIR {
+        return -1 as i64
+    }
+    ; A directory's size field tracks its live dirent count, so 0 means empty.
+    if fs_inode_size(inode as u64) != 0 {
+        return -1 as i64
+    }
+    name_buf: u8[32]
+    parent: i64 = fs_split_path(path, name_buf[0])
+    if parent < 0 {
+        return -1 as i64
+    }
+    if fs_remove_dirent(parent as u64, name_buf[0]) < 0 {
+        return -1 as i64
+    }
+    fs_release_inode(inode as u64)
+    return 0
+}
+
 ; Move a file or directory from old_path to new_path (cross-directory allowed).
 ; Returns 0 on success, -1 on error.
 fs_rename: (old_path: u8*, new_path: u8*) -> i64 {

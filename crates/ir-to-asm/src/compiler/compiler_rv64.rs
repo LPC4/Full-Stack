@@ -2,6 +2,7 @@ use super::{
     assembly_emitter::AssemblyEmitter,
     data_section::DataSection,
     function_context::FunctionContext,
+    peephole,
     register_allocator::{Allocation, RegisterAllocator},
     type_utils,
 };
@@ -29,6 +30,7 @@ pub struct CompilerRv64 {
     data: DataSection,
     type_aliases: HashMap<String, IrType>,
     function_return_types: HashMap<String, IrType>,
+    peephole: bool,
 }
 
 impl Default for CompilerRv64 {
@@ -44,12 +46,19 @@ impl CompilerRv64 {
             data: DataSection::new(),
             type_aliases: HashMap::new(),
             function_return_types: HashMap::new(),
+            peephole: false,
         }
     }
 
+    /// Enable or disable the conservative peephole pass over the emitted token
+    /// stream. Off by default so golden snapshots stay stable; turn it on to
+    /// assemble the optimized stream.
+    pub fn set_peephole(&mut self, enabled: bool) {
+        self.peephole = enabled;
+    }
+
     pub fn compile(&mut self, program: &IrProgram) -> String {
-        self.compile_inner(program);
-        self.emitter.finish()
+        self.compile_with_tokens(program).0
     }
 
     /// Compile and return both the text assembly and the structured token stream.
@@ -58,7 +67,20 @@ impl CompilerRv64 {
         program: &IrProgram,
     ) -> (String, Vec<asm_to_binary::rv_instruction::RvInstruction>) {
         self.compile_inner(program);
-        (self.emitter.finish(), self.emitter.finish_tokens())
+        if self.peephole {
+            // The peephole runs on the token stream the assembler consumes; render
+            // the text from the optimized tokens so the `.s` view matches the
+            // bytes that will actually be assembled.
+            let tokens = peephole::optimize(&self.emitter.finish_tokens());
+            let text = tokens
+                .iter()
+                .map(|t| t.to_string())
+                .collect::<Vec<_>>()
+                .join("\n");
+            (text, tokens)
+        } else {
+            (self.emitter.finish(), self.emitter.finish_tokens())
+        }
     }
 
     fn compile_inner(&mut self, program: &IrProgram) {

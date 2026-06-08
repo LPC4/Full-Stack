@@ -15,6 +15,8 @@ const SYSCALL_READDIR  = 101   ; list directory entry by index
 const SYSCALL_STAT     = 102   ; inode type at a path (-1 if missing)
 const SYSCALL_EXEC     = 103   ; load and run an executable file from the FS
 const SYSCALL_PIDALIVE = 104   ; 1 if a launched pid is still runnable
+const SYSCALL_UNLINK   = 105   ; remove a regular file
+const SYSCALL_RMDIR    = 106   ; remove an empty directory
 ; Process-tree syscalls (Linux/RISC-V numbers).
 const SYSCALL_FORK     = 220   ; clone the current process; returns child pid / 0
 const SYSCALL_WAIT     = 260   ; reap an exited child; returns its exit code / -1
@@ -83,6 +85,8 @@ external fs_read:              (fd: i64, buf: u8*, offset: u64, len: u64) -> i64
 external fs_write:             (fd: i64, buf: u8*, offset: u64, len: u64) -> i64
 external fs_rename:            (old_path: u8*, new_path: u8*) -> i64
 external fs_mkdir:             (path: u8*) -> i64
+external fs_unlink:            (path: u8*) -> i64
+external fs_rmdir:             (path: u8*) -> i64
 external fs_readdir:           (path: u8*, index: u64, name_buf: u8*) -> i64
 external fs_stat:              (path: u8*) -> i64
 external fs_get_pos:           (fd: i64) -> u64
@@ -308,6 +312,22 @@ sys_ftruncate_impl: (frame: u64*) -> u64 {
     return SYSACT_CONTINUE
 }
 
+; Remove the regular file at the absolute path in a0. Factored out of
+; syscall_dispatch so its locals do not enlarge that function's stack frame.
+sys_unlink_impl: (frame: u64*) -> u64 {
+    path: u8* = (@frame[10]) as u8*
+    @frame[10] = fs_unlink(path) as u64
+    return SYSACT_CONTINUE
+}
+
+; Remove the empty directory at the absolute path in a0. Factored out for the
+; same frame-size reason as sys_unlink_impl.
+sys_rmdir_impl: (frame: u64*) -> u64 {
+    path: u8* = (@frame[10]) as u8*
+    @frame[10] = fs_rmdir(path) as u64
+    return SYSACT_CONTINUE
+}
+
 ; Dispatch a U-mode ecall: reads a7 (syscall number) and a0-a2 (args), writes result to frame a0.
 syscall_dispatch: (frame: u64*) -> u64 {
     num: u64 = @frame[17]
@@ -406,6 +426,14 @@ syscall_dispatch: (frame: u64*) -> u64 {
 
     if num == SYSCALL_FTRUNCATE {
         return sys_ftruncate_impl(frame)
+    }
+
+    if num == SYSCALL_UNLINK {
+        return sys_unlink_impl(frame)
+    }
+
+    if num == SYSCALL_RMDIR {
+        return sys_rmdir_impl(frame)
     }
 
     if num == SYSCALL_PIDALIVE {

@@ -89,6 +89,7 @@ support the interactive shell.
 | 102 | stat | inode type at a path |
 | 103 | exec | load and run an `FEXE` executable from the filesystem |
 | 104 | pidalive | 1 while a launched pid is still runnable |
+| 105 / 106 | unlink / rmdir | remove a file / remove an empty directory |
 | 220 | fork | clone the current process; returns the child pid to the parent, 0 to the child |
 | 260 | wait | reap an exited child; returns its exit code (-1 if none) |
 
@@ -101,7 +102,9 @@ it. The shell uses `exec` + `pidalive` to run a child and wait for it cooperativ
 - `user_hello.hll` -- writes a greeting via `sys_write`, then yields forever.
 - `shell.hll` -- interactive shell booted as pid 1. Reads a line from the UART one byte at a
   time (yielding while idle) and runs built-ins: `ls`, `cd <dir>`, `cat <file>`,
-  `edit <file>`, `run <file>`, `help`, `exit`.
+  `edit <file>`, `run <file>`, `touch <file>`, `mkdir <dir>`, `rm <file>`, `rmdir <dir>`,
+  `mv <old> <new>`, `help`, `exit`. Executable files use the `.fexe` extension; `run`
+  verifies the `FEXE` magic before launching.
 - `edit.hll` -- a small full-screen file editor launched by the shell's `edit` built-in;
   loads a file from the filesystem, accepts edits over the UART, and writes it back.
 

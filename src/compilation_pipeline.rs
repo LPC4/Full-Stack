@@ -160,6 +160,7 @@ pub struct CompilationPipeline {
     artifact_stem: RefCell<Option<String>>,
     last_artifact_stem: RefCell<Option<String>>,
     write_artifacts: bool,
+    peephole: bool,
 }
 
 impl Default for CompilationPipeline {
@@ -181,6 +182,7 @@ impl CompilationPipeline {
             artifact_stem: RefCell::new(None),
             last_artifact_stem: RefCell::new(None),
             write_artifacts: true,
+            peephole: false,
         }
     }
 
@@ -196,6 +198,7 @@ impl CompilationPipeline {
             artifact_stem: RefCell::new(None),
             last_artifact_stem: RefCell::new(None),
             write_artifacts: true,
+            peephole: false,
         }
     }
 
@@ -263,6 +266,13 @@ impl CompilationPipeline {
 
     pub fn set_write_artifacts(&mut self, enabled: bool) {
         self.write_artifacts = enabled;
+    }
+
+    /// Enable the conservative assembly peephole pass. Off by default; when on,
+    /// the emitted token stream (and the `.s` text rendered from it) is optimized
+    /// before assembly.
+    pub fn set_peephole(&mut self, enabled: bool) {
+        self.peephole = enabled;
     }
 
     pub fn set_artifact_stem(&mut self, stem: Option<String>) {
@@ -569,6 +579,7 @@ impl CompilationPipeline {
         ir: &IrProgram,
     ) -> (String, Vec<RvInstruction>) {
         let mut compiler = CompilerRv64::new();
+        compiler.set_peephole(self.peephole);
         let (asm, tokens) = compiler.compile_with_tokens(ir);
         let stem = if let Some(existing) = self.current_artifact_stem() {
             existing

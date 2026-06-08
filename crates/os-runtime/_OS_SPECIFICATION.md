@@ -40,7 +40,7 @@ To make the relationship between firmware, kernel and the higher-level OS cleare
 - User processes and services
   - Role: User-mode programs that run under kernel supervision with address-space isolation. Communicate with the kernel via ecall.
   - Where to find it in the repo: `crates/os-runtime/user/` (example programs). The test harness injects user binaries by placing them at physical address 0x87F00000; the kernel reads metadata, copies pages, maps them, creates a PCB, and adds it to the scheduler.
-  - What is implemented: `user_hello.hll` (prints a greeting via `sys_write`, then yields in a loop) and `shell.hll`, an interactive shell that boots as pid 1 and runs built-in commands (`ls`, `cd`, `cat`, `edit`, `run`, `help`, `exit`) against the filesystem. The injection mechanism and the full user-process lifecycle (create, run, exec a child, exit) work end-to-end in integration tests.
+  - What is implemented: `user_hello.hll` (prints a greeting via `sys_write`, then yields in a loop) and `shell.hll`, an interactive shell that boots as pid 1 and runs built-in commands (`ls`, `cd`, `cat`, `edit`, `run`, `touch`, `mkdir`, `rm`, `rmdir`, `mv`, `help`, `exit`) against the filesystem. The injection mechanism and the full user-process lifecycle (create, run, exec a child, exit) work end-to-end in integration tests.
   - Not yet implemented: block-device drivers (the filesystem lives in a RAM image), signals, and multi-hart support.
 
 The remainder of this specification documents the machine model, calling conventions and ABI that the kernel and eventual OS must follow.
@@ -709,6 +709,8 @@ project-specific extensions added to support the interactive shell.
 | `102` | `stat` | `a0=path*` | inode type or -1 | Inode type at a path (1=file, 2=dir) |
 | `103` | `exec` | `a0=path*` | new pid or -1 | Load an `FEXE` executable from the filesystem and enqueue it |
 | `104` | `pidalive` | `a0=pid` | 1 or 0 | 1 while a launched pid is still in the ready queue |
+| `105` | `unlink` | `a0=path*` | 0 or -1 | Remove a regular file (frees its dirent, data blocks, and inode); refuses directories |
+| `106` | `rmdir` | `a0=path*` | 0 or -1 | Remove an empty directory; refuses the root and non-empty directories |
 | `220` | `fork` | -- | child pid (parent) / 0 (child) / -1 | Clone the caller: copy its address space and trap frame into a new child process |
 | `260` | `wait` | -- | exit code or -1 | Reap an exited child and return its exit code; -1 if there is no child to reap |
 
@@ -716,6 +718,26 @@ project-specific extensions added to support the interactive shell.
 maps it at a per-pid 16 MiB code slot starting at `0x4000_0000` (pid 1 at the base), then calls
 `process_create` and `scheduler_add`. The shell pairs `exec` with `pidalive` to run a child and
 wait for it cooperatively.
+
+#### 9.2.1 Executable file format (FEXE)
+
+Executables stored in the filesystem use the `FEXE` container: a 4 KiB header block followed by
+the position-independent flat-binary payload. `build_exec_file` (host) writes it and `sys_exec`
+(guest) reads it.
+
+```
+Offset  Size  Field
+------  ----  -----
+0       4     magic    "FEXE" (0x4558_4546, little-endian u32)
+8       8     entry    entry-point offset within the payload (u64)
+4096    ...   payload  flat binary; loaded page-by-page and mapped R+W+X+U
+```
+
+`sys_exec` validates the magic and rejects a file that does not begin with `FEXE`. The entry VA is
+`0x4000_0000 + entry`. By convention these files use the **`.fexe`** extension (`/bin/edit.fexe`,
+`/home/<program>.fexe`); the `.bin` extension is reserved for *flat* binary exports (no FEXE
+wrapper). The shell's `run` command pre-checks the magic and reports `not an executable` for a
+non-FEXE file before calling `exec`.
 
 ### 9.3 Scheduler Actions
 

@@ -456,12 +456,12 @@ main: () -> i32 {
     let image = build_fs_image(&[
         FsEntry::Dir { path: "/home" },
         FsEntry::File {
-            path: "/home/hello.bin",
+            path: "/home/hello.fexe",
             data: &exec_file,
         },
     ]);
 
-    let session = "ls\ncd /home\nls\nrun hello.bin\nexit\n";
+    let session = "ls\ncd /home\nls\nrun hello.fexe\nexit\n";
     let (_, outcome, uart) =
         boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 80_000_000);
 
@@ -469,7 +469,7 @@ main: () -> i32 {
     assert!(uart.contains("HLL shell ready"), "shell did not start; uart={uart:?}");
     assert!(uart.contains("home"), "ls of root did not list home; uart={uart:?}");
     assert!(
-        uart.contains("hello.bin"),
+        uart.contains("hello.fexe"),
         "ls of /home did not list the program; uart={uart:?}"
     );
     assert!(
@@ -479,6 +479,35 @@ main: () -> i32 {
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
         "exit did not halt the VM cleanly; outcome={outcome:?} uart={uart:?}"
+    );
+}
+
+// `run` on a non-FEXE file must report "not an executable" up front rather than
+// failing opaquely inside sys_exec.
+#[test]
+fn kernel_shell_run_rejects_non_executable() {
+    let shell = compile_hosted(user::SHELL);
+    let image = build_fs_image(&[FsEntry::File {
+        path: "/notes.txt",
+        data: b"just some text, not a program\n",
+    }]);
+
+    let session = "run /notes.txt\nrun /missing.fexe\nexit\n";
+    let (_, outcome, uart) =
+        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 80_000_000);
+
+    assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
+    assert!(
+        uart.contains("run: not an executable: /notes.txt"),
+        "run did not reject a non-FEXE file; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("run: no such file: /missing.fexe"),
+        "run did not report a missing file; uart={uart:?}"
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "exit did not halt cleanly; outcome={outcome:?} uart={uart:?}"
     );
 }
 
@@ -532,7 +561,7 @@ fn editor_loads_clears_appends_writes_and_truncates() {
     let image = build_fs_image(&[
         FsEntry::Dir { path: "/bin" },
         FsEntry::File {
-            path: "/bin/edit",
+            path: "/bin/edit.fexe",
             data: &editor_exec,
         },
         FsEntry::File {
@@ -733,7 +762,7 @@ main: () -> i32 {{
     @p = 0xAA as u8
     console_writeln("PARENT_WROTE".data)
 
-    pid: i64 = sc_exec("/child.bin".data)
+    pid: i64 = sc_exec("/child.fexe".data)
     if pid < 0 {{
         console_writeln("PARENT_EXEC_FAIL".data)
         sc_exit(1)
@@ -779,7 +808,7 @@ main: () -> i32 {{
     let child_exec = assembled_to_exec_file(&child);
 
     let image = build_fs_image(&[FsEntry::File {
-        path: "/child.bin",
+        path: "/child.fexe",
         data: &child_exec,
     }]);
 
@@ -987,6 +1016,115 @@ fn kernel_fs_full_lifecycle() {
     assert!(uart.contains("[  FS  ] mounted"), "expected FS mount message; uart={uart:?}");
     assert!(!uart.contains("FS_FAIL"), "an FS operation failed; uart={uart:?}");
     assert!(uart.contains("FS_ALL_PASS"), "FS exerciser did not report success; uart={uart:?}");
+}
+
+// Scan the inode table for an entry of the given type (1=file, 2=dir) and name.
+// Returns true if present. Used by the file-management test to assert on-disk
+// state directly, since the shell echoes typed commands and UART substring
+// checks for path names would match the echo rather than real FS effects.
+fn inode_present(image: &[u8], name: &str, ty: u16) -> bool {
+    const BLOCK_SIZE: usize = 4096;
+    const INODE_SIZE: usize = 128;
+    const INODE_COUNT: usize = 256;
+    const IN_TYPE: usize = 0;
+    const IN_NAME: usize = 8;
+    for idx in 0..INODE_COUNT {
+        let base = BLOCK_SIZE + idx * INODE_SIZE;
+        let t = u16::from_le_bytes([image[base + IN_TYPE], image[base + IN_TYPE + 1]]);
+        if t != ty {
+            continue;
+        }
+        let name_bytes = &image[base + IN_NAME..base + IN_NAME + 32];
+        let end = name_bytes.iter().position(|&b| b == 0).unwrap_or(32);
+        if &name_bytes[..end] == name.as_bytes() {
+            return true;
+        }
+    }
+    false
+}
+
+// Drive the shell's file-management commands (mkdir/touch/rm/mv/rmdir) and
+// verify their effects on the on-disk inode table.
+#[test]
+fn kernel_shell_file_management() {
+    let shell = compile_hosted(user::SHELL);
+
+    // Start from an empty FS so the only inodes are the root plus what the
+    // session creates.
+    let image = build_fs_image(&[]);
+
+    // mkdir a directory, touch two files in it, rm one, mv (rename) the other,
+    // then exit. Final state: /work exists, /work/renamed.txt exists,
+    // keep.txt and temp.txt are gone.
+    let session = "mkdir /work\n\
+                   touch /work/keep.txt\n\
+                   touch /work/temp.txt\n\
+                   rm /work/temp.txt\n\
+                   mv /work/keep.txt /work/renamed.txt\n\
+                   exit\n";
+
+    let (vm, outcome, uart) =
+        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 120_000_000);
+
+    assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
+    assert!(uart.contains("HLL shell ready"), "shell did not start; uart={uart:?}");
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "exit did not halt the VM cleanly; outcome={outcome:?} uart={uart:?}"
+    );
+
+    // No command should have reported a failure.
+    assert!(!uart.contains("cannot create"), "a create command failed; uart={uart:?}");
+    assert!(!uart.contains("cannot remove"), "rm failed; uart={uart:?}");
+    assert!(!uart.contains("cannot move"), "mv failed; uart={uart:?}");
+
+    let final_image = vm.peek_bytes_raw(FS_IMAGE_PA, image.len());
+    assert!(inode_present(&final_image, "work", 2), "mkdir did not create /work");
+    assert!(
+        inode_present(&final_image, "renamed.txt", 1),
+        "mv did not produce renamed.txt"
+    );
+    assert!(
+        !inode_present(&final_image, "keep.txt", 1),
+        "mv left the old name behind"
+    );
+    assert!(
+        !inode_present(&final_image, "temp.txt", 1),
+        "rm did not remove temp.txt"
+    );
+}
+
+// Verify rmdir removes an empty directory but refuses a non-empty one.
+#[test]
+fn kernel_shell_rmdir_empty_and_nonempty() {
+    let shell = compile_hosted(user::SHELL);
+    let image = build_fs_image(&[]);
+
+    // /full holds a file (rmdir must refuse it); /empty is removable.
+    let session = "mkdir /full\n\
+                   touch /full/f.txt\n\
+                   mkdir /empty\n\
+                   rmdir /full\n\
+                   rmdir /empty\n\
+                   exit\n";
+
+    let (vm, outcome, uart) =
+        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 120_000_000);
+
+    assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "exit did not halt cleanly; outcome={outcome:?} uart={uart:?}"
+    );
+    // rmdir /full must fail (non-empty); rmdir /empty must succeed.
+    assert!(
+        uart.contains("rmdir: cannot remove: /full"),
+        "rmdir should refuse a non-empty directory; uart={uart:?}"
+    );
+
+    let final_image = vm.peek_bytes_raw(FS_IMAGE_PA, image.len());
+    assert!(inode_present(&final_image, "full", 2), "non-empty dir was wrongly removed");
+    assert!(!inode_present(&final_image, "empty", 2), "empty dir was not removed");
 }
 
 #[test]

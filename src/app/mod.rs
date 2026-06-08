@@ -820,7 +820,7 @@ impl FullStackApp {
     }
 
     /// Compile the bundled line editor as a hosted binary, caching the result
-    /// so repeated boots reuse it. Installed at `/bin/edit` by the boot image
+    /// so repeated boots reuse it. Installed at `/bin/edit.fexe` by the boot image
     /// builder so the shell's `edit` command can exec it.
     fn ensure_edit_binary(&mut self) -> Result<(), String> {
         if self.edit_binary.is_some() {
@@ -867,14 +867,14 @@ impl FullStackApp {
             },
         ];
 
-        // Install the line editor at /bin/edit so the shell's `edit` command can
-        // exec it. Without this the editor is compiled but never reachable.
+        // Install the line editor at /bin/edit.fexe so the shell's `edit` command
+        // can exec it. Without this the editor is compiled but never reachable.
         let edit_holder;
         if let Some(asm) = self.edit_binary.as_ref() {
             edit_holder = assembled_to_exec_file(asm);
             entries.push(FsEntry::Dir { path: "/bin" });
             entries.push(FsEntry::File {
-                path: "/bin/edit",
+                path: "/bin/edit.fexe",
                 data: &edit_holder,
             });
         }
@@ -890,7 +890,7 @@ impl FullStackApp {
                 .find(|p| p.id == self.selected_inject_program_id)
                 .map(|p| sanitize_program_filename(&p.name))
                 .unwrap_or_else(|| "program".to_owned());
-            path_holder = format!("/home/{name}.bin");
+            path_holder = format!("/home/{name}.fexe");
             exec_holder = assembled_to_exec_file(asm);
             entries.push(FsEntry::File {
                 path: &path_holder,
@@ -980,7 +980,7 @@ impl eframe::App for FullStackApp {
                 ui.set_max_width(900.0);
                 // Booting drops into an interactive shell (ls / cd / run / exit).
                 // The selected program, if any, is placed in /home as a runnable
-                // file you can launch with `run <name>.bin`.
+                // file you can launch with `run <name>.fexe`.
                 ui.horizontal(|ui| {
                     ui.label("Program in /home:");
                     // Program selector: list Example and Custom programs.

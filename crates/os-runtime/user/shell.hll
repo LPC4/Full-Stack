@@ -132,6 +132,65 @@ sc_read: (fd: i64, buf: u8*, offset: u64, len: u64) -> i64 {
     return _ret
 }
 
+; Create a directory at an absolute path. Returns >=0 on success or -1.
+sc_mkdir: (path: u8*) -> i64 {
+    _a0 = path as u64
+    asm {
+        la t0, _a0
+        ld a0, 0(t0)
+        li a7, 83
+        ecall
+        la t0, _ret
+        sd a0, 0(t0)
+    }
+    return _ret
+}
+
+; Move/rename a file or directory. Returns 0 on success or -1.
+sc_rename: (old_path: u8*, new_path: u8*) -> i64 {
+    _a0 = old_path as u64
+    _a1 = new_path as u64
+    asm {
+        la t0, _a0
+        ld a0, 0(t0)
+        la t0, _a1
+        ld a1, 0(t0)
+        li a7, 82
+        ecall
+        la t0, _ret
+        sd a0, 0(t0)
+    }
+    return _ret
+}
+
+; Remove a regular file. Returns 0 on success or -1.
+sc_unlink: (path: u8*) -> i64 {
+    _a0 = path as u64
+    asm {
+        la t0, _a0
+        ld a0, 0(t0)
+        li a7, 105
+        ecall
+        la t0, _ret
+        sd a0, 0(t0)
+    }
+    return _ret
+}
+
+; Remove an empty directory. Returns 0 on success or -1.
+sc_rmdir: (path: u8*) -> i64 {
+    _a0 = path as u64
+    asm {
+        la t0, _a0
+        ld a0, 0(t0)
+        li a7, 106
+        ecall
+        la t0, _ret
+        sd a0, 0(t0)
+    }
+    return _ret
+}
+
 ; Close a file descriptor.
 sc_close: (fd: i64) {
     _a0 = fd as u64
@@ -382,6 +441,36 @@ cmd_cd: (cwd: u8*, arg: u8*) {
     sh_strcpy(cwd, target_p)
 }
 
+; Return 1 if the file at `path` begins with the FEXE magic ("FEXE"), else 0.
+; Lets `run` reject a non-executable file with a clear message up front, rather
+; than failing opaquely inside sys_exec.
+sh_is_fexe: (path: u8*) -> i64 {
+    fd: i64 = sc_open(path, 0)
+    if fd < 0 {
+        return -1 as i64
+    }
+    magic: u8[4]
+    magic_p: u8* = magic[0]
+    n: i64 = sc_read(fd, magic_p, 0, 4)
+    sc_close(fd)
+    if n != 4 {
+        return 0
+    }
+    if @(magic_p + 0) != 70 {
+        return 0
+    }
+    if @(magic_p + 1) != 69 {
+        return 0
+    }
+    if @(magic_p + 2) != 88 {
+        return 0
+    }
+    if @(magic_p + 3) != 69 {
+        return 0
+    }
+    return 1
+}
+
 cmd_run: (cwd: u8*, arg: u8*) {
     if @arg == 0 {
         console_writeln("run: missing file name".data)
@@ -390,6 +479,17 @@ cmd_run: (cwd: u8*, arg: u8*) {
     target: u8[256]
     target_p: u8* = target[0]
     sh_join_path(cwd, arg, target_p)
+    ok: i64 = sh_is_fexe(target_p)
+    if ok < 0 {
+        console_write("run: no such file: ".data)
+        console_writeln(arg)
+        return
+    }
+    if ok == 0 {
+        console_write("run: not an executable: ".data)
+        console_writeln(arg)
+        return
+    }
     pid: i64 = sc_exec(target_p)
     if pid < 0 {
         console_write("run: cannot exec: ".data)
@@ -442,13 +542,125 @@ cmd_edit: (cwd: u8*, arg: u8*) {
     target: u8[256]
     target_p: u8* = target[0]
     sh_join_path(cwd, arg, target_p)
-    pid: i64 = sc_exec_arg("/bin/edit".data, target_p)
+    pid: i64 = sc_exec_arg("/bin/edit.fexe".data, target_p)
     if pid < 0 {
-        console_writeln("edit: cannot launch /bin/edit".data)
+        console_writeln("edit: cannot launch /bin/edit.fexe".data)
         return
     }
     while sc_pidalive(pid as u64) == 1 {
         sc_yield()
+    }
+}
+
+; Create an empty file (open with the create flag, then close).
+cmd_touch: (cwd: u8*, arg: u8*) {
+    if @arg == 0 {
+        console_writeln("touch: missing file name".data)
+        return
+    }
+    target: u8[256]
+    target_p: u8* = target[0]
+    sh_join_path(cwd, arg, target_p)
+    fd: i64 = sc_open(target_p, 2)
+    if fd < 0 {
+        console_write("touch: cannot create: ".data)
+        console_writeln(arg)
+        return
+    }
+    sc_close(fd)
+}
+
+; Create a directory.
+cmd_mkdir: (cwd: u8*, arg: u8*) {
+    if @arg == 0 {
+        console_writeln("mkdir: missing directory name".data)
+        return
+    }
+    target: u8[256]
+    target_p: u8* = target[0]
+    sh_join_path(cwd, arg, target_p)
+    if sc_mkdir(target_p) < 0 {
+        console_write("mkdir: cannot create: ".data)
+        console_writeln(arg)
+    }
+}
+
+; Remove a regular file.
+cmd_rm: (cwd: u8*, arg: u8*) {
+    if @arg == 0 {
+        console_writeln("rm: missing file name".data)
+        return
+    }
+    target: u8[256]
+    target_p: u8* = target[0]
+    sh_join_path(cwd, arg, target_p)
+    if sc_unlink(target_p) < 0 {
+        console_write("rm: cannot remove: ".data)
+        console_writeln(arg)
+    }
+}
+
+; Remove an empty directory.
+cmd_rmdir: (cwd: u8*, arg: u8*) {
+    if @arg == 0 {
+        console_writeln("rmdir: missing directory name".data)
+        return
+    }
+    target: u8[256]
+    target_p: u8* = target[0]
+    sh_join_path(cwd, arg, target_p)
+    if sc_rmdir(target_p) < 0 {
+        console_write("rmdir: cannot remove: ".data)
+        console_writeln(arg)
+    }
+}
+
+; Move/rename: "mv <old> <new>". Splits arg on the first run of spaces.
+cmd_mv: (cwd: u8*, arg: u8*) {
+    ; Find the space separating the two operands.
+    sp: u64 = 0
+    while @(arg + sp) != 0 {
+        if @(arg + sp) == 32 {
+            break
+        }
+        sp = sp + 1
+    }
+    if @(arg + sp) == 0 {
+        console_writeln("mv: usage: mv <old> <new>".data)
+        return
+    }
+    ; Copy the first operand out before we walk past it.
+    src: u8[128]
+    src_p: u8* = src[0]
+    i: u64 = 0
+    while i < sp {
+        if i >= 127 {
+            break
+        }
+        d: u8* = src_p + i
+        @d = @(arg + i)
+        i = i + 1
+    }
+    st: u8* = src_p + i
+    @st = 0 as u8
+    ; Skip the separating space(s) to reach the destination operand.
+    while @(arg + sp) == 32 {
+        sp = sp + 1
+    }
+    if @(arg + sp) == 0 {
+        console_writeln("mv: usage: mv <old> <new>".data)
+        return
+    }
+    dst_arg: u8* = arg + sp
+    old_abs: u8[256]
+    old_p: u8* = old_abs[0]
+    sh_join_path(cwd, src_p, old_p)
+    new_abs: u8[256]
+    new_p: u8* = new_abs[0]
+    sh_join_path(cwd, dst_arg, new_p)
+    if sc_rename(old_p, new_p) < 0 {
+        console_write("mv: cannot move: ".data)
+        console_writeln(src_p)
     }
 }
 
@@ -465,7 +677,9 @@ handle_command: (cwd: u8*, line: u8*) {
         return
     }
     if sh_streq(line, "help".data) == 1 {
-        console_writeln("commands: ls, cd <dir>, run <file>, cat <file>, edit <file>, exit".data)
+        console_writeln("commands: ls, cd <dir>, run <file>, cat <file>, edit <file>,".data)
+        console_writeln("          touch <file>, mkdir <dir>, rm <file>, rmdir <dir>,".data)
+        console_writeln("          mv <old> <new>, exit".data)
         return
     }
     if sh_starts_with(line, "cd ".data) == 1 {
@@ -482,6 +696,26 @@ handle_command: (cwd: u8*, line: u8*) {
     }
     if sh_starts_with(line, "edit ".data) == 1 {
         cmd_edit(cwd, line + 5)
+        return
+    }
+    if sh_starts_with(line, "touch ".data) == 1 {
+        cmd_touch(cwd, line + 6)
+        return
+    }
+    if sh_starts_with(line, "mkdir ".data) == 1 {
+        cmd_mkdir(cwd, line + 6)
+        return
+    }
+    if sh_starts_with(line, "rmdir ".data) == 1 {
+        cmd_rmdir(cwd, line + 6)
+        return
+    }
+    if sh_starts_with(line, "rm ".data) == 1 {
+        cmd_rm(cwd, line + 3)
+        return
+    }
+    if sh_starts_with(line, "mv ".data) == 1 {
+        cmd_mv(cwd, line + 3)
         return
     }
     console_write("unknown command: ".data)
