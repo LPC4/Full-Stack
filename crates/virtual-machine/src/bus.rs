@@ -181,9 +181,12 @@ impl SystemBus {
                 a if a >= PLIC_BASE && a <= PLIC_END => {
                     self.plic.read_byte(a - PLIC_BASE).unwrap_or(0)
                 }
-                a if a >= FB_BASE && a <= FB_END => {
-                    self.framebuffer.pixels().get((a - FB_BASE) as usize).copied().unwrap_or(0)
-                }
+                a if a >= FB_BASE && a <= FB_END => self
+                    .framebuffer
+                    .pixels()
+                    .get((a - FB_BASE) as usize)
+                    .copied()
+                    .unwrap_or(0),
                 _ => self.l1_cache.read_byte(addr + i).unwrap_or(0),
             })
             .collect()

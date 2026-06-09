@@ -17,11 +17,11 @@ use super::section::SectionKind;
 use super::token::{AsmToken, BranchKind};
 use crate::pseudo::PseudoInstruction;
 use crate::real::RealInstruction;
+use crate::riscv::rv64i::Srai;
 use crate::riscv::rv64i::{
     Add, Addi, And, Andi, Ecall, Jalr, Lb, Lbu, Ld, Mret, Or, Ori, Sb, Sd, SfenceVma, Slli, Sret,
     Srl, Srli, Sub, Wfi,
 };
-use crate::riscv::rv64i::Srai;
 use crate::riscv::rv64m::{Divu, Mul, Remu};
 use crate::riscv::rv64zicsr::{Csrrc, Csrrs, Csrrw};
 use crate::rv_instruction::RvInstruction;
