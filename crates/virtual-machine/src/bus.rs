@@ -20,8 +20,9 @@ pub const SYSCON_BASE: u64 = 0x1001_0000;
 pub const SYSCON_SIZE: u64 = 0x1000;
 pub const SYSCON_END: u64 = SYSCON_BASE + SYSCON_SIZE - 1;
 /// Linear framebuffer MMIO device. See `devices::framebuffer`.
+/// The span covers the pixel buffer plus a one-page control block (FILL, ...).
 pub const FB_BASE: u64 = 0x1002_0000;
-pub const FB_SIZE: u64 = crate::devices::framebuffer::FB_BYTES as u64;
+pub const FB_SIZE: u64 = crate::devices::framebuffer::FB_TOTAL_BYTES as u64;
 pub const FB_END: u64 = FB_BASE + FB_SIZE - 1;
 pub const CLINT_BASE: u64 = 0x0200_0000;
 pub const CLINT_SIZE: u64 = 0x10000;
@@ -204,6 +205,11 @@ impl SystemBus {
     /// Borrow the framebuffer's pixel buffer for display.
     pub fn peek_framebuffer(&self) -> &[u8] {
         self.framebuffer.pixels()
+    }
+
+    /// Number of full-screen FILL clears the framebuffer has performed.
+    pub fn framebuffer_fill_count(&self) -> u64 {
+        self.framebuffer.fill_count()
     }
 
     // Direct access to devices for interrupt handling

@@ -71,6 +71,8 @@ pub struct HighLevelCompiler {
     /// Set per compilation unit so that two units linked together never produce duplicate label names.
     pub string_prefix: String,
     prelude_types: Vec<(String, IrType)>,
+    // Return type of the function being lowered, so `return` literals get its width.
+    current_return_ty: Option<IrType>,
 }
 
 impl HighLevelCompiler {
@@ -98,6 +100,7 @@ impl HighLevelCompiler {
             global_vars: std::collections::HashMap::new(),
             string_prefix: prefix.to_owned(),
             prelude_types: Vec::new(),
+            current_return_ty: None,
         }
     }
 

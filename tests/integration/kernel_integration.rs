@@ -502,8 +502,7 @@ fn cube_demo_drives_framebuffer() {
         "cube should run continuously, got {outcome:?}"
     );
 
-    // The clear loop fills the framebuffer with opaque black through MMU + bus +
-    // device, so a large opaque-black region proves that path executed.
+    // A large opaque-black region proves the FILL clear path ran.
     let px = vm.peek_framebuffer();
     let opaque_black = px
         .chunks_exact(4)
@@ -511,7 +510,38 @@ fn cube_demo_drives_framebuffer() {
         .count();
     assert!(
         opaque_black > 10_000,
-        "expected the clear loop to fill the framebuffer, got {opaque_black} black pixels"
+        "expected the clear to fill the framebuffer, got {opaque_black} black pixels"
+    );
+    // The device-side FILL must actually have run at least once in this budget.
+    assert!(
+        vm.framebuffer_fill_count() >= 1,
+        "cube did not clear the framebuffer via the FILL register"
+    );
+}
+
+// Headless framebuffer throughput bench (a measurement, not a pass/fail). Run with:
+//   cargo test --release --test all -- --ignored cube_framebuffer_bench --nocapture
+#[test]
+#[ignore]
+fn cube_framebuffer_bench() {
+    let user = compile_hosted(user::CUBE);
+    let steps: u64 = 40_000_000;
+
+    let start = std::time::Instant::now();
+    let (vm, _outcome, _uart) = boot_kernel(cached_kernel(), Some(&user), None, "", steps);
+    let elapsed = start.elapsed().as_secs_f64();
+
+    let frames = vm.framebuffer_fill_count();
+    let cps = steps as f64 / elapsed;
+    let fps = frames as f64 / elapsed;
+    let cycles_per_frame = if frames > 0 {
+        steps as f64 / frames as f64
+    } else {
+        f64::NAN
+    };
+    println!(
+        "cube bench: {steps} steps in {elapsed:.3}s => {cps:.0} cycles/s; \
+         {frames} frames; {cycles_per_frame:.0} cycles/frame; {fps:.1} cube fps"
     );
 }
 
@@ -558,6 +588,53 @@ main: () -> i32 {
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
         "exit did not halt the VM cleanly; outcome={outcome:?} uart={uart:?}"
+    );
+}
+
+// Non-zero global initializers must survive the FEXE/sys_exec load path too, not
+// just the direct VM loader the run_hll tests cover (PLAN 0.2).
+#[test]
+fn kernel_shell_exec_carries_global_initializers() {
+    let shell = compile_hosted(user::SHELL);
+
+    let child = compile_hosted(
+        r#"
+external print_int: (value: i64) -> i32
+external console_writeln: (str: u8*)
+g: i64 = 12345
+arr: i64[3] = [100, 200, 300]
+main: () -> i32 {
+    console_writeln("SCALAR".data)
+    print_int(g)
+    console_writeln("ARRAY".data)
+    print_int(@arr[0] + @arr[1] + @arr[2])
+    return 0
+}
+"#,
+    );
+    let exec_file = assembled_to_exec_file(&child);
+
+    let image = build_fs_image(&[FsEntry::File {
+        path: "/g.fexe",
+        data: &exec_file,
+    }]);
+
+    let session = "run /g.fexe\nexit\n";
+    let (_, outcome, uart) =
+        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 80_000_000);
+
+    assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
+    assert!(
+        uart.contains("12345"),
+        "scalar global initializer did not survive exec; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("600"),
+        "array global initializer did not survive exec; uart={uart:?}"
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "exit did not halt cleanly; outcome={outcome:?} uart={uart:?}"
     );
 }
 

@@ -720,13 +720,17 @@ maps it at a per-pid 16 MiB code slot starting at `0x4000_0000` (pid 1 at the ba
 `process_create` and `scheduler_add`. The shell pairs `exec` with `pidalive` to run a child and
 wait for it cooperatively.
 
-`map_fb` maps the framebuffer device's physical pages (`0x1002_0000`, 320 x 240 RGBA8888 = 75 pages)
-into the calling process at `0x5000_0000` with R+W+U permissions and returns that base virtual
-address. The mapping is added to the running process's page-table root, so each caller gets the
-framebuffer in its own address space; the underlying device buffer is shared. The bundled `fbdemo`
-program (`/bin/fbdemo.fexe`) calls `map_fb` and renders a Mandelbrot set into the buffer (its hot
-loop is hand-written fixed-point assembly); `run /bin/fbdemo` from the shell paints it, viewable in
-the Machine window's FB tab.
+`map_fb` maps the framebuffer device's physical pages (`0x1002_0000`, 76 pages: 75 for the
+320 x 240 RGBA8888 pixel buffer plus one control page holding the `FILL` register) into the calling
+process at `0x5000_0000` with R+W+U permissions and returns that base virtual address. The mapping is
+added to the running process's page-table root, so each caller gets the framebuffer in its own
+address space; the underlying device buffer is shared. The control page after the pixels exposes
+`FILL` (base + `307200`: clear the draw buffer to one colour device-side), `DBMODE` (base + `307208`:
+enable double buffering), and `PRESENT` (base + `307204`: publish the back buffer). The bundled
+`fbdemo` program (`/bin/fbdemo.fexe`) renders a Mandelbrot set single-buffered; `/bin/cube.fexe`
+animates a spinning wireframe cube, enabling double buffering and `FILL`-clearing then `PRESENT`-ing
+each frame so it never flickers. `run /bin/fbdemo` or `run /bin/cube` from the shell paints them,
+viewable in the Machine window's FB tab.
 
 #### 9.2.1 Executable file format (FEXE)
 

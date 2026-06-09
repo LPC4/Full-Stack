@@ -11,11 +11,11 @@ entry:
 	$pp = stack_alloc i32**
 	write i32** $ptr @ $pp
 	; assignment
-	$1 = read i32 @ $val_ptr
-	$2 = math add i32 $1, 1
-	$3 = read i32** @ $pp
-	$4 = read i32* @ $3
-	write i32 $2 @ $4
+	$1 = read i32** @ $pp
+	$2 = read i32* @ $1
+	$3 = read i32 @ $val_ptr
+	$4 = math add i32 $3, 1
+	write i32 $4 @ $2
 	$5 = read i32* @ $ptr
 	; defer: captured call free with 1 args
 	$6 = read i32* @ $ptr

@@ -186,10 +186,11 @@ impl SemanticAnalyzer {
                         resolved_init_ty
                     );
 
-                    // Allow integer literal widening
+                    // A constant integer expression adopts the declared integer
+                    // width; lowering folds it to the target type.
                     let is_literal_widening_allowed = Self::is_integer_type(&resolved_decl_ty)
-                        && Self::is_i32_type(&resolved_init_ty)
-                        && Self::is_literal_source(init_expr);
+                        && Self::is_integer_type(&resolved_init_ty)
+                        && Self::is_const_int_expr(init_expr);
 
                     if resolved_decl_ty != resolved_init_ty && !is_literal_widening_allowed {
                         self.error(format!(
@@ -1036,17 +1037,35 @@ impl SemanticAnalyzer {
         matches!(ty, IrType::Integer(_))
     }
 
-    fn is_i32_type(ty: &IrType) -> bool {
-        matches!(ty, IrType::Integer(crate::ir::IntWidth::I32))
-    }
-
-    fn is_literal_source(expr: &Expression) -> bool {
-        matches!(
-            expr,
+    // An integer literal, a negation, or arithmetic/bitwise ops over such (grouped).
+    fn is_const_int_expr(expr: &Expression) -> bool {
+        match expr {
             Expression::Primary(PrimaryExpr::Literal(
-                Literal::Integer(_) | Literal::HexInteger(_)
-            ))
-        )
+                Literal::Integer(_) | Literal::HexInteger(_),
+            )) => true,
+            Expression::Primary(PrimaryExpr::Grouped(inner)) => Self::is_const_int_expr(inner),
+            Expression::Unary {
+                op: UnaryOp::Negate,
+                expr,
+            } => Self::is_const_int_expr(expr),
+            Expression::Binary { op, left, right } => {
+                matches!(
+                    op,
+                    BinaryOp::Add
+                        | BinaryOp::Sub
+                        | BinaryOp::Mul
+                        | BinaryOp::Div
+                        | BinaryOp::Mod
+                        | BinaryOp::Shl
+                        | BinaryOp::Shr
+                        | BinaryOp::BitwiseAnd
+                        | BinaryOp::BitwiseOr
+                        | BinaryOp::BitwiseXor
+                ) && Self::is_const_int_expr(left)
+                    && Self::is_const_int_expr(right)
+            }
+            _ => false,
+        }
     }
 
     pub fn diagnostics(&self) -> &[Diagnostic] {

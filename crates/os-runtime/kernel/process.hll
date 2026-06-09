@@ -52,9 +52,6 @@ const USER_STACK_BASE = 0x80000000
 next_pid: u64 = 1
 
 process_init: () {
-    ; Set the first pid explicitly; global data initializers are not reloaded
-    ; into the running image, so do not rely on the declaration above.
-    next_pid = 1
     klog_ok("process subsystem ready".data)
 }
 

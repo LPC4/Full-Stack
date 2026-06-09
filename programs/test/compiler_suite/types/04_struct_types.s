@@ -5,17 +5,17 @@
 .globl calc_offset
 calc_offset:
 	; --- Function Prologue ---
-	; Allocate stack frame: 48 bytes
-	addi   sp, sp, -48
-	; Save return address (ra) at offset 32
-	sd     ra, 32(sp)
-	; Save callee-saved register s8 at offset 40
-	sd     s0, 40(sp)
+	; Allocate stack frame: 64 bytes
+	addi   sp, sp, -64
+	; Save return address (ra) at offset 40
+	sd     ra, 40(sp)
+	; Save callee-saved register s8 at offset 48
+	sd     s0, 48(sp)
 	; Set up frame pointer
 	addi   s0, sp, 0
 	; --- End Prologue ---
 	; --- Function Parameter Spills ---
-	addi   t0, s0, 48
+	addi   t0, s0, 64
 	; Spill parameter '$p' from register a0 to stack slot 16
 	sd     a0, 16(sp)
 	; Spill parameter '$shift' from register a1 to stack slot 24
@@ -43,20 +43,7 @@ calc_offset__entry:
 	addi   t2, t1, 0
 	add    t3, t0, t2
 	sd     t3, 16(sp)
-	; Load f32 from memory into $$2
-	ld     t0, 16(sp)
-	ld     t1, 0(t0)
-	fsw    ft6, 16(sp)
-	; Load f32 from memory into $$3
-	addi   t0, sp, 8
-	ld     t1, 0(t0)
-	fsw    ft6, 24(sp)
-	; add operation on f32
-	flw    ft1, 16(sp)
-	flw    ft2, 24(sp)
-	fadd.s ft3, ft1, ft2
-	fsw    ft3, 16(sp)
-	; Load {x: f32, y: f32}* from memory into $$5
+	; Load {x: f32, y: f32}* from memory into $$2
 	addi   t0, sp, 0
 	ld     t1, 0(t0)
 	sd     t1, 24(sp)
@@ -65,9 +52,22 @@ calc_offset__entry:
 	addi   t2, t1, 0
 	add    t3, t0, t2
 	sd     t3, 24(sp)
+	; Load f32 from memory into $$4
 	ld     t0, 24(sp)
+	ld     t1, 0(t0)
+	fsw    ft6, 24(sp)
+	; Load f32 from memory into $$5
+	addi   t0, sp, 8
+	ld     t1, 0(t0)
+	fsw    ft6, 32(sp)
+	; add operation on f32
+	flw    ft1, 24(sp)
+	flw    ft2, 32(sp)
+	fadd.s ft3, ft1, ft2
+	fsw    ft3, 24(sp)
+	ld     t0, 16(sp)
 	; Store f32 to memory
-	flw    ft4, 16(sp)
+	flw    ft4, 24(sp)
 	fsw    ft4, 0(t0)
 	; assignment
 	; Load {x: f32, y: f32}* from memory into $$7
@@ -79,20 +79,7 @@ calc_offset__entry:
 	addi   t2, t1, 0
 	add    t3, t0, t2
 	sd     t3, 16(sp)
-	; Load f32 from memory into $$9
-	ld     t0, 16(sp)
-	ld     t1, 0(t0)
-	fsw    ft6, 16(sp)
-	; Load f32 from memory into $$10
-	addi   t0, sp, 8
-	ld     t1, 0(t0)
-	fsw    ft6, 24(sp)
-	; add operation on f32
-	flw    ft5, 16(sp)
-	flw    ft6, 24(sp)
-	fadd.s ft7, ft5, ft6
-	fsw    ft7, 16(sp)
-	; Load {x: f32, y: f32}* from memory into $$12
+	; Load {x: f32, y: f32}* from memory into $$9
 	addi   t0, sp, 0
 	ld     t1, 0(t0)
 	sd     t1, 24(sp)
@@ -101,9 +88,22 @@ calc_offset__entry:
 	addi   t2, t1, 0
 	add    t3, t0, t2
 	sd     t3, 24(sp)
+	; Load f32 from memory into $$11
 	ld     t0, 24(sp)
+	ld     t1, 0(t0)
+	fsw    ft6, 24(sp)
+	; Load f32 from memory into $$12
+	addi   t0, sp, 8
+	ld     t1, 0(t0)
+	fsw    ft6, 32(sp)
+	; add operation on f32
+	flw    ft5, 24(sp)
+	flw    ft6, 32(sp)
+	fadd.s ft7, ft5, ft6
+	fsw    ft7, 24(sp)
+	ld     t0, 16(sp)
 	; Store f32 to memory
-	flw    ft0, 16(sp)
+	flw    ft0, 24(sp)
 	fsw    ft0, 0(t0)
 	; Load {x: f32, y: f32}* from memory into $$14
 	addi   t0, sp, 0
@@ -139,12 +139,12 @@ calc_offset__entry:
 	flw    ft4, 16(sp)
 	fsgnj.s fa0, ft4, ft4
 	; --- Function Epilogue ---
-	; Restore callee-saved register s8 from offset 40
-	ld     s0, 40(sp)
-	; Restore return address (ra) from offset 32
-	ld     ra, 32(sp)
-	; Deallocate stack frame: 48 bytes
-	addi   sp, sp, 48
+	; Restore callee-saved register s8 from offset 48
+	ld     s0, 48(sp)
+	; Restore return address (ra) from offset 40
+	ld     ra, 40(sp)
+	; Deallocate stack frame: 64 bytes
+	addi   sp, sp, 64
 	; Return to caller
 	jalr   zero, 0(ra)
 	; --- End Epilogue ---

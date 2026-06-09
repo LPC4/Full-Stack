@@ -15,15 +15,179 @@ const VPN_BITS: u64 = 9;
 const PTE_SIZE: u64 = 8;
 const LEVELS: usize = 3;
 
+// Direct-mapped TLB size; covers the framebuffer (76 pages) plus code/stack.
+const TLB_ENTRIES: usize = 256;
+
 #[inline]
 fn is_sv39_canonical(vaddr: u64) -> bool {
     let upper_bits = vaddr >> 39;
     upper_bits == 0 || upper_bits == 0x1FF_FFFF
 }
 
+#[derive(Clone, Copy)]
+struct TlbEntry {
+    valid: bool,
+    vpn: u64,
+    // Leaf PTE as written back to memory (A set, D set for write inserts).
+    pte: u64,
+    // Leaf level, for superpage offset reconstruction.
+    level: usize,
+}
+
+/// Direct-mapped cache of Sv39 leaf mappings. Caches only the mapping, not the
+/// permission decision (re-checked per access); keyed by satp, flushed on
+/// sfence.vma. See the VM spec section 2.1.7.
+pub struct Tlb {
+    satp: u64,
+    entries: [TlbEntry; TLB_ENTRIES],
+}
+
+impl Default for Tlb {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Tlb {
+    pub fn new() -> Self {
+        Self {
+            satp: 0,
+            entries: [TlbEntry {
+                valid: false,
+                vpn: 0,
+                pte: 0,
+                level: 0,
+            }; TLB_ENTRIES],
+        }
+    }
+
+    /// Invalidate every entry. Called on sfence.vma.
+    pub fn flush(&mut self) {
+        for e in &mut self.entries {
+            e.valid = false;
+        }
+    }
+
+    // Drop all entries if the active address space (satp) changed.
+    fn sync_satp(&mut self, satp: u64) {
+        if self.satp != satp {
+            self.satp = satp;
+            self.flush();
+        }
+    }
+
+    fn lookup(&self, vpn: u64) -> Option<(u64, usize)> {
+        let e = &self.entries[(vpn as usize) & (TLB_ENTRIES - 1)];
+        if e.valid && e.vpn == vpn {
+            Some((e.pte, e.level))
+        } else {
+            None
+        }
+    }
+
+    fn insert(&mut self, vpn: u64, pte: u64, level: usize) {
+        self.entries[(vpn as usize) & (TLB_ENTRIES - 1)] = TlbEntry {
+            valid: true,
+            vpn,
+            pte,
+            level,
+        };
+    }
+}
+
+// Check a leaf PTE and build the physical address (permission/privilege/superpage/
+// PMP). Shared by the walk and a TLB hit; touches no memory and no A/D bits.
+#[expect(clippy::too_many_arguments)]
+fn finalize_leaf(
+    pte: u64,
+    vaddr: u64,
+    level: usize,
+    priv_mode: PrivilegeMode,
+    sum: u64,
+    mxr: u64,
+    is_write: bool,
+    is_execute: bool,
+    pmpcfg0: u64,
+    pmpaddr0: u64,
+) -> Result<u64, VmError> {
+    let r = (pte >> 1) & 1;
+    let w = (pte >> 2) & 1;
+    let x = (pte >> 3) & 1;
+    let u_bit = (pte >> 4) & 1;
+
+    // Permission checks.
+    if is_execute && x == 0 {
+        return Err(VmError::InstructionAccessFault(vaddr));
+    }
+    if is_write && w == 0 {
+        return Err(VmError::StoreAccessFault(vaddr));
+    }
+    if !is_write && !is_execute && r == 0 {
+        // MXR=1: executable pages are also readable.
+        if mxr == 0 || x == 0 {
+            return Err(VmError::LoadAccessFault(vaddr));
+        }
+    }
+
+    // U-bit / SUM privilege checks.
+    match priv_mode {
+        PrivilegeMode::User => {
+            if u_bit == 0 {
+                return Err(VmError::PageFault(vaddr));
+            }
+        }
+        PrivilegeMode::Supervisor => {
+            if u_bit == 1 && sum == 0 {
+                return Err(VmError::PageFault(vaddr));
+            }
+        }
+        PrivilegeMode::Machine => {}
+    }
+
+    // Superpage alignment: lower PPN bits must be zero.
+    if level > 0 {
+        let lower_mask = (1u64 << (level as u64 * VPN_BITS)) - 1;
+        if ((pte >> 10) & lower_mask) != 0 {
+            return Err(VmError::PageFault(vaddr));
+        }
+    }
+
+    // Physical address construction. For superpages the lower VPN bits substitute
+    // for the lower PPN bits.
+    let lower_ppn_bits = level as u64 * VPN_BITS;
+    let offset_bits = 12 + lower_ppn_bits;
+    let page_ppn = (pte >> 10) & 0x0000_0FFF_FFFF_FFFF;
+    let super_offset = vaddr & ((1u64 << offset_bits) - 1);
+    let phys_addr = ((page_ppn >> lower_ppn_bits) << offset_bits) | super_offset;
+
+    // PMP enforcement (simple single-entry TOR-like semantics).
+    if pmpcfg0 != 0 {
+        let allow_r = (pmpcfg0 & 0x1) != 0;
+        let allow_w = (pmpcfg0 & 0x2) != 0;
+        let allow_x = (pmpcfg0 & 0x4) != 0;
+        let pmp_match = pmpaddr0 == u64::MAX || phys_addr <= pmpaddr0;
+        if pmp_match {
+            if is_execute && !allow_x {
+                return Err(VmError::InstructionAccessFault(vaddr));
+            }
+            if is_write && !allow_w {
+                return Err(VmError::StoreAccessFault(vaddr));
+            }
+            if !is_write && !is_execute && !allow_r {
+                return Err(VmError::LoadAccessFault(vaddr));
+            }
+        } else {
+            return Err(VmError::PageFault(vaddr));
+        }
+    }
+
+    Ok(phys_addr)
+}
+
 /// Translate a virtual address to a physical address using Sv39 page tables.
 ///
 /// `mstatus` is needed for the SUM (bit 18) and MXR (bit 19) bits.
+#[expect(clippy::too_many_arguments)]
 pub fn translate_with_pmp(
     vaddr: u64,
     satp: u64,
@@ -34,6 +198,7 @@ pub fn translate_with_pmp(
     is_execute: bool,
     pmpcfg0: u64,
     pmpaddr0: u64,
+    tlb: &mut Tlb,
 ) -> Result<u64, VmError> {
     let mode = (satp >> 60) & 0xF;
     let ppn = satp & 0x0FFF_FFFF_FFFF; // Mask to 44 bits
@@ -86,6 +251,19 @@ pub fn translate_with_pmp(
     let sum = (mstatus >> 18) & 1; // Supervisor User Memory access bit
     let mxr = (mstatus >> 19) & 1; // Make eXecutable Readable bit
 
+    // TLB fast path. A write to a page with a clean cached D bit re-walks so the
+    // PTE's D bit gets set in memory.
+    tlb.sync_satp(satp);
+    let vpn_page = vaddr >> 12;
+    if let Some((pte, level)) = tlb.lookup(vpn_page) {
+        let needs_dirty = is_write && ((pte >> 7) & 1) == 0;
+        if !needs_dirty {
+            return finalize_leaf(
+                pte, vaddr, level, priv_mode, sum, mxr, is_write, is_execute, pmpcfg0, pmpaddr0,
+            );
+        }
+    }
+
     let mut current_ppn = ppn;
 
     for level in (0..LEVELS).rev() {
@@ -110,48 +288,14 @@ pub fn translate_with_pmp(
         let r = (pte >> 1) & 1;
         let w = (pte >> 2) & 1;
         let x = (pte >> 3) & 1;
-        let u_bit = (pte >> 4) & 1;
 
         if r == 1 || x == 1 {
             // ---- Leaf PTE ----
 
-            // Permission checks.
-            if is_execute && x == 0 {
-                return Err(VmError::InstructionAccessFault(vaddr));
-            }
-            if is_write && w == 0 {
-                return Err(VmError::StoreAccessFault(vaddr));
-            }
-            if !is_write && !is_execute && r == 0 {
-                // MXR=1: executable pages are also readable.
-                if mxr == 0 || x == 0 {
-                    return Err(VmError::LoadAccessFault(vaddr));
-                }
-            }
-
-            // U-bit / SUM privilege checks.
-            match priv_mode {
-                PrivilegeMode::User => {
-                    if u_bit == 0 {
-                        return Err(VmError::PageFault(vaddr));
-                    }
-                }
-                PrivilegeMode::Supervisor => {
-                    // S-mode cannot access U-mode pages unless SUM=1.
-                    if u_bit == 1 && sum == 0 {
-                        return Err(VmError::PageFault(vaddr));
-                    }
-                }
-                PrivilegeMode::Machine => {}
-            }
-
-            // Superpage alignment: lower PPN bits must be zero.
-            if level > 0 {
-                let lower_mask = (1u64 << (level as u64 * VPN_BITS)) - 1;
-                if ((pte >> 10) & lower_mask) != 0 {
-                    return Err(VmError::PageFault(vaddr));
-                }
-            }
+            // Permission/privilege/superpage/PMP checks and phys construction.
+            let phys_addr = finalize_leaf(
+                pte, vaddr, level, priv_mode, sum, mxr, is_write, is_execute, pmpcfg0, pmpaddr0,
+            )?;
 
             // Maintain A/D bits (set A on any access, D on writes).
             let mut new_pte = pte | (1u64 << 6); // A bit
@@ -164,36 +308,8 @@ pub fn translate_with_pmp(
                     .map_err(|_| VmError::PageFault(vaddr))?;
             }
 
-            // Physical address construction.
-            // For superpages (level > 0) the lower VPN bits substitute for the
-            // lower PPN bits in the physical address.
-            let lower_ppn_bits = level as u64 * VPN_BITS;
-            let offset_bits = 12 + lower_ppn_bits;
-            let page_ppn = (pte >> 10) & 0x0000_0FFF_FFFF_FFFF;
-            let super_offset = vaddr & ((1u64 << offset_bits) - 1);
-            let phys_addr = ((page_ppn >> lower_ppn_bits) << offset_bits) | super_offset;
-
-            // PMP enforcement (simple single-entry TOR-like semantics).
-            if pmpcfg0 != 0 {
-                let allow_r = (pmpcfg0 & 0x1) != 0;
-                let allow_w = (pmpcfg0 & 0x2) != 0;
-                let allow_x = (pmpcfg0 & 0x4) != 0;
-                // pmpaddr0 == u64::MAX matches entire space (ROM uses -1)
-                let pmp_match = pmpaddr0 == u64::MAX || phys_addr <= pmpaddr0;
-                if pmp_match {
-                    if is_execute && !allow_x {
-                        return Err(VmError::InstructionAccessFault(vaddr));
-                    }
-                    if is_write && !allow_w {
-                        return Err(VmError::StoreAccessFault(vaddr));
-                    }
-                    if !is_write && !is_execute && !allow_r {
-                        return Err(VmError::LoadAccessFault(vaddr));
-                    }
-                } else {
-                    return Err(VmError::PageFault(vaddr));
-                }
-            }
+            // Cache the post-update leaf so later accesses to this page skip the walk.
+            tlb.insert(vaddr >> 12, new_pte, level);
 
             return Ok(phys_addr);
         } else {
@@ -219,8 +335,9 @@ pub fn translate(
     is_write: bool,
     is_execute: bool,
 ) -> Result<u64, VmError> {
+    let mut tlb = Tlb::new();
     translate_with_pmp(
-        vaddr, satp, priv_mode, mstatus, bus, is_write, is_execute, 0, 0,
+        vaddr, satp, priv_mode, mstatus, bus, is_write, is_execute, 0, 0, &mut tlb,
     )
 }
 
@@ -245,6 +362,7 @@ mod tests {
         let pmpcfg0 = 0x7u64; // R/W/X bits in our simplified model
         let pmpaddr0 = u64::MAX; // match all
 
+        let mut tlb = Tlb::new();
         let fetched = crate::cpu::pipeline::fetch::fetch_with_pmp(
             &mut bus,
             crate::bus::RAM_BASE,
@@ -253,6 +371,7 @@ mod tests {
             mstatus,
             pmpcfg0,
             pmpaddr0,
+            &mut tlb,
         )
         .expect("fetch should succeed");
 
@@ -273,6 +392,7 @@ mod tests {
         let pmpcfg0 = 0x3u64; // R/W
         let pmpaddr0 = u64::MAX;
 
+        let mut tlb = Tlb::new();
         let res = crate::cpu::pipeline::fetch::fetch_with_pmp(
             &mut bus,
             crate::bus::RAM_BASE,
@@ -281,6 +401,7 @@ mod tests {
             mstatus,
             pmpcfg0,
             pmpaddr0,
+            &mut tlb,
         );
 
         assert!(matches!(

@@ -382,6 +382,118 @@ impl HighLevelCompiler {
         Some(addr.clone())
     }
 
+    // Lower an expression, folding a bare or negated integer literal to a typed
+    // immediate of the target width so `x: i64 = -1` works without a cast.
+    pub(super) fn lower_value_for_type(
+        &mut self,
+        expr: &Expression,
+        target_ty: &IrType,
+    ) -> Option<LoweredValue> {
+        if matches!(self.resolve_named_type(target_ty), IrType::Integer(_)) {
+            if let Some(v) = Self::fold_int_literal(expr) {
+                return Some(LoweredValue {
+                    value: IrValue::Integer(v),
+                    ty: target_ty.clone(),
+                    is_unsigned: false,
+                });
+            }
+        }
+        self.lower_expression(expr)
+    }
+
+    // Fold a bare or (grouped) negated integer literal to its i64 value.
+    fn fold_int_literal(expr: &Expression) -> Option<i64> {
+        match expr {
+            Expression::Primary(crate::ast::PrimaryExpr::Literal(
+                Literal::Integer(v) | Literal::HexInteger(v),
+            )) => Some(*v),
+            Expression::Primary(crate::ast::PrimaryExpr::Grouped(inner)) => {
+                Self::fold_int_literal(inner)
+            }
+            Expression::Unary {
+                op: UnaryOp::Negate,
+                expr: inner,
+            } => Self::fold_int_literal(inner).map(|v| -v),
+            _ => None,
+        }
+    }
+
+    // Serialize a constant global initializer to little-endian bytes for `ty`.
+    // None when it is absent, zero (stays in .bss), or not a constant.
+    pub(super) fn const_init_bytes(
+        &self,
+        expr: &Expression,
+        ty: &IrType,
+    ) -> Option<Vec<u8>> {
+        let resolved = self.resolve_named_type(ty);
+        match &resolved {
+            IrType::Integer(width) => {
+                let v = match self.eval_const_expr(expr).ok()? {
+                    Literal::Integer(v) | Literal::HexInteger(v) => v,
+                    Literal::Boolean(b) => b as i64,
+                    _ => return None,
+                };
+                if v == 0 {
+                    return None;
+                }
+                let size = match width {
+                    IntWidth::I1 | IntWidth::I8 => 1,
+                    IntWidth::I16 => 2,
+                    IntWidth::I32 => 4,
+                    IntWidth::I64 => 8,
+                };
+                Some(v.to_le_bytes()[..size].to_vec())
+            }
+            IrType::Float(width) => {
+                let f = match self.eval_const_expr(expr).ok()? {
+                    Literal::Float(f) => f,
+                    Literal::Integer(v) => v as f64,
+                    _ => return None,
+                };
+                match width {
+                    FloatWidth::F32 => {
+                        if f == 0.0 {
+                            return None;
+                        }
+                        Some((f as f32).to_le_bytes().to_vec())
+                    }
+                    FloatWidth::F64 => {
+                        if f == 0.0 {
+                            return None;
+                        }
+                        Some(f.to_le_bytes().to_vec())
+                    }
+                }
+            }
+            IrType::Array { len, element } => {
+                let elements = match expr {
+                    Expression::Primary(crate::ast::PrimaryExpr::ArrayLiteral(elems)) => elems,
+                    _ => return None,
+                };
+                if elements.len() != *len {
+                    return None;
+                }
+                let elem_size = self.type_size_in_bytes(element);
+                let mut out = Vec::with_capacity(len * elem_size);
+                for elem in elements {
+                    // A zeroed element still needs its slot, so fill it explicitly.
+                    let bytes = self
+                        .const_init_bytes(elem, element)
+                        .unwrap_or_else(|| vec![0u8; elem_size]);
+                    if bytes.len() != elem_size {
+                        return None;
+                    }
+                    out.extend_from_slice(&bytes);
+                }
+                if out.iter().all(|&b| b == 0) {
+                    return None;
+                }
+                Some(out)
+            }
+            _ => None,
+        }
+    }
+
     pub(crate) fn align_to(value: i64, alignment: i64) -> i64 {
         let alignment = alignment.max(1);
         (value + alignment - 1) & !(alignment - 1)

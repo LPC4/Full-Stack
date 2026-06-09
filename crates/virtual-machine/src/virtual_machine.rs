@@ -233,6 +233,11 @@ impl VirtualMachine {
         self.bus.peek_framebuffer()
     }
 
+    /// Number of full-screen FILL clears performed (a per-frame counter for benches).
+    pub fn framebuffer_fill_count(&self) -> u64 {
+        self.bus.framebuffer_fill_count()
+    }
+
     /// Write raw bytes into physical RAM at `addr`.  Used to inject
     /// pre-compiled user binaries alongside a loaded kernel image.
     /// Flushes the L1/L2/L3 cache hierarchy afterward so subsequent

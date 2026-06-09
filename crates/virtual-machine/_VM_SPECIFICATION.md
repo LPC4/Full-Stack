@@ -35,7 +35,7 @@ the VM's observable behavior.
 | `0x0C00_0000` - `0x0CFF_FFFF` | PLIC | 16 MB | Platform-Level Interrupt Controller |
 | `0x1000_0000` - `0x1000_0FFF` | UART | 4 KB | Serial console (NS16550A subset; 8 registers at the low offsets) |
 | `0x1001_0000` - `0x1001_0FFF` | SYSCON | 4 KB | Halt/exit device (write an exit code to stop the VM) |
-| `0x1002_0000` - `0x1006_AFFF` | Framebuffer | 300 KB | Linear RGBA8888 display, 320 x 240 (see 6.5) |
+| `0x1002_0000` - `0x1006_BFFF` | Framebuffer | 304 KB | Linear RGBA8888 display 320 x 240 + control page (see 6.5) |
 | `0x8000_0000` - ... | RAM | 128 MB | Main memory (DRAM); default size is 128 MB |
 
 **Note:** Addresses are physical when virtual memory is disabled (SATP.mode = 0/Bare) or when the
@@ -143,10 +143,21 @@ Sv39 requires that virtual addresses be "canonical": bits [63:39] must all equal
 
 Non-canonical addresses trigger a Page Fault before translation begins.
 
-### 2.1.7 Special Instructions
+### 2.1.7 Translation Cache (TLB)
+The MMU keeps a 256-entry direct-mapped TLB of Sv39 leaf mappings to avoid a full
+3-level page-table walk on every access. Only the address mapping (leaf PTE +
+level) is cached, never a permission decision: each hit re-runs the
+permission/privilege/PMP checks against the current privilege mode and `mstatus`
+(SUM/MXR), so those bits take effect immediately without a flush. The cache is
+keyed by `SATP`, so an address-space switch (any `SATP` write) drops all entries,
+and `SFENCE.VMA` flushes it explicitly. A/D bits stay correct: entries are
+inserted only after the walk writes the bits back, and a store to a page whose
+cached D bit is still clear re-walks so memory's D bit is set.
+
+### 2.1.8 Special Instructions
 **SFENCE.VMA:** Synchronize page table updates
 - **Opcode:** SYSTEM with funct3=0, funct12=0x105
-- **Behavior:** No-op in this implementation (no TLB caching)
+- **Behavior:** Flushes the TLB (see 2.1.7); otherwise has no architectural state
 - **Purpose:** Ensures subsequent memory accesses use updated page tables
 
 
@@ -691,12 +702,32 @@ The framebuffer is `320 x 240` pixels in RGBA8888 format: byte `n` is pixel `n /
 `n % 4` (0 = R, 1 = G, 2 = B, 3 = A), for a total of `320 * 240 * 4 = 307200` bytes. Like the other
 MMIO devices it bypasses the caches, so writes are visible to the display immediately without a
 flush. Stores land in the pixel buffer; the GUI uploads the buffer to a texture each frame via the
-bus `peek_framebuffer` accessor (which does not perturb device or cache state). Accesses past the end
-of the buffer raise a bus error.
+bus `peek_framebuffer` accessor (which does not perturb device or cache state).
+
+**Control block.** A one-page (`0x1000`) control region follows the pixel buffer, starting at offset
+`307200` (`0x1006_B000`). Registers (word writes; byte writes and reads are ignored / return zero):
+
+| Offset | Name | Access | Effect |
+|--------|------|--------|--------|
+| `+0`   | `FILL` | Word write | Fill the active draw buffer with the written RGBA colour (little-endian), device-side |
+| `+4`   | `PRESENT` | Word write | Copy the back buffer to the visible front buffer (no-op when single-buffered) |
+| `+8`   | `DBMODE` | Word write | Non-zero enables double buffering; zero disables it |
+
+Writing `FILL` clears the whole screen in one MMIO access instead of a 76_800-store sweep (each of
+which would also pay an MMU walk), which is the dominant per-frame cost for an animated guest.
+
+**Double buffering.** By default the device is single-buffered: pixel writes land directly in the
+visible buffer, so progressive renderers (e.g. `fbdemo`) paint as they go. Writing a non-zero value
+to `DBMODE` switches drawing to an off-screen back buffer; the GUI keeps showing the front buffer
+until a `PRESENT` copies the back buffer over. This lets an animated guest draw a full frame and
+publish it atomically, so the asynchronously-sampling GUI never shows a half-drawn or just-cleared
+frame (no flicker). The total device span is `307200 + 4096 = 311296` bytes; accesses past the end
+raise a bus error.
 
 The kernel exposes the device to user programs through the `map_fb` syscall (number 107), which maps
-the framebuffer's physical pages into the calling process and returns the base virtual address. See
-the OS specification for the syscall and the `fbdemo` program.
+the framebuffer's physical pages (76: 75 pixel pages plus the control page) into the calling process
+and returns the base virtual address. See the OS specification for the syscall and the `fbdemo`
+program.
 
 ### 6.6 Cache Hierarchy
 

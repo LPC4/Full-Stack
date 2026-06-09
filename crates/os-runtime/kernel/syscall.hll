@@ -51,9 +51,10 @@ const USER_ARG_BASE  = 0x7FF00000
 const USER_ARG_FLAGS = 22
 const USER_ARG_MAX   = 4095
 
-; Framebuffer device: 320 x 240 RGBA8888 = 75 pages, mapped into the per-process gap.
+; Framebuffer device: 320 x 240 RGBA8888 = 75 pixel pages plus one control page
+; (FILL register etc.), mapped into the per-process gap.
 const FB_PHYS_BASE = 0x10020000
-const FB_PAGE_COUNT = 75
+const FB_PAGE_COUNT = 76
 const FB_USER_BASE = 0x50000000
 const FB_MAP_FLAGS = 22         ; R + W + U (vmm_map adds V)
 

@@ -209,6 +209,52 @@ main: () -> i32 {
 }
 
 #[test]
+fn hll_negative_integer_inits() {
+    // Negative literals and literal arithmetic adopt the declared i64 width with
+    // no explicit cast (PLAN 0.1).
+    let (_, outcome, _) = run_hll(r#"
+neg_one: () -> i64 {
+    return -1
+}
+main: () -> i32 {
+    a: i64 = -42
+    b: i64 = 0 - 1
+    c: i64 = a * b
+    d: i64 = neg_one()
+    e: i64 = c + d
+    return e as i32
+}
+"#);
+    // a=-42, b=-1, c=42, d=-1, e=41.
+    assert!(matches!(outcome, StepOutcome::Halted(41)), "expected Halted(41), got {outcome:?}");
+}
+
+#[test]
+fn hll_global_scalar_initializer() {
+    // A non-zero scalar global reads back its declared value (PLAN 0.2).
+    let (_, outcome, _) = run_hll(r#"
+g: i64 = 42
+main: () -> i32 {
+    return g as i32
+}
+"#);
+    assert!(matches!(outcome, StepOutcome::Halted(42)), "expected Halted(42), got {outcome:?}");
+}
+
+#[test]
+fn hll_global_array_initializer() {
+    // A non-zero array global initializer lands in .data and reads back (PLAN 0.2).
+    let (_, outcome, _) = run_hll(r#"
+arr: i64[4] = [10, 20, 12, 0]
+main: () -> i32 {
+    s: i64 = @arr[0] + @arr[1] + @arr[2] + @arr[3]
+    return s as i32
+}
+"#);
+    assert!(matches!(outcome, StepOutcome::Halted(42)), "expected Halted(42), got {outcome:?}");
+}
+
+#[test]
 fn hll_function_call_and_return() {
     let (_, outcome, _) = run_hll(r#"
 add: (a: i32, b: i32) -> i32 {

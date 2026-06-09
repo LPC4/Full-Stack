@@ -74,10 +74,14 @@ impl HighLevelCompiler {
                         );
                     }
                 } else {
-                    // Normal return (non-aggregate)
+                    // Normal return (non-aggregate); literals take the return width.
+                    let return_ty = self.current_return_ty.clone();
                     let value = expr
                         .as_ref()
-                        .and_then(|e| self.lower_expression(e))
+                        .and_then(|e| match &return_ty {
+                            Some(rt) => self.lower_value_for_type(e, rt),
+                            None => self.lower_expression(e),
+                        })
                         .map(|l| l.value);
 
                     // Emulate proper defer by emitting cleanup instructions at exit points
@@ -120,7 +124,7 @@ impl HighLevelCompiler {
                 });
 
                 if let Some(init_expr) = init {
-                    if let Some(lowered) = self.lower_expression(init_expr) {
+                    if let Some(lowered) = self.lower_value_for_type(init_expr, &lowered_ty) {
                         self.push_instruction(IrInstruction::Store {
                             ty: lowered_ty.clone(),
                             value: lowered.value,

@@ -40,26 +40,26 @@ chained_deref_assign__entry:
 	addi   t1, sp, 8
 	sd     t1, 0(t0)
 	; assignment
-	; Load i32 from memory into $$1
-	addi   t0, sp, 0
-	lw     t1, 0(t0)
-	sw     t1, 24(sp)
-	; add operation on i32
-	lw     t0, 24(sp)
-	addi   t1, zero, 1
-	add    t2, t0, t1
-	sw     t2, 24(sp)
-	; Load i32** from memory into $$3
+	; Load i32** from memory into $$1
 	addi   t0, sp, 16
 	ld     t1, 0(t0)
-	sd     t1, 32(sp)
-	; Load i32* from memory into $$4
-	ld     t0, 32(sp)
+	sd     t1, 24(sp)
+	; Load i32* from memory into $$2
+	ld     t0, 24(sp)
 	ld     t1, 0(t0)
-	sd     t1, 32(sp)
-	ld     t0, 32(sp)
+	sd     t1, 24(sp)
+	; Load i32 from memory into $$3
+	addi   t0, sp, 0
+	lw     t1, 0(t0)
+	sw     t1, 32(sp)
+	; add operation on i32
+	lw     t0, 32(sp)
+	addi   t1, zero, 1
+	add    t2, t0, t1
+	sw     t2, 32(sp)
+	ld     t0, 24(sp)
 	; Store i32 to memory
-	lw     t1, 24(sp)
+	lw     t1, 32(sp)
 	sw     t1, 0(t0)
 	; Load i32* from memory into $$5
 	addi   t0, sp, 8

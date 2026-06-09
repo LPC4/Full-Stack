@@ -178,4 +178,8 @@ pub mod user {
     /// Framebuffer demo: maps the framebuffer and renders a Mandelbrot set.
     /// Installed at `/bin/fbdemo.fexe`.
     pub const FBDEMO: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/user/fbdemo.hll"));
+
+    /// Spinning 3D wireframe cube demo: maps the framebuffer and animates a
+    /// rotating cube. Installed at `/bin/cube.fexe`.
+    pub const CUBE: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/user/cube.hll"));
 }

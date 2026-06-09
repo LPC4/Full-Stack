@@ -8,18 +8,18 @@ entry:
 	$0 = heap_alloc i32
 	write i32* $0 @ $ptr
 	; assignment
-	$1 = read i32 @ $val_ptr
-	$2 = read i32* @ $ptr
-	write i32 $1 @ $2
+	$1 = read i32* @ $ptr
+	$2 = read i32 @ $val_ptr
+	write i32 $2 @ $1
 	; local var: val_ref
 	$val_ref = stack_alloc i32*
 	write i32* $val_ptr @ $val_ref
 	; assignment
-	$3 = read i32* @ $ptr
-	$4 = read i32 @ $3
-	$5 = math add i32 $4, 10
-	$6 = read i32* @ $val_ref
-	write i32 $5 @ $6
+	$3 = read i32* @ $val_ref
+	$4 = read i32* @ $ptr
+	$5 = read i32 @ $4
+	$6 = math add i32 $5, 10
+	write i32 $6 @ $3
 	$7 = read i32* @ $ptr
 	; defer: captured call free with 1 args
 	$8 = read i32 @ $val_ptr

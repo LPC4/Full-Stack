@@ -60,19 +60,10 @@ impl HighLevelCompiler {
             }
             DeclNode::Variable { name, ty, init } => {
                 let ir_ty = self.lower_type(ty);
-                // Zero-initialised for null/zero init, otherwise use raw bytes if constant.
+                // Constant non-zero initializers go to .data; the rest stay in .bss.
                 let init_bytes: Option<Vec<u8>> = match init {
                     None => None,
-                    Some(expr) => {
-                        if let Ok(lit) = self.eval_const_expr(expr) {
-                            match &lit {
-                                Literal::Integer(0) | Literal::Null => None,
-                                _ => None, // non-zero init: treat as zero for now
-                            }
-                        } else {
-                            None
-                        }
-                    }
+                    Some(expr) => self.const_init_bytes(expr, &ir_ty),
                 };
                 self.global_vars.insert(name.clone(), ir_ty.clone());
                 ir_program.push_global_var(IrGlobalVar {
@@ -136,6 +127,7 @@ impl HighLevelCompiler {
                 self.defers.clear();
 
                 let return_ty = self.lower_return_type(return_type.as_ref());
+                self.current_return_ty = Some(return_ty.clone());
 
                 // For functions returning aggregates, determine return strategy:
                 // - Small structs (<=16 bytes): returned in registers a0/a1
@@ -277,6 +269,7 @@ impl HighLevelCompiler {
 
                 ir_program.push_function(function);
                 self.context.end_function();
+                self.current_return_ty = None;
                 Ok(())
             }
         }

@@ -79,6 +79,8 @@ pub struct Pipeline {
     mret_in_flight: bool,
 
     predictor: BranchPredictor,
+    /// Sv39 translation cache. Flushed on `sfence.vma` and on `satp` change.
+    tlb: crate::cpu::mmu::Tlb,
     pub stats: PipelineStats,
     /// Snapshot of the pipeline state produced by the most recent tick.
     pub last_cycle: CpuPipelineFeed,
@@ -104,6 +106,7 @@ impl Pipeline {
             mem_wb: None,
             mret_in_flight: false,
             predictor: BranchPredictor::new(),
+            tlb: crate::cpu::mmu::Tlb::new(),
             stats: PipelineStats::default(),
             last_cycle: CpuPipelineFeed {
                 stages: [None; 5],
@@ -129,6 +132,7 @@ impl Pipeline {
         self.id_ex = None;
         self.ex_mem = None;
         self.mem_wb = None;
+        self.tlb.flush();
     }
 
     /// Set register a0 (x10) to the kernel entry point so ROM `_start` can
@@ -367,6 +371,7 @@ impl Pipeline {
             self.csrs.mstatus,
             self.csrs.pmpcfg0,
             self.csrs.pmpaddr0,
+            &mut self.tlb,
         ) {
             Ok(r) => r,
             Err(e) => {
@@ -553,6 +558,7 @@ impl Pipeline {
             self.csrs.mstatus,
             self.csrs.pmpcfg0,
             self.csrs.pmpaddr0,
+            &mut self.tlb,
         ) {
             Ok(r) => r,
             Err(e) => {
@@ -590,6 +596,8 @@ impl Pipeline {
         // Flush it so each address space starts with clean prediction state.
         if matches!(mem_wb.mem_result, MemResult::SfenceVma) {
             self.predictor.clear();
+            // Drop cached translations: the guest just changed a mapping.
+            self.tlb.flush();
         }
 
         let next_pc =

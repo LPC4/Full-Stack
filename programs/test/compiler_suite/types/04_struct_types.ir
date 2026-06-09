@@ -11,21 +11,21 @@ entry:
 	; assignment
 	$0 = read {x: f32, y: f32}* @ $p_ptr
 	$1 = offset f32 $0, 0
-	$2 = read f32 @ $1
-	$3 = read f32 @ $shift_ptr
-	$4 = math add f32 $2, $3
-	$5 = read {x: f32, y: f32}* @ $p_ptr
-	$6 = offset f32 $5, 0
-	write f32 $4 @ $6
+	$2 = read {x: f32, y: f32}* @ $p_ptr
+	$3 = offset f32 $2, 0
+	$4 = read f32 @ $3
+	$5 = read f32 @ $shift_ptr
+	$6 = math add f32 $4, $5
+	write f32 $6 @ $1
 	; assignment
 	$7 = read {x: f32, y: f32}* @ $p_ptr
 	$8 = offset f32 $7, 4
-	$9 = read f32 @ $8
-	$10 = read f32 @ $shift_ptr
-	$11 = math add f32 $9, $10
-	$12 = read {x: f32, y: f32}* @ $p_ptr
-	$13 = offset f32 $12, 4
-	write f32 $11 @ $13
+	$9 = read {x: f32, y: f32}* @ $p_ptr
+	$10 = offset f32 $9, 4
+	$11 = read f32 @ $10
+	$12 = read f32 @ $shift_ptr
+	$13 = math add f32 $11, $12
+	write f32 $13 @ $8
 	$14 = read {x: f32, y: f32}* @ $p_ptr
 	$15 = offset f32 $14, 0
 	$16 = read f32 @ $15

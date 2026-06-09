@@ -44,26 +44,17 @@ impl DataSection {
         self.bss.push(format!("\t.space {size}"));
     }
 
-    pub fn add_data_symbol(&mut self, name: &str, _size: usize, align: usize, init: &[u8]) {
+    pub fn add_data_symbol(&mut self, name: &str, size: usize, align: usize, init: &[u8]) {
         self.data.push(format!(".globl {name}"));
         self.data.push(format!(".balign {align}"));
         self.data.push(format!("{name}:"));
-        let mut bytes = String::new();
-        for (i, b) in init.iter().enumerate() {
-            if i % 8 == 0 {
-                if !bytes.is_empty() {
-                    self.data.push(bytes);
-                    bytes = String::new();
-                }
-                bytes.push_str("\t.byte ");
-            }
-            bytes.push_str(&format!("{b:#04x}"));
-            if i != init.len() - 1 {
-                bytes.push_str(", ");
-            }
+        // One `.byte` per byte: the directive parser takes a single value each.
+        for b in init {
+            self.data.push(format!("\t.byte {b}"));
         }
-        if !bytes.is_empty() {
-            self.data.push(bytes);
+        // Zero-pad when the initializer is shorter than the declared type.
+        for _ in init.len()..size {
+            self.data.push("\t.byte 0".to_owned());
         }
     }
 

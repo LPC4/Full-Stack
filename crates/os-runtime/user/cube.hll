@@ -42,11 +42,10 @@ eb: i64[12]
 
 ; Minsky-circle rotation state for two axes. Stable integer (cos, sin) pairs that
 ; advance by a fixed small angle each frame; different divisors tumble the cube.
-; The cosines must start at ONE, but non-zero global initializers are ignored at
-; runtime (globals start zeroed), so they are set in init_angles instead.
-cay: i64 = 0
+; The cosines start at ONE (1.0); the sines start at zero.
+cay: i64 = ONE
 say: i64 = 0
-cax: i64 = 0
+cax: i64 = ONE
 sax: i64 = 0
 
 ; Map the framebuffer into this address space; returns its base VA (0 on failure).
@@ -94,11 +93,11 @@ draw_line: (x0: i64, y0: i64, x1: i64, y1: i64, color: u32) {
     if dy < 0 {
         dy = 0 - dy
     }
-    sx: i64 = (0 - 1) as i64
+    sx: i64 = -1
     if x0 < x1 {
         sx = 1
     }
-    sy: i64 = (0 - 1) as i64
+    sy: i64 = -1
     if y0 < y1 {
         sy = 1
     }
@@ -173,13 +172,6 @@ init_edges: () {
     @eb[11] = 7
 }
 
-; Seed the rotation cosines to 1.0 (sines stay zeroed). Done at runtime because
-; non-zero global initializers are dropped.
-init_angles: () {
-    cay = ONE
-    cax = ONE
-}
-
 ; Advance both rotation angles one step (Minsky recurrence, drift-stable).
 advance_angles: () {
     say = say + cay / 32
@@ -215,21 +207,29 @@ project_all: () {
     }
 }
 
-; Fill the whole framebuffer with opaque black via a tight store loop.
+; Pixel-buffer byte size; the control registers sit immediately after it.
+const FB_BYTES = 307200
+; Control-register offsets relative to (_fb_base + FB_BYTES).
+const FB_FILL = 0
+const FB_PRESENT = 4
+const FB_DBMODE = 8
+
+; Enable double buffering so the GUI only ever shows complete frames (no flicker).
+enable_double_buffer: () {
+    reg: u32* = (_fb_base + FB_BYTES + FB_DBMODE) as u32*
+    @reg = 1 as u32
+}
+
+; Clear the back buffer to opaque black via one write to FILL (device memsets it).
 fb_clear: () {
-    asm {
-        la   t0, _fb_base
-        ld   t0, 0(t0)          ; base pixel pointer
-        li   t1, 76800          ; 320 * 240 pixels
-        li   t2, 255
-        slli t2, t2, 24         ; 0xFF000000 = opaque black
-        li   t3, 0
-    _cube_clr:
-        sw   t2, 0(t0)
-        addi t0, t0, 4
-        addi t1, t1, -1
-        blt  t3, t1, _cube_clr  ; loop while pixels remain
-    }
+    fill: u32* = (_fb_base + FB_BYTES + FB_FILL) as u32*
+    @fill = 0xFF000000 as u32
+}
+
+; Publish the finished back buffer to the visible front buffer.
+fb_present: () {
+    reg: u32* = (_fb_base + FB_BYTES + FB_PRESENT) as u32*
+    @reg = 1 as u32
 }
 
 ; Draw all 12 edges in one colour.
@@ -254,7 +254,7 @@ main: () -> i32 {
 
     init_cube()
     init_edges()
-    init_angles()
+    enable_double_buffer()
     console_writeln("cube: rendering".data)
 
     while 1 == 1 {
@@ -262,6 +262,7 @@ main: () -> i32 {
         project_all()
         fb_clear()
         draw_cube()
+        fb_present()
     }
     return 0
 }

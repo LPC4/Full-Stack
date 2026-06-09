@@ -727,7 +727,7 @@ impl HighLevelCompiler {
             return self.lower_struct_destructuring_from_addr(fields, &addr);
         }
 
-        let lowered = self.lower_expr(rvalue, EvalMode::Value)?;
+        // Resolve the target address first so the rvalue can take the slot's width.
         let target_expr = Self::assign_target_to_expression(target)?;
         let addr = self.lower_expr(&target_expr, EvalMode::Address)?;
 
@@ -740,6 +740,8 @@ impl HighLevelCompiler {
                 return None;
             }
         };
+
+        let lowered = self.lower_value_for_type(rvalue, &store_ty)?;
 
         self.push_instruction(IrInstruction::Store {
             ty: store_ty,
