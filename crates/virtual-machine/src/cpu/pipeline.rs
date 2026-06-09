@@ -25,9 +25,7 @@ use crate::cpu::registers::{PrivilegeMode, Registers};
 use crate::cpu::traps;
 use crate::error::VmError;
 
-// ---------------------------------------------------------------------------
-// Public types
-// ---------------------------------------------------------------------------
+// --- Public types ---
 
 #[derive(Debug)]
 pub enum TickOutcome {
@@ -62,9 +60,7 @@ pub struct CpuPipelineFeed {
     pub flushed: bool,
 }
 
-// ---------------------------------------------------------------------------
-// Pipeline
-// ---------------------------------------------------------------------------
+// --- Pipeline ---
 
 pub struct Pipeline {
     regs: Registers,
@@ -181,9 +177,7 @@ impl Pipeline {
         self.predictor.stats()
     }
 
-    // -----------------------------------------------------------------------
-    // Main tick, advance the pipeline by one clock cycle
-    // -----------------------------------------------------------------------
+    // --- Main tick, advance the pipeline by one clock cycle ---
 
     /// Advance every pipeline stage by one cycle.
     ///
@@ -360,9 +354,7 @@ impl Pipeline {
         Ok(TickOutcome::Continue)
     }
 
-    // -----------------------------------------------------------------------
-    // Stage implementations
-    // -----------------------------------------------------------------------
+    // --- Stage implementations ---
 
     fn stage_if(&mut self, bus: &mut SystemBus) -> Result<Option<IFIDReg>, VmError> {
         let pc = self.fetch_pc;
@@ -631,9 +623,7 @@ impl Pipeline {
         Ok(TickOutcome::Continue)
     }
 
-    // -----------------------------------------------------------------------
-    // Control flow resolution
-    // -----------------------------------------------------------------------
+    // --- Control flow resolution ---
 
     fn resolve_control_flow(
         &self,
@@ -674,9 +664,7 @@ impl Pipeline {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Trap / interrupt helpers
-    // -----------------------------------------------------------------------
+    // --- Trap / interrupt helpers ---
 
     fn flush_pipeline(&mut self) {
         self.if_id = None;
@@ -788,9 +776,7 @@ impl Pipeline {
         None
     }
 
-    // -----------------------------------------------------------------------
-    // run() helper
-    // -----------------------------------------------------------------------
+    // --- run() helper ---
 
     pub fn run(&mut self, bus: &mut SystemBus, max_cycles: u64) -> (TickOutcome, String) {
         let mut outcome = TickOutcome::Continue;
@@ -819,9 +805,7 @@ impl Pipeline {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Forwarding value helpers
-// ---------------------------------------------------------------------------
+// --- Forwarding value helpers ---
 
 fn ex_forwarding_info(result: &ExecResult, id_ex: &IDEXReg) -> (usize, bool, u64) {
     match result {

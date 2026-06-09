@@ -4,8 +4,6 @@ pub mod semantic_analyzer;
 pub mod symbol_table;
 pub mod type_context;
 
-pub use diagnostics::{Diagnostic, DiagnosticLevel, Diagnostics};
+pub use diagnostics::{Diagnostic, DiagnosticLevel};
 pub use lowering_context::LoweringContext;
 pub use semantic_analyzer::SemanticAnalyzer;
-pub use symbol_table::{SymbolInfo, SymbolTable};
-pub use type_context::TypeContext;

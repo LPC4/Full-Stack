@@ -22,9 +22,7 @@ pub struct VirtualMachine {
     bus: SystemBus,
 }
 
-// ---------------------------------------------------------------------------
-// Constructors
-// ---------------------------------------------------------------------------
+// --- Constructors ---
 
 impl VirtualMachine {
     /// Create a VM from raw assembled output by exporting it to ELF and loading that image.
@@ -105,9 +103,7 @@ impl VirtualMachine {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Step / run
-// ---------------------------------------------------------------------------
+// --- Step / run ---
 
 impl VirtualMachine {
     pub fn step(&mut self) -> Result<StepOutcome, VmError> {
@@ -156,9 +152,7 @@ impl VirtualMachine {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Peripheral / debug accessors
-// ---------------------------------------------------------------------------
+// --- Peripheral / debug accessors ---
 
 impl VirtualMachine {
     pub fn uart_receive(&mut self, byte: u8) {
@@ -208,9 +202,7 @@ impl VirtualMachine {
         self.cpu.stats().insns_retired
     }
 
-    // ---------------------------------------------------------------------------
-    // Bulk debug accessors
-    // ---------------------------------------------------------------------------
+    // --- Bulk debug accessors ---
 
     pub fn peek_all_xregs(&self) -> [u64; 32] {
         self.cpu.peek_all_xregs()

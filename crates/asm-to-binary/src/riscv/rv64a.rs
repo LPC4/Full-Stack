@@ -117,9 +117,7 @@ macro_rules! amo_inst {
     };
 }
 
-// ---------------------------------------------------------------------------
-// Word (.w, funct3=2) AMO instructions - funct5 values per spec
-// ---------------------------------------------------------------------------
+// --- Word (.w, funct3=2) AMO instructions - funct5 values per spec ---
 
 amo_inst!(AmoaddW, funct3 = 2, funct5 = 0x00, mnemonic = "amoadd");
 amo_inst!(AmoswapW, funct3 = 2, funct5 = 0x01, mnemonic = "amoswap");
@@ -131,9 +129,7 @@ amo_inst!(AmomaxW, funct3 = 2, funct5 = 0x14, mnemonic = "amomax");
 amo_inst!(AmominuW, funct3 = 2, funct5 = 0x18, mnemonic = "amominu");
 amo_inst!(AmomaxuW, funct3 = 2, funct5 = 0x1C, mnemonic = "amomaxu");
 
-// ---------------------------------------------------------------------------
-// Doubleword (.d, funct3=3) AMO instructions
-// ---------------------------------------------------------------------------
+// --- Doubleword (.d, funct3=3) AMO instructions ---
 
 amo_inst!(AmoaddD, funct3 = 3, funct5 = 0x00, mnemonic = "amoadd");
 amo_inst!(AmoswapD, funct3 = 3, funct5 = 0x01, mnemonic = "amoswap");
@@ -145,9 +141,7 @@ amo_inst!(AmomaxD, funct3 = 3, funct5 = 0x14, mnemonic = "amomax");
 amo_inst!(AmominuD, funct3 = 3, funct5 = 0x18, mnemonic = "amominu");
 amo_inst!(AmomaxuD, funct3 = 3, funct5 = 0x1C, mnemonic = "amomaxu");
 
-// ---------------------------------------------------------------------------
-// Load-Reserved / Store-Conditional  (LR has no rs2; SC has all three)
-// ---------------------------------------------------------------------------
+// --- Load-Reserved / Store-Conditional  (LR has no rs2; SC has all three) ---
 
 /// `lr.w rd, (rs1)` / `lr.d rd, (rs1)` -- Load-reserved.
 ///

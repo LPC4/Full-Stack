@@ -27,9 +27,7 @@ fn accept(src: &str) {
         .unwrap_or_else(|e| panic!("expected compile to succeed, got: {e}"));
 }
 
-// ---------------------------------------------------------------------------
-// Undefined local variables
-// ---------------------------------------------------------------------------
+// --- Undefined local variables ---
 
 #[test]
 fn undefined_local_on_rhs_is_rejected() {
@@ -109,12 +107,9 @@ main: () -> i32 {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Regression: exact shape of the computed_binary_pa bug
-//
+// --- Regression: exact shape of the computed_binary_pa bug ---
 // A variable was defined under one name, then the name was changed but the
 // old name was left on the right-hand side of an assignment.
-// ---------------------------------------------------------------------------
 
 #[test]
 fn renamed_variable_residue_is_rejected() {
@@ -143,9 +138,7 @@ fn: () -> () {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Valid programs that must continue to compile
-// ---------------------------------------------------------------------------
+// --- Valid programs that must continue to compile ---
 
 #[test]
 fn variable_defined_before_use_is_accepted() {

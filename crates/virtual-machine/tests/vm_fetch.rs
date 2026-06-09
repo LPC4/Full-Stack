@@ -4,9 +4,7 @@ use virtual_machine::cpu::pipeline::fetch::fetch;
 use virtual_machine::error::VmError;
 use virtual_machine::memory::MemoryAccess;
 
-// ---------------------------------------------------------------------------
-// Fetch stage, alignment checks
-// ---------------------------------------------------------------------------
+// --- Fetch stage, alignment checks ---
 
 #[test]
 fn fetch_aligned_word() {

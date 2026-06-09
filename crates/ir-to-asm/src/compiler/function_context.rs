@@ -15,7 +15,6 @@ pub trait Rv64Backend {
     fn emit_ld(&mut self, rd: Reg, base: Reg, offset: i32);
     fn emit_mv(&mut self, rd: Reg, rs: Reg);
     fn emit_jalr(&mut self, rd: Reg, rs1: Reg, imm: i32);
-    fn emit_li(&mut self, rd: Reg, imm: i64);
     fn emit_store_from_tmp(&mut self, addr_reg: Reg, val_reg: Reg, ty: &IrType, offset: i32);
     fn emit_load_to_slot(&mut self, slot: usize, addr_reg: Reg, ty: &IrType, offset: i32);
     fn emit_comment(&mut self, text: &str);
@@ -23,7 +22,6 @@ pub trait Rv64Backend {
 
 /// Function-level context that owns prologue/epilogue emission and frame layout.
 pub struct FunctionContext {
-    pub name: String,
     pub frame: FrameContext,
     type_aliases: HashMap<String, IrType>,
     /// Maps virtual registers to stack offsets.
@@ -41,9 +39,8 @@ pub struct FunctionContext {
 }
 
 impl FunctionContext {
-    pub fn new(name: &str, type_aliases: &HashMap<String, IrType>) -> Self {
+    pub fn new(type_aliases: &HashMap<String, IrType>) -> Self {
         Self {
-            name: name.to_owned(),
             frame: FrameContext::new(),
             type_aliases: type_aliases.clone(),
             reg_slots: HashMap::new(),
@@ -116,11 +113,6 @@ impl FunctionContext {
     /// Get the stack offset for a virtual register.
     pub fn slot_for_reg(&self, reg: &IrRegister) -> Option<usize> {
         self.reg_slots.get(reg).copied()
-    }
-
-    /// Record that a virtual register is a function parameter (already has a stack slot).
-    pub fn set_param_slot(&mut self, reg: &IrRegister, slot: usize) {
-        self.reg_slots.insert(reg.clone(), slot);
     }
 
     /// Point a virtual register at an already-reserved stack slot offset.

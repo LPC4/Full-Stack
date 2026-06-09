@@ -122,10 +122,7 @@ impl HighLevelCompiler {
                     self.function_declarations.insert(
                         name.clone(),
                         FunctionDecl {
-                            name: name.clone(),
-                            generics: generics.clone(),
                             params: params.clone(),
-                            return_type: return_type.clone(),
                             body: body.clone(),
                         },
                     );

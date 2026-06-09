@@ -4,9 +4,8 @@ use full_stack::compilation_pipeline::TargetMode;
 use full_stack::view::debug::SessionStatus;
 use full_stack::view::{
     AssemblyView, AstView, CacheView, CfgView, CompilerView, CpuStateView, ExecutionView,
-    FramebufferView, InterruptView, IoView, IrView, MemoryView, PageTableView, PipelineView,
-    PrivilegeView, SourceView, StackView, SyscallTraceView, TokensView, TrapView, VmExecutionView,
-    ui_theme,
+    FramebufferView, IoView, IrView, MemoryView, PipelineView, SourceView, StackView, TokensView,
+    VmExecutionView, ui_theme,
 };
 
 const IDE_VIEWS: &[(&str, fn() -> Box<dyn CompilerView>)] = &[
@@ -30,17 +29,7 @@ const DEBUG_VIEWS: &[(&str, fn() -> Box<dyn CompilerView>)] = &[
     ("Framebuffer", || Box::new(FramebufferView::default())),
 ];
 
-const OS_VIEWS: &[(&str, fn() -> Box<dyn CompilerView>)] = &[
-    ("Trap Inspector", || Box::new(TrapView)),
-    ("Privilege Timeline", || Box::new(PrivilegeView)),
-    ("Syscall Trace", || Box::new(SyscallTraceView)),
-    ("Page Table Walker", || Box::new(PageTableView)),
-    ("Interrupt Controller", || Box::new(InterruptView)),
-];
-
-// ---------------------------------------------------------------------------
-// Helper: render an "Add View" submenu from a list of descriptors
-// ---------------------------------------------------------------------------
+// --- Helper: render an "Add View" submenu from a list of descriptors ---
 
 fn add_view_menu(
     ui: &mut egui::Ui,
@@ -58,9 +47,7 @@ fn add_view_menu(
     let _ = label; // suppress unused warning; label kept for clarity at call sites
 }
 
-// ---------------------------------------------------------------------------
-// Top bars
-// ---------------------------------------------------------------------------
+// --- Top bars ---
 
 impl FullStackApp {
     pub(super) fn ide_top_bar(&mut self, ui: &mut egui::Ui) {
@@ -203,15 +190,6 @@ impl FullStackApp {
                         ui,
                         "IDE",
                         IDE_VIEWS,
-                        &mut self.pending_new_view,
-                        &mut self.next_view_id,
-                    );
-                    ui.separator();
-                    ui.label(RichText::new("OS Views").small().weak());
-                    add_view_menu(
-                        ui,
-                        "OS",
-                        OS_VIEWS,
                         &mut self.pending_new_view,
                         &mut self.next_view_id,
                     );
@@ -408,15 +386,6 @@ impl FullStackApp {
                         ui,
                         "Debug",
                         DEBUG_VIEWS,
-                        &mut self.pending_new_view,
-                        &mut self.next_view_id,
-                    );
-                    ui.separator();
-                    ui.label(RichText::new("OS Views").small().weak());
-                    add_view_menu(
-                        ui,
-                        "OS",
-                        OS_VIEWS,
                         &mut self.pending_new_view,
                         &mut self.next_view_id,
                     );

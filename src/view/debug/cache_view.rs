@@ -80,9 +80,7 @@ impl CompilerView for CacheView {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+// --- Helpers ---
 
 fn format_bytes(n: usize) -> String {
     if n >= 1024 * 1024 {
@@ -120,9 +118,7 @@ fn color_swatch(ui: &mut Ui, color: Color32) {
     ui.painter().rect_filled(rect, 2.0, color);
 }
 
-// ---------------------------------------------------------------------------
-// Per-level section
-// ---------------------------------------------------------------------------
+// --- Per-level section ---
 
 enum GridDetail {
     Full,
@@ -172,9 +168,7 @@ fn cache_section(ui: &mut Ui, label: &str, snap: &CacheSnapshot, detail: GridDet
         });
 }
 
-// ---------------------------------------------------------------------------
-// L1, full setxway pixel grid
-// ---------------------------------------------------------------------------
+// --- L1, full setxway pixel grid ---
 
 fn draw_full_grid(ui: &mut Ui, snap: &CacheSnapshot) {
     let n_sets = snap.sets.len();
@@ -249,9 +243,7 @@ fn draw_full_grid(ui: &mut Ui, snap: &CacheSnapshot) {
     });
 }
 
-// ---------------------------------------------------------------------------
-// L2, per-way utilization bars
-// ---------------------------------------------------------------------------
+// --- L2, per-way utilization bars ---
 
 fn draw_way_bars(ui: &mut Ui, snap: &CacheSnapshot) {
     let theme = ui_theme();
@@ -328,9 +320,7 @@ fn draw_way_bars(ui: &mut Ui, snap: &CacheSnapshot) {
         });
 }
 
-// ---------------------------------------------------------------------------
-// L3, aggregate summary
-// ---------------------------------------------------------------------------
+// --- L3, aggregate summary ---
 
 fn draw_aggregate(ui: &mut Ui, snap: &CacheSnapshot) {
     let theme = ui_theme();
@@ -394,9 +384,7 @@ fn draw_aggregate(ui: &mut Ui, snap: &CacheSnapshot) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Stats block (shared)
-// ---------------------------------------------------------------------------
+// --- Stats block (shared) ---
 
 fn stats_block(
     ui: &mut Ui,

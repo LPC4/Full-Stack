@@ -10,9 +10,7 @@ use crate::cpu::csr::CsrFile;
 use crate::cpu::registers::{PrivilegeMode, Registers};
 use crate::error::VmError;
 
-// ---------------------------------------------------------------------------
-// mcause constants
-// ---------------------------------------------------------------------------
+// --- mcause constants ---
 
 /// Instruction access fault
 pub const CAUSE_INSN_ACCESS_FAULT: u64 = 1;
@@ -45,9 +43,7 @@ pub const CAUSE_M_TIMER_IRQ: u64 = (1u64 << 63) | 7;
 /// Machine external interrupt
 pub const CAUSE_M_EXTERNAL_IRQ: u64 = (1u64 << 63) | 11;
 
-// ---------------------------------------------------------------------------
-// Trap entry
-// ---------------------------------------------------------------------------
+// --- Trap entry ---
 
 /// Enter a trap: saves state, updates CSRs, jumps to the appropriate handler.
 ///
@@ -124,9 +120,7 @@ pub fn take_trap(regs: &mut Registers, csrs: &mut CsrFile, cause: u64, tval: u64
     }
 }
 
-// ---------------------------------------------------------------------------
-// Trap dispatch (error to trap mapping)
-// ---------------------------------------------------------------------------
+// --- Trap dispatch (error to trap mapping) ---
 
 /// Map a `VmError` to a trap cause/tval pair.
 /// Returns `Some((cause, tval))` if the error should trigger a trap,
@@ -144,9 +138,7 @@ pub fn error_to_trap_cause(e: &VmError) -> Option<(u64, u64)> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Trap return (MRET / SRET)
-// ---------------------------------------------------------------------------
+// --- Trap return (MRET / SRET) ---
 
 /// Handle MRET - return from machine-mode trap.
 ///
@@ -212,9 +204,7 @@ pub fn handle_sret(regs: &mut Registers, csrs: &mut CsrFile) -> Result<u64, VmEr
     Ok(csrs.sepc)
 }
 
-// ---------------------------------------------------------------------------
-// Unit tests for trap behavior
-// ---------------------------------------------------------------------------
+// --- Unit tests for trap behavior ---
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -227,7 +217,7 @@ mod tests {
         let mut csrs = CsrFile::new();
 
         // Simulate that MPP was Supervisor (1) in mstatus and MEPC set
-        csrs.mstatus = (1u64 << 11); // MPP = 1 (Supervisor)
+        csrs.mstatus = 1u64 << 11; // MPP = 1 (Supervisor)
         csrs.mepc = 0x1000;
 
         regs.priv_mode = PrivilegeMode::Machine;

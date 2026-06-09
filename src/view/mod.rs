@@ -2,7 +2,6 @@ pub mod common;
 pub mod compilation_state;
 pub mod debug;
 pub mod layout;
-pub mod os;
 pub mod program_catalog;
 pub mod viewtrait;
 
@@ -32,10 +31,6 @@ pub use crate::view::ide::SourceView;
 pub use crate::view::ide::StackView;
 pub use crate::view::ide::TokensView;
 pub use crate::view::ide::VmExecutionView;
-
-pub use crate::view::os::{
-    InterruptView, PageTableView, PrivilegeView, SyscallTraceView, TrapView,
-};
 
 pub fn blank_custom_program_source() -> String {
     "; Write your program here\n".to_owned()

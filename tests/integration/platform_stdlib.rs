@@ -1,4 +1,4 @@
-use full_stack::compilation_pipeline::{CompilationPipeline, TargetMode};
+use full_stack::compilation_pipeline::CompilationPipeline;
 use full_stack::compilation_pipeline::TargetMode as PipelineTargetMode;
 use asm_to_binary::assembler::link_layout::LinkLayout;
 use asm_to_binary::AssembledOutput;

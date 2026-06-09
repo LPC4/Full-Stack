@@ -9,9 +9,7 @@ use virtual_machine::cpu::pipeline::{Pipeline, TickOutcome};
 use virtual_machine::memory::MemoryAccess;
 use virtual_machine::rom::generate_rom_image;
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+// --- Helpers ---
 
 const STACK_TOP: u64 = RAM_BASE + 4 * 1024 * 1024; // 4 MiB stack
 
@@ -41,9 +39,7 @@ fn run_n(cpu: &mut Pipeline, bus: &mut SystemBus, max: u64) -> TickOutcome {
     TickOutcome::Continue
 }
 
-// ---------------------------------------------------------------------------
-// Instruction encodings (hand-assembled)
-// ---------------------------------------------------------------------------
+// --- Instruction encodings (hand-assembled) ---
 
 // addi rd, rs1, imm  -> opcode=0x13, funct3=0
 fn addi(rd: u32, rs1: u32, imm: i32) -> u32 {
@@ -114,9 +110,7 @@ fn nop() -> u32 {
     addi(0, 0, 0)
 }
 
-// ---------------------------------------------------------------------------
-// Test 1: Basic sequential execution - no hazards
-// ---------------------------------------------------------------------------
+// --- Test 1: Basic sequential execution - no hazards ---
 
 #[test]
 fn pipeline_basic_sequential_no_hazards() {
@@ -152,9 +146,7 @@ fn pipeline_basic_sequential_no_hazards() {
     assert!(cpu.stats.insns_retired >= 5);
 }
 
-// ---------------------------------------------------------------------------
-// Test 2: RAW hazard resolved by EX/MEM forwarding (no stall)
-// ---------------------------------------------------------------------------
+// --- Test 2: RAW hazard resolved by EX/MEM forwarding (no stall) ---
 
 #[test]
 fn pipeline_raw_forwarding_no_stall() {
@@ -183,9 +175,7 @@ fn pipeline_raw_forwarding_no_stall() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Test 3: Load-use hazard - must stall 1 cycle
-// ---------------------------------------------------------------------------
+// --- Test 3: Load-use hazard - must stall 1 cycle ---
 
 #[test]
 fn pipeline_load_use_stall() {
@@ -225,9 +215,7 @@ fn pipeline_load_use_stall() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Test 4: Branch not taken - no flush
-// ---------------------------------------------------------------------------
+// --- Test 4: Branch not taken - no flush ---
 
 #[test]
 fn pipeline_branch_not_taken_no_flush() {
@@ -260,9 +248,7 @@ fn pipeline_branch_not_taken_no_flush() {
     // but on first encounter starts weakly-not-taken -> correct prediction)
 }
 
-// ---------------------------------------------------------------------------
-// Test 5: Branch taken - pipeline flush
-// ---------------------------------------------------------------------------
+// --- Test 5: Branch taken - pipeline flush ---
 
 #[test]
 fn pipeline_branch_taken_causes_flush() {
@@ -302,9 +288,7 @@ fn pipeline_branch_taken_causes_flush() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Test 6: Double data hazard - both EX/MEM and MEM/WB forwarding
-// ---------------------------------------------------------------------------
+// --- Test 6: Double data hazard - both EX/MEM and MEM/WB forwarding ---
 
 #[test]
 fn pipeline_double_forwarding() {
@@ -337,9 +321,7 @@ fn pipeline_double_forwarding() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Test 7: Loop with taken branch and correct result
-// ---------------------------------------------------------------------------
+// --- Test 7: Loop with taken branch and correct result ---
 
 #[test]
 fn pipeline_loop_sum_1_to_5() {
@@ -381,9 +363,7 @@ fn pipeline_loop_sum_1_to_5() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Test 8: Pipeline stats sanity - cycle count >= insns_retired
-// ---------------------------------------------------------------------------
+// --- Test 8: Pipeline stats sanity - cycle count >= insns_retired ---
 
 #[test]
 fn pipeline_cycle_count_geq_retired() {
@@ -405,9 +385,7 @@ fn pipeline_cycle_count_geq_retired() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Test 9: Store then load (no load-use, store is before load)
-// ---------------------------------------------------------------------------
+// --- Test 9: Store then load (no load-use, store is before load) ---
 
 #[test]
 fn pipeline_store_load_correct() {
@@ -437,9 +415,7 @@ fn pipeline_store_load_correct() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Test 10: Branch predictor statistics
-// ---------------------------------------------------------------------------
+// --- Test 10: Branch predictor statistics ---
 
 #[test]
 fn predictor_stats_tracked() {

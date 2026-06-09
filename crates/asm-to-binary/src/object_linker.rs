@@ -271,9 +271,7 @@ impl ObjectLinker {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+// --- Helpers ---
 
 /// Collect all distinct section kinds present across all modules, in canonical
 /// ELF load order: Text, RoData, Data, Custom(k), Bss.
@@ -369,9 +367,7 @@ fn find_symbol_section_name_via_map<'a>(
     None
 }
 
-// ---------------------------------------------------------------------------
-// PC-relative splitting
-// ---------------------------------------------------------------------------
+// --- PC-relative splitting ---
 
 fn pcrel_split(offset: i64) -> (i32, i32) {
     let lo12 = ((offset & 0xFFF) as i32).wrapping_sub(if offset & 0x800 != 0 { 0x1000 } else { 0 });

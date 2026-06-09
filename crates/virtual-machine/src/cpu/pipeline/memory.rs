@@ -7,9 +7,7 @@ use crate::cpu::registers::PrivilegeMode;
 use crate::error::VmError;
 use crate::memory::MemoryAccess as _;
 
-// ---------------------------------------------------------------------------
-// Public result type
-// ---------------------------------------------------------------------------
+// --- Public result type ---
 
 #[derive(Clone, Debug)]
 pub enum MemResult {
@@ -63,9 +61,7 @@ pub enum MemResult {
     },
 }
 
-// ---------------------------------------------------------------------------
-// Public entry point
-// ---------------------------------------------------------------------------
+// --- Public entry point ---
 
 pub fn memory_stage_with_pmp(
     result: ExecResult,
@@ -224,9 +220,7 @@ pub fn memory_stage(
     memory_stage_with_pmp(result, bus, reservation, satp, priv_mode, mstatus, 0, 0)
 }
 
-// ---------------------------------------------------------------------------
-// Integer load
-// ---------------------------------------------------------------------------
+// --- Integer load ---
 
 fn load_int(bus: &mut SystemBus, addr: u64, funct3: u8) -> Result<u64, VmError> {
     match funct3 {
@@ -276,9 +270,7 @@ fn load_int(bus: &mut SystemBus, addr: u64, funct3: u8) -> Result<u64, VmError> 
     }
 }
 
-// ---------------------------------------------------------------------------
-// Integer store
-// ---------------------------------------------------------------------------
+// --- Integer store ---
 
 fn store_int(bus: &mut SystemBus, addr: u64, val: u64, funct3: u8) -> Result<(), VmError> {
     match funct3 {
@@ -298,9 +290,7 @@ fn store_int(bus: &mut SystemBus, addr: u64, val: u64, funct3: u8) -> Result<(),
     }
 }
 
-// ---------------------------------------------------------------------------
-// FP load
-// ---------------------------------------------------------------------------
+// --- FP load ---
 
 fn load_fp(bus: &mut SystemBus, addr: u64, funct3: u8) -> Result<u64, VmError> {
     match funct3 {
@@ -322,9 +312,7 @@ fn load_fp(bus: &mut SystemBus, addr: u64, funct3: u8) -> Result<u64, VmError> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// FP store
-// ---------------------------------------------------------------------------
+// --- FP store ---
 
 fn store_fp(bus: &mut SystemBus, addr: u64, bits: u64, funct3: u8) -> Result<(), VmError> {
     match funct3 {
@@ -342,9 +330,7 @@ fn store_fp(bus: &mut SystemBus, addr: u64, bits: u64, funct3: u8) -> Result<(),
     }
 }
 
-// ---------------------------------------------------------------------------
-// Atomics
-// ---------------------------------------------------------------------------
+// --- Atomics ---
 
 fn handle_atomic(
     bus: &mut SystemBus,

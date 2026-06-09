@@ -27,9 +27,7 @@ use std::path::Path;
 use std::process::ExitCode;
 use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 
-// ---------------------------------------------------------------------------
-// Error type
-// ---------------------------------------------------------------------------
+// --- Error type ---
 
 #[derive(Debug)]
 enum CliError {
@@ -60,9 +58,7 @@ impl From<std::io::Error> for CliError {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Argument model
-// ---------------------------------------------------------------------------
+// --- Argument model ---
 
 #[derive(Debug)]
 enum Subcommand {
@@ -89,9 +85,7 @@ impl Args {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Entry point
-// ---------------------------------------------------------------------------
+// --- Entry point ---
 
 fn main() -> ExitCode {
     match run_cli() {
@@ -117,9 +111,7 @@ fn run_cli() -> Result<ExitCode, CliError> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Argument parsing
-// ---------------------------------------------------------------------------
+// --- Argument parsing ---
 
 fn parse_args() -> Result<Args, CliError> {
     let raw: Vec<String> = std::env::args().skip(1).collect();
@@ -200,9 +192,7 @@ fn parse_mode(s: &str) -> Result<TargetMode, CliError> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// link
-// ---------------------------------------------------------------------------
+// --- link ---
 
 fn cmd_link(args: &Args) -> Result<ExitCode, CliError> {
     if args.inputs.is_empty() {
@@ -275,9 +265,7 @@ fn compile_user_objects(
     Ok(result)
 }
 
-// ---------------------------------------------------------------------------
-// hll-to-ir
-// ---------------------------------------------------------------------------
+// --- hll-to-ir ---
 
 fn cmd_hll_to_ir(args: &Args) -> Result<ExitCode, CliError> {
     let input = require_single_input(args)?;
@@ -302,9 +290,7 @@ fn cmd_hll_to_ir(args: &Args) -> Result<ExitCode, CliError> {
     Ok(ExitCode::SUCCESS)
 }
 
-// ---------------------------------------------------------------------------
-// hll-to-asm
-// ---------------------------------------------------------------------------
+// --- hll-to-asm ---
 
 fn cmd_hll_to_asm(args: &Args) -> Result<ExitCode, CliError> {
     let input = require_single_input(args)?;
@@ -340,9 +326,7 @@ fn cmd_hll_to_asm(args: &Args) -> Result<ExitCode, CliError> {
     Ok(ExitCode::SUCCESS)
 }
 
-// ---------------------------------------------------------------------------
-// run
-// ---------------------------------------------------------------------------
+// --- run ---
 
 fn cmd_run(args: &Args) -> Result<ExitCode, CliError> {
     let input = require_single_input(args)?;
@@ -375,9 +359,7 @@ fn cmd_run(args: &Args) -> Result<ExitCode, CliError> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Compilation helpers
-// ---------------------------------------------------------------------------
+// --- Compilation helpers ---
 
 /// Compile an HLL source file with the stdlib and return assembled output.
 fn assemble_from_hll_file(path: &str, mode: TargetMode) -> Result<AssembledOutput, CliError> {
@@ -475,9 +457,7 @@ fn asm_text_to_tokens(text: &str) -> Vec<RvInstruction> {
         .collect()
 }
 
-// ---------------------------------------------------------------------------
-// Pipeline factory
-// ---------------------------------------------------------------------------
+// --- Pipeline factory ---
 
 fn make_pipeline(mode: TargetMode, string_prefix: &str) -> CompilationPipeline {
     let mut p = CompilationPipeline::new();
@@ -495,9 +475,7 @@ fn source_stem(path: &str, default: &str) -> String {
         .to_owned()
 }
 
-// ---------------------------------------------------------------------------
-// I/O helpers
-// ---------------------------------------------------------------------------
+// --- I/O helpers ---
 
 fn require_single_input(args: &Args) -> Result<&str, CliError> {
     if args.inputs.len() > 1 {
@@ -533,9 +511,7 @@ fn write_or_print(output: Option<&str>, content: &str) -> Result<(), CliError> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Help
-// ---------------------------------------------------------------------------
+// --- Help ---
 
 fn print_help() {
     println!(

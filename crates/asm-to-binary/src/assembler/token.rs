@@ -100,7 +100,7 @@ pub enum AsmToken {
     DataAsciz(String),
 
     // ---- meta ----
-    Comment(String),
+    Comment,
 }
 
 impl AsmToken {
@@ -121,19 +121,7 @@ impl AsmToken {
             // Size depends on current offset, layout pass computes these
             Self::Align(_) | Self::Balign(_) => None,
             // No bytes
-            Self::Section(_) | Self::Label(_) | Self::Globl(_) | Self::Comment(_) => Some(0),
+            Self::Section(_) | Self::Label(_) | Self::Globl(_) | Self::Comment => Some(0),
         }
-    }
-
-    pub fn is_code(&self) -> bool {
-        matches!(
-            self,
-            Self::Real(_)
-                | Self::Branch { .. }
-                | Self::Jal { .. }
-                | Self::Call { .. }
-                | Self::Tail { .. }
-                | Self::La { .. }
-        )
     }
 }

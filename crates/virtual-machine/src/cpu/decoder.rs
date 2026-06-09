@@ -6,9 +6,7 @@
 
 use crate::error::VmError;
 
-// ---------------------------------------------------------------------------
-// Public types
-// ---------------------------------------------------------------------------
+// --- Public types ---
 
 #[derive(Debug, Clone)]
 pub enum FMacOp {
@@ -309,9 +307,7 @@ impl DecodedInsn {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Public decode entry point
-// ---------------------------------------------------------------------------
+// --- Public decode entry point ---
 
 pub fn decode(word: u32) -> Result<DecodedInsn, VmError> {
     let opcode = word & 0x7F;
@@ -420,9 +416,7 @@ pub fn decode(word: u32) -> Result<DecodedInsn, VmError> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Sub-decoders
-// ---------------------------------------------------------------------------
+// --- Sub-decoders ---
 
 fn decode_fence(word: u32) -> Result<DecodedInsn, VmError> {
     match funct3(word) {
@@ -473,9 +467,7 @@ fn fmac(word: u32, op: FMacOp) -> DecodedInsn {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Field extraction helpers
-// ---------------------------------------------------------------------------
+// --- Field extraction helpers ---
 
 /// Extract bits [hi..lo] (inclusive) from `word`.
 fn field(word: u32, hi: u32, lo: u32) -> u32 {

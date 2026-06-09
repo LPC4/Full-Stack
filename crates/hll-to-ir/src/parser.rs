@@ -31,6 +31,9 @@ pub struct Parser<'a> {
 }
 
 impl<'a> Parser<'a> {
+    // Span-less constructor used only by parser/compiler unit tests; the real
+    // pipeline always carries source spans via `new_with_spans`.
+    #[cfg(test)]
     pub fn new(tokens: Vec<Token<'a>>) -> Self {
         let spans = vec![Span::default(); tokens.len()];
         Self {
@@ -1242,10 +1245,6 @@ impl<'a> Parser<'a> {
         matches!(self.peek(), Some(Token::RBracket))
     }
 
-    fn check_gt(&self) -> bool {
-        matches!(self.peek(), Some(Token::Gt))
-    }
-
     fn check_gt_or_shr(&self) -> bool {
         // Used in type contexts where `>>` can close nested generics
         // Also check for pending virtual > from a split >>
@@ -1544,31 +1543,6 @@ impl<'a> Parser<'a> {
 
     fn match_gte(&mut self) -> bool {
         self.match_variant(|t| matches!(t, Token::Gte))
-    }
-
-    fn expect_gt(&mut self) -> Result<(), ParserError> {
-        if self.match_gt() {
-            Ok(())
-        } else if matches!(self.peek(), Some(Token::Shr) | Some(Token::Gte)) {
-            // In type context, `>>` and `>=` can close an inner generic
-            // Just consume the token - the remaining `>` will be seen on next check_gt_or_shr
-            self.advance();
-            Ok(())
-        } else {
-            Err(self.error("expected `>`"))
-        }
-    }
-
-    fn expect_gt_in_type(&mut self) -> Result<(), ParserError> {
-        if self.match_gt() {
-            Ok(())
-        } else if matches!(self.peek(), Some(Token::Shr) | Some(Token::Gte)) {
-            // Consume Shr/Gte as a closing bracket for nested generics
-            self.advance();
-            Ok(())
-        } else {
-            Err(self.error("expected `>`"))
-        }
     }
 
     fn match_not(&mut self) -> bool {

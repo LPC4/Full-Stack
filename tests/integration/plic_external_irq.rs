@@ -87,9 +87,7 @@ fn compile_and_run_kernel(kernel_src: &str) -> (String, Option<i64>, u64) {
     )
 }
 
-// ---------------------------------------------------------------------------
-// Phase 2: UART RX -> PLIC -> SEIP -> trap cause 9
-// ---------------------------------------------------------------------------
+// --- Phase 2: UART RX -> PLIC -> SEIP -> trap cause 9 ---
 
 #[test]
 fn plic_uart_rx_injection_and_external_interrupt_delivery() {

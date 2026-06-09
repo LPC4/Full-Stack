@@ -14,9 +14,7 @@ use hll_to_ir::{
 use std::sync::OnceLock;
 use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 
-// ---------------------------------------------------------------------------
-// Full HLL pipeline helpers
-// ---------------------------------------------------------------------------
+// --- Full HLL pipeline helpers ---
 
 // The hosted stdlib is identical for every VM-execution test, so compile and
 // assemble it exactly once for the whole suite and link each user program
@@ -186,9 +184,7 @@ main: () -> i32 {
     assert!(matches!(outcome, StepOutcome::Halted(42)), "expected Halted(42), got {outcome:?}");
 }
 
-// ---------------------------------------------------------------------------
-// HLL full-pipeline VM tests
-// ---------------------------------------------------------------------------
+// --- HLL full-pipeline VM tests ---
 
 #[test]
 fn hll_arithmetic_return() {
@@ -260,9 +256,7 @@ main: () -> i32 {
     assert!(matches!(outcome, StepOutcome::Halted(0)), "expected Halted(0), got {outcome:?}");
 }
 
-// ---------------------------------------------------------------------------
-// Helper
-// ---------------------------------------------------------------------------
+// --- Helper ---
 
 fn ri(i: RealInstruction) -> RvInstruction {
     RvInstruction::Real(i)
@@ -276,9 +270,7 @@ fn assemble_and_run(insns: Vec<RvInstruction>) -> (VirtualMachine, StepOutcome) 
     (vm, result.outcome)
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
+// --- Tests ---
 
 #[test]
 fn test_exit_zero() {
@@ -464,9 +456,7 @@ fn test_csr_instret() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// End-to-end qemu program tests (full HLL pipeline through VM)
-// ---------------------------------------------------------------------------
+// --- End-to-end qemu program tests (full HLL pipeline through VM) ---
 
 #[test]
 fn qemu_01_arithmetic_and_types() {
@@ -583,11 +573,8 @@ fn examples_exit_zero_in_vm() {
     }
 }
 
-// ===========================================================================
-// Calling convention (merged from calling_convention_exec.rs)
-//
+// --- Calling convention (merged from calling_convention_exec.rs) ---
 // All programs return 0 (pass) or 1 (fail).
-// ===========================================================================
 
 /// All eight argument registers (a0-a7) are passed and summed correctly.
 #[test]
@@ -700,12 +687,9 @@ main: () -> i32 {
     );
 }
 
-// ===========================================================================
-// emit_li constant materialization (merged from emit_li_execution.rs)
-//
+// --- emit_li constant materialization (merged from emit_li_execution.rs) ---
 // Expected values are built from safe (<= 2047) operands so the comparison
 // target is not affected by the same bug under test.
-// ===========================================================================
 
 /// 42 - exercises the ADDI-only path (value in [-2048, 2047]).
 #[test]
@@ -857,9 +841,7 @@ main: () -> i32 {
     );
 }
 
-// ===========================================================================
-// Global variables (merged from global_var_exec.rs)
-// ===========================================================================
+// --- Global variables (merged from global_var_exec.rs) ---
 
 /// A global i32 starts at zero and can be written then read back correctly.
 #[test]
@@ -978,9 +960,7 @@ main: () -> i32 {
     );
 }
 
-// ===========================================================================
-// Memory width load/store (merged from memory_width_exec.rs)
-// ===========================================================================
+// --- Memory width load/store (merged from memory_width_exec.rs) ---
 
 /// Store and load an i8: positive value 127 round-trips without corruption.
 #[test]
@@ -1123,9 +1103,7 @@ main: () -> i32 {
     );
 }
 
-// ===========================================================================
-// Struct layout and heap (merged from struct_array_exec.rs)
-// ===========================================================================
+// --- Struct layout and heap (merged from struct_array_exec.rs) ---
 
 /// Two-field struct: fields land at the correct offsets.
 #[test]
@@ -1287,12 +1265,9 @@ main: () -> i32 {
     );
 }
 
-// ===========================================================================
-// IR instruction lowering (merged from ir_instruction_exec.rs)
-//
+// --- IR instruction lowering (merged from ir_instruction_exec.rs) ---
 // HLL programs cover ops the language expresses directly; directly-constructed
 // IR covers ops with no HLL surface syntax (signed shift, etc.).
-// ===========================================================================
 
 /// Signed integer division with a negative dividend must use `div` (signed).
 #[test]

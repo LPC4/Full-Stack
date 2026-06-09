@@ -392,9 +392,6 @@ impl AssemblyEmitter {
     pub fn emit_fsw(&mut self, base: Reg, src: Reg, offset: i32) {
         self.emit_inst(RealInstruction::Fsw(Fsw::new(base, src, offset)));
     }
-    pub fn emit_fsd(&mut self, base: Reg, src: Reg, offset: i32) {
-        self.emit_inst(RealInstruction::Fsd(Fsd::new(base, src, offset)));
-    }
     pub fn emit_flw(&mut self, rd: Reg, base: Reg, offset: i32) {
         self.emit_inst(RealInstruction::Flw(Flw::new(rd, base, offset)));
     }
@@ -685,10 +682,6 @@ impl Rv64Backend for AssemblyEmitter {
 
     fn emit_jalr(&mut self, rd: Reg, rs1: Reg, imm: i32) {
         Self::emit_jalr(self, rd, rs1, imm);
-    }
-
-    fn emit_li(&mut self, rd: Reg, imm: i64) {
-        Self::emit_li(self, rd, imm);
     }
 
     fn emit_store_from_tmp(&mut self, addr_reg: Reg, val_reg: Reg, ty: &IrType, offset: i32) {

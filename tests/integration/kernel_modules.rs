@@ -21,9 +21,7 @@ fn assert_kernel_module_compiles(name: &str, source: &str) {
         .unwrap_or_else(|e| panic!("kernel module `{name}` failed to compile:\n{e}"));
 }
 
-// ---------------------------------------------------------------------------
-// Stdlib modules used by the kernel
-// ---------------------------------------------------------------------------
+// --- Stdlib modules used by the kernel ---
 
 #[test]
 fn kernel_stdlib_all_modules_compile() {
@@ -47,9 +45,7 @@ fn kernel_stdlib_full_bundle_compiles() {
         .unwrap_or_else(|e| panic!("kernel stdlib bundle failed to compile:\n{e}"));
 }
 
-// ---------------------------------------------------------------------------
-// Individual kernel HLL modules
-// ---------------------------------------------------------------------------
+// --- Individual kernel HLL modules ---
 
 #[test]
 fn kernel_entry_compiles() {
@@ -106,23 +102,94 @@ fn kernel_fs_compiles() {
     assert_kernel_module_compiles("fs", kernel::FS);
 }
 
-// ---------------------------------------------------------------------------
-// Regression: my_kernel.hll must compile with all identifiers resolved.
-//
+// --- Regression: my_kernel.hll must compile with all identifiers resolved ---
 // This test directly prevents the `computed_binary_pa` class of bug: a local
 // variable renamed during refactoring leaves a stale reference that the
 // compiler must catch.  If this test fails, inspect spawn_user_process (or
 // any function using undefined names) before running slower runtime tests.
-// ---------------------------------------------------------------------------
 
 #[test]
 fn my_kernel_compiles() {
     assert_kernel_module_compiles("my_kernel", kernel::MY_KERNEL);
 }
 
-// ---------------------------------------------------------------------------
-// Module count sanity checks
-// ---------------------------------------------------------------------------
+// --- Frame-size guard ---
+// HLL gives every block-local its own stack slot, so a giant function can grow
+// a frame past the RV immediate range [-2048, 2047], at which point an `sd`/`ld`
+// offset panics the assembler at compile time (this bit syscall_dispatch twice).
+// Flag any kernel function whose frame exceeds a safe threshold here, so the
+// problem surfaces as a clear test failure rather than a deep compile panic.
+
+// Safe ceiling: leaves headroom below the 2047-byte immediate limit for the
+// largest slot offset within a frame.
+const FRAME_WARN_BYTES: u64 = 1800;
+
+// Parse `<label>:` / `; Allocate stack frame: N bytes` pairs out of asm text.
+fn frame_sizes(asm: &str) -> Vec<(String, u64)> {
+    let mut out = Vec::new();
+    let mut current: Option<String> = None;
+    for line in asm.lines() {
+        let trimmed = line.trim();
+        if let Some(label) = trimmed.strip_suffix(':') {
+            if !label.is_empty() && !label.starts_with('.') && !label.contains(' ') {
+                current = Some(label.to_owned());
+            }
+        } else if let Some(rest) = trimmed.strip_prefix("; Allocate stack frame:") {
+            if let (Some(name), Some(size)) = (
+                current.take(),
+                rest.trim().strip_suffix(" bytes").and_then(|s| s.parse().ok()),
+            ) {
+                out.push((name, size));
+            }
+        }
+    }
+    out
+}
+
+// Compile every kernel function and assert no frame exceeds the safe ceiling.
+#[test]
+fn kernel_frames_stay_within_immediate_range() {
+    let mut p = CompilationPipeline::new();
+    p.set_target_mode(TargetMode::Kernel);
+    p.set_write_artifacts(false);
+    p.set_string_prefix(Some("__kern_str_".to_owned()));
+
+    let mut sources: Vec<(&str, String)> =
+        vec![("kernel_stdlib", get_kernel_stdlib_source())];
+    sources.push(("my_kernel", kernel::MY_KERNEL.to_owned()));
+
+    let mut offenders: Vec<(String, u64)> = Vec::new();
+    let mut parsed_any = false;
+    for (name, source) in &sources {
+        let ir = p
+            .compile(source)
+            .unwrap_or_else(|e| panic!("{name} failed to compile:\n{e}"))
+            .ir_program;
+        let asm = p.compile_ir_to_assembly(&ir);
+        for (func, size) in frame_sizes(&asm) {
+            parsed_any = true;
+            if size > FRAME_WARN_BYTES {
+                offenders.push((func, size));
+            }
+        }
+    }
+
+    // Guard against the parser silently matching nothing (asm format drift).
+    assert!(parsed_any, "no frame-size comments parsed; the asm format changed");
+
+    assert!(
+        offenders.is_empty(),
+        "kernel functions exceed the safe frame ceiling ({FRAME_WARN_BYTES} bytes); \
+         factor them into helpers (see PLAN 1.1 / 5.2):\n{}",
+        offenders
+            .iter()
+            .map(|(f, s)| format!("  {f}: {s} bytes"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+// --- Module count sanity checks ---
 
 #[test]
 fn kernel_stdlib_has_expected_module_count() {

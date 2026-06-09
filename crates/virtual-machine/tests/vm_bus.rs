@@ -2,9 +2,7 @@ use virtual_machine::bus::{PLIC_BASE, RAM_BASE, ROM_BASE, SystemBus};
 use virtual_machine::error::VmError;
 use virtual_machine::memory::MemoryAccess;
 
-// ---------------------------------------------------------------------------
-// System Bus, routing to different devices
-// ---------------------------------------------------------------------------
+// --- System Bus, routing to different devices ---
 
 #[test]
 fn bus_route_to_ram() {
@@ -79,9 +77,7 @@ fn bus_unmapped_address_write() {
     assert!(matches!(result, Err(VmError::BusError(0x4000_0000))));
 }
 
-// ---------------------------------------------------------------------------
-// System Bus, RAM bounds checking
-// ---------------------------------------------------------------------------
+// --- System Bus, RAM bounds checking ---
 
 #[test]
 fn bus_ram_first_byte() {
@@ -115,9 +111,7 @@ fn bus_ram_beyond_end() {
     assert!(result.is_err());
 }
 
-// ---------------------------------------------------------------------------
-// System Bus, alignment requirements
-// ---------------------------------------------------------------------------
+// --- System Bus, alignment requirements ---
 
 #[test]
 fn bus_read_halfword_aligned() {
@@ -147,9 +141,7 @@ fn bus_read_doubleword_aligned() {
     assert_eq!(dw, value);
 }
 
-// ---------------------------------------------------------------------------
-// System Bus, device accessors
-// ---------------------------------------------------------------------------
+// --- System Bus, device accessors ---
 
 #[test]
 fn bus_uart_mut_access() {
@@ -191,9 +183,7 @@ fn bus_plic_context_threshold_is_mapped() {
     assert_eq!(threshold, 3);
 }
 
-// ---------------------------------------------------------------------------
-// System Bus, size queries
-// ---------------------------------------------------------------------------
+// --- System Bus, size queries ---
 
 #[test]
 fn bus_ram_size() {

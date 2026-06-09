@@ -7,9 +7,7 @@ use full_stack::compilation_pipeline::{CompilationPipeline, TargetMode};
 use hll_to_ir::stdlib::get_stdlib_source;
 use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 
-// ---------------------------------------------------------------------------
-// Shared helpers
-// ---------------------------------------------------------------------------
+// --- Shared helpers ---
 
 const STDLIB_PREFIX: &str = "_s_";
 const USER_PREFIX: &str = "_u_";
@@ -72,9 +70,7 @@ fn hll_to_asm_text(src: &str) -> String {
     pipeline.compile_ir_to_assembly(&result.ir_program)
 }
 
-// ---------------------------------------------------------------------------
-// hll-to-ir tests
-// ---------------------------------------------------------------------------
+// --- hll-to-ir tests ---
 
 #[test]
 fn ir_output_contains_function_name() {
@@ -114,9 +110,7 @@ fn ir_output_multiple_functions() {
     assert!(ir.contains("cube"), "IR should contain 'cube'");
 }
 
-// ---------------------------------------------------------------------------
-// hll-to-asm tests
-// ---------------------------------------------------------------------------
+// --- hll-to-asm tests ---
 
 #[test]
 fn asm_output_contains_function_label() {
@@ -158,9 +152,7 @@ fn asm_output_text_section() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// run tests
-// ---------------------------------------------------------------------------
+// --- run tests ---
 
 #[test]
 fn run_simple_return_value() {

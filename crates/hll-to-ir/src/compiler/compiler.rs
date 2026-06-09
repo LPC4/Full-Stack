@@ -26,17 +26,13 @@ struct GenericTypeDef {
 
 #[derive(Debug, Clone)]
 pub struct FunctionDecl {
-    pub name: String,
-    pub generics: Vec<String>,
     pub params: Vec<crate::ast::Parameter>,
-    pub return_type: Option<ReturnType>,
     pub body: Option<Block>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CompilerError {
     UnsupportedDeclaration(String),
-    UnsupportedFeature(&'static str),
 }
 
 #[derive(Debug, Clone)]

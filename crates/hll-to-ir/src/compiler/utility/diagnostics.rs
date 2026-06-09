@@ -78,18 +78,6 @@ impl Diagnostics {
             .push(Diagnostic::new(DiagnosticLevel::Error, message));
     }
 
-    /// Emit a warning pinned to a source location.
-    pub fn warn_at(&mut self, span: Span, message: impl Into<String>) {
-        self.entries
-            .push(Diagnostic::new(DiagnosticLevel::Warning, message).with_span(span));
-    }
-
-    /// Emit an error pinned to a source location.
-    pub fn error_at(&mut self, span: Span, message: impl Into<String>) {
-        self.entries
-            .push(Diagnostic::new(DiagnosticLevel::Error, message).with_span(span));
-    }
-
     pub fn has_errors(&self) -> bool {
         self.entries
             .iter()

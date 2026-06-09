@@ -3,7 +3,7 @@ use super::{
     data_section::DataSection,
     function_context::FunctionContext,
     peephole,
-    register_allocator::{Allocation, RegisterAllocator},
+    stack_slots,
     type_utils,
 };
 use asm_to_binary::encode_decode::Reg;
@@ -119,9 +119,8 @@ impl CompilerRv64 {
     }
 
     fn compile_function(&mut self, func: &hll_to_ir::IrFunction) {
-        let mut ctx = FunctionContext::new(&func.name, &self.type_aliases);
-        let mut alloc = RegisterAllocator::new();
-        alloc.allocate_stack_slots(func, &mut ctx, &self.function_return_types);
+        let mut ctx = FunctionContext::new(&self.type_aliases);
+        stack_slots::assign_stack_slots(func, &mut ctx, &self.function_return_types);
 
         let return_type = self.resolve_ir_type(&func.return_type);
         let is_aggregate = matches!(return_type, IrType::Aggregate(_) | IrType::Array { .. });
@@ -197,10 +196,10 @@ impl CompilerRv64 {
             let label = ctx.get_label(&block.label).unwrap();
             self.emitter.emit_label(label);
             for inst in &block.instructions {
-                self.lower_instruction(inst, &mut ctx, &alloc);
+                self.lower_instruction(inst, &mut ctx);
             }
             if let Some(term) = &block.terminator {
-                self.lower_terminator(term, &mut ctx, &alloc, needs_sret, is_aggregate);
+                self.lower_terminator(term, &mut ctx, needs_sret, is_aggregate);
             }
         }
 
@@ -211,7 +210,6 @@ impl CompilerRv64 {
         &mut self,
         inst: &IrInstruction,
         ctx: &mut FunctionContext,
-        alloc: &RegisterAllocator,
     ) {
         use IrInstruction::{
             Alloc, Call, Cast, Cmp, Comment, GlobalRef, HeapAlloc, HeapFree, Index, InlineAsm,
@@ -225,62 +223,62 @@ impl CompilerRv64 {
                     self.emitter.emit_raw(&format!("\t{line}"));
                 }
             }
-            ReadReg { dest, reg } => self.lower_read_reg(dest, reg, ctx, alloc),
-            GlobalRef { dest, name } => self.lower_global_ref(dest, name, ctx, alloc),
+            ReadReg { dest, reg } => self.lower_read_reg(dest, reg, ctx),
+            GlobalRef { dest, name } => self.lower_global_ref(dest, name, ctx),
             Load {
                 dest,
                 ty,
                 ptr,
                 offset,
-            } => self.lower_load(dest, ty, ptr, *offset, ctx, alloc),
+            } => self.lower_load(dest, ty, ptr, *offset, ctx),
             Store {
                 ty,
                 value,
                 ptr,
                 offset,
-            } => self.lower_store(ty, value, ptr, *offset, ctx, alloc),
+            } => self.lower_store(ty, value, ptr, *offset, ctx),
             Offset {
                 dest, ptr, bytes, ..
-            } => self.lower_offset(dest, ptr, bytes, ctx, alloc),
+            } => self.lower_offset(dest, ptr, bytes, ctx),
             Index {
                 dest,
                 ty,
                 base_ptr,
                 idx,
-            } => self.lower_index(dest, ty, base_ptr, idx, ctx, alloc),
+            } => self.lower_index(dest, ty, base_ptr, idx, ctx),
             Math {
                 dest,
                 op,
                 ty,
                 lhs,
                 rhs,
-            } => self.lower_math(dest, op, ty, lhs, rhs, ctx, alloc),
+            } => self.lower_math(dest, op, ty, lhs, rhs, ctx),
             Unary {
                 dest,
                 op,
                 ty,
                 value,
-            } => self.lower_unary(dest, op, ty, value, ctx, alloc),
+            } => self.lower_unary(dest, op, ty, value, ctx),
             Cmp {
                 dest,
                 op,
                 ty,
                 lhs,
                 rhs,
-            } => self.lower_cmp(dest, op, ty, lhs, rhs, ctx, alloc),
+            } => self.lower_cmp(dest, op, ty, lhs, rhs, ctx),
             Cast {
                 dest,
                 mode,
                 value,
                 ty,
-            } => self.lower_cast_inst(dest, *mode, value, ty, ctx, alloc),
+            } => self.lower_cast_inst(dest, *mode, value, ty, ctx),
             Call {
                 dest,
                 function,
                 args,
-            } => self.lower_call(dest, function, args, ctx, alloc),
-            HeapAlloc { dest, ty, count } => self.lower_heap_alloc(dest, ty, count, ctx, alloc),
-            HeapFree { ptr } => self.lower_heap_free(ptr, ctx, alloc),
+            } => self.lower_call(dest, function, args, ctx),
+            HeapAlloc { dest, ty, count } => self.lower_heap_alloc(dest, ty, count, ctx),
+            HeapFree { ptr } => self.lower_heap_free(ptr, ctx),
         }
     }
 
@@ -291,13 +289,12 @@ impl CompilerRv64 {
         ptr: &hll_to_ir::IrRegister,
         offset: Option<i64>,
         ctx: &mut FunctionContext,
-        alloc: &RegisterAllocator,
     ) {
         self.emitter.reset_temp_counter();
         let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
         self.emitter
             .emit_comment(&format!("Load {ty} from memory into ${dest}"));
-        let ptr_tmp = self.load_pointer_operand_to_temp(ptr, ctx, alloc);
+        let ptr_tmp = self.load_pointer_operand_to_temp(ptr, ctx);
         let addr_tmp = if let Some(off) = offset {
             let tmp = self.emitter.alloc_temp_reg();
             self.emitter.emit_addi(tmp, ptr_tmp, off as i32);
@@ -345,9 +342,6 @@ impl CompilerRv64 {
             }
             self.emitter
                 .emit_store_from_tmp(SP, loaded_val, &resolved_ty, dest_slot as i32);
-            if let Some(Allocation::Physical(phys_reg)) = alloc.get_allocation(dest) {
-                self.emitter.emit_mv(*phys_reg, loaded_val);
-            }
         }
     }
 
@@ -358,10 +352,9 @@ impl CompilerRv64 {
         ptr: &hll_to_ir::IrRegister,
         offset: Option<i64>,
         ctx: &mut FunctionContext,
-        alloc: &RegisterAllocator,
     ) {
         self.emitter.reset_temp_counter();
-        let addr_tmp = self.resolve_ptr_to_addr(ptr, ctx, offset.map(|o| o as i32), alloc);
+        let addr_tmp = self.resolve_ptr_to_addr(ptr, ctx, offset.map(|o| o as i32));
         let resolved_ty = self.resolve_ir_type(ty);
         self.emitter.emit_comment(&format!("Store {ty} to memory"));
         if matches!(resolved_ty, IrType::Array { .. } | IrType::Aggregate(_)) {
@@ -376,11 +369,11 @@ impl CompilerRv64 {
                 self.type_size(&resolved_ty),
             );
         } else if matches!(resolved_ty, IrType::Float(_)) {
-            let val_fp = self.load_float_value_to_temp(value, ctx, alloc);
+            let val_fp = self.load_float_value_to_temp(value, ctx);
             self.emitter
                 .emit_store_from_tmp(addr_tmp, val_fp, &resolved_ty, 0);
         } else {
-            let val_tmp = self.load_value_to_temp(value, ctx, alloc);
+            let val_tmp = self.load_value_to_temp(value, ctx);
             self.emitter
                 .emit_store_from_tmp(addr_tmp, val_tmp, &resolved_ty, 0);
         }
@@ -392,12 +385,11 @@ impl CompilerRv64 {
         ptr: &hll_to_ir::IrRegister,
         bytes: &IrValue,
         ctx: &mut FunctionContext,
-        alloc: &RegisterAllocator,
     ) {
         self.emitter.reset_temp_counter();
         let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
-        let ptr_tmp = self.load_pointer_operand_to_temp(ptr, ctx, alloc);
-        let byte_val_reg = self.load_value_to_temp(bytes, ctx, alloc);
+        let ptr_tmp = self.load_pointer_operand_to_temp(ptr, ctx);
+        let byte_val_reg = self.load_value_to_temp(bytes, ctx);
         let off_tmp = self.emitter.alloc_temp_reg();
         self.emitter.emit_mv(off_tmp, byte_val_reg);
         let result_tmp = self.emitter.alloc_temp_reg();
@@ -412,12 +404,11 @@ impl CompilerRv64 {
         base_ptr: &hll_to_ir::IrRegister,
         idx: &IrValue,
         ctx: &mut FunctionContext,
-        alloc: &RegisterAllocator,
     ) {
         self.emitter.reset_temp_counter();
         let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
-        let base_tmp = self.load_pointer_operand_to_temp(base_ptr, ctx, alloc);
-        let idx_tmp = self.load_value_to_temp(idx, ctx, alloc);
+        let base_tmp = self.load_pointer_operand_to_temp(base_ptr, ctx);
+        let idx_tmp = self.load_value_to_temp(idx, ctx);
         let scale = self.type_size(ty);
         let scaled_tmp = self.emitter.alloc_temp_reg();
         if scale == 1 {
@@ -438,7 +429,6 @@ impl CompilerRv64 {
         lhs: &IrValue,
         rhs: &IrValue,
         ctx: &mut FunctionContext,
-        alloc: &RegisterAllocator,
     ) {
         self.emitter.reset_temp_counter();
         let resolved_ty = self.resolve_ir_type(ty);
@@ -449,8 +439,8 @@ impl CompilerRv64 {
         self.emitter
             .emit_comment(&format!("{op} operation on {ty}"));
         if matches!(resolved_ty, IrType::Float(hll_to_ir::FloatWidth::F32)) {
-            let lhs_fp = self.load_float_value_to_temp(lhs, ctx, alloc);
-            let rhs_fp = self.load_float_value_to_temp(rhs, ctx, alloc);
+            let lhs_fp = self.load_float_value_to_temp(lhs, ctx);
+            let rhs_fp = self.load_float_value_to_temp(rhs, ctx);
             let result_fp = self.emitter.alloc_float_temp_reg();
             match op {
                 IrMathOp::Add => self.emitter.emit_fadd_s(result_fp, lhs_fp, rhs_fp),
@@ -463,8 +453,8 @@ impl CompilerRv64 {
             }
             self.emitter.emit_fsw(SP, result_fp, dest_slot as i32);
         } else {
-            let lhs_tmp = self.load_value_to_temp(lhs, ctx, alloc);
-            let rhs_tmp = self.load_value_to_temp(rhs, ctx, alloc);
+            let lhs_tmp = self.load_value_to_temp(lhs, ctx);
+            let rhs_tmp = self.load_value_to_temp(rhs, ctx);
             let result_tmp = self.emitter.alloc_temp_reg();
             match op {
                 IrMathOp::Add => self.emitter.emit_add(result_tmp, lhs_tmp, rhs_tmp),
@@ -484,9 +474,6 @@ impl CompilerRv64 {
             }
             self.emitter
                 .emit_store_from_tmp(SP, result_tmp, &resolved_ty, dest_slot as i32);
-            if let Some(Allocation::Physical(phys_reg)) = alloc.get_allocation(dest) {
-                self.emitter.emit_mv(*phys_reg, result_tmp);
-            }
         }
     }
 
@@ -497,7 +484,6 @@ impl CompilerRv64 {
         ty: &IrType,
         value: &IrValue,
         ctx: &mut FunctionContext,
-        alloc: &RegisterAllocator,
     ) {
         self.emitter.reset_temp_counter();
         let resolved_ty = self.resolve_ir_type(ty);
@@ -506,7 +492,7 @@ impl CompilerRv64 {
         }
         let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
         if matches!(resolved_ty, IrType::Float(hll_to_ir::FloatWidth::F32)) {
-            let val_fp = self.load_float_value_to_temp(value, ctx, alloc);
+            let val_fp = self.load_float_value_to_temp(value, ctx);
             let result_fp = self.emitter.alloc_float_temp_reg();
             match op {
                 IrUnaryOp::Neg => {
@@ -518,7 +504,7 @@ impl CompilerRv64 {
             }
             self.emitter.emit_fsw(SP, result_fp, dest_slot as i32);
         } else {
-            let val_tmp = self.load_value_to_temp(value, ctx, alloc);
+            let val_tmp = self.load_value_to_temp(value, ctx);
             let result_tmp = self.emitter.alloc_temp_reg();
             match op {
                 IrUnaryOp::Neg => self.emitter.emit_neg(result_tmp, val_tmp),
@@ -526,9 +512,6 @@ impl CompilerRv64 {
             }
             self.emitter
                 .emit_store_from_tmp(SP, result_tmp, &resolved_ty, dest_slot as i32);
-            if let Some(Allocation::Physical(phys_reg)) = alloc.get_allocation(dest) {
-                self.emitter.emit_mv(*phys_reg, result_tmp);
-            }
         }
     }
 
@@ -540,7 +523,6 @@ impl CompilerRv64 {
         lhs: &IrValue,
         rhs: &IrValue,
         ctx: &mut FunctionContext,
-        alloc: &RegisterAllocator,
     ) {
         self.emitter.reset_temp_counter();
         let resolved_ty = self.resolve_ir_type(ty);
@@ -552,8 +534,8 @@ impl CompilerRv64 {
         let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
         let bool_ty = IrType::Integer(hll_to_ir::IntWidth::I1);
         if matches!(resolved_ty, IrType::Float(hll_to_ir::FloatWidth::F32)) {
-            let lhs_fp = self.load_float_value_to_temp(lhs, ctx, alloc);
-            let rhs_fp = self.load_float_value_to_temp(rhs, ctx, alloc);
+            let lhs_fp = self.load_float_value_to_temp(lhs, ctx);
+            let rhs_fp = self.load_float_value_to_temp(rhs, ctx);
             let result_tmp = self.emitter.alloc_temp_reg();
             match op {
                 IrCmpOp::Eq => self.emitter.emit_feq_s(result_tmp, lhs_fp, rhs_fp),
@@ -578,8 +560,8 @@ impl CompilerRv64 {
             self.emitter
                 .emit_store_from_tmp(SP, result_tmp, &bool_ty, dest_slot as i32);
         } else {
-            let lhs_tmp = self.load_value_to_temp(lhs, ctx, alloc);
-            let rhs_tmp = self.load_value_to_temp(rhs, ctx, alloc);
+            let lhs_tmp = self.load_value_to_temp(lhs, ctx);
+            let rhs_tmp = self.load_value_to_temp(rhs, ctx);
             let result_tmp = self.emitter.alloc_temp_reg();
             match op {
                 IrCmpOp::Eq => self.emitter.emit_seq(result_tmp, lhs_tmp, rhs_tmp),
@@ -595,9 +577,6 @@ impl CompilerRv64 {
             }
             self.emitter
                 .emit_store_from_tmp(SP, result_tmp, &bool_ty, dest_slot as i32);
-            if let Some(Allocation::Physical(phys_reg)) = alloc.get_allocation(dest) {
-                self.emitter.emit_mv(*phys_reg, result_tmp);
-            }
         }
     }
 
@@ -608,7 +587,6 @@ impl CompilerRv64 {
         value: &IrValue,
         ty: &IrType,
         ctx: &mut FunctionContext,
-        alloc: &RegisterAllocator,
     ) {
         self.emitter.reset_temp_counter();
         let resolved_ty = self.resolve_ir_type(ty);
@@ -616,14 +594,11 @@ impl CompilerRv64 {
             panic!("Cast operations cannot be performed on aggregate/array type {resolved_ty:?}");
         }
         let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
-        let src_tmp = self.load_value_to_temp(value, ctx, alloc);
+        let src_tmp = self.load_value_to_temp(value, ctx);
         let result_tmp = self.emitter.alloc_temp_reg();
         self.lower_cast(result_tmp, src_tmp, mode, &resolved_ty);
         self.emitter
             .emit_store_from_tmp(SP, result_tmp, &resolved_ty, dest_slot as i32);
-        if let Some(Allocation::Physical(phys_reg)) = alloc.get_allocation(dest) {
-            self.emitter.emit_mv(*phys_reg, result_tmp);
-        }
     }
 
     fn lower_call(
@@ -632,7 +607,6 @@ impl CompilerRv64 {
         function: &str,
         args: &[IrValue],
         ctx: &mut FunctionContext,
-        alloc: &RegisterAllocator,
     ) {
         self.emitter.reset_temp_counter();
         let func_return_type = self
@@ -672,7 +646,7 @@ impl CompilerRv64 {
             if arg_index >= 8 {
                 break;
             }
-            let arg_tmp = self.load_value_to_temp(arg, ctx, alloc);
+            let arg_tmp = self.load_value_to_temp(arg, ctx);
             self.emitter.emit_mv(reg_for_arg(arg_index), arg_tmp);
             arg_index += 1;
         }
@@ -691,7 +665,7 @@ impl CompilerRv64 {
             self.emitter.emit_add_imm(SP, SP, -aligned_bytes);
 
             for (i, arg) in args.iter().enumerate().skip(8) {
-                let arg_tmp = self.load_value_to_temp(arg, ctx, alloc);
+                let arg_tmp = self.load_value_to_temp(arg, ctx);
                 let offset = ((i - 8) * 8) as i32;
                 self.emitter.emit_sd(SP, arg_tmp, offset);
             }
@@ -771,9 +745,6 @@ impl CompilerRv64 {
             let resolved_return_ty = self.resolve_ir_type(&func_return_type);
             self.emitter
                 .emit_store_from_tmp(SP, A0, &resolved_return_ty, dest_slot as i32);
-            if let Some(Allocation::Physical(phys_reg)) = alloc.get_allocation(dest) {
-                self.emitter.emit_mv(*phys_reg, A0);
-            }
         }
         self.emitter
             .emit_comment(&format!("--- End Function Call: {function} ---"));
@@ -784,7 +755,6 @@ impl CompilerRv64 {
         dest: &hll_to_ir::IrRegister,
         name: &str,
         ctx: &mut FunctionContext,
-        alloc: &RegisterAllocator,
     ) {
         self.emitter.reset_temp_counter();
         let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
@@ -792,9 +762,6 @@ impl CompilerRv64 {
         self.emitter
             .emit_raw(&format!("\tla {}, {}", reg_name(temp, false), name));
         self.emitter.emit_sd(SP, temp, dest_slot as i32);
-        if let Some(Allocation::Physical(phys_reg)) = alloc.get_allocation(dest) {
-            self.emitter.emit_mv(*phys_reg, temp);
-        }
     }
 
     fn lower_heap_alloc(
@@ -803,7 +770,6 @@ impl CompilerRv64 {
         ty: &IrType,
         count: &Option<IrValue>,
         ctx: &mut FunctionContext,
-        alloc: &RegisterAllocator,
     ) {
         self.emitter.reset_temp_counter();
         let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
@@ -819,7 +785,7 @@ impl CompilerRv64 {
             }
             Some(count_val) => {
                 // Dynamic count: compute sizeof(T) * count at runtime.
-                let count_tmp = self.load_value_to_temp(count_val, ctx, alloc);
+                let count_tmp = self.load_value_to_temp(count_val, ctx);
                 let size_tmp = self.emitter.alloc_temp_reg();
                 self.emitter.emit_li(size_tmp, type_size as i64);
                 self.emitter.emit_raw(&format!(
@@ -833,19 +799,15 @@ impl CompilerRv64 {
 
         self.emitter.emit_raw("\tcall malloc");
         self.emitter.emit_sd(SP, A0, dest_slot as i32);
-        if let Some(Allocation::Physical(phys_reg)) = alloc.get_allocation(dest) {
-            self.emitter.emit_mv(*phys_reg, A0);
-        }
     }
 
     fn lower_heap_free(
         &mut self,
         ptr: &hll_to_ir::IrRegister,
         ctx: &mut FunctionContext,
-        alloc: &RegisterAllocator,
     ) {
         self.emitter.reset_temp_counter();
-        let ptr_tmp = self.load_value_to_temp(&IrValue::Register(ptr.clone()), ctx, alloc);
+        let ptr_tmp = self.load_value_to_temp(&IrValue::Register(ptr.clone()), ctx);
         self.emitter.emit_mv(A0, ptr_tmp);
         self.emitter.emit_raw("\tcall free");
     }
@@ -855,7 +817,6 @@ impl CompilerRv64 {
         dest: &hll_to_ir::IrRegister,
         reg: &str,
         ctx: &mut FunctionContext,
-        alloc: &RegisterAllocator,
     ) {
         use asm_to_binary::parse_int_reg;
         self.emitter.reset_temp_counter();
@@ -864,21 +825,17 @@ impl CompilerRv64 {
         let tmp = self.emitter.alloc_temp_reg();
         self.emitter.emit_mv(tmp, src_hw);
         self.emitter.emit_sd(SP, tmp, dest_slot as i32);
-        if let Some(Allocation::Physical(phys_reg)) = alloc.get_allocation(dest) {
-            self.emitter.emit_mv(*phys_reg, src_hw);
-        }
     }
 
     fn lower_terminator(
         &mut self,
         term: &IrTerminator,
         ctx: &mut FunctionContext,
-        alloc: &RegisterAllocator,
         needs_sret: bool,
         _is_aggregate: bool,
     ) {
         match term {
-            IrTerminator::Return(val) => self.lower_return(val.as_ref(), needs_sret, ctx, alloc),
+            IrTerminator::Return(val) => self.lower_return(val.as_ref(), needs_sret, ctx),
             IrTerminator::Jump(label) => {
                 let lbl = ctx.get_label(label).unwrap();
                 self.emitter.emit_jal(ZERO, lbl);
@@ -888,7 +845,7 @@ impl CompilerRv64 {
                 then_label,
                 else_label,
             } => {
-                let cond_tmp = self.load_value_to_temp(cond, ctx, alloc);
+                let cond_tmp = self.load_value_to_temp(cond, ctx);
                 let then_lbl = ctx.get_label(then_label).unwrap();
                 let else_lbl = ctx.get_label(else_label).unwrap();
                 self.emitter.emit_bne(cond_tmp, ZERO, then_lbl);
@@ -902,7 +859,6 @@ impl CompilerRv64 {
         val: Option<&IrValue>,
         needs_sret: bool,
         ctx: &mut FunctionContext,
-        alloc: &RegisterAllocator,
     ) {
         if let Some(val) = val {
             let raw_val_type = self.resolve_value_type(val, ctx);
@@ -924,7 +880,7 @@ impl CompilerRv64 {
                     self.emitter.emit_add_imm(addr_tmp, SP, slot as i64);
                     addr_tmp
                 } else {
-                    self.load_pointer_operand_to_temp(reg, ctx, alloc)
+                    self.load_pointer_operand_to_temp(reg, ctx)
                 };
                 let sret_ptr = 9; // s1
                 let size = self.type_size(&resolved_val);
@@ -963,7 +919,7 @@ impl CompilerRv64 {
             } else {
                 let resolved_val = self.resolve_value_type(val, ctx);
                 if matches!(resolved_val, IrType::Float(_)) {
-                    let val_fp = self.load_float_value_to_temp(val, ctx, alloc);
+                    let val_fp = self.load_float_value_to_temp(val, ctx);
                     match resolved_val {
                         IrType::Float(hll_to_ir::FloatWidth::F32) => {
                             self.emitter.emit_fmv_s(FA0, val_fp);
@@ -975,7 +931,7 @@ impl CompilerRv64 {
                         _ => unreachable!(),
                     }
                 } else {
-                    let val_tmp = self.load_value_to_temp(val, ctx, alloc);
+                    let val_tmp = self.load_value_to_temp(val, ctx);
                     self.emitter.emit_mv(A0, val_tmp);
                 }
             }
@@ -990,24 +946,7 @@ impl CompilerRv64 {
         ptr: &hll_to_ir::IrRegister,
         ctx: &FunctionContext,
         byte_offset: Option<i32>,
-        alloc: &RegisterAllocator,
     ) -> Reg {
-        if let Some(alloc_result) = alloc.get_allocation(ptr)
-            && let Allocation::Physical(phys_reg) = alloc_result
-        {
-            let tmp = self.emitter.alloc_temp_reg();
-            if let Some(off) = byte_offset {
-                if off != 0 {
-                    self.emitter.emit_add_imm(tmp, *phys_reg, off as i64);
-                } else {
-                    self.emitter.emit_mv(tmp, *phys_reg);
-                }
-            } else {
-                self.emitter.emit_mv(tmp, *phys_reg);
-            }
-            return tmp;
-        }
-
         let slot = ctx.slot_for_reg(ptr).expect("ptr slot");
         let tmp = self.emitter.alloc_temp_reg();
 
@@ -1029,7 +968,6 @@ impl CompilerRv64 {
         &mut self,
         val: &IrValue,
         ctx: &FunctionContext,
-        alloc: &RegisterAllocator,
     ) -> Reg {
         let temp = self.emitter.alloc_temp_reg();
         match val {
@@ -1042,27 +980,7 @@ impl CompilerRv64 {
                     return temp;
                 }
 
-                if let Some(alloc_result) = alloc.get_allocation(reg) {
-                    match alloc_result {
-                        Allocation::Physical(phys_reg) => {
-                            self.emitter.emit_mv(temp, *phys_reg);
-                            return temp;
-                        }
-                        Allocation::StackSlot(slot) => {
-                            if ctx.is_stack_address(reg) {
-                                self.emitter.emit_add_imm(temp, SP, *slot as i64);
-                            } else {
-                                let ty = ctx
-                                    .type_for_reg(reg)
-                                    .unwrap_or(IrType::Integer(hll_to_ir::IntWidth::I64));
-                                self.emitter.emit_load_from_slot(temp, *slot, &ty);
-                            }
-                            return temp;
-                        }
-                    }
-                }
-
-                // No allocation recorded: fall back to the register's stack slot.
+                // Load the register's value from its stack slot.
                 let slot = ctx.slot_for_reg(reg).expect("reg slot");
                 if ctx.is_stack_address(reg) {
                     self.emitter.emit_add_imm(temp, SP, slot as i64);
@@ -1095,7 +1013,6 @@ impl CompilerRv64 {
         &mut self,
         val: &IrValue,
         ctx: &FunctionContext,
-        alloc: &RegisterAllocator,
     ) -> Reg {
         let temp = self.emitter.alloc_float_temp_reg();
         match val {
@@ -1116,26 +1033,6 @@ impl CompilerRv64 {
                                 temp,
                                 reg_for_arg(index),
                             )));
-                        }
-                        _ => panic!("Expected float type"),
-                    }
-                    return temp;
-                }
-
-                if let Some(alloc_result) = alloc.get_allocation(reg)
-                    && let Allocation::Physical(phys_reg) = alloc_result
-                {
-                    // Float moves pick the move that matches the value width.
-                    let ty = ctx
-                        .type_for_reg(reg)
-                        .unwrap_or(IrType::Float(hll_to_ir::FloatWidth::F32));
-                    match ty {
-                        IrType::Float(hll_to_ir::FloatWidth::F32) => {
-                            self.emitter.emit_fmv_s(temp, *phys_reg);
-                        }
-                        IrType::Float(hll_to_ir::FloatWidth::F64) => {
-                            self.emitter
-                                .emit_inst(RealInstruction::FsgnjD(fmv_d(temp, *phys_reg)));
                         }
                         _ => panic!("Expected float type"),
                     }
@@ -1170,7 +1067,6 @@ impl CompilerRv64 {
         &mut self,
         reg: &hll_to_ir::IrRegister,
         ctx: &FunctionContext,
-        alloc: &RegisterAllocator,
     ) -> Reg {
         let temp = self.emitter.alloc_temp_reg();
         if ctx.preserve_param_registers()
@@ -1178,13 +1074,6 @@ impl CompilerRv64 {
             && index < 8
         {
             self.emitter.emit_mv(temp, reg_for_arg(index));
-            return temp;
-        }
-
-        if let Some(alloc_result) = alloc.get_allocation(reg)
-            && let Allocation::Physical(phys_reg) = alloc_result
-        {
-            self.emitter.emit_mv(temp, *phys_reg);
             return temp;
         }
 
@@ -1240,10 +1129,6 @@ impl CompilerRv64 {
                 IrType::Pointer(Box::new(IrType::Integer(hll_to_ir::IntWidth::I8)))
             }
         }
-    }
-
-    fn type_alignment(&self, ty: &IrType) -> usize {
-        type_utils::type_alignment(ty, &self.type_aliases)
     }
 
     fn type_size(&self, ty: &IrType) -> usize {

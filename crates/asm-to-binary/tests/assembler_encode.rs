@@ -70,16 +70,13 @@ fn test_tail_pseudo_relocation() {
     assert!(output.has_symbol("end_func"));
 }
 
-// ---------------------------------------------------------------------------
-// Regression: AUIPC hi20 must be pre-shifted (hi20 << 12)
-//
+// --- Regression: AUIPC hi20 must be pre-shifted (hi20 << 12) ---
 // Before the fix, encode_call/encode_tail/encode_la passed the raw 20-bit
 // page number to Auipc::new instead of shifting it left by 12.  UType::encode
 // masks with 0xFFFFF000, so an unshifted value < 4096 encoded as imm=0.
 // That caused `la t0, far_label` at PC=0 with far_label at 0x11000 to produce
 // auipc t0, 0 instead of auipc t0, 0x11000 -> the load address ended up below
 // RAM_BASE causing an infinite trap loop.
-// ---------------------------------------------------------------------------
 
 /// Assemble `la t0, far_label` where `far_label` is exactly 0x11000 bytes
 /// ahead of the instruction (hi20=17, lo12=0).  The first encoded word must

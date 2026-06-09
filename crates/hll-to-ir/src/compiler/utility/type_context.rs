@@ -8,7 +8,6 @@ pub enum TypeCheckError {
         expected: String,
         found: String,
     },
-    UndefinedType(String),
     InvalidOperation {
         op: String,
         lhs: String,
@@ -18,10 +17,6 @@ pub enum TypeCheckError {
         op: String,
         ty: String,
     },
-    InvalidCast {
-        from: String,
-        to: String,
-    },
 }
 
 impl std::fmt::Display for TypeCheckError {
@@ -30,7 +25,6 @@ impl std::fmt::Display for TypeCheckError {
             Self::TypeMismatch { expected, found } => {
                 write!(f, "type mismatch: expected `{expected}`, found `{found}`")
             }
-            Self::UndefinedType(name) => write!(f, "undefined type `{name}`"),
             Self::InvalidOperation { op, lhs, rhs } => {
                 write!(
                     f,
@@ -39,9 +33,6 @@ impl std::fmt::Display for TypeCheckError {
             }
             Self::InvalidUnaryOp { op, ty } => {
                 write!(f, "operator `{op}` cannot be applied to `{ty}`")
-            }
-            Self::InvalidCast { from, to } => {
-                write!(f, "cannot cast `{from}` to `{to}`")
             }
         }
     }

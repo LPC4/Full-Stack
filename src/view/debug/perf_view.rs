@@ -6,9 +6,7 @@ use egui::{Color32, RichText, Ui, Vec2};
 #[derive(Clone, Default)]
 pub struct PerfView;
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+// --- Helpers ---
 
 fn hit_rate(hits: u64, misses: u64) -> f32 {
     let total = hits + misses;
@@ -78,9 +76,7 @@ fn section_header(ui: &mut Ui, title: &str, theme_color: Color32) {
     ui.add_space(4.0);
 }
 
-// ---------------------------------------------------------------------------
-// CompilerView impl
-// ---------------------------------------------------------------------------
+// --- CompilerView impl ---
 
 impl CompilerView for PerfView {
     fn title(&self) -> &'static str {

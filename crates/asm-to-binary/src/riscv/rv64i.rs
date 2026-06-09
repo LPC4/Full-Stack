@@ -10,9 +10,7 @@ use crate::traits::Instruction;
 use crate::utils::reg_name;
 use std::fmt::Debug;
 
-// ---------------------------------------------------------------------------
-// Integer register-register instructions
-// ---------------------------------------------------------------------------
+// --- Integer register-register instructions ---
 
 r_inst!(
     Add,
@@ -121,9 +119,7 @@ r_inst!(
     mnemonic = "sraw"
 );
 
-// ---------------------------------------------------------------------------
-// Integer immediate arithmetic / shifts
-// ---------------------------------------------------------------------------
+// --- Integer immediate arithmetic / shifts ---
 
 i_imm_inst!(Addi, opcode = 0x13, funct3 = 0, mnemonic = "addi");
 i_imm_inst!(Slti, opcode = 0x13, funct3 = 2, mnemonic = "slti");
@@ -135,9 +131,7 @@ i_imm_inst!(Andi, opcode = 0x13, funct3 = 7, mnemonic = "andi");
 // RV64W immediate instructions use opcode 0x1B.
 i_imm_inst!(Addiw, opcode = 0x1B, funct3 = 0, mnemonic = "addiw");
 
-// ---------------------------------------------------------------------------
-// Loads / stores / branches / upper-immediate / jumps
-// ---------------------------------------------------------------------------
+// --- Loads / stores / branches / upper-immediate / jumps ---
 
 i_load_inst!(Lb, funct3 = 0, mnemonic = "lb");
 i_load_inst!(Lh, funct3 = 1, mnemonic = "lh");
@@ -164,9 +158,7 @@ u_inst!(Auipc, opcode = 0x17, mnemonic = "auipc");
 
 j_inst!(Jal, mnemonic = "jal");
 
-// ---------------------------------------------------------------------------
-// Special-case instructions
-// ---------------------------------------------------------------------------
+// --- Special-case instructions ---
 
 // Shift immediates
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -4,9 +4,7 @@ use std::sync::{LazyLock, Mutex};
 
 use egui::{Color32, Frame, Stroke};
 
-// ------------------------------------------------------------
-// Background presets
-// ------------------------------------------------------------
+// --- Background presets ---
 
 #[derive(serde::Deserialize, serde::Serialize, Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub enum BgPreset {

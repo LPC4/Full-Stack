@@ -8,9 +8,7 @@ use virtual_machine::bus::{CLINT_BASE, PLIC_BASE, RAM_BASE, ROM_BASE, UART_BASE}
 use virtual_machine::memory::cache::CacheSnapshot;
 use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 
-// ---------------------------------------------------------------------------
-// Re-exports
-// ---------------------------------------------------------------------------
+// --- Re-exports ---
 
 pub use snapshot::{
     CpuSnapshot, DebugSnapshot, PipelineCycleSnapshot, PipelineEntry, PipelineHistory, SlotState,
@@ -33,9 +31,7 @@ pub use io_view::IoView;
 pub use memory_view::MemoryView;
 pub use pipeline_view::PipelineView;
 
-// ---------------------------------------------------------------------------
-// Session status
-// ---------------------------------------------------------------------------
+// --- Session status ---
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SessionStatus {
@@ -47,9 +43,7 @@ pub enum SessionStatus {
     Error(String),
 }
 
-// ---------------------------------------------------------------------------
-// Well-known address presets the memory view can jump to
-// ---------------------------------------------------------------------------
+// --- Well-known address presets the memory view can jump to ---
 
 #[derive(Clone, Debug)]
 pub struct AddressPreset {
@@ -80,9 +74,7 @@ pub const ADDRESS_PRESETS: &[AddressPreset] = &[
     },
 ];
 
-// ---------------------------------------------------------------------------
-// DebugSession
-// ---------------------------------------------------------------------------
+// --- DebugSession ---
 
 pub struct DebugSession {
     vm: VirtualMachine,
@@ -176,9 +168,7 @@ impl DebugSession {
         session
     }
 
-    // -----------------------------------------------------------------------
-    // Control
-    // -----------------------------------------------------------------------
+    // --- Control ---
 
     /// Execute a single instruction and update the snapshot.
     pub fn step(&mut self) {
@@ -350,9 +340,7 @@ impl DebugSession {
         self.uart_tx_pending.extend(bytes);
     }
 
-    // -----------------------------------------------------------------------
-    // Memory inspection
-    // -----------------------------------------------------------------------
+    // --- Memory inspection ---
 
     /// Read up to `len` bytes from the VM's address space.
     pub fn peek_bytes(&mut self, addr: u64, len: usize) -> Vec<u8> {
@@ -371,9 +359,7 @@ impl DebugSession {
         self.vm.get_cache_snapshots()
     }
 
-    // -----------------------------------------------------------------------
-    // Internal
-    // -----------------------------------------------------------------------
+    // --- Internal ---
 
     fn refresh_snapshot(&mut self) {
         let pc = self.vm.peek_pc();
@@ -446,9 +432,7 @@ impl DebugSession {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Helper: populate section-start presets from the linker symbol table
-// ---------------------------------------------------------------------------
+// --- Helper: populate section-start presets from the linker symbol table ---
 
 fn fill_section_presets(snapshot: &mut DebugSnapshot, symbols: &HashMap<String, u64>) {
     // Named section start labels emitted by the assembler.

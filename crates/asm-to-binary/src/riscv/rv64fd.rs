@@ -9,9 +9,7 @@ use crate::encode_decode::{IType, R4Type, RType, Reg, RiscvFormat as _, SType};
 use crate::traits::Instruction;
 use crate::utils::reg_name;
 
-// ---------------------------------------------------------------------------
-// Rounding-mode constants
-// ---------------------------------------------------------------------------
+// --- Rounding-mode constants ---
 pub const RNE: u8 = 0b000; // Round to Nearest, ties to Even
 pub const RTZ: u8 = 0b001; // Round towards Zero
 pub const RDN: u8 = 0b010; // Round Down (towards -inf)
@@ -32,9 +30,7 @@ const OP_FMSUB: u8 = 0x47;
 const OP_FNMSUB: u8 = 0x4B;
 const OP_FNMADD: u8 = 0x4F;
 
-// ---------------------------------------------------------------------------
-// Loads / Stores
-// ---------------------------------------------------------------------------
+// --- Loads / Stores ---
 
 /// FP load (single or double).  Opcode = 0x07.
 macro_rules! fp_load_inst {
@@ -132,9 +128,7 @@ macro_rules! fp_store_inst {
 fp_store_inst!(Fsw, 2, "fsw");
 fp_store_inst!(Fsd, 3, "fsd");
 
-// ---------------------------------------------------------------------------
-// FP ALU - generic macro for 2-source FP operations
-// ---------------------------------------------------------------------------
+// --- FP ALU - generic macro for 2-source FP operations ---
 
 macro_rules! fp_alu_inst {
     ($name:ident, $funct5:expr, $fmt:expr, $rm:expr, $mnem:literal $(,)?) => {
@@ -222,9 +216,7 @@ fp_alu_inst!(FsgnjxD, 0b00100, FMT_D, 0b010, "fsgnjx");
 fp_alu_inst!(FminD, 0b00101, FMT_D, 0b000, "fmin");
 fp_alu_inst!(FmaxD, 0b00101, FMT_D, 0b001, "fmax");
 
-// ---------------------------------------------------------------------------
-// FSQRT - single source, rs2 = 0
-// ---------------------------------------------------------------------------
+// --- FSQRT - single source, rs2 = 0 ---
 macro_rules! fsqrt_inst {
     ($name:ident, $fmt:expr, $mnem:literal $(,)?) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
@@ -283,9 +275,7 @@ macro_rules! fsqrt_inst {
 fsqrt_inst!(FsqrtS, FMT_S, "fsqrt");
 fsqrt_inst!(FsqrtD, FMT_D, "fsqrt");
 
-// ---------------------------------------------------------------------------
-// FP Compare - funct5 = 10100, rm selects comparison
-// ---------------------------------------------------------------------------
+// --- FP Compare - funct5 = 10100, rm selects comparison ---
 macro_rules! fcmp_inst {
     ($name:ident, $fmt:expr, $rm:expr, $mnem:literal $(,)?) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
@@ -340,9 +330,7 @@ fcmp_inst!(FleqD, FMT_D, 0b000, "fle");
 fcmp_inst!(FltD, FMT_D, 0b001, "flt");
 fcmp_inst!(FeqD, FMT_D, 0b010, "feq");
 
-// ---------------------------------------------------------------------------
-// FCLASS - rs2 = 0, funct5 = 11100, rm = 001
-// ---------------------------------------------------------------------------
+// --- FCLASS - rs2 = 0, funct5 = 11100, rm = 001 ---
 macro_rules! fclass_inst {
     ($name:ident, $fmt:expr, $mnem:literal $(,)?) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
@@ -390,9 +378,7 @@ macro_rules! fclass_inst {
 fclass_inst!(FclassS, FMT_S, "fclass");
 fclass_inst!(FclassD, FMT_D, "fclass");
 
-// ---------------------------------------------------------------------------
-// FP Move (bitwise) - funct5 = 11100 (FP->int) or 11110 (int->FP)
-// ---------------------------------------------------------------------------
+// --- FP Move (bitwise) - funct5 = 11100 (FP->int) or 11110 (int->FP) ---
 macro_rules! fmv_x_f {
     ($name:ident, $funct5:expr, $fmt:expr, $to_int:expr, $mnem:literal $(,)?) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
@@ -446,9 +432,7 @@ fmv_x_f!(FmvWX, 0b11110, FMT_S, false, "fmv.w.x");
 fmv_x_f!(FmvXD, 0b11100, FMT_D, true, "fmv.x.d");
 fmv_x_f!(FmvDX, 0b11110, FMT_D, false, "fmv.d.x");
 
-// ---------------------------------------------------------------------------
-// FP Conversions - funct5 indicates direction, rs2 encodes integer type
-// ---------------------------------------------------------------------------
+// --- FP Conversions - funct5 indicates direction, rs2 encodes integer type ---
 
 /// Integer type codes used in the `rs2` field of fcvt instructions.
 mod int_type {
@@ -650,9 +634,7 @@ fcvt_i2f!(FcvtDLU, FMT_D, int_type::LU, "fcvt.d.lu");
 fcvt_f2f!(FcvtSD, 0b01000, FMT_S, FMT_D, "fcvt.s.d"); // double->single
 fcvt_f2f!(FcvtDS, 0b01001, FMT_D, FMT_S, "fcvt.d.s"); // single->double
 
-// ---------------------------------------------------------------------------
-// FP Fused Multiply-Add / Subtract (R4-type)
-// ---------------------------------------------------------------------------
+// --- FP Fused Multiply-Add / Subtract (R4-type) ---
 macro_rules! fmac_inst {
     ($name:ident, $opcode:expr, $fmt:expr, $mnem:literal $(,)?) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
@@ -729,9 +711,7 @@ fmac_inst!(FnmsubD, OP_FNMSUB, FMT_D, "fnmsub");
 fmac_inst!(FnmaddS, OP_FNMADD, FMT_S, "fnmadd");
 fmac_inst!(FnmaddD, OP_FNMADD, FMT_D, "fnmadd");
 
-// ===========================================================================
-// FP Pseudo-instructions
-// ===========================================================================
+// --- FP Pseudo-instructions ---
 
 /// `fmv.s fd, fs` -> `fsgnj.s fd, fs, fs`
 pub fn fmv_s(fd: Reg, fs: Reg) -> Fsgnj {

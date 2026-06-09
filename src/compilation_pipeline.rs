@@ -762,6 +762,59 @@ fn sanitize_artifact_component(value: &str) -> String {
     }
 }
 
+// --- Filesystem layout ---
+
+/// Canonical on-disk filesystem layout constants.
+///
+/// These mirror the `FS_*` constants in `crates/os-runtime/kernel/fs.hll`, which
+/// is the source of truth for the running kernel. The host-side [`build_fs_image`]
+/// builder and the kernel must agree byte for byte, so `fs_layout_matches_fs_hll`
+/// asserts the two stay in sync.
+pub mod fs_layout {
+    /// Block size in bytes (`FS_BLOCK_SIZE`).
+    pub const BLOCK_SIZE: usize = 4096;
+    /// Inode size in bytes (`FS_INODE_SIZE`).
+    pub const INODE_SIZE: usize = 128;
+    /// Total inode count (`FS_MAX_INODES`).
+    pub const INODE_COUNT: usize = 256;
+    /// Blocks occupied by the inode table (`INODE_COUNT * INODE_SIZE / BLOCK_SIZE`).
+    pub const INODE_TABLE_BLOCKS: usize = INODE_COUNT * INODE_SIZE / BLOCK_SIZE;
+    /// Free-block bitmap block index (`FS_BITMAP_BLOCK`); follows the inode table.
+    pub const BITMAP_BLOCK: usize = 1 + INODE_TABLE_BLOCKS;
+    /// First data block index (`FS_DATA_BLOCK_START`); follows the bitmap.
+    pub const DATA_BLOCK_START: usize = BITMAP_BLOCK + 1;
+    /// Directory-entry size in bytes (`FS_DIRENT_SIZE`).
+    pub const DIRENT_SIZE: usize = 36;
+    /// Directory entries per block (`FS_DIRENTS_PER_BLOCK`).
+    pub const DIRENTS_PER_BLOCK: usize = BLOCK_SIZE / DIRENT_SIZE;
+    /// Direct block pointers per inode (`FS_INODE_BLOCKS`).
+    pub const MAX_DIRECT_BLOCKS: usize = 44;
+    /// Largest data-block count the layout supports (`FS_MAX_BLOCKS`).
+    pub const MAX_DATA_BLOCKS: usize = 255;
+
+    // Inode field offsets (FS_IN_*).
+    pub const IN_TYPE: usize = 0;
+    pub const IN_PARENT: usize = 2;
+    pub const IN_SIZE: usize = 4;
+    pub const IN_NAME: usize = 8;
+    pub const IN_BLOCKS: usize = 40;
+
+    // Directory-entry field offsets (FS_DE_*).
+    pub const DE_NAME: usize = 0;
+    pub const DE_INODE: usize = 32;
+
+    // Superblock field offsets (FS_SB_*); MAGIC/VERSION/INODE_COUNT/ROOT_INODE are
+    // host-only header fields the kernel reads positionally.
+    pub const SB_MAGIC: usize = 0;
+    pub const SB_VERSION: usize = 8;
+    pub const SB_INODE_COUNT: usize = 10;
+    pub const SB_BLOCK_COUNT: usize = 12;
+    pub const SB_ROOT_INODE: usize = 14;
+    pub const SB_FREE_INODES: usize = 16;
+    pub const SB_FREE_BLOCKS: usize = 20;
+    pub const SB_INODE_BITMAP: usize = 24;
+}
+
 // --- Filesystem image builder ---
 
 /// An entry to include in a filesystem image built by [`build_fs_image`].
@@ -774,37 +827,14 @@ pub enum FsEntry<'a> {
 
 /// Serialise `entries` into the on-disk filesystem image format and return the raw bytes.
 ///
-///   Block 0      Superblock (4096 bytes, first 64 bytes used)
-///   Blocks 1-4   Inode table (256 x 64 bytes)
-///   Block 5      Free-block bitmap (one bit per data block starting at block 6)
-///   Block 6+     Data blocks (4096 bytes each)
+///   Block 0       Superblock (4096 bytes, header fields in the first 64)
+///   Blocks 1-8    Inode table (256 inodes x 128 bytes)
+///   Block 9       Free-block bitmap (one bit per data block starting at block 10)
+///   Blocks 10+    Data blocks (4096 bytes each)
+///
+/// Layout constants live in [`fs_layout`] and are checked against `fs.hll`.
 pub fn build_fs_image(entries: &[FsEntry<'_>]) -> Vec<u8> {
-    const BLOCK_SIZE: usize = 4096;
-    const INODE_SIZE: usize = 128;
-    const INODE_COUNT: usize = 256;
-    const INODE_TABLE_BLOCKS: usize = 8; // 256 * 128 / 4096
-    const BITMAP_BLOCK: usize = 9;
-    const DATA_BLOCK_START: usize = 10;
-    const DIRENT_SIZE: usize = 36;
-    const DIRENTS_PER_BLOCK: usize = 113; // 4096 / 36
-    const MAX_DIRECT_BLOCKS: usize = 44; // (128 - IN_BLOCKS) / 2, matches FS_INODE_BLOCKS
-
-    // Inode layout offsets.
-    const IN_TYPE: usize = 0;
-    const IN_PARENT: usize = 2;
-    const IN_SIZE: usize = 4;
-    const IN_NAME: usize = 8;
-    const IN_BLOCKS: usize = 40;
-
-    // Superblock layout offsets.
-    const SB_MAGIC: usize = 0;
-    const SB_VERSION: usize = 8;
-    const SB_INODE_COUNT: usize = 10;
-    const SB_BLOCK_COUNT: usize = 12;
-    const SB_ROOT_INODE: usize = 14;
-    const SB_FREE_INODES: usize = 16;
-    const SB_FREE_BLOCKS: usize = 20;
-    const SB_INODE_BITMAP: usize = 24;
+    use fs_layout::*;
 
     // One block per file (rounded up) plus one per directory and the root, then
     // a margin of free blocks so the running FS can create and grow files.
@@ -818,12 +848,11 @@ pub fn build_fs_image(entries: &[FsEntry<'_>]) -> Vec<u8> {
         }
     }
     needed_data_blocks += 56;
-    // FS_MAX_BLOCKS is 255 data blocks.
-    let total_data_blocks = needed_data_blocks.min(255);
+    let total_data_blocks = needed_data_blocks.min(MAX_DATA_BLOCKS);
     assert!(
-        needed_data_blocks <= 255,
-        "boot FS image needs {needed_data_blocks} data blocks but the layout caps at 255; \
-         reduce the bundled file sizes"
+        needed_data_blocks <= MAX_DATA_BLOCKS,
+        "boot FS image needs {needed_data_blocks} data blocks but the layout caps at \
+         {MAX_DATA_BLOCKS}; reduce the bundled file sizes"
     );
     let total_blocks = DATA_BLOCK_START + total_data_blocks;
     let image_size = total_blocks * BLOCK_SIZE;
@@ -905,14 +934,15 @@ pub fn build_fs_image(entries: &[FsEntry<'_>]) -> Vec<u8> {
         let blk_off = block_offset(blk_idx);
         let de_off = blk_off + count * DIRENT_SIZE;
 
-        // Write name field (32 bytes).
+        // Write name field (DE_NAME, 32 bytes).
         let name_bytes = name.as_bytes();
         let name_len = name_bytes.len().min(31);
-        image[de_off..de_off + name_len].copy_from_slice(&name_bytes[..name_len]);
-        image[de_off + name_len] = 0;
-        // Write inode u16 at offset 32.
-        image[de_off + 32] = (child_inode & 0xFF) as u8;
-        image[de_off + 33] = ((child_inode >> 8) & 0xFF) as u8;
+        image[de_off + DE_NAME..de_off + DE_NAME + name_len]
+            .copy_from_slice(&name_bytes[..name_len]);
+        image[de_off + DE_NAME + name_len] = 0;
+        // Write the child inode index (u16) at DE_INODE.
+        image[de_off + DE_INODE] = (child_inode & 0xFF) as u8;
+        image[de_off + DE_INODE + 1] = ((child_inode >> 8) & 0xFF) as u8;
 
         // Increment parent size.
         let new_count = (count + 1) as u32;
@@ -1029,8 +1059,8 @@ pub fn build_fs_image(entries: &[FsEntry<'_>]) -> Vec<u8> {
         }
     }
 
-    // --- Free-block bitmap (block 5) ---
-    // One bit per data block starting at block 6; bit 0 of byte 0 = block 6.
+    // --- Free-block bitmap (BITMAP_BLOCK) ---
+    // One bit per data block starting at DATA_BLOCK_START; bit 0 of byte 0 = first data block.
     {
         let bmap_off = block_offset(BITMAP_BLOCK);
         for i in 0..total_data_blocks {
@@ -1081,6 +1111,72 @@ pub fn assembled_to_exec_file(assembled: &AssembledOutput) -> Vec<u8> {
 #[cfg(test)]
 mod fs_image_tests {
     use super::*;
+
+    // Parse a `const FS_NAME = <int>` declaration out of fs.hll. Handles decimal
+    // and 0x-prefixed hex.
+    fn fs_hll_const(src: &str, name: &str) -> i64 {
+        for line in src.lines() {
+            let line = line.trim();
+            let rest = match line.strip_prefix("const ") {
+                Some(r) => r,
+                None => continue,
+            };
+            let (lhs, rhs) = match rest.split_once('=') {
+                Some(p) => p,
+                None => continue,
+            };
+            if lhs.trim() != name {
+                continue;
+            }
+            let val = rhs.split(';').next().unwrap_or("").trim();
+            return if let Some(hex) = val.strip_prefix("0x") {
+                i64::from_str_radix(hex, 16).expect("hex fs.hll const")
+            } else {
+                val.parse().expect("decimal fs.hll const")
+            };
+        }
+        panic!("const {name} not found in fs.hll");
+    }
+
+    // The host image builder and the running kernel must agree on the on-disk
+    // layout byte for byte. fs.hll is the source of truth; this guards the copy
+    // in fs_layout from drifting.
+    #[test]
+    fn fs_layout_matches_fs_hll() {
+        let path =
+            concat!(env!("CARGO_MANIFEST_DIR"), "/crates/os-runtime/kernel/fs.hll");
+        let src = std::fs::read_to_string(path).expect("read fs.hll");
+
+        let pairs: &[(&str, i64)] = &[
+            ("FS_BLOCK_SIZE", fs_layout::BLOCK_SIZE as i64),
+            ("FS_INODE_SIZE", fs_layout::INODE_SIZE as i64),
+            ("FS_MAX_INODES", fs_layout::INODE_COUNT as i64),
+            ("FS_BITMAP_BLOCK", fs_layout::BITMAP_BLOCK as i64),
+            ("FS_DATA_BLOCK_START", fs_layout::DATA_BLOCK_START as i64),
+            ("FS_DIRENT_SIZE", fs_layout::DIRENT_SIZE as i64),
+            ("FS_DIRENTS_PER_BLOCK", fs_layout::DIRENTS_PER_BLOCK as i64),
+            ("FS_INODE_BLOCKS", fs_layout::MAX_DIRECT_BLOCKS as i64),
+            ("FS_IN_TYPE", fs_layout::IN_TYPE as i64),
+            ("FS_IN_PARENT", fs_layout::IN_PARENT as i64),
+            ("FS_IN_SIZE", fs_layout::IN_SIZE as i64),
+            ("FS_IN_NAME", fs_layout::IN_NAME as i64),
+            ("FS_IN_BLOCKS", fs_layout::IN_BLOCKS as i64),
+            ("FS_DE_NAME", fs_layout::DE_NAME as i64),
+            ("FS_DE_INODE", fs_layout::DE_INODE as i64),
+            ("FS_SB_BLOCK_COUNT", fs_layout::SB_BLOCK_COUNT as i64),
+            ("FS_SB_FREE_INODES", fs_layout::SB_FREE_INODES as i64),
+            ("FS_SB_FREE_BLOCKS", fs_layout::SB_FREE_BLOCKS as i64),
+            ("FS_SB_INODE_BITMAP", fs_layout::SB_INODE_BITMAP as i64),
+        ];
+
+        for (name, rust_val) in pairs {
+            let hll_val = fs_hll_const(&src, name);
+            assert_eq!(
+                hll_val, *rust_val,
+                "{name}: fs.hll has {hll_val} but fs_layout has {rust_val}"
+            );
+        }
+    }
 
     // Regression: the image must be sized for the sum of all files' blocks, not
     // just the largest one, or the copy loop runs past the data region.

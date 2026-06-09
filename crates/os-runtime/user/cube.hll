@@ -1,0 +1,267 @@
+; Spinning 3D cube demo. Maps the framebuffer (map_fb, a7=107), then loops
+; forever: advance two rotation angles, project the 8 cube vertices to screen
+; space, clear the frame, and draw the 12 edges with Bresenham lines.
+;
+; All geometry math is Q16.16 fixed point. The per-frame vertex work (8 verts)
+; runs in HLL since it is cheap; the full-screen clear is a hand-written asm
+; fill loop because that store-per-pixel sweep is the real cost each frame.
+;
+; Pixels are RGBA8888 (low byte = red), matching the framebuffer device, so an
+; opaque colour has 0xFF in the top byte. There is no vsync: the program free
+; runs and the GUI samples the live device buffer, so it animates as fast as the
+; VM can drive it. Stop it from the machine window.
+
+external console_writeln: (str: u8*)
+
+; Q16.16 scale: 1.0 == 65536.
+const ONE = 65536
+; Camera distance pushed onto z so the projected z stays positive.
+const DIST = 262144
+; Screen-space scale factor for the perspective divide.
+const SCALE = 150
+; Screen centre.
+const CX = 160
+const CY = 120
+
+; Framebuffer base virtual address (filled in by sc_map_fb).
+_fb_base: u64 = 0
+_ret: u64 = 0
+
+; Cube model-space vertex coordinates (Q16.16), one entry per corner.
+vx: i64[8]
+vy: i64[8]
+vz: i64[8]
+
+; Projected screen coordinates (integer pixels) for each vertex.
+sxv: i64[8]
+syv: i64[8]
+
+; Edge endpoints: edge i connects vertex ea[i] to vertex eb[i].
+ea: i64[12]
+eb: i64[12]
+
+; Minsky-circle rotation state for two axes. Stable integer (cos, sin) pairs that
+; advance by a fixed small angle each frame; different divisors tumble the cube.
+; The cosines must start at ONE, but non-zero global initializers are ignored at
+; runtime (globals start zeroed), so they are set in init_angles instead.
+cay: i64 = 0
+say: i64 = 0
+cax: i64 = 0
+sax: i64 = 0
+
+; Map the framebuffer into this address space; returns its base VA (0 on failure).
+sc_map_fb: () -> u64 {
+    asm {
+        li a7, 107
+        ecall
+        la t0, _ret
+        sd a0, 0(t0)
+    }
+    return _ret
+}
+
+; Q16.16 multiply.
+fmul: (a: i64, b: i64) -> i64 {
+    return (a * b) / ONE
+}
+
+; Plot one pixel if it lies inside the 320x240 frame.
+plot: (x: i64, y: i64, color: u32) {
+    if x < 0 {
+        return
+    }
+    if x >= 320 {
+        return
+    }
+    if y < 0 {
+        return
+    }
+    if y >= 240 {
+        return
+    }
+    off: u64 = ((y as u64) * 320 + (x as u64)) * 4
+    p: u32* = (_fb_base + off) as u32*
+    @p = color
+}
+
+; Integer Bresenham line between two screen points.
+draw_line: (x0: i64, y0: i64, x1: i64, y1: i64, color: u32) {
+    dx: i64 = x1 - x0
+    if dx < 0 {
+        dx = 0 - dx
+    }
+    dy: i64 = y1 - y0
+    if dy < 0 {
+        dy = 0 - dy
+    }
+    sx: i64 = (0 - 1) as i64
+    if x0 < x1 {
+        sx = 1
+    }
+    sy: i64 = (0 - 1) as i64
+    if y0 < y1 {
+        sy = 1
+    }
+    err: i64 = dx - dy
+    while 1 == 1 {
+        plot(x0, y0, color)
+        if x0 == x1 {
+            if y0 == y1 {
+                return
+            }
+        }
+        e2: i64 = err + err
+        if e2 > (0 - dy) {
+            err = err - dy
+            x0 = x0 + sx
+        }
+        if e2 < dx {
+            err = err + dx
+            y0 = y0 + sy
+        }
+    }
+}
+
+; Place the 8 cube corners at (+/-1, +/-1, +/-1) in Q16.16, signs from index bits.
+init_cube: () {
+    i: i64 = 0
+    while i < 8 {
+        if (i & 1) == 0 {
+            @vx[i] = 0 - ONE
+        } else {
+            @vx[i] = ONE
+        }
+        if (i & 2) == 0 {
+            @vy[i] = 0 - ONE
+        } else {
+            @vy[i] = ONE
+        }
+        if (i & 4) == 0 {
+            @vz[i] = 0 - ONE
+        } else {
+            @vz[i] = ONE
+        }
+        i = i + 1
+    }
+}
+
+; The 12 edges connect corners that differ in exactly one axis bit.
+init_edges: () {
+    @ea[0] = 0
+    @eb[0] = 1
+    @ea[1] = 0
+    @eb[1] = 2
+    @ea[2] = 0
+    @eb[2] = 4
+    @ea[3] = 1
+    @eb[3] = 3
+    @ea[4] = 1
+    @eb[4] = 5
+    @ea[5] = 2
+    @eb[5] = 3
+    @ea[6] = 2
+    @eb[6] = 6
+    @ea[7] = 3
+    @eb[7] = 7
+    @ea[8] = 4
+    @eb[8] = 5
+    @ea[9] = 4
+    @eb[9] = 6
+    @ea[10] = 5
+    @eb[10] = 7
+    @ea[11] = 6
+    @eb[11] = 7
+}
+
+; Seed the rotation cosines to 1.0 (sines stay zeroed). Done at runtime because
+; non-zero global initializers are dropped.
+init_angles: () {
+    cay = ONE
+    cax = ONE
+}
+
+; Advance both rotation angles one step (Minsky recurrence, drift-stable).
+advance_angles: () {
+    say = say + cay / 32
+    cay = cay - say / 32
+    sax = sax + cax / 48
+    cax = cax - sax / 48
+}
+
+; Rotate every vertex (Y then X), perspective-project, and store screen coords.
+project_all: () {
+    i: i64 = 0
+    while i < 8 {
+        x: i64 = @vx[i]
+        y: i64 = @vy[i]
+        z: i64 = @vz[i]
+
+        ; Rotate about Y.
+        x1: i64 = fmul(x, cay) + fmul(z, say)
+        z1: i64 = fmul(z, cay) - fmul(x, say)
+        y1: i64 = y
+
+        ; Rotate about X.
+        y2: i64 = fmul(y1, cax) - fmul(z1, sax)
+        z2: i64 = fmul(z1, cax) + fmul(y1, sax)
+        x2: i64 = x1
+
+        ; Perspective divide. zc stays positive because DIST > max |z2|.
+        zc: i64 = z2 + DIST
+        @sxv[i] = CX + (x2 * SCALE) / zc
+        @syv[i] = CY - (y2 * SCALE) / zc
+
+        i = i + 1
+    }
+}
+
+; Fill the whole framebuffer with opaque black via a tight store loop.
+fb_clear: () {
+    asm {
+        la   t0, _fb_base
+        ld   t0, 0(t0)          ; base pixel pointer
+        li   t1, 76800          ; 320 * 240 pixels
+        li   t2, 255
+        slli t2, t2, 24         ; 0xFF000000 = opaque black
+        li   t3, 0
+    _cube_clr:
+        sw   t2, 0(t0)
+        addi t0, t0, 4
+        addi t1, t1, -1
+        blt  t3, t1, _cube_clr  ; loop while pixels remain
+    }
+}
+
+; Draw all 12 edges in one colour.
+draw_cube: () {
+    col: u32 = 0xFF33FF66 as u32
+    i: i64 = 0
+    while i < 12 {
+        a: i64 = @ea[i]
+        b: i64 = @eb[i]
+        draw_line(@sxv[a], @syv[a], @sxv[b], @syv[b], col)
+        i = i + 1
+    }
+}
+
+main: () -> i32 {
+    base: u64 = sc_map_fb()
+    if base == 0 {
+        console_writeln("cube: map_fb failed".data)
+        return 1
+    }
+    _fb_base = base
+
+    init_cube()
+    init_edges()
+    init_angles()
+    console_writeln("cube: rendering".data)
+
+    while 1 == 1 {
+        advance_angles()
+        project_all()
+        fb_clear()
+        draw_cube()
+    }
+    return 0
+}

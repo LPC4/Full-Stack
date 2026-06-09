@@ -2,7 +2,7 @@ macro_rules! asm_warn {
     ($out:expr, $($arg:tt)*) => {{
         let msg = format!($($arg)*);
         eprintln!("asm warning: {msg}");
-        $out.push(AsmToken::Comment(msg));
+        $out.push(AsmToken::Comment);
     }};
 }
 
@@ -57,7 +57,7 @@ pub fn parse(tokens: &[RvInstruction]) -> Vec<AsmToken> {
                 }
             }
             RvInstruction::Label(name) => out.push(AsmToken::Label(name.clone())),
-            RvInstruction::Comment(text) => out.push(AsmToken::Comment(text.clone())),
+            RvInstruction::Comment(_) => out.push(AsmToken::Comment),
             RvInstruction::Directive(raw) => {
                 parse_directive_or_instruction(raw, &mut out);
             }
@@ -66,9 +66,7 @@ pub fn parse(tokens: &[RvInstruction]) -> Vec<AsmToken> {
     out
 }
 
-// ---------------------------------------------------------------------------
-// Parsing `Directive` variants
-// ---------------------------------------------------------------------------
+// --- Parsing `Directive` variants ---
 
 fn parse_directive_or_instruction(raw: &str, out: &mut Vec<AsmToken>) {
     // Strip trailing inline `;` or `#` comments before any classification.
@@ -117,7 +115,7 @@ fn parse_directive_or_instruction(raw: &str, out: &mut Vec<AsmToken>) {
         return;
     }
 
-    out.push(AsmToken::Comment(format!("unparsed line: {raw}")));
+    out.push(AsmToken::Comment);
 }
 
 fn push_directive(dir: Directive, out: &mut Vec<AsmToken>) {
@@ -140,9 +138,7 @@ fn push_directive(dir: Directive, out: &mut Vec<AsmToken>) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Parsing raw instruction lines
-// ---------------------------------------------------------------------------
+// --- Parsing raw instruction lines ---
 
 /// Parse a trimmed instruction line and push typed `AsmToken`s into `out`.
 ///
@@ -495,7 +491,7 @@ fn expand_li(rd: u8, imm: i64, out: &mut Vec<AsmToken>) {
     use crate::riscv::rv64i::{Lui, Srli};
 
     // Helper: emit lui+addi for a signed 32-bit value into `rd`.
-    let mut load32 = |reg: u8, val32: i32, out: &mut Vec<AsmToken>| {
+    let load32 = |reg: u8, val32: i32, out: &mut Vec<AsmToken>| {
         if (-2048..=2047).contains(&(val32 as i64)) {
             out.push(AsmToken::Real(RealInstruction::Addi(Addi::new(
                 reg, 0, val32,
@@ -655,9 +651,7 @@ fn parse_la(operands: &str) -> Option<AsmToken> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// New instruction parsers
-// ---------------------------------------------------------------------------
+// --- New instruction parsers ---
 
 /// Parse `rs, label` for a zero-register branch (`beqz`/`bnez`).
 /// Expands to `beq/bne rs, x0, label`.

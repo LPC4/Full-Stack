@@ -3,9 +3,7 @@
 //! All instructions are R-type with `funct7 = 0x01`.
 //! 64-bit ops use opcode `0x33`; 32-bit word ops use `0x3B`.
 
-// =============================================================================
-// 64-bit multiply / divide  (opcode 0x33, funct7 = 0x01)
-// =============================================================================
+// --- 64-bit multiply / divide  (opcode 0x33, funct7 = 0x01) ---
 
 r_inst!(
     Mul,
@@ -64,9 +62,7 @@ r_inst!(
     mnemonic = "remu"
 );
 
-// =============================================================================
-// 32-bit word multiply / divide  (opcode 0x3B, funct7 = 0x01)
-// =============================================================================
+// --- 32-bit word multiply / divide  (opcode 0x3B, funct7 = 0x01) ---
 
 r_inst!(
     Mulw,

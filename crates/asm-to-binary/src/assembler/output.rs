@@ -162,9 +162,7 @@ impl AssembledOutput {
     }
 }
 
-// ---------------------------------------------------------------------------
-// ELF-64 generation (RISC-V little-endian)
-// ---------------------------------------------------------------------------
+// --- ELF-64 generation (RISC-V little-endian) ---
 
 /// ELF-64 constants for RISC-V.
 mod elf64 {
@@ -907,9 +905,7 @@ impl AssembledOutput {
         std::fs::write(path, self.to_object(name))
     }
 
-    // ---------------------------------------------------------------------------
-    // Flat binary
-    // ---------------------------------------------------------------------------
+    // --- Flat binary ---
 
     /// Produce a raw flat binary: all sections packed in load order (non-BSS
     /// first, then BSS as zeros).  No ELF headers are included.  Suitable for
@@ -929,9 +925,7 @@ impl AssembledOutput {
         buf
     }
 
-    // ---------------------------------------------------------------------------
-    // Layout symbol injection
-    // ---------------------------------------------------------------------------
+    // --- Layout symbol injection ---
 
     /// Inject linker boundary symbols (`__text_start`, `__bss_end`, etc.) into
     /// the symbol table so kernel startup code can zero BSS, set the stack
@@ -1020,9 +1014,7 @@ impl AssembledOutput {
         }
     }
 
-    // ---------------------------------------------------------------------------
-    // Entry-point marking
-    // ---------------------------------------------------------------------------
+    // --- Entry-point marking ---
 
     /// Mark `entry_symbol` as a global export if it is present in the symbol
     /// table but not yet in `global_symbols`.  This ensures the ELF symtab

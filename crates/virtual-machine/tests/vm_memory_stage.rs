@@ -4,9 +4,7 @@ use virtual_machine::cpu::pipeline::execute::ExecResult;
 use virtual_machine::cpu::pipeline::memory::{MemResult, memory_stage};
 use virtual_machine::memory::MemoryAccess;
 
-// ---------------------------------------------------------------------------
-// Memory stage, integer loads
-// ---------------------------------------------------------------------------
+// --- Memory stage, integer loads ---
 
 #[test]
 fn memory_load_byte_sign_extend() {
@@ -161,9 +159,7 @@ fn memory_load_doubleword() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Memory stage, integer stores
-// ---------------------------------------------------------------------------
+// --- Memory stage, integer stores ---
 
 #[test]
 fn memory_store_byte() {
@@ -278,9 +274,7 @@ fn memory_store_doubleword() {
     assert_eq!(dw, value);
 }
 
-// ---------------------------------------------------------------------------
-// Memory stage, pass-through operations
-// ---------------------------------------------------------------------------
+// --- Memory stage, pass-through operations ---
 
 #[test]
 fn memory_pass_through_write_int() {

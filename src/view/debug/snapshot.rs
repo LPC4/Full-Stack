@@ -4,9 +4,7 @@
 use virtual_machine::cpu::csr::CsrSnapshot;
 use virtual_machine::memory::cache::CacheStats;
 
-// ---------------------------------------------------------------------------
-// CPU snapshot
-// ---------------------------------------------------------------------------
+// --- CPU snapshot ---
 
 /// All CPU register state captured after a step.
 #[derive(Clone, Debug, Default)]
@@ -19,9 +17,7 @@ pub struct CpuSnapshot {
     pub prev_xregs: [u64; 32],
 }
 
-// ---------------------------------------------------------------------------
-// Pipeline history
-// ---------------------------------------------------------------------------
+// --- Pipeline history ---
 
 /// An instruction occupying one pipeline stage.
 #[derive(Clone, Debug)]
@@ -90,9 +86,7 @@ impl PipelineHistory {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Top-level snapshot
-// ---------------------------------------------------------------------------
+// --- Top-level snapshot ---
 
 /// Everything the debug panels need, captured after each step.
 #[derive(Clone, Debug, Default)]

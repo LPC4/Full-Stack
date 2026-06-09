@@ -197,9 +197,7 @@ impl<Next: MemoryAccess> Cache<Next> {
         Ok((set_idx, victim_idx, true))
     }
 
-    // ---------------------------------------------------------------------------
-    // Internal multi-byte helpers: count one stat per unique cache block touched
-    // ---------------------------------------------------------------------------
+    // --- Internal multi-byte helpers: count one stat per unique cache block touched ---
 
     fn read_n(&mut self, addr: u64, n: usize) -> Result<u64, VmError> {
         let block_mask = !((1u64 << self.block_bits) - 1);
@@ -310,9 +308,7 @@ impl<Next: MemoryAccess> MemoryAccess for Cache<Next> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Snapshot types for the debug UI
-// ---------------------------------------------------------------------------
+// --- Snapshot types for the debug UI ---
 
 #[derive(Clone, Debug, Default)]
 pub struct CacheParamsSnapshot {

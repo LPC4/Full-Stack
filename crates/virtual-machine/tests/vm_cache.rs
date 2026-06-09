@@ -2,9 +2,7 @@ use virtual_machine::memory::MemoryAccess;
 use virtual_machine::memory::cache::{Cache, CacheParams};
 use virtual_machine::memory::ram::Ram;
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+// --- Helpers ---
 
 const RAM_BASE: u64 = 0x8000_0000;
 const RAM_SIZE: usize = 1 * 1024 * 1024; // 1 MiB
@@ -37,9 +35,7 @@ fn make_read_only_cache() -> Cache<Ram> {
     )
 }
 
-// ---------------------------------------------------------------------------
-// Basic hit / miss counting
-// ---------------------------------------------------------------------------
+// --- Basic hit / miss counting ---
 
 #[test]
 fn first_read_is_a_miss() {
@@ -68,9 +64,7 @@ fn different_blocks_each_count_as_a_miss() {
     assert_eq!(c.stats().read_hits, 0);
 }
 
-// ---------------------------------------------------------------------------
-// Multi-byte accesses count as one stat per block, not one per byte
-// ---------------------------------------------------------------------------
+// --- Multi-byte accesses count as one stat per block, not one per byte ---
 
 #[test]
 fn halfword_read_counts_as_one_access() {
@@ -118,9 +112,7 @@ fn word_spanning_two_blocks_counts_as_two_reads() {
     assert_eq!(c.stats().read_hits, 1);
 }
 
-// ---------------------------------------------------------------------------
-// Write policy: write-back
-// ---------------------------------------------------------------------------
+// --- Write policy: write-back ---
 
 #[test]
 fn write_back_marks_line_dirty_and_does_not_propagate_immediately() {
@@ -152,9 +144,7 @@ fn write_back_dirty_eviction_propagates_to_next_level() {
     assert_eq!(v, 0xAB, "dirty eviction must write back to next level");
 }
 
-// ---------------------------------------------------------------------------
-// Write policy: write-through
-// ---------------------------------------------------------------------------
+// --- Write policy: write-through ---
 
 #[test]
 fn write_through_propagates_immediately() {
@@ -175,9 +165,7 @@ fn write_through_propagates_immediately() {
     assert_eq!(direct, 0xCD, "write-through must propagate immediately");
 }
 
-// ---------------------------------------------------------------------------
-// Read-only cache rejects writes
-// ---------------------------------------------------------------------------
+// --- Read-only cache rejects writes ---
 
 #[test]
 fn read_only_cache_rejects_writes() {
@@ -186,9 +174,7 @@ fn read_only_cache_rejects_writes() {
     assert!(result.is_err(), "write to read-only cache must fail");
 }
 
-// ---------------------------------------------------------------------------
-// LRU replacement
-// ---------------------------------------------------------------------------
+// --- LRU replacement ---
 
 #[test]
 fn lru_evicts_least_recently_used_way() {
@@ -229,9 +215,7 @@ fn lru_evicts_least_recently_used_way() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Three-level hierarchy (L1 -> L2 -> RAM)
-// ---------------------------------------------------------------------------
+// --- Three-level hierarchy (L1 -> L2 -> RAM) ---
 
 #[test]
 fn three_level_hierarchy_read_write() {
@@ -267,9 +251,7 @@ fn three_level_hierarchy_read_write() {
     assert_eq!(l1.stats().read_hits, 1);
 }
 
-// ---------------------------------------------------------------------------
-// Write miss: block is fetched before writing (write-allocate)
-// ---------------------------------------------------------------------------
+// --- Write miss: block is fetched before writing (write-allocate) ---
 
 #[test]
 fn write_miss_fetches_block_write_allocate() {
@@ -282,9 +264,7 @@ fn write_miss_fetches_block_write_allocate() {
     assert_eq!(c.stats().read_hits, 1);
 }
 
-// ---------------------------------------------------------------------------
-// Stats: hit rate
-// ---------------------------------------------------------------------------
+// --- Stats: hit rate ---
 
 #[test]
 fn repeated_reads_produce_high_hit_rate() {

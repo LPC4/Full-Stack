@@ -67,7 +67,6 @@ pub enum Token<'a> {
 
     // Punctuation and Operators
     Colon,
-    Semicolon, // Starts comment
     Comma,
     Dot,
     Assign,

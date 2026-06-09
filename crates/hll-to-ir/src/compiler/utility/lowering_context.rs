@@ -77,10 +77,6 @@ impl LoweringContext {
             .insert(label.0.clone(), self.ssa_env.clone());
     }
 
-    pub fn get_block_exit_values(&self, label: &IrLabel) -> Option<HashMap<String, IrValue>> {
-        self.block_exit_values.get(&label.0).cloned()
-    }
-
     pub fn snapshot_env(&self) -> HashMap<String, IrValue> {
         self.ssa_env.clone()
     }

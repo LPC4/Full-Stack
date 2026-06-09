@@ -27,9 +27,7 @@ const USER_BINARY_PA: u64 = 0x87F00000;
 const USER_META_PA: u64 = 0x87EFF000;
 const USER_CODE_VA: u64 = 0x4000_0000;
 
-// ---------------------------------------------------------------------------
-// Cached kernel binaries
-// ---------------------------------------------------------------------------
+// --- Cached kernel binaries ---
 
 // Kernel built from the single-concatenated stdlib source plus my_kernel. This
 // is what most tests boot.
@@ -114,9 +112,7 @@ fn cached_kernel_multi_module() -> &'static AssembledOutput {
     })
 }
 
-// ---------------------------------------------------------------------------
-// Shared helpers
-// ---------------------------------------------------------------------------
+// --- Shared helpers ---
 
 // Compile a hosted user program (links the hosted stdlib).
 fn compile_hosted(src: &str) -> AssembledOutput {
@@ -202,12 +198,9 @@ fn run_example_in_kernel(user_src: &str, label: &str) {
     assert_user_exit_ok(&uart, &outcome, label);
 }
 
-// ===========================================================================
-// Boot sequence (merged from kernel_boot_device_tree.rs + kernel_user_injection.rs)
-//
+// --- Boot sequence (merged from kernel_boot_device_tree.rs + kernel_user_injection.rs) ---
 // All of these formerly recompiled the kernel and asserted on different parts of
 // the same boot. One boot now covers the whole sequence.
-// ===========================================================================
 
 #[test]
 fn kernel_boot_full_sequence() {
@@ -304,9 +297,7 @@ fn kernel_boot_multi_module_no_user_binary() {
     );
 }
 
-// ===========================================================================
-// Example programs in kernel userspace (merged from kernel_example_injection.rs)
-// ===========================================================================
+// --- Example programs in kernel userspace (merged from kernel_example_injection.rs) ---
 
 const CORE_BASICS: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -434,9 +425,7 @@ main: () -> i32 {
     );
 }
 
-// ===========================================================================
-// Framebuffer device (map_fb syscall + fbdemo program)
-// ===========================================================================
+// --- Framebuffer device (map_fb syscall + fbdemo program) ---
 
 // Boot fbdemo as pid 1, read the framebuffer back, and check the rendered image.
 // Covers the whole path: map_fb -> MMU translation -> bus routing -> device store.
@@ -484,9 +473,49 @@ fn fbdemo_renders_mandelbrot_set() {
     );
 }
 
-// ===========================================================================
-// Interactive shell (merged from kernel_shell.rs)
-// ===========================================================================
+// Boot the spinning-cube demo as pid 1 for a bounded number of cycles (it loops
+// forever) and confirm it compiled, mapped the framebuffer, and drove the
+// per-pixel store path. A timeout almost always lands inside the full-screen
+// clear, so we assert on the clear (opaque black) rather than the edge pixels,
+// which would be timing-dependent.
+#[test]
+fn cube_demo_drives_framebuffer() {
+    let user = compile_hosted(user::CUBE);
+    let (vm, outcome, uart) = boot_kernel(cached_kernel(), Some(&user), None, "", 10_000_000);
+
+    assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
+    assert!(
+        !uart.contains("unhandled exception"),
+        "unhandled CPU exception; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("[ PROC ] pid 1 ready"),
+        "cube process was not spawned; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("cube: rendering"),
+        "cube did not reach its render loop; uart={uart:?}"
+    );
+    // It never exits, so the bounded run must still be ticking, not halted.
+    assert!(
+        matches!(outcome, StepOutcome::Continue),
+        "cube should run continuously, got {outcome:?}"
+    );
+
+    // The clear loop fills the framebuffer with opaque black through MMU + bus +
+    // device, so a large opaque-black region proves that path executed.
+    let px = vm.peek_framebuffer();
+    let opaque_black = px
+        .chunks_exact(4)
+        .filter(|p| p[0] == 0 && p[1] == 0 && p[2] == 0 && p[3] == 255)
+        .count();
+    assert!(
+        opaque_black > 10_000,
+        "expected the clear loop to fill the framebuffer, got {opaque_black} black pixels"
+    );
+}
+
+// --- Interactive shell (merged from kernel_shell.rs) ---
 
 #[test]
 fn kernel_shell_ls_cd_run_exit() {
@@ -561,9 +590,7 @@ fn kernel_shell_run_rejects_non_executable() {
     );
 }
 
-// ===========================================================================
-// File editor (merged from kernel_editor.rs)
-// ===========================================================================
+// --- File editor (merged from kernel_editor.rs) ---
 
 // Old contents of /notes.txt: distinctive filler, longer than the new contents,
 // so a missing truncate would leave some of it behind.
@@ -654,9 +681,7 @@ fn editor_loads_clears_appends_writes_and_truncates() {
     );
 }
 
-// ===========================================================================
-// fork / wait (merged from kernel_fork.rs)
-// ===========================================================================
+// --- fork / wait (merged from kernel_fork.rs) ---
 
 #[test]
 fn fork_child_runs_and_parent_reaps_exit_code() {
@@ -747,9 +772,7 @@ main: () -> i32 {
     assert!(child_at < reaped_at, "parent reaped before the child ran; uart={uart:?}");
 }
 
-// ===========================================================================
-// Per-process address-space isolation (merged from kernel_isolation.rs)
-// ===========================================================================
+// --- Per-process address-space isolation (merged from kernel_isolation.rs) ---
 
 // A fixed user VA inside the lowest stack page (mapped R+W+U in every process,
 // well below the live stack frames of a shallow program).
@@ -881,9 +904,7 @@ main: () -> i32 {{
     );
 }
 
-// ===========================================================================
-// Filesystem (merged from kernel_fs.rs)
-// ===========================================================================
+// --- Filesystem (merged from kernel_fs.rs) ---
 
 // User program that exercises the full FS API and prints FS_ALL_PASS on success.
 const FS_EXERCISER: &str = r#"

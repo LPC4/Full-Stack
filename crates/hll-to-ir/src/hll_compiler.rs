@@ -6,9 +6,7 @@ use crate::lexer::Lexer;
 use crate::parser::Parser;
 use crate::token::Token;
 
-// ---------------------------------------------------------------------------
-// Public types
-// ---------------------------------------------------------------------------
+// --- Public types ---
 
 pub struct CompileConfig {
     pub target: TargetMode,
@@ -144,9 +142,7 @@ impl HllCompiler {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Freestanding asm-block validator (moved from root compilation_pipeline.rs)
-// ---------------------------------------------------------------------------
+// --- Freestanding asm-block validator (moved from root compilation_pipeline.rs) ---
 
 /// Linux RV64 userspace syscall numbers that are invalid in freestanding mode.
 const LINUX_USERSPACE_SYSCALLS: &[(u64, &str)] = &[

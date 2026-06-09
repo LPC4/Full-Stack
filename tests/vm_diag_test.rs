@@ -3,9 +3,7 @@ use hll_to_ir::stdlib::get_stdlib_source;
 use virtual_machine::bus::ELF_LOAD_BASE;
 use virtual_machine::virtual_machine::VirtualMachine;
 
-// ---------------------------------------------------------------------------
-// Kernel diagnostic: compile + dump assembly, then step-trace the VM
-// ---------------------------------------------------------------------------
+// --- Kernel diagnostic: compile + dump assembly, then step-trace the VM ---
 // Run with:  cargo test kernel_asm_diag -- --nocapture
 //
 // Shows:
@@ -112,20 +110,17 @@ fn kernel_asm_diag() {
     eprintln!("\n=== UART OUTPUT SO FAR ===\n{uart_so_far}");
 }
 
-// ---------------------------------------------------------------------------
-// Linking helper
-//
+// --- Linking helper ---
 // This is the canonical "link with stdlib" path used by the GUI and tests:
-//   1. Compile stdlib once -> Vec<RvInstruction> token stream
-//   2. Compile user source independently -> Vec<RvInstruction> token stream
-//   3. Assemble stdlib + user into relocatable objects
-//   4. Link the objects and inject the kernel layout symbols
-//   5. Load the resulting ELF into VM and run
+// 1. Compile stdlib once -> Vec<RvInstruction> token stream
+// 2. Compile user source independently -> Vec<RvInstruction> token stream
+// 3. Assemble stdlib + user into relocatable objects
+// 4. Link the objects and inject the kernel layout symbols
+// 5. Load the resulting ELF into VM and run
 //
 // To link with a different runtime (custom allocator, bare-metal glue, or a
 // future C stdlib path) substitute step 1 with any Vec<RvInstruction> that
 // defines malloc/free and whatever other symbols user code calls as external.
-// ---------------------------------------------------------------------------
 fn link_stdlib_and_run(user_src: &str) -> (String, Option<i64>) {
     use virtual_machine::virtual_machine::StepOutcome;
 

@@ -279,6 +279,8 @@ pub struct FullStackApp {
     #[serde(skip)]
     fbdemo_binary: Option<AssembledOutput>,
     #[serde(skip)]
+    cube_binary: Option<AssembledOutput>,
+    #[serde(skip)]
     vm_output_view_id: u64,
     settings: AppSettings,
     #[serde(skip)]
@@ -321,6 +323,7 @@ impl Default for FullStackApp {
             shell_binary: None,
             edit_binary: None,
             fbdemo_binary: None,
+            cube_binary: None,
             vm_output_view_id: 0,
             settings: AppSettings::default(),
             show_settings: false,
@@ -886,6 +889,37 @@ impl FullStackApp {
         }
     }
 
+    /// Compile the bundled spinning-cube demo as a hosted binary, caching it.
+    fn ensure_cube_binary(&mut self) -> Result<(), String> {
+        if self.cube_binary.is_some() {
+            return Ok(());
+        }
+        let mut pipeline = CompilationPipeline::new();
+        pipeline.set_target_mode(TargetMode::Hosted);
+        pipeline.set_write_artifacts(false);
+        pipeline.set_type_prelude(get_stdlib_type_prelude());
+
+        let source = format!(
+            "{}\n{}",
+            get_stdlib_source_for_mode(TargetMode::Hosted),
+            os_runtime::user::CUBE
+        );
+        let result = pipeline.run_full(&source, None);
+        if result.has_errors() {
+            return Err(result.format_diagnostics());
+        }
+        if let Some(ref asm_err) = result.assembler_error {
+            return Err(format!("assembler error: {asm_err}"));
+        }
+        match result.binary.as_ref() {
+            Some(bin) => {
+                self.cube_binary = Some(bin.assembled.clone());
+                Ok(())
+            }
+            None => Err("cube produced no binary".to_owned()),
+        }
+    }
+
     /// Build the filesystem image the shell boots with: a `/home` directory and,
     /// if a program is selected for injection, that program stored there as a
     /// runnable executable file. A short readme is always present so `ls` has
@@ -904,7 +938,9 @@ impl FullStackApp {
         // Install the line editor at /bin/edit.fexe so the shell's `edit` command
         // can exec it. Without this the editor is compiled but never reachable.
         let edit_holder;
-        let have_bin_dir = self.edit_binary.is_some() || self.fbdemo_binary.is_some();
+        let have_bin_dir = self.edit_binary.is_some()
+            || self.fbdemo_binary.is_some()
+            || self.cube_binary.is_some();
         if have_bin_dir {
             entries.push(FsEntry::Dir { path: "/bin" });
         }
@@ -924,6 +960,17 @@ impl FullStackApp {
             entries.push(FsEntry::File {
                 path: "/bin/fbdemo.fexe",
                 data: &fbdemo_holder,
+            });
+        }
+
+        // Install the spinning-cube demo at /bin/cube.fexe so `run /bin/cube`
+        // animates a rotating wireframe on the framebuffer device.
+        let cube_holder;
+        if let Some(asm) = self.cube_binary.as_ref() {
+            cube_holder = assembled_to_exec_file(asm);
+            entries.push(FsEntry::File {
+                path: "/bin/cube.fexe",
+                data: &cube_holder,
             });
         }
 
@@ -1051,7 +1098,7 @@ impl eframe::App for FullStackApp {
                         }
                     }
 
-                    egui::ComboBox::from_id_source("inject_program_list")
+                    egui::ComboBox::from_id_salt("inject_program_list")
                         .selected_text(selected_label.clone())
                         .show_ui(ui, |ui| {
                             if ui
@@ -1111,6 +1158,11 @@ impl eframe::App for FullStackApp {
                         if let Err(e) = self.ensure_fbdemo_binary() {
                             self.compilation_state
                                 .set_error(format!("fbdemo compile failed: {e}"));
+                        }
+                        // Best-effort: install the spinning-cube demo for `run /bin/cube`.
+                        if let Err(e) = self.ensure_cube_binary() {
+                            self.compilation_state
+                                .set_error(format!("cube compile failed: {e}"));
                         }
                         let fs_image = self.build_boot_fs_image();
                         let shell = self.shell_binary.clone();

@@ -4,9 +4,7 @@ use virtual_machine::cpu::pipeline::writeback::writeback;
 use virtual_machine::cpu::registers::Registers;
 use virtual_machine::error::VmError;
 
-// ---------------------------------------------------------------------------
-// Writeback stage, integer register writes
-// ---------------------------------------------------------------------------
+// --- Writeback stage, integer register writes ---
 
 #[test]
 fn writeback_write_int() {
@@ -43,9 +41,7 @@ fn writeback_write_int_to_x0() {
     assert_eq!(next_pc, 0x8000_0004);
 }
 
-// ---------------------------------------------------------------------------
-// Writeback stage, floating-point register writes
-// ---------------------------------------------------------------------------
+// --- Writeback stage, floating-point register writes ---
 
 #[test]
 fn writeback_write_fp() {
@@ -66,9 +62,7 @@ fn writeback_write_fp() {
     assert_eq!(next_pc, 0x8000_0004);
 }
 
-// ---------------------------------------------------------------------------
-// Writeback stage, operations with FP flags
-// ---------------------------------------------------------------------------
+// --- Writeback stage, operations with FP flags ---
 
 #[test]
 fn writeback_write_int_with_flags() {
@@ -115,9 +109,7 @@ fn writeback_accumulate_fp_flags() {
     assert_eq!(csrs.fflags, 0x11); // NX | NV
 }
 
-// ---------------------------------------------------------------------------
-// Writeback stage, CSR operations
-// ---------------------------------------------------------------------------
+// --- Writeback stage, CSR operations ---
 
 #[test]
 fn writeback_csrrw() {
@@ -273,9 +265,7 @@ fn writeback_csr_read_only() {
     assert_eq!(next_pc, 0x8000_0004);
 }
 
-// ---------------------------------------------------------------------------
-// Writeback stage, special operations
-// ---------------------------------------------------------------------------
+// --- Writeback stage, special operations ---
 
 #[test]
 fn writeback_jump() {

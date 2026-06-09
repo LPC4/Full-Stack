@@ -12,9 +12,7 @@ use crate::utils::reg_name;
 
 const OP_SYSTEM: u8 = 0x73;
 
-// ---------------------------------------------------------------------------
-// Common CSR addresses
-// ---------------------------------------------------------------------------
+// --- Common CSR addresses ---
 pub mod csr {
     pub const FFLAGS: u16 = 0x001;
     pub const FRM: u16 = 0x002;
@@ -30,9 +28,7 @@ pub mod csr {
     pub const MTVAL: u16 = 0x343;
 }
 
-// ---------------------------------------------------------------------------
-// Register-operand CSR instructions (funct3 = 1-3)
-// ---------------------------------------------------------------------------
+// --- Register-operand CSR instructions (funct3 = 1-3) ---
 
 macro_rules! csr_reg_inst {
     ($name:ident, $funct3:expr, $mnem:literal $(,)?) => {
@@ -92,9 +88,7 @@ csr_reg_inst!(Csrrw, 1, "csrrw");
 csr_reg_inst!(Csrrs, 2, "csrrs");
 csr_reg_inst!(Csrrc, 3, "csrrc");
 
-// ---------------------------------------------------------------------------
-// Immediate-operand CSR instructions (funct3 = 5-7)
-// ---------------------------------------------------------------------------
+// --- Immediate-operand CSR instructions (funct3 = 5-7) ---
 
 macro_rules! csr_imm_inst {
     ($name:ident, $funct3:expr, $mnem:literal $(,)?) => {

@@ -25,9 +25,7 @@ use super::traits::Instruction as _;
 /// Every encodable RISC-V instruction in one enum.
 #[derive(Debug, Clone)]
 pub enum RealInstruction {
-    // -------------------------------------------------------------------
-    // RV64I - R-type
-    // -------------------------------------------------------------------
+    // --- RV64I - R-type ---
     Add(Add),
     Sub(Sub),
     Sll(Sll),
@@ -45,9 +43,7 @@ pub enum RealInstruction {
     Srlw(Srlw),
     Sraw(Sraw),
 
-    // -------------------------------------------------------------------
-    // RV64I - I-type immediate ALU
-    // -------------------------------------------------------------------
+    // --- RV64I - I-type immediate ALU ---
     Addi(Addi),
     Slti(Slti),
     Sltiu(Sltiu),
@@ -63,9 +59,7 @@ pub enum RealInstruction {
     Srliw(Srliw),
     Sraiw(Sraiw),
 
-    // -------------------------------------------------------------------
-    // RV64I - loads
-    // -------------------------------------------------------------------
+    // --- RV64I - loads ---
     Lb(Lb),
     Lh(Lh),
     Lw(Lw),
@@ -74,17 +68,13 @@ pub enum RealInstruction {
     Lhu(Lhu),
     Lwu(Lwu),
 
-    // -------------------------------------------------------------------
-    // RV64I - stores
-    // -------------------------------------------------------------------
+    // --- RV64I - stores ---
     Sb(Sb),
     Sh(Sh),
     Sw(Sw),
     Sd(Sd),
 
-    // -------------------------------------------------------------------
-    // RV64I - branches
-    // -------------------------------------------------------------------
+    // --- RV64I - branches ---
     Beq(Beq),
     Bne(Bne),
     Blt(Blt),
@@ -92,17 +82,13 @@ pub enum RealInstruction {
     Bltu(Bltu),
     Bgeu(Bgeu),
 
-    // -------------------------------------------------------------------
-    // RV64I - upper immediate / jump
-    // -------------------------------------------------------------------
+    // --- RV64I - upper immediate / jump ---
     Lui(Lui),
     Auipc(Auipc),
     Jal(Jal),
     Jalr(Jalr),
 
-    // -------------------------------------------------------------------
-    // RV64I - system
-    // -------------------------------------------------------------------
+    // --- RV64I - system ---
     Ecall(Ecall),
     Ebreak(Ebreak),
     Mret(Mret),
@@ -112,9 +98,7 @@ pub enum RealInstruction {
     Fence(Fence),
     FenceI(FenceI),
 
-    // -------------------------------------------------------------------
-    // RV64M - multiply / divide
-    // -------------------------------------------------------------------
+    // --- RV64M - multiply / divide ---
     Mul(Mul),
     Mulh(Mulh),
     Mulhsu(Mulhsu),
@@ -129,9 +113,7 @@ pub enum RealInstruction {
     Remw(Remw),
     Remuw(Remuw),
 
-    // -------------------------------------------------------------------
-    // RV64A - atomics
-    // -------------------------------------------------------------------
+    // --- RV64A - atomics ---
     Lr(Lr),
     Sc(Sc),
     AmoaddW(AmoaddW),
@@ -153,17 +135,13 @@ pub enum RealInstruction {
     AmominuD(AmominuD),
     AmomaxuD(AmomaxuD),
 
-    // -------------------------------------------------------------------
-    // RV64FD - floating-point loads / stores
-    // -------------------------------------------------------------------
+    // --- RV64FD - floating-point loads / stores ---
     Flw(Flw),
     Fld(Fld),
     Fsw(Fsw),
     Fsd(Fsd),
 
-    // -------------------------------------------------------------------
-    // RV64FD - FP ALU single-precision
-    // -------------------------------------------------------------------
+    // --- RV64FD - FP ALU single-precision ---
     Fadd(Fadd),
     Fsub(Fsub),
     Fmul(Fmul),
@@ -175,9 +153,7 @@ pub enum RealInstruction {
     Fmin(Fmin),
     Fmax(Fmax),
 
-    // -------------------------------------------------------------------
-    // RV64FD - FP ALU double-precision
-    // -------------------------------------------------------------------
+    // --- RV64FD - FP ALU double-precision ---
     FaddD(FaddD),
     FsubD(FsubD),
     FmulD(FmulD),
@@ -189,9 +165,7 @@ pub enum RealInstruction {
     FminD(FminD),
     FmaxD(FmaxD),
 
-    // -------------------------------------------------------------------
-    // RV64FD - FP compare (single/double)
-    // -------------------------------------------------------------------
+    // --- RV64FD - FP compare (single/double) ---
     FeqS(FeqS),
     FltS(FltS),
     FleqS(FleqS),
@@ -199,23 +173,17 @@ pub enum RealInstruction {
     FltD(FltD),
     FleqD(FleqD),
 
-    // -------------------------------------------------------------------
-    // RV64FD - FP classify
-    // -------------------------------------------------------------------
+    // --- RV64FD - FP classify ---
     FclassS(FclassS),
     FclassD(FclassD),
 
-    // -------------------------------------------------------------------
-    // RV64FD - FP move (bitwise)
-    // -------------------------------------------------------------------
+    // --- RV64FD - FP move (bitwise) ---
     FmvXW(FmvXW),
     FmvWX(FmvWX),
     FmvXD(FmvXD),
     FmvDX(FmvDX),
 
-    // -------------------------------------------------------------------
-    // RV64FD - FP -> integer conversions
-    // -------------------------------------------------------------------
+    // --- RV64FD - FP -> integer conversions ---
     FcvtWS(FcvtWS),
     FcvtWUS(FcvtWUS),
     FcvtLS(FcvtLS),
@@ -225,9 +193,7 @@ pub enum RealInstruction {
     FcvtLD(FcvtLD),
     FcvtLUD(FcvtLUD),
 
-    // -------------------------------------------------------------------
-    // RV64FD - integer -> FP conversions
-    // -------------------------------------------------------------------
+    // --- RV64FD - integer -> FP conversions ---
     FcvtSW(FcvtSW),
     FcvtSWU(FcvtSWU),
     FcvtSL(FcvtSL),
@@ -237,15 +203,11 @@ pub enum RealInstruction {
     FcvtDL(FcvtDL),
     FcvtDLU(FcvtDLU),
 
-    // -------------------------------------------------------------------
-    // RV64FD - FP <-> FP conversions
-    // -------------------------------------------------------------------
+    // --- RV64FD - FP <-> FP conversions ---
     FcvtSD(FcvtSD),
     FcvtDS(FcvtDS),
 
-    // -------------------------------------------------------------------
-    // RV64FD - FMAC (fused multiply-add/sub)
-    // -------------------------------------------------------------------
+    // --- RV64FD - FMAC (fused multiply-add/sub) ---
     FmaddS(FmaddS),
     FmaddD(FmaddD),
     FmsubS(FmsubS),
@@ -255,9 +217,7 @@ pub enum RealInstruction {
     FnmaddS(FnmaddS),
     FnmaddD(FnmaddD),
 
-    // -------------------------------------------------------------------
-    // RV64ZICSR - CSR instructions
-    // -------------------------------------------------------------------
+    // --- RV64ZICSR - CSR instructions ---
     Csrrw(Csrrw),
     Csrrs(Csrrs),
     Csrrc(Csrrc),

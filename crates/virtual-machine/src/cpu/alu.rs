@@ -7,9 +7,7 @@
 //! NaN-boxing convention: single-precision results have their upper 32 bits set to
 //! `0xFFFF_FFFF` so that the 64-bit FP register holds a valid NaN-boxed f32.
 
-// ---------------------------------------------------------------------------
-// FP rounding mode constants (match RISC-V spec frm field)
-// ---------------------------------------------------------------------------
+// --- FP rounding mode constants (match RISC-V spec frm field) ---
 
 pub const RM_RNE: u8 = 0; // Round to Nearest, ties to Even
 pub const RM_RTZ: u8 = 1; // Round towards Zero
@@ -18,9 +16,7 @@ pub const RM_RUP: u8 = 3; // Round Up (towards +inf)
 pub const RM_RMM: u8 = 4; // Round to Nearest, ties to Max Magnitude
 pub const RM_DYN: u8 = 7; // Dynamic (use fcsr.frm), caller resolves before calling
 
-// ---------------------------------------------------------------------------
-// Exception flag bits
-// ---------------------------------------------------------------------------
+// --- Exception flag bits ---
 
 const NV: u8 = 0x10; // Invalid operation
 const DZ: u8 = 0x08; // Divide by zero
@@ -28,9 +24,7 @@ const OF: u8 = 0x04; // Overflow
 const UF: u8 = 0x02; // Underflow
 const NX: u8 = 0x01; // Inexact
 
-// ---------------------------------------------------------------------------
-// Canonical NaN bit patterns
-// ---------------------------------------------------------------------------
+// --- Canonical NaN bit patterns ---
 
 /// Canonical quiet NaN for f32, NaN-boxed in a u64 FP register.
 #[inline]
@@ -44,9 +38,7 @@ pub fn canon_nan_d() -> u64 {
     0x7FF8_0000_0000_0000u64
 }
 
-// ---------------------------------------------------------------------------
-// NaN-box helpers
-// ---------------------------------------------------------------------------
+// --- NaN-box helpers ---
 
 #[inline]
 fn box_f32(v: f32) -> u64 {
@@ -58,9 +50,7 @@ fn box_f64(v: f64) -> u64 {
     v.to_bits()
 }
 
-// ---------------------------------------------------------------------------
-// Base integer ALU, RV64I
-// ---------------------------------------------------------------------------
+// --- Base integer ALU, RV64I ---
 
 #[inline]
 pub fn add(a: u64, b: u64) -> u64 {
@@ -130,9 +120,7 @@ pub fn sraw(a: u64, b: u64) -> u64 {
     ((a as i32) >> (b & 31)) as i64 as u64
 }
 
-// ---------------------------------------------------------------------------
-// M extension, multiply / divide
-// ---------------------------------------------------------------------------
+// --- M extension, multiply / divide ---
 
 /// Lower 64 bits of a*b (both interpreted as two's-complement 64-bit).
 #[inline]
@@ -245,9 +233,7 @@ pub fn remuw(a: u64, b: u64) -> u64 {
     }
 }
 
-// ---------------------------------------------------------------------------
-// FP rounding helpers
-// ---------------------------------------------------------------------------
+// --- FP rounding helpers ---
 
 pub fn round_f32(val: f32, rm: u8) -> f32 {
     match rm {
@@ -271,9 +257,7 @@ pub fn round_f64(val: f64, rm: u8) -> f64 {
     }
 }
 
-// ---------------------------------------------------------------------------
-// f32 rounding helpers: next representable value up/down
-// ---------------------------------------------------------------------------
+// --- f32 rounding helpers: next representable value up/down ---
 
 /// Next representable f32 strictly greater than `x`.
 #[inline]
@@ -315,14 +299,11 @@ fn next_down_f32(x: f32) -> f32 {
     }
 }
 
-// ---------------------------------------------------------------------------
-// f64 -> f32 with explicit rounding mode
-//
+// --- f64 -> f32 with explicit rounding mode ---
 // Strategy: compute with hardware default (RNE on x86/ARM), then if the
 // rounded result is on the wrong side of the exact value, nudge it by one ULP.
 // For f32 inputs (at most 24 significant bits), the f64 result is exact so the
 // "exact" value passed here is the true mathematical result.
-// ---------------------------------------------------------------------------
 
 /// Round a finite-or-infinite f64 to f32 using the specified rounding mode.
 pub fn f64_to_f32_with_rm(val: f64, rm: u8) -> f32 {
@@ -365,9 +346,7 @@ pub fn f64_to_f32_with_rm(val: f64, rm: u8) -> f32 {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Flag detection from f64-exact result and f32 rounded result
-// ---------------------------------------------------------------------------
+// --- Flag detection from f64-exact result and f32 rounded result ---
 
 /// Derive fflags for an f32 operation given the exact result (`exact`, computed
 /// in f64) and the rounded f32 result.  Handles OF, UF, NX.
@@ -389,9 +368,7 @@ pub fn fp_flags_from_exact_s(exact: f64, result: f32) -> u8 {
     flags
 }
 
-// ---------------------------------------------------------------------------
-// f64 flag detection helper, used by the D-extension operations
-// ---------------------------------------------------------------------------
+// --- f64 flag detection helper, used by the D-extension operations ---
 
 fn flags_binary_d(a: f64, b: f64, result: f64) -> u8 {
     let mut flags = 0u8;
@@ -407,9 +384,7 @@ fn flags_binary_d(a: f64, b: f64, result: f64) -> u8 {
     flags
 }
 
-// ---------------------------------------------------------------------------
-// F extension, single-precision arithmetic (exact via f64 promotion)
-// ---------------------------------------------------------------------------
+// --- F extension, single-precision arithmetic (exact via f64 promotion) ---
 
 pub fn fp_add_s(a: f32, b: f32, rm: u8) -> (u64, u8) {
     if a.is_nan() || b.is_nan() {
@@ -492,9 +467,7 @@ pub fn fp_sqrt_s(a: f32, rm: u8) -> (u64, u8) {
     (box_f32(result), flags)
 }
 
-// ---------------------------------------------------------------------------
-// D extension, double-precision arithmetic
-// ---------------------------------------------------------------------------
+// --- D extension, double-precision arithmetic ---
 
 pub fn fp_add_d(a: f64, b: f64, _rm: u8) -> (u64, u8) {
     let result = a + b;
@@ -559,9 +532,7 @@ pub fn fp_sqrt_d(a: f64, _rm: u8) -> (u64, u8) {
     (bits, flags)
 }
 
-// ---------------------------------------------------------------------------
-// FCVT.S.D, convert f64 to f32 with rounding mode and full flag detection
-// ---------------------------------------------------------------------------
+// --- FCVT.S.D, convert f64 to f32 with rounding mode and full flag detection ---
 
 /// Convert a double-precision value to single-precision with explicit rounding.
 pub fn fp_cvt_d_to_s(val: f64, rm: u8) -> (u64, u8) {
@@ -591,9 +562,7 @@ pub fn fp_cvt_d_to_s(val: f64, rm: u8) -> (u64, u8) {
     )
 }
 
-// ---------------------------------------------------------------------------
-// Sign-injection (no rounding, no flags)
-// ---------------------------------------------------------------------------
+// --- Sign-injection (no rounding, no flags) ---
 
 pub fn fp_sgnj_s(a: f32, b: f32) -> u64 {
     let mag = a.to_bits() & 0x7FFF_FFFF;
@@ -631,9 +600,7 @@ pub fn fp_sgnjx_d(a: f64, b: f64) -> u64 {
     box_f64(f64::from_bits(mag | sign))
 }
 
-// ---------------------------------------------------------------------------
-// Min / Max (RISC-V 2.2: NaN propagation, if one input is NaN, return the other)
-// ---------------------------------------------------------------------------
+// --- Min / Max (RISC-V 2.2: NaN propagation, if one input is NaN, return the other) ---
 
 pub fn fp_min_s(a: f32, b: f32) -> (u64, u8) {
     let result = if a.is_nan() {
@@ -703,9 +670,7 @@ pub fn fp_max_d(a: f64, b: f64) -> (u64, u8) {
     (bits, flags)
 }
 
-// ---------------------------------------------------------------------------
-// Comparisons, return 0 or 1 (not NaN-boxed); NV if either input is NaN
-// ---------------------------------------------------------------------------
+// --- Comparisons, return 0 or 1 (not NaN-boxed); NV if either input is NaN ---
 
 pub fn fp_feq_s(a: f32, b: f32) -> (u64, u8) {
     if a.is_nan() || b.is_nan() {
@@ -755,15 +720,12 @@ pub fn fp_fle_d(a: f64, b: f64) -> (u64, u8) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// fclass, classify a floating-point value into one of 10 categories
-//
+// --- fclass, classify a floating-point value into one of 10 categories ---
 // Bit index meanings:
-//   0 = -inf      1 = -normal   2 = -subnormal   3 = -0
-//   4 = +0      5 = +subnormal  6 = +normal    7 = +inf
-//   8 = sNaN (Rust cannot distinguish sNaN from qNaN, so we always use 9)
-//   9 = qNaN
-// ---------------------------------------------------------------------------
+// 0 = -inf      1 = -normal   2 = -subnormal   3 = -0
+// 4 = +0      5 = +subnormal  6 = +normal    7 = +inf
+// 8 = sNaN (Rust cannot distinguish sNaN from qNaN, so we always use 9)
+// 9 = qNaN
 
 pub fn fp_fclass_s(a: f32) -> u64 {
     let bits = a.to_bits();
@@ -801,15 +763,12 @@ pub fn fp_fclass_d(a: f64) -> u64 {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Fused multiply-add (F extension), exact via f64 promotion
-//
+// --- Fused multiply-add (F extension), exact via f64 promotion ---
 // All four FMA variants use f64 arithmetic internally.  For f32 operands
 // (<= 24 significant bits), both the intermediate product (<= 48 bits) and the
 // final sum (<= 49 bits) fit exactly in f64 (53-bit mantissa), so the f64
 // result is the correctly-rounded mathematical result before the final
 // rounding to f32.
-// ---------------------------------------------------------------------------
 
 pub fn fp_fmadd_s(rs1: f32, rs2: f32, rs3: f32, rm: u8) -> (u64, u8) {
     if rs1.is_nan() || rs2.is_nan() || rs3.is_nan() {
@@ -893,9 +852,7 @@ pub fn fp_fnmadd_s(rs1: f32, rs2: f32, rs3: f32, rm: u8) -> (u64, u8) {
     )
 }
 
-// ---------------------------------------------------------------------------
-// Fused multiply-add (D extension), hardware precision (RNE only)
-// ---------------------------------------------------------------------------
+// --- Fused multiply-add (D extension), hardware precision (RNE only) ---
 
 pub fn fp_fmadd_d(rs1: f64, rs2: f64, rs3: f64, _rm: u8) -> (u64, u8) {
     let result = rs1.mul_add(rs2, rs3);

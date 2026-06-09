@@ -242,7 +242,7 @@ pub fn encode(tokens: &[AsmToken], layout: &Layout) -> Result<AssembledOutput, A
                 current_addr += s.len() as u64 + 1;
             }
 
-            AsmToken::Comment(_) => {}
+            AsmToken::Comment => {}
         }
     }
 
@@ -266,9 +266,7 @@ pub fn encode(tokens: &[AsmToken], layout: &Layout) -> Result<AssembledOutput, A
     Ok(out)
 }
 
-// ---------------------------------------------------------------------------
-// Branch and jump encoding helpers
-// ---------------------------------------------------------------------------
+// --- Branch and jump encoding helpers ---
 
 fn encode_branch(
     kind: &BranchKind,
@@ -336,9 +334,7 @@ fn push_u32(sec: &mut SectionData, word: u32, current_addr: &mut u64) {
     *current_addr += 4;
 }
 
-// ---------------------------------------------------------------------------
-// Pseudo-instruction encoding with symbol relocation
-// ---------------------------------------------------------------------------
+// --- Pseudo-instruction encoding with symbol relocation ---
 
 /// Split a PC-relative byte offset into (hi20, lo12) for AUIPC+lo pairs.
 ///

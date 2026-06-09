@@ -1,8 +1,6 @@
 use virtual_machine::cpu::csr::{CsrFile, addr};
 
-// ---------------------------------------------------------------------------
-// CSR File, basic read/write
-// ---------------------------------------------------------------------------
+// --- CSR File, basic read/write ---
 
 #[test]
 fn csr_mstatus_read_write() {
@@ -78,9 +76,7 @@ fn csr_mip_read_write() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// CSR File, floating-point CSRs
-// ---------------------------------------------------------------------------
+// --- CSR File, floating-point CSRs ---
 
 #[test]
 fn csr_fflags_read_write() {
@@ -134,9 +130,7 @@ fn csr_accumulate_fflags() {
     assert_eq!(csrs.fflags, 0x11);
 }
 
-// ---------------------------------------------------------------------------
-// CSR File, performance counters
-// ---------------------------------------------------------------------------
+// --- CSR File, performance counters ---
 
 #[test]
 fn csr_cycle_increment() {
@@ -184,9 +178,7 @@ fn csr_counters_wrap() {
     assert_eq!(csrs.read(addr::CYCLE).unwrap(), 0);
 }
 
-// ---------------------------------------------------------------------------
-// CSR File, special registers
-// ---------------------------------------------------------------------------
+// --- CSR File, special registers ---
 
 #[test]
 fn csr_mscratch_read_write() {
@@ -230,9 +222,7 @@ fn csr_mtval_read_write() {
     assert_eq!(csrs.read(addr::MTVAL).unwrap(), 0xBAD_ADD);
 }
 
-// ---------------------------------------------------------------------------
-// CSR File, illegal CSR addresses
-// ---------------------------------------------------------------------------
+// --- CSR File, illegal CSR addresses ---
 
 #[test]
 fn csr_illegal_address_read() {
@@ -250,9 +240,7 @@ fn csr_illegal_address_write() {
     assert!(csrs.write(0x999, 42).is_err());
 }
 
-// ---------------------------------------------------------------------------
-// CSR File, rounding mode helper
-// ---------------------------------------------------------------------------
+// --- CSR File, rounding mode helper ---
 
 #[test]
 fn csr_rounding_mode() {

@@ -1,6 +1,6 @@
 //! Machine window: secondary egui window for booting and observing kernel programs.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use asm_to_binary::AssembledOutput;
 use egui::{Color32, Frame, Margin, RichText, Stroke, Vec2};
@@ -43,8 +43,15 @@ fn toolbar_bg() -> Color32 {
 
 // --- Tuning ---
 
-/// VM steps executed per UI frame while booting.
-const STEPS_PER_TICK: u64 = 50_000;
+/// Wall-clock budget spent stepping the VM per UI frame. The VM runs as many
+/// cycles as fit in this window rather than a fixed count, so throughput scales
+/// with host speed instead of being pinned to ~STEP_BATCH x 60fps. Kept under a
+/// 16ms frame so the UI stays responsive.
+const FRAME_STEP_BUDGET: Duration = Duration::from_millis(8);
+
+/// Cycles run between wall-clock checks. Amortizes the `Instant::now()` cost
+/// while keeping the budget overshoot small.
+const STEP_BATCH: u64 = 4096;
 
 /// Fixed height of the top toolbar row (boot / stop / clear + status).
 const TOOLBAR_H: f32 = 34.0;
@@ -210,23 +217,31 @@ impl MachineWindow {
                 let mut halted: Option<i64> = None;
                 let mut timed_out = false;
 
-                for _ in 0..STEPS_PER_TICK {
-                    if *steps >= *max_steps {
-                        timed_out = true;
-                        break;
+                // Run cycles in batches until the wall-clock budget for this
+                // frame is spent, the step cap is hit, or the VM halts.
+                let frame_start = Instant::now();
+                'budget: loop {
+                    for _ in 0..STEP_BATCH {
+                        if *steps >= *max_steps {
+                            timed_out = true;
+                            break 'budget;
+                        }
+                        match vm.step() {
+                            Ok(StepOutcome::Continue) => *steps += 1,
+                            Ok(StepOutcome::Halted(code)) => {
+                                *steps += 1;
+                                halted = Some(code);
+                                break 'budget;
+                            }
+                            Err(_) => {
+                                *steps += 1;
+                                halted = Some(-1);
+                                break 'budget;
+                            }
+                        }
                     }
-                    match vm.step() {
-                        Ok(StepOutcome::Continue) => *steps += 1,
-                        Ok(StepOutcome::Halted(code)) => {
-                            *steps += 1;
-                            halted = Some(code);
-                            break;
-                        }
-                        Err(_) => {
-                            *steps += 1;
-                            halted = Some(-1);
-                            break;
-                        }
+                    if frame_start.elapsed() >= FRAME_STEP_BUDGET {
+                        break;
                     }
                 }
 
@@ -374,7 +389,8 @@ impl MachineWindow {
     }
 
     fn render_console(&mut self, ui: &mut egui::Ui, is_running: bool) {
-        // --- Focus handling: click the console to focus, click away to blur. ---
+        // --- Focus handling ---
+        // Click the console to focus, click away to blur.
         let rect = ui.max_rect();
         let id = ui.make_persistent_id("mw_console_surface");
         let resp = ui.interact(rect, id, egui::Sense::click());
@@ -392,7 +408,8 @@ impl MachineWindow {
         }
         let focused = self.terminal_focused && is_running;
 
-        // --- Send keystrokes straight to the VM's UART while focused. ---
+        // --- Console input ---
+        // Send keystrokes straight to the VM's UART while focused.
         if focused {
             let bytes = collect_console_input(ui);
             if !bytes.is_empty() {
@@ -406,7 +423,7 @@ impl MachineWindow {
             ui.ctx().request_repaint_after(Duration::from_millis(120));
         }
 
-        // --- Decide what to show. ---
+        // --- Decide what to show ---
         enum LogState<'a> {
             Idle,
             BootingNoOutput(u64),

@@ -9,9 +9,7 @@
 use crate::cpu::decoder::DecodedInsn;
 use crate::cpu::pipeline::registers::{EXMEMReg, IDEXReg, MEMWBReg};
 
-// ---------------------------------------------------------------------------
-// Register-number extraction helpers
-// ---------------------------------------------------------------------------
+// --- Register-number extraction helpers ---
 
 /// Destination register (integer or FP) of a decoded instruction; 0 = none.
 pub fn insn_rd(insn: &DecodedInsn) -> usize {
@@ -92,9 +90,7 @@ pub fn insn_is_fp_dest(insn: &DecodedInsn) -> bool {
     )
 }
 
-// ---------------------------------------------------------------------------
-// Load-use hazard detection
-// ---------------------------------------------------------------------------
+// --- Load-use hazard detection ---
 
 /// Returns true if `id_ex` is a load whose result is needed by the instruction
 /// currently in the IF/ID register (identified by its raw-word rs1/rs2 fields).
@@ -108,9 +104,7 @@ pub fn load_use_hazard(id_ex: &IDEXReg, if_id_rs1: usize, if_id_rs2: usize) -> b
     id_ex.rd == if_id_rs1 || id_ex.rd == if_id_rs2
 }
 
-// ---------------------------------------------------------------------------
-// Data forwarding
-// ---------------------------------------------------------------------------
+// --- Data forwarding ---
 
 pub struct ForwardedValues {
     pub rs1: u64,

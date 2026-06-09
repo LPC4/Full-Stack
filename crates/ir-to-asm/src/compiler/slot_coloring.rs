@@ -339,7 +339,7 @@ fn term_uses(term: &IrTerminator) -> Vec<IrRegister> {
 mod tests {
     use super::*;
     use crate::compiler::function_context::FunctionContext;
-    use crate::compiler::register_allocator::RegisterAllocator;
+    use crate::compiler::stack_slots::assign_stack_slots;
     use hll_to_ir::{IntWidth, IrBlock, IrMathOp, IrTerminator, IrValue};
     use std::collections::HashMap;
 
@@ -362,9 +362,8 @@ mod tests {
     }
 
     fn slots_for(func: &IrFunction) -> (FunctionContext, HashMap<IrRegister, usize>) {
-        let mut ctx = FunctionContext::new("test", &HashMap::new());
-        let mut alloc = RegisterAllocator::new();
-        alloc.allocate_stack_slots(func, &mut ctx, &HashMap::new());
+        let mut ctx = FunctionContext::new(&HashMap::new());
+        assign_stack_slots(func, &mut ctx, &HashMap::new());
         let mut map = HashMap::new();
         for block in &func.blocks {
             for inst in &block.instructions {
