@@ -45,7 +45,7 @@ fn toolbar_bg() -> Color32 {
 
 /// Wall-clock budget spent stepping the VM per UI frame. The VM runs as many
 /// cycles as fit in this window rather than a fixed count, so throughput scales
-/// with host speed instead of being pinned to ~STEP_BATCH x 60fps. Kept under a
+/// with host speed instead of being pinned to ~`STEP_BATCH` x 60fps. Kept under a
 /// 16ms frame so the UI stays responsive.
 const FRAME_STEP_BUDGET: Duration = Duration::from_millis(8);
 

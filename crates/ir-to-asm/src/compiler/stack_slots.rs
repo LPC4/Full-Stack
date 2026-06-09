@@ -151,7 +151,9 @@ fn collect_vregs_from_terminator(
 mod tests {
     use std::collections::HashMap;
 
-    use hll_to_ir::{IntWidth, IrBlock, IrFunction, IrInstruction, IrRegister, IrTerminator, IrType};
+    use hll_to_ir::{
+        IntWidth, IrBlock, IrFunction, IrInstruction, IrRegister, IrTerminator, IrType,
+    };
 
     use super::assign_stack_slots;
     use crate::compiler::function_context::FunctionContext;

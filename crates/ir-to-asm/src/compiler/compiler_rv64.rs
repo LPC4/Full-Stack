@@ -1,10 +1,6 @@
 use super::{
-    assembly_emitter::AssemblyEmitter,
-    data_section::DataSection,
-    function_context::FunctionContext,
-    peephole,
-    stack_slots,
-    type_utils,
+    assembly_emitter::AssemblyEmitter, data_section::DataSection,
+    function_context::FunctionContext, peephole, stack_slots, type_utils,
 };
 use asm_to_binary::encode_decode::Reg;
 use asm_to_binary::real::RealInstruction;
@@ -206,11 +202,7 @@ impl CompilerRv64 {
         self.emitter.end_function();
     }
 
-    fn lower_instruction(
-        &mut self,
-        inst: &IrInstruction,
-        ctx: &mut FunctionContext,
-    ) {
+    fn lower_instruction(&mut self, inst: &IrInstruction, ctx: &mut FunctionContext) {
         use IrInstruction::{
             Alloc, Call, Cast, Cmp, Comment, GlobalRef, HeapAlloc, HeapFree, Index, InlineAsm,
             Load, Math, Offset, Phi, ReadReg, Store, Unary,
@@ -801,11 +793,7 @@ impl CompilerRv64 {
         self.emitter.emit_sd(SP, A0, dest_slot as i32);
     }
 
-    fn lower_heap_free(
-        &mut self,
-        ptr: &hll_to_ir::IrRegister,
-        ctx: &mut FunctionContext,
-    ) {
+    fn lower_heap_free(&mut self, ptr: &hll_to_ir::IrRegister, ctx: &mut FunctionContext) {
         self.emitter.reset_temp_counter();
         let ptr_tmp = self.load_value_to_temp(&IrValue::Register(ptr.clone()), ctx);
         self.emitter.emit_mv(A0, ptr_tmp);
@@ -854,12 +842,7 @@ impl CompilerRv64 {
         }
     }
 
-    fn lower_return(
-        &mut self,
-        val: Option<&IrValue>,
-        needs_sret: bool,
-        ctx: &mut FunctionContext,
-    ) {
+    fn lower_return(&mut self, val: Option<&IrValue>, needs_sret: bool, ctx: &mut FunctionContext) {
         if let Some(val) = val {
             let raw_val_type = self.resolve_value_type(val, ctx);
             let resolved_val = match (&raw_val_type, val) {
@@ -964,11 +947,7 @@ impl CompilerRv64 {
         tmp
     }
 
-    fn load_value_to_temp(
-        &mut self,
-        val: &IrValue,
-        ctx: &FunctionContext,
-    ) -> Reg {
+    fn load_value_to_temp(&mut self, val: &IrValue, ctx: &FunctionContext) -> Reg {
         let temp = self.emitter.alloc_temp_reg();
         match val {
             IrValue::Register(reg) => {
@@ -1009,11 +988,7 @@ impl CompilerRv64 {
         temp
     }
 
-    fn load_float_value_to_temp(
-        &mut self,
-        val: &IrValue,
-        ctx: &FunctionContext,
-    ) -> Reg {
+    fn load_float_value_to_temp(&mut self, val: &IrValue, ctx: &FunctionContext) -> Reg {
         let temp = self.emitter.alloc_float_temp_reg();
         match val {
             IrValue::Register(reg) => {

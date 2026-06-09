@@ -834,7 +834,7 @@ pub enum FsEntry<'a> {
 ///
 /// Layout constants live in [`fs_layout`] and are checked against `fs.hll`.
 pub fn build_fs_image(entries: &[FsEntry<'_>]) -> Vec<u8> {
-    use fs_layout::*;
+    use fs_layout::{BLOCK_SIZE, MAX_DATA_BLOCKS, DATA_BLOCK_START, INODE_SIZE, IN_TYPE, IN_PARENT, IN_SIZE, IN_NAME, IN_BLOCKS, DIRENT_SIZE, DE_NAME, DE_INODE, MAX_DIRECT_BLOCKS, SB_VERSION, SB_INODE_COUNT, INODE_COUNT, SB_BLOCK_COUNT, SB_ROOT_INODE, SB_FREE_INODES, SB_FREE_BLOCKS, SB_INODE_BITMAP, BITMAP_BLOCK};
 
     // One block per file (rounded up) plus one per directory and the root, then
     // a margin of free blocks so the running FS can create and grow files.
@@ -1143,8 +1143,10 @@ mod fs_image_tests {
     // in fs_layout from drifting.
     #[test]
     fn fs_layout_matches_fs_hll() {
-        let path =
-            concat!(env!("CARGO_MANIFEST_DIR"), "/crates/os-runtime/kernel/fs.hll");
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/crates/os-runtime/kernel/fs.hll"
+        );
         let src = std::fs::read_to_string(path).expect("read fs.hll");
 
         let pairs: &[(&str, i64)] = &[

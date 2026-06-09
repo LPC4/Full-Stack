@@ -221,7 +221,17 @@ pub fn memory_stage(
     mstatus: u64,
 ) -> Result<MemResult, VmError> {
     let mut tlb = mmu::Tlb::new();
-    memory_stage_with_pmp(result, bus, reservation, satp, priv_mode, mstatus, 0, 0, &mut tlb)
+    memory_stage_with_pmp(
+        result,
+        bus,
+        reservation,
+        satp,
+        priv_mode,
+        mstatus,
+        0,
+        0,
+        &mut tlb,
+    )
 }
 
 // --- Integer load ---

@@ -420,11 +420,7 @@ impl HighLevelCompiler {
 
     // Serialize a constant global initializer to little-endian bytes for `ty`.
     // None when it is absent, zero (stays in .bss), or not a constant.
-    pub(super) fn const_init_bytes(
-        &self,
-        expr: &Expression,
-        ty: &IrType,
-    ) -> Option<Vec<u8>> {
+    pub(super) fn const_init_bytes(&self, expr: &Expression, ty: &IrType) -> Option<Vec<u8>> {
         let resolved = self.resolve_named_type(ty);
         match &resolved {
             IrType::Integer(width) => {

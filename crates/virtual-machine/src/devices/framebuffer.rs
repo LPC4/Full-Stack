@@ -166,7 +166,8 @@ mod tests {
         fb.write_word(FB_BYTES as u64 - 4, 0x9ABC_DEF0).unwrap();
 
         // Opaque black = 0xFF000000 -> bytes [00,00,00,FF].
-        fb.write_word((FB_BYTES + FB_FILL_REG) as u64, 0xFF00_0000).unwrap();
+        fb.write_word((FB_BYTES + FB_FILL_REG) as u64, 0xFF00_0000)
+            .unwrap();
 
         let px = fb.pixels();
         assert_eq!(px.len(), FB_BYTES);
@@ -182,14 +183,19 @@ mod tests {
         fb.write_word((FB_BYTES + FB_DBMODE_REG) as u64, 1).unwrap();
 
         // Clear and draw into the back buffer.
-        fb.write_word((FB_BYTES + FB_FILL_REG) as u64, 0xFF00_0000).unwrap();
+        fb.write_word((FB_BYTES + FB_FILL_REG) as u64, 0xFF00_0000)
+            .unwrap();
         fb.write_word(0, 0xFFFF_FFFF).unwrap();
 
         // Front buffer must still be untouched (all zero) before PRESENT.
-        assert!(fb.pixels().iter().all(|&b| b == 0), "front changed before present");
+        assert!(
+            fb.pixels().iter().all(|&b| b == 0),
+            "front changed before present"
+        );
 
         // After PRESENT the front reflects the back buffer.
-        fb.write_word((FB_BYTES + FB_PRESENT_REG) as u64, 0).unwrap();
+        fb.write_word((FB_BYTES + FB_PRESENT_REG) as u64, 0)
+            .unwrap();
         assert_eq!(&fb.pixels()[0..4], &[0xFF, 0xFF, 0xFF, 0xFF]);
         assert_eq!(&fb.pixels()[4..8], &[0x00, 0x00, 0x00, 0xFF]);
     }
