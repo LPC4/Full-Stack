@@ -17,6 +17,7 @@ const SYSCALL_EXEC     = 103   ; load and run an executable file from the FS
 const SYSCALL_PIDALIVE = 104   ; 1 if a launched pid is still runnable
 const SYSCALL_UNLINK   = 105   ; remove a regular file
 const SYSCALL_RMDIR    = 106   ; remove an empty directory
+const SYSCALL_MAPFB    = 107   ; map the framebuffer into the caller; returns its base VA
 ; Process-tree syscalls (Linux/RISC-V numbers).
 const SYSCALL_FORK     = 220   ; clone the current process; returns child pid / 0
 const SYSCALL_WAIT     = 260   ; reap an exited child; returns its exit code / -1
@@ -49,6 +50,12 @@ const USER_ARG_BASE  = 0x7FF00000
 ; R + W + U page flags (vmm_map adds V).
 const USER_ARG_FLAGS = 22
 const USER_ARG_MAX   = 4095
+
+; Framebuffer device: 320 x 240 RGBA8888 = 75 pages, mapped into the per-process gap.
+const FB_PHYS_BASE = 0x10020000
+const FB_PAGE_COUNT = 75
+const FB_USER_BASE = 0x50000000
+const FB_MAP_FLAGS = 22         ; R + W + U (vmm_map adds V)
 
 external klog_int:             (label: u8*, val: i64)
 external klog_error:           (msg: u8*)
@@ -328,6 +335,19 @@ sys_rmdir_impl: (frame: u64*) -> u64 {
     return SYSACT_CONTINUE
 }
 
+; Map the framebuffer into the caller and return its base VA in a0. vmm_map
+; targets the active root, which the scheduler points at the running process.
+sys_map_fb_impl: (frame: u64*) -> u64 {
+    i: u64 = 0
+    while i < FB_PAGE_COUNT {
+        off: u64 = i * 4096
+        vmm_map(FB_USER_BASE + off, FB_PHYS_BASE + off, FB_MAP_FLAGS)
+        i = i + 1
+    }
+    @frame[10] = FB_USER_BASE
+    return SYSACT_CONTINUE
+}
+
 ; Dispatch a U-mode ecall: reads a7 (syscall number) and a0-a2 (args), writes result to frame a0.
 syscall_dispatch: (frame: u64*) -> u64 {
     num: u64 = @frame[17]
@@ -434,6 +454,10 @@ syscall_dispatch: (frame: u64*) -> u64 {
 
     if num == SYSCALL_RMDIR {
         return sys_rmdir_impl(frame)
+    }
+
+    if num == SYSCALL_MAPFB {
+        return sys_map_fb_impl(frame)
     }
 
     if num == SYSCALL_PIDALIVE {

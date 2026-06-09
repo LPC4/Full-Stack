@@ -174,4 +174,9 @@ pub mod user {
     /// loads the file, and edits it with append/print/clear/write/quit commands.
     /// Compiled in hosted mode and launched by the shell's `edit` command.
     pub const EDIT: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/user/edit.hll"));
+
+    /// Framebuffer demo: maps the framebuffer and renders a Mandelbrot set.
+    /// Installed at `/bin/fbdemo.fexe`.
+    pub const FBDEMO: &str =
+        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/user/fbdemo.hll"));
 }

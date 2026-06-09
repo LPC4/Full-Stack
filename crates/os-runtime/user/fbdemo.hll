@@ -1,0 +1,110 @@
+; Framebuffer demo: maps the framebuffer (map_fb, a7=107) and renders a
+; Mandelbrot set over x in [-2.5, 1.0], y in [-1.25, 1.25], then exits.
+;
+; The render is one hand-written asm loop: the stack-based HLL backend spills
+; every temporary, so the same loop in HLL runs ~20x slower on the VM. Pixels
+; are RGBA8888 (low byte = red); math is Q16.16, so the squared terms shift
+; logically (srli) and the signed cross term arithmetically (srai).
+
+external console_writeln: (str: u8*)
+
+; Framebuffer base virtual address, staged here so the asm loop can reach it.
+_fb_base: u64 = 0
+_ret: u64 = 0
+
+; Map the framebuffer into this address space; returns its base VA (0 on failure).
+sc_map_fb: () -> u64 {
+    asm {
+        li a7, 107
+        ecall
+        la t0, _ret
+        sd a0, 0(t0)
+    }
+    return _ret
+}
+
+main: () -> i32 {
+    base: u64 = sc_map_fb()
+    if base == 0 {
+        console_writeln("fbdemo: map_fb failed".data)
+        return 1
+    }
+    _fb_base = base
+
+    ; Render the full 320x240 frame. Constants are Q16.16:
+    ;   xmin=-2.5 (-163840), ymin=-1.25 (-81920)
+    ;   dx = 3.5/320 = 716, dy = 2.5/240 = 682
+    ;   four = 4.0 (262144), MAXIT = 64
+    ; Register map (all caller-saved; no calls, sp/gp/tp/ra/s* untouched):
+    ;   a0 pixel write pointer   a1 cy        a2 py
+    ;   a3 dx                    a4 dy        a5 scratch
+    ;   a6 four                  a7 MAXIT
+    ;   t0 cx   t1 px   t2 zx   t3 zy   t4 it   t5/t6 scratch
+    asm {
+        la   a0, _fb_base
+        ld   a0, 0(a0)           ; a0 = base pixel pointer
+        li   a1, -81920          ; cy = ymin
+        li   a2, 0               ; py = 0
+        li   a3, 716             ; dx
+        li   a4, 682             ; dy
+        li   a6, 262144          ; four
+        li   a7, 64              ; MAXIT
+    _fb_row:
+        li   t0, -163840         ; cx = xmin
+        li   t1, 0               ; px = 0
+    _fb_col:
+        li   t2, 0               ; zx
+        li   t3, 0               ; zy
+        li   t4, 0               ; it
+    _fb_iter:
+        mul  t5, t2, t2
+        srli t5, t5, 16          ; zx2 (>= 0)
+        mul  t6, t3, t3
+        srli t6, t6, 16          ; zy2 (>= 0)
+        add  a5, t5, t6          ; |z|^2
+        bge  a5, a6, _fb_escape  ; escaped once |z|^2 >= 4
+        mul  a5, t2, t3
+        srai a5, a5, 15          ; 2*zx*zy >> 16 (signed)
+        add  a5, a5, a1          ; new zy = 2*zx*zy + cy
+        sub  t5, t5, t6          ; zx2 - zy2
+        add  t2, t5, t0          ; new zx = zx2 - zy2 + cx
+        mv   t3, a5
+        addi t4, t4, 1
+        blt  t4, a7, _fb_iter
+    _fb_escape:
+        ; Colour from the iteration count. Inside the set (it == MAXIT) -> black.
+        li   t5, 0               ; colour accumulator
+        bge  t4, a7, _fb_alpha
+        li   t6, 9
+        mul  t6, t4, t6
+        andi t6, t6, 255         ; r
+        mv   t5, t6
+        li   t6, 5
+        mul  t6, t4, t6
+        andi t6, t6, 255
+        slli t6, t6, 8
+        or   t5, t5, t6          ; |= g << 8
+        li   t6, 13
+        mul  t6, t4, t6
+        andi t6, t6, 255
+        slli t6, t6, 16
+        or   t5, t5, t6          ; |= b << 16
+    _fb_alpha:
+        li   t6, 255
+        slli t6, t6, 24
+        or   t5, t5, t6          ; |= a << 24
+        sw   t5, 0(a0)           ; write pixel
+        addi a0, a0, 4           ; next pixel
+        add  t0, t0, a3          ; cx += dx
+        addi t1, t1, 1           ; px++
+        li   t6, 320
+        blt  t1, t6, _fb_col
+        add  a1, a1, a4          ; cy += dy
+        addi a2, a2, 1           ; py++
+        li   t6, 240
+        blt  a2, t6, _fb_row
+    }
+
+    console_writeln("fbdemo: mandelbrot rendered".data)
+    return 0
+}

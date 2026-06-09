@@ -435,6 +435,56 @@ main: () -> i32 {
 }
 
 // ===========================================================================
+// Framebuffer device (map_fb syscall + fbdemo program)
+// ===========================================================================
+
+// Boot fbdemo as pid 1, read the framebuffer back, and check the rendered image.
+// Covers the whole path: map_fb -> MMU translation -> bus routing -> device store.
+#[test]
+fn fbdemo_renders_mandelbrot_set() {
+    const FB_W: usize = 320;
+    const FB_H: usize = 240;
+    let user = compile_hosted(user::FBDEMO);
+    let (vm, outcome, uart) = boot_kernel(cached_kernel(), Some(&user), None, "", 2_000_000_000);
+    assert_user_exit_ok(&uart, &outcome, "fbdemo");
+    assert!(
+        uart.contains("fbdemo: mandelbrot rendered"),
+        "fbdemo did not report success; uart={uart:?}"
+    );
+
+    let px = vm.peek_framebuffer();
+    let pixel = |x: usize, y: usize| -> [u8; 4] {
+        let o = (y * FB_W + x) * 4;
+        [px[o], px[o + 1], px[o + 2], px[o + 3]]
+    };
+
+    // Every pixel must be fully opaque (the alpha byte is always written).
+    for (i, p) in px.chunks_exact(4).enumerate() {
+        assert_eq!(p[3], 255, "pixel {i} not opaque: {p:?}");
+    }
+
+    // Image centre maps to c ~ (-0.75, 0), deep inside the set -> black.
+    assert_eq!(pixel(FB_W / 2, FB_H / 2), [0, 0, 0, 255], "set interior should be black");
+
+    // Far left on the real axis escapes immediately, so it is coloured.
+    let left = pixel(40, FB_H / 2);
+    assert!(
+        left[0] != 0 || left[1] != 0 || left[2] != 0,
+        "escaping pixel should be coloured, got {left:?}"
+    );
+
+    // A large coloured region confirms the fractal rendered, not a stray pixel.
+    let coloured = px
+        .chunks_exact(4)
+        .filter(|p| p[0] != 0 || p[1] != 0 || p[2] != 0)
+        .count();
+    assert!(
+        coloured > 10_000,
+        "expected a substantial coloured region, got {coloured} pixels"
+    );
+}
+
+// ===========================================================================
 // Interactive shell (merged from kernel_shell.rs)
 // ===========================================================================
 

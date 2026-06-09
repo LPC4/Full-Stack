@@ -1,6 +1,6 @@
 //! System bus, routes physical addresses to ROM, RAM, and MMIO devices.
 
-use crate::devices::{clint::Clint, plic::Plic, uart::Uart};
+use crate::devices::{clint::Clint, framebuffer::Framebuffer, plic::Plic, uart::Uart};
 use crate::error::VmError;
 use crate::memory::{
     MemoryAccess, PeekByteRaw as _,
@@ -19,6 +19,10 @@ pub const UART_END: u64 = UART_BASE + UART_SIZE - 1;
 pub const SYSCON_BASE: u64 = 0x1001_0000;
 pub const SYSCON_SIZE: u64 = 0x1000;
 pub const SYSCON_END: u64 = SYSCON_BASE + SYSCON_SIZE - 1;
+/// Linear framebuffer MMIO device. See `devices::framebuffer`.
+pub const FB_BASE: u64 = 0x1002_0000;
+pub const FB_SIZE: u64 = crate::devices::framebuffer::FB_BYTES as u64;
+pub const FB_END: u64 = FB_BASE + FB_SIZE - 1;
 pub const CLINT_BASE: u64 = 0x0200_0000;
 pub const CLINT_SIZE: u64 = 0x10000;
 pub const CLINT_END: u64 = CLINT_BASE + CLINT_SIZE - 1;
@@ -37,6 +41,7 @@ pub struct SystemBus {
     uart: Uart,
     clint: Clint,
     plic: Plic,
+    framebuffer: Framebuffer,
     syscon_exit: Option<i64>,
 }
 
@@ -79,12 +84,14 @@ impl SystemBus {
         let uart = Uart::new();
         let clint = Clint::new();
         let plic = Plic::new();
+        let framebuffer = Framebuffer::new();
         Self {
             rom,
             l1_cache,
             uart,
             clint,
             plic,
+            framebuffer,
             syscon_exit: None,
         }
     }
@@ -100,6 +107,7 @@ impl SystemBus {
             a if a >= UART_BASE && a <= UART_END => Some((&mut self.uart, addr - UART_BASE)),
             a if a >= CLINT_BASE && a <= CLINT_END => Some((&mut self.clint, addr - CLINT_BASE)),
             a if a >= PLIC_BASE && a <= PLIC_END => Some((&mut self.plic, addr - PLIC_BASE)),
+            a if a >= FB_BASE && a <= FB_END => Some((&mut self.framebuffer, addr - FB_BASE)),
             a if a >= ROM_BASE && a <= ROM_END => Some((&mut self.rom, addr)),
             _ => {
                 // Route all RAM accesses through L1 cache (which cascades to L2, L3, then RAM)
@@ -173,6 +181,9 @@ impl SystemBus {
                 a if a >= PLIC_BASE && a <= PLIC_END => {
                     self.plic.read_byte(a - PLIC_BASE).unwrap_or(0)
                 }
+                a if a >= FB_BASE && a <= FB_END => {
+                    self.framebuffer.pixels().get((a - FB_BASE) as usize).copied().unwrap_or(0)
+                }
                 _ => self.l1_cache.read_byte(addr + i).unwrap_or(0),
             })
             .collect()
@@ -185,6 +196,11 @@ impl SystemBus {
         (0..len as u64)
             .map(|i| self.l1_cache.peek_byte_raw(addr + i).unwrap_or(0))
             .collect()
+    }
+
+    /// Borrow the framebuffer's pixel buffer for display.
+    pub fn peek_framebuffer(&self) -> &[u8] {
+        self.framebuffer.pixels()
     }
 
     // Direct access to devices for interrupt handling
@@ -273,5 +289,28 @@ impl MemoryAccess for SystemBus {
         }
         let (dev, local) = self.route(addr).ok_or(VmError::BusError(addr))?;
         dev.write_doubleword(local, data)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Writes at FB_BASE land in the device, not RAM, and read back via the peek path.
+    #[test]
+    fn framebuffer_writes_route_to_device() {
+        let mut bus = SystemBus::new(vec![0u8; 64]);
+
+        // Top-left pixel: R=0x11 G=0x22 B=0x33 A=0xFF.
+        bus.write_word(FB_BASE, 0xFF33_2211).unwrap();
+        let p = FB_BASE + 100;
+        bus.write_byte(p, 0xAB).unwrap();
+
+        assert_eq!(bus.read_word(FB_BASE).unwrap(), 0xFF33_2211);
+        assert_eq!(bus.read_byte(p).unwrap(), 0xAB);
+
+        let px = bus.peek_framebuffer();
+        assert_eq!(&px[0..4], &[0x11, 0x22, 0x33, 0xFF]);
+        assert_eq!(px[(p - FB_BASE) as usize], 0xAB);
     }
 }

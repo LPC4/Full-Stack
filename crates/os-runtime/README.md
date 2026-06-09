@@ -90,6 +90,7 @@ support the interactive shell.
 | 103 | exec | load and run an `FEXE` executable from the filesystem |
 | 104 | pidalive | 1 while a launched pid is still runnable |
 | 105 / 106 | unlink / rmdir | remove a file / remove an empty directory |
+| 107 | map_fb | map the framebuffer device into the caller; returns its base VA |
 | 220 | fork | clone the current process; returns the child pid to the parent, 0 to the child |
 | 260 | wait | reap an exited child; returns its exit code (-1 if none) |
 
@@ -107,6 +108,9 @@ it. The shell uses `exec` + `pidalive` to run a child and wait for it cooperativ
   verifies the `FEXE` magic before launching.
 - `edit.hll` -- a small full-screen file editor launched by the shell's `edit` built-in;
   loads a file from the filesystem, accepts edits over the UART, and writes it back.
+- `fbdemo.hll` -- maps the framebuffer via `map_fb` and renders a Mandelbrot set (its hot
+  loop is hand-written fixed-point assembly), then exits. Installed at `/bin/fbdemo.fexe`;
+  `run /bin/fbdemo` paints the FB tab, filling in progressively as it renders.
 
 ## Image injection
 

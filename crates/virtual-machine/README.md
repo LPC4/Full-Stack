@@ -5,7 +5,7 @@
 A cycle-stepped RISC-V RV64IMAFD emulator. It runs a 5-stage in-order pipeline with data
 forwarding, hazard detection, and branch prediction over a three-level write-back cache
 hierarchy, plus an Sv39 MMU, M/S/U privilege modes with trap handling, and memory-mapped
-devices (UART, CLINT, PLIC, SYSCON).
+devices (UART, CLINT, PLIC, SYSCON, Framebuffer).
 
 ## Flow
 
@@ -73,6 +73,7 @@ RAM accesses cascade L1 -> L2 -> L3 -> RAM; MMIO regions bypass the caches.
 | PLIC | `0x0C00_0000` | 16 MB |
 | UART | `0x1000_0000` | NS16550A subset |
 | SYSCON | `0x1001_0000` | halt/exit device |
+| Framebuffer | `0x1002_0000` | 320x240 RGBA8888 linear display |
 | RAM | `0x8000_0000` | 128 MB |
 
 ## Module layout
@@ -81,7 +82,7 @@ RAM accesses cascade L1 -> L2 -> L3 -> RAM; MMIO regions bypass the caches.
 src/
   cpu/        pipeline stages, ALU, decoder, CSRs, MMU, hazard unit, predictor, traps
   memory/     RAM, ROM, and the L1/L2/L3 cache
-  devices/    UART, CLINT, PLIC
+  devices/    UART, CLINT, PLIC, Framebuffer
 ```
 
 The system bus, ELF parser, ROM image generator, and top-level `VirtualMachine` sit

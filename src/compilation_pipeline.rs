@@ -806,19 +806,25 @@ pub fn build_fs_image(entries: &[FsEntry<'_>]) -> Vec<u8> {
     const SB_FREE_BLOCKS: usize = 20;
     const SB_INODE_BITMAP: usize = 24;
 
-    // Pre-calculate the total number of data blocks needed.
-    // We allocate enough to hold all file contents plus directory blocks.
-    // Minimum 56 data blocks so there is always free space for FS operations.
-    let mut needed_data_blocks: usize = 56;
+    // One block per file (rounded up) plus one per directory and the root, then
+    // a margin of free blocks so the running FS can create and grow files.
+    let mut needed_data_blocks: usize = 1; // root directory block
     for entry in entries {
-        if let FsEntry::File { data, .. } = entry {
-            let file_blocks = data.len().div_ceil(BLOCK_SIZE);
-            needed_data_blocks = needed_data_blocks.max(file_blocks + 10);
+        match entry {
+            FsEntry::File { data, .. } => {
+                needed_data_blocks += data.len().div_ceil(BLOCK_SIZE).max(1);
+            }
+            FsEntry::Dir { .. } => needed_data_blocks += 1,
         }
     }
-    // Clamp to max 255 (spec: block 5 is bitmap, data starts at 6, max index 255+6=261).
-    // The spec says FS_MAX_BLOCKS=255 data blocks.
+    needed_data_blocks += 56;
+    // FS_MAX_BLOCKS is 255 data blocks.
     let total_data_blocks = needed_data_blocks.min(255);
+    assert!(
+        needed_data_blocks <= 255,
+        "boot FS image needs {needed_data_blocks} data blocks but the layout caps at 255; \
+         reduce the bundled file sizes"
+    );
     let total_blocks = DATA_BLOCK_START + total_data_blocks;
     let image_size = total_blocks * BLOCK_SIZE;
 
@@ -1070,6 +1076,36 @@ pub fn assembled_to_exec_file(assembled: &AssembledOutput) -> Vec<u8> {
     let entry_off = assembled.symbol_address("_start").unwrap_or(0);
     let payload = assembled.to_flat_binary();
     build_exec_file(entry_off, &payload)
+}
+
+#[cfg(test)]
+mod fs_image_tests {
+    use super::*;
+
+    // Regression: the image must be sized for the sum of all files' blocks, not
+    // just the largest one, or the copy loop runs past the data region.
+    #[test]
+    fn build_fs_image_sizes_for_total_of_all_files() {
+        const BLOCK: usize = 4096;
+        // Four 30-block files sum to 120 blocks, well past any single file.
+        let big = vec![7u8; 30 * BLOCK];
+        let entries = vec![
+            FsEntry::Dir { path: "/bin" },
+            FsEntry::File { path: "/bin/a.fexe", data: &big },
+            FsEntry::File { path: "/bin/b.fexe", data: &big },
+            FsEntry::File { path: "/bin/c.fexe", data: &big },
+            FsEntry::Dir { path: "/home" },
+            FsEntry::File { path: "/home/d.fexe", data: &big },
+        ];
+
+        // Must not panic and must hold all 120 data blocks plus metadata.
+        let image = build_fs_image(&entries);
+        assert!(
+            image.len() >= 120 * BLOCK,
+            "image too small ({} bytes) for the summed file contents",
+            image.len()
+        );
+    }
 }
 
 /// Split an absolute path into (`parent_path`, `last_component`).

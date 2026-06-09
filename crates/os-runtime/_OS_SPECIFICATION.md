@@ -711,6 +711,7 @@ project-specific extensions added to support the interactive shell.
 | `104` | `pidalive` | `a0=pid` | 1 or 0 | 1 while a launched pid is still in the ready queue |
 | `105` | `unlink` | `a0=path*` | 0 or -1 | Remove a regular file (frees its dirent, data blocks, and inode); refuses directories |
 | `106` | `rmdir` | `a0=path*` | 0 or -1 | Remove an empty directory; refuses the root and non-empty directories |
+| `107` | `map_fb` | -- | base VA | Map the linear framebuffer device into the caller and return its base virtual address |
 | `220` | `fork` | -- | child pid (parent) / 0 (child) / -1 | Clone the caller: copy its address space and trap frame into a new child process |
 | `260` | `wait` | -- | exit code or -1 | Reap an exited child and return its exit code; -1 if there is no child to reap |
 
@@ -718,6 +719,14 @@ project-specific extensions added to support the interactive shell.
 maps it at a per-pid 16 MiB code slot starting at `0x4000_0000` (pid 1 at the base), then calls
 `process_create` and `scheduler_add`. The shell pairs `exec` with `pidalive` to run a child and
 wait for it cooperatively.
+
+`map_fb` maps the framebuffer device's physical pages (`0x1002_0000`, 320 x 240 RGBA8888 = 75 pages)
+into the calling process at `0x5000_0000` with R+W+U permissions and returns that base virtual
+address. The mapping is added to the running process's page-table root, so each caller gets the
+framebuffer in its own address space; the underlying device buffer is shared. The bundled `fbdemo`
+program (`/bin/fbdemo.fexe`) calls `map_fb` and renders a Mandelbrot set into the buffer (its hot
+loop is hand-written fixed-point assembly); `run /bin/fbdemo` from the shell paints it, viewable in
+the Machine window's FB tab.
 
 #### 9.2.1 Executable file format (FEXE)
 

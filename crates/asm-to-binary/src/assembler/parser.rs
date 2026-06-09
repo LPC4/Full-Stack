@@ -21,7 +21,8 @@ use crate::riscv::rv64i::{
     Add, Addi, And, Andi, Ecall, Jalr, Lb, Lbu, Ld, Mret, Or, Ori, Sb, Sd, SfenceVma, Slli, Sret,
     Srl, Srli, Sub, Wfi,
 };
-use crate::riscv::rv64m::{Divu, Remu};
+use crate::riscv::rv64i::Srai;
+use crate::riscv::rv64m::{Divu, Mul, Remu};
 use crate::riscv::rv64zicsr::{Csrrc, Csrrs, Csrrw};
 use crate::rv_instruction::RvInstruction;
 
@@ -414,6 +415,21 @@ fn parse_instruction_line(line: &str, out: &mut Vec<AsmToken>) {
         return;
     }
 
+    if mnemonic == "srai" {
+        if let Some((rd, rs1, shamt)) = parse_r_i_imm(rest)
+            && (0..=63).contains(&shamt)
+        {
+            out.push(AsmToken::Real(RealInstruction::Srai(Srai::new(
+                rd,
+                rs1,
+                shamt as u8,
+            ))));
+            return;
+        }
+        asm_warn!(out, "unrecognised srai: {line}");
+        return;
+    }
+
     // `csrr rd, csr`  ->  csrrs rd, csr, x0
     if mnemonic == "csrr" {
         if let Some(tok) = parse_csrr(rest) {
@@ -748,6 +764,7 @@ fn parse_r_type(mnemonic: &str, operands: &str) -> Option<AsmToken> {
         "or" => RealInstruction::Or(Or::new(rd, rs1, rs2)),
         "divu" => RealInstruction::Divu(Divu::new(rd, rs1, rs2)),
         "remu" => RealInstruction::Remu(Remu::new(rd, rs1, rs2)),
+        "mul" => RealInstruction::Mul(Mul::new(rd, rs1, rs2)),
         _ => return None,
     };
     Some(AsmToken::Real(real))
@@ -802,5 +819,27 @@ mod tests {
             encode_line("csrrc t0, sscratch, t1"),
             expect_csr_word(5, 6, 3)
         );
+    }
+
+    #[test]
+    fn mul_encodes_as_rv64m_r_type() {
+        // mul t5, t2, t3 -> rd=x30, rs1=x7, rs2=x28; OP opcode 0x33, funct3=0, funct7=0x01.
+        let word = encode_line("mul t5, t2, t3");
+        assert_eq!(word & 0x7f, 0x33, "opcode");
+        assert_eq!((word >> 7) & 0x1f, 30, "rd");
+        assert_eq!((word >> 12) & 0x7, 0, "funct3");
+        assert_eq!((word >> 15) & 0x1f, 7, "rs1");
+        assert_eq!((word >> 20) & 0x1f, 28, "rs2");
+        assert_eq!((word >> 25) & 0x7f, 0x01, "funct7 (M extension)");
+    }
+
+    #[test]
+    fn srai_encodes_with_arithmetic_funct7() {
+        // srai a5, a5, 15 -> rd=rs1=x15, shamt=15; OP-IMM 0x13, funct3=5, funct7=0x20.
+        let word = encode_line("srai a5, a5, 15");
+        assert_eq!(word & 0x7f, 0x13, "opcode");
+        assert_eq!((word >> 12) & 0x7, 5, "funct3");
+        assert_eq!((word >> 20) & 0x1f, 15, "shamt");
+        assert_eq!((word >> 25) & 0x7f, 0x20, "funct7 marks arithmetic shift");
     }
 }

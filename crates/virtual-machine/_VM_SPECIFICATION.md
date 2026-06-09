@@ -15,7 +15,7 @@ the VM's observable behavior.
 - **Memory System:** Byte-addressable, little-endian, flat physical address space with optional Sv39 virtual memory translation
 - **MMU:** Sv39 page-based virtual memory (3-level page table, 39-bit virtual addresses)
 - **CSR File:** Machine-mode and Supervisor-mode Control & Status Registers (Zicsr extension), plus single-entry PMP storage
-- **Devices:** UART (serial I/O), CLINT (timer/software interrupts), PLIC (external interrupts), SYSCON (halt/exit)
+- **Devices:** UART (serial I/O), CLINT (timer/software interrupts), PLIC (external interrupts), SYSCON (halt/exit), Framebuffer (linear RGBA8888 display)
 - **Bus:** Memory-mapped I/O with address decoding
 
 ### 1.2 Execution Model
@@ -35,6 +35,7 @@ the VM's observable behavior.
 | `0x0C00_0000` - `0x0CFF_FFFF` | PLIC | 16 MB | Platform-Level Interrupt Controller |
 | `0x1000_0000` - `0x1000_0FFF` | UART | 4 KB | Serial console (NS16550A subset; 8 registers at the low offsets) |
 | `0x1001_0000` - `0x1001_0FFF` | SYSCON | 4 KB | Halt/exit device (write an exit code to stop the VM) |
+| `0x1002_0000` - `0x1006_AFFF` | Framebuffer | 300 KB | Linear RGBA8888 display, 320 x 240 (see 6.5) |
 | `0x8000_0000` - ... | RAM | 128 MB | Main memory (DRAM); default size is 128 MB |
 
 **Note:** Addresses are physical when virtual memory is disabled (SATP.mode = 0/Bare) or when the
@@ -682,7 +683,22 @@ Writing an 8-byte value to SYSCON latches an exit code and signals the run loop 
 harness reads the exit code from the final `RunResult`.
 
 
-### 6.5 Cache Hierarchy
+### 6.5 Framebuffer (Linear Display)
+**Base Address:** `0x1002_0000`  
+**Purpose:** A flat pixel buffer the guest draws into and the GUI displays as an image.
+
+The framebuffer is `320 x 240` pixels in RGBA8888 format: byte `n` is pixel `n / 4`, channel
+`n % 4` (0 = R, 1 = G, 2 = B, 3 = A), for a total of `320 * 240 * 4 = 307200` bytes. Like the other
+MMIO devices it bypasses the caches, so writes are visible to the display immediately without a
+flush. Stores land in the pixel buffer; the GUI uploads the buffer to a texture each frame via the
+bus `peek_framebuffer` accessor (which does not perturb device or cache state). Accesses past the end
+of the buffer raise a bus error.
+
+The kernel exposes the device to user programs through the `map_fb` syscall (number 107), which maps
+the framebuffer's physical pages into the calling process and returns the base virtual address. See
+the OS specification for the syscall and the `fbdemo` program.
+
+### 6.6 Cache Hierarchy
 
 RAM accesses pass through three levels of set-associative cache before reaching DRAM. MMIO device
 regions are never cached. All levels use 64-byte blocks, true LRU replacement, and a write-back /

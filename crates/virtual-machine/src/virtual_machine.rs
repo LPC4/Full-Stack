@@ -236,6 +236,11 @@ impl VirtualMachine {
         self.bus.peek_bytes_raw(addr, len)
     }
 
+    /// Borrow the framebuffer device's pixel buffer for display.
+    pub fn peek_framebuffer(&self) -> &[u8] {
+        self.bus.peek_framebuffer()
+    }
+
     /// Write raw bytes into physical RAM at `addr`.  Used to inject
     /// pre-compiled user binaries alongside a loaded kernel image.
     /// Flushes the L1/L2/L3 cache hierarchy afterward so subsequent

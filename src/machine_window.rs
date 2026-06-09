@@ -5,7 +5,7 @@ use std::time::Duration;
 use asm_to_binary::AssembledOutput;
 use egui::{Color32, Frame, Margin, RichText, Stroke, Vec2};
 use full_stack::view::ui_theme;
-use virtual_machine::bus::RAM_BASE;
+use virtual_machine::devices::framebuffer::{FB_HEIGHT, FB_WIDTH};
 use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 
 // --- Palette ---
@@ -45,8 +45,6 @@ fn toolbar_bg() -> Color32 {
 
 /// VM steps executed per UI frame while booting.
 const STEPS_PER_TICK: u64 = 50_000;
-const FB_COLS: usize = 80;
-const FB_ROWS: usize = 25;
 
 /// Fixed height of the top toolbar row (boot / stop / clear + status).
 const TOOLBAR_H: f32 = 34.0;
@@ -59,6 +57,7 @@ pub struct BootResult {
     pub exit_code: Option<i64>,
     pub steps: u64,
     pub max_steps_reached: bool,
+    /// Snapshot of the framebuffer device's RGBA8888 pixel buffer at stop time.
     pub fb_bytes: Vec<u8>,
 }
 
@@ -102,6 +101,8 @@ pub struct MachineWindow {
     log_cache: Option<egui::text::LayoutJob>,
     log_cache_generation: u64,
     log_cache_cursor: bool,
+    /// GPU texture the framebuffer pixels are uploaded into each frame.
+    fb_texture: Option<egui::TextureHandle>,
 }
 
 // --- Public API ---
@@ -188,7 +189,7 @@ impl MachineWindow {
                 ui.set_max_height(content_h);
                 match self.active_tab {
                     FbTab::BootLog => self.render_console(ui, is_running),
-                    FbTab::Framebuffer => self.render_framebuffer(ui),
+                    FbTab::Framebuffer => self.render_framebuffer(ui, is_running),
                 }
             });
     }
@@ -236,7 +237,7 @@ impl MachineWindow {
                 }
 
                 if halted.is_some() || timed_out {
-                    let fb_bytes = vm.peek_bytes_raw(RAM_BASE, FB_COLS * FB_ROWS);
+                    let fb_bytes = vm.peek_framebuffer().to_vec();
                     Some(BootResult {
                         uart_output: std::mem::take(uart_text),
                         exit_code: halted,
@@ -356,7 +357,7 @@ impl MachineWindow {
                 uart_text,
                 ..
             } => {
-                let fb_bytes = vm.peek_bytes_raw(RAM_BASE, FB_COLS * FB_ROWS);
+                let fb_bytes = vm.peek_framebuffer().to_vec();
                 Some(BootResult {
                     uart_output: std::mem::take(uart_text),
                     exit_code: None,
@@ -476,44 +477,55 @@ impl MachineWindow {
             });
     }
 
-    fn render_framebuffer(&self, ui: &mut egui::Ui) {
-        let fb: Option<Vec<u8>> = match &self.phase {
+    /// Draw the framebuffer as a scaled image: the live device while running,
+    /// the captured snapshot once the run stops.
+    fn render_framebuffer(&mut self, ui: &mut egui::Ui, is_running: bool) {
+        let bytes: Option<&[u8]> = match &self.phase {
             BootPhase::Idle => None,
-            BootPhase::Running { vm, .. } => Some(vm.peek_bytes_raw(RAM_BASE, FB_COLS * FB_ROWS)),
-            BootPhase::Done(r) => Some(r.fb_bytes.clone()),
+            BootPhase::Running { vm, .. } => Some(vm.peek_framebuffer()),
+            BootPhase::Done(r) => Some(r.fb_bytes.as_slice()),
         };
 
-        match fb {
+        let expected = FB_WIDTH * FB_HEIGHT * 4;
+        match bytes {
             None => {
                 ui.colored_label(term_dim(), "Boot the kernel to see framebuffer contents.");
+                return;
             }
-            Some(ref bytes) if bytes.is_empty() || bytes.iter().all(|&b| b == 0) => {
-                ui.colored_label(term_dim(), "(no framebuffer data)");
+            Some(b) if b.len() < expected || b.iter().all(|&x| x == 0) => {
+                ui.colored_label(term_dim(), "(framebuffer is blank)");
+                return;
             }
-            Some(bytes) => {
-                let mut text = String::with_capacity(FB_COLS * FB_ROWS + FB_ROWS);
-                for row in bytes.chunks(FB_COLS) {
-                    for &b in row {
-                        text.push(if b.is_ascii_graphic() || b == b' ' {
-                            b as char
-                        } else {
-                            '.'
-                        });
-                    }
-                    text.push('\n');
-                }
-                egui::ScrollArea::both()
-                    .id_salt("mw_framebuffer")
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        ui.label(
-                            RichText::new(text)
-                                .monospace()
-                                .color(term_text())
-                                .size(12.0),
-                        );
-                    });
+            Some(_) => {}
+        }
+
+        // Upload the pixels into the texture, allocating it on first use.
+        let pixels = bytes.unwrap();
+        let image =
+            egui::ColorImage::from_rgba_unmultiplied([FB_WIDTH, FB_HEIGHT], &pixels[..expected]);
+        let opts = egui::TextureOptions::NEAREST;
+        match &mut self.fb_texture {
+            Some(tex) => tex.set(image, opts),
+            none => {
+                *none = Some(ui.ctx().load_texture("mw_framebuffer", image, opts));
             }
+        }
+
+        // Keep the live image refreshing as the device changes.
+        if is_running {
+            ui.ctx().request_repaint();
+        }
+
+        if let Some(tex) = &self.fb_texture {
+            // Scale up to fit the available area, preserving aspect.
+            let avail = ui.available_size();
+            let scale = (avail.x / FB_WIDTH as f32)
+                .min(avail.y / FB_HEIGHT as f32)
+                .max(1.0);
+            let size = egui::vec2(FB_WIDTH as f32 * scale, FB_HEIGHT as f32 * scale);
+            ui.centered_and_justified(|ui| {
+                ui.add(egui::Image::new(tex).fit_to_exact_size(size));
+            });
         }
     }
 }
