@@ -1,6 +1,8 @@
 //! Machine window: secondary egui window for booting and observing kernel programs.
 
-use std::time::{Duration, Instant};
+// web-time, not std::time: on wasm32 std's Instant has no wall clock, so the
+// step-budget loop below would never yield and hang the browser tab.
+use web_time::{Duration, Instant};
 
 use asm_to_binary::AssembledOutput;
 use egui::{Color32, Frame, Margin, RichText, Stroke, Vec2};

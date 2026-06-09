@@ -1280,6 +1280,7 @@ dependencies = [
  "virtual_machine",
  "wasm-bindgen-futures",
  "web-sys",
+ "web-time",
 ]
 
 [[package]]
