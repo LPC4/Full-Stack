@@ -1091,11 +1091,23 @@ mod fs_image_tests {
         let big = vec![7u8; 30 * BLOCK];
         let entries = vec![
             FsEntry::Dir { path: "/bin" },
-            FsEntry::File { path: "/bin/a.fexe", data: &big },
-            FsEntry::File { path: "/bin/b.fexe", data: &big },
-            FsEntry::File { path: "/bin/c.fexe", data: &big },
+            FsEntry::File {
+                path: "/bin/a.fexe",
+                data: &big,
+            },
+            FsEntry::File {
+                path: "/bin/b.fexe",
+                data: &big,
+            },
+            FsEntry::File {
+                path: "/bin/c.fexe",
+                data: &big,
+            },
             FsEntry::Dir { path: "/home" },
-            FsEntry::File { path: "/home/d.fexe", data: &big },
+            FsEntry::File {
+                path: "/home/d.fexe",
+                data: &big,
+            },
         ];
 
         // Must not panic and must hold all 120 data blocks plus metadata.

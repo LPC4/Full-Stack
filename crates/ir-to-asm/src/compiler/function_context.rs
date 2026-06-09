@@ -285,7 +285,9 @@ impl FunctionContext {
 
     /// Save the sret pointer (in a0 on entry) into its stack slot.
     fn emit_sret_save(&self, backend: &mut impl Rv64Backend, sret_slot: usize) {
-        backend.emit_comment(&format!("Save sret pointer from a0 to stack slot {sret_slot}"));
+        backend.emit_comment(&format!(
+            "Save sret pointer from a0 to stack slot {sret_slot}"
+        ));
         backend.emit_store_from_tmp(
             SP,
             arg_reg(0),

@@ -177,6 +177,5 @@ pub mod user {
 
     /// Framebuffer demo: maps the framebuffer and renders a Mandelbrot set.
     /// Installed at `/bin/fbdemo.fexe`.
-    pub const FBDEMO: &str =
-        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/user/fbdemo.hll"));
+    pub const FBDEMO: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/user/fbdemo.hll"));
 }
