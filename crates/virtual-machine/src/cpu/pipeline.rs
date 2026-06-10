@@ -200,8 +200,7 @@ impl Pipeline {
             let phys_addr = vaddr;
             if self.csrs.pmpcfg0 != 0 {
                 let allow_r = (self.csrs.pmpcfg0 & 0x1) != 0;
-                let pmp_match =
-                    self.csrs.pmpaddr0 == u64::MAX || phys_addr <= self.csrs.pmpaddr0;
+                let pmp_match = self.csrs.pmpaddr0 == u64::MAX || phys_addr <= self.csrs.pmpaddr0;
                 if !pmp_match || !allow_r {
                     return None;
                 }

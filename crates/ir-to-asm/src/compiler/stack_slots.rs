@@ -13,7 +13,6 @@ use std::collections::HashMap;
 /// Alloc dests get dedicated full-size slots; hot scalar regs get phys regs first.
 /// Remaining regs are slot-colored; `needs_sret` marks functions with hidden sret param.
 
-
 pub fn assign_stack_slots(
     func: &IrFunction,
     ctx: &mut FunctionContext,

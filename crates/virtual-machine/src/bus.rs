@@ -237,9 +237,7 @@ impl SystemBus {
                     // Keyboard DATA reads have a pop side effect; never touch from
                     // the debug peek path.
                     a if a >= KBD_BASE && a <= KBD_END => 0,
-                    a if a >= ROM_BASE && a <= ROM_END => {
-                        self.rom.peek_byte(a).unwrap_or(0)
-                    }
+                    a if a >= ROM_BASE && a <= ROM_END => self.rom.peek_byte(a).unwrap_or(0),
                     _ => self.l1_cache.peek_byte_raw(a).unwrap_or(0),
                 }
             })

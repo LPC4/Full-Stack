@@ -41,10 +41,20 @@ pub enum AsmToken {
         rs2: Reg,
         target: String,
     },
-    Jal { rd: Reg, target: String },
-    Call { symbol: String },
-    Tail { symbol: String },
-    La { rd: Reg, symbol: String },
+    Jal {
+        rd: Reg,
+        target: String,
+    },
+    Call {
+        symbol: String,
+    },
+    Tail {
+        symbol: String,
+    },
+    La {
+        rd: Reg,
+        symbol: String,
+    },
 
     // ---- structure ----
     Section(SectionKind),

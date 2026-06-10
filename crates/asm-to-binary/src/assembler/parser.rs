@@ -386,7 +386,9 @@ fn expand_li(rd: u8, imm: i64) -> Vec<AsmToken> {
         out.push(AsmToken::Real(RealInstruction::Lui(Lui::new(reg, hi20))));
         if lo12_signed != 0 {
             out.push(AsmToken::Real(RealInstruction::Addi(Addi::new(
-                reg, reg, lo12_signed,
+                reg,
+                reg,
+                lo12_signed,
             ))));
         }
     };

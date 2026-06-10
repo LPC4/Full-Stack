@@ -55,7 +55,7 @@ const FRAME_STEP_BUDGET: Duration = Duration::from_millis(8);
 /// while keeping the budget overshoot small.
 const STEP_BATCH: u64 = 4096;
 
-/// Hard per-frame cycle cap on WASM to prevent overshoot from clamped `performance.now()`. 
+/// Hard per-frame cycle cap on WASM to prevent overshoot from clamped `performance.now()`.
 ///
 /// event loop. This count cap bounds the work regardless of clock behaviour so
 /// the tab stays responsive; native has no such cap (its clock is reliable).
@@ -823,8 +823,7 @@ fn render_cache_stats(ui: &mut egui::Ui, vm: &VirtualMachine) {
         };
         ui.label(mono(
             format!(
-                "{name}  rd {rrate:>5.1}% ({:>10})  wr {wrate:>5.1}% ({:>10})",
-                reads, writes
+                "{name}  rd {rrate:>5.1}% ({reads:>10})  wr {wrate:>5.1}% ({writes:>10})"
             ),
             term_text(),
         ));
@@ -878,7 +877,10 @@ fn render_disasm(ui: &mut egui::Ui, vm: &VirtualMachine) {
         } else {
             term_dim()
         };
-        ui.label(mono(format!("{marker} {addr:#012x}  {word:08x}  {asm}"), col));
+        ui.label(mono(
+            format!("{marker} {addr:#012x}  {word:08x}  {asm}"),
+            col,
+        ));
     }
 }
 

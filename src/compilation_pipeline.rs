@@ -793,7 +793,7 @@ fn sanitize_artifact_component(value: &str) -> String {
 
 /// Canonical on-disk filesystem layout constants.
 ///
-/// Mirrors `FS_*` in `kernel/fs.hll`. See _OS_SPECIFICATION.md for filesystem layout.
+/// Mirrors `FS_*` in `kernel/fs.hll`. See _`OS_SPECIFICATION.md` for filesystem layout.
 ///
 ///
 ///
@@ -854,7 +854,7 @@ pub enum FsEntry<'a> {
 
 /// Serialise `entries` into the on-disk filesystem image format and return the raw bytes.
 ///
-/// See _OS_SPECIFICATION.md for block layout.
+/// See _`OS_SPECIFICATION.md` for block layout.
 ///
 ///
 ///
