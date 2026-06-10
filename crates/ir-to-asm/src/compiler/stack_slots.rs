@@ -8,14 +8,18 @@ use super::function_context::FunctionContext;
 use hll_to_ir::{IrFunction, IrInstruction, IrTerminator, IrType, IrValue};
 use std::collections::HashMap;
 
-/// Reserve a stack slot for every virtual register the function uses.
+/// Reserve stack slots for every virtual register. See _IR_SPECIFICATIONS.md for layout details.
 ///
-/// `Alloc` destinations get dedicated, full-size slots (address-taken storage);
-/// all other registers are slot-colored so disjoint live ranges share a slot.
+/// Alloc dests get dedicated full-size slots; hot scalar regs get phys regs first.
+/// Remaining regs are slot-colored; `needs_sret` marks functions with hidden sret param.
+
+
 pub fn assign_stack_slots(
     func: &IrFunction,
     ctx: &mut FunctionContext,
     function_return_types: &HashMap<String, IrType>,
+    regalloc: bool,
+    needs_sret: bool,
 ) {
     // Pre-allocate Alloc destinations first so struct allocs get
     // (type_size * count) bytes rather than the 8-byte pointer size.
@@ -41,7 +45,14 @@ pub fn assign_stack_slots(
         }
     }
 
-    // Slot coloring gives every register a slot, sharing where live ranges allow.
+    // Physical register allocation claims the hottest scalars first; whatever
+    // it leaves behind falls through to slot coloring.
+    if regalloc {
+        super::register_allocator::allocate_registers(func, ctx, &vregs, needs_sret);
+    }
+
+    // Slot coloring gives every remaining register a slot, sharing where live
+    // ranges allow.
     super::slot_coloring::assign_colored_slots(func, ctx, &vregs);
 }
 
@@ -211,7 +222,7 @@ mod tests {
         func.push_block(block);
 
         let mut ctx = FunctionContext::new(&HashMap::new());
-        assign_stack_slots(&func, &mut ctx, &HashMap::new());
+        assign_stack_slots(&func, &mut ctx, &HashMap::new(), false, false);
 
         let slot_block = ctx
             .slot_for_reg(&reg("block"))

@@ -55,9 +55,8 @@ const FRAME_STEP_BUDGET: Duration = Duration::from_millis(8);
 /// while keeping the budget overshoot small.
 const STEP_BATCH: u64 = 4096;
 
-/// Hard per-frame cycle cap on WASM. `web_time::Instant` reads `performance.now()`,
-/// whose resolution the browser may clamp (e.g. to 1ms for security), so the
-/// wall-clock budget alone can overshoot badly on a heavy boot and starve the
+/// Hard per-frame cycle cap on WASM to prevent overshoot from clamped `performance.now()`. 
+///
 /// event loop. This count cap bounds the work regardless of clock behaviour so
 /// the tab stays responsive; native has no such cap (its clock is reliable).
 #[cfg(target_arch = "wasm32")]

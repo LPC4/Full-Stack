@@ -1,4 +1,4 @@
-/// Integration tests for symbol relocation with pseudo-instructions (call, tail, la).
+/// Integration tests for symbol relocation with pseudo-instructions.
 use asm_to_binary::assembler::Assembler;
 use asm_to_binary::rv_instruction::RvInstruction;
 use asm_to_binary::pseudo::PseudoInstruction;

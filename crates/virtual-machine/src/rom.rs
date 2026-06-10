@@ -51,7 +51,7 @@ fn parse_asm_text(src: &str) -> Vec<RvInstruction> {
 /// The returned `Vec<u8>` starts at physical address `ROM_BASE` (`0x0000_0000`).
 ///
 /// # Panics
-/// Panics if the assembler rejects the ROM source (indicates a bug in `crates/os-runtime/boot/rom.s`).
+/// Panics if the assembler rejects the ROM source (bug in `crates/os-runtime/boot/rom.s`).
 pub fn generate_rom_image() -> Vec<u8> {
     let tokens = parse_asm_text(os_runtime::ROM_SOURCE);
     let output = Assembler::assemble(&tokens)

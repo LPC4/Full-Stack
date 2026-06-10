@@ -1,9 +1,5 @@
-/// Pass 2: encode the typed token stream to bytes, resolving all label references.
-///
-/// At this point the `SymbolTable` from the layout pass contains every label's
-/// section-relative address.  We convert those to absolute addresses by adding
-/// the running section base, then compute PC-relative branch/jump offsets and
-/// encode the final machine words.
+/// Pass 2: encode typed tokens to bytes, resolving label references via the symbol table.
+/// See _RISCV_SPECIFICATIONS.md for pseudo-instruction expansion rules.
 use super::AssemblerError;
 use super::layout::Layout;
 use super::output::{AssembledOutput, RelocationKind, RelocationRecord};
@@ -13,23 +9,16 @@ use crate::real::RealInstruction;
 use crate::riscv::rv64i::{Addi, Auipc, Beq, Bge, Bgeu, Blt, Bltu, Bne, Jal as JalInst, Jalr};
 use crate::traits::Instruction as _;
 
-/// Encode all tokens into an `AssembledOutput` using layout information for
-/// label resolution.
+/// Encode all tokens into an `AssembledOutput` using the layout symbol table.
 pub fn encode(tokens: &[AsmToken], layout: &Layout) -> Result<AssembledOutput, AssemblerError> {
     let mut out = AssembledOutput::new();
-
-    // Build one `SectionData` per section in discovery order.
     let mut sections: std::collections::HashMap<SectionKind, SectionData> = layout
         .section_order
         .iter()
         .map(|k| (k.clone(), SectionData::new(k.clone())))
         .collect();
 
-    // Compute the absolute base address of each section, packing non-BSS sections
-    // first and BSS sections last.  BSS is excluded from the ELF file (it is
-    // zero-filled by the loader), so if BSS were sandwiched between text and
-    // rodata the ELF virtual addresses would diverge from the file layout and
-    // `la` instructions would point past the actual rodata.
+    // Non-BSS sections first, BSS last to keep ELF virtual addresses contiguous.
     let mut section_bases: std::collections::HashMap<SectionKind, u64> =
         std::collections::HashMap::new();
     let mut running_base: u64 = 0;
@@ -50,9 +39,7 @@ pub fn encode(tokens: &[AsmToken], layout: &Layout) -> Result<AssembledOutput, A
         running_base += layout.section_sizes.get(kind).copied().unwrap_or(0);
     }
 
-    // Walk tokens and emit bytes.
     let mut current_kind = SectionKind::Text;
-    // Current absolute address of the next byte to be emitted.
     let mut current_addr: u64 = section_bases.get(&current_kind).copied().unwrap_or(0);
 
     for token in tokens {
@@ -65,14 +52,12 @@ pub fn encode(tokens: &[AsmToken], layout: &Layout) -> Result<AssembledOutput, A
                     .or_insert_with(|| SectionData::new(current_kind.clone()));
                 current_addr = base + sec.current_offset();
             }
-
             AsmToken::Label(name) => {
                 let sec = sections
                     .entry(current_kind.clone())
                     .or_insert_with(|| SectionData::new(current_kind.clone()));
                 sec.define_label(name.clone());
             }
-
             AsmToken::Globl(name) => {
                 let sec = sections
                     .entry(current_kind.clone())
@@ -82,7 +67,6 @@ pub fn encode(tokens: &[AsmToken], layout: &Layout) -> Result<AssembledOutput, A
                     out.global_symbols.push(name.clone());
                 }
             }
-
             AsmToken::Real(inst) => {
                 push_u32(
                     sections
@@ -92,7 +76,6 @@ pub fn encode(tokens: &[AsmToken], layout: &Layout) -> Result<AssembledOutput, A
                     &mut current_addr,
                 );
             }
-
             AsmToken::Branch {
                 kind,
                 rs1,
@@ -108,7 +91,6 @@ pub fn encode(tokens: &[AsmToken], layout: &Layout) -> Result<AssembledOutput, A
                     &mut current_addr,
                 );
             }
-
             AsmToken::Jal { rd, target } => {
                 let sec = sections
                     .entry(current_kind.clone())
@@ -128,7 +110,6 @@ pub fn encode(tokens: &[AsmToken], layout: &Layout) -> Result<AssembledOutput, A
                     current_addr += 4;
                 }
             }
-
             AsmToken::Call { symbol } => {
                 let sec = sections
                     .entry(current_kind.clone())
@@ -142,9 +123,8 @@ pub fn encode(tokens: &[AsmToken], layout: &Layout) -> Result<AssembledOutput, A
                     &mut out.relocations,
                     current_kind.name(),
                 );
-                current_addr += 8; // 2 instructions
+                current_addr += 8;
             }
-
             AsmToken::Tail { symbol } => {
                 let sec = sections
                     .entry(current_kind.clone())
@@ -158,9 +138,8 @@ pub fn encode(tokens: &[AsmToken], layout: &Layout) -> Result<AssembledOutput, A
                     &mut out.relocations,
                     current_kind.name(),
                 );
-                current_addr += 8; // 2 instructions
+                current_addr += 8;
             }
-
             AsmToken::La { rd, symbol } => {
                 let sec = sections
                     .entry(current_kind.clone())
@@ -175,9 +154,8 @@ pub fn encode(tokens: &[AsmToken], layout: &Layout) -> Result<AssembledOutput, A
                     &mut out.relocations,
                     current_kind.name(),
                 )?;
-                current_addr += 8; // 2 instructions
+                current_addr += 8;
             }
-
             AsmToken::Align(n) => {
                 let sec = sections
                     .entry(current_kind.clone())
@@ -187,7 +165,6 @@ pub fn encode(tokens: &[AsmToken], layout: &Layout) -> Result<AssembledOutput, A
                 current_addr =
                     section_bases.get(&current_kind).copied().unwrap_or(0) + sec.current_offset();
             }
-
             AsmToken::Balign(n) => {
                 let sec = sections
                     .entry(current_kind.clone())
@@ -196,7 +173,6 @@ pub fn encode(tokens: &[AsmToken], layout: &Layout) -> Result<AssembledOutput, A
                 current_addr =
                     section_bases.get(&current_kind).copied().unwrap_or(0) + sec.current_offset();
             }
-
             AsmToken::Space(n) => {
                 let sec = sections
                     .entry(current_kind.clone())
@@ -204,7 +180,6 @@ pub fn encode(tokens: &[AsmToken], layout: &Layout) -> Result<AssembledOutput, A
                 sec.bytes.extend(std::iter::repeat_n(0u8, *n as usize));
                 current_addr += n;
             }
-
             AsmToken::DataU8(b) => {
                 let sec = sections
                     .entry(current_kind.clone())
@@ -238,15 +213,14 @@ pub fn encode(tokens: &[AsmToken], layout: &Layout) -> Result<AssembledOutput, A
                     .entry(current_kind.clone())
                     .or_insert_with(|| SectionData::new(current_kind.clone()));
                 sec.bytes.extend_from_slice(s.as_bytes());
-                sec.push_u8(0); // null terminator
+                sec.push_u8(0);
                 current_addr += s.len() as u64 + 1;
             }
-
             AsmToken::Comment => {}
         }
     }
 
-    // Flatten sections into output, assigning absolute addresses to symbols.
+    // Flatten sections, assign absolute addresses to symbols.
     for kind in &layout.section_order {
         let base = section_bases.get(kind).copied().unwrap_or(0);
         if let Some(sec) = sections.remove(kind) {
@@ -337,9 +311,6 @@ fn push_u32(sec: &mut SectionData, word: u32, current_addr: &mut u64) {
 // --- Pseudo-instruction encoding with symbol relocation ---
 
 /// Split a PC-relative byte offset into (hi20, lo12) for AUIPC+lo pairs.
-///
-/// lo12 is sign-extended, so hi20 is adjusted up by 1 when bit 11 of lo12 is
-/// set to compensate for the sign extension at load time.
 fn pcrel_split(offset: i64) -> (i32, i32) {
     let lo12 = ((offset & 0xFFF) as i32).wrapping_sub(if offset & 0x800 != 0 { 0x1000 } else { 0 });
     let hi20 = ((offset - lo12 as i64) >> 12) as i32;
@@ -363,12 +334,12 @@ fn resolve_absolute_symbol(
     None
 }
 
-/// Compute the PC-relative pair for a target address and current instruction address.
+/// Compute PC-relative (hi20, lo12) for a target address relative to current_addr.
 fn pcrel_offsets(target_addr: u64, current_addr: u64) -> (i32, i32) {
     pcrel_split((target_addr as i64) - (current_addr as i64))
 }
 
-/// Encode `call symbol` -> `auipc ra, %pcrel_hi(symbol); jalr ra, ra, %pcrel_lo(symbol)`
+/// Encode `call symbol` -> `auipc ra, %pcrel_hi(symbol); jalr ra, ra, %pcrel_lo(symbol)`.
 fn encode_call(
     sec: &mut SectionData,
     symbol: &str,
@@ -380,12 +351,11 @@ fn encode_call(
 ) {
     if let Some(target_addr) = resolve_absolute_symbol(symbol, symbols, section_bases) {
         let (hi20, lo12) = pcrel_offsets(target_addr, current_addr);
-        sec.push_u32_le(Auipc::new(1, hi20 << 12).encode()); // auipc ra, hi20
-        sec.push_u32_le(Jalr::new(1, 1, lo12).encode()); // jalr ra, ra, lo12
+        sec.push_u32_le(Auipc::new(1, hi20 << 12).encode());
+        sec.push_u32_le(Jalr::new(1, 1, lo12).encode());
         return;
     }
-
-    // Leave immediates zeroed and emit a relocation for the linker.
+    // Emit relocation when the target is in a different object.
     let reloc_offset = sec.current_offset();
     sec.push_u32_le(Auipc::new(1, 0).encode());
     sec.push_u32_le(Jalr::new(1, 1, 0).encode());
@@ -398,7 +368,7 @@ fn encode_call(
     });
 }
 
-/// Encode `tail symbol` -> `auipc t1, %pcrel_hi(symbol); jalr x0, t1, %pcrel_lo(symbol)`
+/// Encode `tail symbol` -> `auipc t1, %pcrel_hi(symbol); jalr x0, t1, %pcrel_lo(symbol)`.
 fn encode_tail(
     sec: &mut SectionData,
     symbol: &str,
@@ -410,11 +380,10 @@ fn encode_tail(
 ) {
     if let Some(target_addr) = resolve_absolute_symbol(symbol, symbols, section_bases) {
         let (hi20, lo12) = pcrel_offsets(target_addr, current_addr);
-        sec.push_u32_le(Auipc::new(6, hi20 << 12).encode()); // auipc t1, hi20
-        sec.push_u32_le(Jalr::new(0, 6, lo12).encode()); // jalr x0, t1, lo12 (no return)
+        sec.push_u32_le(Auipc::new(6, hi20 << 12).encode());
+        sec.push_u32_le(Jalr::new(0, 6, lo12).encode());
         return;
     }
-
     let reloc_offset = sec.current_offset();
     sec.push_u32_le(Auipc::new(6, 0).encode());
     sec.push_u32_le(Jalr::new(0, 6, 0).encode());
@@ -427,7 +396,8 @@ fn encode_tail(
     });
 }
 
-/// Encode `la rd, symbol` -> `auipc rd, %pcrel_hi(symbol); addi rd, rd, %pcrel_lo(symbol)`
+/// Encode `la rd, symbol` -> `auipc rd, %pcrel_hi(symbol); addi rd, rd, %pcrel_lo(symbol)`.
+/// Always emits a relocation since section merging may change cross-section distances.
 fn encode_la(
     sec: &mut SectionData,
     rd: u8,
@@ -441,10 +411,8 @@ fn encode_la(
     let target_abs_addr = resolve_absolute_symbol(symbol, symbols, section_bases);
     let (hi20, lo12) = pcrel_offsets(target_abs_addr.unwrap_or(0), current_addr);
     let reloc_offset = sec.current_offset();
-    sec.push_u32_le(Auipc::new(rd, hi20 << 12).encode()); // auipc rd, hi20
-    sec.push_u32_le(Addi::new(rd, rd, lo12).encode()); // addi rd, rd, lo12
-    // Always emit a relocation: section merging may change cross-section distances
-    // even for local symbols, so the linker must re-evaluate every `la`.
+    sec.push_u32_le(Auipc::new(rd, hi20 << 12).encode());
+    sec.push_u32_le(Addi::new(rd, rd, lo12).encode());
     relocations.push(RelocationRecord {
         section: section_name.to_owned(),
         offset: reloc_offset,

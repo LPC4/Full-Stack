@@ -5,8 +5,7 @@ use super::function_context::FunctionContext;
 use hll_to_ir::{IrFunction, IrInstruction, IrRegister, IrTerminator, IrType, IrValue};
 use std::collections::{HashMap, HashSet};
 
-/// Assign stack slots to every value register that still needs one.
-/// Registers that already have a slot (e.g. `Alloc` destinations) are untouched.
+/// Assign stack slots to every value register that still needs one (Alloc destinations excluded).
 pub fn assign_colored_slots(
     func: &IrFunction,
     ctx: &mut FunctionContext,
@@ -16,7 +15,7 @@ pub fn assign_colored_slots(
     let mut colorable_set: HashSet<IrRegister> = HashSet::new();
 
     for (reg, ty) in vregs {
-        if ctx.slot_for_reg(reg).is_some() {
+        if ctx.slot_for_reg(reg).is_some() || ctx.phys_reg_for(reg).is_some() {
             continue;
         }
         if !ctx.is_stack_address(reg) && is_colorable_type(&ctx.resolve_type(ty)) {
@@ -58,9 +57,8 @@ fn is_colorable_type(ty: &IrType) -> bool {
     )
 }
 
-/// Build the interference graph among colorable registers using live-variable
-/// analysis over the control-flow graph.
-fn build_interference(
+/// Build the interference graph among colorable registers via live-variable analysis.
+pub(super) fn build_interference(
     func: &IrFunction,
     colorable: &HashSet<IrRegister>,
 ) -> HashMap<IrRegister, HashSet<IrRegister>> {
@@ -224,8 +222,7 @@ fn add_edge(graph: &mut HashMap<IrRegister, HashSet<IrRegister>>, a: &IrRegister
     graph.entry(b.clone()).or_default().insert(a.clone());
 }
 
-/// Greedy graph coloring in IR appearance order (for deterministic output);
-/// each register gets the lowest color not used by a colored neighbor.
+/// Greedy graph coloring in IR appearance order; each register gets the lowest unused color.
 fn greedy_color(
     order: &[IrRegister],
     graph: &HashMap<IrRegister, HashSet<IrRegister>>,
@@ -259,7 +256,7 @@ fn value_reg(value: &IrValue) -> Option<IrRegister> {
     }
 }
 
-fn inst_uses(inst: &IrInstruction) -> Vec<IrRegister> {
+pub(super) fn inst_uses(inst: &IrInstruction) -> Vec<IrRegister> {
     use IrInstruction::{
         Call, Cast, Cmp, HeapAlloc, HeapFree, Index, Load, Math, Offset, Phi, Store, Unary,
     };
@@ -304,7 +301,7 @@ fn inst_uses(inst: &IrInstruction) -> Vec<IrRegister> {
     uses
 }
 
-fn inst_defs(inst: &IrInstruction) -> Vec<IrRegister> {
+pub(super) fn inst_defs(inst: &IrInstruction) -> Vec<IrRegister> {
     use IrInstruction::{
         Alloc, Call, Cast, Cmp, GlobalRef, HeapAlloc, Index, Load, Math, Offset, Phi, ReadReg,
         Unary,
@@ -327,7 +324,7 @@ fn inst_defs(inst: &IrInstruction) -> Vec<IrRegister> {
     }
 }
 
-fn term_uses(term: &IrTerminator) -> Vec<IrRegister> {
+pub(super) fn term_uses(term: &IrTerminator) -> Vec<IrRegister> {
     match term {
         IrTerminator::Return(Some(value)) => value_reg(value).into_iter().collect(),
         IrTerminator::Branch { cond, .. } => value_reg(cond).into_iter().collect(),
@@ -363,7 +360,7 @@ mod tests {
 
     fn slots_for(func: &IrFunction) -> (FunctionContext, HashMap<IrRegister, usize>) {
         let mut ctx = FunctionContext::new(&HashMap::new());
-        assign_stack_slots(func, &mut ctx, &HashMap::new());
+        assign_stack_slots(func, &mut ctx, &HashMap::new(), false, false);
         let mut map = HashMap::new();
         for block in &func.blocks {
             for inst in &block.instructions {

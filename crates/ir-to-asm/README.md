@@ -10,7 +10,8 @@ instructions, and emits the `.text`, `.data`, and `.rodata` sections.
 
 ```
 IrProgram
-  -> Stack-slot planning  every IR value gets a frame slot (slot coloring shares them)
+  -> Register allocation  hot scalar values -> callee-saved registers
+  -> Stack-slot planning  remaining IR values get frame slots (slot coloring shares them)
   -> Frame layout         spill slots, saved registers, locals per function
   -> Instruction select   IR ops -> RV64 instructions
   -> Emitter              assembly text and/or Vec<RvInstruction> tokens
@@ -37,24 +38,31 @@ consumes, so stage 3 and stage 4 hand off without re-parsing text.
 
 ## Register allocation and stack slots
 
-The code generator keeps every IR virtual register in a stack slot; it does not
-hand out physical registers for values. A naive one-slot-per-register layout
-makes frames grow without bound, wasting stack and pushing load/store offsets
-past the RISC-V immediate range on large functions.
+`register_allocator` (PLAN 1.1) keeps hot scalar values in registers instead of
+memory. It reuses `slot_coloring`'s interference analysis and greedily colors
+the highest-use-count integer/pointer values onto the callee-saved registers
+s2-s11 (s0 is the frame pointer, s1 the sret pointer); values that do not fit
+fall back to slots. Callee-saved registers survive calls and the kernel trap
+entry saves x18-x27, so assigned values need no call-crossing analysis -- the
+prologue/epilogue saves exactly the registers used. Results written to a
+register are sign-extended to their IR width so they match what a typed slot
+store/reload would produce. Excluded from allocation: floats (FP file),
+aggregates, address-taken values, the hidden sret parameter, and any function
+containing inline asm (which may clobber arbitrary registers). A tight integer
+loop runs roughly 2x faster with allocation on
+(`regalloc_hot_loop_is_substantially_faster`).
 
-`slot_coloring` shrinks frames by letting registers whose live ranges never
-overlap share a slot. It runs live-variable analysis over the real control-flow
-graph (so loops are handled correctly), builds an interference graph among the
-scalar value registers, and colors it greedily; each color becomes one 8-byte
-slot. Function parameters are treated as simultaneous defs at the entry block so
-they never collapse together. Registers that escape (`Alloc` destinations and
-stack addresses) or need more than 8 bytes (aggregates, arrays) keep a dedicated
-slot.
+Allocation is on by default in the application's `CompilationPipeline` and off
+on a raw `CompilerRv64::new()`; both expose `set_register_allocation`.
 
-There is no physical register allocator yet: every value lives in a slot and is
-reloaded on each use. A linear-scan allocator that keeps hot values in registers
-across their live range (reusing `slot_coloring`'s liveness) is the planned next
-step (PLAN 1.1).
+Values left in memory go through stack slots: `slot_coloring` shrinks frames by
+letting registers whose live ranges never overlap share a slot. It runs
+live-variable analysis over the real control-flow graph (so loops are handled
+correctly), builds an interference graph among the scalar value registers, and
+colors it greedily; each color becomes one 8-byte slot. Function parameters are
+treated as simultaneous defs at the entry block so they never collapse
+together. Registers that escape (`Alloc` destinations and stack addresses) or
+need more than 8 bytes (aggregates, arrays) keep a dedicated slot.
 
 ## Module layout
 

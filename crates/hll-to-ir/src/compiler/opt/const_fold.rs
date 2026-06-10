@@ -139,11 +139,7 @@ fn substitute_terminator(
     false
 }
 
-/// Mutable references to the value operands a register constant may flow into.
-///
-/// `Phi` is excluded: its incoming values are evaluated in predecessor blocks,
-/// so the current block's constant map does not apply to them. Pointer operands
-/// are `IrRegister`-typed, not `IrValue`, so they are not substitutable here.
+/// Mutable references to value operands a register constant may flow into (Phi excluded).
 fn operand_uses_mut(inst: &mut IrInstruction) -> Vec<&mut IrValue> {
     match inst {
         IrInstruction::Math { lhs, rhs, .. } | IrInstruction::Cmp { lhs, rhs, .. } => {

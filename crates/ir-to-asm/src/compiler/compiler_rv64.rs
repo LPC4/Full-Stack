@@ -30,6 +30,7 @@ pub struct CompilerRv64 {
     type_aliases: HashMap<String, IrType>,
     function_return_types: HashMap<String, IrType>,
     peephole: bool,
+    regalloc: bool,
 }
 
 impl Default for CompilerRv64 {
@@ -46,14 +47,16 @@ impl CompilerRv64 {
             type_aliases: HashMap::new(),
             function_return_types: HashMap::new(),
             peephole: false,
+            regalloc: false,
         }
     }
 
-    /// Enable or disable the conservative peephole pass over the emitted token
-    /// stream. Off by default so golden snapshots stay stable; turn it on to
-    /// assemble the optimized stream.
     pub fn set_peephole(&mut self, enabled: bool) {
         self.peephole = enabled;
+    }
+
+    pub fn set_register_allocation(&mut self, enabled: bool) {
+        self.regalloc = enabled;
     }
 
     pub fn compile(&mut self, program: &IrProgram) -> String {
@@ -118,12 +121,18 @@ impl CompilerRv64 {
     }
 
     fn compile_function(&mut self, func: &hll_to_ir::IrFunction) {
-        let mut ctx = FunctionContext::new(&self.type_aliases);
-        stack_slots::assign_stack_slots(func, &mut ctx, &self.function_return_types);
-
         let return_type = self.resolve_ir_type(&func.return_type);
         let is_aggregate = matches!(return_type, IrType::Aggregate(_) | IrType::Array { .. });
         let needs_sret = is_aggregate && !self.can_return_in_registers(&return_type);
+
+        let mut ctx = FunctionContext::new(&self.type_aliases);
+        stack_slots::assign_stack_slots(
+            func,
+            &mut ctx,
+            &self.function_return_types,
+            self.regalloc,
+            needs_sret,
+        );
 
         let sret_slot = if needs_sret {
             ctx.save_reg(9); // s1 holds the sret pointer.
@@ -286,7 +295,6 @@ impl CompilerRv64 {
         ctx: &mut FunctionContext,
     ) {
         self.emitter.reset_temp_counter();
-        let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
         self.emitter
             .emit_comment(&format!("Load {ty} from memory into ${dest}"));
         let ptr_tmp = self.load_pointer_operand_to_temp(ptr, ctx);
@@ -299,6 +307,7 @@ impl CompilerRv64 {
         };
         let resolved_ty = self.resolve_ir_type(ty);
         if matches!(resolved_ty, IrType::Array { .. } | IrType::Aggregate(_)) {
+            let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
             self.emitter.copy_bytes_from_addr_to_slot(
                 dest_slot,
                 addr_tmp,
@@ -308,6 +317,7 @@ impl CompilerRv64 {
         } else if let IrType::Float(width) = resolved_ty {
             // Floats must load into an FP register and store back with fsw/fsd;
             // routing through a GP temp would reinterpret the bit pattern.
+            let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
             let fp_tmp = self.emitter.alloc_float_temp_reg();
             match width {
                 hll_to_ir::FloatWidth::F32 => {
@@ -320,7 +330,10 @@ impl CompilerRv64 {
                 }
             }
         } else {
-            let loaded_val = self.emitter.alloc_temp_reg();
+            // A register-resident dest takes the typed load directly (the load
+            // already sign-extends to width); slot dests go through a temp.
+            let dest_phys = ctx.phys_reg_for(dest);
+            let loaded_val = dest_phys.unwrap_or_else(|| self.emitter.alloc_temp_reg());
             match &resolved_ty {
                 IrType::Integer(w) => match w {
                     hll_to_ir::IntWidth::I1 | hll_to_ir::IntWidth::I8 => {
@@ -349,8 +362,11 @@ impl CompilerRv64 {
                         .emit_inst(RealInstruction::Ld(Ld::new(loaded_val, addr_tmp, 0)));
                 }
             }
-            self.emitter
-                .emit_store_from_tmp(SP, loaded_val, &resolved_ty, dest_slot as i32);
+            if dest_phys.is_none() {
+                let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
+                self.emitter
+                    .emit_store_from_tmp(SP, loaded_val, &resolved_ty, dest_slot as i32);
+            }
         }
     }
 
@@ -396,14 +412,14 @@ impl CompilerRv64 {
         ctx: &mut FunctionContext,
     ) {
         self.emitter.reset_temp_counter();
-        let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
         let ptr_tmp = self.load_pointer_operand_to_temp(ptr, ctx);
         let byte_val_reg = self.load_value_to_temp(bytes, ctx);
         let off_tmp = self.emitter.alloc_temp_reg();
         self.emitter.emit_mv(off_tmp, byte_val_reg);
-        let result_tmp = self.emitter.alloc_temp_reg();
+        let result_tmp = self.result_reg_for(dest, ctx);
         self.emitter.emit_add(result_tmp, ptr_tmp, off_tmp);
-        self.emitter.emit_sd(SP, result_tmp, dest_slot as i32);
+        let ptr_ty = IrType::Pointer(Box::new(IrType::Void));
+        self.commit_int_result(dest, result_tmp, &ptr_ty, ctx);
     }
 
     fn lower_index(
@@ -415,7 +431,6 @@ impl CompilerRv64 {
         ctx: &mut FunctionContext,
     ) {
         self.emitter.reset_temp_counter();
-        let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
         let base_tmp = self.load_pointer_operand_to_temp(base_ptr, ctx);
         let idx_tmp = self.load_value_to_temp(idx, ctx);
         let scale = self.type_size(ty);
@@ -425,9 +440,10 @@ impl CompilerRv64 {
         } else {
             self.emitter.emit_mul_imm(scaled_tmp, idx_tmp, scale as i32);
         }
-        let result_tmp = self.emitter.alloc_temp_reg();
+        let result_tmp = self.result_reg_for(dest, ctx);
         self.emitter.emit_add(result_tmp, base_tmp, scaled_tmp);
-        self.emitter.emit_sd(SP, result_tmp, dest_slot as i32);
+        let ptr_ty = IrType::Pointer(Box::new(IrType::Void));
+        self.commit_int_result(dest, result_tmp, &ptr_ty, ctx);
     }
 
     fn lower_math(
@@ -444,10 +460,10 @@ impl CompilerRv64 {
         if matches!(resolved_ty, IrType::Aggregate(_) | IrType::Array { .. }) {
             panic!("Math operations cannot be performed on aggregate/array type {resolved_ty:?}");
         }
-        let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
         self.emitter
             .emit_comment(&format!("{op} operation on {ty}"));
         if let IrType::Float(width) = resolved_ty {
+            let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
             let is_f64 = matches!(width, hll_to_ir::FloatWidth::F64);
             let lhs_fp = self.load_float_value_to_temp(lhs, &resolved_ty, ctx);
             let rhs_fp = self.load_float_value_to_temp(rhs, &resolved_ty, ctx);
@@ -475,7 +491,7 @@ impl CompilerRv64 {
         } else {
             let lhs_tmp = self.load_value_to_temp(lhs, ctx);
             let rhs_tmp = self.load_value_to_temp(rhs, ctx);
-            let result_tmp = self.emitter.alloc_temp_reg();
+            let result_tmp = self.result_reg_for(dest, ctx);
             match op {
                 IrMathOp::Add => self.emitter.emit_add(result_tmp, lhs_tmp, rhs_tmp),
                 IrMathOp::Sub => self.emitter.emit_sub(result_tmp, lhs_tmp, rhs_tmp),
@@ -492,8 +508,7 @@ impl CompilerRv64 {
                 IrMathOp::Or => self.emitter.emit_or(result_tmp, lhs_tmp, rhs_tmp),
                 IrMathOp::Xor => self.emitter.emit_xor(result_tmp, lhs_tmp, rhs_tmp),
             }
-            self.emitter
-                .emit_store_from_tmp(SP, result_tmp, &resolved_ty, dest_slot as i32);
+            self.commit_int_result(dest, result_tmp, &resolved_ty, ctx);
         }
     }
 
@@ -510,8 +525,8 @@ impl CompilerRv64 {
         if matches!(resolved_ty, IrType::Aggregate(_) | IrType::Array { .. }) {
             panic!("Unary operations cannot be performed on aggregate/array type {resolved_ty:?}");
         }
-        let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
         if let IrType::Float(width) = resolved_ty {
+            let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
             let is_f64 = matches!(width, hll_to_ir::FloatWidth::F64);
             let val_fp = self.load_float_value_to_temp(value, &resolved_ty, ctx);
             let result_fp = self.emitter.alloc_float_temp_reg();
@@ -536,13 +551,12 @@ impl CompilerRv64 {
             }
         } else {
             let val_tmp = self.load_value_to_temp(value, ctx);
-            let result_tmp = self.emitter.alloc_temp_reg();
+            let result_tmp = self.result_reg_for(dest, ctx);
             match op {
                 IrUnaryOp::Neg => self.emitter.emit_neg(result_tmp, val_tmp),
                 IrUnaryOp::Not => self.emitter.emit_not(result_tmp, val_tmp),
             }
-            self.emitter
-                .emit_store_from_tmp(SP, result_tmp, &resolved_ty, dest_slot as i32);
+            self.commit_int_result(dest, result_tmp, &resolved_ty, ctx);
         }
     }
 
@@ -562,13 +576,12 @@ impl CompilerRv64 {
                 "Comparison operations cannot be performed on aggregate/array type {resolved_ty:?}"
             );
         }
-        let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
         let bool_ty = IrType::Integer(hll_to_ir::IntWidth::I1);
         if let IrType::Float(width) = resolved_ty {
             let is_f64 = matches!(width, hll_to_ir::FloatWidth::F64);
             let lhs_fp = self.load_float_value_to_temp(lhs, &resolved_ty, ctx);
             let rhs_fp = self.load_float_value_to_temp(rhs, &resolved_ty, ctx);
-            let result_tmp = self.emitter.alloc_temp_reg();
+            let result_tmp = self.result_reg_for(dest, ctx);
             // Emit the comparison appropriate to the float width.
             let feq = |s: &mut Self, rd, a, b| {
                 if is_f64 {
@@ -603,12 +616,11 @@ impl CompilerRv64 {
                 IrCmpOp::Sgt | IrCmpOp::Ugt => flt(self, result_tmp, rhs_fp, lhs_fp),
                 IrCmpOp::Sge | IrCmpOp::Uge => fle(self, result_tmp, rhs_fp, lhs_fp),
             }
-            self.emitter
-                .emit_store_from_tmp(SP, result_tmp, &bool_ty, dest_slot as i32);
+            self.commit_canonical_result(dest, result_tmp, &bool_ty, ctx);
         } else {
             let lhs_tmp = self.load_value_to_temp(lhs, ctx);
             let rhs_tmp = self.load_value_to_temp(rhs, ctx);
-            let result_tmp = self.emitter.alloc_temp_reg();
+            let result_tmp = self.result_reg_for(dest, ctx);
             match op {
                 IrCmpOp::Eq => self.emitter.emit_seq(result_tmp, lhs_tmp, rhs_tmp),
                 IrCmpOp::Ne => self.emitter.emit_sne(result_tmp, lhs_tmp, rhs_tmp),
@@ -621,8 +633,7 @@ impl CompilerRv64 {
                 IrCmpOp::Sge => self.emitter.emit_cmp_sge(result_tmp, lhs_tmp, rhs_tmp),
                 IrCmpOp::Uge => self.emitter.emit_cmp_uge(result_tmp, lhs_tmp, rhs_tmp),
             }
-            self.emitter
-                .emit_store_from_tmp(SP, result_tmp, &bool_ty, dest_slot as i32);
+            self.commit_canonical_result(dest, result_tmp, &bool_ty, ctx);
         }
     }
 
@@ -639,7 +650,6 @@ impl CompilerRv64 {
         if matches!(resolved_ty, IrType::Aggregate(_) | IrType::Array { .. }) {
             panic!("Cast operations cannot be performed on aggregate/array type {resolved_ty:?}");
         }
-        let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
         let src_ty = self.resolve_value_type(value, ctx);
 
         // Casts that cross or stay within the FP register file need fcvt, not a
@@ -649,15 +659,17 @@ impl CompilerRv64 {
         let dst_is_float = matches!(resolved_ty, IrType::Float(_));
         match mode {
             IrCastMode::F2i => {
-                self.lower_cast_f2i(dest_slot, value, &src_ty, &resolved_ty, ctx);
+                self.lower_cast_f2i(dest, value, &src_ty, &resolved_ty, ctx);
                 return;
             }
             IrCastMode::I2f => {
+                let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
                 self.lower_cast_i2f(dest_slot, value, &resolved_ty, ctx);
                 return;
             }
             // A float-to-float Bitcast is really a width conversion.
             IrCastMode::Bitcast if src_is_float && dst_is_float => {
+                let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
                 self.lower_cast_f2f(dest_slot, value, &src_ty, &resolved_ty, ctx);
                 return;
             }
@@ -665,10 +677,9 @@ impl CompilerRv64 {
         }
 
         let src_tmp = self.load_value_to_temp(value, ctx);
-        let result_tmp = self.emitter.alloc_temp_reg();
+        let result_tmp = self.result_reg_for(dest, ctx);
         self.lower_cast(result_tmp, src_tmp, mode, &resolved_ty);
-        self.emitter
-            .emit_store_from_tmp(SP, result_tmp, &resolved_ty, dest_slot as i32);
+        self.commit_int_result(dest, result_tmp, &resolved_ty, ctx);
     }
 
     /// Lower a float-to-integer cast via the appropriate `fcvt.{w,l}.{s,d}`.
@@ -676,14 +687,14 @@ impl CompilerRv64 {
     /// used (the common case).
     fn lower_cast_f2i(
         &mut self,
-        dest_slot: usize,
+        dest: &hll_to_ir::IrRegister,
         value: &IrValue,
         src_ty: &IrType,
         target_ty: &IrType,
         ctx: &FunctionContext,
     ) {
         let src_fp = self.load_float_value_to_temp(value, src_ty, ctx);
-        let result_tmp = self.emitter.alloc_temp_reg();
+        let result_tmp = self.result_reg_for(dest, ctx);
         let from_f64 = matches!(src_ty, IrType::Float(hll_to_ir::FloatWidth::F64));
         let to_i64 = matches!(target_ty, IrType::Integer(hll_to_ir::IntWidth::I64));
         match (from_f64, to_i64) {
@@ -700,8 +711,7 @@ impl CompilerRv64 {
                 .emitter
                 .emit_inst(RealInstruction::FcvtLD(FcvtLD::new(result_tmp, src_fp))),
         }
-        self.emitter
-            .emit_store_from_tmp(SP, result_tmp, target_ty, dest_slot as i32);
+        self.commit_int_result(dest, result_tmp, target_ty, ctx);
     }
 
     /// Lower an integer-to-float cast via `fcvt.{s,d}.{w,l}`. Signed source is
@@ -830,13 +840,15 @@ impl CompilerRv64 {
             } else {
                 stack_bytes
             };
-            self.emitter.emit_add_imm(SP, SP, -aligned_bytes);
 
+            // Store below sp first, then move sp: loading an argument from its
+            // stack slot must happen while sp still matches the frame layout.
             for (i, arg) in args.iter().enumerate().skip(8) {
                 let arg_tmp = self.load_value_to_temp(arg, ctx);
-                let offset = ((i - 8) * 8) as i32;
+                let offset = (((i - 8) * 8) as i64 - aligned_bytes) as i32;
                 self.emitter.emit_sd(SP, arg_tmp, offset);
             }
+            self.emitter.emit_add_imm(SP, SP, -aligned_bytes);
         }
 
         self.emitter.emit_jal(RA, function);
@@ -909,10 +921,8 @@ impl CompilerRv64 {
                 }
             }
         } else if !is_agg_return && let Some(dest) = dest {
-            let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
             let resolved_return_ty = self.resolve_ir_type(&func_return_type);
-            self.emitter
-                .emit_store_from_tmp(SP, A0, &resolved_return_ty, dest_slot as i32);
+            self.store_int_result_from(dest, A0, &resolved_return_ty, ctx);
         }
         self.emitter
             .emit_comment(&format!("--- End Function Call: {function} ---"));
@@ -925,11 +935,11 @@ impl CompilerRv64 {
         ctx: &mut FunctionContext,
     ) {
         self.emitter.reset_temp_counter();
-        let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
-        let temp = self.emitter.alloc_temp_reg();
+        let temp = self.result_reg_for(dest, ctx);
         self.emitter
             .emit_raw(&format!("\tla {}, {}", reg_name(temp, false), name));
-        self.emitter.emit_sd(SP, temp, dest_slot as i32);
+        let ptr_ty = IrType::Pointer(Box::new(IrType::Void));
+        self.commit_canonical_result(dest, temp, &ptr_ty, ctx);
     }
 
     fn lower_heap_alloc(
@@ -940,7 +950,6 @@ impl CompilerRv64 {
         ctx: &mut FunctionContext,
     ) {
         self.emitter.reset_temp_counter();
-        let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
         let type_size = self.type_size(ty);
 
         match count {
@@ -966,7 +975,8 @@ impl CompilerRv64 {
         }
 
         self.emitter.emit_raw("\tcall malloc");
-        self.emitter.emit_sd(SP, A0, dest_slot as i32);
+        let ptr_ty = IrType::Pointer(Box::new(IrType::Void));
+        self.store_int_result_from(dest, A0, &ptr_ty, ctx);
     }
 
     fn lower_heap_free(&mut self, ptr: &hll_to_ir::IrRegister, ctx: &mut FunctionContext) {
@@ -984,11 +994,11 @@ impl CompilerRv64 {
     ) {
         use asm_to_binary::parse_int_reg;
         self.emitter.reset_temp_counter();
-        let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
         let src_hw = parse_int_reg(reg).expect("asm_reg: register validated by semantic analysis");
-        let tmp = self.emitter.alloc_temp_reg();
+        let tmp = self.result_reg_for(dest, ctx);
         self.emitter.emit_mv(tmp, src_hw);
-        self.emitter.emit_sd(SP, tmp, dest_slot as i32);
+        let i64_ty = IrType::Integer(hll_to_ir::IntWidth::I64);
+        self.commit_canonical_result(dest, tmp, &i64_ty, ctx);
     }
 
     fn lower_terminator(
@@ -1098,6 +1108,68 @@ impl CompilerRv64 {
         ctx.emit_epilogue(&mut self.emitter);
     }
 
+    // --- Result-routing helpers (register allocation) ---
+
+    /// The register an instruction result is computed into: the dest's
+    /// assigned physical register, or a fresh scratch temp for slot-based dests.
+    fn result_reg_for(&mut self, dest: &hll_to_ir::IrRegister, ctx: &FunctionContext) -> Reg {
+        ctx.phys_reg_for(dest)
+            .unwrap_or_else(|| self.emitter.alloc_temp_reg())
+    }
+
+    /// Finish an integer-producing instruction whose result is in `result`
+    /// (obtained from `result_reg_for`): register-resident dests are
+    /// width-normalized in place, slot-based dests are stored to their slot.
+    fn commit_int_result(
+        &mut self,
+        dest: &hll_to_ir::IrRegister,
+        result: Reg,
+        ty: &IrType,
+        ctx: &FunctionContext,
+    ) {
+        if ctx.phys_reg_for(dest).is_some() {
+            self.emitter.emit_normalize_width(result, ty);
+        } else {
+            let slot = ctx.slot_for_reg(dest).expect("dest slot");
+            self.emitter
+                .emit_store_from_tmp(SP, result, ty, slot as i32);
+        }
+    }
+
+    /// Like `commit_int_result`, but skips width normalization for results
+    /// already in canonical sign-extended form (e.g. comparison results,
+    /// always 0 or 1).
+    fn commit_canonical_result(
+        &mut self,
+        dest: &hll_to_ir::IrRegister,
+        result: Reg,
+        ty: &IrType,
+        ctx: &FunctionContext,
+    ) {
+        if ctx.phys_reg_for(dest).is_none() {
+            let slot = ctx.slot_for_reg(dest).expect("dest slot");
+            self.emitter
+                .emit_store_from_tmp(SP, result, ty, slot as i32);
+        }
+    }
+
+    /// Store a value already sitting in `src` (e.g. a0 after a call) into the
+    /// dest register or slot.
+    fn store_int_result_from(
+        &mut self,
+        dest: &hll_to_ir::IrRegister,
+        src: Reg,
+        ty: &IrType,
+        ctx: &FunctionContext,
+    ) {
+        if let Some(phys) = ctx.phys_reg_for(dest) {
+            self.emitter.emit_move_typed(phys, src, ty);
+        } else {
+            let slot = ctx.slot_for_reg(dest).expect("dest slot");
+            self.emitter.emit_store_from_tmp(SP, src, ty, slot as i32);
+        }
+    }
+
     // --- Operand-loading helpers ---
 
     fn resolve_ptr_to_addr(
@@ -1106,6 +1178,19 @@ impl CompilerRv64 {
         ctx: &FunctionContext,
         byte_offset: Option<i32>,
     ) -> Reg {
+        if let Some(phys) = ctx.phys_reg_for(ptr) {
+            // The pointer already lives in a register. Apply any offset into a
+            // scratch temp; the allocated register must not be mutated.
+            return match byte_offset {
+                Some(off) if off != 0 => {
+                    let tmp = self.emitter.alloc_temp_reg();
+                    self.emitter.emit_add_imm(tmp, phys, off as i64);
+                    tmp
+                }
+                _ => phys,
+            };
+        }
+
         let slot = ctx.slot_for_reg(ptr).expect("ptr slot");
         let tmp = self.emitter.alloc_temp_reg();
 
@@ -1124,6 +1209,14 @@ impl CompilerRv64 {
     }
 
     fn load_value_to_temp(&mut self, val: &IrValue, ctx: &FunctionContext) -> Reg {
+        // Register-resident values are used in place; no temp, no load.
+        if let IrValue::Register(reg) = val
+            && !ctx.preserve_param_registers()
+            && let Some(phys) = ctx.phys_reg_for(reg)
+        {
+            return phys;
+        }
+
         let temp = self.emitter.alloc_temp_reg();
         match val {
             IrValue::Register(reg) => {
@@ -1240,6 +1333,12 @@ impl CompilerRv64 {
         reg: &hll_to_ir::IrRegister,
         ctx: &FunctionContext,
     ) -> Reg {
+        if !ctx.preserve_param_registers()
+            && let Some(phys) = ctx.phys_reg_for(reg)
+        {
+            return phys;
+        }
+
         let temp = self.emitter.alloc_temp_reg();
         if ctx.preserve_param_registers()
             && let Some(index) = ctx.param_index(reg)

@@ -1,12 +1,5 @@
 /// Multi-pass assembler: `Vec<RvInstruction>` -> `AssembledOutput`.
-///
-/// # Passes
-///
-/// | Pass | File | Responsibility |
-/// |------|------|----------------|
-/// | 0 :  Parse  | `parser.rs`   | `RvInstruction` -> `Vec<AsmToken>` (typed, no raw strings) |
-/// | 1 :  Layout | `layout.rs`   | Walk tokens, compute every label's section-relative address |
-/// | 2 :  Encode | `encode.rs`   | Emit bytes, resolve branch/jump offsets via symbol table |
+/// See _RISCV_SPECIFICATIONS.md for pass details (parse, layout, encode).
 pub(crate) mod directive;
 pub(crate) mod encode;
 pub(crate) mod layout;
@@ -23,7 +16,7 @@ pub use link_layout::LinkLayout;
 use crate::rv_instruction::RvInstruction;
 use output::AssembledOutput;
 
-/// Error produced by any pass.
+/// Error produced by any assembler pass.
 #[derive(Debug, Clone)]
 pub struct AssemblerError {
     pub message: String,
@@ -46,19 +39,10 @@ impl AssemblerError {
 pub struct Assembler;
 
 impl Assembler {
-    /// Assemble a `RvInstruction` token stream into machine code.
-    ///
-    /// # Errors
-    /// Returns an error if a label is undefined/duplicated, or if a branch
-    /// offset falls outside the encodable range.
+    /// Assemble tokens into machine code. Errors on undefined labels or out-of-range branches.
     pub fn assemble(tokens: &[RvInstruction]) -> Result<AssembledOutput, AssemblerError> {
-        // Pass 0: parse raw strings into fully-typed AsmTokens.
         let asm_tokens = parser::parse(tokens);
-
-        // Pass 1: compute label addresses.
         let layout = layout::compute_layout(&asm_tokens)?;
-
-        // Pass 2: encode to bytes, resolving all symbol references.
         encode::encode(&asm_tokens, &layout)
     }
 }

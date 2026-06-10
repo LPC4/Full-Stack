@@ -1,10 +1,6 @@
+/// Pass 1: walk typed tokens and compute every label's byte address (section-relative).
+/// No bytes are emitted; the symbol table is used by the encode pass.
 use super::AssemblerError;
-/// Pass 1: walk the typed token stream and compute every label's byte address.
-///
-/// The layout pass does **not** emit any bytes; it only answers the question
-/// "at what byte offset within the output does this label live?"  That information
-/// is recorded in a `SymbolTable` which the encode pass uses to fill in
-/// branch/jump immediate fields.
 use super::section::SectionKind;
 use super::symbol_table::SymbolTable;
 use super::token::AsmToken;
@@ -12,18 +8,11 @@ use super::token::AsmToken;
 /// Result of the layout pass.
 pub struct Layout {
     pub symbols: SymbolTable,
-    /// Sections in the order they first appeared, used to keep the output stable.
     pub section_order: Vec<SectionKind>,
-    /// For each section: the total byte size after all tokens are accounted for.
     pub section_sizes: std::collections::HashMap<SectionKind, u64>,
 }
 
-/// Walk `tokens`, assign addresses to every `Label`, and return the symbol table.
-///
-/// Section addresses start at 0 for each section (the encode pass packs them
-/// consecutively, so the encode pass also sets each section's `base_address`).
-/// We use section-relative addresses here; the encode pass converts them to
-/// absolute when building `AssembledOutput`.
+/// Walk tokens, assign addresses to labels, return the symbol table.
 pub fn compute_layout(tokens: &[AsmToken]) -> Result<Layout, AssemblerError> {
     let mut symbols = SymbolTable::new();
     let mut section_order: Vec<SectionKind> = Vec::new();
@@ -31,19 +20,15 @@ pub fn compute_layout(tokens: &[AsmToken]) -> Result<Layout, AssemblerError> {
         std::collections::HashMap::new();
 
     let mut current = SectionKind::Text;
-    let mut offset: u64 = 0; // byte offset within `current`
+    let mut offset: u64 = 0;
 
     for token in tokens {
         match token {
             AsmToken::Section(kind) => {
-                // Commit final size for the outgoing section.
                 *section_sizes.entry(current.clone()).or_insert(0) = offset;
-                // Switch.
                 if !section_order.contains(kind) {
                     section_order.push(kind.clone());
                 }
-                // Restore any previously accumulated offset for this section
-                // (sections may be revisited, e.g. .text appears after .data).
                 offset = *section_sizes.entry(kind.clone()).or_insert(0);
                 current = kind.clone();
             }
@@ -81,7 +66,6 @@ pub fn compute_layout(tokens: &[AsmToken]) -> Result<Layout, AssemblerError> {
         }
     }
 
-    // Commit the final section.
     *section_sizes.entry(current).or_insert(0) = offset;
 
     Ok(Layout {

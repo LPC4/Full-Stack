@@ -1,5 +1,6 @@
 use super::frame_context::FrameContext;
 use asm_to_binary::encode_decode::Reg;
+use asm_to_binary::utils::reg_name;
 use hll_to_ir::{IrFunction, IrLabel, IrRegister, IrType};
 use std::collections::{HashMap, HashSet};
 
@@ -17,6 +18,8 @@ pub trait Rv64Backend {
     fn emit_jalr(&mut self, rd: Reg, rs1: Reg, imm: i32);
     fn emit_store_from_tmp(&mut self, addr_reg: Reg, val_reg: Reg, ty: &IrType, offset: i32);
     fn emit_load_to_slot(&mut self, slot: usize, addr_reg: Reg, ty: &IrType, offset: i32);
+    fn emit_move_typed(&mut self, rd: Reg, rs: Reg, ty: &IrType);
+    fn emit_load_typed(&mut self, rd: Reg, addr_reg: Reg, ty: &IrType, offset: i32);
     fn emit_comment(&mut self, text: &str);
 }
 
@@ -26,6 +29,9 @@ pub struct FunctionContext {
     type_aliases: HashMap<String, IrType>,
     /// Maps virtual registers to stack offsets.
     reg_slots: HashMap<IrRegister, usize>,
+    /// Maps virtual registers to assigned physical registers (register
+    /// allocation); such registers have no stack slot.
+    phys_regs: HashMap<IrRegister, Reg>,
     /// Maps virtual parameter registers to their ABI argument index.
     param_indices: HashMap<IrRegister, usize>,
     /// Records the IR type associated with each virtual register.
@@ -44,6 +50,7 @@ impl FunctionContext {
             frame: FrameContext::new(),
             type_aliases: type_aliases.clone(),
             reg_slots: HashMap::new(),
+            phys_regs: HashMap::new(),
             param_indices: HashMap::new(),
             reg_types: HashMap::new(),
             stack_address_regs: HashSet::new(),
@@ -121,6 +128,16 @@ impl FunctionContext {
         self.reg_slots.insert(reg.clone(), slot);
     }
 
+    /// Assign a physical register to a virtual register (register allocation).
+    pub fn assign_phys_reg(&mut self, reg: &IrRegister, phys: Reg) {
+        self.phys_regs.insert(reg.clone(), phys);
+    }
+
+    /// The physical register holding this virtual register, if allocated.
+    pub fn phys_reg_for(&self, reg: &IrRegister) -> Option<Reg> {
+        self.phys_regs.get(reg).copied()
+    }
+
     /// Record the ABI argument index for a function parameter register.
     pub fn set_param_index(&mut self, reg: &IrRegister, index: usize) {
         self.param_indices.insert(reg.clone(), index);
@@ -181,7 +198,8 @@ impl FunctionContext {
         }
         for (reg, offset) in self.saved_regs() {
             backend.emit_comment(&format!(
-                "Save callee-saved register s{reg} at offset {offset}"
+                "Save callee-saved register {} at offset {offset}",
+                reg_name(*reg, false)
             ));
             backend.emit_sd(SP, *reg, *offset as i32);
         }
@@ -195,7 +213,8 @@ impl FunctionContext {
         backend.emit_comment("--- Function Epilogue ---");
         for (reg, offset) in self.saved_regs().iter().rev() {
             backend.emit_comment(&format!(
-                "Restore callee-saved register s{reg} from offset {offset}"
+                "Restore callee-saved register {} from offset {offset}",
+                reg_name(*reg, false)
             ));
             backend.emit_ld(*reg, SP, *offset as i32);
         }
@@ -315,8 +334,27 @@ impl FunctionContext {
         backend.emit_add_imm(caller_sp, S0, frame_size);
 
         for (index, param) in func.params.iter().enumerate().skip(start_index) {
-            let slot = self.slot_for_reg(&param.register).expect("param slot");
             let ty = self.frame.resolve_type(&param.ty, &self.type_aliases);
+            if let Some(phys) = self.phys_reg_for(&param.register) {
+                // Register-allocated parameter: move it into its assigned
+                // register, normalizing the width like a slot round-trip would.
+                if index < 8 {
+                    backend.emit_comment(&format!(
+                        "Move parameter '{}' from register a{} to allocated register",
+                        param.register, index
+                    ));
+                    backend.emit_move_typed(phys, arg_reg(index), &ty);
+                } else {
+                    let offset = ((index - 8) * 8) as i32;
+                    backend.emit_comment(&format!(
+                        "Load parameter '{}' from caller's stack (offset {}) to allocated register",
+                        param.register, offset
+                    ));
+                    backend.emit_load_typed(phys, caller_sp, &ty, offset);
+                }
+                continue;
+            }
+            let slot = self.slot_for_reg(&param.register).expect("param slot");
             if index < 8 {
                 backend.emit_comment(&format!(
                     "Spill parameter '{}' from register a{} to stack slot {}",

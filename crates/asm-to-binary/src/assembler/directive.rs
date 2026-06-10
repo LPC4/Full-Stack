@@ -9,18 +9,14 @@ pub enum Directive {
     Half(u16),
     Word(u32),
     Dword(u64),
-    /// Null-terminated string `.asciz "..."` / `.string "..."`.
     Asciz(String),
-    /// Zero-fill `.space N` or `.zero N`.
     Space(u64),
-    /// `.equ name, value`
     Equ(String, i64),
     Unknown(String),
 }
 
 impl Directive {
-    /// Try to parse a raw directive string (stripped of leading whitespace).
-    /// Returns `None` if the string doesn't start with `.`.
+    /// Try to parse a raw directive string. Returns None if it doesn't start with `.`.
     pub fn parse(raw: &str) -> Option<Self> {
         let s = raw.trim();
         if !s.starts_with('.') {
@@ -65,7 +61,6 @@ fn parse_quoted_string(s: &str) -> String {
     let s = s.trim();
     if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
         let inner = &s[1..s.len() - 1];
-        // Unescape basic escape sequences.
         inner
             .replace("\\n", "\n")
             .replace("\\t", "\t")

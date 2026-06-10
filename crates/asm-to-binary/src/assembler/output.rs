@@ -6,49 +6,34 @@ use std::path::Path;
 /// A lightweight view of one section, returned by [`AssembledOutput::sections_iter`].
 #[derive(Debug, Clone, Copy)]
 pub struct SectionInfo<'a> {
-    /// The section name (e.g. `".text"`, `".data"`).
     pub name: &'a str,
-    /// Raw byte content of the section.
     pub bytes: &'a [u8],
 }
 
-/// Relocation kinds currently emitted by the assembler for object output.
+/// Relocation kinds emitted by the assembler for object output.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RelocationKind {
-    /// Pair relocation for `auipc + jalr` call/tail stubs.
     CallPlt,
-    /// J-type relocation for unresolved `jal`/`j` targets.
     Jal,
-    /// PC-relative `la` expansion (`auipc` + `addi`).
     La,
 }
 
 /// One unresolved relocation emitted during assembly.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RelocationRecord {
-    /// Section name containing the relocation site (e.g. `.text`).
     pub section: String,
-    /// Byte offset within `section` where relocation is applied.
     pub offset: u64,
-    /// Referenced symbol name.
     pub symbol: String,
-    /// Architecture relocation kind.
     pub kind: RelocationKind,
-    /// Explicit relocation addend.
     pub addend: i64,
 }
 
-/// The final output produced by the assembler -- one byte blob per section,
-/// plus a complete symbol table ready to hand to a linker or ELF writer.
+/// The final output produced by the assembler: byte blobs per section, symbol table, relocations.
 #[derive(Debug, Default, Clone)]
 pub struct AssembledOutput {
-    /// Sections in emission order, keyed by kind.
     pub(crate) sections: Vec<SectionData>,
-    /// All resolved labels: name -> absolute address within the output blob.
     pub(crate) symbol_table: HashMap<String, u64>,
-    /// Names marked `.globl` (exported).
     pub(crate) global_symbols: Vec<String>,
-    /// Unresolved relocation records for object-file emission.
     pub(crate) relocations: Vec<RelocationRecord>,
 }
 

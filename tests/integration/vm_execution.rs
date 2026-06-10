@@ -971,7 +971,7 @@ main: () -> i32 {
     );
 }
 
-/// 0xFFFF_FFFF - hi_adj overflows i32; the slli/srli sequence must still be right.
+/// 0xFFFF_FFFF tests hi_adj overflow; slli/srli sequence must still produce correct bits.
 #[test]
 fn li_max_unsigned_32bit() {
     let (_, outcome, _) = run_hll(r#"
@@ -1225,7 +1225,7 @@ main: () -> i32 {
     );
 }
 
-/// Store and load an i64: large value 0x8010_0000 round-trips without sign-corruption.
+/// i64 store/load round-trip for large value 0x8010_0000.
 #[test]
 fn mem_i64_store_load_large() {
     let (_, outcome, _) = run_hll(r#"

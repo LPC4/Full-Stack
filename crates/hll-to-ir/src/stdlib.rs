@@ -97,7 +97,7 @@ pub fn get_stdlib_type_prelude() -> Vec<(String, IrType)> {
     ]
 }
 
-/// Hosted stdlib: includes the Linux-syscall runtime and entry point.
+/// Hosted stdlib: includes the Linux-syscall runtime and entry point. See _LANG_SPECIFICATIONS.md.
 pub fn get_stdlib_source() -> String {
     let capacity = stdlib::TYPES.len()
         + stdlib::MEMORY_ALLOCATOR.len()
@@ -124,7 +124,7 @@ pub fn get_stdlib_source() -> String {
     combined
 }
 
-/// Kernel stdlib: types, allocator, strings, mem, freestanding panic/console,
+/// Kernel stdlib: types, allocator, panic, klog, boot runtime. No Linux syscalls.
 /// klog, kernel utilities, kernel checks, and the kernel boot runtime.
 /// No Linux syscalls. Entry point is `_kernel_start`; user code must define `kmain`.
 ///
@@ -215,7 +215,7 @@ pub fn get_kernel_stdlib_source() -> String {
     combined
 }
 
-/// Freestanding stdlib: types, allocator, strings, panic, and `_start` entry wrapper.
+/// Freestanding stdlib: types, allocator, strings, panic, and `_start` entry.
 fn get_freestanding_stdlib_source() -> String {
     let capacity = stdlib::TYPES.len()
         + stdlib::MEMORY_ALLOCATOR.len()

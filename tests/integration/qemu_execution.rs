@@ -133,7 +133,7 @@ fn require_qemu_result(test_name: &'static str, result: Result<QemuResult, QemuS
 /// Compile HLL source to the final assembled output and export it as an ELF
 /// image ready for qemu-riscv64.
 /// Uses two-stage compilation: compile stdlib and user code independently,
-/// then assemble them into objects and link the objects through the linker pipeline.
+/// then assemble and link through the pipeline.
 fn compile_to_elf(source: &str) -> Vec<u8> {
     let pipeline = CompilationPipeline::new();
 

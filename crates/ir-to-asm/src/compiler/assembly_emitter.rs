@@ -450,6 +450,63 @@ impl AssemblyEmitter {
         self.emit_inst(RealInstruction::FleqD(FleqD::new(rd, rs1, rs2)));
     }
 
+    // --- Typed register helpers ---
+
+    // Move `rs` into `rd`, normalizing to the type's width.
+    pub fn emit_move_typed(&mut self, rd: Reg, rs: Reg, ty: &IrType) {
+        match ty {
+            IrType::Integer(hll_to_ir::IntWidth::I32) => self.emit_addiw(rd, rs, 0),
+            IrType::Integer(hll_to_ir::IntWidth::I16) => {
+                self.emit_slli(rd, rs, 48);
+                self.emit_srai(rd, rd, 48);
+            }
+            IrType::Integer(hll_to_ir::IntWidth::I8 | hll_to_ir::IntWidth::I1) => {
+                self.emit_slli(rd, rs, 56);
+                self.emit_srai(rd, rd, 56);
+            }
+            _ => self.emit_mv(rd, rs),
+        }
+    }
+
+    // Sign-extend `rd` in place to the type's width (no-op for 64-bit types).
+    pub fn emit_normalize_width(&mut self, rd: Reg, ty: &IrType) {
+        match ty {
+            IrType::Integer(hll_to_ir::IntWidth::I32) => self.emit_addiw(rd, rd, 0),
+            IrType::Integer(hll_to_ir::IntWidth::I16) => {
+                self.emit_slli(rd, rd, 48);
+                self.emit_srai(rd, rd, 48);
+            }
+            IrType::Integer(hll_to_ir::IntWidth::I8 | hll_to_ir::IntWidth::I1) => {
+                self.emit_slli(rd, rd, 56);
+                self.emit_srai(rd, rd, 56);
+            }
+            _ => {}
+        }
+    }
+
+    // Typed load from `offset(addr_reg)` directly into an integer register.
+    pub fn emit_load_typed(&mut self, rd: Reg, addr_reg: Reg, ty: &IrType, offset: i32) {
+        match ty {
+            IrType::Integer(w) => match w {
+                hll_to_ir::IntWidth::I1 | hll_to_ir::IntWidth::I8 => {
+                    self.emit_inst(RealInstruction::Lb(Lb::new(rd, addr_reg, offset)));
+                }
+                hll_to_ir::IntWidth::I16 => {
+                    self.emit_inst(RealInstruction::Lh(Lh::new(rd, addr_reg, offset)));
+                }
+                hll_to_ir::IntWidth::I32 => {
+                    self.emit_inst(RealInstruction::Lw(Lw::new(rd, addr_reg, offset)));
+                }
+                hll_to_ir::IntWidth::I64 => {
+                    self.emit_inst(RealInstruction::Ld(Ld::new(rd, addr_reg, offset)));
+                }
+            },
+            _ => {
+                self.emit_inst(RealInstruction::Ld(Ld::new(rd, addr_reg, offset)));
+            }
+        }
+    }
+
     // --- Typed memory helpers ---
     pub fn emit_load_from_slot(&mut self, rd: Reg, slot: usize, ty: &IrType) {
         match ty {
@@ -729,6 +786,14 @@ impl Rv64Backend for AssemblyEmitter {
 
     fn emit_load_to_slot(&mut self, slot: usize, addr_reg: Reg, ty: &IrType, offset: i32) {
         Self::emit_load_to_slot(self, slot, addr_reg, ty, offset);
+    }
+
+    fn emit_move_typed(&mut self, rd: Reg, rs: Reg, ty: &IrType) {
+        Self::emit_move_typed(self, rd, rs, ty);
+    }
+
+    fn emit_load_typed(&mut self, rd: Reg, addr_reg: Reg, ty: &IrType, offset: i32) {
+        Self::emit_load_typed(self, rd, addr_reg, ty, offset);
     }
 
     fn emit_comment(&mut self, text: &str) {

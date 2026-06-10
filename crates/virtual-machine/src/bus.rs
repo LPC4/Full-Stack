@@ -17,7 +17,7 @@ pub const ROM_END: u64 = ROM_BASE + ROM_SIZE - 1;
 pub const UART_BASE: u64 = 0x1000_0000;
 pub const UART_SIZE: u64 = 0x1000;
 pub const UART_END: u64 = UART_BASE + UART_SIZE - 1;
-/// SYSCON power-off device. Writing any 8-byte value halts the VM with that exit code.
+/// SYSCON power-off device. Writing any 8-byte value halts the VM with the exit code.
 pub const SYSCON_BASE: u64 = 0x1001_0000;
 pub const SYSCON_SIZE: u64 = 0x1000;
 pub const SYSCON_END: u64 = SYSCON_BASE + SYSCON_SIZE - 1;

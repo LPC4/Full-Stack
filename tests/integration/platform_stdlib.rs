@@ -790,7 +790,7 @@ kmain: () -> () {
     assert_eq!(exit, Some(0));
 }
 
-/// After freeing a page, the next alloc returns the same page address (free-list reuse).
+/// Free-list reuse: next alloc returns the just-freed page.
 #[test]
 fn pmm_free_list_reuse() {
     let (uart, exit) = run_kernel_hll(
@@ -998,7 +998,7 @@ kmain: () -> () {
 
 // --- Process + Scheduler ---
 
-/// Checks that process_create returns a non-null PCB and scheduler_add accepts it.
+/// process_create returns a non-null PCB; scheduler_add accepts it.
 #[test]
 fn process_create_and_scheduler_add() {
     let (uart, exit) = run_kernel_hll(

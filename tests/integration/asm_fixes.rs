@@ -120,19 +120,45 @@ fn f32_return_value_in_fa0() {
 
 // -- Register allocation -------------------------------------------------------
 
-#[test]
-fn many_locals_use_multiple_temp_registers() {
-    let asm = compile_inline(r#"main: () -> i32 {
+const MANY_LOCALS: &str = r#"main: () -> i32 {
     a: i32 = 1  b: i32 = 2  c: i32 = 3  d: i32 = 4  e: i32 = 5
     f: i32 = 6  g: i32 = 7  h: i32 = 8  i: i32 = 9  j: i32 = 10
     return a + b + c + d + e + f + g + h + i + j
-}"#);
+}"#;
+
+#[test]
+fn many_locals_use_multiple_temp_registers() {
+    // This validates the temp-cycling behavior of the stack-slot lowering, so
+    // pin register allocation off (it would lift the locals out of slots).
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_write_artifacts(false);
+    pipeline.set_register_allocation(false);
+    let result = pipeline.compile(MANY_LOCALS).expect("compilation failed");
+    let asm = pipeline.compile_ir_to_assembly(&result.ir_program);
+
     let used: Vec<&str> = ["t0", "t1", "t2", "t3", "t4", "t5", "t6"]
         .iter()
         .filter(|r| asm.contains(*r))
         .cloned()
         .collect();
     assert!(used.len() >= 3, "expected multiple temp registers, got {used:?}");
+}
+
+#[test]
+fn many_locals_get_callee_saved_registers_by_default() {
+    // With register allocation on (the default), values live in s2-s11. The
+    // left-leaning sum keeps at most two values live at once, so the allocator
+    // correctly reuses two registers rather than spreading across the file.
+    let asm = compile_inline(MANY_LOCALS);
+    let used: Vec<&str> = ["s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11"]
+        .iter()
+        .filter(|r| asm.contains(*r))
+        .cloned()
+        .collect();
+    assert!(
+        used.len() >= 2,
+        "expected values in callee-saved registers, got {used:?}"
+    );
 }
 
 // -- Struct return convention --------------------------------------------------

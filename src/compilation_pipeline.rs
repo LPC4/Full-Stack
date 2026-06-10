@@ -164,6 +164,7 @@ pub struct CompilationPipeline {
     last_artifact_stem: RefCell<Option<String>>,
     write_artifacts: bool,
     peephole: bool,
+    register_allocation: bool,
     optimize: OptOptions,
 }
 
@@ -186,7 +187,8 @@ impl CompilationPipeline {
             artifact_stem: RefCell::new(None),
             last_artifact_stem: RefCell::new(None),
             write_artifacts: true,
-            peephole: false,
+            peephole: true,
+            register_allocation: true,
             optimize: OptOptions::none(),
         }
     }
@@ -203,7 +205,8 @@ impl CompilationPipeline {
             artifact_stem: RefCell::new(None),
             last_artifact_stem: RefCell::new(None),
             write_artifacts: true,
-            peephole: false,
+            peephole: true,
+            register_allocation: true,
             optimize: OptOptions::none(),
         }
     }
@@ -279,6 +282,14 @@ impl CompilationPipeline {
     /// before assembly.
     pub fn set_peephole(&mut self, enabled: bool) {
         self.peephole = enabled;
+    }
+
+    /// Enable or disable physical register allocation in the RV64 backend: hot
+    /// scalar values are kept in callee-saved registers (s2-s11) instead of
+    /// stack slots. On by default; turn it off to get the pure stack-slot
+    /// lowering (e.g. for codegen-shape comparisons).
+    pub fn set_register_allocation(&mut self, enabled: bool) {
+        self.register_allocation = enabled;
     }
 
     /// Enable IR-level optimization passes (constant folding, dead-code
@@ -595,6 +606,7 @@ impl CompilationPipeline {
     ) -> (String, Vec<RvInstruction>) {
         let mut compiler = CompilerRv64::new();
         compiler.set_peephole(self.peephole);
+        compiler.set_register_allocation(self.register_allocation);
         let (asm, tokens) = compiler.compile_with_tokens(ir);
         let stem = if let Some(existing) = self.current_artifact_stem() {
             existing
@@ -781,10 +793,10 @@ fn sanitize_artifact_component(value: &str) -> String {
 
 /// Canonical on-disk filesystem layout constants.
 ///
-/// These mirror the `FS_*` constants in `crates/os-runtime/kernel/fs.hll`, which
-/// is the source of truth for the running kernel. The host-side [`build_fs_image`]
-/// builder and the kernel must agree byte for byte, so `fs_layout_matches_fs_hll`
-/// asserts the two stay in sync.
+/// Mirrors `FS_*` in `kernel/fs.hll`. See _OS_SPECIFICATION.md for filesystem layout.
+///
+///
+///
 pub mod fs_layout {
     /// Block size in bytes (`FS_BLOCK_SIZE`).
     pub const BLOCK_SIZE: usize = 4096;
@@ -842,10 +854,10 @@ pub enum FsEntry<'a> {
 
 /// Serialise `entries` into the on-disk filesystem image format and return the raw bytes.
 ///
-///   Block 0       Superblock (4096 bytes, header fields in the first 64)
-///   Blocks 1-8    Inode table (256 inodes x 128 bytes)
-///   Block 9       Free-block bitmap (one bit per data block starting at block 10)
-///   Blocks 10+    Data blocks (4096 bytes each)
+/// See _OS_SPECIFICATION.md for block layout.
+///
+///
+///
 ///
 /// Layout constants live in [`fs_layout`] and are checked against `fs.hll`.
 pub fn build_fs_image(entries: &[FsEntry<'_>]) -> Vec<u8> {

@@ -1,14 +1,4 @@
-//! IR-level optimization passes.
-//!
-//! Conservative, opt-in transforms that run on the lowered `IrProgram` before
-//! backend lowering, shrinking the work the stack-only backend and the asm
-//! peephole have to do. All passes are off by default (`OptOptions::none`) so
-//! golden IR/assembly snapshots stay stable; enable them per pass.
-//!
-//! Passes are deliberately local and SSA-free so they are sound on the current
-//! IR (registers may be reassigned, e.g. loop-carried values):
-//! - [`const_fold`] -- local constant folding + propagation within a block.
-//! - [`dce`] -- whole-function dead-code elimination of pure, unread results.
+//! IR-level optimization passes (const_fold, dce). Off by default; see _LANG_SPECIFICATIONS.md.
 
 mod const_fold;
 mod dce;
@@ -52,11 +42,7 @@ pub fn optimize(program: &mut IrProgram, opts: OptOptions) {
     }
 }
 
-/// Run the enabled passes over one function to a fixpoint.
-///
-/// Folding exposes dead code and DCE can expose further folding, so the passes
-/// alternate until neither changes anything. The iteration count is bounded as a
-/// safety net; in practice it converges in a couple of rounds.
+/// Run enabled passes over one function to a fixpoint (folding + DCE alternate).
 fn optimize_function(func: &mut IrFunction, opts: OptOptions) {
     const MAX_ROUNDS: usize = 16;
     for _ in 0..MAX_ROUNDS {

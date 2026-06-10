@@ -141,9 +141,7 @@ pub fn error_to_trap_cause(e: &VmError) -> Option<(u64, u64)> {
 // --- Trap return (MRET / SRET) ---
 
 /// Handle MRET - return from machine-mode trap.
-///
-/// Restores MIE from MPIE, sets MPIE=1, restores privilege from MPP, sets MPP=User.
-/// Returns the PC to jump to (MEPC).
+/// Restores MIE from MPIE, privilege from MPP, returns PC from MEPC.
 pub fn handle_mret(regs: &mut Registers, csrs: &mut CsrFile) -> u64 {
     // MIE = old MPIE; MPIE = 1
     let mpie = (csrs.mstatus >> 7) & 1;
@@ -169,10 +167,7 @@ pub fn handle_mret(regs: &mut Registers, csrs: &mut CsrFile) -> u64 {
     csrs.mepc
 }
 
-/// Handle SRET - return from supervisor-mode trap.
-///
-/// Restores SIE from SPIE, sets SPIE=1, restores privilege from SPP, sets SPP=User.
-/// Returns the PC to jump to (SEPC), or Err if SRET is illegal in the current mode.
+/// Handle SRET - restore SIE from SPIE, privilege from SPP, return PC from SEPC. Err if illegal.
 pub fn handle_sret(regs: &mut Registers, csrs: &mut CsrFile) -> Result<u64, VmError> {
     // SRET is illegal from U-mode.
     if regs.priv_mode == PrivilegeMode::User {
