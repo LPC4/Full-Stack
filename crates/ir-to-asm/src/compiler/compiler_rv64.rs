@@ -4,7 +4,10 @@ use super::{
 };
 use asm_to_binary::encode_decode::Reg;
 use asm_to_binary::real::RealInstruction;
-use asm_to_binary::riscv::rv64fd::{Fsgnjn, fmv_d};
+use asm_to_binary::riscv::rv64fd::{
+    FcvtDL, FcvtDS, FcvtDW, FcvtLD, FcvtLS, FcvtSD, FcvtSL, FcvtSW, FcvtWD, FcvtWS, Fsgnjn,
+    FsgnjnD, fmv_d,
+};
 use asm_to_binary::riscv::rv64i::{Lb, Ld, Lh, Lw, Sb, Sh, Sw};
 use asm_to_binary::utils::reg_name;
 use hll_to_ir::{
@@ -302,6 +305,20 @@ impl CompilerRv64 {
                 0,
                 self.type_size(&resolved_ty),
             );
+        } else if let IrType::Float(width) = resolved_ty {
+            // Floats must load into an FP register and store back with fsw/fsd;
+            // routing through a GP temp would reinterpret the bit pattern.
+            let fp_tmp = self.emitter.alloc_float_temp_reg();
+            match width {
+                hll_to_ir::FloatWidth::F32 => {
+                    self.emitter.emit_flw(fp_tmp, addr_tmp, 0);
+                    self.emitter.emit_fsw(SP, fp_tmp, dest_slot as i32);
+                }
+                hll_to_ir::FloatWidth::F64 => {
+                    self.emitter.emit_fld(fp_tmp, addr_tmp, 0);
+                    self.emitter.emit_fsd(SP, fp_tmp, dest_slot as i32);
+                }
+            }
         } else {
             let loaded_val = self.emitter.alloc_temp_reg();
             match &resolved_ty {
@@ -361,7 +378,7 @@ impl CompilerRv64 {
                 self.type_size(&resolved_ty),
             );
         } else if matches!(resolved_ty, IrType::Float(_)) {
-            let val_fp = self.load_float_value_to_temp(value, ctx);
+            let val_fp = self.load_float_value_to_temp(value, &resolved_ty, ctx);
             self.emitter
                 .emit_store_from_tmp(addr_tmp, val_fp, &resolved_ty, 0);
         } else {
@@ -430,11 +447,18 @@ impl CompilerRv64 {
         let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
         self.emitter
             .emit_comment(&format!("{op} operation on {ty}"));
-        if matches!(resolved_ty, IrType::Float(hll_to_ir::FloatWidth::F32)) {
-            let lhs_fp = self.load_float_value_to_temp(lhs, ctx);
-            let rhs_fp = self.load_float_value_to_temp(rhs, ctx);
+        if let IrType::Float(width) = resolved_ty {
+            let is_f64 = matches!(width, hll_to_ir::FloatWidth::F64);
+            let lhs_fp = self.load_float_value_to_temp(lhs, &resolved_ty, ctx);
+            let rhs_fp = self.load_float_value_to_temp(rhs, &resolved_ty, ctx);
             let result_fp = self.emitter.alloc_float_temp_reg();
             match op {
+                IrMathOp::Add if is_f64 => self.emitter.emit_fadd_d(result_fp, lhs_fp, rhs_fp),
+                IrMathOp::Sub if is_f64 => self.emitter.emit_fsub_d(result_fp, lhs_fp, rhs_fp),
+                IrMathOp::Mul if is_f64 => self.emitter.emit_fmul_d(result_fp, lhs_fp, rhs_fp),
+                IrMathOp::Div | IrMathOp::SDiv if is_f64 => {
+                    self.emitter.emit_fdiv_d(result_fp, lhs_fp, rhs_fp);
+                }
                 IrMathOp::Add => self.emitter.emit_fadd_s(result_fp, lhs_fp, rhs_fp),
                 IrMathOp::Sub => self.emitter.emit_fsub_s(result_fp, lhs_fp, rhs_fp),
                 IrMathOp::Mul => self.emitter.emit_fmul_s(result_fp, lhs_fp, rhs_fp),
@@ -443,7 +467,11 @@ impl CompilerRv64 {
                 }
                 _ => panic!("Unsupported float math op {op:?}"),
             }
-            self.emitter.emit_fsw(SP, result_fp, dest_slot as i32);
+            if is_f64 {
+                self.emitter.emit_fsd(SP, result_fp, dest_slot as i32);
+            } else {
+                self.emitter.emit_fsw(SP, result_fp, dest_slot as i32);
+            }
         } else {
             let lhs_tmp = self.load_value_to_temp(lhs, ctx);
             let rhs_tmp = self.load_value_to_temp(rhs, ctx);
@@ -483,10 +511,17 @@ impl CompilerRv64 {
             panic!("Unary operations cannot be performed on aggregate/array type {resolved_ty:?}");
         }
         let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
-        if matches!(resolved_ty, IrType::Float(hll_to_ir::FloatWidth::F32)) {
-            let val_fp = self.load_float_value_to_temp(value, ctx);
+        if let IrType::Float(width) = resolved_ty {
+            let is_f64 = matches!(width, hll_to_ir::FloatWidth::F64);
+            let val_fp = self.load_float_value_to_temp(value, &resolved_ty, ctx);
             let result_fp = self.emitter.alloc_float_temp_reg();
             match op {
+                IrUnaryOp::Neg if is_f64 => {
+                    self.emitter
+                        .emit_inst(RealInstruction::FsgnjnD(FsgnjnD::new(
+                            result_fp, val_fp, val_fp,
+                        )));
+                }
                 IrUnaryOp::Neg => {
                     self.emitter.emit_inst(RealInstruction::Fsgnjn(Fsgnjn::new(
                         result_fp, val_fp, val_fp,
@@ -494,7 +529,11 @@ impl CompilerRv64 {
                 }
                 IrUnaryOp::Not => panic!("Bitwise not not supported for floats"),
             }
-            self.emitter.emit_fsw(SP, result_fp, dest_slot as i32);
+            if is_f64 {
+                self.emitter.emit_fsd(SP, result_fp, dest_slot as i32);
+            } else {
+                self.emitter.emit_fsw(SP, result_fp, dest_slot as i32);
+            }
         } else {
             let val_tmp = self.load_value_to_temp(value, ctx);
             let result_tmp = self.emitter.alloc_temp_reg();
@@ -525,29 +564,44 @@ impl CompilerRv64 {
         }
         let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
         let bool_ty = IrType::Integer(hll_to_ir::IntWidth::I1);
-        if matches!(resolved_ty, IrType::Float(hll_to_ir::FloatWidth::F32)) {
-            let lhs_fp = self.load_float_value_to_temp(lhs, ctx);
-            let rhs_fp = self.load_float_value_to_temp(rhs, ctx);
+        if let IrType::Float(width) = resolved_ty {
+            let is_f64 = matches!(width, hll_to_ir::FloatWidth::F64);
+            let lhs_fp = self.load_float_value_to_temp(lhs, &resolved_ty, ctx);
+            let rhs_fp = self.load_float_value_to_temp(rhs, &resolved_ty, ctx);
             let result_tmp = self.emitter.alloc_temp_reg();
+            // Emit the comparison appropriate to the float width.
+            let feq = |s: &mut Self, rd, a, b| {
+                if is_f64 {
+                    s.emitter.emit_feq_d(rd, a, b)
+                } else {
+                    s.emitter.emit_feq_s(rd, a, b)
+                }
+            };
+            let flt = |s: &mut Self, rd, a, b| {
+                if is_f64 {
+                    s.emitter.emit_flt_d(rd, a, b)
+                } else {
+                    s.emitter.emit_flt_s(rd, a, b)
+                }
+            };
+            let fle = |s: &mut Self, rd, a, b| {
+                if is_f64 {
+                    s.emitter.emit_fle_d(rd, a, b)
+                } else {
+                    s.emitter.emit_fle_s(rd, a, b)
+                }
+            };
             match op {
-                IrCmpOp::Eq => self.emitter.emit_feq_s(result_tmp, lhs_fp, rhs_fp),
+                IrCmpOp::Eq => feq(self, result_tmp, lhs_fp, rhs_fp),
                 IrCmpOp::Ne => {
                     let tmp = self.emitter.alloc_temp_reg();
-                    self.emitter.emit_feq_s(tmp, lhs_fp, rhs_fp);
+                    feq(self, tmp, lhs_fp, rhs_fp);
                     self.emitter.emit_not(result_tmp, tmp);
                 }
-                IrCmpOp::Slt | IrCmpOp::Ult => {
-                    self.emitter.emit_flt_s(result_tmp, lhs_fp, rhs_fp);
-                }
-                IrCmpOp::Sle | IrCmpOp::Ule => {
-                    self.emitter.emit_fle_s(result_tmp, lhs_fp, rhs_fp);
-                }
-                IrCmpOp::Sgt | IrCmpOp::Ugt => {
-                    self.emitter.emit_flt_s(result_tmp, rhs_fp, lhs_fp);
-                }
-                IrCmpOp::Sge | IrCmpOp::Uge => {
-                    self.emitter.emit_fle_s(result_tmp, rhs_fp, lhs_fp);
-                }
+                IrCmpOp::Slt | IrCmpOp::Ult => flt(self, result_tmp, lhs_fp, rhs_fp),
+                IrCmpOp::Sle | IrCmpOp::Ule => fle(self, result_tmp, lhs_fp, rhs_fp),
+                IrCmpOp::Sgt | IrCmpOp::Ugt => flt(self, result_tmp, rhs_fp, lhs_fp),
+                IrCmpOp::Sge | IrCmpOp::Uge => fle(self, result_tmp, rhs_fp, lhs_fp),
             }
             self.emitter
                 .emit_store_from_tmp(SP, result_tmp, &bool_ty, dest_slot as i32);
@@ -586,11 +640,133 @@ impl CompilerRv64 {
             panic!("Cast operations cannot be performed on aggregate/array type {resolved_ty:?}");
         }
         let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
+        let src_ty = self.resolve_value_type(value, ctx);
+
+        // Casts that cross or stay within the FP register file need fcvt, not a
+        // plain integer move. The IR `Cast` carries only the target type, so the
+        // source width is recovered from the operand's type.
+        let src_is_float = matches!(src_ty, IrType::Float(_));
+        let dst_is_float = matches!(resolved_ty, IrType::Float(_));
+        match mode {
+            IrCastMode::F2i => {
+                self.lower_cast_f2i(dest_slot, value, &src_ty, &resolved_ty, ctx);
+                return;
+            }
+            IrCastMode::I2f => {
+                self.lower_cast_i2f(dest_slot, value, &resolved_ty, ctx);
+                return;
+            }
+            // A float-to-float Bitcast is really a width conversion.
+            IrCastMode::Bitcast if src_is_float && dst_is_float => {
+                self.lower_cast_f2f(dest_slot, value, &src_ty, &resolved_ty, ctx);
+                return;
+            }
+            _ => {}
+        }
+
         let src_tmp = self.load_value_to_temp(value, ctx);
         let result_tmp = self.emitter.alloc_temp_reg();
         self.lower_cast(result_tmp, src_tmp, mode, &resolved_ty);
         self.emitter
             .emit_store_from_tmp(SP, result_tmp, &resolved_ty, dest_slot as i32);
+    }
+
+    /// Lower a float-to-integer cast via the appropriate `fcvt.{w,l}.{s,d}`.
+    /// Signedness is not tracked in the IR cast mode, so signed conversion is
+    /// used (the common case).
+    fn lower_cast_f2i(
+        &mut self,
+        dest_slot: usize,
+        value: &IrValue,
+        src_ty: &IrType,
+        target_ty: &IrType,
+        ctx: &FunctionContext,
+    ) {
+        let src_fp = self.load_float_value_to_temp(value, src_ty, ctx);
+        let result_tmp = self.emitter.alloc_temp_reg();
+        let from_f64 = matches!(src_ty, IrType::Float(hll_to_ir::FloatWidth::F64));
+        let to_i64 = matches!(target_ty, IrType::Integer(hll_to_ir::IntWidth::I64));
+        match (from_f64, to_i64) {
+            (false, false) => self
+                .emitter
+                .emit_inst(RealInstruction::FcvtWS(FcvtWS::new(result_tmp, src_fp))),
+            (false, true) => self
+                .emitter
+                .emit_inst(RealInstruction::FcvtLS(FcvtLS::new(result_tmp, src_fp))),
+            (true, false) => self
+                .emitter
+                .emit_inst(RealInstruction::FcvtWD(FcvtWD::new(result_tmp, src_fp))),
+            (true, true) => self
+                .emitter
+                .emit_inst(RealInstruction::FcvtLD(FcvtLD::new(result_tmp, src_fp))),
+        }
+        self.emitter
+            .emit_store_from_tmp(SP, result_tmp, target_ty, dest_slot as i32);
+    }
+
+    /// Lower an integer-to-float cast via `fcvt.{s,d}.{w,l}`. Signed source is
+    /// assumed (signedness is not carried in the IR cast mode).
+    fn lower_cast_i2f(
+        &mut self,
+        dest_slot: usize,
+        value: &IrValue,
+        target_ty: &IrType,
+        ctx: &FunctionContext,
+    ) {
+        let src_ty = self.resolve_value_type(value, ctx);
+        let src_tmp = self.load_value_to_temp(value, ctx);
+        let result_fp = self.emitter.alloc_float_temp_reg();
+        let to_f64 = matches!(target_ty, IrType::Float(hll_to_ir::FloatWidth::F64));
+        let from_i64 = matches!(src_ty, IrType::Integer(hll_to_ir::IntWidth::I64));
+        match (to_f64, from_i64) {
+            (false, false) => self
+                .emitter
+                .emit_inst(RealInstruction::FcvtSW(FcvtSW::new(result_fp, src_tmp))),
+            (false, true) => self
+                .emitter
+                .emit_inst(RealInstruction::FcvtSL(FcvtSL::new(result_fp, src_tmp))),
+            (true, false) => self
+                .emitter
+                .emit_inst(RealInstruction::FcvtDW(FcvtDW::new(result_fp, src_tmp))),
+            (true, true) => self
+                .emitter
+                .emit_inst(RealInstruction::FcvtDL(FcvtDL::new(result_fp, src_tmp))),
+        }
+        if to_f64 {
+            self.emitter.emit_fsd(SP, result_fp, dest_slot as i32);
+        } else {
+            self.emitter.emit_fsw(SP, result_fp, dest_slot as i32);
+        }
+    }
+
+    /// Lower a float-to-float cast: f32<->f64 width conversion, or a plain move
+    /// when the widths match.
+    fn lower_cast_f2f(
+        &mut self,
+        dest_slot: usize,
+        value: &IrValue,
+        src_ty: &IrType,
+        target_ty: &IrType,
+        ctx: &FunctionContext,
+    ) {
+        let src_fp = self.load_float_value_to_temp(value, src_ty, ctx);
+        let result_fp = self.emitter.alloc_float_temp_reg();
+        let from_f64 = matches!(src_ty, IrType::Float(hll_to_ir::FloatWidth::F64));
+        let to_f64 = matches!(target_ty, IrType::Float(hll_to_ir::FloatWidth::F64));
+        match (from_f64, to_f64) {
+            (true, false) => self
+                .emitter
+                .emit_inst(RealInstruction::FcvtSD(FcvtSD::new(result_fp, src_fp))),
+            (false, true) => self
+                .emitter
+                .emit_inst(RealInstruction::FcvtDS(FcvtDS::new(result_fp, src_fp))),
+            _ => self.emitter.emit_fmv_d(result_fp, src_fp),
+        }
+        if to_f64 {
+            self.emitter.emit_fsd(SP, result_fp, dest_slot as i32);
+        } else {
+            self.emitter.emit_fsw(SP, result_fp, dest_slot as i32);
+        }
     }
 
     fn lower_call(
@@ -902,7 +1078,7 @@ impl CompilerRv64 {
             } else {
                 let resolved_val = self.resolve_value_type(val, ctx);
                 if matches!(resolved_val, IrType::Float(_)) {
-                    let val_fp = self.load_float_value_to_temp(val, ctx);
+                    let val_fp = self.load_float_value_to_temp(val, &resolved_val, ctx);
                     match resolved_val {
                         IrType::Float(hll_to_ir::FloatWidth::F32) => {
                             self.emitter.emit_fmv_s(FA0, val_fp);
@@ -988,7 +1164,15 @@ impl CompilerRv64 {
         temp
     }
 
-    fn load_float_value_to_temp(&mut self, val: &IrValue, ctx: &FunctionContext) -> Reg {
+    /// Load a float value into an FP temp. `float_ty` is the operand's float
+    /// width, used to materialize constants with the correct bit pattern and
+    /// move instruction (`fmv.w.x` for f32, `fmv.d.x` for f64).
+    fn load_float_value_to_temp(
+        &mut self,
+        val: &IrValue,
+        float_ty: &IrType,
+        ctx: &FunctionContext,
+    ) -> Reg {
         let temp = self.emitter.alloc_float_temp_reg();
         match val {
             IrValue::Register(reg) => {
@@ -1030,8 +1214,21 @@ impl CompilerRv64 {
             }
             IrValue::Float(f) => {
                 let int_tmp = self.emitter.alloc_temp_reg();
-                self.emitter.emit_li(int_tmp, f.to_bits() as i64);
-                self.emitter.emit_fmv_w_x(temp, int_tmp);
+                match float_ty {
+                    IrType::Float(hll_to_ir::FloatWidth::F64) => {
+                        // Move the full 64-bit pattern via fmv.d.x.
+                        self.emitter.emit_li(int_tmp, f.to_bits() as i64);
+                        self.emitter.emit_fmv_d_x(temp, int_tmp);
+                    }
+                    _ => {
+                        // f32: round the f64 literal to f32 and move its 32-bit
+                        // pattern. fmv.w.x only consumes the low 32 bits, so the
+                        // value must already be the f32 encoding.
+                        let bits = (*f as f32).to_bits();
+                        self.emitter.emit_li(int_tmp, i64::from(bits));
+                        self.emitter.emit_fmv_w_x(temp, int_tmp);
+                    }
+                }
             }
             _ => panic!("Unsupported float value: {val:?}"),
         }

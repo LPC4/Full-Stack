@@ -83,11 +83,18 @@ pub fn insn_is_atomic(insn: &DecodedInsn) -> bool {
 }
 
 /// True when the destination of a decoded instruction is an FP register.
+///
+/// Not every OP-FP instruction writes the FP file: FP-to-int conversions
+/// (`fcvt.w/wu/l/lu.*`, funct5 0b11000), comparisons (`fle/flt/feq`, 0b10100),
+/// and `fmv.x.*`/`fclass` (0b11100) write an integer register. Treating those as
+/// FP-dest would route their result through FP forwarding and starve an adjacent
+/// integer consumer, which then reads a stale value.
 pub fn insn_is_fp_dest(insn: &DecodedInsn) -> bool {
-    matches!(
-        insn,
-        DecodedInsn::FLoad { .. } | DecodedInsn::FOp { .. } | DecodedInsn::FMac { .. }
-    )
+    match insn {
+        DecodedInsn::FLoad { .. } | DecodedInsn::FMac { .. } => true,
+        DecodedInsn::FOp { funct5, .. } => !matches!(*funct5, 0b11000 | 0b10100 | 0b11100),
+        _ => false,
+    }
 }
 
 // --- Load-use hazard detection ---
@@ -98,7 +105,8 @@ pub fn load_use_hazard(id_ex: &IDEXReg, if_id_rs1: usize, if_id_rs2: usize) -> b
     if !(id_ex.is_load || id_ex.is_fp_load) {
         return false;
     }
-    if id_ex.rd == 0 {
+    // x0 has no real result to wait on, but f0 is a real FP register.
+    if id_ex.rd == 0 && !id_ex.is_fp_load {
         return false;
     }
     id_ex.rd == if_id_rs1 || id_ex.rd == if_id_rs2
@@ -130,16 +138,18 @@ pub fn compute_forwarding(
     let mut frs1 = id_ex.frs1_val;
     let mut frs2 = id_ex.frs2_val;
 
-    // MEM/WB -> EX (lower priority)
-    if let Some(mw) = mem_wb
-        && mw.rd != 0
-    {
+    // MEM/WB -> EX (lower priority). The rd != 0 guard applies only to integer
+    // destinations: x0 is hardwired zero, but f0 is a real FP register, so FP
+    // results to f0 must still be forwarded.
+    if let Some(mw) = mem_wb {
         if !mw.is_fp_dest {
-            if mw.rd == id_ex.rs1 {
-                rs1 = mw.fwd_val;
-            }
-            if mw.rd == id_ex.rs2 {
-                rs2 = mw.fwd_val;
+            if mw.rd != 0 {
+                if mw.rd == id_ex.rs1 {
+                    rs1 = mw.fwd_val;
+                }
+                if mw.rd == id_ex.rs2 {
+                    rs2 = mw.fwd_val;
+                }
             }
         } else {
             if mw.rd == id_ex.frs1 {
@@ -151,17 +161,18 @@ pub fn compute_forwarding(
         }
     }
 
-    // EX/MEM -> EX (higher priority, load results excluded)
+    // EX/MEM -> EX (higher priority, load results excluded).
     if let Some(em) = ex_mem
-        && em.rd != 0
         && !em.is_load
     {
         if !em.is_fp_dest {
-            if em.rd == id_ex.rs1 {
-                rs1 = em.fwd_val;
-            }
-            if em.rd == id_ex.rs2 {
-                rs2 = em.fwd_val;
+            if em.rd != 0 {
+                if em.rd == id_ex.rs1 {
+                    rs1 = em.fwd_val;
+                }
+                if em.rd == id_ex.rs2 {
+                    rs2 = em.fwd_val;
+                }
             }
         } else {
             if em.rd == id_ex.frs1 {

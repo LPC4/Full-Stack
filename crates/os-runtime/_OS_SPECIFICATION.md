@@ -712,6 +712,7 @@ project-specific extensions added to support the interactive shell.
 | `105` | `unlink` | `a0=path*` | 0 or -1 | Remove a regular file (frees its dirent, data blocks, and inode); refuses directories |
 | `106` | `rmdir` | `a0=path*` | 0 or -1 | Remove an empty directory; refuses the root and non-empty directories |
 | `107` | `map_fb` | -- | base VA | Map the linear framebuffer device into the caller and return its base virtual address |
+| `108` | `poll_key` | -- | packed event or -1 | Pop the next key event from the keyboard device; -1 when none pending |
 | `220` | `fork` | -- | child pid (parent) / 0 (child) / -1 | Clone the caller: copy its address space and trap frame into a new child process |
 | `260` | `wait` | -- | exit code or -1 | Reap an exited child and return its exit code; -1 if there is no child to reap |
 
@@ -731,6 +732,11 @@ enable double buffering), and `PRESENT` (base + `307204`: publish the back buffe
 animates a spinning wireframe cube, enabling double buffering and `FILL`-clearing then `PRESENT`-ing
 each frame so it never flickers. `run /bin/fbdemo` or `run /bin/cube` from the shell paints them,
 viewable in the Machine window's FB tab.
+
+`poll_key` reads the keyboard device (`0x1007_0000`): it checks the STATUS register and, if an event
+is queued, pops the DATA register and returns the packed event (bit 16 = pressed, bits 15..0 =
+scancode); it returns -1 when the queue is empty. The host GUI forwards key presses while the FB tab
+is focused. A program can drain it in a loop to react to input without blocking.
 
 #### 9.2.1 Executable file format (FEXE)
 

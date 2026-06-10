@@ -138,6 +138,55 @@ fn: () -> () {
     );
 }
 
+// --- Float operations the backend cannot lower must be rejected cleanly ---
+// (PLAN 5.4: these used to reach the backend and panic instead of producing a
+// source-level diagnostic.)
+
+#[test]
+fn float_modulo_is_rejected() {
+    reject(
+        r#"
+main: () -> i32 {
+    a: f32 = 1.5
+    b: f32 = 2.5
+    c: f32 = a % b
+    return 0
+}
+"#,
+        "Mod",
+    );
+}
+
+#[test]
+fn float_bitwise_and_is_rejected() {
+    reject(
+        r#"
+main: () -> i32 {
+    a: f32 = 1.5
+    b: f32 = 2.5
+    c: f32 = a & b
+    return 0
+}
+"#,
+        "BitwiseAnd",
+    );
+}
+
+#[test]
+fn float_shift_is_rejected() {
+    reject(
+        r#"
+main: () -> i32 {
+    a: f64 = 4.0
+    b: f64 = 2.0
+    c: f64 = a << b
+    return 0
+}
+"#,
+        "Shl",
+    );
+}
+
 // --- Valid programs that must continue to compile ---
 
 #[test]

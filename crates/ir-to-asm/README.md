@@ -10,7 +10,7 @@ instructions, and emits the `.text`, `.data`, and `.rodata` sections.
 
 ```
 IrProgram
-  -> Register allocator   SSA virtual registers -> RV64 GPR/FPR (linear scan)
+  -> Stack-slot planning  every IR value gets a frame slot (slot coloring shares them)
   -> Frame layout         spill slots, saved registers, locals per function
   -> Instruction select   IR ops -> RV64 instructions
   -> Emitter              assembly text and/or Vec<RvInstruction> tokens
@@ -51,9 +51,10 @@ they never collapse together. Registers that escape (`Alloc` destinations and
 stack addresses) or need more than 8 bytes (aggregates, arrays) keep a dedicated
 slot.
 
-`register_allocator` also implements a linear-scan pass that assigns physical
-temporaries (`t0`-`t6`) with spill-to-slot fallback. It is exercised by tests
-but not used on the main codegen path, which stays stack-only for stable output.
+There is no physical register allocator yet: every value lives in a slot and is
+reloaded on each use. A linear-scan allocator that keeps hot values in registers
+across their live range (reusing `slot_coloring`'s liveness) is the planned next
+step (PLAN 1.1).
 
 ## Module layout
 

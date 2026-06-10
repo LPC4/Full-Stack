@@ -232,7 +232,15 @@ pub fn translate_with_pmp(
                     return Err(VmError::LoadAccessFault(vaddr));
                 }
             } else {
-                return Err(VmError::InstructionAccessFault(vaddr));
+                // PMP non-match: report the access fault matching the access type,
+                // not always an instruction fault.
+                return Err(if is_execute {
+                    VmError::InstructionAccessFault(vaddr)
+                } else if is_write {
+                    VmError::StoreAccessFault(vaddr)
+                } else {
+                    VmError::LoadAccessFault(vaddr)
+                });
             }
         }
         return Ok(phys_addr);

@@ -238,6 +238,11 @@ impl VirtualMachine {
         self.bus.framebuffer_fill_count()
     }
 
+    /// Push a key event from the host GUI into the keyboard MMIO device.
+    pub fn keyboard_push(&mut self, scancode: u16, pressed: bool) {
+        self.bus.keyboard_push(scancode, pressed);
+    }
+
     /// Write raw bytes into physical RAM at `addr`.  Used to inject
     /// pre-compiled user binaries alongside a loaded kernel image.
     /// Flushes the L1/L2/L3 cache hierarchy afterward so subsequent

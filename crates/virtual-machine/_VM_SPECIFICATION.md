@@ -15,7 +15,7 @@ the VM's observable behavior.
 - **Memory System:** Byte-addressable, little-endian, flat physical address space with optional Sv39 virtual memory translation
 - **MMU:** Sv39 page-based virtual memory (3-level page table, 39-bit virtual addresses)
 - **CSR File:** Machine-mode and Supervisor-mode Control & Status Registers (Zicsr extension), plus single-entry PMP storage
-- **Devices:** UART (serial I/O), CLINT (timer/software interrupts), PLIC (external interrupts), SYSCON (halt/exit), Framebuffer (linear RGBA8888 display)
+- **Devices:** UART (serial I/O), CLINT (timer/software interrupts), PLIC (external interrupts), SYSCON (halt/exit), Framebuffer (linear RGBA8888 display), Keyboard (key-event FIFO)
 - **Bus:** Memory-mapped I/O with address decoding
 
 ### 1.2 Execution Model
@@ -36,6 +36,7 @@ the VM's observable behavior.
 | `0x1000_0000` - `0x1000_0FFF` | UART | 4 KB | Serial console (NS16550A subset; 8 registers at the low offsets) |
 | `0x1001_0000` - `0x1001_0FFF` | SYSCON | 4 KB | Halt/exit device (write an exit code to stop the VM) |
 | `0x1002_0000` - `0x1006_BFFF` | Framebuffer | 304 KB | Linear RGBA8888 display 320 x 240 + control page (see 6.5) |
+| `0x1007_0000` - `0x1007_0FFF` | Keyboard | 4 KB | Key-event FIFO (STATUS/DATA; see 6.6) |
 | `0x8000_0000` - ... | RAM | 128 MB | Main memory (DRAM); default size is 128 MB |
 
 **Note:** Addresses are physical when virtual memory is disabled (SATP.mode = 0/Bare) or when the
@@ -476,9 +477,13 @@ csrs.write(addr::SATP, 0); // MODE=0 (Bare)
 
 ### 4.4 Machine Memory Protection (Partial)
 - `pmpcfg0` (`0x3A0`) and `pmpaddr0` (`0x3B0`) are implemented as a single PMP entry: writable
-  storage plus a basic R/W/X allow/deny check when configured.
-- The remaining `pmpcfg`/`pmpaddr` registers are not implemented. This single-entry support is
-  enough for the ROM `_start` stub to open an all-address grant before delegating to S-mode.
+  storage plus an R/W/X allow/deny check enforced by the MMU for non-Machine modes.
+- The match uses simplified TOR-like semantics: `pmpaddr0 == u64::MAX` matches all addresses,
+  otherwise a physical address matches when `phys_addr <= pmpaddr0`. A configured non-match
+  raises the access fault corresponding to the access type (instruction/load/store).
+- The remaining `pmpcfg`/`pmpaddr` registers (entries 1-15) are intentionally not implemented.
+  This single-entry support is enough for the ROM `_start` stub to open an all-address grant
+  before delegating to S-mode; no guest currently needs finer-grained protection.
 
 ### 4.5 Floating-Point CSRs
 
@@ -729,7 +734,25 @@ the framebuffer's physical pages (76: 75 pixel pages plus the control page) into
 and returns the base virtual address. See the OS specification for the syscall and the `fbdemo`
 program.
 
-### 6.6 Cache Hierarchy
+### 6.6 Keyboard (Input)
+**Base Address:** `0x1007_0000` (one page, above the framebuffer span)  
+**Purpose:** Deliver host key events to the guest as a small FIFO of packed events.
+
+The host GUI pushes key press/release events into a bounded ring buffer (capacity 256; events are
+dropped if the guest never drains them). The guest reads two word registers:
+
+| Offset | Name | Access | Effect |
+|--------|------|--------|--------|
+| `+0`   | `STATUS` | Word read | Number of events currently queued (0 = empty) |
+| `+4`   | `DATA`   | Word read | Pop and return the oldest event; `0xFFFF_FFFF` when empty |
+
+A popped event packs the key in bits `15..0` (the scancode) and the press/release state in bit 16
+(`1` = pressed, `0` = released). Printable keys report their ASCII code; the arrow keys use a private
+range (`0x80`-`0x83` for up/down/left/right). Registers are read-only to the guest; writes are
+ignored. Reading `DATA` has a side effect (it pops), so the debug peek path never touches this
+device. The kernel exposes it through the `poll_key` syscall (number 108).
+
+### 6.7 Cache Hierarchy
 
 RAM accesses pass through three levels of set-associative cache before reaching DRAM. MMIO device
 regions are never cached. All levels use 64-byte blocks, true LRU replacement, and a write-back /
@@ -759,6 +782,8 @@ fn route(&mut self, addr: u64) -> Option<(&mut dyn MemoryAccess, u64)> {
         a if a >= UART_BASE  && a <= UART_END  => Some((&mut self.uart,  addr - UART_BASE)),
         a if a >= CLINT_BASE && a <= CLINT_END => Some((&mut self.clint, addr - CLINT_BASE)),
         a if a >= PLIC_BASE  && a <= PLIC_END  => Some((&mut self.plic,  addr - PLIC_BASE)),
+        a if a >= FB_BASE    && a <= FB_END    => Some((&mut self.framebuffer, addr - FB_BASE)),
+        a if a >= KBD_BASE   && a <= KBD_END   => Some((&mut self.keyboard, addr - KBD_BASE)),
         a if a >= ROM_BASE   && a <= ROM_END   => Some((&mut self.rom,   addr)),
         // Everything else routes to RAM through the L1 cache (which cascades to L2/L3/RAM).
         _ => Some((&mut self.l1_cache, addr)),

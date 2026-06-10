@@ -18,6 +18,7 @@ const SYSCALL_PIDALIVE = 104   ; 1 if a launched pid is still runnable
 const SYSCALL_UNLINK   = 105   ; remove a regular file
 const SYSCALL_RMDIR    = 106   ; remove an empty directory
 const SYSCALL_MAPFB    = 107   ; map the framebuffer into the caller; returns its base VA
+const SYSCALL_POLLKEY  = 108   ; pop the next key event (-1 if none)
 ; Process-tree syscalls (Linux/RISC-V numbers).
 const SYSCALL_FORK     = 220   ; clone the current process; returns child pid / 0
 const SYSCALL_WAIT     = 260   ; reap an exited child; returns its exit code / -1
@@ -112,6 +113,19 @@ sys_readchar_impl: () -> i64 {
     rbr_p: u8* = 0x10000000 as u8*
     c: u8 = @rbr_p
     return c as i64
+}
+
+; Pop the next key event from the keyboard MMIO device (0x10070000). The STATUS
+; register holds the queued event count; DATA pops the oldest event. Returns the
+; packed event (bit 16 = pressed, bits 15..0 = scancode), or -1 when none pending.
+sys_pollkey_impl: () -> i64 {
+    status_p: u32* = 0x10070000 as u32*
+    if (@status_p) == 0 {
+        return -1 as i64
+    }
+    data_p: u32* = 0x10070004 as u32*
+    ev: u32 = @data_p
+    return ev as i64
 }
 
 ; Load an executable file from the FS and add it to the scheduler. `arg` is an
@@ -459,6 +473,11 @@ syscall_dispatch: (frame: u64*) -> u64 {
 
     if num == SYSCALL_MAPFB {
         return sys_map_fb_impl(frame)
+    }
+
+    if num == SYSCALL_POLLKEY {
+        @frame[10] = sys_pollkey_impl() as u64
+        return SYSACT_CONTINUE
     }
 
     if num == SYSCALL_PIDALIVE {

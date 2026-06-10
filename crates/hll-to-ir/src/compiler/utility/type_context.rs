@@ -166,10 +166,21 @@ impl TypeContext {
                     });
                 }
 
+                // Modulo and shifts are not defined for floating-point operands.
+                if matches!(op, BinaryOp::Mod | BinaryOp::Shl | BinaryOp::Shr)
+                    && Self::is_float_typename(effective_type)
+                {
+                    return Err(TypeCheckError::InvalidOperation {
+                        op: format!("{op:?}"),
+                        lhs: lhs_type.to_owned(),
+                        rhs: rhs_type.to_owned(),
+                    });
+                }
+
                 Ok(effective_type.to_owned())
             }
 
-            // Bitwise operations require numeric types
+            // Bitwise operations require integer types
             BinaryOp::BitwiseAnd | BinaryOp::BitwiseXor | BinaryOp::BitwiseOr => {
                 let effective_type = if lhs_unknown {
                     rhs_type
@@ -186,9 +197,10 @@ impl TypeContext {
                 } else {
                     lhs_type
                 };
-                if !self.is_numeric(effective_type)
+                if (!self.is_numeric(effective_type)
                     && !self.is_unknown_like(effective_type)
-                    && !self.is_placeholder_like(effective_type)
+                    && !self.is_placeholder_like(effective_type))
+                    || Self::is_float_typename(effective_type)
                 {
                     return Err(TypeCheckError::InvalidOperation {
                         op: format!("{op:?}"),
@@ -272,6 +284,10 @@ impl TypeContext {
             ty,
             "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64"
         )
+    }
+
+    fn is_float_typename(ty: &str) -> bool {
+        matches!(ty, "f32" | "f64")
     }
 
     /// Promote two integer types to the wider/higher-priority type for mixed-width operations.

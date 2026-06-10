@@ -187,10 +187,15 @@ impl SemanticAnalyzer {
                     );
 
                     // A constant integer expression adopts the declared integer
-                    // width; lowering folds it to the target type.
-                    let is_literal_widening_allowed = Self::is_integer_type(&resolved_decl_ty)
+                    // width; lowering folds it to the target type. Float literals
+                    // are width-flexible the same way: a bare float literal adopts
+                    // the declared f32/f64 (lowering materializes the right bits).
+                    let is_literal_widening_allowed = (Self::is_integer_type(&resolved_decl_ty)
                         && Self::is_integer_type(&resolved_init_ty)
-                        && Self::is_const_int_expr(init_expr);
+                        && Self::is_const_int_expr(init_expr))
+                        || (Self::is_float_type(&resolved_decl_ty)
+                            && Self::is_float_type(&resolved_init_ty)
+                            && Self::is_float_literal_expr(init_expr));
 
                     if resolved_decl_ty != resolved_init_ty && !is_literal_widening_allowed {
                         self.error(format!(
@@ -1035,6 +1040,24 @@ impl SemanticAnalyzer {
 
     fn is_integer_type(ty: &IrType) -> bool {
         matches!(ty, IrType::Integer(_))
+    }
+
+    fn is_float_type(ty: &IrType) -> bool {
+        matches!(ty, IrType::Float(_))
+    }
+
+    // A bare float literal (optionally grouped or negated). Such a literal is
+    // width-flexible and adopts the declared f32/f64 type.
+    fn is_float_literal_expr(expr: &Expression) -> bool {
+        match expr {
+            Expression::Primary(PrimaryExpr::Literal(Literal::Float(_))) => true,
+            Expression::Primary(PrimaryExpr::Grouped(inner)) => Self::is_float_literal_expr(inner),
+            Expression::Unary {
+                op: UnaryOp::Negate,
+                expr,
+            } => Self::is_float_literal_expr(expr),
+            _ => false,
+        }
     }
 
     // An integer literal, a negation, or arithmetic/bitwise ops over such (grouped).

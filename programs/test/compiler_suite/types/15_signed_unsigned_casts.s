@@ -153,12 +153,12 @@ main__entry:
 	lw     t1, 0(t0)
 	sw     t1, 160(sp)
 	lw     t0, 160(sp)
-	addi   t1, t0, 0
-	fsd    ft6, 160(sp)
+	fcvt.d.w ft0, t0
+	fsd    ft0, 160(sp)
 	addi   t0, sp, 120
 	; Store f64 to memory
-	fld    ft0, 160(sp)
-	fsd    ft0, 0(t0)
+	fld    ft1, 160(sp)
+	fsd    ft1, 0(t0)
 	; local var: ptr
 	addi   a0, zero, 4
 	call malloc

@@ -3,7 +3,10 @@ use asm_to_binary::assembler::{Assembler, AssemblerError};
 use asm_to_binary::rv_instruction::RvInstruction;
 use asm_to_binary::{AssembledOutput, LinkerError, ObjectLinker};
 pub use hll_to_ir::TargetMode;
-use hll_to_ir::{CompileConfig, Diagnostic, DiagnosticLevel, HllCompiler, IrProgram, IrType};
+use hll_to_ir::{
+    CompileConfig, Diagnostic, DiagnosticLevel, HllCompiler, IrProgram, IrType, OptOptions,
+    optimize_ir,
+};
 use ir_to_asm::compiler::compiler_rv64::CompilerRv64;
 use std::cell::RefCell;
 use std::collections::hash_map::DefaultHasher;
@@ -161,6 +164,7 @@ pub struct CompilationPipeline {
     last_artifact_stem: RefCell<Option<String>>,
     write_artifacts: bool,
     peephole: bool,
+    optimize: OptOptions,
 }
 
 impl Default for CompilationPipeline {
@@ -183,6 +187,7 @@ impl CompilationPipeline {
             last_artifact_stem: RefCell::new(None),
             write_artifacts: true,
             peephole: false,
+            optimize: OptOptions::none(),
         }
     }
 
@@ -199,6 +204,7 @@ impl CompilationPipeline {
             last_artifact_stem: RefCell::new(None),
             write_artifacts: true,
             peephole: false,
+            optimize: OptOptions::none(),
         }
     }
 
@@ -273,6 +279,13 @@ impl CompilationPipeline {
     /// before assembly.
     pub fn set_peephole(&mut self, enabled: bool) {
         self.peephole = enabled;
+    }
+
+    /// Enable IR-level optimization passes (constant folding, dead-code
+    /// elimination). Off by default so IR/assembly goldens stay stable; when on,
+    /// the passes run on the lowered IR before backend lowering.
+    pub fn set_optimize(&mut self, opts: OptOptions) {
+        self.optimize = opts;
     }
 
     pub fn set_artifact_stem(&mut self, stem: Option<String>) {
@@ -357,9 +370,10 @@ impl CompilationPipeline {
             type_prelude: self.type_prelude.clone(),
         });
 
-        let out = compiler
+        let mut out = compiler
             .compile(source)
             .map_err(CompilationError::DiagnosticErrors)?;
+        optimize_ir(&mut out.ir, self.optimize);
 
         // Entry-point presence check for freestanding builds.
         // Kernel mode skips this: `_kernel_start` is provided by the kernel stdlib, not user code.
@@ -423,7 +437,7 @@ impl CompilationPipeline {
             type_prelude: self.type_prelude.clone(),
         });
 
-        let out = match compiler.compile(source) {
+        let mut out = match compiler.compile(source) {
             Ok(out) => out,
             Err(diags) => {
                 return PipelineResult {
@@ -438,6 +452,7 @@ impl CompilationPipeline {
                 };
             }
         };
+        optimize_ir(&mut out.ir, self.optimize);
 
         let mut diagnostics = out.diagnostics;
 

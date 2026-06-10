@@ -55,6 +55,14 @@ const FRAME_STEP_BUDGET: Duration = Duration::from_millis(8);
 /// while keeping the budget overshoot small.
 const STEP_BATCH: u64 = 4096;
 
+/// Hard per-frame cycle cap on WASM. `web_time::Instant` reads `performance.now()`,
+/// whose resolution the browser may clamp (e.g. to 1ms for security), so the
+/// wall-clock budget alone can overshoot badly on a heavy boot and starve the
+/// event loop. This count cap bounds the work regardless of clock behaviour so
+/// the tab stays responsive; native has no such cap (its clock is reliable).
+#[cfg(target_arch = "wasm32")]
+const WASM_MAX_CYCLES_PER_FRAME: u64 = 250_000;
+
 /// Fixed height of the top toolbar row (boot / stop / clear + status).
 const TOOLBAR_H: f32 = 34.0;
 
@@ -75,6 +83,7 @@ pub enum FbTab {
     #[default]
     BootLog,
     Framebuffer,
+    Debug,
 }
 
 enum BootPhase {
@@ -87,6 +96,8 @@ enum BootPhase {
         uart_text: String,
         /// Incremented every time new UART arrives; used to skip `LayoutJob` rebuilds.
         log_generation: u64,
+        /// When set, the VM is held; only the debugger's Step button advances it.
+        paused: bool,
     },
     Done(BootResult),
 }
@@ -107,11 +118,17 @@ pub struct MachineWindow {
     pub active_tab: FbTab,
     pub selected_user_inject: bool,
     terminal_focused: bool,
+    /// Whether the framebuffer view has focus and forwards key events to the VM.
+    fb_focused: bool,
     log_cache: Option<egui::text::LayoutJob>,
     log_cache_generation: u64,
     log_cache_cursor: bool,
     /// GPU texture the framebuffer pixels are uploaded into each frame.
     fb_texture: Option<egui::TextureHandle>,
+    /// Optional PC breakpoint: the run loop pauses when the CPU reaches it.
+    breakpoint: Option<u64>,
+    /// Hex text backing the breakpoint input field in the debugger tab.
+    breakpoint_input: String,
 }
 
 // --- Public API ---
@@ -165,6 +182,7 @@ impl MachineWindow {
             max_steps: max_steps.max(1),
             uart_text: String::new(),
             log_generation: 0,
+            paused: false,
         };
         self.active_tab = FbTab::BootLog;
         self.log_cache = None;
@@ -199,6 +217,7 @@ impl MachineWindow {
                 match self.active_tab {
                     FbTab::BootLog => self.render_console(ui, is_running),
                     FbTab::Framebuffer => self.render_framebuffer(ui, is_running),
+                    FbTab::Debug => self.render_debugger(ui),
                 }
             });
     }
@@ -208,6 +227,7 @@ impl MachineWindow {
 
 impl MachineWindow {
     fn maybe_tick(&mut self, ctx: &egui::Context) {
+        let breakpoint = self.breakpoint;
         let transition = match &mut self.phase {
             BootPhase::Running {
                 vm,
@@ -215,13 +235,25 @@ impl MachineWindow {
                 max_steps,
                 uart_text,
                 log_generation,
+                paused,
             } => {
+                // While paused the VM is frozen; the debugger's Step button is the
+                // only thing that advances it. Keep repainting so the UI is live.
+                if *paused {
+                    ctx.request_repaint_after(Duration::from_millis(100));
+                    return;
+                }
+
                 let mut halted: Option<i64> = None;
                 let mut timed_out = false;
+                let mut hit_breakpoint = false;
 
                 // Run cycles in batches until the wall-clock budget for this
-                // frame is spent, the step cap is hit, or the VM halts.
+                // frame is spent, the step cap is hit, or the VM halts. On WASM a
+                // hard cycle count also bounds the frame (see WASM_MAX_CYCLES_PER_FRAME).
                 let frame_start = Instant::now();
+                #[cfg(target_arch = "wasm32")]
+                let mut cycles_this_frame = 0u64;
                 'budget: loop {
                     for _ in 0..STEP_BATCH {
                         if *steps >= *max_steps {
@@ -241,10 +273,27 @@ impl MachineWindow {
                                 break 'budget;
                             }
                         }
+                        if let Some(bp) = breakpoint {
+                            if vm.peek_pc() == bp {
+                                hit_breakpoint = true;
+                                break 'budget;
+                            }
+                        }
+                    }
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        cycles_this_frame += STEP_BATCH;
+                        if cycles_this_frame >= WASM_MAX_CYCLES_PER_FRAME {
+                            break;
+                        }
                     }
                     if frame_start.elapsed() >= FRAME_STEP_BUDGET {
                         break;
                     }
+                }
+
+                if hit_breakpoint {
+                    *paused = true;
                 }
 
                 let new_bytes = vm.drain_uart_output();
@@ -328,6 +377,11 @@ impl MachineWindow {
                     if !matches!(self.phase, BootPhase::Idle) {
                         ui.separator();
                         let (label, col, steps, exit_code) = self.status_info();
+                        // A live spinner doubles as a "VM alive vs stalled" signal:
+                        // if the run loop or event loop freezes, it stops animating.
+                        if is_running {
+                            ui.add(egui::Spinner::new().size(12.0));
+                        }
                         ui.colored_label(col, RichText::new(label).strong().monospace().size(11.0));
                         if let Some(code) = exit_code {
                             ui.colored_label(
@@ -344,6 +398,7 @@ impl MachineWindow {
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.selectable_value(&mut self.active_tab, FbTab::Debug, "Debug");
                         ui.selectable_value(&mut self.active_tab, FbTab::Framebuffer, "FB");
                         ui.selectable_value(&mut self.active_tab, FbTab::BootLog, "Log");
                     });
@@ -392,23 +447,27 @@ impl MachineWindow {
 
     fn render_console(&mut self, ui: &mut egui::Ui, is_running: bool) {
         // --- Focus handling ---
-        // Click the console to focus, click away to blur.
+        // A single press anywhere inside the surface focuses it; a press outside
+        // blurs. We test the raw pointer press (not the interact's `clicked()`)
+        // because the ScrollArea drawn on top consumes the click, which would
+        // otherwise force a second click on empty space to focus.
         let rect = ui.max_rect();
         let id = ui.make_persistent_id("mw_console_surface");
-        let resp = ui.interact(rect, id, egui::Sense::click());
-        if resp.clicked() {
-            self.terminal_focused = true;
-        }
+        // Focusable but not clickable: we read clicks from the raw pointer, and a
+        // clickable focused widget would activate (and swallow) Enter/Space.
+        ui.interact(rect, id, egui::Sense::focusable_noninteractive());
         if ui.input(|i| i.pointer.any_pressed()) {
-            let clicked_outside = ui
-                .input(|i| i.pointer.interact_pos())
-                .map(|p| !rect.contains(p))
-                .unwrap_or(false);
-            if clicked_outside {
-                self.terminal_focused = false;
+            if let Some(p) = ui.input(|i| i.pointer.interact_pos()) {
+                self.terminal_focused = rect.contains(p);
             }
         }
         let focused = self.terminal_focused && is_running;
+
+        // Hold real egui keyboard focus while active. This keeps
+        // `wants_keyboard_input()` true so egui consumes keystrokes instead of
+        // letting the OS default-handle them, which silences the Windows
+        // "unhandled key" ding on every keypress.
+        sync_keyboard_focus(ui, id, focused);
 
         // --- Console input ---
         // Send keystrokes straight to the VM's UART while focused.
@@ -499,6 +558,33 @@ impl MachineWindow {
     /// Draw the framebuffer as a scaled image: the live device while running,
     /// the captured snapshot once the run stops.
     fn render_framebuffer(&mut self, ui: &mut egui::Ui, is_running: bool) {
+        // --- Focus + key forwarding ---
+        // A single press inside focuses the framebuffer so key events forward to
+        // the VM's keyboard device; a press outside blurs. We use the raw pointer
+        // press rather than the interact's `clicked()` so a single click suffices.
+        let rect = ui.max_rect();
+        let id = ui.make_persistent_id("mw_fb_surface");
+        ui.interact(rect, id, egui::Sense::focusable_noninteractive());
+        if ui.input(|i| i.pointer.any_pressed()) {
+            if let Some(p) = ui.input(|i| i.pointer.interact_pos()) {
+                self.fb_focused = rect.contains(p);
+            }
+        }
+        // Hold egui keyboard focus while active so arrow/other keys are consumed
+        // by egui instead of triggering the Windows unhandled-key ding.
+        sync_keyboard_focus(ui, id, self.fb_focused && is_running);
+        if self.fb_focused && is_running {
+            let events = collect_key_events(ui);
+            if !events.is_empty() {
+                if let BootPhase::Running { vm, .. } = &mut self.phase {
+                    for (scancode, pressed) in events {
+                        vm.keyboard_push(scancode, pressed);
+                    }
+                }
+            }
+            ui.ctx().request_repaint_after(Duration::from_millis(16));
+        }
+
         let bytes: Option<&[u8]> = match &self.phase {
             BootPhase::Idle => None,
             BootPhase::Running { vm, .. } => Some(vm.peek_framebuffer()),
@@ -547,6 +633,242 @@ impl MachineWindow {
             });
         }
     }
+
+    /// Read-only CPU/pipeline/cache inspector with pause, single-step, and a PC
+    /// breakpoint. Only meaningful while the VM is running.
+    fn render_debugger(&mut self, ui: &mut egui::Ui) {
+        if !matches!(self.phase, BootPhase::Running { .. }) {
+            ui.colored_label(term_dim(), "Boot the kernel to inspect CPU state.");
+            return;
+        }
+
+        // --- Controls: pause / step / breakpoint ---
+        let paused = matches!(&self.phase, BootPhase::Running { paused: true, .. });
+        ui.horizontal(|ui| {
+            let toggle = if paused { "Resume" } else { "Pause" };
+            if ui.button(toggle).clicked() {
+                if let BootPhase::Running { paused, .. } = &mut self.phase {
+                    *paused = !*paused;
+                }
+            }
+            if ui
+                .add_enabled(paused, egui::Button::new("Step"))
+                .on_hover_text("Execute one CPU step")
+                .clicked()
+            {
+                if let BootPhase::Running { vm, steps, .. } = &mut self.phase {
+                    if vm.step().is_ok() {
+                        *steps += 1;
+                    }
+                }
+            }
+            ui.separator();
+            ui.label(RichText::new("bp 0x").monospace().size(11.0));
+            let resp = ui.add(
+                egui::TextEdit::singleline(&mut self.breakpoint_input)
+                    .hint_text("PC")
+                    .desired_width(80.0)
+                    .font(egui::TextStyle::Monospace),
+            );
+            if resp.changed() {
+                self.breakpoint =
+                    u64::from_str_radix(self.breakpoint_input.trim_start_matches("0x"), 16).ok();
+            }
+            if ui.button("clr").clicked() {
+                self.breakpoint = None;
+                self.breakpoint_input.clear();
+            }
+            if let Some(bp) = self.breakpoint {
+                ui.colored_label(
+                    term_ok(),
+                    RichText::new(format!("armed @ {bp:#x}"))
+                        .monospace()
+                        .size(11.0),
+                );
+            }
+        });
+
+        ui.separator();
+
+        let BootPhase::Running { vm, .. } = &self.phase else {
+            return;
+        };
+
+        egui::ScrollArea::vertical()
+            .id_salt("mw_debugger")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                render_pipeline(ui, vm);
+                ui.add_space(8.0);
+                render_pipeline_stats(ui, vm);
+                ui.add_space(8.0);
+                render_cache_stats(ui, vm);
+                ui.add_space(8.0);
+                render_registers(ui, vm);
+                ui.add_space(8.0);
+                render_disasm(ui, vm);
+            });
+
+        // Keep state fresh while running; while paused, a slower tick is enough.
+        ui.ctx()
+            .request_repaint_after(Duration::from_millis(if paused { 150 } else { 33 }));
+    }
+}
+
+// --- Debugger sub-renderers ---
+
+const ABI_REG_NAMES: [&str; 32] = [
+    "zero", "ra", "sp", "gp", "tp", "t0", "t1", "t2", "s0", "s1", "a0", "a1", "a2", "a3", "a4",
+    "a5", "a6", "a7", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11", "t3", "t4",
+    "t5", "t6",
+];
+
+fn dbg_heading(ui: &mut egui::Ui, text: &str) {
+    ui.label(
+        RichText::new(text)
+            .monospace()
+            .size(11.0)
+            .strong()
+            .color(ui_theme().accent),
+    );
+}
+
+fn mono(text: impl Into<String>, col: Color32) -> RichText {
+    RichText::new(text.into()).monospace().size(11.0).color(col)
+}
+
+fn render_pipeline(ui: &mut egui::Ui, vm: &VirtualMachine) {
+    dbg_heading(ui, "PIPELINE");
+    let feed = vm.pipeline_snapshot();
+    let names = ["IF", "ID", "EX", "MEM", "WB"];
+    for (i, stage) in feed.stages.iter().enumerate() {
+        let body = match stage {
+            Some((pc, mnem)) => format!("{:<4} {:#012x}  {}", names[i], pc, mnem),
+            None => format!("{:<4} (bubble)", names[i]),
+        };
+        let col = if stage.is_some() {
+            term_text()
+        } else {
+            term_dim()
+        };
+        ui.label(mono(body, col));
+    }
+    // Always render the flags line (with a placeholder when idle) so it never
+    // appears/disappears, which would shift everything below it every cycle.
+    let mut flags = Vec::new();
+    if feed.stalled {
+        flags.push("STALL");
+    }
+    if feed.flushed {
+        flags.push("FLUSH");
+    }
+    let (text, col) = if flags.is_empty() {
+        ("flags --".to_owned(), term_dim())
+    } else {
+        (format!("flags {}", flags.join(" ")), term_warn())
+    };
+    ui.label(mono(text, col));
+}
+
+fn render_pipeline_stats(ui: &mut egui::Ui, vm: &VirtualMachine) {
+    dbg_heading(ui, "STATS");
+    let s = vm.pipeline_stats();
+    let ipc = if s.cycles > 0 {
+        s.insns_retired as f64 / s.cycles as f64
+    } else {
+        0.0
+    };
+    let mispredict = if s.branches_seen > 0 {
+        100.0 * s.branches_mispredicted as f64 / s.branches_seen as f64
+    } else {
+        0.0
+    };
+    ui.label(mono(
+        format!(
+            "cycles {}  retired {}  IPC {:.3}",
+            s.cycles, s.insns_retired, ipc
+        ),
+        term_text(),
+    ));
+    ui.label(mono(
+        format!("stalls {}  flushes {}", s.stall_cycles, s.flush_cycles),
+        term_text(),
+    ));
+    ui.label(mono(
+        format!(
+            "branches {}  mispredict {:.1}%",
+            s.branches_seen, mispredict
+        ),
+        term_text(),
+    ));
+}
+
+fn render_cache_stats(ui: &mut egui::Ui, vm: &VirtualMachine) {
+    dbg_heading(ui, "CACHE");
+    let (l1, l2, l3) = vm.get_cache_stats();
+    for (name, st) in [("L1", &l1), ("L2", &l2), ("L3", &l3)] {
+        let reads = st.read_hits + st.read_misses;
+        let writes = st.write_hits + st.write_misses;
+        let rrate = if reads > 0 {
+            100.0 * st.read_hits as f64 / reads as f64
+        } else {
+            0.0
+        };
+        let wrate = if writes > 0 {
+            100.0 * st.write_hits as f64 / writes as f64
+        } else {
+            0.0
+        };
+        ui.label(mono(
+            format!("{name}  rd {rrate:5.1}% ({reads})  wr {wrate:5.1}% ({writes})"),
+            term_text(),
+        ));
+    }
+}
+
+fn render_registers(ui: &mut egui::Ui, vm: &VirtualMachine) {
+    dbg_heading(ui, "REGISTERS");
+    ui.label(mono(format!("pc  {:#018x}", vm.peek_pc()), term_cursor()));
+    let xregs = vm.peek_all_xregs();
+    // Four columns of eight registers each.
+    egui::Grid::new("mw_regs")
+        .num_columns(4)
+        .spacing([14.0, 2.0])
+        .show(ui, |ui| {
+            for row in 0..8 {
+                for col in 0..4 {
+                    let i = col * 8 + row;
+                    ui.label(mono(
+                        format!("{:>4} {:#018x}", ABI_REG_NAMES[i], xregs[i]),
+                        term_text(),
+                    ));
+                }
+                ui.end_row();
+            }
+        });
+}
+
+fn render_disasm(ui: &mut egui::Ui, vm: &VirtualMachine) {
+    dbg_heading(ui, "MEMORY @ PC");
+    let pc = vm.peek_pc();
+    // Show a window of raw 32-bit words around PC. Read without disturbing state.
+    let start = pc.saturating_sub(16);
+    let bytes = vm.peek_bytes_raw(start, 16 * 4);
+    for i in 0..16 {
+        let addr = start + (i * 4) as u64;
+        let off = i * 4;
+        if off + 4 > bytes.len() {
+            break;
+        }
+        let word = u32::from_le_bytes([bytes[off], bytes[off + 1], bytes[off + 2], bytes[off + 3]]);
+        let marker = if addr == pc { ">" } else { " " };
+        let col = if addr == pc {
+            term_cursor()
+        } else {
+            term_dim()
+        };
+        ui.label(mono(format!("{marker} {addr:#012x}  {word:08x}"), col));
+    }
 }
 
 /// Append UART output bytes to the console buffer, interpreting the control
@@ -593,6 +915,66 @@ fn collect_console_input(ui: &egui::Ui) -> Vec<u8> {
                     _ => {}
                 },
                 _ => {}
+            }
+        }
+    });
+    out
+}
+
+/// Keep egui's keyboard focus in sync with our own focus flag for the surface
+/// `id`. While `focused`, the surface holds focus so `wants_keyboard_input()`
+/// stays true and egui consumes keystrokes (no OS default beep); when it loses
+/// focus we surrender it so other widgets behave normally.
+fn sync_keyboard_focus(ui: &egui::Ui, id: egui::Id, focused: bool) {
+    ui.memory_mut(|m| {
+        if focused {
+            m.request_focus(id);
+        } else if m.has_focus(id) {
+            m.surrender_focus(id);
+        }
+    });
+}
+
+/// Scancodes the keyboard device reports to the guest. Printable keys use their
+/// ASCII code; the arrow keys use a private range above 0x7F so they never
+/// collide with text.
+pub const SCAN_ARROW_UP: u16 = 0x80;
+pub const SCAN_ARROW_DOWN: u16 = 0x81;
+pub const SCAN_ARROW_LEFT: u16 = 0x82;
+pub const SCAN_ARROW_RIGHT: u16 = 0x83;
+
+// Map an egui key to the guest scancode, or None if it has no mapping.
+fn egui_key_to_scancode(key: egui::Key) -> Option<u16> {
+    use egui::Key;
+    let code = match key {
+        Key::ArrowUp => SCAN_ARROW_UP,
+        Key::ArrowDown => SCAN_ARROW_DOWN,
+        Key::ArrowLeft => SCAN_ARROW_LEFT,
+        Key::ArrowRight => SCAN_ARROW_RIGHT,
+        Key::Space => 0x20,
+        Key::Enter => 0x0D,
+        Key::Escape => 0x1B,
+        Key::Tab => 0x09,
+        Key::Backspace => 0x08,
+        // Letters report their uppercase ASCII; the guest sees the physical key,
+        // not the shifted glyph.
+        k if (Key::A..=Key::Z).contains(&k) => b'A' as u16 + (k as u16 - Key::A as u16),
+        k if (Key::Num0..=Key::Num9).contains(&k) => b'0' as u16 + (k as u16 - Key::Num0 as u16),
+        _ => return None,
+    };
+    Some(code)
+}
+
+/// Collect this frame's key press/release events as `(scancode, pressed)` pairs
+/// for the VM keyboard device. Only keys with a known scancode are forwarded.
+fn collect_key_events(ui: &egui::Ui) -> Vec<(u16, bool)> {
+    let mut out = Vec::new();
+    ui.input(|i| {
+        for ev in &i.events {
+            if let egui::Event::Key { key, pressed, .. } = ev {
+                if let Some(scancode) = egui_key_to_scancode(*key) {
+                    out.push((scancode, *pressed));
+                }
             }
         }
     });

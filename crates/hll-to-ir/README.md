@@ -46,11 +46,31 @@ re-exported from the crate root so the back end can consume them directly.
 ```
 src/
   compiler/   lexer-to-IR lowering, semantic analysis, symbol and type tables
+  compiler/opt/   IR optimization passes (constant folding, dead-code elimination)
   ir/         IR data model: program, functions, blocks, instructions, values, types
 ```
 
 Lexer, parser, AST, the top-level `HllCompiler`, and the stdlib bundler live alongside
 these as sibling modules.
+
+## Optimization passes
+
+`compiler/opt` holds conservative, opt-in passes that run on the lowered `IrProgram`
+via `optimize(&mut program, OptOptions)`. They are off by default (`OptOptions::none`)
+so golden IR and assembly snapshots stay stable; the pipeline enables them with
+`CompilationPipeline::set_optimize`.
+
+- **Constant folding** -- local, per-block. Tracks registers that hold a known integer
+  constant, propagates them into later operands, and folds pure `Math`/`Unary`/`Cmp`
+  with all-constant operands. Folding mirrors the RV64 backend exactly (64-bit op, then
+  sign-extend to the result width); division/remainder by zero is left to run time.
+  Propagation is reset at every block boundary, so it is sound without strict SSA
+  (registers may be reassigned, e.g. loop-carried values).
+- **Dead-code elimination** -- whole-function, to a fixpoint. Drops pure instructions
+  whose result is never read. `Load` is retained (it may target MMIO), as are calls and
+  other side-effecting instructions.
+
+Copy propagation and leaf-function inlining are planned but not yet implemented.
 
 ## Standard library
 

@@ -172,6 +172,81 @@ fn peephole_preserves_behavior_and_shrinks_code() {
     );
 }
 
+/// Compile a user program with IR optimization on or off, returning the VM run
+/// (exit outcome + UART) and the emitted instruction count.
+fn run_hll_optimize(
+    src: &str,
+    opts: hll_to_ir::OptOptions,
+) -> (StepOutcome, String, usize) {
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_write_artifacts(false);
+    pipeline.set_optimize(opts);
+
+    let user_result = pipeline.compile(src).expect("user compile failed");
+    let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program);
+    let code_lines = user_tokens.iter().filter(|t| t.is_code()).count();
+    let user_obj = pipeline.assemble(&user_tokens).expect("user assemble failed");
+
+    let assembled = pipeline
+        .link_assembled_objects(&[("stdlib", cached_stdlib_obj()), ("user", &user_obj)])
+        .expect("link failed");
+    let mut vm = VirtualMachine::new(&assembled);
+    let run = vm.run(5_000_000);
+    (run.outcome, run.uart_output.clone(), code_lines)
+}
+
+// Constant-heavy program with a dead local: const folding collapses the
+// arithmetic and DCE drops the unused computation.
+const OPT_CONST_PROGRAM: &str = r#"
+main: () -> i32 {
+    a: i32 = 2 + 3 * 4
+    b: i32 = a * 10
+    unused: i32 = 100 + 200 + 300
+    return b as i32
+}
+"#;
+
+#[test]
+fn ir_opt_preserves_behavior_and_shrinks_code() {
+    // Folds to b = 14 * 10 = 140; `unused` is dead.
+    let (base_outcome, base_uart, base_lines) =
+        run_hll_optimize(OPT_CONST_PROGRAM, hll_to_ir::OptOptions::none());
+    let (opt_outcome, opt_uart, opt_lines) =
+        run_hll_optimize(OPT_CONST_PROGRAM, hll_to_ir::OptOptions::all());
+
+    assert!(
+        matches!(base_outcome, StepOutcome::Halted(140)),
+        "expected Halted(140) unoptimized, got {base_outcome:?}"
+    );
+    assert_eq!(
+        format!("{base_outcome:?}"),
+        format!("{opt_outcome:?}"),
+        "IR optimization changed the exit outcome"
+    );
+    assert_eq!(base_uart, opt_uart, "IR optimization changed UART output");
+    assert!(
+        opt_lines < base_lines,
+        "const-fold + DCE should remove instructions: {base_lines} -> {opt_lines}"
+    );
+}
+
+#[test]
+fn ir_opt_preserves_control_flow_program() {
+    // The peephole stress program has params and loops: optimization must not
+    // change its result even where little folds.
+    let (base_outcome, base_uart, _) =
+        run_hll_optimize(PEEPHOLE_PROGRAM, hll_to_ir::OptOptions::none());
+    let (opt_outcome, opt_uart, _) =
+        run_hll_optimize(PEEPHOLE_PROGRAM, hll_to_ir::OptOptions::all());
+
+    assert_eq!(
+        format!("{base_outcome:?}"),
+        format!("{opt_outcome:?}"),
+        "IR optimization changed the exit outcome on the control-flow program"
+    );
+    assert_eq!(base_uart, opt_uart, "IR optimization changed UART output");
+}
+
 #[test]
 fn hll_new_i32_and_return() {
     let (_, outcome, _) = run_hll(r#"
@@ -300,6 +375,56 @@ main: () -> i32 {
 "#);
     assert_eq!(uart, "AB", "expected UART='AB', got {uart:?}");
     assert!(matches!(outcome, StepOutcome::Halted(0)), "expected Halted(0), got {outcome:?}");
+}
+
+// --- Keyboard device ---
+
+// The guest drains the keyboard MMIO ring (STATUS at 0x10070000, DATA at
+// 0x10070004) and echoes the scancode of each *press* (bit 16 set), so releases
+// must be filtered out. Events are queued by the host before the run starts.
+#[test]
+fn keyboard_device_delivers_press_events_to_guest() {
+    let src = r#"
+external putchar: (c: i32) -> i32
+
+main: () -> i32 {
+    while 1 == 1 {
+        status_p: u32* = 0x10070000 as u32*
+        if (@status_p) == 0 {
+            break
+        }
+        data_p: u32* = 0x10070004 as u32*
+        ev: u32 = @data_p
+        if (ev & 0x10000) != 0 {
+            putchar((ev & 0xFF) as i32)
+        }
+    }
+    return 0
+}
+"#;
+
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_write_artifacts(false);
+    let user_result = pipeline.compile(src).expect("user compile failed");
+    let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program);
+    let user_obj = pipeline.assemble(&user_tokens).expect("user assemble failed");
+    let assembled = pipeline
+        .link_assembled_objects(&[("stdlib", cached_stdlib_obj()), ("user", &user_obj)])
+        .expect("link failed");
+
+    let mut vm = VirtualMachine::new(&assembled);
+    // Queue: A press, B release (filtered), C press -> guest echoes "AC".
+    vm.keyboard_push(b'A' as u16, true);
+    vm.keyboard_push(b'B' as u16, false);
+    vm.keyboard_push(b'C' as u16, true);
+
+    let run = vm.run(5_000_000);
+    assert_eq!(run.uart_output, "AC", "expected 'AC', got {:?}", run.uart_output);
+    assert!(
+        matches!(run.outcome, StepOutcome::Halted(0)),
+        "expected Halted(0), got {:?}",
+        run.outcome
+    );
 }
 
 // --- Helper ---
@@ -1552,6 +1677,168 @@ fn ir_cmp_slt_negative() {
     let program = pass_fail_ir("slt", entry, IrValue::Register(IrRegister::Named("ok".into())));
     let (_, outcome, _) = run_ir(&program);
     assert!(matches!(outcome, StepOutcome::Halted(0)), "slt: -1 < 0 should be true, got {outcome:?}");
+}
+
+// --- Floating-point lowering (PLAN 3.1 / 5.1) ---
+//
+// These guard the three float-lowering correctness fixes: f32 and f64 constant
+// materialization, f64 arithmetic going through the FPU (not the integer ALU),
+// int<->float casts using fcvt, and FP comparisons. Each program computes a
+// float result and truncates it to an i32 exit code via an `as` cast.
+
+#[test]
+fn float_f32_constant_and_add() {
+    // Before the fix, `1.5: f32` materialized 0.0 (wrong low 32 bits), so the
+    // sum was 0. Correct: 1.5 + 2.5 = 4.0 -> 4.
+    let (_, outcome, _) = run_hll(r#"
+main: () -> i32 {
+    a: f32 = 1.5
+    b: f32 = 2.5
+    c: f32 = a + b
+    return c as i32
+}
+"#);
+    assert!(matches!(outcome, StepOutcome::Halted(4)), "expected Halted(4), got {outcome:?}");
+}
+
+#[test]
+fn float_f64_arithmetic_uses_fpu() {
+    // Before the fix, f64 math fell through to the integer ALU and operated on
+    // raw bit patterns. Correct: 3.5 * 2.0 = 7.0 -> 7.
+    let (_, outcome, _) = run_hll(r#"
+main: () -> i32 {
+    a: f64 = 3.5
+    b: f64 = 2.0
+    c: f64 = a * b
+    return c as i32
+}
+"#);
+    assert!(matches!(outcome, StepOutcome::Halted(7)), "expected Halted(7), got {outcome:?}");
+}
+
+#[test]
+fn float_f64_div_and_sub() {
+    // 20.0 / 4.0 = 5.0, then 5.0 - 2.0 = 3.0 -> 3.
+    let (_, outcome, _) = run_hll(r#"
+main: () -> i32 {
+    a: f64 = 20.0
+    b: f64 = 4.0
+    two: f64 = 2.0
+    c: f64 = a / b
+    d: f64 = c - two
+    return d as i32
+}
+"#);
+    assert!(matches!(outcome, StepOutcome::Halted(3)), "expected Halted(3), got {outcome:?}");
+}
+
+#[test]
+fn float_int_to_float_roundtrip() {
+    // i32 -> f64 (fcvt.d.w) then f64 -> i32 (fcvt.w.d). Before the fix both
+    // casts were a plain `mv` reinterpreting the bit pattern.
+    let (_, outcome, _) = run_hll(r#"
+main: () -> i32 {
+    n: i32 = 7
+    three: f64 = 3.0
+    f: f64 = n as f64
+    g: f64 = f * three
+    return g as i32
+}
+"#);
+    assert!(matches!(outcome, StepOutcome::Halted(21)), "expected Halted(21), got {outcome:?}");
+}
+
+#[test]
+fn float_f32_int_cast() {
+    // i32 -> f32 -> i32 with a non-trivial intermediate value.
+    let (_, outcome, _) = run_hll(r#"
+main: () -> i32 {
+    n: i32 = 9
+    f: f32 = n as f32
+    g: f32 = f + 0.5
+    h: f32 = g * 2.0
+    return h as i32
+}
+"#);
+    // 9.0 + 0.5 = 9.5, * 2.0 = 19.0 -> 19.
+    assert!(matches!(outcome, StepOutcome::Halted(19)), "expected Halted(19), got {outcome:?}");
+}
+
+#[test]
+fn float_f32_to_f64_widen() {
+    // f32 -> f64 conversion (fcvt.d.s). 3.5 widened, + 1.5 = 5.0 -> 5.
+    let (_, outcome, _) = run_hll(r#"
+main: () -> i32 {
+    a: f32 = 3.5
+    onefive: f64 = 1.5
+    b: f64 = a as f64
+    c: f64 = b + onefive
+    return c as i32
+}
+"#);
+    assert!(matches!(outcome, StepOutcome::Halted(5)), "expected Halted(5), got {outcome:?}");
+}
+
+#[test]
+fn float_f64_to_f32_narrow() {
+    // f64 -> f32 conversion (fcvt.s.d). 6.5 narrowed -> 6.
+    let (_, outcome, _) = run_hll(r#"
+main: () -> i32 {
+    a: f64 = 6.5
+    b: f32 = a as f32
+    return b as i32
+}
+"#);
+    assert!(matches!(outcome, StepOutcome::Halted(6)), "expected Halted(6), got {outcome:?}");
+}
+
+#[test]
+fn float_f64_negation() {
+    // Unary negation via fsgnjn.d. -5.0 + 8.0 = 3.0 -> 3.
+    let (_, outcome, _) = run_hll(r#"
+main: () -> i32 {
+    a: f64 = 5.0
+    eight: f64 = 8.0
+    b: f64 = -a
+    c: f64 = b + eight
+    return c as i32
+}
+"#);
+    assert!(matches!(outcome, StepOutcome::Halted(3)), "expected Halted(3), got {outcome:?}");
+}
+
+#[test]
+fn float_f32_comparison() {
+    // f32 less-than comparison must use flt.s.
+    let (_, outcome, _) = run_hll(r#"
+main: () -> i32 {
+    a: f32 = 1.5
+    b: f32 = 2.5
+    if a < b {
+        return 1
+    }
+    return 0
+}
+"#);
+    assert!(matches!(outcome, StepOutcome::Halted(1)), "expected Halted(1), got {outcome:?}");
+}
+
+#[test]
+fn float_f64_comparison() {
+    // f64 equality must use feq.d (not the integer comparator).
+    let (_, outcome, _) = run_hll(r#"
+main: () -> i32 {
+    a: f64 = 5.5
+    b: f64 = 2.5
+    eight: f64 = 8.0
+    c: f64 = a + b
+    if c == eight {
+        return 1
+    }
+    return 0
+}
+"#);
+    assert!(matches!(outcome, StepOutcome::Halted(1)), "expected Halted(1), got {outcome:?}");
 }
 
 

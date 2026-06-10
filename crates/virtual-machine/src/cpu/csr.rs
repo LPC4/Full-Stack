@@ -72,7 +72,9 @@ pub struct CsrFile {
     pub mcause: u64,
     pub mtval: u64,
     pub mip: u64,
-    // Physical Memory Protection CSRs (simple storage; enforcement is not implemented)
+    // Physical Memory Protection: a single PMP entry. The MMU enforces it with
+    // simplified TOR-like semantics (see mmu.rs translate_with_pmp); entries 1-15
+    // are intentionally not implemented. See VM spec 4.4.
     pub pmpcfg0: u64,
     pub pmpaddr0: u64,
 

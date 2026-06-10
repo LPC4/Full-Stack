@@ -1,6 +1,8 @@
 //! System bus, routes physical addresses to ROM, RAM, and MMIO devices.
 
-use crate::devices::{clint::Clint, framebuffer::Framebuffer, plic::Plic, uart::Uart};
+use crate::devices::{
+    clint::Clint, framebuffer::Framebuffer, keyboard::Keyboard, plic::Plic, uart::Uart,
+};
 use crate::error::VmError;
 use crate::memory::{
     MemoryAccess, PeekByteRaw as _,
@@ -24,6 +26,13 @@ pub const SYSCON_END: u64 = SYSCON_BASE + SYSCON_SIZE - 1;
 pub const FB_BASE: u64 = 0x1002_0000;
 pub const FB_SIZE: u64 = crate::devices::framebuffer::FB_TOTAL_BYTES as u64;
 pub const FB_END: u64 = FB_BASE + FB_SIZE - 1;
+/// Keyboard input MMIO device. See `devices::keyboard`.
+/// Placed above `FB_END` (the framebuffer spans ~311 KiB from `FB_BASE`).
+pub const KBD_BASE: u64 = 0x1007_0000;
+pub const KBD_SIZE: u64 = crate::devices::keyboard::KBD_TOTAL_BYTES as u64;
+pub const KBD_END: u64 = KBD_BASE + KBD_SIZE - 1;
+// The framebuffer device span is large; guard against it overlapping the keyboard.
+const _: () = assert!(KBD_BASE > FB_END);
 pub const CLINT_BASE: u64 = 0x0200_0000;
 pub const CLINT_SIZE: u64 = 0x10000;
 pub const CLINT_END: u64 = CLINT_BASE + CLINT_SIZE - 1;
@@ -43,6 +52,7 @@ pub struct SystemBus {
     clint: Clint,
     plic: Plic,
     framebuffer: Framebuffer,
+    keyboard: Keyboard,
     syscon_exit: Option<i64>,
 }
 
@@ -86,6 +96,7 @@ impl SystemBus {
         let clint = Clint::new();
         let plic = Plic::new();
         let framebuffer = Framebuffer::new();
+        let keyboard = Keyboard::new();
         Self {
             rom,
             l1_cache,
@@ -93,6 +104,7 @@ impl SystemBus {
             clint,
             plic,
             framebuffer,
+            keyboard,
             syscon_exit: None,
         }
     }
@@ -109,6 +121,7 @@ impl SystemBus {
             a if a >= CLINT_BASE && a <= CLINT_END => Some((&mut self.clint, addr - CLINT_BASE)),
             a if a >= PLIC_BASE && a <= PLIC_END => Some((&mut self.plic, addr - PLIC_BASE)),
             a if a >= FB_BASE && a <= FB_END => Some((&mut self.framebuffer, addr - FB_BASE)),
+            a if a >= KBD_BASE && a <= KBD_END => Some((&mut self.keyboard, addr - KBD_BASE)),
             a if a >= ROM_BASE && a <= ROM_END => Some((&mut self.rom, addr)),
             _ => {
                 // Route all RAM accesses through L1 cache (which cascades to L2, L3, then RAM)
@@ -188,6 +201,9 @@ impl SystemBus {
                     .get((a - FB_BASE) as usize)
                     .copied()
                     .unwrap_or(0),
+                // Keyboard DATA reads have a pop side effect; never touch it from
+                // the debug peek path.
+                a if a >= KBD_BASE && a <= KBD_END => 0,
                 _ => self.l1_cache.read_byte(addr + i).unwrap_or(0),
             })
             .collect()
@@ -210,6 +226,11 @@ impl SystemBus {
     /// Number of full-screen FILL clears the framebuffer has performed.
     pub fn framebuffer_fill_count(&self) -> u64 {
         self.framebuffer.fill_count()
+    }
+
+    /// Push a key event from the host GUI into the keyboard device.
+    pub fn keyboard_push(&mut self, scancode: u16, pressed: bool) {
+        self.keyboard.push_event(scancode, pressed);
     }
 
     // Direct access to devices for interrupt handling

@@ -2,7 +2,8 @@ use super::{data_section::DataSection, function_context::Rv64Backend};
 use asm_to_binary::encode_decode::Reg;
 use asm_to_binary::real::RealInstruction;
 use asm_to_binary::riscv::rv64fd::{
-    Fadd, Fdiv, FeqS, Fld, FleqS, FltS, Flw, Fmul, FmvWX, Fsd, Fsub, Fsw, fmv_s,
+    Fadd, FaddD, Fdiv, FdivD, FeqD, FeqS, Fld, FleqD, FleqS, FltD, FltS, Flw, Fmul, FmulD, FmvDX,
+    FmvWX, Fsd, Fsub, FsubD, Fsw, fmv_d, fmv_s,
 };
 use asm_to_binary::riscv::rv64i::{
     Add, Addi, Addiw, And, Jalr, Lb, Ld, Lh, Lui, Lw, Or, Sb, Sd, Sh, Sll, Slli, Slt, Sltiu, Sltu,
@@ -270,7 +271,14 @@ impl AssemblyEmitter {
 
             self.emit_slli(rd, rd, 32);
 
-            let tmp = self.alloc_temp_reg();
+            // The scratch register must not alias rd, or building the lower half
+            // would clobber the already-shifted upper half. alloc_temp_reg cycles
+            // t0-t6 with no awareness of rd, so skip rd explicitly.
+            let mut tmp = self.alloc_temp_reg();
+            if tmp == rd {
+                tmp = self.alloc_temp_reg();
+            }
+            debug_assert_ne!(tmp, rd, "emit_li scratch register must differ from rd");
             let lo_hi = ((lower_32 >> 12) & 0xFFFFF) as i32;
             let lo_lo = (lower_32 & 0xFFF) as i32;
             let lo_lo_signed = if lo_lo >= 0x800 {
@@ -392,6 +400,9 @@ impl AssemblyEmitter {
     pub fn emit_fsw(&mut self, base: Reg, src: Reg, offset: i32) {
         self.emit_inst(RealInstruction::Fsw(Fsw::new(base, src, offset)));
     }
+    pub fn emit_fsd(&mut self, base: Reg, src: Reg, offset: i32) {
+        self.emit_inst(RealInstruction::Fsd(Fsd::new(base, src, offset)));
+    }
     pub fn emit_flw(&mut self, rd: Reg, base: Reg, offset: i32) {
         self.emit_inst(RealInstruction::Flw(Flw::new(rd, base, offset)));
     }
@@ -409,6 +420,34 @@ impl AssemblyEmitter {
     }
     pub fn emit_fle_s(&mut self, rd: Reg, rs1: Reg, rs2: Reg) {
         self.emit_inst(RealInstruction::FleqS(FleqS::new(rd, rs1, rs2)));
+    }
+    // --- Double-precision floating-point instructions ---
+    pub fn emit_fmv_d_x(&mut self, fd: Reg, rs: Reg) {
+        self.emit_inst(RealInstruction::FmvDX(FmvDX::new(fd, rs)));
+    }
+    pub fn emit_fmv_d(&mut self, rd: Reg, rs: Reg) {
+        self.emit_inst(RealInstruction::FsgnjD(fmv_d(rd, rs)));
+    }
+    pub fn emit_fadd_d(&mut self, rd: Reg, rs1: Reg, rs2: Reg) {
+        self.emit_inst(RealInstruction::FaddD(FaddD::new(rd, rs1, rs2)));
+    }
+    pub fn emit_fsub_d(&mut self, rd: Reg, rs1: Reg, rs2: Reg) {
+        self.emit_inst(RealInstruction::FsubD(FsubD::new(rd, rs1, rs2)));
+    }
+    pub fn emit_fmul_d(&mut self, rd: Reg, rs1: Reg, rs2: Reg) {
+        self.emit_inst(RealInstruction::FmulD(FmulD::new(rd, rs1, rs2)));
+    }
+    pub fn emit_fdiv_d(&mut self, rd: Reg, rs1: Reg, rs2: Reg) {
+        self.emit_inst(RealInstruction::FdivD(FdivD::new(rd, rs1, rs2)));
+    }
+    pub fn emit_feq_d(&mut self, rd: Reg, rs1: Reg, rs2: Reg) {
+        self.emit_inst(RealInstruction::FeqD(FeqD::new(rd, rs1, rs2)));
+    }
+    pub fn emit_flt_d(&mut self, rd: Reg, rs1: Reg, rs2: Reg) {
+        self.emit_inst(RealInstruction::FltD(FltD::new(rd, rs1, rs2)));
+    }
+    pub fn emit_fle_d(&mut self, rd: Reg, rs1: Reg, rs2: Reg) {
+        self.emit_inst(RealInstruction::FleqD(FleqD::new(rd, rs1, rs2)));
     }
 
     // --- Typed memory helpers ---

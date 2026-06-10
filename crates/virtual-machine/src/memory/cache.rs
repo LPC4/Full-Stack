@@ -200,6 +200,22 @@ impl<Next: MemoryAccess> Cache<Next> {
     // --- Internal multi-byte helpers: count one stat per unique cache block touched ---
 
     fn read_n(&mut self, addr: u64, n: usize) -> Result<u64, VmError> {
+        // Fast path: an aligned 2/4/8-byte access lands wholly inside one line
+        // (a power-of-two access aligned to its size never crosses a power-of-two
+        // block), so resolve the line once and read the slice directly.
+        if n > 1 && addr & (n as u64 - 1) == 0 {
+            let (set_idx, way_idx, miss) = self.resolve_line(addr)?;
+            if miss {
+                self.stats.read_misses += 1;
+            } else {
+                self.stats.read_hits += 1;
+            }
+            let offset = (addr & ((1u64 << self.block_bits) - 1)) as usize;
+            let mut buf = [0u8; 8];
+            buf[..n].copy_from_slice(&self.sets[set_idx].ways[way_idx].data[offset..offset + n]);
+            return Ok(u64::from_le_bytes(buf));
+        }
+
         let block_mask = !((1u64 << self.block_bits) - 1);
         let mut result = 0u64;
         let mut last_block = u64::MAX;
@@ -234,6 +250,37 @@ impl<Next: MemoryAccess> Cache<Next> {
     fn write_n(&mut self, addr: u64, data: u64, n: usize) -> Result<(), VmError> {
         if self.params.read_only {
             return Err(VmError::WriteToRom);
+        }
+
+        // Fast path: an aligned 2/4/8-byte access lands wholly inside one line.
+        // Resolve once, splat the slice, and (write-through) issue a single sized
+        // store to the next level instead of one write_byte per byte.
+        if n > 1 && addr & (n as u64 - 1) == 0 {
+            let (set_idx, way_idx, miss) = self.resolve_line(addr)?;
+            if miss {
+                self.stats.write_misses += 1;
+            } else {
+                self.stats.write_hits += 1;
+            }
+            let offset = (addr & ((1u64 << self.block_bits) - 1)) as usize;
+            let bytes = data.to_le_bytes();
+            self.sets[set_idx].ways[way_idx].data[offset..offset + n].copy_from_slice(&bytes[..n]);
+
+            if self.params.write_back {
+                self.sets[set_idx].ways[way_idx].dirty = true;
+            } else {
+                match n {
+                    2 => self.next.write_halfword(addr, data as u16)?,
+                    4 => self.next.write_word(addr, data as u32)?,
+                    8 => self.next.write_doubleword(addr, data)?,
+                    _ => {
+                        for i in 0..n {
+                            self.next.write_byte(addr + i as u64, bytes[i])?;
+                        }
+                    }
+                }
+            }
+            return Ok(());
         }
 
         let block_mask = !((1u64 << self.block_bits) - 1);
@@ -345,6 +392,76 @@ impl<Next: MemoryAccess + PeekByteRaw> PeekByteRaw for Cache<Next> {
             }
         }
         self.next.peek_byte_raw(addr)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::memory::ram::Ram;
+
+    fn make_cache() -> Cache<Ram> {
+        let ram = Ram::new(0x8000_0000, 64 * 1024);
+        let params = CacheParams {
+            size: 1024,
+            block_size: 64,
+            associativity: 2,
+            write_back: true,
+            read_only: false,
+        };
+        Cache::new(params, ram)
+    }
+
+    // The aligned fast path must produce the same bytes as a byte-by-byte access.
+    #[test]
+    fn aligned_fast_path_roundtrip() {
+        let mut c = make_cache();
+        let base = 0x8000_0040; // line-aligned
+
+        c.write_doubleword(base, 0x0102_0304_0506_0708).unwrap();
+        c.write_word(base + 8, 0xAABB_CCDD).unwrap();
+        c.write_halfword(base + 12, 0xBEEF).unwrap();
+
+        assert_eq!(c.read_doubleword(base).unwrap(), 0x0102_0304_0506_0708);
+        assert_eq!(c.read_word(base + 8).unwrap(), 0xAABB_CCDD);
+        assert_eq!(c.read_halfword(base + 12).unwrap(), 0xBEEF);
+
+        // Byte view must agree with the wide stores (little-endian).
+        assert_eq!(c.read_byte(base).unwrap(), 0x08);
+        assert_eq!(c.read_byte(base + 7).unwrap(), 0x01);
+    }
+
+    // A doubleword straddling two lines uses the slow path; verify it still works.
+    #[test]
+    fn line_crossing_unaligned_access() {
+        let mut c = make_cache();
+        let addr = 0x8000_003E; // 2 bytes before a 64-byte line boundary
+
+        c.write_doubleword(addr, 0x1122_3344_5566_7788).unwrap();
+        assert_eq!(c.read_doubleword(addr).unwrap(), 0x1122_3344_5566_7788);
+    }
+
+    // Write-through must mirror the wide store into the next level exactly once.
+    #[test]
+    fn write_through_propagates_to_next() {
+        let ram = Ram::new(0x8000_0000, 64 * 1024);
+        let params = CacheParams {
+            size: 1024,
+            block_size: 64,
+            associativity: 2,
+            write_back: false,
+            read_only: false,
+        };
+        let mut c = Cache::new(params, ram);
+        let base = 0x8000_0080;
+
+        c.write_doubleword(base, 0xDEAD_BEEF_CAFE_F00D).unwrap();
+        assert_eq!(
+            c.peek_next().peek_byte_raw(base),
+            Some(0x0D),
+            "low byte should be written through immediately"
+        );
+        assert_eq!(c.peek_next().peek_byte_raw(base + 7), Some(0xDE));
     }
 }
 
