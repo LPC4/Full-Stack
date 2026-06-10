@@ -203,7 +203,6 @@ spawn_user_process: () {
     page_size: u64 = 4096
     pages: u64 = (user_size + page_size - 1) / page_size
 
-    ; Debug: log the user_size and pages computed to help diagnose mapping faults.
     klog_int("[ PROC ] user_size bytes".data, user_size as i64)
     klog_int("[ PROC ] pages to map".data, pages as i64)
 

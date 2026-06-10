@@ -32,6 +32,7 @@ pub fn get_stdlib_modules_for_mode(mode: TargetMode) -> Vec<(&'static str, &'sta
             ("memory_allocator", stdlib::MEMORY_ALLOCATOR),
             ("string_utils", stdlib::STRING_UTILS),
             ("runtime", stdlib::HOSTED_RUNTIME),
+            ("syscalls", stdlib::HOSTED_SYSCALLS),
         ],
         TargetMode::Freestanding => vec![
             ("types", stdlib::TYPES),
@@ -103,6 +104,7 @@ pub fn get_stdlib_source() -> String {
         + stdlib::MEMORY_ALLOCATOR.len()
         + stdlib::STRING_UTILS.len()
         + stdlib::HOSTED_RUNTIME.len()
+        + stdlib::HOSTED_SYSCALLS.len()
         + 256;
     let mut combined = String::with_capacity(capacity);
     append_section(&mut combined, "; --- stdlib: types ---\n", stdlib::TYPES);
@@ -120,6 +122,11 @@ pub fn get_stdlib_source() -> String {
         &mut combined,
         "; --- stdlib: runtime ---\n",
         stdlib::HOSTED_RUNTIME,
+    );
+    append_section(
+        &mut combined,
+        "; --- stdlib: syscalls ---\n",
+        stdlib::HOSTED_SYSCALLS,
     );
     combined
 }

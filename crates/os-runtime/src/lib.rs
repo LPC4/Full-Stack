@@ -74,6 +74,13 @@ pub mod stdlib {
         "/stdlib/hosted/runtime.hll"
     ));
 
+    /// Hosted userspace syscall wrappers (`sc_open`, `sc_read`, ...) and C-string
+    /// helpers (`cstr_len`, `cstr_eq`, ...), shared by the bundled user programs.
+    pub const HOSTED_SYSCALLS: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/stdlib/hosted/syscalls.hll"
+    ));
+
     /// Freestanding runtime: `_kpanic` / `kpanic` (UART direct-write, no syscalls).
     pub const FREESTANDING_RUNTIME: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),

@@ -41,12 +41,9 @@ const USER_CODE_BASE = 0x40000000
 ; R + W + X + U page flags (vmm_map adds V).
 const USER_PAGE_FLAGS = 30
 
-; One page mapped into every exec'd process holding the exec argument string (an
-; absolute path the program may read). A program that takes no argument finds an
-; empty (zeroed) string here. It must sit in the private per-process VA gap
-; (0x40000000-0x7FFFFFFF), not below 0x40000000 which the kernel identity-maps
-; with a 1 GiB superpage; mapping a 4 KiB page into a superpage region would
-; corrupt the page table. Placed well above code and below the user stack.
+; Per-process page holding the exec argument string (an absolute path the program
+; may read). Sits in the private VA gap above 0x40000000 to avoid the kernel's
+; 1 GiB identity superpage; programs with no argument see a zeroed string.
 const USER_ARG_BASE  = 0x7FF00000
 ; R + W + U page flags (vmm_map adds V).
 const USER_ARG_FLAGS = 22
@@ -138,10 +135,8 @@ sys_exec_impl: (path: u8*, arg: u8*) -> i64 {
         return -1 as i64
     }
 
-    ; Stage the argument into a kernel buffer while the caller's address space is
-    ; still active; process_create below switches to the child's root, after which
-    ; the caller's `arg` pointer is no longer mapped. The kernel buffer stays
-    ; reachable (identity-mapped in every root).
+    ; Stage the argument into a kernel buffer (identity-mapped in every root) while
+    ; the caller's address space is live; process_create switches roots below.
     arg_buf: u8* = kmalloc(USER_ARG_MAX + 1)
     memset(arg_buf, 0, USER_ARG_MAX + 1)
     if arg != null {
@@ -173,15 +168,13 @@ sys_exec_impl: (path: u8*, arg: u8*) -> i64 {
         return -1 as i64
     }
 
-    ; Create the process first: process_create allocates the child's page-table
-    ; root and makes it the active root, so the payload pages below map into the
-    ; child's address space at the canonical code base.
+    ; Create the process first so the child's page-table root is active; the
+    ; payload pages below then map into the child's address space.
     entry: u64 = USER_CODE_BASE + entry_off
     pcb: u64* = process_create(entry)
 
-    ; Map the argument page into the child (its root is now the active root) and
-    ; copy the staged string in. Always mapped so a program can read USER_ARG_BASE
-    ; unconditionally; with no argument it sees an empty string.
+    ; Map the argument page into the child and copy the staged string in. Always
+    ; mapped, so a program can read USER_ARG_BASE even when it has no argument.
     arg_pa: u8* = pmm_alloc()
     if arg_pa == null {
         fs_close(fd)
@@ -233,10 +226,9 @@ sys_write_impl: (fd: u64, buf: u8*, len: u64) -> u64 {
     return written
 }
 
-; Fork the current process. Allocates a child PCB and a fresh page-table root,
-; eagerly copies the parent's user pages into it, duplicates the trap frame, and
-; sets the child up to return 0 from the fork ecall. Returns the child pid to the
-; parent (or -1 if there is no running process).
+; Fork the current process: allocate a child PCB and page-table root, copy the
+; parent's user pages and trap frame, and make the child return 0. Returns the
+; child pid to the parent, or -1 if there is no running process.
 sys_fork_impl: (frame: u64*) -> i64 {
     parent: u64* = scheduler_current()
     if parent == null {
@@ -253,9 +245,8 @@ sys_fork_impl: (frame: u64*) -> i64 {
     ; Duplicate the parent's user address space (code + stack) into the child.
     vmm_fork_copy(parent_root, child_root)
 
-    ; Copy the live parent context into the child, then adjust the child's return:
-    ; a0 = 0 (fork returns 0 in the child) and sepc past the ecall (the trap epilogue
-    ; only advances the parent's live frame, not this copy).
+    ; Copy the parent context into the child, then set a0 = 0 (fork's child return)
+    ; and advance sepc past the ecall (the trap epilogue only advances the parent).
     cframe_addr: u64 = child as u64 + 40
     memcpy(cframe_addr as u8*, frame as u8*, 288)
     cframe: u64* = cframe_addr as u64*
@@ -266,10 +257,9 @@ sys_fork_impl: (frame: u64*) -> i64 {
     return process_pid(child) as i64
 }
 
-; Wait for any child to exit and reap its exit code. If a zombie child exists,
-; reap it and return its code. If children exist but none has exited, rewind sepc
-; and yield so the syscall re-runs after a context switch (cooperative poll). If
-; there are no children at all, return -1.
+; Wait for any child to exit and reap its code. A waiting zombie is reaped and its
+; code returned; a still-running child rewinds sepc and yields to re-run the ecall
+; later (cooperative poll); no children at all returns -1.
 sys_wait_impl: (frame: u64*) -> u64 {
     parent: u64* = scheduler_current()
     if parent == null {
@@ -298,8 +288,7 @@ sys_wait_impl: (frame: u64*) -> u64 {
 }
 
 ; Handle SYSCALL_EXIT. Pid 1 (the shell) leaving halts the machine; any other
-; process becomes a zombie holding its exit code until its parent waits. Kept as
-; its own function so its locals do not enlarge syscall_dispatch's stack frame.
+; process becomes a zombie holding its exit code until its parent waits.
 sys_exit_impl: (frame: u64*) -> u64 {
     code: u64 = @frame[10]
     klog_int("sys_exit code".data, code as i64)
@@ -325,8 +314,8 @@ sys_exit_impl: (frame: u64*) -> u64 {
     return SYSACT_EXIT_SCHEDULE
 }
 
-; Truncate the file behind a0 to a0=fd, a1=len. Factored out of syscall_dispatch
-; so its locals do not enlarge that function's already-large stack frame.
+; Truncate the file in a0=fd to a1=len. This and the small *_impl wrappers below
+; keep their locals out of syscall_dispatch's already-large stack frame.
 sys_ftruncate_impl: (frame: u64*) -> u64 {
     fd:  i64 = (@frame[10]) as i64
     len: u64 = @frame[11]
@@ -334,16 +323,14 @@ sys_ftruncate_impl: (frame: u64*) -> u64 {
     return SYSACT_CONTINUE
 }
 
-; Remove the regular file at the absolute path in a0. Factored out of
-; syscall_dispatch so its locals do not enlarge that function's stack frame.
+; Remove the regular file at the absolute path in a0.
 sys_unlink_impl: (frame: u64*) -> u64 {
     path: u8* = (@frame[10]) as u8*
     @frame[10] = fs_unlink(path) as u64
     return SYSACT_CONTINUE
 }
 
-; Remove the empty directory at the absolute path in a0. Factored out for the
-; same frame-size reason as sys_unlink_impl.
+; Remove the empty directory at the absolute path in a0.
 sys_rmdir_impl: (frame: u64*) -> u64 {
     path: u8* = (@frame[10]) as u8*
     @frame[10] = fs_rmdir(path) as u64

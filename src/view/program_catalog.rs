@@ -8,6 +8,7 @@ pub enum ProgramKind {
     Custom,
     Stdlib, // Read-only stdlib programs
     Os,     // Read-only OS / kernel programs
+    User,   // Read-only userspace programs (shell, editor, assembler, demos)
 }
 
 #[derive(Clone, serde::Deserialize, serde::Serialize, Debug)]
@@ -95,6 +96,19 @@ impl ProgramFile {
         }
     }
 
+    pub fn user(id: &str, name: &str, description: &str, source: &str) -> Self {
+        Self {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            kind: ProgramKind::User,
+            source: source.to_owned(),
+            standalone: false,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
+            description: description.to_owned(),
+        }
+    }
+
     pub fn is_custom(&self) -> bool {
         matches!(self.kind, ProgramKind::Custom)
     }
@@ -105,6 +119,10 @@ impl ProgramFile {
 
     pub fn is_os(&self) -> bool {
         matches!(self.kind, ProgramKind::Os)
+    }
+
+    pub fn is_user(&self) -> bool {
+        matches!(self.kind, ProgramKind::User)
     }
 }
 
@@ -191,12 +209,90 @@ fn built_in_programs() -> Vec<ProgramFile> {
             p.standalone = true;
             p
         },
+        {
+            let mut p = ProgramFile::os(
+                "os-kernel-process",
+                "Process",
+                "Process Control Block and lifecycle: process_init, process_create, fork helpers.",
+                os_runtime::kernel::PROCESS,
+            );
+            p.standalone = true;
+            p
+        },
+        {
+            let mut p = ProgramFile::os(
+                "os-kernel-syscall",
+                "Syscall",
+                "Syscall dispatch: syscall_dispatch and the sys_* implementations (exit, exec, fork, wait, file I/O).",
+                os_runtime::kernel::SYSCALL,
+            );
+            p.standalone = true;
+            p
+        },
+        {
+            let mut p = ProgramFile::os(
+                "os-kernel-scheduler",
+                "Scheduler",
+                "Round-robin scheduler: scheduler_init, scheduler_add, schedule, zombie/reap bookkeeping.",
+                os_runtime::kernel::SCHEDULER,
+            );
+            p.standalone = true;
+            p
+        },
+        {
+            let mut p = ProgramFile::os(
+                "os-kernel-fs",
+                "Filesystem",
+                "Inode-based read-write filesystem: fs_open, fs_read, fs_write, fs_create, fs_mkdir, fs_rename, fs_unlink, fs_rmdir.",
+                os_runtime::kernel::FS,
+            );
+            p.standalone = true;
+            p
+        },
         // Compilable kernel: select this to build the full OS
         ProgramFile::os(
             "os-my-kernel",
             "My Kernel",
             "Compilable kernel: ties Entry, Checks, Utilities, PMM, VMM, and trap modules together. Select Kernel target mode to run.",
             os_runtime::kernel::MY_KERNEL,
+        ),
+        // Userspace programs (read-only): the hosted programs that run under the
+        // kernel. Compile in Hosted target mode; the shell boots them as pid 1.
+        ProgramFile::user(
+            "user-shell",
+            "Shell",
+            "Interactive shell (pid 1): ls, cd, run, cat, edit, as, file management.",
+            os_runtime::user::SHELL,
+        ),
+        ProgramFile::user(
+            "user-edit",
+            "Editor",
+            "ed-style line editor launched by the shell's `edit` command.",
+            os_runtime::user::EDIT,
+        ),
+        ProgramFile::user(
+            "user-as",
+            "Assembler",
+            "In-VM RV64I assembler launched by the shell's `as` command.",
+            os_runtime::user::AS,
+        ),
+        ProgramFile::user(
+            "user-cube",
+            "Cube Demo",
+            "Spinning 3D wireframe cube on the framebuffer device.",
+            os_runtime::user::CUBE,
+        ),
+        ProgramFile::user(
+            "user-fbdemo",
+            "Mandelbrot Demo",
+            "Framebuffer Mandelbrot renderer.",
+            os_runtime::user::FBDEMO,
+        ),
+        ProgramFile::user(
+            "user-hello",
+            "Hello",
+            "Minimal user program: prints a greeting, then yields forever.",
+            os_runtime::user::USER_HELLO,
         ),
         // Example programs
         ProgramFile::example(

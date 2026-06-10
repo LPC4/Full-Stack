@@ -1,281 +1,33 @@
-; Interactive shell (pid-1 user process).
-
+; Interactive shell (pid-1 user process). Syscall wrappers and C-string helpers
+; come from the hosted stdlib (stdlib/hosted/syscalls.hll); this file declares
+; the ones it uses as externals and keeps only shell-specific logic.
 
 external console_putchar: (c: i32)
 external console_write:   (str: u8*)
 external console_writeln: (str: u8*)
 
-; --- Syscall argument marshalling via globals (asm cannot reach locals) ---
+; Userspace syscalls (defined in the hosted stdlib).
+external sc_readchar: () -> i64
+external sc_readdir:  (path: u8*, index: u64, name_buf: u8*) -> i64
+external sc_stat:     (path: u8*) -> i64
+external sc_exec:     (path: u8*) -> i64
+external sc_exec_arg: (path: u8*, arg: u8*) -> i64
+external sc_open:     (path: u8*, flags: u64) -> i64
+external sc_read:     (fd: i64, buf: u8*, offset: u64, len: u64) -> i64
+external sc_mkdir:    (path: u8*) -> i64
+external sc_rename:   (old_path: u8*, new_path: u8*) -> i64
+external sc_unlink:   (path: u8*) -> i64
+external sc_rmdir:    (path: u8*) -> i64
+external sc_close:    (fd: i64)
+external sc_pidalive: (pid: u64) -> i64
+external sc_yield:    ()
+external sc_exit:     (code: i64)
 
-_a0:  u64 = 0
-_a1:  u64 = 0
-_a2:  u64 = 0
-_a3:  u64 = 0
-_ret: i64 = 0
-
-; Read one byte from the UART. Returns the byte (0-255) or -1 if none pending.
-sc_readchar: () -> i64 {
-    asm {
-        li a7, 100
-        ecall
-        la t0, _ret
-        sd a0, 0(t0)
-    }
-    return _ret
-}
-
-; List the index-th entry of `path`; writes the name into name_buf.
-; Returns the entry type (1=file, 2=dir) or -1 past the end.
-sc_readdir: (path: u8*, index: u64, name_buf: u8*) -> i64 {
-    _a0 = path as u64
-    _a1 = index
-    _a2 = name_buf as u64
-    asm {
-        la t0, _a0
-        ld a0, 0(t0)
-        la t0, _a1
-        ld a1, 0(t0)
-        la t0, _a2
-        ld a2, 0(t0)
-        li a7, 101
-        ecall
-        la t0, _ret
-        sd a0, 0(t0)
-    }
-    return _ret
-}
-
-; Return the inode type at `path` (1=file, 2=dir) or -1 if missing.
-sc_stat: (path: u8*) -> i64 {
-    _a0 = path as u64
-    asm {
-        la t0, _a0
-        ld a0, 0(t0)
-        li a7, 102
-        ecall
-        la t0, _ret
-        sd a0, 0(t0)
-    }
-    return _ret
-}
-
-; Load and run an executable file with no argument. Returns the new pid or -1.
-sc_exec: (path: u8*) -> i64 {
-    return sc_exec_arg(path, 0 as u8*)
-}
-
-; Load and run an executable file, passing `arg` (a null-terminated string the
-; program can read from USER_ARG_BASE). Returns the new pid or -1 on error.
-sc_exec_arg: (path: u8*, arg: u8*) -> i64 {
-    _a0 = path as u64
-    _a1 = arg as u64
-    asm {
-        la t0, _a0
-        ld a0, 0(t0)
-        la t0, _a1
-        ld a1, 0(t0)
-        li a7, 103
-        ecall
-        la t0, _ret
-        sd a0, 0(t0)
-    }
-    return _ret
-}
-
-; Open a file. flags: 0=RO, 1=RW, 2=create. Returns fd>=2 or -1.
-sc_open: (path: u8*, flags: u64) -> i64 {
-    _a0 = path as u64
-    _a1 = flags
-    asm {
-        la t0, _a0
-        ld a0, 0(t0)
-        la t0, _a1
-        ld a1, 0(t0)
-        li a7, 56
-        ecall
-        la t0, _ret
-        sd a0, 0(t0)
-    }
-    return _ret
-}
-
-; Read up to len bytes from fd at offset into buf. Returns bytes read or -1.
-sc_read: (fd: i64, buf: u8*, offset: u64, len: u64) -> i64 {
-    _a0 = fd as u64
-    _a1 = buf as u64
-    _a2 = offset
-    _a3 = len
-    asm {
-        la t0, _a0
-        ld a0, 0(t0)
-        la t0, _a1
-        ld a1, 0(t0)
-        la t0, _a2
-        ld a2, 0(t0)
-        la t0, _a3
-        ld a3, 0(t0)
-        li a7, 63
-        ecall
-        la t0, _ret
-        sd a0, 0(t0)
-    }
-    return _ret
-}
-
-; Create a directory at an absolute path. Returns >=0 on success or -1.
-sc_mkdir: (path: u8*) -> i64 {
-    _a0 = path as u64
-    asm {
-        la t0, _a0
-        ld a0, 0(t0)
-        li a7, 83
-        ecall
-        la t0, _ret
-        sd a0, 0(t0)
-    }
-    return _ret
-}
-
-; Move/rename a file or directory. Returns 0 on success or -1.
-sc_rename: (old_path: u8*, new_path: u8*) -> i64 {
-    _a0 = old_path as u64
-    _a1 = new_path as u64
-    asm {
-        la t0, _a0
-        ld a0, 0(t0)
-        la t0, _a1
-        ld a1, 0(t0)
-        li a7, 82
-        ecall
-        la t0, _ret
-        sd a0, 0(t0)
-    }
-    return _ret
-}
-
-; Remove a regular file. Returns 0 on success or -1.
-sc_unlink: (path: u8*) -> i64 {
-    _a0 = path as u64
-    asm {
-        la t0, _a0
-        ld a0, 0(t0)
-        li a7, 105
-        ecall
-        la t0, _ret
-        sd a0, 0(t0)
-    }
-    return _ret
-}
-
-; Remove an empty directory. Returns 0 on success or -1.
-sc_rmdir: (path: u8*) -> i64 {
-    _a0 = path as u64
-    asm {
-        la t0, _a0
-        ld a0, 0(t0)
-        li a7, 106
-        ecall
-        la t0, _ret
-        sd a0, 0(t0)
-    }
-    return _ret
-}
-
-; Close a file descriptor.
-sc_close: (fd: i64) {
-    _a0 = fd as u64
-    asm {
-        la t0, _a0
-        ld a0, 0(t0)
-        li a7, 57
-        ecall
-    }
-}
-
-; Return 1 while the given pid is still runnable, 0 once it has exited.
-sc_pidalive: (pid: u64) -> i64 {
-    _a0 = pid
-    asm {
-        la t0, _a0
-        ld a0, 0(t0)
-        li a7, 104
-        ecall
-        la t0, _ret
-        sd a0, 0(t0)
-    }
-    return _ret
-}
-
-; Voluntarily yield the CPU to the scheduler.
-sc_yield: () {
-    asm {
-        li a7, 2
-        ecall
-    }
-}
-
-; Terminate this process. The kernel halts the VM when it is the last one.
-sc_exit: (code: i64) {
-    _a0 = code as u64
-    asm {
-        la t0, _a0
-        ld a0, 0(t0)
-        li a7, 93
-        ecall
-    }
-}
-
-; --- String helpers ---
-
-sh_strlen: (s: u8*) -> u64 {
-    n: u64 = 0
-    while @(s + n) != 0 {
-        n = n + 1
-    }
-    return n
-}
-
-; Null-terminated equality. Returns 1 if equal, 0 otherwise.
-sh_streq: (a: u8*, b: u8*) -> i64 {
-    i: u64 = 0
-    while 1 == 1 {
-        ca: u8 = @(a + i)
-        cb: u8 = @(b + i)
-        if ca != cb {
-            return 0
-        }
-        if ca == 0 {
-            return 1
-        }
-        i = i + 1
-    }
-    return 0
-}
-
-; Returns 1 if `s` begins with `prefix`, 0 otherwise.
-sh_starts_with: (s: u8*, prefix: u8*) -> i64 {
-    i: u64 = 0
-    while @(prefix + i) != 0 {
-        if @(s + i) != @(prefix + i) {
-            return 0
-        }
-        i = i + 1
-    }
-    return 1
-}
-
-sh_strcpy: (dst: u8*, src: u8*) {
-    i: u64 = 0
-    while 1 == 1 {
-        c: u8 = @(src + i)
-        d: u8* = dst + i
-        @d = c
-        if c == 0 {
-            return
-        }
-        i = i + 1
-    }
-}
+; C-string helpers (defined in the hosted stdlib).
+external cstr_len:         (s: u8*) -> u64
+external cstr_eq:          (a: u8*, b: u8*) -> i64
+external cstr_copy:        (dst: u8*, src: u8*)
+external cstr_starts_with: (s: u8*, prefix: u8*) -> i64
 
 ; --- Path helpers ---
 
@@ -283,11 +35,11 @@ sh_strcpy: (dst: u8*, src: u8*) {
 ; An arg starting with '/' is absolute; otherwise it is joined onto cwd.
 sh_join_path: (cwd: u8*, arg: u8*, out: u8*) {
     if @arg == 47 {
-        sh_strcpy(out, arg)
+        cstr_copy(out, arg)
         return
     }
-    sh_strcpy(out, cwd)
-    l: u64 = sh_strlen(out)
+    cstr_copy(out, cwd)
+    l: u64 = cstr_len(out)
     ; Ensure a single separator between cwd and arg.
     if l == 0 {
         slash: u8* = out + l
@@ -315,7 +67,7 @@ sh_join_path: (cwd: u8*, arg: u8*, out: u8*) {
 
 ; Remove the last path component from cwd in place, keeping at least root "/".
 sh_path_pop: (cwd: u8*) {
-    l: u64 = sh_strlen(cwd)
+    l: u64 = cstr_len(cwd)
     if l <= 1 {
         return
     }
@@ -402,15 +154,15 @@ cmd_cd: (cwd: u8*, arg: u8*) {
     if @arg == 0 {
         return
     }
-    if sh_streq(arg, "/".data) == 1 {
+    if cstr_eq(arg, "/".data) == 1 {
         t: u8* = cwd + 1
         @t = 0 as u8
         return
     }
-    if sh_streq(arg, ".".data) == 1 {
+    if cstr_eq(arg, ".".data) == 1 {
         return
     }
-    if sh_streq(arg, "..".data) == 1 {
+    if cstr_eq(arg, "..".data) == 1 {
         sh_path_pop(cwd)
         return
     }
@@ -428,12 +180,11 @@ cmd_cd: (cwd: u8*, arg: u8*) {
         console_writeln(arg)
         return
     }
-    sh_strcpy(cwd, target_p)
+    cstr_copy(cwd, target_p)
 }
 
 ; Return 1 if the file at `path` begins with the FEXE magic ("FEXE"), else 0.
-; Lets `run` reject a non-executable file with a clear message up front, rather
-; than failing opaquely inside sys_exec.
+; Lets `run` reject a non-executable up front instead of failing inside sys_exec.
 sh_is_fexe: (path: u8*) -> i64 {
     fd: i64 = sc_open(path, 0)
     if fd < 0 {
@@ -701,11 +452,11 @@ cmd_as: (cwd: u8*, arg: u8*) {
     sh_join_path(cwd, dst_arg, out_abs_p)
     packed: u8[256]
     packed_p: u8* = packed[0]
-    sh_strcpy(packed_p, src_abs_p)
-    pl: u64 = sh_strlen(packed_p)
+    cstr_copy(packed_p, src_abs_p)
+    pl: u64 = cstr_len(packed_p)
     sep: u8* = packed_p + pl
     @sep = 32 as u8
-    sh_strcpy(packed_p + pl + 1, out_abs_p)
+    cstr_copy(packed_p + pl + 1, out_abs_p)
     pid: i64 = sc_exec_arg("/bin/as.fexe".data, packed_p)
     if pid < 0 {
         console_writeln("as: cannot launch /bin/as.fexe".data)
@@ -720,57 +471,57 @@ handle_command: (cwd: u8*, line: u8*) {
     if @line == 0 {
         return
     }
-    if sh_streq(line, "exit".data) == 1 {
+    if cstr_eq(line, "exit".data) == 1 {
         sc_exit(0)
         return
     }
-    if sh_streq(line, "ls".data) == 1 {
+    if cstr_eq(line, "ls".data) == 1 {
         cmd_ls(cwd)
         return
     }
-    if sh_streq(line, "help".data) == 1 {
+    if cstr_eq(line, "help".data) == 1 {
         console_writeln("commands: ls, cd <dir>, run <file>, cat <file>, edit <file>,".data)
         console_writeln("          touch <file>, mkdir <dir>, rm <file>, rmdir <dir>,".data)
         console_writeln("          mv <old> <new>, as <src> <out>, exit".data)
         return
     }
-    if sh_starts_with(line, "cd ".data) == 1 {
+    if cstr_starts_with(line, "cd ".data) == 1 {
         cmd_cd(cwd, line + 3)
         return
     }
-    if sh_starts_with(line, "run ".data) == 1 {
+    if cstr_starts_with(line, "run ".data) == 1 {
         cmd_run(cwd, line + 4)
         return
     }
-    if sh_starts_with(line, "cat ".data) == 1 {
+    if cstr_starts_with(line, "cat ".data) == 1 {
         cmd_cat(cwd, line + 4)
         return
     }
-    if sh_starts_with(line, "edit ".data) == 1 {
+    if cstr_starts_with(line, "edit ".data) == 1 {
         cmd_edit(cwd, line + 5)
         return
     }
-    if sh_starts_with(line, "touch ".data) == 1 {
+    if cstr_starts_with(line, "touch ".data) == 1 {
         cmd_touch(cwd, line + 6)
         return
     }
-    if sh_starts_with(line, "mkdir ".data) == 1 {
+    if cstr_starts_with(line, "mkdir ".data) == 1 {
         cmd_mkdir(cwd, line + 6)
         return
     }
-    if sh_starts_with(line, "rmdir ".data) == 1 {
+    if cstr_starts_with(line, "rmdir ".data) == 1 {
         cmd_rmdir(cwd, line + 6)
         return
     }
-    if sh_starts_with(line, "rm ".data) == 1 {
+    if cstr_starts_with(line, "rm ".data) == 1 {
         cmd_rm(cwd, line + 3)
         return
     }
-    if sh_starts_with(line, "mv ".data) == 1 {
+    if cstr_starts_with(line, "mv ".data) == 1 {
         cmd_mv(cwd, line + 3)
         return
     }
-    if sh_starts_with(line, "as ".data) == 1 {
+    if cstr_starts_with(line, "as ".data) == 1 {
         cmd_as(cwd, line + 3)
         return
     }

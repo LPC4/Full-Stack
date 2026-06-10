@@ -1,0 +1,361 @@
+; Userspace syscall wrappers and C-string helpers, shared by the hosted user
+; programs (shell, editor, assembler, framebuffer demos). Each wrapper marshals
+; arguments through globals because inline asm cannot reach HLL locals, issues an
+; ecall, and stores a0 back. These were previously duplicated in every user
+; program; they now live in the hosted stdlib so programs link against them.
+
+; --- Syscall argument marshalling ---
+
+_a0: u64 = 0
+_a1: u64 = 0
+_a2: u64 = 0
+_a3: u64 = 0
+_ret: i64 = 0
+
+; Read one byte from the UART (syscall 100). Returns the byte or -1 if none.
+sc_readchar: () -> i64 {
+    asm {
+        li a7, 100
+        ecall
+        la t0, _ret
+        sd a0, 0(t0)
+    }
+    return _ret
+}
+
+; Voluntarily yield the CPU to the scheduler (syscall 2).
+sc_yield: () {
+    asm {
+        li a7, 2
+        ecall
+    }
+}
+
+; Terminate the calling process with `code` (syscall 93).
+sc_exit: (code: i64) {
+    _a0 = code as u64
+    asm {
+        la t0, _a0
+        ld a0, 0(t0)
+        li a7, 93
+        ecall
+    }
+}
+
+; Open a file (syscall 56). flags: 0=RO, 1=RW, 2=create. Returns fd>=2 or -1.
+sc_open: (path: u8*, flags: u64) -> i64 {
+    _a0 = path as u64
+    _a1 = flags
+    asm {
+        la t0, _a0
+        ld a0, 0(t0)
+        la t0, _a1
+        ld a1, 0(t0)
+        li a7, 56
+        ecall
+        la t0, _ret
+        sd a0, 0(t0)
+    }
+    return _ret
+}
+
+; Read up to len bytes from fd at offset into buf (syscall 63). Bytes read or -1.
+sc_read: (fd: i64, buf: u8*, offset: u64, len: u64) -> i64 {
+    _a0 = fd as u64
+    _a1 = buf as u64
+    _a2 = offset
+    _a3 = len
+    asm {
+        la t0, _a0
+        ld a0, 0(t0)
+        la t0, _a1
+        ld a1, 0(t0)
+        la t0, _a2
+        ld a2, 0(t0)
+        la t0, _a3
+        ld a3, 0(t0)
+        li a7, 63
+        ecall
+        la t0, _ret
+        sd a0, 0(t0)
+    }
+    return _ret
+}
+
+; Write len bytes from buf to fd (syscall 64). fd 0/1 -> UART; >=2 -> filesystem.
+sc_write: (fd: i64, buf: u8*, len: u64) -> i64 {
+    _a0 = fd as u64
+    _a1 = buf as u64
+    _a2 = len
+    asm {
+        la t0, _a0
+        ld a0, 0(t0)
+        la t0, _a1
+        ld a1, 0(t0)
+        la t0, _a2
+        ld a2, 0(t0)
+        li a7, 64
+        ecall
+        la t0, _ret
+        sd a0, 0(t0)
+    }
+    return _ret
+}
+
+; Close a file descriptor (syscall 57).
+sc_close: (fd: i64) {
+    _a0 = fd as u64
+    asm {
+        la t0, _a0
+        ld a0, 0(t0)
+        li a7, 57
+        ecall
+    }
+}
+
+; Truncate fd to an exact length (syscall 46). Returns 0 or -1.
+sc_ftruncate: (fd: i64, len: u64) -> i64 {
+    _a0 = fd as u64
+    _a1 = len
+    asm {
+        la t0, _a0
+        ld a0, 0(t0)
+        la t0, _a1
+        ld a1, 0(t0)
+        li a7, 46
+        ecall
+        la t0, _ret
+        sd a0, 0(t0)
+    }
+    return _ret
+}
+
+; Inode type at a path (syscall 102): 1=file, 2=dir, -1=missing.
+sc_stat: (path: u8*) -> i64 {
+    _a0 = path as u64
+    asm {
+        la t0, _a0
+        ld a0, 0(t0)
+        li a7, 102
+        ecall
+        la t0, _ret
+        sd a0, 0(t0)
+    }
+    return _ret
+}
+
+; List the index-th entry of `path` (syscall 101); writes its name into name_buf.
+; Returns the entry type (1=file, 2=dir) or -1 past the end.
+sc_readdir: (path: u8*, index: u64, name_buf: u8*) -> i64 {
+    _a0 = path as u64
+    _a1 = index
+    _a2 = name_buf as u64
+    asm {
+        la t0, _a0
+        ld a0, 0(t0)
+        la t0, _a1
+        ld a1, 0(t0)
+        la t0, _a2
+        ld a2, 0(t0)
+        li a7, 101
+        ecall
+        la t0, _ret
+        sd a0, 0(t0)
+    }
+    return _ret
+}
+
+; Load and run an executable, passing `arg` (null-terminated, readable at
+; USER_ARG_BASE) (syscall 103). Returns the new pid or -1.
+sc_exec_arg: (path: u8*, arg: u8*) -> i64 {
+    _a0 = path as u64
+    _a1 = arg as u64
+    asm {
+        la t0, _a0
+        ld a0, 0(t0)
+        la t0, _a1
+        ld a1, 0(t0)
+        li a7, 103
+        ecall
+        la t0, _ret
+        sd a0, 0(t0)
+    }
+    return _ret
+}
+
+; Load and run an executable with no argument. Returns the new pid or -1.
+sc_exec: (path: u8*) -> i64 {
+    return sc_exec_arg(path, 0 as u8*)
+}
+
+; Create a directory (syscall 83). Returns >=0 or -1.
+sc_mkdir: (path: u8*) -> i64 {
+    _a0 = path as u64
+    asm {
+        la t0, _a0
+        ld a0, 0(t0)
+        li a7, 83
+        ecall
+        la t0, _ret
+        sd a0, 0(t0)
+    }
+    return _ret
+}
+
+; Move/rename a file or directory (syscall 82). Returns 0 or -1.
+sc_rename: (old_path: u8*, new_path: u8*) -> i64 {
+    _a0 = old_path as u64
+    _a1 = new_path as u64
+    asm {
+        la t0, _a0
+        ld a0, 0(t0)
+        la t0, _a1
+        ld a1, 0(t0)
+        li a7, 82
+        ecall
+        la t0, _ret
+        sd a0, 0(t0)
+    }
+    return _ret
+}
+
+; Remove a regular file (syscall 105). Returns 0 or -1.
+sc_unlink: (path: u8*) -> i64 {
+    _a0 = path as u64
+    asm {
+        la t0, _a0
+        ld a0, 0(t0)
+        li a7, 105
+        ecall
+        la t0, _ret
+        sd a0, 0(t0)
+    }
+    return _ret
+}
+
+; Remove an empty directory (syscall 106). Returns 0 or -1.
+sc_rmdir: (path: u8*) -> i64 {
+    _a0 = path as u64
+    asm {
+        la t0, _a0
+        ld a0, 0(t0)
+        li a7, 106
+        ecall
+        la t0, _ret
+        sd a0, 0(t0)
+    }
+    return _ret
+}
+
+; 1 while the given pid is still runnable, 0 once it has exited (syscall 104).
+sc_pidalive: (pid: u64) -> i64 {
+    _a0 = pid
+    asm {
+        la t0, _a0
+        ld a0, 0(t0)
+        li a7, 104
+        ecall
+        la t0, _ret
+        sd a0, 0(t0)
+    }
+    return _ret
+}
+
+; Map the framebuffer device and return its base VA (syscall 107), 0 on failure.
+sc_map_fb: () -> u64 {
+    asm {
+        li a7, 107
+        ecall
+        la t0, _ret
+        sd a0, 0(t0)
+    }
+    return _ret as u64
+}
+
+; Pop the next key event from the keyboard device (syscall 108); -1 when none.
+sc_poll_key: () -> i64 {
+    asm {
+        li a7, 108
+        ecall
+        la t0, _ret
+        sd a0, 0(t0)
+    }
+    return _ret
+}
+
+; Clone the caller (syscall 220): child pid in the parent, 0 in the child, -1 on
+; error.
+sc_fork: () -> i64 {
+    asm {
+        li a7, 220
+        ecall
+        la t0, _ret
+        sd a0, 0(t0)
+    }
+    return _ret
+}
+
+; Reap an exited child and return its exit code, or -1 if none (syscall 260).
+sc_wait: () -> i64 {
+    asm {
+        li a7, 260
+        ecall
+        la t0, _ret
+        sd a0, 0(t0)
+    }
+    return _ret
+}
+
+; --- Null-terminated C-string helpers ---
+
+; Length of a null-terminated string (excluding the terminator).
+cstr_len: (s: u8*) -> u64 {
+    n: u64 = 0
+    while @(s + n) != 0 {
+        n = n + 1
+    }
+    return n
+}
+
+; 1 if two null-terminated strings are equal, 0 otherwise.
+cstr_eq: (a: u8*, b: u8*) -> i64 {
+    i: u64 = 0
+    while 1 == 1 {
+        ca: u8 = @(a + i)
+        cb: u8 = @(b + i)
+        if ca != cb {
+            return 0
+        }
+        if ca == 0 {
+            return 1
+        }
+        i = i + 1
+    }
+    return 0
+}
+
+; Copy a null-terminated string from src to dst (including the terminator).
+cstr_copy: (dst: u8*, src: u8*) {
+    i: u64 = 0
+    while 1 == 1 {
+        c: u8 = @(src + i)
+        d: u8* = dst + i
+        @d = c
+        if c == 0 {
+            return
+        }
+        i = i + 1
+    }
+}
+
+; 1 if `s` begins with `prefix`, 0 otherwise.
+cstr_starts_with: (s: u8*, prefix: u8*) -> i64 {
+    i: u64 = 0
+    while @(prefix + i) != 0 {
+        if @(s + i) != @(prefix + i) {
+            return 0
+        }
+        i = i + 1
+    }
+    return 1
+}

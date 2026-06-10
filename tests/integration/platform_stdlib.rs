@@ -131,6 +131,43 @@ fn rom_image_assembles() {
     assert_eq!(rom.len() % 4, 0, "ROM size must be word-aligned");
 }
 
+// Every userspace catalog program must compile, assemble, and link against the
+// hosted stdlib (which now provides the shared sc_* / cstr_* helpers). Guards the
+// "Userspace Programs" catalog section so a broken program is caught at test time
+// rather than when the user selects it in the GUI.
+#[test]
+fn userspace_catalog_programs_compile_hosted() {
+    let programs = [
+        ("shell", os_runtime::user::SHELL),
+        ("edit", os_runtime::user::EDIT),
+        ("as", os_runtime::user::AS),
+        ("cube", os_runtime::user::CUBE),
+        ("fbdemo", os_runtime::user::FBDEMO),
+        ("user_hello", os_runtime::user::USER_HELLO),
+    ];
+    for (name, src) in programs {
+        let mut pipeline = CompilationPipeline::new();
+        pipeline.set_write_artifacts(false);
+        let stdlib = pipeline
+            .compile(&get_stdlib_source())
+            .unwrap_or_else(|e| panic!("{name}: stdlib compile failed: {e:?}"));
+        let (_, stdlib_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&stdlib.ir_program);
+        let user = pipeline
+            .compile(src)
+            .unwrap_or_else(|e| panic!("{name}: compile failed: {e:?}"));
+        let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&user.ir_program);
+        let stdlib_obj = pipeline
+            .assemble(&stdlib_tokens)
+            .unwrap_or_else(|e| panic!("{name}: stdlib assemble failed: {e:?}"));
+        let user_obj = pipeline
+            .assemble(&user_tokens)
+            .unwrap_or_else(|e| panic!("{name}: user assemble failed: {e:?}"));
+        pipeline
+            .link_assembled_objects(&[("stdlib", &stdlib_obj), ("user", &user_obj)])
+            .unwrap_or_else(|e| panic!("{name}: link failed: {e:?}"));
+    }
+}
+
 // --- mem.hll ---
 
 #[test]

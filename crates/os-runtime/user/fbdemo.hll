@@ -1,65 +1,62 @@
-; Framebuffer demo: maps the framebuffer (map_fb, a7=107) and renders a
-; Mandelbrot set over x in [-2.5, 1.0], y in [-1.25, 1.25], then exits.
+; Framebuffer demo: maps the framebuffer (map_fb, syscall 107) and renders the
+; Mandelbrot set, then exits. All math is fixed-point Q16.16 (1.0 == 65536).
+;
+; The complex-plane window is chosen so one pixel is square: the x and y steps
+; are equal (dx == dy), which keeps the set from looking stretched.
 
 external console_writeln: (str: u8*)
+; Map the framebuffer (syscall 107); returns its base VA (0 on failure).
+external sc_map_fb: () -> u64
 
 ; Framebuffer base virtual address (filled in by sc_map_fb).
 _fb_base: u64 = 0
-_ret: u64 = 0
 
 ; Q16.16 scale: 1.0 == 65536.
 const ONE = 65536
-; Complex-plane window, Q16.16: xmin = -2.5, ymin = -1.25.
+; Framebuffer dimensions.
+const W = 320
+const H = 240
+; Complex-plane window, Q16.16. x in [-2.5, 1.0], y in [-1.3125, 1.3125].
+; The y range is the x range scaled by H/W so pixels stay square.
 const XMIN = -163840
-const YMIN = -81920
-; Per-pixel steps: dx = 3.5/320, dy = 2.5/240.
-const DX = 716
-const DY = 682
+const YMIN = -86016
+; Per-pixel step: 3.5 / 320 == 2.625 / 240, so dx == dy.
+const STEP = 717
 ; Escape radius squared (4.0) and iteration cap.
 const FOUR = 262144
 const MAXIT = 64
-const W = 320
-const H = 240
-
-; Map the framebuffer into this address space; returns its base VA (0 on failure).
-sc_map_fb: () -> u64 {
-    asm {
-        li a7, 107
-        ecall
-        la t0, _ret
-        sd a0, 0(t0)
-    }
-    return _ret
-}
 
 ; Escape-time colour for one point c (Q16.16). Returns an opaque RGBA pixel.
+; Iterates z = z^2 + c until |z|^2 >= 4 or the cap is hit.
 mandel_pixel: (cx: i64, cy: i64) -> u32 {
     zx: i64 = 0
     zy: i64 = 0
     it: i64 = 0
     while it < MAXIT {
-        ; Squares are non-negative, so logical >> 16 equals the arithmetic shift.
+        ; Squares are non-negative, so a logical >> 16 rescales them to Q16.16.
         zx2: i64 = (zx * zx) >> 16
         zy2: i64 = (zy * zy) >> 16
         if (zx2 + zy2) >= FOUR {
             break
         }
-        ; Signed cross term: divide (>> is logical) to preserve the sign.
+        ; Cross term 2*zx*zy in Q16.16: divide by ONE (signed) to keep the sign.
         nzy: i64 = (2 * zx * zy) / ONE + cy
         zx = zx2 - zy2 + cx
         zy = nzy
         it = it + 1
     }
 
-    ; Inside the set (it == MAXIT) stays black; escaped points colour by count.
-    color: u32 = 0
-    if it < MAXIT {
-        r: i64 = (it * 9) & 255
-        g: i64 = (it * 5) & 255
-        b: i64 = (it * 13) & 255
-        color = (r | (g << 8) | (b << 16)) as u32
+    ; Points still bounded at the cap are inside the set and stay black.
+    if it >= MAXIT {
+        return 0xFF000000 as u32
     }
-    return color | (0xFF000000 as u32)
+
+    ; Escaped points: map the iteration count to a smooth purple-ish gradient.
+    r: i64 = (it * 9) & 255
+    g: i64 = (it * 5) & 255
+    b: i64 = (it * 13) & 255
+    rgb: i64 = r | (g << 8) | (b << 16)
+    return (rgb as u32) | (0xFF000000 as u32)
 }
 
 main: () -> i32 {
@@ -79,10 +76,10 @@ main: () -> i32 {
         while px < W {
             @p = mandel_pixel(cx, cy)
             p = ((p as u64) + 4) as u32*
-            cx = cx + DX
+            cx = cx + STEP
             px = px + 1
         }
-        cy = cy + DY
+        cy = cy + STEP
         py = py + 1
     }
 

@@ -427,12 +427,42 @@ main: () -> i32 {
 
 // --- Framebuffer device (map_fb syscall + fbdemo program) ---
 
-// Boot fbdemo as pid 1, read the framebuffer back, and check the rendered image.
-// Covers the whole path: map_fb -> MMU translation -> bus routing -> device store.
+// Reference Mandelbrot membership using the exact Q16.16 integer math from
+// fbdemo.hll. Returns true when the point is inside the set (black pixel).
+// Kept identical to the HLL so the VM render can be compared pixel-for-pixel;
+// any codegen distortion (e.g. a mixed-width truncation that shears the set)
+// shows up as a large disagreement here.
+fn fbdemo_ref_in_set(cx: i64, cy: i64) -> bool {
+    const ONE: i64 = 65536;
+    const FOUR: i64 = 262144;
+    const MAXIT: i64 = 64;
+    let (mut zx, mut zy, mut it) = (0i64, 0i64, 0i64);
+    while it < MAXIT {
+        let zx2 = (zx * zx) >> 16;
+        let zy2 = (zy * zy) >> 16;
+        if zx2 + zy2 >= FOUR {
+            break;
+        }
+        let nzy = (2 * zx * zy) / ONE + cy;
+        zx = zx2 - zy2 + cx;
+        zy = nzy;
+        it += 1;
+    }
+    it >= MAXIT
+}
+
+// Boot fbdemo as pid 1, read the framebuffer back, and check the rendered image
+// against the reference fractal. Covers the whole path: map_fb -> MMU
+// translation -> bus routing -> device store, plus the compiler's integer
+// codegen (the set is sheared if a wide multiply is truncated to 32 bits).
 #[test]
 fn fbdemo_renders_mandelbrot_set() {
     const FB_W: usize = 320;
     const FB_H: usize = 240;
+    const XMIN: i64 = -163840;
+    const YMIN: i64 = -86016;
+    const STEP: i64 = 717;
+
     let user = compile_hosted(user::FBDEMO);
     let (vm, outcome, uart) = boot_kernel(cached_kernel(), Some(&user), None, "", 2_000_000_000);
     assert_user_exit_ok(&uart, &outcome, "fbdemo");
@@ -442,34 +472,40 @@ fn fbdemo_renders_mandelbrot_set() {
     );
 
     let px = vm.peek_framebuffer();
-    let pixel = |x: usize, y: usize| -> [u8; 4] {
-        let o = (y * FB_W + x) * 4;
-        [px[o], px[o + 1], px[o + 2], px[o + 3]]
-    };
 
     // Every pixel must be fully opaque (the alpha byte is always written).
     for (i, p) in px.chunks_exact(4).enumerate() {
         assert_eq!(p[3], 255, "pixel {i} not opaque: {p:?}");
     }
 
-    // Image centre maps to c ~ (-0.75, 0), deep inside the set -> black.
-    assert_eq!(pixel(FB_W / 2, FB_H / 2), [0, 0, 0, 255], "set interior should be black");
+    // Compare the rendered set membership (black vs coloured) to the reference
+    // for every pixel. With correct codegen these agree exactly; a sheared or
+    // truncated render disagrees on thousands of pixels.
+    let mut in_set = 0usize;
+    let mut mismatches = 0usize;
+    for y in 0..FB_H {
+        for x in 0..FB_W {
+            let cx = XMIN + (x as i64) * STEP;
+            let cy = YMIN + (y as i64) * STEP;
+            let want_black = fbdemo_ref_in_set(cx, cy);
+            if want_black {
+                in_set += 1;
+            }
+            let o = (y * FB_W + x) * 4;
+            let got_black = px[o] == 0 && px[o + 1] == 0 && px[o + 2] == 0;
+            if got_black != want_black {
+                mismatches += 1;
+            }
+        }
+    }
 
-    // Far left on the real axis escapes immediately, so it is coloured.
-    let left = pixel(40, FB_H / 2);
+    // Sanity: the window genuinely contains a chunk of the set.
+    assert!(in_set > 10_000, "reference window has too little set: {in_set} px");
+    // The render must match the reference fractal almost exactly.
     assert!(
-        left[0] != 0 || left[1] != 0 || left[2] != 0,
-        "escaping pixel should be coloured, got {left:?}"
-    );
-
-    // A large coloured region confirms the fractal rendered, not a stray pixel.
-    let coloured = px
-        .chunks_exact(4)
-        .filter(|p| p[0] != 0 || p[1] != 0 || p[2] != 0)
-        .count();
-    assert!(
-        coloured > 10_000,
-        "expected a substantial coloured region, got {coloured} pixels"
+        mismatches < (FB_W * FB_H) / 200,
+        "rendered set disagrees with reference on {mismatches} pixels (likely a \
+         codegen distortion); in_set={in_set}"
     );
 }
 
@@ -912,39 +948,9 @@ fn fork_child_runs_and_parent_reaps_exit_code() {
     let parent = compile_hosted(
         r#"
 external console_writeln: (str: u8*)
-
-_a0:  u64 = 0
-_ret: i64 = 0
-
-sc_fork: () -> i64 {
-    asm {
-        li a7, 220
-        ecall
-        la t0, _ret
-        sd a0, 0(t0)
-    }
-    return _ret
-}
-
-sc_wait: () -> i64 {
-    asm {
-        li a7, 260
-        ecall
-        la t0, _ret
-        sd a0, 0(t0)
-    }
-    return _ret
-}
-
-sc_exit: (code: i64) {
-    _a0 = code as u64
-    asm {
-        la t0, _a0
-        ld a0, 0(t0)
-        li a7, 93
-        ecall
-    }
-}
+external sc_fork: () -> i64
+external sc_wait: () -> i64
+external sc_exit: (code: i64)
 
 main: () -> i32 {
     pid: i64 = sc_fork()
@@ -1007,50 +1013,10 @@ fn per_process_address_spaces_are_isolated() {
     let parent_src = format!(
         r#"
 external console_writeln: (str: u8*)
-
-_a0:  u64 = 0
-_ret: i64 = 0
-
-sc_exec: (path: u8*) -> i64 {{
-    _a0 = path as u64
-    asm {{
-        la t0, _a0
-        ld a0, 0(t0)
-        li a1, 0
-        li a7, 103
-        ecall
-        la t0, _ret
-        sd a0, 0(t0)
-    }}
-    return _ret
-}}
-
-sc_pidalive: (pid: u64) -> i64 {{
-    _a0 = pid
-    asm {{
-        la t0, _a0
-        ld a0, 0(t0)
-        li a7, 104
-        ecall
-        la t0, _ret
-        sd a0, 0(t0)
-    }}
-    return _ret
-}}
-
-sc_yield: () {{
-    asm {{ li a7, 2  ecall }}
-}}
-
-sc_exit: (code: i64) {{
-    _a0 = code as u64
-    asm {{
-        la t0, _a0
-        ld a0, 0(t0)
-        li a7, 93
-        ecall
-    }}
-}}
+external sc_exec: (path: u8*) -> i64
+external sc_pidalive: (pid: u64) -> i64
+external sc_yield: ()
+external sc_exit: (code: i64)
 
 main: () -> i32 {{
     p: u8* = {shared} as u8*
@@ -1130,107 +1096,12 @@ main: () -> i32 {{
 
 // User program that exercises the full FS API and prints FS_ALL_PASS on success.
 const FS_EXERCISER: &str = r#"
-_a0: u64 = 0
-_a1: u64 = 0
-_a2: u64 = 0
-_a3: u64 = 0
-_ret: i64 = 0
-
-sc_open: (path: u64, flags: u64) -> i64 {
-    _a0 = path
-    _a1 = flags
-    asm {
-        la t0, _a0
-        ld a0, 0(t0)
-        la t0, _a1
-        ld a1, 0(t0)
-        li a7, 56
-        ecall
-        la t0, _ret
-        sd a0, 0(t0)
-    }
-    return _ret
-}
-
-sc_close: (fd: i64) {
-    _a0 = fd as u64
-    asm {
-        la t0, _a0
-        ld a0, 0(t0)
-        li a7, 57
-        ecall
-    }
-}
-
-sc_read: (fd: i64, buf: u64, offset: u64, len: u64) -> i64 {
-    _a0 = fd as u64
-    _a1 = buf
-    _a2 = offset
-    _a3 = len
-    asm {
-        la t0, _a0
-        ld a0, 0(t0)
-        la t0, _a1
-        ld a1, 0(t0)
-        la t0, _a2
-        ld a2, 0(t0)
-        la t0, _a3
-        ld a3, 0(t0)
-        li a7, 63
-        ecall
-        la t0, _ret
-        sd a0, 0(t0)
-    }
-    return _ret
-}
-
-sc_write: (fd: i64, buf: u64, len: u64) -> i64 {
-    _a0 = fd as u64
-    _a1 = buf
-    _a2 = len
-    asm {
-        la t0, _a0
-        ld a0, 0(t0)
-        la t0, _a1
-        ld a1, 0(t0)
-        la t0, _a2
-        ld a2, 0(t0)
-        li a7, 64
-        ecall
-        la t0, _ret
-        sd a0, 0(t0)
-    }
-    return _ret
-}
-
-sc_mkdir: (path: u64) -> i64 {
-    _a0 = path
-    asm {
-        la t0, _a0
-        ld a0, 0(t0)
-        li a7, 83
-        ecall
-        la t0, _ret
-        sd a0, 0(t0)
-    }
-    return _ret
-}
-
-sc_rename: (oldp: u64, newp: u64) -> i64 {
-    _a0 = oldp
-    _a1 = newp
-    asm {
-        la t0, _a0
-        ld a0, 0(t0)
-        la t0, _a1
-        ld a1, 0(t0)
-        li a7, 82
-        ecall
-        la t0, _ret
-        sd a0, 0(t0)
-    }
-    return _ret
-}
+external sc_open:   (path: u8*, flags: u64) -> i64
+external sc_close:  (fd: i64)
+external sc_read:   (fd: i64, buf: u8*, offset: u64, len: u64) -> i64
+external sc_write:  (fd: i64, buf: u8*, len: u64) -> i64
+external sc_mkdir:  (path: u8*) -> i64
+external sc_rename: (old_path: u8*, new_path: u8*) -> i64
 
 fail: (label: u8*) -> i32 {
     console_write("FS_FAIL: ".data)
@@ -1251,42 +1122,41 @@ bytes_eq: (a: u8*, b: u8*, n: u64) -> i64 {
 
 main: () -> i32 {
     buf: u8[64]
-    buf_addr: u64 = u64(buf[0])
 
     ; 1. Read a pre-populated file.
-    fd: i64 = sc_open(u64("/hello.txt".data), 0)
+    fd: i64 = sc_open("/hello.txt".data, 0)
     if fd < 2 { return fail("open hello".data) }
-    n: i64 = sc_read(fd, buf_addr, 0, 13)
+    n: i64 = sc_read(fd, buf[0], 0, 13)
     if n != 13 { return fail("read hello count".data) }
     if bytes_eq(buf[0], "hello from fs".data, 13) == 0 { return fail("read hello data".data) }
     sc_close(fd)
 
     ; 2. Create a directory.
-    if sc_mkdir(u64("/out".data)) < 0 { return fail("mkdir out".data) }
+    if sc_mkdir("/out".data) < 0 { return fail("mkdir out".data) }
 
     ; 3. Create a file in it and write to it.
-    wfd: i64 = sc_open(u64("/out/result.txt".data), 2)
+    wfd: i64 = sc_open("/out/result.txt".data, 2)
     if wfd < 2 { return fail("create result".data) }
-    w: i64 = sc_write(wfd, u64("data123".data), 7)
+    w: i64 = sc_write(wfd, "data123".data, 7)
     if w != 7 { return fail("write count".data) }
     sc_close(wfd)
 
     ; 4. Re-open and read back the written contents.
-    rfd: i64 = sc_open(u64("/out/result.txt".data), 0)
+    rfd: i64 = sc_open("/out/result.txt".data, 0)
     if rfd < 2 { return fail("reopen result".data) }
-    rn: i64 = sc_read(rfd, buf_addr, 0, 7)
+    rn: i64 = sc_read(rfd, buf[0], 0, 7)
     if rn != 7 { return fail("readback count".data) }
     if bytes_eq(buf[0], "data123".data, 7) == 0 { return fail("readback data".data) }
     sc_close(rfd)
 
     ; 5. Rename within the directory; old name must disappear.
-    if sc_rename(u64("/out/result.txt".data), u64("/out/final.txt".data)) != 0 {
+    if sc_rename("/out/result.txt".data, "/out/final.txt".data) != 0 {
         return fail("rename".data)
     }
-    ffd: i64 = sc_open(u64("/out/final.txt".data), 0)
+    ffd: i64 = sc_open("/out/final.txt".data, 0)
     if ffd < 2 { return fail("open final".data) }
     sc_close(ffd)
-    gone: i64 = sc_open(u64("/out/result.txt".data), 0)
+    gone: i64 = sc_open("/out/result.txt".data, 0)
     if gone >= 0 { return fail("old name still present".data) }
 
     console_writeln("FS_ALL_PASS".data)

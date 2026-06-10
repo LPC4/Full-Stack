@@ -106,8 +106,7 @@ vmm_map_kernel: (root: u64) {
 }
 
 ; Allocate a fresh root table, stamp the shared kernel mappings into it, and
-; return its physical address. Restores the previously active root before
-; returning so callers decide explicitly when to map into the new root.
+; return its PA. Restores the previously active root so callers map in explicitly.
 vmm_new_root: () -> u64 {
     saved: u64 = vmm_active_root
     root: u64* = vmm_alloc_pt()
@@ -117,11 +116,10 @@ vmm_new_root: () -> u64 {
     return root_pa
 }
 
-; Eagerly copy every user (U-flagged) 4 KiB page from parent_root into
-; child_root: allocate a fresh physical page, memcpy 4 KiB, and map it at the
-; same VA with the same permissions. Kernel superpages are skipped (they are
-; already shared via vmm_map_kernel). Walks the 3-level table, treating PTEs with
-; R/W/X all clear as interior nodes and the rest as leaves.
+; Copy every user (U-flagged) 4 KiB page from parent_root into child_root: a fresh
+; physical page, memcpy, and a matching mapping. Kernel superpages are skipped
+; (already shared via vmm_map_kernel). Walks the 3-level table, R/W/X-clear PTEs
+; are interior nodes and the rest are leaves.
 vmm_fork_copy: (parent_root: u64, child_root: u64) {
     l2: u64* = parent_root as u64*
     i2: u64 = 0

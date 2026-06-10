@@ -63,6 +63,11 @@ impl FullStackApp {
             .map(|p| p.is_os())
             .unwrap_or(false);
         let is_kernel = self.target_mode == TargetMode::Kernel;
+        let is_user = self
+            .catalog
+            .current_program()
+            .map(|p| p.is_user())
+            .unwrap_or(false);
 
         ui.set_min_size(egui::vec2(ui.available_width(), ui.available_height()));
         ui.horizontal(|ui| {
@@ -73,7 +78,8 @@ impl FullStackApp {
                 self.compile();
             }
 
-            if !is_stdlib && !is_kernel {
+            // "Run in VM": shown for non-stdlib, non-kernel, non-user programs.
+            if !is_stdlib && !is_kernel && !is_user {
                 if ui
                     .add(
                         egui::Button::new(RichText::new("Run in VM").strong())
@@ -95,6 +101,39 @@ impl FullStackApp {
                 }
             }
 
+            // "Run": shown for userspace programs. Boots the kernel + shell and
+            // auto-runs this program. The kernel is compiled once and cached, with
+            // no effect on the catalog selection or the current target mode.
+            if is_user {
+                if ui
+                    .add(
+                        egui::Button::new(RichText::new("Run").strong())
+                            .fill(theme.accent)
+                            .min_size(egui::vec2(100.0, 35.0)),
+                    )
+                    .on_hover_text("Boot the kernel and auto-run this program in the shell")
+                    .clicked()
+                {
+                    let program_id = self.catalog.selected_program_id.clone();
+                    let prepared = self
+                        .ensure_kernel_binary()
+                        .and_then(|()| self.compile_and_store_hosted(&program_id));
+                    match prepared {
+                        Ok(()) => {
+                            self.selected_inject_program_id = program_id;
+                            self.machine_window.selected_user_inject = true;
+                            self.machine_window.open = true;
+                            self.machine_window.boot_requested = true;
+                            self.machine_window.autorun_requested = true;
+                        }
+                        Err(e) => {
+                            self.compilation_state
+                                .set_error(format!("run setup failed: {e}"));
+                        }
+                    }
+                }
+            }
+
             if is_kernel {
                 let has_assembled = self.compilation_state.assembled().is_some();
                 if ui
@@ -112,7 +151,8 @@ impl FullStackApp {
                 }
             }
 
-            if !is_stdlib && !is_os {
+            // Target selector: hidden for stdlib, OS, and userspace programs.
+            if !is_stdlib && !is_os && !is_user {
                 ui.separator();
                 ui.label("Target:");
                 let prev_mode = self.target_mode;
@@ -199,7 +239,7 @@ impl FullStackApp {
             ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(8.0);
 
-                if !is_stdlib && !is_kernel {
+                if !is_stdlib && !is_kernel && !is_user {
                     let can_debug = self.compilation_state.assembled().is_some();
                     if ui
                         .add_enabled(
@@ -225,6 +265,7 @@ impl FullStackApp {
                         full_stack::view::ProgramKind::Custom => ("custom", theme.text_dim),
                         full_stack::view::ProgramKind::Stdlib => ("stdlib", theme.text_dim),
                         full_stack::view::ProgramKind::Os => ("os", theme.text_dim),
+                        full_stack::view::ProgramKind::User => ("user", theme.text_dim),
                     };
                     ui.label(RichText::new(kind_label).weak().small().color(kind_color));
                     let name_resp = ui.label(RichText::new(&short_name).strong());

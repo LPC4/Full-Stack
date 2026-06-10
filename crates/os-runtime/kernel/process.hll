@@ -1,11 +1,6 @@
 ; PCB layout (44 x u64 = 352 bytes): state, next, stack, pc, frame, root, parent, exit.
 ; Trap frame at [5..40] spans x0-x31, sepc, scause, stval, sstatus (288 bytes).
 
-
-
-
-
-
 const PROC_READY   = 0
 const PROC_RUNNING = 1
 const PROC_BLOCKED = 2
@@ -95,7 +90,7 @@ process_create_at: (entry_pc: u64, stack_top: u64) -> u64* {
     @pcb[3] = last_page_pa
     @pcb[4] = entry_pc
 
-        ; Initial frame: sp = top of stack page, sepc = entry, sstatus = U-mode on sret with IRQs on.
+    ; Initial frame: sp = stack top, sepc = entry, sstatus = U-mode with IRQs on.
     @pcb[5 + 2]  = stack_top
     @pcb[5 + 32] = entry_pc
     @pcb[5 + 35] = 0x13

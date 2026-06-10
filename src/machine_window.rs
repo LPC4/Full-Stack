@@ -65,6 +65,10 @@ const WASM_MAX_CYCLES_PER_FRAME: u64 = 250_000;
 /// Fixed height of the top toolbar row (boot / stop / clear + status).
 const TOOLBAR_H: f32 = 34.0;
 
+/// Substring the shell prints when it is ready for input. The autorun feature
+/// waits for this before typing its command. Must match shell.hll's banner.
+const SHELL_READY_BANNER: &str = "HLL shell ready";
+
 // --- Phase ---
 
 #[derive(Clone, Default)]
@@ -128,6 +132,10 @@ pub struct MachineWindow {
     breakpoint: Option<u64>,
     /// Hex text backing the breakpoint input field in the debugger tab.
     breakpoint_input: String,
+    /// Autorun command typed into the shell's UART once its ready banner appears.
+    autoinject_bytes: Option<Vec<u8>>,
+    /// When true, the next boot should also auto-run the selected userspace program.
+    pub autorun_requested: bool,
 }
 
 // --- Public API ---
@@ -141,6 +149,7 @@ impl MachineWindow {
         user_binary: Option<&AssembledOutput>,
         fs_image: Option<&[u8]>,
         max_steps: u64,
+        autorun_command: Option<&str>,
     ) {
         let mut vm = Box::new(VirtualMachine::new_kernel(assembled));
 
@@ -186,6 +195,11 @@ impl MachineWindow {
         self.active_tab = FbTab::BootLog;
         self.log_cache = None;
         self.log_cache_generation = 0;
+
+        // Queue the autorun command; it is typed into the shell in maybe_tick once
+        // the ready banner appears. The trailing \r is added at injection time.
+        self.autoinject_bytes = autorun_command.map(|cmd| cmd.as_bytes().to_vec());
+        self.autorun_requested = false;
     }
 
     /// Render the machine window contents. Call once per frame while the window is open.
@@ -227,6 +241,9 @@ impl MachineWindow {
 impl MachineWindow {
     fn maybe_tick(&mut self, ctx: &egui::Context) {
         let breakpoint = self.breakpoint;
+        // Take the queued autorun command before borrowing self.phase so it can
+        // be used inside the match arm without a borrow conflict.
+        let mut autoinject_bytes = self.autoinject_bytes.take();
         let transition = match &mut self.phase {
             BootPhase::Running {
                 vm,
@@ -301,6 +318,22 @@ impl MachineWindow {
                     *log_generation = log_generation.wrapping_add(1);
                 }
 
+                // Auto-run: once the shell has printed its ready banner it is in its
+                // read loop, so feed the queued command (e.g. `run /home/foo.fexe`)
+                // into the UART as if the user had typed it. Keying off the banner
+                // rather than a step count makes this robust to VM speed.
+                if let Some(bytes) = &autoinject_bytes {
+                    if uart_text.contains(SHELL_READY_BANNER) {
+                        for &b in bytes {
+                            vm.push_uart_rx(b);
+                        }
+                        // Trailing carriage return so the shell parses the line.
+                        vm.push_uart_rx(b'\r');
+                        autoinject_bytes = None;
+                        *log_generation = log_generation.wrapping_add(1);
+                    }
+                }
+
                 if halted.is_some() || timed_out {
                     let fb_bytes = vm.peek_framebuffer().to_vec();
                     Some(BootResult {
@@ -318,6 +351,10 @@ impl MachineWindow {
             }
             _ => return,
         };
+
+        // Put back the command if the banner has not appeared yet; once injected
+        // this is None and stays None for the rest of the boot.
+        self.autoinject_bytes = autoinject_bytes;
 
         if let Some(result) = transition {
             self.phase = BootPhase::Done(result);
@@ -822,9 +859,7 @@ fn render_cache_stats(ui: &mut egui::Ui, vm: &VirtualMachine) {
             0.0
         };
         ui.label(mono(
-            format!(
-                "{name}  rd {rrate:>5.1}% ({reads:>10})  wr {wrate:>5.1}% ({writes:>10})"
-            ),
+            format!("{name}  rd {rrate:>5.1}% ({reads:>10})  wr {wrate:>5.1}% ({writes:>10})"),
             term_text(),
         ));
     }

@@ -6,6 +6,18 @@ use super::{
 use crate::ast::StructDestructureField;
 use log::warn;
 
+/// Widening rank for integer widths, used to promote mixed-width binary
+/// operands to the wider type (i64 outranks i32, etc.).
+fn int_width_rank(width: &IntWidth) -> u8 {
+    match width {
+        IntWidth::I1 => 0,
+        IntWidth::I8 => 1,
+        IntWidth::I16 => 2,
+        IntWidth::I32 => 3,
+        IntWidth::I64 => 4,
+    }
+}
+
 impl HighLevelCompiler {
     pub(super) fn lower_literal(&mut self, literal: &Literal) -> LoweredValue {
         match literal {
@@ -152,19 +164,36 @@ impl HighLevelCompiler {
             | BinaryOp::BitwiseAnd
             | BinaryOp::BitwiseXor
             | BinaryOp::BitwiseOr => {
+                // Mixed-width integer operands promote to the wider type so an
+                // untyped literal (default i32) does not truncate an i64 operand,
+                // e.g. `2 * zx` must compute in i64. Shifts keep the left type:
+                // the shift amount must not widen the value being shifted.
+                let is_shift = matches!(op, BinaryOp::Shl | BinaryOp::Shr);
+                let (op_ty, op_unsigned) = match (&lhs.ty, &rhs.ty) {
+                    (IrType::Integer(lw), IrType::Integer(rw)) if !is_shift => {
+                        match int_width_rank(lw).cmp(&int_width_rank(rw)) {
+                            std::cmp::Ordering::Greater => (lhs.ty.clone(), lhs.is_unsigned),
+                            std::cmp::Ordering::Less => (rhs.ty.clone(), rhs.is_unsigned),
+                            std::cmp::Ordering::Equal => {
+                                (lhs.ty.clone(), lhs.is_unsigned || rhs.is_unsigned)
+                            }
+                        }
+                    }
+                    _ => (lhs.ty.clone(), lhs.is_unsigned),
+                };
                 let ir_op = match op {
                     BinaryOp::Add => IrMathOp::Add,
                     BinaryOp::Sub => IrMathOp::Sub,
                     BinaryOp::Mul => IrMathOp::Mul,
                     BinaryOp::Div => {
-                        if lhs.is_unsigned {
+                        if op_unsigned {
                             IrMathOp::UDiv
                         } else {
                             IrMathOp::SDiv
                         }
                     }
                     BinaryOp::Mod => {
-                        if lhs.is_unsigned {
+                        if op_unsigned {
                             IrMathOp::UMod
                         } else {
                             IrMathOp::Mod
@@ -182,14 +211,14 @@ impl HighLevelCompiler {
                 self.push_instruction(IrInstruction::Math {
                     dest: dest.clone(),
                     op: ir_op,
-                    ty: lhs.ty.clone(),
+                    ty: op_ty.clone(),
                     lhs: lhs.value,
                     rhs: rhs.value,
                 });
                 Some(LoweredValue {
                     value: IrValue::Register(dest),
-                    ty: lhs.ty,
-                    is_unsigned: lhs.is_unsigned,
+                    ty: op_ty,
+                    is_unsigned: op_unsigned,
                 })
             }
             BinaryOp::Eq

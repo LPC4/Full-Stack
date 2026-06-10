@@ -647,10 +647,8 @@ fs_write: (fd: i64, buf: u8*, offset: u64, len: u64) -> i64 {
     return done as i64
 }
 
-; Shrink (or formally fix) the file behind fd to exactly `len` bytes: set the
-; inode size and free every data block that falls entirely past `len`. Used by
-; the editor to truncate a file when its new contents are shorter than the old.
-; Returns 0 on success, -1 on error. Does not grow files (fs_write does that).
+; Shrink the file behind fd to exactly `len` bytes: set the inode size and free
+; data blocks past `len`. Returns 0 on success, -1 on error. Does not grow files.
 fs_truncate: (fd: i64, len: u64) -> i64 {
     if fs_ready == 0 {
         return -1 as i64

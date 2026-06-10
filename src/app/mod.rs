@@ -21,7 +21,9 @@ use full_stack::view::{
     PipelineView, ProgramCatalog, SourceView, StackView, TokensView, UiTheme, VmExecutionView,
     apply_ui_theme,
 };
-use hll_to_ir::stdlib::{get_stdlib_source_for_mode, get_stdlib_type_prelude};
+use hll_to_ir::stdlib::{
+    get_kernel_stdlib_source, get_stdlib_source_for_mode, get_stdlib_type_prelude,
+};
 use std::fmt;
 use virtual_machine::cpu::StepOutcome;
 use virtual_machine::virtual_machine::VirtualMachine;
@@ -273,6 +275,8 @@ pub struct FullStackApp {
     #[serde(skip)]
     selected_inject_program_id: String,
     #[serde(skip)]
+    kernel_binary: Option<AssembledOutput>,
+    #[serde(skip)]
     shell_binary: Option<AssembledOutput>,
     #[serde(skip)]
     edit_binary: Option<AssembledOutput>,
@@ -322,6 +326,7 @@ impl Default for FullStackApp {
             load_base_input: format!("{:#010x}", LinkLayout::freestanding_kernel().load_base),
             machine_window: MachineWindow::default(),
             selected_inject_program_id: String::new(),
+            kernel_binary: None,
             shell_binary: None,
             edit_binary: None,
             fbdemo_binary: None,
@@ -632,6 +637,9 @@ impl FullStackApp {
 
         self.compilation_state.clear_error();
         self.compilation_state.just_compiled = true;
+        // Cache the kernel binary so it survives target-mode switches.
+        // Userspace programs use this cached kernel for "Run in Kernel".
+        self.kernel_binary = self.compilation_state.assembled().cloned();
     }
 
     fn compile(&mut self) {
@@ -794,6 +802,50 @@ impl FullStackApp {
         }
 
         Err("no assembled binary produced".to_owned())
+    }
+
+    /// Compile the default kernel (kernel stdlib + my_kernel) into `kernel_binary`,
+    /// caching it. Independent of the catalog selection and target mode, so a
+    /// userspace program can boot the kernel without disturbing the editor state.
+    fn ensure_kernel_binary(&mut self) -> Result<(), String> {
+        if self.kernel_binary.is_some() {
+            return Ok(());
+        }
+
+        // Kernel stdlib: single concatenated source with the kernel string prefix.
+        let mut stdlib_pipeline = CompilationPipeline::new();
+        stdlib_pipeline.set_target_mode(TargetMode::Kernel);
+        stdlib_pipeline.set_write_artifacts(false);
+        stdlib_pipeline.set_string_prefix(Some("__kern_str_".to_owned()));
+        let stdlib = stdlib_pipeline
+            .compile(&get_kernel_stdlib_source())
+            .map_err(|e| format!("kernel stdlib compile error: {e}"))?;
+        let (_, stdlib_tokens) =
+            stdlib_pipeline.compile_ir_to_assembly_with_tokens(&stdlib.ir_program);
+        let stdlib_obj = stdlib_pipeline
+            .assemble(&stdlib_tokens)
+            .map_err(|e| format!("kernel stdlib assemble error: {e}"))?;
+
+        // Kernel module, linked against the stdlib object at S-mode entry.
+        let mut kernel_pipeline = CompilationPipeline::new();
+        kernel_pipeline.set_target_mode(TargetMode::Kernel);
+        kernel_pipeline.set_write_artifacts(false);
+        kernel_pipeline.set_entry_point(Some("_kernel_start".to_owned()));
+        let kernel_objs = kernel_pipeline
+            .compile_modules(&[("my_kernel", os_runtime::kernel::MY_KERNEL)])
+            .map_err(|e| format!("kernel module compile error: {e}"))?;
+
+        let assembled = kernel_pipeline
+            .link_assembled_objects_named(
+                "kernel_stdlib_my_kernel",
+                &[
+                    ("kernel_stdlib", &stdlib_obj),
+                    ("my_kernel", &kernel_objs[0]),
+                ],
+            )
+            .map_err(|e| format!("kernel link error: {}", e.message))?;
+        self.kernel_binary = Some(assembled);
+        Ok(())
     }
 
     /// Compile the bundled interactive shell as a hosted binary, caching the
@@ -1134,13 +1186,18 @@ impl eframe::App for FullStackApp {
                 // file you can launch with `run <name>.fexe`.
                 ui.horizontal(|ui| {
                     ui.label("Program in /home:");
-                    // Program selector: list Example and Custom programs.
+                    // Program selector: list Example, Custom, and Userspace programs
+                    // (all hosted -- they install into /home and run under the shell).
                     use full_stack::view::ProgramKind;
                     let programs: Vec<_> = self
                         .catalog
                         .all_programs()
                         .iter()
-                        .filter(|p| p.kind == ProgramKind::Example || p.kind == ProgramKind::Custom)
+                        .filter(|p| {
+                            p.kind == ProgramKind::Example
+                                || p.kind == ProgramKind::Custom
+                                || p.kind == ProgramKind::User
+                        })
                         .cloned()
                         .collect();
 
@@ -1199,7 +1256,14 @@ impl eframe::App for FullStackApp {
 
         if self.machine_window.boot_requested {
             self.machine_window.boot_requested = false;
-            if let Some(assembled) = self.compilation_state.assembled().cloned() {
+            // When autorun is requested, use the cached kernel binary instead
+            // of the currently-selected userspace program's assembled output.
+            let kernel = if self.machine_window.autorun_requested {
+                self.kernel_binary.clone()
+            } else {
+                self.compilation_state.assembled().cloned()
+            };
+            if let Some(assembled) = kernel {
                 // Boot the interactive shell as pid 1, with a filesystem image
                 // that holds any selected program as a runnable file.
                 match self.ensure_shell_binary() {
@@ -1231,11 +1295,29 @@ impl eframe::App for FullStackApp {
                         // step budget so the session does not time out between
                         // inputs (it ends when the user types `exit`).
                         let max_steps = self.settings.max_vm_steps.max(1).saturating_mul(1000);
+
+                        // Build the autorun command if Boot & Run was requested.
+                        let autorun = if self.machine_window.autorun_requested
+                            && !self.selected_inject_program_id.is_empty()
+                        {
+                            let name = self
+                                .catalog
+                                .all_programs()
+                                .iter()
+                                .find(|p| p.id == self.selected_inject_program_id)
+                                .map(|p| sanitize_program_filename(&p.name))
+                                .unwrap_or_else(|| "program".to_owned());
+                            Some(format!("run /home/{name}.fexe"))
+                        } else {
+                            None
+                        };
+
                         self.machine_window.start_boot(
                             &assembled,
                             shell.as_ref(),
                             Some(&fs_image),
                             max_steps,
+                            autorun.as_deref(),
                         );
                     }
                     Err(e) => {

@@ -1,11 +1,9 @@
 ; Line editor (ed-like) for the HLL kernel, modeled on the classic Unix `ed`.
 ;
-; Launched by the shell's `edit <file>` command. The absolute path is passed by
-; the kernel in the USER_ARG_BASE page (see sys_exec_impl). The file is loaded
-; into a line buffer; commands edit individual lines and write it back. This is a
-; line editor (not full-screen) because the GUI terminal is a scrolling log: it
-; renders no cursor-addressing escape codes and forwards no arrow keys, so a
-; visual editor could not draw or be driven there. The line model fits it well.
+; Launched by the shell's `edit <file>`; the kernel passes the absolute path in
+; the USER_ARG_BASE page (see sys_exec_impl). The file loads into a line buffer
+; that commands edit and write back. Line-based (not full-screen) because the GUI
+; terminal is a scrolling log with no cursor addressing or arrow keys.
 ;
 ; Commands (current line shown with a '>' marker by `p`):
 ;   p            print the buffer with line numbers
@@ -26,19 +24,22 @@ external console_write:     (str: u8*)
 external console_writeln:   (str: u8*)
 external console_print_int: (n: i64)
 
+; Userspace syscalls and C-string helpers (defined in the hosted stdlib).
+external sc_readchar:  () -> i64
+external sc_yield:     ()
+external sc_exit:      (code: i64)
+external sc_open:      (path: u8*, flags: u64) -> i64
+external sc_read:      (fd: i64, buf: u8*, offset: u64, len: u64) -> i64
+external sc_write:     (fd: i64, buf: u8*, len: u64) -> i64
+external sc_close:     (fd: i64)
+external sc_ftruncate: (fd: i64, len: u64) -> i64
+external cstr_len:     (s: u8*) -> u64
+
 ; Page the kernel maps with this program's argument string (the file path).
 const ARG_BASE = 0x7FF00000
 ; Line buffer geometry: up to MAXLINES lines of up to LINEW-1 chars each.
 const MAXLINES = 200
 const LINEW = 128
-
-; --- Syscall argument marshalling (see shell.hll for the pattern) ---
-
-_a0: u64 = 0
-_a1: u64 = 0
-_a2: u64 = 0
-_a3: u64 = 0
-_ret: i64 = 0
 
 ; Line storage (MAXLINES * LINEW, null-terminated lines) and a scratch buffer
 ; used for loading and saving the file.
@@ -47,116 +48,6 @@ scratch: u8[25600]
 nlines: i64 = 0
 ; Current line, 1-based; 0 when the buffer is empty.
 cur: i64 = 0
-
-sc_readchar: () -> i64 {
-    asm {
-        li a7, 100
-        ecall
-        la t0, _ret
-        sd a0, 0(t0)
-    }
-    return _ret
-}
-
-sc_yield: () {
-    asm {
-        li a7, 2
-        ecall
-    }
-}
-
-sc_exit: (code: i64) {
-    _a0 = code as u64
-    asm {
-        la t0, _a0
-        ld a0, 0(t0)
-        li a7, 93
-        ecall
-    }
-}
-
-sc_open: (path: u8*, flags: u64) -> i64 {
-    _a0 = path as u64
-    _a1 = flags
-    asm {
-        la t0, _a0
-        ld a0, 0(t0)
-        la t0, _a1
-        ld a1, 0(t0)
-        li a7, 56
-        ecall
-        la t0, _ret
-        sd a0, 0(t0)
-    }
-    return _ret
-}
-
-sc_read: (fd: i64, buf: u8*, offset: u64, len: u64) -> i64 {
-    _a0 = fd as u64
-    _a1 = buf as u64
-    _a2 = offset
-    _a3 = len
-    asm {
-        la t0, _a0
-        ld a0, 0(t0)
-        la t0, _a1
-        ld a1, 0(t0)
-        la t0, _a2
-        ld a2, 0(t0)
-        la t0, _a3
-        ld a3, 0(t0)
-        li a7, 63
-        ecall
-        la t0, _ret
-        sd a0, 0(t0)
-    }
-    return _ret
-}
-
-sc_write: (fd: i64, buf: u8*, len: u64) -> i64 {
-    _a0 = fd as u64
-    _a1 = buf as u64
-    _a2 = len
-    asm {
-        la t0, _a0
-        ld a0, 0(t0)
-        la t0, _a1
-        ld a1, 0(t0)
-        la t0, _a2
-        ld a2, 0(t0)
-        li a7, 64
-        ecall
-        la t0, _ret
-        sd a0, 0(t0)
-    }
-    return _ret
-}
-
-sc_close: (fd: i64) {
-    _a0 = fd as u64
-    asm {
-        la t0, _a0
-        ld a0, 0(t0)
-        li a7, 57
-        ecall
-    }
-}
-
-sc_ftruncate: (fd: i64, len: u64) -> i64 {
-    _a0 = fd as u64
-    _a1 = len
-    asm {
-        la t0, _a0
-        ld a0, 0(t0)
-        la t0, _a1
-        ld a1, 0(t0)
-        li a7, 46
-        ecall
-        la t0, _ret
-        sd a0, 0(t0)
-    }
-    return _ret
-}
 
 ; --- Line input ---
 
@@ -202,14 +93,6 @@ ed_read_line: (buf: u8*) {
 }
 
 ; --- Line buffer model ---
-
-slen: (s: u8*) -> u64 {
-    n: u64 = 0
-    while @(s + n) != 0 {
-        n = n + 1
-    }
-    return n
-}
 
 ; Pointer to 0-based line index i.
 lptr: (i: i64) -> u8* {
@@ -601,7 +484,7 @@ ed_subst: (arg: u8*) {
         out = out + 1
         rk = rk + 1
     }
-    p = (at as u64) + slen(oldp)
+    p = (at as u64) + cstr_len(oldp)
     while @(cl + p) != 0 {
         d: u8* = tp + out
         @d = @(cl + p)

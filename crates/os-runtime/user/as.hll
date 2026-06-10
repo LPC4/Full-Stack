@@ -19,18 +19,20 @@
 external console_write:   (str: u8*)
 external console_writeln: (str: u8*)
 
+; Userspace syscalls and C-string helpers (defined in the hosted stdlib).
+external sc_open:      (path: u8*, flags: u64) -> i64
+external sc_read:      (fd: i64, buf: u8*, offset: u64, len: u64) -> i64
+external sc_write:     (fd: i64, buf: u8*, len: u64) -> i64
+external sc_ftruncate: (fd: i64, len: u64) -> i64
+external sc_close:     (fd: i64)
+external sc_exit:      (code: i64)
+external cstr_eq:      (a: u8*, b: u8*) -> i64
+external cstr_len:     (s: u8*) -> u64
+
 ; Page the kernel maps with this program's argument string. Matches USER_ARG_BASE.
 const ARG_BASE = 0x7FF00000
 ; FEXE header size; payload (flat binary) starts here.
 const HDR = 4096
-
-; --- Syscall marshalling (globals, since inline asm cannot reach locals) ---
-
-_a0: u64 = 0
-_a1: u64 = 0
-_a2: u64 = 0
-_a3: u64 = 0
-_ret: i64 = 0
 
 ; Source text, assembled code, and the FEXE output image.
 src: u8[8192]
@@ -50,125 +52,6 @@ ntok: i64 = 0
 
 ; Set once on any assembly error so main can abort with a non-zero exit.
 err_flag: i64 = 0
-
-sc_open: (path: u8*, flags: u64) -> i64 {
-    _a0 = path as u64
-    _a1 = flags
-    asm {
-        la t0, _a0
-        ld a0, 0(t0)
-        la t0, _a1
-        ld a1, 0(t0)
-        li a7, 56
-        ecall
-        la t0, _ret
-        sd a0, 0(t0)
-    }
-    return _ret
-}
-
-sc_read: (fd: i64, buf: u8*, offset: u64, len: u64) -> i64 {
-    _a0 = fd as u64
-    _a1 = buf as u64
-    _a2 = offset
-    _a3 = len
-    asm {
-        la t0, _a0
-        ld a0, 0(t0)
-        la t0, _a1
-        ld a1, 0(t0)
-        la t0, _a2
-        ld a2, 0(t0)
-        la t0, _a3
-        ld a3, 0(t0)
-        li a7, 63
-        ecall
-        la t0, _ret
-        sd a0, 0(t0)
-    }
-    return _ret
-}
-
-sc_write: (fd: i64, buf: u8*, len: u64) -> i64 {
-    _a0 = fd as u64
-    _a1 = buf as u64
-    _a2 = len
-    asm {
-        la t0, _a0
-        ld a0, 0(t0)
-        la t0, _a1
-        ld a1, 0(t0)
-        la t0, _a2
-        ld a2, 0(t0)
-        li a7, 64
-        ecall
-        la t0, _ret
-        sd a0, 0(t0)
-    }
-    return _ret
-}
-
-sc_ftruncate: (fd: i64, len: u64) -> i64 {
-    _a0 = fd as u64
-    _a1 = len
-    asm {
-        la t0, _a0
-        ld a0, 0(t0)
-        la t0, _a1
-        ld a1, 0(t0)
-        li a7, 46
-        ecall
-        la t0, _ret
-        sd a0, 0(t0)
-    }
-    return _ret
-}
-
-sc_close: (fd: i64) {
-    _a0 = fd as u64
-    asm {
-        la t0, _a0
-        ld a0, 0(t0)
-        li a7, 57
-        ecall
-    }
-}
-
-sc_exit: (code: i64) {
-    _a0 = code as u64
-    asm {
-        la t0, _a0
-        ld a0, 0(t0)
-        li a7, 93
-        ecall
-    }
-}
-
-; --- String helpers ---
-
-streq: (a: u8*, b: u8*) -> i64 {
-    i: u64 = 0
-    while 1 == 1 {
-        ca: u8 = @(a + i)
-        cb: u8 = @(b + i)
-        if ca != cb {
-            return 0
-        }
-        if ca == 0 {
-            return 1
-        }
-        i = i + 1
-    }
-    return 0
-}
-
-slen: (s: u8*) -> u64 {
-    n: u64 = 0
-    while @(s + n) != 0 {
-        n = n + 1
-    }
-    return n
-}
 
 ; Pointer to token i in the line token table.
 tok_at: (i: i64) -> u8* {
@@ -255,7 +138,7 @@ tokenize: (line: u8*) {
 
 ; 1 if token `p` ends with ':' (a label definition).
 ends_colon: (p: u8*) -> i64 {
-    l: u64 = slen(p)
+    l: u64 = cstr_len(p)
     if l == 0 {
         return 0
     }
@@ -267,7 +150,7 @@ ends_colon: (p: u8*) -> i64 {
 
 ; Strip a trailing ':' from a label token in place.
 drop_colon: (p: u8*) {
-    l: u64 = slen(p)
+    l: u64 = cstr_len(p)
     if l > 0 {
         t: u8* = p + (l - 1)
         @t = 0 as u8
@@ -296,103 +179,103 @@ parse_uint: (p: u8*) -> i64 {
 
 ; Map a register token to its number 0..31, or -1 on error (sets err_flag).
 reg_num: (p: u8*) -> i64 {
-    if streq(p, "zero".data) == 1 {
+    if cstr_eq(p, "zero".data) == 1 {
         return 0
     }
-    if streq(p, "ra".data) == 1 {
+    if cstr_eq(p, "ra".data) == 1 {
         return 1
     }
-    if streq(p, "sp".data) == 1 {
+    if cstr_eq(p, "sp".data) == 1 {
         return 2
     }
-    if streq(p, "gp".data) == 1 {
+    if cstr_eq(p, "gp".data) == 1 {
         return 3
     }
-    if streq(p, "tp".data) == 1 {
+    if cstr_eq(p, "tp".data) == 1 {
         return 4
     }
-    if streq(p, "t0".data) == 1 {
+    if cstr_eq(p, "t0".data) == 1 {
         return 5
     }
-    if streq(p, "t1".data) == 1 {
+    if cstr_eq(p, "t1".data) == 1 {
         return 6
     }
-    if streq(p, "t2".data) == 1 {
+    if cstr_eq(p, "t2".data) == 1 {
         return 7
     }
-    if streq(p, "fp".data) == 1 {
+    if cstr_eq(p, "fp".data) == 1 {
         return 8
     }
-    if streq(p, "s0".data) == 1 {
+    if cstr_eq(p, "s0".data) == 1 {
         return 8
     }
-    if streq(p, "s1".data) == 1 {
+    if cstr_eq(p, "s1".data) == 1 {
         return 9
     }
-    if streq(p, "a0".data) == 1 {
+    if cstr_eq(p, "a0".data) == 1 {
         return 10
     }
-    if streq(p, "a1".data) == 1 {
+    if cstr_eq(p, "a1".data) == 1 {
         return 11
     }
-    if streq(p, "a2".data) == 1 {
+    if cstr_eq(p, "a2".data) == 1 {
         return 12
     }
-    if streq(p, "a3".data) == 1 {
+    if cstr_eq(p, "a3".data) == 1 {
         return 13
     }
-    if streq(p, "a4".data) == 1 {
+    if cstr_eq(p, "a4".data) == 1 {
         return 14
     }
-    if streq(p, "a5".data) == 1 {
+    if cstr_eq(p, "a5".data) == 1 {
         return 15
     }
-    if streq(p, "a6".data) == 1 {
+    if cstr_eq(p, "a6".data) == 1 {
         return 16
     }
-    if streq(p, "a7".data) == 1 {
+    if cstr_eq(p, "a7".data) == 1 {
         return 17
     }
-    if streq(p, "s2".data) == 1 {
+    if cstr_eq(p, "s2".data) == 1 {
         return 18
     }
-    if streq(p, "s3".data) == 1 {
+    if cstr_eq(p, "s3".data) == 1 {
         return 19
     }
-    if streq(p, "s4".data) == 1 {
+    if cstr_eq(p, "s4".data) == 1 {
         return 20
     }
-    if streq(p, "s5".data) == 1 {
+    if cstr_eq(p, "s5".data) == 1 {
         return 21
     }
-    if streq(p, "s6".data) == 1 {
+    if cstr_eq(p, "s6".data) == 1 {
         return 22
     }
-    if streq(p, "s7".data) == 1 {
+    if cstr_eq(p, "s7".data) == 1 {
         return 23
     }
-    if streq(p, "s8".data) == 1 {
+    if cstr_eq(p, "s8".data) == 1 {
         return 24
     }
-    if streq(p, "s9".data) == 1 {
+    if cstr_eq(p, "s9".data) == 1 {
         return 25
     }
-    if streq(p, "s10".data) == 1 {
+    if cstr_eq(p, "s10".data) == 1 {
         return 26
     }
-    if streq(p, "s11".data) == 1 {
+    if cstr_eq(p, "s11".data) == 1 {
         return 27
     }
-    if streq(p, "t3".data) == 1 {
+    if cstr_eq(p, "t3".data) == 1 {
         return 28
     }
-    if streq(p, "t4".data) == 1 {
+    if cstr_eq(p, "t4".data) == 1 {
         return 29
     }
-    if streq(p, "t5".data) == 1 {
+    if cstr_eq(p, "t5".data) == 1 {
         return 30
     }
-    if streq(p, "t6".data) == 1 {
+    if cstr_eq(p, "t6".data) == 1 {
         return 31
     }
     ; Raw x<N> form.
@@ -501,7 +384,7 @@ find_label: (name: u8*) -> i64 {
     i: i64 = 0
     while i < lbl_count {
         cand: u8* = lbl_names[0] + (i as u64) * 16
-        if streq(cand, name) == 1 {
+        if cstr_eq(cand, name) == 1 {
             return @lbl_addr[i]
         }
         i = i + 1
@@ -598,82 +481,82 @@ encode_instr: (pass: i64, base: i64, pc: i64) -> i64 {
     o1: u8* = tok_at(base + 2)
     o2: u8* = tok_at(base + 3)
 
-    if streq(m, "ecall".data) == 1 {
+    if cstr_eq(m, "ecall".data) == 1 {
         if pass == 2 {
             emit_word(0x73 as u32)
         }
         return 4
     }
-    if streq(m, "ret".data) == 1 {
+    if cstr_eq(m, "ret".data) == 1 {
         if pass == 2 {
             emit_word(enc_i(0, 1, 0, 0, 0x67))
         }
         return 4
     }
-    if streq(m, "li".data) == 1 {
+    if cstr_eq(m, "li".data) == 1 {
         imm: i64 = parse_imm(o1)
         if pass == 2 {
             emit_li(reg_num(o0), imm)
         }
         return li_size(imm)
     }
-    if streq(m, "mv".data) == 1 {
+    if cstr_eq(m, "mv".data) == 1 {
         if pass == 2 {
             emit_word(enc_i(reg_num(o0), reg_num(o1), 0, 0, 0x13))
         }
         return 4
     }
-    if streq(m, "addi".data) == 1 {
+    if cstr_eq(m, "addi".data) == 1 {
         if pass == 2 {
             emit_word(enc_i(reg_num(o0), reg_num(o1), parse_imm(o2), 0, 0x13))
         }
         return 4
     }
-    if streq(m, "add".data) == 1 {
+    if cstr_eq(m, "add".data) == 1 {
         if pass == 2 {
             emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 0, 0))
         }
         return 4
     }
-    if streq(m, "sub".data) == 1 {
+    if cstr_eq(m, "sub".data) == 1 {
         if pass == 2 {
             emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 0, 0x20))
         }
         return 4
     }
-    if streq(m, "and".data) == 1 {
+    if cstr_eq(m, "and".data) == 1 {
         if pass == 2 {
             emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 7, 0))
         }
         return 4
     }
-    if streq(m, "or".data) == 1 {
+    if cstr_eq(m, "or".data) == 1 {
         if pass == 2 {
             emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 6, 0))
         }
         return 4
     }
-    if streq(m, "xor".data) == 1 {
+    if cstr_eq(m, "xor".data) == 1 {
         if pass == 2 {
             emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 4, 0))
         }
         return 4
     }
-    if streq(m, "j".data) == 1 {
+    if cstr_eq(m, "j".data) == 1 {
         if pass == 2 {
             target: i64 = find_label(o0)
             emit_word(enc_j(0, target - pc))
         }
         return 4
     }
-    if streq(m, "beq".data) == 1 {
+    if cstr_eq(m, "beq".data) == 1 {
         if pass == 2 {
             target: i64 = find_label(o2)
             emit_word(enc_b(reg_num(o0), reg_num(o1), target - pc, 0))
         }
         return 4
     }
-    if streq(m, "bne".data) == 1 {
+    if cstr_eq(m, "bne".data) == 1 {
         if pass == 2 {
             target: i64 = find_label(o2)
             emit_word(enc_b(reg_num(o0), reg_num(o1), target - pc, 1))

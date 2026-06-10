@@ -155,6 +155,8 @@ impl FullStackApp {
             ui.separator();
             self.render_program_section(ui, ProgramKind::Os, "OS");
             ui.separator();
+            self.render_program_section(ui, ProgramKind::User, "Userspace Programs");
+            ui.separator();
             self.render_program_section(ui, ProgramKind::Example, "Examples");
             ui.separator();
             self.render_program_section(ui, ProgramKind::Custom, "Your programs");
