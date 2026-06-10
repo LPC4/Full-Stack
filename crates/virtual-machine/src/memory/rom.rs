@@ -38,6 +38,11 @@ impl Rom {
     pub fn size(&self) -> u64 {
         self.size
     }
+
+    /// Peek at a ROM byte without mutation.
+    pub fn peek_byte(&self, addr: u64) -> Option<u8> {
+        self.index(addr).map(|idx| self.data[idx])
+    }
 }
 
 impl MemoryAccess for Rom {

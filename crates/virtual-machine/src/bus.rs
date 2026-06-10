@@ -209,12 +209,40 @@ impl SystemBus {
             .collect()
     }
 
-    /// Read bytes without touching cache stats or LRU state.
-    /// Checks each cache level for the most current (possibly dirty) data before
-    /// falling through to RAM. Safe to call from the render path every frame.
+    /// Read bytes for debug display without touching cache stats or LRU state.
+    /// Routes by address: ROM and MMIO are read directly (non-destructive).
+    /// RAM is read through the L1/L2/L3 cache hierarchy.
     pub fn peek_bytes_raw(&self, addr: u64, len: usize) -> Vec<u8> {
         (0..len as u64)
-            .map(|i| self.l1_cache.peek_byte_raw(addr + i).unwrap_or(0))
+            .map(|i| {
+                let a = addr + i;
+                match a {
+                    a if a >= UART_BASE && a <= UART_END => {
+                        self.uart.peek_byte(a - UART_BASE).unwrap_or(0)
+                    }
+                    a if a >= CLINT_BASE && a <= CLINT_END => {
+                        // CLINT does not support byte access; return 0 for debug.
+                        0
+                    }
+                    a if a >= PLIC_BASE && a <= PLIC_END => {
+                        // PLIC does not support byte access; return 0 for debug.
+                        0
+                    }
+                    a if a >= FB_BASE && a <= FB_END => self
+                        .framebuffer
+                        .pixels()
+                        .get((a - FB_BASE) as usize)
+                        .copied()
+                        .unwrap_or(0),
+                    // Keyboard DATA reads have a pop side effect; never touch from
+                    // the debug peek path.
+                    a if a >= KBD_BASE && a <= KBD_END => 0,
+                    a if a >= ROM_BASE && a <= ROM_END => {
+                        self.rom.peek_byte(a).unwrap_or(0)
+                    }
+                    _ => self.l1_cache.peek_byte_raw(a).unwrap_or(0),
+                }
+            })
             .collect()
     }
 

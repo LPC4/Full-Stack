@@ -92,6 +92,10 @@ impl Cpu {
         self.pipeline.peek_csrs()
     }
 
+    pub fn debug_translate(&self, vaddr: u64) -> Option<u64> {
+        self.pipeline.debug_translate(vaddr)
+    }
+
     pub fn predictor_stats(&self) -> &predictor::PredictorStats {
         self.pipeline.predictor_stats()
     }

@@ -307,6 +307,95 @@ impl DecodedInsn {
     }
 }
 
+// --- ABI register names for disassembly ---
+
+const REG_NAMES: [&str; 32] = [
+    "zero", "ra", "sp", "gp", "tp", "t0", "t1", "t2",
+    "s0", "s1", "a0", "a1", "a2", "a3", "a4", "a5",
+    "a6", "a7", "s2", "s3", "s4", "s5", "s6", "s7",
+    "s8", "s9", "s10", "s11", "t3", "t4", "t5", "t6",
+];
+
+fn reg_name(r: usize) -> &'static str {
+    REG_NAMES.get(r).copied().unwrap_or("??")
+}
+
+impl std::fmt::Display for DecodedInsn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Lui { rd, imm } => {
+                write!(f, "{:<10} {}, {:#x}", "lui", reg_name(*rd), (*imm as u64) >> 12)
+            }
+            Self::Auipc { rd, imm } => {
+                write!(f, "{:<10} {}, {:#x}", "auipc", reg_name(*rd), (*imm as u64) >> 12)
+            }
+            Self::Jal { rd, imm } => {
+                write!(f, "{:<10} {}, {}", "jal", reg_name(*rd), imm)
+            }
+            Self::Jalr { rd, rs1, imm } => {
+                write!(f, "{:<10} {}, {}({})", "jalr", reg_name(*rd), imm, reg_name(*rs1))
+            }
+            Self::Branch { rs1, rs2, imm, .. } => {
+                write!(f, "{:<10} {}, {}, {}", self.mnemonic(), reg_name(*rs1), reg_name(*rs2), imm)
+            }
+            Self::Load { rd, rs1, imm, .. } => {
+                write!(f, "{:<10} {}, {}({})", self.mnemonic(), reg_name(*rd), imm, reg_name(*rs1))
+            }
+            Self::Store { rs1, rs2, imm, .. } => {
+                write!(f, "{:<10} {}, {}({})", self.mnemonic(), reg_name(*rs2), imm, reg_name(*rs1))
+            }
+            Self::AluImm { rd, rs1, imm, funct3, .. } => {
+                let shift = if *funct3 == 1 || *funct3 == 5 { imm & 0x3F } else { *imm };
+                write!(f, "{:<10} {}, {}, {}", self.mnemonic(), reg_name(*rd), reg_name(*rs1), shift)
+            }
+            Self::AluImm32 { rd, rs1, imm, funct3, .. } => {
+                let shift = if *funct3 == 1 || *funct3 == 5 { imm & 0x1F } else { *imm };
+                write!(f, "{:<10} {}, {}, {}", self.mnemonic(), reg_name(*rd), reg_name(*rs1), shift)
+            }
+            Self::Alu { rd, rs1, rs2, .. } => {
+                write!(f, "{:<10} {}, {}, {}", self.mnemonic(), reg_name(*rd), reg_name(*rs1), reg_name(*rs2))
+            }
+            Self::Alu32 { rd, rs1, rs2, .. } => {
+                write!(f, "{:<10} {}, {}, {}", self.mnemonic(), reg_name(*rd), reg_name(*rs1), reg_name(*rs2))
+            }
+            Self::Fence { pred, succ, .. } => {
+                write!(f, "{:<10} {}, {}", "fence", pred, succ)
+            }
+            Self::FenceI => write!(f, "fence.i"),
+            Self::Ecall => write!(f, "ecall"),
+            Self::Ebreak => write!(f, "ebreak"),
+            Self::Mret => write!(f, "mret"),
+            Self::Sret => write!(f, "sret"),
+            Self::SfenceVma => write!(f, "sfence.vma"),
+            Self::Wfi => write!(f, "wfi"),
+            Self::Csr { rd, rs1_uimm, csr, .. } => {
+                let mnem = self.mnemonic();
+                if mnem == "csrrwi" || mnem == "csrrsi" || mnem == "csrrci" {
+                    write!(f, "{:<10} {}, {:#x}, {}", mnem, reg_name(*rd), csr, rs1_uimm)
+                } else {
+                    write!(f, "{:<10} {}, {:#x}, {}", mnem, reg_name(*rd), csr, reg_name(*rs1_uimm))
+                }
+            }
+            Self::FLoad { rd, rs1, imm, .. } => {
+                write!(f, "{:<10} {}, {}({})", self.mnemonic(), reg_name(*rd), imm, reg_name(*rs1))
+            }
+            Self::FStore { rs1, rs2, imm, .. } => {
+                write!(f, "{:<10} {}, {}({})", self.mnemonic(), reg_name(*rs2), imm, reg_name(*rs1))
+            }
+            Self::FOp { rd, rs1, rs2, .. } => {
+                let mnem = format!("f.{}", self.mnemonic());
+                write!(f, "{:<10} {}, {}, {}", mnem, reg_name(*rd), reg_name(*rs1), reg_name(*rs2))
+            }
+            Self::FMac { rd, rs1, rs2, rs3, .. } => {
+                write!(f, "{:<10} {}, {}, {}, {}", self.mnemonic(), reg_name(*rd), reg_name(*rs1), reg_name(*rs2), reg_name(*rs3))
+            }
+            Self::Atomic { rd, rs1, rs2, .. } => {
+                write!(f, "{:<10} {}, {}, ({})", self.mnemonic(), reg_name(*rd), reg_name(*rs2), reg_name(*rs1))
+            }
+        }
+    }
+}
+
 // --- Public decode entry point ---
 
 pub fn decode(word: u32) -> Result<DecodedInsn, VmError> {

@@ -742,7 +742,7 @@ fn render_pipeline(ui: &mut egui::Ui, vm: &VirtualMachine) {
     let names = ["IF", "ID", "EX", "MEM", "WB"];
     for (i, stage) in feed.stages.iter().enumerate() {
         let body = match stage {
-            Some((pc, mnem)) => format!("{:<4} {:#012x}  {}", names[i], pc, mnem),
+            Some((pc, mnem)) => format!("{:<4} {:#012x}  {:<10}", names[i], pc, mnem),
             None => format!("{:<4} (bubble)", names[i]),
         };
         let col = if stage.is_some() {
@@ -784,18 +784,21 @@ fn render_pipeline_stats(ui: &mut egui::Ui, vm: &VirtualMachine) {
     };
     ui.label(mono(
         format!(
-            "cycles {}  retired {}  IPC {:.3}",
+            "cycles {:>10}  retired {:>10}  IPC {:.3}",
             s.cycles, s.insns_retired, ipc
         ),
         term_text(),
     ));
     ui.label(mono(
-        format!("stalls {}  flushes {}", s.stall_cycles, s.flush_cycles),
+        format!(
+            "stalls {:>10}  flushes {:>9}",
+            s.stall_cycles, s.flush_cycles
+        ),
         term_text(),
     ));
     ui.label(mono(
         format!(
-            "branches {}  mispredict {:.1}%",
+            "branches {:>7}  mispredict {:>5.1}%",
             s.branches_seen, mispredict
         ),
         term_text(),
@@ -819,7 +822,10 @@ fn render_cache_stats(ui: &mut egui::Ui, vm: &VirtualMachine) {
             0.0
         };
         ui.label(mono(
-            format!("{name}  rd {rrate:5.1}% ({reads})  wr {wrate:5.1}% ({writes})"),
+            format!(
+                "{name}  rd {rrate:>5.1}% ({:>10})  wr {wrate:>5.1}% ({:>10})",
+                reads, writes
+            ),
             term_text(),
         ));
     }
@@ -848,10 +854,13 @@ fn render_registers(ui: &mut egui::Ui, vm: &VirtualMachine) {
 }
 
 fn render_disasm(ui: &mut egui::Ui, vm: &VirtualMachine) {
+    use virtual_machine::cpu::decoder;
+
     dbg_heading(ui, "MEMORY @ PC");
     let pc = vm.peek_pc();
-    // Show a window of raw 32-bit words around PC. Read without disturbing state.
-    let start = pc.saturating_sub(16);
+    // Translate virtual address to physical for the memory peek.
+    let phys_pc = vm.debug_translate(pc).unwrap_or(pc);
+    let start = phys_pc.saturating_sub(16);
     let bytes = vm.peek_bytes_raw(start, 16 * 4);
     for i in 0..16 {
         let addr = start + (i * 4) as u64;
@@ -860,13 +869,16 @@ fn render_disasm(ui: &mut egui::Ui, vm: &VirtualMachine) {
             break;
         }
         let word = u32::from_le_bytes([bytes[off], bytes[off + 1], bytes[off + 2], bytes[off + 3]]);
-        let marker = if addr == pc { ">" } else { " " };
-        let col = if addr == pc {
+        let asm = decoder::decode(word)
+            .map(|d| format!("{d}"))
+            .unwrap_or_else(|_| "(illegal)".to_owned());
+        let marker = if addr == phys_pc { ">" } else { " " };
+        let col = if addr == phys_pc {
             term_cursor()
         } else {
             term_dim()
         };
-        ui.label(mono(format!("{marker} {addr:#012x}  {word:08x}"), col));
+        ui.label(mono(format!("{marker} {addr:#012x}  {word:08x}  {asm}"), col));
     }
 }
 

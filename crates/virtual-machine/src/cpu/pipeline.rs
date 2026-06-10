@@ -177,6 +177,74 @@ impl Pipeline {
         self.csrs.snapshot()
     }
 
+    /// Best-effort virtual-to-physical translation for debug display.
+    /// Uses the TLB cache; returns None when no mapping is cached (requires a
+    /// full page-table walk which needs `&mut bus`). M-mode and Bare mode are
+    /// identity-mapped (with PMP checks).
+    pub fn debug_translate(&self, vaddr: u64) -> Option<u64> {
+        use crate::cpu::mmu::{self, finalize_leaf};
+        use crate::cpu::registers::PrivilegeMode;
+
+        let priv_mode = self.regs.priv_mode;
+
+        // M-mode bypasses translation entirely.
+        if priv_mode == PrivilegeMode::Machine {
+            return Some(vaddr);
+        }
+
+        let satp = self.csrs.satp;
+        let mode = (satp >> 60) & 0xF;
+
+        if mode == 0 {
+            // Bare mode: vaddr is the physical address.
+            let phys_addr = vaddr;
+            if self.csrs.pmpcfg0 != 0 {
+                let allow_r = (self.csrs.pmpcfg0 & 0x1) != 0;
+                let pmp_match =
+                    self.csrs.pmpaddr0 == u64::MAX || phys_addr <= self.csrs.pmpaddr0;
+                if !pmp_match || !allow_r {
+                    return None;
+                }
+            }
+            return Some(phys_addr);
+        }
+
+        // Sv39 is the only paging mode supported.
+        if mode != 8 {
+            return None;
+        }
+
+        if !mmu::is_sv39_canonical(vaddr) {
+            return None;
+        }
+
+        let mstatus = self.csrs.mstatus;
+        let sum = (mstatus >> 18) & 1;
+        let mxr = (mstatus >> 19) & 1;
+
+        // TLB lookup only — we cannot walk page tables with &self.
+        let vpn_page = vaddr >> 12;
+        if let Some((pte, level)) = self.tlb.lookup(vpn_page) {
+            match finalize_leaf(
+                pte,
+                vaddr,
+                level,
+                priv_mode,
+                sum,
+                mxr,
+                false, // is_write
+                true,  // is_execute (we're translating a PC)
+                self.csrs.pmpcfg0,
+                self.csrs.pmpaddr0,
+            ) {
+                Ok(phys) => Some(phys),
+                Err(_) => None,
+            }
+        } else {
+            None
+        }
+    }
+
     pub fn predictor_stats(&self) -> &crate::cpu::predictor::PredictorStats {
         self.predictor.stats()
     }

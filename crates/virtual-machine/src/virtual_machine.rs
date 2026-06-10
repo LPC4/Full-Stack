@@ -216,14 +216,21 @@ impl VirtualMachine {
         self.cpu.peek_csrs()
     }
 
+    /// Best-effort virtual-to-physical translation for debug display.
+    /// Uses the TLB cache.
+    pub fn debug_translate(&self, vaddr: u64) -> Option<u64> {
+        self.cpu.debug_translate(vaddr)
+    }
+
     /// Read up to `len` bytes from the address space starting at `addr`.
     /// Unroutable addresses produce 0x00 bytes.
     pub fn peek_bytes(&mut self, addr: u64, len: usize) -> Vec<u8> {
         self.bus.peek_bytes(addr, len)
     }
 
-    /// Like `peek_bytes` but does not update cache stats or LRU state.
-    /// Checks dirty cache lines for the latest data. Safe to call every render frame.
+    /// Like `peek_bytes` but only needs `&self` (no cache stat side effects).
+    /// Reads ROM/MMIO directly and bypasses the cache hierarchy for RAM,
+    /// so the debug view always reflects physical memory. Safe to call every frame.
     pub fn peek_bytes_raw(&self, addr: u64, len: usize) -> Vec<u8> {
         self.bus.peek_bytes_raw(addr, len)
     }

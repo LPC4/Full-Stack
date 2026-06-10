@@ -69,6 +69,21 @@ impl Uart {
     pub fn drain_output(&mut self) -> Vec<u8> {
         std::mem::take(&mut self.tx_out)
     }
+
+    /// Peek at a UART register without side effects.
+    pub fn peek_byte(&self, offset: u64) -> Option<u8> {
+        match offset % 8 {
+            reg::RBR => self.rx_buf.front().copied(),
+            reg::IER => Some(self.ier),
+            reg::IIR => Some(self.iir),
+            reg::LCR => Some(self.lcr),
+            reg::MCR => Some(self.mcr),
+            reg::LSR => Some(self.lsr),
+            reg::MSR => Some(self.msr),
+            reg::SCR => Some(self.scr),
+            _ => None,
+        }
+    }
 }
 
 impl MemoryAccess for Uart {

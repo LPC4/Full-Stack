@@ -19,7 +19,7 @@ const LEVELS: usize = 3;
 const TLB_ENTRIES: usize = 256;
 
 #[inline]
-fn is_sv39_canonical(vaddr: u64) -> bool {
+pub(crate) fn is_sv39_canonical(vaddr: u64) -> bool {
     let upper_bits = vaddr >> 39;
     upper_bits == 0 || upper_bits == 0x1FF_FFFF
 }
@@ -76,7 +76,7 @@ impl Tlb {
         }
     }
 
-    fn lookup(&self, vpn: u64) -> Option<(u64, usize)> {
+    pub(crate) fn lookup(&self, vpn: u64) -> Option<(u64, usize)> {
         let e = &self.entries[(vpn as usize) & (TLB_ENTRIES - 1)];
         if e.valid && e.vpn == vpn {
             Some((e.pte, e.level))
@@ -98,7 +98,7 @@ impl Tlb {
 // Check a leaf PTE and build the physical address (permission/privilege/superpage/
 // PMP). Shared by the walk and a TLB hit; touches no memory and no A/D bits.
 #[expect(clippy::too_many_arguments)]
-fn finalize_leaf(
+pub(crate) fn finalize_leaf(
     pte: u64,
     vaddr: u64,
     level: usize,
