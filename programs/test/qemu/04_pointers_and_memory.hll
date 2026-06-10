@@ -1,13 +1,5 @@
-; Comprehensive pointer and memory test.
-;
-; Covers: new/free, defer free, address-of (&) and dereference (@),
-;         pointer mutation through function parameters, stack arrays,
-;         chained dereference, variable-index array element addressing.
-;
-; Every heap allocation is explicitly freed before the program exits.
-; A clean return-0 exit confirms no memory corruption or missing free.
-;
-; Returns 0 on full success. Unique non-zero codes name failing checks.
+; Comprehensive pointer and memory test. Covers new/free, defer, &/@, chained deref, stack arrays.
+; Returns 0 on success; unique non-zero codes identify failing checks.
 
 swap: (a: i32*, b: i32*) -> i32 {
     tmp: i32 = @a

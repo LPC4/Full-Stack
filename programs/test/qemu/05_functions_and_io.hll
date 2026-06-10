@@ -1,11 +1,5 @@
-; Comprehensive functions and I/O test.
-;
-; Covers: external putchar I/O, iterative recursion-style functions,
-;         function composition, bool return values, multi-call pipelines,
-;         string output via individual character writes.
-;
-; On success: writes "PASS\n" to stdout AND returns 0.
-; Each failure branch returns a unique non-zero code.
+; Functions and I/O test. Covers external putchar, recursion, composition, bool returns.
+; Success: writes "PASS\n" and returns 0. Failure: unique non-zero code.
 
 external putchar: (c: i32) -> i32
 

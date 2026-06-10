@@ -1,9 +1,9 @@
-# M-mode trap handler; concatenated after startup.s to form the ROM image.
-# _m_trap is at ROM offset 0x100 because startup.s pads 192 bytes after _start.
+# M-mode trap handler at ROM offset 0x100 (concatenated after startup.s).
+
 
 # _m_trap: M-mode trap handler at ROM offset 0x100.
-# Handles ecall from U/S/M-mode (causes 8, 9, 11); all other traps -> mret.
-# mtvec is loaded by _start (kernel) or directly by Pipeline::new (hosted).
+# Handles ecall from U/S/M-mode; all other traps -> mret.
+# mtvec loaded by _start (kernel) or Pipeline::new (hosted).
 _m_trap:
     csrr t0, mcause
     li t1, 8

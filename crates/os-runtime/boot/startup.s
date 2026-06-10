@@ -4,29 +4,29 @@
     .globl _start
     .globl _m_trap
 
-# _start: M-mode boot stub (offset 0x000)
+# M-mode boot stub at offset 0x000
 _start:
-    # PMP: single entry, full address space, RWX.
-    #    pmpaddr0 = -1  (TOR upper bound = all ones)
-    #    pmpcfg0  = 0x1F (A=NAPOT, X=1, W=1, R=1)
+    # PMP: single entry, full address space, RWX (pmpaddr0=-1, pmpcfg0=0x1F).
+
+
     li t0, -1
     csrw pmpaddr0, t0
     li t0, 31
     csrw pmpcfg0, t0
 
-    # medeleg: delegate U-ecall (8), insn pgfault (12), load pgfault (13), store pgfault (15) to S-mode.
+    # medeleg: delegate ecalls + page faults to S-mode.
     li t0, 45312
     csrw medeleg, t0
 
-    # mideleg: delegate S-mode software (1), timer (5), and PLIC (9) interrupts.
+    # mideleg: delegate S-mode SW, timer, and PLIC interrupts.
     li t0, 546
     csrw mideleg, t0
 
-    # mtvec = _m_trap (offset 0x100 = 256 from ROM base)
+    # mtvec = _m_trap (offset 0x100)
     li t0, 256
     csrw mtvec, t0
 
-    # mstatus: MPP=01 (Supervisor) so mret drops to S-mode.
+    # mstatus: set MPP=Supervisor so mret drops to S-mode.
     li t0, 1
     slli t0, t0, 11
     csrw mstatus, t0

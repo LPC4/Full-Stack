@@ -1,13 +1,4 @@
-; Inode-based read-write filesystem stored in a contiguous physical region.
-;
-; On-disk layout:
-;   Block 0      Superblock
-;   Blocks 1-8   Inode table (256 inodes x 128 bytes)
-;   Block 9      Free-block bitmap (bit i => data block FS_DATA_BLOCK_START + i)
-;   Blocks 10+   Data blocks
-;
-; Inodes are 128 bytes so each can index up to FS_INODE_BLOCKS direct data
-; blocks (44 -> 176 KiB max file), enough to store executable images.
+; Inode-based read-write filesystem. See _OS_SPECIFICATION.md for on-disk layout.
 
 ; --- Layout constants ---
 
@@ -173,8 +164,7 @@ fs_streq: (a: u8*, b: u8*) -> i64 {
     return 0
 }
 
-; Copy at most n bytes from src to dst including the terminator, then ensure
-; the destination is null-terminated within its n-byte field.
+; Null-terminated copy of at most n bytes (padded with terminator).
 fs_strncpy: (dst: u8*, src: u8*, n: u64) {
     i: u64 = 0
     while i < n {
@@ -192,7 +182,7 @@ fs_strncpy: (dst: u8*, src: u8*, n: u64) {
 
 ; --- Block allocation ---
 
-; Allocate a free data block. Returns block number (>= FS_DATA_BLOCK_START), or 0 if full.
+; Allocate a free data block. Returns 0 if full.
 fs_alloc_block: () -> u64 {
     bitmap_base: u64 = fs_image_base + FS_BITMAP_BLOCK * FS_BLOCK_SIZE
     block_count: u64 = fs_rd16(fs_image_base + FS_SB_BLOCK_COUNT)
@@ -725,8 +715,7 @@ fs_close: (fd: i64) {
     fs_wr64(slot + FS_FDE_POS, 0)
 }
 
-; Create a file (node_type=1) or directory (node_type=2) named `name` under
-; parent_path. Returns the new inode index, or -1 on error.
+; Create a file (type=1) or directory (type=2) under parent_path.
 fs_create: (parent_path: u8*, name: u8*, node_type: u8) -> i64 {
     if fs_ready == 0 {
         return -1 as i64
@@ -739,7 +728,6 @@ fs_create: (parent_path: u8*, name: u8*, node_type: u8) -> i64 {
 }
 
 ; Return the inode type at an absolute path (1=file, 2=dir), or -1 if missing.
-; The shell uses this to validate cd targets.
 fs_stat: (path: u8*) -> i64 {
     if fs_ready == 0 {
         return -1 as i64
@@ -751,10 +739,7 @@ fs_stat: (path: u8*) -> i64 {
     return fs_inode_type(inode as u64) as i64
 }
 
-; Look up the index-th valid entry of the directory at `path`.
-; Writes the entry name into name_buf (up to FS_NAME_LEN bytes) and returns the
-; entry's inode type (1=file, 2=dir). Returns -1 when index is past the end or
-; the path is not a directory. The shell calls this in a loop to implement ls.
+; Readdir: write the index-th entry name into name_buf, return its inode type (1/2) or -1.
 fs_readdir: (path: u8*, index: u64, name_buf: u8*) -> i64 {
     if fs_ready == 0 {
         return -1 as i64
@@ -806,8 +791,7 @@ fs_mkdir: (path: u8*) -> i64 {
     return fs_create_at(parent as u64, name_buf[0], FS_TYPE_DIR)
 }
 
-; Free every data block held by inode, then return the inode to the free pool.
-; Shared by fs_unlink and fs_rmdir. Does not touch any directory entry.
+; Free all data blocks and return inode to the free pool. Does not touch directory entries.
 fs_release_inode: (inode: u64) {
     blk_slot: u64 = 0
     while blk_slot < FS_INODE_BLOCKS {

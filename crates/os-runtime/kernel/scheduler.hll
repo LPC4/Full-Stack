@@ -43,8 +43,8 @@ scheduler_add: (pcb: u64*) {
 }
 
 ; --- Context switch ---
-; Saves the current trap frame into its PCB (action=2 marks EXITED, else re-enqueues as READY),
-; then restores the next READY process. Caller must not touch sepc after this call.
+; Save trap frame into current PCB, restore next READY process. action=2 marks EXITED.
+
 schedule: (frame: u64*, action: u64) {
     if current_process != null {
         memcpy((current_process as u64 + 40) as u8*, frame as u8*, 288)

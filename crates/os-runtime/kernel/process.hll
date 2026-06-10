@@ -1,10 +1,10 @@
-; PCB layout (44 x u64 = 352 bytes):
-; [0] pid, [1] state (READY=0, RUNNING=1, BLOCKED=2, EXITED=3), [2] next (linked list),
-; [3] user_stack_pa, [4] entry_pc, [5..40] trap_frame (36 u64s), [41] page_root_pa,
-; [42] parent_pid, [43] exit_code.
-; Trap frame: x0-x31 at byte offsets 0-248, sepc=256, scause=264, stval=272, sstatus=280.
-; Save/restore: memcpy(pcb_bytes+40, frame, 288). The trailing scalar fields all
-; sit after the trap frame so the 288-byte context copy never touches them.
+; PCB layout (44 x u64 = 352 bytes): state, next, stack, pc, frame, root, parent, exit.
+; Trap frame at [5..40] spans x0-x31, sepc, scause, stval, sstatus (288 bytes).
+
+
+
+
+
 
 const PROC_READY   = 0
 const PROC_RUNNING = 1

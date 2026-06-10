@@ -1,21 +1,11 @@
-; Interactive shell for the HLL kernel.
-;
-; Runs as the pid-1 user process. Reads a line from the UART one character at a
-; time (sys_readchar, yielding while idle), then dispatches built-in commands:
-;
-;   ls            list the current directory
-;   cd <dir>      change directory (handles "/", "..", ".", relative, absolute)
-;   run <file>    load and run an executable file, waiting for it to finish
-;   exit          terminate the shell (the kernel halts the VM)
+; Interactive shell (pid-1 user process).
 
 
 external console_putchar: (c: i32)
 external console_write:   (str: u8*)
 external console_writeln: (str: u8*)
 
-; --- Syscall argument marshalling ---
-; Inline asm can only reach globals via `la`, so syscall arguments are staged
-; here before each ecall and the result is read back from _ret.
+; --- Syscall argument marshalling via globals (asm cannot reach locals) ---
 
 _a0:  u64 = 0
 _a1:  u64 = 0
