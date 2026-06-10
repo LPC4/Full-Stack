@@ -2,10 +2,6 @@
 ; forever: advance two rotation angles, project the 8 cube vertices to screen
 ; space, clear the frame, and draw the 12 edges with Bresenham lines.
 ;
-; All geometry math is Q16.16 fixed point. The per-frame vertex work (8 verts)
-; runs in HLL since it is cheap; the full-screen clear is a hand-written asm
-; fill loop because that store-per-pixel sweep is the real cost each frame.
-;
 ; Pixels are RGBA8888 (low byte = red), matching the framebuffer device, so an
 ; opaque colour has 0xFF in the top byte. There is no vsync: the program free
 ; runs and the GUI samples the live device buffer, so it animates as fast as the

@@ -4,7 +4,7 @@ use super::ast::{
     UnaryOp,
 };
 
-use super::token::{Span, Token};
+use super::token::{CompoundOp, Span, Token};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParserError {
@@ -388,6 +388,21 @@ impl<'a> Parser<'a> {
         if self.match_assign() {
             let target = self.expression_to_target(left)?;
             let rvalue = self.parse_assignment()?;
+            Ok(Expression::Assignment {
+                target: Box::new(target),
+                rvalue: Box::new(rvalue),
+            })
+        } else if let Some(op) = self.match_compound_assign() {
+            // Desugar `lhs OP= rhs` into `lhs = lhs OP (rhs)`. The lhs expression
+            // is reused as the binary's left operand, so it is evaluated twice;
+            // HLL targets are simple lvalues, so this is benign.
+            let target = self.expression_to_target(left.clone())?;
+            let rhs = self.parse_assignment()?;
+            let rvalue = Expression::Binary {
+                op,
+                left: Box::new(left),
+                right: Box::new(rhs),
+            };
             Ok(Expression::Assignment {
                 target: Box::new(target),
                 rvalue: Box::new(rvalue),
@@ -1261,6 +1276,28 @@ impl<'a> Parser<'a> {
         self.match_variant(|t| matches!(t, Token::Assign))
     }
 
+    // Consume a compound-assign operator (`+=`, `<<=`, ...) and map it to the
+    // matching binary operator, or return None and consume nothing.
+    fn match_compound_assign(&mut self) -> Option<BinaryOp> {
+        let op = match self.peek() {
+            Some(Token::CompoundAssign(op)) => *op,
+            _ => return None,
+        };
+        self.advance();
+        Some(match op {
+            CompoundOp::Add => BinaryOp::Add,
+            CompoundOp::Sub => BinaryOp::Sub,
+            CompoundOp::Mul => BinaryOp::Mul,
+            CompoundOp::Div => BinaryOp::Div,
+            CompoundOp::Mod => BinaryOp::Mod,
+            CompoundOp::BitAnd => BinaryOp::BitwiseAnd,
+            CompoundOp::BitOr => BinaryOp::BitwiseOr,
+            CompoundOp::BitXor => BinaryOp::BitwiseXor,
+            CompoundOp::Shl => BinaryOp::Shl,
+            CompoundOp::Shr => BinaryOp::Shr,
+        })
+    }
+
     fn match_colon(&mut self) -> bool {
         self.match_variant(|t| matches!(t, Token::Colon))
     }
@@ -1694,6 +1731,36 @@ mod tests {
                 }
             }
             other => panic!("expected Cast expression, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn compound_assign_desugars_to_binary() {
+        use crate::ast::{BinaryOp, Literal, PrimaryExpr};
+        use crate::token::CompoundOp;
+        // `x += 1` parses as `x = x + 1`.
+        let tokens = vec![
+            Token::Ident("x"),
+            Token::CompoundAssign(CompoundOp::Add),
+            Token::Integer("1"),
+            Token::Eof,
+        ];
+        let mut parser = Parser::new(tokens);
+        match parser.parse_expression().unwrap() {
+            Expression::Assignment { target, rvalue } => {
+                assert!(matches!(target.as_ref(), AssignTarget::Identifier(n) if n == "x"));
+                match rvalue.as_ref() {
+                    Expression::Binary { op, left, right } => {
+                        assert!(matches!(op, BinaryOp::Add));
+                        assert!(matches!(left.as_ref(),
+                            Expression::Primary(PrimaryExpr::Identifier(n)) if n == "x"));
+                        assert!(matches!(right.as_ref(),
+                            Expression::Primary(PrimaryExpr::Literal(Literal::Integer(_)))));
+                    }
+                    other => panic!("expected Binary rvalue, got: {other:?}"),
+                }
+            }
+            other => panic!("expected Assignment, got: {other:?}"),
         }
     }
 

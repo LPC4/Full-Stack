@@ -274,6 +274,48 @@ main: () -> i32 {
 }
 
 #[test]
+fn hll_compound_assignment_all_operators() {
+    // Each compound operator desugars to `lhs = lhs OP rhs` and runs end to end.
+    let (_, outcome, _) = run_hll(r#"
+main: () -> i32 {
+    x: i64 = 10
+    x += 5
+    x -= 3
+    x *= 2
+    x /= 4
+    x %= 4
+    x <<= 3
+    x >>= 1
+    x |= 1
+    x &= 12
+    x ^= 2
+    return x as i32
+}
+"#);
+    // 10 +5=15 -3=12 *2=24 /4=6 %4=2 <<3=16 >>1=8 |1=9 &12=8 ^2=10.
+    assert!(matches!(outcome, StepOutcome::Halted(10)), "expected Halted(10), got {outcome:?}");
+}
+
+#[test]
+fn hll_compound_assignment_on_array_element() {
+    // A dereferenced array element is a valid compound-assign target; the lvalue
+    // is evaluated twice (read then write) with no surprises for a simple index.
+    let (_, outcome, _) = run_hll(r#"
+a: i64[3]
+main: () -> i32 {
+    @a[0] = 5
+    @a[1] = 0
+    i: i64 = 1
+    @a[i] += 7
+    @a[0] *= 4
+    return (@a[0] + @a[1]) as i32
+}
+"#);
+    // a[0]=5*4=20, a[1]=0+7=7 -> 27.
+    assert!(matches!(outcome, StepOutcome::Halted(27)), "expected Halted(27), got {outcome:?}");
+}
+
+#[test]
 fn hll_return_zero() {
     let (_, outcome, _) = run_hll(r#"
 main: () -> i32 {

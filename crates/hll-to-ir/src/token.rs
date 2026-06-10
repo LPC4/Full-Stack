@@ -27,6 +27,21 @@ impl std::fmt::Display for Span {
     }
 }
 
+/// The arithmetic/bitwise operation in a compound assignment (`+=`, `<<=`, ...).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompoundOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    BitAnd,
+    BitOr,
+    BitXor,
+    Shl,
+    Shr,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Token<'a> {
     Ident(&'a str),
@@ -70,6 +85,7 @@ pub enum Token<'a> {
     Comma,
     Dot,
     Assign,
+    CompoundAssign(CompoundOp),
     Plus,
     Minus,
     Star,

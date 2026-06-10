@@ -452,7 +452,8 @@ asm_block      = "asm" "{" { asm_line } "}";
 asm_line       = { any_char - newline } newline;
 expression     = assignment | binary_expr | cast_expr | unary_expr | postfix_expr;
 cast_expr      = expression "as" type;
-assignment     = lvalue "=" expression;
+assignment     = lvalue ( "=" | compound_op ) expression;
+compound_op    = "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^=" | "<<=" | ">>=";
 lvalue         = struct_destructure | dereference | field_access | array_index | identifier;
 struct_destructure = "{" [ identifier ":" type { "," identifier ":" type } [ "," ] ] "}";
 unary_expr     = unary_op expression;
@@ -509,6 +510,14 @@ val: i32 = (@ptr) as i32
 
 Evaluation order: binary expressions, function arguments, and struct literals are evaluated
 strictly left to right. `defer` cleanup runs in LIFO order at the enclosing scope exit.
+
+### 9.4 Compound assignment
+
+`lhs OP= rhs` is shorthand for `lhs = lhs OP rhs`, available for `+= -= *= /= %=` and the
+bitwise/shift forms `&= |= ^= <<= >>=`. The right-hand side is the whole expression, so
+`x -= a + b` means `x = x - (a + b)`. The left-hand side is evaluated twice (once to read,
+once to write); HLL lvalues are simple (identifiers, fields, dereferenced array elements)
+with no side effects, so this is observationally equivalent to a single evaluation.
 
 ## 10. Memory safety framework
 

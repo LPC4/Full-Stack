@@ -1,4 +1,4 @@
-use crate::token::{Span, Token};
+use crate::token::{CompoundOp, Span, Token};
 use std::iter::Peekable;
 use std::str::Chars;
 
@@ -80,18 +80,19 @@ impl<'a> Lexer<'a> {
             ':' => Token::Colon,
             ',' => Token::Comma,
             '.' => Token::Dot,
-            '+' => Token::Plus,
-            '-' => Token::Minus,
-            '*' => Token::Star,
-            '/' => Token::Slash,
-            '%' => Token::Percent,
+            '+' => self.op_or_compound(CompoundOp::Add, Token::Plus),
+            // `-=` compound; `->` stays Minus then Gt (handled by the parser).
+            '-' => self.op_or_compound(CompoundOp::Sub, Token::Minus),
+            '*' => self.op_or_compound(CompoundOp::Mul, Token::Star),
+            '/' => self.op_or_compound(CompoundOp::Div, Token::Slash),
+            '%' => self.op_or_compound(CompoundOp::Mod, Token::Percent),
             '@' => Token::At,
             '&' => {
                 if self.peek_is('&') {
                     self.advance();
                     Token::And
                 } else {
-                    Token::Ampersand
+                    self.op_or_compound(CompoundOp::BitAnd, Token::Ampersand)
                 }
             }
             '|' => {
@@ -99,10 +100,10 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     Token::Or
                 } else {
-                    Token::Pipe
+                    self.op_or_compound(CompoundOp::BitOr, Token::Pipe)
                 }
             }
-            '^' => Token::Caret,
+            '^' => self.op_or_compound(CompoundOp::BitXor, Token::Caret),
             '(' => Token::LParen,
             ')' => Token::RParen,
             '{' => Token::LBrace,
@@ -130,7 +131,7 @@ impl<'a> Lexer<'a> {
             '<' => {
                 if self.peek_is('<') {
                     self.advance();
-                    Token::Shl
+                    self.op_or_compound(CompoundOp::Shl, Token::Shl)
                 } else if self.peek_is('=') {
                     self.advance();
                     Token::Lte
@@ -141,7 +142,7 @@ impl<'a> Lexer<'a> {
             '>' => {
                 if self.peek_is('>') {
                     self.advance();
-                    Token::Shr
+                    self.op_or_compound(CompoundOp::Shr, Token::Shr)
                 } else if self.peek_is('=') {
                     self.advance();
                     Token::Gte
@@ -304,6 +305,17 @@ impl<'a> Lexer<'a> {
 
     fn peek_is(&mut self, expected: char) -> bool {
         self.chars.peek() == Some(&expected)
+    }
+
+    // Return the compound-assign token if the operator is followed by `=`,
+    // otherwise the plain operator token.
+    fn op_or_compound(&mut self, op: CompoundOp, plain: Token<'a>) -> Token<'a> {
+        if self.peek_is('=') {
+            self.advance();
+            Token::CompoundAssign(op)
+        } else {
+            plain
+        }
     }
 }
 
