@@ -638,6 +638,73 @@ main: () -> i32 {
     );
 }
 
+// In-VM assembler: `as <src> <out>` assembles a small RV64I program from a source
+// file into a runnable FEXE, then `run` executes it. The test program exercises
+// li/add/addi/bne/label/ecall (sum 1..=7 = 28, then exit(28)). The exec'd child's
+// exit code halts the VM, so asserting Halted(28) proves every encoding -- the
+// branch offset, arithmetic, and immediates -- is correct end to end. A wrong
+// branch offset would fault or loop forever instead.
+#[test]
+fn kernel_shell_assembles_and_runs_program() {
+    let shell = compile_hosted(user::SHELL);
+    let as_exec = assembled_to_exec_file(&compile_hosted(user::AS));
+
+    // Sum 1..=7 into a0 (= 28), then exit(a0). Pure subset: li/add/addi/bne/ecall.
+    let source = b"\
+; sum 1..7 then exit with the result
+  li a0, 0
+  li t0, 1
+  li t1, 8
+loop:
+  add a0, a0, t0
+  addi t0, t0, 1
+  bne t0, t1, loop
+  li a7, 93
+  ecall
+";
+
+    let image = build_fs_image(&[
+        FsEntry::Dir { path: "/bin" },
+        FsEntry::File {
+            path: "/bin/as.fexe",
+            data: &as_exec,
+        },
+        FsEntry::File {
+            path: "/prog.s",
+            data: source,
+        },
+    ]);
+
+    let session = "as /prog.s /prog.fexe\nrun /prog.fexe\nexit\n";
+    let (_, outcome, uart) =
+        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 200_000_000);
+
+    assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
+    assert!(
+        !uart.contains("unhandled exception"),
+        "the assembled program faulted; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("as: wrote /prog.fexe"),
+        "assembler did not report success; uart={uart:?}"
+    );
+    assert!(
+        !uart.contains("run: not an executable"),
+        "sys_exec rejected the produced FEXE; uart={uart:?}"
+    );
+    assert!(
+        !uart.contains("run: cannot exec"),
+        "sys_exec failed to load the produced FEXE; uart={uart:?}"
+    );
+    // The assembled program computes 1+2+...+7 = 28 and exits with it; the child's
+    // exit code halts the VM, so Halted(28) proves correct execution.
+    assert!(
+        matches!(outcome, StepOutcome::Halted(28)),
+        "assembled program did not exit with the computed sum 28; \
+         outcome={outcome:?} uart={uart:?}"
+    );
+}
+
 // `run` on a non-FEXE file must report "not an executable" up front rather than
 // failing opaquely inside sys_exec.
 #[test]
@@ -733,7 +800,7 @@ fn editor_loads_clears_appends_writes_and_truncates() {
         boot_kernel(cached_kernel(), Some(&shell), Some(&image), &session, 200_000_000);
 
     assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
-    assert!(uart.contains("edit: a=append"), "editor did not start; uart={uart:?}");
+    assert!(uart.contains("edit: p=print"), "editor did not start; uart={uart:?}");
     assert!(uart.contains("edit: written"), "editor did not write the file; uart={uart:?}");
 
     // The cat output (after "edit: written") must show exactly the new lines and
@@ -755,6 +822,84 @@ fn editor_loads_clears_appends_writes_and_truncates() {
     assert_eq!(
         size, expected,
         "inode size not truncated to new contents; got {size}, want {expected}"
+    );
+}
+
+// The ed-style line editor: insert/goto/substitute/delete on individual lines,
+// then write. Builds a three-line file, edits the middle line by substitution,
+// inserts a line before it, deletes the first, and writes; the on-disk contents
+// must reflect every operation.
+#[test]
+fn editor_line_operations_insert_substitute_delete() {
+    let shell = compile_hosted(user::SHELL);
+    let editor_exec = assembled_to_exec_file(&compile_hosted(user::EDIT));
+
+    let image = build_fs_image(&[
+        FsEntry::Dir { path: "/bin" },
+        FsEntry::File {
+            path: "/bin/edit.fexe",
+            data: &editor_exec,
+        },
+        FsEntry::File {
+            path: "/doc.txt",
+            data: b"alpha\nbravo\ncharlie\n",
+        },
+    ]);
+
+    // edit: go to line 2, substitute bravo->BRAVO, insert "inserted" before it,
+    // go to line 1 (alpha) and delete it, then write and quit.
+    //   start:  alpha / bravo / charlie
+    //   2       -> current = bravo
+    //   s/bravo/BRAVO/
+    //   i ... inserted .   -> alpha / inserted / BRAVO / charlie
+    //   1 d    -> inserted / BRAVO / charlie
+    let session = "edit /doc.txt\n\
+2\n\
+s/bravo/BRAVO/\n\
+i\ninserted\n.\n\
+g 1\nd\n\
+w\nq\n\
+cat /doc.txt\nexit\n";
+    let (_, _outcome, uart) =
+        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 200_000_000);
+
+    assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
+    assert!(uart.contains("edit: written"), "editor did not write; uart={uart:?}");
+    let after = &uart[uart.find("edit: written").unwrap()..];
+    assert!(after.contains("inserted"), "insert did not take; uart={uart:?}");
+    assert!(after.contains("BRAVO"), "substitute did not take; uart={uart:?}");
+    assert!(after.contains("charlie"), "tail line lost; uart={uart:?}");
+    assert!(!after.contains("alpha"), "delete of first line failed; uart={uart:?}");
+}
+
+// The bundled example assembly (`/home/fib.s`) assembles and runs: fib(11) = 89.
+// Guards both the assembler and the shipped example file.
+#[test]
+fn example_fib_assembles_and_runs() {
+    let shell = compile_hosted(user::SHELL);
+    let as_exec = assembled_to_exec_file(&compile_hosted(user::AS));
+
+    let image = build_fs_image(&[
+        FsEntry::Dir { path: "/bin" },
+        FsEntry::File {
+            path: "/bin/as.fexe",
+            data: &as_exec,
+        },
+        FsEntry::File {
+            path: "/fib.s",
+            data: user::EXAMPLE_FIB_S.as_bytes(),
+        },
+    ]);
+
+    let session = "as /fib.s /fib.fexe\nrun /fib.fexe\nexit\n";
+    let (_, outcome, uart) =
+        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 200_000_000);
+
+    assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
+    assert!(uart.contains("as: wrote /fib.fexe"), "assembler failed; uart={uart:?}");
+    assert!(
+        matches!(outcome, StepOutcome::Halted(89)),
+        "fib example did not exit with fib(11)=89; outcome={outcome:?} uart={uart:?}"
     );
 }
 

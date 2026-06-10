@@ -1,0 +1,835 @@
+; Minimal in-VM RV64I assembler. Launched by the shell as `as <src> <out>`:
+; the shell joins both operands to absolute paths and passes them as one
+; space-separated argument string in the USER_ARG_BASE page. This program reads
+; a small assembly subset, assembles it with a two-pass label resolver, wraps the
+; flat machine code in the FEXE container, and writes it to <out>. `run <out>`
+; then executes it through the existing sys_exec path.
+;
+; Supported subset (very small on purpose):
+;   add sub and or xor  (rd, rs1, rs2)
+;   addi                (rd, rs1, imm)
+;   li                  (rd, imm)   -- addi, or lui+addi for wide immediates
+;   mv                  (rd, rs)    -- addi rd, rs, 0
+;   j label             -- jal x0, off
+;   beq/bne rs1, rs2, label
+;   ecall, ret          -- ret = jalr x0, ra, 0
+; Labels: `name:` on its own line or before an instruction. Comments start with
+; ';' or '#'. Registers accept ABI names (a0, t0, sp, ra, zero, ...) or x0..x31.
+
+external console_write:   (str: u8*)
+external console_writeln: (str: u8*)
+
+; Page the kernel maps with this program's argument string. Matches USER_ARG_BASE.
+const ARG_BASE = 0x7FF00000
+; FEXE header size; payload (flat binary) starts here.
+const HDR = 4096
+
+; --- Syscall marshalling (globals, since inline asm cannot reach locals) ---
+
+_a0: u64 = 0
+_a1: u64 = 0
+_a2: u64 = 0
+_a3: u64 = 0
+_ret: i64 = 0
+
+; Source text, assembled code, and the FEXE output image.
+src: u8[8192]
+src_len: u64 = 0
+code: u8[8192]
+code_len: u64 = 0
+out: u8[12288]
+
+; Label table: names packed 16 bytes each, parallel address array.
+lbl_names: u8[1024]
+lbl_addr: i64[64]
+lbl_count: i64 = 0
+
+; Token table for one line: up to 6 tokens, 24 bytes each.
+tokbuf: u8[144]
+ntok: i64 = 0
+
+; Set once on any assembly error so main can abort with a non-zero exit.
+err_flag: i64 = 0
+
+sc_open: (path: u8*, flags: u64) -> i64 {
+    _a0 = path as u64
+    _a1 = flags
+    asm {
+        la t0, _a0
+        ld a0, 0(t0)
+        la t0, _a1
+        ld a1, 0(t0)
+        li a7, 56
+        ecall
+        la t0, _ret
+        sd a0, 0(t0)
+    }
+    return _ret
+}
+
+sc_read: (fd: i64, buf: u8*, offset: u64, len: u64) -> i64 {
+    _a0 = fd as u64
+    _a1 = buf as u64
+    _a2 = offset
+    _a3 = len
+    asm {
+        la t0, _a0
+        ld a0, 0(t0)
+        la t0, _a1
+        ld a1, 0(t0)
+        la t0, _a2
+        ld a2, 0(t0)
+        la t0, _a3
+        ld a3, 0(t0)
+        li a7, 63
+        ecall
+        la t0, _ret
+        sd a0, 0(t0)
+    }
+    return _ret
+}
+
+sc_write: (fd: i64, buf: u8*, len: u64) -> i64 {
+    _a0 = fd as u64
+    _a1 = buf as u64
+    _a2 = len
+    asm {
+        la t0, _a0
+        ld a0, 0(t0)
+        la t0, _a1
+        ld a1, 0(t0)
+        la t0, _a2
+        ld a2, 0(t0)
+        li a7, 64
+        ecall
+        la t0, _ret
+        sd a0, 0(t0)
+    }
+    return _ret
+}
+
+sc_ftruncate: (fd: i64, len: u64) -> i64 {
+    _a0 = fd as u64
+    _a1 = len
+    asm {
+        la t0, _a0
+        ld a0, 0(t0)
+        la t0, _a1
+        ld a1, 0(t0)
+        li a7, 46
+        ecall
+        la t0, _ret
+        sd a0, 0(t0)
+    }
+    return _ret
+}
+
+sc_close: (fd: i64) {
+    _a0 = fd as u64
+    asm {
+        la t0, _a0
+        ld a0, 0(t0)
+        li a7, 57
+        ecall
+    }
+}
+
+sc_exit: (code: i64) {
+    _a0 = code as u64
+    asm {
+        la t0, _a0
+        ld a0, 0(t0)
+        li a7, 93
+        ecall
+    }
+}
+
+; --- String helpers ---
+
+streq: (a: u8*, b: u8*) -> i64 {
+    i: u64 = 0
+    while 1 == 1 {
+        ca: u8 = @(a + i)
+        cb: u8 = @(b + i)
+        if ca != cb {
+            return 0
+        }
+        if ca == 0 {
+            return 1
+        }
+        i = i + 1
+    }
+    return 0
+}
+
+slen: (s: u8*) -> u64 {
+    n: u64 = 0
+    while @(s + n) != 0 {
+        n = n + 1
+    }
+    return n
+}
+
+; Pointer to token i in the line token table.
+tok_at: (i: i64) -> u8* {
+    return tokbuf[0] + (i as u64) * 24
+}
+
+; Report an assembly error with a one-line message and remember the failure.
+fail: (msg: u8*) {
+    console_write("as: ".data)
+    console_writeln(msg)
+    err_flag = 1
+}
+
+; 1 if c is a token separator (space, tab, comma).
+is_sep: (c: u8) -> i64 {
+    if c == 32 {
+        return 1
+    }
+    if c == 9 {
+        return 1
+    }
+    if c == 44 {
+        return 1
+    }
+    return 0
+}
+
+; Truncate the line at the first comment character (';' or '#').
+strip_comment: (line: u8*) {
+    i: u64 = 0
+    while @(line + i) != 0 {
+        c: u8 = @(line + i)
+        if c == 59 {
+            t: u8* = line + i
+            @t = 0 as u8
+            return
+        }
+        if c == 35 {
+            t: u8* = line + i
+            @t = 0 as u8
+            return
+        }
+        i = i + 1
+    }
+}
+
+; Split `line` into the global token table, returning the token count.
+tokenize: (line: u8*) {
+    n: i64 = 0
+    i: u64 = 0
+    while 1 == 1 {
+        while is_sep(@(line + i)) == 1 {
+            i = i + 1
+        }
+        if @(line + i) == 0 {
+            break
+        }
+        if n >= 6 {
+            break
+        }
+        dst: u8* = tok_at(n)
+        k: u64 = 0
+        while 1 == 1 {
+            c: u8 = @(line + i)
+            if c == 0 {
+                break
+            }
+            if is_sep(c) == 1 {
+                break
+            }
+            if k < 23 {
+                d: u8* = dst + k
+                @d = c
+                k = k + 1
+            }
+            i = i + 1
+        }
+        term: u8* = dst + k
+        @term = 0 as u8
+        n = n + 1
+    }
+    ntok = n
+}
+
+; 1 if token `p` ends with ':' (a label definition).
+ends_colon: (p: u8*) -> i64 {
+    l: u64 = slen(p)
+    if l == 0 {
+        return 0
+    }
+    if @(p + (l - 1)) == 58 {
+        return 1
+    }
+    return 0
+}
+
+; Strip a trailing ':' from a label token in place.
+drop_colon: (p: u8*) {
+    l: u64 = slen(p)
+    if l > 0 {
+        t: u8* = p + (l - 1)
+        @t = 0 as u8
+    }
+}
+
+; --- Register and immediate parsing ---
+
+; Parse an unsigned decimal starting at p (used for x<N> register numbers).
+parse_uint: (p: u8*) -> i64 {
+    v: i64 = 0
+    i: u64 = 0
+    while @(p + i) != 0 {
+        c: u8 = @(p + i)
+        if c < 48 {
+            return v
+        }
+        if c > 57 {
+            return v
+        }
+        v = v * 10 + (c as i64 - 48)
+        i = i + 1
+    }
+    return v
+}
+
+; Map a register token to its number 0..31, or -1 on error (sets err_flag).
+reg_num: (p: u8*) -> i64 {
+    if streq(p, "zero".data) == 1 {
+        return 0
+    }
+    if streq(p, "ra".data) == 1 {
+        return 1
+    }
+    if streq(p, "sp".data) == 1 {
+        return 2
+    }
+    if streq(p, "gp".data) == 1 {
+        return 3
+    }
+    if streq(p, "tp".data) == 1 {
+        return 4
+    }
+    if streq(p, "t0".data) == 1 {
+        return 5
+    }
+    if streq(p, "t1".data) == 1 {
+        return 6
+    }
+    if streq(p, "t2".data) == 1 {
+        return 7
+    }
+    if streq(p, "fp".data) == 1 {
+        return 8
+    }
+    if streq(p, "s0".data) == 1 {
+        return 8
+    }
+    if streq(p, "s1".data) == 1 {
+        return 9
+    }
+    if streq(p, "a0".data) == 1 {
+        return 10
+    }
+    if streq(p, "a1".data) == 1 {
+        return 11
+    }
+    if streq(p, "a2".data) == 1 {
+        return 12
+    }
+    if streq(p, "a3".data) == 1 {
+        return 13
+    }
+    if streq(p, "a4".data) == 1 {
+        return 14
+    }
+    if streq(p, "a5".data) == 1 {
+        return 15
+    }
+    if streq(p, "a6".data) == 1 {
+        return 16
+    }
+    if streq(p, "a7".data) == 1 {
+        return 17
+    }
+    if streq(p, "s2".data) == 1 {
+        return 18
+    }
+    if streq(p, "s3".data) == 1 {
+        return 19
+    }
+    if streq(p, "s4".data) == 1 {
+        return 20
+    }
+    if streq(p, "s5".data) == 1 {
+        return 21
+    }
+    if streq(p, "s6".data) == 1 {
+        return 22
+    }
+    if streq(p, "s7".data) == 1 {
+        return 23
+    }
+    if streq(p, "s8".data) == 1 {
+        return 24
+    }
+    if streq(p, "s9".data) == 1 {
+        return 25
+    }
+    if streq(p, "s10".data) == 1 {
+        return 26
+    }
+    if streq(p, "s11".data) == 1 {
+        return 27
+    }
+    if streq(p, "t3".data) == 1 {
+        return 28
+    }
+    if streq(p, "t4".data) == 1 {
+        return 29
+    }
+    if streq(p, "t5".data) == 1 {
+        return 30
+    }
+    if streq(p, "t6".data) == 1 {
+        return 31
+    }
+    ; Raw x<N> form.
+    if @p == 120 {
+        n: i64 = parse_uint(p + 1)
+        if n >= 0 {
+            if n <= 31 {
+                return n
+            }
+        }
+    }
+    fail("bad register".data)
+    return -1
+}
+
+; Parse a signed immediate: optional '-', then decimal or 0x hex.
+parse_imm: (p: u8*) -> i64 {
+    i: u64 = 0
+    neg: i64 = 0
+    if @(p + i) == 45 {
+        neg = 1
+        i = i + 1
+    }
+    v: i64 = 0
+    ; Hex form 0x...
+    if @(p + i) == 48 {
+        if @(p + i + 1) == 120 {
+            i = i + 2
+            while @(p + i) != 0 {
+                c: u8 = @(p + i)
+                d: i64 = -1
+                if c >= 48 {
+                    if c <= 57 {
+                        d = c as i64 - 48
+                    }
+                }
+                if c >= 97 {
+                    if c <= 102 {
+                        d = c as i64 - 87
+                    }
+                }
+                if c >= 65 {
+                    if c <= 70 {
+                        d = c as i64 - 55
+                    }
+                }
+                if d < 0 {
+                    break
+                }
+                v = v * 16 + d
+                i = i + 1
+            }
+            if neg == 1 {
+                return 0 - v
+            }
+            return v
+        }
+    }
+    ; Decimal.
+    while @(p + i) != 0 {
+        c: u8 = @(p + i)
+        if c < 48 {
+            break
+        }
+        if c > 57 {
+            break
+        }
+        v = v * 10 + (c as i64 - 48)
+        i = i + 1
+    }
+    if neg == 1 {
+        return 0 - v
+    }
+    return v
+}
+
+; --- Label table ---
+
+add_label: (name: u8*, addr: i64) {
+    if lbl_count >= 64 {
+        fail("too many labels".data)
+        return
+    }
+    dst: u8* = lbl_names[0] + (lbl_count as u64) * 16
+    i: u64 = 0
+    while 1 == 1 {
+        c: u8 = @(name + i)
+        if i >= 15 {
+            break
+        }
+        d: u8* = dst + i
+        @d = c
+        if c == 0 {
+            break
+        }
+        i = i + 1
+    }
+    t: u8* = dst + i
+    @t = 0 as u8
+    @lbl_addr[lbl_count] = addr
+    lbl_count = lbl_count + 1
+}
+
+; Resolve a label name to its byte address, or -1 if undefined (sets err_flag).
+find_label: (name: u8*) -> i64 {
+    i: i64 = 0
+    while i < lbl_count {
+        cand: u8* = lbl_names[0] + (i as u64) * 16
+        if streq(cand, name) == 1 {
+            return @lbl_addr[i]
+        }
+        i = i + 1
+    }
+    fail("undefined label".data)
+    return -1
+}
+
+; --- Encoding ---
+
+push_byte: (b: u8) {
+    if code_len < 8192 {
+        @code[code_len] = b
+        code_len = code_len + 1
+    }
+}
+
+emit_word: (w: u32) {
+    push_byte(w as u8)
+    push_byte((w >> 8) as u8)
+    push_byte((w >> 16) as u8)
+    push_byte((w >> 24) as u8)
+}
+
+enc_r: (rd: i64, rs1: i64, rs2: i64, funct3: i64, funct7: i64) -> u32 {
+    return ((funct7 as u32) << 25) | ((rs2 as u32) << 20) | ((rs1 as u32) << 15)
+         | ((funct3 as u32) << 12) | ((rd as u32) << 7) | (0x33 as u32)
+}
+
+enc_i: (rd: i64, rs1: i64, imm: i64, funct3: i64, opcode: i64) -> u32 {
+    return (((imm as u32) & 0xFFF) << 20) | ((rs1 as u32) << 15)
+         | ((funct3 as u32) << 12) | ((rd as u32) << 7) | (opcode as u32)
+}
+
+enc_b: (rs1: i64, rs2: i64, imm: i64, funct3: i64) -> u32 {
+    u: u32 = imm as u32
+    i12: u32 = (u >> 12) & 1
+    i11: u32 = (u >> 11) & 1
+    i10_5: u32 = (u >> 5) & 0x3F
+    i4_1: u32 = (u >> 1) & 0xF
+    return (i12 << 31) | (i10_5 << 25) | ((rs2 as u32) << 20) | ((rs1 as u32) << 15)
+         | ((funct3 as u32) << 12) | (i4_1 << 8) | (i11 << 7) | (0x63 as u32)
+}
+
+enc_j: (rd: i64, imm: i64) -> u32 {
+    u: u32 = imm as u32
+    i20: u32 = (u >> 20) & 1
+    i10_1: u32 = (u >> 1) & 0x3FF
+    i11: u32 = (u >> 11) & 1
+    i19_12: u32 = (u >> 12) & 0xFF
+    return (i20 << 31) | (i10_1 << 21) | (i11 << 20) | (i19_12 << 12)
+         | ((rd as u32) << 7) | (0x6F as u32)
+}
+
+; Number of bytes an `li rd, imm` expands to (addi, or lui+addi for wide).
+li_size: (imm: i64) -> i64 {
+    if imm >= -2048 {
+        if imm <= 2047 {
+            return 4
+        }
+    }
+    return 8
+}
+
+; Emit `li rd, imm`. Single addi for 12-bit signed; lui+addi for 0..0x7FFFFFFF.
+emit_li: (rd: i64, imm: i64) {
+    if imm >= -2048 {
+        if imm <= 2047 {
+            emit_word(enc_i(rd, 0, imm, 0, 0x13))
+            return
+        }
+    }
+    if imm < 0 {
+        fail("li: negative immediate too wide".data)
+        return
+    }
+    if imm > 2147483647 {
+        fail("li: immediate too wide".data)
+        return
+    }
+    hi: i64 = (imm + 2048) / 4096
+    lo: i64 = imm - hi * 4096
+    emit_word(((hi as u32) & 0xFFFFF) << 12 | ((rd as u32) << 7) | (0x37 as u32))
+    emit_word(enc_i(rd, rd, lo, 0, 0x13))
+}
+
+; Assemble one already-tokenized instruction whose mnemonic is at token `base`.
+; In pass 1 (pass == 1) nothing is emitted; it only reports the byte size so
+; labels get correct addresses. In pass 2 it encodes into `code`. `pc` is the
+; current byte address (for branch/jump relative offsets). Returns the size.
+encode_instr: (pass: i64, base: i64, pc: i64) -> i64 {
+    m: u8* = tok_at(base)
+    o0: u8* = tok_at(base + 1)
+    o1: u8* = tok_at(base + 2)
+    o2: u8* = tok_at(base + 3)
+
+    if streq(m, "ecall".data) == 1 {
+        if pass == 2 {
+            emit_word(0x73 as u32)
+        }
+        return 4
+    }
+    if streq(m, "ret".data) == 1 {
+        if pass == 2 {
+            emit_word(enc_i(0, 1, 0, 0, 0x67))
+        }
+        return 4
+    }
+    if streq(m, "li".data) == 1 {
+        imm: i64 = parse_imm(o1)
+        if pass == 2 {
+            emit_li(reg_num(o0), imm)
+        }
+        return li_size(imm)
+    }
+    if streq(m, "mv".data) == 1 {
+        if pass == 2 {
+            emit_word(enc_i(reg_num(o0), reg_num(o1), 0, 0, 0x13))
+        }
+        return 4
+    }
+    if streq(m, "addi".data) == 1 {
+        if pass == 2 {
+            emit_word(enc_i(reg_num(o0), reg_num(o1), parse_imm(o2), 0, 0x13))
+        }
+        return 4
+    }
+    if streq(m, "add".data) == 1 {
+        if pass == 2 {
+            emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 0, 0))
+        }
+        return 4
+    }
+    if streq(m, "sub".data) == 1 {
+        if pass == 2 {
+            emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 0, 0x20))
+        }
+        return 4
+    }
+    if streq(m, "and".data) == 1 {
+        if pass == 2 {
+            emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 7, 0))
+        }
+        return 4
+    }
+    if streq(m, "or".data) == 1 {
+        if pass == 2 {
+            emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 6, 0))
+        }
+        return 4
+    }
+    if streq(m, "xor".data) == 1 {
+        if pass == 2 {
+            emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 4, 0))
+        }
+        return 4
+    }
+    if streq(m, "j".data) == 1 {
+        if pass == 2 {
+            target: i64 = find_label(o0)
+            emit_word(enc_j(0, target - pc))
+        }
+        return 4
+    }
+    if streq(m, "beq".data) == 1 {
+        if pass == 2 {
+            target: i64 = find_label(o2)
+            emit_word(enc_b(reg_num(o0), reg_num(o1), target - pc, 0))
+        }
+        return 4
+    }
+    if streq(m, "bne".data) == 1 {
+        if pass == 2 {
+            target: i64 = find_label(o2)
+            emit_word(enc_b(reg_num(o0), reg_num(o1), target - pc, 1))
+        }
+        return 4
+    }
+
+    fail("unknown instruction".data)
+    return 0
+}
+
+; One assembly pass over the source. Pass 1 records label addresses; pass 2
+; encodes instructions into `code`.
+assemble: (pass: i64) {
+    i: u64 = 0
+    pc: i64 = 0
+    line: u8[256]
+    line_p: u8* = line[0]
+    while i < src_len {
+        ; Extract one line (without the newline) into line_p.
+        j: u64 = 0
+        while i < src_len {
+            c: u8 = @src[i]
+            i = i + 1
+            if c == 10 {
+                break
+            }
+            if c != 13 {
+                if j < 255 {
+                    d: u8* = line_p + j
+                    @d = c
+                    j = j + 1
+                }
+            }
+        }
+        term: u8* = line_p + j
+        @term = 0 as u8
+
+        strip_comment(line_p)
+        tokenize(line_p)
+        if ntok == 0 {
+            ; blank or comment-only line
+        } else {
+            base: i64 = 0
+            first: u8* = tok_at(0)
+            if ends_colon(first) == 1 {
+                drop_colon(first)
+                if pass == 1 {
+                    add_label(first, pc)
+                }
+                base = 1
+            }
+            if base < ntok {
+                size: i64 = encode_instr(pass, base, pc)
+                pc = pc + size
+            }
+        }
+    }
+}
+
+; Split the argument "src out" at the first space into two path buffers.
+split_arg: (arg: u8*, src_path: u8*, out_path: u8*) -> i64 {
+    i: u64 = 0
+    while @(arg + i) != 0 {
+        if @(arg + i) == 32 {
+            break
+        }
+        d: u8* = src_path + i
+        @d = @(arg + i)
+        i = i + 1
+    }
+    st: u8* = src_path + i
+    @st = 0 as u8
+    if @(arg + i) == 0 {
+        return 0
+    }
+    ; Skip the separating space(s).
+    while @(arg + i) == 32 {
+        i = i + 1
+    }
+    if @(arg + i) == 0 {
+        return 0
+    }
+    k: u64 = 0
+    while @(arg + i) != 0 {
+        d: u8* = out_path + k
+        @d = @(arg + i)
+        i = i + 1
+        k = k + 1
+    }
+    ot: u8* = out_path + k
+    @ot = 0 as u8
+    return 1
+}
+
+main: () -> i32 {
+    arg: u8* = ARG_BASE as u8*
+    src_path: u8[128]
+    out_path: u8[128]
+    src_pp: u8* = src_path[0]
+    out_pp: u8* = out_path[0]
+    if split_arg(arg, src_pp, out_pp) == 0 {
+        console_writeln("as: usage: as <src> <out>".data)
+        return 1
+    }
+
+    fd: i64 = sc_open(src_pp, 0)
+    if fd < 0 {
+        console_write("as: cannot open ".data)
+        console_writeln(src_pp)
+        return 1
+    }
+    n: i64 = sc_read(fd, src[0], 0, 8191)
+    sc_close(fd)
+    if n <= 0 {
+        console_writeln("as: empty source".data)
+        return 1
+    }
+    src_len = n as u64
+    @src[src_len] = 0 as u8
+
+    lbl_count = 0
+    code_len = 0
+    err_flag = 0
+    assemble(1)
+    code_len = 0
+    assemble(2)
+    if err_flag != 0 {
+        return 1
+    }
+
+    ; Build the FEXE image: magic "FEXE", entry offset 0, then the payload.
+    @out[0] = 70 as u8
+    @out[1] = 69 as u8
+    @out[2] = 88 as u8
+    @out[3] = 69 as u8
+    ; out[4..16] stay zero (unused word + entry offset 0).
+    i: u64 = 0
+    while i < code_len {
+        d: u8* = out[0] + (HDR as u64) + i
+        @d = @code[i]
+        i = i + 1
+    }
+    total: u64 = (HDR as u64) + code_len
+
+    ofd: i64 = sc_open(out_pp, 2)
+    if ofd < 0 {
+        console_write("as: cannot create ".data)
+        console_writeln(out_pp)
+        return 1
+    }
+    sc_write(ofd, out[0], total)
+    sc_ftruncate(ofd, total)
+    sc_close(ofd)
+
+    console_write("as: wrote ".data)
+    console_writeln(out_pp)
+    return 0
+}

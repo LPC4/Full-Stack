@@ -182,4 +182,19 @@ pub mod user {
     /// Spinning 3D wireframe cube demo: maps the framebuffer and animates a
     /// rotating cube. Installed at `/bin/cube.fexe`.
     pub const CUBE: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/user/cube.hll"));
+
+    /// Minimal in-VM RV64I assembler. Reads a `.s` file, assembles a small
+    /// instruction subset, and writes a runnable FEXE. Installed at `/bin/as.fexe`
+    /// and launched by the shell's `as <src> <out>` command.
+    pub const AS: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/user/as.hll"));
+
+    /// Example assembly source: sum 1..10, exit with the total (55). Installed at
+    /// `/home/sum.s` so `as`/`run` can be tried out of the box.
+    pub const EXAMPLE_SUM_S: &str =
+        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/user/examples/sum.s"));
+
+    /// Example assembly source: iterative Fibonacci, exit with fib(11) (89).
+    /// Installed at `/home/fib.s`.
+    pub const EXAMPLE_FIB_S: &str =
+        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/user/examples/fib.s"));
 }

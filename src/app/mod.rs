@@ -281,6 +281,8 @@ pub struct FullStackApp {
     #[serde(skip)]
     cube_binary: Option<AssembledOutput>,
     #[serde(skip)]
+    as_binary: Option<AssembledOutput>,
+    #[serde(skip)]
     vm_output_view_id: u64,
     settings: AppSettings,
     #[serde(skip)]
@@ -324,6 +326,7 @@ impl Default for FullStackApp {
             edit_binary: None,
             fbdemo_binary: None,
             cube_binary: None,
+            as_binary: None,
             vm_output_view_id: 0,
             settings: AppSettings::default(),
             show_settings: false,
@@ -920,18 +923,60 @@ impl FullStackApp {
         }
     }
 
+    /// Compile the bundled in-VM assembler as a hosted binary, caching it.
+    /// Installed at `/bin/as.fexe` so the shell's `as <src> <out>` command works.
+    fn ensure_as_binary(&mut self) -> Result<(), String> {
+        if self.as_binary.is_some() {
+            return Ok(());
+        }
+        let mut pipeline = CompilationPipeline::new();
+        pipeline.set_target_mode(TargetMode::Hosted);
+        pipeline.set_write_artifacts(false);
+        pipeline.set_type_prelude(get_stdlib_type_prelude());
+
+        let source = format!(
+            "{}\n{}",
+            get_stdlib_source_for_mode(TargetMode::Hosted),
+            os_runtime::user::AS
+        );
+        let result = pipeline.run_full(&source, None);
+        if result.has_errors() {
+            return Err(result.format_diagnostics());
+        }
+        if let Some(ref asm_err) = result.assembler_error {
+            return Err(format!("assembler error: {asm_err}"));
+        }
+        match result.binary.as_ref() {
+            Some(bin) => {
+                self.as_binary = Some(bin.assembled.clone());
+                Ok(())
+            }
+            None => Err("assembler produced no binary".to_owned()),
+        }
+    }
+
     /// Build the filesystem image the shell boots with: a `/home` directory and,
     /// if a program is selected for injection, that program stored there as a
     /// runnable executable file. A short readme is always present so `ls` has
     /// something to show.
     fn build_boot_fs_image(&self) -> Vec<u8> {
-        let readme: &[u8] = b"Type 'help' for commands. Use 'run <file>' to run a program.\n";
+        let readme: &[u8] = b"Type 'help' for commands. Use 'run <file>' to run a program.\n\
+Try the assembler: as /home/fib.s /home/fib.fexe then run /home/fib.fexe\n";
 
         let mut entries = vec![
             FsEntry::Dir { path: "/home" },
             FsEntry::File {
                 path: "/readme.txt",
                 data: readme,
+            },
+            // Example assembly sources so `as`/`run` can be tried immediately.
+            FsEntry::File {
+                path: "/home/sum.s",
+                data: os_runtime::user::EXAMPLE_SUM_S.as_bytes(),
+            },
+            FsEntry::File {
+                path: "/home/fib.s",
+                data: os_runtime::user::EXAMPLE_FIB_S.as_bytes(),
             },
         ];
 
@@ -940,7 +985,8 @@ impl FullStackApp {
         let edit_holder;
         let have_bin_dir = self.edit_binary.is_some()
             || self.fbdemo_binary.is_some()
-            || self.cube_binary.is_some();
+            || self.cube_binary.is_some()
+            || self.as_binary.is_some();
         if have_bin_dir {
             entries.push(FsEntry::Dir { path: "/bin" });
         }
@@ -971,6 +1017,16 @@ impl FullStackApp {
             entries.push(FsEntry::File {
                 path: "/bin/cube.fexe",
                 data: &cube_holder,
+            });
+        }
+
+        // Install the in-VM assembler at /bin/as.fexe so `as <src> <out>` works.
+        let as_holder;
+        if let Some(asm) = self.as_binary.as_ref() {
+            as_holder = assembled_to_exec_file(asm);
+            entries.push(FsEntry::File {
+                path: "/bin/as.fexe",
+                data: &as_holder,
             });
         }
 
@@ -1163,6 +1219,11 @@ impl eframe::App for FullStackApp {
                         if let Err(e) = self.ensure_cube_binary() {
                             self.compilation_state
                                 .set_error(format!("cube compile failed: {e}"));
+                        }
+                        // Best-effort: install the in-VM assembler for `as <src> <out>`.
+                        if let Err(e) = self.ensure_as_binary() {
+                            self.compilation_state
+                                .set_error(format!("assembler compile failed: {e}"));
                         }
                         let fs_image = self.build_boot_fs_image();
                         let shell = self.shell_binary.clone();

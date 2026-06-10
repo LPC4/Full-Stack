@@ -1,15 +1,24 @@
-; Tiny line editor (ed-like) for the HLL kernel.
+; Line editor (ed-like) for the HLL kernel, modeled on the classic Unix `ed`.
 ;
-; Launched by the shell's `edit <file>` command. The absolute path to edit is
-; passed by the kernel in the USER_ARG_BASE page (see sys_exec_impl), which this
-; program reads directly. On start the file is loaded into an in-memory buffer;
-; commands then edit that buffer and write it back:
+; Launched by the shell's `edit <file>` command. The absolute path is passed by
+; the kernel in the USER_ARG_BASE page (see sys_exec_impl). The file is loaded
+; into a line buffer; commands edit individual lines and write it back. This is a
+; line editor (not full-screen) because the GUI terminal is a scrolling log: it
+; renders no cursor-addressing escape codes and forwards no arrow keys, so a
+; visual editor could not draw or be driven there. The line model fits it well.
 ;
-;   a   append: read lines until a single "." on its own line; append to buffer
-;   p   print the buffer with line numbers
-;   c   clear the buffer
-;   w   write the buffer back to the file (truncating to the exact length)
-;   q   quit
+; Commands (current line shown with a '>' marker by `p`):
+;   p            print the buffer with line numbers
+;   N            go to line N and print it
+;   a            append lines after the current line; end with "." on its own line
+;   i            insert lines before the current line; end with "."
+;   d [N]        delete the current line (or line N)
+;   c            clear the whole buffer
+;   r <text>     replace the current line with <text>
+;   s/old/new/   substitute the first "old" with "new" on the current line
+;   w            write the buffer back to the file
+;   q            quit
+;   h            help
 
 
 external console_putchar:   (c: i32)
@@ -18,22 +27,26 @@ external console_writeln:   (str: u8*)
 external console_print_int: (n: i64)
 
 ; Page the kernel maps with this program's argument string (the file path).
-; Must match USER_ARG_BASE in the kernel's syscall.hll.
 const ARG_BASE = 0x7FF00000
-; Maximum editable file size held in the buffer.
-const EDIT_CAP = 4096
+; Line buffer geometry: up to MAXLINES lines of up to LINEW-1 chars each.
+const MAXLINES = 200
+const LINEW = 128
 
 ; --- Syscall argument marshalling (see shell.hll for the pattern) ---
 
-_a0:  u64 = 0
-_a1:  u64 = 0
-_a2:  u64 = 0
-_a3:  u64 = 0
+_a0: u64 = 0
+_a1: u64 = 0
+_a2: u64 = 0
+_a3: u64 = 0
 _ret: i64 = 0
 
-; Editor buffer and current length.
-edit_buf: u8[4096]
-edit_len: u64 = 0
+; Line storage (MAXLINES * LINEW, null-terminated lines) and a scratch buffer
+; used for loading and saving the file.
+lines: u8[25600]
+scratch: u8[25600]
+nlines: i64 = 0
+; Current line, 1-based; 0 when the buffer is empty.
+cur: i64 = 0
 
 sc_readchar: () -> i64 {
     asm {
@@ -100,7 +113,6 @@ sc_read: (fd: i64, buf: u8*, offset: u64, len: u64) -> i64 {
     return _ret
 }
 
-; Write len bytes from buf to fd at its implicit position (0 after open).
 sc_write: (fd: i64, buf: u8*, len: u64) -> i64 {
     _a0 = fd as u64
     _a1 = buf as u64
@@ -189,118 +201,439 @@ ed_read_line: (buf: u8*) {
     @term = 0 as u8
 }
 
-; --- Buffer operations ---
+; --- Line buffer model ---
 
-; Load the file at `path` into the buffer, replacing its contents.
+slen: (s: u8*) -> u64 {
+    n: u64 = 0
+    while @(s + n) != 0 {
+        n = n + 1
+    }
+    return n
+}
+
+; Pointer to 0-based line index i.
+lptr: (i: i64) -> u8* {
+    return lines[0] + (i as u64) * 128
+}
+
+; Copy a null-terminated string into 0-based line i, truncating to LINEW-1.
+set_line: (i: i64, src: u8*) {
+    dst: u8* = lptr(i)
+    k: u64 = 0
+    while @(src + k) != 0 {
+        if k >= 127 {
+            break
+        }
+        d: u8* = dst + k
+        @d = @(src + k)
+        k = k + 1
+    }
+    t: u8* = dst + k
+    @t = 0 as u8
+}
+
+; Copy 0-based line src over 0-based line dst.
+copy_line: (dst: i64, src: i64) {
+    dp: u8* = lptr(dst)
+    sp: u8* = lptr(src)
+    k: u64 = 0
+    while k < 128 {
+        d: u8* = dp + k
+        @d = @(sp + k)
+        k = k + 1
+    }
+}
+
+; Insert `src` as a new line at 0-based position pos, shifting later lines down.
+insert_at: (pos: i64, src: u8*) {
+    if nlines >= MAXLINES {
+        console_writeln("edit: buffer full".data)
+        return
+    }
+    k: i64 = nlines
+    while k > pos {
+        copy_line(k, k - 1)
+        k = k - 1
+    }
+    set_line(pos, src)
+    nlines = nlines + 1
+}
+
+; Delete the line at 0-based position pos, shifting later lines up.
+delete_at: (pos: i64) {
+    if pos < 0 {
+        return
+    }
+    if pos >= nlines {
+        return
+    }
+    k: i64 = pos
+    while k < nlines - 1 {
+        copy_line(k, k + 1)
+        k = k + 1
+    }
+    nlines = nlines - 1
+}
+
+; Clamp the current line into range after an edit.
+fix_cur: () {
+    if nlines == 0 {
+        cur = 0
+        return
+    }
+    if cur < 1 {
+        cur = 1
+    }
+    if cur > nlines {
+        cur = nlines
+    }
+}
+
+; --- File load / save ---
+
 ed_load: (path: u8*) {
-    edit_len = 0
+    nlines = 0
+    cur = 0
     fd: i64 = sc_open(path, 2)
     if fd < 0 {
         return
     }
-    bp: u8* = edit_buf[0]
-    off: u64 = 0
-    while off < EDIT_CAP {
-        n: i64 = sc_read(fd, bp + off, off, EDIT_CAP - off)
+    bp: u8* = scratch[0]
+    total: u64 = 0
+    while total < 25599 {
+        n: i64 = sc_read(fd, bp + total, total, 25599 - total)
         if n <= 0 {
             break
         }
-        off = off + n as u64
+        total = total + n as u64
     }
-    edit_len = off
     sc_close(fd)
-}
 
-; Append one byte to the buffer if there is room.
-ed_push: (c: u8) {
-    if edit_len < EDIT_CAP {
-        bp: u8* = edit_buf[0]
-        d: u8* = bp + edit_len
-        @d = c
-        edit_len = edit_len + 1
-    }
-}
-
-; Append mode: read lines until a line that is exactly ".".
-ed_append: () {
-    console_writeln("append mode - end with a single '.' on its own line".data)
+    ; Split the raw bytes into lines on '\n'.
     line: u8[256]
     lp: u8* = line[0]
-    while 1 == 1 {
-        console_write("* ".data)
-        ed_read_line(lp)
-        ; A lone "." on its own line ends append mode.
-        if @lp == 46 {
-            second: u8* = lp + 1
-            if @second == 0 {
-                return
-            }
-        }
-        i: u64 = 0
-        while @(lp + i) != 0 {
-            ed_push(@(lp + i))
-            i = i + 1
-        }
-        ed_push(10 as u8)
-    }
-}
-
-; Print the buffer with 1-based line numbers.
-ed_print: () {
-    if edit_len == 0 {
-        console_writeln("(empty)".data)
-        return
-    }
-    bp: u8* = edit_buf[0]
-    line_no: i64 = 1
-    console_print_int(line_no)
-    console_write(": ".data)
+    j: u64 = 0
     i: u64 = 0
-    while i < edit_len {
+    while i < total {
         c: u8 = @(bp + i)
-        console_putchar(c as i32)
         i = i + 1
         if c == 10 {
-            if i < edit_len {
-                line_no = line_no + 1
-                console_print_int(line_no)
-                console_write(": ".data)
+            t: u8* = lp + j
+            @t = 0 as u8
+            insert_at(nlines, lp)
+            j = 0
+        } else {
+            if c != 13 {
+                if j < 255 {
+                    d: u8* = lp + j
+                    @d = c
+                    j = j + 1
+                }
             }
         }
     }
-    ; Guarantee a trailing newline after an unterminated last line.
-    last: u8* = bp + (edit_len - 1)
-    if @last != 10 {
-        console_putchar(10)
+    ; A final unterminated line still counts.
+    if j > 0 {
+        t: u8* = lp + j
+        @t = 0 as u8
+        insert_at(nlines, lp)
+    }
+    if nlines > 0 {
+        cur = nlines
     }
 }
 
-; Write the buffer back to `path`, truncating the file to the exact length.
 ed_write: (path: u8*) {
+    ; Join the lines back into scratch with a '\n' after each.
+    bp: u8* = scratch[0]
+    total: u64 = 0
+    i: i64 = 0
+    while i < nlines {
+        sp: u8* = lptr(i)
+        k: u64 = 0
+        while @(sp + k) != 0 {
+            if total < 25599 {
+                d: u8* = bp + total
+                @d = @(sp + k)
+                total = total + 1
+            }
+            k = k + 1
+        }
+        if total < 25599 {
+            d: u8* = bp + total
+            @d = 10 as u8
+            total = total + 1
+        }
+        i = i + 1
+    }
+
     fd: i64 = sc_open(path, 2)
     if fd < 0 {
         console_writeln("edit: write failed (open)".data)
         return
     }
-    if edit_len > 0 {
-        bp: u8* = edit_buf[0]
-        n: i64 = sc_write(fd, bp, edit_len)
+    if total > 0 {
+        n: i64 = sc_write(fd, bp, total)
         if n < 0 {
             console_writeln("edit: write failed".data)
             sc_close(fd)
             return
         }
     }
-    sc_ftruncate(fd, edit_len)
+    sc_ftruncate(fd, total)
     sc_close(fd)
     console_writeln("edit: written".data)
+}
+
+; --- Commands ---
+
+ed_print: () {
+    if nlines == 0 {
+        console_writeln("(empty)".data)
+        return
+    }
+    i: i64 = 0
+    while i < nlines {
+        if (i + 1) == cur {
+            console_write("> ".data)
+        } else {
+            console_write("  ".data)
+        }
+        console_print_int(i + 1)
+        console_write(": ".data)
+        console_writeln(lptr(i))
+        i = i + 1
+    }
+}
+
+; Read lines until a lone "." and insert them starting at 0-based pos. Returns
+; the 0-based index just past the last inserted line.
+read_block_into: (pos: i64) -> i64 {
+    console_writeln("(enter lines, end with '.')".data)
+    line: u8[256]
+    lp: u8* = line[0]
+    p: i64 = pos
+    while 1 == 1 {
+        console_write("* ".data)
+        ed_read_line(lp)
+        if @lp == 46 {
+            if @(lp + 1) == 0 {
+                return p
+            }
+        }
+        insert_at(p, lp)
+        p = p + 1
+    }
+    return p
+}
+
+ed_append: () {
+    end: i64 = read_block_into(cur)
+    cur = end
+    fix_cur()
+}
+
+ed_insert: () {
+    pos: i64 = cur - 1
+    if pos < 0 {
+        pos = 0
+    }
+    end: i64 = read_block_into(pos)
+    cur = end
+    fix_cur()
+}
+
+; Parse a non-negative decimal at p, skipping leading spaces. -1 if none.
+parse_num: (p: u8*) -> i64 {
+    i: u64 = 0
+    while @(p + i) == 32 {
+        i = i + 1
+    }
+    if @(p + i) < 48 {
+        return -1
+    }
+    if @(p + i) > 57 {
+        return -1
+    }
+    v: i64 = 0
+    while @(p + i) != 0 {
+        c: u8 = @(p + i)
+        if c < 48 {
+            break
+        }
+        if c > 57 {
+            break
+        }
+        v = v * 10 + (c as i64 - 48)
+        i = i + 1
+    }
+    return v
+}
+
+ed_delete: (arg: u8*) {
+    n: i64 = parse_num(arg)
+    target: i64 = cur
+    if n >= 1 {
+        target = n
+    }
+    if target < 1 {
+        console_writeln("edit: no line".data)
+        return
+    }
+    if target > nlines {
+        console_writeln("edit: no such line".data)
+        return
+    }
+    delete_at(target - 1)
+    cur = target
+    fix_cur()
+}
+
+; Replace the current line with the text after the command character.
+ed_replace: (arg: u8*) {
+    if cur < 1 {
+        console_writeln("edit: no current line".data)
+        return
+    }
+    i: u64 = 0
+    while @(arg + i) == 32 {
+        i = i + 1
+    }
+    set_line(cur - 1, arg + i)
+}
+
+; Find needle in hay; return the 0-based byte index or -1.
+str_find: (hay: u8*, needle: u8*) -> i64 {
+    if @needle == 0 {
+        return -1
+    }
+    i: u64 = 0
+    while @(hay + i) != 0 {
+        j: u64 = 0
+        while 1 == 1 {
+            if @(needle + j) == 0 {
+                return i as i64
+            }
+            if @(hay + i + j) != @(needle + j) {
+                break
+            }
+            j = j + 1
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+; Substitute the first occurrence of old with new on the current line:
+;   s<delim>old<delim>new<delim>   e.g.  s/foo/bar/
+ed_subst: (arg: u8*) {
+    if cur < 1 {
+        console_writeln("edit: no current line".data)
+        return
+    }
+    i: u64 = 0
+    while @(arg + i) == 32 {
+        i = i + 1
+    }
+    delim: u8 = @(arg + i)
+    if delim == 0 {
+        console_writeln("edit: usage s/old/new/".data)
+        return
+    }
+    i = i + 1
+    old: u8[128]
+    oldp: u8* = old[0]
+    k: u64 = 0
+    while @(arg + i) != 0 {
+        if @(arg + i) == delim {
+            break
+        }
+        if k < 127 {
+            d: u8* = oldp + k
+            @d = @(arg + i)
+            k = k + 1
+        }
+        i = i + 1
+    }
+    ot: u8* = oldp + k
+    @ot = 0 as u8
+    if @(arg + i) == delim {
+        i = i + 1
+    }
+    rep: u8[128]
+    repp: u8* = rep[0]
+    k = 0
+    while @(arg + i) != 0 {
+        if @(arg + i) == delim {
+            break
+        }
+        if k < 127 {
+            d: u8* = repp + k
+            @d = @(arg + i)
+            k = k + 1
+        }
+        i = i + 1
+    }
+    rt: u8* = repp + k
+    @rt = 0 as u8
+
+    cl: u8* = lptr(cur - 1)
+    at: i64 = str_find(cl, oldp)
+    if at < 0 {
+        console_writeln("edit: not found".data)
+        return
+    }
+    ; Build prefix + replacement + suffix into a scratch line.
+    tmp: u8[256]
+    tp: u8* = tmp[0]
+    out: u64 = 0
+    p: u64 = 0
+    while (p as i64) < at {
+        d: u8* = tp + out
+        @d = @(cl + p)
+        out = out + 1
+        p = p + 1
+    }
+    rk: u64 = 0
+    while @(repp + rk) != 0 {
+        d: u8* = tp + out
+        @d = @(repp + rk)
+        out = out + 1
+        rk = rk + 1
+    }
+    p = (at as u64) + slen(oldp)
+    while @(cl + p) != 0 {
+        d: u8* = tp + out
+        @d = @(cl + p)
+        out = out + 1
+        p = p + 1
+    }
+    fin: u8* = tp + out
+    @fin = 0 as u8
+    set_line(cur - 1, tp)
+}
+
+; Go to the line number parsed from `arg` (clamped), then print the buffer.
+ed_goto: (arg: u8*) {
+    n: i64 = parse_num(arg)
+    if n >= 1 {
+        if n <= nlines {
+            cur = n
+        }
+    }
+    ed_print()
+}
+
+ed_help: () {
+    console_writeln("edit: p=print  g <n> (or just <n>)=goto  a=append  i=insert".data)
+    console_writeln("      d=delete  c=clear  r=replace  s/old/new/  w=write  q=quit".data)
 }
 
 main: () -> i32 {
     path: u8* = ARG_BASE as u8*
     ed_load(path)
 
-    console_writeln("edit: a=append p=print c=clear w=write q=quit".data)
+    ed_help()
 
     line: u8[256]
     line_p: u8* = line[0]
@@ -308,28 +641,61 @@ main: () -> i32 {
         console_write("edit> ".data)
         ed_read_line(line_p)
         c: u8 = @line_p
-        if c == 97 {
-            ed_append()
+        if c == 0 {
+            ; blank line: do nothing
         } else {
+            if c >= 48 {
+                if c <= 57 {
+                    ed_goto(line_p)
+                    continue
+                }
+            }
+            if c == 103 {
+                ed_goto(line_p + 1)
+            } else {
             if c == 112 {
                 ed_print()
             } else {
-                if c == 99 {
-                    edit_len = 0
-                    console_writeln("edit: cleared".data)
+                if c == 97 {
+                    ed_append()
                 } else {
-                    if c == 119 {
-                        ed_write(path)
+                    if c == 105 {
+                        ed_insert()
                     } else {
-                        if c == 113 {
-                            sc_exit(0)
+                        if c == 100 {
+                            ed_delete(line_p + 1)
                         } else {
-                            if c != 0 {
-                                console_writeln("edit: unknown command".data)
+                            if c == 99 {
+                                nlines = 0
+                                cur = 0
+                                console_writeln("edit: cleared".data)
+                            } else {
+                                if c == 114 {
+                                    ed_replace(line_p + 1)
+                                } else {
+                                    if c == 115 {
+                                        ed_subst(line_p + 1)
+                                    } else {
+                                        if c == 119 {
+                                            ed_write(path)
+                                        } else {
+                                            if c == 113 {
+                                                sc_exit(0)
+                                            } else {
+                                                if c == 104 {
+                                                    ed_help()
+                                                } else {
+                                                    console_writeln("edit: unknown command (h for help)".data)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
                 }
+            }
             }
         }
     }

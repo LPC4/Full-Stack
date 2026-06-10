@@ -40,7 +40,7 @@ To make the relationship between firmware, kernel and the higher-level OS cleare
 - User processes and services
   - Role: User-mode programs that run under kernel supervision with address-space isolation. Communicate with the kernel via ecall.
   - Where to find it in the repo: `crates/os-runtime/user/` (example programs). The test harness injects user binaries by placing them at physical address 0x87F00000; the kernel reads metadata, copies pages, maps them, creates a PCB, and adds it to the scheduler.
-  - What is implemented: `user_hello.hll` (prints a greeting via `sys_write`, then yields in a loop) and `shell.hll`, an interactive shell that boots as pid 1 and runs built-in commands (`ls`, `cd`, `cat`, `edit`, `run`, `touch`, `mkdir`, `rm`, `rmdir`, `mv`, `help`, `exit`) against the filesystem. The injection mechanism and the full user-process lifecycle (create, run, exec a child, exit) work end-to-end in integration tests.
+  - What is implemented: `user_hello.hll` (prints a greeting via `sys_write`, then yields in a loop) and `shell.hll`, an interactive shell that boots as pid 1 and runs built-in commands (`ls`, `cd`, `cat`, `edit`, `run`, `as`, `touch`, `mkdir`, `rm`, `rmdir`, `mv`, `help`, `exit`) against the filesystem. The injection mechanism and the full user-process lifecycle (create, run, exec a child, exit) work end-to-end in integration tests.
   - Not yet implemented: block-device drivers (the filesystem lives in a RAM image), signals, and multi-hart support.
 
 The remainder of this specification documents the machine model, calling conventions and ABI that the kernel and eventual OS must follow.
@@ -757,6 +757,28 @@ Offset  Size  Field
 `/home/<program>.fexe`); the `.bin` extension is reserved for *flat* binary exports (no FEXE
 wrapper). The shell's `run` command pre-checks the magic and reports `not an executable` for a
 non-FEXE file before calling `exec`.
+
+#### 9.2.2 In-VM assembler (`as`)
+
+`/bin/as.fexe` (source `user/as.hll`) is a userspace assembler that closes the
+self-hosting loop: author a small assembly file in the editor and turn it into a
+runnable program without leaving the VM. The shell's `as <src> <out>` builtin
+joins both operands to absolute paths and launches the assembler with
+`"<abs_src> <abs_out>"` as its argument string (via `sys_exec`'s `USER_ARG_BASE`
+page). The assembler reads the source, runs a two-pass label resolver (pass 1
+assigns each label its byte offset, pass 2 encodes), wraps the resulting flat
+binary in the FEXE container (entry offset 0), and writes it to `<out>`. The
+produced file is then run with `run <out>` through the normal `exec` path.
+
+Supported instruction subset: `add sub and or xor` (register-register), `addi`,
+`li` (one `addi`, or `lui`+`addi` for immediates wider than 12 bits), `mv`,
+`j <label>`, `beq`/`bne <rs1>, <rs2>, <label>`, `ecall`, and `ret`. Registers
+accept ABI names (`a0`, `t0`, `sp`, `ra`, `zero`, ...) or the raw `x0`..`x31`
+form. Labels are written `name:` (alone or before an instruction); comments start
+with `;` or `#`; immediates may be decimal, `0x` hex, or negative. The subset is
+intentionally minimal -- there is no data section, relocation, or pseudo-op
+expansion beyond `li`/`mv`/`ret`. Instruction encodings match the host
+`asm-to-binary` backend.
 
 ### 9.3 Scheduler Actions
 
