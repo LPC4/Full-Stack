@@ -819,13 +819,22 @@ impl CompilerRv64 {
         self.emitter
             .emit_comment(&format!("Passing {} arguments", args.len()));
 
-        // First 8 arguments go in a0-a7.
+        // First 8 arguments go in a0-a7 (integer/pointer) or fa0-fa7 (float). The
+        // callee reads each param from the register file matching its type, so a
+        // float argument must be placed in the float arg register, not the integer
+        // one (otherwise the callee reads an unrelated fN register).
         for arg in args {
             if arg_index >= 8 {
                 break;
             }
-            let arg_tmp = self.load_value_to_temp(arg, ctx);
-            self.emitter.emit_mv(reg_for_arg(arg_index), arg_tmp);
+            let ty = self.resolve_ir_type(&self.resolve_value_type(arg, ctx));
+            if let IrType::Float(w) = ty {
+                let ftmp = self.load_float_value_to_temp(arg, &IrType::Float(w), ctx);
+                self.emit_float_move(reg_for_arg(arg_index), ftmp, w);
+            } else {
+                let arg_tmp = self.load_value_to_temp(arg, ctx);
+                self.emitter.emit_mv(reg_for_arg(arg_index), arg_tmp);
+            }
             arg_index += 1;
         }
 
@@ -844,9 +853,18 @@ impl CompilerRv64 {
             // Store below sp first, then move sp: loading an argument from its
             // stack slot must happen while sp still matches the frame layout.
             for (i, arg) in args.iter().enumerate().skip(8) {
-                let arg_tmp = self.load_value_to_temp(arg, ctx);
                 let offset = (((i - 8) * 8) as i64 - aligned_bytes) as i32;
-                self.emitter.emit_sd(SP, arg_tmp, offset);
+                let ty = self.resolve_ir_type(&self.resolve_value_type(arg, ctx));
+                if let IrType::Float(w) = ty {
+                    let ftmp = self.load_float_value_to_temp(arg, &IrType::Float(w), ctx);
+                    match w {
+                        hll_to_ir::FloatWidth::F32 => self.emitter.emit_fsw(SP, ftmp, offset),
+                        hll_to_ir::FloatWidth::F64 => self.emitter.emit_fsd(SP, ftmp, offset),
+                    }
+                } else {
+                    let arg_tmp = self.load_value_to_temp(arg, ctx);
+                    self.emitter.emit_sd(SP, arg_tmp, offset);
+                }
             }
             self.emitter.emit_add_imm(SP, SP, -aligned_bytes);
         }
@@ -1399,6 +1417,15 @@ impl CompilerRv64 {
             IrValue::GlobalString(_) => {
                 IrType::Pointer(Box::new(IrType::Integer(hll_to_ir::IntWidth::I8)))
             }
+        }
+    }
+
+    /// Move a float temp into a destination float register for the given width
+    /// (`fmv.s` for f32, `fmv.d` for f64). Used to place float call arguments.
+    fn emit_float_move(&mut self, dst: Reg, src: Reg, width: hll_to_ir::FloatWidth) {
+        match width {
+            hll_to_ir::FloatWidth::F32 => self.emitter.emit_fmv_s(dst, src),
+            hll_to_ir::FloatWidth::F64 => self.emitter.emit_fmv_d(dst, src),
         }
     }
 

@@ -170,11 +170,6 @@ fn boot_kernel(
 
 // A hosted user program injected as pid 1 must spawn and exit with code 0.
 fn assert_user_exit_ok(uart: &str, outcome: &StepOutcome, label: &str) {
-    if let StepOutcome::Halted(c) = outcome
-        && *c != 0
-    {
-        panic!("{label}: unexpected VM halt with code {c}; uart={uart:?}");
-    }
     assert!(!uart.contains("PANIC!"), "{label}: kernel panicked; uart={uart:?}");
     assert!(
         !uart.contains("unhandled exception"),
@@ -184,9 +179,10 @@ fn assert_user_exit_ok(uart: &str, outcome: &StepOutcome, label: &str) {
         uart.contains("[ PROC ] pid 1 ready"),
         "{label}: user process was not spawned; uart={uart:?}"
     );
+    // A pid-1 program exiting cleanly calls kshutdown(0), halting the VM with 0.
     assert!(
-        uart.contains("sys_exit code: 0"),
-        "{label}: user process did not exit with code 0; uart={uart:?}"
+        matches!(outcome, StepOutcome::Halted(0)),
+        "{label}: user process did not exit cleanly with code 0; got {outcome:?}, uart={uart:?}"
     );
 }
 
@@ -676,10 +672,11 @@ main: () -> i32 {
 
 // In-VM assembler: `as <src> <out>` assembles a small RV64I program from a source
 // file into a runnable FEXE, then `run` executes it. The test program exercises
-// li/add/addi/bne/label/ecall (sum 1..=7 = 28, then exit(28)). The exec'd child's
-// exit code halts the VM, so asserting Halted(28) proves every encoding -- the
-// branch offset, arithmetic, and immediates -- is correct end to end. A wrong
-// branch offset would fault or loop forever instead.
+// li/add/addi/bne/label/ecall (sum 1..=7 = 28, then exit(28)). The shell reaps the
+// child via wait and prints "[exit 28]", proving every encoding -- the branch
+// offset, arithmetic, and immediates -- is correct end to end (a wrong branch
+// offset would fault or loop forever instead). The shell then survives to run the
+// trailing `exit`, so the VM halts cleanly with 0.
 #[test]
 fn kernel_shell_assembles_and_runs_program() {
     let shell = compile_hosted(user::SHELL);
@@ -732,12 +729,16 @@ loop:
         !uart.contains("run: cannot exec"),
         "sys_exec failed to load the produced FEXE; uart={uart:?}"
     );
-    // The assembled program computes 1+2+...+7 = 28 and exits with it; the child's
-    // exit code halts the VM, so Halted(28) proves correct execution.
+    // The assembled program computes 1+2+...+7 = 28 and exits with it; the shell
+    // reaps it and reports the status, proving correct execution.
     assert!(
-        matches!(outcome, StepOutcome::Halted(28)),
-        "assembled program did not exit with the computed sum 28; \
-         outcome={outcome:?} uart={uart:?}"
+        uart.contains("[exit 28]"),
+        "shell did not report the assembled program's exit code 28; uart={uart:?}"
+    );
+    // The shell survived the run and processed the trailing `exit`.
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "shell did not survive the run and exit cleanly; outcome={outcome:?} uart={uart:?}"
     );
 }
 
@@ -933,9 +934,102 @@ fn example_fib_assembles_and_runs() {
 
     assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
     assert!(uart.contains("as: wrote /fib.fexe"), "assembler failed; uart={uart:?}");
+    // The shell reaps the program and reports fib(11)=89, then survives to exit.
     assert!(
-        matches!(outcome, StepOutcome::Halted(89)),
-        "fib example did not exit with fib(11)=89; outcome={outcome:?} uart={uart:?}"
+        uart.contains("[exit 89]"),
+        "shell did not report fib(11)=89 as the exit code; uart={uart:?}"
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "shell did not survive the run and exit cleanly; outcome={outcome:?} uart={uart:?}"
+    );
+}
+
+// Running a program must return to the prompt (not halt the VM) so the shell can
+// run further commands. Runs the same child twice and then exits: the marker must
+// appear twice and the VM halts only on the shell's own `exit`.
+#[test]
+fn kernel_shell_survives_run_and_continues() {
+    let shell = compile_hosted(user::SHELL);
+    let child = compile_hosted(
+        r#"
+external console_writeln: (str: u8*)
+main: () -> i32 {
+    console_writeln("RAN_CHILD".data)
+    return 7
+}
+"#,
+    );
+    let exec_file = assembled_to_exec_file(&child);
+    let image = build_fs_image(&[FsEntry::File {
+        path: "/hi.fexe",
+        data: &exec_file,
+    }]);
+
+    let session = "run /hi.fexe\nrun /hi.fexe\nexit\n";
+    let (_, outcome, uart) =
+        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 80_000_000);
+
+    assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
+    // The child ran both times: the shell stayed alive across the first run.
+    assert_eq!(
+        uart.matches("RAN_CHILD").count(),
+        2,
+        "child did not run twice (shell did not survive the first run); uart={uart:?}"
+    );
+    // Each run reaped the child and reported its non-zero exit code.
+    assert_eq!(
+        uart.matches("[exit 7]").count(),
+        2,
+        "shell did not report the child's exit code on both runs; uart={uart:?}"
+    );
+    // The VM halts only on the shell's own `exit`, not on a child's exit code.
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "shell did not exit cleanly after the runs; outcome={outcome:?} uart={uart:?}"
+    );
+}
+
+// Ctrl-C (UART byte 0x03) while a foreground program runs must tear it down and
+// return to the prompt. The child loops forever, so without an interrupt the shell
+// would block in wait and never reach the trailing `exit`. The 0x03 between the
+// `run` line and `exit` makes the kernel kill the child; the shell prints "^C",
+// reads `exit`, and the VM halts cleanly -- which only happens if Ctrl-C worked.
+#[test]
+fn kernel_shell_ctrl_c_interrupts_foreground() {
+    let shell = compile_hosted(user::SHELL);
+    let child = compile_hosted(
+        r#"
+main: () -> i32 {
+    x: i64 = 0
+    while 1 == 1 {
+        x = x + 1
+    }
+    return 0
+}
+"#,
+    );
+    let exec_file = assembled_to_exec_file(&child);
+    let image = build_fs_image(&[FsEntry::File {
+        path: "/loop.fexe",
+        data: &exec_file,
+    }]);
+
+    // 0x03 (Ctrl-C) is delivered right after the run command's newline.
+    let session = "run /loop.fexe\n\x03exit\n";
+    let (_, outcome, uart) =
+        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 80_000_000);
+
+    assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
+    assert!(
+        uart.contains("^C"),
+        "shell did not acknowledge Ctrl-C; uart={uart:?}"
+    );
+    // The shell survived the interrupt and processed the trailing `exit`. If Ctrl-C
+    // had not worked, the shell would still be blocked on the looping child.
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "Ctrl-C did not return control to the shell; outcome={outcome:?} uart={uart:?}"
     );
 }
 

@@ -19,8 +19,8 @@ external sc_rename:   (old_path: u8*, new_path: u8*) -> i64
 external sc_unlink:   (path: u8*) -> i64
 external sc_rmdir:    (path: u8*) -> i64
 external sc_close:    (fd: i64)
-external sc_pidalive: (pid: u64) -> i64
 external sc_yield:    ()
+external sc_wait:     () -> i64
 external sc_exit:     (code: i64)
 
 ; C-string helpers (defined in the hosted stdlib).
@@ -212,6 +212,47 @@ sh_is_fexe: (path: u8*) -> i64 {
     return 1
 }
 
+; Print a signed decimal integer to the console.
+sh_print_dec: (v: i64) {
+    if v < 0 {
+        console_putchar(45)  ; '-'
+        v = 0 - v
+    }
+    if v == 0 {
+        console_putchar(48)  ; '0'
+        return
+    }
+    digits: u8[24]
+    digits_p: u8* = digits[0]
+    n: u64 = 0
+    uv: u64 = v as u64
+    while uv > 0 {
+        d: u64 = uv % 10
+        dp: u8* = digits_p + n
+        @dp = (48 + d) as u8
+        n = n + 1
+        uv = uv / 10
+    }
+    while n > 0 {
+        n = n - 1
+        console_putchar((@(digits_p + n)) as i32)
+    }
+}
+
+; Block until the foreground child exits or is interrupted, then report status.
+; wait returns the child's exit code, or the interrupt sentinel (-2) on Ctrl-C.
+sh_wait_foreground: () {
+    code: i64 = sc_wait()
+    two: i64 = 2
+    if code + two == 0 {
+        console_writeln("^C".data)
+        return
+    }
+    console_write("[exit ".data)
+    sh_print_dec(code)
+    console_writeln("]".data)
+}
+
 cmd_run: (cwd: u8*, arg: u8*) {
     if @arg == 0 {
         console_writeln("run: missing file name".data)
@@ -237,10 +278,7 @@ cmd_run: (cwd: u8*, arg: u8*) {
         console_writeln(arg)
         return
     }
-    ; Wait for the launched program to finish (cooperative polling).
-    while sc_pidalive(pid as u64) == 1 {
-        sc_yield()
-    }
+    sh_wait_foreground()
 }
 
 ; Print a file's contents to the console.
@@ -288,9 +326,7 @@ cmd_edit: (cwd: u8*, arg: u8*) {
         console_writeln("edit: cannot launch /bin/edit.fexe".data)
         return
     }
-    while sc_pidalive(pid as u64) == 1 {
-        sc_yield()
-    }
+    sh_wait_foreground()
 }
 
 ; Create an empty file (open with the create flag, then close).
@@ -462,9 +498,7 @@ cmd_as: (cwd: u8*, arg: u8*) {
         console_writeln("as: cannot launch /bin/as.fexe".data)
         return
     }
-    while sc_pidalive(pid as u64) == 1 {
-        sc_yield()
-    }
+    sh_wait_foreground()
 }
 
 handle_command: (cwd: u8*, line: u8*) {
@@ -483,6 +517,7 @@ handle_command: (cwd: u8*, line: u8*) {
         console_writeln("commands: ls, cd <dir>, run <file>, cat <file>, edit <file>,".data)
         console_writeln("          touch <file>, mkdir <dir>, rm <file>, rmdir <dir>,".data)
         console_writeln("          mv <old> <new>, as <src> <out>, exit".data)
+        console_writeln("press Ctrl-C to stop a running program.".data)
         return
     }
     if cstr_starts_with(line, "cd ".data) == 1 {

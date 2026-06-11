@@ -14,7 +14,7 @@ only exposes each source file as a compile-time string constant so `hll-to-ir` a
 boot/       M-mode ROM firmware (assembly): reset stub and hosted trap handler
 kernel/     S-mode kernel sources (HLL): traps, memory, processes, syscalls, fs
 stdlib/     shared HLL stdlib, split into common / hosted / freestanding bundles
-user/       example U-mode programs (HLL): hello world, interactive shell, file editor
+user/       U-mode programs (HLL): shell, line editor, in-VM assembler, cube + fbdemo
 src/        thin Rust crate exposing every source file as a string constant
 tests/      Rust tests over ROM, boot sequence, allocator, PMM, and subsystems
 ```
@@ -103,14 +103,25 @@ it. The shell uses `exec` + `pidalive` to run a child and wait for it cooperativ
 - `user_hello.hll` -- writes a greeting via `sys_write`, then yields forever.
 - `shell.hll` -- interactive shell booted as pid 1. Reads a line from the UART one byte at a
   time (yielding while idle) and runs built-ins: `ls`, `cd <dir>`, `cat <file>`,
-  `edit <file>`, `run <file>`, `touch <file>`, `mkdir <dir>`, `rm <file>`, `rmdir <dir>`,
-  `mv <old> <new>`, `help`, `exit`. Executable files use the `.fexe` extension; `run`
-  verifies the `FEXE` magic before launching.
-- `edit.hll` -- a small full-screen file editor launched by the shell's `edit` built-in;
-  loads a file from the filesystem, accepts edits over the UART, and writes it back.
-- `fbdemo.hll` -- maps the framebuffer via `map_fb` and renders a Mandelbrot set (its hot
-  loop is hand-written fixed-point assembly), then exits. Installed at `/bin/fbdemo.fexe`;
-  `run /bin/fbdemo` paints the FB tab, filling in progressively as it renders.
+  `edit <file>`, `as <src> <out>`, `run <file>`, `touch <file>`, `mkdir <dir>`,
+  `rm <file>`, `rmdir <dir>`, `mv <old> <new>`, `help`, `exit`. A foreground child runs
+  via `exec` + `wait`: the shell reaps it, prints `[exit N]`, and returns to the prompt;
+  Ctrl-C tears the child down. Executable files use the `.fexe` extension; `run` verifies
+  the `FEXE` magic before launching.
+- `edit.hll` -- an `ed`-style line editor launched by the shell's `edit` built-in. It loads
+  a file into a line array and accepts line commands over the UART (`p` print, `N` goto,
+  `a`/`i` append/insert, `d` delete, `c` clear, `r` replace, `s/old/new/` substitute,
+  `w`/`q`). Line-oriented because the GUI terminal renders no ANSI or cursor codes.
+- `as.hll` -- a userspace assembler installed at `/bin/as.fexe`, launched by the shell's
+  `as` built-in. It reads a `.s` file, two-pass assembles a small RV64I subset, and writes
+  a runnable FEXE -- closing the self-hosting loop entirely inside the VM. See the OS
+  specification (9.2.2) for the supported instructions.
+- `cube.hll` -- maps the framebuffer via `map_fb` and animates a spinning wireframe cube in
+  native `f64`, double-buffered so it never flickers. Installed at `/bin/cube.fexe`; reads
+  WASD key events through `poll_key` to steer the rotation.
+- `fbdemo.hll` -- maps the framebuffer and renders a Mandelbrot set in native `f64`, then
+  exits. Installed at `/bin/fbdemo.fexe`; `run /bin/fbdemo` paints the FB tab, filling in
+  progressively as it renders.
 
 ## Image injection
 

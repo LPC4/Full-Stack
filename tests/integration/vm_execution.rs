@@ -1883,4 +1883,51 @@ main: () -> i32 {
     assert!(matches!(outcome, StepOutcome::Halted(1)), "expected Halted(1), got {outcome:?}");
 }
 
+#[test]
+fn float_f64_arguments_passed_in_fp_registers() {
+    // f64 call arguments must arrive in the float register file (fa0/fa1), not the
+    // integer one. Regression for the Mandelbrot demo rendering all black because
+    // mandel_pixel's f64 args came through as garbage.
+    let (_, outcome, _) = run_hll(r#"
+sum3: (a: f64, b: f64, c: f64) -> f64 {
+    return a + b + c
+}
+main: () -> i32 {
+    x: f64 = 2.5
+    y: f64 = -1.5
+    z: f64 = 4.0
+    r: f64 = sum3(x, y, z)
+    five: f64 = 5.0
+    if r == five {
+        return 1
+    }
+    return 0
+}
+"#);
+    assert!(matches!(outcome, StepOutcome::Halted(1)), "expected Halted(1), got {outcome:?}");
+}
+
+#[test]
+fn float_mixed_int_and_f64_arguments() {
+    // Interleaved integer and float parameters must each land in the right file.
+    let (_, outcome, _) = run_hll(r#"
+mix: (n: i64, a: f64, m: i64, b: f64) -> f64 {
+    s: f64 = a + b
+    nf: f64 = (n + m) as f64
+    return s + nf
+}
+main: () -> i32 {
+    a: f64 = 1.5
+    b: f64 = 2.5
+    r: f64 = mix(3, a, 4, b)
+    eleven: f64 = 11.0
+    if r == eleven {
+        return 1
+    }
+    return 0
+}
+"#);
+    assert!(matches!(outcome, StepOutcome::Halted(1)), "expected Halted(1), got {outcome:?}");
+}
+
 

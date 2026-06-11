@@ -688,6 +688,18 @@ main: () -> i32 {
         return 1
     }
 
+    ; Append NOP padding (addi x0, x0, 0). A program whose last instruction is
+    ; `ecall` has nothing valid after it; the pipeline speculatively fetches the
+    ; following word, and a zero word decodes as an illegal instruction that traps
+    ; to M-mode (not delegated), bypassing the kernel's S-mode exit path and
+    ; halting the VM. NOPs keep the speculative fetch valid so the exit ecall traps
+    ; cleanly and the kernel can reap the process.
+    pad: u64 = 0
+    while pad < 8 {
+        emit_word(0x13 as u32)
+        pad = pad + 1
+    }
+
     ; Build the FEXE image: magic "FEXE", entry offset 0, then the payload.
     @out[0] = 70 as u8
     @out[1] = 69 as u8

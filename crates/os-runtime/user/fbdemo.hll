@@ -1,5 +1,5 @@
 ; Framebuffer demo: maps the framebuffer (map_fb, syscall 107) and renders the
-; Mandelbrot set, then exits. All math is fixed-point Q16.16 (1.0 == 65536).
+; Mandelbrot set, then exits.
 ;
 ; The complex-plane window is chosen so one pixel is square: the x and y steps
 ; are equal (dx == dy), which keeps the set from looking stretched.
@@ -11,36 +11,33 @@ external sc_map_fb: () -> u64
 ; Framebuffer base virtual address (filled in by sc_map_fb).
 _fb_base: u64 = 0
 
-; Q16.16 scale: 1.0 == 65536.
-const ONE = 65536
 ; Framebuffer dimensions.
 const W = 320
 const H = 240
-; Complex-plane window, Q16.16. x in [-2.5, 1.0], y in [-1.3125, 1.3125].
+; Complex-plane window, f64. x in [-2.5, 1.0], y in [-1.3125, 1.3125].
 ; The y range is the x range scaled by H/W so pixels stay square.
-const XMIN = -163840
-const YMIN = -86016
+XMIN: f64 = -2.5
+YMIN: f64 = -1.3125
 ; Per-pixel step: 3.5 / 320 == 2.625 / 240, so dx == dy.
-const STEP = 717
+STEP: f64 = 0.0109375
 ; Escape radius squared (4.0) and iteration cap.
-const FOUR = 262144
+FOUR: f64 = 4.0
+TWO: f64 = 2.0
 const MAXIT = 64
 
-; Escape-time colour for one point c (Q16.16). Returns an opaque RGBA pixel.
+; Escape-time colour for one point c (f64). Returns an opaque RGBA pixel.
 ; Iterates z = z^2 + c until |z|^2 >= 4 or the cap is hit.
-mandel_pixel: (cx: i64, cy: i64) -> u32 {
-    zx: i64 = 0
-    zy: i64 = 0
+mandel_pixel: (cx: f64, cy: f64) -> u32 {
+    zx: f64 = 0.0
+    zy: f64 = 0.0
     it: i64 = 0
     while it < MAXIT {
-        ; Squares are non-negative, so a logical >> 16 rescales them to Q16.16.
-        zx2: i64 = (zx * zx) >> 16
-        zy2: i64 = (zy * zy) >> 16
+        zx2: f64 = zx * zx
+        zy2: f64 = zy * zy
         if (zx2 + zy2) >= FOUR {
             break
         }
-        ; Cross term 2*zx*zy in Q16.16: divide by ONE (signed) to keep the sign.
-        nzy: i64 = (2 * zx * zy) / ONE + cy
+        nzy: f64 = TWO * zx * zy + cy
         zx = zx2 - zy2 + cx
         zy = nzy
         it = it + 1
@@ -68,10 +65,10 @@ main: () -> i32 {
     _fb_base = base
 
     p: u32* = base as u32*
-    cy: i64 = YMIN as i64
+    cy: f64 = YMIN
     py: i64 = 0
     while py < H {
-        cx: i64 = XMIN as i64
+        cx: f64 = XMIN
         px: i64 = 0
         while px < W {
             @p = mandel_pixel(cx, cy)

@@ -27,6 +27,12 @@ const SYSACT_CONTINUE      = 0
 const SYSACT_SCHEDULE      = 1
 const SYSACT_EXIT_SCHEDULE = 2
 
+; UART byte the foreground Ctrl-C check looks for, and the sentinel wait returns
+; to the parent when it tears a child down (distinct from a real exit code and
+; from -1 = "no children").
+const INPUT_INTR_CHAR = 3
+const WAIT_INTERRUPTED = 0xFFFFFFFFFFFFFFFE  ; -2 as u64
+
 ; Executable file format written by the host injector and loaded by sys_exec.
 ; The first 4 KiB is a header block; the payload (a position-independent flat
 ; binary) starts at file offset EXEC_HEADER_SIZE.
@@ -85,6 +91,7 @@ external scheduler_make_zombie: (pcb: u64*)
 external scheduler_find_zombie_child: (parent_pid: u64) -> u64*
 external scheduler_remove_zombie: (pcb: u64*)
 external scheduler_has_children: (parent_pid: u64) -> u64
+external scheduler_kill_child:  (parent_pid: u64) -> u64
 external fs_open:              (path: u8*, flags: u64) -> i64
 external fs_close:             (fd: i64)
 external fs_read:              (fd: i64, buf: u8*, offset: u64, len: u64) -> i64
@@ -100,9 +107,17 @@ external fs_set_pos:           (fd: i64, pos: u64)
 external fs_truncate:          (fd: i64, len: u64) -> i64
 
 
-; Read one byte from the NS16550A UART receive buffer (0x10000000).
-; Returns the byte (0-255), or -1 when no input is pending.
-sys_readchar_impl: () -> i64 {
+; One-byte input pushback. The foreground Ctrl-C check (sys_wait_impl) must pop a
+; UART byte to inspect it; a non-Ctrl-C byte is stashed here so the running child
+; (or the shell afterwards) still receives it. valid=0 means empty; a stored byte
+; is delivered ahead of the UART on the next readchar.
+input_pushback_valid: u64 = 0
+input_pushback_byte:  u64 = 0
+
+; Pop the next pending UART byte (0-255) from the receive buffer, consuming it, or
+; -1 when none is pending. Does not consult the pushback (the Ctrl-C check wants
+; the raw device byte).
+kuart_take: () -> i64 {
     lsr_p: u8* = 0x10000005 as u8*
     if ((@lsr_p) as u64 & 1) == 0 {
         return -1 as i64
@@ -110,6 +125,16 @@ sys_readchar_impl: () -> i64 {
     rbr_p: u8* = 0x10000000 as u8*
     c: u8 = @rbr_p
     return c as i64
+}
+
+; Read one byte from the UART (0x10000000), delivering a stashed pushback byte
+; first. Returns the byte (0-255), or -1 when no input is pending.
+sys_readchar_impl: () -> i64 {
+    if input_pushback_valid != 0 {
+        input_pushback_valid = 0
+        return input_pushback_byte as i64
+    }
+    return kuart_take()
 }
 
 ; Pop the next key event from the keyboard MMIO device (0x10070000). The STATUS
@@ -168,10 +193,20 @@ sys_exec_impl: (path: u8*, arg: u8*) -> i64 {
         return -1 as i64
     }
 
+    ; Record the launching process so the child is parented to it; wait/Ctrl-C
+    ; both find a foreground child through this link. Captured before
+    ; process_create switches the active root.
+    parent_pcb: u64* = scheduler_current()
+    parent_pid_v: u64 = 0
+    if parent_pcb != null {
+        parent_pid_v = process_pid(parent_pcb)
+    }
+
     ; Create the process first so the child's page-table root is active; the
     ; payload pages below then map into the child's address space.
     entry: u64 = USER_CODE_BASE + entry_off
     pcb: u64* = process_create(entry)
+    process_set_parent(pcb, parent_pid_v)
 
     ; Map the argument page into the child and copy the staged string in. Always
     ; mapped, so a program can read USER_ARG_BASE even when it has no argument.
@@ -277,6 +312,22 @@ sys_wait_impl: (frame: u64*) -> u64 {
     }
 
     if scheduler_has_children(ppid) == 1 {
+        ; Foreground Ctrl-C: while the parent polls wait, peek one UART byte. A
+        ; 0x03 tears the child down and returns the interrupted sentinel; any other
+        ; byte is stashed so the running child (or the shell) still receives it.
+        ; Skip while the pushback is occupied to preserve input ordering.
+        if input_pushback_valid == 0 {
+            c: i64 = kuart_take()
+            if c == INPUT_INTR_CHAR {
+                scheduler_kill_child(ppid)
+                @frame[10] = WAIT_INTERRUPTED
+                return SYSACT_CONTINUE
+            }
+            if c >= 0 {
+                input_pushback_byte = c as u64
+                input_pushback_valid = 1
+            }
+        }
         ; A child is still running: re-run this ecall after a reschedule. The trap
         ; epilogue adds 4 to sepc, so subtract 4 first to land back on the ecall.
         @frame[32] = @frame[32] - 4
@@ -291,7 +342,6 @@ sys_wait_impl: (frame: u64*) -> u64 {
 ; process becomes a zombie holding its exit code until its parent waits.
 sys_exit_impl: (frame: u64*) -> u64 {
     code: u64 = @frame[10]
-    klog_int("sys_exit code".data, code as i64)
     current: u64* = scheduler_current()
     if current == null {
         ; No process context: nothing to reap, just halt.

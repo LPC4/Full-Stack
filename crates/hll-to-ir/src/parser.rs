@@ -1754,8 +1754,10 @@ mod tests {
                         assert!(matches!(op, BinaryOp::Add));
                         assert!(matches!(left.as_ref(),
                             Expression::Primary(PrimaryExpr::Identifier(n)) if n == "x"));
-                        assert!(matches!(right.as_ref(),
-                            Expression::Primary(PrimaryExpr::Literal(Literal::Integer(_)))));
+                        assert!(matches!(
+                            right.as_ref(),
+                            Expression::Primary(PrimaryExpr::Literal(Literal::Integer(_)))
+                        ));
                     }
                     other => panic!("expected Binary rvalue, got: {other:?}"),
                 }

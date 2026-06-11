@@ -611,10 +611,17 @@ impl MachineWindow {
         sync_keyboard_focus(ui, id, self.fb_focused && is_running);
         if self.fb_focused && is_running {
             let events = collect_key_events(ui);
-            if !events.is_empty() {
+            // Also mirror Ctrl+letter to the UART so Ctrl-C interrupts a graphical
+            // foreground program (the shell's wait poll reads the UART), while the
+            // raw key events still reach the program via the keyboard device.
+            let ctrl_bytes = collect_ctrl_bytes(ui);
+            if !events.is_empty() || !ctrl_bytes.is_empty() {
                 if let BootPhase::Running { vm, .. } = &mut self.phase {
                     for (scancode, pressed) in events {
                         vm.keyboard_push(scancode, pressed);
+                    }
+                    for b in ctrl_bytes {
+                        vm.push_uart_rx(b);
                     }
                 }
             }
@@ -954,14 +961,57 @@ fn collect_console_input(ui: &egui::Ui) -> Vec<u8> {
                         }
                     }
                 }
+                // egui-winit turns Ctrl+C (Cmd+C) into Event::Copy and suppresses the
+                // Key event, so this is the only way to receive Ctrl+C. The shell's
+                // wait poll (kuart_take) treats 0x03 as the interrupt sentinel.
+                egui::Event::Copy => out.push(0x03),
                 egui::Event::Key {
-                    key, pressed: true, ..
-                } => match key {
-                    egui::Key::Enter => out.push(b'\r'),
-                    egui::Key::Backspace => out.push(0x08),
-                    egui::Key::Tab => out.push(b'\t'),
-                    _ => {}
-                },
+                    key,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } => {
+                    // Remaining Ctrl+letters arrive as Key events -> control char.
+                    if modifiers.ctrl && (egui::Key::A..=egui::Key::Z).contains(key) {
+                        out.push(1 + (*key as u8 - egui::Key::A as u8));
+                    } else {
+                        match key {
+                            egui::Key::Enter => out.push(b'\r'),
+                            egui::Key::Backspace => out.push(0x08),
+                            egui::Key::Tab => out.push(b'\t'),
+                            _ => {}
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    });
+    out
+}
+
+/// Collect this frame's Ctrl+letter presses as control-character bytes
+/// (`0x01`-`0x1A`). Used by the framebuffer view to forward Ctrl-C to the UART
+/// (where the shell's wait poll sees it) without dumping ordinary keystrokes
+/// there -- those go to the keyboard device for the running program to read.
+fn collect_ctrl_bytes(ui: &egui::Ui) -> Vec<u8> {
+    let mut out = Vec::new();
+    ui.input(|i| {
+        for ev in &i.events {
+            match ev {
+                // egui-winit turns Ctrl+C (Cmd+C) into Event::Copy and returns
+                // early, never emitting the Key event -- so this is the only way to
+                // see Ctrl+C. Map it to the interrupt byte 0x03.
+                egui::Event::Copy => out.push(0x03),
+                // Other Ctrl+letters still arrive as Key events.
+                egui::Event::Key {
+                    key,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } if modifiers.ctrl && (egui::Key::A..=egui::Key::Z).contains(key) => {
+                    out.push(1 + (*key as u8 - egui::Key::A as u8));
+                }
                 _ => {}
             }
         }

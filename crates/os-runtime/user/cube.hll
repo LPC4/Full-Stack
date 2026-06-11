@@ -10,24 +10,37 @@
 external console_writeln: (str: u8*)
 ; Map the framebuffer (syscall 107); returns its base VA (0 on failure).
 external sc_map_fb: () -> u64
+; Pop the next keyboard event (syscall 108); packed event or -1 when none.
+external sc_poll_key: () -> i64
 
-; Q16.16 scale: 1.0 == 65536.
-const ONE = 65536
 ; Camera distance pushed onto z so the projected z stays positive.
-const DIST = 262144
+DIST: f64 = 4.0
 ; Screen-space scale factor for the perspective divide.
-const SCALE = 150
-; Screen centre.
-const CX = 160
-const CY = 120
+SCALE: f64 = 150.0
+; Screen centre, as f64 for the projection expression.
+CX: f64 = 160.0
+CY: f64 = 120.0
+
+; Minsky rotation step per frame for each axis (small-angle approximation).
+STEP_Y: f64 = 0.03125
+STEP_X: f64 = 0.02083333333
+
+; Extra rotation applied per frame while a WASD key is held (player control).
+WASD_STEP: f64 = 0.05
+
+; Held state for the WASD keys (1 while down). A/D spin about Y, W/S tilt about X.
+hold_w: i64 = 0
+hold_a: i64 = 0
+hold_s: i64 = 0
+hold_d: i64 = 0
 
 ; Framebuffer base virtual address (filled in by sc_map_fb).
 _fb_base: u64 = 0
 
-; Cube model-space vertex coordinates (Q16.16), one entry per corner.
-vx: i64[8]
-vy: i64[8]
-vz: i64[8]
+; Cube model-space vertex coordinates (f64), one entry per corner.
+vx: f64[8]
+vy: f64[8]
+vz: f64[8]
 
 ; Projected screen coordinates (integer pixels) for each vertex.
 sxv: i64[8]
@@ -37,18 +50,12 @@ syv: i64[8]
 ea: i64[12]
 eb: i64[12]
 
-; Minsky-circle rotation state for two axes. Stable integer (cos, sin) pairs that
-; advance by a fixed small angle each frame; different divisors tumble the cube.
-; The cosines start at ONE (1.0); the sines start at zero.
-cay: i64 = ONE
-say: i64 = 0
-cax: i64 = ONE
-sax: i64 = 0
-
-; Q16.16 multiply.
-fmul: (a: i64, b: i64) -> i64 {
-    return (a * b) / ONE
-}
+; Minsky-circle rotation state for two axes. (cos, sin) pairs that
+; advance by a fixed small angle each frame; different steps tumble the cube.
+cay: f64 = 1.0
+say: f64 = 0.0
+cax: f64 = 1.0
+sax: f64 = 0.0
 
 ; Plot one pixel if it lies inside the 320x240 frame.
 plot: (x: i64, y: i64, color: u32) {
@@ -107,24 +114,24 @@ draw_line: (x0: i64, y0: i64, x1: i64, y1: i64, color: u32) {
     }
 }
 
-; Place the 8 cube corners at (+/-1, +/-1, +/-1) in Q16.16, signs from index bits.
+; Place the 8 cube corners at (+/-1, +/-1, +/-1), signs from index bits.
 init_cube: () {
     i: i64 = 0
     while i < 8 {
         if (i & 1) == 0 {
-            @vx[i] = 0 - ONE
+            @vx[i] = -1.0
         } else {
-            @vx[i] = ONE
+            @vx[i] = 1.0
         }
         if (i & 2) == 0 {
-            @vy[i] = 0 - ONE
+            @vy[i] = -1.0
         } else {
-            @vy[i] = ONE
+            @vy[i] = 1.0
         }
         if (i & 4) == 0 {
-            @vz[i] = 0 - ONE
+            @vz[i] = -1.0
         } else {
-            @vz[i] = ONE
+            @vz[i] = 1.0
         }
         i = i + 1
     }
@@ -160,34 +167,82 @@ init_edges: () {
 
 ; Advance both rotation angles one step (Minsky recurrence, drift-stable).
 advance_angles: () {
-    say = say + cay / 32
-    cay = cay - say / 32
-    sax = sax + cax / 48
-    cax = cax - sax / 48
+    say = say + cay * STEP_Y
+    cay = cay - say * STEP_Y
+    sax = sax + cax * STEP_X
+    cax = cax - sax * STEP_X
+}
+
+; Drain all pending keyboard events and update the WASD held state. The GUI sends
+; letters as their uppercase ASCII scancode with bit 16 set on a press.
+poll_input: () {
+    while 1 == 1 {
+        ev: i64 = sc_poll_key()
+        if ev < 0 {
+            return
+        }
+        sc: u64 = (ev as u64) & 0xFFFF
+        down: i64 = 0
+        if ((ev as u64) & 0x10000) != 0 {
+            down = 1
+        }
+        if sc == 87 {
+            hold_w = down
+        }
+        if sc == 65 {
+            hold_a = down
+        }
+        if sc == 83 {
+            hold_s = down
+        }
+        if sc == 68 {
+            hold_d = down
+        }
+    }
+}
+
+; Apply one WASD rotation step per held key (Minsky recurrence, both directions).
+apply_wasd: () {
+    if hold_d != 0 {
+        say = say + cay * WASD_STEP
+        cay = cay - say * WASD_STEP
+    }
+    if hold_a != 0 {
+        say = say - cay * WASD_STEP
+        cay = cay + say * WASD_STEP
+    }
+    if hold_s != 0 {
+        sax = sax + cax * WASD_STEP
+        cax = cax - sax * WASD_STEP
+    }
+    if hold_w != 0 {
+        sax = sax - cax * WASD_STEP
+        cax = cax + sax * WASD_STEP
+    }
 }
 
 ; Rotate every vertex (Y then X), perspective-project, and store screen coords.
 project_all: () {
     i: i64 = 0
     while i < 8 {
-        x: i64 = @vx[i]
-        y: i64 = @vy[i]
-        z: i64 = @vz[i]
+        x: f64 = @vx[i]
+        y: f64 = @vy[i]
+        z: f64 = @vz[i]
 
         ; Rotate about Y.
-        x1: i64 = fmul(x, cay) + fmul(z, say)
-        z1: i64 = fmul(z, cay) - fmul(x, say)
-        y1: i64 = y
+        x1: f64 = x * cay + z * say
+        z1: f64 = z * cay - x * say
+        y1: f64 = y
 
         ; Rotate about X.
-        y2: i64 = fmul(y1, cax) - fmul(z1, sax)
-        z2: i64 = fmul(z1, cax) + fmul(y1, sax)
-        x2: i64 = x1
+        y2: f64 = y1 * cax - z1 * sax
+        z2: f64 = z1 * cax + y1 * sax
+        x2: f64 = x1
 
         ; Perspective divide. zc stays positive because DIST > max |z2|.
-        zc: i64 = z2 + DIST
-        @sxv[i] = CX + (x2 * SCALE) / zc
-        @syv[i] = CY - (y2 * SCALE) / zc
+        zc: f64 = z2 + DIST
+        @sxv[i] = (CX + (x2 * SCALE) / zc) as i64
+        @syv[i] = (CY - (y2 * SCALE) / zc) as i64
 
         i = i + 1
     }
@@ -241,10 +296,12 @@ main: () -> i32 {
     init_cube()
     init_edges()
     enable_double_buffer()
-    console_writeln("cube: rendering".data)
+    console_writeln("cube: rendering (WASD to rotate)".data)
 
     while 1 == 1 {
+        poll_input()
         advance_angles()
+        apply_wasd()
         project_all()
         fb_clear()
         draw_cube()

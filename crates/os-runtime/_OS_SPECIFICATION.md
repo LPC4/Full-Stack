@@ -708,18 +708,33 @@ project-specific extensions added to support the interactive shell.
 | `101` | `readdir` | `a0=path*`, `a1=index`, `a2=name_buf*` | entry type or -1 | Look up the index-th directory entry; writes its name |
 | `102` | `stat` | `a0=path*` | inode type or -1 | Inode type at a path (1=file, 2=dir) |
 | `103` | `exec` | `a0=path*` | new pid or -1 | Load an `FEXE` executable from the filesystem and enqueue it |
-| `104` | `pidalive` | `a0=pid` | 1 or 0 | 1 while a launched pid is still in the ready queue |
+| `104` | `pidalive` | `a0=pid` | 1 or 0 | 1 while a launched pid is still in the ready queue (legacy; the shell now uses `wait`) |
 | `105` | `unlink` | `a0=path*` | 0 or -1 | Remove a regular file (frees its dirent, data blocks, and inode); refuses directories |
 | `106` | `rmdir` | `a0=path*` | 0 or -1 | Remove an empty directory; refuses the root and non-empty directories |
 | `107` | `map_fb` | -- | base VA | Map the linear framebuffer device into the caller and return its base virtual address |
 | `108` | `poll_key` | -- | packed event or -1 | Pop the next key event from the keyboard device; -1 when none pending |
 | `220` | `fork` | -- | child pid (parent) / 0 (child) / -1 | Clone the caller: copy its address space and trap frame into a new child process |
-| `260` | `wait` | -- | exit code or -1 | Reap an exited child and return its exit code; -1 if there is no child to reap |
+| `260` | `wait` | -- | exit code, -1 (no child), or -2 (Ctrl-C) | Reap an exited child and return its exit code; -1 if there is no child to reap; -2 if the foreground child was torn down by Ctrl-C |
 
 `exec` reads a position-independent flat binary (4 KiB header + payload) from the filesystem and
-maps it at a per-pid 16 MiB code slot starting at `0x4000_0000` (pid 1 at the base), then calls
-`process_create` and `scheduler_add`. The shell pairs `exec` with `pidalive` to run a child and
-wait for it cooperatively.
+maps it at `0x4000_0000` in the child's private page-table root, then calls `process_create` and
+`scheduler_add`. `exec` parents the new process to its launcher (the pid from `scheduler_current()`,
+captured before `process_create` switches the active root) so the launcher's `wait` can find it.
+
+The shell runs a foreground child by pairing `exec` with `wait` (`sh_wait_foreground`): it blocks in
+`wait`, which reschedules to the child until the child exits and becomes a zombie, then reaps the
+zombie and returns its exit code. The shell prints `[exit N]` and resumes at the prompt rather than
+halting the VM. (The older `exec`+`pidalive`+`yield` poll loop is retained only in standalone test
+programs.)
+
+**Ctrl-C.** While the shell blocks in `wait`, the "child still running" branch of `sys_wait_impl`
+peeks one UART byte. A `0x03` (Ctrl-C) calls `scheduler_kill_child(ppid)` -- which unlinks the first
+READY child of the parent and marks it EXITED (leaked, not reaped) -- and returns the `-2` sentinel,
+on which the shell prints `^C`. A non-`0x03` byte is stashed in a one-deep kernel pushback
+(`input_pushback_*`, delivered ahead of the device by `sys_readchar_impl`) so an interactive child
+(the editor) still receives its input in order; the peek is skipped while the pushback is occupied.
+Ctrl-C is reliable for compute-bound children and best-effort for ones that read input (the child's
+own `readchar` races the wait poll).
 
 `map_fb` maps the framebuffer device's physical pages (`0x1002_0000`, 76 pages: 75 for the
 320 x 240 RGBA8888 pixel buffer plus one control page holding the `FILL` register) into the calling
@@ -733,10 +748,18 @@ animates a spinning wireframe cube, enabling double buffering and `FILL`-clearin
 each frame so it never flickers. `run /bin/fbdemo` or `run /bin/cube` from the shell paints them,
 viewable in the Machine window's FB tab.
 
-`poll_key` reads the keyboard device (`0x1007_0000`): it checks the STATUS register and, if an event
-is queued, pops the DATA register and returns the packed event (bit 16 = pressed, bits 15..0 =
-scancode); it returns -1 when the queue is empty. The host GUI forwards key presses while the FB tab
-is focused. A program can drain it in a loop to react to input without blocking.
+The runtime has two input devices for two kinds of program. **Text input** (the shell, the editor)
+arrives over the UART (`0x1000_0000`): the host GUI forwards keystrokes from both the terminal view
+and the FB tab into the UART receive buffer (printable text plus the control codes for
+Enter/Backspace/Tab and Ctrl+letter, e.g. Ctrl+C -> `0x03`); programs read it with `readchar`, and
+`sys_wait_impl` watches it for the `0x03` foreground-interrupt. **Event input** (interactive
+graphical programs such as the cube) uses `poll_key`, which reads the keyboard device
+(`0x1007_0000`): it checks the STATUS register and, if an event is queued, pops the DATA register and
+returns the packed event (bit 16 = pressed, bits 15..0 = scancode); it returns -1 when the queue is
+empty. The host GUI pushes raw key press/release events there while the FB tab is focused (letters as
+their uppercase ASCII, arrows in the private range `0x80`-`0x83`). A program drains it in a loop to
+react to input without blocking; the cube uses it for WASD rotation. (Ctrl+letter is mirrored to the
+UART as well so Ctrl-C can still interrupt a graphical foreground program.)
 
 #### 9.2.1 Executable file format (FEXE)
 
@@ -779,6 +802,16 @@ with `;` or `#`; immediates may be decimal, `0x` hex, or negative. The subset is
 intentionally minimal -- there is no data section, relocation, or pseudo-op
 expansion beyond `li`/`mv`/`ret`. Instruction encodings match the host
 `asm-to-binary` backend.
+
+The assembler appends 8 trailing NOPs (`addi x0, x0, 0`) after the program. A flat
+program whose last instruction is `ecall` (the exit) has no valid instruction
+after it; the 5-stage pipeline speculatively fetches the following word, and a
+zero word (`0x0000_0000`, the page fill) decodes as an illegal instruction. Illegal
+instructions are **not** delegated by `medeleg`, so the trap is taken to M-mode
+(`_m_trap`), which services it as a `sys_exit` straight to SYSCON and halts the VM
+-- bypassing the kernel's S-mode exit path and the parent's `wait`. The NOP padding
+keeps the speculative fetch valid so the exit `ecall` traps cleanly to S-mode and
+the kernel reaps the process normally.
 
 ### 9.3 Scheduler Actions
 

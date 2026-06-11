@@ -315,8 +315,39 @@ const REG_NAMES: [&str; 32] = [
     "t5", "t6",
 ];
 
+const FREG_NAMES: [&str; 32] = [
+    "ft0", "ft1", "ft2", "ft3", "ft4", "ft5", "ft6", "ft7",
+    "fs0", "fs1", "fa0", "fa1", "fa2", "fa3", "fa4", "fa5",
+    "fa6", "fa7", "fs2", "fs3", "fs4", "fs5", "fs6", "fs7",
+    "fs8", "fs9", "fs10", "fs11", "ft8", "ft9", "ft10", "ft11",
+];
+
 fn reg_name(r: usize) -> &'static str {
     REG_NAMES.get(r).copied().unwrap_or("??")
+}
+
+fn freg_name(r: usize) -> &'static str {
+    FREG_NAMES.get(r).copied().unwrap_or("f??")
+}
+
+// Decode the FOp mnemonic with format suffix (.s/.d).
+fn fop_mnemonic(funct5: u8, fmt: u8) -> &'static str {
+    match funct5 {
+        0b00000 => if fmt == 1 { "fadd.d" } else { "fadd.s" },
+        0b00001 => if fmt == 1 { "fsub.d" } else { "fsub.s" },
+        0b00010 => if fmt == 1 { "fmul.d" } else { "fmul.s" },
+        0b00011 => if fmt == 1 { "fdiv.d" } else { "fdiv.s" },
+        0b01011 => if fmt == 1 { "fsqrt.d" } else { "fsqrt.s" },
+        0b00100 => if fmt == 1 { "fsgnj.d" } else { "fsgnj.s" },
+        0b00101 => if fmt == 1 { "fsgnjn.d" } else { "fsgnjn.s" },
+        0b00110 => if fmt == 1 { "fsgnjx.d" } else { "fsgnjx.s" },
+        0b10100 => if fmt == 1 { "feq.d" } else { "feq.s" },
+        0b10101 => if fmt == 1 { "flt.d" } else { "flt.s" },
+        0b10110 => if fmt == 1 { "fle.d" } else { "fle.s" },
+        0b11000 => if fmt == 1 { "fcvt.w.d" } else { "fcvt.w.s" },
+        0b11100 => if fmt == 1 { "fcvt.d.w" } else { "fcvt.s.w" },
+        _ => if fmt == 1 { "fop.d" } else { "fop.s" },
+    }
 }
 
 impl std::fmt::Display for DecodedInsn {
@@ -484,7 +515,7 @@ impl std::fmt::Display for DecodedInsn {
                     f,
                     "{:<10} {}, {}({})",
                     self.mnemonic(),
-                    reg_name(*rd),
+                    freg_name(*rd),
                     imm,
                     reg_name(*rs1)
                 )
@@ -494,33 +525,39 @@ impl std::fmt::Display for DecodedInsn {
                     f,
                     "{:<10} {}, {}({})",
                     self.mnemonic(),
-                    reg_name(*rs2),
+                    freg_name(*rs2),
                     imm,
                     reg_name(*rs1)
                 )
             }
-            Self::FOp { rd, rs1, rs2, .. } => {
-                let mnem = format!("f.{}", self.mnemonic());
+            Self::FOp { funct5, fmt, rd, rs1, rs2, .. } => {
                 write!(
                     f,
                     "{:<10} {}, {}, {}",
-                    mnem,
-                    reg_name(*rd),
-                    reg_name(*rs1),
-                    reg_name(*rs2)
+                    fop_mnemonic(*funct5, *fmt),
+                    freg_name(*rd),
+                    freg_name(*rs1),
+                    freg_name(*rs2)
                 )
             }
             Self::FMac {
-                rd, rs1, rs2, rs3, ..
+                fmt, rd, rs1, rs2, rs3, ..
             } => {
+                let mnem = match self.mnemonic() {
+                    "fmadd" => if *fmt == 1 { "fmadd.d" } else { "fmadd.s" },
+                    "fmsub" => if *fmt == 1 { "fmsub.d" } else { "fmsub.s" },
+                    "fnmsub" => if *fmt == 1 { "fnmsub.d" } else { "fnmsub.s" },
+                    "fnmadd" => if *fmt == 1 { "fnmadd.d" } else { "fnmadd.s" },
+                    _ => "fmac??",
+                };
                 write!(
                     f,
                     "{:<10} {}, {}, {}, {}",
-                    self.mnemonic(),
-                    reg_name(*rd),
-                    reg_name(*rs1),
-                    reg_name(*rs2),
-                    reg_name(*rs3)
+                    mnem,
+                    freg_name(*rd),
+                    freg_name(*rs1),
+                    freg_name(*rs2),
+                    freg_name(*rs3)
                 )
             }
             Self::Atomic { rd, rs1, rs2, .. } => {
