@@ -804,7 +804,7 @@ impl FullStackApp {
         Err("no assembled binary produced".to_owned())
     }
 
-    /// Compile the default kernel (kernel stdlib + my_kernel) into `kernel_binary`,
+    /// Compile the default kernel (kernel stdlib + `my_kernel`) into `kernel_binary`,
     /// caching it. Independent of the catalog selection and target mode, so a
     /// userspace program can boot the kernel without disturbing the editor state.
     fn ensure_kernel_binary(&mut self) -> Result<(), String> {
