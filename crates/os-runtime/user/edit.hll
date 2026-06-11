@@ -1,22 +1,5 @@
-; Line editor (ed-like) for the HLL kernel, modeled on the classic Unix `ed`.
-;
-; Launched by the shell's `edit <file>`; the kernel passes the absolute path in
-; the USER_ARG_BASE page (see sys_exec_impl). The file loads into a line buffer
-; that commands edit and write back. Line-based (not full-screen) because the GUI
-; terminal is a scrolling log with no cursor addressing or arrow keys.
-;
-; Commands (current line shown with a '>' marker by `p`):
-;   p            print the buffer with line numbers
-;   N            go to line N and print it
-;   a            append lines after the current line; end with "." on its own line
-;   i            insert lines before the current line; end with "."
-;   d [N]        delete the current line (or line N)
-;   c            clear the whole buffer
-;   r <text>     replace the current line with <text>
-;   s/old/new/   substitute the first "old" with "new" on the current line
-;   w            write the buffer back to the file
-;   q            quit
-;   h            help
+; ed-style line editor, launched by the shell's `edit <file>`.
+; Commands and rationale: OS spec ch.10.2 (type `h` for the in-editor help).
 
 
 external console_putchar:   (c: i32)

@@ -1,6 +1,5 @@
-; PMM: 4 KiB pages over a contiguous region of RAM above the kernel.
-; Freed pages store the next-ptr at byte 0 and PMM_FREE_MAGIC at byte 8.
-; Allocations verify the magic; corrupt (mismatched) pages are skipped (leaked).
+; Physical page allocator: bump range + magic-checked free list. See OS spec ch.4.1.
+; Freed pages store next-ptr at byte 0 and PMM_FREE_MAGIC at byte 8.
 
 const PMM_FREE_MAGIC = 0xCAFE
 
@@ -17,10 +16,8 @@ pmm_init: (start: u64, end: u64) {
     pmm_free_head = 0
 }
 
-; Allocate one 4 KiB page.  Returns null on OOM.
-; Checks the free list first; falls back to the bump range.
-; Return value is left in a0 by the asm block; no HLL return statement so
-; the implicit Return(None) epilogue preserves a0 unchanged.
+; Allocate one 4 KiB page (free list first, then bump); null on OOM.
+; Result is left in a0 by the asm; the implicit empty return preserves it.
 pmm_alloc: () -> u8* {
     asm {
         la   t0, pmm_free_head

@@ -1,921 +1,521 @@
-# RISC-V RV64 Bare-Metal Kernel Specification
+# RISC-V RV64 Bare-Metal Runtime Specification
 
-This document defines the contract between the HLL compiler and runtime and the bare-metal
-kernel code that runs on the VM. It covers the boot protocol, kernel image format, the ABI,
-the three runtime bundles (hosted, freestanding, kernel), the hardware abstraction layer,
-the syscall interface, and the process and filesystem model of the reference kernel.
+This document specifies the runtime that lives in `crates/os-runtime/`: the boot
+firmware (`boot/`), the reference kernel (`kernel/`), the three standard-library
+bundles (`stdlib/`), and the userspace programs (`user/`). It is the contract those
+components keep with each other and with the VM. The HLL language, IR, assembler,
+and the machine itself are specified elsewhere and are only referenced here:
+
+- HLL language: `crates/hll-to-ir/_LANG_SPECIFICATIONS.md`
+- IR: `crates/ir-to-asm/_IR_SPECIFICATIONS.md`
+- RISC-V backend and ABI: `crates/asm-to-binary/_RISCV_SPECIFICATIONS.md`
+- VM, CPU, and device behavior: `crates/virtual-machine/_VM_SPECIFICATION.md`
+
+## Contents
+
+1. Overview
+2. Boot firmware (`boot/`)
+3. Kernel initialization (`kernel/entry.hll`, `my_kernel.hll`)
+4. Memory management (`vmm.hll`, `pmm.hll`, allocator)
+5. Processes and scheduling (`process.hll`, `scheduler.hll`)
+6. Traps and interrupts (`trap_entry.hll`, `trap_handler.hll`)
+7. Syscall interface (`syscall.hll`, `stdlib/hosted/syscalls.hll`)
+8. Filesystem (`fs.hll`)
+9. Standard library (`stdlib/`)
+10. Userspace programs (`user/`)
+- Appendix A: Memory map quick reference
+- Appendix B: Syscall quick reference
+
 
 ## 1. Overview
 
-### 1.1 Design Goals
-This specification establishes a clean separation between **hosted application code** (user-space programs using Linux syscalls) and **freestanding kernel code** (bare-metal OS running directly on RISC-V hardware). The goal is to enable the same HLL compiler toolchain to produce both types of binaries without conflict.
+### 1.1 Source map
 
-**Key Principles:**
-- **No hidden dependencies:** Freestanding code must not implicitly rely on host OS services
-- **Explicit hardware access:** All I/O goes through defined platform primitives
-- **Predictable boot flow:** Kernel entry state is fully specified and reproducible
-- **Compiler-enforced safety:** Bare-metal mode rejects hosted-only constructs at compile time
+Every component in the folder is documented by exactly one chapter below. Code
+comments cite the chapter rather than repeating its content.
 
-### 1.2 Target Platforms
-- **Primary:** Project's built-in RV64IMAFD virtual machine (with MMU, CLINT, PLIC, UART)
-- **Secondary:** QEMU `virt` machine (RV64 system emulation)
-- **Future:** Real RISC-V hardware (SiFive HiFive, StarFive VisionFive, etc.)
-
-All platforms share the same memory map and device layout defined in Section 3.
+| Path | Component | Chapter |
+|------|-----------|---------|
+| `boot/startup.s`, `boot/trap.s` | M-mode ROM firmware and trap vectors | 2 |
+| `kernel/entry.hll`, `my_kernel.hll` | S-mode entry and `kmain` boot sequence | 3 |
+| `kernel/vmm.hll`, `pmm.hll` | Sv39 paging and physical page allocator | 4 |
+| `kernel/process.hll`, `scheduler.hll` | PCB, scheduler, fork/exec | 5 |
+| `kernel/trap_entry.hll`, `trap_handler.hll` | Trap entry and dispatch | 6 |
+| `kernel/syscall.hll`, `stdlib/hosted/syscalls.hll` | Syscall ABI, table, wrappers | 7 |
+| `kernel/fs.hll` | Inode filesystem | 8 |
+| `kernel/utilities.hll`, `checks.hll` | HAL primitives, boot diagnostics | 3, 9 |
+| `stdlib/common/`, `freestanding/`, `hosted/` | Standard-library bundles | 9 |
+| `user/shell.hll`, `edit.hll`, `as.hll`, `cube.hll`, `fbdemo.hll` | Userspace programs | 10 |
 
-### 1.3 Layered view: ROM, Kernel, and the eventual OS
-
-To make the relationship between firmware, kernel and the higher-level OS clearer we adopt a layered view:
+### 1.2 Layered model
 
-- ROM (boot firmware)
-  - Role: Minimal, immutable code executed at reset. Configures CPU state (PMP, exception/interrupt delegation), sets up the M-mode trap vector, and drops to Supervisor mode via `mret`. ROM runs in Machine mode and handles hosted `sys_write` and `sys_exit` ecalls for non-kernel programs.
-  - Where to find it in the repo: `crates/os-runtime/boot/startup.s` (M-mode entry, offset 0x000) and `boot/trap.s` (M-mode trap handler, offset 0x100). The VM assembles these into its ROM image at startup.
-  - What is implemented: full PMP grant, `medeleg`/`mideleg` delegation to S-mode, `mtvec` setup, `mepc` set to the kernel entry address, and `mret` into S-mode. `trap.s` handles `sys_write` (UART write loop) and `sys_exit` (SYSCON halt) for the hosted runtime.
-
-- Kernel (S-mode kernel code)
-  - Role: Initialize hardware (UART, CLINT, PLIC), set up the heap and PMM, configure and enable Sv39 paging, install the S-mode trap handler, spawn user processes, and enter the preemptive scheduler idle loop.
-  - Where to find it in the repo: `crates/os-runtime/kernel/` -- `entry.hll` (S-mode entry stub), `my_kernel.hll` (reference kernel / `kmain`), `trap_entry.hll` (stvec prologue/epilogue), `trap_handler.hll`, `utilities.hll` (kmalloc, timer, PLIC), `checks.hll` (boot diagnostics), `pmm.hll`, `vmm.hll`, `process.hll`, `syscall.hll`, `scheduler.hll`, `fs.hll` (filesystem). Shared stdlib lives under `crates/os-runtime/stdlib/`.
-  - What is implemented: full boot sequence including MMU enable (Sv39 canonical lower-half identity mapping), PCB-based process creation with per-pid VMM-mapped user stacks, round-robin preemptive scheduler driven by CLINT timer interrupts, an inode-based read-write filesystem mounted from an injected image, and syscall dispatch (process control, file I/O, directory listing, and program exec; see Section 9).
-
-- User processes and services
-  - Role: User-mode programs that run under kernel supervision with address-space isolation. Communicate with the kernel via ecall.
-  - Where to find it in the repo: `crates/os-runtime/user/` (example programs). The test harness injects user binaries by placing them at physical address 0x87F00000; the kernel reads metadata, copies pages, maps them, creates a PCB, and adds it to the scheduler.
-  - What is implemented: `user_hello.hll` (prints a greeting via `sys_write`, then yields in a loop) and `shell.hll`, an interactive shell that boots as pid 1 and runs built-in commands (`ls`, `cd`, `cat`, `edit`, `run`, `as`, `touch`, `mkdir`, `rm`, `rmdir`, `mv`, `help`, `exit`) against the filesystem. The injection mechanism and the full user-process lifecycle (create, run, exec a child, exit) work end-to-end in integration tests.
-  - Not yet implemented: block-device drivers (the filesystem lives in a RAM image), signals, and multi-hart support.
-
-The remainder of this specification documents the machine model, calling conventions and ABI that the kernel and eventual OS must follow.
-
-
-## 2. Compiler Target Modes
-
-The HLL compiler operates in three modes, selected via `TargetMode` in the API or `--mode` on the `fsc` CLI:
-
-### 2.1 Hosted Mode (Default)
-```bash
-fsc run program.hll --mode hosted
-```
-
-**Characteristics:**
-- Links against the hosted stdlib (`types`, `memory_allocator`, `string_utils`, `runtime`).
-- Uses Linux syscalls for I/O (`ecall` with `a7=64` for write, `a7=93` for exit).
-- Entry point: `_start` (from `stdlib/hosted/runtime.hll`) calls `main()`, then `exit(return_code)`.
-- Console output: `putchar`, `printf` use `sys_write(fd=1, ...)`.
-- Heap allocation via `malloc`/`free` provided by `memory_allocator.hll`.
-
-**Use Case:** User-space applications, algorithm tests, educational examples.
-
-### 2.2 Freestanding Mode
-```bash
-fsc run program.hll --mode freestanding
-```
-
-**Characteristics:**
-- Links against the freestanding stdlib (`types`, `memory_allocator`, `string_utils`, `runtime`, `console`, `entry`).
-- Entry point: `_start` (from `stdlib/freestanding/entry.hll`) calls `main()`, then halts via SYSCON.
-- Console I/O via direct NS16550A UART MMIO writes (no ecall).
-- Panic via `kpanic` (direct UART write + WFI loop).
-- No Linux syscalls; all I/O is explicit.
-
-**Use Case:** Bare-metal programs without a kernel, firmware utilities.
-
-### 2.3 Kernel Mode
-```bash
-fsc link src/*.hll --mode freestanding   # kernel images use Kernel internally
-```
-
-**Characteristics:**
-- Links against the full kernel stdlib bundle (`types`, `memory_allocator`, `string_utils`, `mem`,
-  `runtime`, `console`, `klog`, `trap_entry`, `utilities`, `checks`, `entry`, `trap_handler`,
-  `pmm`, `vmm`, `process`, `syscall`, `scheduler`, `fs`).
-- Entry point: `_kernel_start` (from `kernel/entry.hll`) calls `kmain()`.
-- No Linux syscalls; all I/O and hardware access is via MMIO or the provided HAL primitives.
-- Full kernel infrastructure provided: PMM, Sv39 VMM, trap handling, scheduler, syscall dispatch.
-
-**Use Case:** OS kernels, the reference `my_kernel.hll`, integration tests.
-
-
-## 3. Hardware Platform
-
-### 3.1 ISA and Extensions
-- **Base ISA:** RV64I (64-bit integer)
-- **Extensions:** M (multiply/divide), A (atomics), F (single-precision FP), D (double-precision FP)
-- **Privileged Extensions:** Zicsr (CSR access), Zifencei (instruction fence)
-- **Virtual Memory:** Sv39 (39-bit virtual addresses, 3-level page tables)
-- **Privilege Modes:** Machine (M), Supervisor (S), User (U) - kernel starts in M-mode
-
-### 3.2 Memory Map
-
-| Address Range | Device | Size | Description |
-|---------------|--------|------|-------------|
-| `0x0000_0000` - `0x0FFF_FFFF` | ROM | 256 MB | Boot ROM / firmware (read-only) |
-| `0x0200_0000` - `0x0200_FFFF` | CLINT | 64 KB | Core Local Interruptor (timer + IPI) |
-| `0x0C00_0000` - `0x0CFF_FFFF` | PLIC | 16 MB | Platform-Level Interrupt Controller |
-| `0x1000_0000` - `0x1000_0FFF` | UART | 4 KB | NS16550A serial console (8 registers at the low offsets) |
-| `0x1001_0000` - `0x1001_0FFF` | SYSCON | 4 KB | Halt/exit device (write an exit code to stop the VM) |
-| `0x8000_0000` - ... | RAM | 128 MB | Main memory (DRAM); the built-in VM provides 128 MB |
-
-**Notes:**
-- All addresses are **physical** until the kernel enables Sv39 paging
-- ROM contains minimal boot firmware (not part of the kernel)
-- UART, CLINT, PLIC are memory-mapped I/O (MMIO) devices
-- RAM is zero-initialized except where the kernel image is loaded
-
-### 3.3 UART (Serial Console)
-
-**Base Address:** `0x1000_0000`  
-**Model:** NS16550A subset (8 single-byte registers at offsets `0x00`-`0x07`)
-
-| Offset | Register | Access | Description |
-|--------|----------|--------|-------------|
-| `0x00` | THR/RBR | W/R | Transmitter Holding / Receiver Buffer |
-| `0x01` | IER | R/W | Interrupt Enable Register |
-| `0x02` | IIR/FCR | R/W | Interrupt Identification / FIFO Control |
-| `0x03` | LCR | R/W | Line Control Register |
-| `0x04` | MCR | R/W | Modem Control Register |
-| `0x05` | LSR | R | Line Status Register |
-| `0x06` | MSR | R | Modem Status Register |
-| `0x07` | SCR | R/W | Scratch Register |
-
-Kernel code reaches MMIO through `asm { }` blocks (a raw `li` of the device address
-followed by a load or store), because in S-mode `sp` may point at user virtual addresses
-and an `ecall` is not available. The single argument arrives in `a0`; a value is returned
-in `a0`.
-
-```hll
-; Write a byte to the UART transmit register (0x10000000).
-; The VM keeps LSR bit 5 (THR empty) set, so no busy-wait is needed.
-uart_putchar: (c: i32) {
-    asm {
-        li   t0, 0x10000000
-        sb   a0, 0(t0)
-    }
-}
-
-; Read a byte from the UART (non-blocking). Returns the byte (0-255), or -1 when
-; the receive buffer is empty (LSR bit 0 clear).
-uart_getchar: () -> i32 {
-    asm {
-        li   t0, 0x10000000
-        lb   t1, 5(t0)        ; LSR at offset 5
-        andi t1, t1, 1        ; data-ready bit
-        beqz t1, .Lrx_empty
-        lbu  a0, 0(t0)        ; RBR at offset 0
-        j    .Lrx_done
-    .Lrx_empty:
-        li   a0, -1
-    .Lrx_done:
-    }
-}
-```
-
-### 3.4 CLINT (Timer and Interprocessor Interrupts)
-
-**Base Address:** `0x0200_0000`
-
-| Offset | Register | Access | Description |
-|--------|----------|--------|-------------|
-| `0x0000` | MSIP | R/W | Machine Software Interrupt Pending (per-hart) |
-| `0x4000` | MTIMECMP | R/W | Machine Timer Compare (per-hart, 64-bit) |
-| `0xBFF8` | MTIME | R/W | Machine Time (global, 64-bit, free-running) |
-
-**Timer Behavior:**
-- `MTIME` increments every clock cycle (simulated as instruction count in VM)
-- When `MTIME >= MTIMECMP`, sets `MIP.MTIP` (machine timer interrupt pending)
-- Writing to `MTIMECMP` clears the interrupt if condition no longer holds
-
-**Example: arm the timer `interval_cycles` from now**
-```hll
-; Set MTIMECMP (hart 0, 0x0200_4000) to MTIME (0x0200_BFF8) + interval_cycles.
-set_timer_interrupt: (interval_cycles: u64) {
-    asm {
-        li   t0, 0x0200BFF8   ; MTIME
-        ld   t1, 0(t0)
-        add  t1, t1, a0       ; a0 = interval_cycles
-        li   t0, 0x02004000   ; MTIMECMP, hart 0
-        sd   t1, 0(t0)
-    }
-}
-```
-
-### 3.5 PLIC (External Interrupt Controller)
-
-**Base Address:** `0x0C00_0000`
-
-**Purpose:** Routes external interrupts (e.g., UART RX, disk I/O) to CPU harts with priority arbitration.
-
-**Memory Layout:**
-- `0x0000-0x007C`: Priority registers (32 sources x 4 bytes)
-- `0x1000-0x107C`: Pending bits (bitfield, 1 bit per source)
-- `0x2000-0x207C`: Enable bits (per-context, 1 bit per source)
-- `0x200000`: Threshold register (per-context)
-- `0x200004`: Claim/Complete register (per-context)
-
-**Operation:**
-1. An external device asserts an interrupt source (the VM's UART RX uses source 10).
-2. The trap handler reads the claim register for its context to obtain the pending source.
-3. Reading the claim register returns the highest-priority pending source and clears its
-   pending bit.
-4. The handler writes the source id back to the complete register when it is done.
-
-The reference kernel uses S-mode context 1 (hart 0). Its claim/complete register is at
-`0x0C20_0000 + context * 0x1000 + 4`, i.e. `0x0C20_1004` for context 1.
-
-**Example: claim and complete an interrupt**
-```hll
-; Read the claim/complete register for S-mode context 1; clears the pending bit.
-plic_claim: () -> u32 {
-    asm {
-        li   t0, 0x0C201004
-        lw   a0, 0(t0)
-    }
-}
-
-; Signal completion by writing the source id back to the same register.
-plic_complete: (irq_id: u32) {
-    asm {
-        li   t0, 0x0C201004
-        sw   a0, 0(t0)        ; a0 = irq_id
-    }
-}
-```
-
-
-## 4. Kernel Image Format
-
-The compiler produces one of two formats, selected at build time:
-
-### 4.1 ELF Format (Preferred)
-
-**Format:** 64-bit ELF, little-endian, RISC-V machine type (EM_RISCV = 243)
-
-**Sections:**
-- `.text`: Executable code (read + execute)
-- `.rodata`: Read-only data (strings, constants)
-- `.data`: Initialized data (read + write)
-- `.bss`: Zero-initialized data (read + write, not stored in file)
-
-**Program Headers:**
-- Single `PT_LOAD` segment covering all sections
-- Flags: `PF_R | PF_W | PF_X` (read + write + execute)
-- Virtual address (p_vaddr) = Physical address (p_paddr) = `0x8000_0000`
-- Alignment: 4096 bytes (page-aligned)
-
-**Entry Point:** Symbol `_start` (address stored in ELF header `e_entry`)
-
-**Required Symbols (exported by linker):**
-
-| Symbol | Type | Description |
-|--------|------|-------------|
-| `_start` | Function | Kernel entry point (provided by freestanding runtime) |
-| `__bss_start` | Address | Start of BSS section (inclusive) |
-| `__bss_end` | Address | End of BSS section (exclusive) |
-| `__stack_top` | Address | Top of initial kernel stack (grows downward) |
-| `__heap_start` | Address | Start of available heap memory (optional) |
-| `__image_size` | Value | Total size of kernel image in bytes |
-
-**Loading:**
-- QEMU: `qemu-system-riscv64 -kernel kernel.elf -nographic`
-- VM: Loader parses ELF headers, loads segments into RAM at `p_paddr`
-- Bootloader: Custom loader must parse ELF and jump to `e_entry`
-
-### 4.2 Flat Binary Format
-
-**Format:** Raw memory image (no headers, no metadata)
-
-**Contents:**
-- Concatenation of `.text` + `.rodata` + `.data` sections (in that order)
-- BSS is **not** included (must be zero-filled by loader based on `__bss_start`/`__bss_end`)
-
-**Entry Point:** First byte of the image (assumed to be at address `0x8000_0000`)
-
-**Loading:**
-- Copy binary to `0x8000_0000` in RAM
-- Zero-fill BSS from `__bss_start` to `__bss_end` (symbols embedded in binary or provided separately)
-- Jump to `0x8000_0000`
-
-**Use Case:** Simple bootloaders, direct ROM programming, minimal environments
-
-### 4.3 Linker Script
-
-Both formats use the same linker script to control layout:
-
-```ld
-/* kernel.ld */
-ENTRY(_start)
-
-SECTIONS {
-    /* Load address: start of RAM */
-    . = 0x80000000;
-    
-    /* Text section: executable code */
-    .text : {
-        *(.text)
-        *(.text.*)
-    }
-    
-    /* Read-only data: strings, constants */
-    .rodata : {
-        *(.rodata)
-        *(.rodata.*)
-    }
-    
-    /* Data section: initialized globals */
-    .data : {
-        *(.data)
-        *(.data.*)
-    }
-    
-    /* BSS section: zero-initialized globals */
-    __bss_start = .;
-    .bss : {
-        *(.bss)
-        *(.bss.*)
-        *(COMMON)
-    }
-    __bss_end = .;
-    
-    /* Stack: 64 KB, aligned to 16 bytes */
-    . = ALIGN(16);
-    . += 0x10000;
-    __stack_top = .;
-    
-    /* Heap starts after stack (kernel can adjust this) */
-    __heap_start = .;
-    
-    /* Discard unnecessary sections */
-    /DISCARD/ : {
-        *(.comment)
-        *(.note*)
-    }
-}
-```
-
-
-## 5. Boot Protocol
-
-### 5.1 Initial State (Before Kernel Entry)
-
-When the boot ROM/firmware transfers control to the kernel:
-
-**Register State:**
-- `a0`: Hart ID (always 0 for single-core systems)
-- `a1`: Device tree blob pointer (or 0 if not provided)
-- `a2`-`a7`: Undefined (do not rely on these values)
-- `sp`: Undefined (kernel must set up its own stack)
-- All other registers: Undefined
-
-**CSR State:**
-- `mstatus`: MIE = 0 (interrupts disabled), MPIE = 0, MPP = 3 (Machine mode)
-- `mie`: All bits = 0 (no interrupts enabled)
-- `mip`: All bits = 0 (no pending interrupts)
-- `mtvec`: Undefined (kernel must set trap vector)
-- `satp`: MODE = 0 (Bare, no virtual memory translation)
-- `mepc`, `mcause`, `mtval`: Undefined
-
-**Memory State:**
-- Kernel image loaded at `0x8000_0000` (ELF segments or flat binary)
-- BSS region (`__bss_start` to `__bss_end`) may contain garbage (kernel must zero it)
-- Rest of RAM (`0x8000_0000 + image_size` to `0xFFFF_FFFF`) is available for allocation
-- Devices (UART, CLINT, PLIC) are in reset state
-
-**Privilege Mode:** Machine mode (highest privilege)
-
-### 5.2 Boot Sequence
-
-The boot process follows this sequence:
+- **ROM (boot firmware).** Immutable M-mode code run at reset. Configures PMP and
+  exception/interrupt delegation, sets the M-mode trap vector, and `mret`s into
+  S-mode at the kernel entry. Also services hosted `sys_write`/`sys_exit` ecalls
+  for non-kernel (freestanding/hosted) programs that run without the kernel.
+- **Kernel (S-mode).** Initializes hardware, heap, PMM, and Sv39 paging; installs
+  the S-mode trap handler; spawns pid 1; then enters a timer-preempted scheduler.
+- **User (U-mode).** Programs run under the kernel with per-process address-space
+  isolation, talking to the kernel only via `ecall`.
+
+### 1.3 Target hardware
+
+RV64IMAFD with Zicsr/Zifencei, Sv39 paging, and M/S/U privilege modes. Primary
+target is the project VM; QEMU `virt` is a secondary target. Device registers and
+timing are defined in the VM spec; the addresses this runtime depends on are
+collected in Appendix A.
+
+
+## 2. Boot firmware (`boot/`)
+
+### 2.1 Image format and linker layout
+
+The kernel image is laid out from `0x8000_0000` as `.text`, `.rodata`, `.data`,
+then `.bss` (zeroed by the loader using `__bss_start`/`__bss_end`), followed by a
+64 KiB stack to `__stack_top` and the heap. Both an ELF (single `PT_LOAD`,
+`p_vaddr == p_paddr == 0x8000_0000`, `RWX`, 4 KiB aligned) and a flat binary
+(`.text+.rodata+.data` concatenation, BSS zero-filled by the loader) are produced
+from the same linker script; the VM loads either at `0x8000_0000` and jumps to
+`_start`. Exported symbols: `_start`, `__bss_start`, `__bss_end`, `__stack_top`,
+`__heap_start`, `__image_size`.
+
+### 2.2 M-mode ROM startup (`startup.s`, offset `0x000`)
+
+At reset the VM sets PC to the ROM base and loads the kernel at `0x8000_0000`.
+`_start` runs in M-mode and: grants all of memory via PMP (`pmpaddr0 = -1`,
+`pmpcfg0 = 0x1F`); delegates exception causes 8/12/13/15 and interrupt causes
+1/5/9 to S-mode (`medeleg`/`mideleg`); points `mtvec` at the M-mode trap handler
+(offset `0x100`); sets `mstatus.MPP = Supervisor` and `mepc` to the kernel entry
+(passed by the loader); and `mret`s into S-mode. It does not clear BSS or set `sp`
+-- the VM initializes `sp` to the top of RAM and the kernel's prologues take over.
+
+### 2.3 Trap vectors (`trap.s`)
+
+`trap.s` holds two handlers. The **M-mode** handler (offset `0x100`) services only
+hosted-program ecalls: `sys_write` (UART write loop) and `sys_exit` (SYSCON halt);
+every other M-mode trap returns via `mret` to be handled in S-mode. Because
+illegal-instruction (cause 2) is **not** delegated, a stray illegal instruction
+traps here and is treated as exit -- see the assembler NOP-padding note in 10.3.
+The **S-mode** entry path is in `trap_entry.hll` (chapter 6).
+
+
+## 3. Kernel initialization (`kernel/entry.hll`, `my_kernel.hll`)
+
+### 3.1 Entry stub
+
+`_kernel_start` (`entry.hll`) is the S-mode entry. It calls `kmain()` and panics if
+`kmain` ever returns.
+
+### 3.2 `kmain` boot sequence
+
+`kmain` (`my_kernel.hll`) runs the boot steps in order:
 
 ```
-1. VM / Hardware reset
-   +- PC set to ROM base (0x0000_0000)
-   +- Kernel ELF loaded into RAM at 0x8000_0000
-
-2. ROM _start (boot/startup.s, M-mode, offset 0x000)
-   +- PMP: open all-address grant (pmpaddr0 = -1, pmpcfg0 = 0x1F)
-   +- medeleg: delegate exception causes 8, 12, 13, 15 to S-mode
-   +- mideleg: delegate interrupt causes 1, 5, 9 to S-mode
-   +- mtvec = ROM offset 0x100 (_m_trap)
-   +- mstatus.MPP = Supervisor (01)
-   +- mepc = kernel entry address (passed in a0 by the VM loader)
-   +- mret -> drops to S-mode, jumps to kernel entry
-
-3. _kernel_start (kernel/entry.hll, S-mode)
-   +- Calls kmain()
-   +- If kmain returns: calls kpanic (should never happen)
-
-4. kmain() (kernel/my_kernel.hll, S-mode)
-   +- boot_console: UART online, log initial banner
-   +- boot_traps:   install S-mode stvec (trap_init), enable STIE + SEIE
-   +- boot_timer:   arm CLINT timer via timer_set(1_000_000)
-   +- boot_plic:    enable UART IRQ on PLIC context 1
-   +- memory diagnostics: memory_self_test, pmm_ops_test
-   +- boot_heap:    smoke-test kmalloc
-   +- boot_pmm:     pmm_init(0x8010_0000, 0x87F0_0000); alloc/free probe
-   +- boot_vmm:     vmm_init; 1 GiB identity maps for low/RAM/high ranges;
-                    vmm_enable (write SATP, sfence.vma)
-   +- process_init, scheduler_init
-   +- spawn_user_process: read metadata, copy pages, map U-mode VAs,
-                          process_create, scheduler_add (pid 1)
-   +- boot_filesystem: read FS metadata page, fs_init (mount the image)
-   +- boot_interrupts: s_enable_interrupts (only after pid 1 is enqueued)
-   +- Idle WFI loop (scheduler takes over via timer preemption)
-
-5. M-mode trap handler (boot/trap.s, offset 0x100)
-   +- Handles ecalls from hosted programs only (sys_write, sys_exit)
-   +- All other traps -> mret (passed back to S-mode handler)
+boot_console    UART online, print banner
+boot_traps      trap_init: install stvec, enable STIE + SEIE
+boot_timer      arm CLINT timer via timer_set(1_000_000)
+boot_plic       enable the UART RX IRQ on PLIC S-mode context 1
+diagnostics     memory_self_test, pmm_ops_test (checks.hll)
+boot_heap       smoke-test kmalloc
+boot_pmm        pmm_init(0x8010_0000, 0x87F0_0000) + alloc/free probe
+boot_vmm        vmm_init, stamp kernel maps, vmm_enable (write satp, sfence)
+process/sched   process_init, scheduler_init
+spawn_user      copy + map the pid-1 binary, process_create, scheduler_add
+boot_filesystem read FS metadata page, fs_init (mount the image)
+boot_interrupts s_enable_interrupts (only after pid 1 is enqueued)
+idle            WFI loop; the timer preempts into pid 1
 ```
 
-### 5.3 S-mode Trap Entry
+### 3.3 Physical memory the kernel programs
 
-The stvec is pointed at `stvec_entry` (inside `_s_trap_host` in `trap_entry.hll`).
-On any S-mode trap or interrupt the CPU jumps here:
+RAM is `0x8000_0000` + 128 MiB. The kernel image and its 64 KiB stack sit at the
+bottom; `pmm` owns `0x8010_0000 .. 0x87F0_0000`; the injected pid-1 binary, its
+metadata, and the filesystem image sit in the top of RAM (Appendix A, and 5.x /
+8.4 for the exact pages).
 
-```assembly
-; Allocate 288-byte trap frame on the kernel stack
-addi  sp, sp, -288
-; Save x1..x31 (x0 is always zero, skip)
-sd    x1, 8(sp)
-; x2 (sp): save original sp = sp + 288
-addi  t0, sp, 288
-sd    t0, 16(sp)
-; ... remaining registers ...
-; Save S-mode CSRs at offsets 256-280
-csrr  t0, sepc    ; offset 256
-csrr  t0, scause  ; offset 264
-csrr  t0, stval   ; offset 272
-csrr  t0, sstatus ; offset 280
-; Call HLL trap handler with frame pointer in a0
-mv    a0, sp
-call  trap_handler
-; Restore CSRs and GPRs, then sret
+
+## 4. Memory management (`vmm.hll`, `pmm.hll`, allocator)
+
+### 4.1 Physical page allocator (`pmm.hll`)
+
+`pmm` hands out 4 KiB pages from `[start, end)` set by `pmm_init`. `pmm_alloc`
+checks a free list first (each freed page stores a magic + next pointer; a magic
+mismatch is skipped as corrupt) and otherwise bumps a pointer; it returns `null` on
+exhaustion. `pmm_free` pushes onto the free list. The allocator never returns a
+page that is still mapped: pages are only reused after an explicit `pmm_free`.
+
+### 4.2 Kernel heap (`kmalloc` / `malloc`)
+
+`kmalloc` (`utilities.hll`) wraps the stdlib `malloc` and panics on OOM. `malloc`
+(`stdlib/common/memory_allocator.hll`) is a bump-plus-free-list allocator over a
+static `heap_buffer: u8[65536]` living in kernel BSS -- distinct from `pmm` memory
+and from user pages, so heap allocations never alias process address spaces.
+
+### 4.3 Sv39 paging and per-process roots
+
+The kernel runs Sv39 (39-bit VAs, 3-level tables). `vmm_init`/`vmm_enable` build
+and activate the boot root. `vmm_map` / `vmm_map_1gib` install leaf/gigapage PTEs
+into the *active* root; `vmm_alloc_pt` pulls intermediate tables from `pmm`.
+
+Each process owns a private root (`vmm_new_root` allocates one and stamps the
+shared kernel/RAM/MMIO mappings into it via `vmm_map_kernel`). Because every root
+carries those kernel mappings, the kernel can run with any process's `satp` active
+after a trap. **Isolation is physical, not by VA slotting:** all processes share
+the same canonical user VAs (code at `0x4000_0000`, stack top at `0x8000_0000`),
+mapped to disjoint physical pages in their own roots. `vmm_fork_copy` clones a
+parent's user (U-flagged) pages into a child root for `fork`.
+
+### 4.4 Active root vs `satp`; TLB
+
+Two notions of "current root" exist and must not be confused:
+
+- `satp` is the hardware-translated address space (what loads/stores use).
+- `vmm_active_root` is bookkeeping for where `vmm_map` writes PTEs.
+
+`vmm_set_root` updates only `vmm_active_root` (so the kernel can build a child's
+tables while still running in the parent's `satp`). `vmm_switch` updates both,
+writes `satp`, and issues `sfence.vma` to flush the TLB; the scheduler calls it on
+every context switch. The VM's TLB is also flushed on any `satp` change.
+
+
+## 5. Processes and scheduling (`process.hll`, `scheduler.hll`)
+
+### 5.1 Process control block (PCB)
+
+A process is a 352-byte PCB allocated with `kmalloc`:
+
+```
+Offset  Size  Field
+0       8     pid             u64, assigned sequentially from 1
+8       8     state           0=READY, 1=RUNNING, 2=BLOCKED, 3=EXITED
+16      8     next            u64* to next PCB in the ready queue (0 = end)
+24      8     user_stack_pa   physical address of the user-stack page
+32      8     entry_pc        user entry-point VA
+40      288   trap_frame      36 u64: x0..x31, sepc, scause, stval, sstatus
+328     8     page_root       physical address of this process's Sv39 root
+336     8     parent_pid      parent pid (set by fork/exec; 0 if none)
+344     8     exit_code       exit code, read by the parent's wait
 ```
 
-The trap frame is also the process context: `schedule()` copies it in and out of the PCB to perform context switches.
+The `trap_frame` layout matches the on-stack frame built by the trap entry (6.1),
+so `schedule` saves/restores context with a single `memcpy` of those 288 bytes.
 
-**Note:** The ROM `_start` stub does not clear BSS or set sp before mret. The kernel's HLL function prologues establish stack frames relative to sp, which the VM initialises to the top of RAM before execution begins.
+### 5.2 Address space and initial trap frame
 
+`process_create` gives the process a fresh root (4.3), maps 4 stack pages just
+below `USER_STACK_BASE` (`0x8000_0000`) with R+W+U, and pre-populates the trap
+frame so the first `sret` enters U-mode: `frame[2]` (sp) = stack top,
+`frame[32]` (sepc) = entry, `frame[35]` (sstatus) = `0x13` (U-mode, IRQs on). The
+full integer/FP register ABI is the standard RISC-V convention; see
+`_RISCV_SPECIFICATIONS.md` section 8.
 
-## 6. Calling Convention and ABI
+### 5.3 States and the ready queue
 
-The kernel uses the standard RISC-V calling convention without modification:
+The scheduler keeps a FIFO ready queue (`ready_queue_head`), the running process
+(`current_process`), an EXITED-but-unreaped list (`zombie_head`), and the single
+process blocked on input (`input_waiter`, 6.4). States cycle
+READY -> RUNNING -> {READY, BLOCKED, EXITED}.
 
-### 6.1 Integer Register Usage
+### 5.4 Round-robin preemption
 
-| Register | ABI Name | Caller/Callee Saved | Purpose |
-|----------|----------|---------------------|---------|
-| `x0` | `zero` | Hardwired 0 | Constant zero |
-| `x1` | `ra` | Caller-saved | Return address |
-| `x2` | `sp` | Caller-saved | Stack pointer |
-| `x3` | `gp` | Caller-saved | Global pointer (not used) |
-| `x4` | `tp` | Caller-saved | Thread pointer (not used) |
-| `x5`-`x7` | `t0`-`t2` | Caller-saved | Temporaries |
-| `x8` | `s0`/`fp` | Callee-saved | Saved register / Frame pointer |
-| `x9` | `s1` | Callee-saved | Saved register |
-| `x10`-`x11` | `a0`-`a1` | Caller-saved | Arguments / Return values |
-| `x12`-`x17` | `a2`-`a7` | Caller-saved | Arguments |
-| `x18`-`x27` | `s2`-`s11` | Callee-saved | Saved registers |
-| `x28`-`x31` | `t3`-`t6` | Caller-saved | Temporaries |
+`schedule(frame, action)` saves the live frame into `current_process`, sets its
+next state per `action` (7.3), dequeues the head of the ready queue, switches into
+its root (`vmm_switch`), and restores its frame. The CLINT timer interrupt (6.3)
+calls `schedule(frame, 1)` every 1,000,000 cycles, giving preemptive round-robin
+even for compute-bound processes that never yield.
 
-### 6.2 Floating-Point Register Usage
+### 5.5 fork and exec
 
-| Register | ABI Name | Caller/Callee Saved | Purpose |
-|----------|----------|---------------------|---------|
-| `f0`-`f7` | `ft0`-`ft7` | Caller-saved | FP temporaries |
-| `f8`-`f9` | `fs0`-`fs1` | Callee-saved | FP saved registers |
-| `f10`-`f17` | `fa0`-`fa7` | Caller-saved | FP arguments / Return values |
-| `f18`-`f27` | `fs2`-`fs11` | Callee-saved | FP saved registers |
-| `f28`-`f31` | `ft8`-`ft11` | Caller-saved | FP temporaries |
+`fork` (syscall 220) allocates a child PCB and root, copies the parent's user pages
+(`vmm_fork_copy`) and trap frame, sets the child's `a0` to 0, and enqueues it.
+`exec` (syscall 103) loads an FEXE (7.4) into a fresh per-process root at
+`0x4000_0000`, parents the child to its launcher (captured before the root
+switches), and enqueues it. `process_peek_pid` reports the next pid to be assigned.
 
-### 6.3 Stack Layout
+### 5.6 Zombies and reaping
 
-**Stack Growth:** Downward (from high addresses to low addresses)
-
-**Alignment:** 16-byte aligned at all times (RISC-V requirement)
-
-**Frame Structure:**
-```
-High addresses
-+----------------------+
-|   Caller's frame     |
-+----------------------+
-|   Return address (ra)| <- sp + N - 8
-|   Saved registers    | <- sp + N - 16, sp + N - 24, ...
-|   Local variables    | <- sp + 0, sp + 8, ...
-+----------------------+
-|   Current frame      | <- sp (16-byte aligned)
-+----------------------+
-Low addresses
-```
-
-**No Red Zone:** RISC-V does not have a red zone. The compiler will not access memory below `sp` without adjusting it first.
-
-### 6.4 Function Prologue/Epilogue
-
-**Typical Prologue:**
-```assembly
-addi   sp, sp, -N          # Allocate stack frame (N is multiple of 16)
-sd     ra, N - 8(sp)       # Save return address
-sd     s0, N - 16(sp)      # Save callee-saved registers as needed
-addi   s0, sp, N           # Set frame pointer
-```
-
-**Typical Epilogue:**
-```assembly
-ld     ra, N - 8(sp)       # Restore return address
-ld     s0, N - 16(sp)      # Restore callee-saved registers
-addi   sp, sp, N           # Deallocate stack frame
-jalr   zero, 0(ra)         # Return to caller
-```
-
-The HLL compiler generates this automatically.
+`exit` marks a process EXITED and keeps the PCB on `zombie_head` holding its exit
+code until a parent reaps it; the VM halts only when the last runnable process
+exits. `wait`/`waitpid` (7.2) reap zombies. Liveness queries:
+`scheduler_pid_in_queue` checks the ready queue only; `scheduler_pid_alive`
+(backing `pidalive`) also counts the running and input-blocked process, so a live
+job is never misreported as finished.
 
 
-## 7. Runtime Split
+## 6. Traps and interrupts (`trap_entry.hll`, `trap_handler.hll`)
 
-The compiler provides three mutually exclusive runtime bundles (see Section 2 for mode selection):
+### 6.1 S-mode trap entry
 
-### 7.1 Hosted Runtime
+`stvec` points at the entry in `trap_entry.hll`. On any S-mode trap it allocates a
+288-byte frame on a dedicated kernel stack (switched in via `sscratch`), saves
+`x1..x31` and the S-mode CSRs (`sepc`/`scause`/`stval`/`sstatus` at frame offsets
+256/264/272/280), calls `trap_handler(frame)`, then restores and `sret`s. The frame
+doubles as the process context (5.1).
 
-**Source:** `stdlib/hosted/runtime.hll`, `stdlib/common/{types,memory_allocator,string_utils}.hll`
+### 6.2 Dispatch by cause
 
-**Entry flow:**
-```
-_start (runtime.hll)  ->  main() (user code)  ->  exit(code) via sys_exit ecall
-```
+`trap_handler` switches on `scause`: cause 5 = timer (6.3), cause 8 = U-mode ecall
+(syscall dispatch, 7.1), cause 9 = external/UART-RX interrupt (6.4). The ecall path
+advances `sepc` by 4 before returning.
 
-**Provided symbols:** `_start`, `putchar`, `puts`, `print_int`, `exit`, `malloc`, `free`, `str_*`.
+### 6.3 Timer preemption
 
-**Use Case:** Educational examples, algorithm tests, user-space tools.
+The timer interrupt re-arms `MTIMECMP` (`timer_set`) and calls `schedule(frame, 1)`
+to round-robin the ready queue.
 
-### 7.2 Freestanding Runtime
+### 6.4 UART RX wake model
 
-**Source:** `stdlib/freestanding/{runtime,console,entry}.hll`, `stdlib/common/{types,memory_allocator,string_utils}.hll`
+`readchar` is blocking. When no byte is ready, `sys_readchar_block` records the
+caller as `input_waiter`, arms the UART RX interrupt (IER bit 0), rewinds `sepc` so
+the ecall re-runs on wake, and returns the BLOCK action (7.3) so other processes
+run. An arriving byte raises cause 9; the handler claims/completes the PLIC, masks
+the RX IRQ (it stays asserted while the FIFO is non-empty and would otherwise
+re-fire), wakes the waiter to the front of the ready queue, and preempts so it runs
+next. An idle reader therefore costs no CPU and a compute-bound job gets the full
+machine. If a BLOCK has nothing else to run, the scheduler declines it and leaves
+the caller running (it retries the read).
 
-**Entry flow:**
-```
-_start (entry.hll)  ->  main() (user code)  ->  SYSCON halt
-```
+### 6.5 Ctrl-C and the input pushback
 
-**Provided symbols:**
-| Symbol | Description |
-|--------|-------------|
-| `_start` | Calls `main()`, then writes to SYSCON to halt |
-| `kpanic` | Writes message to UART (direct MMIO), then WFI loop |
-| `_kpanic` | Minimal panic with no message (pre-init safe) |
-| `console_putchar` | Single-byte write to NS16550A at 0x10000000 |
-| `console_write` | Null-terminated string write to UART |
-| `console_writeln` | `console_write` + newline |
-| `console_print_int` | Decimal integer to UART |
-| `console_print_hex` | 64-bit hex to UART (16 digits, `0x` prefix) |
-| `malloc` / `free` | Bump-pointer allocator with free-list |
-| `memset` / `memcpy` / `memmove` / `memcmp` | Low-level memory ops |
-
-**Use Case:** Bare-metal programs, firmware utilities, simple MMIO tests.
-
-### 7.3 Kernel Runtime
-
-**Source:** All freestanding sources plus the full kernel bundle from `crates/os-runtime/kernel/`.
-
-**Entry flow:**
-```
-_kernel_start (entry.hll)  ->  kmain() (my_kernel.hll / user kernel)
-```
-
-Everything in the freestanding bundle plus:
-
-| Symbol | Source | Description |
-|--------|--------|-------------|
-| `_kernel_start` | `entry.hll` | S-mode entry; calls `kmain`, panics on return |
-| `klog_ok` / `klog_warn` / `klog_error` | `klog.hll` | Formatted kernel log to UART |
-| `klog_int` / `klog_hex` | `klog.hll` | Labelled integer/hex log |
-| `kmalloc` | `utilities.hll` | `malloc` wrapper that panics on OOM |
-| `kshutdown` | `utilities.hll` | Write exit code to SYSCON (halts VM/QEMU) |
-| `timer_get` / `timer_set` | `utilities.hll` | CLINT MTIME / MTIMECMP access |
-| `plic_init` | `utilities.hll` | PLIC S-mode setup for UART IRQ (source 10) |
-| `memory_self_test` / `pmm_ops_test` | `checks.hll` | Boot-time diagnostics |
-| `trap_init` | `trap_entry.hll` | Install stvec, enable STIE + SEIE |
-| `trap_handler` | `trap_handler.hll` | Timer / IRQ / ecall dispatcher |
-| `pmm_init` / `pmm_alloc` / `pmm_free` | `pmm.hll` | 4 KiB page allocator |
-| `vmm_init` / `vmm_enable` / `vmm_map` / `vmm_map_1gib` | `vmm.hll` | Sv39 page table management |
-| `process_init` / `process_create` / `process_peek_pid` | `process.hll` | PCB allocation, per-pid stacks, next-pid query |
-| `syscall_dispatch` | `syscall.hll` | U-mode ecall handler (process control, file I/O, exec; see Section 9) |
-| `scheduler_init` / `scheduler_add` / `schedule` | `scheduler.hll` | Round-robin preemptive scheduler |
-| `scheduler_ready_empty` / `scheduler_pid_in_queue` | `scheduler.hll` | Ready-queue introspection used by exit and exec-wait |
-| `fs_init` / `fs_open` / `fs_read` / `fs_write` / `fs_close` | `fs.hll` | Inode filesystem: mount and file I/O |
-| `fs_create` / `fs_mkdir` / `fs_rename` / `fs_stat` / `fs_readdir` | `fs.hll` | Inode filesystem: namespace operations |
-
-**Use Case:** OS kernels, integration tests, the reference `my_kernel.hll`.
+While the shell blocks in `waitpid`, the still-running branch peeks one UART byte.
+A `0x03` tears down that exact foreground pid (`scheduler_kill_pid`) and returns the
+`-2` sentinel; any other byte is stashed in a one-deep pushback
+(`input_pushback_*`) delivered ahead of the device by the next `readchar`, so an
+interactive child still receives its input in order. Ctrl-C is reliable for
+compute-bound children and best-effort for input readers (their `readchar` races
+the wait peek).
 
 
-## 8. Hardware Abstraction Layer (HAL)
+## 7. Syscall interface (`syscall.hll`, `stdlib/hosted/syscalls.hll`)
 
-The kernel **must** provide a small set of platform primitives that replace hosted I/O functions. These are the only hardware-specific functions the compiler runtime depends on.
+### 7.1 Calling convention
 
-### 8.1 Console and Halt Primitives
+U-mode programs trap with `ecall`. The number is in `a7`; up to four arguments in
+`a0`-`a3`; the result is written back to `a0` in the trap frame. The S-mode handler
+catches cause 8, dispatches via `syscall_dispatch`, and advances `sepc` by 4.
+Standard numbers follow the Linux RISC-V ABI; the 100-range is project-specific.
+`stdlib/hosted/syscalls.hll` provides the userspace `sc_*` wrappers and C-string
+helpers that programs link against.
 
-These are provided by the kernel stdlib bundle (`console.hll`, `utilities.hll`).
-Kernel code calls them directly; they do not go through any syscall layer.
-
-| Symbol | Signature | Description |
-|--------|-----------|-------------|
-| `console_putchar` | `(c: i32) -> ()` | Write one byte to NS16550A UART TX (0x10000000). Direct MMIO, no ecall. |
-| `console_write` | `(str: u8*) -> ()` | Write null-terminated string to UART. |
-| `console_writeln` | `(str: u8*) -> ()` | `console_write` followed by a newline. |
-| `console_print_int` | `(n: i64) -> ()` | Decimal integer to UART. |
-| `console_print_hex` | `(n: u64) -> ()` | 64-bit hex to UART (`0x` prefix, 16 digits). |
-| `kshutdown` | `(code: i64) -> ()` | Write exit code to SYSCON (0x10010000); halts VM/QEMU. |
-| `kpanic` | `(msg: u8*) -> ()` | Write message to UART then WFI loop (never returns). |
-
-### 8.2 Timer and Interrupt Primitives
-
-| Symbol | Signature | Description |
-|--------|-----------|-------------|
-| `timer_get` | `() -> u64` | Read current MTIME from CLINT (0x0200_BFF8). |
-| `timer_set` | `(interval: u64) -> ()` | Set MTIMECMP to MTIME + interval for hart 0. |
-| `plic_init` | `() -> ()` | Enable UART source 10 on PLIC S-mode context 1, threshold 0. |
-| `trap_init` | `() -> ()` | Point stvec at `stvec_entry`; enable STIE + SEIE in `sie`. |
-
-### 8.3 Implementation Example
-
-The HAL primitives are provided by the kernel stdlib bundle.
-The implementations below are from `utilities.hll` and `stdlib/freestanding/console.hll`.
-
-```hll
-; Write a single character directly to NS16550A UART TX (0x10000000).
-; Direct MMIO -- never use ecall here; S-mode sp may point at user VA space.
-console_putchar: (c: i32) -> () {
-    asm {
-        li   t0, 0x10000000
-        sb   a0, 0(t0)
-    }
-}
-
-; Halt by writing the exit code to SYSCON (0x10010000).
-; The VM stops on this write; the WFI loop is a safety net for real hardware.
-kshutdown: (code: i64) -> () {
-    asm {
-        li   t0, 268500992   ; 0x10010000
-        sd   a0, 0(t0)
-    .Lkshutdown_halt:
-        wfi
-        j    .Lkshutdown_halt
-    }
-}
-
-; Read MTIME counter from CLINT (0x0200_BFF8).
-timer_get: () -> u64 {
-    asm { li t0, 33603576 ; ld a0, 0(t0) }
-}
-
-; Set MTIMECMP for hart 0 to MTIME + interval cycles (0x0200_4000).
-timer_set: (interval: u64) -> () {
-    asm {
-        li  t0, 33603576    ; CLINT MTIME
-        ld  t1, 0(t0)
-        add t1, t1, a0
-        li  t0, 33570816    ; CLINT MTIMECMP hart 0
-        sd  t1, 0(t0)
-    }
-}
-```
-
-
-## 9. Syscall Interface
-
-U-mode processes communicate with the kernel via the `ecall` instruction.
-The S-mode trap handler catches cause 8 (U-mode ecall), dispatches via `syscall_dispatch`,
-and advances `sepc` by 4 before returning.
-
-### 9.1 Calling Convention
-
-Syscall number in `a7`; up to four arguments in `a0`-`a3`; return value written back to `a0`
-in the trap frame. Standard numbers follow the Linux RISC-V ABI; numbers in the 100-range are
-project-specific extensions added to support the interactive shell.
-
-### 9.2 Syscall Table
+### 7.2 Syscall table
 
 | Number | Name | Arguments | Return | Description |
 |--------|------|-----------|--------|-------------|
-| `2` | `yield` | -- | -- | Voluntarily yield the CPU; triggers SCHEDULE action |
+| `2` | `yield` | -- | -- | Yield the CPU (SCHEDULE action) |
 | `46` | `ftruncate` | `a0=fd`, `a1=len` | 0 or -1 | Shrink a file to an exact length |
-| `56` | `open` | `a0=path*`, `a1=flags` | fd (>= 2) or -1 | Open a file by absolute path. flags: 0=RO, 1=RW, 2=create |
-| `57` | `close` | `a0=fd` | 0 | Release a file descriptor |
-| `63` | `read` | `a0=fd`, `a1=buf*`, `a2=offset`, `a3=len` | bytes read or -1 | Read from a filesystem fd at an explicit offset |
-| `64` | `write` | `a0=fd`, `a1=buf*`, `a2=len` | bytes written or -1 | fd 0/1 -> UART; fd >= 2 -> filesystem at the stored position |
-| `82` | `rename` | `a0=old*`, `a1=new*` | 0 or -1 | Move a file or directory (cross-directory allowed) |
-| `83` | `mkdir` | `a0=path*` | inode or -1 | Create a directory at an absolute path |
-| `93` | `exit` | `a0=code` | -- | Terminate the calling process; triggers EXIT_SCHEDULE. The PCB lingers as a zombie holding the exit code until the parent waits. Halts the VM if it was the last runnable process |
-| `100` | `readchar` | -- | byte (0-255) or -1 | Read one byte from the UART receive buffer (non-blocking) |
-| `101` | `readdir` | `a0=path*`, `a1=index`, `a2=name_buf*` | entry type or -1 | Look up the index-th directory entry; writes its name |
-| `102` | `stat` | `a0=path*` | inode type or -1 | Inode type at a path (1=file, 2=dir) |
-| `103` | `exec` | `a0=path*` | new pid or -1 | Load an `FEXE` executable from the filesystem and enqueue it |
-| `104` | `pidalive` | `a0=pid` | 1 or 0 | 1 while a launched pid is still in the ready queue (legacy; the shell now uses `wait`) |
-| `105` | `unlink` | `a0=path*` | 0 or -1 | Remove a regular file (frees its dirent, data blocks, and inode); refuses directories |
-| `106` | `rmdir` | `a0=path*` | 0 or -1 | Remove an empty directory; refuses the root and non-empty directories |
-| `107` | `map_fb` | -- | base VA | Map the linear framebuffer device into the caller and return its base virtual address |
-| `108` | `poll_key` | -- | packed event or -1 | Pop the next key event from the keyboard device; -1 when none pending |
-| `220` | `fork` | -- | child pid (parent) / 0 (child) / -1 | Clone the caller: copy its address space and trap frame into a new child process |
-| `260` | `wait` | -- | exit code, -1 (no child), or -2 (Ctrl-C) | Reap an exited child and return its exit code; -1 if there is no child to reap; -2 if the foreground child was torn down by Ctrl-C |
+| `56` | `open` | `a0=path*`, `a1=flags` | fd (>=2) or -1 | Open by absolute path. flags: 0=RO, 1=RW, 2=create |
+| `57` | `close` | `a0=fd` | 0 | Release a descriptor |
+| `63` | `read` | `a0=fd`, `a1=buf*`, `a2=off`, `a3=len` | bytes or -1 | Read a file fd at an explicit offset |
+| `64` | `write` | `a0=fd`, `a1=buf*`, `a2=len` | bytes or -1 | fd 0/1 -> UART; fd >=2 -> file at stored position |
+| `82` | `rename` | `a0=old*`, `a1=new*` | 0 or -1 | Move a file or directory |
+| `83` | `mkdir` | `a0=path*` | inode or -1 | Create a directory |
+| `93` | `exit` | `a0=code` | -- | Terminate caller (EXIT_SCHEDULE); PCB lingers as a zombie; halts the VM if last runnable |
+| `100` | `readchar` | -- | byte (0-255) | Read one UART byte; **blocks** (sleeps the caller, arming the RX interrupt) until one arrives (6.4) |
+| `101` | `readdir` | `a0=path*`, `a1=index`, `a2=name*` | type or -1 | Look up the index-th dir entry; writes its name |
+| `102` | `stat` | `a0=path*` | type or -1 | Inode type at a path (1=file, 2=dir) |
+| `103` | `exec` | `a0=path*` | pid or -1 | Load an FEXE and enqueue it (5.5, 7.4) |
+| `104` | `pidalive` | `a0=pid` | 1 or 0 | 1 while the pid is RUNNING/READY/BLOCKED; 0 for zombie/unknown |
+| `105` | `unlink` | `a0=path*` | 0 or -1 | Remove a regular file; refuses directories |
+| `106` | `rmdir` | `a0=path*` | 0 or -1 | Remove an empty directory; refuses root/non-empty |
+| `107` | `map_fb` | -- | base VA | Map the framebuffer into the caller (7.5) |
+| `108` | `poll_key` | -- | event or -1 | Pop a key event from the keyboard device; -1 if none (7.5) |
+| `220` | `fork` | -- | child / 0 / -1 | Clone the caller (5.5) |
+| `260` | `wait` | -- | code / -1 / -2 | Reap any exited child; -1 none; -2 Ctrl-C (fork test) |
+| `261` | `waitpid` | `a0=pid` | code / -1 / -2 | Reap the specific child pid, else poll / Ctrl-C-tear-down; -1 if not ours |
 
-`exec` reads a position-independent flat binary (4 KiB header + payload) from the filesystem and
-maps it at `0x4000_0000` in the child's private page-table root, then calls `process_create` and
-`scheduler_add`. `exec` parents the new process to its launcher (the pid from `scheduler_current()`,
-captured before `process_create` switches the active root) so the launcher's `wait` can find it.
+The shell runs a foreground child by pairing `exec` with `waitpid`
+(`sh_wait_foreground(pid)`): it blocks until the child becomes a zombie, reaps that
+exact pid, prints `[exit N]`, and resumes. Background jobs (`run <file> &`) skip the
+wait, record the pid in an 8-slot job table, and are reaped at the prompt; `jobs`
+and `fg <id>` manage them (10.1). Pid-targeted waits ensure a foreground wait never
+reaps a background job that finished first.
 
-The shell runs a foreground child by pairing `exec` with `wait` (`sh_wait_foreground`): it blocks in
-`wait`, which reschedules to the child until the child exits and becomes a zombie, then reaps the
-zombie and returns its exit code. The shell prints `[exit N]` and resumes at the prompt rather than
-halting the VM. (The older `exec`+`pidalive`+`yield` poll loop is retained only in standalone test
-programs.)
+### 7.3 Scheduler actions
 
-**Ctrl-C.** While the shell blocks in `wait`, the "child still running" branch of `sys_wait_impl`
-peeks one UART byte. A `0x03` (Ctrl-C) calls `scheduler_kill_child(ppid)` -- which unlinks the first
-READY child of the parent and marks it EXITED (leaked, not reaped) -- and returns the `-2` sentinel,
-on which the shell prints `^C`. A non-`0x03` byte is stashed in a one-deep kernel pushback
-(`input_pushback_*`, delivered ahead of the device by `sys_readchar_impl`) so an interactive child
-(the editor) still receives its input in order; the peek is skipped while the pushback is occupied.
-Ctrl-C is reliable for compute-bound children and best-effort for ones that read input (the child's
-own `readchar` races the wait poll).
-
-`map_fb` maps the framebuffer device's physical pages (`0x1002_0000`, 76 pages: 75 for the
-320 x 240 RGBA8888 pixel buffer plus one control page holding the `FILL` register) into the calling
-process at `0x5000_0000` with R+W+U permissions and returns that base virtual address. The mapping is
-added to the running process's page-table root, so each caller gets the framebuffer in its own
-address space; the underlying device buffer is shared. The control page after the pixels exposes
-`FILL` (base + `307200`: clear the draw buffer to one colour device-side), `DBMODE` (base + `307208`:
-enable double buffering), and `PRESENT` (base + `307204`: publish the back buffer). The bundled
-`fbdemo` program (`/bin/fbdemo.fexe`) renders a Mandelbrot set single-buffered; `/bin/cube.fexe`
-animates a spinning wireframe cube, enabling double buffering and `FILL`-clearing then `PRESENT`-ing
-each frame so it never flickers. `run /bin/fbdemo` or `run /bin/cube` from the shell paints them,
-viewable in the Machine window's FB tab.
-
-The runtime has two input devices for two kinds of program. **Text input** (the shell, the editor)
-arrives over the UART (`0x1000_0000`): the host GUI forwards keystrokes from both the terminal view
-and the FB tab into the UART receive buffer (printable text plus the control codes for
-Enter/Backspace/Tab and Ctrl+letter, e.g. Ctrl+C -> `0x03`); programs read it with `readchar`, and
-`sys_wait_impl` watches it for the `0x03` foreground-interrupt. **Event input** (interactive
-graphical programs such as the cube) uses `poll_key`, which reads the keyboard device
-(`0x1007_0000`): it checks the STATUS register and, if an event is queued, pops the DATA register and
-returns the packed event (bit 16 = pressed, bits 15..0 = scancode); it returns -1 when the queue is
-empty. The host GUI pushes raw key press/release events there while the FB tab is focused (letters as
-their uppercase ASCII, arrows in the private range `0x80`-`0x83`). A program drains it in a loop to
-react to input without blocking; the cube uses it for WASD rotation. (Ctrl+letter is mirrored to the
-UART as well so Ctrl-C can still interrupt a graphical foreground program.)
-
-#### 9.2.1 Executable file format (FEXE)
-
-Executables stored in the filesystem use the `FEXE` container: a 4 KiB header block followed by
-the position-independent flat-binary payload. `build_exec_file` (host) writes it and `sys_exec`
-(guest) reads it.
-
-```
-Offset  Size  Field
-------  ----  -----
-0       4     magic    "FEXE" (0x4558_4546, little-endian u32)
-8       8     entry    entry-point offset within the payload (u64)
-4096    ...   payload  flat binary; loaded page-by-page and mapped R+W+X+U
-```
-
-`sys_exec` validates the magic and rejects a file that does not begin with `FEXE`. The entry VA is
-`0x4000_0000 + entry`. By convention these files use the **`.fexe`** extension (`/bin/edit.fexe`,
-`/home/<program>.fexe`); the `.bin` extension is reserved for *flat* binary exports (no FEXE
-wrapper). The shell's `run` command pre-checks the magic and reports `not an executable` for a
-non-FEXE file before calling `exec`.
-
-#### 9.2.2 In-VM assembler (`as`)
-
-`/bin/as.fexe` (source `user/as.hll`) is a userspace assembler that closes the
-self-hosting loop: author a small assembly file in the editor and turn it into a
-runnable program without leaving the VM. The shell's `as <src> <out>` builtin
-joins both operands to absolute paths and launches the assembler with
-`"<abs_src> <abs_out>"` as its argument string (via `sys_exec`'s `USER_ARG_BASE`
-page). The assembler reads the source, runs a two-pass label resolver (pass 1
-assigns each label its byte offset, pass 2 encodes), wraps the resulting flat
-binary in the FEXE container (entry offset 0), and writes it to `<out>`. The
-produced file is then run with `run <out>` through the normal `exec` path.
-
-Supported instruction subset: `add sub and or xor` (register-register), `addi`,
-`li` (one `addi`, or `lui`+`addi` for immediates wider than 12 bits), `mv`,
-`j <label>`, `beq`/`bne <rs1>, <rs2>, <label>`, `ecall`, and `ret`. Registers
-accept ABI names (`a0`, `t0`, `sp`, `ra`, `zero`, ...) or the raw `x0`..`x31`
-form. Labels are written `name:` (alone or before an instruction); comments start
-with `;` or `#`; immediates may be decimal, `0x` hex, or negative. The subset is
-intentionally minimal -- there is no data section, relocation, or pseudo-op
-expansion beyond `li`/`mv`/`ret`. Instruction encodings match the host
-`asm-to-binary` backend.
-
-The assembler appends 8 trailing NOPs (`addi x0, x0, 0`) after the program. A flat
-program whose last instruction is `ecall` (the exit) has no valid instruction
-after it; the 5-stage pipeline speculatively fetches the following word, and a
-zero word (`0x0000_0000`, the page fill) decodes as an illegal instruction. Illegal
-instructions are **not** delegated by `medeleg`, so the trap is taken to M-mode
-(`_m_trap`), which services it as a `sys_exit` straight to SYSCON and halts the VM
--- bypassing the kernel's S-mode exit path and the parent's `wait`. The NOP padding
-keeps the speculative fetch valid so the exit `ecall` traps cleanly to S-mode and
-the kernel reaps the process normally.
-
-### 9.3 Scheduler Actions
-
-`syscall_dispatch` returns an action code that `trap_handler` passes to `schedule`:
+`syscall_dispatch` returns an action that `trap_handler` passes to `schedule`:
 
 | Constant | Value | Meaning |
 |----------|-------|---------|
-| `SYSACT_CONTINUE` | 0 | Resume current process unchanged |
-| `SYSACT_SCHEDULE` | 1 | Yield: re-enqueue as READY, switch to next process |
-| `SYSACT_EXIT_SCHEDULE` | 2 | Exit: mark EXITED, do not re-enqueue, switch to next |
+| `SYSACT_CONTINUE` | 0 | Resume the current process unchanged |
+| `SYSACT_SCHEDULE` | 1 | Yield: re-enqueue READY, switch to next |
+| `SYSACT_EXIT_SCHEDULE` | 2 | Exit: mark EXITED, switch to next |
+| `SYSACT_BLOCK` | 3 | Sleep the caller (input wait); not re-enqueued (6.4) |
 
+### 7.4 Executable format (FEXE)
 
-## 10. Process Model
-
-### 10.1 Process Control Block (PCB)
-
-Each process is represented by a 352-byte PCB allocated with `kmalloc`.
+Filesystem executables use the `FEXE` container: a 4 KiB header then a
+position-independent flat-binary payload.
 
 ```
 Offset  Size  Field
-------  ----  -----
-0       8     pid             (u64, assigned sequentially from 1)
-8       8     state           (0=READY, 1=RUNNING, 2=BLOCKED, 3=EXITED)
-16      8     next            (u64* to next PCB in ready queue, 0 = end)
-24      8     user_stack_pa   (physical address of the user-stack 4 KiB page)
-32      8     entry_pc        (user-space entry point virtual address)
-40      288   trap_frame      (36 u64s: x0..x31, sepc, scause, stval, sstatus)
-328     8     page_root       (physical address of this process's Sv39 root page table)
-336     8     parent_pid      (pid of the parent, set by fork; 0 if none)
-344     8     exit_code       (exit code recorded at exit, read by the parent's wait)
+0       4     magic    "FEXE" (0x4558_4546, little-endian u32)
+8       8     entry    entry-point offset within the payload (u64)
+4096    ...   payload  flat binary; mapped R+W+X+U at 0x4000_0000
 ```
 
-The `trap_frame` layout matches the on-stack frame built by `stvec_entry`, so
-`schedule` can `memcpy(pcb+40, frame, 288)` to save and `memcpy(frame, pcb+40, 288)` to restore.
+`exec` validates the magic and maps the payload at `0x4000_0000 + entry` in the
+child's root. Convention: `.fexe` for FEXE files, `.bin` for raw flat exports. The
+shell's `run` pre-checks the magic and reports `not an executable` otherwise.
 
-### 10.2 Per-Process Stacks and Initial Trap Frame
+### 7.5 Framebuffer and keyboard devices
 
-Each process gets its own user-stack region so the shell and any program it launches never
-share stack virtual addresses. `process_create` computes a stack top of
-`USER_STACK_BASE - (pid - 1) * USER_STACK_SLOT` (base `0x8000_0000`, slot 1 MiB, so pid 1 keeps
-`0x8000_0000`), then allocates 4 physical pages with `pmm_alloc` and maps them just below the
-stack top with flags R+W+U.
+`map_fb` maps the framebuffer device (`0x1002_0000`, 76 pages: 75 for the
+320x240 RGBA8888 buffer plus one control page) into the caller at `0x5000_0000`
+(R+W+U) and returns that VA; the device buffer is shared, the mapping is
+per-process. The control page exposes `FILL` (clear the draw buffer device-side),
+`DBMODE` (enable double buffering), and `PRESENT` (publish the back buffer).
 
-It then pre-populates the trap frame so the first `sret` drops into U-mode:
+The runtime has two input devices. **Text** (shell, editor) arrives over the UART
+(`0x1000_0000`) and is read with `readchar`; the host GUI forwards printable text,
+Enter/Backspace/Tab, and Ctrl+letter (Ctrl+C -> `0x03`). **Events** (graphical
+programs like the cube) use `poll_key`, reading the keyboard device
+(`0x1007_0000`): it returns a packed event (bit 16 = pressed, bits 15..0 =
+scancode) or -1 when empty. The GUI pushes raw key events there while the FB tab is
+focused (letters as uppercase ASCII, arrows in `0x80`-`0x83`) and mirrors
+Ctrl+letter to the UART so Ctrl-C can still interrupt a graphical foreground job.
 
-- `frame[2]` (sp) = stack top for this pid
-- `frame[32]` (sepc) = `entry_pc`
-- `frame[35]` (sstatus) = `0x13` (UIE=1, SIE=1, SPIE=1, SPP=0 for U-mode on `sret`)
 
-`process_peek_pid` returns the pid that the next `process_create` will assign, which `sys_exec`
-uses to place a program's code at the matching per-pid `0x4000_0000` code slot before creating it.
+## 8. Filesystem (`fs.hll`)
 
-### 10.3 Scheduler
+### 8.1 On-disk layout
 
-The scheduler maintains a singly-linked FIFO ready queue (`ready_queue_head`) and a pointer
-to the currently-running process (`current_process`).
-
-`schedule(frame, action)`:
-1. If `current_process != null`: copy the live trap frame into `current_process.trap_frame`.
-   - `action == SYSACT_EXIT_SCHEDULE`: mark state EXITED (not re-enqueued).
-   - Otherwise: mark state READY and append to the tail of the ready queue.
-2. Dequeue the head of the ready queue as `next`.
-3. Copy `next.trap_frame` over the live trap frame; `sret` restores it.
-
-The CLINT timer interrupt (S-mode cause 5) calls `schedule(frame, SYSACT_SCHEDULE)` after
-re-arming MTIMECMP, implementing preemptive round-robin at 1,000,000-cycle intervals.
-
-### 10.4 User Process and Filesystem Injection
-
-The test harness places the pid-1 binary and (optionally) a filesystem image into physical RAM
-before the kernel starts:
-
-| Physical Address | Content |
-|-----------------|---------|
-| `0x87F0_0000` | pid-1 user binary pages (raw, starting at offset 0); the shell or a test program |
-| `0x87EF_F000` | User metadata: bytes `[0..8)` = entry VA, `[8..16)` = size in bytes |
-| `0x87C0_0000` | Filesystem image (superblock, inode table, bitmap, data blocks) |
-| `0x87BF_F000` | Filesystem metadata: bytes `[0..8)` = image PA, `[8..16)` = image size |
-
-During `spawn_user_process` the kernel:
-1. Reads entry VA and size from the user metadata page.
-2. Allocates `ceil(size/4096)` physical pages via `pmm_alloc`.
-3. Copies each source page with `memcpy`.
-4. Maps each page at user VA `0x4000_0000 + offset` with flags R+W+X+U (VMM_V added internally).
-5. Calls `process_create(entry_va)` then `scheduler_add(pcb)`.
-
-`boot_filesystem` then reads the filesystem metadata page; if the image PA is non-zero it calls
-`fs_init(image_pa, image_size)` to validate the magic and mount it. The first timer interrupt
-context-switches into pid 1 via `sret`. When pid 1 is the shell, additional processes are created
-later at runtime through `sys_exec` rather than by injection.
-
-### 10.5 Filesystem Layout
-
-The filesystem image is a contiguous region with a fixed block layout (4 KiB blocks):
+The image is a contiguous region of 4 KiB blocks:
 
 | Block | Content |
 |-------|---------|
-| 0 | Superblock (magic `"HLLFS"`, block/inode/free counts, inode bitmap) |
+| 0 | Superblock (magic `"HLLFS"`, counts, inode bitmap) |
 | 1-8 | Inode table (256 inodes x 128 bytes) |
 | 9 | Free-block bitmap (1 bit per data block) |
 | 10+ | Data blocks |
 
-Each 128-byte inode stores a type (free/file/dir), parent inode, size, a 32-byte name, and up to
-44 direct block pointers (176 KiB maximum file size, enough for executable images). Directories
-store 36-byte entries (32-byte name + inode index). Paths are absolute and resolved from the root
-directory at inode 0. Open files use a 16-slot kernel descriptor table; descriptors 0 and 1 are
-reserved for the UART, so filesystem fds start at 2.
+### 8.2 Inodes and directories
+
+Each 128-byte inode stores a type (free/file/dir), parent inode, size, a 32-byte
+name, and up to 44 direct block pointers (176 KiB max file -- enough for executable
+images). Directories store 36-byte entries (32-byte name + inode index). Paths are
+absolute and resolved from the root directory at inode 0.
+
+### 8.3 Descriptors and operations
+
+Open files use a 16-slot kernel descriptor table; fds 0 and 1 are reserved for the
+UART, so file fds start at 2. `fs_open`/`read`/`write`/`close` plus
+`fs_create`/`mkdir`/`rename`/`stat`/`readdir`/`unlink`/`rmdir` back the
+corresponding syscalls (7.2).
+
+### 8.4 Image injection
+
+The test harness and GUI place the image in RAM before boot; `boot_filesystem`
+reads its metadata page and calls `fs_init` to validate the magic and mount it.
+Addresses are in Appendix A.
+
+
+## 9. Standard library (`stdlib/`)
+
+Three bundles share `common/` and are selected by the compiler's target mode (see
+`_LANG_SPECIFICATIONS.md` / `_IR_SPECIFICATIONS.md` for mode selection; this
+chapter documents only what the bundles provide).
+
+### 9.1 `common/`
+
+`types` (width aliases), `mem` (`memset`/`memcpy`/`memmove`/`memcmp`),
+`memory_allocator` (`malloc`/`free` over the static heap, 4.2), `string_utils`
+(`str_*`), and `klog` (`klog_ok`/`warn`/`error`/`int`/`hex` -- formatted UART log).
+
+### 9.2 `freestanding/`
+
+`entry` (`_start` -> `main` -> SYSCON halt), `console` (direct NS16550A MMIO:
+`console_putchar`/`write`/`writeln`/`print_int`/`print_hex`), and `runtime`
+(`kpanic` = UART message + WFI loop). For bare-metal programs without a kernel.
+
+### 9.3 `hosted/`
+
+`runtime` (`_start` -> `main` -> `exit` via Linux ecalls) and `syscalls` (the
+userspace `sc_*` wrappers for the syscalls in 7.2, plus C-string helpers). Linked
+by U-mode programs that run under the kernel.
+
+### 9.4 HAL primitives
+
+The kernel bundle calls these directly (no syscall layer); implementations are in
+`utilities.hll` and `freestanding/console.hll`. Console: `console_putchar`/`write`/
+`writeln`/`print_int`/`print_hex`. Halt/panic: `kshutdown` (write exit code to
+SYSCON `0x1001_0000`), `kpanic`. Timer/IRQ: `timer_get` (CLINT MTIME `0x0200_BFF8`),
+`timer_set` (MTIMECMP hart 0 `0x0200_4000`), `plic_init` (enable UART source 10 on
+S-mode context 1), `trap_init` (install `stvec`, enable STIE+SEIE). MMIO is reached
+through `asm {}` blocks (a `li` of the device address then a load/store) because in
+S-mode `sp` may hold a user VA and `ecall` is unavailable.
+
+
+## 10. Userspace programs (`user/`)
+
+### 10.1 Shell (`shell.hll`)
+
+The interactive shell boots as pid 1. Built-ins: `ls`, `cd`, `cat`, `edit`, `run`
+(`[&]` to background), `as`, `touch`, `mkdir`, `rm`, `rmdir`, `mv`, `jobs`,
+`fg <id>`, `help`, `exit`. It reads a line over the UART (`sh_read_line`, echoing
+and handling Backspace), resolves relative paths against `cwd` (`sh_join_path`),
+and dispatches by prefix. Foreground programs are run via `exec` + `waitpid`
+(7.2); background jobs go in an 8-slot table (`job_pids`, job id = slot + 1).
+Note: the table is `i64[8]` and must be indexed with `job_pids[i]` (type-scaled);
+raw `base + i` is byte-scaled in HLL (lang spec 4.2) and would overlap slots.
+
+### 10.2 Line editor (`edit.hll`)
+
+`/bin/edit.fexe` is an `ed`-style line editor over a line-array model (the GUI
+terminal renders no cursor codes, so a visual editor is not possible). Commands:
+`p` (numbered, current-line marker), `N` goto, `a`/`i` append/insert, `d [N]`
+delete, `c` clear, `r` replace, `s/old/new/`, `w`/`q`/`h`. Launched by the shell's
+`edit` with the absolute path as its argument.
+
+### 10.3 In-VM assembler (`as.hll`)
+
+`/bin/as.fexe` closes the self-hosting loop: `as <src> <out>` assembles a `.s` file
+into a runnable FEXE inside the VM. It runs a two-pass label resolver (pass 1
+assigns byte offsets, pass 2 encodes), wraps the flat binary in FEXE (entry 0), and
+writes `<out>`; `run <out>` then execs it. Subset: `add sub and or xor` (R-type),
+`addi`, `li`, `mv`, `j`, `beq`/`bne`, `ecall`, `ret`; ABI or `x0`..`x31` register
+names; `;`/`#` comments; decimal/hex/negative immediates. Encodings mirror the host
+`asm-to-binary` backend.
+
+It appends 8 trailing NOPs after the program. A flat program ending in `ecall` has
+no valid instruction after it; the pipeline speculatively fetches the next word,
+and the zero page-fill decodes as an illegal instruction. Illegal instructions are
+not delegated by `medeleg`, so the trap goes to M-mode (`_m_trap`), which services
+it as `sys_exit` to SYSCON and halts the VM -- bypassing the kernel's exit path. The
+NOPs keep the speculative fetch valid so the exit `ecall` traps cleanly to S-mode.
+
+### 10.4 Framebuffer demos (`cube.hll`, `fbdemo.hll`)
+
+`/bin/cube.fexe` animates a spinning wireframe cube and `/bin/fbdemo.fexe` renders a
+Mandelbrot set; both use `map_fb` (7.5) and native `f64` math. The cube enables
+double buffering and `FILL`-clears then `PRESENT`s each frame (no flicker) and
+reads WASD via `poll_key`. Run them from the shell and view in the Machine window's
+FB tab.
+
+### 10.5 Hello and examples
+
+`user_hello.hll` prints a greeting via `sys_write` then yields in a loop (a minimal
+pid-1). `user/examples/sum.s` (=55) and `fib.s` (=89) are sample assembly inputs for
+the in-VM assembler, installed under `/home`.
+
+
+## Appendix: Memory map quick reference
+
+| Address | Device / region |
+|---------|-----------------|
+| `0x0000_0000` | Boot ROM (firmware) |
+| `0x0200_0000` | CLINT (MSIP `+0`, MTIMECMP `+0x4000`, MTIME `+0xBFF8`) |
+| `0x0C00_0000` | PLIC (S-mode context 1 claim/complete `0x0C20_1004`) |
+| `0x1000_0000` | UART (NS16550A; IER `+1`, LSR `+5`) |
+| `0x1001_0000` | SYSCON (write exit code to halt) |
+| `0x1002_0000` | Framebuffer device (76 pages; control page after pixels) |
+| `0x1007_0000` | Keyboard event device |
+| `0x8000_0000` | RAM (128 MiB): kernel image + 64 KiB stack at base |
+| `0x8010_0000 .. 0x87F0_0000` | PMM page pool |
+| `0x87C0_0000` | Filesystem image |
+| `0x87BF_F000` | FS metadata (PA, size) |
+| `0x87EF_F000` | User metadata (entry VA, size) |
+| `0x87F0_0000` | pid-1 user binary pages |
+
+User virtual addresses (per process, in its own root): code `0x4000_0000`, stack
+top `0x8000_0000`, framebuffer `0x5000_0000`.
+

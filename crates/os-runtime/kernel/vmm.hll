@@ -1,5 +1,4 @@
-; Sv39 VMM: 3-level tables (L2->L1->L0), 4 KiB pages, 512 entries per level.
-; VA bits [63:39] must sign-extend bit 38 (canonical); lower half is identity-mapped.
+; Sv39 paging: 3-level tables, 4 KiB pages, per-process roots. See OS spec ch.4.3.
 ; PTE bits: [53:10] PPN, [7] D, [6] A, [5] G, [4] U, [3] X, [2] W, [1] R, [0] V.
 
 external pmm_alloc: () -> u8*
@@ -31,9 +30,7 @@ assert_canonical: (va: u64) {
 ; Physical address of the boot/kernel Sv39 root (L2) page table (0 = uninitialised).
 vmm_root: u64 = 0
 
-; Physical address of the root that vmm_map / vmm_map_1gib currently walk.
-; Defaults to the boot root; per-process creation points it at each new root so
-; user mappings land in the right address space without touching satp.
+; Root that vmm_map walks (distinct from satp). See OS spec ch.4.4.
 vmm_active_root: u64 = 0
 
 ; Set the root that subsequent vmm_map / vmm_map_1gib calls write into.
@@ -92,12 +89,8 @@ vmm_map_1gib: (va: u64, pa: u64, flags: u64) {
     @l2[vpn2] = ((pa >> 12) << 10) + flags + VMM_V
 }
 
-; Stamp the kernel image, RAM, and MMIO mappings into `root` so every per-process
-; address space can fault into the kernel while the process's satp is active.
-; Uses 1 GiB superpages, matching the boot identity map:
-;   0x00000000  devices (UART/CLINT/PLIC low range)  R+W+G
-;   0x80000000  main RAM (kernel image, PMM, FS image) R+W+X+G
-;   0xC0000000  high range                            R+W+X+G
+; Stamp the shared kernel/RAM/MMIO 1 GiB superpages into `root` so every process
+; can fault into the kernel under its own satp. See OS spec ch.4.3.
 vmm_map_kernel: (root: u64) {
     vmm_set_root(root)
     vmm_map_1gib(0x00000000, 0, 38)
@@ -116,10 +109,8 @@ vmm_new_root: () -> u64 {
     return root_pa
 }
 
-; Copy every user (U-flagged) 4 KiB page from parent_root into child_root: a fresh
-; physical page, memcpy, and a matching mapping. Kernel superpages are skipped
-; (already shared via vmm_map_kernel). Walks the 3-level table, R/W/X-clear PTEs
-; are interior nodes and the rest are leaves.
+; Deep-copy the parent's user (U-flagged) pages into child_root for fork;
+; kernel superpages stay shared. See OS spec ch.4.3.
 vmm_fork_copy: (parent_root: u64, child_root: u64) {
     l2: u64* = parent_root as u64*
     i2: u64 = 0

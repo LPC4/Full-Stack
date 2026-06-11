@@ -397,9 +397,8 @@ fs_resolve: (path: u8*) -> i64 {
     return -1 as i64
 }
 
-; Split an absolute path into its parent inode and leaf name.
-; The leaf name (max FS_NAME_LEN-1 chars) is written into name_buf.
-; Returns the parent inode, or -1 on error.
+; Split an absolute path into its parent inode (returned) and leaf name
+; (written to name_buf); -1 on error.
 fs_split_path: (path: u8*, name_buf: u8*) -> i64 {
     path_len: u64 = 0
     while @(path + path_len) != 0 {
@@ -803,9 +802,8 @@ fs_release_inode: (inode: u64) {
     fs_free_inode(inode)
 }
 
-; Remove the regular file at an absolute path: detach it from its parent
-; directory, free its data blocks, and free its inode. Refuses directories
-; (use fs_rmdir). Returns 0 on success, -1 on error.
+; Remove a regular file: detach from parent, free data blocks and inode.
+; Refuses directories (use fs_rmdir). 0 on success, -1 on error.
 fs_unlink: (path: u8*) -> i64 {
     if fs_ready == 0 {
         return -1 as i64

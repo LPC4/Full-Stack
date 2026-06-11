@@ -4,6 +4,7 @@ external klog_hex:          (label: u8*, val: u64)
 external timer_set:         (interval: u64)
 external syscall_dispatch:  (frame: u64*) -> u64
 external schedule:          (frame: u64*, action: u64)
+external scheduler_wake_input_waiter: () -> u64
 kernel_tick: u64
 
 trap_handler: (frame: u64*) {
@@ -30,7 +31,8 @@ trap_handler: (frame: u64*) {
             return
         }
 
-        ; External interrupt (cause 9): claim/complete via PLIC.
+        ; External interrupt (cause 9): UART RX. Claim/complete via PLIC, then
+        ; wake the process sleeping on input and run it next.
         if cause_code == 9 {
             asm {
                 ; Claim: read PLIC S-mode claim register for hart 0 context 1
@@ -38,6 +40,15 @@ trap_handler: (frame: u64*) {
                 lw   t1, 0(t0)
                 ; Complete: write the same IRQ number back
                 sw   t1, 0(t0)
+            }
+            ; Mask the RX IRQ until consumed (else it re-fires and livelocks);
+            ; the reader re-arms it when it next sleeps. See OS spec ch.6.4.
+            ier: u8* = 0x10000001 as u8*
+            @ier = 0 as u8
+            ; Wake the input sleeper (pushed to the ready-queue front) and
+            ; preempt the current job so it runs immediately.
+            if scheduler_wake_input_waiter() == 1 {
+                schedule(frame, 1)
             }
             return
         }

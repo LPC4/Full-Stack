@@ -39,9 +39,8 @@ external vmm_set_root: (root_pa: u64)
 external kpanic:       (msg: u8*)
 external klog_ok:      (msg: u8*)
 
-; Top of every process's user stack. Each process owns a private Sv39 root, so
-; all processes can share the same canonical stack VA without colliding; the
-; address spaces are kept disjoint physically rather than by VA slotting.
+; Canonical user-stack top, shared by all processes (isolation is per-root, not
+; by VA slotting). See OS spec ch.4.3.
 const USER_STACK_BASE = 0x80000000
 
 next_pid: u64 = 1
@@ -104,9 +103,8 @@ process_create: (entry_pc: u64) -> u64* {
     return process_create_at(entry_pc, USER_STACK_BASE)
 }
 
-; Allocate a zeroed PCB and assign the next pid, but build no address space and
-; map no stack. Used by fork, which supplies the child's root and copies the
-; parent's memory and trap frame itself.
+; Allocate a zeroed PCB with the next pid but no address space or stack.
+; Used by fork, which supplies the child's root and copies memory itself.
 process_alloc: () -> u64* {
     pcb_bytes: u8* = kmalloc(PCB_SIZE)
     memset(pcb_bytes, 0, PCB_SIZE)
@@ -118,8 +116,7 @@ process_alloc: () -> u64* {
 }
 
 ; --- PCB field accessors ---
-; Keep PCB layout knowledge in this module; callers use these instead of raw
-; index arithmetic.
+; Keep PCB layout (OS spec ch.5.1) here; callers use these, not raw indices.
 
 process_pid: (pcb: u64*) -> u64 {
     return @pcb[0]

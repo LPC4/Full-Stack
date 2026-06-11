@@ -15,11 +15,14 @@ current_process:  u64* = null
 ready_queue_head: u64* = null
 ; EXITED processes waiting to be reaped by their parent (linked via field [2]).
 zombie_head:      u64* = null
+; The single process BLOCKED waiting for UART input. Woken by the UART RX interrupt. null if none.
+input_waiter:     u64* = null
 
 scheduler_init: () {
     current_process  = null
     ready_queue_head = null
     zombie_head      = null
+    input_waiter     = null
     klog_ok("scheduler ready".data)
 }
 
@@ -43,17 +46,30 @@ scheduler_add: (pcb: u64*) {
 }
 
 ; --- Context switch ---
-; Save trap frame into current PCB, restore next READY process. action=2 marks EXITED.
-
+; Save the current frame, restore the next process. action: 0/1 yield, 2 exit,
+; 3 block. See OS spec ch.5.4 and 7.3.
 schedule: (frame: u64*, action: u64) {
+    ; A block with nothing else to run would strand the caller: leave it RUNNING
+    ; to retry and clear the waiter.
+    if action == 3 {
+        if ready_queue_head == null {
+            input_waiter = null
+            return
+        }
+    }
+
     if current_process != null {
         memcpy((current_process as u64 + 40) as u8*, frame as u8*, 288)
 
         if action == 2 {
             @current_process[1] = 3  ; EXITED
         } else {
-            @current_process[1] = 0  ; READY
-            scheduler_add(current_process)
+            if action == 3 {
+                @current_process[1] = 2  ; BLOCKED (not re-enqueued; woken later)
+            } else {
+                @current_process[1] = 0  ; READY
+                scheduler_add(current_process)
+            }
         }
     }
 
@@ -68,6 +84,26 @@ schedule: (frame: u64*, action: u64) {
     ; Switch into the next process's address space before restoring its context.
     vmm_switch(@next[41])
     memcpy(frame as u8*, (next as u64 + 40) as u8*, 288)
+}
+
+; Record the process about to block on UART input so the RX interrupt can wake
+; it. There is only one such reader at a time (the foreground input consumer).
+scheduler_set_input_waiter: (pcb: u64*) {
+    input_waiter = pcb
+}
+
+; Wake the input-blocked process to the front of the ready queue; 1 if woken.
+; Called from the UART RX interrupt. See OS spec ch.6.4.
+scheduler_wake_input_waiter: () -> u64 {
+    w: u64* = input_waiter
+    if w == null {
+        return 0
+    }
+    input_waiter = null
+    @w[1] = 0  ; READY
+    @w[2] = ready_queue_head as u64
+    ready_queue_head = w
+    return 1
 }
 
 ; Return 1 if the ready queue is empty, 0 otherwise.
@@ -92,6 +128,22 @@ scheduler_pid_in_queue: (pid: u64) -> u64 {
     return 0
 }
 
+; Return 1 if the pid names a live process (RUNNING, READY, or BLOCKED on input),
+; 0 if it is a zombie or unknown.
+scheduler_pid_alive: (pid: u64) -> u64 {
+    if current_process != null {
+        if @current_process[0] == pid {
+            return 1
+        }
+    }
+    if input_waiter != null {
+        if @input_waiter[0] == pid {
+            return 1
+        }
+    }
+    return scheduler_pid_in_queue(pid)
+}
+
 ; --- Zombie (EXITED, unreaped) bookkeeping ---
 
 ; Add an EXITED process to the zombie list so its parent can later reap its
@@ -99,6 +151,18 @@ scheduler_pid_in_queue: (pid: u64) -> u64 {
 scheduler_make_zombie: (pcb: u64*) {
     @pcb[2] = zombie_head as u64
     zombie_head = pcb
+}
+
+; Find the EXITED zombie with this exact pid (pids are unique), or null.
+scheduler_find_zombie_pid: (pid: u64) -> u64* {
+    curr: u64* = zombie_head
+    while curr != null {
+        if @curr[0] == pid {
+            return curr
+        }
+        curr = (@curr[2]) as u64*
+    }
+    return null
 }
 
 ; Find an EXITED child of parent_pid awaiting reaping. Returns its PCB or null.
@@ -131,15 +195,34 @@ scheduler_remove_zombie: (pcb: u64*) {
     }
 }
 
-; Remove the first READY child of parent_pid from the ready queue and mark it
-; EXITED, dropping it without reaping. Used by Ctrl-C to tear down a foreground
-; child. Returns 1 if a child was killed, 0 if none was queued. The PCB and its
-; page tables are leaked (consistent with zombie teardown elsewhere).
+; Ctrl-C teardown: unlink the first READY child of parent_pid and mark it EXITED
+; (PCB/page tables leaked); 1 if killed. See OS spec ch.6.5.
 scheduler_kill_child: (parent_pid: u64) -> u64 {
     prev: u64* = 0 as u64*
     curr: u64* = ready_queue_head
     while curr != null {
         if @curr[PCB_IDX_PARENT_PID] == parent_pid {
+            if prev == null {
+                ready_queue_head = (@curr[2]) as u64*
+            } else {
+                @prev[2] = @curr[2]
+            }
+            @curr[1] = 3  ; EXITED
+            return 1
+        }
+        prev = curr
+        curr = (@curr[2]) as u64*
+    }
+    return 0
+}
+
+; Pid-targeted Ctrl-C teardown: unlink the READY process with this exact pid and
+; mark it EXITED (PCB/page tables leaked); 1 if killed. See OS spec ch.6.5.
+scheduler_kill_pid: (pid: u64) -> u64 {
+    prev: u64* = 0 as u64*
+    curr: u64* = ready_queue_head
+    while curr != null {
+        if @curr[0] == pid {
             if prev == null {
                 ready_queue_head = (@curr[2]) as u64*
             } else {

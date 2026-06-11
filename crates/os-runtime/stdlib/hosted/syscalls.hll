@@ -1,8 +1,5 @@
-; Userspace syscall wrappers and C-string helpers, shared by the hosted user
-; programs (shell, editor, assembler, framebuffer demos). Each wrapper marshals
-; arguments through globals because inline asm cannot reach HLL locals, issues an
-; ecall, and stores a0 back. These were previously duplicated in every user
-; program; they now live in the hosted stdlib so programs link against them.
+; Userspace syscall wrappers (sc_*) and C-string helpers. Args go through globals
+; since inline asm cannot reach locals. Numbers and semantics: OS spec ch.7.
 
 ; --- Syscall argument marshalling ---
 
@@ -299,6 +296,21 @@ sc_fork: () -> i64 {
 sc_wait: () -> i64 {
     asm {
         li a7, 260
+        ecall
+        la t0, _ret
+        sd a0, 0(t0)
+    }
+    return _ret
+}
+
+; Wait for a specific child by pid (syscall 261). Returns its exit code, the
+; interrupt sentinel (-2) on Ctrl-C, or -1 if pid is not a child of the caller.
+sc_waitpid: (pid: i64) -> i64 {
+    _a0 = pid as u64
+    asm {
+        la t0, _a0
+        ld a0, 0(t0)
+        li a7, 261
         ecall
         la t0, _ret
         sd a0, 0(t0)

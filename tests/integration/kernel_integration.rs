@@ -129,13 +129,15 @@ fn compile_hosted(src: &str) -> AssembledOutput {
 // Boot the kernel, optionally injecting an FS image and a pid-1 user binary, and
 // optionally pre-loading a UART session. Returns the VM (for post-run peeks),
 // the final outcome, and the captured UART output.
-fn boot_kernel(
+// Set up a booted kernel VM (RAM layout + optional FS image + pid-1 user binary
+// + front-loaded UART input) without running it, so callers can either run it in
+// one shot (boot_kernel) or step it manually and inject input mid-run.
+fn setup_kernel_vm(
     kernel: &AssembledOutput,
     user: Option<&AssembledOutput>,
     fs_image: Option<&[u8]>,
     input: &str,
-    max_steps: u64,
-) -> (VirtualMachine, StepOutcome, String) {
+) -> VirtualMachine {
     let mut vm = VirtualMachine::new_kernel(kernel);
 
     if let Some(image) = fs_image {
@@ -164,6 +166,17 @@ fn boot_kernel(
         vm.push_uart_rx(b);
     }
 
+    vm
+}
+
+fn boot_kernel(
+    kernel: &AssembledOutput,
+    user: Option<&AssembledOutput>,
+    fs_image: Option<&[u8]>,
+    input: &str,
+    max_steps: u64,
+) -> (VirtualMachine, StepOutcome, String) {
+    let mut vm = setup_kernel_vm(kernel, user, fs_image, input);
     let run = vm.run(max_steps);
     (vm, run.outcome, run.uart_output)
 }
@@ -1033,6 +1046,194 @@ main: () -> i32 {
     );
 }
 
+// Two concurrent background jobs must each occupy a distinct job-table slot.
+#[test]
+fn kernel_shell_two_background_jobs_keep_distinct_slots() {
+    let shell = compile_hosted(user::SHELL);
+    let spin = r#"
+external sc_exit: (code: i64)
+main: () -> i32 {
+    i: u64 = 0
+    while 1 == 1 { i = i + 1 }
+    sc_exit(0)
+    return 0
+}
+"#;
+    let a = compile_hosted(spin);
+    let b = compile_hosted(spin);
+    let a_exec = assembled_to_exec_file(&a);
+    let b_exec = assembled_to_exec_file(&b);
+    let image = build_fs_image(&[
+        FsEntry::File { path: "/a.fexe", data: &a_exec },
+        FsEntry::File { path: "/b.fexe", data: &b_exec },
+    ]);
+
+    let session = "run /a.fexe &\njobs\nrun /b.fexe &\njobs\nexit\n";
+    let (_, outcome, uart) =
+        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 60_000_000);
+
+    assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
+    // No slot was corrupted: no job is ever reaped with a bogus/garbage pid, and
+    // neither real pid (2, 3) is ever reported "done" -- both spin forever.
+    assert!(!uart.contains("] done   pid "), "a live job was wrongly reaped; uart={uart:?}");
+    assert!(
+        !uart.contains("no background jobs"),
+        "a background job vanished from the table; uart={uart:?}"
+    );
+    // Both jobs must appear, each on its own job id, in the final listing.
+    assert!(uart.contains("[1] pid 2"), "job 1 missing; uart={uart:?}");
+    assert!(uart.contains("[2] pid 3"), "job 2 missing; uart={uart:?}");
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "shell did not exit cleanly; outcome={outcome:?} uart={uart:?}"
+    );
+}
+
+// Console interrupt takeover + `jobs` while a background job runs (PLAN 1.1/1.2).
+// Unlike kernel_shell_background_job_runs_and_fg_reaps_it (which front-loads the
+// whole session into the UART, so the shell never actually blocks), this drives
+// input the way the GUI does: input is injected MID-RUN, only after the shell has
+// reached its blocking read. That exercises the path that was previously untested
+// -- the shell sleeping in readchar (UART RX interrupt armed), a background job
+// running on the CPU in the meantime, and an incoming byte raising the RX
+// interrupt to wake the shell ("the console takes over") so it can list the job.
+// Regression guard for "jobs shows nothing while a background job is running".
+#[test]
+fn kernel_shell_interrupt_wake_lists_running_background_job() {
+    let shell = compile_hosted(user::SHELL);
+    // A background job that runs forever and never reads input, so it stays the
+    // sole runnable process while the shell is blocked waiting for a keystroke.
+    let spinner = compile_hosted(
+        r#"
+external sc_exit: (code: i64)
+main: () -> i32 {
+    i: u64 = 0
+    while 1 == 1 {
+        i = i + 1
+    }
+    sc_exit(0)
+    return 0
+}
+"#,
+    );
+    let spinner_exec = assembled_to_exec_file(&spinner);
+    let image = build_fs_image(&[FsEntry::File { path: "/spin.fexe", data: &spinner_exec }]);
+
+    // No front-loaded input: the shell must block in readchar between commands.
+    let mut vm = setup_kernel_vm(cached_kernel(), Some(&shell), Some(&image), "");
+    let mut out = String::new();
+
+    // Helper: inject a line, then step until `marker` shows in the UART output.
+    // Stepping past the blocking read proves the RX interrupt woke the shell.
+    let feed = |vm: &mut VirtualMachine, out: &mut String, line: &[u8], marker: &str| {
+        for b in line {
+            vm.push_uart_rx(*b);
+        }
+        for _ in 0..30_000_000u64 {
+            let _ = vm.step();
+            let bytes = vm.uart_output();
+            out.push_str(&String::from_utf8_lossy(&bytes));
+            if out.contains(marker) {
+                return true;
+            }
+        }
+        false
+    };
+
+    // Boot to the prompt (the shell is now blocked in its first readchar).
+    for _ in 0..5_000_000u64 {
+        let _ = vm.step();
+        let bytes = vm.uart_output();
+        out.push_str(&String::from_utf8_lossy(&bytes));
+        if out.contains("shell ready") {
+            break;
+        }
+    }
+    assert!(out.contains("shell ready"), "shell never booted; out={out:?}");
+
+    // Background a forever-spinner; the announcement proves exec returned to the
+    // prompt instead of blocking, and the shell then sleeps in readchar again.
+    assert!(feed(&mut vm, &mut out, b"run /spin.fexe &\n", "] pid "),
+        "background job was not announced; out={out:?}");
+
+    // While the spinner runs, type `jobs`. The byte must raise the RX interrupt,
+    // wake the blocked shell, and list the job as running -- not "no background
+    // jobs" (which would mean the live job had been wrongly reaped from the table).
+    assert!(feed(&mut vm, &mut out, b"jobs\n", "running"),
+        "interactive `jobs` did not list the running background job; out={out:?}");
+    assert!(
+        !out.contains("no background jobs"),
+        "shell reported no jobs while one was running; out={out:?}"
+    );
+}
+
+// Background jobs (PLAN 1.2): `run <file> &` execs without waiting and returns to
+// the prompt; `jobs` lists the job; `fg <n>` waits on it and reaps the exact exit
+// code via the pid-targeted waitpid syscall (261). The background child spins
+// before printing, so its announcement "[1] pid N" (printed the instant exec
+// returns) must appear before the child's "SLOW_DONE" -- proof the shell returned
+// to the prompt and kept running concurrently with the child rather than blocking.
+#[test]
+fn kernel_shell_background_job_runs_and_fg_reaps_it() {
+    let shell = compile_hosted(user::SHELL);
+
+    let slow = compile_hosted(
+        r#"
+external console_writeln: (str: u8*)
+external sc_exit: (code: i64)
+spin: () {
+    i: u64 = 0
+    while i < 2000000 {
+        i = i + 1
+    }
+}
+main: () -> i32 {
+    spin()
+    console_writeln("SLOW_DONE".data)
+    sc_exit(7)
+    return 0
+}
+"#,
+    );
+    let slow_exec = assembled_to_exec_file(&slow);
+
+    let image = build_fs_image(&[FsEntry::File {
+        path: "/slow.fexe",
+        data: &slow_exec,
+    }]);
+
+    let session = "run /slow.fexe &\njobs\nfg 1\nexit\n";
+    let (_, outcome, uart) =
+        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 200_000_000);
+
+    assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
+    // The job was backgrounded (announced with a job id and pid).
+    assert!(uart.contains("] pid "), "background job was not announced; uart={uart:?}");
+    assert!(uart.contains("SLOW_DONE"), "background child did not run; uart={uart:?}");
+    // fg reaped the exact exit code through the pid-targeted wait.
+    assert!(
+        uart.contains("[exit 7]"),
+        "fg did not reap the child's exit code (7); uart={uart:?}"
+    );
+
+    // Concurrency: the prompt returned and printed the job announcement before the
+    // child finished its spin (the shell did not block on the background job).
+    let announce = uart.find("] pid ").expect("job announcement");
+    let slow_done = uart.find("SLOW_DONE").expect("slow done");
+    assert!(
+        announce < slow_done,
+        "shell blocked on the background job instead of returning to the prompt; uart={uart:?}"
+    );
+    // fg waited for completion: the exit report follows the child's own output.
+    let exit_at = uart.find("[exit 7]").expect("exit report");
+    assert!(slow_done < exit_at, "fg reported exit before the child finished; uart={uart:?}");
+
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "shell did not exit cleanly after the job; outcome={outcome:?} uart={uart:?}"
+    );
+}
+
 // --- fork / wait (merged from kernel_fork.rs) ---
 
 #[test]
@@ -1092,6 +1293,87 @@ main: () -> i32 {
     let child_at = uart.find("CHILD_RAN").unwrap();
     let reaped_at = uart.find("PARENT_REAPED_42").unwrap();
     assert!(child_at < reaped_at, "parent reaped before the child ran; uart={uart:?}");
+}
+
+// Preemptive scheduling: the timer interrupt must time-slice two compute-bound
+// processes, not just switch on voluntary syscalls. pid 1 forks; both parent and
+// child emit a marker char after a tight compute-only spin (no syscalls between
+// marks), so ONLY the timer interrupt can switch from one to the other mid-loop.
+// Interleaved A/B output proves preemption; a fully sequential AAAA...BBBB run
+// would mean the timer never preempts (each process runs to completion, then
+// yields at wait). This is the foundation for background jobs (PLAN 1.2).
+#[test]
+fn scheduler_timer_preempts_compute_bound_processes() {
+    let parent = compile_hosted(
+        r#"
+external console_writeln: (str: u8*)
+external sc_fork:  () -> i64
+external sc_wait:  () -> i64
+external sc_exit:  (code: i64)
+external sc_write: (fd: i64, buf: u8*, len: u64) -> i64
+
+; A compute-only delay long enough that the 1e6-cycle timer fires within it.
+spin: () {
+    i: u64 = 0
+    while i < 600000 {
+        i = i + 1
+    }
+}
+
+main: () -> i32 {
+    console_writeln("SENTINEL_START".data)
+    pid: i64 = sc_fork()
+    if pid == 0 {
+        n: u64 = 0
+        while n < 8 {
+            spin()
+            sc_write(1, "B".data, 1)
+            n = n + 1
+        }
+        sc_exit(0)
+    }
+    m: u64 = 0
+    while m < 8 {
+        spin()
+        sc_write(1, "A".data, 1)
+        m = m + 1
+    }
+    sc_wait()
+    console_writeln("SENTINEL_END".data)
+    sc_exit(0)
+    return 0
+}
+"#,
+    );
+
+    let image = build_fs_image(&[]);
+    let (_, _outcome, uart) =
+        boot_kernel(cached_kernel(), Some(&parent), Some(&image), "", 200_000_000);
+
+    assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
+
+    // Everything between the two sentinels is emitted only by the two user
+    // processes (the kernel logs nothing to the UART once pid 1 is running).
+    let start = uart.find("SENTINEL_START").expect("start sentinel missing") + "SENTINEL_START".len();
+    let end = uart.find("SENTINEL_END").expect("end sentinel missing");
+    assert!(start <= end, "sentinels out of order; uart={uart:?}");
+    let marks: String = uart[start..end].chars().filter(|c| *c == 'A' || *c == 'B').collect();
+
+    let a_count = marks.chars().filter(|c| *c == 'A').count();
+    let b_count = marks.chars().filter(|c| *c == 'B').count();
+    assert!(a_count > 0 && b_count > 0, "both processes must emit marks; marks={marks:?}");
+
+    // Count A<->B transitions. A fully sequential run (no preemption) has exactly
+    // one transition; genuine time-slicing produces several.
+    let transitions = marks
+        .as_bytes()
+        .windows(2)
+        .filter(|w| w[0] != w[1])
+        .count();
+    assert!(
+        transitions >= 3,
+        "timer did not preempt: output is nearly sequential ({transitions} transitions); marks={marks:?}"
+    );
 }
 
 // --- Per-process address-space isolation (merged from kernel_isolation.rs) ---

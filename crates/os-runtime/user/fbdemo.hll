@@ -1,8 +1,5 @@
-; Framebuffer demo: maps the framebuffer (map_fb, syscall 107) and renders the
-; Mandelbrot set, then exits.
-;
-; The complex-plane window is chosen so one pixel is square: the x and y steps
-; are equal (dx == dy), which keeps the set from looking stretched.
+; Framebuffer demo: map_fb, render the Mandelbrot set (square pixels), exit.
+; See OS spec ch.10.4.
 
 external console_writeln: (str: u8*)
 ; Map the framebuffer (syscall 107); returns its base VA (0 on failure).

@@ -1,20 +1,5 @@
-; Minimal in-VM RV64I assembler. Launched by the shell as `as <src> <out>`:
-; the shell joins both operands to absolute paths and passes them as one
-; space-separated argument string in the USER_ARG_BASE page. This program reads
-; a small assembly subset, assembles it with a two-pass label resolver, wraps the
-; flat machine code in the FEXE container, and writes it to <out>. `run <out>`
-; then executes it through the existing sys_exec path.
-;
-; Supported subset (very small on purpose):
-;   add sub and or xor  (rd, rs1, rs2)
-;   addi                (rd, rs1, imm)
-;   li                  (rd, imm)   -- addi, or lui+addi for wide immediates
-;   mv                  (rd, rs)    -- addi rd, rs, 0
-;   j label             -- jal x0, off
-;   beq/bne rs1, rs2, label
-;   ecall, ret          -- ret = jalr x0, ra, 0
-; Labels: `name:` on its own line or before an instruction. Comments start with
-; ';' or '#'. Registers accept ABI names (a0, t0, sp, ra, zero, ...) or x0..x31.
+; Minimal in-VM RV64I assembler: `as <src> <out>` two-pass assembles a small
+; subset into a FEXE. Subset, encodings, and the trailing-NOP quirk: OS spec ch.10.3.
 
 external console_write:   (str: u8*)
 external console_writeln: (str: u8*)
@@ -471,10 +456,8 @@ emit_li: (rd: i64, imm: i64) {
     emit_word(enc_i(rd, rd, lo, 0, 0x13))
 }
 
-; Assemble one already-tokenized instruction whose mnemonic is at token `base`.
-; In pass 1 (pass == 1) nothing is emitted; it only reports the byte size so
-; labels get correct addresses. In pass 2 it encodes into `code`. `pc` is the
-; current byte address (for branch/jump relative offsets). Returns the size.
+; Assemble one tokenized instruction at token `base`; pass 1 sizes only, pass 2
+; encodes. `pc` is the current byte address (for branch offsets). Returns the size.
 encode_instr: (pass: i64, base: i64, pc: i64) -> i64 {
     m: u8* = tok_at(base)
     o0: u8* = tok_at(base + 1)
@@ -688,12 +671,8 @@ main: () -> i32 {
         return 1
     }
 
-    ; Append NOP padding (addi x0, x0, 0). A program whose last instruction is
-    ; `ecall` has nothing valid after it; the pipeline speculatively fetches the
-    ; following word, and a zero word decodes as an illegal instruction that traps
-    ; to M-mode (not delegated), bypassing the kernel's S-mode exit path and
-    ; halting the VM. NOPs keep the speculative fetch valid so the exit ecall traps
-    ; cleanly and the kernel can reap the process.
+    ; Append NOP padding so the speculative fetch after the final ecall stays
+    ; valid (a zero word would trap to M-mode and halt the VM). See OS spec ch.10.3.
     pad: u64 = 0
     while pad < 8 {
         emit_word(0x13 as u32)

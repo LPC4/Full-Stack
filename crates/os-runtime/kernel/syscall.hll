@@ -1,4 +1,4 @@
-; Syscall dispatch layer.
+; Syscall dispatch layer. See OS spec ch.7.
 
 const SYSCALL_EXIT     = 93
 const SYSCALL_WRITE    = 64
@@ -21,42 +21,37 @@ const SYSCALL_MAPFB    = 107   ; map the framebuffer into the caller; returns it
 const SYSCALL_POLLKEY  = 108   ; pop the next key event (-1 if none)
 ; Process-tree syscalls (Linux/RISC-V numbers).
 const SYSCALL_FORK     = 220   ; clone the current process; returns child pid / 0
-const SYSCALL_WAIT     = 260   ; reap an exited child; returns its exit code / -1
+const SYSCALL_WAIT     = 260   ; reap any exited child; returns its exit code / -1
+const SYSCALL_WAITPID  = 261   ; reap a specific child by pid; -2 on Ctrl-C, -1 if not ours
 
 const SYSACT_CONTINUE      = 0
 const SYSACT_SCHEDULE      = 1
 const SYSACT_EXIT_SCHEDULE = 2
+const SYSACT_BLOCK         = 3   ; sleep the caller (e.g. waiting on input)
 
-; UART byte the foreground Ctrl-C check looks for, and the sentinel wait returns
-; to the parent when it tears a child down (distinct from a real exit code and
-; from -1 = "no children").
+; UART interrupt-enable register (base + 1); bit 0 = receive-data-ready IRQ.
+const UART_IER_ADDR = 0x10000001
+
+; Ctrl-C byte, and the -2 sentinel wait returns on a foreground teardown.
 const INPUT_INTR_CHAR = 3
 const WAIT_INTERRUPTED = 0xFFFFFFFFFFFFFFFE  ; -2 as u64
 
-; Executable file format written by the host injector and loaded by sys_exec.
-; The first 4 KiB is a header block; the payload (a position-independent flat
-; binary) starts at file offset EXEC_HEADER_SIZE.
-;   header[0..4]  magic "FEXE" (u32 little-endian)
-;   header[8..16] entry offset within the payload (u64)
+; FEXE container: 4 KiB header (magic + entry offset) then payload. See OS spec ch.7.4.
 const FEXE_MAGIC       = 0x45584546
 const EXEC_HEADER_SIZE = 4096
 
-; Canonical user code base. Every process owns a private page-table root, so all
-; programs map their code at the same VA; isolation comes from the separate roots.
+; Canonical user code base (every process has its own root). See OS spec ch.4.3.
 const USER_CODE_BASE = 0x40000000
 ; R + W + X + U page flags (vmm_map adds V).
 const USER_PAGE_FLAGS = 30
 
-; Per-process page holding the exec argument string (an absolute path the program
-; may read). Sits in the private VA gap above 0x40000000 to avoid the kernel's
-; 1 GiB identity superpage; programs with no argument see a zeroed string.
+; Per-process page holding the exec argument string; zeroed when there is none.
 const USER_ARG_BASE  = 0x7FF00000
 ; R + W + U page flags (vmm_map adds V).
 const USER_ARG_FLAGS = 22
 const USER_ARG_MAX   = 4095
 
-; Framebuffer device: 320 x 240 RGBA8888 = 75 pixel pages plus one control page
-; (FILL register etc.), mapped into the per-process gap.
+; Framebuffer device: 75 pixel pages + 1 control page. See OS spec ch.7.5.
 const FB_PHYS_BASE = 0x10020000
 const FB_PAGE_COUNT = 76
 const FB_USER_BASE = 0x50000000
@@ -85,10 +80,14 @@ external process_exit_code:    (pcb: u64*) -> i64
 external process_set_exit_code: (pcb: u64*, code: i64)
 external scheduler_add:        (pcb: u64*)
 external scheduler_current:    () -> u64*
+external scheduler_set_input_waiter: (pcb: u64*)
 external scheduler_ready_empty: () -> u64
 external scheduler_pid_in_queue: (pid: u64) -> u64
+external scheduler_pid_alive:    (pid: u64) -> u64
 external scheduler_make_zombie: (pcb: u64*)
 external scheduler_find_zombie_child: (parent_pid: u64) -> u64*
+external scheduler_find_zombie_pid: (pid: u64) -> u64*
+external scheduler_kill_pid:    (pid: u64) -> u64
 external scheduler_remove_zombie: (pcb: u64*)
 external scheduler_has_children: (parent_pid: u64) -> u64
 external scheduler_kill_child:  (parent_pid: u64) -> u64
@@ -107,16 +106,12 @@ external fs_set_pos:           (fd: i64, pos: u64)
 external fs_truncate:          (fd: i64, len: u64) -> i64
 
 
-; One-byte input pushback. The foreground Ctrl-C check (sys_wait_impl) must pop a
-; UART byte to inspect it; a non-Ctrl-C byte is stashed here so the running child
-; (or the shell afterwards) still receives it. valid=0 means empty; a stored byte
-; is delivered ahead of the UART on the next readchar.
+; One-byte input pushback: a byte peeked by the Ctrl-C check but not consumed,
+; delivered ahead of the device by the next readchar. See OS spec ch.6.5.
 input_pushback_valid: u64 = 0
 input_pushback_byte:  u64 = 0
 
-; Pop the next pending UART byte (0-255) from the receive buffer, consuming it, or
-; -1 when none is pending. Does not consult the pushback (the Ctrl-C check wants
-; the raw device byte).
+; Pop the next raw UART byte (0-255), or -1 if none. Ignores the pushback.
 kuart_take: () -> i64 {
     lsr_p: u8* = 0x10000005 as u8*
     if ((@lsr_p) as u64 & 1) == 0 {
@@ -127,19 +122,36 @@ kuart_take: () -> i64 {
     return c as i64
 }
 
-; Read one byte from the UART (0x10000000), delivering a stashed pushback byte
-; first. Returns the byte (0-255), or -1 when no input is pending.
-sys_readchar_impl: () -> i64 {
+; Blocking UART read: returns the pushback or a ready byte, else sleeps the
+; caller until the RX interrupt wakes it. See OS spec ch.6.4.
+sys_readchar_block: (frame: u64*) -> u64 {
     if input_pushback_valid != 0 {
         input_pushback_valid = 0
-        return input_pushback_byte as i64
+        @frame[10] = input_pushback_byte
+        return SYSACT_CONTINUE
     }
-    return kuart_take()
+    c: i64 = kuart_take()
+    if c >= 0 {
+        @frame[10] = c as u64
+        return SYSACT_CONTINUE
+    }
+
+    cur: u64* = scheduler_current()
+    if cur == null {
+        @frame[10] = 0xFFFFFFFFFFFFFFFF
+        return SYSACT_CONTINUE
+    }
+
+    ; Arm the RX interrupt before sleeping so no arriving byte loses its wakeup.
+    ier: u8* = UART_IER_ADDR as u8*
+    @ier = 1 as u8
+
+    scheduler_set_input_waiter(cur)
+    @frame[32] = @frame[32] - 4  ; re-run the ecall once woken
+    return SYSACT_BLOCK
 }
 
-; Pop the next key event from the keyboard MMIO device (0x10070000). The STATUS
-; register holds the queued event count; DATA pops the oldest event. Returns the
-; packed event (bit 16 = pressed, bits 15..0 = scancode), or -1 when none pending.
+; Pop a packed key event from the keyboard device, or -1 if none. See OS spec ch.7.5.
 sys_pollkey_impl: () -> i64 {
     status_p: u32* = 0x10070000 as u32*
     if (@status_p) == 0 {
@@ -150,18 +162,15 @@ sys_pollkey_impl: () -> i64 {
     return ev as i64
 }
 
-; Load an executable file from the FS and add it to the scheduler. `arg` is an
-; optional null-terminated string (an absolute path the program may read); it is
-; copied into the child's USER_ARG_BASE page. Pass null for no argument.
-; Returns the new pid on success, or -1 on any failure.
+; Load an FEXE into a new process and enqueue it; arg (or null) is staged into
+; the child's USER_ARG_BASE page. Returns the new pid or -1. See OS spec ch.5.5.
 sys_exec_impl: (path: u8*, arg: u8*) -> i64 {
     fd: i64 = fs_open(path, 0)
     if fd < 2 {
         return -1 as i64
     }
 
-    ; Stage the argument into a kernel buffer (identity-mapped in every root) while
-    ; the caller's address space is live; process_create switches roots below.
+    ; Stage the argument into a kernel buffer before process_create switches roots.
     arg_buf: u8* = kmalloc(USER_ARG_MAX + 1)
     memset(arg_buf, 0, USER_ARG_MAX + 1)
     if arg != null {
@@ -193,9 +202,7 @@ sys_exec_impl: (path: u8*, arg: u8*) -> i64 {
         return -1 as i64
     }
 
-    ; Record the launching process so the child is parented to it; wait/Ctrl-C
-    ; both find a foreground child through this link. Captured before
-    ; process_create switches the active root.
+    ; Parent the child to its launcher (captured before the root switches).
     parent_pcb: u64* = scheduler_current()
     parent_pid_v: u64 = 0
     if parent_pcb != null {
@@ -261,9 +268,7 @@ sys_write_impl: (fd: u64, buf: u8*, len: u64) -> u64 {
     return written
 }
 
-; Fork the current process: allocate a child PCB and page-table root, copy the
-; parent's user pages and trap frame, and make the child return 0. Returns the
-; child pid to the parent, or -1 if there is no running process.
+; Fork: clone the caller's address space and trap frame; child returns 0. See OS spec ch.5.5.
 sys_fork_impl: (frame: u64*) -> i64 {
     parent: u64* = scheduler_current()
     if parent == null {
@@ -280,8 +285,7 @@ sys_fork_impl: (frame: u64*) -> i64 {
     ; Duplicate the parent's user address space (code + stack) into the child.
     vmm_fork_copy(parent_root, child_root)
 
-    ; Copy the parent context into the child, then set a0 = 0 (fork's child return)
-    ; and advance sepc past the ecall (the trap epilogue only advances the parent).
+    ; Child inherits the context but returns 0 and resumes past the ecall.
     cframe_addr: u64 = child as u64 + 40
     memcpy(cframe_addr as u8*, frame as u8*, 288)
     cframe: u64* = cframe_addr as u64*
@@ -292,9 +296,7 @@ sys_fork_impl: (frame: u64*) -> i64 {
     return process_pid(child) as i64
 }
 
-; Wait for any child to exit and reap its code. A waiting zombie is reaped and its
-; code returned; a still-running child rewinds sepc and yields to re-run the ecall
-; later (cooperative poll); no children at all returns -1.
+; Reap any exited child (code), poll if one still runs, or -1 if none. Used by the fork test.
 sys_wait_impl: (frame: u64*) -> u64 {
     parent: u64* = scheduler_current()
     if parent == null {
@@ -312,10 +314,7 @@ sys_wait_impl: (frame: u64*) -> u64 {
     }
 
     if scheduler_has_children(ppid) == 1 {
-        ; Foreground Ctrl-C: while the parent polls wait, peek one UART byte. A
-        ; 0x03 tears the child down and returns the interrupted sentinel; any other
-        ; byte is stashed so the running child (or the shell) still receives it.
-        ; Skip while the pushback is occupied to preserve input ordering.
+        ; Peek for a Ctrl-C foreground teardown; stash any other byte. See OS spec ch.6.5.
         if input_pushback_valid == 0 {
             c: i64 = kuart_take()
             if c == INPUT_INTR_CHAR {
@@ -328,8 +327,7 @@ sys_wait_impl: (frame: u64*) -> u64 {
                 input_pushback_valid = 1
             }
         }
-        ; A child is still running: re-run this ecall after a reschedule. The trap
-        ; epilogue adds 4 to sepc, so subtract 4 first to land back on the ecall.
+        ; Child still running: rewind sepc (epilogue adds 4) and reschedule.
         @frame[32] = @frame[32] - 4
         return SYSACT_SCHEDULE
     }
@@ -338,34 +336,66 @@ sys_wait_impl: (frame: u64*) -> u64 {
     return SYSACT_CONTINUE
 }
 
-; Handle SYSCALL_EXIT. Pid 1 (the shell) leaving halts the machine; any other
-; process becomes a zombie holding its exit code until its parent waits.
+; Reap the specific child a0 (code), else poll/Ctrl-C-tear-down that pid, else -1.
+; Pids are unique, so no parent check is needed. See OS spec ch.7.2.
+sys_waitpid_impl: (frame: u64*) -> u64 {
+    parent: u64* = scheduler_current()
+    if parent == null {
+        @frame[10] = 0xFFFFFFFFFFFFFFFF
+        return SYSACT_CONTINUE
+    }
+    target: u64 = @frame[10]
+
+    z: u64* = scheduler_find_zombie_pid(target)
+    if z != null {
+        code: i64 = process_exit_code(z)
+        scheduler_remove_zombie(z)
+        @frame[10] = code as u64
+        return SYSACT_CONTINUE
+    }
+
+    if scheduler_pid_in_queue(target) == 1 {
+        ; Peek for a Ctrl-C teardown of this exact pid; stash any other byte.
+        if input_pushback_valid == 0 {
+            c: i64 = kuart_take()
+            if c == INPUT_INTR_CHAR {
+                scheduler_kill_pid(target)
+                @frame[10] = WAIT_INTERRUPTED
+                return SYSACT_CONTINUE
+            }
+            if c >= 0 {
+                input_pushback_byte = c as u64
+                input_pushback_valid = 1
+            }
+        }
+        @frame[32] = @frame[32] - 4
+        return SYSACT_SCHEDULE
+    }
+
+    @frame[10] = 0xFFFFFFFFFFFFFFFF
+    return SYSACT_CONTINUE
+}
+
+; Exit: pid 1 (or no/empty context) halts the VM; others become zombies. See OS spec ch.5.6.
 sys_exit_impl: (frame: u64*) -> u64 {
     code: u64 = @frame[10]
     current: u64* = scheduler_current()
     if current == null {
-        ; No process context: nothing to reap, just halt.
         kshutdown(code as i64)
     }
-    ; The shell (pid 1) leaving tears down the machine; a forked child exiting
-    ; must not, even when the ready queue momentarily empties.
     if process_pid(current) == 1 {
         kshutdown(code as i64)
     }
-    ; Safety net: if nothing else is runnable, there is no process to switch to
-    ; (and no parent will ever reap this one), so halt rather than resume a dead
-    ; process. Normal wait flows keep the parent READY, so this stays false.
+    ; Nothing else runnable: no one to switch to or reap us, so halt.
     if scheduler_ready_empty() == 1 {
         kshutdown(code as i64)
     }
-    ; Record the exit code and keep the PCB as a zombie until the parent waits.
     process_set_exit_code(current, code as i64)
     scheduler_make_zombie(current)
     return SYSACT_EXIT_SCHEDULE
 }
 
-; Truncate the file in a0=fd to a1=len. This and the small *_impl wrappers below
-; keep their locals out of syscall_dispatch's already-large stack frame.
+; Truncate fd a0 to a1 bytes. These small wrappers keep locals out of dispatch's frame.
 sys_ftruncate_impl: (frame: u64*) -> u64 {
     fd:  i64 = (@frame[10]) as i64
     len: u64 = @frame[11]
@@ -387,8 +417,7 @@ sys_rmdir_impl: (frame: u64*) -> u64 {
     return SYSACT_CONTINUE
 }
 
-; Map the framebuffer into the caller and return its base VA in a0. vmm_map
-; targets the active root, which the scheduler points at the running process.
+; Map the framebuffer into the caller's root; return its base VA. See OS spec ch.7.5.
 sys_map_fb_impl: (frame: u64*) -> u64 {
     i: u64 = 0
     while i < FB_PAGE_COUNT {
@@ -400,7 +429,7 @@ sys_map_fb_impl: (frame: u64*) -> u64 {
     return SYSACT_CONTINUE
 }
 
-; Dispatch a U-mode ecall: reads a7 (syscall number) and a0-a2 (args), writes result to frame a0.
+; Dispatch a U-mode ecall by a7; args in a0-a3, result to a0. See OS spec ch.7.
 syscall_dispatch: (frame: u64*) -> u64 {
     num: u64 = @frame[17]
 
@@ -469,8 +498,7 @@ syscall_dispatch: (frame: u64*) -> u64 {
     }
 
     if num == SYSCALL_READCHAR {
-        @frame[10] = sys_readchar_impl() as u64
-        return SYSACT_CONTINUE
+        return sys_readchar_block(frame)
     }
 
     if num == SYSCALL_READDIR {
@@ -519,7 +547,7 @@ syscall_dispatch: (frame: u64*) -> u64 {
 
     if num == SYSCALL_PIDALIVE {
         pid: u64 = @frame[10]
-        @frame[10] = scheduler_pid_in_queue(pid)
+        @frame[10] = scheduler_pid_alive(pid)
         return SYSACT_CONTINUE
     }
 
@@ -530,6 +558,10 @@ syscall_dispatch: (frame: u64*) -> u64 {
 
     if num == SYSCALL_WAIT {
         return sys_wait_impl(frame)
+    }
+
+    if num == SYSCALL_WAITPID {
+        return sys_waitpid_impl(frame)
     }
 
     if num == SYSCALL_YIELD {

@@ -1,6 +1,5 @@
-; Interactive shell (pid-1 user process). Syscall wrappers and C-string helpers
-; come from the hosted stdlib (stdlib/hosted/syscalls.hll); this file declares
-; the ones it uses as externals and keeps only shell-specific logic.
+; Interactive shell, pid 1. See OS spec ch.10.1.
+; Syscall wrappers and C-string helpers come from the hosted stdlib.
 
 external console_putchar: (c: i32)
 external console_write:   (str: u8*)
@@ -20,7 +19,8 @@ external sc_unlink:   (path: u8*) -> i64
 external sc_rmdir:    (path: u8*) -> i64
 external sc_close:    (fd: i64)
 external sc_yield:    ()
-external sc_wait:     () -> i64
+external sc_waitpid:  (pid: i64) -> i64
+external sc_pidalive: (pid: u64) -> i64
 external sc_exit:     (code: i64)
 
 ; C-string helpers (defined in the hosted stdlib).
@@ -87,8 +87,7 @@ sh_path_pop: (cwd: u8*) {
 
 ; --- Line input ---
 
-; Read a line from the UART into buf (max 255 chars), echoing as it is typed.
-; Blocks (by yielding) until a newline arrives.
+; Read a line from the UART into buf (max 255 chars), echoing as typed.
 sh_read_line: (buf: u8*) {
     n: u64 = 0
     done: i64 = 0
@@ -239,10 +238,9 @@ sh_print_dec: (v: i64) {
     }
 }
 
-; Block until the foreground child exits or is interrupted, then report status.
-; wait returns the child's exit code, or the interrupt sentinel (-2) on Ctrl-C.
-sh_wait_foreground: () {
-    code: i64 = sc_wait()
+; Wait on a foreground child, then report status. -2 means Ctrl-C. See OS spec ch.7.2.
+sh_wait_foreground: (pid: i64) {
+    code: i64 = sc_waitpid(pid)
     two: i64 = 2
     if code + two == 0 {
         console_writeln("^C".data)
@@ -253,11 +251,150 @@ sh_wait_foreground: () {
     console_writeln("]".data)
 }
 
+; --- Background job table ---
+; Job id = slot index + 1; 0 marks a free slot. Index with job_pids[i], not
+; base+i: raw pointer arith is byte-scaled in HLL (lang spec 4.2).
+
+const MAX_JOBS = 8
+job_pids: i64[8]
+
+; Record a backgrounded pid in the first free slot; returns the job id or -1.
+jobs_add: (pid: i64) -> i64 {
+    i: u64 = 0
+    while i < MAX_JOBS {
+        slot: i64* = job_pids[i]
+        if @slot == 0 {
+            @slot = pid
+            return (i + 1) as i64
+        }
+        i = i + 1
+    }
+    return -1 as i64
+}
+
+; Reap finished background jobs and free their slots. Called at the prompt.
+jobs_reap: () {
+    i: u64 = 0
+    while i < MAX_JOBS {
+        slot: i64* = job_pids[i]
+        pid: i64 = @slot
+        if pid != 0 {
+            if sc_pidalive(pid as u64) == 0 {
+                sc_waitpid(pid)
+                console_write("[".data)
+                sh_print_dec((i + 1) as i64)
+                console_write("] done   pid ".data)
+                sh_print_dec(pid)
+                console_putchar(10)
+                @slot = 0
+            }
+        }
+        i = i + 1
+    }
+}
+
+; Parse a non-negative decimal from the front of s (0 if no leading digit).
+sh_parse_int: (s: u8*) -> i64 {
+    n: i64 = 0
+    i: u64 = 0
+    while @(s + i) != 0 {
+        c: u8 = @(s + i)
+        if c < 48 {
+            return n
+        }
+        if c > 57 {
+            return n
+        }
+        n = n * 10 + (c - 48) as i64
+        i = i + 1
+    }
+    return n
+}
+
+; List the background jobs and their status (running / done-not-yet-reaped).
+cmd_jobs: () {
+    i: u64 = 0
+    any: i64 = 0
+    while i < MAX_JOBS {
+        slot: i64* = job_pids[i]
+        pid: i64 = @slot
+        if pid != 0 {
+            any = 1
+            console_write("[".data)
+            sh_print_dec((i + 1) as i64)
+            console_write("] pid ".data)
+            sh_print_dec(pid)
+            if sc_pidalive(pid as u64) == 1 {
+                console_writeln("   running".data)
+            } else {
+                console_writeln("   done".data)
+            }
+        }
+        i = i + 1
+    }
+    if any == 0 {
+        console_writeln("no background jobs".data)
+    }
+}
+
+; Foreground a background job by 1-based id: remove it and wait on it.
+cmd_fg: (arg: u8*) {
+    if @arg == 0 {
+        console_writeln("fg: usage: fg <job>".data)
+        return
+    }
+    jid: i64 = sh_parse_int(arg)
+    if jid < 1 {
+        console_writeln("fg: no such job".data)
+        return
+    }
+    if jid > MAX_JOBS {
+        console_writeln("fg: no such job".data)
+        return
+    }
+    slot: i64* = job_pids[(jid - 1) as u64]
+    pid: i64 = @slot
+    if pid == 0 {
+        console_writeln("fg: no such job".data)
+        return
+    }
+    @slot = 0
+    sh_wait_foreground(pid)
+}
+
 cmd_run: (cwd: u8*, arg: u8*) {
     if @arg == 0 {
         console_writeln("run: missing file name".data)
         return
     }
+    ; A trailing '&' backgrounds the job; trim it (and spaces) off in place.
+    bg: i64 = 0
+    l: u64 = cstr_len(arg)
+    while l > 0 {
+        if @(arg + (l - 1)) != 32 {
+            break
+        }
+        l = l - 1
+    }
+    if l > 0 {
+        if @(arg + (l - 1)) == 38 {  ; '&'
+            bg = 1
+            l = l - 1
+            while l > 0 {
+                if @(arg + (l - 1)) != 32 {
+                    break
+                }
+                l = l - 1
+            }
+        }
+    }
+    term: u8* = arg + l
+    @term = 0 as u8
+    if @arg == 0 {
+        console_writeln("run: missing file name".data)
+        return
+    }
+
     target: u8[256]
     target_p: u8* = target[0]
     sh_join_path(cwd, arg, target_p)
@@ -278,7 +415,16 @@ cmd_run: (cwd: u8*, arg: u8*) {
         console_writeln(arg)
         return
     }
-    sh_wait_foreground()
+    if bg == 1 {
+        jid: i64 = jobs_add(pid)
+        console_write("[".data)
+        sh_print_dec(jid)
+        console_write("] pid ".data)
+        sh_print_dec(pid)
+        console_putchar(10)
+        return
+    }
+    sh_wait_foreground(pid)
 }
 
 ; Print a file's contents to the console.
@@ -326,7 +472,7 @@ cmd_edit: (cwd: u8*, arg: u8*) {
         console_writeln("edit: cannot launch /bin/edit.fexe".data)
         return
     }
-    sh_wait_foreground()
+    sh_wait_foreground(pid)
 }
 
 ; Create an empty file (open with the create flag, then close).
@@ -498,7 +644,7 @@ cmd_as: (cwd: u8*, arg: u8*) {
         console_writeln("as: cannot launch /bin/as.fexe".data)
         return
     }
-    sh_wait_foreground()
+    sh_wait_foreground(pid)
 }
 
 handle_command: (cwd: u8*, line: u8*) {
@@ -513,11 +659,19 @@ handle_command: (cwd: u8*, line: u8*) {
         cmd_ls(cwd)
         return
     }
+    if cstr_eq(line, "jobs".data) == 1 {
+        cmd_jobs()
+        return
+    }
     if cstr_eq(line, "help".data) == 1 {
-        console_writeln("commands: ls, cd <dir>, run <file>, cat <file>, edit <file>,".data)
+        console_writeln("commands: ls, cd <dir>, run <file> [&], cat <file>, edit <file>,".data)
         console_writeln("          touch <file>, mkdir <dir>, rm <file>, rmdir <dir>,".data)
-        console_writeln("          mv <old> <new>, as <src> <out>, exit".data)
-        console_writeln("press Ctrl-C to stop a running program.".data)
+        console_writeln("          mv <old> <new>, as <src> <out>, jobs, fg <job>, exit".data)
+        console_writeln("run with '&' to background; Ctrl-C stops a foreground program.".data)
+        return
+    }
+    if cstr_starts_with(line, "fg ".data) == 1 {
+        cmd_fg(line + 3)
         return
     }
     if cstr_starts_with(line, "cd ".data) == 1 {
@@ -577,6 +731,7 @@ main: () -> i32 {
     console_writeln("HLL shell ready. type 'help' for commands.".data)
 
     while 1 == 1 {
+        jobs_reap()
         console_write(cwd_p)
         console_write("$ ".data)
         sh_read_line(line_p)
