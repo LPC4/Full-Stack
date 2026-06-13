@@ -157,6 +157,7 @@ mod tests {
     fn alloc_for(func: &IrFunction) -> FunctionContext {
         let mut ctx = FunctionContext::new(&StdHashMap::new());
         assign_stack_slots(func, &mut ctx, &StdHashMap::new(), true, false);
+        ctx.finalize();
         ctx
     }
 
