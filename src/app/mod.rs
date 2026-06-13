@@ -1446,7 +1446,8 @@ Add '&' to run in the background; jobs / fg <job> / kill <pid> manage jobs.\n\
 \n\
 Send output to a file:  echo hi > note.txt   cat a b >> log.txt\n\
 Pipe programs:          cat a | filter      (up to 4 stages)\n\
-Assemble:  as /home/src/fib.s /home/fib.fexe  then run it with  fib\n";
+Assemble:  as /home/src/fib.s /home/fib.fexe  then run it with  fib\n\
+Examples in /home/src: sum.s fib.s array.s (array.s sums a stack array -> 42)\n";
 
     vec![
         FsEntry::Dir { path: "/bin" },
@@ -1465,6 +1466,10 @@ Assemble:  as /home/src/fib.s /home/fib.fexe  then run it with  fib\n";
         FsEntry::File {
             path: "/home/src/fib.s",
             data: os_runtime::user::EXAMPLE_FIB_S.as_bytes(),
+        },
+        FsEntry::File {
+            path: "/home/src/array.s",
+            data: os_runtime::user::EXAMPLE_ARRAY_S.as_bytes(),
         },
     ]
 }
@@ -1539,6 +1544,10 @@ mod boot_fs_tests {
         assert!(
             files.contains(&"/home/src/fib.s"),
             "fib.s not under /home/src; files={files:?}"
+        );
+        assert!(
+            files.contains(&"/home/src/array.s"),
+            "array.s not under /home/src; files={files:?}"
         );
         assert!(
             !files.contains(&"/home/sum.s"),

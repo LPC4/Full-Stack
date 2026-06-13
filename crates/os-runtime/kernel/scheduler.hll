@@ -247,6 +247,12 @@ scheduler_has_children: (parent_pid: u64) -> u64 {
         }
         curr = (@curr[2]) as u64*
     }
+    ; A child sleeping on input has left the ready queue but is still alive.
+    if input_waiter != null {
+        if @input_waiter[PCB_IDX_PARENT_PID] == parent_pid {
+            return 1
+        }
+    }
     z: u64* = zombie_head
     while z != null {
         if @z[PCB_IDX_PARENT_PID] == parent_pid {

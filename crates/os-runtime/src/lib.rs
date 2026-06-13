@@ -208,4 +208,10 @@ pub mod user {
     /// Installed at `/home/src/fib.s`.
     pub const EXAMPLE_FIB_S: &str =
         include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/user/examples/fib.s"));
+
+    /// Example assembly source: sum a stack-built array, exit with the total (42).
+    /// Exercises the expanded assembler subset (sd/ld with offset(reg), slli, bge).
+    /// Installed at `/home/src/array.s`.
+    pub const EXAMPLE_ARRAY_S: &str =
+        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/user/examples/array.s"));
 }

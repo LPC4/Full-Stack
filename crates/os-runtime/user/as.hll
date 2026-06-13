@@ -1,5 +1,7 @@
-; Minimal in-VM RV64I assembler: `as <src> <out>` two-pass assembles a small
-; subset into a FEXE. Subset, encodings, and the trailing-NOP quirk: OS spec ch.10.3.
+; In-VM RV64I assembler: `as <src> <out>` two-pass assembles into a FEXE.
+; Subset: li mv add sub and or xor sll srl sra slt sltu; addi andi ori xori slti
+; sltiu slli srli srai; ld lw lwu lh lhu lb lbu and sd sw sh sb (offset(reg));
+; lui auipc; j beq bne blt bge bltu bgeu; nop ecall ret. Subset/encodings and the trailing-NOP quirk: OS spec ch.10.3.
 
 external console_write:   (str: u8*)
 external console_writeln: (str: u8*)
@@ -337,6 +339,48 @@ parse_imm: (p: u8*) -> i64 {
     return v
 }
 
+; Last memory operand parsed by parse_mem: `offset(reg)` split into its parts.
+mem_imm: i64 = 0
+mem_reg: i64 = 0
+
+; Parse a `offset(reg)` operand into mem_imm and mem_reg (e.g. `-8(sp)`).
+parse_mem: (p: u8*) {
+    mem_imm = parse_imm(p)
+    ; Advance to the opening parenthesis.
+    i: u64 = 0
+    while @(p + i) != 0 {
+        if @(p + i) == 40 {
+            break
+        }
+        i = i + 1
+    }
+    if @(p + i) != 40 {
+        fail("bad memory operand".data)
+        mem_reg = 0
+        return
+    }
+    i = i + 1
+    ; Copy the register name (up to the closing parenthesis) and resolve it.
+    rbuf: u8[8]
+    rp: u8* = rbuf[0]
+    k: u64 = 0
+    while @(p + i) != 0 {
+        c: u8 = @(p + i)
+        if c == 41 {
+            break
+        }
+        if k < 7 {
+            d: u8* = rp + k
+            @d = c
+            k = k + 1
+        }
+        i = i + 1
+    }
+    t: u8* = rp + k
+    @t = 0 as u8
+    mem_reg = reg_num(rp)
+}
+
 ; --- Label table ---
 
 add_label: (name: u8*, addr: i64) {
@@ -424,6 +468,19 @@ enc_j: (rd: i64, imm: i64) -> u32 {
          | ((rd as u32) << 7) | (0x6F as u32)
 }
 
+enc_s: (rs1: i64, rs2: i64, imm: i64, funct3: i64) -> u32 {
+    u: u32 = imm as u32
+    i11_5: u32 = (u >> 5) & 0x7F
+    i4_0: u32 = u & 0x1F
+    return (i11_5 << 25) | ((rs2 as u32) << 20) | ((rs1 as u32) << 15)
+         | ((funct3 as u32) << 12) | (i4_0 << 7) | (0x23 as u32)
+}
+
+; U-type (lui/auipc): the operand is the 20-bit value placed in bits 31:12.
+enc_u: (rd: i64, imm: i64, opcode: i64) -> u32 {
+    return (((imm as u32) & 0xFFFFF) << 12) | ((rd as u32) << 7) | (opcode as u32)
+}
+
 ; Number of bytes an `li rd, imm` expands to (addi, or lui+addi for wide).
 li_size: (imm: i64) -> i64 {
     if imm >= -2048 {
@@ -446,11 +503,12 @@ emit_li: (rd: i64, imm: i64) {
         fail("li: negative immediate too wide".data)
         return
     }
-    if imm > 2147483647 {
+    ; lui carries a 20-bit field, so the split must fit hi in [0, 0xFFFFF].
+    hi: i64 = (imm + 2048) / 4096
+    if hi > 1048575 {
         fail("li: immediate too wide".data)
         return
     }
-    hi: i64 = (imm + 2048) / 4096
     lo: i64 = imm - hi * 4096
     emit_word(((hi as u32) & 0xFFFFF) << 12 | ((rd as u32) << 7) | (0x37 as u32))
     emit_word(enc_i(rd, rd, lo, 0, 0x13))
@@ -543,6 +601,220 @@ encode_instr: (pass: i64, base: i64, pc: i64) -> i64 {
         if pass == 2 {
             target: i64 = find_label(o2)
             emit_word(enc_b(reg_num(o0), reg_num(o1), target - pc, 1))
+        }
+        return 4
+    }
+    if cstr_eq(m, "blt".data) == 1 {
+        if pass == 2 {
+            target: i64 = find_label(o2)
+            emit_word(enc_b(reg_num(o0), reg_num(o1), target - pc, 4))
+        }
+        return 4
+    }
+    if cstr_eq(m, "bge".data) == 1 {
+        if pass == 2 {
+            target: i64 = find_label(o2)
+            emit_word(enc_b(reg_num(o0), reg_num(o1), target - pc, 5))
+        }
+        return 4
+    }
+    if cstr_eq(m, "bltu".data) == 1 {
+        if pass == 2 {
+            target: i64 = find_label(o2)
+            emit_word(enc_b(reg_num(o0), reg_num(o1), target - pc, 6))
+        }
+        return 4
+    }
+    if cstr_eq(m, "bgeu".data) == 1 {
+        if pass == 2 {
+            target: i64 = find_label(o2)
+            emit_word(enc_b(reg_num(o0), reg_num(o1), target - pc, 7))
+        }
+        return 4
+    }
+
+    ; --- Register-register (R-type) ---
+    if cstr_eq(m, "sll".data) == 1 {
+        if pass == 2 {
+            emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 1, 0))
+        }
+        return 4
+    }
+    if cstr_eq(m, "srl".data) == 1 {
+        if pass == 2 {
+            emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 5, 0))
+        }
+        return 4
+    }
+    if cstr_eq(m, "sra".data) == 1 {
+        if pass == 2 {
+            emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 5, 0x20))
+        }
+        return 4
+    }
+    if cstr_eq(m, "slt".data) == 1 {
+        if pass == 2 {
+            emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 2, 0))
+        }
+        return 4
+    }
+    if cstr_eq(m, "sltu".data) == 1 {
+        if pass == 2 {
+            emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 3, 0))
+        }
+        return 4
+    }
+
+    ; --- Register-immediate (I-type, opcode 0x13) ---
+    if cstr_eq(m, "andi".data) == 1 {
+        if pass == 2 {
+            emit_word(enc_i(reg_num(o0), reg_num(o1), parse_imm(o2), 7, 0x13))
+        }
+        return 4
+    }
+    if cstr_eq(m, "ori".data) == 1 {
+        if pass == 2 {
+            emit_word(enc_i(reg_num(o0), reg_num(o1), parse_imm(o2), 6, 0x13))
+        }
+        return 4
+    }
+    if cstr_eq(m, "xori".data) == 1 {
+        if pass == 2 {
+            emit_word(enc_i(reg_num(o0), reg_num(o1), parse_imm(o2), 4, 0x13))
+        }
+        return 4
+    }
+    if cstr_eq(m, "slti".data) == 1 {
+        if pass == 2 {
+            emit_word(enc_i(reg_num(o0), reg_num(o1), parse_imm(o2), 2, 0x13))
+        }
+        return 4
+    }
+    if cstr_eq(m, "sltiu".data) == 1 {
+        if pass == 2 {
+            emit_word(enc_i(reg_num(o0), reg_num(o1), parse_imm(o2), 3, 0x13))
+        }
+        return 4
+    }
+
+    ; --- Shift-immediate (shamt in the low bits; srai sets funct7=0x20) ---
+    if cstr_eq(m, "slli".data) == 1 {
+        if pass == 2 {
+            emit_word(enc_i(reg_num(o0), reg_num(o1), parse_imm(o2), 1, 0x13))
+        }
+        return 4
+    }
+    if cstr_eq(m, "srli".data) == 1 {
+        if pass == 2 {
+            emit_word(enc_i(reg_num(o0), reg_num(o1), parse_imm(o2), 5, 0x13))
+        }
+        return 4
+    }
+    if cstr_eq(m, "srai".data) == 1 {
+        if pass == 2 {
+            emit_word(enc_i(reg_num(o0), reg_num(o1), parse_imm(o2) | 0x400, 5, 0x13))
+        }
+        return 4
+    }
+
+    ; --- Loads (rd, offset(rs1); opcode 0x03) ---
+    if cstr_eq(m, "ld".data) == 1 {
+        if pass == 2 {
+            parse_mem(o1)
+            emit_word(enc_i(reg_num(o0), mem_reg, mem_imm, 3, 0x03))
+        }
+        return 4
+    }
+    if cstr_eq(m, "lw".data) == 1 {
+        if pass == 2 {
+            parse_mem(o1)
+            emit_word(enc_i(reg_num(o0), mem_reg, mem_imm, 2, 0x03))
+        }
+        return 4
+    }
+    if cstr_eq(m, "lwu".data) == 1 {
+        if pass == 2 {
+            parse_mem(o1)
+            emit_word(enc_i(reg_num(o0), mem_reg, mem_imm, 6, 0x03))
+        }
+        return 4
+    }
+    if cstr_eq(m, "lh".data) == 1 {
+        if pass == 2 {
+            parse_mem(o1)
+            emit_word(enc_i(reg_num(o0), mem_reg, mem_imm, 1, 0x03))
+        }
+        return 4
+    }
+    if cstr_eq(m, "lhu".data) == 1 {
+        if pass == 2 {
+            parse_mem(o1)
+            emit_word(enc_i(reg_num(o0), mem_reg, mem_imm, 5, 0x03))
+        }
+        return 4
+    }
+    if cstr_eq(m, "lb".data) == 1 {
+        if pass == 2 {
+            parse_mem(o1)
+            emit_word(enc_i(reg_num(o0), mem_reg, mem_imm, 0, 0x03))
+        }
+        return 4
+    }
+    if cstr_eq(m, "lbu".data) == 1 {
+        if pass == 2 {
+            parse_mem(o1)
+            emit_word(enc_i(reg_num(o0), mem_reg, mem_imm, 4, 0x03))
+        }
+        return 4
+    }
+
+    ; --- Stores (rs2, offset(rs1); opcode 0x23) ---
+    if cstr_eq(m, "sd".data) == 1 {
+        if pass == 2 {
+            parse_mem(o1)
+            emit_word(enc_s(mem_reg, reg_num(o0), mem_imm, 3))
+        }
+        return 4
+    }
+    if cstr_eq(m, "sw".data) == 1 {
+        if pass == 2 {
+            parse_mem(o1)
+            emit_word(enc_s(mem_reg, reg_num(o0), mem_imm, 2))
+        }
+        return 4
+    }
+    if cstr_eq(m, "sh".data) == 1 {
+        if pass == 2 {
+            parse_mem(o1)
+            emit_word(enc_s(mem_reg, reg_num(o0), mem_imm, 1))
+        }
+        return 4
+    }
+    if cstr_eq(m, "sb".data) == 1 {
+        if pass == 2 {
+            parse_mem(o1)
+            emit_word(enc_s(mem_reg, reg_num(o0), mem_imm, 0))
+        }
+        return 4
+    }
+
+    ; --- Upper-immediate (rd, imm20) ---
+    if cstr_eq(m, "lui".data) == 1 {
+        if pass == 2 {
+            emit_word(enc_u(reg_num(o0), parse_imm(o1), 0x37))
+        }
+        return 4
+    }
+    if cstr_eq(m, "auipc".data) == 1 {
+        if pass == 2 {
+            emit_word(enc_u(reg_num(o0), parse_imm(o1), 0x17))
+        }
+        return 4
+    }
+
+    if cstr_eq(m, "nop".data) == 1 {
+        if pass == 2 {
+            emit_word(enc_i(0, 0, 0, 0, 0x13))
         }
         return 4
     }

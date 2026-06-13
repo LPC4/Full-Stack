@@ -240,8 +240,10 @@ switches), and enqueues it. `process_peek_pid` reports the next pid to be assign
 code until a parent reaps it; the VM halts only when the last runnable process
 exits. `wait`/`waitpid` (7.2) reap zombies. Liveness queries:
 `scheduler_pid_in_queue` checks the ready queue only; `scheduler_pid_alive`
-(backing `pidalive`) also counts the running and input-blocked process, so a live
-job is never misreported as finished.
+(backing `pidalive`) also counts the running and input-blocked process. `wait` and
+`waitpid` use the alive-including-blocked test (not the ready-queue-only one), so a
+child that sleeps on input -- e.g. the editor idling for a keystroke -- leaves the
+ready queue but is never misreported to its waiting parent as finished.
 
 
 ## 6. Traps and interrupts (`trap_entry.hll`, `trap_handler.hll`)
@@ -544,10 +546,12 @@ delete, `c` clear, `r` replace, `s/old/new/`, `w`/`q`/`h`. Launched by the shell
 `/bin/as.fexe` closes the self-hosting loop: `as <src> <out>` assembles a `.s` file
 into a runnable FEXE inside the VM. It runs a two-pass label resolver (pass 1
 assigns byte offsets, pass 2 encodes), wraps the flat binary in FEXE (entry 0), and
-writes `<out>`; `run <out>` then execs it. Subset: `add sub and or xor` (R-type),
-`addi`, `li`, `mv`, `j`, `beq`/`bne`, `ecall`, `ret`; ABI or `x0`..`x31` register
-names; `;`/`#` comments; decimal/hex/negative immediates. Encodings mirror the host
-`asm-to-binary` backend.
+writes `<out>`; `run <out>` then execs it. Subset: `add sub and or xor sll srl sra
+slt sltu` (R-type); `addi andi ori xori slti sltiu slli srli srai` (register-
+immediate); `ld lw lwu lh lhu lb lbu` / `sd sw sh sb` with `offset(reg)` syntax;
+`lui auipc`; `li`, `mv`; `j`, `beq bne blt bge bltu bgeu`; `nop`, `ecall`, `ret`.
+ABI or `x0`..`x31` register names; `;`/`#` comments; decimal/hex/negative
+immediates. Encodings mirror the host `asm-to-binary` backend.
 
 It appends 8 trailing NOPs after the program. A flat program ending in `ecall` has
 no valid instruction after it; the pipeline speculatively fetches the next word,

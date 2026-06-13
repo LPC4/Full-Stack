@@ -802,6 +802,121 @@ loop:
     );
 }
 
+// Exercises the expanded assembler subset (PLAN 1.1): loads/stores with the
+// `offset(reg)` syntax, the full branch set, shifts, register-immediate ALU ops,
+// `slt`/`sltu`, and `lui`. The program computes 42 through every new instruction,
+// self-checks each result with a branch to `fail`, and exits with a0. A single
+// wrong encoding either faults or jumps to `fail` (exit 1), so `[exit 42]` proves
+// the whole batch encodes correctly end to end.
+#[test]
+fn kernel_shell_assembles_expanded_subset() {
+    let shell = compile_hosted(user::SHELL);
+    let as_exec = assembled_to_exec_file(&compile_hosted(user::AS));
+
+    let source = b"\
+; build 42 through the expanded instruction subset, self-checking as we go
+  addi sp, sp, -16
+  li t0, 5
+  slli t1, t0, 2       ; 20
+  srli t2, t1, 1       ; 10
+  sub  t3, t1, t2      ; 10
+  add  a0, t2, t3      ; 20
+  sd a0, 0(sp)
+  ld a1, 0(sp)         ; 20
+  sw a1, 8(sp)
+  lw a2, 8(sp)         ; 20
+  add a0, a1, a2       ; 40
+  li t0, 2
+  add a0, a0, t0       ; 42
+  andi a0, a0, 63      ; 42
+  li t1, 42
+  bge a0, t1, ok1
+  j fail
+ok1:
+  blt a0, t1, fail
+  li t2, 100
+  bltu a0, t2, ok2
+  j fail
+ok2:
+  bgeu a0, t2, fail
+  slt t3, a0, t2       ; 42 < 100 -> 1
+  beq t3, zero, fail
+  li t0, 6
+  li t1, 2
+  sll t2, t0, t1       ; 24
+  li t3, 24
+  bne t2, t3, fail
+  srl t2, t2, t1       ; 6
+  bne t2, t0, fail
+  li t0, -8
+  srai t4, t0, 1       ; -4
+  li t3, -4
+  bne t4, t3, fail
+  li t0, 12
+  ori t2, t0, 3        ; 15
+  li t3, 15
+  bne t2, t3, fail
+  xori t2, t2, 15      ; 0
+  bne t2, zero, fail
+  li t0, 5
+  slti t2, t0, 10      ; 1
+  li t3, 1
+  bne t2, t3, fail
+  sltu t2, t0, t3      ; 5 < 1 unsigned -> 0
+  bne t2, zero, fail
+  lui t2, 1            ; 0x1000 = 4096
+  li t3, 4096
+  bne t2, t3, fail
+  li t0, 42
+  sb t0, 4(sp)
+  lb t1, 4(sp)         ; 42
+  li t3, 42
+  bne t1, t3, fail
+  addi sp, sp, 16
+  li a7, 93
+  ecall
+fail:
+  addi sp, sp, 16
+  li a0, 1
+  li a7, 93
+  ecall
+";
+
+    let image = build_fs_image(&[
+        FsEntry::Dir { path: "/bin" },
+        FsEntry::File {
+            path: "/bin/as.fexe",
+            data: &as_exec,
+        },
+        FsEntry::File {
+            path: "/prog.s",
+            data: source,
+        },
+    ]);
+
+    let session = "as /prog.s /prog.fexe\nrun /prog.fexe\nexit\n";
+    let (_, outcome, uart) =
+        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 200_000_000);
+
+    assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
+    assert!(
+        !uart.contains("unhandled exception"),
+        "the assembled program faulted; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("as: wrote /prog.fexe"),
+        "assembler did not report success; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("[exit 42]"),
+        "expanded-subset program did not exit 42 (a wrong encoding jumps to fail/1); uart={uart:?}"
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "shell did not survive the run and exit cleanly; outcome={outcome:?} uart={uart:?}"
+    );
+}
+
 // A non-FEXE file or a missing name must be reported as an unknown command
 // rather than failing opaquely inside sys_exec. Bare-name execution (PLAN 1.1)
 // folds `run` into a single PATH-resolving path, so both report the same way.
@@ -1019,6 +1134,98 @@ cat /doc.txt\nexit\n";
     assert!(after.contains("BRAVO"), "substitute did not take; uart={uart:?}");
     assert!(after.contains("charlie"), "tail line lost; uart={uart:?}");
     assert!(!after.contains("alpha"), "delete of first line failed; uart={uart:?}");
+}
+
+// A foreground interactive child that blocks waiting for input must not be
+// declared dead by its parent's `waitpid`. When the editor sleeps on `sc_readchar`
+// it becomes the scheduler's input_waiter and leaves the ready queue; `waitpid`
+// must treat that as alive (scheduler_pid_alive, not just pid_in_queue) or it
+// returns -1 and the shell abandons the still-running child. The normal harness
+// front-loads all UART input so the child never blocks and never hit this; here we
+// launch the editor, run with NO command available so it blocks (and gets timer-
+// preempted), then inject the command -- mirroring the GUI, where `edit` printed
+// `[exit -1]` at the first prompt before the user typed anything.
+#[test]
+fn editor_waits_while_idle_for_input() {
+    let shell = compile_hosted(user::SHELL);
+    let editor_exec = assembled_to_exec_file(&compile_hosted(user::EDIT));
+
+    let image = build_fs_image(&[
+        FsEntry::Dir { path: "/bin" },
+        FsEntry::File {
+            path: "/bin/edit.fexe",
+            data: &editor_exec,
+        },
+        FsEntry::Dir { path: "/home" },
+        FsEntry::Dir { path: "/home/src" },
+        FsEntry::File {
+            path: "/home/src/fib.s",
+            data: user::EXAMPLE_FIB_S.as_bytes(),
+        },
+    ]);
+
+    // Launch only: cd + edit. No editor command yet, so the editor idles.
+    let mut vm = setup_kernel_vm(cached_kernel(), Some(&shell), Some(&image), "cd /home/src\nedit fib.s\n");
+
+    // Let it boot, launch the editor, and idle (spinning on sc_readchar/sc_yield
+    // and getting timer-preempted) for a good while with no input available.
+    let r1 = vm.run(60_000_000);
+    let uart1 = r1.uart_output.clone();
+    assert!(uart1.contains("edit: p=print"), "editor did not start; uart={uart1:?}");
+
+    // Now the user "types" a command. Feed it and continue.
+    for b in "p\nq\nexit\n".bytes() {
+        vm.push_uart_rx(b);
+    }
+    let r2 = vm.run(60_000_000);
+    let uart = format!("{uart1}{}", r2.uart_output);
+
+    assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
+    assert!(
+        !uart.contains("[exit -1]"),
+        "editor faulted after idling/preemption; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("li t0, 0"),
+        "editor did not print the file after input arrived; uart={uart:?}"
+    );
+}
+
+// The bundled `array.s` example assembles and runs: it builds a five-element
+// array on the stack with `sd`, sums it via `slli`-scaled `ld offset(reg)` in a
+// `bge`-controlled loop, and exits with the total (42). Guards both the shipped
+// example and the expanded assembler subset through the in-VM `as`.
+#[test]
+fn example_array_assembles_and_runs() {
+    let shell = compile_hosted(user::SHELL);
+    let as_exec = assembled_to_exec_file(&compile_hosted(user::AS));
+
+    let image = build_fs_image(&[
+        FsEntry::Dir { path: "/bin" },
+        FsEntry::File {
+            path: "/bin/as.fexe",
+            data: &as_exec,
+        },
+        FsEntry::File {
+            path: "/array.s",
+            data: user::EXAMPLE_ARRAY_S.as_bytes(),
+        },
+    ]);
+
+    let session = "as /array.s /array.fexe\nrun /array.fexe\nexit\n";
+    let (_, outcome, uart) =
+        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 200_000_000);
+
+    assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
+    assert!(uart.contains("as: wrote /array.fexe"), "assembler failed; uart={uart:?}");
+    assert!(
+        uart.contains("[exit 42]"),
+        "shell did not report the array sum (42) as the exit code; uart={uart:?}"
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "shell did not survive the run and exit cleanly; outcome={outcome:?} uart={uart:?}"
+    );
 }
 
 // The bundled example assembly (`/home/fib.s`) assembles and runs: fib(11) = 89.

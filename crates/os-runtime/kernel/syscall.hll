@@ -443,7 +443,10 @@ sys_waitpid_impl: (frame: u64*) -> u64 {
         return SYSACT_CONTINUE
     }
 
-    if scheduler_pid_in_queue(target) == 1 {
+    ; "Alive" must include a child sleeping on input (the input_waiter), not just
+    ; ready-queue members, else waiting on an interactive child (e.g. the editor
+    ; idling for a keystroke) wrongly returns -1 the moment it blocks.
+    if scheduler_pid_alive(target) == 1 {
         ; Peek for a Ctrl-C teardown of this exact pid; stash any other byte.
         if input_pushback_valid == 0 {
             c: i64 = kuart_take()
