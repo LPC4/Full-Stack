@@ -178,6 +178,8 @@ main__entry:
 ; Load i32 from memory into $$26
 	addi   t0, sp, 40
 	lw     s3, 0(t0)
+	slli  s3, s3, 32
+	srli  s3, s3, 32
 	addiw  s3, s3, 0
 ; add operation on i32
 	add    s2, s2, s3

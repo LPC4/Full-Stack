@@ -726,7 +726,11 @@ visible buffer, so progressive renderers (e.g. `fbdemo`) paint as they go. Writi
 to `DBMODE` switches drawing to an off-screen back buffer; the GUI keeps showing the front buffer
 until a `PRESENT` copies the back buffer over. This lets an animated guest draw a full frame and
 publish it atomically, so the asynchronously-sampling GUI never shows a half-drawn or just-cleared
-frame (no flicker). The total device span is `307200 + 4096 = 311296` bytes; accesses past the end
+frame (no flicker). `DBMODE` is sticky device state with no notion of process lifecycle, so it
+survives a guest exit; the kernel reference-counts framebuffer users and resets it to single-buffered
+when the last one exits (see OS spec 7.5) so a single-buffered program never inherits a dead
+program's double-buffer mode. The total device span is `307200 + 4096 = 311296` bytes; accesses past
+the end
 raise a bus error.
 
 The kernel exposes the device to user programs through the `map_fb` syscall (number 107), which maps

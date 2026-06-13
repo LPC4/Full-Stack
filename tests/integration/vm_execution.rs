@@ -1997,3 +1997,119 @@ main: () -> i32 {
 }
 
 
+
+// --- Unsigned widening casts must zero-extend (not sign-extend) ---
+// A narrow unsigned value is loaded with a sign-extending lb/lh/lw; the widening
+// `as u64` (an IR Zext) must clear the high bits. Before the fix, Zext lowered to
+// a bare `mv`, so any byte/half/word with its high bit set widened to garbage
+// (e.g. 0xA4 -> 0xFFFF_FFFF_FFFF_FFA4).
+
+/// u8 with its high bit set must widen to its 0..255 value, not a negative.
+#[test]
+fn cast_u8_high_bit_zero_extends() {
+    let (_, outcome, _) = run_hll(r#"
+load_byte: (p: u8*) -> u64 {
+    b: u8 = @p
+    return b as u64
+}
+main: () -> i32 {
+    buf: u8* = new(u8, 1)
+    @buf = 0xA4 as u8
+    if load_byte(buf) == 164 {
+        return 0
+    }
+    return 1
+}
+"#);
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "u8 0xA4 must widen to 164, not a sign-extended negative; got {outcome:?}"
+    );
+}
+
+/// u16 and u32 high-bit values must also zero-extend through `as u64`.
+#[test]
+fn cast_u16_u32_high_bit_zero_extend() {
+    let (_, outcome, _) = run_hll(r#"
+main: () -> i32 {
+    h: u16 = 0x8001 as u16
+    wh: u64 = h as u64
+    w: u32 = 0x80000001 as u32
+    ww: u64 = w as u64
+    if wh == 32769 {
+        if ww == 2147483649 {
+            return 0
+        }
+    }
+    return 1
+}
+"#);
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "u16 0x8001 -> 32769 and u32 0x80000001 -> 2147483649; got {outcome:?}"
+    );
+}
+
+/// The fix must not break signed widening: i8 -1 still sign-extends to i64 -1.
+#[test]
+fn cast_signed_i8_still_sign_extends() {
+    let (_, outcome, _) = run_hll(r#"
+main: () -> i32 {
+    b: i8 = 0 as i8
+    b = b - 1
+    w: i64 = b as i64
+    if w == -1 {
+        return 0
+    }
+    return 1
+}
+"#);
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "i8 -1 must sign-extend to i64 -1; got {outcome:?}"
+    );
+}
+
+/// The real-world trigger: a little-endian u64 assembled from sign-extending
+/// byte loads through nested helper calls (the ELF-header read pattern).
+#[test]
+fn cast_nested_byte_composition_reads_u64() {
+    let (_, outcome, _) = run_hll(r#"
+rd_u16: (p: u8*, off: u64) -> u64 {
+    o1: u64 = off + 1
+    lo: u8 = @(p + off)
+    hi: u8 = @(p + o1)
+    return (lo as u64) | ((hi as u64) << 8)
+}
+rd_u32: (p: u8*, off: u64) -> u64 {
+    return rd_u16(p, off) | (rd_u16(p, off + 2) << 16)
+}
+rd_u64: (p: u8*, off: u64) -> u64 {
+    return rd_u32(p, off) | (rd_u32(p, off + 4) << 32)
+}
+setb: (p: u8*, off: u64, val: u64) {
+    q: u8* = p + off
+    @q = val as u8
+}
+main: () -> i32 {
+    buf: u8* = new(u8, 8)
+    ; little-endian 0xF0E0D0C0B0A09080 -- every byte has its high bit set
+    setb(buf, 0, 0x80)
+    setb(buf, 1, 0x90)
+    setb(buf, 2, 0xA0)
+    setb(buf, 3, 0xB0)
+    setb(buf, 4, 0xC0)
+    setb(buf, 5, 0xD0)
+    setb(buf, 6, 0xE0)
+    setb(buf, 7, 0xF0)
+    if rd_u64(buf, 0) == 0xF0E0D0C0B0A09080 {
+        return 0
+    }
+    return 1
+}
+"#);
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "nested LE u64 read must compose all eight bytes; got {outcome:?}"
+    );
+}

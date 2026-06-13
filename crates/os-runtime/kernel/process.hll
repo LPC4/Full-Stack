@@ -29,6 +29,9 @@ const PCB_IDX_EXIT_CODE  = 43
 ; console (UART). Bound by exec when the shell requests `>`/`>>`/`<`. See ch.7.7.
 const PCB_IDX_STDOUT_FD  = 44
 const PCB_IDX_STDIN_FD   = 45
+; 1 once the process has mapped the framebuffer; drives the DBMODE reset on the
+; last framebuffer user's exit (see syscall.hll fb_release_on_exit, OS spec 7.5).
+const PCB_IDX_FB_MAPPED  = 46
 
 ; VMM flags for user-accessible pages.
 const VMM_U = 16

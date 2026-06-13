@@ -369,8 +369,23 @@ shell's `run` pre-checks the magic and reports `not an executable` otherwise.
 `map_fb` maps the framebuffer device (`0x1002_0000`, 76 pages: 75 for the
 320x240 RGBA8888 buffer plus one control page) into the caller at `0x5000_0000`
 (R+W+U) and returns that VA; the device buffer is shared, the mapping is
-per-process. The control page exposes `FILL` (clear the draw buffer device-side),
-`DBMODE` (enable double buffering), and `PRESENT` (publish the back buffer).
+per-process. The control page exposes three word-write registers:
+
+| Offset | Name | Effect |
+| --- | --- | --- |
+| `0` | `FILL` | Clear the draw buffer to the written RGBA colour (device-side). |
+| `4` | `PRESENT` | Publish the back buffer to the front (no-op when single-buffered). |
+| `8` | `DBMODE` | `1` enables double buffering, `0` returns to single buffering. |
+
+`DBMODE` is one global device flag, not per-process, so the kernel reference-counts
+framebuffer users (set on the first `map_fb` per process via PCB index 46, cleared
+on exit) and resets `DBMODE` to `0` (single-buffered) only when the **last** user
+exits. This way a program that maps the framebuffer after a double-buffering one
+(e.g. the cube) has exited starts single-buffered instead of drawing into the
+hidden back buffer, yet a still-running double-buffered program is left alone and
+does not start flickering. A double-buffering program enables `DBMODE` itself right
+after `map_fb`. (Concurrent graphical programs still share the one screen and one
+`DBMODE`; the kernel does not composite them.)
 
 The runtime has two input devices. **Text** (shell, editor) arrives over the UART
 (`0x1000_0000`) and is read with `readchar`; the host GUI forwards printable text,
@@ -565,10 +580,14 @@ NOPs keep the speculative fetch valid so the exit `ecall` traps cleanly to S-mod
 The demo gallery lives in `/home/demo`, reachable by bare name (PATH search, 10.1):
 `cube` animates a spinning wireframe cube, `mandelbrot` renders a Mandelbrot set,
 and `life` runs Conway's Game of Life on a 40x30 toroidal grid (B3/S23). All three
-use `map_fb` (7.5); the cube and Mandelbrot use native `f64` math. Each enables
-double buffering and `FILL`-clears then `PRESENT`s every frame (no flicker). The
-cube reads WASD via `poll_key`; `life` reads `P` (pause), `R` (reseed), and space
-(single step). Run them from the shell and view in the Machine window's FB tab.
+use `map_fb` (7.5); the cube and Mandelbrot use native `f64` math. The cube and
+`life` enable double buffering, then `FILL`-clear and `PRESENT` each frame (no
+flicker); the Mandelbrot renders one static frame straight to the single front
+buffer. Because `DBMODE` resets to single-buffered once the last framebuffer user
+exits (7.5), the Mandelbrot draws correctly when run after the cube/life exit. The
+cube reads WASD via
+`poll_key`; `life` reads `P` (pause), `R` (reseed), and space (single step). Run
+them from the shell and view in the Machine window's FB tab.
 
 ### 10.5 Hello and examples
 

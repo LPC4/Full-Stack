@@ -688,7 +688,7 @@ impl CompilerRv64 {
 
         let src_tmp = self.load_value_to_temp(value, ctx);
         let result_tmp = self.result_reg_for(dest, ctx);
-        self.lower_cast(result_tmp, src_tmp, mode, &resolved_ty);
+        self.lower_cast(result_tmp, src_tmp, mode, &src_ty, &resolved_ty);
         self.commit_int_result(dest, result_tmp, &resolved_ty, ctx);
     }
 
@@ -1385,11 +1385,35 @@ impl CompilerRv64 {
         temp
     }
 
-    fn lower_cast(&mut self, rd: Reg, rs: Reg, mode: IrCastMode, ty: &IrType) {
+    fn lower_cast(&mut self, rd: Reg, rs: Reg, mode: IrCastMode, src_ty: &IrType, ty: &IrType) {
         match mode {
-            IrCastMode::Bitcast | IrCastMode::Trunc | IrCastMode::Zext => {
+            IrCastMode::Bitcast | IrCastMode::Trunc => {
                 self.emitter.emit_mv(rd, rs);
             }
+            // Zero-extend from the SOURCE width: the operand may have been
+            // produced by a sign-extending load (lb/lh/lw), so the high bits
+            // must be cleared, not merely copied. The IR cast carries only the
+            // target type, so the source width comes from `src_ty`.
+            IrCastMode::Zext => match self.resolve_ir_type(src_ty) {
+                IrType::Integer(hll_to_ir::IntWidth::I1) => {
+                    self.emitter.emit_slli(rd, rs, 63);
+                    self.emitter.emit_srli(rd, rd, 63);
+                }
+                IrType::Integer(hll_to_ir::IntWidth::I8) => {
+                    self.emitter.emit_slli(rd, rs, 56);
+                    self.emitter.emit_srli(rd, rd, 56);
+                }
+                IrType::Integer(hll_to_ir::IntWidth::I16) => {
+                    self.emitter.emit_slli(rd, rs, 48);
+                    self.emitter.emit_srli(rd, rd, 48);
+                }
+                IrType::Integer(hll_to_ir::IntWidth::I32) => {
+                    self.emitter.emit_slli(rd, rs, 32);
+                    self.emitter.emit_srli(rd, rd, 32);
+                }
+                // I64 (and any non-narrow source) already fills the register.
+                _ => self.emitter.emit_mv(rd, rs),
+            },
             IrCastMode::Sext => match ty {
                 IrType::Integer(hll_to_ir::IntWidth::I32) => {
                     self.emitter.emit_addiw(rd, rs, 0);
@@ -1465,7 +1489,71 @@ fn reg_for_arg(i: usize) -> Reg {
 
 #[cfg(test)]
 mod tests {
-    use super::reg_for_arg;
+    use super::{reg_for_arg, CompilerRv64};
+    use hll_to_ir::{
+        IntWidth, IrBlock, IrCastMode, IrFunction, IrInstruction, IrProgram, IrRegister,
+        IrTerminator, IrType, IrValue,
+    };
+
+    // A zero-extending cast from a narrow unsigned integer must clear the high
+    // bits the sign-extending load (lb/lh/lw) left behind -- it cannot be a bare
+    // `mv`. Regression for the u8->u64 widening miscompile that read 0xA4 as
+    // 0xFFFF_FFFF_FFFF_FFA4. The lowering emits `slli`/`srli` to mask to the
+    // source width.
+    #[test]
+    fn zext_from_loaded_narrow_unsigned_masks_high_bits() {
+        let mask_widths = [
+            (IntWidth::I8, 56u32),
+            (IntWidth::I16, 48),
+            (IntWidth::I32, 32),
+        ];
+        for (width, shift) in mask_widths {
+            let slot = IrRegister::Named("slot".to_owned());
+            let loaded = IrRegister::Named("loaded".to_owned());
+            let widened = IrRegister::Named("widened".to_owned());
+
+            let mut entry = IrBlock::new("entry");
+            entry.push_instruction(IrInstruction::Alloc {
+                dest: slot.clone(),
+                ty: IrType::Integer(width),
+                count: None,
+            });
+            entry.push_instruction(IrInstruction::Store {
+                ty: IrType::Integer(width),
+                value: IrValue::Integer(-1),
+                ptr: slot.clone(),
+                offset: None,
+            });
+            entry.push_instruction(IrInstruction::Load {
+                dest: loaded.clone(),
+                ty: IrType::Integer(width),
+                ptr: slot.clone(),
+                offset: None,
+            });
+            entry.push_instruction(IrInstruction::Cast {
+                dest: widened.clone(),
+                mode: IrCastMode::Zext,
+                value: IrValue::Register(loaded),
+                ty: IrType::Integer(IntWidth::I64),
+            });
+            entry.set_terminator(IrTerminator::Return(Some(IrValue::Register(widened))));
+
+            let mut func = IrFunction::new("widen", IrType::Integer(IntWidth::I64));
+            func.push_block(entry);
+            let mut program = IrProgram::new("test");
+            program.push_function(func);
+
+            let asm = CompilerRv64::new().compile(&program);
+            assert!(
+                asm.contains("slli") && asm.contains("srli"),
+                "zext from {width:?} must emit slli/srli to zero the high bits; asm:\n{asm}"
+            );
+            assert!(
+                asm.contains(&format!(", {shift}\n")),
+                "zext from {width:?} must mask with a {shift}-bit logical shift; asm:\n{asm}"
+            );
+        }
+    }
 
     #[test]
     fn reg_for_arg_maps_first_eight_to_a_regs() {

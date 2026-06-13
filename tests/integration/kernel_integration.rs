@@ -1228,6 +1228,124 @@ fn example_array_assembles_and_runs() {
     );
 }
 
+// The expanded assembler handles a data section, `la`, and `call`/`ret`: a
+// hand-written program loads a `.asciz` string with `la`, prints it via the write
+// syscall, then computes its exit code through a called function. Proves the
+// text/pad/data layout, PC-relative `la`/`call` encoding, and `jalr`-based return
+// all round-trip through the in-VM `as`.
+#[test]
+fn kernel_shell_assembles_data_and_calls() {
+    let shell = compile_hosted(user::SHELL);
+    let as_exec = assembled_to_exec_file(&compile_hosted(user::AS));
+
+    let source = b"\
+.text
+.globl _start
+_start:
+  la a1, msg          ; address of the string in .data
+  li a0, 1            ; fd = stdout (UART)
+  li a2, 5            ; length of \"HELLO\"
+  li a7, 64
+  ecall               ; write(1, msg, 5)
+  li a0, 40
+  call add_two        ; a0 = 42 via a real call/ret
+  li a7, 93
+  ecall               ; exit(42)
+add_two:
+  addi a0, a0, 2
+  ret
+.data
+msg:
+  .asciz \"HELLO\"
+";
+
+    let image = build_fs_image(&[
+        FsEntry::Dir { path: "/bin" },
+        FsEntry::File {
+            path: "/bin/as.fexe",
+            data: &as_exec,
+        },
+        FsEntry::File {
+            path: "/prog.s",
+            data: source,
+        },
+    ]);
+
+    let session = "as /prog.s /prog.fexe\nrun /prog.fexe\nexit\n";
+    let (_, outcome, uart) =
+        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 200_000_000);
+
+    assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
+    assert!(
+        !uart.contains("unhandled exception"),
+        "the assembled program faulted; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("as: wrote /prog.fexe"),
+        "assembler did not report success; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("HELLO"),
+        "`la` + .asciz did not print the data-section string; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("[exit 42]"),
+        "call/ret did not produce exit 42; uart={uart:?}"
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "shell did not survive the run and exit cleanly; outcome={outcome:?} uart={uart:?}"
+    );
+}
+
+// A static ELF executable produced by the host toolchain loads and runs in the
+// kernel. sys_exec now dispatches on the file magic (ELF vs FEXE): it parses the
+// ELF64 header + PT_LOAD program headers, maps each segment at its p_vaddr,
+// zeroes BSS, and jumps e_entry. The shell's executable check accepts ELF magic
+// too, so `run /prog.elf` reaches the loader. Proves host-built ELF binaries run
+// in our kernel unmodified -- the foundation for the in-VM linker's output.
+#[test]
+fn kernel_loads_and_runs_elf() {
+    let shell = compile_hosted(user::SHELL);
+    let prog = compile_hosted(
+        "external console_writeln: (s: u8*)\n\
+         main: () -> i32 {\n\
+         \tconsole_writeln(\"elf ok\".data)\n\
+         \treturn 7\n\
+         }\n",
+    );
+    // Link at the same base the kernel maps user code to, so e_entry / p_vaddr
+    // land in the user code region.
+    let elf = prog.to_elf(USER_CODE_VA);
+
+    let image = build_fs_image(&[FsEntry::File {
+        path: "/prog.elf",
+        data: &elf,
+    }]);
+
+    let session = "run /prog.elf\nexit\n";
+    let (_, outcome, uart) =
+        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 200_000_000);
+
+    assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
+    assert!(
+        !uart.contains("unhandled exception"),
+        "the ELF program faulted; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("elf ok"),
+        "ELF program did not print its marker; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("[exit 7]"),
+        "ELF program did not exit 7 through the loader; uart={uart:?}"
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "shell did not survive the ELF run and exit cleanly; outcome={outcome:?} uart={uart:?}"
+    );
+}
+
 // The bundled example assembly (`/home/fib.s`) assembles and runs: fib(11) = 89.
 // Guards both the assembler and the shipped example file.
 #[test]

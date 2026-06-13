@@ -62,6 +62,8 @@ const FB_PHYS_BASE = 0x10020000
 const FB_PAGE_COUNT = 76
 const FB_USER_BASE = 0x50000000
 const FB_MAP_FLAGS = 22         ; R + W + U (vmm_map adds V)
+const FB_PIXEL_BYTES = 307200   ; 320*240*4; the control page follows the pixels
+const FB_DBMODE_REG = 8         ; control-register offset: 0 = single, 1 = double
 
 external klog_int:             (label: u8*, val: i64)
 external klog_error:           (msg: u8*)
@@ -191,10 +193,73 @@ sys_pollkey_impl: () -> i64 {
     return ev as i64
 }
 
-; Load an FEXE into a new process and enqueue it; arg (or null) is staged into
-; the child's USER_ARG_BASE page. out_path/in_path (or null) redirect the child's
-; stdout/stdin to FS files; out_append seeks stdout to end instead of truncating.
-; Returns the new pid or -1. See OS spec ch.5.5 and 7.7.
+; --- Little-endian reads from a byte buffer (alignment-safe ELF parsing) ---
+
+rd_u16: (p: u8*, off: u64) -> u64 {
+    o1: u64 = off + 1
+    lo: u8 = @(p + off)
+    hi: u8 = @(p + o1)
+    return (lo as u64) | ((hi as u64) << 8)
+}
+rd_u32: (p: u8*, off: u64) -> u64 {
+    return rd_u16(p, off) | (rd_u16(p, off + 2) << 16)
+}
+rd_u64: (p: u8*, off: u64) -> u64 {
+    return rd_u32(p, off) | (rd_u32(p, off + 4) << 32)
+}
+
+; Load every PT_LOAD segment of a static ELF64 image (already open as `fd`, with
+; its 64-byte header in `hdr`) into the active page-table root. Each segment is
+; mapped page-by-page at its p_vaddr; file-backed bytes ([0, p_filesz)) are copied
+; and the rest ([p_filesz, p_memsz), i.e. BSS) stays zero. Assumes page-aligned
+; p_vaddr (true for our single-PT_LOAD host output). Returns the segment count
+; mapped, or -1 on allocation/read failure. See OS spec ch.7.4.
+load_elf_segments: (fd: i64, hdr: u8*) -> i64 {
+    phoff: u64 = rd_u64(hdr, 32)       ; e_phoff
+    phentsize: u64 = rd_u16(hdr, 54)   ; e_phentsize
+    phnum: u64 = rd_u16(hdr, 56)       ; e_phnum
+    ph: u8* = kmalloc(64)
+    loaded: i64 = 0
+    pi: u64 = 0
+    while pi < phnum {
+        hn: i64 = fs_read(fd, ph, phoff + pi * phentsize, 56)
+        if hn < 56 {
+            return -1 as i64
+        }
+        ptype: u64 = rd_u32(ph, 0)     ; p_type; PT_LOAD == 1
+        if ptype == 1 {
+            p_offset: u64 = rd_u64(ph, 8)
+            p_vaddr:  u64 = rd_u64(ph, 16)
+            p_filesz: u64 = rd_u64(ph, 32)
+            p_memsz:  u64 = rd_u64(ph, 40)
+            seg_off: u64 = 0
+            while seg_off < p_memsz {
+                page_pa: u8* = pmm_alloc()
+                if page_pa == null {
+                    return -1 as i64
+                }
+                memset(page_pa, 0, 4096)
+                if seg_off < p_filesz {
+                    to_read: u64 = p_filesz - seg_off
+                    if to_read > 4096 {
+                        to_read = 4096
+                    }
+                    fs_read(fd, page_pa, p_offset + seg_off, to_read)
+                }
+                vmm_map(p_vaddr + seg_off, page_pa as u64, USER_PAGE_FLAGS)
+                seg_off = seg_off + 4096
+            }
+            loaded = loaded + 1
+        }
+        pi = pi + 1
+    }
+    return loaded
+}
+
+; Load an FEXE or static ELF64 into a new process and enqueue it; arg (or null) is
+; staged into the child's USER_ARG_BASE page. out_path/in_path (or null) redirect
+; the child's stdout/stdin to FS files; out_append seeks stdout to end instead of
+; truncating. Returns the new pid or -1. See OS spec ch.5.5 and 7.7.
 sys_exec_impl: (path: u8*, arg: u8*, out_path: u8*, in_path: u8*, out_append: u64) -> i64 {
     fd: i64 = fs_open(path, 0)
     if fd < 2 {
@@ -246,20 +311,39 @@ sys_exec_impl: (path: u8*, arg: u8*, out_path: u8*, in_path: u8*, out_append: u6
         }
     }
 
-    ; Read and validate the header block.
+    ; Read the header block and determine the executable format (FEXE or ELF).
     hdr: u8* = kmalloc(64)
-    hn: i64 = fs_read(fd, hdr, 0, 16)
+    hn: i64 = fs_read(fd, hdr, 0, 64)
     if hn < 16 {
         fs_close(fd)
         return -1 as i64
     }
-    magic_p: u32* = hdr as u32*
-    magic: u64 = (@magic_p) as u64
-    entry_p: u64* = (hdr as u64 + 8) as u64*
-    entry_off: u64 = @entry_p
-    if magic != FEXE_MAGIC {
-        fs_close(fd)
-        return -1 as i64
+    is_elf: i64 = 0
+    if @hdr == 0x7F {
+        if @(hdr + 1) == 69 {
+            if @(hdr + 2) == 76 {
+                if @(hdr + 3) == 70 {
+                    is_elf = 1
+                }
+            }
+        }
+    }
+    ; Entry is an absolute VA for ELF (e_entry), or USER_CODE_BASE + the FEXE
+    ; entry offset for the flat format.
+    entry: u64 = 0
+    if is_elf == 1 {
+        if hn < 64 {
+            fs_close(fd)
+            return -1 as i64
+        }
+        entry = rd_u64(hdr, 24)
+    } else {
+        magic_p: u32* = hdr as u32*
+        if (@magic_p) as u64 != FEXE_MAGIC {
+            fs_close(fd)
+            return -1 as i64
+        }
+        entry = USER_CODE_BASE + rd_u64(hdr, 8)
     }
 
     ; Parent the child to its launcher (captured before the root switches).
@@ -271,7 +355,6 @@ sys_exec_impl: (path: u8*, arg: u8*, out_path: u8*, in_path: u8*, out_append: u6
 
     ; Create the process first so the child's page-table root is active; the
     ; payload pages below then map into the child's address space.
-    entry: u64 = USER_CODE_BASE + entry_off
     pcb: u64* = process_create(entry)
     process_set_parent(pcb, parent_pid_v)
 
@@ -294,32 +377,40 @@ sys_exec_impl: (path: u8*, arg: u8*, out_path: u8*, in_path: u8*, out_append: u6
     memcpy(arg_pa, arg_buf, USER_ARG_MAX + 1)
     vmm_map(USER_ARG_BASE, arg_pa as u64, USER_ARG_FLAGS)
 
-    ; Copy the payload into fresh physical pages and map them user-accessible.
-    off: u64 = EXEC_HEADER_SIZE as u64
-    page_idx: u64 = 0
-    while 1 == 1 {
-        page_pa: u8* = pmm_alloc()
-        if page_pa == null {
-            fs_close(fd)
+    ; Load the image into the child's (now active) address space.
+    if is_elf == 1 {
+        segs: i64 = load_elf_segments(fd, hdr)
+        fs_close(fd)
+        if segs <= 0 {
             return -1 as i64
         }
-        memset(page_pa, 0, 4096)
-        got: i64 = fs_read(fd, page_pa, off, 4096)
-        if got <= 0 {
-            pmm_free(page_pa)
-            break
+    } else {
+        ; Copy the FEXE payload into fresh physical pages and map them user-accessible.
+        off: u64 = EXEC_HEADER_SIZE as u64
+        page_idx: u64 = 0
+        while 1 == 1 {
+            page_pa: u8* = pmm_alloc()
+            if page_pa == null {
+                fs_close(fd)
+                return -1 as i64
+            }
+            memset(page_pa, 0, 4096)
+            got: i64 = fs_read(fd, page_pa, off, 4096)
+            if got <= 0 {
+                pmm_free(page_pa)
+                break
+            }
+            vmm_map(USER_CODE_BASE + page_idx * 4096, page_pa as u64, USER_PAGE_FLAGS)
+            page_idx = page_idx + 1
+            off = off + 4096
+            if got < 4096 {
+                break
+            }
         }
-        vmm_map(USER_CODE_BASE + page_idx * 4096, page_pa as u64, USER_PAGE_FLAGS)
-        page_idx = page_idx + 1
-        off = off + 4096
-        if got < 4096 {
-            break
+        fs_close(fd)
+        if page_idx == 0 {
+            return -1 as i64
         }
-    }
-    fs_close(fd)
-
-    if page_idx == 0 {
-        return -1 as i64
     }
 
     scheduler_add(pcb)
@@ -541,6 +632,44 @@ sys_rmdir_impl: (frame: u64*) -> u64 {
     return SYSACT_CONTINUE
 }
 
+; --- Framebuffer ownership tracking ---
+; DBMODE is a single global device flag, but graphical programs run concurrently
+; (background jobs). We reset it to single-buffered only when the LAST framebuffer
+; user exits, so a later single-buffered program never inherits a dead program's
+; double-buffer mode, while a live double-buffered program keeps its setting and
+; does not flicker. See OS spec ch.7.5.
+fb_user_count: u64 = 0
+
+; Mark a process as a framebuffer user on its first map_fb (PCB index 46).
+fb_acquire: (pcb: u64*) {
+    if pcb == null {
+        return
+    }
+    if @pcb[46] == 0 {
+        @pcb[46] = 1
+        fb_user_count = fb_user_count + 1
+    }
+}
+
+; Called from every process-exit path. When the last framebuffer user leaves,
+; reset DBMODE to single-buffered so the next single-buffered program is visible.
+fb_release_on_exit: (pcb: u64*) {
+    if pcb == null {
+        return
+    }
+    if @pcb[46] == 0 {
+        return
+    }
+    @pcb[46] = 0
+    if fb_user_count != 0 {
+        fb_user_count = fb_user_count - 1
+    }
+    if fb_user_count == 0 {
+        dbmode: u32* = (FB_PHYS_BASE + FB_PIXEL_BYTES + FB_DBMODE_REG) as u32*
+        @dbmode = 0 as u32
+    }
+}
+
 ; Map the framebuffer into the caller's root; return its base VA. See OS spec ch.7.5.
 sys_map_fb_impl: (frame: u64*) -> u64 {
     i: u64 = 0
@@ -549,6 +678,7 @@ sys_map_fb_impl: (frame: u64*) -> u64 {
         vmm_map(FB_USER_BASE + off, FB_PHYS_BASE + off, FB_MAP_FLAGS)
         i = i + 1
     }
+    fb_acquire(scheduler_current())
     @frame[10] = FB_USER_BASE
     return SYSACT_CONTINUE
 }

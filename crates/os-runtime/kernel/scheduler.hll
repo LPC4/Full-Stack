@@ -7,6 +7,7 @@ external kpanic:     (msg: u8*)
 external klog_ok:    (msg: u8*)
 external klog_int:   (label: u8*, val: i64)
 external klog_error: (msg: u8*)
+external fb_release_on_exit: (pcb: u64*)
 
 ; Index of the parent_pid field in the PCB (see process.hll PCB layout).
 const PCB_IDX_PARENT_PID = 42
@@ -63,6 +64,7 @@ schedule: (frame: u64*, action: u64) {
 
         if action == 2 {
             @current_process[1] = 3  ; EXITED
+            fb_release_on_exit(current_process)
         } else {
             if action == 3 {
                 @current_process[1] = 2  ; BLOCKED (not re-enqueued; woken later)
@@ -208,6 +210,7 @@ scheduler_kill_child: (parent_pid: u64) -> u64 {
                 @prev[2] = @curr[2]
             }
             @curr[1] = 3  ; EXITED
+            fb_release_on_exit(curr)
             return 1
         }
         prev = curr
@@ -229,6 +232,7 @@ scheduler_kill_pid: (pid: u64) -> u64 {
                 @prev[2] = @curr[2]
             }
             @curr[1] = 3  ; EXITED
+            fb_release_on_exit(curr)
             return 1
         }
         prev = curr

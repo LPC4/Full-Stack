@@ -1,7 +1,10 @@
 ; In-VM RV64I assembler: `as <src> <out>` two-pass assembles into a FEXE.
 ; Subset: li mv add sub and or xor sll srl sra slt sltu; addi andi ori xori slti
 ; sltiu slli srli srai; ld lw lwu lh lhu lb lbu and sd sw sh sb (offset(reg));
-; lui auipc; j beq bne blt bge bltu bgeu; nop ecall ret. Subset/encodings and the trailing-NOP quirk: OS spec ch.10.3.
+; lui auipc; j jal jalr call la; beq bne blt bge bltu bgeu; nop ecall ret.
+; Directives: .text/.data/.section, .globl, .byte .word .zero .ascii .asciz.
+; The payload is text, then PAD NOPs, then the data section. Subset/encodings and
+; the trailing-NOP quirk: OS spec ch.10.3.
 
 external console_write:   (str: u8*)
 external console_writeln: (str: u8*)
@@ -20,17 +23,27 @@ external cstr_len:     (s: u8*) -> u64
 const ARG_BASE = 0x7FF00000
 ; FEXE header size; payload (flat binary) starts here.
 const HDR = 4096
+; Bytes of NOP padding between the text and data regions (the M-mode halt quirk).
+const PAD = 32
 
 ; Source text, assembled code, and the FEXE output image.
 src: u8[8192]
 src_len: u64 = 0
 code: u8[8192]
 code_len: u64 = 0
+; Data section bytes, appended after the text + NOP pad in the final image.
+data: u8[8192]
+data_len: u64 = 0
+; Current section: 0 = text, 1 = data. Switched by .text/.data directives.
+cur_sec: i64 = 0
+; Final text size after pass 1; data labels resolve to text_total + PAD + offset.
+text_total: i64 = 0
 out: u8[12288]
 
-; Label table: names packed 16 bytes each, parallel address array.
+; Label table: names packed 16 bytes each, parallel address and section arrays.
 lbl_names: u8[1024]
 lbl_addr: i64[64]
+lbl_sec: i64[64]
 lbl_count: i64 = 0
 
 ; Token table for one line: up to 6 tokens, 24 bytes each.
@@ -383,7 +396,9 @@ parse_mem: (p: u8*) {
 
 ; --- Label table ---
 
-add_label: (name: u8*, addr: i64) {
+; Record a label at section-local offset `off` in section `sec` (0 text, 1 data).
+; resolve_labels() rewrites data offsets to absolute payload positions after pass 1.
+add_label: (name: u8*, off: i64, sec: i64) {
     if lbl_count >= 64 {
         fail("too many labels".data)
         return
@@ -404,8 +419,21 @@ add_label: (name: u8*, addr: i64) {
     }
     t: u8* = dst + i
     @t = 0 as u8
-    @lbl_addr[lbl_count] = addr
+    @lbl_addr[lbl_count] = off
+    @lbl_sec[lbl_count] = sec
     lbl_count = lbl_count + 1
+}
+
+; After pass 1, turn data-section label offsets into absolute payload positions
+; (data follows the text and its NOP pad). Text labels are already absolute.
+resolve_labels: () {
+    i: i64 = 0
+    while i < lbl_count {
+        if @lbl_sec[i] == 1 {
+            @lbl_addr[i] = text_total + PAD + @lbl_addr[i]
+        }
+        i = i + 1
+    }
 }
 
 ; Resolve a label name to its byte address, or -1 if undefined (sets err_flag).
@@ -512,6 +540,159 @@ emit_li: (rd: i64, imm: i64) {
     lo: i64 = imm - hi * 4096
     emit_word(((hi as u32) & 0xFFFFF) << 12 | ((rd as u32) << 7) | (0x37 as u32))
     emit_word(enc_i(rd, rd, lo, 0, 0x13))
+}
+
+; --- Data section emission ---
+
+push_data_byte: (b: u8) {
+    if data_len < 8192 {
+        @data[data_len] = b
+        data_len = data_len + 1
+    }
+}
+
+emit_data_word: (w: u32) {
+    push_data_byte(w as u8)
+    push_data_byte((w >> 8) as u8)
+    push_data_byte((w >> 16) as u8)
+    push_data_byte((w >> 24) as u8)
+}
+
+; PC-relative split for auipc+addi / auipc+jalr pairs (la, call). The hi field is
+; left signed; enc_u/enc_i mask it. Both halves reference the auipc's pc.
+pcrel_hi: i64 = 0
+pcrel_lo: i64 = 0
+split_pcrel: (delta: i64) {
+    lo: i64 = delta & 0xFFF
+    if lo >= 2048 {
+        lo = lo - 4096
+    }
+    pcrel_lo = lo
+    pcrel_hi = (delta - lo) >> 12
+}
+
+; Emit/size a quoted string from a .ascii/.asciz line (`zt` adds a NUL). Strings
+; cannot contain ';' or '#' (the line is comment-stripped first). Returns length.
+data_string: (pass: i64, line_p: u8*, zt: i64) -> i64 {
+    i: u64 = 0
+    while @(line_p + i) != 0 {
+        if @(line_p + i) == 34 {
+            break
+        }
+        i = i + 1
+    }
+    if @(line_p + i) != 34 {
+        fail("string: missing quote".data)
+        return 0
+    }
+    i = i + 1
+    n: i64 = 0
+    while @(line_p + i) != 0 {
+        c: u8 = @(line_p + i)
+        if c == 34 {
+            break
+        }
+        if c == 92 {
+            i = i + 1
+            e: u8 = @(line_p + i)
+            c = e
+            if e == 110 {
+                c = 10 as u8
+            }
+            if e == 116 {
+                c = 9 as u8
+            }
+            if e == 114 {
+                c = 13 as u8
+            }
+            if e == 48 {
+                c = 0 as u8
+            }
+            if e == 92 {
+                c = 92 as u8
+            }
+            if e == 34 {
+                c = 34 as u8
+            }
+        }
+        if pass == 2 {
+            push_data_byte(c)
+        }
+        n = n + 1
+        i = i + 1
+    }
+    if zt == 1 {
+        if pass == 2 {
+            push_data_byte(0 as u8)
+        }
+        n = n + 1
+    }
+    return n
+}
+
+; Handle a directive line. Section directives switch cur_sec and return 0; data
+; directives emit (pass 2) and return the byte count they add to the data section.
+handle_directive: (pass: i64, base: i64, line_p: u8*) -> i64 {
+    d: u8* = tok_at(base)
+    if cstr_eq(d, ".text".data) == 1 {
+        cur_sec = 0
+        return 0
+    }
+    if cstr_eq(d, ".data".data) == 1 {
+        cur_sec = 1
+        return 0
+    }
+    if cstr_eq(d, ".rodata".data) == 1 {
+        cur_sec = 1
+        return 0
+    }
+    if cstr_eq(d, ".bss".data) == 1 {
+        cur_sec = 1
+        return 0
+    }
+    if cstr_eq(d, ".section".data) == 1 {
+        a: u8* = tok_at(base + 1)
+        if cstr_eq(a, ".text".data) == 1 {
+            cur_sec = 0
+        } else {
+            cur_sec = 1
+        }
+        return 0
+    }
+    if cstr_eq(d, ".globl".data) == 1 {
+        return 0
+    }
+    if cstr_eq(d, ".byte".data) == 1 {
+        if pass == 2 {
+            push_data_byte(parse_imm(tok_at(base + 1)) as u8)
+        }
+        return 1
+    }
+    if cstr_eq(d, ".word".data) == 1 {
+        if pass == 2 {
+            emit_data_word(parse_imm(tok_at(base + 1)) as u32)
+        }
+        return 4
+    }
+    if cstr_eq(d, ".zero".data) == 1 {
+        n: i64 = parse_imm(tok_at(base + 1))
+        if pass == 2 {
+            k: i64 = 0
+            while k < n {
+                push_data_byte(0 as u8)
+                k = k + 1
+            }
+        }
+        return n
+    }
+    if cstr_eq(d, ".asciz".data) == 1 {
+        return data_string(pass, line_p, 1)
+    }
+    if cstr_eq(d, ".ascii".data) == 1 {
+        return data_string(pass, line_p, 0)
+    }
+    fail("unknown directive".data)
+    return 0
 }
 
 ; Assemble one tokenized instruction at token `base`; pass 1 sizes only, pass 2
@@ -631,6 +812,41 @@ encode_instr: (pass: i64, base: i64, pc: i64) -> i64 {
             emit_word(enc_b(reg_num(o0), reg_num(o1), target - pc, 7))
         }
         return 4
+    }
+
+    ; --- Jumps and PC-relative address materialization ---
+    if cstr_eq(m, "jal".data) == 1 {
+        if pass == 2 {
+            target: i64 = find_label(o1)
+            emit_word(enc_j(reg_num(o0), target - pc))
+        }
+        return 4
+    }
+    if cstr_eq(m, "jalr".data) == 1 {
+        if pass == 2 {
+            emit_word(enc_i(reg_num(o0), reg_num(o1), parse_imm(o2), 0, 0x67))
+        }
+        return 4
+    }
+    ; call/la expand to auipc + jalr/addi against the current pc (8 bytes).
+    if cstr_eq(m, "call".data) == 1 {
+        if pass == 2 {
+            target: i64 = find_label(o0)
+            split_pcrel(target - pc)
+            emit_word(enc_u(1, pcrel_hi, 0x17))
+            emit_word(enc_i(1, 1, pcrel_lo, 0, 0x67))
+        }
+        return 8
+    }
+    if cstr_eq(m, "la".data) == 1 {
+        if pass == 2 {
+            target: i64 = find_label(o1)
+            split_pcrel(target - pc)
+            rd: i64 = reg_num(o0)
+            emit_word(enc_u(rd, pcrel_hi, 0x17))
+            emit_word(enc_i(rd, rd, pcrel_lo, 0, 0x13))
+        }
+        return 8
     }
 
     ; --- Register-register (R-type) ---
@@ -827,7 +1043,9 @@ encode_instr: (pass: i64, base: i64, pc: i64) -> i64 {
 ; encodes instructions into `code`.
 assemble: (pass: i64) {
     i: u64 = 0
-    pc: i64 = 0
+    tpc: i64 = 0
+    dpc: i64 = 0
+    cur_sec = 0
     line: u8[256]
     line_p: u8* = line[0]
     while i < src_len {
@@ -860,15 +1078,31 @@ assemble: (pass: i64) {
             if ends_colon(first) == 1 {
                 drop_colon(first)
                 if pass == 1 {
-                    add_label(first, pc)
+                    if cur_sec == 0 {
+                        add_label(first, tpc, 0)
+                    } else {
+                        add_label(first, dpc, 1)
+                    }
                 }
                 base = 1
             }
             if base < ntok {
-                size: i64 = encode_instr(pass, base, pc)
-                pc = pc + size
+                d0: u8* = tok_at(base)
+                if @d0 == 46 {
+                    ; Directive (leading '.'); may switch section or emit data.
+                    sz: i64 = handle_directive(pass, base, line_p)
+                    if cur_sec == 1 {
+                        dpc = dpc + sz
+                    }
+                } else {
+                    size: i64 = encode_instr(pass, base, tpc)
+                    tpc = tpc + size
+                }
             }
         }
+    }
+    if pass == 1 {
+        text_total = tpc
     }
 }
 
@@ -935,9 +1169,12 @@ main: () -> i32 {
 
     lbl_count = 0
     code_len = 0
+    data_len = 0
     err_flag = 0
     assemble(1)
+    resolve_labels()
     code_len = 0
+    data_len = 0
     assemble(2)
     if err_flag != 0 {
         return 1
@@ -945,10 +1182,17 @@ main: () -> i32 {
 
     ; Append NOP padding so the speculative fetch after the final ecall stays
     ; valid (a zero word would trap to M-mode and halt the VM). See OS spec ch.10.3.
+    ; PAD bytes here must match the gap data labels were resolved against.
     pad: u64 = 0
     while pad < 8 {
         emit_word(0x13 as u32)
         pad = pad + 1
+    }
+    ; The data section follows the text and its pad in the flat payload.
+    di: u64 = 0
+    while di < data_len {
+        push_byte(@data[di])
+        di = di + 1
     }
 
     ; Build the FEXE image: magic "FEXE", entry offset 0, then the payload.

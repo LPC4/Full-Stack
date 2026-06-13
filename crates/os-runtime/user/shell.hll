@@ -285,8 +285,9 @@ cmd_cd: (cwd: u8*, arg: u8*) {
     cstr_copy(cwd, target_p)
 }
 
-; Return 1 if the file at `path` begins with the FEXE magic ("FEXE"), else 0.
-; Lets `run` reject a non-executable up front instead of failing inside sys_exec.
+; Return 1 if the file at `path` is an executable the kernel can load: either a
+; FEXE ("FEXE") or an ELF (0x7F 'E' 'L' 'F'). Lets `run` reject a non-executable
+; up front instead of failing inside sys_exec.
 sh_is_fexe: (path: u8*) -> i64 {
     fd: i64 = sc_open(path, 0)
     if fd < 0 {
@@ -299,19 +300,27 @@ sh_is_fexe: (path: u8*) -> i64 {
     if n != 4 {
         return 0
     }
-    if @(magic_p + 0) != 70 {
-        return 0
+    ; FEXE: 'F' 'E' 'X' 'E'.
+    if @(magic_p + 0) == 70 {
+        if @(magic_p + 1) == 69 {
+            if @(magic_p + 2) == 88 {
+                if @(magic_p + 3) == 69 {
+                    return 1
+                }
+            }
+        }
     }
-    if @(magic_p + 1) != 69 {
-        return 0
+    ; ELF: 0x7F 'E' 'L' 'F'.
+    if @(magic_p + 0) == 127 {
+        if @(magic_p + 1) == 69 {
+            if @(magic_p + 2) == 76 {
+                if @(magic_p + 3) == 70 {
+                    return 1
+                }
+            }
+        }
     }
-    if @(magic_p + 2) != 88 {
-        return 0
-    }
-    if @(magic_p + 3) != 69 {
-        return 0
-    }
-    return 1
+    return 0
 }
 
 ; Print a signed decimal integer to the current sink (console unless redirected).
