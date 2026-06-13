@@ -183,12 +183,16 @@ pub mod user {
     pub const EDIT: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/user/edit.hll"));
 
     /// Framebuffer demo: maps the framebuffer and renders a Mandelbrot set.
-    /// Installed at `/bin/fbdemo.fexe`.
+    /// Installed at `/home/demo/mandelbrot.fexe`.
     pub const FBDEMO: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/user/fbdemo.hll"));
 
     /// Spinning 3D wireframe cube demo: maps the framebuffer and animates a
-    /// rotating cube. Installed at `/bin/cube.fexe`.
+    /// rotating cube. Installed at `/home/demo/cube.fexe`.
     pub const CUBE: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/user/cube.hll"));
+
+    /// Conway's Game of Life demo: a toroidal grid animated on the framebuffer
+    /// with P/R/space keyboard control. Installed at `/home/demo/life.fexe`.
+    pub const LIFE: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/user/life.hll"));
 
     /// Minimal in-VM RV64I assembler. Reads a `.s` file, assembles a small
     /// instruction subset, and writes a runnable FEXE. Installed at `/bin/as.fexe`
@@ -196,12 +200,12 @@ pub mod user {
     pub const AS: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/user/as.hll"));
 
     /// Example assembly source: sum 1..10, exit with the total (55). Installed at
-    /// `/home/sum.s` so `as`/`run` can be tried out of the box.
+    /// `/home/src/sum.s` so `as` can be tried out of the box.
     pub const EXAMPLE_SUM_S: &str =
         include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/user/examples/sum.s"));
 
     /// Example assembly source: iterative Fibonacci, exit with fib(11) (89).
-    /// Installed at `/home/fib.s`.
+    /// Installed at `/home/src/fib.s`.
     pub const EXAMPLE_FIB_S: &str =
         include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/user/examples/fib.s"));
 }

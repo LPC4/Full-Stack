@@ -7,6 +7,10 @@ use std::collections::HashMap;
 pub struct FrameContext {
     /// Total frame size in bytes.
     frame_size: usize,
+    /// Whether the return address must be saved. Laid out in `finalize`.
+    needs_ra: bool,
+    /// Callee-saved registers to preserve. Laid out in `finalize`.
+    pending_regs: Vec<u8>,
     /// Offset where return address (ra) is stored, if any.
     ra_offset: Option<usize>,
     /// List of (register index, offset) for saved callee-saved registers.
@@ -21,6 +25,8 @@ impl FrameContext {
     pub fn new() -> Self {
         Self {
             frame_size: 0,
+            needs_ra: false,
+            pending_regs: Vec::new(),
             ra_offset: None,
             saved_regs: Vec::new(),
             next_offset: 0,
@@ -42,16 +48,13 @@ impl FrameContext {
 
     /// Mark that the return address must be saved.
     pub fn save_ra(&mut self) {
-        if self.ra_offset.is_none() {
-            self.ra_offset = Some(self.alloc_slot(8, 8));
-        }
+        self.needs_ra = true;
     }
 
     /// Mark that a callee-saved integer register must be saved.
     pub fn save_reg(&mut self, reg: u8) {
-        if !self.saved_regs.iter().any(|(r, _)| *r == reg) {
-            let offset = self.alloc_slot(8, 8);
-            self.saved_regs.push((reg, offset));
+        if !self.pending_regs.contains(&reg) {
+            self.pending_regs.push(reg);
         }
     }
 
@@ -64,6 +67,17 @@ impl FrameContext {
     }
 
     pub fn finalize(&mut self) {
+        // Lay out the save area above the locals: callee-saved regs ascending,
+        // then ra at the top. This keeps it one contiguous block.
+        let mut regs = std::mem::take(&mut self.pending_regs);
+        regs.sort_unstable();
+        for reg in regs {
+            let offset = self.alloc_slot(8, 8);
+            self.saved_regs.push((reg, offset));
+        }
+        if self.needs_ra {
+            self.ra_offset = Some(self.alloc_slot(8, 8));
+        }
         // Align frame size to 16 bytes.
         self.frame_size = (self.next_offset + self.alignment - 1) & !(self.alignment - 1);
     }

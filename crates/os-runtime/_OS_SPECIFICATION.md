@@ -45,7 +45,7 @@ comments cite the chapter rather than repeating its content.
 | `kernel/fs.hll` | Inode filesystem | 8 |
 | `kernel/utilities.hll`, `checks.hll` | HAL primitives, boot diagnostics | 3, 9 |
 | `stdlib/common/`, `freestanding/`, `hosted/` | Standard-library bundles | 9 |
-| `user/shell.hll`, `edit.hll`, `as.hll`, `cube.hll`, `fbdemo.hll` | Userspace programs | 10 |
+| `user/shell.hll`, `edit.hll`, `as.hll`, `cube.hll`, `fbdemo.hll`, `life.hll` | Userspace programs | 10 |
 
 ### 1.2 Layered model
 
@@ -182,7 +182,7 @@ every context switch. The VM's TLB is also flushed on any `satp` change.
 
 ### 5.1 Process control block (PCB)
 
-A process is a 352-byte PCB allocated with `kmalloc`:
+A process is a 384-byte PCB allocated with `kmalloc`:
 
 ```
 Offset  Size  Field
@@ -195,6 +195,8 @@ Offset  Size  Field
 328     8     page_root       physical address of this process's Sv39 root
 336     8     parent_pid      parent pid (set by fork/exec; 0 if none)
 344     8     exit_code       exit code, read by the parent's wait
+352     8     stdout_fd       redirected stdout kernel fd, 0 = console (7.7)
+360     8     stdin_fd        redirected stdin kernel fd, 0 = console (7.7)
 ```
 
 The `trap_frame` layout matches the on-stack frame built by the trap entry (6.1),
@@ -304,9 +306,10 @@ helpers that programs link against.
 | `2` | `yield` | -- | -- | Yield the CPU (SCHEDULE action) |
 | `46` | `ftruncate` | `a0=fd`, `a1=len` | 0 or -1 | Shrink a file to an exact length |
 | `56` | `open` | `a0=path*`, `a1=flags` | fd (>=2) or -1 | Open by absolute path. flags: 0=RO, 1=RW, 2=create |
+| `62` | `lseek` | `a0=fd`, `a1=off`, `a2=whence` | new pos | Reposition a file fd. whence 0=SET, 1=CUR, 2=END (used for `>>` append) |
 | `57` | `close` | `a0=fd` | 0 | Release a descriptor |
 | `63` | `read` | `a0=fd`, `a1=buf*`, `a2=off`, `a3=len` | bytes or -1 | Read a file fd at an explicit offset |
-| `64` | `write` | `a0=fd`, `a1=buf*`, `a2=len` | bytes or -1 | fd 0/1 -> UART; fd >=2 -> file at stored position |
+| `64` | `write` | `a0=fd`, `a1=buf*`, `a2=len` | bytes or -1 | fd 0/1 -> redirected stdout file or UART (7.7); fd >=2 -> file at stored position |
 | `82` | `rename` | `a0=old*`, `a1=new*` | 0 or -1 | Move a file or directory |
 | `83` | `mkdir` | `a0=path*` | inode or -1 | Create a directory |
 | `93` | `exit` | `a0=code` | -- | Terminate caller (EXIT_SCHEDULE); PCB lingers as a zombie; halts the VM if last runnable |
@@ -319,6 +322,8 @@ helpers that programs link against.
 | `106` | `rmdir` | `a0=path*` | 0 or -1 | Remove an empty directory; refuses root/non-empty |
 | `107` | `map_fb` | -- | base VA | Map the framebuffer into the caller (7.5) |
 | `108` | `poll_key` | -- | event or -1 | Pop a key event from the keyboard device; -1 if none (7.5) |
+| `110` | `exec_redir` | `a0=path*`, `a1=arg*`, `a2=out*`, `a3=in*`, `a4=append` | pid or -1 | Exec with stdout/stdin bound to FS files (7.7); `out`/`in` may be null |
+| `129` | `kill` | `a0=pid`, `a1=sig` | 0 or -1 | Signal a pid; only `SIGKILL` (9) is honoured (7.6); -1 if not a live killable pid; pid 1 is protected |
 | `220` | `fork` | -- | child / 0 / -1 | Clone the caller (5.5) |
 | `260` | `wait` | -- | code / -1 / -2 | Reap any exited child; -1 none; -2 Ctrl-C (fork test) |
 | `261` | `waitpid` | `a0=pid` | code / -1 / -2 | Reap the specific child pid, else poll / Ctrl-C-tear-down; -1 if not ours |
@@ -373,6 +378,66 @@ programs like the cube) use `poll_key`, reading the keyboard device
 scancode) or -1 when empty. The GUI pushes raw key events there while the FB tab is
 focused (letters as uppercase ASCII, arrows in `0x80`-`0x83`) and mirrors
 Ctrl+letter to the UART so Ctrl-C can still interrupt a graphical foreground job.
+
+### 7.6 Signals (`kill`)
+
+`kill` (syscall `129`) generalises the Ctrl-C teardown into a pid-targeted path a
+program can invoke directly. Only `SIGKILL` (9) is implemented and it is
+uncatchable: `sys_kill_impl` unlinks the target from the ready queue and marks it
+`EXITED` via the same `scheduler_kill_pid` used by the Ctrl-C foreground teardown
+(6.5), leaving a zombie its parent reaps. pid 1 (the shell) is protected; any other
+signal number or an unknown/non-ready pid returns -1. There is no signal table,
+handler delivery, or `SIGTERM`/`SIGINT` catch path yet -- those, plus Ctrl-Z stop
+state, remain deferred. The shell exposes this as `kill <pid>` and `kill %<job>`
+(the latter maps a job id through the job table); the killed job leaves the table
+when `jobs_reap` next runs at the prompt (10.1).
+
+### 7.7 I/O redirection
+
+Each PCB carries two redirect slots, `stdout_fd` and `stdin_fd` (5.1), each a
+kernel FS fd or 0 for the console. They are bound at exec time: `exec_redir`
+(syscall `110`) opens the requested files **in the parent address space** (before
+the root switch, while the path strings are still mapped), then stores the fds on
+the freshly created child PCB. `>` truncates the target and seeks to 0; `>>` seeks
+to end (`fs_fd_size`); `<` opens read-only.
+
+With a slot bound, the standard syscalls reroute transparently: a fd 0/1 `write`
+goes through `sys_stdout_write`, which appends to `stdout_fd` and advances its
+position instead of hitting the UART; `readchar` returns the next byte of
+`stdin_fd` (advancing its position) and `-1` at EOF, instead of blocking on the
+UART. Because the hosted `putchar`/`readchar` already funnel through these
+syscalls, existing programs inherit redirection with no code change. The fds are
+released in `sys_exit` when the process ends.
+
+The shell parses `> >> <` as space-separated operators in `cmd_exec` and launches
+via `sh_launch_redir`.
+
+**Pipes (`a | b | c`, PLAN v3 1.2).** Implemented as a *sequential temp-file
+pipeline*, not a blocking ring-buffer object: each stage runs to completion with its
+stdout bound to a temp file (`/.pipeN`) that the next stage reads as stdin, reusing
+the redirection path above. The shell splits the line on `|` (`cmd_pipe`, max 4
+stages), runs each stage via `sh_run_stage` with the connecting temp paths (an
+explicit `<`/`>`/`>>` on the end stages overrides the pipe default), waits between
+stages, then unlinks the temps. Builtin producers (`ls`/`cat`/`echo`/...) write
+through the sink to the temp file; the consumer is either an external filter reading
+`sc_readchar` (EOF at the file's end) or builtin `cat`, which reads the temp as its
+input source. So `echo hi | cat` and `ls | cat` work. A trailing `&` is accepted and ignored
+(pipelines run foreground). **Restriction:** because stages are sequential a
+producer fully finishes before its consumer runs -- correct for finite output (all
+this system produces) but not a streaming/concurrent pipe. The blocking
+`sys_pipe`/`dup2` ring buffer is intentionally not built (no practical need at this
+scale).
+
+**Builtin redirection (PLAN v3 1.3).** Shell builtins (`ls cat echo pwd jobs help`)
+run inside the shell process, not an exec'd child, so they bypass the per-PCB fd
+table. They instead use a shell-side *output sink* and *input source*: two globals
+`sh_sink_fd` and `sh_src_fd` (0 = console / none, else an open FS fd). The `sh_out*`
+helpers write to the sink; `cat` with no file operand reads the source. Builtins are
+run through `sh_run_stage`, which parses the line, opens the `>`/`>>` target as the
+sink (truncating with `ftruncate` or seeking to end with `lseek`) and any `<` target
+as the source, runs the builtin, then closes both. Only `cat` consumes the source;
+the others ignore it. This makes `cat a b >> log`, `ls /home/demo > files.txt`,
+`echo hi > note.txt`, and `cat < in.txt` behave like a real shell.
 
 
 ## 8. Filesystem (`fs.hll`)
@@ -449,11 +514,19 @@ S-mode `sp` may hold a user VA and `ecall` is unavailable.
 
 ### 10.1 Shell (`shell.hll`)
 
-The interactive shell boots as pid 1. Built-ins: `ls`, `cd`, `cat`, `edit`, `run`
-(`[&]` to background), `as`, `touch`, `mkdir`, `rm`, `rmdir`, `mv`, `jobs`,
-`fg <id>`, `help`, `exit`. It reads a line over the UART (`sh_read_line`, echoing
-and handling Backspace), resolves relative paths against `cwd` (`sh_join_path`),
-and dispatches by prefix. Foreground programs are run via `exec` + `waitpid`
+The interactive shell boots as pid 1. Built-ins: `ls [dir]`, `cd`, `cat <f>...`,
+`echo`, `pwd`, `edit`, `run` (`[&]` to background), `as`, `touch`, `mkdir`, `rm`,
+`rmdir`, `mv`, `jobs`, `fg <id>`, `kill <pid>` / `kill %<job>` (7.6), `help`,
+`exit`. Any other line is treated as a program name and resolved via a PATH search
+(`cwd`, `/bin`, `/home/demo`, with and without `.fexe`), with optional `> file` /
+`>> file` / `< file` redirection (7.7). It reads a line over the UART
+(`sh_read_line`, echoing and handling Backspace), resolves relative paths against
+`cwd` (`sh_join_path`), and dispatches on the first word (`sh_first_word`, tolerant
+of leading spaces). Output-producing builtins honour `>`/`>>` via the shell output
+sink, and `cat` with no file operand reads its input source (`<` file or a pipe),
+so `cat`, `echo | cat`, and `ls | cat` all redirect (7.7). `ls` hides names starting
+with `.` (Unix convention), which also keeps the `.pipeN` pipe temps out of a
+listing. Foreground programs are run via `exec` + `waitpid`
 (7.2); background jobs go in an 8-slot table (`job_pids`, job id = slot + 1).
 Note: the table is `i64[8]` and must be indexed with `job_pids[i]` (type-scaled);
 raw `base + i` is byte-scaled in HLL (lang spec 4.2) and would overlap slots.
@@ -483,13 +556,15 @@ not delegated by `medeleg`, so the trap goes to M-mode (`_m_trap`), which servic
 it as `sys_exit` to SYSCON and halts the VM -- bypassing the kernel's exit path. The
 NOPs keep the speculative fetch valid so the exit `ecall` traps cleanly to S-mode.
 
-### 10.4 Framebuffer demos (`cube.hll`, `fbdemo.hll`)
+### 10.4 Framebuffer demos (`cube.hll`, `fbdemo.hll`, `life.hll`)
 
-`/bin/cube.fexe` animates a spinning wireframe cube and `/bin/fbdemo.fexe` renders a
-Mandelbrot set; both use `map_fb` (7.5) and native `f64` math. The cube enables
-double buffering and `FILL`-clears then `PRESENT`s each frame (no flicker) and
-reads WASD via `poll_key`. Run them from the shell and view in the Machine window's
-FB tab.
+The demo gallery lives in `/home/demo`, reachable by bare name (PATH search, 10.1):
+`cube` animates a spinning wireframe cube, `mandelbrot` renders a Mandelbrot set,
+and `life` runs Conway's Game of Life on a 40x30 toroidal grid (B3/S23). All three
+use `map_fb` (7.5); the cube and Mandelbrot use native `f64` math. Each enables
+double buffering and `FILL`-clears then `PRESENT`s every frame (no flicker). The
+cube reads WASD via `poll_key`; `life` reads `P` (pause), `R` (reseed), and space
+(single step). Run them from the shell and view in the Machine window's FB tab.
 
 ### 10.5 Hello and examples
 

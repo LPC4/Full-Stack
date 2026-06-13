@@ -3,21 +3,17 @@
 .globl sum_to_n
 sum_to_n:
 ; --- Function Prologue ---
-; Allocate stack frame: 64 bytes
-	addi   sp, sp, -64
+; Allocate stack frame: 48 bytes
+	addi   sp, sp, -48
 ; Save return address (ra) at offset 40
 	sd     ra, 40(sp)
 ; Save callee-saved register s2 at offset 24
 	sd     s2, 24(sp)
 ; Save callee-saved register s3 at offset 32
 	sd     s3, 32(sp)
-; Save callee-saved register s0 at offset 48
-	sd     s0, 48(sp)
-; Set up frame pointer
-	addi   s0, sp, 0
 ; --- End Prologue ---
 ; --- Function Parameter Spills ---
-	addi   t0, s0, 64
+	addi   t0, sp, 48
 ; Move parameter '$n' from register a0 to allocated register
 	addiw  s2, a0, 0
 ; --- End Parameter Spills ---
@@ -85,16 +81,14 @@ sum_to_n__label_2:
 	lw     s2, 0(t0)
 	addi   a0, s2, 0
 ; --- Function Epilogue ---
-; Restore callee-saved register s0 from offset 48
-	ld     s0, 48(sp)
 ; Restore callee-saved register s3 from offset 32
 	ld     s3, 32(sp)
 ; Restore callee-saved register s2 from offset 24
 	ld     s2, 24(sp)
 ; Restore return address (ra) from offset 40
 	ld     ra, 40(sp)
-; Deallocate stack frame: 64 bytes
-	addi   sp, sp, 64
+; Deallocate stack frame: 48 bytes
+	addi   sp, sp, 48
 ; Return to caller
 	jalr   zero, 0(ra)
 ; --- End Epilogue ---
@@ -103,21 +97,17 @@ sum_to_n__label_2:
 .globl factorial_while
 factorial_while:
 ; --- Function Prologue ---
-; Allocate stack frame: 64 bytes
-	addi   sp, sp, -64
+; Allocate stack frame: 48 bytes
+	addi   sp, sp, -48
 ; Save return address (ra) at offset 40
 	sd     ra, 40(sp)
 ; Save callee-saved register s2 at offset 24
 	sd     s2, 24(sp)
 ; Save callee-saved register s3 at offset 32
 	sd     s3, 32(sp)
-; Save callee-saved register s0 at offset 48
-	sd     s0, 48(sp)
-; Set up frame pointer
-	addi   s0, sp, 0
 ; --- End Prologue ---
 ; --- Function Parameter Spills ---
-	addi   t1, s0, 64
+	addi   t1, sp, 48
 ; Move parameter '$n' from register a0 to allocated register
 	addiw  s2, a0, 0
 ; --- End Parameter Spills ---
@@ -185,16 +175,14 @@ factorial_while__label_5:
 	lw     s2, 0(t0)
 	addi   a0, s2, 0
 ; --- Function Epilogue ---
-; Restore callee-saved register s0 from offset 48
-	ld     s0, 48(sp)
 ; Restore callee-saved register s3 from offset 32
 	ld     s3, 32(sp)
 ; Restore callee-saved register s2 from offset 24
 	ld     s2, 24(sp)
 ; Restore return address (ra) from offset 40
 	ld     ra, 40(sp)
-; Deallocate stack frame: 64 bytes
-	addi   sp, sp, 64
+; Deallocate stack frame: 48 bytes
+	addi   sp, sp, 48
 ; Return to caller
 	jalr   zero, 0(ra)
 ; --- End Epilogue ---
@@ -207,10 +195,6 @@ main:
 	addi   sp, sp, -16
 ; Save return address (ra) at offset 0
 	sd     ra, 0(sp)
-; Save callee-saved register s0 at offset 8
-	sd     s0, 8(sp)
-; Set up frame pointer
-	addi   s0, sp, 0
 ; --- End Prologue ---
 ; Basic Block: entry
 main__entry:
@@ -228,8 +212,6 @@ main__entry:
 	jal ra, print
 ; --- End Function Call: print ---
 ; --- Function Epilogue ---
-; Restore callee-saved register s0 from offset 8
-	ld     s0, 8(sp)
 ; Restore return address (ra) from offset 0
 	ld     ra, 0(sp)
 ; Deallocate stack frame: 16 bytes

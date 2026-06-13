@@ -79,6 +79,9 @@ pub struct BootResult {
     pub max_steps_reached: bool,
     /// Snapshot of the framebuffer device's RGBA8888 pixel buffer at stop time.
     pub fb_bytes: Vec<u8>,
+    /// Set when the VM stopped because `step()` returned an error (a CPU fault the
+    /// kernel did not handle). Holds the faulting pc and the error, for the status.
+    pub fault: Option<String>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -263,6 +266,7 @@ impl MachineWindow {
                 let mut halted: Option<i64> = None;
                 let mut timed_out = false;
                 let mut hit_breakpoint = false;
+                let mut fault: Option<String> = None;
 
                 // Run cycles in batches until the wall-clock budget for this
                 // frame is spent, the step cap is hit, or the VM halts. On WASM a
@@ -283,9 +287,10 @@ impl MachineWindow {
                                 halted = Some(code);
                                 break 'budget;
                             }
-                            Err(_) => {
+                            Err(e) => {
                                 *steps += 1;
                                 halted = Some(-1);
+                                fault = Some(format!("pc={:#x}: {e:?}", vm.peek_pc()));
                                 break 'budget;
                             }
                         }
@@ -342,6 +347,7 @@ impl MachineWindow {
                         steps: *steps,
                         max_steps_reached: timed_out,
                         fb_bytes,
+                        fault,
                     })
                 } else {
                     // Rate-limit repaints to roughly 60 fps to avoid saturating the CPU.
@@ -431,6 +437,18 @@ impl MachineWindow {
                                 .monospace()
                                 .size(11.0),
                         );
+                        // Surface an unhandled CPU fault (silent -1) so it is
+                        // diagnosable instead of just an opaque exit code.
+                        if let BootPhase::Done(r) = &self.phase {
+                            if let Some(fault) = &r.fault {
+                                ui.colored_label(
+                                    term_err(),
+                                    RichText::new(format!("fault {fault}"))
+                                        .monospace()
+                                        .size(11.0),
+                                );
+                            }
+                        }
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -472,6 +490,7 @@ impl MachineWindow {
                     steps: *steps,
                     max_steps_reached: false,
                     fb_bytes,
+                    fault: None,
                 })
             }
             _ => None,
@@ -595,17 +614,15 @@ impl MachineWindow {
     /// the captured snapshot once the run stops.
     fn render_framebuffer(&mut self, ui: &mut egui::Ui, is_running: bool) {
         // --- Focus + key forwarding ---
-        // A single press inside focuses the framebuffer so key events forward to
-        // the VM's keyboard device; a press outside blurs. We use the raw pointer
-        // press rather than the interact's `clicked()` so a single click suffices.
+        // The framebuffer tab is a dedicated interactive view, so simply having it
+        // open while the VM runs auto-focuses it: keys (and Ctrl-C, mirrored to the
+        // UART) forward immediately, with no click required first. Without this,
+        // switching to the FB tab "to watch" silently swallowed Ctrl-C until you
+        // clicked inside the image.
         let rect = ui.max_rect();
         let id = ui.make_persistent_id("mw_fb_surface");
         ui.interact(rect, id, egui::Sense::focusable_noninteractive());
-        if ui.input(|i| i.pointer.any_pressed()) {
-            if let Some(p) = ui.input(|i| i.pointer.interact_pos()) {
-                self.fb_focused = rect.contains(p);
-            }
-        }
+        self.fb_focused = is_running;
         // Hold egui keyboard focus while active so arrow/other keys are consumed
         // by egui instead of triggering the Windows unhandled-key ding.
         sync_keyboard_focus(ui, id, self.fb_focused && is_running);

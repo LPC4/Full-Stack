@@ -3,18 +3,14 @@
 .globl main
 main:
 ; --- Function Prologue ---
-; Allocate stack frame: 208 bytes
-	addi   sp, sp, -208
+; Allocate stack frame: 192 bytes
+	addi   sp, sp, -192
 ; Save return address (ra) at offset 184
 	sd     ra, 184(sp)
-; Save callee-saved register s2 at offset 160
-	sd     s2, 160(sp)
-; Save callee-saved register s3 at offset 168
-	sd     s3, 168(sp)
-; Save callee-saved register s0 at offset 192
-	sd     s0, 192(sp)
-; Set up frame pointer
-	addi   s0, sp, 0
+; Save callee-saved register s2 at offset 168
+	sd     s2, 168(sp)
+; Save callee-saved register s3 at offset 176
+	sd     s3, 176(sp)
 ; --- End Prologue ---
 ; Basic Block: entry
 main__entry:
@@ -127,10 +123,10 @@ main__entry:
 	addi   t0, sp, 112
 	lw     s2, 0(t0)
 	fcvt.d.w ft0, s2
-	fsd    ft0, 176(sp)
+	fsd    ft0, 160(sp)
 	addi   t0, sp, 120
 ; Store f64 to memory
-	fld    ft1, 176(sp)
+	fld    ft1, 160(sp)
 	fsd    ft1, 0(t0)
 ; local var: ptr
 	addi   a0, zero, 4
@@ -194,16 +190,14 @@ main__entry:
 	addiw  s2, s2, 0
 	addi   a0, s2, 0
 ; --- Function Epilogue ---
-; Restore callee-saved register s0 from offset 192
-	ld     s0, 192(sp)
-; Restore callee-saved register s3 from offset 168
-	ld     s3, 168(sp)
-; Restore callee-saved register s2 from offset 160
-	ld     s2, 160(sp)
+; Restore callee-saved register s3 from offset 176
+	ld     s3, 176(sp)
+; Restore callee-saved register s2 from offset 168
+	ld     s2, 168(sp)
 ; Restore return address (ra) from offset 184
 	ld     ra, 184(sp)
-; Deallocate stack frame: 208 bytes
-	addi   sp, sp, 208
+; Deallocate stack frame: 192 bytes
+	addi   sp, sp, 192
 ; Return to caller
 	jalr   zero, 0(ra)
 ; --- End Epilogue ---

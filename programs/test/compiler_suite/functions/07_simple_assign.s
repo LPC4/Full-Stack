@@ -3,16 +3,12 @@
 .globl test_simple
 test_simple:
 ; --- Function Prologue ---
-; Allocate stack frame: 48 bytes
-	addi   sp, sp, -48
+; Allocate stack frame: 32 bytes
+	addi   sp, sp, -32
 ; Save return address (ra) at offset 24
 	sd     ra, 24(sp)
 ; Save callee-saved register s2 at offset 16
 	sd     s2, 16(sp)
-; Save callee-saved register s0 at offset 32
-	sd     s0, 32(sp)
-; Set up frame pointer
-	addi   s0, sp, 0
 ; --- End Prologue ---
 ; Basic Block: entry
 test_simple__entry:
@@ -36,14 +32,12 @@ test_simple__entry:
 	lw     s2, 0(t0)
 	addi   a0, s2, 0
 ; --- Function Epilogue ---
-; Restore callee-saved register s0 from offset 32
-	ld     s0, 32(sp)
 ; Restore callee-saved register s2 from offset 16
 	ld     s2, 16(sp)
 ; Restore return address (ra) from offset 24
 	ld     ra, 24(sp)
-; Deallocate stack frame: 48 bytes
-	addi   sp, sp, 48
+; Deallocate stack frame: 32 bytes
+	addi   sp, sp, 32
 ; Return to caller
 	jalr   zero, 0(ra)
 ; --- End Epilogue ---

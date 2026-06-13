@@ -1,5 +1,6 @@
-use crate::view::{CompilationState, CompilerView, ProgramCatalog, ui_theme};
-use egui::{CornerRadius, FontId, Pos2, Rect, RichText, Sense, Stroke, StrokeKind, Vec2};
+use crate::view::{CompilationState, CompilerView, ProgramCatalog, StackPalette, ui_theme};
+use egui::{Color32, CornerRadius, FontId, Pos2, Rect, RichText, Sense, Stroke, StrokeKind, Vec2};
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone)]
 enum StackElementKind {
@@ -283,14 +284,12 @@ fn draw_modern_function_stack(ui: &mut egui::Ui, func: &FunctionStack) {
                 StrokeKind::Middle,
             );
 
-            let mut elements = func.elements.clone();
-            elements.sort_by(|a, b| b.offset.cmp(&a.offset));
+            let rows = coalesce_rows(&func.elements);
 
-            for elem in &elements {
-                let size = get_elem_size(elem);
-                let top_offset = elem.offset + size;
+            for row in &rows {
+                let top_offset = row.offset + row.size;
 
-                let y_bottom = bottom_y - (elem.offset as f32 * scale_y);
+                let y_bottom = bottom_y - (row.offset as f32 * scale_y);
                 let y_top = bottom_y - (top_offset as f32 * scale_y);
 
                 let seg_rect = Rect::from_min_max(
@@ -298,23 +297,8 @@ fn draw_modern_function_stack(ui: &mut egui::Ui, func: &FunctionStack) {
                     Pos2::new(bar_rect.right(), y_bottom),
                 );
 
-                let (fill_color, stroke_color) = match &elem.kind {
-                    StackElementKind::ReturnAddress => (
-                        palette.return_address.gamma_multiply(0.25),
-                        palette.return_address,
-                    ),
-                    StackElementKind::SavedRegister { .. } => (
-                        palette.saved_register.gamma_multiply(0.25),
-                        palette.saved_register,
-                    ),
-                    StackElementKind::LocalVariable { .. } => (
-                        palette.local_variable.gamma_multiply(0.25),
-                        palette.local_variable,
-                    ),
-                    StackElementKind::Parameter { .. } => {
-                        (palette.parameter.gamma_multiply(0.25), palette.parameter)
-                    }
-                };
+                let stroke_color = row_color(&row.kind, &palette);
+                let fill_color = stroke_color.gamma_multiply(0.25);
 
                 painter.rect_filled(seg_rect, CornerRadius::same(2), fill_color);
                 painter.rect_stroke(
@@ -325,31 +309,38 @@ fn draw_modern_function_stack(ui: &mut egui::Ui, func: &FunctionStack) {
                 );
 
                 if ui.rect_contains_pointer(seg_rect) {
-                    let response = ui.interact(seg_rect, ui.id().with(elem.offset), Sense::hover());
+                    let response = ui.interact(seg_rect, ui.id().with(row.offset), Sense::hover());
 
                     response.on_hover_ui(|ui| {
-                        match &elem.kind {
-                            StackElementKind::ReturnAddress => {
+                        match &row.kind {
+                            RowKind::ReturnAddress => {
                                 ui.label(
                                     RichText::new("Return Address (ra)")
                                         .strong()
                                         .color(stroke_color),
                                 );
                             }
-                            StackElementKind::SavedRegister { reg } => {
+                            RowKind::SavedRegister { reg } => {
                                 ui.label(
                                     RichText::new(format!("Saved Register (s{reg})"))
                                         .strong()
                                         .color(stroke_color),
                                 );
                             }
-                            StackElementKind::LocalVariable {
-                                name,
+                            RowKind::Variables {
+                                names,
                                 type_name,
-                                size,
+                                is_param,
                             } => {
+                                let title = if names.len() > 1 {
+                                    "Shared slot"
+                                } else if *is_param {
+                                    "Parameter"
+                                } else {
+                                    "Local Variable"
+                                };
                                 ui.label(
-                                    RichText::new(format!("Local Variable: {name}"))
+                                    RichText::new(format!("{title}: {}", join_names(names)))
                                         .strong()
                                         .color(stroke_color),
                                 );
@@ -361,31 +352,14 @@ fn draw_modern_function_stack(ui: &mut egui::Ui, func: &FunctionStack) {
                                         type_name
                                     }
                                 ));
-                                ui.label(format!("Size: {size} bytes"));
-                            }
-                            StackElementKind::Parameter {
-                                name,
-                                type_name,
-                                size,
-                            } => {
-                                ui.label(
-                                    RichText::new(format!("Parameter: {name}"))
-                                        .strong()
-                                        .color(stroke_color),
-                                );
-                                ui.label(format!(
-                                    "Type: {}",
-                                    if type_name.is_empty() {
-                                        "Unknown"
-                                    } else {
-                                        type_name
-                                    }
-                                ));
-                                ui.label(format!("Size: {size} bytes"));
+                                ui.label(format!("Size: {} bytes", row.size));
+                                if names.len() > 1 {
+                                    ui.label(format!("Slot coalesces {} variables", names.len()));
+                                }
                             }
                         }
                         ui.separator();
-                        ui.label(format!("Memory Offset: SP + 0x{:02X}", elem.offset));
+                        ui.label(format!("Memory Offset: SP + 0x{:02X}", row.offset));
                     });
                 }
             }
@@ -433,66 +407,76 @@ fn draw_modern_function_stack(ui: &mut egui::Ui, func: &FunctionStack) {
                     ui.label(RichText::new("Size").strong());
                     ui.end_row();
 
-                    let mut elements = func.elements.clone();
-                    elements.sort_by(|a, b| b.offset.cmp(&a.offset));
+                    let rows = coalesce_rows(&func.elements);
 
                     let mut current_offset = func.frame_size;
+                    let mut shown_saved = false;
+                    let mut shown_locals = false;
 
-                    for elem in &elements {
-                        let elem_size = get_elem_size(elem);
-                        let top_of_elem = elem.offset + elem_size;
+                    for row in &rows {
+                        let top_of_row = row.offset + row.size;
 
-                        if current_offset > top_of_elem {
-                            let gap = current_offset - top_of_elem;
+                        // Header when crossing into the saved-register or locals zone.
+                        if row.is_saved() && !shown_saved {
+                            region_header(ui, "Saved Registers", palette.saved_register);
+                            shown_saved = true;
+                        } else if !row.is_saved() && !shown_locals {
+                            region_header(ui, "Locals", palette.local_variable);
+                            shown_locals = true;
+                        }
+
+                        if current_offset > top_of_row {
+                            let gap = current_offset - top_of_row;
                             ui.label(
-                                RichText::new(format!("+0x{top_of_elem:02X}"))
+                                RichText::new(format!("+0x{top_of_row:02X}"))
                                     .monospace()
                                     .color(palette.dim_text),
                             );
-                            ui.label(RichText::new("Padding / Locals").color(palette.dim_text));
+                            ui.label(RichText::new("Padding").color(palette.dim_text));
                             ui.label(RichText::new("-").color(palette.dim_text));
                             ui.label(RichText::new("-").color(palette.dim_text));
                             ui.label(RichText::new(format!("{gap} bytes")).color(palette.dim_text));
                             ui.end_row();
                         }
 
-                        ui.label(RichText::new(format!("+0x{:02X}", elem.offset)).monospace());
+                        ui.label(RichText::new(format!("+0x{:02X}", row.offset)).monospace());
 
-                        match &elem.kind {
-                            StackElementKind::ReturnAddress => {
+                        match &row.kind {
+                            RowKind::ReturnAddress => {
                                 ui.label(
                                     RichText::new("Return Addr").color(palette.return_address),
                                 );
                                 ui.label("ra");
                                 ui.label("-");
-                                ui.label(format!("{elem_size} bytes"));
+                                ui.label(format!("{} bytes", row.size));
                             }
-                            StackElementKind::SavedRegister { reg } => {
+                            RowKind::SavedRegister { reg } => {
                                 ui.label(RichText::new("Saved Reg").color(palette.saved_register));
                                 ui.label(format!("s{reg}"));
                                 ui.label("-");
-                                ui.label(format!("{elem_size} bytes"));
+                                ui.label(format!("{} bytes", row.size));
                             }
-                            StackElementKind::LocalVariable {
-                                name, type_name, ..
+                            RowKind::Variables {
+                                names,
+                                type_name,
+                                is_param,
                             } => {
-                                ui.label(RichText::new("Local Var").color(palette.local_variable));
-                                ui.label(name);
+                                let (kind_label, color) = if names.len() > 1 {
+                                    ("Shared", palette.local_variable)
+                                } else if *is_param {
+                                    ("Parameter", palette.parameter)
+                                } else {
+                                    ("Local Var", palette.local_variable)
+                                };
+                                ui.label(RichText::new(kind_label).color(color));
+                                ui.label(join_names(names));
                                 ui.label(if type_name.is_empty() { "?" } else { type_name });
-                                ui.label(format!("{elem_size} bytes"));
-                            }
-                            StackElementKind::Parameter {
-                                name, type_name, ..
-                            } => {
-                                ui.label(RichText::new("Parameter").color(palette.parameter));
-                                ui.label(name);
-                                ui.label(if type_name.is_empty() { "?" } else { type_name });
-                                ui.label(format!("{elem_size} bytes"));
+                                ui.label(format!("{} bytes", row.size));
                             }
                         }
                         ui.end_row();
 
-                        current_offset = elem.offset;
+                        current_offset = row.offset;
                     }
 
                     if current_offset > 0 {
@@ -511,11 +495,134 @@ fn draw_modern_function_stack(ui: &mut egui::Ui, func: &FunctionStack) {
     });
 }
 
-fn get_elem_size(elem: &StackElement) -> usize {
-    match &elem.kind {
-        StackElementKind::ReturnAddress => 8,
-        StackElementKind::SavedRegister { .. } => 8,
-        StackElementKind::LocalVariable { size, .. } => *size,
-        StackElementKind::Parameter { size, .. } => *size,
+// A full-width section label inside the frame-variables grid.
+fn region_header(ui: &mut egui::Ui, text: &str, color: Color32) {
+    ui.label(RichText::new(text).strong().color(color));
+    ui.label("");
+    ui.label("");
+    ui.label("");
+    ui.label("");
+    ui.end_row();
+}
+
+// One rendered row per stack slot. Slot coloring maps several disjoint locals
+// to the same offset, so variables sharing a slot are merged into one row.
+enum RowKind {
+    ReturnAddress,
+    SavedRegister {
+        reg: u8,
+    },
+    Variables {
+        names: Vec<String>,
+        type_name: String,
+        is_param: bool,
+    },
+}
+
+struct RenderRow {
+    offset: usize,
+    size: usize,
+    kind: RowKind,
+}
+
+impl RenderRow {
+    fn is_saved(&self) -> bool {
+        matches!(
+            self.kind,
+            RowKind::ReturnAddress | RowKind::SavedRegister { .. }
+        )
+    }
+}
+
+// Merge raw elements into one row per offset, sorted top-of-frame first.
+fn coalesce_rows(elements: &[StackElement]) -> Vec<RenderRow> {
+    let mut by_offset: BTreeMap<usize, RenderRow> = BTreeMap::new();
+    for elem in elements {
+        match &elem.kind {
+            StackElementKind::ReturnAddress => {
+                by_offset.insert(
+                    elem.offset,
+                    RenderRow {
+                        offset: elem.offset,
+                        size: 8,
+                        kind: RowKind::ReturnAddress,
+                    },
+                );
+            }
+            StackElementKind::SavedRegister { reg } => {
+                by_offset.insert(
+                    elem.offset,
+                    RenderRow {
+                        offset: elem.offset,
+                        size: 8,
+                        kind: RowKind::SavedRegister { reg: *reg },
+                    },
+                );
+            }
+            StackElementKind::LocalVariable {
+                name,
+                type_name,
+                size,
+            }
+            | StackElementKind::Parameter {
+                name,
+                type_name,
+                size,
+            } => {
+                let is_param = matches!(elem.kind, StackElementKind::Parameter { .. });
+                let row = by_offset.entry(elem.offset).or_insert_with(|| RenderRow {
+                    offset: elem.offset,
+                    size: 0,
+                    kind: RowKind::Variables {
+                        names: Vec::new(),
+                        type_name: String::new(),
+                        is_param,
+                    },
+                });
+                row.size = row.size.max(*size);
+                if let RowKind::Variables {
+                    names,
+                    type_name: ty,
+                    is_param: ip,
+                } = &mut row.kind
+                {
+                    if !name.is_empty() && !names.iter().any(|n| n == name) {
+                        names.push(name.clone());
+                    }
+                    if ty.is_empty() {
+                        *ty = type_name.clone();
+                    } else if !type_name.is_empty() && ty != type_name {
+                        *ty = "mixed".to_owned();
+                    }
+                    *ip = *ip && is_param;
+                }
+            }
+        }
+    }
+    let mut rows: Vec<RenderRow> = by_offset.into_values().collect();
+    rows.sort_by(|a, b| b.offset.cmp(&a.offset));
+    rows
+}
+
+// Accent color for a row, by kind. Coalesced multi-var slots read as locals.
+fn row_color(kind: &RowKind, palette: &StackPalette) -> Color32 {
+    match kind {
+        RowKind::ReturnAddress => palette.return_address,
+        RowKind::SavedRegister { .. } => palette.saved_register,
+        RowKind::Variables {
+            is_param, names, ..
+        } if *is_param && names.len() == 1 => palette.parameter,
+        RowKind::Variables { .. } => palette.local_variable,
+    }
+}
+
+// Join shared-slot names, capping the list so the cell stays readable.
+fn join_names(names: &[String]) -> String {
+    if names.is_empty() {
+        "?".to_owned()
+    } else if names.len() <= 4 {
+        names.join(", ")
+    } else {
+        format!("{}, +{} more", names[..3].join(", "), names.len() - 3)
     }
 }

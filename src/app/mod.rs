@@ -285,6 +285,8 @@ pub struct FullStackApp {
     #[serde(skip)]
     cube_binary: Option<AssembledOutput>,
     #[serde(skip)]
+    life_binary: Option<AssembledOutput>,
+    #[serde(skip)]
     as_binary: Option<AssembledOutput>,
     #[serde(skip)]
     vm_output_view_id: u64,
@@ -331,6 +333,7 @@ impl Default for FullStackApp {
             edit_binary: None,
             fbdemo_binary: None,
             cube_binary: None,
+            life_binary: None,
             as_binary: None,
             vm_output_view_id: 0,
             settings: AppSettings::default(),
@@ -975,6 +978,37 @@ impl FullStackApp {
         }
     }
 
+    /// Compile the bundled Game of Life demo as a hosted binary, caching it.
+    fn ensure_life_binary(&mut self) -> Result<(), String> {
+        if self.life_binary.is_some() {
+            return Ok(());
+        }
+        let mut pipeline = CompilationPipeline::new();
+        pipeline.set_target_mode(TargetMode::Hosted);
+        pipeline.set_write_artifacts(false);
+        pipeline.set_type_prelude(get_stdlib_type_prelude());
+
+        let source = format!(
+            "{}\n{}",
+            get_stdlib_source_for_mode(TargetMode::Hosted),
+            os_runtime::user::LIFE
+        );
+        let result = pipeline.run_full(&source, None);
+        if result.has_errors() {
+            return Err(result.format_diagnostics());
+        }
+        if let Some(ref asm_err) = result.assembler_error {
+            return Err(format!("assembler error: {asm_err}"));
+        }
+        match result.binary.as_ref() {
+            Some(bin) => {
+                self.life_binary = Some(bin.assembled.clone());
+                Ok(())
+            }
+            None => Err("life produced no binary".to_owned()),
+        }
+    }
+
     /// Compile the bundled in-VM assembler as a hosted binary, caching it.
     /// Installed at `/bin/as.fexe` so the shell's `as <src> <out>` command works.
     fn ensure_as_binary(&mut self) -> Result<(), String> {
@@ -1012,36 +1046,11 @@ impl FullStackApp {
     /// runnable executable file. A short readme is always present so `ls` has
     /// something to show.
     fn build_boot_fs_image(&self) -> Vec<u8> {
-        let readme: &[u8] = b"Type 'help' for commands. Use 'run <file>' to run a program.\n\
-Try the assembler: as /home/fib.s /home/fib.fexe then run /home/fib.fexe\n";
-
-        let mut entries = vec![
-            FsEntry::Dir { path: "/home" },
-            FsEntry::File {
-                path: "/readme.txt",
-                data: readme,
-            },
-            // Example assembly sources so `as`/`run` can be tried immediately.
-            FsEntry::File {
-                path: "/home/sum.s",
-                data: os_runtime::user::EXAMPLE_SUM_S.as_bytes(),
-            },
-            FsEntry::File {
-                path: "/home/fib.s",
-                data: os_runtime::user::EXAMPLE_FIB_S.as_bytes(),
-            },
-        ];
+        let mut entries = boot_fs_static_entries();
 
         // Install the line editor at /bin/edit.fexe so the shell's `edit` command
         // can exec it. Without this the editor is compiled but never reachable.
         let edit_holder;
-        let have_bin_dir = self.edit_binary.is_some()
-            || self.fbdemo_binary.is_some()
-            || self.cube_binary.is_some()
-            || self.as_binary.is_some();
-        if have_bin_dir {
-            entries.push(FsEntry::Dir { path: "/bin" });
-        }
         if let Some(asm) = self.edit_binary.as_ref() {
             edit_holder = assembled_to_exec_file(asm);
             entries.push(FsEntry::File {
@@ -1050,25 +1059,36 @@ Try the assembler: as /home/fib.s /home/fib.fexe then run /home/fib.fexe\n";
             });
         }
 
-        // Install the framebuffer demo at /bin/fbdemo.fexe so `run /bin/fbdemo`
-        // paints the framebuffer device.
+        // Install the Mandelbrot framebuffer demo at /home/demo/mandelbrot.fexe so
+        // a bare `mandelbrot` paints the framebuffer device.
         let fbdemo_holder;
         if let Some(asm) = self.fbdemo_binary.as_ref() {
             fbdemo_holder = assembled_to_exec_file(asm);
             entries.push(FsEntry::File {
-                path: "/bin/fbdemo.fexe",
+                path: "/home/demo/mandelbrot.fexe",
                 data: &fbdemo_holder,
             });
         }
 
-        // Install the spinning-cube demo at /bin/cube.fexe so `run /bin/cube`
+        // Install the spinning-cube demo at /home/demo/cube.fexe so a bare `cube`
         // animates a rotating wireframe on the framebuffer device.
         let cube_holder;
         if let Some(asm) = self.cube_binary.as_ref() {
             cube_holder = assembled_to_exec_file(asm);
             entries.push(FsEntry::File {
-                path: "/bin/cube.fexe",
+                path: "/home/demo/cube.fexe",
                 data: &cube_holder,
+            });
+        }
+
+        // Install Conway's Game of Life at /home/demo/life.fexe so a bare `life`
+        // animates a cellular automaton on the framebuffer device.
+        let life_holder;
+        if let Some(asm) = self.life_binary.as_ref() {
+            life_holder = assembled_to_exec_file(asm);
+            entries.push(FsEntry::File {
+                path: "/home/demo/life.fexe",
+                data: &life_holder,
             });
         }
 
@@ -1181,9 +1201,9 @@ impl eframe::App for FullStackApp {
             .resizable(true)
             .show(ui.ctx(), |ui| {
                 ui.set_max_width(900.0);
-                // Booting drops into an interactive shell (ls / cd / run / exit).
+                // Booting drops into an interactive shell (ls / cd / cat / exit).
                 // The selected program, if any, is placed in /home as a runnable
-                // file you can launch with `run <name>.fexe`.
+                // file you can launch by typing its name (bare-name execution).
                 ui.horizontal(|ui| {
                     ui.label("Program in /home:");
                     // Program selector: list Example, Custom, and Userspace programs
@@ -1274,15 +1294,20 @@ impl eframe::App for FullStackApp {
                             self.compilation_state
                                 .set_error(format!("editor compile failed: {e}"));
                         }
-                        // Best-effort: install the framebuffer demo for `run /bin/fbdemo`.
+                        // Best-effort: install the Mandelbrot demo for `mandelbrot`.
                         if let Err(e) = self.ensure_fbdemo_binary() {
                             self.compilation_state
                                 .set_error(format!("fbdemo compile failed: {e}"));
                         }
-                        // Best-effort: install the spinning-cube demo for `run /bin/cube`.
+                        // Best-effort: install the spinning-cube demo for `cube`.
                         if let Err(e) = self.ensure_cube_binary() {
                             self.compilation_state
                                 .set_error(format!("cube compile failed: {e}"));
+                        }
+                        // Best-effort: install the Game of Life demo for `life`.
+                        if let Err(e) = self.ensure_life_binary() {
+                            self.compilation_state
+                                .set_error(format!("life compile failed: {e}"));
                         }
                         // Best-effort: install the in-VM assembler for `as <src> <out>`.
                         if let Err(e) = self.ensure_as_binary() {
@@ -1402,6 +1427,48 @@ fn sanitize_program_filename(name: &str) -> String {
     }
 }
 
+/// The always-present part of the boot filesystem image: the Unix-shaped
+/// directory tree (`/bin`, `/home`, `/home/demo`, `/home/src`), a readme, and the
+/// example assembly sources. Compiled binaries (editor, demos, assembler) are
+/// appended by [`FullStackApp::build_boot_fs_image`] when available. See PLAN 2.1.
+fn boot_fs_static_entries() -> Vec<FsEntry<'static>> {
+    // Bare-name execution finds demos on PATH; the readme points at the layout.
+    let readme: &[u8] = b"Full-Stack OS. Type 'help' for the full command list.\n\
+\n\
+  ls [dir]      list a directory       cat <file>...  print files\n\
+  echo <text>   print text             pwd            show cwd\n\
+  cd <dir>      change directory       edit <file>    edit a file\n\
+\n\
+Run a program by typing its name (PATH is . then /bin then /home/demo):\n\
+  cube          spinning wireframe     mandelbrot     fractal\n\
+  life          game of life\n\
+Add '&' to run in the background; jobs / fg <job> / kill <pid> manage jobs.\n\
+\n\
+Send output to a file:  echo hi > note.txt   cat a b >> log.txt\n\
+Pipe programs:          cat a | filter      (up to 4 stages)\n\
+Assemble:  as /home/src/fib.s /home/fib.fexe  then run it with  fib\n";
+
+    vec![
+        FsEntry::Dir { path: "/bin" },
+        FsEntry::Dir { path: "/home" },
+        FsEntry::Dir { path: "/home/demo" },
+        FsEntry::Dir { path: "/home/src" },
+        FsEntry::File {
+            path: "/readme.txt",
+            data: readme,
+        },
+        // Example assembly sources so `as` can be tried immediately.
+        FsEntry::File {
+            path: "/home/src/sum.s",
+            data: os_runtime::user::EXAMPLE_SUM_S.as_bytes(),
+        },
+        FsEntry::File {
+            path: "/home/src/fib.s",
+            data: os_runtime::user::EXAMPLE_FIB_S.as_bytes(),
+        },
+    ]
+}
+
 fn run_in_vm(
     assembled: &AssembledOutput,
     entry_symbol: &str,
@@ -1430,5 +1497,60 @@ fn run_in_vm(
         },
         steps: result.steps,
         max_steps_reached: matches!(result.outcome, StepOutcome::Continue),
+    }
+}
+
+#[cfg(test)]
+mod boot_fs_tests {
+    use super::*;
+
+    // PLAN 2.1: the boot image is laid out Unix-style -- tools in /bin, demos in
+    // /home/demo, example sources in /home/src -- not all dumped in /bin or /home.
+    #[test]
+    fn boot_fs_static_layout_is_unix_shaped() {
+        let entries = boot_fs_static_entries();
+
+        let dirs: Vec<&str> = entries
+            .iter()
+            .filter_map(|e| match e {
+                FsEntry::Dir { path } => Some(*path),
+                FsEntry::File { .. } => None,
+            })
+            .collect();
+        let files: Vec<&str> = entries
+            .iter()
+            .filter_map(|e| match e {
+                FsEntry::File { path, .. } => Some(*path),
+                FsEntry::Dir { .. } => None,
+            })
+            .collect();
+
+        for dir in ["/bin", "/home", "/home/demo", "/home/src"] {
+            assert!(
+                dirs.contains(&dir),
+                "missing directory {dir}; dirs={dirs:?}"
+            );
+        }
+        // Example sources moved under /home/src, no longer loose in /home.
+        assert!(
+            files.contains(&"/home/src/sum.s"),
+            "sum.s not under /home/src; files={files:?}"
+        );
+        assert!(
+            files.contains(&"/home/src/fib.s"),
+            "fib.s not under /home/src; files={files:?}"
+        );
+        assert!(
+            !files.contains(&"/home/sum.s"),
+            "sum.s still loose in /home; files={files:?}"
+        );
+        assert!(
+            !files.contains(&"/home/fib.s"),
+            "fib.s still loose in /home; files={files:?}"
+        );
+        assert!(
+            files.contains(&"/readme.txt"),
+            "readme missing; files={files:?}"
+        );
     }
 }

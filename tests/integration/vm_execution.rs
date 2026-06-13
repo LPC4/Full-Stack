@@ -172,6 +172,56 @@ fn peephole_preserves_behavior_and_shrinks_code() {
     );
 }
 
+/// Compile and run a user program with the frame pointer omitted or kept,
+/// returning the VM run (exit outcome + UART) and the emitted instruction count.
+fn run_hll_omit_fp(src: &str, omit_fp: bool) -> (StepOutcome, String, usize) {
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_write_artifacts(false);
+    pipeline.set_omit_frame_pointer(omit_fp);
+
+    let user_result = pipeline.compile(src).expect("user compile failed");
+    let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program);
+    let code_lines = user_tokens.iter().filter(|t| t.is_code()).count();
+    let user_obj = pipeline.assemble(&user_tokens).expect("user assemble failed");
+
+    let assembled = pipeline
+        .link_assembled_objects(&[("stdlib", cached_stdlib_obj()), ("user", &user_obj)])
+        .expect("link failed");
+    let mut vm = VirtualMachine::new(&assembled);
+    let run = vm.run(5_000_000);
+    (run.outcome, run.uart_output.clone(), code_lines)
+}
+
+// A nine-arg callee exercises the stack-passed argument path (caller_sp),
+// which is the one place omitting the frame pointer changes the base register.
+const OMIT_FP_PROGRAM: &str = r#"
+sum9: (a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64, h: i64, i: i64) -> i64 {
+    return a + b + c + d + e + f + g + h + i
+}
+
+main: () -> i32 {
+    total: i64 = sum9(1, 2, 3, 4, 5, 6, 7, 8, 9)
+    return total as i32
+}
+"#;
+
+#[test]
+fn omit_frame_pointer_preserves_behavior() {
+    let (base_outcome, base_uart, base_lines) = run_hll_omit_fp(OMIT_FP_PROGRAM, false);
+    let (omit_outcome, omit_uart, omit_lines) = run_hll_omit_fp(OMIT_FP_PROGRAM, true);
+
+    assert_eq!(
+        format!("{base_outcome:?}"),
+        format!("{omit_outcome:?}"),
+        "omitting the frame pointer changed the exit outcome"
+    );
+    assert_eq!(base_uart, omit_uart, "omitting the frame pointer changed UART output");
+    assert!(
+        omit_lines <= base_lines,
+        "omitting the frame pointer should not add instructions: {base_lines} -> {omit_lines}"
+    );
+}
+
 /// Compile a user program with IR optimization on or off, returning the VM run
 /// (exit outcome + UART) and the emitted instruction count.
 fn run_hll_optimize(
@@ -1832,6 +1882,22 @@ main: () -> i32 {
 }
 "#);
     assert!(matches!(outcome, StepOutcome::Halted(6)), "expected Halted(6), got {outcome:?}");
+}
+
+#[test]
+fn float_f64_var_plus_bare_literal() {
+    // PLAN 6.4: a bare float literal infers as f32, but mixing it with an f64 var
+    // used to be rejected as a type mismatch. It now promotes to f64. Both operand
+    // orders must work: 4.0 + 1.5 = 5.5, then 1.5 + 5.5 = 7.0 -> 7.
+    let (_, outcome, _) = run_hll(r#"
+main: () -> i32 {
+    x: f64 = 4.0
+    y: f64 = x + 1.5
+    z: f64 = 1.5 + y
+    return z as i32
+}
+"#);
+    assert!(matches!(outcome, StepOutcome::Halted(7)), "expected Halted(7), got {outcome:?}");
 }
 
 #[test]

@@ -3,21 +3,17 @@
 .globl chained_deref_assign
 chained_deref_assign:
 ; --- Function Prologue ---
-; Allocate stack frame: 64 bytes
-	addi   sp, sp, -64
+; Allocate stack frame: 48 bytes
+	addi   sp, sp, -48
 ; Save return address (ra) at offset 40
 	sd     ra, 40(sp)
 ; Save callee-saved register s2 at offset 24
 	sd     s2, 24(sp)
 ; Save callee-saved register s3 at offset 32
 	sd     s3, 32(sp)
-; Save callee-saved register s0 at offset 48
-	sd     s0, 48(sp)
-; Set up frame pointer
-	addi   s0, sp, 0
 ; --- End Prologue ---
 ; --- Function Parameter Spills ---
-	addi   t0, s0, 64
+	addi   t0, sp, 48
 ; Move parameter '$val' from register a0 to allocated register
 	addiw  s2, a0, 0
 ; --- End Parameter Spills ---
@@ -71,16 +67,14 @@ chained_deref_assign__entry:
 ; --- End Function Call: free ---
 	addi   a0, s3, 0
 ; --- Function Epilogue ---
-; Restore callee-saved register s0 from offset 48
-	ld     s0, 48(sp)
 ; Restore callee-saved register s3 from offset 32
 	ld     s3, 32(sp)
 ; Restore callee-saved register s2 from offset 24
 	ld     s2, 24(sp)
 ; Restore return address (ra) from offset 40
 	ld     ra, 40(sp)
-; Deallocate stack frame: 64 bytes
-	addi   sp, sp, 64
+; Deallocate stack frame: 48 bytes
+	addi   sp, sp, 48
 ; Return to caller
 	jalr   zero, 0(ra)
 ; --- End Epilogue ---

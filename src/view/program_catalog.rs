@@ -289,6 +289,12 @@ fn built_in_programs() -> Vec<ProgramFile> {
             os_runtime::user::FBDEMO,
         ),
         ProgramFile::user(
+            "user-life",
+            "Game of Life Demo",
+            "Conway's Game of Life on the framebuffer (P pause, R reseed, space step).",
+            os_runtime::user::LIFE,
+        ),
+        ProgramFile::user(
             "user-hello",
             "Hello",
             "Minimal user program: prints a greeting, then yields forever.",

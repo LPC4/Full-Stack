@@ -116,14 +116,17 @@ impl TypeContext {
         let lhs_placeholder = self.is_placeholder_like(lhs_type);
         let rhs_placeholder = self.is_placeholder_like(rhs_type);
 
-        // Both operands must be the same type, with an exception: integer types of
-        // different widths are compatible (e.g. i64 op i32 literal is valid).
+        // Both operands must be the same type, with two exceptions: integer types
+        // of different widths are compatible (e.g. i64 op i32 literal is valid),
+        // and float types of different widths are compatible (e.g. an f64 var op a
+        // bare float literal, which infers as f32, promotes to f64).
         if lhs_type != rhs_type
             && !lhs_unknown
             && !rhs_unknown
             && !lhs_placeholder
             && !rhs_placeholder
             && !(Self::is_integer_typename(lhs_type) && Self::is_integer_typename(rhs_type))
+            && !(Self::is_float_typename(lhs_type) && Self::is_float_typename(rhs_type))
         {
             return Err(TypeCheckError::TypeMismatch {
                 expected: lhs_type.to_owned(),
@@ -152,6 +155,10 @@ impl TypeContext {
                 {
                     // Mixed integer widths: promote to wider type
                     Self::promote_integer_types(lhs_type, rhs_type)
+                } else if Self::is_float_typename(lhs_type) && Self::is_float_typename(rhs_type) {
+                    // Mixed float widths: promote to the wider type so a bare float
+                    // literal (f32) does not pin the result narrower than an f64 var.
+                    Self::promote_float_types(lhs_type, rhs_type)
                 } else {
                     lhs_type
                 };
@@ -313,6 +320,15 @@ impl TypeContext {
         let rhs_pri = width_priority(rhs);
 
         if lhs_pri >= rhs_pri { lhs } else { rhs }
+    }
+
+    /// Promote two float types to the wider one (f64 outranks f32).
+    fn promote_float_types<'a>(lhs: &'a str, rhs: &'a str) -> &'a str {
+        if lhs == "f64" || rhs == "f64" {
+            "f64"
+        } else {
+            lhs
+        }
     }
 
     fn is_numeric(&self, ty: &str) -> bool {

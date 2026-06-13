@@ -57,10 +57,13 @@ fn bool_stores_use_sb() {
 // -- Function epilogue ---------------------------------------------------------
 
 #[test]
-fn epilogue_restores_ra_and_s0() {
+fn epilogue_restores_ra_without_frame_pointer() {
+    // Frame pointer is omitted by default, so ra is restored but s0 is never
+    // set up or saved.
     let asm = compile_fixture("functions", "11_constexpr_pure_functions");
     assert!(asm.contains("ld     ra,"), "expected epilogue 'ld ra'");
-    assert!(asm.contains("ld     s0,"), "expected epilogue 'ld s0'");
+    assert!(!asm.contains("s0, sp, 0"), "frame pointer should not be set up");
+    assert!(!asm.contains("ld     s0,"), "s0 should not be restored");
 }
 
 #[test]

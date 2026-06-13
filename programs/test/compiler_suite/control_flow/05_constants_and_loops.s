@@ -9,10 +9,6 @@ main:
 	sd     ra, 16(sp)
 ; Save callee-saved register s2 at offset 8
 	sd     s2, 8(sp)
-; Save callee-saved register s0 at offset 24
-	sd     s0, 24(sp)
-; Set up frame pointer
-	addi   s0, sp, 0
 ; --- End Prologue ---
 ; Basic Block: entry
 main__entry:
@@ -85,8 +81,6 @@ main__label_2:
 	lw     s2, 0(t0)
 	addi   a0, s2, 0
 ; --- Function Epilogue ---
-; Restore callee-saved register s0 from offset 24
-	ld     s0, 24(sp)
 ; Restore callee-saved register s2 from offset 8
 	ld     s2, 8(sp)
 ; Restore return address (ra) from offset 16

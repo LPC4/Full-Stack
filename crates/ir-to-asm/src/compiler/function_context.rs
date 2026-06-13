@@ -42,6 +42,8 @@ pub struct FunctionContext {
     label_map: HashMap<IrLabel, String>,
     /// When true, incoming parameters may be read directly from a0-a7 / fa0-fa7.
     preserve_param_registers: bool,
+    /// When true, skip the s0 frame pointer; locals are addressed via sp.
+    omit_frame_pointer: bool,
 }
 
 impl FunctionContext {
@@ -56,6 +58,7 @@ impl FunctionContext {
             stack_address_regs: HashSet::new(),
             label_map: HashMap::new(),
             preserve_param_registers: false,
+            omit_frame_pointer: false,
         }
     }
 
@@ -155,6 +158,10 @@ impl FunctionContext {
         self.preserve_param_registers
     }
 
+    pub fn set_omit_frame_pointer(&mut self, omit: bool) {
+        self.omit_frame_pointer = omit;
+    }
+
     pub fn set_reg_type(&mut self, reg: &IrRegister, ty: IrType) {
         self.reg_types.insert(reg.clone(), ty);
     }
@@ -203,8 +210,10 @@ impl FunctionContext {
             ));
             backend.emit_sd(SP, *reg, *offset as i32);
         }
-        backend.emit_comment("Set up frame pointer");
-        backend.emit_mv(S0, SP);
+        if !self.omit_frame_pointer {
+            backend.emit_comment("Set up frame pointer");
+            backend.emit_mv(S0, SP);
+        }
         backend.emit_comment("--- End Prologue ---");
     }
 
@@ -331,7 +340,9 @@ impl FunctionContext {
         }
         let frame_size = self.frame_size() as i64;
         let caller_sp = backend.alloc_temp_reg();
-        backend.emit_add_imm(caller_sp, S0, frame_size);
+        // sp is unchanged after the prologue, so sp + frame_size == caller's sp.
+        let base = if self.omit_frame_pointer { SP } else { S0 };
+        backend.emit_add_imm(caller_sp, base, frame_size);
 
         for (index, param) in func.params.iter().enumerate().skip(start_index) {
             let ty = self.frame.resolve_type(&param.ty, &self.type_aliases);

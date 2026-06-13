@@ -165,6 +165,7 @@ pub struct CompilationPipeline {
     write_artifacts: bool,
     peephole: bool,
     register_allocation: bool,
+    omit_frame_pointer: bool,
     optimize: OptOptions,
 }
 
@@ -189,6 +190,7 @@ impl CompilationPipeline {
             write_artifacts: true,
             peephole: true,
             register_allocation: true,
+            omit_frame_pointer: true,
             optimize: OptOptions::none(),
         }
     }
@@ -207,6 +209,7 @@ impl CompilationPipeline {
             write_artifacts: true,
             peephole: true,
             register_allocation: true,
+            omit_frame_pointer: true,
             optimize: OptOptions::none(),
         }
     }
@@ -290,6 +293,11 @@ impl CompilationPipeline {
     /// lowering (e.g. for codegen-shape comparisons).
     pub fn set_register_allocation(&mut self, enabled: bool) {
         self.register_allocation = enabled;
+    }
+
+    /// Omit the redundant s0 frame pointer in the RV64 backend. On by default.
+    pub fn set_omit_frame_pointer(&mut self, enabled: bool) {
+        self.omit_frame_pointer = enabled;
     }
 
     /// Enable IR-level optimization passes (constant folding, dead-code
@@ -607,6 +615,7 @@ impl CompilationPipeline {
         let mut compiler = CompilerRv64::new();
         compiler.set_peephole(self.peephole);
         compiler.set_register_allocation(self.register_allocation);
+        compiler.set_omit_frame_pointer(self.omit_frame_pointer);
         let (asm, tokens) = compiler.compile_with_tokens(ir);
         let stem = if let Some(existing) = self.current_artifact_stem() {
             existing

@@ -3,19 +3,15 @@
 .globl control_suite
 control_suite:
 ; --- Function Prologue ---
-; Allocate stack frame: 48 bytes
-	addi   sp, sp, -48
+; Allocate stack frame: 32 bytes
+	addi   sp, sp, -32
 ; Save return address (ra) at offset 24
 	sd     ra, 24(sp)
 ; Save callee-saved register s2 at offset 16
 	sd     s2, 16(sp)
-; Save callee-saved register s0 at offset 32
-	sd     s0, 32(sp)
-; Set up frame pointer
-	addi   s0, sp, 0
 ; --- End Prologue ---
 ; --- Function Parameter Spills ---
-	addi   t0, s0, 48
+	addi   t0, sp, 32
 ; Move parameter '$param' from register a0 to allocated register
 	addiw  s2, a0, 0
 ; --- End Parameter Spills ---
@@ -111,14 +107,12 @@ control_suite__label_6:
 	lw     s2, 0(t0)
 	addi   a0, s2, 0
 ; --- Function Epilogue ---
-; Restore callee-saved register s0 from offset 32
-	ld     s0, 32(sp)
 ; Restore callee-saved register s2 from offset 16
 	ld     s2, 16(sp)
 ; Restore return address (ra) from offset 24
 	ld     ra, 24(sp)
-; Deallocate stack frame: 48 bytes
-	addi   sp, sp, 48
+; Deallocate stack frame: 32 bytes
+	addi   sp, sp, 32
 ; Return to caller
 	jalr   zero, 0(ra)
 ; --- End Epilogue ---
@@ -127,14 +121,12 @@ control_suite__label_8:
 	addi   t1, zero, 0
 	addi   a0, t1, 0
 ; --- Function Epilogue ---
-; Restore callee-saved register s0 from offset 32
-	ld     s0, 32(sp)
 ; Restore callee-saved register s2 from offset 16
 	ld     s2, 16(sp)
 ; Restore return address (ra) from offset 24
 	ld     ra, 24(sp)
-; Deallocate stack frame: 48 bytes
-	addi   sp, sp, 48
+; Deallocate stack frame: 32 bytes
+	addi   sp, sp, 32
 ; Return to caller
 	jalr   zero, 0(ra)
 ; --- End Epilogue ---

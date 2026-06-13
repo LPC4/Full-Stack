@@ -7,10 +7,6 @@ main:
 	addi   sp, sp, -112
 ; Save return address (ra) at offset 96
 	sd     ra, 96(sp)
-; Save callee-saved register s0 at offset 104
-	sd     s0, 104(sp)
-; Set up frame pointer
-	addi   s0, sp, 0
 ; --- End Prologue ---
 ; Basic Block: entry
 main__entry:
@@ -62,8 +58,6 @@ main__entry:
 	addi   t4, zero, 0
 	addi   a0, t4, 0
 ; --- Function Epilogue ---
-; Restore callee-saved register s0 from offset 104
-	ld     s0, 104(sp)
 ; Restore return address (ra) from offset 96
 	ld     ra, 96(sp)
 ; Deallocate stack frame: 112 bytes

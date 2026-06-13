@@ -9,6 +9,7 @@ const SYSCALL_READ     = 63
 const SYSCALL_RENAME   = 82
 const SYSCALL_MKDIR    = 83
 const SYSCALL_FTRUNCATE = 46   ; shrink a file to an exact length
+const SYSCALL_LSEEK    = 62    ; reposition a file fd; whence 0=SET 1=CUR 2=END
 ; Project-specific syscalls for the interactive shell.
 const SYSCALL_READCHAR = 100   ; read one byte from the UART (-1 if none)
 const SYSCALL_READDIR  = 101   ; list directory entry by index
@@ -19,10 +20,15 @@ const SYSCALL_UNLINK   = 105   ; remove a regular file
 const SYSCALL_RMDIR    = 106   ; remove an empty directory
 const SYSCALL_MAPFB    = 107   ; map the framebuffer into the caller; returns its base VA
 const SYSCALL_POLLKEY  = 108   ; pop the next key event (-1 if none)
+const SYSCALL_EXEC_REDIR = 110 ; exec with stdout/stdin redirected to FS files (7.7)
 ; Process-tree syscalls (Linux/RISC-V numbers).
 const SYSCALL_FORK     = 220   ; clone the current process; returns child pid / 0
 const SYSCALL_WAIT     = 260   ; reap any exited child; returns its exit code / -1
 const SYSCALL_WAITPID  = 261   ; reap a specific child by pid; -2 on Ctrl-C, -1 if not ours
+const SYSCALL_KILL     = 129   ; send a signal to a pid; only SIGKILL is honoured
+
+; Signal numbers. Only SIGKILL is implemented (uncatchable teardown). See OS spec ch.7.6.
+const SIGKILL = 9
 
 const SYSACT_CONTINUE      = 0
 const SYSACT_SCHEDULE      = 1
@@ -78,6 +84,10 @@ external process_set_root:     (pcb: u64*, root: u64)
 external process_set_parent:   (pcb: u64*, ppid: u64)
 external process_exit_code:    (pcb: u64*) -> i64
 external process_set_exit_code: (pcb: u64*, code: i64)
+external process_stdout_fd:     (pcb: u64*) -> u64
+external process_set_stdout_fd: (pcb: u64*, fd: u64)
+external process_stdin_fd:      (pcb: u64*) -> u64
+external process_set_stdin_fd:  (pcb: u64*, fd: u64)
 external scheduler_add:        (pcb: u64*)
 external scheduler_current:    () -> u64*
 external scheduler_set_input_waiter: (pcb: u64*)
@@ -104,6 +114,7 @@ external fs_stat:              (path: u8*) -> i64
 external fs_get_pos:           (fd: i64) -> u64
 external fs_set_pos:           (fd: i64, pos: u64)
 external fs_truncate:          (fd: i64, len: u64) -> i64
+external fs_fd_size:           (fd: i64) -> u64
 
 
 ; One-byte input pushback: a byte peeked by the Ctrl-C check but not consumed,
@@ -125,6 +136,24 @@ kuart_take: () -> i64 {
 ; Blocking UART read: returns the pushback or a ready byte, else sleeps the
 ; caller until the RX interrupt wakes it. See OS spec ch.6.4.
 sys_readchar_block: (frame: u64*) -> u64 {
+    ; Redirected stdin (`prog < file`): hand back the next file byte, or -1 at EOF.
+    rcur: u64* = scheduler_current()
+    if rcur != null {
+        ifd: u64 = process_stdin_fd(rcur)
+        if ifd >= 2 {
+            ipos: u64 = fs_get_pos(ifd as i64)
+            ch: u8[1]
+            chp: u8* = ch[0]
+            got: i64 = fs_read(ifd as i64, chp, ipos, 1)
+            if got == 1 {
+                fs_set_pos(ifd as i64, ipos + 1)
+                @frame[10] = (@chp) as u64
+                return SYSACT_CONTINUE
+            }
+            @frame[10] = 0xFFFFFFFFFFFFFFFF
+            return SYSACT_CONTINUE
+        }
+    }
     if input_pushback_valid != 0 {
         input_pushback_valid = 0
         @frame[10] = input_pushback_byte
@@ -163,11 +192,42 @@ sys_pollkey_impl: () -> i64 {
 }
 
 ; Load an FEXE into a new process and enqueue it; arg (or null) is staged into
-; the child's USER_ARG_BASE page. Returns the new pid or -1. See OS spec ch.5.5.
-sys_exec_impl: (path: u8*, arg: u8*) -> i64 {
+; the child's USER_ARG_BASE page. out_path/in_path (or null) redirect the child's
+; stdout/stdin to FS files; out_append seeks stdout to end instead of truncating.
+; Returns the new pid or -1. See OS spec ch.5.5 and 7.7.
+sys_exec_impl: (path: u8*, arg: u8*, out_path: u8*, in_path: u8*, out_append: u64) -> i64 {
     fd: i64 = fs_open(path, 0)
     if fd < 2 {
         return -1 as i64
+    }
+
+    ; Open any stdout/stdin redirect targets now, while the parent address space
+    ; is still active and the path strings are readable. The resulting fds live in
+    ; the global FS table, so they remain valid after the root switch below.
+    out_fd: i64 = 0
+    in_fd:  i64 = 0
+    if out_path != null {
+        out_fd = fs_open(out_path, 2)  ; create (implies RW)
+        if out_fd < 2 {
+            fs_close(fd)
+            return -1 as i64
+        }
+        if out_append != 0 {
+            fs_set_pos(out_fd, fs_fd_size(out_fd))
+        } else {
+            fs_truncate(out_fd, 0)
+            fs_set_pos(out_fd, 0)
+        }
+    }
+    if in_path != null {
+        in_fd = fs_open(in_path, 0)  ; read-only
+        if in_fd < 2 {
+            if out_fd >= 2 {
+                fs_close(out_fd)
+            }
+            fs_close(fd)
+            return -1 as i64
+        }
     }
 
     ; Stage the argument into a kernel buffer before process_create switches roots.
@@ -214,6 +274,15 @@ sys_exec_impl: (path: u8*, arg: u8*) -> i64 {
     entry: u64 = USER_CODE_BASE + entry_off
     pcb: u64* = process_create(entry)
     process_set_parent(pcb, parent_pid_v)
+
+    ; Bind the redirect fds onto the child so sys_write (fd 1) / readchar (fd 0)
+    ; route to the file instead of the console. 0 means "inherit the console".
+    if out_fd >= 2 {
+        process_set_stdout_fd(pcb, out_fd as u64)
+    }
+    if in_fd >= 2 {
+        process_set_stdin_fd(pcb, in_fd as u64)
+    }
 
     ; Map the argument page into the child and copy the staged string in. Always
     ; mapped, so a program can read USER_ARG_BASE even when it has no argument.
@@ -266,6 +335,26 @@ sys_write_impl: (fd: u64, buf: u8*, len: u64) -> u64 {
         written = written + 1
     }
     return written
+}
+
+; Standard-output write (fd 0/1): if the caller has a redirected stdout bound,
+; append to that file and advance its position; otherwise write to the console.
+; Returns bytes written. See OS spec ch.7.7.
+sys_stdout_write: (buf: u8*, len: u64) -> u64 {
+    cur: u64* = scheduler_current()
+    if cur != null {
+        ofd: u64 = process_stdout_fd(cur)
+        if ofd >= 2 {
+            pos: u64 = fs_get_pos(ofd as i64)
+            n: i64 = fs_write(ofd as i64, buf, pos, len)
+            if n < 0 {
+                return 0
+            }
+            fs_set_pos(ofd as i64, pos + n as u64)
+            return n as u64
+        }
+    }
+    return sys_write_impl(0, buf, len)
 }
 
 ; Fork: clone the caller's address space and trap frame; child returns 0. See OS spec ch.5.5.
@@ -376,6 +465,29 @@ sys_waitpid_impl: (frame: u64*) -> u64 {
     return SYSACT_CONTINUE
 }
 
+; Signal a pid (a0=pid, a1=sig). Only SIGKILL is honoured: unlink the target from
+; the ready queue and mark it EXITED (same teardown as the Ctrl-C path), leaving a
+; zombie its parent reaps. pid 1 (the shell) is protected. 0 on success, -1 if the
+; pid is not a live, killable process. See OS spec ch.7.6.
+sys_kill_impl: (frame: u64*) -> u64 {
+    pid: u64 = @frame[10]
+    sig: u64 = @frame[11]
+    if sig != SIGKILL {
+        @frame[10] = 0xFFFFFFFFFFFFFFFF
+        return SYSACT_CONTINUE
+    }
+    if pid == 1 {
+        @frame[10] = 0xFFFFFFFFFFFFFFFF
+        return SYSACT_CONTINUE
+    }
+    if scheduler_kill_pid(pid) == 1 {
+        @frame[10] = 0
+    } else {
+        @frame[10] = 0xFFFFFFFFFFFFFFFF
+    }
+    return SYSACT_CONTINUE
+}
+
 ; Exit: pid 1 (or no/empty context) halts the VM; others become zombies. See OS spec ch.5.6.
 sys_exit_impl: (frame: u64*) -> u64 {
     code: u64 = @frame[10]
@@ -389,6 +501,15 @@ sys_exit_impl: (frame: u64*) -> u64 {
     ; Nothing else runnable: no one to switch to or reap us, so halt.
     if scheduler_ready_empty() == 1 {
         kshutdown(code as i64)
+    }
+    ; Release any redirected stdio fds so the FS slot is freed for reuse.
+    ofd: u64 = process_stdout_fd(current)
+    if ofd >= 2 {
+        fs_close(ofd as i64)
+    }
+    ifd: u64 = process_stdin_fd(current)
+    if ifd >= 2 {
+        fs_close(ifd as i64)
     }
     process_set_exit_code(current, code as i64)
     scheduler_make_zombie(current)
@@ -442,9 +563,8 @@ syscall_dispatch: (frame: u64*) -> u64 {
         buf: u8* = (@frame[11]) as u8*
         len: u64 = @frame[12]
         if fd < 2 {
-            ; fd 0/1 -> UART
-            result: u64 = sys_write_impl(fd, buf, len)
-            @frame[10] = result
+            ; fd 0/1 -> redirected stdout file, or the UART console.
+            @frame[10] = sys_stdout_write(buf, len)
             return SYSACT_CONTINUE
         }
         ; fd >= 2 -> file, use and advance stored position.
@@ -519,13 +639,39 @@ syscall_dispatch: (frame: u64*) -> u64 {
 
     if num == SYSCALL_EXEC {
         ; Args read inline to keep syscall_dispatch's (already large) frame small.
-        result: i64 = sys_exec_impl((@frame[10]) as u8*, (@frame[11]) as u8*)
+        result: i64 = sys_exec_impl((@frame[10]) as u8*, (@frame[11]) as u8*, null, null, 0)
         @frame[10] = result as u64
+        return SYSACT_CONTINUE
+    }
+
+    if num == SYSCALL_EXEC_REDIR {
+        ; a0=path, a1=arg, a2=out_path, a3=in_path, a4=out_append.
+        r: i64 = sys_exec_impl((@frame[10]) as u8*, (@frame[11]) as u8*,
+                               (@frame[12]) as u8*, (@frame[13]) as u8*, @frame[14])
+        @frame[10] = r as u64
         return SYSACT_CONTINUE
     }
 
     if num == SYSCALL_FTRUNCATE {
         return sys_ftruncate_impl(frame)
+    }
+
+    if num == SYSCALL_LSEEK {
+        ; a0=fd, a1=offset (signed), a2=whence (0=SET,1=CUR,2=END). Returns new pos.
+        fd:     i64 = (@frame[10]) as i64
+        offset: i64 = (@frame[11]) as i64
+        whence: u64 = @frame[12]
+        base: u64 = 0
+        if whence == 1 {
+            base = fs_get_pos(fd)
+        }
+        if whence == 2 {
+            base = fs_fd_size(fd)
+        }
+        newpos: u64 = (base as i64 + offset) as u64
+        fs_set_pos(fd, newpos)
+        @frame[10] = newpos
+        return SYSACT_CONTINUE
     }
 
     if num == SYSCALL_UNLINK {
@@ -562,6 +708,10 @@ syscall_dispatch: (frame: u64*) -> u64 {
 
     if num == SYSCALL_WAITPID {
         return sys_waitpid_impl(frame)
+    }
+
+    if num == SYSCALL_KILL {
+        return sys_kill_impl(frame)
     }
 
     if num == SYSCALL_YIELD {

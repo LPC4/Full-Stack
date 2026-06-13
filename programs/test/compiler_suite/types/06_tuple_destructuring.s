@@ -13,13 +13,9 @@ divide:
 	sd     s3, 32(sp)
 ; Save callee-saved register s4 at offset 40
 	sd     s4, 40(sp)
-; Save callee-saved register s0 at offset 56
-	sd     s0, 56(sp)
-; Set up frame pointer
-	addi   s0, sp, 0
 ; --- End Prologue ---
 ; --- Function Parameter Spills ---
-	addi   t0, s0, 64
+	addi   t0, sp, 64
 ; Move parameter '$a' from register a0 to allocated register
 	addiw  s2, a0, 0
 ; Move parameter '$b' from register a1 to allocated register
@@ -61,8 +57,6 @@ divide__entry:
 	sw     s3, 0(t0)
 	ld     a0, 16(sp)
 ; --- Function Epilogue ---
-; Restore callee-saved register s0 from offset 56
-	ld     s0, 56(sp)
 ; Restore callee-saved register s4 from offset 40
 	ld     s4, 40(sp)
 ; Restore callee-saved register s3 from offset 32
@@ -81,16 +75,12 @@ divide__entry:
 .globl test_tuple_destructuring
 test_tuple_destructuring:
 ; --- Function Prologue ---
-; Allocate stack frame: 64 bytes
-	addi   sp, sp, -64
+; Allocate stack frame: 48 bytes
+	addi   sp, sp, -48
 ; Save return address (ra) at offset 40
 	sd     ra, 40(sp)
-; Save callee-saved register s2 at offset 24
-	sd     s2, 24(sp)
-; Save callee-saved register s0 at offset 48
-	sd     s0, 48(sp)
-; Set up frame pointer
-	addi   s0, sp, 0
+; Save callee-saved register s2 at offset 32
+	sd     s2, 32(sp)
 ; --- End Prologue ---
 ; Basic Block: entry
 test_tuple_destructuring__entry:
@@ -103,7 +93,7 @@ test_tuple_destructuring__entry:
 	addi   a1, t1, 0
 	jal ra, divide
 ; Unpacking small aggregate return from a0/a1
-	sd     a0, 32(sp)
+	sd     a0, 24(sp)
 ; --- End Function Call: divide ---
 	addi   t0, sp, 0
 ; Store {quotient: i32, remainder: i32} to memory
@@ -128,14 +118,12 @@ test_tuple_destructuring__entry:
 	lw     s2, 0(t0)
 	addi   a0, s2, 0
 ; --- Function Epilogue ---
-; Restore callee-saved register s0 from offset 48
-	ld     s0, 48(sp)
-; Restore callee-saved register s2 from offset 24
-	ld     s2, 24(sp)
+; Restore callee-saved register s2 from offset 32
+	ld     s2, 32(sp)
 ; Restore return address (ra) from offset 40
 	ld     ra, 40(sp)
-; Deallocate stack frame: 64 bytes
-	addi   sp, sp, 64
+; Deallocate stack frame: 48 bytes
+	addi   sp, sp, 48
 ; Return to caller
 	jalr   zero, 0(ra)
 ; --- End Epilogue ---

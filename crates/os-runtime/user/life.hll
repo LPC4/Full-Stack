@@ -1,0 +1,239 @@
+; Conway's Game of Life: a 40x30 toroidal grid rendered to the framebuffer.
+; B3/S23 rules, double-buffered, with P/R/space keyboard control. See OS spec ch.10.5.
+
+external console_writeln: (str: u8*)
+; Map the framebuffer (syscall 107); returns its base VA (0 on failure).
+external sc_map_fb: () -> u64
+; Pop the next keyboard event (syscall 108); packed event or -1 when none.
+external sc_poll_key: () -> i64
+
+; Grid dimensions and the pixel size of each cell. GW*CELL = 320, GH*CELL = 240.
+const GW = 40
+const GH = 30
+const CELL = 8
+const CELLS = 1200
+
+; Live-cell colour (opaque green).
+const ALIVE_COLOR = 0xFF66FF99
+
+; Current and next generation, one byte per cell (1 = alive). Fully written
+; before being read, so they never rely on bss zero-init.
+cur: u8[1200]
+nxt: u8[1200]
+
+; Framebuffer base virtual address (filled in by sc_map_fb).
+_fb_base: u64 = 0
+
+; Linear-congruential RNG state, advanced by rng_next for the random seed fill.
+rng: u64 = 2463534242
+
+; 1 while the simulation is paused; step_req requests one generation while paused.
+paused: i64 = 0
+step_req: i64 = 0
+
+; --- Framebuffer plumbing (mirrors the cube demo) ---
+
+; Pixel-buffer byte size; the control registers sit immediately after it.
+const FB_BYTES = 307200
+const FB_FILL = 0
+const FB_PRESENT = 4
+const FB_DBMODE = 8
+
+; Enable double buffering so the GUI only ever shows complete frames.
+enable_double_buffer: () {
+    reg: u32* = (_fb_base + FB_BYTES + FB_DBMODE) as u32*
+    @reg = 1 as u32
+}
+
+; Clear the back buffer to opaque black via one write to FILL.
+fb_clear: () {
+    fill: u32* = (_fb_base + FB_BYTES + FB_FILL) as u32*
+    @fill = 0xFF000000 as u32
+}
+
+; Publish the finished back buffer to the visible front buffer.
+fb_present: () {
+    reg: u32* = (_fb_base + FB_BYTES + FB_PRESENT) as u32*
+    @reg = 1 as u32
+}
+
+; --- Simulation ---
+
+; Advance the RNG one step and return the new state.
+rng_next: () -> u64 {
+    rng = rng * 1103515245 + 12345
+    return rng
+}
+
+; Fill the grid with a fresh random soup (~30% alive).
+seed: () {
+    i: i64 = 0
+    while i < CELLS {
+        r: u64 = rng_next()
+        v: u8 = 0
+        if ((r >> 16) % 10) < 3 {
+            v = 1 as u8
+        }
+        @cur[i] = v
+        i = i + 1
+    }
+}
+
+; Compute one generation into nxt (B3/S23), then copy it back into cur. Neighbour
+; counting is inlined with the wraparound rows/cols computed once per row/column,
+; so the hot loop is pure array loads with no per-neighbour function call.
+step: () {
+    y: i64 = 0
+    while y < GH {
+        ; Wrapped row above/below, as flat base offsets into the grid.
+        ym: i64 = y - 1
+        if ym < 0 {
+            ym = GH - 1
+        }
+        yp: i64 = y + 1
+        if yp >= GH {
+            yp = 0
+        }
+        rc: i64 = y * GW
+        ru: i64 = ym * GW
+        rd: i64 = yp * GW
+
+        x: i64 = 0
+        while x < GW {
+            xm: i64 = x - 1
+            if xm < 0 {
+                xm = GW - 1
+            }
+            xp: i64 = x + 1
+            if xp >= GW {
+                xp = 0
+            }
+
+            n: i64 = (@cur[ru + xm]) as i64 + (@cur[ru + x]) as i64 + (@cur[ru + xp]) as i64
+            n = n + (@cur[rc + xm]) as i64 + (@cur[rc + xp]) as i64
+            n = n + (@cur[rd + xm]) as i64 + (@cur[rd + x]) as i64 + (@cur[rd + xp]) as i64
+
+            idx: i64 = rc + x
+            live: i64 = 0
+            if @cur[idx] != 0 {
+                if n == 2 {
+                    live = 1
+                }
+                if n == 3 {
+                    live = 1
+                }
+            } else {
+                if n == 3 {
+                    live = 1
+                }
+            }
+            @nxt[idx] = live as u8
+            x = x + 1
+        }
+        y = y + 1
+    }
+    i: i64 = 0
+    while i < CELLS {
+        @cur[i] = @nxt[i]
+        i = i + 1
+    }
+}
+
+; --- Rendering ---
+
+; Fill the CELLxCELL block for grid cell (gx, gy). Cells are always in-frame, so
+; this writes the framebuffer directly with no per-pixel bounds check.
+draw_cell: (gx: i64, gy: i64, color: u32) {
+    px: u64 = (gx * CELL) as u64
+    py: u64 = (gy * CELL) as u64
+    row_base: u64 = _fb_base + (py * 320 + px) * 4
+    yy: u64 = 0
+    while yy < CELL {
+        p: u32* = (row_base + yy * 320 * 4) as u32*
+        xx: u64 = 0
+        while xx < CELL {
+            q: u32* = (p as u64 + xx * 4) as u32*
+            @q = color
+            xx = xx + 1
+        }
+        yy = yy + 1
+    }
+}
+
+; Draw every live cell as a filled block (dead cells stay on the cleared field).
+render: () {
+    col: u32 = ALIVE_COLOR as u32
+    y: i64 = 0
+    while y < GH {
+        rc: i64 = y * GW
+        x: i64 = 0
+        while x < GW {
+            if @cur[rc + x] != 0 {
+                draw_cell(x, y, col)
+            }
+            x = x + 1
+        }
+        y = y + 1
+    }
+}
+
+; --- Input ---
+
+; Drain pending key events: P toggles pause, R reseeds, space single-steps.
+poll_input: () {
+    while 1 == 1 {
+        ev: i64 = sc_poll_key()
+        if ev < 0 {
+            return
+        }
+        sc: u64 = (ev as u64) & 0xFFFF
+        down: i64 = 0
+        if ((ev as u64) & 0x10000) != 0 {
+            down = 1
+        }
+        if down == 1 {
+            if sc == 80 {
+                if paused == 0 {
+                    paused = 1
+                } else {
+                    paused = 0
+                }
+            }
+            if sc == 82 {
+                seed()
+            }
+            if sc == 32 {
+                step_req = 1
+            }
+        }
+    }
+}
+
+main: () -> i32 {
+    base: u64 = sc_map_fb()
+    if base == 0 {
+        console_writeln("life: map_fb failed".data)
+        return 1
+    }
+    _fb_base = base
+
+    enable_double_buffer()
+    seed()
+    console_writeln("life: running (P pause, R reseed, space step)".data)
+
+    while 1 == 1 {
+        poll_input()
+        if paused == 0 {
+            step()
+        } else {
+            if step_req == 1 {
+                step()
+                step_req = 0
+            }
+        }
+        fb_clear()
+        render()
+        fb_present()
+    }
+    return 0
+}

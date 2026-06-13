@@ -7,6 +7,7 @@ _a0: u64 = 0
 _a1: u64 = 0
 _a2: u64 = 0
 _a3: u64 = 0
+_a4: u64 = 0
 _ret: i64 = 0
 
 ; Read one byte from the UART (syscall 100). Returns the byte or -1 if none.
@@ -127,6 +128,27 @@ sc_ftruncate: (fd: i64, len: u64) -> i64 {
     return _ret
 }
 
+; Reposition a file fd (syscall 62). whence: 0=SET, 1=CUR, 2=END. Returns the new
+; absolute position. Used by the shell to seek to end for `>>` append redirection.
+sc_lseek: (fd: i64, offset: i64, whence: u64) -> i64 {
+    _a0 = fd as u64
+    _a1 = offset as u64
+    _a2 = whence
+    asm {
+        la t0, _a0
+        ld a0, 0(t0)
+        la t0, _a1
+        ld a1, 0(t0)
+        la t0, _a2
+        ld a2, 0(t0)
+        li a7, 62
+        ecall
+        la t0, _ret
+        sd a0, 0(t0)
+    }
+    return _ret
+}
+
 ; Inode type at a path (syscall 102): 1=file, 2=dir, -1=missing.
 sc_stat: (path: u8*) -> i64 {
     _a0 = path as u64
@@ -183,6 +205,34 @@ sc_exec_arg: (path: u8*, arg: u8*) -> i64 {
 ; Load and run an executable with no argument. Returns the new pid or -1.
 sc_exec: (path: u8*) -> i64 {
     return sc_exec_arg(path, 0 as u8*)
+}
+
+; Exec with stdout/stdin redirected to FS files (syscall 110). out_path/in_path
+; may be null; out_append != 0 appends (`>>`) instead of truncating (`>`). The
+; child's fd 1 / fd 0 then route to those files. Returns the new pid or -1.
+sc_exec_redir: (path: u8*, arg: u8*, out_path: u8*, in_path: u8*, out_append: u64) -> i64 {
+    _a0 = path as u64
+    _a1 = arg as u64
+    _a2 = out_path as u64
+    _a3 = in_path as u64
+    _a4 = out_append
+    asm {
+        la t0, _a0
+        ld a0, 0(t0)
+        la t0, _a1
+        ld a1, 0(t0)
+        la t0, _a2
+        ld a2, 0(t0)
+        la t0, _a3
+        ld a3, 0(t0)
+        la t0, _a4
+        ld a4, 0(t0)
+        li a7, 110
+        ecall
+        la t0, _ret
+        sd a0, 0(t0)
+    }
+    return _ret
 }
 
 ; Create a directory (syscall 83). Returns >=0 or -1.
@@ -311,6 +361,24 @@ sc_waitpid: (pid: i64) -> i64 {
         la t0, _a0
         ld a0, 0(t0)
         li a7, 261
+        ecall
+        la t0, _ret
+        sd a0, 0(t0)
+    }
+    return _ret
+}
+
+; Send signal `sig` to `pid` (syscall 129). Only SIGKILL (9) is honoured.
+; Returns 0 on success, -1 if the pid is not a live, killable process.
+sc_kill: (pid: i64, sig: i64) -> i64 {
+    _a0 = pid as u64
+    _a1 = sig as u64
+    asm {
+        la t0, _a0
+        ld a0, 0(t0)
+        la t0, _a1
+        ld a1, 0(t0)
+        li a7, 129
         ecall
         la t0, _ret
         sd a0, 0(t0)

@@ -31,6 +31,7 @@ pub struct CompilerRv64 {
     function_return_types: HashMap<String, IrType>,
     peephole: bool,
     regalloc: bool,
+    omit_frame_pointer: bool,
 }
 
 impl Default for CompilerRv64 {
@@ -48,6 +49,7 @@ impl CompilerRv64 {
             function_return_types: HashMap::new(),
             peephole: false,
             regalloc: false,
+            omit_frame_pointer: false,
         }
     }
 
@@ -57,6 +59,11 @@ impl CompilerRv64 {
 
     pub fn set_register_allocation(&mut self, enabled: bool) {
         self.regalloc = enabled;
+    }
+
+    /// Omit the redundant frame pointer (s0); locals are addressed via sp.
+    pub fn set_omit_frame_pointer(&mut self, enabled: bool) {
+        self.omit_frame_pointer = enabled;
     }
 
     pub fn compile(&mut self, program: &IrProgram) -> String {
@@ -126,6 +133,7 @@ impl CompilerRv64 {
         let needs_sret = is_aggregate && !self.can_return_in_registers(&return_type);
 
         let mut ctx = FunctionContext::new(&self.type_aliases);
+        ctx.set_omit_frame_pointer(self.omit_frame_pointer);
         stack_slots::assign_stack_slots(
             func,
             &mut ctx,
@@ -142,7 +150,9 @@ impl CompilerRv64 {
         };
 
         ctx.save_ra();
-        ctx.save_reg(S0);
+        if !self.omit_frame_pointer {
+            ctx.save_reg(S0);
+        }
         ctx.finalize();
 
         for (index, param) in func.params.iter().enumerate() {

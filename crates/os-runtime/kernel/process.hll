@@ -1,5 +1,6 @@
-; PCB layout (44 x u64 = 352 bytes): state, next, stack, pc, frame, root, parent, exit.
-; Trap frame at [5..40] spans x0-x31, sepc, scause, stval, sstatus (288 bytes).
+; PCB layout (48 x u64 = 384 bytes): state, next, stack, pc, frame, root, parent,
+; exit, then the two redirected-stdio kernel fds (0 = console). Trap frame at
+; [5..40] spans x0-x31, sepc, scause, stval, sstatus (288 bytes).
 
 const PROC_READY   = 0
 const PROC_RUNNING = 1
@@ -16,12 +17,18 @@ const PCB_OFF_TRAP_FRAME    = 40
 const PCB_OFF_PAGE_ROOT     = 328
 const PCB_OFF_PARENT_PID    = 336
 const PCB_OFF_EXIT_CODE     = 344
-const PCB_SIZE              = 352
+const PCB_OFF_STDOUT_FD     = 352
+const PCB_OFF_STDIN_FD      = 360
+const PCB_SIZE              = 384
 
 ; PCB field indices (u64 array view) for the trailing scalar fields.
 const PCB_IDX_PAGE_ROOT  = 41
 const PCB_IDX_PARENT_PID = 42
 const PCB_IDX_EXIT_CODE  = 43
+; Redirected stdio: kernel fd backing the process's stdout / stdin, or 0 for the
+; console (UART). Bound by exec when the shell requests `>`/`>>`/`<`. See ch.7.7.
+const PCB_IDX_STDOUT_FD  = 44
+const PCB_IDX_STDIN_FD   = 45
 
 ; VMM flags for user-accessible pages.
 const VMM_U = 16
@@ -152,6 +159,24 @@ process_exit_code: (pcb: u64*) -> i64 {
 
 process_set_exit_code: (pcb: u64*, code: i64) {
     @pcb[PCB_IDX_EXIT_CODE] = code as u64
+}
+
+; Redirected stdout/stdin: the kernel fd backing this process's fd 1 / fd 0, or 0
+; for the console (UART). See OS spec ch.7.7.
+process_stdout_fd: (pcb: u64*) -> u64 {
+    return @pcb[PCB_IDX_STDOUT_FD]
+}
+
+process_set_stdout_fd: (pcb: u64*, fd: u64) {
+    @pcb[PCB_IDX_STDOUT_FD] = fd
+}
+
+process_stdin_fd: (pcb: u64*) -> u64 {
+    return @pcb[PCB_IDX_STDIN_FD]
+}
+
+process_set_stdin_fd: (pcb: u64*, fd: u64) {
+    @pcb[PCB_IDX_STDIN_FD] = fd
 }
 
 ; Address of the embedded 288-byte trap frame, for context copies.

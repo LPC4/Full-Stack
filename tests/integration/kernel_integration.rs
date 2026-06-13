@@ -564,6 +564,53 @@ fn cube_demo_drives_framebuffer() {
     );
 }
 
+// Boot the Game of Life demo as pid 1 for a bounded number of cycles (it loops
+// forever) and confirm it compiled, mapped the framebuffer, seeded a grid, and
+// drove both the device FILL clear and the per-pixel store path. Like the cube
+// test, a timeout almost always lands inside the clear, so we assert on the clear
+// plus at least one live cell drawn (a non-black pixel) rather than exact cells.
+#[test]
+fn life_demo_drives_framebuffer() {
+    let user = compile_hosted(user::LIFE);
+    let (vm, outcome, uart) = boot_kernel(cached_kernel(), Some(&user), None, "", 20_000_000);
+
+    assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
+    assert!(
+        !uart.contains("unhandled exception"),
+        "unhandled CPU exception; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("[ PROC ] pid 1 ready"),
+        "life process was not spawned; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("life: running"),
+        "life did not reach its render loop; uart={uart:?}"
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Continue),
+        "life should run continuously, got {outcome:?}"
+    );
+
+    // The FILL clear must have run (opaque-black field) ...
+    let px = vm.peek_framebuffer();
+    let opaque_black = px
+        .chunks_exact(4)
+        .filter(|p| p[0] == 0 && p[1] == 0 && p[2] == 0 && p[3] == 255)
+        .count();
+    assert!(
+        opaque_black > 10_000,
+        "expected the clear to fill the framebuffer, got {opaque_black} black pixels"
+    );
+    assert!(
+        vm.framebuffer_fill_count() >= 1,
+        "life did not clear the framebuffer via the FILL register"
+    );
+    // ... and at least one live cell drawn (a green, non-black pixel).
+    let live = px.chunks_exact(4).any(|p| p[1] > 0 && p[3] == 255);
+    assert!(live, "life rendered no live cells onto the framebuffer");
+}
+
 // Headless framebuffer throughput bench (a measurement, not a pass/fail). Run with:
 //   cargo test --release --test all -- --ignored cube_framebuffer_bench --nocapture
 #[test]
@@ -755,8 +802,9 @@ loop:
     );
 }
 
-// `run` on a non-FEXE file must report "not an executable" up front rather than
-// failing opaquely inside sys_exec.
+// A non-FEXE file or a missing name must be reported as an unknown command
+// rather than failing opaquely inside sys_exec. Bare-name execution (PLAN 1.1)
+// folds `run` into a single PATH-resolving path, so both report the same way.
 #[test]
 fn kernel_shell_run_rejects_non_executable() {
     let shell = compile_hosted(user::SHELL);
@@ -771,12 +819,63 @@ fn kernel_shell_run_rejects_non_executable() {
 
     assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
     assert!(
-        uart.contains("run: not an executable: /notes.txt"),
+        uart.contains("unknown command: /notes.txt"),
         "run did not reject a non-FEXE file; uart={uart:?}"
     );
     assert!(
-        uart.contains("run: no such file: /missing.fexe"),
+        uart.contains("unknown command: /missing.fexe"),
         "run did not report a missing file; uart={uart:?}"
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "exit did not halt cleanly; outcome={outcome:?} uart={uart:?}"
+    );
+}
+
+// Bare-name execution (PLAN 1.1): typing a program name (no `run`) resolves it
+// through the PATH search (cwd, /bin, /home/demo) and runs it. Also covers a
+// relative `./child.fexe` path and `&` backgrounding via the shared launch path.
+#[test]
+fn kernel_shell_bare_name_runs_program() {
+    let shell = compile_hosted(user::SHELL);
+
+    let child = compile_hosted(
+        r#"
+external console_writeln: (str: u8*)
+main: () -> i32 {
+    console_writeln("BARE_NAME_RAN".data)
+    return 0
+}
+"#,
+    );
+    let exec_file = assembled_to_exec_file(&child);
+
+    // Install one demo under /home/demo (hit via PATH) and the same binary under
+    // /home so a relative `./demo.fexe` resolves from cwd.
+    let image = build_fs_image(&[
+        FsEntry::Dir { path: "/home" },
+        FsEntry::Dir { path: "/home/demo" },
+        FsEntry::File {
+            path: "/home/demo/widget.fexe",
+            data: &exec_file,
+        },
+        FsEntry::File {
+            path: "/home/child.fexe",
+            data: &exec_file,
+        },
+    ]);
+
+    // `widget` (no run, no path) resolves via /home/demo; `./child.fexe` resolves
+    // relative to cwd /home; `widget &` exercises the backgrounded launch path.
+    let session = "widget\ncd /home\n./child.fexe\nwidget &\nexit\n";
+    let (_, outcome, uart) =
+        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 120_000_000);
+
+    assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
+    let runs = uart.matches("BARE_NAME_RAN").count();
+    assert!(
+        runs >= 3,
+        "bare-name/relative/background launches did not all run (got {runs}); uart={uart:?}"
     );
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
@@ -1083,6 +1182,550 @@ main: () -> i32 {
     // Both jobs must appear, each on its own job id, in the final listing.
     assert!(uart.contains("[1] pid 2"), "job 1 missing; uart={uart:?}");
     assert!(uart.contains("[2] pid 3"), "job 2 missing; uart={uart:?}");
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "shell did not exit cleanly; outcome={outcome:?} uart={uart:?}"
+    );
+}
+
+// Signals + `kill` (PLAN v3 sec.3): background a forever-spinner, `kill <pid>` it
+// by pid, and confirm the shell survives, the job leaves the table, and a later
+// `jobs` reports nothing. The spinner never exits on its own, so its disappearance
+// proves the SIGKILL teardown (scheduler_kill_pid via syscall 129) actually ran.
+#[test]
+fn kernel_kill_background_job() {
+    let shell = compile_hosted(user::SHELL);
+    let spin = compile_hosted(
+        r#"
+external sc_exit: (code: i64)
+main: () -> i32 {
+    i: u64 = 0
+    while 1 == 1 { i = i + 1 }
+    sc_exit(0)
+    return 0
+}
+"#,
+    );
+    let spin_exec = assembled_to_exec_file(&spin);
+    let image = build_fs_image(&[FsEntry::File { path: "/spin.fexe", data: &spin_exec }]);
+
+    let session = "run /spin.fexe &\nkill 2\njobs\nexit\n";
+    let (_, outcome, uart) =
+        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 60_000_000);
+
+    assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
+    // The job was announced as pid 2 ...
+    assert!(uart.contains("[1] pid 2"), "background job not announced; uart={uart:?}");
+    // ... reaped after the kill ...
+    assert!(
+        uart.contains("] done   pid 2"),
+        "killed job was not reaped from the table; uart={uart:?}"
+    );
+    // ... and the later `jobs` listing is empty.
+    assert!(
+        uart.contains("no background jobs"),
+        "job still listed after kill; uart={uart:?}"
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "shell did not exit cleanly after kill; outcome={outcome:?} uart={uart:?}"
+    );
+}
+
+// `kill %<job>` maps a job id through the shell's job table to the same SIGKILL
+// path as `kill <pid>`. Same scenario as kernel_kill_background_job, addressed by
+// job id instead of pid.
+#[test]
+fn kernel_kill_by_jobid() {
+    let shell = compile_hosted(user::SHELL);
+    let spin = compile_hosted(
+        r#"
+external sc_exit: (code: i64)
+main: () -> i32 {
+    i: u64 = 0
+    while 1 == 1 { i = i + 1 }
+    sc_exit(0)
+    return 0
+}
+"#,
+    );
+    let spin_exec = assembled_to_exec_file(&spin);
+    let image = build_fs_image(&[FsEntry::File { path: "/spin.fexe", data: &spin_exec }]);
+
+    let session = "run /spin.fexe &\nkill %1\njobs\nexit\n";
+    let (_, outcome, uart) =
+        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 60_000_000);
+
+    assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
+    assert!(uart.contains("[1] pid 2"), "background job not announced; uart={uart:?}");
+    assert!(
+        uart.contains("] done   pid 2"),
+        "killed job was not reaped from the table; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("no background jobs"),
+        "job still listed after kill %1; uart={uart:?}"
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "shell did not exit cleanly after kill; outcome={outcome:?} uart={uart:?}"
+    );
+}
+
+// I/O redirection (PLAN v3 1.2, first slice): `prog > file` binds the child's
+// stdout (fd 1) to an FS file via the per-PCB fd table, so its console output is
+// captured instead of hitting the UART. We prove the capture by ordering: the
+// marker must appear only AFTER `cat` reads the file back -- if redirection had
+// failed, the program would have printed it straight to the UART before `cat`.
+#[test]
+fn kernel_redirect_stdout_to_file() {
+    let shell = compile_hosted(user::SHELL);
+    let printer = compile_hosted(
+        r#"
+external console_writeln: (str: u8*)
+external sc_exit: (code: i64)
+main: () -> i32 {
+    console_writeln("REDIRECT_OK".data)
+    sc_exit(0)
+    return 0
+}
+"#,
+    );
+    let printer_exec = assembled_to_exec_file(&printer);
+    let image = build_fs_image(&[FsEntry::File { path: "/printer.fexe", data: &printer_exec }]);
+
+    let session = "run /printer.fexe > /out.txt\ncat /out.txt\nexit\n";
+    let (_, outcome, uart) =
+        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 120_000_000);
+
+    assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
+    let mark = uart.find("REDIRECT_OK").expect("marker never reached the UART");
+    let cat = uart.find("cat /out.txt").expect("cat command not echoed");
+    assert!(
+        mark > cat,
+        "marker appeared before `cat`, so stdout was NOT redirected; uart={uart:?}"
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "shell did not exit cleanly; outcome={outcome:?} uart={uart:?}"
+    );
+}
+
+// Append redirection (`>>`): two runs appending to the same file, then `cat`
+// shows both lines -- proving `>>` seeks to end instead of truncating.
+#[test]
+fn kernel_redirect_append() {
+    let shell = compile_hosted(user::SHELL);
+    let printer = compile_hosted(
+        r#"
+external console_writeln: (str: u8*)
+external sc_exit: (code: i64)
+main: () -> i32 {
+    console_writeln("LINE".data)
+    sc_exit(0)
+    return 0
+}
+"#,
+    );
+    let printer_exec = assembled_to_exec_file(&printer);
+    let image = build_fs_image(&[FsEntry::File { path: "/p.fexe", data: &printer_exec }]);
+
+    let session = "run /p.fexe > /log.txt\nrun /p.fexe >> /log.txt\ncat /log.txt\nexit\n";
+    let (_, outcome, uart) =
+        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 160_000_000);
+
+    assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
+    // After cat, both appended lines are present (the `cat` echo is the only LINE
+    // before this point, so a >=2 count past it proves the file holds two lines).
+    let cat = uart.find("cat /log.txt").expect("cat not echoed");
+    let after = &uart[cat..];
+    let lines = after.matches("LINE").count();
+    assert!(
+        lines >= 2,
+        "append did not accumulate two lines; found {lines} in {after:?}"
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "shell did not exit cleanly; outcome={outcome:?} uart={uart:?}"
+    );
+}
+
+// Input redirection (`prog < file`): the child's stdin (fd 0 / sc_readchar) reads
+// from an FS file and sees EOF (-1) at its end. The echo program copies stdin to
+// stdout (the UART here), so the file's contents appear on the console.
+#[test]
+fn kernel_redirect_stdin_from_file() {
+    let shell = compile_hosted(user::SHELL);
+    let echo = compile_hosted(
+        r#"
+external sc_readchar: () -> i64
+external console_putchar: (c: i32)
+external sc_exit: (code: i64)
+main: () -> i32 {
+    while 1 == 1 {
+        c: i64 = sc_readchar()
+        if c < 0 {
+            break
+        }
+        console_putchar(c as i32)
+    }
+    sc_exit(0)
+    return 0
+}
+"#,
+    );
+    let echo_exec = assembled_to_exec_file(&echo);
+    let image = build_fs_image(&[
+        FsEntry::File { path: "/echo.fexe", data: &echo_exec },
+        FsEntry::File { path: "/in.txt", data: b"HELLO_STDIN" },
+    ]);
+
+    let session = "run /echo.fexe < /in.txt\nexit\n";
+    let (_, outcome, uart) =
+        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 120_000_000);
+
+    assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
+    assert!(
+        uart.contains("HELLO_STDIN"),
+        "stdin redirection did not feed the file to the program; uart={uart:?}"
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "shell did not exit cleanly; outcome={outcome:?} uart={uart:?}"
+    );
+}
+
+// Command polish (PLAN v3 1.3): `ls <dir>` lists a directory other than cwd.
+// Previously only a bare `ls` (current directory) was recognised; `ls /sub` fell
+// through to bare-name execution and failed with "unknown command".
+#[test]
+fn kernel_ls_dir_lists_target() {
+    let shell = compile_hosted(user::SHELL);
+    let image = build_fs_image(&[
+        FsEntry::Dir { path: "/sub" },
+        FsEntry::File { path: "/sub/alpha.txt", data: b"A" },
+        FsEntry::File { path: "/sub/beta.txt", data: b"B" },
+    ]);
+
+    let session = "ls /sub\nexit\n";
+    let (_, outcome, uart) =
+        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 120_000_000);
+
+    assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
+    assert!(
+        uart.contains("alpha.txt") && uart.contains("beta.txt"),
+        "ls <dir> did not list the target directory; uart={uart:?}"
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "shell did not exit cleanly; outcome={outcome:?} uart={uart:?}"
+    );
+}
+
+// Command polish (PLAN v3 1.3): builtin output redirection. `echo` is a builtin
+// running inside the shell (not an exec'd child), so its `>` redirect is served by
+// the shell-side output sink, not the kernel per-PCB fd table. We prove the text
+// landed in the file (and not the console) by reading it back with `cat`.
+#[test]
+fn kernel_echo_redirect_to_file() {
+    let shell = compile_hosted(user::SHELL);
+    let image = build_fs_image(&[FsEntry::Dir { path: "/tmp" }]);
+    let session = "echo MARKER_ECHO > /e.txt\ncat /e.txt\nexit\n";
+    let (_, outcome, uart) =
+        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 120_000_000);
+
+    assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
+    // After the `cat /e.txt` echo, the marker can only come from the file: if the
+    // sink had failed, echo would have hit the console and /e.txt stayed empty.
+    let cat = uart.find("cat /e.txt").expect("cat command not echoed");
+    let after = &uart[cat..];
+    assert!(
+        after.contains("MARKER_ECHO"),
+        "echo output was not captured into the file; uart={uart:?}"
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "shell did not exit cleanly; outcome={outcome:?} uart={uart:?}"
+    );
+}
+
+// Command polish (PLAN v3 1.3): a builtin `cat <file> >> <dst>` appends through the
+// shell sink (seeking to end via sc_lseek). Two appends of the same source file
+// then a read-back must show its contents twice.
+#[test]
+fn kernel_cat_append_builtin() {
+    let shell = compile_hosted(user::SHELL);
+    let image = build_fs_image(&[FsEntry::File { path: "/src.txt", data: b"DATA\n" }]);
+
+    let session = "cat /src.txt >> /dst.txt\ncat /src.txt >> /dst.txt\ncat /dst.txt\nexit\n";
+    let (_, outcome, uart) =
+        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 160_000_000);
+
+    assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
+    // The append commands echo "src.txt", never "DATA"; so every DATA after the
+    // final read-back is file content. Two appends => two lines.
+    let cat = uart.find("cat /dst.txt").expect("read-back not echoed");
+    let after = &uart[cat..];
+    let lines = after.matches("DATA").count();
+    assert!(
+        lines >= 2,
+        "builtin append did not accumulate two copies; found {lines} in {after:?}"
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "shell did not exit cleanly; outcome={outcome:?} uart={uart:?}"
+    );
+}
+
+// Pipes (PLAN v3 1.2): `producer | filter`. The producer writes to stdout, which
+// the shell binds to a temp file; the filter's stdin reads that file back. The
+// producer's payload therefore never hits the UART directly -- only the filter,
+// the pipeline's last stage, prints it -- so seeing the payload on the console
+// proves it travelled through the pipe.
+#[test]
+fn kernel_pipe_two_stage() {
+    let shell = compile_hosted(user::SHELL);
+    let producer = compile_hosted(
+        r#"
+external console_writeln: (str: u8*)
+external sc_exit: (code: i64)
+main: () -> i32 {
+    console_writeln("PIPE_PAYLOAD".data)
+    sc_exit(0)
+    return 0
+}
+"#,
+    );
+    // Copy stdin to stdout until EOF (-1): a transparent filter.
+    let filter = compile_hosted(
+        r#"
+external sc_readchar: () -> i64
+external console_putchar: (c: i32)
+external sc_exit: (code: i64)
+main: () -> i32 {
+    while 1 == 1 {
+        c: i64 = sc_readchar()
+        if c < 0 {
+            break
+        }
+        console_putchar(c as i32)
+    }
+    sc_exit(0)
+    return 0
+}
+"#,
+    );
+    let producer_exec = assembled_to_exec_file(&producer);
+    let filter_exec = assembled_to_exec_file(&filter);
+    let image = build_fs_image(&[
+        FsEntry::File { path: "/producer.fexe", data: &producer_exec },
+        FsEntry::File { path: "/filter.fexe", data: &filter_exec },
+    ]);
+
+    let session = "/producer.fexe | /filter.fexe\nexit\n";
+    let (_, outcome, uart) =
+        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 160_000_000);
+
+    assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
+    // The command echo contains "producer"/"filter", never the payload, so any
+    // PIPE_PAYLOAD on the UART came out of the filter, i.e. through the pipe.
+    let cmd = uart.find("filter.fexe").expect("pipeline not echoed");
+    let after = &uart[cmd..];
+    assert!(
+        after.contains("PIPE_PAYLOAD"),
+        "payload did not travel through the pipe; uart={uart:?}"
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "shell did not exit cleanly; outcome={outcome:?} uart={uart:?}"
+    );
+}
+
+// Pipes combined with a trailing redirect: `producer | filter > out.txt`. The
+// filter's stdout is captured to a file instead of the console, proven by reading
+// it back with `cat` -- the payload appears only after the `cat`, never before.
+#[test]
+fn kernel_pipe_to_file() {
+    let shell = compile_hosted(user::SHELL);
+    let producer = compile_hosted(
+        r#"
+external console_writeln: (str: u8*)
+external sc_exit: (code: i64)
+main: () -> i32 {
+    console_writeln("VIA_PIPE".data)
+    sc_exit(0)
+    return 0
+}
+"#,
+    );
+    let filter = compile_hosted(
+        r#"
+external sc_readchar: () -> i64
+external console_putchar: (c: i32)
+external sc_exit: (code: i64)
+main: () -> i32 {
+    while 1 == 1 {
+        c: i64 = sc_readchar()
+        if c < 0 {
+            break
+        }
+        console_putchar(c as i32)
+    }
+    sc_exit(0)
+    return 0
+}
+"#,
+    );
+    let producer_exec = assembled_to_exec_file(&producer);
+    let filter_exec = assembled_to_exec_file(&filter);
+    let image = build_fs_image(&[
+        FsEntry::File { path: "/producer.fexe", data: &producer_exec },
+        FsEntry::File { path: "/filter.fexe", data: &filter_exec },
+    ]);
+
+    let session = "/producer.fexe | /filter.fexe > /piped.txt\ncat /piped.txt\nexit\n";
+    let (_, outcome, uart) =
+        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 200_000_000);
+
+    assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
+    let cat = uart.find("cat /piped.txt").expect("cat not echoed");
+    let before = &uart[..cat];
+    let after = &uart[cat..];
+    assert!(
+        !before.contains("VIA_PIPE"),
+        "pipeline output leaked to console instead of the file; uart={uart:?}"
+    );
+    assert!(
+        after.contains("VIA_PIPE"),
+        "piped output was not captured into the file; uart={uart:?}"
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "shell did not exit cleanly; outcome={outcome:?} uart={uart:?}"
+    );
+}
+
+// Pipes with a builtin source: `cat /src.txt | filter`. The builtin `cat` runs in
+// the shell with its output bound to the pipe temp file (the sink), and the
+// external filter reads it back -- exercising the builtin-producer branch of
+// sh_run_stage.
+#[test]
+fn kernel_pipe_builtin_source() {
+    let shell = compile_hosted(user::SHELL);
+    let filter = compile_hosted(
+        r#"
+external sc_readchar: () -> i64
+external console_putchar: (c: i32)
+external sc_exit: (code: i64)
+main: () -> i32 {
+    while 1 == 1 {
+        c: i64 = sc_readchar()
+        if c < 0 {
+            break
+        }
+        console_putchar(c as i32)
+    }
+    sc_exit(0)
+    return 0
+}
+"#,
+    );
+    let filter_exec = assembled_to_exec_file(&filter);
+    let image = build_fs_image(&[
+        FsEntry::File { path: "/filter.fexe", data: &filter_exec },
+        FsEntry::File { path: "/src.txt", data: b"CAT_PIPED\n" },
+    ]);
+
+    let session = "cat /src.txt | /filter.fexe\nexit\n";
+    let (_, outcome, uart) =
+        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 160_000_000);
+
+    assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
+    let cmd = uart.find("filter.fexe").expect("pipeline not echoed");
+    let after = &uart[cmd..];
+    assert!(
+        after.contains("CAT_PIPED"),
+        "builtin cat output did not travel through the pipe; uart={uart:?}"
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "shell did not exit cleanly; outcome={outcome:?} uart={uart:?}"
+    );
+}
+
+// `cat` with no file argument is a stdin consumer: it copies its input source to
+// the sink. As a pipe consumer, `echo TEXT | cat` must print TEXT (the builtin
+// `cat` reads the pipe temp file the shell wired to its stdin).
+#[test]
+fn kernel_pipe_echo_into_cat() {
+    let shell = compile_hosted(user::SHELL);
+    let image = build_fs_image(&[FsEntry::Dir { path: "/tmp" }]);
+
+    let session = "echo CAT_STDIN | cat\nexit\n";
+    let (_, outcome, uart) =
+        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 120_000_000);
+
+    assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
+    // The command echo prints "CAT_STDIN" once (the typed line). If the pipe worked,
+    // cat prints it a second time, so the count is >= 2.
+    let n = uart.matches("CAT_STDIN").count();
+    assert!(
+        n >= 2,
+        "echo did not pipe into cat; saw CAT_STDIN {n} time(s); uart={uart:?}"
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "shell did not exit cleanly; outcome={outcome:?} uart={uart:?}"
+    );
+}
+
+// `ls | cat` must list the real directory contents only. The pipe temp file the
+// shell creates is named with a leading dot, and `ls` hides dotfiles, so it never
+// appears in the listing (regression for a leaked `.pipe0` entry).
+#[test]
+fn kernel_pipe_ls_hides_temp_file() {
+    let shell = compile_hosted(user::SHELL);
+    let image = build_fs_image(&[
+        FsEntry::File { path: "/real.txt", data: b"x" },
+        FsEntry::Dir { path: "/sub" },
+    ]);
+
+    let session = "ls | cat\nexit\n";
+    let (_, outcome, uart) =
+        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 120_000_000);
+
+    assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
+    let cmd = uart.find("ls | cat").expect("pipeline not echoed");
+    let after = &uart[cmd..];
+    assert!(after.contains("real.txt"), "real file missing from ls; uart={uart:?}");
+    assert!(
+        !after.contains(".pipe"),
+        "pipe temp leaked into ls output; uart={uart:?}"
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "shell did not exit cleanly; outcome={outcome:?} uart={uart:?}"
+    );
+}
+
+// `cat < file` (no file operand, stdin redirected): cat reads the redirected file
+// and prints it. Proves the builtin input source also serves explicit `<`.
+#[test]
+fn kernel_cat_stdin_redirect() {
+    let shell = compile_hosted(user::SHELL);
+    let image = build_fs_image(&[FsEntry::File { path: "/in.txt", data: b"FROM_STDIN\n" }]);
+
+    let session = "cat < /in.txt\nexit\n";
+    let (_, outcome, uart) =
+        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 120_000_000);
+
+    assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
+    // "FROM_STDIN" is only in the file, never in the typed command, so any sighting
+    // is cat printing the redirected input.
+    assert!(
+        uart.contains("FROM_STDIN"),
+        "cat did not read redirected stdin; uart={uart:?}"
+    );
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
         "shell did not exit cleanly; outcome={outcome:?} uart={uart:?}"

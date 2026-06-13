@@ -16,6 +16,12 @@ fn compile(program: &IrProgram) -> String {
     CompilerRv64::new().compile(program)
 }
 
+fn compile_omit_fp(program: &IrProgram) -> String {
+    let mut compiler = CompilerRv64::new();
+    compiler.set_omit_frame_pointer(true);
+    compiler.compile(program)
+}
+
 #[test]
 fn emits_symbolic_labels_for_calls_and_branches() {
     let mut program = IrProgram::new("test");
@@ -88,6 +94,32 @@ fn emits_standard_prologue_and_argument_spills() {
     assert!(asm.contains("addi") && asm.contains("s0, sp, 0"), "expected frame pointer initialization, got:\n{asm}");
     assert!(asm.contains("a0") && asm.contains("sd"), "expected first argument spill, got:\n{asm}");
     assert!(asm.contains("a7") && asm.contains("sd"), "expected eighth argument spill, got:\n{asm}");
+    assert!(asm.contains("ld") && asm.contains("t0"), "expected stack-passed argument load, got:\n{asm}");
+}
+
+#[test]
+fn omit_frame_pointer_drops_s0_setup_but_keeps_ra() {
+    let mut program = IrProgram::new("test");
+    let mut func = IrFunction::new("spill_args", int32());
+
+    // Nine params force a frame and a stack-passed arg (caller_sp path).
+    for i in 0..9 {
+        func.push_param(IrParam {
+            ty: int64(),
+            register: IrRegister::Named(format!("arg{i}")),
+        });
+    }
+    let mut entry = IrBlock::new("entry");
+    entry.set_terminator(IrTerminator::Return(Some(IrValue::Integer(0))));
+    func.push_block(entry);
+    program.push_function(func);
+
+    let asm = compile_omit_fp(&program);
+
+    assert!(!asm.contains("s0, sp, 0"), "frame pointer should not be set up, got:\n{asm}");
+    assert!(!asm.contains("Save callee-saved register s0"), "s0 should not be saved, got:\n{asm}");
+    assert!(asm.contains("ra,") && asm.contains("(sp)"), "ra must still be saved, got:\n{asm}");
+    // Stack-passed arg still loads, now based off sp instead of s0.
     assert!(asm.contains("ld") && asm.contains("t0"), "expected stack-passed argument load, got:\n{asm}");
 }
 

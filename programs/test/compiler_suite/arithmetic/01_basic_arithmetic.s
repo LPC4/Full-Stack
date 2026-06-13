@@ -13,10 +13,6 @@ main:
 	sd     s3, 48(sp)
 ; Save callee-saved register s4 at offset 56
 	sd     s4, 56(sp)
-; Save callee-saved register s0 at offset 72
-	sd     s0, 72(sp)
-; Set up frame pointer
-	addi   s0, sp, 0
 ; --- End Prologue ---
 ; Basic Block: entry
 main__entry:
@@ -84,8 +80,6 @@ main__entry:
 	lw     s2, 0(t0)
 	addi   a0, s2, 0
 ; --- Function Epilogue ---
-; Restore callee-saved register s0 from offset 72
-	ld     s0, 72(sp)
 ; Restore callee-saved register s4 from offset 56
 	ld     s4, 56(sp)
 ; Restore callee-saved register s3 from offset 48
