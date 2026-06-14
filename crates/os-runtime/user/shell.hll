@@ -39,7 +39,7 @@ external cstr_starts_with: (s: u8*, prefix: u8*) -> i64
 ; Build an absolute path from `cwd` and `arg` into out.
 ; An arg starting with '/' is absolute; otherwise it is joined onto cwd.
 sh_join_path: (cwd: u8*, arg: u8*, out: u8*) {
-    if @arg == 47 {
+    if @arg == '/' {
         cstr_copy(out, arg)
         return
     }
@@ -48,12 +48,12 @@ sh_join_path: (cwd: u8*, arg: u8*, out: u8*) {
     ; Ensure a single separator between cwd and arg.
     if l == 0 {
         slash: u8* = out + l
-        @slash = 47 as u8
+        @slash = '/' as u8
         l = l + 1
     } else {
-        if @(out + (l - 1)) != 47 {
+        if @(out + (l - 1)) != '/' {
             slash: u8* = out + l
-            @slash = 47 as u8
+            @slash = '/' as u8
             l = l + 1
         }
     }
@@ -79,7 +79,7 @@ sh_path_pop: (cwd: u8*) {
     i: u64 = l
     while i > 1 {
         i = i - 1
-        if @(cwd + i) == 47 {
+        if @(cwd + i) == '/' {
             t: u8* = cwd + i
             @t = 0 as u8
             return
@@ -101,20 +101,20 @@ sh_read_line: (buf: u8*) {
         if c < 0 {
             sc_yield()
         } else {
-            if c == 10 {
-                console_putchar(10)
+            if c == '\n' {
+                console_putchar('\n')
                 done = 1
             } else {
-                if c == 13 {
-                    console_putchar(10)
+                if c == '\r' {
+                    console_putchar('\n')
                     done = 1
                 } else {
-                    if c == 8 {
+                    if c == '\b' {
                         if n > 0 {
                             n = n - 1
-                            console_putchar(8)
-                            console_putchar(32)
-                            console_putchar(8)
+                            console_putchar('\b')
+                            console_putchar(' ')
+                            console_putchar('\b')
                         }
                     } else {
                         if n < 255 {
@@ -133,10 +133,8 @@ sh_read_line: (buf: u8*) {
 }
 
 ; --- Builtin output sink and input source ---
-; Builtins write through these so their output can go to a file, not just console.
-; sh_sink_fd is 0 for the console, otherwise an open file fd. sh_src_fd is the
-; matching input side: 0 for none, otherwise a file `cat` reads when given no args
-; (set for `cat < file` and for `... | cat`).
+; Builtins route I/O through these fds for redirection. sh_sink_fd: 0 = console,
+; else an output file fd. sh_src_fd: 0 = none, else a file `cat` reads with no args.
 
 sh_sink_fd: i64 = 0
 sh_src_fd: i64 = 0
@@ -179,7 +177,7 @@ sh_outch: (c: i32) {
 ; Write a string followed by a newline to the current sink.
 sh_outln: (s: u8*) {
     sh_out(s)
-    sh_outch(10)
+    sh_outch('\n')
 }
 
 ; Close the sink file (if open) and go back to writing to the console.
@@ -229,12 +227,12 @@ cmd_ls: (cwd: u8*, arg: u8*) {
         if t < 0 {
             done = 1
         } else {
-            if @name_p != 46 {  ; skip dotfiles ('.')
+            if @name_p != '.' {  ; skip dotfiles
                 sh_out(name_p)
                 if t == 2 {
-                    sh_outch(47)
+                    sh_outch('/')
                 }
-                sh_outch(10)
+                sh_outch('\n')
             }
             i = i + 1
         }
@@ -249,7 +247,7 @@ cmd_pwd: (cwd: u8*) {
 ; Print the argument text and a newline.
 cmd_echo: (arg: u8*) {
     sh_out(arg)
-    sh_outch(10)
+    sh_outch('\n')
 }
 
 cmd_cd: (cwd: u8*, arg: u8*) {
@@ -285,10 +283,9 @@ cmd_cd: (cwd: u8*, arg: u8*) {
     cstr_copy(cwd, target_p)
 }
 
-; Return 1 if the file at `path` is an executable the kernel can load: either a
-; FEXE ("FEXE") or an ELF (0x7F 'E' 'L' 'F'). Lets `run` reject a non-executable
-; up front instead of failing inside sys_exec.
-sh_is_fexe: (path: u8*) -> i64 {
+; Return 1 if `path` is a kernel-loadable executable: a static ELF (0x7F 'E' 'L'
+; 'F'). Lets `run` reject a non-executable up front instead of failing in sys_exec.
+sh_is_exec: (path: u8*) -> i64 {
     fd: i64 = sc_open(path, 0)
     if fd < 0 {
         return -1 as i64
@@ -300,21 +297,11 @@ sh_is_fexe: (path: u8*) -> i64 {
     if n != 4 {
         return 0
     }
-    ; FEXE: 'F' 'E' 'X' 'E'.
-    if @(magic_p + 0) == 70 {
-        if @(magic_p + 1) == 69 {
-            if @(magic_p + 2) == 88 {
-                if @(magic_p + 3) == 69 {
-                    return 1
-                }
-            }
-        }
-    }
-    ; ELF: 0x7F 'E' 'L' 'F'.
-    if @(magic_p + 0) == 127 {
-        if @(magic_p + 1) == 69 {
-            if @(magic_p + 2) == 76 {
-                if @(magic_p + 3) == 70 {
+    ; ELF magic: 0x7F 'E' 'L' 'F'.
+    if @(magic_p + 0) == 0x7F {
+        if @(magic_p + 1) == 'E' {
+            if @(magic_p + 2) == 'L' {
+                if @(magic_p + 3) == 'F' {
                     return 1
                 }
             }
@@ -326,11 +313,11 @@ sh_is_fexe: (path: u8*) -> i64 {
 ; Print a signed decimal integer to the current sink (console unless redirected).
 sh_print_dec: (v: i64) {
     if v < 0 {
-        sh_outch(45)  ; '-'
+        sh_outch('-')
         v = 0 - v
     }
     if v == 0 {
-        sh_outch(48)  ; '0'
+        sh_outch('0')
         return
     }
     digits: u8[24]
@@ -340,7 +327,7 @@ sh_print_dec: (v: i64) {
     while uv > 0 {
         d: u64 = uv % 10
         dp: u8* = digits_p + n
-        @dp = (48 + d) as u8
+        @dp = ('0' + d) as u8
         n = n + 1
         uv = uv / 10
     }
@@ -397,7 +384,7 @@ jobs_reap: () {
                 sh_print_dec((i + 1) as i64)
                 console_write("] done   pid ".data)
                 sh_print_dec(pid)
-                console_putchar(10)
+                console_putchar('\n')
                 @slot = 0
             }
         }
@@ -411,10 +398,10 @@ sh_parse_int: (s: u8*) -> i64 {
     i: u64 = 0
     while @(s + i) != 0 {
         c: u8 = @(s + i)
-        if c < 48 {
+        if c < '0' {
             return n
         }
-        if c > 57 {
+        if c > '9' {
             return n
         }
         n = n * 10 + (c - 48) as i64
@@ -485,7 +472,7 @@ cmd_kill: (arg: u8*) {
         return
     }
     pid: i64 = 0
-    if @arg == 37 {  ; '%' -> job id
+    if @arg == '%' {  ; job id like %1
         jid: i64 = sh_parse_int(arg + 1)
         if jid < 1 {
             console_writeln("kill: no such job".data)
@@ -511,40 +498,39 @@ cmd_kill: (arg: u8*) {
     if sc_kill(pid, SIGKILL) < 0 {
         console_write("kill: no such process: ".data)
         sh_print_dec(pid)
-        console_putchar(10)
+        console_putchar('\n')
     }
 }
 
-; Try `<dir>/<name>` and `<dir>/<name>.fexe`; if either is a FEXE, fill out and
+; Try `<dir>/<name>` and `<dir>/<name>.elf`; if either is an ELF, fill out and
 ; return 1. Used by the PATH search so a bare program name resolves to a file.
 sh_try_dir: (dir: u8*, name: u8*, out: u8*) -> i64 {
     sh_join_path(dir, name, out)
-    if sh_is_fexe(out) == 1 {
+    if sh_is_exec(out) == 1 {
         return 1
     }
     l: u64 = cstr_len(out)
-    cstr_copy(out + l, ".fexe".data)
-    if sh_is_fexe(out) == 1 {
+    cstr_copy(out + l, ".elf".data)
+    if sh_is_exec(out) == 1 {
         return 1
     }
     return 0
 }
 
-; Resolve a program name to an absolute FEXE path in out. A name containing '/'
-; is taken as a path (relative to cwd or absolute); otherwise a small PATH search
-; tries cwd, /bin, then /home/demo. Returns 1 if a FEXE was found, else 0.
+; Resolve a program name to an absolute ELF path in out. A name with '/' is a path;
+; otherwise PATH-search cwd, /bin, /home/demo. Returns 1 if an ELF was found, else 0.
 sh_resolve_program: (cwd: u8*, name: u8*, out: u8*) -> i64 {
     ; Strip a leading "./" so a relative `./prog` joins cleanly onto cwd (the FS
     ; path resolver does not collapse a "." component).
-    if @name == 46 {
-        if @(name + 1) == 47 {
+    if @name == '.' {
+        if @(name + 1) == '/' {
             name = name + 2
         }
     }
     has_slash: i64 = 0
     i: u64 = 0
     while @(name + i) != 0 {
-        if @(name + i) == 47 {
+        if @(name + i) == '/' {
             has_slash = 1
             break
         }
@@ -552,12 +538,12 @@ sh_resolve_program: (cwd: u8*, name: u8*, out: u8*) -> i64 {
     }
     if has_slash == 1 {
         sh_join_path(cwd, name, out)
-        if sh_is_fexe(out) == 1 {
+        if sh_is_exec(out) == 1 {
             return 1
         }
         l: u64 = cstr_len(out)
-        cstr_copy(out + l, ".fexe".data)
-        if sh_is_fexe(out) == 1 {
+        cstr_copy(out + l, ".elf".data)
+        if sh_is_exec(out) == 1 {
             return 1
         }
         return 0
@@ -574,7 +560,7 @@ sh_resolve_program: (cwd: u8*, name: u8*, out: u8*) -> i64 {
     return 0
 }
 
-; Exec a resolved FEXE path with optional stdout/stdin redirection; on '&'
+; Exec a resolved ELF path with optional stdout/stdin redirection; on '&'
 ; register a background job, else wait. out_p/in_p are absolute paths or null.
 sh_launch_redir: (target_p: u8*, name: u8*, bg: i64, out_p: u8*, in_p: u8*, out_append: u64) {
     pid: i64 = sc_exec_redir(target_p, 0 as u8*, out_p, in_p, out_append)
@@ -589,31 +575,30 @@ sh_launch_redir: (target_p: u8*, name: u8*, bg: i64, out_p: u8*, in_p: u8*, out_
         sh_print_dec(jid)
         console_write("] pid ".data)
         sh_print_dec(pid)
-        console_putchar(10)
+        console_putchar('\n')
         return
     }
     sh_wait_foreground(pid)
 }
 
-; Bare-name execution: resolve the first token via PATH and run it. A trailing
-; '&' backgrounds the job; `> file` / `>> file` redirect stdout and `< file`
-; redirects stdin. Drives both `run <file>` and a typed program name. See ch.7.7.
+; Bare-name execution: resolve the first token via PATH and run it. Trailing `&`
+; backgrounds; `> >> <` redirect stdio. Drives `run <file>` and typed names. OS spec 7.7.
 cmd_exec: (cwd: u8*, line: u8*) {
     ; Detect a trailing '&' (after any spaces) -> background.
     bg: i64 = 0
     l: u64 = cstr_len(line)
     while l > 0 {
-        if @(line + (l - 1)) != 32 {
+        if @(line + (l - 1)) != ' ' {
             break
         }
         l = l - 1
     }
     if l > 0 {
-        if @(line + (l - 1)) == 38 {  ; '&'
+        if @(line + (l - 1)) == '&' {
             bg = 1
             l = l - 1
             while l > 0 {
-                if @(line + (l - 1)) != 32 {
+                if @(line + (l - 1)) != ' ' {
                     break
                 }
                 l = l - 1
@@ -639,7 +624,7 @@ cmd_exec: (cwd: u8*, line: u8*) {
     i: u64 = 0
     while i < l {
         while i < l {
-            if @(line + i) != 32 {
+            if @(line + i) != ' ' {
                 break
             }
             i = i + 1
@@ -650,7 +635,7 @@ cmd_exec: (cwd: u8*, line: u8*) {
         tn: u64 = 0
         while i < l {
             c: u8 = @(line + i)
-            if c == 32 {
+            if c == ' ' {
                 break
             }
             if tn < 255 {
@@ -771,7 +756,7 @@ cmd_cat: (cwd: u8*, arg: u8*) {
     fname_p: u8* = fname[0]
     i: u64 = 0
     while @(arg + i) != 0 {
-        while @(arg + i) == 32 {
+        while @(arg + i) == ' ' {
             i = i + 1
         }
         if @(arg + i) == 0 {
@@ -779,7 +764,7 @@ cmd_cat: (cwd: u8*, arg: u8*) {
         }
         n: u64 = 0
         while @(arg + i) != 0 {
-            if @(arg + i) == 32 {
+            if @(arg + i) == ' ' {
                 break
             }
             if n < 127 {
@@ -804,9 +789,9 @@ cmd_edit: (cwd: u8*, arg: u8*) {
     target: u8[256]
     target_p: u8* = target[0]
     sh_join_path(cwd, arg, target_p)
-    pid: i64 = sc_exec_arg("/bin/edit.fexe".data, target_p)
+    pid: i64 = sc_exec_arg("/bin/edit.elf".data, target_p)
     if pid < 0 {
-        console_writeln("edit: cannot launch /bin/edit.fexe".data)
+        console_writeln("edit: cannot launch /bin/edit.elf".data)
         return
     }
     sh_wait_foreground(pid)
@@ -880,7 +865,7 @@ cmd_mv: (cwd: u8*, arg: u8*) {
     ; Find the space separating the two operands.
     sp: u64 = 0
     while @(arg + sp) != 0 {
-        if @(arg + sp) == 32 {
+        if @(arg + sp) == ' ' {
             break
         }
         sp = sp + 1
@@ -904,7 +889,7 @@ cmd_mv: (cwd: u8*, arg: u8*) {
     st: u8* = src_p + i
     @st = 0 as u8
     ; Skip the separating space(s) to reach the destination operand.
-    while @(arg + sp) == 32 {
+    while @(arg + sp) == ' ' {
         sp = sp + 1
     }
     if @(arg + sp) == 0 {
@@ -924,19 +909,19 @@ cmd_mv: (cwd: u8*, arg: u8*) {
     }
 }
 
-; Assemble: "as <src> <out>". Joins both operands to absolute paths, packs them
-; space-separated, and launches /bin/as.fexe with that argument string.
-cmd_as: (cwd: u8*, arg: u8*) {
+; Launch a two-operand toolchain command "<tool> <in> <out>": resolves both to
+; absolute paths and execs `elf_p` with them space-separated. Shared by `as`/`cc`.
+sh_run_tool2: (cwd: u8*, arg: u8*, elf_p: u8*, usage: u8*) {
     ; Find the space separating the two operands.
     sp: u64 = 0
     while @(arg + sp) != 0 {
-        if @(arg + sp) == 32 {
+        if @(arg + sp) == ' ' {
             break
         }
         sp = sp + 1
     }
     if @(arg + sp) == 0 {
-        console_writeln("as: usage: as <src> <out>".data)
+        console_writeln(usage)
         return
     }
     ; Copy the source operand out before walking past it.
@@ -954,11 +939,11 @@ cmd_as: (cwd: u8*, arg: u8*) {
     st: u8* = src_p + i
     @st = 0 as u8
     ; Skip the separating space(s) to reach the destination operand.
-    while @(arg + sp) == 32 {
+    while @(arg + sp) == ' ' {
         sp = sp + 1
     }
     if @(arg + sp) == 0 {
-        console_writeln("as: usage: as <src> <out>".data)
+        console_writeln(usage)
         return
     }
     dst_arg: u8* = arg + sp
@@ -974,25 +959,36 @@ cmd_as: (cwd: u8*, arg: u8*) {
     cstr_copy(packed_p, src_abs_p)
     pl: u64 = cstr_len(packed_p)
     sep: u8* = packed_p + pl
-    @sep = 32 as u8
+    @sep = ' ' as u8
     cstr_copy(packed_p + pl + 1, out_abs_p)
-    pid: i64 = sc_exec_arg("/bin/as.fexe".data, packed_p)
+    pid: i64 = sc_exec_arg(elf_p, packed_p)
     if pid < 0 {
-        console_writeln("as: cannot launch /bin/as.fexe".data)
+        console_write("cannot launch ".data)
+        console_writeln(elf_p)
         return
     }
     sh_wait_foreground(pid)
 }
 
+; Assemble: "as <src> <out>" -> /bin/as.elf.
+cmd_as: (cwd: u8*, arg: u8*) {
+    sh_run_tool2(cwd, arg, "/bin/as.elf".data, "as: usage: as <src> <out>".data)
+}
+
+; Compile HLL-0: "cc <src.hll> <out.s>" -> /bin/cc.elf.
+cmd_cc: (cwd: u8*, arg: u8*) {
+    sh_run_tool2(cwd, arg, "/bin/cc.elf".data, "cc: usage: cc <src.hll> <out.s>".data)
+}
+
 ; Copy the first whitespace-delimited token of `line` into out (max 31 chars).
 sh_first_word: (line: u8*, out: u8*) {
     i: u64 = 0
-    while @(line + i) == 32 {
+    while @(line + i) == ' ' {
         i = i + 1
     }
     n: u64 = 0
     while @(line + i) != 0 {
-        if @(line + i) == 32 {
+        if @(line + i) == ' ' {
             break
         }
         if n < 31 {
@@ -1010,16 +1006,16 @@ sh_first_word: (line: u8*, out: u8*) {
 ; spaces around it. Points at the terminator when there is no argument.
 sh_skip_word: (line: u8*) -> u8* {
     i: u64 = 0
-    while @(line + i) == 32 {
+    while @(line + i) == ' ' {
         i = i + 1
     }
     while @(line + i) != 0 {
-        if @(line + i) == 32 {
+        if @(line + i) == ' ' {
             break
         }
         i = i + 1
     }
-    while @(line + i) == 32 {
+    while @(line + i) == ' ' {
         i = i + 1
     }
     return line + i
@@ -1030,7 +1026,7 @@ cmd_help: () {
     sh_outln("Type a program name to run it. PATH is . then /bin then /home/demo.".data)
     sh_outln("files     ls [dir]   cat <file>...   echo <text>   pwd".data)
     sh_outln("          touch <f>   mkdir <d>   rm <f>   rmdir <d>   mv <old> <new>".data)
-    sh_outln("tools     edit <file>   as <src> <out>".data)
+    sh_outln("tools     edit <file>   cc <src.hll> <out.s>   as <src> <out>".data)
     sh_outln("jobs      <prog> &   jobs   fg <job>   kill <pid>   kill %<job>".data)
     sh_outln("redirect  <cmd> > file   <cmd> >> file   <prog> < file".data)
     sh_outln("pipe      <cmd> | <cmd>   e.g. echo hi | cat   (up to 4 stages)".data)
@@ -1087,10 +1083,8 @@ sh_dispatch_out_builtin: (cwd: u8*, cmd: u8*, args: u8*) {
 }
 
 ; --- Pipelines (a | b | c) ---
-; Each stage runs to completion writing to a temp file that the next stage reads
-; as stdin, reusing the redirection path (exec_redir or the builtin sink). No
-; kernel pipe object; the catch is that a stage finishes before the next starts,
-; which is fine since every program here produces finite output. See OS spec 7.7.
+; Sequential: each stage runs to completion into a temp file the next reads as
+; stdin (no kernel pipe object). Reuses the redirection path. See OS spec 7.7.
 
 const MAX_PIPE_STAGES = 4
 
@@ -1109,7 +1103,7 @@ sh_pipe_temp: (idx: u64) -> u8* {
 sh_has_pipe: (line: u8*) -> i64 {
     i: u64 = 0
     while @(line + i) != 0 {
-        if @(line + i) == 124 {  ; '|'
+        if @(line + i) == '|' {
             return 1
         }
         i = i + 1
@@ -1117,9 +1111,8 @@ sh_has_pipe: (line: u8*) -> i64 {
     return 0
 }
 
-; Run one pipeline stage and wait for it. def_in/def_out are the pipe temp files
-; to use for stdin/stdout (null means inherit); a `< > >>` written on the stage
-; itself takes priority over them.
+; Run one pipeline stage and wait. def_in/def_out are the pipe temp files for
+; stdin/stdout (null = inherit); a `< > >>` on the stage itself takes priority.
 sh_run_stage: (cwd: u8*, line: u8*, def_in: u8*, def_out: u8*) {
     clean: u8[256]
     clean_p: u8* = clean[0]
@@ -1138,7 +1131,7 @@ sh_run_stage: (cwd: u8*, line: u8*, def_in: u8*, def_out: u8*) {
     i: u64 = 0
     while i < l {
         while i < l {
-            if @(line + i) != 32 {
+            if @(line + i) != ' ' {
                 break
             }
             i = i + 1
@@ -1149,7 +1142,7 @@ sh_run_stage: (cwd: u8*, line: u8*, def_in: u8*, def_out: u8*) {
         tn: u64 = 0
         while i < l {
             c: u8 = @(line + i)
-            if c == 32 {
+            if c == ' ' {
                 break
             }
             if tn < 255 {
@@ -1190,7 +1183,7 @@ sh_run_stage: (cwd: u8*, line: u8*, def_in: u8*, def_out: u8*) {
                             } else {
                                 if cn > 0 {
                                     s: u8* = clean_p + cn
-                                    @s = 32 as u8
+                                    @s = ' ' as u8
                                     cn = cn + 1
                                 }
                                 j: u64 = 0
@@ -1276,20 +1269,19 @@ sh_run_stage: (cwd: u8*, line: u8*, def_in: u8*, def_out: u8*) {
     sc_waitpid(pid)
 }
 
-; Run a pipeline of up to MAX_PIPE_STAGES stages left to right, each feeding the
-; next through a temp file. A `<` on the first stage and `>`/`>>` on the last still
-; work. A trailing `&` is dropped (pipelines run in the foreground).
+; Run a pipeline of up to MAX_PIPE_STAGES stages left to right via temp files. `<`
+; on the first and `>`/`>>` on the last work; a trailing `&` is dropped (foreground).
 cmd_pipe: (cwd: u8*, line: u8*) {
     ; Trim trailing spaces and a trailing '&'.
     l: u64 = cstr_len(line)
     while l > 0 {
-        if @(line + (l - 1)) != 32 {
+        if @(line + (l - 1)) != ' ' {
             break
         }
         l = l - 1
     }
     if l > 0 {
-        if @(line + (l - 1)) == 38 {  ; '&'
+        if @(line + (l - 1)) == '&' {
             l = l - 1
         }
     }
@@ -1305,7 +1297,7 @@ cmd_pipe: (cwd: u8*, line: u8*) {
         if i == l {
             cut = 1
         } else {
-            if @(line + i) == 124 {  ; '|'
+            if @(line + i) == '|' {
                 cut = 1
             }
         }
@@ -1426,6 +1418,10 @@ handle_command: (cwd: u8*, line: u8*) {
         cmd_as(cwd, sh_skip_word(line))
         return
     }
+    if cstr_eq(cmd_p, "cc".data) == 1 {
+        cmd_cc(cwd, sh_skip_word(line))
+        return
+    }
     if cstr_eq(cmd_p, "run".data) == 1 {
         cmd_run(cwd, sh_skip_word(line))
         return
@@ -1464,7 +1460,7 @@ handle_command: (cwd: u8*, line: u8*) {
 main: () -> i32 {
     cwd: u8[256]
     cwd_p: u8* = cwd[0]
-    @cwd_p = 47 as u8
+    @cwd_p = '/' as u8
     second: u8* = cwd_p + 1
     @second = 0 as u8
 

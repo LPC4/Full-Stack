@@ -21,7 +21,7 @@ puts: (str: u8*) -> i32 {
         putchar((@(str + i)) as i32)
         i = i + 1
     }
-    putchar(10)
+    putchar('\n')
     return 0
 }
 
@@ -30,16 +30,16 @@ print_int_rec: (n: i64) {
         return
     }
     print_int_rec(n / 10)
-    putchar((n % 10) as i32 + 48)
+    putchar((n % 10) as i32 + '0')
 }
 
 print_int: (value: i64) -> i32 {
     if value == 0 {
-        putchar(48)
+        putchar('0')
         return 0
     }
     if value < 0 {
-        putchar(45)
+        putchar('-')
         print_int_rec(-value)
     } else {
         print_int_rec(value)
@@ -51,10 +51,10 @@ printf: (fmt: u8*, value: i32) -> i32 {
     i: u64 = 0
     while @(fmt + i) != 0 {
         c: i32 = (@(fmt + i)) as i32
-        if c == 37 {
+        if c == '%' {
             ni: u64 = i + 1
             next: i32 = (@(fmt + ni)) as i32
-            if next == 100 {
+            if next == 'd' {
                 print_int(value as i64)
                 i = i + 2
             } else {
@@ -96,7 +96,7 @@ console_write: (str: u8*) {
 
 console_writeln: (str: u8*) {
     console_write(str)
-    putchar(10)
+    putchar('\n')
 }
 
 console_print_int: (n: i64) {
@@ -112,13 +112,13 @@ console_print_hex: (n: u64) {
         nibble: u64 = v % 16
         v = v / 16
         if nibble < 10 {
-            buf[i] = (nibble as i32 + 48) as u8
+            buf[i] = (nibble as i32 + '0') as u8
         } else {
-            buf[i] = (nibble as i32 - 10 + 97) as u8
+            buf[i] = (nibble as i32 - 10 + 'a') as u8
         }
     }
-    putchar(48)
-    putchar(120)
+    putchar('0')
+    putchar('x')
     buf_ptr: u8* = buf[0]
     j: u64 = 0
     while j < 16 {

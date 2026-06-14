@@ -1,10 +1,5 @@
-; In-VM RV64I assembler: `as <src> <out>` two-pass assembles into a FEXE.
-; Subset: li mv add sub and or xor sll srl sra slt sltu; addi andi ori xori slti
-; sltiu slli srli srai; ld lw lwu lh lhu lb lbu and sd sw sh sb (offset(reg));
-; lui auipc; j jal jalr call la; beq bne blt bge bltu bgeu; nop ecall ret.
-; Directives: .text/.data/.section, .globl, .byte .word .zero .ascii .asciz.
-; The payload is text, then PAD NOPs, then the data section. Subset/encodings and
-; the trailing-NOP quirk: OS spec ch.10.3.
+; In-VM RV64I assembler: `as <src> <out>` two-pass assembles a static ELF64 (one
+; PT_LOAD at USER_CODE_BASE) for sys_exec. Subset, directives, encodings, NOP quirk: OS spec 10.3.
 
 external console_write:   (str: u8*)
 external console_writeln: (str: u8*)
@@ -21,12 +16,14 @@ external cstr_len:     (s: u8*) -> u64
 
 ; Page the kernel maps with this program's argument string. Matches USER_ARG_BASE.
 const ARG_BASE = 0x7FF00000
-; FEXE header size; payload (flat binary) starts here.
+; Virtual base the kernel maps user code at; the ELF links e_entry/p_vaddr here.
+const USER_CODE_BASE = 0x40000000
+; ELF header region size; the page-aligned PT_LOAD payload (flat binary) starts here.
 const HDR = 4096
 ; Bytes of NOP padding between the text and data regions (the M-mode halt quirk).
 const PAD = 32
 
-; Source text, assembled code, and the FEXE output image.
+; Source text, assembled code, and the ELF output image.
 src: u8[8192]
 src_len: u64 = 0
 code: u8[8192]
@@ -38,6 +35,7 @@ data_len: u64 = 0
 cur_sec: i64 = 0
 ; Final text size after pass 1; data labels resolve to text_total + PAD + offset.
 text_total: i64 = 0
+; Output image: ELF header + program header in the first page, payload from HDR on.
 out: u8[12288]
 
 ; Label table: names packed 16 bytes each, parallel address and section arrays.
@@ -67,13 +65,13 @@ fail: (msg: u8*) {
 
 ; 1 if c is a token separator (space, tab, comma).
 is_sep: (c: u8) -> i64 {
-    if c == 32 {
+    if c == ' ' {
         return 1
     }
-    if c == 9 {
+    if c == '\t' {
         return 1
     }
-    if c == 44 {
+    if c == ',' {
         return 1
     }
     return 0
@@ -84,12 +82,12 @@ strip_comment: (line: u8*) {
     i: u64 = 0
     while @(line + i) != 0 {
         c: u8 = @(line + i)
-        if c == 59 {
+        if c == ';' {
             t: u8* = line + i
             @t = 0 as u8
             return
         }
-        if c == 35 {
+        if c == '#' {
             t: u8* = line + i
             @t = 0 as u8
             return
@@ -142,7 +140,7 @@ ends_colon: (p: u8*) -> i64 {
     if l == 0 {
         return 0
     }
-    if @(p + (l - 1)) == 58 {
+    if @(p + (l - 1)) == ':' {
         return 1
     }
     return 0
@@ -165,13 +163,13 @@ parse_uint: (p: u8*) -> i64 {
     i: u64 = 0
     while @(p + i) != 0 {
         c: u8 = @(p + i)
-        if c < 48 {
+        if c < '0' {
             return v
         }
-        if c > 57 {
+        if c > '9' {
             return v
         }
-        v = v * 10 + (c as i64 - 48)
+        v = v * 10 + (c as i64 - '0')
         i = i + 1
     }
     return v
@@ -279,7 +277,7 @@ reg_num: (p: u8*) -> i64 {
         return 31
     }
     ; Raw x<N> form.
-    if @p == 120 {
+    if @p == 'x' {
         n: i64 = parse_uint(p + 1)
         if n >= 0 {
             if n <= 31 {
@@ -295,30 +293,30 @@ reg_num: (p: u8*) -> i64 {
 parse_imm: (p: u8*) -> i64 {
     i: u64 = 0
     neg: i64 = 0
-    if @(p + i) == 45 {
+    if @(p + i) == '-' {
         neg = 1
         i = i + 1
     }
     v: i64 = 0
     ; Hex form 0x...
-    if @(p + i) == 48 {
-        if @(p + i + 1) == 120 {
+    if @(p + i) == '0' {
+        if @(p + i + 1) == 'x' {
             i = i + 2
             while @(p + i) != 0 {
                 c: u8 = @(p + i)
                 d: i64 = -1
-                if c >= 48 {
-                    if c <= 57 {
-                        d = c as i64 - 48
+                if c >= '0' {
+                    if c <= '9' {
+                        d = c as i64 - '0'
                     }
                 }
-                if c >= 97 {
-                    if c <= 102 {
+                if c >= 'a' {
+                    if c <= 'f' {
                         d = c as i64 - 87
                     }
                 }
-                if c >= 65 {
-                    if c <= 70 {
+                if c >= 'A' {
+                    if c <= 'F' {
                         d = c as i64 - 55
                     }
                 }
@@ -337,13 +335,13 @@ parse_imm: (p: u8*) -> i64 {
     ; Decimal.
     while @(p + i) != 0 {
         c: u8 = @(p + i)
-        if c < 48 {
+        if c < '0' {
             break
         }
-        if c > 57 {
+        if c > '9' {
             break
         }
-        v = v * 10 + (c as i64 - 48)
+        v = v * 10 + (c as i64 - '0')
         i = i + 1
     }
     if neg == 1 {
@@ -362,12 +360,12 @@ parse_mem: (p: u8*) {
     ; Advance to the opening parenthesis.
     i: u64 = 0
     while @(p + i) != 0 {
-        if @(p + i) == 40 {
+        if @(p + i) == '(' {
             break
         }
         i = i + 1
     }
-    if @(p + i) != 40 {
+    if @(p + i) != '(' {
         fail("bad memory operand".data)
         mem_reg = 0
         return
@@ -379,7 +377,7 @@ parse_mem: (p: u8*) {
     k: u64 = 0
     while @(p + i) != 0 {
         c: u8 = @(p + i)
-        if c == 41 {
+        if c == ')' {
             break
         }
         if k < 7 {
@@ -464,6 +462,17 @@ emit_word: (w: u32) {
     push_byte((w >> 8) as u8)
     push_byte((w >> 16) as u8)
     push_byte((w >> 24) as u8)
+}
+
+; Write an `n`-byte little-endian value into the output image at byte offset `off`.
+; Used to lay down the ELF header and program header fields.
+wr_le: (off: u64, val: u64, n: u64) {
+    k: u64 = 0
+    while k < n {
+        d: u8* = out[0] + off + k
+        @d = (val >> (k * 8)) as u8
+        k = k + 1
+    }
 }
 
 enc_r: (rd: i64, rs1: i64, rs2: i64, funct3: i64, funct7: i64) -> u32 {
@@ -576,12 +585,12 @@ split_pcrel: (delta: i64) {
 data_string: (pass: i64, line_p: u8*, zt: i64) -> i64 {
     i: u64 = 0
     while @(line_p + i) != 0 {
-        if @(line_p + i) == 34 {
+        if @(line_p + i) == '"' {
             break
         }
         i = i + 1
     }
-    if @(line_p + i) != 34 {
+    if @(line_p + i) != '"' {
         fail("string: missing quote".data)
         return 0
     }
@@ -589,30 +598,30 @@ data_string: (pass: i64, line_p: u8*, zt: i64) -> i64 {
     n: i64 = 0
     while @(line_p + i) != 0 {
         c: u8 = @(line_p + i)
-        if c == 34 {
+        if c == '"' {
             break
         }
-        if c == 92 {
+        if c == '\\' {
             i = i + 1
             e: u8 = @(line_p + i)
             c = e
-            if e == 110 {
-                c = 10 as u8
+            if e == 'n' {
+                c = '\n' as u8
             }
-            if e == 116 {
-                c = 9 as u8
+            if e == 't' {
+                c = '\t' as u8
             }
-            if e == 114 {
-                c = 13 as u8
+            if e == 'r' {
+                c = '\r' as u8
             }
-            if e == 48 {
+            if e == '0' {
                 c = 0 as u8
             }
-            if e == 92 {
-                c = 92 as u8
+            if e == '\\' {
+                c = '\\' as u8
             }
-            if e == 34 {
-                c = 34 as u8
+            if e == '"' {
+                c = '"' as u8
             }
         }
         if pass == 2 {
@@ -734,6 +743,14 @@ encode_instr: (pass: i64, base: i64, pc: i64) -> i64 {
         }
         return 4
     }
+    ; addiw is the 32-bit word add-immediate (opcode 0x1B); the host backend
+    ; normalizes every i32 result through it, so the HLL-0 subset needs it.
+    if cstr_eq(m, "addiw".data) == 1 {
+        if pass == 2 {
+            emit_word(enc_i(reg_num(o0), reg_num(o1), parse_imm(o2), 0, 0x1B))
+        }
+        return 4
+    }
     if cstr_eq(m, "add".data) == 1 {
         if pass == 2 {
             emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 0, 0))
@@ -761,6 +778,38 @@ encode_instr: (pass: i64, base: i64, pc: i64) -> i64 {
     if cstr_eq(m, "xor".data) == 1 {
         if pass == 2 {
             emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 4, 0))
+        }
+        return 4
+    }
+    ; --- M-extension: 64-bit multiply / divide (opcode 0x33, funct7 = 0x01) ---
+    ; Needed for HLL `* / %`; mirrors asm-to-binary rv64m encodings.
+    if cstr_eq(m, "mul".data) == 1 {
+        if pass == 2 {
+            emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 0, 1))
+        }
+        return 4
+    }
+    if cstr_eq(m, "div".data) == 1 {
+        if pass == 2 {
+            emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 4, 1))
+        }
+        return 4
+    }
+    if cstr_eq(m, "divu".data) == 1 {
+        if pass == 2 {
+            emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 5, 1))
+        }
+        return 4
+    }
+    if cstr_eq(m, "rem".data) == 1 {
+        if pass == 2 {
+            emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 6, 1))
+        }
+        return 4
+    }
+    if cstr_eq(m, "remu".data) == 1 {
+        if pass == 2 {
+            emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 7, 1))
         }
         return 4
     }
@@ -1054,10 +1103,10 @@ assemble: (pass: i64) {
         while i < src_len {
             c: u8 = @src[i]
             i = i + 1
-            if c == 10 {
+            if c == '\n' {
                 break
             }
-            if c != 13 {
+            if c != '\r' {
                 if j < 255 {
                     d: u8* = line_p + j
                     @d = c
@@ -1088,7 +1137,7 @@ assemble: (pass: i64) {
             }
             if base < ntok {
                 d0: u8* = tok_at(base)
-                if @d0 == 46 {
+                if @d0 == '.' {
                     ; Directive (leading '.'); may switch section or emit data.
                     sz: i64 = handle_directive(pass, base, line_p)
                     if cur_sec == 1 {
@@ -1110,7 +1159,7 @@ assemble: (pass: i64) {
 split_arg: (arg: u8*, src_path: u8*, out_path: u8*) -> i64 {
     i: u64 = 0
     while @(arg + i) != 0 {
-        if @(arg + i) == 32 {
+        if @(arg + i) == ' ' {
             break
         }
         d: u8* = src_path + i
@@ -1123,7 +1172,7 @@ split_arg: (arg: u8*, src_path: u8*, out_path: u8*) -> i64 {
         return 0
     }
     ; Skip the separating space(s).
-    while @(arg + i) == 32 {
+    while @(arg + i) == ' ' {
         i = i + 1
     }
     if @(arg + i) == 0 {
@@ -1180,9 +1229,8 @@ main: () -> i32 {
         return 1
     }
 
-    ; Append NOP padding so the speculative fetch after the final ecall stays
-    ; valid (a zero word would trap to M-mode and halt the VM). See OS spec ch.10.3.
-    ; PAD bytes here must match the gap data labels were resolved against.
+    ; Append NOP padding so a speculative fetch past the final ecall stays valid
+    ; (a zero word would trap to M-mode and halt). OS spec 10.3; PAD matches the label gap.
     pad: u64 = 0
     while pad < 8 {
         emit_word(0x13 as u32)
@@ -1195,12 +1243,40 @@ main: () -> i32 {
         di = di + 1
     }
 
-    ; Build the FEXE image: magic "FEXE", entry offset 0, then the payload.
-    @out[0] = 70 as u8
-    @out[1] = 69 as u8
-    @out[2] = 88 as u8
-    @out[3] = 69 as u8
-    ; out[4..16] stay zero (unused word + entry offset 0).
+    ; Minimal static ELF64: 64-byte header + one 56-byte PT_LOAD in the first page,
+    ; payload at HDR. sys_exec reads e_entry + the PT_LOAD and maps it at p_vaddr.
+    base: u64 = USER_CODE_BASE as u64
+    ; e_ident: 0x7F 'E' 'L' 'F', ELFCLASS64, ELFDATA2LSB, EV_CURRENT; rest zero.
+    @out[0] = 0x7F as u8
+    @out[1] = 69 as u8   ; 'E'
+    @out[2] = 76 as u8   ; 'L'
+    @out[3] = 70 as u8   ; 'F'
+    @out[4] = 2 as u8    ; ELFCLASS64
+    @out[5] = 1 as u8    ; ELFDATA2LSB (little-endian)
+    @out[6] = 1 as u8    ; EV_CURRENT
+    wr_le(16, 2, 2)              ; e_type = ET_EXEC
+    wr_le(18, 243, 2)            ; e_machine = EM_RISCV
+    wr_le(20, 1, 4)              ; e_version = EV_CURRENT
+    wr_le(24, base, 8)           ; e_entry (text starts at the payload base)
+    wr_le(32, 64, 8)            ; e_phoff (program header follows the ELF header)
+    ; e_shoff (40) stays 0: no section headers.
+    wr_le(48, 5, 4)             ; e_flags (RVC | double-float ABI; informational)
+    wr_le(52, 64, 2)            ; e_ehsize
+    wr_le(54, 56, 2)            ; e_phentsize
+    wr_le(56, 1, 2)            ; e_phnum (one PT_LOAD)
+    ; e_shentsize/e_shnum/e_shstrndx (58/60/62) stay 0.
+
+    ; One PT_LOAD covering the whole payload, mapped R|W|X at the load base.
+    wr_le(64, 1, 4)            ; p_type = PT_LOAD
+    wr_le(68, 7, 4)            ; p_flags = R|W|X
+    wr_le(72, HDR as u64, 8)   ; p_offset (payload at the page boundary)
+    wr_le(80, base, 8)         ; p_vaddr
+    wr_le(88, base, 8)         ; p_paddr
+    wr_le(96, code_len, 8)     ; p_filesz
+    wr_le(104, code_len, 8)    ; p_memsz (no separate BSS; .zero is in the payload)
+    wr_le(112, 4096, 8)        ; p_align
+
+    ; out[120..HDR] stay zero; the payload follows at the page boundary.
     i: u64 = 0
     while i < code_len {
         d: u8* = out[0] + (HDR as u64) + i

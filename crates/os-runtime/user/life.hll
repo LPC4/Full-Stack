@@ -79,9 +79,8 @@ seed: () {
     }
 }
 
-; Compute one generation into nxt (B3/S23), then copy it back into cur. Neighbour
-; counting is inlined with the wraparound rows/cols computed once per row/column,
-; so the hot loop is pure array loads with no per-neighbour function call.
+; Compute one generation into nxt (B3/S23), then copy back to cur. Neighbour
+; counting is inlined (wraparound precomputed per row/col) so the hot loop has no calls.
 step: () {
     y: i64 = 0
     while y < GH {
@@ -192,17 +191,17 @@ poll_input: () {
             down = 1
         }
         if down == 1 {
-            if sc == 80 {
+            if sc == 'P' {
                 if paused == 0 {
                     paused = 1
                 } else {
                     paused = 0
                 }
             }
-            if sc == 82 {
+            if sc == 'R' {
                 seed()
             }
-            if sc == 32 {
+            if sc == ' ' {
                 step_req = 1
             }
         }

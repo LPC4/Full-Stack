@@ -10,7 +10,7 @@
 
 use asm_to_binary::AssembledOutput;
 use full_stack::compilation_pipeline::{
-    assembled_to_exec_file, build_fs_image, CompilationPipeline, FsEntry, TargetMode,
+    assembled_to_elf_file, build_fs_image, CompilationPipeline, FsEntry, TargetMode,
 };
 use hll_to_ir::stdlib::{
     get_kernel_stdlib_source, get_stdlib_modules_for_mode, get_stdlib_source_for_mode,
@@ -57,7 +57,10 @@ fn cached_kernel() -> &'static AssembledOutput {
         kernel_pipeline
             .link_assembled_objects_named(
                 "kernel_stdlib_my_kernel",
-                &[("kernel_stdlib", &stdlib_obj), ("my_kernel", &kernel_objs[0])],
+                &[
+                    ("kernel_stdlib", &stdlib_obj),
+                    ("my_kernel", &kernel_objs[0]),
+                ],
             )
             .expect("kernel link")
     })
@@ -116,7 +119,11 @@ fn cached_kernel_multi_module() -> &'static AssembledOutput {
 
 // Compile a hosted user program (links the hosted stdlib).
 fn compile_hosted(src: &str) -> AssembledOutput {
-    let full = format!("{}\n{}", get_stdlib_source_for_mode(TargetMode::Hosted), src);
+    let full = format!(
+        "{}\n{}",
+        get_stdlib_source_for_mode(TargetMode::Hosted),
+        src
+    );
     let mut pipeline = CompilationPipeline::new();
     pipeline.set_target_mode(TargetMode::Hosted);
     pipeline.set_write_artifacts(false);
@@ -159,7 +166,8 @@ fn setup_kernel_vm(
             .expect("write user entry VA");
         vm.write_ram(USER_META_PA + 8, &user_size.to_le_bytes())
             .expect("write user size");
-        vm.write_ram(USER_BINARY_PA, &flat).expect("write user binary");
+        vm.write_ram(USER_BINARY_PA, &flat)
+            .expect("write user binary");
     }
 
     for b in input.bytes() {
@@ -183,7 +191,10 @@ fn boot_kernel(
 
 // A hosted user program injected as pid 1 must spawn and exit with code 0.
 fn assert_user_exit_ok(uart: &str, outcome: &StepOutcome, label: &str) {
-    assert!(!uart.contains("PANIC!"), "{label}: kernel panicked; uart={uart:?}");
+    assert!(
+        !uart.contains("PANIC!"),
+        "{label}: kernel panicked; uart={uart:?}"
+    );
     assert!(
         !uart.contains("unhandled exception"),
         "{label}: unhandled CPU exception; uart={uart:?}"
@@ -249,9 +260,18 @@ fn kernel_boot_full_sequence() {
         !uart.contains("memory self-test failed"),
         "memory self-test must not fail; uart={uart:?}"
     );
-    assert!(uart.contains("[  OK  ] heap ready\n"), "expected heap smoke-test; uart={uart:?}");
-    assert!(uart.contains("[  OK  ] timer armed\n"), "expected timer armed; uart={uart:?}");
-    assert!(uart.contains("[  OK  ] boot complete\n"), "expected boot complete; uart={uart:?}");
+    assert!(
+        uart.contains("[  OK  ] heap ready\n"),
+        "expected heap smoke-test; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("[  OK  ] timer armed\n"),
+        "expected timer armed; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("[  OK  ] boot complete\n"),
+        "expected boot complete; uart={uart:?}"
+    );
 
     // User process spawns and greets.
     assert!(
@@ -267,8 +287,13 @@ fn kernel_boot_full_sequence() {
 #[test]
 fn kernel_boot_multi_module_with_user() {
     let user = compile_hosted(user::USER_HELLO);
-    let (_, outcome, uart) =
-        boot_kernel(cached_kernel_multi_module(), Some(&user), None, "", 10_000_000);
+    let (_, outcome, uart) = boot_kernel(
+        cached_kernel_multi_module(),
+        Some(&user),
+        None,
+        "",
+        10_000_000,
+    );
     match outcome {
         StepOutcome::Continue => {}
         StepOutcome::Halted(c) => panic!("unexpected halt with code {c}; uart={uart:?}"),
@@ -289,8 +314,7 @@ fn kernel_boot_multi_module_with_user() {
 
 #[test]
 fn kernel_boot_multi_module_no_user_binary() {
-    let (_, outcome, uart) =
-        boot_kernel(cached_kernel_multi_module(), None, None, "", 10_000_000);
+    let (_, outcome, uart) = boot_kernel(cached_kernel_multi_module(), None, None, "", 10_000_000);
     // Without a user binary the kernel calls kshutdown(0) after spawn returns.
     match outcome {
         StepOutcome::Halted(0) => {}
@@ -509,7 +533,10 @@ fn fbdemo_renders_mandelbrot_set() {
     }
 
     // Sanity: the window genuinely contains a chunk of the set.
-    assert!(in_set > 10_000, "reference window has too little set: {in_set} px");
+    assert!(
+        in_set > 10_000,
+        "reference window has too little set: {in_set} px"
+    );
     // The render must match the reference fractal almost exactly.
     assert!(
         mismatches < (FB_W * FB_H) / 200,
@@ -652,25 +679,36 @@ main: () -> i32 {
 }
 "#,
     );
-    let exec_file = assembled_to_exec_file(&child);
+    let exec_file = assembled_to_elf_file(&child);
 
     let image = build_fs_image(&[
         FsEntry::Dir { path: "/home" },
         FsEntry::File {
-            path: "/home/hello.fexe",
+            path: "/home/hello.elf",
             data: &exec_file,
         },
     ]);
 
-    let session = "ls\ncd /home\nls\nrun hello.fexe\nexit\n";
-    let (_, outcome, uart) =
-        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 80_000_000);
+    let session = "ls\ncd /home\nls\nrun hello.elf\nexit\n";
+    let (_, outcome, uart) = boot_kernel(
+        cached_kernel(),
+        Some(&shell),
+        Some(&image),
+        session,
+        80_000_000,
+    );
 
     assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
-    assert!(uart.contains("HLL shell ready"), "shell did not start; uart={uart:?}");
-    assert!(uart.contains("home"), "ls of root did not list home; uart={uart:?}");
     assert!(
-        uart.contains("hello.fexe"),
+        uart.contains("HLL shell ready"),
+        "shell did not start; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("home"),
+        "ls of root did not list home; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("hello.elf"),
         "ls of /home did not list the program; uart={uart:?}"
     );
     assert!(
@@ -683,8 +721,8 @@ main: () -> i32 {
     );
 }
 
-// Non-zero global initializers must survive the FEXE/sys_exec load path too, not
-// just the direct VM loader the run_hll tests cover (PLAN 0.2).
+// Non-zero global initializers must survive the ELF/sys_exec load path too, not
+// just the direct VM loader the run_hll tests cover.
 #[test]
 fn kernel_shell_exec_carries_global_initializers() {
     let shell = compile_hosted(user::SHELL);
@@ -704,16 +742,21 @@ main: () -> i32 {
 }
 "#,
     );
-    let exec_file = assembled_to_exec_file(&child);
+    let exec_file = assembled_to_elf_file(&child);
 
     let image = build_fs_image(&[FsEntry::File {
-        path: "/g.fexe",
+        path: "/g.elf",
         data: &exec_file,
     }]);
 
-    let session = "run /g.fexe\nexit\n";
-    let (_, outcome, uart) =
-        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 80_000_000);
+    let session = "run /g.elf\nexit\n";
+    let (_, outcome, uart) = boot_kernel(
+        cached_kernel(),
+        Some(&shell),
+        Some(&image),
+        session,
+        80_000_000,
+    );
 
     assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
     assert!(
@@ -731,7 +774,7 @@ main: () -> i32 {
 }
 
 // In-VM assembler: `as <src> <out>` assembles a small RV64I program from a source
-// file into a runnable FEXE, then `run` executes it. The test program exercises
+// file into a runnable ELF, then `run` executes it. The test program exercises
 // li/add/addi/bne/label/ecall (sum 1..=7 = 28, then exit(28)). The shell reaps the
 // child via wait and prints "[exit 28]", proving every encoding -- the branch
 // offset, arithmetic, and immediates -- is correct end to end (a wrong branch
@@ -740,7 +783,7 @@ main: () -> i32 {
 #[test]
 fn kernel_shell_assembles_and_runs_program() {
     let shell = compile_hosted(user::SHELL);
-    let as_exec = assembled_to_exec_file(&compile_hosted(user::AS));
+    let as_exec = assembled_to_elf_file(&compile_hosted(user::AS));
 
     // Sum 1..=7 into a0 (= 28), then exit(a0). Pure subset: li/add/addi/bne/ecall.
     let source = b"\
@@ -759,7 +802,7 @@ loop:
     let image = build_fs_image(&[
         FsEntry::Dir { path: "/bin" },
         FsEntry::File {
-            path: "/bin/as.fexe",
+            path: "/bin/as.elf",
             data: &as_exec,
         },
         FsEntry::File {
@@ -768,9 +811,14 @@ loop:
         },
     ]);
 
-    let session = "as /prog.s /prog.fexe\nrun /prog.fexe\nexit\n";
-    let (_, outcome, uart) =
-        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 200_000_000);
+    let session = "as /prog.s /prog.elf\nrun /prog.elf\nexit\n";
+    let (_, outcome, uart) = boot_kernel(
+        cached_kernel(),
+        Some(&shell),
+        Some(&image),
+        session,
+        200_000_000,
+    );
 
     assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
     assert!(
@@ -778,16 +826,16 @@ loop:
         "the assembled program faulted; uart={uart:?}"
     );
     assert!(
-        uart.contains("as: wrote /prog.fexe"),
+        uart.contains("as: wrote /prog.elf"),
         "assembler did not report success; uart={uart:?}"
     );
     assert!(
         !uart.contains("run: not an executable"),
-        "sys_exec rejected the produced FEXE; uart={uart:?}"
+        "sys_exec rejected the produced ELF; uart={uart:?}"
     );
     assert!(
         !uart.contains("run: cannot exec"),
-        "sys_exec failed to load the produced FEXE; uart={uart:?}"
+        "sys_exec failed to load the produced ELF; uart={uart:?}"
     );
     // The assembled program computes 1+2+...+7 = 28 and exits with it; the shell
     // reaps it and reports the status, proving correct execution.
@@ -811,7 +859,7 @@ loop:
 #[test]
 fn kernel_shell_assembles_expanded_subset() {
     let shell = compile_hosted(user::SHELL);
-    let as_exec = assembled_to_exec_file(&compile_hosted(user::AS));
+    let as_exec = assembled_to_elf_file(&compile_hosted(user::AS));
 
     let source = b"\
 ; build 42 through the expanded instruction subset, self-checking as we go
@@ -885,7 +933,7 @@ fail:
     let image = build_fs_image(&[
         FsEntry::Dir { path: "/bin" },
         FsEntry::File {
-            path: "/bin/as.fexe",
+            path: "/bin/as.elf",
             data: &as_exec,
         },
         FsEntry::File {
@@ -894,9 +942,14 @@ fail:
         },
     ]);
 
-    let session = "as /prog.s /prog.fexe\nrun /prog.fexe\nexit\n";
-    let (_, outcome, uart) =
-        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 200_000_000);
+    let session = "as /prog.s /prog.elf\nrun /prog.elf\nexit\n";
+    let (_, outcome, uart) = boot_kernel(
+        cached_kernel(),
+        Some(&shell),
+        Some(&image),
+        session,
+        200_000_000,
+    );
 
     assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
     assert!(
@@ -904,7 +957,7 @@ fail:
         "the assembled program faulted; uart={uart:?}"
     );
     assert!(
-        uart.contains("as: wrote /prog.fexe"),
+        uart.contains("as: wrote /prog.elf"),
         "assembler did not report success; uart={uart:?}"
     );
     assert!(
@@ -917,7 +970,88 @@ fail:
     );
 }
 
-// A non-FEXE file or a missing name must be reported as an unknown command
+// Exercises the M-extension + addiw (PLAN 1.1 final gap): the last mnemonics the
+// HLL backend emits that the in-VM assembler was missing. Computes 42 through
+// mul/div/divu/rem/remu and addiw, self-checking each with a branch to `fail`.
+// A wrong encoding jumps to `fail` (exit 1) or faults, so `[exit 42]` proves the
+// whole M-extension batch encodes byte-correctly end to end.
+#[test]
+fn kernel_shell_assembles_m_extension() {
+    let shell = compile_hosted(user::SHELL);
+    let as_exec = assembled_to_elf_file(&compile_hosted(user::AS));
+
+    let source = b"\
+; build 42 through the M-extension and addiw, self-checking as we go
+  li t0, 6
+  li t1, 7
+  mul a0, t0, t1       ; 42
+  li t2, 42
+  bne a0, t2, fail
+  li t0, 85
+  li t1, 2
+  div t3, t0, t1       ; 42
+  bne t3, t2, fail
+  rem t4, t0, t1       ; 85 % 2 = 1
+  li t5, 1
+  bne t4, t5, fail
+  li t0, 84
+  li t1, 2
+  divu t3, t0, t1      ; 42
+  bne t3, t2, fail
+  remu t4, t0, t1      ; 84 % 2 = 0
+  bne t4, zero, fail
+  li t0, 40
+  addiw a0, t0, 2      ; 42 (exit code)
+  bne a0, t2, fail
+  li a7, 93
+  ecall
+fail:
+  li a0, 1
+  li a7, 93
+  ecall
+";
+
+    let image = build_fs_image(&[
+        FsEntry::Dir { path: "/bin" },
+        FsEntry::File {
+            path: "/bin/as.elf",
+            data: &as_exec,
+        },
+        FsEntry::File {
+            path: "/prog.s",
+            data: source,
+        },
+    ]);
+
+    let session = "as /prog.s /prog.elf\nrun /prog.elf\nexit\n";
+    let (_, outcome, uart) = boot_kernel(
+        cached_kernel(),
+        Some(&shell),
+        Some(&image),
+        session,
+        200_000_000,
+    );
+
+    assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
+    assert!(
+        !uart.contains("unhandled exception"),
+        "the assembled program faulted; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("as: wrote /prog.elf"),
+        "assembler did not report success; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("[exit 42]"),
+        "M-extension program did not exit 42 (a wrong encoding jumps to fail/1); uart={uart:?}"
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "shell did not survive the run and exit cleanly; outcome={outcome:?} uart={uart:?}"
+    );
+}
+
+// A non-ELF file or a missing name must be reported as an unknown command
 // rather than failing opaquely inside sys_exec. Bare-name execution (PLAN 1.1)
 // folds `run` into a single PATH-resolving path, so both report the same way.
 #[test]
@@ -928,17 +1062,22 @@ fn kernel_shell_run_rejects_non_executable() {
         data: b"just some text, not a program\n",
     }]);
 
-    let session = "run /notes.txt\nrun /missing.fexe\nexit\n";
-    let (_, outcome, uart) =
-        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 80_000_000);
+    let session = "run /notes.txt\nrun /missing.elf\nexit\n";
+    let (_, outcome, uart) = boot_kernel(
+        cached_kernel(),
+        Some(&shell),
+        Some(&image),
+        session,
+        80_000_000,
+    );
 
     assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
     assert!(
         uart.contains("unknown command: /notes.txt"),
-        "run did not reject a non-FEXE file; uart={uart:?}"
+        "run did not reject a non-ELF file; uart={uart:?}"
     );
     assert!(
-        uart.contains("unknown command: /missing.fexe"),
+        uart.contains("unknown command: /missing.elf"),
         "run did not report a missing file; uart={uart:?}"
     );
     assert!(
@@ -947,9 +1086,9 @@ fn kernel_shell_run_rejects_non_executable() {
     );
 }
 
-// Bare-name execution (PLAN 1.1): typing a program name (no `run`) resolves it
+// Bare-name execution (PLAN 1.1): /utyping a program name (no `run`) resolves it
 // through the PATH search (cwd, /bin, /home/demo) and runs it. Also covers a
-// relative `./child.fexe` path and `&` backgrounding via the shared launch path.
+// relative `./child.elf` path and `&` backgrounding via the shared launch path.
 #[test]
 fn kernel_shell_bare_name_runs_program() {
     let shell = compile_hosted(user::SHELL);
@@ -963,28 +1102,33 @@ main: () -> i32 {
 }
 "#,
     );
-    let exec_file = assembled_to_exec_file(&child);
+    let exec_file = assembled_to_elf_file(&child);
 
     // Install one demo under /home/demo (hit via PATH) and the same binary under
-    // /home so a relative `./demo.fexe` resolves from cwd.
+    // /home so a relative `./demo.elf` resolves from cwd.
     let image = build_fs_image(&[
         FsEntry::Dir { path: "/home" },
         FsEntry::Dir { path: "/home/demo" },
         FsEntry::File {
-            path: "/home/demo/widget.fexe",
+            path: "/home/demo/widget.elf",
             data: &exec_file,
         },
         FsEntry::File {
-            path: "/home/child.fexe",
+            path: "/home/child.elf",
             data: &exec_file,
         },
     ]);
 
-    // `widget` (no run, no path) resolves via /home/demo; `./child.fexe` resolves
+    // `widget` (no run, no path) resolves via /home/demo; `./child.elf` resolves
     // relative to cwd /home; `widget &` exercises the backgrounded launch path.
-    let session = "widget\ncd /home\n./child.fexe\nwidget &\nexit\n";
-    let (_, outcome, uart) =
-        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 120_000_000);
+    let session = "widget\ncd /home\n./child.elf\nwidget &\nexit\n";
+    let (_, outcome, uart) = boot_kernel(
+        cached_kernel(),
+        Some(&shell),
+        Some(&image),
+        session,
+        120_000_000,
+    );
 
     assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
     let runs = uart.matches("BARE_NAME_RAN").count();
@@ -1041,12 +1185,12 @@ fn inode_size_of(image: &[u8], name: &str) -> Option<u32> {
 fn editor_loads_clears_appends_writes_and_truncates() {
     let shell = compile_hosted(user::SHELL);
     let editor = compile_hosted(user::EDIT);
-    let editor_exec = assembled_to_exec_file(&editor);
+    let editor_exec = assembled_to_elf_file(&editor);
 
     let image = build_fs_image(&[
         FsEntry::Dir { path: "/bin" },
         FsEntry::File {
-            path: "/bin/edit.fexe",
+            path: "/bin/edit.elf",
             data: &editor_exec,
         },
         FsEntry::File {
@@ -1060,12 +1204,23 @@ fn editor_loads_clears_appends_writes_and_truncates() {
     let session = format!(
         "edit /notes.txt\nc\na\n{EDITOR_NEW_LINE_1}\n{EDITOR_NEW_LINE_2}\n.\nw\nq\ncat /notes.txt\nexit\n"
     );
-    let (vm, _outcome, uart) =
-        boot_kernel(cached_kernel(), Some(&shell), Some(&image), &session, 200_000_000);
+    let (vm, _outcome, uart) = boot_kernel(
+        cached_kernel(),
+        Some(&shell),
+        Some(&image),
+        &session,
+        200_000_000,
+    );
 
     assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
-    assert!(uart.contains("edit: p=print"), "editor did not start; uart={uart:?}");
-    assert!(uart.contains("edit: written"), "editor did not write the file; uart={uart:?}");
+    assert!(
+        uart.contains("edit: p=print"),
+        "editor did not start; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("edit: written"),
+        "editor did not write the file; uart={uart:?}"
+    );
 
     // The cat output (after "edit: written") must show exactly the new lines and
     // none of the old filler.
@@ -1096,12 +1251,12 @@ fn editor_loads_clears_appends_writes_and_truncates() {
 #[test]
 fn editor_line_operations_insert_substitute_delete() {
     let shell = compile_hosted(user::SHELL);
-    let editor_exec = assembled_to_exec_file(&compile_hosted(user::EDIT));
+    let editor_exec = assembled_to_elf_file(&compile_hosted(user::EDIT));
 
     let image = build_fs_image(&[
         FsEntry::Dir { path: "/bin" },
         FsEntry::File {
-            path: "/bin/edit.fexe",
+            path: "/bin/edit.elf",
             data: &editor_exec,
         },
         FsEntry::File {
@@ -1124,16 +1279,33 @@ i\ninserted\n.\n\
 g 1\nd\n\
 w\nq\n\
 cat /doc.txt\nexit\n";
-    let (_, _outcome, uart) =
-        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 200_000_000);
+    let (_, _outcome, uart) = boot_kernel(
+        cached_kernel(),
+        Some(&shell),
+        Some(&image),
+        session,
+        200_000_000,
+    );
 
     assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
-    assert!(uart.contains("edit: written"), "editor did not write; uart={uart:?}");
+    assert!(
+        uart.contains("edit: written"),
+        "editor did not write; uart={uart:?}"
+    );
     let after = &uart[uart.find("edit: written").unwrap()..];
-    assert!(after.contains("inserted"), "insert did not take; uart={uart:?}");
-    assert!(after.contains("BRAVO"), "substitute did not take; uart={uart:?}");
+    assert!(
+        after.contains("inserted"),
+        "insert did not take; uart={uart:?}"
+    );
+    assert!(
+        after.contains("BRAVO"),
+        "substitute did not take; uart={uart:?}"
+    );
     assert!(after.contains("charlie"), "tail line lost; uart={uart:?}");
-    assert!(!after.contains("alpha"), "delete of first line failed; uart={uart:?}");
+    assert!(
+        !after.contains("alpha"),
+        "delete of first line failed; uart={uart:?}"
+    );
 }
 
 // A foreground interactive child that blocks waiting for input must not be
@@ -1148,12 +1320,12 @@ cat /doc.txt\nexit\n";
 #[test]
 fn editor_waits_while_idle_for_input() {
     let shell = compile_hosted(user::SHELL);
-    let editor_exec = assembled_to_exec_file(&compile_hosted(user::EDIT));
+    let editor_exec = assembled_to_elf_file(&compile_hosted(user::EDIT));
 
     let image = build_fs_image(&[
         FsEntry::Dir { path: "/bin" },
         FsEntry::File {
-            path: "/bin/edit.fexe",
+            path: "/bin/edit.elf",
             data: &editor_exec,
         },
         FsEntry::Dir { path: "/home" },
@@ -1165,13 +1337,21 @@ fn editor_waits_while_idle_for_input() {
     ]);
 
     // Launch only: cd + edit. No editor command yet, so the editor idles.
-    let mut vm = setup_kernel_vm(cached_kernel(), Some(&shell), Some(&image), "cd /home/src\nedit fib.s\n");
+    let mut vm = setup_kernel_vm(
+        cached_kernel(),
+        Some(&shell),
+        Some(&image),
+        "cd /home/src\nedit fib.s\n",
+    );
 
     // Let it boot, launch the editor, and idle (spinning on sc_readchar/sc_yield
     // and getting timer-preempted) for a good while with no input available.
     let r1 = vm.run(60_000_000);
     let uart1 = r1.uart_output.clone();
-    assert!(uart1.contains("edit: p=print"), "editor did not start; uart={uart1:?}");
+    assert!(
+        uart1.contains("edit: p=print"),
+        "editor did not start; uart={uart1:?}"
+    );
 
     // Now the user "types" a command. Feed it and continue.
     for b in "p\nq\nexit\n".bytes() {
@@ -1198,12 +1378,12 @@ fn editor_waits_while_idle_for_input() {
 #[test]
 fn example_array_assembles_and_runs() {
     let shell = compile_hosted(user::SHELL);
-    let as_exec = assembled_to_exec_file(&compile_hosted(user::AS));
+    let as_exec = assembled_to_elf_file(&compile_hosted(user::AS));
 
     let image = build_fs_image(&[
         FsEntry::Dir { path: "/bin" },
         FsEntry::File {
-            path: "/bin/as.fexe",
+            path: "/bin/as.elf",
             data: &as_exec,
         },
         FsEntry::File {
@@ -1212,12 +1392,20 @@ fn example_array_assembles_and_runs() {
         },
     ]);
 
-    let session = "as /array.s /array.fexe\nrun /array.fexe\nexit\n";
-    let (_, outcome, uart) =
-        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 200_000_000);
+    let session = "as /array.s /array.elf\nrun /array.elf\nexit\n";
+    let (_, outcome, uart) = boot_kernel(
+        cached_kernel(),
+        Some(&shell),
+        Some(&image),
+        session,
+        200_000_000,
+    );
 
     assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
-    assert!(uart.contains("as: wrote /array.fexe"), "assembler failed; uart={uart:?}");
+    assert!(
+        uart.contains("as: wrote /array.elf"),
+        "assembler failed; uart={uart:?}"
+    );
     assert!(
         uart.contains("[exit 42]"),
         "shell did not report the array sum (42) as the exit code; uart={uart:?}"
@@ -1236,7 +1424,7 @@ fn example_array_assembles_and_runs() {
 #[test]
 fn kernel_shell_assembles_data_and_calls() {
     let shell = compile_hosted(user::SHELL);
-    let as_exec = assembled_to_exec_file(&compile_hosted(user::AS));
+    let as_exec = assembled_to_elf_file(&compile_hosted(user::AS));
 
     let source = b"\
 .text
@@ -1262,7 +1450,7 @@ msg:
     let image = build_fs_image(&[
         FsEntry::Dir { path: "/bin" },
         FsEntry::File {
-            path: "/bin/as.fexe",
+            path: "/bin/as.elf",
             data: &as_exec,
         },
         FsEntry::File {
@@ -1271,9 +1459,14 @@ msg:
         },
     ]);
 
-    let session = "as /prog.s /prog.fexe\nrun /prog.fexe\nexit\n";
-    let (_, outcome, uart) =
-        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 200_000_000);
+    let session = "as /prog.s /prog.elf\nrun /prog.elf\nexit\n";
+    let (_, outcome, uart) = boot_kernel(
+        cached_kernel(),
+        Some(&shell),
+        Some(&image),
+        session,
+        200_000_000,
+    );
 
     assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
     assert!(
@@ -1281,7 +1474,7 @@ msg:
         "the assembled program faulted; uart={uart:?}"
     );
     assert!(
-        uart.contains("as: wrote /prog.fexe"),
+        uart.contains("as: wrote /prog.elf"),
         "assembler did not report success; uart={uart:?}"
     );
     assert!(
@@ -1299,11 +1492,10 @@ msg:
 }
 
 // A static ELF executable produced by the host toolchain loads and runs in the
-// kernel. sys_exec now dispatches on the file magic (ELF vs FEXE): it parses the
-// ELF64 header + PT_LOAD program headers, maps each segment at its p_vaddr,
-// zeroes BSS, and jumps e_entry. The shell's executable check accepts ELF magic
-// too, so `run /prog.elf` reaches the loader. Proves host-built ELF binaries run
-// in our kernel unmodified -- the foundation for the in-VM linker's output.
+// kernel. sys_exec validates the ELF magic, then parses the ELF64 header + PT_LOAD
+// program headers, maps each segment at its p_vaddr, zeroes BSS, and jumps
+// e_entry. The shell's executable check requires ELF magic, so `run /prog.elf`
+// reaches the loader. Proves host-built ELF binaries run in our kernel unmodified.
 #[test]
 fn kernel_loads_and_runs_elf() {
     let shell = compile_hosted(user::SHELL);
@@ -1324,8 +1516,13 @@ fn kernel_loads_and_runs_elf() {
     }]);
 
     let session = "run /prog.elf\nexit\n";
-    let (_, outcome, uart) =
-        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 200_000_000);
+    let (_, outcome, uart) = boot_kernel(
+        cached_kernel(),
+        Some(&shell),
+        Some(&image),
+        session,
+        200_000_000,
+    );
 
     assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
     assert!(
@@ -1351,12 +1548,12 @@ fn kernel_loads_and_runs_elf() {
 #[test]
 fn example_fib_assembles_and_runs() {
     let shell = compile_hosted(user::SHELL);
-    let as_exec = assembled_to_exec_file(&compile_hosted(user::AS));
+    let as_exec = assembled_to_elf_file(&compile_hosted(user::AS));
 
     let image = build_fs_image(&[
         FsEntry::Dir { path: "/bin" },
         FsEntry::File {
-            path: "/bin/as.fexe",
+            path: "/bin/as.elf",
             data: &as_exec,
         },
         FsEntry::File {
@@ -1365,12 +1562,20 @@ fn example_fib_assembles_and_runs() {
         },
     ]);
 
-    let session = "as /fib.s /fib.fexe\nrun /fib.fexe\nexit\n";
-    let (_, outcome, uart) =
-        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 200_000_000);
+    let session = "as /fib.s /fib.elf\nrun /fib.elf\nexit\n";
+    let (_, outcome, uart) = boot_kernel(
+        cached_kernel(),
+        Some(&shell),
+        Some(&image),
+        session,
+        200_000_000,
+    );
 
     assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
-    assert!(uart.contains("as: wrote /fib.fexe"), "assembler failed; uart={uart:?}");
+    assert!(
+        uart.contains("as: wrote /fib.elf"),
+        "assembler failed; uart={uart:?}"
+    );
     // The shell reaps the program and reports fib(11)=89, then survives to exit.
     assert!(
         uart.contains("[exit 89]"),
@@ -1379,6 +1584,195 @@ fn example_fib_assembles_and_runs() {
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
         "shell did not survive the run and exit cleanly; outcome={outcome:?} uart={uart:?}"
+    );
+}
+
+// PLAN 1.2 Phase A: pin the HLL-0 codegen target. Run the host-compiled hello.hll
+// and the /bin/as-assembled hand-written hello.s side by side; both must print
+// "HLL0" and exit 36, so source and frozen target agree.
+#[test]
+fn kernel_cc_target_roundtrips() {
+    let shell = compile_hosted(user::SHELL);
+    let as_exec = assembled_to_elf_file(&compile_hosted(user::AS));
+    let host_elf = assembled_to_elf_file(&compile_hosted(user::CC_HELLO_HLL));
+
+    let image = build_fs_image(&[
+        FsEntry::Dir { path: "/bin" },
+        FsEntry::File {
+            path: "/bin/as.elf",
+            data: &as_exec,
+        },
+        FsEntry::File {
+            path: "/hello.s",
+            data: user::CC_HELLO_S.as_bytes(),
+        },
+        FsEntry::File {
+            path: "/hello_host.elf",
+            data: &host_elf,
+        },
+    ]);
+
+    // Run the host-compiled source, then assemble + run the hand-written target.
+    let session = "run /hello_host.elf\nas /hello.s /hello.elf\nrun /hello.elf\nexit\n";
+    let (_, outcome, uart) = boot_kernel(
+        cached_kernel(),
+        Some(&shell),
+        Some(&image),
+        session,
+        200_000_000,
+    );
+
+    assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
+    assert!(
+        !uart.contains("unhandled exception"),
+        "the HLL-0 target faulted; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("as: wrote /hello.elf"),
+        "assembler did not report success; uart={uart:?}"
+    );
+    // Both the host-compiled source and the hand-written target must print the
+    // marker and exit 36 -- so each appears twice.
+    assert!(
+        uart.matches("HLL0").count() >= 2,
+        "source and target did not both print the marker; uart={uart:?}"
+    );
+    assert!(
+        uart.matches("[exit 36]").count() >= 2,
+        "source and target did not both exit 36; uart={uart:?}"
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "shell did not survive the runs and exit cleanly; outcome={outcome:?} uart={uart:?}"
+    );
+}
+
+// PLAN 1.2 Phase B/C: the in-VM compiler `cc.hll` must itself host-compile (it is
+// built into /bin/cc.elf). Fast guard that catches HLL syntax/semantic errors
+// without booting the kernel.
+#[test]
+fn cc_host_compiles() {
+    let out = compile_hosted(user::CC);
+    assert!(
+        !out.to_flat_binary().is_empty(),
+        "cc.hll produced an empty binary"
+    );
+}
+
+// PLAN 1.2 Phase D: the self-hosting headline. Inject a pure HLL-0 program, then
+// `cc src.hll out.s && as out.s out.elf && run out.elf` -- all inside the VM. The
+// program prints "HLL0\nY" and exits sum_to(8)=36, exercising the whole in-VM
+// toolchain (compiler -> assembler -> loader). The source mirrors hello.hll but
+// drops the inline-asm putc (cc emits putc as an intrinsic helper).
+#[test]
+fn kernel_cc_compiles_and_runs() {
+    let shell = compile_hosted(user::SHELL);
+    let as_exec = assembled_to_elf_file(&compile_hosted(user::AS));
+    let cc_exec = assembled_to_elf_file(&compile_hosted(user::CC));
+
+    let image = build_fs_image(&[
+        FsEntry::Dir { path: "/bin" },
+        FsEntry::File {
+            path: "/bin/as.elf",
+            data: &as_exec,
+        },
+        FsEntry::File {
+            path: "/bin/cc.elf",
+            data: &cc_exec,
+        },
+        FsEntry::File {
+            path: "/prog.hll",
+            data: user::CC_DEMO_HLL.as_bytes(),
+        },
+    ]);
+
+    let session = "cc /prog.hll /prog.s\nas /prog.s /prog.elf\nrun /prog.elf\nexit\n";
+    let (_, outcome, uart) = boot_kernel(
+        cached_kernel(),
+        Some(&shell),
+        Some(&image),
+        session,
+        300_000_000,
+    );
+
+    assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
+    assert!(
+        !uart.contains("unhandled exception"),
+        "the compiled program faulted; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("cc: wrote /prog.s"),
+        "compiler did not report success; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("as: wrote /prog.elf"),
+        "assembler did not report success; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("HLL0"),
+        "program marker missing; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("[exit 36]"),
+        "compiled program did not exit 36; uart={uart:?}"
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "shell did not survive the run and exit cleanly; outcome={outcome:?} uart={uart:?}"
+    );
+}
+
+// Repro of the interactive self-hosting session: cwd /home/src, relative paths to
+// cc/as, and bare-name execution (`hello`, not `run /abs/path`).
+#[test]
+fn kernel_cc_interactive_relative_paths_and_barename() {
+    let shell = compile_hosted(user::SHELL);
+    let as_exec = assembled_to_elf_file(&compile_hosted(user::AS));
+    let cc_exec = assembled_to_elf_file(&compile_hosted(user::CC));
+
+    let image = build_fs_image(&[
+        FsEntry::Dir { path: "/bin" },
+        FsEntry::File {
+            path: "/bin/as.elf",
+            data: &as_exec,
+        },
+        FsEntry::File {
+            path: "/bin/cc.elf",
+            data: &cc_exec,
+        },
+        FsEntry::Dir { path: "/home" },
+        FsEntry::Dir { path: "/home/src" },
+        FsEntry::File {
+            path: "/home/src/hello.hll",
+            data: user::CC_DEMO_HLL.as_bytes(),
+        },
+    ]);
+
+    let session = "cd /home/src\ncc hello.hll hello.s\nas hello.s hello.elf\nhello\nexit\n";
+    let (_, outcome, uart) = boot_kernel(
+        cached_kernel(),
+        Some(&shell),
+        Some(&image),
+        session,
+        300_000_000,
+    );
+
+    assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
+    assert!(
+        !uart.contains("unhandled exception"),
+        "the compiled program faulted; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("HLL0"),
+        "program marker missing; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("[exit 36]"),
+        "compiled program did not exit 36; uart={uart:?}"
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "shell did not survive and exit cleanly; outcome={outcome:?} uart={uart:?}"
     );
 }
 
@@ -1397,15 +1791,20 @@ main: () -> i32 {
 }
 "#,
     );
-    let exec_file = assembled_to_exec_file(&child);
+    let exec_file = assembled_to_elf_file(&child);
     let image = build_fs_image(&[FsEntry::File {
-        path: "/hi.fexe",
+        path: "/hi.elf",
         data: &exec_file,
     }]);
 
-    let session = "run /hi.fexe\nrun /hi.fexe\nexit\n";
-    let (_, outcome, uart) =
-        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 80_000_000);
+    let session = "run /hi.elf\nrun /hi.elf\nexit\n";
+    let (_, outcome, uart) = boot_kernel(
+        cached_kernel(),
+        Some(&shell),
+        Some(&image),
+        session,
+        80_000_000,
+    );
 
     assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
     // The child ran both times: the shell stayed alive across the first run.
@@ -1446,16 +1845,21 @@ main: () -> i32 {
 }
 "#,
     );
-    let exec_file = assembled_to_exec_file(&child);
+    let exec_file = assembled_to_elf_file(&child);
     let image = build_fs_image(&[FsEntry::File {
-        path: "/loop.fexe",
+        path: "/loop.elf",
         data: &exec_file,
     }]);
 
     // 0x03 (Ctrl-C) is delivered right after the run command's newline.
-    let session = "run /loop.fexe\n\x03exit\n";
-    let (_, outcome, uart) =
-        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 80_000_000);
+    let session = "run /loop.elf\n\x03exit\n";
+    let (_, outcome, uart) = boot_kernel(
+        cached_kernel(),
+        Some(&shell),
+        Some(&image),
+        session,
+        80_000_000,
+    );
 
     assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
     assert!(
@@ -1485,21 +1889,35 @@ main: () -> i32 {
 "#;
     let a = compile_hosted(spin);
     let b = compile_hosted(spin);
-    let a_exec = assembled_to_exec_file(&a);
-    let b_exec = assembled_to_exec_file(&b);
+    let a_exec = assembled_to_elf_file(&a);
+    let b_exec = assembled_to_elf_file(&b);
     let image = build_fs_image(&[
-        FsEntry::File { path: "/a.fexe", data: &a_exec },
-        FsEntry::File { path: "/b.fexe", data: &b_exec },
+        FsEntry::File {
+            path: "/a.elf",
+            data: &a_exec,
+        },
+        FsEntry::File {
+            path: "/b.elf",
+            data: &b_exec,
+        },
     ]);
 
-    let session = "run /a.fexe &\njobs\nrun /b.fexe &\njobs\nexit\n";
-    let (_, outcome, uart) =
-        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 60_000_000);
+    let session = "run /a.elf &\njobs\nrun /b.elf &\njobs\nexit\n";
+    let (_, outcome, uart) = boot_kernel(
+        cached_kernel(),
+        Some(&shell),
+        Some(&image),
+        session,
+        60_000_000,
+    );
 
     assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
     // No slot was corrupted: no job is ever reaped with a bogus/garbage pid, and
     // neither real pid (2, 3) is ever reported "done" -- both spin forever.
-    assert!(!uart.contains("] done   pid "), "a live job was wrongly reaped; uart={uart:?}");
+    assert!(
+        !uart.contains("] done   pid "),
+        "a live job was wrongly reaped; uart={uart:?}"
+    );
     assert!(
         !uart.contains("no background jobs"),
         "a background job vanished from the table; uart={uart:?}"
@@ -1531,16 +1949,27 @@ main: () -> i32 {
 }
 "#,
     );
-    let spin_exec = assembled_to_exec_file(&spin);
-    let image = build_fs_image(&[FsEntry::File { path: "/spin.fexe", data: &spin_exec }]);
+    let spin_exec = assembled_to_elf_file(&spin);
+    let image = build_fs_image(&[FsEntry::File {
+        path: "/spin.elf",
+        data: &spin_exec,
+    }]);
 
-    let session = "run /spin.fexe &\nkill 2\njobs\nexit\n";
-    let (_, outcome, uart) =
-        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 60_000_000);
+    let session = "run /spin.elf &\nkill 2\njobs\nexit\n";
+    let (_, outcome, uart) = boot_kernel(
+        cached_kernel(),
+        Some(&shell),
+        Some(&image),
+        session,
+        60_000_000,
+    );
 
     assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
     // The job was announced as pid 2 ...
-    assert!(uart.contains("[1] pid 2"), "background job not announced; uart={uart:?}");
+    assert!(
+        uart.contains("[1] pid 2"),
+        "background job not announced; uart={uart:?}"
+    );
     // ... reaped after the kill ...
     assert!(
         uart.contains("] done   pid 2"),
@@ -1574,15 +2003,26 @@ main: () -> i32 {
 }
 "#,
     );
-    let spin_exec = assembled_to_exec_file(&spin);
-    let image = build_fs_image(&[FsEntry::File { path: "/spin.fexe", data: &spin_exec }]);
+    let spin_exec = assembled_to_elf_file(&spin);
+    let image = build_fs_image(&[FsEntry::File {
+        path: "/spin.elf",
+        data: &spin_exec,
+    }]);
 
-    let session = "run /spin.fexe &\nkill %1\njobs\nexit\n";
-    let (_, outcome, uart) =
-        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 60_000_000);
+    let session = "run /spin.elf &\nkill %1\njobs\nexit\n";
+    let (_, outcome, uart) = boot_kernel(
+        cached_kernel(),
+        Some(&shell),
+        Some(&image),
+        session,
+        60_000_000,
+    );
 
     assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
-    assert!(uart.contains("[1] pid 2"), "background job not announced; uart={uart:?}");
+    assert!(
+        uart.contains("[1] pid 2"),
+        "background job not announced; uart={uart:?}"
+    );
     assert!(
         uart.contains("] done   pid 2"),
         "killed job was not reaped from the table; uart={uart:?}"
@@ -1616,15 +2056,25 @@ main: () -> i32 {
 }
 "#,
     );
-    let printer_exec = assembled_to_exec_file(&printer);
-    let image = build_fs_image(&[FsEntry::File { path: "/printer.fexe", data: &printer_exec }]);
+    let printer_exec = assembled_to_elf_file(&printer);
+    let image = build_fs_image(&[FsEntry::File {
+        path: "/printer.elf",
+        data: &printer_exec,
+    }]);
 
-    let session = "run /printer.fexe > /out.txt\ncat /out.txt\nexit\n";
-    let (_, outcome, uart) =
-        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 120_000_000);
+    let session = "run /printer.elf > /out.txt\ncat /out.txt\nexit\n";
+    let (_, outcome, uart) = boot_kernel(
+        cached_kernel(),
+        Some(&shell),
+        Some(&image),
+        session,
+        120_000_000,
+    );
 
     assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
-    let mark = uart.find("REDIRECT_OK").expect("marker never reached the UART");
+    let mark = uart
+        .find("REDIRECT_OK")
+        .expect("marker never reached the UART");
     let cat = uart.find("cat /out.txt").expect("cat command not echoed");
     assert!(
         mark > cat,
@@ -1652,12 +2102,20 @@ main: () -> i32 {
 }
 "#,
     );
-    let printer_exec = assembled_to_exec_file(&printer);
-    let image = build_fs_image(&[FsEntry::File { path: "/p.fexe", data: &printer_exec }]);
+    let printer_exec = assembled_to_elf_file(&printer);
+    let image = build_fs_image(&[FsEntry::File {
+        path: "/p.elf",
+        data: &printer_exec,
+    }]);
 
-    let session = "run /p.fexe > /log.txt\nrun /p.fexe >> /log.txt\ncat /log.txt\nexit\n";
-    let (_, outcome, uart) =
-        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 160_000_000);
+    let session = "run /p.elf > /log.txt\nrun /p.elf >> /log.txt\ncat /log.txt\nexit\n";
+    let (_, outcome, uart) = boot_kernel(
+        cached_kernel(),
+        Some(&shell),
+        Some(&image),
+        session,
+        160_000_000,
+    );
 
     assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
     // After cat, both appended lines are present (the `cat` echo is the only LINE
@@ -1699,15 +2157,26 @@ main: () -> i32 {
 }
 "#,
     );
-    let echo_exec = assembled_to_exec_file(&echo);
+    let echo_exec = assembled_to_elf_file(&echo);
     let image = build_fs_image(&[
-        FsEntry::File { path: "/echo.fexe", data: &echo_exec },
-        FsEntry::File { path: "/in.txt", data: b"HELLO_STDIN" },
+        FsEntry::File {
+            path: "/echo.elf",
+            data: &echo_exec,
+        },
+        FsEntry::File {
+            path: "/in.txt",
+            data: b"HELLO_STDIN",
+        },
     ]);
 
-    let session = "run /echo.fexe < /in.txt\nexit\n";
-    let (_, outcome, uart) =
-        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 120_000_000);
+    let session = "run /echo.elf < /in.txt\nexit\n";
+    let (_, outcome, uart) = boot_kernel(
+        cached_kernel(),
+        Some(&shell),
+        Some(&image),
+        session,
+        120_000_000,
+    );
 
     assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
     assert!(
@@ -1728,13 +2197,24 @@ fn kernel_ls_dir_lists_target() {
     let shell = compile_hosted(user::SHELL);
     let image = build_fs_image(&[
         FsEntry::Dir { path: "/sub" },
-        FsEntry::File { path: "/sub/alpha.txt", data: b"A" },
-        FsEntry::File { path: "/sub/beta.txt", data: b"B" },
+        FsEntry::File {
+            path: "/sub/alpha.txt",
+            data: b"A",
+        },
+        FsEntry::File {
+            path: "/sub/beta.txt",
+            data: b"B",
+        },
     ]);
 
     let session = "ls /sub\nexit\n";
-    let (_, outcome, uart) =
-        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 120_000_000);
+    let (_, outcome, uart) = boot_kernel(
+        cached_kernel(),
+        Some(&shell),
+        Some(&image),
+        session,
+        120_000_000,
+    );
 
     assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
     assert!(
@@ -1756,8 +2236,13 @@ fn kernel_echo_redirect_to_file() {
     let shell = compile_hosted(user::SHELL);
     let image = build_fs_image(&[FsEntry::Dir { path: "/tmp" }]);
     let session = "echo MARKER_ECHO > /e.txt\ncat /e.txt\nexit\n";
-    let (_, outcome, uart) =
-        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 120_000_000);
+    let (_, outcome, uart) = boot_kernel(
+        cached_kernel(),
+        Some(&shell),
+        Some(&image),
+        session,
+        120_000_000,
+    );
 
     assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
     // After the `cat /e.txt` echo, the marker can only come from the file: if the
@@ -1780,11 +2265,19 @@ fn kernel_echo_redirect_to_file() {
 #[test]
 fn kernel_cat_append_builtin() {
     let shell = compile_hosted(user::SHELL);
-    let image = build_fs_image(&[FsEntry::File { path: "/src.txt", data: b"DATA\n" }]);
+    let image = build_fs_image(&[FsEntry::File {
+        path: "/src.txt",
+        data: b"DATA\n",
+    }]);
 
     let session = "cat /src.txt >> /dst.txt\ncat /src.txt >> /dst.txt\ncat /dst.txt\nexit\n";
-    let (_, outcome, uart) =
-        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 160_000_000);
+    let (_, outcome, uart) = boot_kernel(
+        cached_kernel(),
+        Some(&shell),
+        Some(&image),
+        session,
+        160_000_000,
+    );
 
     assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
     // The append commands echo "src.txt", never "DATA"; so every DATA after the
@@ -1840,21 +2333,32 @@ main: () -> i32 {
 }
 "#,
     );
-    let producer_exec = assembled_to_exec_file(&producer);
-    let filter_exec = assembled_to_exec_file(&filter);
+    let producer_exec = assembled_to_elf_file(&producer);
+    let filter_exec = assembled_to_elf_file(&filter);
     let image = build_fs_image(&[
-        FsEntry::File { path: "/producer.fexe", data: &producer_exec },
-        FsEntry::File { path: "/filter.fexe", data: &filter_exec },
+        FsEntry::File {
+            path: "/producer.elf",
+            data: &producer_exec,
+        },
+        FsEntry::File {
+            path: "/filter.elf",
+            data: &filter_exec,
+        },
     ]);
 
-    let session = "/producer.fexe | /filter.fexe\nexit\n";
-    let (_, outcome, uart) =
-        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 160_000_000);
+    let session = "/producer.elf | /filter.elf\nexit\n";
+    let (_, outcome, uart) = boot_kernel(
+        cached_kernel(),
+        Some(&shell),
+        Some(&image),
+        session,
+        160_000_000,
+    );
 
     assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
     // The command echo contains "producer"/"filter", never the payload, so any
     // PIPE_PAYLOAD on the UART came out of the filter, i.e. through the pipe.
-    let cmd = uart.find("filter.fexe").expect("pipeline not echoed");
+    let cmd = uart.find("filter.elf").expect("pipeline not echoed");
     let after = &uart[cmd..];
     assert!(
         after.contains("PIPE_PAYLOAD"),
@@ -1901,16 +2405,27 @@ main: () -> i32 {
 }
 "#,
     );
-    let producer_exec = assembled_to_exec_file(&producer);
-    let filter_exec = assembled_to_exec_file(&filter);
+    let producer_exec = assembled_to_elf_file(&producer);
+    let filter_exec = assembled_to_elf_file(&filter);
     let image = build_fs_image(&[
-        FsEntry::File { path: "/producer.fexe", data: &producer_exec },
-        FsEntry::File { path: "/filter.fexe", data: &filter_exec },
+        FsEntry::File {
+            path: "/producer.elf",
+            data: &producer_exec,
+        },
+        FsEntry::File {
+            path: "/filter.elf",
+            data: &filter_exec,
+        },
     ]);
 
-    let session = "/producer.fexe | /filter.fexe > /piped.txt\ncat /piped.txt\nexit\n";
-    let (_, outcome, uart) =
-        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 200_000_000);
+    let session = "/producer.elf | /filter.elf > /piped.txt\ncat /piped.txt\nexit\n";
+    let (_, outcome, uart) = boot_kernel(
+        cached_kernel(),
+        Some(&shell),
+        Some(&image),
+        session,
+        200_000_000,
+    );
 
     assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
     let cat = uart.find("cat /piped.txt").expect("cat not echoed");
@@ -1955,18 +2470,29 @@ main: () -> i32 {
 }
 "#,
     );
-    let filter_exec = assembled_to_exec_file(&filter);
+    let filter_exec = assembled_to_elf_file(&filter);
     let image = build_fs_image(&[
-        FsEntry::File { path: "/filter.fexe", data: &filter_exec },
-        FsEntry::File { path: "/src.txt", data: b"CAT_PIPED\n" },
+        FsEntry::File {
+            path: "/filter.elf",
+            data: &filter_exec,
+        },
+        FsEntry::File {
+            path: "/src.txt",
+            data: b"CAT_PIPED\n",
+        },
     ]);
 
-    let session = "cat /src.txt | /filter.fexe\nexit\n";
-    let (_, outcome, uart) =
-        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 160_000_000);
+    let session = "cat /src.txt | /filter.elf\nexit\n";
+    let (_, outcome, uart) = boot_kernel(
+        cached_kernel(),
+        Some(&shell),
+        Some(&image),
+        session,
+        160_000_000,
+    );
 
     assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
-    let cmd = uart.find("filter.fexe").expect("pipeline not echoed");
+    let cmd = uart.find("filter.elf").expect("pipeline not echoed");
     let after = &uart[cmd..];
     assert!(
         after.contains("CAT_PIPED"),
@@ -1987,8 +2513,13 @@ fn kernel_pipe_echo_into_cat() {
     let image = build_fs_image(&[FsEntry::Dir { path: "/tmp" }]);
 
     let session = "echo CAT_STDIN | cat\nexit\n";
-    let (_, outcome, uart) =
-        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 120_000_000);
+    let (_, outcome, uart) = boot_kernel(
+        cached_kernel(),
+        Some(&shell),
+        Some(&image),
+        session,
+        120_000_000,
+    );
 
     assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
     // The command echo prints "CAT_STDIN" once (the typed line). If the pipe worked,
@@ -2011,18 +2542,29 @@ fn kernel_pipe_echo_into_cat() {
 fn kernel_pipe_ls_hides_temp_file() {
     let shell = compile_hosted(user::SHELL);
     let image = build_fs_image(&[
-        FsEntry::File { path: "/real.txt", data: b"x" },
+        FsEntry::File {
+            path: "/real.txt",
+            data: b"x",
+        },
         FsEntry::Dir { path: "/sub" },
     ]);
 
     let session = "ls | cat\nexit\n";
-    let (_, outcome, uart) =
-        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 120_000_000);
+    let (_, outcome, uart) = boot_kernel(
+        cached_kernel(),
+        Some(&shell),
+        Some(&image),
+        session,
+        120_000_000,
+    );
 
     assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
     let cmd = uart.find("ls | cat").expect("pipeline not echoed");
     let after = &uart[cmd..];
-    assert!(after.contains("real.txt"), "real file missing from ls; uart={uart:?}");
+    assert!(
+        after.contains("real.txt"),
+        "real file missing from ls; uart={uart:?}"
+    );
     assert!(
         !after.contains(".pipe"),
         "pipe temp leaked into ls output; uart={uart:?}"
@@ -2038,11 +2580,19 @@ fn kernel_pipe_ls_hides_temp_file() {
 #[test]
 fn kernel_cat_stdin_redirect() {
     let shell = compile_hosted(user::SHELL);
-    let image = build_fs_image(&[FsEntry::File { path: "/in.txt", data: b"FROM_STDIN\n" }]);
+    let image = build_fs_image(&[FsEntry::File {
+        path: "/in.txt",
+        data: b"FROM_STDIN\n",
+    }]);
 
     let session = "cat < /in.txt\nexit\n";
-    let (_, outcome, uart) =
-        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 120_000_000);
+    let (_, outcome, uart) = boot_kernel(
+        cached_kernel(),
+        Some(&shell),
+        Some(&image),
+        session,
+        120_000_000,
+    );
 
     assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
     // "FROM_STDIN" is only in the file, never in the typed command, so any sighting
@@ -2084,8 +2634,11 @@ main: () -> i32 {
 }
 "#,
     );
-    let spinner_exec = assembled_to_exec_file(&spinner);
-    let image = build_fs_image(&[FsEntry::File { path: "/spin.fexe", data: &spinner_exec }]);
+    let spinner_exec = assembled_to_elf_file(&spinner);
+    let image = build_fs_image(&[FsEntry::File {
+        path: "/spin.elf",
+        data: &spinner_exec,
+    }]);
 
     // No front-loaded input: the shell must block in readchar between commands.
     let mut vm = setup_kernel_vm(cached_kernel(), Some(&shell), Some(&image), "");
@@ -2117,18 +2670,25 @@ main: () -> i32 {
             break;
         }
     }
-    assert!(out.contains("shell ready"), "shell never booted; out={out:?}");
+    assert!(
+        out.contains("shell ready"),
+        "shell never booted; out={out:?}"
+    );
 
     // Background a forever-spinner; the announcement proves exec returned to the
     // prompt instead of blocking, and the shell then sleeps in readchar again.
-    assert!(feed(&mut vm, &mut out, b"run /spin.fexe &\n", "] pid "),
-        "background job was not announced; out={out:?}");
+    assert!(
+        feed(&mut vm, &mut out, b"run /spin.elf &\n", "] pid "),
+        "background job was not announced; out={out:?}"
+    );
 
     // While the spinner runs, type `jobs`. The byte must raise the RX interrupt,
     // wake the blocked shell, and list the job as running -- not "no background
     // jobs" (which would mean the live job had been wrongly reaped from the table).
-    assert!(feed(&mut vm, &mut out, b"jobs\n", "running"),
-        "interactive `jobs` did not list the running background job; out={out:?}");
+    assert!(
+        feed(&mut vm, &mut out, b"jobs\n", "running"),
+        "interactive `jobs` did not list the running background job; out={out:?}"
+    );
     assert!(
         !out.contains("no background jobs"),
         "shell reported no jobs while one was running; out={out:?}"
@@ -2163,21 +2723,32 @@ main: () -> i32 {
 }
 "#,
     );
-    let slow_exec = assembled_to_exec_file(&slow);
+    let slow_exec = assembled_to_elf_file(&slow);
 
     let image = build_fs_image(&[FsEntry::File {
-        path: "/slow.fexe",
+        path: "/slow.elf",
         data: &slow_exec,
     }]);
 
-    let session = "run /slow.fexe &\njobs\nfg 1\nexit\n";
-    let (_, outcome, uart) =
-        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 200_000_000);
+    let session = "run /slow.elf &\njobs\nfg 1\nexit\n";
+    let (_, outcome, uart) = boot_kernel(
+        cached_kernel(),
+        Some(&shell),
+        Some(&image),
+        session,
+        200_000_000,
+    );
 
     assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
     // The job was backgrounded (announced with a job id and pid).
-    assert!(uart.contains("] pid "), "background job was not announced; uart={uart:?}");
-    assert!(uart.contains("SLOW_DONE"), "background child did not run; uart={uart:?}");
+    assert!(
+        uart.contains("] pid "),
+        "background job was not announced; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("SLOW_DONE"),
+        "background child did not run; uart={uart:?}"
+    );
     // fg reaped the exact exit code through the pid-targeted wait.
     assert!(
         uart.contains("[exit 7]"),
@@ -2194,7 +2765,10 @@ main: () -> i32 {
     );
     // fg waited for completion: the exit report follows the child's own output.
     let exit_at = uart.find("[exit 7]").expect("exit report");
-    assert!(slow_done < exit_at, "fg reported exit before the child finished; uart={uart:?}");
+    assert!(
+        slow_done < exit_at,
+        "fg reported exit before the child finished; uart={uart:?}"
+    );
 
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
@@ -2246,7 +2820,10 @@ main: () -> i32 {
         uart.contains("PARENT_FORKED"),
         "parent did not return from fork; uart={uart:?}"
     );
-    assert!(uart.contains("CHILD_RAN"), "child did not run; uart={uart:?}");
+    assert!(
+        uart.contains("CHILD_RAN"),
+        "child did not run; uart={uart:?}"
+    );
     assert!(
         uart.contains("PARENT_REAPED_42"),
         "parent did not reap the child's exit code; uart={uart:?}"
@@ -2260,7 +2837,10 @@ main: () -> i32 {
     // returned (the parent busy-yields until a zombie child appears).
     let child_at = uart.find("CHILD_RAN").unwrap();
     let reaped_at = uart.find("PARENT_REAPED_42").unwrap();
-    assert!(child_at < reaped_at, "parent reaped before the child ran; uart={uart:?}");
+    assert!(
+        child_at < reaped_at,
+        "parent reaped before the child ran; uart={uart:?}"
+    );
 }
 
 // Preemptive scheduling: the timer interrupt must time-slice two compute-bound
@@ -2315,29 +2895,37 @@ main: () -> i32 {
     );
 
     let image = build_fs_image(&[]);
-    let (_, _outcome, uart) =
-        boot_kernel(cached_kernel(), Some(&parent), Some(&image), "", 200_000_000);
+    let (_, _outcome, uart) = boot_kernel(
+        cached_kernel(),
+        Some(&parent),
+        Some(&image),
+        "",
+        200_000_000,
+    );
 
     assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
 
     // Everything between the two sentinels is emitted only by the two user
     // processes (the kernel logs nothing to the UART once pid 1 is running).
-    let start = uart.find("SENTINEL_START").expect("start sentinel missing") + "SENTINEL_START".len();
+    let start =
+        uart.find("SENTINEL_START").expect("start sentinel missing") + "SENTINEL_START".len();
     let end = uart.find("SENTINEL_END").expect("end sentinel missing");
     assert!(start <= end, "sentinels out of order; uart={uart:?}");
-    let marks: String = uart[start..end].chars().filter(|c| *c == 'A' || *c == 'B').collect();
+    let marks: String = uart[start..end]
+        .chars()
+        .filter(|c| *c == 'A' || *c == 'B')
+        .collect();
 
     let a_count = marks.chars().filter(|c| *c == 'A').count();
     let b_count = marks.chars().filter(|c| *c == 'B').count();
-    assert!(a_count > 0 && b_count > 0, "both processes must emit marks; marks={marks:?}");
+    assert!(
+        a_count > 0 && b_count > 0,
+        "both processes must emit marks; marks={marks:?}"
+    );
 
     // Count A<->B transitions. A fully sequential run (no preemption) has exactly
     // one transition; genuine time-slicing produces several.
-    let transitions = marks
-        .as_bytes()
-        .windows(2)
-        .filter(|w| w[0] != w[1])
-        .count();
+    let transitions = marks.as_bytes().windows(2).filter(|w| w[0] != w[1]).count();
     assert!(
         transitions >= 3,
         "timer did not preempt: output is nearly sequential ({transitions} transitions); marks={marks:?}"
@@ -2367,7 +2955,7 @@ main: () -> i32 {{
     @p = 0xAA as u8
     console_writeln("PARENT_WROTE".data)
 
-    pid: i64 = sc_exec("/child.fexe".data)
+    pid: i64 = sc_exec("/child.elf".data)
     if pid < 0 {{
         console_writeln("PARENT_EXEC_FAIL".data)
         sc_exit(1)
@@ -2410,10 +2998,10 @@ main: () -> i32 {{
 
     let parent = compile_hosted(&parent_src);
     let child = compile_hosted(&child_src);
-    let child_exec = assembled_to_exec_file(&child);
+    let child_exec = assembled_to_elf_file(&child);
 
     let image = build_fs_image(&[FsEntry::File {
-        path: "/child.fexe",
+        path: "/child.elf",
         data: &child_exec,
     }]);
 
@@ -2421,7 +3009,10 @@ main: () -> i32 {{
         boot_kernel(cached_kernel(), Some(&parent), Some(&image), "", 80_000_000);
 
     assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
-    assert!(uart.contains("PARENT_WROTE"), "parent did not start; uart={uart:?}");
+    assert!(
+        uart.contains("PARENT_WROTE"),
+        "parent did not start; uart={uart:?}"
+    );
     assert!(
         uart.contains("CHILD_FINAL_BB"),
         "child did not run/write its own VA; uart={uart:?}"
@@ -2519,10 +3110,22 @@ fn kernel_fs_full_lifecycle() {
         boot_kernel(cached_kernel(), Some(&user), Some(&image), "", 50_000_000);
 
     assert_user_exit_ok(&uart, &outcome, "fs_full_lifecycle");
-    assert!(uart.contains("boot complete"), "expected boot to complete; uart={uart:?}");
-    assert!(uart.contains("[  FS  ] mounted"), "expected FS mount message; uart={uart:?}");
-    assert!(!uart.contains("FS_FAIL"), "an FS operation failed; uart={uart:?}");
-    assert!(uart.contains("FS_ALL_PASS"), "FS exerciser did not report success; uart={uart:?}");
+    assert!(
+        uart.contains("boot complete"),
+        "expected boot to complete; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("[  FS  ] mounted"),
+        "expected FS mount message; uart={uart:?}"
+    );
+    assert!(
+        !uart.contains("FS_FAIL"),
+        "an FS operation failed; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("FS_ALL_PASS"),
+        "FS exerciser did not report success; uart={uart:?}"
+    );
 }
 
 // Scan the inode table for an entry of the given type (1=file, 2=dir) and name.
@@ -2570,23 +3173,37 @@ fn kernel_shell_file_management() {
                    mv /work/keep.txt /work/renamed.txt\n\
                    exit\n";
 
-    let (vm, outcome, uart) =
-        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 120_000_000);
+    let (vm, outcome, uart) = boot_kernel(
+        cached_kernel(),
+        Some(&shell),
+        Some(&image),
+        session,
+        120_000_000,
+    );
 
     assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
-    assert!(uart.contains("HLL shell ready"), "shell did not start; uart={uart:?}");
+    assert!(
+        uart.contains("HLL shell ready"),
+        "shell did not start; uart={uart:?}"
+    );
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
         "exit did not halt the VM cleanly; outcome={outcome:?} uart={uart:?}"
     );
 
     // No command should have reported a failure.
-    assert!(!uart.contains("cannot create"), "a create command failed; uart={uart:?}");
+    assert!(
+        !uart.contains("cannot create"),
+        "a create command failed; uart={uart:?}"
+    );
     assert!(!uart.contains("cannot remove"), "rm failed; uart={uart:?}");
     assert!(!uart.contains("cannot move"), "mv failed; uart={uart:?}");
 
     let final_image = vm.peek_bytes_raw(FS_IMAGE_PA, image.len());
-    assert!(inode_present(&final_image, "work", 2), "mkdir did not create /work");
+    assert!(
+        inode_present(&final_image, "work", 2),
+        "mkdir did not create /work"
+    );
     assert!(
         inode_present(&final_image, "renamed.txt", 1),
         "mv did not produce renamed.txt"
@@ -2615,8 +3232,13 @@ fn kernel_shell_rmdir_empty_and_nonempty() {
                    rmdir /empty\n\
                    exit\n";
 
-    let (vm, outcome, uart) =
-        boot_kernel(cached_kernel(), Some(&shell), Some(&image), session, 120_000_000);
+    let (vm, outcome, uart) = boot_kernel(
+        cached_kernel(),
+        Some(&shell),
+        Some(&image),
+        session,
+        120_000_000,
+    );
 
     assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
     assert!(
@@ -2630,8 +3252,14 @@ fn kernel_shell_rmdir_empty_and_nonempty() {
     );
 
     let final_image = vm.peek_bytes_raw(FS_IMAGE_PA, image.len());
-    assert!(inode_present(&final_image, "full", 2), "non-empty dir was wrongly removed");
-    assert!(!inode_present(&final_image, "empty", 2), "empty dir was not removed");
+    assert!(
+        inode_present(&final_image, "full", 2),
+        "non-empty dir was wrongly removed"
+    );
+    assert!(
+        !inode_present(&final_image, "empty", 2),
+        "empty dir was not removed"
+    );
 }
 
 #[test]

@@ -49,6 +49,8 @@ pub enum Token<'a> {
     HexInteger(&'a str),
     Float(&'a str),
     String(&'a str),
+    // A `'c'` literal, lexed to its ascii byte value.
+    Char(u8),
 
     // Keywords
     External,

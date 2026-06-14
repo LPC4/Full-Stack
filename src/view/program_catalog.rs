@@ -277,6 +277,12 @@ fn built_in_programs() -> Vec<ProgramFile> {
             os_runtime::user::AS,
         ),
         ProgramFile::user(
+            "user-cc",
+            "Compiler",
+            "In-VM HLL-0 compiler launched by the shell's `cc` command.",
+            os_runtime::user::CC,
+        ),
+        ProgramFile::user(
             "user-cube",
             "Cube Demo",
             "Spinning 3D wireframe cube on the framebuffer device.",

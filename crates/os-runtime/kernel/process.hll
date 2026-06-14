@@ -1,6 +1,5 @@
-; PCB layout (48 x u64 = 384 bytes): state, next, stack, pc, frame, root, parent,
-; exit, then the two redirected-stdio kernel fds (0 = console). Trap frame at
-; [5..40] spans x0-x31, sepc, scause, stval, sstatus (288 bytes).
+; PCB layout (48 x u64 = 384 bytes): scalar fields, two redirected-stdio fds, then
+; the trap frame at [5..40] (x0-x31, sepc, scause, stval, sstatus). Full map: OS spec 5.2.
 
 const PROC_READY   = 0
 const PROC_RUNNING = 1

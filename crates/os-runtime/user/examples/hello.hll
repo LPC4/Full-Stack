@@ -1,0 +1,40 @@
+; HLL-0 cc reference. The body is pure HLL-0; putc is the I/O intrinsic, written
+; out here so the file also host-compiles. Prints "HLL0\nY", exits sum_to(8)=36.
+
+putc: (ch: i32) -> i32 {
+    ; write(1, &ch, 1). ch is in a0; the ecall is the intrinsic cc emits inline.
+    asm {
+        addi sp, sp, -16
+        sb   a0, 7(sp)
+        li   a0, 1
+        addi a1, sp, 7
+        li   a2, 1
+        li   a7, 64
+        ecall
+        addi sp, sp, 16
+    }
+    return 0
+}
+
+sum_to: (n: i32) -> i32 {
+    total: i32 = 0
+    i: i32 = 1
+    while i <= n {
+        total = total + i
+        i = i + 1
+    }
+    return total
+}
+
+main: () -> i32 {
+    putc('H')
+    putc('L')
+    putc('L')
+    putc('0')
+    putc('\n')
+    n: i32 = sum_to(8)
+    if n > 30 {
+        putc('Y')
+    }
+    return n
+}

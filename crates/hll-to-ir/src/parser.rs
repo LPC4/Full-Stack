@@ -791,7 +791,7 @@ impl<'a> Parser<'a> {
                             match self.peek() {
                                 Some(Token::Comma) => {
                                     self.advance(); // consume comma
-                                    // Check if we're at closing bracket now
+                                                    // Check if we're at closing bracket now
                                     if self.check_gt_or_shr() {
                                         break;
                                     }
@@ -1311,6 +1311,12 @@ impl<'a> Parser<'a> {
             Some(Token::Integer(_)) => Expression::Primary(PrimaryExpr::Literal(Literal::Integer(
                 self.expect_integer()?,
             ))),
+            // A char literal is just its ascii byte as an integer literal.
+            Some(Token::Char(value)) => {
+                let v = *value as i64;
+                self.advance();
+                Expression::Primary(PrimaryExpr::Literal(Literal::Integer(v)))
+            }
             Some(Token::HexInteger(_)) => Expression::Primary(PrimaryExpr::Literal(
                 Literal::HexInteger(self.expect_hex_integer()?),
             )),

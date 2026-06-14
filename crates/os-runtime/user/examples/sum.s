@@ -1,7 +1,7 @@
 # Sum the integers 1..10 and exit with the total (55).
 # Assemble and run from the shell:
-#   as /home/sum.s /home/sum.fexe
-#   run /home/sum.fexe
+#   as /home/sum.s /home/sum.elf
+#   run /home/sum.elf
 # Uses only the in-VM assembler subset: li, add, addi, beq, j, ecall.
 
   li a0, 0        # total = 0

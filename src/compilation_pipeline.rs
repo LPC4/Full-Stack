@@ -1119,34 +1119,21 @@ pub fn build_fs_image(entries: &[FsEntry<'_>]) -> Vec<u8> {
     image
 }
 
-// --- Executable file format (FEXE) ---
+// --- Executable file format (static ELF64) ---
 
-/// Size of the executable header block. The payload starts at this offset so it
-/// stays 4 KiB-aligned for the kernel's page-by-page load.
-pub const EXEC_HEADER_SIZE: usize = 4096;
+/// Virtual base the kernel maps user code at; ELF binaries link `e_entry`/`p_vaddr`
+/// here. Matches `USER_CODE_BASE`/`USER_CODE_VA` in the kernel sources.
+pub const USER_CODE_BASE: u64 = 0x4000_0000;
 
-/// Magic number identifying a FEXE executable file ("FEXE", little-endian).
-pub const FEXE_MAGIC: u32 = 0x4558_4546;
-
-/// Wrap a position-independent flat binary in the FEXE executable-file format
-/// understood by the kernel's `sys_exec`. The result is a header block (magic +
-/// entry offset) followed by the payload, suitable for storing as a regular file
-/// via [`build_fs_image`].
-pub fn build_exec_file(entry_off: u64, payload: &[u8]) -> Vec<u8> {
-    let mut out = vec![0u8; EXEC_HEADER_SIZE + payload.len()];
-    out[0..4].copy_from_slice(&FEXE_MAGIC.to_le_bytes());
-    out[8..16].copy_from_slice(&entry_off.to_le_bytes());
-    out[EXEC_HEADER_SIZE..].copy_from_slice(payload);
-    out
-}
-
-/// Build a FEXE executable file from an assembled hosted program. The entry
-/// offset is taken from `_start`; the payload is the flat binary (which already
-/// includes zero-filled BSS, so the program's globals are mapped on load).
-pub fn assembled_to_exec_file(assembled: &AssembledOutput) -> Vec<u8> {
-    let entry_off = assembled.symbol_address("_start").unwrap_or(0);
-    let payload = assembled.to_flat_binary();
-    build_exec_file(entry_off, &payload)
+/// Build a static ELF64 executable from an assembled hosted program.
+///
+/// Linked at [`USER_CODE_BASE`] so its `e_entry`/`p_vaddr` land in the kernel's
+/// user code region. The entry point resolves from `_start`; the single `PT_LOAD`
+/// segment carries the flat image (zero-filled BSS included). Suitable for storing
+/// as a regular file via [`build_fs_image`] and loading through the kernel's
+/// `sys_exec`.
+pub fn assembled_to_elf_file(assembled: &AssembledOutput) -> Vec<u8> {
+    assembled.to_elf(USER_CODE_BASE)
 }
 
 #[cfg(test)]
@@ -1231,20 +1218,20 @@ mod fs_image_tests {
         let entries = vec![
             FsEntry::Dir { path: "/bin" },
             FsEntry::File {
-                path: "/bin/a.fexe",
+                path: "/bin/a.elf",
                 data: &big,
             },
             FsEntry::File {
-                path: "/bin/b.fexe",
+                path: "/bin/b.elf",
                 data: &big,
             },
             FsEntry::File {
-                path: "/bin/c.fexe",
+                path: "/bin/c.elf",
                 data: &big,
             },
             FsEntry::Dir { path: "/home" },
             FsEntry::File {
-                path: "/home/d.fexe",
+                path: "/home/d.elf",
                 data: &big,
             },
         ];

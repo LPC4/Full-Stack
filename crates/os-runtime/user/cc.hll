@@ -1,0 +1,1170 @@
+; In-VM HLL-0 compiler: `cc <src.hll> <out.s>` -> naive stack-machine RISC-V for
+; `/bin/as`. HLL-0 subset and codegen model: lang spec Appendix D, OS spec 10.4.
+
+external console_write:   (str: u8*)
+external console_writeln: (str: u8*)
+
+external sc_open:      (path: u8*, flags: u64) -> i64
+external sc_read:      (fd: i64, buf: u8*, offset: u64, len: u64) -> i64
+external sc_write:     (fd: i64, buf: u8*, len: u64) -> i64
+external sc_ftruncate: (fd: i64, len: u64) -> i64
+external sc_close:     (fd: i64)
+external cstr_eq:      (a: u8*, b: u8*) -> i64
+
+; Page the kernel maps with this program's argument string (matches USER_ARG_BASE).
+const ARG_BASE = 0x7FF00000
+
+; Token kinds.
+const TK_EOF = 0
+const TK_INT = 1
+const TK_IDENT = 2
+const TK_LPAREN = 3
+const TK_RPAREN = 4
+const TK_LBRACE = 5
+const TK_RBRACE = 6
+const TK_COMMA = 7
+const TK_COLON = 8
+const TK_ARROW = 9
+const TK_ASSIGN = 10
+const TK_PLUS = 11
+const TK_MINUS = 12
+const TK_STAR = 13
+const TK_SLASH = 14
+const TK_PCT = 15
+const TK_LT = 16
+const TK_LE = 17
+const TK_GT = 18
+const TK_GE = 19
+const TK_EQ = 20
+const TK_NE = 21
+
+; AST node kinds.
+const ND_INT = 1
+const ND_VAR = 2
+const ND_BINOP = 3
+const ND_CALL = 4
+const ND_DECL = 5
+const ND_ASSIGN = 6
+const ND_IF = 7
+const ND_WHILE = 8
+const ND_RETURN = 9
+const ND_EXPR = 10
+
+; --- Source and token stream ---
+src: u8[8192]
+src_len: u64 = 0
+
+; One token per slot: kind, integer value (INT) and 16-byte lexeme (IDENT).
+tk_kind: i64[2048]
+tk_val: i64[2048]
+tk_txt: u8[32768]
+ntok: i64 = 0
+
+; --- AST: flat parallel arrays, statements linked via nd_next (-1 = end) ---
+nd_kind: i64[1024]
+nd_a: i64[1024]
+nd_b: i64[1024]
+nd_c: i64[1024]
+nd_next: i64[1024]
+nd_name: u8[16384]
+nnode: i64 = 0
+
+; Call argument expression nodes, referenced by ND_CALL via (start, count).
+call_args: i64[512]
+ncallarg: i64 = 0
+
+; Function table.
+fn_name: u8[1024]
+fn_nparams: i64[64]
+fn_nlocals: i64[64]
+fn_body: i64[64]
+nfn: i64 = 0
+
+; Locals of the function currently being parsed (params first, then declarations).
+loc_name: u8[1024]
+loc_count: i64 = 0
+
+; Parser cursor and the assembled output text.
+pos: i64 = 0
+asmout: u8[32768]
+asmlen: u64 = 0
+
+; Set once on any error so main aborts with a non-zero exit. Other globals used by
+; codegen: the function being emitted and a monotonic label counter.
+err_flag: i64 = 0
+putc_used: i64 = 0
+cur_fn: i64 = 0
+nlabel: i64 = 0
+
+; Report an error once and remember the failure.
+perr: (msg: u8*) {
+    if err_flag == 0 {
+        console_write("cc: ".data)
+        console_writeln(msg)
+    }
+    err_flag = 1
+}
+
+; --- Character classes ---
+is_space: (c: u8) -> i64 {
+    if c == ' ' {
+        return 1
+    }
+    if c == '\t' {
+        return 1
+    }
+    if c == '\r' {
+        return 1
+    }
+    if c == '\n' {
+        return 1
+    }
+    return 0
+}
+
+is_digit: (c: u8) -> i64 {
+    if c < '0' {
+        return 0
+    }
+    if c > '9' {
+        return 0
+    }
+    return 1
+}
+
+is_alpha: (c: u8) -> i64 {
+    if c == '_' {
+        return 1
+    }
+    if c >= 'a' {
+        if c <= 'z' {
+            return 1
+        }
+    }
+    if c >= 'A' {
+        if c <= 'Z' {
+            return 1
+        }
+    }
+    return 0
+}
+
+is_alnum: (c: u8) -> i64 {
+    if is_alpha(c) == 1 {
+        return 1
+    }
+    return is_digit(c)
+}
+
+; Copy a NUL-terminated string into a 16-byte name slot (bounds at 15 chars).
+copy16: (dst: u8*, src_p: u8*) {
+    i: u64 = 0
+    while i < 15 {
+        c: u8 = @(src_p + i)
+        e: u8* = dst + i
+        @e = c
+        if c == 0 {
+            return
+        }
+        i = i + 1
+    }
+    z: u8* = dst + 15
+    @z = 0 as u8
+}
+
+; --- Output emission ---
+emit_ch: (c: u8) {
+    if asmlen < 32768 {
+        @asmout[asmlen] = c
+        asmlen = asmlen + 1
+    }
+}
+
+emit_str: (s: u8*) {
+    i: u64 = 0
+    while @(s + i) != 0 {
+        emit_ch(@(s + i))
+        i = i + 1
+    }
+}
+
+; Append a signed decimal integer.
+emit_int: (v: i64) {
+    if v < 0 {
+        emit_ch('-' as u8)
+        v = 0 - v
+    }
+    if v == 0 {
+        emit_ch('0' as u8)
+        return
+    }
+    buf: u8[24]
+    n: i64 = 0
+    while v > 0 {
+        @buf[n] = ('0' + v % 10) as u8
+        n = n + 1
+        v = v / 10
+    }
+    while n > 0 {
+        n = n - 1
+        emit_ch(@buf[n])
+    }
+}
+
+; --- Tokenizer ---
+push_tok: (kind: i64, val: i64) {
+    if ntok < 2048 {
+        @tk_kind[ntok] = kind
+        @tk_val[ntok] = val
+        d: u8* = tk_txt[0] + (ntok as u64) * 16
+        @d = 0 as u8
+        ntok = ntok + 1
+    }
+}
+
+; Copy src[start, start+len) into token idx's lexeme slot.
+set_tok_txt: (idx: i64, start: u64, len: u64) {
+    d: u8* = tk_txt[0] + (idx as u64) * 16
+    k: u64 = 0
+    while k < len {
+        if k < 15 {
+            e: u8* = d + k
+            @e = @src[start + k]
+        }
+        k = k + 1
+    }
+    t: u64 = len
+    if t > 15 {
+        t = 15
+    }
+    z: u8* = d + t
+    @z = 0 as u8
+}
+
+; Scan a 1- or 2-char operator/punctuation at i; push it and return the next index.
+scan_punct: (i: u64) -> u64 {
+    c: u8 = @src[i]
+    d: u8 = 0 as u8
+    if i + 1 < src_len {
+        d = @src[i + 1]
+    }
+    if c == '-' {
+        if d == '>' {
+            push_tok(TK_ARROW, 0)
+            return i + 2
+        }
+    }
+    if c == '<' {
+        if d == '=' {
+            push_tok(TK_LE, 0)
+            return i + 2
+        }
+    }
+    if c == '>' {
+        if d == '=' {
+            push_tok(TK_GE, 0)
+            return i + 2
+        }
+    }
+    if c == '=' {
+        if d == '=' {
+            push_tok(TK_EQ, 0)
+            return i + 2
+        }
+    }
+    if c == '!' {
+        if d == '=' {
+            push_tok(TK_NE, 0)
+            return i + 2
+        }
+    }
+    if c == '(' {
+        push_tok(TK_LPAREN, 0)
+        return i + 1
+    }
+    if c == ')' {
+        push_tok(TK_RPAREN, 0)
+        return i + 1
+    }
+    if c == '{' {
+        push_tok(TK_LBRACE, 0)
+        return i + 1
+    }
+    if c == '}' {
+        push_tok(TK_RBRACE, 0)
+        return i + 1
+    }
+    if c == ',' {
+        push_tok(TK_COMMA, 0)
+        return i + 1
+    }
+    if c == ':' {
+        push_tok(TK_COLON, 0)
+        return i + 1
+    }
+    if c == '=' {
+        push_tok(TK_ASSIGN, 0)
+        return i + 1
+    }
+    if c == '+' {
+        push_tok(TK_PLUS, 0)
+        return i + 1
+    }
+    if c == '-' {
+        push_tok(TK_MINUS, 0)
+        return i + 1
+    }
+    if c == '*' {
+        push_tok(TK_STAR, 0)
+        return i + 1
+    }
+    if c == '/' {
+        push_tok(TK_SLASH, 0)
+        return i + 1
+    }
+    if c == '%' {
+        push_tok(TK_PCT, 0)
+        return i + 1
+    }
+    if c == '<' {
+        push_tok(TK_LT, 0)
+        return i + 1
+    }
+    if c == '>' {
+        push_tok(TK_GT, 0)
+        return i + 1
+    }
+    perr("bad character".data)
+    return i + 1
+}
+
+; Map a backslash escape character to its byte value (e.g. 'n' -> newline).
+char_escape: (e: u8) -> i64 {
+    if e == 'n' {
+        return 10
+    }
+    if e == 't' {
+        return 9
+    }
+    if e == 'r' {
+        return 13
+    }
+    if e == 'b' {
+        return 8
+    }
+    if e == '0' {
+        return 0
+    }
+    return e as i64
+}
+
+; Split the source into the global token table. Comments run from ';' to EOL.
+tokenize: () {
+    ntok = 0
+    i: u64 = 0
+    while i < src_len {
+        c: u8 = @src[i]
+        if is_space(c) == 1 {
+            i = i + 1
+        } else {
+            if c == ';' {
+                while i < src_len {
+                    if @src[i] == '\n' {
+                        break
+                    }
+                    i = i + 1
+                }
+            } else {
+                if is_alpha(c) == 1 {
+                    start: u64 = i
+                    while i < src_len {
+                        if is_alnum(@src[i]) == 1 {
+                            i = i + 1
+                        } else {
+                            break
+                        }
+                    }
+                    idx: i64 = ntok
+                    push_tok(TK_IDENT, 0)
+                    set_tok_txt(idx, start, i - start)
+                } else {
+                    if is_digit(c) == 1 {
+                        v: i64 = 0
+                        while i < src_len {
+                            d: u8 = @src[i]
+                            if is_digit(d) == 1 {
+                                v = v * 10 + (d as i64 - '0')
+                                i = i + 1
+                            } else {
+                                break
+                            }
+                        }
+                        push_tok(TK_INT, v)
+                    } else {
+                        if c == '\'' {
+                            i = i + 1
+                            cv: i64 = 0
+                            e: u8 = @src[i]
+                            if e == '\\' {
+                                i = i + 1
+                                cv = char_escape(@src[i])
+                                i = i + 1
+                            } else {
+                                cv = e as i64
+                                i = i + 1
+                            }
+                            if @src[i] == '\'' {
+                                i = i + 1
+                            } else {
+                                perr("unterminated char literal".data)
+                            }
+                            push_tok(TK_INT, cv)
+                        } else {
+                            i = scan_punct(i)
+                        }
+                    }
+                }
+            }
+        }
+    }
+    push_tok(TK_EOF, 0)
+}
+
+; --- Token cursor ---
+cur_kind: () -> i64 {
+    if pos < ntok {
+        return @tk_kind[pos]
+    }
+    return TK_EOF
+}
+
+cur_val: () -> i64 {
+    return @tk_val[pos]
+}
+
+cur_txt: () -> u8* {
+    return tk_txt[0] + (pos as u64) * 16
+}
+
+nxt_kind: () -> i64 {
+    if pos + 1 < ntok {
+        return @tk_kind[pos + 1]
+    }
+    return TK_EOF
+}
+
+adv: () {
+    pos = pos + 1
+}
+
+expect: (k: i64, msg: u8*) {
+    if cur_kind() == k {
+        adv()
+    } else {
+        perr(msg)
+    }
+}
+
+; --- AST construction ---
+mk: (kind: i64) -> i64 {
+    id: i64 = nnode
+    @nd_kind[id] = kind
+    @nd_a[id] = 0
+    @nd_b[id] = 0
+    @nd_c[id] = 0
+    @nd_next[id] = -1
+    nnode = nnode + 1
+    return id
+}
+
+set_name: (node: i64, s: u8*) {
+    copy16(nd_name[0] + (node as u64) * 16, s)
+}
+
+; --- Local symbol table (one function at a time) ---
+add_local: (name: u8*) -> i64 {
+    slot: i64 = loc_count
+    copy16(loc_name[0] + (slot as u64) * 16, name)
+    loc_count = loc_count + 1
+    return slot
+}
+
+find_local: (name: u8*) -> i64 {
+    i: i64 = 0
+    while i < loc_count {
+        c: u8* = loc_name[0] + (i as u64) * 16
+        if cstr_eq(c, name) == 1 {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+; --- Expression parsing (precedence climbing over the HLL-0 operator set) ---
+is_mulop: (k: i64) -> i64 {
+    if k == TK_STAR {
+        return 1
+    }
+    if k == TK_SLASH {
+        return 1
+    }
+    if k == TK_PCT {
+        return 1
+    }
+    return 0
+}
+
+is_addop: (k: i64) -> i64 {
+    if k == TK_PLUS {
+        return 1
+    }
+    if k == TK_MINUS {
+        return 1
+    }
+    return 0
+}
+
+is_relop: (k: i64) -> i64 {
+    if k == TK_LT {
+        return 1
+    }
+    if k == TK_LE {
+        return 1
+    }
+    if k == TK_GT {
+        return 1
+    }
+    if k == TK_GE {
+        return 1
+    }
+    return 0
+}
+
+is_eqop: (k: i64) -> i64 {
+    if k == TK_EQ {
+        return 1
+    }
+    if k == TK_NE {
+        return 1
+    }
+    return 0
+}
+
+parse_primary: () -> i64 {
+    k: i64 = cur_kind()
+    if k == TK_INT {
+        v: i64 = cur_val()
+        adv()
+        n: i64 = mk(ND_INT)
+        @nd_a[n] = v
+        return n
+    }
+    if k == TK_LPAREN {
+        adv()
+        e: i64 = parse_expr()
+        expect(TK_RPAREN, "expected )".data)
+        return e
+    }
+    if k == TK_IDENT {
+        nm: u8[24]
+        copy16(nm[0], cur_txt())
+        adv()
+        if cur_kind() == TK_LPAREN {
+            adv()
+            n: i64 = mk(ND_CALL)
+            set_name(n, nm[0])
+            if cstr_eq(nm[0], "putc".data) == 1 {
+                putc_used = 1
+            }
+            astart: i64 = ncallarg
+            cnt: i64 = 0
+            if cur_kind() != TK_RPAREN {
+                while 1 == 1 {
+                    a: i64 = parse_expr()
+                    @call_args[ncallarg] = a
+                    ncallarg = ncallarg + 1
+                    cnt = cnt + 1
+                    if cur_kind() == TK_COMMA {
+                        adv()
+                    } else {
+                        break
+                    }
+                }
+            }
+            expect(TK_RPAREN, "expected ) in call".data)
+            @nd_b[n] = astart
+            @nd_c[n] = cnt
+            return n
+        }
+        slot: i64 = find_local(nm[0])
+        if slot < 0 {
+            perr("unknown variable".data)
+            slot = 0
+        }
+        n: i64 = mk(ND_VAR)
+        @nd_a[n] = slot
+        return n
+    }
+    perr("expected expression".data)
+    return mk(ND_INT)
+}
+
+parse_mul: () -> i64 {
+    n: i64 = parse_primary()
+    while is_mulop(cur_kind()) == 1 {
+        op: i64 = cur_kind()
+        adv()
+        r: i64 = parse_primary()
+        b: i64 = mk(ND_BINOP)
+        @nd_a[b] = op
+        @nd_b[b] = n
+        @nd_c[b] = r
+        n = b
+    }
+    return n
+}
+
+parse_add: () -> i64 {
+    n: i64 = parse_mul()
+    while is_addop(cur_kind()) == 1 {
+        op: i64 = cur_kind()
+        adv()
+        r: i64 = parse_mul()
+        b: i64 = mk(ND_BINOP)
+        @nd_a[b] = op
+        @nd_b[b] = n
+        @nd_c[b] = r
+        n = b
+    }
+    return n
+}
+
+parse_rel: () -> i64 {
+    n: i64 = parse_add()
+    while is_relop(cur_kind()) == 1 {
+        op: i64 = cur_kind()
+        adv()
+        r: i64 = parse_add()
+        b: i64 = mk(ND_BINOP)
+        @nd_a[b] = op
+        @nd_b[b] = n
+        @nd_c[b] = r
+        n = b
+    }
+    return n
+}
+
+parse_expr: () -> i64 {
+    n: i64 = parse_rel()
+    while is_eqop(cur_kind()) == 1 {
+        op: i64 = cur_kind()
+        adv()
+        r: i64 = parse_rel()
+        b: i64 = mk(ND_BINOP)
+        @nd_a[b] = op
+        @nd_b[b] = n
+        @nd_c[b] = r
+        n = b
+    }
+    return n
+}
+
+; --- Statement / block / function parsing ---
+parse_stmt: () -> i64 {
+    k: i64 = cur_kind()
+    if k == TK_IDENT {
+        t: u8* = cur_txt()
+        if cstr_eq(t, "return".data) == 1 {
+            adv()
+            e: i64 = parse_expr()
+            n: i64 = mk(ND_RETURN)
+            @nd_a[n] = e
+            return n
+        }
+        if cstr_eq(t, "if".data) == 1 {
+            adv()
+            c: i64 = parse_expr()
+            expect(TK_LBRACE, "expected { after if".data)
+            body: i64 = parse_block()
+            expect(TK_RBRACE, "expected } after if".data)
+            n: i64 = mk(ND_IF)
+            @nd_a[n] = c
+            @nd_b[n] = body
+            return n
+        }
+        if cstr_eq(t, "while".data) == 1 {
+            adv()
+            c: i64 = parse_expr()
+            expect(TK_LBRACE, "expected { after while".data)
+            body: i64 = parse_block()
+            expect(TK_RBRACE, "expected } after while".data)
+            n: i64 = mk(ND_WHILE)
+            @nd_a[n] = c
+            @nd_b[n] = body
+            return n
+        }
+        ; Declaration `name: i32 = expr` or assignment `name = expr`.
+        k1: i64 = nxt_kind()
+        if k1 == TK_COLON {
+            nm: u8[24]
+            copy16(nm[0], cur_txt())
+            adv()
+            adv()
+            expect(TK_IDENT, "expected type in decl".data)
+            expect(TK_ASSIGN, "expected = in decl".data)
+            e: i64 = parse_expr()
+            slot: i64 = add_local(nm[0])
+            n: i64 = mk(ND_DECL)
+            @nd_a[n] = slot
+            @nd_b[n] = e
+            return n
+        }
+        if k1 == TK_ASSIGN {
+            nm: u8[24]
+            copy16(nm[0], cur_txt())
+            adv()
+            adv()
+            e: i64 = parse_expr()
+            slot: i64 = find_local(nm[0])
+            if slot < 0 {
+                perr("assignment to unknown variable".data)
+                slot = 0
+            }
+            n: i64 = mk(ND_ASSIGN)
+            @nd_a[n] = slot
+            @nd_b[n] = e
+            return n
+        }
+    }
+    ; Bare expression statement (e.g. a call).
+    e: i64 = parse_expr()
+    n: i64 = mk(ND_EXPR)
+    @nd_a[n] = e
+    return n
+}
+
+; Parse statements up to '}' into a linked list; return the head node (-1 empty).
+parse_block: () -> i64 {
+    head: i64 = -1
+    tail: i64 = -1
+    while 1 == 1 {
+        k: i64 = cur_kind()
+        if k == TK_RBRACE {
+            break
+        }
+        if k == TK_EOF {
+            break
+        }
+        s: i64 = parse_stmt()
+        if head < 0 {
+            head = s
+        } else {
+            @nd_next[tail] = s
+        }
+        tail = s
+        if err_flag != 0 {
+            break
+        }
+    }
+    return head
+}
+
+; Parse one `name: (params) -> type { body }` definition.
+parse_function: () {
+    if cur_kind() != TK_IDENT {
+        perr("expected function name".data)
+        return
+    }
+    fidx: i64 = nfn
+    copy16(fn_name[0] + (fidx as u64) * 16, cur_txt())
+    adv()
+    expect(TK_COLON, "expected : after function name".data)
+    expect(TK_LPAREN, "expected ( before params".data)
+    loc_count = 0
+    np: i64 = 0
+    if cur_kind() != TK_RPAREN {
+        while 1 == 1 {
+            if cur_kind() != TK_IDENT {
+                perr("expected parameter name".data)
+                break
+            }
+            pn: u8[24]
+            copy16(pn[0], cur_txt())
+            adv()
+            expect(TK_COLON, "expected : in parameter".data)
+            expect(TK_IDENT, "expected parameter type".data)
+            add_local(pn[0])
+            np = np + 1
+            if cur_kind() == TK_COMMA {
+                adv()
+            } else {
+                break
+            }
+        }
+    }
+    expect(TK_RPAREN, "expected ) after params".data)
+    expect(TK_ARROW, "expected ->".data)
+    expect(TK_IDENT, "expected return type".data)
+    expect(TK_LBRACE, "expected { before body".data)
+    head: i64 = parse_block()
+    expect(TK_RBRACE, "expected } after body".data)
+    @fn_nparams[fidx] = np
+    @fn_nlocals[fidx] = loc_count
+    @fn_body[fidx] = head
+    nfn = nfn + 1
+}
+
+parse_program: () {
+    pos = 0
+    nfn = 0
+    while cur_kind() != TK_EOF {
+        parse_function()
+        if err_flag != 0 {
+            return
+        }
+    }
+}
+
+; --- Code generation (naive stack machine) ---
+gen_binop: (op: i64) {
+    if op == TK_PLUS {
+        emit_str("  add a0, t0, a0\n  addiw a0, a0, 0\n".data)
+        return
+    }
+    if op == TK_MINUS {
+        emit_str("  sub a0, t0, a0\n  addiw a0, a0, 0\n".data)
+        return
+    }
+    if op == TK_STAR {
+        emit_str("  mul a0, t0, a0\n  addiw a0, a0, 0\n".data)
+        return
+    }
+    if op == TK_SLASH {
+        emit_str("  div a0, t0, a0\n  addiw a0, a0, 0\n".data)
+        return
+    }
+    if op == TK_PCT {
+        emit_str("  rem a0, t0, a0\n  addiw a0, a0, 0\n".data)
+        return
+    }
+    if op == TK_LT {
+        emit_str("  slt a0, t0, a0\n".data)
+        return
+    }
+    if op == TK_LE {
+        emit_str("  slt a0, a0, t0\n  xori a0, a0, 1\n".data)
+        return
+    }
+    if op == TK_GT {
+        emit_str("  slt a0, a0, t0\n".data)
+        return
+    }
+    if op == TK_GE {
+        emit_str("  slt a0, t0, a0\n  xori a0, a0, 1\n".data)
+        return
+    }
+    if op == TK_EQ {
+        emit_str("  sub a0, t0, a0\n  sltiu a0, a0, 1\n".data)
+        return
+    }
+    if op == TK_NE {
+        emit_str("  sub a0, t0, a0\n  sltu a0, zero, a0\n".data)
+        return
+    }
+}
+
+gen_call: (n: i64) {
+    start: i64 = @nd_b[n]
+    cnt: i64 = @nd_c[n]
+    ; Evaluate args left to right, pushing each result.
+    j: i64 = 0
+    while j < cnt {
+        gen_expr(@call_args[start + j])
+        emit_str("  addi sp, sp, -16\n  sd a0, 0(sp)\n".data)
+        j = j + 1
+    }
+    ; Pop into a0..a(cnt-1); the last pushed (top of stack) is the highest arg reg.
+    k: i64 = cnt - 1
+    while k >= 0 {
+        emit_str("  ld a".data)
+        emit_int(k)
+        emit_str(", 0(sp)\n  addi sp, sp, 16\n".data)
+        k = k - 1
+    }
+    emit_str("  call ".data)
+    emit_str(nd_name[0] + (n as u64) * 16)
+    emit_str("\n".data)
+}
+
+gen_expr: (n: i64) {
+    k: i64 = @nd_kind[n]
+    if k == ND_INT {
+        emit_str("  li a0, ".data)
+        emit_int(@nd_a[n])
+        emit_str("\n".data)
+        return
+    }
+    if k == ND_VAR {
+        emit_str("  ld a0, ".data)
+        emit_int(@nd_a[n] * 8)
+        emit_str("(fp)\n".data)
+        return
+    }
+    if k == ND_BINOP {
+        gen_expr(@nd_b[n])
+        emit_str("  addi sp, sp, -16\n  sd a0, 0(sp)\n".data)
+        gen_expr(@nd_c[n])
+        emit_str("  ld t0, 0(sp)\n  addi sp, sp, 16\n".data)
+        gen_binop(@nd_a[n])
+        return
+    }
+    if k == ND_CALL {
+        gen_call(n)
+        return
+    }
+}
+
+gen_block: (head: i64) {
+    h: i64 = head
+    while h >= 0 {
+        gen_stmt(h)
+        h = @nd_next[h]
+    }
+}
+
+gen_stmt: (n: i64) {
+    k: i64 = @nd_kind[n]
+    if k == ND_DECL {
+        gen_expr(@nd_b[n])
+        emit_str("  sd a0, ".data)
+        emit_int(@nd_a[n] * 8)
+        emit_str("(fp)\n".data)
+        return
+    }
+    if k == ND_ASSIGN {
+        gen_expr(@nd_b[n])
+        emit_str("  sd a0, ".data)
+        emit_int(@nd_a[n] * 8)
+        emit_str("(fp)\n".data)
+        return
+    }
+    if k == ND_RETURN {
+        gen_expr(@nd_a[n])
+        emit_str("  j Lret_".data)
+        emit_int(cur_fn)
+        emit_str("\n".data)
+        return
+    }
+    if k == ND_EXPR {
+        gen_expr(@nd_a[n])
+        return
+    }
+    if k == ND_IF {
+        gen_expr(@nd_a[n])
+        lend: i64 = nlabel
+        nlabel = nlabel + 1
+        emit_str("  beq a0, zero, L".data)
+        emit_int(lend)
+        emit_str("\n".data)
+        gen_block(@nd_b[n])
+        emit_str("L".data)
+        emit_int(lend)
+        emit_str(":\n".data)
+        return
+    }
+    if k == ND_WHILE {
+        ltop: i64 = nlabel
+        nlabel = nlabel + 1
+        lend: i64 = nlabel
+        nlabel = nlabel + 1
+        emit_str("L".data)
+        emit_int(ltop)
+        emit_str(":\n".data)
+        gen_expr(@nd_a[n])
+        emit_str("  beq a0, zero, L".data)
+        emit_int(lend)
+        emit_str("\n".data)
+        gen_block(@nd_b[n])
+        emit_str("  j L".data)
+        emit_int(ltop)
+        emit_str("\nL".data)
+        emit_int(lend)
+        emit_str(":\n".data)
+        return
+    }
+}
+
+; Emit one function. main becomes `_start` and exits (a7=93); others `ret`.
+gen_function: (fi: i64, is_main: i64) {
+    cur_fn = fi
+    nloc: i64 = @fn_nlocals[fi]
+    ; Frame: nloc 8-byte slots + saved ra/fp (16 bytes), rounded up to 16.
+    fixed: i64 = ((nloc * 8 + 16 + 15) / 16) * 16
+    if is_main == 1 {
+        emit_str("_start:\n".data)
+    } else {
+        emit_str(fn_name[0] + (fi as u64) * 16)
+        emit_str(":\n".data)
+    }
+    emit_str("  addi sp, sp, -".data)
+    emit_int(fixed)
+    emit_str("\n  sd ra, ".data)
+    emit_int(fixed - 8)
+    emit_str("(sp)\n  sd fp, ".data)
+    emit_int(fixed - 16)
+    emit_str("(sp)\n  addi fp, sp, 0\n".data)
+    ; Spill incoming args a0..a(np-1) into their local slots.
+    np: i64 = @fn_nparams[fi]
+    k: i64 = 0
+    while k < np {
+        emit_str("  sd a".data)
+        emit_int(k)
+        emit_str(", ".data)
+        emit_int(k * 8)
+        emit_str("(fp)\n".data)
+        k = k + 1
+    }
+    gen_block(@fn_body[fi])
+    ; Epilogue: discard temporaries, restore ra/fp, return or exit.
+    emit_str("Lret_".data)
+    emit_int(fi)
+    emit_str(":\n  addi sp, fp, 0\n  ld ra, ".data)
+    emit_int(fixed - 8)
+    emit_str("(sp)\n  ld fp, ".data)
+    emit_int(fixed - 16)
+    emit_str("(sp)\n  addi sp, sp, ".data)
+    emit_int(fixed)
+    emit_str("\n".data)
+    if is_main == 1 {
+        emit_str("  li a7, 93\n  ecall\n".data)
+    } else {
+        emit_str("  ret\n".data)
+    }
+}
+
+; The putc intrinsic, emitted as a callable helper: write(1, &ch, 1).
+emit_putc_helper: () {
+    emit_str("putc:\n  addi sp, sp, -16\n  sd a0, 0(sp)\n  li a0, 1\n".data)
+    emit_str("  addi a1, sp, 0\n  li a2, 1\n  li a7, 64\n  ecall\n".data)
+    emit_str("  addi sp, sp, 16\n  ret\n".data)
+}
+
+gen_program: () {
+    emit_str(".text\n.globl _start\n".data)
+    mi: i64 = -1
+    fi: i64 = 0
+    while fi < nfn {
+        p: u8* = fn_name[0] + (fi as u64) * 16
+        if cstr_eq(p, "main".data) == 1 {
+            mi = fi
+        }
+        fi = fi + 1
+    }
+    if mi < 0 {
+        perr("no main function".data)
+        return
+    }
+    gen_function(mi, 1)
+    fi = 0
+    while fi < nfn {
+        if fi != mi {
+            gen_function(fi, 0)
+        }
+        fi = fi + 1
+    }
+    if putc_used == 1 {
+        emit_putc_helper()
+    }
+}
+
+; Split the argument "src out" at the first space into two path buffers.
+split_arg: (arg: u8*, src_path: u8*, out_path: u8*) -> i64 {
+    i: u64 = 0
+    while @(arg + i) != 0 {
+        if @(arg + i) == ' ' {
+            break
+        }
+        d: u8* = src_path + i
+        @d = @(arg + i)
+        i = i + 1
+    }
+    st: u8* = src_path + i
+    @st = 0 as u8
+    if @(arg + i) == 0 {
+        return 0
+    }
+    while @(arg + i) == ' ' {
+        i = i + 1
+    }
+    if @(arg + i) == 0 {
+        return 0
+    }
+    k: u64 = 0
+    while @(arg + i) != 0 {
+        d: u8* = out_path + k
+        @d = @(arg + i)
+        i = i + 1
+        k = k + 1
+    }
+    ot: u8* = out_path + k
+    @ot = 0 as u8
+    return 1
+}
+
+main: () -> i32 {
+    arg: u8* = ARG_BASE as u8*
+    src_path: u8[128]
+    out_path: u8[128]
+    src_pp: u8* = src_path[0]
+    out_pp: u8* = out_path[0]
+    if split_arg(arg, src_pp, out_pp) == 0 {
+        console_writeln("cc: usage: cc <src.hll> <out.s>".data)
+        return 1
+    }
+
+    fd: i64 = sc_open(src_pp, 0)
+    if fd < 0 {
+        console_write("cc: cannot open ".data)
+        console_writeln(src_pp)
+        return 1
+    }
+    n: i64 = sc_read(fd, src[0], 0, 8191)
+    sc_close(fd)
+    if n <= 0 {
+        console_writeln("cc: empty source".data)
+        return 1
+    }
+    src_len = n as u64
+    @src[src_len] = 0 as u8
+
+    err_flag = 0
+    nnode = 0
+    ncallarg = 0
+    nlabel = 0
+    putc_used = 0
+    asmlen = 0
+    tokenize()
+    parse_program()
+    if err_flag != 0 {
+        return 1
+    }
+    gen_program()
+    if err_flag != 0 {
+        return 1
+    }
+
+    ofd: i64 = sc_open(out_pp, 2)
+    if ofd < 0 {
+        console_write("cc: cannot create ".data)
+        console_writeln(out_pp)
+        return 1
+    }
+    sc_write(ofd, asmout[0], asmlen)
+    sc_ftruncate(ofd, asmlen)
+    sc_close(ofd)
+
+    console_write("cc: wrote ".data)
+    console_writeln(out_pp)
+    return 0
+}

@@ -180,16 +180,16 @@ poll_input: () {
         if ((ev as u64) & 0x10000) != 0 {
             down = 1
         }
-        if sc == 87 {
+        if sc == 'W' {
             hold_w = down
         }
-        if sc == 65 {
+        if sc == 'A' {
             hold_a = down
         }
-        if sc == 83 {
+        if sc == 'S' {
             hold_s = down
         }
-        if sc == 68 {
+        if sc == 'D' {
             hold_d = down
         }
     }

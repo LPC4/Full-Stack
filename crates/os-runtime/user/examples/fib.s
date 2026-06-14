@@ -1,7 +1,7 @@
 # Compute the 11th Fibonacci number iteratively and exit with it (89).
 # Assemble and run from the shell:
-#   as /home/fib.s /home/fib.fexe
-#   run /home/fib.fexe
+#   as /home/fib.s /home/fib.elf
+#   run /home/fib.elf
 # Uses only the in-VM assembler subset: li, add, mv, addi, beq, j, ecall.
 
   li t0, 0        # a = fib(0)

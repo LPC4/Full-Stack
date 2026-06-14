@@ -25,7 +25,7 @@ console_write: (str: u8*) {
 
 console_writeln: (str: u8*) {
     console_write(str)
-    console_putchar(10)
+    console_putchar('\n')
 }
 
 console_print_int_rec: (n: i64) {
@@ -33,16 +33,16 @@ console_print_int_rec: (n: i64) {
         return
     }
     console_print_int_rec(n / 10)
-    console_putchar((n % 10) as i32 + 48)
+    console_putchar((n % 10) as i32 + '0')
 }
 
 console_print_int: (n: i64) {
     if n == 0 {
-        console_putchar(48)
+        console_putchar('0')
         return
     }
     if n < 0 {
-        console_putchar(45)
+        console_putchar('-')
         console_print_int_rec(-n)
     } else {
         console_print_int_rec(n)
@@ -58,13 +58,13 @@ console_print_hex: (n: u64) {
         nibble: u64 = v % 16
         v = v / 16
         if nibble < 10 {
-            buf[i] = (nibble as i32 + 48) as u8
+            buf[i] = (nibble as i32 + '0') as u8
         } else {
-            buf[i] = (nibble as i32 - 10 + 97) as u8
+            buf[i] = (nibble as i32 - 10 + 'a') as u8
         }
     }
-    console_putchar(48)
-    console_putchar(120)
+    console_putchar('0')
+    console_putchar('x')
     buf_ptr: u8* = buf[0]
     j: u64 = 0
     while j < 16 {

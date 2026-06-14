@@ -49,8 +49,8 @@ $ ls
 /home
 $ cd home
 $ edit sum.s          ; line editor: append, insert, substitute, delete, write
-$ as sum.s sum.fexe   ; assemble inside the VM -> a runnable FEXE
-$ run sum.fexe        ; exec it as a child process; the shell reaps it
+$ as sum.s sum.elf   ; assemble inside the VM -> a runnable ELF
+$ run sum.elf        ; exec it as a child process; the shell reaps it
 [exit 28]
 $ run /bin/cube       ; spinning wireframe cube in the framebuffer tab (WASD to rotate)
 $ run /bin/fbdemo     ; Mandelbrot set rendered to the framebuffer
@@ -79,7 +79,7 @@ image. Nothing about them is privileged, they reach the kernel only through `eca
   an S-mode paging kernel with a round-robin scheduler, an inode-based read-write
   filesystem, and a shell with an in-VM editor and assembler.
 - **Self-hosting in the guest**: `/bin/as` is a userspace assembler that turns a `.s`
-  file into a runnable FEXE entirely inside the VM, closing the source-to-binary loop
+  file into a runnable ELF entirely inside the VM, closing the source-to-binary loop
   without the host toolchain.
 - **Every stage visualised**: tokens, AST, IR, assembly, CFG, memory map, cache
   state, disassembly, stack, registers, and a cycle-stepping debugger showing the

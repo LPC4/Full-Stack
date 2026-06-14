@@ -93,6 +93,10 @@ Heap allocation rules:
 String literals: `"text"` evaluates to a compile-time inline struct `{ data: u8*, length: u64 }`
 equivalent to `Str`, so `s: Str = "hello"` is valid with no wrapper call.
 
+Character literals: `'c'` is an integer literal equal to the ascii byte of `c` (default
+type `i32`, like any integer literal), so `putc('A')` and `putc(65)` are identical. Escapes
+`\n \t \r \b \0 \\ \' \"` are recognized; the body must be exactly one ascii character.
+
 Initialization rules: stack variables must be initialized unless declared as an
 uninitialized buffer, and reading an uninitialized stack variable is a compile-time error.
 
@@ -668,41 +672,73 @@ across FFI boundaries.
 - Lifetime ranges are tracked for stack and heap regions.
 - Optimized builds maintain semantic equivalence with a source-level mapping.
 
-## Appendix A: Safety semantics (platform-defined behavior)
+## Appendix D: HLL-0 (the self-hosting subset)
 
-The following behaviors are intentionally not enforced by the compiler; they defer to
-RISC-V hardware traps or the platform ABI.
+HLL-0 is the deliberately tiny subset the in-VM compiler `cc` (PLAN 1.2) accepts. It is
+*not* a separate language: every HLL-0 program is also a valid HLL program except for the
+one I/O intrinsic below. The point is to make a naive, self-hostable compiler tractable, so
+HLL-0 drops everything that needs a type checker or heap: there is one numeric type, no
+pointers, structs, arrays, floats, casts, `defer`, or inline `asm`.
 
-| Scenario | Behavior |
-|----------|----------|
-| Integer overflow | Wraps modulo 2^N (two's complement) |
-| Division by zero | Hardware trap (SIGFPE on hosted; synchronous exception in kernel mode) |
-| Dynamic array out-of-bounds | No runtime check; memory corruption or hardware trap |
-| Null pointer dereference | Hardware page fault or trap |
+### D.1 Types
 
-These are not compiler bugs. Use explicit range checks and null guards in application code.
+Only `i32`. Every local, parameter, and return value is `i32`; arithmetic wraps modulo 2^32
+(two's complement). There is no `bool`: comparisons yield `i32` `0`/`1`, and `if`/`while`
+conditions test "non-zero".
 
-## Appendix B: Migration guide (v1.4.3 to v1.5.0)
+### D.2 Program shape
 
-| Old syntax | New syntax | Notes |
-|------------|-----------|-------|
-| `new([N]T)` | `new(T, N)` | Count is now the second argument; the result type is `T*`, not `T[N]*` |
-| `@x as T` | `(@x) as T` | Outer parens required: `as` binds tighter than `@` |
-| `-> ()` | (omit) | Void return: drop the `-> ()` clause entirely |
-| `Type(expr)` | `expr as Type` | Postfix cast is preferred; the prefix form is still accepted |
-| `;` as statement terminator | (newline) | Semicolon has always been a comment; no change needed |
-| `make_str("text")` | `"text"` | String literals are already `Str`-compatible inline structs |
+A program is a list of function definitions. Execution starts at `main: () -> i32`; the
+`i32` it returns becomes the process exit code. Functions take zero or more `i32`
+parameters and return `i32`.
 
-## Appendix C: Implementation checklist
+```hll
+name: (p0: i32, p1: i32) -> i32 {
+    ; statements
+}
+```
 
-1. Pointer typing: `T*` is strictly a pointer; never auto-dereference.
-2. Dereference syntax: all value access requires `@`, as in `@ptr.field`, `@arr[i]`, `@ptr`.
-3. Address syntax: `&` applies only to stack variables and array elements.
-4. Indexing: `arr[i]` evaluates to `T*`; read or write requires `@arr[i]`.
-5. Mutability: parameters are immutable copies; use `T*` and `&` for mutation.
-6. Resource lifecycle: `new()` requires `free()` or `defer free()`. No GC.
-7. Error flow: functions return `{ value, error }` structs; handle them explicitly.
-8. Precedence: parenthesize ambiguous expressions; the compiler rejects ambiguous
-   precedence rather than inferring it.
-9. FFI boundaries: document ownership transfer; compiler safety does not cross language
-   boundaries.
+### D.3 Statements
+
+| Statement | Form |
+|-----------|------|
+| Local declaration | `name: i32 = expr` |
+| Assignment | `name = expr` |
+| Conditional | `if expr { ... }` (no `else` in HLL-0) |
+| Loop | `while expr { ... }` |
+| Return | `return expr` |
+| Expression statement | a bare call, e.g. `putc(10)` |
+
+`break`/`continue`/`defer` are out of HLL-0 scope.
+
+### D.4 Expressions
+
+Integer and `'c'` char literals, parameter/local identifiers, function calls `f(a, b)`, the
+binary operators `+ - * / %`, and the comparisons `< <= > >= == !=`. Comparisons produce
+`0`/`1`. A char literal is its ascii byte (escapes `\n \t \r \0` recognized), so `putc('A')`
+equals `putc(65)`. Operator precedence follows §9.3 (multiplicative above additive above
+comparison); parenthesize anything ambiguous.
+
+### D.5 I/O intrinsic
+
+`putc(ch: i32)` writes the low byte of `ch` to file descriptor 1. It is the only intrinsic;
+`cc` lowers it to a `write(1, &ch, 1)` ecall (a7=64) rather than a real call. All other
+output is built from `putc`. Process exit is `main`'s return value, lowered to an exit ecall
+(a7=93). This is the whole "ecall-based I/O" surface of HLL-0.
+
+### D.6 Codegen target
+
+`cc` emits naive stack-machine RISC-V in the subset the in-VM assembler `/bin/as` covers
+(PLAN §1.1): every local occupies a stack slot, operands are reloaded before each use,
+arguments pass in `a0..a7`, and each function keeps `ra` in its frame across calls. The
+frozen reference pair is `user/examples/hello.hll` (source) and `user/examples/hello.s`
+(the exact assembly `cc` must produce). `hello.hll` spells `putc` out as an inline-asm
+function so the source also compiles and runs on the host toolchain;
+`kernel_cc_target_roundtrips` runs the host-compiled source and the `/bin/as`-assembled
+hand-written target side by side and checks they behave identically.
+
+The in-VM compiler now exists: `user/cc.hll` (installed at `/bin/cc.elf`, OS spec 10.4)
+parses this subset and emits the stack-machine assembly described here. Because cc treats
+`putc` as the built-in I/O intrinsic and emits the helper itself, its input omits the
+inline-asm `putc` definition (`user/examples/cc_demo.hll` is the pure-HLL-0 sample);
+`kernel_cc_compiles_and_runs` exercises the full in-VM `cc` -> `as` -> run toolchain.

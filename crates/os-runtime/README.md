@@ -87,7 +87,7 @@ support the interactive shell.
 | 100 | readchar | read one UART byte (-1 if none pending) |
 | 101 | readdir | list a directory entry by index |
 | 102 | stat | inode type at a path |
-| 103 | exec | load and run an `FEXE` executable from the filesystem |
+| 103 | exec | load and run an `ELF` executable from the filesystem |
 | 104 | pidalive | 1 while a launched pid is still runnable |
 | 105 / 106 | unlink / rmdir | remove a file / remove an empty directory |
 | 107 | map_fb | map the framebuffer device into the caller; returns its base VA |
@@ -106,21 +106,26 @@ it. The shell uses `exec` + `pidalive` to run a child and wait for it cooperativ
   `edit <file>`, `as <src> <out>`, `run <file>`, `touch <file>`, `mkdir <dir>`,
   `rm <file>`, `rmdir <dir>`, `mv <old> <new>`, `help`, `exit`. A foreground child runs
   via `exec` + `wait`: the shell reaps it, prints `[exit N]`, and returns to the prompt;
-  Ctrl-C tears the child down. Executable files use the `.fexe` extension; `run` verifies
-  the `FEXE` magic before launching.
+  Ctrl-C tears the child down. Executable files use the `.elf` extension; `run` verifies
+  the `ELF` magic before launching.
 - `edit.hll` -- an `ed`-style line editor launched by the shell's `edit` built-in. It loads
   a file into a line array and accepts line commands over the UART (`p` print, `N` goto,
   `a`/`i` append/insert, `d` delete, `c` clear, `r` replace, `s/old/new/` substitute,
   `w`/`q`). Line-oriented because the GUI terminal renders no ANSI or cursor codes.
-- `as.hll` -- a userspace assembler installed at `/bin/as.fexe`, launched by the shell's
+- `as.hll` -- a userspace assembler installed at `/bin/as.elf`, launched by the shell's
   `as` built-in. It reads a `.s` file, two-pass assembles a small RV64I subset, and writes
-  a runnable FEXE -- closing the self-hosting loop entirely inside the VM. See the OS
+  a runnable ELF -- closing the self-hosting loop entirely inside the VM. See the OS
   specification (9.2.2) for the supported instructions.
+- `cc.hll` -- a userspace HLL-0 compiler installed at `/bin/cc.elf`, launched by the shell's
+  `cc` built-in. It reads an `.hll` file, parses the HLL-0 subset (lang spec Appendix D)
+  into a flat node array, and emits naive stack-machine assembly in the `as` subset, so
+  `cc foo.hll foo.s && as foo.s foo.elf && foo` builds and runs a program with a toolchain
+  that itself runs inside the VM. See the OS specification (10.4).
 - `cube.hll` -- maps the framebuffer via `map_fb` and animates a spinning wireframe cube in
-  native `f64`, double-buffered so it never flickers. Installed at `/bin/cube.fexe`; reads
+  native `f64`, double-buffered so it never flickers. Installed at `/bin/cube.elf`; reads
   WASD key events through `poll_key` to steer the rotation.
 - `fbdemo.hll` -- maps the framebuffer and renders a Mandelbrot set in native `f64`, then
-  exits. Installed at `/bin/fbdemo.fexe`; `run /bin/fbdemo` paints the FB tab, filling in
+  exits. Installed at `/bin/fbdemo.elf`; `run /bin/fbdemo` paints the FB tab, filling in
   progressively as it renders.
 
 ## Image injection

@@ -2,8 +2,8 @@
 # Showcases the expanded in-VM assembler subset (PLAN 1.1): a stack frame,
 # sd/ld with offset(reg) addressing, slli index scaling, and a bge-controlled
 # loop. Assemble and run from the shell:
-#   as /home/src/array.s /home/array.fexe
-#   run /home/array.fexe          # exits with 42
+#   as /home/src/array.s /home/array.elf
+#   run /home/array.elf          # exits with 42
 
   addi sp, sp, -64        # reserve five i64 slots (16-byte aligned)
   li t0, 3

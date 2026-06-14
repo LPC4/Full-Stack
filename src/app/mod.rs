@@ -10,7 +10,7 @@ use egui::Color32;
 use egui_dock::{DockState, NodeIndex};
 use full_stack::compilation_pipeline::{
     AsmOutput, BinaryOutput, CompilationPipeline, FsEntry, IrOutput, PipelineResult, TargetMode,
-    assembled_to_exec_file, build_fs_image,
+    assembled_to_elf_file, build_fs_image,
 };
 use full_stack::target_mode::infer_target_mode_for_source;
 use full_stack::view::debug::DebugSession;
@@ -289,6 +289,8 @@ pub struct FullStackApp {
     #[serde(skip)]
     as_binary: Option<AssembledOutput>,
     #[serde(skip)]
+    cc_binary: Option<AssembledOutput>,
+    #[serde(skip)]
     vm_output_view_id: u64,
     settings: AppSettings,
     #[serde(skip)]
@@ -335,6 +337,7 @@ impl Default for FullStackApp {
             cube_binary: None,
             life_binary: None,
             as_binary: None,
+            cc_binary: None,
             vm_output_view_id: 0,
             settings: AppSettings::default(),
             show_settings: false,
@@ -884,7 +887,7 @@ impl FullStackApp {
     }
 
     /// Compile the bundled line editor as a hosted binary, caching the result
-    /// so repeated boots reuse it. Installed at `/bin/edit.fexe` by the boot image
+    /// so repeated boots reuse it. Installed at `/bin/edit.elf` by the boot image
     /// builder so the shell's `edit` command can exec it.
     fn ensure_edit_binary(&mut self) -> Result<(), String> {
         if self.edit_binary.is_some() {
@@ -1010,7 +1013,7 @@ impl FullStackApp {
     }
 
     /// Compile the bundled in-VM assembler as a hosted binary, caching it.
-    /// Installed at `/bin/as.fexe` so the shell's `as <src> <out>` command works.
+    /// Installed at `/bin/as.elf` so the shell's `as <src> <out>` command works.
     fn ensure_as_binary(&mut self) -> Result<(), String> {
         if self.as_binary.is_some() {
             return Ok(());
@@ -1041,6 +1044,38 @@ impl FullStackApp {
         }
     }
 
+    /// Compile the bundled in-VM HLL-0 compiler as a hosted binary, caching it.
+    /// Installed at `/bin/cc.elf` so the shell's `cc <src.hll> <out.s>` works.
+    fn ensure_cc_binary(&mut self) -> Result<(), String> {
+        if self.cc_binary.is_some() {
+            return Ok(());
+        }
+        let mut pipeline = CompilationPipeline::new();
+        pipeline.set_target_mode(TargetMode::Hosted);
+        pipeline.set_write_artifacts(false);
+        pipeline.set_type_prelude(get_stdlib_type_prelude());
+
+        let source = format!(
+            "{}\n{}",
+            get_stdlib_source_for_mode(TargetMode::Hosted),
+            os_runtime::user::CC
+        );
+        let result = pipeline.run_full(&source, None);
+        if result.has_errors() {
+            return Err(result.format_diagnostics());
+        }
+        if let Some(ref asm_err) = result.assembler_error {
+            return Err(format!("assembler error: {asm_err}"));
+        }
+        match result.binary.as_ref() {
+            Some(bin) => {
+                self.cc_binary = Some(bin.assembled.clone());
+                Ok(())
+            }
+            None => Err("compiler produced no binary".to_owned()),
+        }
+    }
+
     /// Build the filesystem image the shell boots with: a `/home` directory and,
     /// if a program is selected for injection, that program stored there as a
     /// runnable executable file. A short readme is always present so `ls` has
@@ -1048,57 +1083,68 @@ impl FullStackApp {
     fn build_boot_fs_image(&self) -> Vec<u8> {
         let mut entries = boot_fs_static_entries();
 
-        // Install the line editor at /bin/edit.fexe so the shell's `edit` command
+        // Install the line editor at /bin/edit.elf so the shell's `edit` command
         // can exec it. Without this the editor is compiled but never reachable.
         let edit_holder;
         if let Some(asm) = self.edit_binary.as_ref() {
-            edit_holder = assembled_to_exec_file(asm);
+            edit_holder = assembled_to_elf_file(asm);
             entries.push(FsEntry::File {
-                path: "/bin/edit.fexe",
+                path: "/bin/edit.elf",
                 data: &edit_holder,
             });
         }
 
-        // Install the Mandelbrot framebuffer demo at /home/demo/mandelbrot.fexe so
+        // Install the Mandelbrot framebuffer demo at /home/demo/mandelbrot.elf so
         // a bare `mandelbrot` paints the framebuffer device.
         let fbdemo_holder;
         if let Some(asm) = self.fbdemo_binary.as_ref() {
-            fbdemo_holder = assembled_to_exec_file(asm);
+            fbdemo_holder = assembled_to_elf_file(asm);
             entries.push(FsEntry::File {
-                path: "/home/demo/mandelbrot.fexe",
+                path: "/home/demo/mandelbrot.elf",
                 data: &fbdemo_holder,
             });
         }
 
-        // Install the spinning-cube demo at /home/demo/cube.fexe so a bare `cube`
+        // Install the spinning-cube demo at /home/demo/cube.elf so a bare `cube`
         // animates a rotating wireframe on the framebuffer device.
         let cube_holder;
         if let Some(asm) = self.cube_binary.as_ref() {
-            cube_holder = assembled_to_exec_file(asm);
+            cube_holder = assembled_to_elf_file(asm);
             entries.push(FsEntry::File {
-                path: "/home/demo/cube.fexe",
+                path: "/home/demo/cube.elf",
                 data: &cube_holder,
             });
         }
 
-        // Install Conway's Game of Life at /home/demo/life.fexe so a bare `life`
+        // Install Conway's Game of Life at /home/demo/life.elf so a bare `life`
         // animates a cellular automaton on the framebuffer device.
         let life_holder;
         if let Some(asm) = self.life_binary.as_ref() {
-            life_holder = assembled_to_exec_file(asm);
+            life_holder = assembled_to_elf_file(asm);
             entries.push(FsEntry::File {
-                path: "/home/demo/life.fexe",
+                path: "/home/demo/life.elf",
                 data: &life_holder,
             });
         }
 
-        // Install the in-VM assembler at /bin/as.fexe so `as <src> <out>` works.
+        // Install the in-VM assembler at /bin/as.elf so `as <src> <out>` works.
         let as_holder;
         if let Some(asm) = self.as_binary.as_ref() {
-            as_holder = assembled_to_exec_file(asm);
+            as_holder = assembled_to_elf_file(asm);
             entries.push(FsEntry::File {
-                path: "/bin/as.fexe",
+                path: "/bin/as.elf",
                 data: &as_holder,
+            });
+        }
+
+        // Install the in-VM HLL-0 compiler at /bin/cc.elf so `cc <src.hll> <out.s>`
+        // works, completing the self-hosting toolchain alongside `as`.
+        let cc_holder;
+        if let Some(asm) = self.cc_binary.as_ref() {
+            cc_holder = assembled_to_elf_file(asm);
+            entries.push(FsEntry::File {
+                path: "/bin/cc.elf",
+                data: &cc_holder,
             });
         }
 
@@ -1113,8 +1159,8 @@ impl FullStackApp {
                 .find(|p| p.id == self.selected_inject_program_id)
                 .map(|p| sanitize_program_filename(&p.name))
                 .unwrap_or_else(|| "program".to_owned());
-            path_holder = format!("/home/{name}.fexe");
-            exec_holder = assembled_to_exec_file(asm);
+            path_holder = format!("/home/{name}.elf");
+            exec_holder = assembled_to_elf_file(asm);
             entries.push(FsEntry::File {
                 path: &path_holder,
                 data: &exec_holder,
@@ -1314,6 +1360,11 @@ impl eframe::App for FullStackApp {
                             self.compilation_state
                                 .set_error(format!("assembler compile failed: {e}"));
                         }
+                        // Best-effort: install the in-VM compiler for `cc <src.hll> <out.s>`.
+                        if let Err(e) = self.ensure_cc_binary() {
+                            self.compilation_state
+                                .set_error(format!("compiler compile failed: {e}"));
+                        }
                         let fs_image = self.build_boot_fs_image();
                         let shell = self.shell_binary.clone();
                         // The shell idles waiting for keystrokes; give it a large
@@ -1332,7 +1383,7 @@ impl eframe::App for FullStackApp {
                                 .find(|p| p.id == self.selected_inject_program_id)
                                 .map(|p| sanitize_program_filename(&p.name))
                                 .unwrap_or_else(|| "program".to_owned());
-                            Some(format!("run /home/{name}.fexe"))
+                            Some(format!("run /home/{name}.elf"))
                         } else {
                             None
                         };
@@ -1446,8 +1497,9 @@ Add '&' to run in the background; jobs / fg <job> / kill <pid> manage jobs.\n\
 \n\
 Send output to a file:  echo hi > note.txt   cat a b >> log.txt\n\
 Pipe programs:          cat a | filter      (up to 4 stages)\n\
-Assemble:  as /home/src/fib.s /home/fib.fexe  then run it with  fib\n\
-Examples in /home/src: sum.s fib.s array.s (array.s sums a stack array -> 42)\n";
+Assemble:  as /home/src/fib.s /home/fib.elf  then run it with  fib\n\
+Compile:   cc /home/src/hello.hll /home/hello.s  then  as  it and run it\n\
+Examples in /home/src: hello.hll sum.s fib.s array.s (array.s sums to 42)\n";
 
     vec![
         FsEntry::Dir { path: "/bin" },
@@ -1470,6 +1522,11 @@ Examples in /home/src: sum.s fib.s array.s (array.s sums a stack array -> 42)\n"
         FsEntry::File {
             path: "/home/src/array.s",
             data: os_runtime::user::EXAMPLE_ARRAY_S.as_bytes(),
+        },
+        // Pure HLL-0 source so `cc` can be tried immediately.
+        FsEntry::File {
+            path: "/home/src/hello.hll",
+            data: os_runtime::user::CC_DEMO_HLL.as_bytes(),
         },
     ]
 }

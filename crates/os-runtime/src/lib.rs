@@ -183,21 +183,27 @@ pub mod user {
     pub const EDIT: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/user/edit.hll"));
 
     /// Framebuffer demo: maps the framebuffer and renders a Mandelbrot set.
-    /// Installed at `/home/demo/mandelbrot.fexe`.
+    /// Installed at `/home/demo/mandelbrot.elf`.
     pub const FBDEMO: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/user/fbdemo.hll"));
 
     /// Spinning 3D wireframe cube demo: maps the framebuffer and animates a
-    /// rotating cube. Installed at `/home/demo/cube.fexe`.
+    /// rotating cube. Installed at `/home/demo/cube.elf`.
     pub const CUBE: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/user/cube.hll"));
 
     /// Conway's Game of Life demo: a toroidal grid animated on the framebuffer
-    /// with P/R/space keyboard control. Installed at `/home/demo/life.fexe`.
+    /// with P/R/space keyboard control. Installed at `/home/demo/life.elf`.
     pub const LIFE: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/user/life.hll"));
 
     /// Minimal in-VM RV64I assembler. Reads a `.s` file, assembles a small
-    /// instruction subset, and writes a runnable FEXE. Installed at `/bin/as.fexe`
+    /// instruction subset, and writes a runnable ELF. Installed at `/bin/as.elf`
     /// and launched by the shell's `as <src> <out>` command.
     pub const AS: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/user/as.hll"));
+
+    /// Minimal in-VM HLL-0 compiler (PLAN 1.2). Reads an `.hll` source, parses the
+    /// HLL-0 subset, and writes naive stack-machine assembly in the `/bin/as`
+    /// subset. Installed at `/bin/cc.elf` and launched by the shell's
+    /// `cc <src.hll> <out.s>` command; pairs with `as` for the self-hosting demo.
+    pub const CC: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/user/cc.hll"));
 
     /// Example assembly source: sum 1..10, exit with the total (55). Installed at
     /// `/home/src/sum.s` so `as` can be tried out of the box.
@@ -215,5 +221,24 @@ pub mod user {
     pub const EXAMPLE_ARRAY_S: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/user/examples/array.s"
+    ));
+
+    /// HLL-0 reference source for the in-VM `cc` (PLAN 1.2 Phase A); host-compilable.
+    pub const CC_HELLO_HLL: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/user/examples/hello.hll"
+    ));
+
+    /// The assembly `cc` must emit for `CC_HELLO_HLL`; the frozen codegen target.
+    pub const CC_HELLO_S: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/user/examples/hello.s"
+    ));
+
+    /// Pure HLL-0 sample for the in-VM `cc` (no inline-asm putc, so it is meant
+    /// for `cc`, not the host). Installed at `/home/src/hello.hll`.
+    pub const CC_DEMO_HLL: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/user/examples/cc_demo.hll"
     ));
 }

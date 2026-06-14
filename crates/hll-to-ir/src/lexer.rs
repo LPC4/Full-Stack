@@ -153,6 +153,7 @@ impl<'a> Lexer<'a> {
 
             // Literals & Keywords
             '"' => self.read_string(start),
+            '\'' => self.read_char(),
             '0'..='9' => self.read_number(start),
             'a'..='z' | 'A'..='Z' | '_' => self.read_identifier(start),
 
@@ -276,6 +277,50 @@ impl<'a> Lexer<'a> {
         // Extract the string content (including quotes)
         let text = &self.input[start..self.pos];
         Token::String(text)
+    }
+
+    // Read a `'c'` literal (opening quote already consumed) into its ascii byte.
+    // Supports the common escapes; rejects empty, multi-char, and non-ascii.
+    fn read_char(&mut self) -> Token<'a> {
+        let value = match self.chars.next() {
+            Some('\\') => {
+                self.pos += 1;
+                match self.chars.next() {
+                    Some(e) => {
+                        self.pos += e.len_utf8();
+                        match e {
+                            'n' => b'\n',
+                            't' => b'\t',
+                            'r' => b'\r',
+                            'b' => 8,
+                            '0' => 0,
+                            '\\' => b'\\',
+                            '\'' => b'\'',
+                            '"' => b'"',
+                            _ => return Token::Error(format!("unknown char escape: \\{}", e)),
+                        }
+                    }
+                    None => return Token::Error("unterminated char literal".to_owned()),
+                }
+            }
+            Some('\'') => return Token::Error("empty char literal".to_owned()),
+            Some(c) if c.is_ascii() => {
+                self.pos += c.len_utf8();
+                c as u8
+            }
+            Some(c) => {
+                self.pos += c.len_utf8();
+                return Token::Error(format!("non-ascii char literal: {}", c));
+            }
+            None => return Token::Error("unterminated char literal".to_owned()),
+        };
+        match self.chars.next() {
+            Some('\'') => {
+                self.pos += 1;
+                Token::Char(value)
+            }
+            _ => Token::Error("unterminated or multi-character char literal".to_owned()),
+        }
     }
 
     fn skip_whitespace_except_newline(&mut self) {
@@ -482,6 +527,18 @@ mod tests {
         let mut lexer = Lexer::new("|");
         // Single | is now the bitwise OR operator (Token::Pipe)
         assert_eq!(lexer.next_token(), Token::Pipe);
+    }
+
+    #[test]
+    fn test_char_literals() {
+        let input = "'A' '0' '\\n' '\\'' '\\\\'";
+        let mut lexer = Lexer::new(input);
+        assert_eq!(lexer.next_token(), Token::Char(65));
+        assert_eq!(lexer.next_token(), Token::Char(48));
+        assert_eq!(lexer.next_token(), Token::Char(10));
+        assert_eq!(lexer.next_token(), Token::Char(39));
+        assert_eq!(lexer.next_token(), Token::Char(92));
+        assert_eq!(lexer.next_token(), Token::Eof);
     }
 
     #[test]

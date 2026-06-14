@@ -324,7 +324,7 @@ impl MachineWindow {
                 }
 
                 // Auto-run: once the shell has printed its ready banner it is in its
-                // read loop, so feed the queued command (e.g. `run /home/foo.fexe`)
+                // read loop, so feed the queued command (e.g. `run /home/foo.elf`)
                 // into the UART as if the user had typed it. Keying off the banner
                 // rather than a step count makes this robust to VM speed.
                 if let Some(bytes) = &autoinject_bytes {

@@ -207,9 +207,8 @@ sc_exec: (path: u8*) -> i64 {
     return sc_exec_arg(path, 0 as u8*)
 }
 
-; Exec with stdout/stdin redirected to FS files (syscall 110). out_path/in_path
-; may be null; out_append != 0 appends (`>>`) instead of truncating (`>`). The
-; child's fd 1 / fd 0 then route to those files. Returns the new pid or -1.
+; Exec with stdout/stdin redirected to FS files (syscall 110). out_path/in_path may
+; be null; out_append != 0 appends (`>>`) else truncates (`>`). Returns pid or -1.
 sc_exec_redir: (path: u8*, arg: u8*, out_path: u8*, in_path: u8*, out_append: u64) -> i64 {
     _a0 = path as u64
     _a1 = arg as u64

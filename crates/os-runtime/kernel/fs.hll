@@ -51,7 +51,7 @@ const FS_FDE_FLAGS = 16
 const FS_FDE_POS   = 24
 
 ; Path separator '/' and string terminator.
-const FS_SLASH = 47
+const FS_SLASH = '/'
 
 ; --- Externals ---
 

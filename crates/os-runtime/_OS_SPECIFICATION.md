@@ -45,7 +45,7 @@ comments cite the chapter rather than repeating its content.
 | `kernel/fs.hll` | Inode filesystem | 8 |
 | `kernel/utilities.hll`, `checks.hll` | HAL primitives, boot diagnostics | 3, 9 |
 | `stdlib/common/`, `freestanding/`, `hosted/` | Standard-library bundles | 9 |
-| `user/shell.hll`, `edit.hll`, `as.hll`, `cube.hll`, `fbdemo.hll`, `life.hll` | Userspace programs | 10 |
+| `user/shell.hll`, `edit.hll`, `as.hll`, `cc.hll`, `cube.hll`, `fbdemo.hll`, `life.hll` | Userspace programs | 10 |
 
 ### 1.2 Layered model
 
@@ -230,7 +230,7 @@ even for compute-bound processes that never yield.
 
 `fork` (syscall 220) allocates a child PCB and root, copies the parent's user pages
 (`vmm_fork_copy`) and trap frame, sets the child's `a0` to 0, and enqueues it.
-`exec` (syscall 103) loads an FEXE (7.4) into a fresh per-process root at
+`exec` (syscall 103) loads a static ELF (7.4) into a fresh per-process root at
 `0x4000_0000`, parents the child to its launcher (captured before the root
 switches), and enqueues it. `process_peek_pid` reports the next pid to be assigned.
 
@@ -318,7 +318,7 @@ helpers that programs link against.
 | `100` | `readchar` | -- | byte (0-255) | Read one UART byte; **blocks** (sleeps the caller, arming the RX interrupt) until one arrives (6.4) |
 | `101` | `readdir` | `a0=path*`, `a1=index`, `a2=name*` | type or -1 | Look up the index-th dir entry; writes its name |
 | `102` | `stat` | `a0=path*` | type or -1 | Inode type at a path (1=file, 2=dir) |
-| `103` | `exec` | `a0=path*` | pid or -1 | Load an FEXE and enqueue it (5.5, 7.4) |
+| `103` | `exec` | `a0=path*` | pid or -1 | Load a static ELF and enqueue it (5.5, 7.4) |
 | `104` | `pidalive` | `a0=pid` | 1 or 0 | 1 while the pid is RUNNING/READY/BLOCKED; 0 for zombie/unknown |
 | `105` | `unlink` | `a0=path*` | 0 or -1 | Remove a regular file; refuses directories |
 | `106` | `rmdir` | `a0=path*` | 0 or -1 | Remove an empty directory; refuses root/non-empty |
@@ -348,21 +348,34 @@ reaps a background job that finished first.
 | `SYSACT_EXIT_SCHEDULE` | 2 | Exit: mark EXITED, switch to next |
 | `SYSACT_BLOCK` | 3 | Sleep the caller (input wait); not re-enqueued (6.4) |
 
-### 7.4 Executable format (FEXE)
+### 7.4 Executable format (static ELF64)
 
-Filesystem executables use the `FEXE` container: a 4 KiB header then a
-position-independent flat-binary payload.
+Filesystem executables are static ELF64 RISC-V binaries with a single `PT_LOAD`
+segment. Both the host toolchain and the in-VM assembler (`as.hll`, 10.3) emit
+this format, linked so `e_entry`/`p_vaddr` land at `0x4000_0000`.
 
 ```
 Offset  Size  Field
-0       4     magic    "FEXE" (0x4558_4546, little-endian u32)
-8       8     entry    entry-point offset within the payload (u64)
-4096    ...   payload  flat binary; mapped R+W+X+U at 0x4000_0000
+0       16    e_ident  0x7F 'E' 'L' 'F', ELFCLASS64, ELFDATA2LSB, EV_CURRENT
+16      2     e_type   ET_EXEC (2)
+18      2     e_machine EM_RISCV (243)
+24      8     e_entry  absolute entry VA (0x4000_0000)
+32      8     e_phoff  program-header offset (64)
+54      2     e_phentsize (56)
+56      2     e_phnum  (1)
+... one PT_LOAD program header ...
+0       4     p_type   PT_LOAD (1)
+8       8     p_offset payload file offset (page-aligned, 4096)
+16      8     p_vaddr  0x4000_0000
+32      8     p_filesz bytes copied from file
+40      8     p_memsz  virtual footprint incl. BSS (zero-filled beyond filesz)
 ```
 
-`exec` validates the magic and maps the payload at `0x4000_0000 + entry` in the
-child's root. Convention: `.fexe` for FEXE files, `.bin` for raw flat exports. The
-shell's `run` pre-checks the magic and reports `not an executable` otherwise.
+`exec` validates the ELF magic, then walks each `PT_LOAD`: it maps `p_memsz` bytes
+at `p_vaddr` (R+W+X+U), copies `[0, p_filesz)` from `p_offset`, and zeroes the rest
+(BSS), then jumps `e_entry`. Convention: `.elf` for executables, `.bin` for raw
+flat exports. The shell's `run` pre-checks the magic and reports `not an
+executable` otherwise.
 
 ### 7.5 Framebuffer and keyboard devices
 
@@ -535,7 +548,7 @@ The interactive shell boots as pid 1. Built-ins: `ls [dir]`, `cd`, `cat <f>...`,
 `echo`, `pwd`, `edit`, `run` (`[&]` to background), `as`, `touch`, `mkdir`, `rm`,
 `rmdir`, `mv`, `jobs`, `fg <id>`, `kill <pid>` / `kill %<job>` (7.6), `help`,
 `exit`. Any other line is treated as a program name and resolved via a PATH search
-(`cwd`, `/bin`, `/home/demo`, with and without `.fexe`), with optional `> file` /
+(`cwd`, `/bin`, `/home/demo`, with and without `.elf`), with optional `> file` /
 `>> file` / `< file` redirection (7.7). It reads a line over the UART
 (`sh_read_line`, echoing and handling Backspace), resolves relative paths against
 `cwd` (`sh_join_path`), and dispatches on the first word (`sh_first_word`, tolerant
@@ -550,7 +563,7 @@ raw `base + i` is byte-scaled in HLL (lang spec 4.2) and would overlap slots.
 
 ### 10.2 Line editor (`edit.hll`)
 
-`/bin/edit.fexe` is an `ed`-style line editor over a line-array model (the GUI
+`/bin/edit.elf` is an `ed`-style line editor over a line-array model (the GUI
 terminal renders no cursor codes, so a visual editor is not possible). Commands:
 `p` (numbered, current-line marker), `N` goto, `a`/`i` append/insert, `d [N]`
 delete, `c` clear, `r` replace, `s/old/new/`, `w`/`q`/`h`. Launched by the shell's
@@ -558,15 +571,18 @@ delete, `c` clear, `r` replace, `s/old/new/`, `w`/`q`/`h`. Launched by the shell
 
 ### 10.3 In-VM assembler (`as.hll`)
 
-`/bin/as.fexe` closes the self-hosting loop: `as <src> <out>` assembles a `.s` file
-into a runnable FEXE inside the VM. It runs a two-pass label resolver (pass 1
-assigns byte offsets, pass 2 encodes), wraps the flat binary in FEXE (entry 0), and
+`/bin/as.elf` closes the self-hosting loop: `as <src> <out>` assembles a `.s` file
+into a runnable static ELF64 (7.4) inside the VM. It runs a two-pass label resolver
+(pass 1 assigns byte offsets, pass 2 encodes), then wraps the flat binary in a
+minimal ELF (one `PT_LOAD` at `0x4000_0000`, `e_entry` at the payload base) and
 writes `<out>`; `run <out>` then execs it. Subset: `add sub and or xor sll srl sra
-slt sltu` (R-type); `addi andi ori xori slti sltiu slli srli srai` (register-
-immediate); `ld lw lwu lh lhu lb lbu` / `sd sw sh sb` with `offset(reg)` syntax;
-`lui auipc`; `li`, `mv`; `j`, `beq bne blt bge bltu bgeu`; `nop`, `ecall`, `ret`.
-ABI or `x0`..`x31` register names; `;`/`#` comments; decimal/hex/negative
-immediates. Encodings mirror the host `asm-to-binary` backend.
+slt sltu` (R-type); `mul div divu rem remu` (M-extension); `addi addiw andi ori xori
+slti sltiu slli srli srai` (register-immediate); `ld lw lwu lh lhu lb lbu` / `sd sw
+sh sb` with `offset(reg)` syntax; `lui auipc`; `li`, `mv`; `j`, `jal jalr call la`;
+`beq bne blt bge bltu bgeu`; `nop`, `ecall`, `ret`. Data directives `.text/.data/
+.section/.globl/.byte/.word/.zero/.ascii/.asciz`. ABI or `x0`..`x31` register names;
+`;`/`#` comments; decimal/hex/negative immediates. Encodings mirror the host
+`asm-to-binary` backend.
 
 It appends 8 trailing NOPs after the program. A flat program ending in `ecall` has
 no valid instruction after it; the pipeline speculatively fetches the next word,
@@ -575,7 +591,26 @@ not delegated by `medeleg`, so the trap goes to M-mode (`_m_trap`), which servic
 it as `sys_exit` to SYSCON and halts the VM -- bypassing the kernel's exit path. The
 NOPs keep the speculative fetch valid so the exit `ecall` traps cleanly to S-mode.
 
-### 10.4 Framebuffer demos (`cube.hll`, `fbdemo.hll`, `life.hll`)
+### 10.4 In-VM compiler (`cc.hll`)
+
+`/bin/cc.elf` is the self-hosting payoff: `cc <src.hll> <out.s>` compiles a program
+in the HLL-0 subset (lang spec Appendix D) to an assembly `.s` file in the subset
+`as` (10.3) covers, so the headline demo `cc hello.hll hello.s && as hello.s
+hello.elf && hello` builds and runs a program with a toolchain that itself runs
+inside the VM. `cc` tokenizes, recursive-descent parses into a flat node array
+(statements linked by a `next` field; no heap graph), and walks it with naive
+stack-machine codegen. Each function gets a fixed frame -- saved `ra`/`fp` at the
+top, one 8-byte slot per local below them, addressed through `fp` -- while the
+hardware stack below `sp` holds expression temporaries: a binary operator pushes
+its left operand, evaluates the right into `a0`, pops the left into `t0`, and
+combines. `main` is emitted as `_start` and exits via the `a7=93` ecall with its
+return value; other functions `ret`. `putc` is the only I/O intrinsic: cc emits it
+as a callable helper doing `write(1, &ch, 1)` (`a7=64`) and `call`s it like any
+function. Integer arithmetic is normalized to 32 bits with a trailing `addiw`. The
+frozen codegen target is `user/examples/hello.s`; `user/examples/cc_demo.hll` is a
+ready-to-compile pure-HLL-0 sample installed at `/home/src/hello.hll`.
+
+### 10.5 Framebuffer demos (`cube.hll`, `fbdemo.hll`, `life.hll`)
 
 The demo gallery lives in `/home/demo`, reachable by bare name (PATH search, 10.1):
 `cube` animates a spinning wireframe cube, `mandelbrot` renders a Mandelbrot set,
@@ -589,7 +624,7 @@ cube reads WASD via
 `poll_key`; `life` reads `P` (pause), `R` (reseed), and space (single step). Run
 them from the shell and view in the Machine window's FB tab.
 
-### 10.5 Hello and examples
+### 10.6 Hello and examples
 
 `user_hello.hll` prints a greeting via `sys_write` then yields in a loop (a minimal
 pid-1). `user/examples/sum.s` (=55) and `fib.s` (=89) are sample assembly inputs for

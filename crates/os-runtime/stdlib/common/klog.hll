@@ -27,12 +27,12 @@ klog_int: (label: u8*, val: i64) {
     console_write(label)
     console_write(": ".data)
     console_print_int(val)
-    console_putchar(10)
+    console_putchar('\n')
 }
 
 klog_hex: (label: u8*, val: u64) {
     console_write(label)
     console_write(": ".data)
     console_print_hex(val)
-    console_putchar(10)
+    console_putchar('\n')
 }

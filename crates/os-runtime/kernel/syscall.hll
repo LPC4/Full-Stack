@@ -42,10 +42,6 @@ const UART_IER_ADDR = 0x10000001
 const INPUT_INTR_CHAR = 3
 const WAIT_INTERRUPTED = 0xFFFFFFFFFFFFFFFE  ; -2 as u64
 
-; FEXE container: 4 KiB header (magic + entry offset) then payload. See OS spec ch.7.4.
-const FEXE_MAGIC       = 0x45584546
-const EXEC_HEADER_SIZE = 4096
-
 ; Canonical user code base (every process has its own root). See OS spec ch.4.3.
 const USER_CODE_BASE = 0x40000000
 ; R + W + X + U page flags (vmm_map adds V).
@@ -65,44 +61,48 @@ const FB_MAP_FLAGS = 22         ; R + W + U (vmm_map adds V)
 const FB_PIXEL_BYTES = 307200   ; 320*240*4; the control page follows the pixels
 const FB_DBMODE_REG = 8         ; control-register offset: 0 = single, 1 = double
 
-external klog_int:             (label: u8*, val: i64)
-external klog_error:           (msg: u8*)
-external console_putchar:      (c: i32)
-external kshutdown:            (code: i64)
-external kmalloc:              (size: u64) -> u8*
-external memset:               (dst: u8*, value: u8, n: u64) -> u8*
-external memcpy:               (dst: u8*, src: u8*, n: u64) -> u8*
-external pmm_alloc:            () -> u8*
-external pmm_free:             (page: u8*)
-external vmm_map:              (va: u64, pa: u64, flags: u64)
-external vmm_new_root:         () -> u64
-external vmm_fork_copy:        (parent_root: u64, child_root: u64)
-external process_create:       (entry_pc: u64) -> u64*
-external process_peek_pid:     () -> u64
-external process_alloc:        () -> u64*
-external process_pid:          (pcb: u64*) -> u64
-external process_root:         (pcb: u64*) -> u64
-external process_set_root:     (pcb: u64*, root: u64)
-external process_set_parent:   (pcb: u64*, ppid: u64)
-external process_exit_code:    (pcb: u64*) -> i64
-external process_set_exit_code: (pcb: u64*, code: i64)
-external process_stdout_fd:     (pcb: u64*) -> u64
-external process_set_stdout_fd: (pcb: u64*, fd: u64)
-external process_stdin_fd:      (pcb: u64*) -> u64
-external process_set_stdin_fd:  (pcb: u64*, fd: u64)
-external scheduler_add:        (pcb: u64*)
-external scheduler_current:    () -> u64*
-external scheduler_set_input_waiter: (pcb: u64*)
-external scheduler_ready_empty: () -> u64
-external scheduler_pid_in_queue: (pid: u64) -> u64
-external scheduler_pid_alive:    (pid: u64) -> u64
-external scheduler_make_zombie: (pcb: u64*)
-external scheduler_find_zombie_child: (parent_pid: u64) -> u64*
-external scheduler_find_zombie_pid: (pid: u64) -> u64*
-external scheduler_kill_pid:    (pid: u64) -> u64
-external scheduler_remove_zombie: (pcb: u64*)
-external scheduler_has_children: (parent_pid: u64) -> u64
-external scheduler_kill_child:  (parent_pid: u64) -> u64
+external klog_int:                  (label: u8*, val: i64)
+external klog_error:                (msg: u8*)
+external console_putchar:           (c: i32)
+external kshutdown:                 (code: i64)
+external kmalloc:                   (size: u64) -> u8*
+external memset:                    (dst: u8*, value: u8, n: u64) -> u8*
+external memcpy:                    (dst: u8*, src: u8*, n: u64) -> u8*
+
+external pmm_alloc:                 () -> u8*
+external pmm_free:                  (page: u8*)
+external vmm_map:                   (va: u64, pa: u64, flags: u64)
+external vmm_new_root:              () -> u64
+external vmm_fork_copy:             (parent_root: u64, child_root: u64)
+
+external process_create:            (entry_pc: u64) -> u64*
+external process_peek_pid:          () -> u64
+external process_alloc:             () -> u64*
+external process_pid:               (pcb: u64*) -> u64
+external process_root:              (pcb: u64*) -> u64
+external process_set_root:          (pcb: u64*, root: u64)
+external process_set_parent:        (pcb: u64*, ppid: u64)
+external process_exit_code:         (pcb: u64*) -> i64
+external process_set_exit_code:     (pcb: u64*, code: i64)
+external process_stdout_fd:         (pcb: u64*) -> u64
+external process_set_stdout_fd:     (pcb: u64*, fd: u64)
+external process_stdin_fd:          (pcb: u64*) -> u64
+external process_set_stdin_fd:      (pcb: u64*, fd: u64)
+
+external scheduler_add:                 (pcb: u64*)
+external scheduler_current:             () -> u64*
+external scheduler_set_input_waiter:    (pcb: u64*)
+external scheduler_ready_empty:         () -> u64
+external scheduler_pid_in_queue:        (pid: u64) -> u64
+external scheduler_pid_alive:           (pid: u64) -> u64
+external scheduler_make_zombie:         (pcb: u64*)
+external scheduler_find_zombie_child:   (parent_pid: u64) -> u64*
+external scheduler_find_zombie_pid:     (pid: u64) -> u64*
+external scheduler_kill_pid:            (pid: u64) -> u64
+external scheduler_remove_zombie:       (pcb: u64*)
+external scheduler_has_children:        (parent_pid: u64) -> u64
+external scheduler_kill_child:          (parent_pid: u64) -> u64
+
 external fs_open:              (path: u8*, flags: u64) -> i64
 external fs_close:             (fd: i64)
 external fs_read:              (fd: i64, buf: u8*, offset: u64, len: u64) -> i64
@@ -208,12 +208,8 @@ rd_u64: (p: u8*, off: u64) -> u64 {
     return rd_u32(p, off) | (rd_u32(p, off + 4) << 32)
 }
 
-; Load every PT_LOAD segment of a static ELF64 image (already open as `fd`, with
-; its 64-byte header in `hdr`) into the active page-table root. Each segment is
-; mapped page-by-page at its p_vaddr; file-backed bytes ([0, p_filesz)) are copied
-; and the rest ([p_filesz, p_memsz), i.e. BSS) stays zero. Assumes page-aligned
-; p_vaddr (true for our single-PT_LOAD host output). Returns the segment count
-; mapped, or -1 on allocation/read failure. See OS spec ch.7.4.
+; Map every PT_LOAD of a static ELF64 (open as `fd`, header in `hdr`) into the
+; active root: copy [0,p_filesz), zero BSS. Returns segment count or -1. OS spec 7.4.
 load_elf_segments: (fd: i64, hdr: u8*) -> i64 {
     phoff: u64 = rd_u64(hdr, 32)       ; e_phoff
     phentsize: u64 = rd_u16(hdr, 54)   ; e_phentsize
@@ -256,19 +252,16 @@ load_elf_segments: (fd: i64, hdr: u8*) -> i64 {
     return loaded
 }
 
-; Load an FEXE or static ELF64 into a new process and enqueue it; arg (or null) is
-; staged into the child's USER_ARG_BASE page. out_path/in_path (or null) redirect
-; the child's stdout/stdin to FS files; out_append seeks stdout to end instead of
-; truncating. Returns the new pid or -1. See OS spec ch.5.5 and 7.7.
+; Load a static ELF64 into a new process and enqueue it; arg staged at USER_ARG_BASE,
+; out_path/in_path redirect child stdio (out_append seeks to end). pid or -1. OS spec 5.5/7.7.
 sys_exec_impl: (path: u8*, arg: u8*, out_path: u8*, in_path: u8*, out_append: u64) -> i64 {
     fd: i64 = fs_open(path, 0)
     if fd < 2 {
         return -1 as i64
     }
 
-    ; Open any stdout/stdin redirect targets now, while the parent address space
-    ; is still active and the path strings are readable. The resulting fds live in
-    ; the global FS table, so they remain valid after the root switch below.
+    ; Open redirect targets now, while the parent address space is active and the
+    ; path strings readable; the FS-table fds stay valid past the root switch below.
     out_fd: i64 = 0
     in_fd:  i64 = 0
     if out_path != null {
@@ -311,40 +304,31 @@ sys_exec_impl: (path: u8*, arg: u8*, out_path: u8*, in_path: u8*, out_append: u6
         }
     }
 
-    ; Read the header block and determine the executable format (FEXE or ELF).
+    ; Read the ELF header and validate the magic; the entry is the absolute VA in
+    ; e_entry. The in-VM assembler and the host both link user code at USER_CODE_BASE.
     hdr: u8* = kmalloc(64)
     hn: i64 = fs_read(fd, hdr, 0, 64)
-    if hn < 16 {
+    if hn < 64 {
         fs_close(fd)
         return -1 as i64
     }
-    is_elf: i64 = 0
-    if @hdr == 0x7F {
-        if @(hdr + 1) == 69 {
-            if @(hdr + 2) == 76 {
-                if @(hdr + 3) == 70 {
-                    is_elf = 1
-                }
-            }
-        }
+    if @hdr != 0x7F {
+        fs_close(fd)
+        return -1 as i64
     }
-    ; Entry is an absolute VA for ELF (e_entry), or USER_CODE_BASE + the FEXE
-    ; entry offset for the flat format.
-    entry: u64 = 0
-    if is_elf == 1 {
-        if hn < 64 {
-            fs_close(fd)
-            return -1 as i64
-        }
-        entry = rd_u64(hdr, 24)
-    } else {
-        magic_p: u32* = hdr as u32*
-        if (@magic_p) as u64 != FEXE_MAGIC {
-            fs_close(fd)
-            return -1 as i64
-        }
-        entry = USER_CODE_BASE + rd_u64(hdr, 8)
+    if @(hdr + 1) != 69 {
+        fs_close(fd)
+        return -1 as i64
     }
+    if @(hdr + 2) != 76 {
+        fs_close(fd)
+        return -1 as i64
+    }
+    if @(hdr + 3) != 70 {
+        fs_close(fd)
+        return -1 as i64
+    }
+    entry: u64 = rd_u64(hdr, 24)
 
     ; Parent the child to its launcher (captured before the root switches).
     parent_pcb: u64* = scheduler_current()
@@ -377,40 +361,11 @@ sys_exec_impl: (path: u8*, arg: u8*, out_path: u8*, in_path: u8*, out_append: u6
     memcpy(arg_pa, arg_buf, USER_ARG_MAX + 1)
     vmm_map(USER_ARG_BASE, arg_pa as u64, USER_ARG_FLAGS)
 
-    ; Load the image into the child's (now active) address space.
-    if is_elf == 1 {
-        segs: i64 = load_elf_segments(fd, hdr)
-        fs_close(fd)
-        if segs <= 0 {
-            return -1 as i64
-        }
-    } else {
-        ; Copy the FEXE payload into fresh physical pages and map them user-accessible.
-        off: u64 = EXEC_HEADER_SIZE as u64
-        page_idx: u64 = 0
-        while 1 == 1 {
-            page_pa: u8* = pmm_alloc()
-            if page_pa == null {
-                fs_close(fd)
-                return -1 as i64
-            }
-            memset(page_pa, 0, 4096)
-            got: i64 = fs_read(fd, page_pa, off, 4096)
-            if got <= 0 {
-                pmm_free(page_pa)
-                break
-            }
-            vmm_map(USER_CODE_BASE + page_idx * 4096, page_pa as u64, USER_PAGE_FLAGS)
-            page_idx = page_idx + 1
-            off = off + 4096
-            if got < 4096 {
-                break
-            }
-        }
-        fs_close(fd)
-        if page_idx == 0 {
-            return -1 as i64
-        }
+    ; Load the ELF segments into the child's (now active) address space.
+    segs: i64 = load_elf_segments(fd, hdr)
+    fs_close(fd)
+    if segs <= 0 {
+        return -1 as i64
     }
 
     scheduler_add(pcb)
@@ -428,9 +383,8 @@ sys_write_impl: (fd: u64, buf: u8*, len: u64) -> u64 {
     return written
 }
 
-; Standard-output write (fd 0/1): if the caller has a redirected stdout bound,
-; append to that file and advance its position; otherwise write to the console.
-; Returns bytes written. See OS spec ch.7.7.
+; Standard-output write (fd 0/1): append to a bound stdout redirect and advance,
+; else write to the console. Returns bytes written. OS spec 7.7.
 sys_stdout_write: (buf: u8*, len: u64) -> u64 {
     cur: u64* = scheduler_current()
     if cur != null {
@@ -534,9 +488,8 @@ sys_waitpid_impl: (frame: u64*) -> u64 {
         return SYSACT_CONTINUE
     }
 
-    ; "Alive" must include a child sleeping on input (the input_waiter), not just
-    ; ready-queue members, else waiting on an interactive child (e.g. the editor
-    ; idling for a keystroke) wrongly returns -1 the moment it blocks.
+    ; "Alive" must include a child blocked on input (input_waiter), not just ready-
+    ; queue members, else waiting on an interactive child returns -1 when it blocks.
     if scheduler_pid_alive(target) == 1 {
         ; Peek for a Ctrl-C teardown of this exact pid; stash any other byte.
         if input_pushback_valid == 0 {
@@ -559,10 +512,8 @@ sys_waitpid_impl: (frame: u64*) -> u64 {
     return SYSACT_CONTINUE
 }
 
-; Signal a pid (a0=pid, a1=sig). Only SIGKILL is honoured: unlink the target from
-; the ready queue and mark it EXITED (same teardown as the Ctrl-C path), leaving a
-; zombie its parent reaps. pid 1 (the shell) is protected. 0 on success, -1 if the
-; pid is not a live, killable process. See OS spec ch.7.6.
+; Signal a pid (a0=pid, a1=sig). Only SIGKILL: unlink from the ready queue and mark
+; EXITED (Ctrl-C teardown), leaving a zombie. pid 1 protected. 0 ok, -1 else. OS spec 7.6.
 sys_kill_impl: (frame: u64*) -> u64 {
     pid: u64 = @frame[10]
     sig: u64 = @frame[11]
@@ -633,11 +584,8 @@ sys_rmdir_impl: (frame: u64*) -> u64 {
 }
 
 ; --- Framebuffer ownership tracking ---
-; DBMODE is a single global device flag, but graphical programs run concurrently
-; (background jobs). We reset it to single-buffered only when the LAST framebuffer
-; user exits, so a later single-buffered program never inherits a dead program's
-; double-buffer mode, while a live double-buffered program keeps its setting and
-; does not flicker. See OS spec ch.7.5.
+; DBMODE is one global device flag but graphical jobs run concurrently. Reset to
+; single-buffered only when the LAST FB user exits, so none inherits/flickers. OS spec 7.5.
 fb_user_count: u64 = 0
 
 ; Mark a process as a framebuffer user on its first map_fb (PCB index 46).
