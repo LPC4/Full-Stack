@@ -1489,7 +1489,7 @@ fn reg_for_arg(i: usize) -> Reg {
 
 #[cfg(test)]
 mod tests {
-    use super::{reg_for_arg, CompilerRv64};
+    use super::{CompilerRv64, reg_for_arg};
     use hll_to_ir::{
         IntWidth, IrBlock, IrCastMode, IrFunction, IrInstruction, IrProgram, IrRegister,
         IrTerminator, IrType, IrValue,

@@ -791,7 +791,7 @@ impl<'a> Parser<'a> {
                             match self.peek() {
                                 Some(Token::Comma) => {
                                     self.advance(); // consume comma
-                                                    // Check if we're at closing bracket now
+                                    // Check if we're at closing bracket now
                                     if self.check_gt_or_shr() {
                                         break;
                                     }
