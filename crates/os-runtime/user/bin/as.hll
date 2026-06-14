@@ -36,20 +36,48 @@ cur_sec: i64 = 0
 ; Final text size after pass 1; data labels resolve to text_total + PAD + offset.
 text_total: i64 = 0
 ; Output image: ELF header + program header in the first page, payload from HDR on.
-out: u8[12288]
+; Also reused as the ET_REL object image in object mode (text/data/relocs/symtab).
+out: u8[32768]
 
-; Label table: names packed 16 bytes each, parallel address and section arrays.
-lbl_names: u8[1024]
-lbl_addr: i64[64]
-lbl_sec: i64[64]
+; A label definition: 16-byte name, byte address, and owning section (0 text, 1 data).
+type Label = { name: u8[16], addr: i64, sec: i64 }
+
+; Label table; resolve_labels() rewrites data addresses to absolute positions.
+labels: Label[64]
 lbl_count: i64 = 0
 
-; Token table for one line: up to 6 tokens, 24 bytes each.
+; Token table for one line: up to 6 tokens, 24 bytes each (one lexeme per slot).
 tokbuf: u8[144]
 ntok: i64 = 0
 
 ; Set once on any assembly error so main can abort with a non-zero exit.
 err_flag: i64 = 0
+
+; --- Object (ET_REL) mode ---
+; 1 when the output path ends in ".o": emit a relocatable object for ld.hll
+; instead of a runnable ET_EXEC. In object mode call/jal to an undefined symbol
+; and every la become relocations rather than locally-resolved or errors.
+obj_mode: i64 = 0
+
+; Names exported via `.globl`, packed 16 bytes each (symtab STB_GLOBAL bind).
+glbl_names: u8[512]
+glbl_count: i64 = 0
+
+; One relocation: 16-byte target symbol name, byte offset in .text, and kind
+; (0 = CALL_PLT auipc+jalr, 1 = JAL, 2 = LA/PCREL_HI20 auipc+addi).
+type Reloc = { sym: u8[16], off: i64, kind: i64 }
+relocs: Reloc[256]
+nreloc: i64 = 0
+
+; Ordered ELF symbol table built for object output: index 0 is the null symbol,
+; then locals, then globals (defined .globl + undefined externals). Names packed
+; 16 bytes each; value is a section-relative offset; shndx 0 = undefined.
+sym_pool: u8[2048]
+sym_val: i64[128]
+sym_shndx: i64[128]
+sym_name_off: i64[128]
+nsym: i64 = 0
+first_global: i64 = 0
 
 ; Pointer to token i in the line token table.
 tok_at: (i: i64) -> u8* {
@@ -401,7 +429,8 @@ add_label: (name: u8*, off: i64, sec: i64) {
         fail("too many labels".data)
         return
     }
-    dst: u8* = lbl_names[0] + (lbl_count as u64) * 16
+    lab: Label* = labels[lbl_count]
+    dst: u8* = lab as u8*
     i: u64 = 0
     while 1 == 1 {
         c: u8 = @(name + i)
@@ -417,8 +446,8 @@ add_label: (name: u8*, off: i64, sec: i64) {
     }
     t: u8* = dst + i
     @t = 0 as u8
-    @lbl_addr[lbl_count] = off
-    @lbl_sec[lbl_count] = sec
+    @lab.addr = off
+    @lab.sec = sec
     lbl_count = lbl_count + 1
 }
 
@@ -427,8 +456,9 @@ add_label: (name: u8*, off: i64, sec: i64) {
 resolve_labels: () {
     i: i64 = 0
     while i < lbl_count {
-        if @lbl_sec[i] == 1 {
-            @lbl_addr[i] = text_total + PAD + @lbl_addr[i]
+        lab: Label* = labels[i]
+        if @lab.sec == 1 {
+            @lab.addr = text_total + PAD + @lab.addr
         }
         i = i + 1
     }
@@ -438,14 +468,92 @@ resolve_labels: () {
 find_label: (name: u8*) -> i64 {
     i: i64 = 0
     while i < lbl_count {
-        cand: u8* = lbl_names[0] + (i as u64) * 16
+        lab: Label* = labels[i]
+        cand: u8* = lab as u8*
         if cstr_eq(cand, name) == 1 {
-            return @lbl_addr[i]
+            return @lab.addr
         }
         i = i + 1
     }
     fail("undefined label".data)
     return -1
+}
+
+; 1 if `name` is a locally-defined label (no error on miss, unlike find_label).
+label_defined: (name: u8*) -> i64 {
+    i: i64 = 0
+    while i < lbl_count {
+        lab: Label* = labels[i]
+        cand: u8* = lab as u8*
+        if cstr_eq(cand, name) == 1 {
+            return 1
+        }
+        i = i + 1
+    }
+    return 0
+}
+
+; Record a `.globl name` export (deduplicated).
+add_globl: (name: u8*) {
+    if is_globl(name) == 1 {
+        return
+    }
+    if glbl_count >= 32 {
+        return
+    }
+    dst: u8* = glbl_names[0] + (glbl_count as u64) * 16
+    i: u64 = 0
+    while i < 15 {
+        c: u8 = @(name + i)
+        e: u8* = dst + i
+        @e = c
+        if c == 0 {
+            glbl_count = glbl_count + 1
+            return
+        }
+        i = i + 1
+    }
+    z: u8* = dst + 15
+    @z = 0 as u8
+    glbl_count = glbl_count + 1
+}
+
+; 1 if `name` was exported via `.globl`.
+is_globl: (name: u8*) -> i64 {
+    i: i64 = 0
+    while i < glbl_count {
+        cand: u8* = glbl_names[0] + (i as u64) * 16
+        if cstr_eq(cand, name) == 1 {
+            return 1
+        }
+        i = i + 1
+    }
+    return 0
+}
+
+; Record a relocation at .text byte offset `off` against `name` (kind as above).
+add_reloc: (name: u8*, off: i64, kind: i64) {
+    if nreloc >= 256 {
+        fail("too many relocations".data)
+        return
+    }
+    r: Reloc* = relocs[nreloc]
+    dst: u8* = r as u8*
+    i: u64 = 0
+    while i < 15 {
+        c: u8 = @(name + i)
+        e: u8* = dst + i
+        @e = c
+        if c == 0 {
+            break
+        }
+        i = i + 1
+    }
+    t: u8* = dst + i
+    @t = 0 as u8
+    @r.off = off
+    @r.kind = kind
+    nreloc = nreloc + 1
 }
 
 ; --- Encoding ---
@@ -669,6 +777,9 @@ handle_directive: (pass: i64, base: i64, line_p: u8*) -> i64 {
         return 0
     }
     if cstr_eq(d, ".globl".data) == 1 {
+        if pass == 1 {
+            add_globl(tok_at(base + 1))
+        }
         return 0
     }
     if cstr_eq(d, ".byte".data) == 1 {
@@ -866,6 +977,13 @@ encode_instr: (pass: i64, base: i64, pc: i64) -> i64 {
     ; --- Jumps and PC-relative address materialization ---
     if cstr_eq(m, "jal".data) == 1 {
         if pass == 2 {
+            if obj_mode == 1 {
+                if label_defined(o1) == 0 {
+                    add_reloc(o1, pc, 1)
+                    emit_word(enc_j(reg_num(o0), 0))
+                    return 4
+                }
+            }
             target: i64 = find_label(o1)
             emit_word(enc_j(reg_num(o0), target - pc))
         }
@@ -880,6 +998,14 @@ encode_instr: (pass: i64, base: i64, pc: i64) -> i64 {
     ; call/la expand to auipc + jalr/addi against the current pc (8 bytes).
     if cstr_eq(m, "call".data) == 1 {
         if pass == 2 {
+            if obj_mode == 1 {
+                if label_defined(o0) == 0 {
+                    add_reloc(o0, pc, 0)
+                    emit_word(enc_u(1, 0, 0x17))
+                    emit_word(enc_i(1, 1, 0, 0, 0x67))
+                    return 8
+                }
+            }
             target: i64 = find_label(o0)
             split_pcrel(target - pc)
             emit_word(enc_u(1, pcrel_hi, 0x17))
@@ -887,11 +1013,26 @@ encode_instr: (pass: i64, base: i64, pc: i64) -> i64 {
         }
         return 8
     }
+    ; la always relocates in object mode (section merging shifts cross-section
+    ; distances); the local pcrel is still prefilled and overwritten by ld.
     if cstr_eq(m, "la".data) == 1 {
         if pass == 2 {
+            rd: i64 = reg_num(o0)
+            if obj_mode == 1 {
+                add_reloc(o1, pc, 2)
+                hi: i64 = 0
+                lo: i64 = 0
+                if label_defined(o1) == 1 {
+                    split_pcrel(find_label(o1) - pc)
+                    hi = pcrel_hi
+                    lo = pcrel_lo
+                }
+                emit_word(enc_u(rd, hi, 0x17))
+                emit_word(enc_i(rd, rd, lo, 0, 0x13))
+                return 8
+            }
             target: i64 = find_label(o1)
             split_pcrel(target - pc)
-            rd: i64 = reg_num(o0)
             emit_word(enc_u(rd, pcrel_hi, 0x17))
             emit_word(enc_i(rd, rd, pcrel_lo, 0, 0x13))
         }
@@ -1190,6 +1331,273 @@ split_arg: (arg: u8*, src_path: u8*, out_path: u8*) -> i64 {
     return 1
 }
 
+; --- ET_REL object emission (PLAN 3 Phase B) ---
+
+; 1 if path ends in the two-character suffix ".o".
+ends_dot_o: (path: u8*) -> i64 {
+    l: u64 = cstr_len(path)
+    if l < 2 {
+        return 0
+    }
+    if @(path + (l - 2)) == '.' {
+        if @(path + (l - 1)) == 'o' {
+            return 1
+        }
+    }
+    return 0
+}
+
+; Copy a NUL-terminated string into out at byte offset off; returns its length.
+out_str: (off: u64, src: u8*) -> u64 {
+    i: u64 = 0
+    while @(src + i) != 0 {
+        d: u8* = out[0] + off + i
+        @d = @(src + i)
+        i = i + 1
+    }
+    return i
+}
+
+; Copy n bytes from src into out at byte offset off.
+out_bytes: (off: u64, src: u8*, n: u64) {
+    i: u64 = 0
+    while i < n {
+        d: u8* = out[0] + off + i
+        @d = @(src + i)
+        i = i + 1
+    }
+}
+
+; Append a symbol to the ordered table (name, section-relative value, shndx).
+push_sym: (name: u8*, value: i64, shndx: i64) {
+    if nsym >= 128 {
+        fail("too many symbols".data)
+        return
+    }
+    dst: u8* = sym_pool[0] + (nsym as u64) * 16
+    i: u64 = 0
+    while i < 15 {
+        c: u8 = @(name + i)
+        e: u8* = dst + i
+        @e = c
+        if c == 0 {
+            break
+        }
+        i = i + 1
+    }
+    t: u8* = dst + i
+    @t = 0 as u8
+    @sym_val[nsym] = value
+    @sym_shndx[nsym] = shndx
+    nsym = nsym + 1
+}
+
+; Index of `name` in the symbol table, or -1 if absent.
+sym_index: (name: u8*) -> i64 {
+    i: i64 = 1
+    while i < nsym {
+        cand: u8* = sym_pool[0] + (i as u64) * 16
+        if cstr_eq(cand, name) == 1 {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+; Build the ordered symbol table: null, locals, globals (defined), externals.
+build_symbols: () {
+    nsym = 0
+    push_sym("".data, 0, 0)
+    ; Locals: defined labels not exported via .globl.
+    i: i64 = 0
+    while i < lbl_count {
+        lab: Label* = labels[i]
+        nm: u8* = lab as u8*
+        if is_globl(nm) == 0 {
+            shndx: i64 = 1
+            if @lab.sec == 1 {
+                shndx = 2
+            }
+            push_sym(nm, @lab.addr, shndx)
+        }
+        i = i + 1
+    }
+    first_global = nsym
+    ; Globals: defined labels exported via .globl.
+    i = 0
+    while i < lbl_count {
+        lab: Label* = labels[i]
+        nm: u8* = lab as u8*
+        if is_globl(nm) == 1 {
+            shndx: i64 = 1
+            if @lab.sec == 1 {
+                shndx = 2
+            }
+            push_sym(nm, @lab.addr, shndx)
+        }
+        i = i + 1
+    }
+    ; Externals: relocation targets with no local definition (undefined, shndx 0).
+    i = 0
+    while i < nreloc {
+        r: Reloc* = relocs[i]
+        rn: u8* = r as u8*
+        if label_defined(rn) == 0 {
+            if sym_index(rn) < 0 {
+                push_sym(rn, 0, 0)
+            }
+        }
+        i = i + 1
+    }
+}
+
+; Write one 24-byte ELF64 symbol entry at byte offset off.
+wr_sym: (off: u64, name_off: u64, bind: u64, shndx: u64, value: u64) {
+    wr_le(off, name_off, 4)
+    wr_le(off + 4, bind * 16, 1)
+    wr_le(off + 5, 0, 1)
+    wr_le(off + 6, shndx, 2)
+    wr_le(off + 8, value, 8)
+    wr_le(off + 16, 0, 8)
+}
+
+; Write one 64-byte ELF64 section header at byte offset off.
+wr_shdr: (off: u64, name: u64, sht: u64, flags: u64, soff: u64, size: u64, link: u64, info: u64, entsize: u64) {
+    wr_le(off, name, 4)
+    wr_le(off + 4, sht, 4)
+    wr_le(off + 8, flags, 8)
+    wr_le(off + 16, 0, 8)
+    wr_le(off + 24, soff, 8)
+    wr_le(off + 32, size, 8)
+    wr_le(off + 40, link, 4)
+    wr_le(off + 44, info, 4)
+    wr_le(off + 48, 4, 8)
+    wr_le(off + 56, entsize, 8)
+}
+
+; Build the whole ET_REL image into out[]; returns its total byte length. Section
+; layout: ehdr, .text, .data, .rela.text, .symtab, .strtab, .shstrtab, shdrs.
+write_object: () -> u64 {
+    build_symbols()
+
+    text_off: u64 = 64
+    data_off: u64 = text_off + code_len
+    rela_off: u64 = (data_off + data_len + 7) / 8 * 8
+    rela_len: u64 = (nreloc as u64) * 24
+    symtab_off: u64 = (rela_off + rela_len + 7) / 8 * 8
+    symtab_len: u64 = (nsym as u64) * 24
+
+    ; .strtab: names packed after symtab; record each symbol's name offset.
+    strtab_off: u64 = symtab_off + symtab_len
+    cursor: u64 = 1
+    si: i64 = 1
+    while si < nsym {
+        @sym_name_off[si] = cursor as i64
+        nm: u8* = sym_pool[0] + (si as u64) * 16
+        cursor = cursor + cstr_len(nm) + 1
+        si = si + 1
+    }
+    strtab_len: u64 = cursor
+
+    ; .shstrtab: fixed section names at known offsets (NUL separators are pre-zeroed).
+    shstr_off: u64 = strtab_off + strtab_len
+    out_str(shstr_off + 1, ".text".data)
+    out_str(shstr_off + 7, ".data".data)
+    out_str(shstr_off + 13, ".rela.text".data)
+    out_str(shstr_off + 24, ".symtab".data)
+    out_str(shstr_off + 32, ".strtab".data)
+    out_str(shstr_off + 40, ".shstrtab".data)
+    shstr_len: u64 = 50
+    shoff: u64 = (shstr_off + shstr_len + 7) / 8 * 8
+
+    ; --- ELF header ---
+    @out[0] = 0x7F as u8
+    @out[1] = 69 as u8
+    @out[2] = 76 as u8
+    @out[3] = 70 as u8
+    @out[4] = 2 as u8
+    @out[5] = 1 as u8
+    @out[6] = 1 as u8
+    wr_le(16, 1, 2)            ; e_type = ET_REL
+    wr_le(18, 243, 2)          ; e_machine = EM_RISCV
+    wr_le(20, 1, 4)            ; e_version
+    wr_le(40, shoff, 8)        ; e_shoff
+    wr_le(48, 5, 4)            ; e_flags
+    wr_le(52, 64, 2)           ; e_ehsize
+    wr_le(58, 64, 2)           ; e_shentsize
+    wr_le(60, 7, 2)            ; e_shnum
+    wr_le(62, 6, 2)            ; e_shstrndx (.shstrtab)
+
+    ; --- Section payloads ---
+    out_bytes(text_off, code[0], code_len)
+    out_bytes(data_off, data[0], data_len)
+
+    ; .rela.text entries: r_offset, r_info = (sym<<32)|type, r_addend = 0.
+    ri: i64 = 0
+    while ri < nreloc {
+        r: Reloc* = relocs[ri]
+        rn: u8* = r as u8*
+        eoff: u64 = rela_off + (ri as u64) * 24
+        rtype: u64 = 19
+        if @r.kind == 1 {
+            rtype = 17
+        }
+        if @r.kind == 2 {
+            rtype = 23
+        }
+        sidx: i64 = sym_index(rn)
+        if sidx < 0 {
+            sidx = 0
+        }
+        info: u64 = (sidx as u64) * 4294967296 + rtype
+        roff: i64 = @r.off
+        wr_le(eoff, roff as u64, 8)
+        wr_le(eoff + 8, info, 8)
+        wr_le(eoff + 16, 0, 8)
+        ri = ri + 1
+    }
+
+    ; .symtab entries.
+    si = 0
+    while si < nsym {
+        eoff: u64 = symtab_off + (si as u64) * 24
+        bind: u64 = 0
+        if si >= first_global {
+            bind = 1
+        }
+        noff: u64 = 0
+        if si > 0 {
+            no: i64 = @sym_name_off[si]
+            noff = no as u64
+        }
+        shx: i64 = @sym_shndx[si]
+        val: i64 = @sym_val[si]
+        wr_sym(eoff, noff, bind, shx as u64, val as u64)
+        si = si + 1
+    }
+
+    ; .strtab bytes.
+    si = 1
+    while si < nsym {
+        nm: u8* = sym_pool[0] + (si as u64) * 16
+        no: i64 = @sym_name_off[si]
+        out_str(strtab_off + (no as u64), nm)
+        si = si + 1
+    }
+
+    ; --- Section headers (indices 0..6) ---
+    ; 0 NULL is the pre-zeroed 64 bytes at shoff.
+    wr_shdr(shoff + 64, 1, 1, 6, text_off, code_len, 0, 0, 0)        ; .text PROGBITS A|X
+    wr_shdr(shoff + 128, 7, 1, 3, data_off, data_len, 0, 0, 0)       ; .data PROGBITS A|W
+    wr_shdr(shoff + 192, 13, 4, 0, rela_off, rela_len, 4, 1, 24)     ; .rela.text -> symtab/.text
+    wr_shdr(shoff + 256, 24, 2, 0, symtab_off, symtab_len, 5, first_global as u64, 24) ; .symtab
+    wr_shdr(shoff + 320, 32, 3, 0, strtab_off, strtab_len, 0, 0, 0)  ; .strtab
+    wr_shdr(shoff + 384, 40, 3, 0, shstr_off, shstr_len, 0, 0, 0)    ; .shstrtab
+
+    return shoff + 448
+}
+
 main: () -> i32 {
     arg: u8* = ARG_BASE as u8*
     src_path: u8[128]
@@ -1216,17 +1624,41 @@ main: () -> i32 {
     src_len = n as u64
     @src[src_len] = 0 as u8
 
+    obj_mode = ends_dot_o(out_pp)
     lbl_count = 0
     code_len = 0
     data_len = 0
     err_flag = 0
+    glbl_count = 0
+    nreloc = 0
     assemble(1)
-    resolve_labels()
+    ; In object mode keep section-relative label addresses (the linker relocates);
+    ; the exe path remaps data labels into the flat payload.
+    if obj_mode == 0 {
+        resolve_labels()
+    }
     code_len = 0
     data_len = 0
     assemble(2)
     if err_flag != 0 {
         return 1
+    }
+
+    ; Object output: emit a relocatable ELF for ld.hll, then write and return.
+    if obj_mode == 1 {
+        ototal: u64 = write_object()
+        oofd: i64 = sc_open(out_pp, 2)
+        if oofd < 0 {
+            console_write("as: cannot create ".data)
+            console_writeln(out_pp)
+            return 1
+        }
+        sc_write(oofd, out[0], ototal)
+        sc_ftruncate(oofd, ototal)
+        sc_close(oofd)
+        console_write("as: wrote ".data)
+        console_writeln(out_pp)
+        return 0
     }
 
     ; Append NOP padding so a speculative fetch past the final ecall stays valid

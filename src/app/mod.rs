@@ -291,6 +291,8 @@ pub struct FullStackApp {
     #[serde(skip)]
     cc_binary: Option<AssembledOutput>,
     #[serde(skip)]
+    ld_binary: Option<AssembledOutput>,
+    #[serde(skip)]
     vm_output_view_id: u64,
     settings: AppSettings,
     #[serde(skip)]
@@ -338,6 +340,7 @@ impl Default for FullStackApp {
             life_binary: None,
             as_binary: None,
             cc_binary: None,
+            ld_binary: None,
             vm_output_view_id: 0,
             settings: AppSettings::default(),
             show_settings: false,
@@ -932,7 +935,7 @@ impl FullStackApp {
         let source = format!(
             "{}\n{}",
             get_stdlib_source_for_mode(TargetMode::Hosted),
-            os_runtime::user::FBDEMO
+            os_runtime::user::MANDELBROT
         );
         let result = pipeline.run_full(&source, None);
         if result.has_errors() {
@@ -1076,6 +1079,38 @@ impl FullStackApp {
         }
     }
 
+    /// Compile the bundled in-VM linker as a hosted binary, caching it.
+    /// Installed at `/bin/ld.elf` so the shell's `ld <obj>... <out>` works.
+    fn ensure_ld_binary(&mut self) -> Result<(), String> {
+        if self.ld_binary.is_some() {
+            return Ok(());
+        }
+        let mut pipeline = CompilationPipeline::new();
+        pipeline.set_target_mode(TargetMode::Hosted);
+        pipeline.set_write_artifacts(false);
+        pipeline.set_type_prelude(get_stdlib_type_prelude());
+
+        let source = format!(
+            "{}\n{}",
+            get_stdlib_source_for_mode(TargetMode::Hosted),
+            os_runtime::user::LD
+        );
+        let result = pipeline.run_full(&source, None);
+        if result.has_errors() {
+            return Err(result.format_diagnostics());
+        }
+        if let Some(ref asm_err) = result.assembler_error {
+            return Err(format!("assembler error: {asm_err}"));
+        }
+        match result.binary.as_ref() {
+            Some(bin) => {
+                self.ld_binary = Some(bin.assembled.clone());
+                Ok(())
+            }
+            None => Err("linker produced no binary".to_owned()),
+        }
+    }
+
     /// Build the filesystem image the shell boots with: a `/home` directory and,
     /// if a program is selected for injection, that program stored there as a
     /// runnable executable file. A short readme is always present so `ls` has
@@ -1145,6 +1180,17 @@ impl FullStackApp {
             entries.push(FsEntry::File {
                 path: "/bin/cc.elf",
                 data: &cc_holder,
+            });
+        }
+
+        // Install the in-VM linker at /bin/ld.elf so `ld <obj>... <out>` works,
+        // completing separate compilation alongside `as`/`cc`.
+        let ld_holder;
+        if let Some(asm) = self.ld_binary.as_ref() {
+            ld_holder = assembled_to_elf_file(asm);
+            entries.push(FsEntry::File {
+                path: "/bin/ld.elf",
+                data: &ld_holder,
             });
         }
 
@@ -1365,6 +1411,11 @@ impl eframe::App for FullStackApp {
                             self.compilation_state
                                 .set_error(format!("compiler compile failed: {e}"));
                         }
+                        // Best-effort: install the in-VM linker for `ld <obj>... <out>`.
+                        if let Err(e) = self.ensure_ld_binary() {
+                            self.compilation_state
+                                .set_error(format!("linker compile failed: {e}"));
+                        }
                         let fs_image = self.build_boot_fs_image();
                         let shell = self.shell_binary.clone();
                         // The shell idles waiting for keystrokes; give it a large
@@ -1497,9 +1548,11 @@ Add '&' to run in the background; jobs / fg <job> / kill <pid> manage jobs.\n\
 \n\
 Send output to a file:  echo hi > note.txt   cat a b >> log.txt\n\
 Pipe programs:          cat a | filter      (up to 4 stages)\n\
-Assemble:  as /home/src/fib.s /home/fib.elf  then run it with  fib\n\
+Assemble:  as /home/src/array.s /home/array.elf  then run it with  array\n\
 Compile:   cc /home/src/hello.hll /home/hello.s  then  as  it and run it\n\
-Examples in /home/src: hello.hll sum.s fib.s array.s (array.s sums to 42)\n";
+Link:      as stdlib.s stdlib.o  &&  as hello_ld.s hello_ld.o\n\
+           ld stdlib.o hello_ld.o hello  &&  run hello   (exits 42)\n\
+Examples in /home/src: hello.hll array.s stdlib.s hello_ld.s\n";
 
     vec![
         FsEntry::Dir { path: "/bin" },
@@ -1510,15 +1563,7 @@ Examples in /home/src: hello.hll sum.s fib.s array.s (array.s sums to 42)\n";
             path: "/readme.txt",
             data: readme,
         },
-        // Example assembly sources so `as` can be tried immediately.
-        FsEntry::File {
-            path: "/home/src/sum.s",
-            data: os_runtime::user::EXAMPLE_SUM_S.as_bytes(),
-        },
-        FsEntry::File {
-            path: "/home/src/fib.s",
-            data: os_runtime::user::EXAMPLE_FIB_S.as_bytes(),
-        },
+        // Example assembly source so `as` can be tried immediately.
         FsEntry::File {
             path: "/home/src/array.s",
             data: os_runtime::user::EXAMPLE_ARRAY_S.as_bytes(),
@@ -1527,6 +1572,16 @@ Examples in /home/src: hello.hll sum.s fib.s array.s (array.s sums to 42)\n";
         FsEntry::File {
             path: "/home/src/hello.hll",
             data: os_runtime::user::CC_DEMO_HLL.as_bytes(),
+        },
+        // A tiny stdlib and a client that links against it, for the `as`+`ld`
+        // separate-compilation demo.
+        FsEntry::File {
+            path: "/home/src/stdlib.s",
+            data: os_runtime::user::EXAMPLE_STDLIB_S.as_bytes(),
+        },
+        FsEntry::File {
+            path: "/home/src/hello_ld.s",
+            data: os_runtime::user::EXAMPLE_HELLO_LD_S.as_bytes(),
         },
     ]
 }
@@ -1593,26 +1648,18 @@ mod boot_fs_tests {
                 "missing directory {dir}; dirs={dirs:?}"
             );
         }
-        // Example sources moved under /home/src, no longer loose in /home.
-        assert!(
-            files.contains(&"/home/src/sum.s"),
-            "sum.s not under /home/src; files={files:?}"
-        );
-        assert!(
-            files.contains(&"/home/src/fib.s"),
-            "fib.s not under /home/src; files={files:?}"
-        );
+        // Example sources live under /home/src, not loose in /home.
         assert!(
             files.contains(&"/home/src/array.s"),
             "array.s not under /home/src; files={files:?}"
         );
         assert!(
-            !files.contains(&"/home/sum.s"),
-            "sum.s still loose in /home; files={files:?}"
+            files.contains(&"/home/src/hello.hll"),
+            "hello.hll not under /home/src; files={files:?}"
         );
         assert!(
-            !files.contains(&"/home/fib.s"),
-            "fib.s still loose in /home; files={files:?}"
+            !files.contains(&"/home/array.s"),
+            "array.s still loose in /home; files={files:?}"
         );
         assert!(
             files.contains(&"/readme.txt"),

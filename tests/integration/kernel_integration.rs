@@ -496,12 +496,12 @@ fn fbdemo_renders_mandelbrot_set() {
     const YMIN: i64 = -86016;
     const STEP: i64 = 717;
 
-    let user = compile_hosted(user::FBDEMO);
+    let user = compile_hosted(user::MANDELBROT);
     let (vm, outcome, uart) = boot_kernel(cached_kernel(), Some(&user), None, "", 2_000_000_000);
-    assert_user_exit_ok(&uart, &outcome, "fbdemo");
+    assert_user_exit_ok(&uart, &outcome, "mandelbrot");
     assert!(
-        uart.contains("fbdemo: mandelbrot rendered"),
-        "fbdemo did not report success; uart={uart:?}"
+        uart.contains("mandelbrot: rendered"),
+        "mandelbrot did not report success; uart={uart:?}"
     );
 
     let px = vm.peek_framebuffer();
@@ -847,6 +847,65 @@ loop:
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
         "shell did not survive the run and exit cleanly; outcome={outcome:?} uart={uart:?}"
+    );
+}
+
+// `as` emits a relocatable ET_REL object when the output ends in
+// ".o". This program has a `.globl` export, an external `call` (undefined locally
+// -> CALL_PLT relocation), and a `la` to a local `.data` symbol (always relocated).
+// The smoke test proves the object writer runs in-VM without faulting and reports
+// success; full correctness is covered once ld.hll links it (Phase C).
+#[test]
+fn kernel_as_emits_object() {
+    let shell = compile_hosted(user::SHELL);
+    let as_exec = assembled_to_elf_file(&compile_hosted(user::AS));
+
+    let source = b"\
+.globl _start
+.text
+_start:
+  la a0, msg
+  call puts
+  li a7, 93
+  ecall
+.data
+msg:
+  .asciz \"hi\"
+";
+
+    let image = build_fs_image(&[
+        FsEntry::Dir { path: "/bin" },
+        FsEntry::File {
+            path: "/bin/as.elf",
+            data: &as_exec,
+        },
+        FsEntry::File {
+            path: "/prog.s",
+            data: source,
+        },
+    ]);
+
+    let session = "as /prog.s /prog.o\nexit\n";
+    let (_, outcome, uart) = boot_kernel(
+        cached_kernel(),
+        Some(&shell),
+        Some(&image),
+        session,
+        200_000_000,
+    );
+
+    assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
+    assert!(
+        !uart.contains("unhandled exception"),
+        "the object writer faulted; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("as: wrote /prog.o"),
+        "assembler did not report writing the object; uart={uart:?}"
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "shell did not survive object emission; outcome={outcome:?} uart={uart:?}"
     );
 }
 
@@ -1331,8 +1390,8 @@ fn editor_waits_while_idle_for_input() {
         FsEntry::Dir { path: "/home" },
         FsEntry::Dir { path: "/home/src" },
         FsEntry::File {
-            path: "/home/src/fib.s",
-            data: user::EXAMPLE_FIB_S.as_bytes(),
+            path: "/home/src/array.s",
+            data: user::EXAMPLE_ARRAY_S.as_bytes(),
         },
     ]);
 
@@ -1341,7 +1400,7 @@ fn editor_waits_while_idle_for_input() {
         cached_kernel(),
         Some(&shell),
         Some(&image),
-        "cd /home/src\nedit fib.s\n",
+        "cd /home/src\nedit array.s\n",
     );
 
     // Let it boot, launch the editor, and idle (spinning on sc_readchar/sc_yield
@@ -1366,7 +1425,7 @@ fn editor_waits_while_idle_for_input() {
         "editor faulted after idling/preemption; uart={uart:?}"
     );
     assert!(
-        uart.contains("li t0, 0"),
+        uart.contains("li t0, 3"),
         "editor did not print the file after input arrived; uart={uart:?}"
     );
 }
@@ -1543,50 +1602,6 @@ fn kernel_loads_and_runs_elf() {
     );
 }
 
-// The bundled example assembly (`/home/fib.s`) assembles and runs: fib(11) = 89.
-// Guards both the assembler and the shipped example file.
-#[test]
-fn example_fib_assembles_and_runs() {
-    let shell = compile_hosted(user::SHELL);
-    let as_exec = assembled_to_elf_file(&compile_hosted(user::AS));
-
-    let image = build_fs_image(&[
-        FsEntry::Dir { path: "/bin" },
-        FsEntry::File {
-            path: "/bin/as.elf",
-            data: &as_exec,
-        },
-        FsEntry::File {
-            path: "/fib.s",
-            data: user::EXAMPLE_FIB_S.as_bytes(),
-        },
-    ]);
-
-    let session = "as /fib.s /fib.elf\nrun /fib.elf\nexit\n";
-    let (_, outcome, uart) = boot_kernel(
-        cached_kernel(),
-        Some(&shell),
-        Some(&image),
-        session,
-        200_000_000,
-    );
-
-    assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
-    assert!(
-        uart.contains("as: wrote /fib.elf"),
-        "assembler failed; uart={uart:?}"
-    );
-    // The shell reaps the program and reports fib(11)=89, then survives to exit.
-    assert!(
-        uart.contains("[exit 89]"),
-        "shell did not report fib(11)=89 as the exit code; uart={uart:?}"
-    );
-    assert!(
-        matches!(outcome, StepOutcome::Halted(0)),
-        "shell did not survive the run and exit cleanly; outcome={outcome:?} uart={uart:?}"
-    );
-}
-
 // PLAN 1.2 Phase A: pin the HLL-0 codegen target. Run the host-compiled hello.hll
 // and the /bin/as-assembled hand-written hello.s side by side; both must print
 // "HLL0" and exit 36, so source and frozen target agree.
@@ -1664,6 +1679,159 @@ fn cc_host_compiles() {
 // program prints "HLL0\nY" and exits sum_to(8)=36, exercising the whole in-VM
 // toolchain (compiler -> assembler -> loader). The source mirrors hello.hll but
 // drops the inline-asm putc (cc emits putc as an intrinsic helper).
+// PLAN 3 Phase C: the separate-compilation headline. Two hand-written .s files are
+// assembled to ET_REL objects, linked into one ELF, and run -- all in-VM:
+//   as a.s a.o && as b.s b.o && ld a.o b.o prog && prog
+// a.s calls an external `get_val` (CALL_PLT relocation across modules); b.s defines
+// it global and loads its own `.data` via `la` (PCREL_HI20 relocation + data merge).
+// get_val returns 42, so a clean `[exit 42]` proves linking + every relocation kind.
+#[test]
+fn kernel_ld_links_objects_and_runs() {
+    let shell = compile_hosted(user::SHELL);
+    let as_exec = assembled_to_elf_file(&compile_hosted(user::AS));
+    let ld_exec = assembled_to_elf_file(&compile_hosted(user::LD));
+
+    let a_s = b"\
+.globl _start
+.text
+_start:
+  call get_val
+  li a7, 93
+  ecall
+";
+    let b_s = b"\
+.globl get_val
+.text
+get_val:
+  la a0, val
+  lw a0, 0(a0)
+  ret
+.data
+val:
+  .word 42
+";
+
+    let image = build_fs_image(&[
+        FsEntry::Dir { path: "/bin" },
+        FsEntry::File {
+            path: "/bin/as.elf",
+            data: &as_exec,
+        },
+        FsEntry::File {
+            path: "/bin/ld.elf",
+            data: &ld_exec,
+        },
+        FsEntry::File {
+            path: "/a.s",
+            data: a_s,
+        },
+        FsEntry::File {
+            path: "/b.s",
+            data: b_s,
+        },
+    ]);
+
+    let session = "as /a.s /a.o\nas /b.s /b.o\nld /a.o /b.o /prog\nrun /prog\nexit\n";
+    let (_, outcome, uart) = boot_kernel(
+        cached_kernel(),
+        Some(&shell),
+        Some(&image),
+        session,
+        300_000_000,
+    );
+
+    assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
+    assert!(
+        !uart.contains("unhandled exception"),
+        "the linked program faulted; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("as: wrote /a.o") && uart.contains("as: wrote /b.o"),
+        "assembler did not emit both objects; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("ld: wrote /prog"),
+        "linker did not report success; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("[exit 42]"),
+        "linked program did not exit 42 (relocations wrong?); uart={uart:?}"
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "shell did not survive and exit cleanly; outcome={outcome:?} uart={uart:?}"
+    );
+}
+
+// PLAN 3 Phase C, the separate-compilation payoff with a real stdlib: a client
+// program (`hello_ld.s`) inlines no I/O -- it calls puts/putc/exit, all resolved
+// at link time against a separately assembled `stdlib.s`. Exercises cross-module
+// CALL_PLT relocations (the externals), an intra-module local call (puts -> putc,
+// no relocation), and a PCREL_HI20 `la` into the client's own merged `.data`.
+// Prints "hello from stdlib!" and exits 42.
+#[test]
+fn kernel_ld_links_stdlib_and_runs() {
+    let shell = compile_hosted(user::SHELL);
+    let as_exec = assembled_to_elf_file(&compile_hosted(user::AS));
+    let ld_exec = assembled_to_elf_file(&compile_hosted(user::LD));
+
+    let image = build_fs_image(&[
+        FsEntry::Dir { path: "/bin" },
+        FsEntry::File {
+            path: "/bin/as.elf",
+            data: &as_exec,
+        },
+        FsEntry::File {
+            path: "/bin/ld.elf",
+            data: &ld_exec,
+        },
+        FsEntry::File {
+            path: "/stdlib.s",
+            data: user::EXAMPLE_STDLIB_S.as_bytes(),
+        },
+        FsEntry::File {
+            path: "/hello_ld.s",
+            data: user::EXAMPLE_HELLO_LD_S.as_bytes(),
+        },
+    ]);
+
+    let session = "as /stdlib.s /stdlib.o\nas /hello_ld.s /hello_ld.o\n\
+ld /stdlib.o /hello_ld.o /hello\nrun /hello\nexit\n";
+    let (_, outcome, uart) = boot_kernel(
+        cached_kernel(),
+        Some(&shell),
+        Some(&image),
+        session,
+        300_000_000,
+    );
+
+    assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
+    assert!(
+        !uart.contains("unhandled exception"),
+        "the linked program faulted; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("as: wrote /stdlib.o") && uart.contains("as: wrote /hello_ld.o"),
+        "assembler did not emit both objects; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("ld: wrote /hello"),
+        "linker did not report success; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("hello from stdlib!"),
+        "stdlib puts/putc output missing; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("[exit 42]"),
+        "linked program did not exit 42 (relocations wrong?); uart={uart:?}"
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "shell did not survive and exit cleanly; outcome={outcome:?} uart={uart:?}"
+    );
+}
+
 #[test]
 fn kernel_cc_compiles_and_runs() {
     let shell = compile_hosted(user::SHELL);
@@ -1765,6 +1933,63 @@ fn kernel_cc_interactive_relative_paths_and_barename() {
     assert!(
         uart.contains("HLL0"),
         "program marker missing; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("[exit 36]"),
+        "compiled program did not exit 36; uart={uart:?}"
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "shell did not survive and exit cleanly; outcome={outcome:?} uart={uart:?}"
+    );
+}
+
+// Regression: a stray trailing space on a `cc`/`as` output operand must not become
+// part of the output filename (it did, so `as hello.s` could not find the file cc
+// wrote as "hello.s "). The output is also named without an extension and run by
+// bare name, exercising cwd resolution of an extensionless ELF.
+#[test]
+fn kernel_cc_tool_arg_trailing_space() {
+    let shell = compile_hosted(user::SHELL);
+    let as_exec = assembled_to_elf_file(&compile_hosted(user::AS));
+    let cc_exec = assembled_to_elf_file(&compile_hosted(user::CC));
+
+    let image = build_fs_image(&[
+        FsEntry::Dir { path: "/bin" },
+        FsEntry::File {
+            path: "/bin/as.elf",
+            data: &as_exec,
+        },
+        FsEntry::File {
+            path: "/bin/cc.elf",
+            data: &cc_exec,
+        },
+        FsEntry::Dir { path: "/home" },
+        FsEntry::Dir { path: "/home/src" },
+        FsEntry::File {
+            path: "/home/src/hello.hll",
+            data: user::CC_DEMO_HLL.as_bytes(),
+        },
+    ]);
+
+    // Trailing spaces after the output operand on both tool invocations.
+    let session = "cd /home/src\ncc hello.hll hello.s \nas hello.s hello \nhello\nexit\n";
+    let (_, outcome, uart) = boot_kernel(
+        cached_kernel(),
+        Some(&shell),
+        Some(&image),
+        session,
+        300_000_000,
+    );
+
+    assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
+    assert!(
+        !uart.contains("cannot open"),
+        "tool could not open its input (trailing space leaked into a path); uart={uart:?}"
+    );
+    assert!(
+        uart.contains("HLL0"),
+        "program marker missing (round trip failed); uart={uart:?}"
     );
     assert!(
         uart.contains("[exit 36]"),
@@ -3276,6 +3501,40 @@ main: () -> i32 {
     assert!(
         !uart.contains("[ FS ] mounted"),
         "FS should not mount when no image; uart={uart:?}"
+    );
+}
+
+// PLAN 4.1: the OS process inspector reads scheduler/PCB state straight from guest
+// memory. This guards the PCB field offsets and symbol resolution end to end: after
+// boot the shell is pid 1, the running process, parented by the kernel (0).
+#[test]
+fn os_inspector_sees_shell_as_pid1() {
+    use full_stack::view::debug::os_view::{self, OsSymbols, Role};
+
+    let kernel = cached_kernel();
+    let shell = compile_hosted(user::SHELL);
+    let image = build_fs_image(&[FsEntry::Dir { path: "/home" }]);
+
+    let mut vm = setup_kernel_vm(kernel, Some(&shell), Some(&image), "");
+    let _ = vm.run(80_000_000);
+
+    let sym = OsSymbols::from_kernel(kernel).expect("kernel scheduler symbols resolve");
+    let procs = os_view::capture(&vm, &sym);
+
+    let running: Vec<_> = procs.iter().filter(|p| p.role == Role::Running).collect();
+    assert_eq!(
+        running.len(),
+        1,
+        "expected exactly one running process; got {}",
+        running.len()
+    );
+    let shell_proc = running[0];
+    assert_eq!(shell_proc.pid, 1, "shell should be pid 1");
+    assert_eq!(shell_proc.parent, 0, "pid 1 is parented by the kernel (0)");
+    assert!(
+        shell_proc.state <= 3,
+        "decoded a nonsense state {} (PCB offsets wrong?)",
+        shell_proc.state
     );
 }
 

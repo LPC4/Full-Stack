@@ -20,6 +20,7 @@ pub mod disassembly_view;
 pub mod framebuffer_view;
 pub mod io_view;
 pub mod memory_view;
+pub mod os_view;
 pub mod pipeline_view;
 pub mod snapshot;
 

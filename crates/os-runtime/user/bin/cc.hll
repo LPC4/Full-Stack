@@ -54,30 +54,25 @@ const ND_EXPR = 10
 src: u8[8192]
 src_len: u64 = 0
 
-; One token per slot: kind, integer value (INT) and 16-byte lexeme (IDENT).
-tk_kind: i64[2048]
-tk_val: i64[2048]
-tk_txt: u8[32768]
+; One token: 16-byte lexeme (IDENT), then kind and integer value (INT). The lexeme
+; is the first field so a slot pointer doubles as its char pointer.
+type Token = { text: u8[16], kind: i64, val: i64 }
+toks: Token[2048]
 ntok: i64 = 0
 
-; --- AST: flat parallel arrays, statements linked via nd_next (-1 = end) ---
-nd_kind: i64[1024]
-nd_a: i64[1024]
-nd_b: i64[1024]
-nd_c: i64[1024]
-nd_next: i64[1024]
-nd_name: u8[16384]
+; --- AST: array of nodes, statements linked via the `next` field (-1 = end) ---
+; The 16-byte name (CALL target only) is first so a node pointer doubles as it.
+type Node = { name: u8[16], kind: i64, a: i64, b: i64, c: i64, next: i64 }
+nodes: Node[1024]
 nnode: i64 = 0
 
 ; Call argument expression nodes, referenced by ND_CALL via (start, count).
 call_args: i64[512]
 ncallarg: i64 = 0
 
-; Function table.
-fn_name: u8[1024]
-fn_nparams: i64[64]
-fn_nlocals: i64[64]
-fn_body: i64[64]
+; Function table; the 16-byte name is first so a slot pointer doubles as it.
+type Fn = { name: u8[16], nparams: i64, nlocals: i64, body: i64 }
+fns: Fn[64]
 nfn: i64 = 0
 
 ; Locals of the function currently being parsed (params first, then declarations).
@@ -214,9 +209,10 @@ emit_int: (v: i64) {
 ; --- Tokenizer ---
 push_tok: (kind: i64, val: i64) {
     if ntok < 2048 {
-        @tk_kind[ntok] = kind
-        @tk_val[ntok] = val
-        d: u8* = tk_txt[0] + (ntok as u64) * 16
+        t: Token* = toks[ntok]
+        @t.kind = kind
+        @t.val = val
+        d: u8* = toks[ntok] as u8*
         @d = 0 as u8
         ntok = ntok + 1
     }
@@ -224,7 +220,7 @@ push_tok: (kind: i64, val: i64) {
 
 ; Copy src[start, start+len) into token idx's lexeme slot.
 set_tok_txt: (idx: i64, start: u64, len: u64) {
-    d: u8* = tk_txt[0] + (idx as u64) * 16
+    d: u8* = toks[idx] as u8*
     k: u64 = 0
     while k < len {
         if k < 15 {
@@ -433,22 +429,25 @@ tokenize: () {
 ; --- Token cursor ---
 cur_kind: () -> i64 {
     if pos < ntok {
-        return @tk_kind[pos]
+        t: Token* = toks[pos]
+        return @t.kind
     }
     return TK_EOF
 }
 
 cur_val: () -> i64 {
-    return @tk_val[pos]
+    t: Token* = toks[pos]
+    return @t.val
 }
 
 cur_txt: () -> u8* {
-    return tk_txt[0] + (pos as u64) * 16
+    return toks[pos] as u8*
 }
 
 nxt_kind: () -> i64 {
     if pos + 1 < ntok {
-        return @tk_kind[pos + 1]
+        t: Token* = toks[pos + 1]
+        return @t.kind
     }
     return TK_EOF
 }
@@ -468,17 +467,18 @@ expect: (k: i64, msg: u8*) {
 ; --- AST construction ---
 mk: (kind: i64) -> i64 {
     id: i64 = nnode
-    @nd_kind[id] = kind
-    @nd_a[id] = 0
-    @nd_b[id] = 0
-    @nd_c[id] = 0
-    @nd_next[id] = -1
+    nd: Node* = nodes[id]
+    @nd.kind = kind
+    @nd.a = 0
+    @nd.b = 0
+    @nd.c = 0
+    @nd.next = -1
     nnode = nnode + 1
     return id
 }
 
 set_name: (node: i64, s: u8*) {
-    copy16(nd_name[0] + (node as u64) * 16, s)
+    copy16(nodes[node] as u8*, s)
 }
 
 ; --- Local symbol table (one function at a time) ---
@@ -557,7 +557,8 @@ parse_primary: () -> i64 {
         v: i64 = cur_val()
         adv()
         n: i64 = mk(ND_INT)
-        @nd_a[n] = v
+        nd: Node* = nodes[n]
+        @nd.a = v
         return n
     }
     if k == TK_LPAREN {
@@ -593,8 +594,9 @@ parse_primary: () -> i64 {
                 }
             }
             expect(TK_RPAREN, "expected ) in call".data)
-            @nd_b[n] = astart
-            @nd_c[n] = cnt
+            nd: Node* = nodes[n]
+            @nd.b = astart
+            @nd.c = cnt
             return n
         }
         slot: i64 = find_local(nm[0])
@@ -603,7 +605,8 @@ parse_primary: () -> i64 {
             slot = 0
         }
         n: i64 = mk(ND_VAR)
-        @nd_a[n] = slot
+        nd: Node* = nodes[n]
+        @nd.a = slot
         return n
     }
     perr("expected expression".data)
@@ -617,9 +620,10 @@ parse_mul: () -> i64 {
         adv()
         r: i64 = parse_primary()
         b: i64 = mk(ND_BINOP)
-        @nd_a[b] = op
-        @nd_b[b] = n
-        @nd_c[b] = r
+        nd: Node* = nodes[b]
+        @nd.a = op
+        @nd.b = n
+        @nd.c = r
         n = b
     }
     return n
@@ -632,9 +636,10 @@ parse_add: () -> i64 {
         adv()
         r: i64 = parse_mul()
         b: i64 = mk(ND_BINOP)
-        @nd_a[b] = op
-        @nd_b[b] = n
-        @nd_c[b] = r
+        nd: Node* = nodes[b]
+        @nd.a = op
+        @nd.b = n
+        @nd.c = r
         n = b
     }
     return n
@@ -647,9 +652,10 @@ parse_rel: () -> i64 {
         adv()
         r: i64 = parse_add()
         b: i64 = mk(ND_BINOP)
-        @nd_a[b] = op
-        @nd_b[b] = n
-        @nd_c[b] = r
+        nd: Node* = nodes[b]
+        @nd.a = op
+        @nd.b = n
+        @nd.c = r
         n = b
     }
     return n
@@ -662,9 +668,10 @@ parse_expr: () -> i64 {
         adv()
         r: i64 = parse_rel()
         b: i64 = mk(ND_BINOP)
-        @nd_a[b] = op
-        @nd_b[b] = n
-        @nd_c[b] = r
+        nd: Node* = nodes[b]
+        @nd.a = op
+        @nd.b = n
+        @nd.c = r
         n = b
     }
     return n
@@ -679,7 +686,8 @@ parse_stmt: () -> i64 {
             adv()
             e: i64 = parse_expr()
             n: i64 = mk(ND_RETURN)
-            @nd_a[n] = e
+            nd: Node* = nodes[n]
+            @nd.a = e
             return n
         }
         if cstr_eq(t, "if".data) == 1 {
@@ -689,8 +697,9 @@ parse_stmt: () -> i64 {
             body: i64 = parse_block()
             expect(TK_RBRACE, "expected } after if".data)
             n: i64 = mk(ND_IF)
-            @nd_a[n] = c
-            @nd_b[n] = body
+            nd: Node* = nodes[n]
+            @nd.a = c
+            @nd.b = body
             return n
         }
         if cstr_eq(t, "while".data) == 1 {
@@ -700,8 +709,9 @@ parse_stmt: () -> i64 {
             body: i64 = parse_block()
             expect(TK_RBRACE, "expected } after while".data)
             n: i64 = mk(ND_WHILE)
-            @nd_a[n] = c
-            @nd_b[n] = body
+            nd: Node* = nodes[n]
+            @nd.a = c
+            @nd.b = body
             return n
         }
         ; Declaration `name: i32 = expr` or assignment `name = expr`.
@@ -716,8 +726,9 @@ parse_stmt: () -> i64 {
             e: i64 = parse_expr()
             slot: i64 = add_local(nm[0])
             n: i64 = mk(ND_DECL)
-            @nd_a[n] = slot
-            @nd_b[n] = e
+            nd: Node* = nodes[n]
+            @nd.a = slot
+            @nd.b = e
             return n
         }
         if k1 == TK_ASSIGN {
@@ -732,15 +743,17 @@ parse_stmt: () -> i64 {
                 slot = 0
             }
             n: i64 = mk(ND_ASSIGN)
-            @nd_a[n] = slot
-            @nd_b[n] = e
+            nd: Node* = nodes[n]
+            @nd.a = slot
+            @nd.b = e
             return n
         }
     }
     ; Bare expression statement (e.g. a call).
     e: i64 = parse_expr()
     n: i64 = mk(ND_EXPR)
-    @nd_a[n] = e
+    nd: Node* = nodes[n]
+    @nd.a = e
     return n
 }
 
@@ -760,7 +773,8 @@ parse_block: () -> i64 {
         if head < 0 {
             head = s
         } else {
-            @nd_next[tail] = s
+            nd: Node* = nodes[tail]
+            @nd.next = s
         }
         tail = s
         if err_flag != 0 {
@@ -777,7 +791,7 @@ parse_function: () {
         return
     }
     fidx: i64 = nfn
-    copy16(fn_name[0] + (fidx as u64) * 16, cur_txt())
+    copy16(fns[fidx] as u8*, cur_txt())
     adv()
     expect(TK_COLON, "expected : after function name".data)
     expect(TK_LPAREN, "expected ( before params".data)
@@ -809,9 +823,10 @@ parse_function: () {
     expect(TK_LBRACE, "expected { before body".data)
     head: i64 = parse_block()
     expect(TK_RBRACE, "expected } after body".data)
-    @fn_nparams[fidx] = np
-    @fn_nlocals[fidx] = loc_count
-    @fn_body[fidx] = head
+    f: Fn* = fns[fidx]
+    @f.nparams = np
+    @f.nlocals = loc_count
+    @f.body = head
     nfn = nfn + 1
 }
 
@@ -875,8 +890,9 @@ gen_binop: (op: i64) {
 }
 
 gen_call: (n: i64) {
-    start: i64 = @nd_b[n]
-    cnt: i64 = @nd_c[n]
+    nd: Node* = nodes[n]
+    start: i64 = @nd.b
+    cnt: i64 = @nd.c
     ; Evaluate args left to right, pushing each result.
     j: i64 = 0
     while j < cnt {
@@ -893,30 +909,31 @@ gen_call: (n: i64) {
         k = k - 1
     }
     emit_str("  call ".data)
-    emit_str(nd_name[0] + (n as u64) * 16)
+    emit_str(nodes[n] as u8*)
     emit_str("\n".data)
 }
 
 gen_expr: (n: i64) {
-    k: i64 = @nd_kind[n]
+    nd: Node* = nodes[n]
+    k: i64 = @nd.kind
     if k == ND_INT {
         emit_str("  li a0, ".data)
-        emit_int(@nd_a[n])
+        emit_int(@nd.a)
         emit_str("\n".data)
         return
     }
     if k == ND_VAR {
         emit_str("  ld a0, ".data)
-        emit_int(@nd_a[n] * 8)
+        emit_int(@nd.a * 8)
         emit_str("(fp)\n".data)
         return
     }
     if k == ND_BINOP {
-        gen_expr(@nd_b[n])
+        gen_expr(@nd.b)
         emit_str("  addi sp, sp, -16\n  sd a0, 0(sp)\n".data)
-        gen_expr(@nd_c[n])
+        gen_expr(@nd.c)
         emit_str("  ld t0, 0(sp)\n  addi sp, sp, 16\n".data)
-        gen_binop(@nd_a[n])
+        gen_binop(@nd.a)
         return
     }
     if k == ND_CALL {
@@ -929,45 +946,47 @@ gen_block: (head: i64) {
     h: i64 = head
     while h >= 0 {
         gen_stmt(h)
-        h = @nd_next[h]
+        nd: Node* = nodes[h]
+        h = @nd.next
     }
 }
 
 gen_stmt: (n: i64) {
-    k: i64 = @nd_kind[n]
+    nd: Node* = nodes[n]
+    k: i64 = @nd.kind
     if k == ND_DECL {
-        gen_expr(@nd_b[n])
+        gen_expr(@nd.b)
         emit_str("  sd a0, ".data)
-        emit_int(@nd_a[n] * 8)
+        emit_int(@nd.a * 8)
         emit_str("(fp)\n".data)
         return
     }
     if k == ND_ASSIGN {
-        gen_expr(@nd_b[n])
+        gen_expr(@nd.b)
         emit_str("  sd a0, ".data)
-        emit_int(@nd_a[n] * 8)
+        emit_int(@nd.a * 8)
         emit_str("(fp)\n".data)
         return
     }
     if k == ND_RETURN {
-        gen_expr(@nd_a[n])
+        gen_expr(@nd.a)
         emit_str("  j Lret_".data)
         emit_int(cur_fn)
         emit_str("\n".data)
         return
     }
     if k == ND_EXPR {
-        gen_expr(@nd_a[n])
+        gen_expr(@nd.a)
         return
     }
     if k == ND_IF {
-        gen_expr(@nd_a[n])
+        gen_expr(@nd.a)
         lend: i64 = nlabel
         nlabel = nlabel + 1
         emit_str("  beq a0, zero, L".data)
         emit_int(lend)
         emit_str("\n".data)
-        gen_block(@nd_b[n])
+        gen_block(@nd.b)
         emit_str("L".data)
         emit_int(lend)
         emit_str(":\n".data)
@@ -981,11 +1000,11 @@ gen_stmt: (n: i64) {
         emit_str("L".data)
         emit_int(ltop)
         emit_str(":\n".data)
-        gen_expr(@nd_a[n])
+        gen_expr(@nd.a)
         emit_str("  beq a0, zero, L".data)
         emit_int(lend)
         emit_str("\n".data)
-        gen_block(@nd_b[n])
+        gen_block(@nd.b)
         emit_str("  j L".data)
         emit_int(ltop)
         emit_str("\nL".data)
@@ -998,13 +1017,14 @@ gen_stmt: (n: i64) {
 ; Emit one function. main becomes `_start` and exits (a7=93); others `ret`.
 gen_function: (fi: i64, is_main: i64) {
     cur_fn = fi
-    nloc: i64 = @fn_nlocals[fi]
+    f: Fn* = fns[fi]
+    nloc: i64 = @f.nlocals
     ; Frame: nloc 8-byte slots + saved ra/fp (16 bytes), rounded up to 16.
     fixed: i64 = ((nloc * 8 + 16 + 15) / 16) * 16
     if is_main == 1 {
         emit_str("_start:\n".data)
     } else {
-        emit_str(fn_name[0] + (fi as u64) * 16)
+        emit_str(fns[fi] as u8*)
         emit_str(":\n".data)
     }
     emit_str("  addi sp, sp, -".data)
@@ -1015,7 +1035,7 @@ gen_function: (fi: i64, is_main: i64) {
     emit_int(fixed - 16)
     emit_str("(sp)\n  addi fp, sp, 0\n".data)
     ; Spill incoming args a0..a(np-1) into their local slots.
-    np: i64 = @fn_nparams[fi]
+    np: i64 = @f.nparams
     k: i64 = 0
     while k < np {
         emit_str("  sd a".data)
@@ -1025,7 +1045,7 @@ gen_function: (fi: i64, is_main: i64) {
         emit_str("(fp)\n".data)
         k = k + 1
     }
-    gen_block(@fn_body[fi])
+    gen_block(@f.body)
     ; Epilogue: discard temporaries, restore ra/fp, return or exit.
     emit_str("Lret_".data)
     emit_int(fi)
@@ -1055,7 +1075,7 @@ gen_program: () {
     mi: i64 = -1
     fi: i64 = 0
     while fi < nfn {
-        p: u8* = fn_name[0] + (fi as u64) * 16
+        p: u8* = fns[fi] as u8*
         if cstr_eq(p, "main".data) == 1 {
             mi = fi
         }

@@ -289,10 +289,10 @@ fn built_in_programs() -> Vec<ProgramFile> {
             os_runtime::user::CUBE,
         ),
         ProgramFile::user(
-            "user-fbdemo",
+            "user-mandelbrot",
             "Mandelbrot Demo",
             "Framebuffer Mandelbrot renderer.",
-            os_runtime::user::FBDEMO,
+            os_runtime::user::MANDELBROT,
         ),
         ProgramFile::user(
             "user-life",

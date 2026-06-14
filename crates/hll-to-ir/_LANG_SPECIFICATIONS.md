@@ -731,13 +731,13 @@ output is built from `putc`. Process exit is `main`'s return value, lowered to a
 `cc` emits naive stack-machine RISC-V in the subset the in-VM assembler `/bin/as` covers
 (PLAN §1.1): every local occupies a stack slot, operands are reloaded before each use,
 arguments pass in `a0..a7`, and each function keeps `ra` in its frame across calls. The
-frozen reference pair is `user/examples/hello.hll` (source) and `user/examples/hello.s`
+frozen reference pair is `user/fixtures/hello.hll` (source) and `user/fixtures/hello.s`
 (the exact assembly `cc` must produce). `hello.hll` spells `putc` out as an inline-asm
 function so the source also compiles and runs on the host toolchain;
 `kernel_cc_target_roundtrips` runs the host-compiled source and the `/bin/as`-assembled
 hand-written target side by side and checks they behave identically.
 
-The in-VM compiler now exists: `user/cc.hll` (installed at `/bin/cc.elf`, OS spec 10.4)
+The in-VM compiler now exists: `user/bin/cc.hll` (installed at `/bin/cc.elf`, OS spec 10.4)
 parses this subset and emits the stack-machine assembly described here. Because cc treats
 `putc` as the built-in I/O intrinsic and emits the helper itself, its input omits the
 inline-asm `putc` definition (`user/examples/cc_demo.hll` is the pure-HLL-0 sample);

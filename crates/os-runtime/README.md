@@ -14,7 +14,8 @@ only exposes each source file as a compile-time string constant so `hll-to-ir` a
 boot/       M-mode ROM firmware (assembly): reset stub and hosted trap handler
 kernel/     S-mode kernel sources (HLL): traps, memory, processes, syscalls, fs
 stdlib/     shared HLL stdlib, split into common / hosted / freestanding bundles
-user/       U-mode programs (HLL): shell, line editor, in-VM assembler, cube + fbdemo
+user/       U-mode programs (HLL): bin/ tools (shell, editor, as, cc, ld),
+            demo/ framebuffer demos, examples/ + fixtures/ sample sources
 src/        thin Rust crate exposing every source file as a string constant
 tests/      Rust tests over ROM, boot sequence, allocator, PMM, and subsystems
 ```
@@ -121,12 +122,17 @@ it. The shell uses `exec` + `pidalive` to run a child and wait for it cooperativ
   into a flat node array, and emits naive stack-machine assembly in the `as` subset, so
   `cc foo.hll foo.s && as foo.s foo.elf && foo` builds and runs a program with a toolchain
   that itself runs inside the VM. See the OS specification (10.4).
+- `ld.hll` -- a userspace static linker installed at `/bin/ld.elf`, launched by the shell's
+  `ld` built-in. It reads N `ET_REL` objects (from `as <src> <out>.o`), merges their
+  sections, resolves the global symbol table, applies relocations, and writes a runnable
+  ELF, so `as` + `ld` give separate compilation entirely inside the VM. See the OS
+  specification (10.4).
 - `cube.hll` -- maps the framebuffer via `map_fb` and animates a spinning wireframe cube in
-  native `f64`, double-buffered so it never flickers. Installed at `/bin/cube.elf`; reads
-  WASD key events through `poll_key` to steer the rotation.
-- `fbdemo.hll` -- maps the framebuffer and renders a Mandelbrot set in native `f64`, then
-  exits. Installed at `/bin/fbdemo.elf`; `run /bin/fbdemo` paints the FB tab, filling in
-  progressively as it renders.
+  native `f64`, double-buffered so it never flickers. Installed at `/home/demo/cube.elf`;
+  reads WASD key events through `poll_key` to steer the rotation.
+- `mandelbrot.hll` -- maps the framebuffer and renders a Mandelbrot set in native `f64`, then
+  exits. Installed at `/home/demo/mandelbrot.elf`; `run mandelbrot` paints the FB tab,
+  filling in progressively as it renders.
 
 ## Image injection
 

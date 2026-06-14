@@ -6,27 +6,27 @@ external console_write:   (str: u8*)
 external console_writeln: (str: u8*)
 
 ; Userspace syscalls (defined in the hosted stdlib).
-external sc_readchar: () -> i64
-external sc_readdir:  (path: u8*, index: u64, name_buf: u8*) -> i64
-external sc_stat:     (path: u8*) -> i64
-external sc_exec:     (path: u8*) -> i64
-external sc_exec_arg: (path: u8*, arg: u8*) -> i64
+external sc_readchar:   () -> i64
+external sc_readdir:    (path: u8*, index: u64, name_buf: u8*) -> i64
+external sc_stat:       (path: u8*) -> i64
+external sc_exec:       (path: u8*) -> i64
+external sc_exec_arg:   (path: u8*, arg: u8*) -> i64
 external sc_exec_redir: (path: u8*, arg: u8*, out_path: u8*, in_path: u8*, out_append: u64) -> i64
-external sc_open:     (path: u8*, flags: u64) -> i64
-external sc_read:     (fd: i64, buf: u8*, offset: u64, len: u64) -> i64
-external sc_write:    (fd: i64, buf: u8*, len: u64) -> i64
-external sc_ftruncate: (fd: i64, len: u64) -> i64
-external sc_lseek:    (fd: i64, offset: i64, whence: u64) -> i64
-external sc_mkdir:    (path: u8*) -> i64
-external sc_rename:   (old_path: u8*, new_path: u8*) -> i64
-external sc_unlink:   (path: u8*) -> i64
-external sc_rmdir:    (path: u8*) -> i64
-external sc_close:    (fd: i64)
-external sc_yield:    ()
-external sc_waitpid:  (pid: i64) -> i64
-external sc_pidalive: (pid: u64) -> i64
-external sc_kill:     (pid: i64, sig: i64) -> i64
-external sc_exit:     (code: i64)
+external sc_open:       (path: u8*, flags: u64) -> i64
+external sc_read:       (fd: i64, buf: u8*, offset: u64, len: u64) -> i64
+external sc_write:      (fd: i64, buf: u8*, len: u64) -> i64
+external sc_ftruncate:  (fd: i64, len: u64) -> i64
+external sc_lseek:      (fd: i64, offset: i64, whence: u64) -> i64
+external sc_mkdir:      (path: u8*) -> i64
+external sc_rename:     (old_path: u8*, new_path: u8*) -> i64
+external sc_unlink:     (path: u8*) -> i64
+external sc_rmdir:      (path: u8*) -> i64
+external sc_close:      (fd: i64)
+external sc_yield:      ()
+external sc_waitpid:    (pid: i64) -> i64
+external sc_pidalive:   (pid: u64) -> i64
+external sc_kill:       (pid: i64, sig: i64) -> i64
+external sc_exit:       (code: i64)
 
 ; C-string helpers (defined in the hosted stdlib).
 external cstr_len:         (s: u8*) -> u64
@@ -946,14 +946,32 @@ sh_run_tool2: (cwd: u8*, arg: u8*, elf_p: u8*, usage: u8*) {
         console_writeln(usage)
         return
     }
-    dst_arg: u8* = arg + sp
+    ; Copy the destination operand, stopping at the first trailing space so a stray
+    ; space in the command line does not become part of the output filename.
+    dst: u8[128]
+    dst_p: u8* = dst[0]
+    j: u64 = 0
+    while @(arg + sp) != 0 {
+        if @(arg + sp) == ' ' {
+            break
+        }
+        if j >= 127 {
+            break
+        }
+        e: u8* = dst_p + j
+        @e = @(arg + sp)
+        sp = sp + 1
+        j = j + 1
+    }
+    dt: u8* = dst_p + j
+    @dt = 0 as u8
     ; Build absolute paths and pack "abs_src abs_out" into one argument buffer.
     src_abs: u8[256]
     src_abs_p: u8* = src_abs[0]
     sh_join_path(cwd, src_p, src_abs_p)
     out_abs: u8[256]
     out_abs_p: u8* = out_abs[0]
-    sh_join_path(cwd, dst_arg, out_abs_p)
+    sh_join_path(cwd, dst_p, out_abs_p)
     packed: u8[256]
     packed_p: u8* = packed[0]
     cstr_copy(packed_p, src_abs_p)
@@ -978,6 +996,64 @@ cmd_as: (cwd: u8*, arg: u8*) {
 ; Compile HLL-0: "cc <src.hll> <out.s>" -> /bin/cc.elf.
 cmd_cc: (cwd: u8*, arg: u8*) {
     sh_run_tool2(cwd, arg, "/bin/cc.elf".data, "cc: usage: cc <src.hll> <out.s>".data)
+}
+
+; Link: "ld <obj>... <out>" -> /bin/ld.elf. Each whitespace token is resolved to an
+; absolute path and the lot is repacked space-separated for the linker (inputs
+; first, output last). Unlike as/cc this takes a variable number of operands.
+cmd_ld: (cwd: u8*, arg: u8*) {
+    packed: u8[512]
+    packed_p: u8* = packed[0]
+    plen: u64 = 0
+    i: u64 = 0
+    ntok: i64 = 0
+    while @(arg + i) != 0 {
+        while @(arg + i) == ' ' {
+            i = i + 1
+        }
+        if @(arg + i) == 0 {
+            break
+        }
+        ; Copy one token out, then absolute-join it.
+        tok: u8[256]
+        tok_p: u8* = tok[0]
+        k: u64 = 0
+        while @(arg + i) != 0 {
+            if @(arg + i) == ' ' {
+                break
+            }
+            if k < 255 {
+                d: u8* = tok_p + k
+                @d = @(arg + i)
+                k = k + 1
+            }
+            i = i + 1
+        }
+        tt: u8* = tok_p + k
+        @tt = 0 as u8
+        abs: u8[256]
+        abs_p: u8* = abs[0]
+        sh_join_path(cwd, tok_p, abs_p)
+        if ntok > 0 {
+            sep: u8* = packed_p + plen
+            @sep = ' ' as u8
+            plen = plen + 1
+        }
+        al: u64 = cstr_len(abs_p)
+        cstr_copy(packed_p + plen, abs_p)
+        plen = plen + al
+        ntok = ntok + 1
+    }
+    if ntok < 2 {
+        console_writeln("ld: usage: ld <obj>... <out>".data)
+        return
+    }
+    pid: i64 = sc_exec_arg("/bin/ld.elf".data, packed_p)
+    if pid < 0 {
+        console_writeln("cannot launch /bin/ld.elf".data)
+        return
+    }
+    sh_wait_foreground(pid)
 }
 
 ; Copy the first whitespace-delimited token of `line` into out (max 31 chars).
@@ -1420,6 +1496,10 @@ handle_command: (cwd: u8*, line: u8*) {
     }
     if cstr_eq(cmd_p, "cc".data) == 1 {
         cmd_cc(cwd, sh_skip_word(line))
+        return
+    }
+    if cstr_eq(cmd_p, "ld".data) == 1 {
+        cmd_ld(cwd, sh_skip_word(line))
         return
     }
     if cstr_eq(cmd_p, "run".data) == 1 {

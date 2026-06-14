@@ -45,7 +45,7 @@ comments cite the chapter rather than repeating its content.
 | `kernel/fs.hll` | Inode filesystem | 8 |
 | `kernel/utilities.hll`, `checks.hll` | HAL primitives, boot diagnostics | 3, 9 |
 | `stdlib/common/`, `freestanding/`, `hosted/` | Standard-library bundles | 9 |
-| `user/shell.hll`, `edit.hll`, `as.hll`, `cc.hll`, `cube.hll`, `fbdemo.hll`, `life.hll` | Userspace programs | 10 |
+| `user/bin/` (`shell.hll`, `edit.hll`, `as.hll`, `cc.hll`, `ld.hll`), `user/demo/` (`cube.hll`, `mandelbrot.hll`, `life.hll`) | Userspace programs | 10 |
 
 ### 1.2 Layered model
 
@@ -607,10 +607,10 @@ combines. `main` is emitted as `_start` and exits via the `a7=93` ecall with its
 return value; other functions `ret`. `putc` is the only I/O intrinsic: cc emits it
 as a callable helper doing `write(1, &ch, 1)` (`a7=64`) and `call`s it like any
 function. Integer arithmetic is normalized to 32 bits with a trailing `addiw`. The
-frozen codegen target is `user/examples/hello.s`; `user/examples/cc_demo.hll` is a
+frozen codegen target is `user/fixtures/hello.s`; `user/examples/cc_demo.hll` is a
 ready-to-compile pure-HLL-0 sample installed at `/home/src/hello.hll`.
 
-### 10.5 Framebuffer demos (`cube.hll`, `fbdemo.hll`, `life.hll`)
+### 10.5 Framebuffer demos (`cube.hll`, `mandelbrot.hll`, `life.hll`)
 
 The demo gallery lives in `/home/demo`, reachable by bare name (PATH search, 10.1):
 `cube` animates a spinning wireframe cube, `mandelbrot` renders a Mandelbrot set,
@@ -626,9 +626,11 @@ them from the shell and view in the Machine window's FB tab.
 
 ### 10.6 Hello and examples
 
-`user_hello.hll` prints a greeting via `sys_write` then yields in a loop (a minimal
-pid-1). `user/examples/sum.s` (=55) and `fib.s` (=89) are sample assembly inputs for
-the in-VM assembler, installed under `/home`.
+`user/demo/user_hello.hll` prints a greeting via `sys_write` then yields in a loop
+(a minimal pid-1). `user/examples/array.s` (=42) is the sample assembly input for the
+in-VM assembler, installed at `/home/src/array.s`. `user/examples/stdlib.s` +
+`hello_ld.s` are the separate-compilation pair for the `as`+`ld` demo (also under
+`/home/src`).
 
 
 ## Appendix: Memory map quick reference

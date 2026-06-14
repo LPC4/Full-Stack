@@ -47,13 +47,13 @@ at a shell prompt running as pid 1:
 $ ls
 /bin   
 /home
-$ cd home
-$ edit sum.s          ; line editor: append, insert, substitute, delete, write
-$ as sum.s sum.elf   ; assemble inside the VM -> a runnable ELF
-$ run sum.elf        ; exec it as a child process; the shell reaps it
-[exit 28]
-$ run /bin/cube       ; spinning wireframe cube in the framebuffer tab (WASD to rotate)
-$ run /bin/fbdemo     ; Mandelbrot set rendered to the framebuffer
+$ cd home/src
+$ edit array.s        ; line editor: append, insert, substitute, delete, write
+$ as array.s array.elf ; assemble inside the VM -> a runnable ELF
+$ run array.elf       ; exec it as a child process; the shell reaps it
+[exit 42]
+$ cube                ; spinning wireframe cube in the framebuffer tab (WASD to rotate)
+$ mandelbrot          ; Mandelbrot set rendered to the framebuffer
 ```
 
 The shell, editor (`edit`), and assembler (`as`) are ordinary HLL programs in

@@ -722,7 +722,7 @@ Writing `FILL` clears the whole screen in one MMIO access instead of a 76_800-st
 which would also pay an MMU walk), which is the dominant per-frame cost for an animated guest.
 
 **Double buffering.** By default the device is single-buffered: pixel writes land directly in the
-visible buffer, so progressive renderers (e.g. `fbdemo`) paint as they go. Writing a non-zero value
+visible buffer, so progressive renderers (e.g. `mandelbrot`) paint as they go. Writing a non-zero value
 to `DBMODE` switches drawing to an off-screen back buffer; the GUI keeps showing the front buffer
 until a `PRESENT` copies the back buffer over. This lets an animated guest draw a full frame and
 publish it atomically, so the asynchronously-sampling GUI never shows a half-drawn or just-cleared
@@ -735,7 +735,7 @@ raise a bus error.
 
 The kernel exposes the device to user programs through the `map_fb` syscall (number 107), which maps
 the framebuffer's physical pages (76: 75 pixel pages plus the control page) into the calling process
-and returns the base virtual address. See the OS specification for the syscall and the `fbdemo`
+and returns the base virtual address. See the OS specification for the syscall and the `mandelbrot`
 program.
 
 ### 6.6 Keyboard (Input)

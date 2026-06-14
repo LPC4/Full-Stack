@@ -6,6 +6,7 @@ use web_time::{Duration, Instant};
 
 use asm_to_binary::AssembledOutput;
 use egui::{Color32, Frame, Margin, RichText, Stroke, Vec2};
+use full_stack::view::debug::os_view::{self, OsSymbols};
 use full_stack::view::ui_theme;
 use virtual_machine::devices::framebuffer::{FB_HEIGHT, FB_WIDTH};
 use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
@@ -139,6 +140,9 @@ pub struct MachineWindow {
     autoinject_bytes: Option<Vec<u8>>,
     /// When true, the next boot should also auto-run the selected userspace program.
     pub autorun_requested: bool,
+    /// Guest-physical addresses of the kernel scheduler globals, resolved at boot.
+    /// `None` for non-kernel images; drives the Debug tab's process inspector.
+    os_symbols: Option<OsSymbols>,
 }
 
 // --- Public API ---
@@ -155,6 +159,10 @@ impl MachineWindow {
         autorun_command: Option<&str>,
     ) {
         let mut vm = Box::new(VirtualMachine::new_kernel(assembled));
+
+        // Resolve the kernel scheduler globals so the Debug tab can walk live
+        // process state. Absent on a non-kernel image (the panel hides itself).
+        self.os_symbols = OsSymbols::from_kernel(assembled);
 
         // Inject a filesystem image if provided. The kernel reads the image base
         // and size from the metadata page at FS_META_PA during boot.
@@ -750,6 +758,7 @@ impl MachineWindow {
 
         ui.separator();
 
+        let os_symbols = self.os_symbols;
         let BootPhase::Running { vm, .. } = &self.phase else {
             return;
         };
@@ -758,6 +767,11 @@ impl MachineWindow {
             .id_salt("mw_debugger")
             .auto_shrink([false, false])
             .show(ui, |ui| {
+                if let Some(sym) = os_symbols.as_ref() {
+                    dbg_heading(ui, "PROCESSES");
+                    os_view::render(ui, vm, sym);
+                    ui.add_space(8.0);
+                }
                 render_pipeline(ui, vm);
                 ui.add_space(8.0);
                 render_pipeline_stats(ui, vm);

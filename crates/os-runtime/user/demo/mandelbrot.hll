@@ -56,7 +56,7 @@ mandel_pixel: (cx: f64, cy: f64) -> u32 {
 main: () -> i32 {
     base: u64 = sc_map_fb()
     if base == 0 {
-        console_writeln("fbdemo: map_fb failed".data)
+        console_writeln("mandelbrot: map_fb failed".data)
         return 1
     }
     _fb_base = base
@@ -77,6 +77,6 @@ main: () -> i32 {
         py = py + 1
     }
 
-    console_writeln("fbdemo: mandelbrot rendered".data)
+    console_writeln("mandelbrot: rendered".data)
     return 0
 }

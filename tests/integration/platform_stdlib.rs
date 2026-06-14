@@ -1,12 +1,12 @@
-use full_stack::compilation_pipeline::CompilationPipeline;
-use full_stack::compilation_pipeline::TargetMode as PipelineTargetMode;
 use asm_to_binary::assembler::link_layout::LinkLayout;
 use asm_to_binary::AssembledOutput;
-use os_runtime::kernel;
+use full_stack::compilation_pipeline::CompilationPipeline;
+use full_stack::compilation_pipeline::TargetMode as PipelineTargetMode;
 use hll_to_ir::stdlib::{
     get_kernel_stdlib_source, get_stdlib_modules_for_mode, get_stdlib_source,
     get_stdlib_type_prelude,
 };
+use os_runtime::kernel;
 use virtual_machine::rom::generate_rom_image;
 use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 
@@ -22,9 +22,11 @@ const KLOG_SRC: &str = include_str!(concat!(
 fn run_hll(src: &str) -> (String, Option<i64>) {
     let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
-    
+
     pipeline.set_write_artifacts(false);
-    let stdlib = pipeline.compile(&get_stdlib_source()).expect("stdlib compile");
+    let stdlib = pipeline
+        .compile(&get_stdlib_source())
+        .expect("stdlib compile");
     let (_, stdlib_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&stdlib.ir_program);
     let user = pipeline.compile(src).expect("user compile");
     let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&user.ir_program);
@@ -51,9 +53,19 @@ fn kernel_stdlib_compiles_as_separate_modules() {
     pipeline.set_type_prelude(get_stdlib_type_prelude());
 
     let modules = get_stdlib_modules_for_mode(full_stack::compilation_pipeline::TargetMode::Kernel);
-    let objs = pipeline.compile_modules(&modules).expect("kernel stdlib modules compile");
-    assert_eq!(objs.len(), modules.len(), "each stdlib hll should produce one object");
-    assert!(objs.len() >= 10, "expected many kernel stdlib objects, got {}", objs.len());
+    let objs = pipeline
+        .compile_modules(&modules)
+        .expect("kernel stdlib modules compile");
+    assert_eq!(
+        objs.len(),
+        modules.len(),
+        "each stdlib hll should produce one object"
+    );
+    assert!(
+        objs.len() >= 10,
+        "expected many kernel stdlib objects, got {}",
+        objs.len()
+    );
 }
 
 #[test]
@@ -86,10 +98,7 @@ fn kernel_boot_runs_with_separate_stdlib_objects() {
         .map(|(name, _)| *name)
         .chain(kernel_modules.iter().map(|(name, _)| *name))
         .collect();
-    let object_refs: Vec<&AssembledOutput> = stdlib_objs
-        .iter()
-        .chain(kernel_objs.iter())
-        .collect();
+    let object_refs: Vec<&AssembledOutput> = stdlib_objs.iter().chain(kernel_objs.iter()).collect();
 
     let final_assembled = kernel_pipeline
         .link_assembled_objects_named(
@@ -107,7 +116,10 @@ fn kernel_boot_runs_with_separate_stdlib_objects() {
     // When no user binary is present the kernel shuts down cleanly.
     match run.outcome {
         StepOutcome::Halted(0) => {}
-        other => panic!("kernel must halt with code 0, got {other:?}; uart={:?}", run.uart_output),
+        other => panic!(
+            "kernel must halt with code 0, got {other:?}; uart={:?}",
+            run.uart_output
+        ),
     }
     assert!(
         run.uart_output.contains("[ PROC ] no user binary present"),
@@ -142,7 +154,7 @@ fn userspace_catalog_programs_compile_hosted() {
         ("edit", os_runtime::user::EDIT),
         ("as", os_runtime::user::AS),
         ("cube", os_runtime::user::CUBE),
-        ("fbdemo", os_runtime::user::FBDEMO),
+        ("mandelbrot", os_runtime::user::MANDELBROT),
         ("user_hello", os_runtime::user::USER_HELLO),
     ];
     for (name, src) in programs {
@@ -378,15 +390,16 @@ fn run_kernel_hll(user_src: &str) -> (String, Option<i64>) {
     let stdlib = stdlib_pipeline
         .compile(&get_kernel_stdlib_source())
         .expect("kernel stdlib compile");
-    let (_, stdlib_tokens) =
-        stdlib_pipeline.compile_ir_to_assembly_with_tokens(&stdlib.ir_program);
+    let (_, stdlib_tokens) = stdlib_pipeline.compile_ir_to_assembly_with_tokens(&stdlib.ir_program);
 
     let mut user_pipeline = CompilationPipeline::new();
     user_pipeline.set_write_artifacts(false);
     let user = user_pipeline.compile(user_src).expect("user compile");
     let (_, user_tokens) = user_pipeline.compile_ir_to_assembly_with_tokens(&user.ir_program);
 
-    let stdlib_obj = stdlib_pipeline.assemble(&stdlib_tokens).expect("stdlib assemble");
+    let stdlib_obj = stdlib_pipeline
+        .assemble(&stdlib_tokens)
+        .expect("stdlib assemble");
     let user_obj = user_pipeline.assemble(&user_tokens).expect("user assemble");
     let assembled = user_pipeline
         .link_assembled_objects(&[("kernel_stdlib", &stdlib_obj), ("user", &user_obj)])
@@ -505,9 +518,18 @@ fn my_kernel_example_program() {
     let (uart, exit) = run_kernel_hll(MY_KERNEL_EXAMPLE);
     // When no user binary is present the kernel shuts down cleanly after
     // spawn_user_process returns.  Verify the critical checkpoints.
-    assert!(uart.contains("[  OK  ] kernel starting\n"), "missing kernel start; uart={uart:?}");
-    assert!(uart.contains("[ VMM ] sv39 enabled\n"), "missing MMU enable; uart={uart:?}");
-    assert!(uart.contains("[ PROC ] no user binary present"), "missing user binary skip; uart={uart:?}");
+    assert!(
+        uart.contains("[  OK  ] kernel starting\n"),
+        "missing kernel start; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("[ VMM ] sv39 enabled\n"),
+        "missing MMU enable; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("[ PROC ] no user binary present"),
+        "missing user binary skip; uart={uart:?}"
+    );
     assert_eq!(exit, Some(0), "kernel must exit with code 0; uart={uart:?}");
 }
 
@@ -521,8 +543,7 @@ fn kernel_boot_missing_kmain_is_assemble_error() {
     let stdlib = stdlib_pipeline
         .compile(&get_kernel_stdlib_source())
         .expect("kernel stdlib compile");
-    let (_, stdlib_tokens) =
-        stdlib_pipeline.compile_ir_to_assembly_with_tokens(&stdlib.ir_program);
+    let (_, stdlib_tokens) = stdlib_pipeline.compile_ir_to_assembly_with_tokens(&stdlib.ir_program);
 
     // A hosted `main` program - no `kmain` defined.
     let mut user_pipeline = CompilationPipeline::new();
@@ -536,8 +557,12 @@ fn kernel_boot_missing_kmain_is_assemble_error() {
         .assemble(&stdlib_tokens)
         .expect("kernel stdlib assemble");
     let user_obj = user_pipeline.assemble(&user_tokens).expect("user assemble");
-    let result = user_pipeline.link_assembled_objects(&[("kernel_stdlib", &stdlib_obj), ("user", &user_obj)]);
-    assert!(result.is_err(), "expected link to fail when kmain is missing");
+    let result = user_pipeline
+        .link_assembled_objects(&[("kernel_stdlib", &stdlib_obj), ("user", &user_obj)]);
+    assert!(
+        result.is_err(),
+        "expected link to fail when kmain is missing"
+    );
     let err = result.unwrap_err();
     assert!(
         err.message.contains("kmain"),
@@ -579,9 +604,13 @@ fn cross_module_call_works() {
     pipeline.set_write_artifacts(false);
 
     // Stdlib provides _start -> main -> exit.
-    let stdlib = pipeline.compile(&get_stdlib_source()).expect("stdlib compile");
+    let stdlib = pipeline
+        .compile(&get_stdlib_source())
+        .expect("stdlib compile");
     let (_, stdlib_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&stdlib.ir_program);
-    let stdlib_obj = pipeline.assemble_named("stdlib", &stdlib_tokens).expect("stdlib assemble");
+    let stdlib_obj = pipeline
+        .assemble_named("stdlib", &stdlib_tokens)
+        .expect("stdlib assemble");
 
     let module_a = r#"
     add_one: (x: i32) -> i32 {
@@ -606,11 +635,10 @@ fn cross_module_call_works() {
     let b_obj = pipeline.assemble_named("b", &b_tokens).expect("b assemble");
 
     let linked = pipeline
-        .link_assembled_objects_named("test", &[
-            ("stdlib", &stdlib_obj),
-            ("a", &a_obj),
-            ("b", &b_obj),
-        ])
+        .link_assembled_objects_named(
+            "test",
+            &[("stdlib", &stdlib_obj), ("a", &a_obj), ("b", &b_obj)],
+        )
         .expect("link");
 
     let mut vm = VirtualMachine::new(&linked);
@@ -628,9 +656,13 @@ fn cross_module_la_works() {
     let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
 
-    let stdlib = pipeline.compile(&get_stdlib_source()).expect("stdlib compile");
+    let stdlib = pipeline
+        .compile(&get_stdlib_source())
+        .expect("stdlib compile");
     let (_, stdlib_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&stdlib.ir_program);
-    let stdlib_obj = pipeline.assemble_named("stdlib", &stdlib_tokens).expect("stdlib assemble");
+    let stdlib_obj = pipeline
+        .assemble_named("stdlib", &stdlib_tokens)
+        .expect("stdlib assemble");
 
     // Module A: a helper returning 99
     let module_a = r#"
@@ -657,11 +689,10 @@ fn cross_module_la_works() {
     let b_obj = pipeline.assemble_named("b", &b_tokens).expect("b assemble");
 
     let linked = pipeline
-        .link_assembled_objects_named("test", &[
-            ("stdlib", &stdlib_obj),
-            ("a", &a_obj),
-            ("b", &b_obj),
-        ])
+        .link_assembled_objects_named(
+            "test",
+            &[("stdlib", &stdlib_obj), ("a", &a_obj), ("b", &b_obj)],
+        )
         .expect("link");
 
     let mut vm = VirtualMachine::new(&linked);
@@ -670,7 +701,11 @@ fn cross_module_la_works() {
         StepOutcome::Halted(code) => Some(code),
         _ => None,
     };
-    assert_eq!(exit, Some(99), "cross-module call through intermediate should return 99");
+    assert_eq!(
+        exit,
+        Some(99),
+        "cross-module call through intermediate should return 99"
+    );
 }
 
 /// Cross-module JAL (tail-call) relocation.
@@ -679,9 +714,13 @@ fn cross_module_tail_works() {
     let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
 
-    let stdlib = pipeline.compile(&get_stdlib_source()).expect("stdlib compile");
+    let stdlib = pipeline
+        .compile(&get_stdlib_source())
+        .expect("stdlib compile");
     let (_, stdlib_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&stdlib.ir_program);
-    let stdlib_obj = pipeline.assemble_named("stdlib", &stdlib_tokens).expect("stdlib assemble");
+    let stdlib_obj = pipeline
+        .assemble_named("stdlib", &stdlib_tokens)
+        .expect("stdlib assemble");
 
     // Module A defines a function and also a tail-call wrapper.
     let module_a = r#"
@@ -713,11 +752,10 @@ fn cross_module_tail_works() {
     let b_obj = pipeline.assemble_named("b", &b_tokens).expect("b assemble");
 
     let linked = pipeline
-        .link_assembled_objects_named("test", &[
-            ("stdlib", &stdlib_obj),
-            ("a", &a_obj),
-            ("b", &b_obj),
-        ])
+        .link_assembled_objects_named(
+            "test",
+            &[("stdlib", &stdlib_obj), ("a", &a_obj), ("b", &b_obj)],
+        )
         .expect("link");
 
     let mut vm = VirtualMachine::new(&linked);
@@ -736,9 +774,13 @@ fn cross_module_chain_three_works() {
     let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
 
-    let stdlib = pipeline.compile(&get_stdlib_source()).expect("stdlib compile");
+    let stdlib = pipeline
+        .compile(&get_stdlib_source())
+        .expect("stdlib compile");
     let (_, stdlib_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&stdlib.ir_program);
-    let stdlib_obj = pipeline.assemble_named("stdlib", &stdlib_tokens).expect("stdlib assemble");
+    let stdlib_obj = pipeline
+        .assemble_named("stdlib", &stdlib_tokens)
+        .expect("stdlib assemble");
 
     let module_a = r#"
     get_ten: () -> i32 {
@@ -775,12 +817,15 @@ fn cross_module_chain_three_works() {
     let c_obj = pipeline.assemble_named("c", &c_tokens).expect("c assemble");
 
     let linked = pipeline
-        .link_assembled_objects_named("chain", &[
-            ("stdlib", &stdlib_obj),
-            ("a", &a_obj),
-            ("b", &b_obj),
-            ("c", &c_obj),
-        ])
+        .link_assembled_objects_named(
+            "chain",
+            &[
+                ("stdlib", &stdlib_obj),
+                ("a", &a_obj),
+                ("b", &b_obj),
+                ("c", &c_obj),
+            ],
+        )
         .expect("link");
 
     let mut vm = VirtualMachine::new(&linked);
@@ -1070,9 +1115,15 @@ kmain: () -> () {
 }
 "#,
     );
-    assert!(uart.contains("[  OK  ] process subsystem ready\n"), "uart={uart:?}");
+    assert!(
+        uart.contains("[  OK  ] process subsystem ready\n"),
+        "uart={uart:?}"
+    );
     assert!(uart.contains("[  OK  ] scheduler ready\n"), "uart={uart:?}");
-    assert!(uart.contains("[  OK  ] process and scheduler ok\n"), "uart={uart:?}");
+    assert!(
+        uart.contains("[  OK  ] process and scheduler ok\n"),
+        "uart={uart:?}"
+    );
     assert_eq!(exit, Some(0));
 }
 
@@ -1180,8 +1231,7 @@ kmain: () -> () {
 "#,
     );
     assert_eq!(
-        uart,
-        "[  OK  ] memory self-test passed\n[  OK  ] memory self test isolated ok\n",
+        uart, "[  OK  ] memory self-test passed\n[  OK  ] memory self test isolated ok\n",
         "uart={uart:?}"
     );
     assert_eq!(exit, Some(0));
@@ -1209,8 +1259,7 @@ kmain: () -> () {
 "#,
     );
     assert_eq!(
-        uart,
-        "[  OK  ] memory self-test passed\n[  OK  ] large memory self test ok\n",
+        uart, "[  OK  ] memory self-test passed\n[  OK  ] large memory self test ok\n",
         "uart={uart:?}"
     );
     assert_eq!(exit, Some(0));
