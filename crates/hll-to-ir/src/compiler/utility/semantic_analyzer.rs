@@ -131,7 +131,7 @@ impl SemanticAnalyzer {
                 Ok(())
             }
             DeclNode::Type { .. } | DeclNode::Const { .. } => Ok(()),
-            DeclNode::Variable { name, ty, init: _ } => {
+            DeclNode::Variable { name, ty, .. } => {
                 let ir_ty = self.ast_type_to_ir_type(ty);
                 self.symbols
                     .insert(name.clone(), ir_ty, crate::ir::IrValue::Null);

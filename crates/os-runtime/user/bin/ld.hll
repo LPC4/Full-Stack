@@ -14,6 +14,11 @@ external sc_close:     (fd: i64)
 external cstr_eq:      (a: u8*, b: u8*) -> i64
 external cstr_len:     (s: u8*) -> u64
 
+; Relocation patching + executable emission, split into ld_link.hll and linked by
+; the host toolchain. They read the merged sections/symbol table built here.
+external apply_relocs: ()
+external emit_exec:    (out_path: u8*)
+
 const ARG_BASE = 0x7FF00000
 const USER_CODE_BASE = 0x40000000
 ; Output image: ELF header + program header in the first page, payload from HDR on.
@@ -244,177 +249,6 @@ build_globals: () {
         }
         m = m + 1
     }
-}
-
-; --- Relocation patching (mirrors object_linker.rs) ---
-
-psplit_hi: i64 = 0
-psplit_lo: i64 = 0
-pcrel_split: (delta: i64) {
-    lo: i64 = delta & 0xFFF
-    if lo >= 2048 {
-        lo = lo - 4096
-    }
-    psplit_lo = lo
-    psplit_hi = (delta - lo) >> 12
-}
-
-rdw_text: (off: i64) -> u32 {
-    return rd_le(merged_text[0], off as u64, 4) as u32
-}
-
-wrw_text: (off: i64, w: u32) {
-    d: u8* = merged_text[0] + (off as u64)
-    @d = w as u8
-    d1: u8* = d + 1
-    @d1 = (w >> 8) as u8
-    d2: u8* = d + 2
-    @d2 = (w >> 16) as u8
-    d3: u8* = d + 3
-    @d3 = (w >> 24) as u8
-}
-
-; Patch the instruction(s) at merged-text offset `site` for relocation `rtype`
-; resolving to PC-relative `delta` (target_abs - site_abs).
-patch: (site: i64, delta: i64, rtype: u64) {
-    pcrel_split(delta)
-    hi_field: u32 = ((psplit_hi as u32) & 0xFFFFF) << 12
-    lo_field: u32 = ((psplit_lo as u32) & 0xFFF) << 20
-    if rtype == 17 {
-        ; JAL: rebuild the 20-bit immediate, keep rd/opcode (low 12 bits).
-        u: u32 = delta as u32
-        i20: u32 = (u >> 20) & 1
-        i10_1: u32 = (u >> 1) & 0x3FF
-        i11: u32 = (u >> 11) & 1
-        i19_12: u32 = (u >> 12) & 0xFF
-        imm_bits: u32 = (i20 << 31) | (i10_1 << 21) | (i11 << 20) | (i19_12 << 12)
-        w: u32 = rdw_text(site)
-        wrw_text(site, (w & 0xFFF) | imm_bits)
-        return
-    }
-    ; CALL_PLT (auipc+jalr) and La/PCREL_HI20 (auipc+addi): patch the auipc hi20
-    ; and the second instruction's imm[11:0] in bits 31:20.
-    au: u32 = rdw_text(site)
-    wrw_text(site, (au & 0xFFF) | hi_field)
-    lo: u32 = rdw_text(site + 4)
-    wrw_text(site + 4, (lo & 0xFFFFF) | lo_field)
-}
-
-; Apply every relocation in every module's .rela.text.
-apply_relocs: () {
-    m: i64 = 0
-    while m < nmod {
-        mb: i64 = @mod_base[m]
-        f: u8* = objbuf[0] + (mb as u64)
-        ti: i64 = sec_index_of(f, ".text".data)
-        di: i64 = sec_index_of(f, ".data".data)
-        sec_find(f, ".symtab".data)
-        symoff: u64 = sec_off
-        sec_find(f, ".strtab".data)
-        strp: u8* = f + sec_off
-        if sec_find(f, ".rela.text".data) == 1 {
-            roff: u64 = sec_off
-            nr: u64 = sec_size / 24
-            j: u64 = 0
-            while j < nr {
-                e: u8* = f + roff + j * 24
-                r_offset: u64 = rd_le(e, 0, 8)
-                rtype: u64 = rd_le(e, 8, 4)
-                symidx: u64 = rd_le(e, 12, 4)
-                s: u8* = f + symoff + symidx * 24
-                shndx: i64 = rd_le(s, 6, 2) as i64
-                value: u64 = rd_le(s, 8, 8)
-                noff: u64 = rd_le(s, 0, 4)
-                nm: u8* = strp + noff
-                target: i64 = 0
-                if shndx == ti {
-                    target = text_vbase + @mod_text_off[m] + (value as i64)
-                } else {
-                    if shndx == di {
-                        target = data_vbase + @mod_data_off[m] + (value as i64)
-                    } else {
-                        target = gsym_lookup(nm)
-                        if target < 0 {
-                            fail("undefined symbol".data)
-                            target = 0
-                        }
-                    }
-                }
-                site: i64 = @mod_text_off[m] + (r_offset as i64)
-                delta: i64 = target - (text_vbase + site)
-                patch(site, delta, rtype)
-                j = j + 1
-            }
-        }
-        m = m + 1
-    }
-}
-
-; --- Output ---
-
-emit_exec: (out_path: u8*) {
-    entry: i64 = gsym_lookup("_start".data)
-    if entry < 0 {
-        fail("no _start symbol".data)
-        return
-    }
-    base: u64 = USER_CODE_BASE as u64
-    payload_len: u64 = mtext_len + (PAD as u64) + mdata_len
-
-    @out[0] = 0x7F as u8
-    @out[1] = 69 as u8
-    @out[2] = 76 as u8
-    @out[3] = 70 as u8
-    @out[4] = 2 as u8
-    @out[5] = 1 as u8
-    @out[6] = 1 as u8
-    wr_le(16, 2, 2)              ; e_type = ET_EXEC
-    wr_le(18, 243, 2)           ; e_machine = EM_RISCV
-    wr_le(20, 1, 4)             ; e_version
-    wr_le(24, entry as u64, 8)  ; e_entry
-    wr_le(32, 64, 8)            ; e_phoff
-    wr_le(48, 5, 4)             ; e_flags
-    wr_le(52, 64, 2)            ; e_ehsize
-    wr_le(54, 56, 2)            ; e_phentsize
-    wr_le(56, 1, 2)             ; e_phnum
-
-    wr_le(64, 1, 4)             ; p_type = PT_LOAD
-    wr_le(68, 7, 4)             ; p_flags = R|W|X
-    wr_le(72, HDR as u64, 8)    ; p_offset
-    wr_le(80, base, 8)          ; p_vaddr
-    wr_le(88, base, 8)          ; p_paddr
-    wr_le(96, payload_len, 8)   ; p_filesz
-    wr_le(104, payload_len, 8)  ; p_memsz
-    wr_le(112, 4096, 8)         ; p_align
-
-    ; Payload: merged text, then 8 NOPs, then merged data.
-    i: u64 = 0
-    while i < mtext_len {
-        d: u8* = out[0] + (HDR as u64) + i
-        @d = @(merged_text[0] + i)
-        i = i + 1
-    }
-    p: u64 = 0
-    while p < 8 {
-        wr_le((HDR as u64) + mtext_len + p * 4, 0x13, 4)
-        p = p + 1
-    }
-    i = 0
-    while i < mdata_len {
-        d: u8* = out[0] + (HDR as u64) + mtext_len + (PAD as u64) + i
-        @d = @(merged_data[0] + i)
-        i = i + 1
-    }
-    total: u64 = (HDR as u64) + payload_len
-
-    ofd: i64 = sc_open(out_path, 2)
-    if ofd < 0 {
-        fail("cannot create output".data)
-        return
-    }
-    sc_write(ofd, out[0], total)
-    sc_ftruncate(ofd, total)
-    sc_close(ofd)
 }
 
 ; Split the whitespace-separated argument into path tokens.

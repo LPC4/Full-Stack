@@ -58,14 +58,25 @@ impl HighLevelCompiler {
                     Ok(())
                 }
             }
-            DeclNode::Variable { name, ty, init } => {
+            DeclNode::Variable {
+                name,
+                ty,
+                init,
+                is_extern,
+            } => {
                 let ir_ty = self.lower_type(ty);
+                // Record the type so references resolve as globals either way.
+                self.global_vars.insert(name.clone(), ir_ty.clone());
+                if *is_extern {
+                    // Defined in another module: emit no storage. References lower
+                    // to `la name`, resolved against the defining .data/.bss symbol.
+                    return Ok(());
+                }
                 // Constant non-zero initializers go to .data; the rest stay in .bss.
                 let init_bytes: Option<Vec<u8>> = match init {
                     None => None,
                     Some(expr) => self.const_init_bytes(expr, &ir_ty),
                 };
-                self.global_vars.insert(name.clone(), ir_ty.clone());
                 ir_program.push_global_var(IrGlobalVar {
                     name: name.clone(),
                     ty: ir_ty,

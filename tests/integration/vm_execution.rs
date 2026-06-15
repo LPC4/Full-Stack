@@ -378,7 +378,7 @@ main: () -> i32 {
 #[test]
 fn hll_negative_integer_inits() {
     // Negative literals and literal arithmetic adopt the declared i64 width with
-    // no explicit cast (PLAN 0.1).
+    // no explicit cast.
     let (_, outcome, _) = run_hll(r#"
 neg_one: () -> i64 {
     return -1
@@ -398,7 +398,7 @@ main: () -> i32 {
 
 #[test]
 fn hll_global_scalar_initializer() {
-    // A non-zero scalar global reads back its declared value (PLAN 0.2).
+    // A non-zero scalar global reads back its declared value.
     let (_, outcome, _) = run_hll(r#"
 g: i64 = 42
 main: () -> i32 {
@@ -410,7 +410,7 @@ main: () -> i32 {
 
 #[test]
 fn hll_global_array_initializer() {
-    // A non-zero array global initializer lands in .data and reads back (PLAN 0.2).
+    // A non-zero array global initializer lands in .data and reads back.
     let (_, outcome, _) = run_hll(r#"
 arr: i64[4] = [10, 20, 12, 0]
 main: () -> i32 {
@@ -1771,7 +1771,7 @@ fn ir_cmp_slt_negative() {
     assert!(matches!(outcome, StepOutcome::Halted(0)), "slt: -1 < 0 should be true, got {outcome:?}");
 }
 
-// --- Floating-point lowering (PLAN 3.1 / 5.1) ---
+// --- Floating-point lowering ---
 //
 // These guard the three float-lowering correctness fixes: f32 and f64 constant
 // materialization, f64 arithmetic going through the FPU (not the integer ALU),
@@ -1886,7 +1886,7 @@ main: () -> i32 {
 
 #[test]
 fn float_f64_var_plus_bare_literal() {
-    // PLAN 6.4: a bare float literal infers as f32, but mixing it with an f64 var
+    // A bare float literal infers as f32, but mixing it with an f64 var
     // used to be rejected as a type mismatch. It now promotes to f64. Both operand
     // orders must work: 4.0 + 1.5 = 5.5, then 1.5 + 5.5 = 7.0 -> 7.
     let (_, outcome, _) = run_hll(r#"

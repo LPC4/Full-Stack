@@ -31,6 +31,9 @@ pub enum DeclNode {
         name: String,
         ty: Type,
         init: Option<Expression>,
+        // External globals are defined in another module; storage is not emitted
+        // here, only the name + type are recorded so references resolve at link.
+        is_extern: bool,
     },
     Function {
         name: String,

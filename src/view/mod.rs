@@ -15,7 +15,7 @@ pub use layout::{
     auto_grid_columns, auto_grid_columns_with_min_width, estimated_monospace_char_width,
     split_rect_into_grid,
 };
-pub use program_catalog::{ProgramCatalog, ProgramFile, ProgramKind};
+pub use program_catalog::{CatalogBadge, ProgramCatalog, ProgramFile, ProgramKind};
 pub use viewtrait::CompilerView;
 
 pub mod ide;

@@ -139,8 +139,7 @@ fn: () -> () {
 }
 
 // --- Float operations the backend cannot lower must be rejected cleanly ---
-// (PLAN 5.4: these used to reach the backend and panic instead of producing a
-// source-level diagnostic.)
+//
 
 #[test]
 fn float_modulo_is_rejected() {

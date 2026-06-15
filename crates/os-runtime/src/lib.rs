@@ -179,6 +179,14 @@ pub mod user {
     pub const SHELL: &str =
         include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/user/bin/shell.hll"));
 
+    /// File-management builtins (`touch`/`mkdir`/`rm`/`rmdir`/`mv`) for the shell,
+    /// split into their own translation unit and linked with `SHELL` by the host
+    /// toolchain. They share `sh_join_path` via an `external` decl.
+    pub const SHELL_FILEOPS: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/user/bin/shell_fileops.hll"
+    ));
+
     /// Tiny line editor (ed-like). Reads its target path from USER_ARG_BASE,
     /// loads the file, and edits it with append/print/clear/write/quit commands.
     /// Compiled in hosted mode and launched by the shell's `edit` command.
@@ -189,17 +197,39 @@ pub mod user {
     /// and launched by the shell's `as <src> <out>` command.
     pub const AS: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/user/bin/as.hll"));
 
-    /// Minimal in-VM HLL-0 compiler (PLAN 1.2). Reads an `.hll` source, parses the
+    /// ET_REL object serializer for `as`, split into its own translation unit and
+    /// linked with `AS` by the host toolchain. Shares the assembler state with
+    /// `as.hll` via `external` globals.
+    pub const AS_OBJECT: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/user/bin/as_object.hll"
+    ));
+
+    /// Minimal in-VM HLL-0 compiler. Reads an `.hll` source, parses the
     /// HLL-0 subset, and writes naive stack-machine assembly in the `/bin/as`
     /// subset. Installed at `/bin/cc.elf` and launched by the shell's
     /// `cc <src.hll> <out.s>` command; pairs with `as` for the self-hosting demo.
     pub const CC: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/user/bin/cc.hll"));
 
-    /// In-VM static linker (PLAN 3 Phase C). Reads N relocatable `ET_REL` objects
+    /// HLL-0 code generator for `cc`, split into its own translation unit and
+    /// linked with `CC` by the host toolchain. Walks the shared AST
+    /// tables via `external` globals and emits the stack-machine assembly.
+    pub const CC_CODEGEN: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/user/bin/cc_codegen.hll"
+    ));
+
+    /// In-VM static linker. Reads N relocatable `ET_REL` objects
     /// produced by `as <src> <out>.o`, merges their sections, resolves the global
     /// symbol table, applies relocations, and writes a runnable ELF. Installed at
     /// `/bin/ld.elf` and launched by the shell's `ld <obj>... <out>` command.
     pub const LD: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/user/bin/ld.hll"));
+
+    /// Relocation patching + executable emission for `ld`, split into its own
+    /// translation unit and linked with `LD` by the host toolchain.
+    /// Reads the merged sections and symbol table via `external` globals.
+    pub const LD_LINK: &str =
+        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/user/bin/ld_link.hll"));
 
     // --- demo: programs installed under /home/demo ---
 
@@ -242,8 +272,8 @@ pub mod user {
     ));
 
     /// Tiny user-space stdlib (`putc`/`puts`/`exit`) as assembly, meant to be
-    /// assembled to an object and linked with a client program by `ld` (PLAN 3
-    /// Phase C demo of separate compilation). Installed at `/home/src/stdlib.s`.
+    /// assembled to an object and linked with a client program by `ld`. Installed
+    /// at `/home/src/stdlib.s`.
     pub const EXAMPLE_STDLIB_S: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/user/examples/stdlib.s"
@@ -259,7 +289,7 @@ pub mod user {
 
     // --- fixtures: frozen test inputs, not installed ---
 
-    /// HLL-0 reference source for the in-VM `cc` (PLAN 1.2 Phase A); host-compilable.
+    /// HLL-0 reference source for the in-VM `cc`; host-compilable.
     pub const CC_HELLO_HLL: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/user/fixtures/hello.hll"
@@ -270,4 +300,231 @@ pub mod user {
         env!("CARGO_MANIFEST_DIR"),
         "/user/fixtures/hello.s"
     ));
+
+    // --- Catalog: one source of truth for "what user programs exist" ---
+
+    /// Role of a bundled user program. Determines where (and whether) it is
+    /// installed into the boot filesystem image.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub enum UserProgramKind {
+        /// HLL source compiled to an ELF and installed under `/bin`.
+        Tool,
+        /// HLL source compiled to an ELF and installed under `/home/demo`.
+        Demo,
+        /// Verbatim source installed under `/home/src` so the toolchain can be
+        /// tried out of the box.
+        Example,
+        /// Frozen test input; not installed into the boot image.
+        Fixture,
+    }
+
+    /// One bundled user program: catalog identity, role, boot-FS install path
+    /// (`None` when not auto-installed), and embedded source. `PROGRAMS` is the
+    /// single list every consumer (boot FS image, GUI catalog, tests) iterates.
+    #[derive(Clone, Copy, Debug)]
+    pub struct UserProgram {
+        /// Stable key: cache key and (for Tool/Demo) catalog id `user-<name>`.
+        pub name: &'static str,
+        /// Human-facing display name for the GUI catalog.
+        pub title: &'static str,
+        /// One-line catalog description.
+        pub description: &'static str,
+        pub kind: UserProgramKind,
+        /// Boot-FS install path, or `None` for the init shell / fixtures / the
+        /// on-demand hello demo.
+        pub install_path: Option<&'static str>,
+        /// Primary translation unit.
+        pub source: &'static str,
+        /// Additional translation units linked with `source`. Empty for single-file
+        /// programs; each is compiled to its own object and linked with the primary
+        /// one and the stdlib.
+        pub aux_sources: &'static [&'static str],
+        /// Display names for `aux_sources`, parallel by index. Used by the GUI
+        /// catalog to show each aux unit as a named, editable module.
+        pub aux_names: &'static [&'static str],
+    }
+
+    impl UserProgram {
+        /// HLL programs the host compiles to an ELF (tools + demos), as opposed
+        /// to verbatim example sources and uninstalled fixtures.
+        pub fn is_compiled(&self) -> bool {
+            matches!(self.kind, UserProgramKind::Tool | UserProgramKind::Demo)
+        }
+
+        /// The aux translation units paired with their display names, in order.
+        pub fn aux_modules(&self) -> impl Iterator<Item = (&'static str, &'static str)> {
+            self.aux_names
+                .iter()
+                .copied()
+                .zip(self.aux_sources.iter().copied())
+        }
+    }
+
+    use UserProgramKind::{Demo, Example, Fixture, Tool};
+
+    /// Every bundled user program, in catalog display order. Adding a program
+    /// means appending one row here -- the boot FS image, the GUI catalog, and
+    /// the userspace compile test all derive from this single list.
+    pub const PROGRAMS: &[UserProgram] = &[
+        // Tools (/bin). The shell is the init process, compiled but not installed.
+        UserProgram {
+            name: "shell",
+            title: "Shell",
+            description: "Interactive shell (pid 1): ls, cd, run, cat, edit, as, file management.",
+            kind: Tool,
+            install_path: None,
+            source: SHELL,
+            aux_sources: &[SHELL_FILEOPS],
+            aux_names: &["shell_fileops"],
+        },
+        UserProgram {
+            name: "edit",
+            title: "Editor",
+            description: "ed-style line editor launched by the shell's `edit` command.",
+            kind: Tool,
+            install_path: Some("/bin/edit.elf"),
+            source: EDIT,
+            aux_sources: &[],
+            aux_names: &[],
+        },
+        UserProgram {
+            name: "as",
+            title: "Assembler",
+            description: "In-VM RV64I assembler launched by the shell's `as` command.",
+            kind: Tool,
+            install_path: Some("/bin/as.elf"),
+            source: AS,
+            aux_sources: &[AS_OBJECT],
+            aux_names: &["as_object"],
+        },
+        UserProgram {
+            name: "cc",
+            title: "Compiler",
+            description: "In-VM HLL-0 compiler launched by the shell's `cc` command.",
+            kind: Tool,
+            install_path: Some("/bin/cc.elf"),
+            source: CC,
+            aux_sources: &[CC_CODEGEN],
+            aux_names: &["cc_codegen"],
+        },
+        UserProgram {
+            name: "ld",
+            title: "Linker",
+            description: "In-VM static linker launched by the shell's `ld` command.",
+            kind: Tool,
+            install_path: Some("/bin/ld.elf"),
+            source: LD,
+            aux_sources: &[LD_LINK],
+            aux_names: &["ld_link"],
+        },
+        // Demos (/home/demo). `hello` is injected on demand, not auto-installed.
+        UserProgram {
+            name: "cube",
+            title: "Cube Demo",
+            description: "Spinning 3D wireframe cube on the framebuffer device.",
+            kind: Demo,
+            install_path: Some("/home/demo/cube.elf"),
+            source: CUBE,
+            aux_sources: &[],
+            aux_names: &[],
+        },
+        UserProgram {
+            name: "mandelbrot",
+            title: "Mandelbrot Demo",
+            description: "Framebuffer Mandelbrot renderer.",
+            kind: Demo,
+            install_path: Some("/home/demo/mandelbrot.elf"),
+            source: MANDELBROT,
+            aux_sources: &[],
+            aux_names: &[],
+        },
+        UserProgram {
+            name: "life",
+            title: "Game of Life Demo",
+            description:
+                "Conway's Game of Life on the framebuffer (P pause, R reseed, space step).",
+            kind: Demo,
+            install_path: Some("/home/demo/life.elf"),
+            source: LIFE,
+            aux_sources: &[],
+            aux_names: &[],
+        },
+        UserProgram {
+            name: "hello",
+            title: "Hello",
+            description: "Minimal user program: prints a greeting, then yields forever.",
+            kind: Demo,
+            install_path: None,
+            source: USER_HELLO,
+            aux_sources: &[],
+            aux_names: &[],
+        },
+        // Example sources (/home/src): installed verbatim, not compiled here.
+        UserProgram {
+            name: "ex_array",
+            title: "array.s",
+            description: "Example assembly: sum a stack array, exit 42. Try with `as`.",
+            kind: Example,
+            install_path: Some("/home/src/array.s"),
+            source: EXAMPLE_ARRAY_S,
+            aux_sources: &[],
+            aux_names: &[],
+        },
+        UserProgram {
+            name: "ex_hello_hll",
+            title: "hello.hll",
+            description: "Pure HLL-0 sample for the in-VM `cc`.",
+            kind: Example,
+            install_path: Some("/home/src/hello.hll"),
+            source: CC_DEMO_HLL,
+            aux_sources: &[],
+            aux_names: &[],
+        },
+        UserProgram {
+            name: "ex_stdlib",
+            title: "stdlib.s",
+            description: "Tiny user-space stdlib for the `as`+`ld` separate-compilation demo.",
+            kind: Example,
+            install_path: Some("/home/src/stdlib.s"),
+            source: EXAMPLE_STDLIB_S,
+            aux_sources: &[],
+            aux_names: &[],
+        },
+        UserProgram {
+            name: "ex_hello_ld",
+            title: "hello_ld.s",
+            description: "Client linked against stdlib.s by `ld`.",
+            kind: Example,
+            install_path: Some("/home/src/hello_ld.s"),
+            source: EXAMPLE_HELLO_LD_S,
+            aux_sources: &[],
+            aux_names: &[],
+        },
+        // Fixtures: frozen test inputs, not installed.
+        UserProgram {
+            name: "fx_hello_hll",
+            title: "hello.hll (fixture)",
+            description: "HLL-0 reference source for `cc`.",
+            kind: Fixture,
+            install_path: None,
+            source: CC_HELLO_HLL,
+            aux_sources: &[],
+            aux_names: &[],
+        },
+        UserProgram {
+            name: "fx_hello_s",
+            title: "hello.s (fixture)",
+            description: "Frozen codegen target `cc` must emit for the reference source.",
+            kind: Fixture,
+            install_path: None,
+            source: CC_HELLO_S,
+            aux_sources: &[],
+            aux_names: &[],
+        },
+    ];
+
+    /// Look up a program by its stable `name` key.
+    pub fn program(name: &str) -> Option<&'static UserProgram> {
+        PROGRAMS.iter().find(|p| p.name == name)
+    }
 }

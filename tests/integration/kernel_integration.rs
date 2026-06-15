@@ -119,6 +119,21 @@ fn cached_kernel_multi_module() -> &'static AssembledOutput {
 
 // Compile a hosted user program (links the hosted stdlib).
 fn compile_hosted(src: &str) -> AssembledOutput {
+    compile_hosted_modules(src, &[])
+}
+
+// Compile a catalog program (primary + any aux translation units) the way the app
+// boot path does -- looks the source and aux modules up by catalog name.
+fn compile_hosted_program(name: &str) -> AssembledOutput {
+    let prog = user::program(name).expect("program in catalog");
+    compile_hosted_modules(prog.source, prog.aux_sources)
+}
+
+// Compile a hosted program that may span multiple translation units:
+// the primary unit carries the stdlib; each aux unit is compiled to its own
+// object with a distinct string prefix (so rodata labels do not collide) and the
+// objects are linked together.
+fn compile_hosted_modules(src: &str, aux: &[&str]) -> AssembledOutput {
     let full = format!(
         "{}\n{}",
         get_stdlib_source_for_mode(TargetMode::Hosted),
@@ -130,7 +145,38 @@ fn compile_hosted(src: &str) -> AssembledOutput {
     pipeline.set_type_prelude(get_stdlib_type_prelude());
     let result = pipeline.compile(&full).expect("hosted compile");
     let (_, tokens) = pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program);
-    pipeline.assemble(&tokens).expect("hosted assemble")
+    let main_obj = pipeline
+        .assemble_named("main", &tokens)
+        .expect("hosted assemble");
+
+    if aux.is_empty() {
+        return main_obj;
+    }
+
+    let aux_objs: Vec<AssembledOutput> = aux
+        .iter()
+        .enumerate()
+        .map(|(i, a)| {
+            let mut p = CompilationPipeline::new();
+            p.set_target_mode(TargetMode::Hosted);
+            p.set_write_artifacts(false);
+            p.set_type_prelude(get_stdlib_type_prelude());
+            p.set_string_prefix(Some(format!("aux{i}_str_")));
+            let r = p.compile(a).expect("aux compile");
+            let (_, t) = p.compile_ir_to_assembly_with_tokens(&r.ir_program);
+            p.assemble_named(&format!("aux{i}"), &t)
+                .expect("aux assemble")
+        })
+        .collect();
+
+    let aux_names: Vec<String> = (0..aux_objs.len()).map(|i| format!("aux{i}")).collect();
+    let mut modules: Vec<(&str, &AssembledOutput)> = vec![("main", &main_obj)];
+    for (n, o) in aux_names.iter().zip(aux_objs.iter()) {
+        modules.push((n.as_str(), o));
+    }
+    pipeline
+        .link_assembled_objects_named("main", &modules)
+        .expect("hosted link")
 }
 
 // Boot the kernel, optionally injecting an FS image and a pid-1 user binary, and
@@ -216,6 +262,66 @@ fn run_example_in_kernel(user_src: &str, label: &str) {
     let user = compile_hosted(user_src);
     let (_, outcome, uart) = boot_kernel(cached_kernel(), Some(&user), None, "", 10_000_000);
     assert_user_exit_ok(&uart, &outcome, label);
+}
+
+// Boot the shell with a set of `tools` installed (each named by its catalog key;
+// source, aux modules, and install path come from the user catalog) plus extra
+// `files`, drive `session` over UART, and return (outcome, uart). Collapses the
+// compile-shell + elf-ify-tools + build-image + boot boilerplate every toolchain
+// test repeats; tests keep their own assertions.
+fn run_tool_session(
+    tools: &[&str],
+    files: &[(&str, &[u8])],
+    session: &str,
+    max_steps: u64,
+) -> (StepOutcome, String) {
+    let shell = compile_hosted_program("shell");
+    let tool_elfs: Vec<(&str, Vec<u8>)> = tools
+        .iter()
+        .map(|name| {
+            let prog = user::program(name).expect("tool not in user catalog");
+            let path = prog.install_path.expect("tool has no install path");
+            let elf = assembled_to_elf_file(&compile_hosted_modules(prog.source, prog.aux_sources));
+            (path, elf)
+        })
+        .collect();
+
+    // Create every parent directory the tool/file paths need, shallowest first.
+    let mut dirs: Vec<String> = Vec::new();
+    for path in tool_elfs
+        .iter()
+        .map(|(p, _)| *p)
+        .chain(files.iter().map(|(p, _)| *p))
+    {
+        let mut idx = 0;
+        while let Some(slash) = path[idx + 1..].find('/') {
+            let end = idx + 1 + slash;
+            let dir = path[..end].to_owned();
+            if !dirs.contains(&dir) {
+                dirs.push(dir);
+            }
+            idx = end;
+        }
+    }
+    dirs.sort_by_key(|d| d.matches('/').count());
+
+    let mut entries: Vec<FsEntry<'_>> = dirs.iter().map(|d| FsEntry::Dir { path: d }).collect();
+    for (path, elf) in &tool_elfs {
+        entries.push(FsEntry::File { path, data: elf });
+    }
+    for (path, data) in files {
+        entries.push(FsEntry::File { path, data });
+    }
+    let image = build_fs_image(&entries);
+
+    let (_, outcome, uart) = boot_kernel(
+        cached_kernel(),
+        Some(&shell),
+        Some(&image),
+        session,
+        max_steps,
+    );
+    (outcome, uart)
 }
 
 // --- Boot sequence (merged from kernel_boot_device_tree.rs + kernel_user_injection.rs) ---
@@ -668,7 +774,7 @@ fn cube_framebuffer_bench() {
 
 #[test]
 fn kernel_shell_ls_cd_run_exit() {
-    let shell = compile_hosted(user::SHELL);
+    let shell = compile_hosted_program("shell");
 
     let child = compile_hosted(
         r#"
@@ -725,7 +831,7 @@ main: () -> i32 {
 // just the direct VM loader the run_hll tests cover.
 #[test]
 fn kernel_shell_exec_carries_global_initializers() {
-    let shell = compile_hosted(user::SHELL);
+    let shell = compile_hosted_program("shell");
 
     let child = compile_hosted(
         r#"
@@ -782,9 +888,6 @@ main: () -> i32 {
 // trailing `exit`, so the VM halts cleanly with 0.
 #[test]
 fn kernel_shell_assembles_and_runs_program() {
-    let shell = compile_hosted(user::SHELL);
-    let as_exec = assembled_to_elf_file(&compile_hosted(user::AS));
-
     // Sum 1..=7 into a0 (= 28), then exit(a0). Pure subset: li/add/addi/bne/ecall.
     let source = b"\
 ; sum 1..7 then exit with the result
@@ -799,24 +902,10 @@ loop:
   ecall
 ";
 
-    let image = build_fs_image(&[
-        FsEntry::Dir { path: "/bin" },
-        FsEntry::File {
-            path: "/bin/as.elf",
-            data: &as_exec,
-        },
-        FsEntry::File {
-            path: "/prog.s",
-            data: source,
-        },
-    ]);
-
-    let session = "as /prog.s /prog.elf\nrun /prog.elf\nexit\n";
-    let (_, outcome, uart) = boot_kernel(
-        cached_kernel(),
-        Some(&shell),
-        Some(&image),
-        session,
+    let (outcome, uart) = run_tool_session(
+        &["as"],
+        &[("/prog.s", source)],
+        "as /prog.s /prog.elf\nrun /prog.elf\nexit\n",
         200_000_000,
     );
 
@@ -857,9 +946,6 @@ loop:
 // success; full correctness is covered once ld.hll links it (Phase C).
 #[test]
 fn kernel_as_emits_object() {
-    let shell = compile_hosted(user::SHELL);
-    let as_exec = assembled_to_elf_file(&compile_hosted(user::AS));
-
     let source = b"\
 .globl _start
 .text
@@ -873,24 +959,10 @@ msg:
   .asciz \"hi\"
 ";
 
-    let image = build_fs_image(&[
-        FsEntry::Dir { path: "/bin" },
-        FsEntry::File {
-            path: "/bin/as.elf",
-            data: &as_exec,
-        },
-        FsEntry::File {
-            path: "/prog.s",
-            data: source,
-        },
-    ]);
-
-    let session = "as /prog.s /prog.o\nexit\n";
-    let (_, outcome, uart) = boot_kernel(
-        cached_kernel(),
-        Some(&shell),
-        Some(&image),
-        session,
+    let (outcome, uart) = run_tool_session(
+        &["as"],
+        &[("/prog.s", source)],
+        "as /prog.s /prog.o\nexit\n",
         200_000_000,
     );
 
@@ -909,7 +981,7 @@ msg:
     );
 }
 
-// Exercises the expanded assembler subset (PLAN 1.1): loads/stores with the
+// Exercises the expanded assembler subset: loads/stores with the
 // `offset(reg)` syntax, the full branch set, shifts, register-immediate ALU ops,
 // `slt`/`sltu`, and `lui`. The program computes 42 through every new instruction,
 // self-checks each result with a branch to `fail`, and exits with a0. A single
@@ -917,9 +989,6 @@ msg:
 // the whole batch encodes correctly end to end.
 #[test]
 fn kernel_shell_assembles_expanded_subset() {
-    let shell = compile_hosted(user::SHELL);
-    let as_exec = assembled_to_elf_file(&compile_hosted(user::AS));
-
     let source = b"\
 ; build 42 through the expanded instruction subset, self-checking as we go
   addi sp, sp, -16
@@ -989,24 +1058,10 @@ fail:
   ecall
 ";
 
-    let image = build_fs_image(&[
-        FsEntry::Dir { path: "/bin" },
-        FsEntry::File {
-            path: "/bin/as.elf",
-            data: &as_exec,
-        },
-        FsEntry::File {
-            path: "/prog.s",
-            data: source,
-        },
-    ]);
-
-    let session = "as /prog.s /prog.elf\nrun /prog.elf\nexit\n";
-    let (_, outcome, uart) = boot_kernel(
-        cached_kernel(),
-        Some(&shell),
-        Some(&image),
-        session,
+    let (outcome, uart) = run_tool_session(
+        &["as"],
+        &[("/prog.s", source)],
+        "as /prog.s /prog.elf\nrun /prog.elf\nexit\n",
         200_000_000,
     );
 
@@ -1029,16 +1084,13 @@ fail:
     );
 }
 
-// Exercises the M-extension + addiw (PLAN 1.1 final gap): the last mnemonics the
+// Exercises the M-extension + addiw: the last mnemonics the
 // HLL backend emits that the in-VM assembler was missing. Computes 42 through
 // mul/div/divu/rem/remu and addiw, self-checking each with a branch to `fail`.
 // A wrong encoding jumps to `fail` (exit 1) or faults, so `[exit 42]` proves the
 // whole M-extension batch encodes byte-correctly end to end.
 #[test]
 fn kernel_shell_assembles_m_extension() {
-    let shell = compile_hosted(user::SHELL);
-    let as_exec = assembled_to_elf_file(&compile_hosted(user::AS));
-
     let source = b"\
 ; build 42 through the M-extension and addiw, self-checking as we go
   li t0, 6
@@ -1070,24 +1122,10 @@ fail:
   ecall
 ";
 
-    let image = build_fs_image(&[
-        FsEntry::Dir { path: "/bin" },
-        FsEntry::File {
-            path: "/bin/as.elf",
-            data: &as_exec,
-        },
-        FsEntry::File {
-            path: "/prog.s",
-            data: source,
-        },
-    ]);
-
-    let session = "as /prog.s /prog.elf\nrun /prog.elf\nexit\n";
-    let (_, outcome, uart) = boot_kernel(
-        cached_kernel(),
-        Some(&shell),
-        Some(&image),
-        session,
+    let (outcome, uart) = run_tool_session(
+        &["as"],
+        &[("/prog.s", source)],
+        "as /prog.s /prog.elf\nrun /prog.elf\nexit\n",
         200_000_000,
     );
 
@@ -1111,11 +1149,11 @@ fail:
 }
 
 // A non-ELF file or a missing name must be reported as an unknown command
-// rather than failing opaquely inside sys_exec. Bare-name execution (PLAN 1.1)
+// rather than failing opaquely inside sys_exec. Bare-name execution
 // folds `run` into a single PATH-resolving path, so both report the same way.
 #[test]
 fn kernel_shell_run_rejects_non_executable() {
-    let shell = compile_hosted(user::SHELL);
+    let shell = compile_hosted_program("shell");
     let image = build_fs_image(&[FsEntry::File {
         path: "/notes.txt",
         data: b"just some text, not a program\n",
@@ -1145,12 +1183,12 @@ fn kernel_shell_run_rejects_non_executable() {
     );
 }
 
-// Bare-name execution (PLAN 1.1): /utyping a program name (no `run`) resolves it
+// Bare-name execution: /utyping a program name (no `run`) resolves it
 // through the PATH search (cwd, /bin, /home/demo) and runs it. Also covers a
 // relative `./child.elf` path and `&` backgrounding via the shared launch path.
 #[test]
 fn kernel_shell_bare_name_runs_program() {
-    let shell = compile_hosted(user::SHELL);
+    let shell = compile_hosted_program("shell");
 
     let child = compile_hosted(
         r#"
@@ -1242,7 +1280,7 @@ fn inode_size_of(image: &[u8], name: &str) -> Option<u32> {
 
 #[test]
 fn editor_loads_clears_appends_writes_and_truncates() {
-    let shell = compile_hosted(user::SHELL);
+    let shell = compile_hosted_program("shell");
     let editor = compile_hosted(user::EDIT);
     let editor_exec = assembled_to_elf_file(&editor);
 
@@ -1309,21 +1347,6 @@ fn editor_loads_clears_appends_writes_and_truncates() {
 // must reflect every operation.
 #[test]
 fn editor_line_operations_insert_substitute_delete() {
-    let shell = compile_hosted(user::SHELL);
-    let editor_exec = assembled_to_elf_file(&compile_hosted(user::EDIT));
-
-    let image = build_fs_image(&[
-        FsEntry::Dir { path: "/bin" },
-        FsEntry::File {
-            path: "/bin/edit.elf",
-            data: &editor_exec,
-        },
-        FsEntry::File {
-            path: "/doc.txt",
-            data: b"alpha\nbravo\ncharlie\n",
-        },
-    ]);
-
     // edit: go to line 2, substitute bravo->BRAVO, insert "inserted" before it,
     // go to line 1 (alpha) and delete it, then write and quit.
     //   start:  alpha / bravo / charlie
@@ -1331,18 +1354,16 @@ fn editor_line_operations_insert_substitute_delete() {
     //   s/bravo/BRAVO/
     //   i ... inserted .   -> alpha / inserted / BRAVO / charlie
     //   1 d    -> inserted / BRAVO / charlie
-    let session = "edit /doc.txt\n\
+    let (_outcome, uart) = run_tool_session(
+        &["edit"],
+        &[("/doc.txt", b"alpha\nbravo\ncharlie\n")],
+        "edit /doc.txt\n\
 2\n\
 s/bravo/BRAVO/\n\
 i\ninserted\n.\n\
 g 1\nd\n\
 w\nq\n\
-cat /doc.txt\nexit\n";
-    let (_, _outcome, uart) = boot_kernel(
-        cached_kernel(),
-        Some(&shell),
-        Some(&image),
-        session,
+cat /doc.txt\nexit\n",
         200_000_000,
     );
 
@@ -1378,7 +1399,7 @@ cat /doc.txt\nexit\n";
 // `[exit -1]` at the first prompt before the user typed anything.
 #[test]
 fn editor_waits_while_idle_for_input() {
-    let shell = compile_hosted(user::SHELL);
+    let shell = compile_hosted_program("shell");
     let editor_exec = assembled_to_elf_file(&compile_hosted(user::EDIT));
 
     let image = build_fs_image(&[
@@ -1436,27 +1457,10 @@ fn editor_waits_while_idle_for_input() {
 // example and the expanded assembler subset through the in-VM `as`.
 #[test]
 fn example_array_assembles_and_runs() {
-    let shell = compile_hosted(user::SHELL);
-    let as_exec = assembled_to_elf_file(&compile_hosted(user::AS));
-
-    let image = build_fs_image(&[
-        FsEntry::Dir { path: "/bin" },
-        FsEntry::File {
-            path: "/bin/as.elf",
-            data: &as_exec,
-        },
-        FsEntry::File {
-            path: "/array.s",
-            data: user::EXAMPLE_ARRAY_S.as_bytes(),
-        },
-    ]);
-
-    let session = "as /array.s /array.elf\nrun /array.elf\nexit\n";
-    let (_, outcome, uart) = boot_kernel(
-        cached_kernel(),
-        Some(&shell),
-        Some(&image),
-        session,
+    let (outcome, uart) = run_tool_session(
+        &["as"],
+        &[("/array.s", user::EXAMPLE_ARRAY_S.as_bytes())],
+        "as /array.s /array.elf\nrun /array.elf\nexit\n",
         200_000_000,
     );
 
@@ -1482,9 +1486,6 @@ fn example_array_assembles_and_runs() {
 // all round-trip through the in-VM `as`.
 #[test]
 fn kernel_shell_assembles_data_and_calls() {
-    let shell = compile_hosted(user::SHELL);
-    let as_exec = assembled_to_elf_file(&compile_hosted(user::AS));
-
     let source = b"\
 .text
 .globl _start
@@ -1506,24 +1507,10 @@ msg:
   .asciz \"HELLO\"
 ";
 
-    let image = build_fs_image(&[
-        FsEntry::Dir { path: "/bin" },
-        FsEntry::File {
-            path: "/bin/as.elf",
-            data: &as_exec,
-        },
-        FsEntry::File {
-            path: "/prog.s",
-            data: source,
-        },
-    ]);
-
-    let session = "as /prog.s /prog.elf\nrun /prog.elf\nexit\n";
-    let (_, outcome, uart) = boot_kernel(
-        cached_kernel(),
-        Some(&shell),
-        Some(&image),
-        session,
+    let (outcome, uart) = run_tool_session(
+        &["as"],
+        &[("/prog.s", source)],
+        "as /prog.s /prog.elf\nrun /prog.elf\nexit\n",
         200_000_000,
     );
 
@@ -1557,7 +1544,7 @@ msg:
 // reaches the loader. Proves host-built ELF binaries run in our kernel unmodified.
 #[test]
 fn kernel_loads_and_runs_elf() {
-    let shell = compile_hosted(user::SHELL);
+    let shell = compile_hosted_program("shell");
     let prog = compile_hosted(
         "external console_writeln: (s: u8*)\n\
          main: () -> i32 {\n\
@@ -1602,38 +1589,21 @@ fn kernel_loads_and_runs_elf() {
     );
 }
 
-// PLAN 1.2 Phase A: pin the HLL-0 codegen target. Run the host-compiled hello.hll
+// Pin the HLL-0 codegen target. Run the host-compiled hello.hll
 // and the /bin/as-assembled hand-written hello.s side by side; both must print
 // "HLL0" and exit 36, so source and frozen target agree.
 #[test]
 fn kernel_cc_target_roundtrips() {
-    let shell = compile_hosted(user::SHELL);
-    let as_exec = assembled_to_elf_file(&compile_hosted(user::AS));
     let host_elf = assembled_to_elf_file(&compile_hosted(user::CC_HELLO_HLL));
 
-    let image = build_fs_image(&[
-        FsEntry::Dir { path: "/bin" },
-        FsEntry::File {
-            path: "/bin/as.elf",
-            data: &as_exec,
-        },
-        FsEntry::File {
-            path: "/hello.s",
-            data: user::CC_HELLO_S.as_bytes(),
-        },
-        FsEntry::File {
-            path: "/hello_host.elf",
-            data: &host_elf,
-        },
-    ]);
-
     // Run the host-compiled source, then assemble + run the hand-written target.
-    let session = "run /hello_host.elf\nas /hello.s /hello.elf\nrun /hello.elf\nexit\n";
-    let (_, outcome, uart) = boot_kernel(
-        cached_kernel(),
-        Some(&shell),
-        Some(&image),
-        session,
+    let (outcome, uart) = run_tool_session(
+        &["as"],
+        &[
+            ("/hello.s", user::CC_HELLO_S.as_bytes()),
+            ("/hello_host.elf", &host_elf),
+        ],
+        "run /hello_host.elf\nas /hello.s /hello.elf\nrun /hello.elf\nexit\n",
         200_000_000,
     );
 
@@ -1662,7 +1632,7 @@ fn kernel_cc_target_roundtrips() {
     );
 }
 
-// PLAN 1.2 Phase B/C: the in-VM compiler `cc.hll` must itself host-compile (it is
+// The in-VM compiler `cc.hll` must itself host-compile (it is
 // built into /bin/cc.elf). Fast guard that catches HLL syntax/semantic errors
 // without booting the kernel.
 #[test]
@@ -1674,12 +1644,12 @@ fn cc_host_compiles() {
     );
 }
 
-// PLAN 1.2 Phase D: the self-hosting headline. Inject a pure HLL-0 program, then
+// The self-hosting headline. Inject a pure HLL-0 program, then
 // `cc src.hll out.s && as out.s out.elf && run out.elf` -- all inside the VM. The
 // program prints "HLL0\nY" and exits sum_to(8)=36, exercising the whole in-VM
 // toolchain (compiler -> assembler -> loader). The source mirrors hello.hll but
 // drops the inline-asm putc (cc emits putc as an intrinsic helper).
-// PLAN 3 Phase C: the separate-compilation headline. Two hand-written .s files are
+// The separate-compilation headline. Two hand-written .s files are
 // assembled to ET_REL objects, linked into one ELF, and run -- all in-VM:
 //   as a.s a.o && as b.s b.o && ld a.o b.o prog && prog
 // a.s calls an external `get_val` (CALL_PLT relocation across modules); b.s defines
@@ -1687,10 +1657,6 @@ fn cc_host_compiles() {
 // get_val returns 42, so a clean `[exit 42]` proves linking + every relocation kind.
 #[test]
 fn kernel_ld_links_objects_and_runs() {
-    let shell = compile_hosted(user::SHELL);
-    let as_exec = assembled_to_elf_file(&compile_hosted(user::AS));
-    let ld_exec = assembled_to_elf_file(&compile_hosted(user::LD));
-
     let a_s = b"\
 .globl _start
 .text
@@ -1711,32 +1677,10 @@ val:
   .word 42
 ";
 
-    let image = build_fs_image(&[
-        FsEntry::Dir { path: "/bin" },
-        FsEntry::File {
-            path: "/bin/as.elf",
-            data: &as_exec,
-        },
-        FsEntry::File {
-            path: "/bin/ld.elf",
-            data: &ld_exec,
-        },
-        FsEntry::File {
-            path: "/a.s",
-            data: a_s,
-        },
-        FsEntry::File {
-            path: "/b.s",
-            data: b_s,
-        },
-    ]);
-
-    let session = "as /a.s /a.o\nas /b.s /b.o\nld /a.o /b.o /prog\nrun /prog\nexit\n";
-    let (_, outcome, uart) = boot_kernel(
-        cached_kernel(),
-        Some(&shell),
-        Some(&image),
-        session,
+    let (outcome, uart) = run_tool_session(
+        &["as", "ld"],
+        &[("/a.s", a_s), ("/b.s", b_s)],
+        "as /a.s /a.o\nas /b.s /b.o\nld /a.o /b.o /prog\nrun /prog\nexit\n",
         300_000_000,
     );
 
@@ -1763,7 +1707,7 @@ val:
     );
 }
 
-// PLAN 3 Phase C, the separate-compilation payoff with a real stdlib: a client
+// The separate-compilation payoff with a real stdlib: a client
 // program (`hello_ld.s`) inlines no I/O -- it calls puts/putc/exit, all resolved
 // at link time against a separately assembled `stdlib.s`. Exercises cross-module
 // CALL_PLT relocations (the externals), an intra-module local call (puts -> putc,
@@ -1771,37 +1715,14 @@ val:
 // Prints "hello from stdlib!" and exits 42.
 #[test]
 fn kernel_ld_links_stdlib_and_runs() {
-    let shell = compile_hosted(user::SHELL);
-    let as_exec = assembled_to_elf_file(&compile_hosted(user::AS));
-    let ld_exec = assembled_to_elf_file(&compile_hosted(user::LD));
-
-    let image = build_fs_image(&[
-        FsEntry::Dir { path: "/bin" },
-        FsEntry::File {
-            path: "/bin/as.elf",
-            data: &as_exec,
-        },
-        FsEntry::File {
-            path: "/bin/ld.elf",
-            data: &ld_exec,
-        },
-        FsEntry::File {
-            path: "/stdlib.s",
-            data: user::EXAMPLE_STDLIB_S.as_bytes(),
-        },
-        FsEntry::File {
-            path: "/hello_ld.s",
-            data: user::EXAMPLE_HELLO_LD_S.as_bytes(),
-        },
-    ]);
-
-    let session = "as /stdlib.s /stdlib.o\nas /hello_ld.s /hello_ld.o\n\
-ld /stdlib.o /hello_ld.o /hello\nrun /hello\nexit\n";
-    let (_, outcome, uart) = boot_kernel(
-        cached_kernel(),
-        Some(&shell),
-        Some(&image),
-        session,
+    let (outcome, uart) = run_tool_session(
+        &["as", "ld"],
+        &[
+            ("/stdlib.s", user::EXAMPLE_STDLIB_S.as_bytes()),
+            ("/hello_ld.s", user::EXAMPLE_HELLO_LD_S.as_bytes()),
+        ],
+        "as /stdlib.s /stdlib.o\nas /hello_ld.s /hello_ld.o\n\
+ld /stdlib.o /hello_ld.o /hello\nrun /hello\nexit\n",
         300_000_000,
     );
 
@@ -1834,32 +1755,10 @@ ld /stdlib.o /hello_ld.o /hello\nrun /hello\nexit\n";
 
 #[test]
 fn kernel_cc_compiles_and_runs() {
-    let shell = compile_hosted(user::SHELL);
-    let as_exec = assembled_to_elf_file(&compile_hosted(user::AS));
-    let cc_exec = assembled_to_elf_file(&compile_hosted(user::CC));
-
-    let image = build_fs_image(&[
-        FsEntry::Dir { path: "/bin" },
-        FsEntry::File {
-            path: "/bin/as.elf",
-            data: &as_exec,
-        },
-        FsEntry::File {
-            path: "/bin/cc.elf",
-            data: &cc_exec,
-        },
-        FsEntry::File {
-            path: "/prog.hll",
-            data: user::CC_DEMO_HLL.as_bytes(),
-        },
-    ]);
-
-    let session = "cc /prog.hll /prog.s\nas /prog.s /prog.elf\nrun /prog.elf\nexit\n";
-    let (_, outcome, uart) = boot_kernel(
-        cached_kernel(),
-        Some(&shell),
-        Some(&image),
-        session,
+    let (outcome, uart) = run_tool_session(
+        &["as", "cc"],
+        &[("/prog.hll", user::CC_DEMO_HLL.as_bytes())],
+        "cc /prog.hll /prog.s\nas /prog.s /prog.elf\nrun /prog.elf\nexit\n",
         300_000_000,
     );
 
@@ -1894,34 +1793,10 @@ fn kernel_cc_compiles_and_runs() {
 // cc/as, and bare-name execution (`hello`, not `run /abs/path`).
 #[test]
 fn kernel_cc_interactive_relative_paths_and_barename() {
-    let shell = compile_hosted(user::SHELL);
-    let as_exec = assembled_to_elf_file(&compile_hosted(user::AS));
-    let cc_exec = assembled_to_elf_file(&compile_hosted(user::CC));
-
-    let image = build_fs_image(&[
-        FsEntry::Dir { path: "/bin" },
-        FsEntry::File {
-            path: "/bin/as.elf",
-            data: &as_exec,
-        },
-        FsEntry::File {
-            path: "/bin/cc.elf",
-            data: &cc_exec,
-        },
-        FsEntry::Dir { path: "/home" },
-        FsEntry::Dir { path: "/home/src" },
-        FsEntry::File {
-            path: "/home/src/hello.hll",
-            data: user::CC_DEMO_HLL.as_bytes(),
-        },
-    ]);
-
-    let session = "cd /home/src\ncc hello.hll hello.s\nas hello.s hello.elf\nhello\nexit\n";
-    let (_, outcome, uart) = boot_kernel(
-        cached_kernel(),
-        Some(&shell),
-        Some(&image),
-        session,
+    let (outcome, uart) = run_tool_session(
+        &["as", "cc"],
+        &[("/home/src/hello.hll", user::CC_DEMO_HLL.as_bytes())],
+        "cd /home/src\ncc hello.hll hello.s\nas hello.s hello.elf\nhello\nexit\n",
         300_000_000,
     );
 
@@ -1950,35 +1825,11 @@ fn kernel_cc_interactive_relative_paths_and_barename() {
 // bare name, exercising cwd resolution of an extensionless ELF.
 #[test]
 fn kernel_cc_tool_arg_trailing_space() {
-    let shell = compile_hosted(user::SHELL);
-    let as_exec = assembled_to_elf_file(&compile_hosted(user::AS));
-    let cc_exec = assembled_to_elf_file(&compile_hosted(user::CC));
-
-    let image = build_fs_image(&[
-        FsEntry::Dir { path: "/bin" },
-        FsEntry::File {
-            path: "/bin/as.elf",
-            data: &as_exec,
-        },
-        FsEntry::File {
-            path: "/bin/cc.elf",
-            data: &cc_exec,
-        },
-        FsEntry::Dir { path: "/home" },
-        FsEntry::Dir { path: "/home/src" },
-        FsEntry::File {
-            path: "/home/src/hello.hll",
-            data: user::CC_DEMO_HLL.as_bytes(),
-        },
-    ]);
-
     // Trailing spaces after the output operand on both tool invocations.
-    let session = "cd /home/src\ncc hello.hll hello.s \nas hello.s hello \nhello\nexit\n";
-    let (_, outcome, uart) = boot_kernel(
-        cached_kernel(),
-        Some(&shell),
-        Some(&image),
-        session,
+    let (outcome, uart) = run_tool_session(
+        &["as", "cc"],
+        &[("/home/src/hello.hll", user::CC_DEMO_HLL.as_bytes())],
+        "cd /home/src\ncc hello.hll hello.s \nas hello.s hello \nhello\nexit\n",
         300_000_000,
     );
 
@@ -2006,7 +1857,7 @@ fn kernel_cc_tool_arg_trailing_space() {
 // appear twice and the VM halts only on the shell's own `exit`.
 #[test]
 fn kernel_shell_survives_run_and_continues() {
-    let shell = compile_hosted(user::SHELL);
+    let shell = compile_hosted_program("shell");
     let child = compile_hosted(
         r#"
 external console_writeln: (str: u8*)
@@ -2058,7 +1909,7 @@ main: () -> i32 {
 // reads `exit`, and the VM halts cleanly -- which only happens if Ctrl-C worked.
 #[test]
 fn kernel_shell_ctrl_c_interrupts_foreground() {
-    let shell = compile_hosted(user::SHELL);
+    let shell = compile_hosted_program("shell");
     let child = compile_hosted(
         r#"
 main: () -> i32 {
@@ -2102,7 +1953,7 @@ main: () -> i32 {
 // Two concurrent background jobs must each occupy a distinct job-table slot.
 #[test]
 fn kernel_shell_two_background_jobs_keep_distinct_slots() {
-    let shell = compile_hosted(user::SHELL);
+    let shell = compile_hosted_program("shell");
     let spin = r#"
 external sc_exit: (code: i64)
 main: () -> i32 {
@@ -2156,13 +2007,13 @@ main: () -> i32 {
     );
 }
 
-// Signals + `kill` (PLAN v3 sec.3): background a forever-spinner, `kill <pid>` it
+// Signals + `kill`: background a forever-spinner, `kill <pid>` it
 // by pid, and confirm the shell survives, the job leaves the table, and a later
 // `jobs` reports nothing. The spinner never exits on its own, so its disappearance
 // proves the SIGKILL teardown (scheduler_kill_pid via syscall 129) actually ran.
 #[test]
 fn kernel_kill_background_job() {
-    let shell = compile_hosted(user::SHELL);
+    let shell = compile_hosted_program("shell");
     let spin = compile_hosted(
         r#"
 external sc_exit: (code: i64)
@@ -2216,7 +2067,7 @@ main: () -> i32 {
 // job id instead of pid.
 #[test]
 fn kernel_kill_by_jobid() {
-    let shell = compile_hosted(user::SHELL);
+    let shell = compile_hosted_program("shell");
     let spin = compile_hosted(
         r#"
 external sc_exit: (code: i64)
@@ -2262,14 +2113,14 @@ main: () -> i32 {
     );
 }
 
-// I/O redirection (PLAN v3 1.2, first slice): `prog > file` binds the child's
+// I/O redirection: `prog > file` binds the child's
 // stdout (fd 1) to an FS file via the per-PCB fd table, so its console output is
 // captured instead of hitting the UART. We prove the capture by ordering: the
 // marker must appear only AFTER `cat` reads the file back -- if redirection had
 // failed, the program would have printed it straight to the UART before `cat`.
 #[test]
 fn kernel_redirect_stdout_to_file() {
-    let shell = compile_hosted(user::SHELL);
+    let shell = compile_hosted_program("shell");
     let printer = compile_hosted(
         r#"
 external console_writeln: (str: u8*)
@@ -2315,7 +2166,7 @@ main: () -> i32 {
 // shows both lines -- proving `>>` seeks to end instead of truncating.
 #[test]
 fn kernel_redirect_append() {
-    let shell = compile_hosted(user::SHELL);
+    let shell = compile_hosted_program("shell");
     let printer = compile_hosted(
         r#"
 external console_writeln: (str: u8*)
@@ -2363,7 +2214,7 @@ main: () -> i32 {
 // stdout (the UART here), so the file's contents appear on the console.
 #[test]
 fn kernel_redirect_stdin_from_file() {
-    let shell = compile_hosted(user::SHELL);
+    let shell = compile_hosted_program("shell");
     let echo = compile_hosted(
         r#"
 external sc_readchar: () -> i64
@@ -2414,12 +2265,12 @@ main: () -> i32 {
     );
 }
 
-// Command polish (PLAN v3 1.3): `ls <dir>` lists a directory other than cwd.
+// Command polish: `ls <dir>` lists a directory other than cwd.
 // Previously only a bare `ls` (current directory) was recognised; `ls /sub` fell
 // through to bare-name execution and failed with "unknown command".
 #[test]
 fn kernel_ls_dir_lists_target() {
-    let shell = compile_hosted(user::SHELL);
+    let shell = compile_hosted_program("shell");
     let image = build_fs_image(&[
         FsEntry::Dir { path: "/sub" },
         FsEntry::File {
@@ -2452,13 +2303,13 @@ fn kernel_ls_dir_lists_target() {
     );
 }
 
-// Command polish (PLAN v3 1.3): builtin output redirection. `echo` is a builtin
+// Command polish: builtin output redirection. `echo` is a builtin
 // running inside the shell (not an exec'd child), so its `>` redirect is served by
 // the shell-side output sink, not the kernel per-PCB fd table. We prove the text
 // landed in the file (and not the console) by reading it back with `cat`.
 #[test]
 fn kernel_echo_redirect_to_file() {
-    let shell = compile_hosted(user::SHELL);
+    let shell = compile_hosted_program("shell");
     let image = build_fs_image(&[FsEntry::Dir { path: "/tmp" }]);
     let session = "echo MARKER_ECHO > /e.txt\ncat /e.txt\nexit\n";
     let (_, outcome, uart) = boot_kernel(
@@ -2484,12 +2335,12 @@ fn kernel_echo_redirect_to_file() {
     );
 }
 
-// Command polish (PLAN v3 1.3): a builtin `cat <file> >> <dst>` appends through the
+// Command polish: a builtin `cat <file> >> <dst>` appends through the
 // shell sink (seeking to end via sc_lseek). Two appends of the same source file
 // then a read-back must show its contents twice.
 #[test]
 fn kernel_cat_append_builtin() {
-    let shell = compile_hosted(user::SHELL);
+    let shell = compile_hosted_program("shell");
     let image = build_fs_image(&[FsEntry::File {
         path: "/src.txt",
         data: b"DATA\n",
@@ -2520,14 +2371,14 @@ fn kernel_cat_append_builtin() {
     );
 }
 
-// Pipes (PLAN v3 1.2): `producer | filter`. The producer writes to stdout, which
+// Pipes: `producer | filter`. The producer writes to stdout, which
 // the shell binds to a temp file; the filter's stdin reads that file back. The
 // producer's payload therefore never hits the UART directly -- only the filter,
 // the pipeline's last stage, prints it -- so seeing the payload on the console
 // proves it travelled through the pipe.
 #[test]
 fn kernel_pipe_two_stage() {
-    let shell = compile_hosted(user::SHELL);
+    let shell = compile_hosted_program("shell");
     let producer = compile_hosted(
         r#"
 external console_writeln: (str: u8*)
@@ -2600,7 +2451,7 @@ main: () -> i32 {
 // it back with `cat` -- the payload appears only after the `cat`, never before.
 #[test]
 fn kernel_pipe_to_file() {
-    let shell = compile_hosted(user::SHELL);
+    let shell = compile_hosted_program("shell");
     let producer = compile_hosted(
         r#"
 external console_writeln: (str: u8*)
@@ -2676,7 +2527,7 @@ main: () -> i32 {
 // sh_run_stage.
 #[test]
 fn kernel_pipe_builtin_source() {
-    let shell = compile_hosted(user::SHELL);
+    let shell = compile_hosted_program("shell");
     let filter = compile_hosted(
         r#"
 external sc_readchar: () -> i64
@@ -2734,7 +2585,7 @@ main: () -> i32 {
 // `cat` reads the pipe temp file the shell wired to its stdin).
 #[test]
 fn kernel_pipe_echo_into_cat() {
-    let shell = compile_hosted(user::SHELL);
+    let shell = compile_hosted_program("shell");
     let image = build_fs_image(&[FsEntry::Dir { path: "/tmp" }]);
 
     let session = "echo CAT_STDIN | cat\nexit\n";
@@ -2765,7 +2616,7 @@ fn kernel_pipe_echo_into_cat() {
 // appears in the listing (regression for a leaked `.pipe0` entry).
 #[test]
 fn kernel_pipe_ls_hides_temp_file() {
-    let shell = compile_hosted(user::SHELL);
+    let shell = compile_hosted_program("shell");
     let image = build_fs_image(&[
         FsEntry::File {
             path: "/real.txt",
@@ -2804,7 +2655,7 @@ fn kernel_pipe_ls_hides_temp_file() {
 // and prints it. Proves the builtin input source also serves explicit `<`.
 #[test]
 fn kernel_cat_stdin_redirect() {
-    let shell = compile_hosted(user::SHELL);
+    let shell = compile_hosted_program("shell");
     let image = build_fs_image(&[FsEntry::File {
         path: "/in.txt",
         data: b"FROM_STDIN\n",
@@ -2832,7 +2683,7 @@ fn kernel_cat_stdin_redirect() {
     );
 }
 
-// Console interrupt takeover + `jobs` while a background job runs (PLAN 1.1/1.2).
+// Console interrupt takeover + `jobs` while a background job runs.
 // Unlike kernel_shell_background_job_runs_and_fg_reaps_it (which front-loads the
 // whole session into the UART, so the shell never actually blocks), this drives
 // input the way the GUI does: input is injected MID-RUN, only after the shell has
@@ -2843,7 +2694,7 @@ fn kernel_cat_stdin_redirect() {
 // Regression guard for "jobs shows nothing while a background job is running".
 #[test]
 fn kernel_shell_interrupt_wake_lists_running_background_job() {
-    let shell = compile_hosted(user::SHELL);
+    let shell = compile_hosted_program("shell");
     // A background job that runs forever and never reads input, so it stays the
     // sole runnable process while the shell is blocked waiting for a keystroke.
     let spinner = compile_hosted(
@@ -2920,7 +2771,7 @@ main: () -> i32 {
     );
 }
 
-// Background jobs (PLAN 1.2): `run <file> &` execs without waiting and returns to
+// Background jobs: `run <file> &` execs without waiting and returns to
 // the prompt; `jobs` lists the job; `fg <n>` waits on it and reaps the exact exit
 // code via the pid-targeted waitpid syscall (261). The background child spins
 // before printing, so its announcement "[1] pid N" (printed the instant exec
@@ -2928,7 +2779,7 @@ main: () -> i32 {
 // to the prompt and kept running concurrently with the child rather than blocking.
 #[test]
 fn kernel_shell_background_job_runs_and_fg_reaps_it() {
-    let shell = compile_hosted(user::SHELL);
+    let shell = compile_hosted_program("shell");
 
     let slow = compile_hosted(
         r#"
@@ -3074,7 +2925,7 @@ main: () -> i32 {
 // marks), so ONLY the timer interrupt can switch from one to the other mid-loop.
 // Interleaved A/B output proves preemption; a fully sequential AAAA...BBBB run
 // would mean the timer never preempts (each process runs to completion, then
-// yields at wait). This is the foundation for background jobs (PLAN 1.2).
+// yields at wait). This is the foundation for background jobs.
 #[test]
 fn scheduler_timer_preempts_compute_bound_processes() {
     let parent = compile_hosted(
@@ -3382,7 +3233,7 @@ fn inode_present(image: &[u8], name: &str, ty: u16) -> bool {
 // verify their effects on the on-disk inode table.
 #[test]
 fn kernel_shell_file_management() {
-    let shell = compile_hosted(user::SHELL);
+    let shell = compile_hosted_program("shell");
 
     // Start from an empty FS so the only inodes are the root plus what the
     // session creates.
@@ -3446,7 +3297,7 @@ fn kernel_shell_file_management() {
 // Verify rmdir removes an empty directory but refuses a non-empty one.
 #[test]
 fn kernel_shell_rmdir_empty_and_nonempty() {
-    let shell = compile_hosted(user::SHELL);
+    let shell = compile_hosted_program("shell");
     let image = build_fs_image(&[]);
 
     // /full holds a file (rmdir must refuse it); /empty is removable.
@@ -3504,7 +3355,7 @@ main: () -> i32 {
     );
 }
 
-// PLAN 4.1: the OS process inspector reads scheduler/PCB state straight from guest
+// The OS process inspector reads scheduler/PCB state straight from guest
 // memory. This guards the PCB field offsets and symbol resolution end to end: after
 // boot the shell is pid 1, the running process, parented by the kernel (0).
 #[test]
@@ -3512,7 +3363,7 @@ fn os_inspector_sees_shell_as_pid1() {
     use full_stack::view::debug::os_view::{self, OsSymbols, Role};
 
     let kernel = cached_kernel();
-    let shell = compile_hosted(user::SHELL);
+    let shell = compile_hosted_program("shell");
     let image = build_fs_image(&[FsEntry::Dir { path: "/home" }]);
 
     let mut vm = setup_kernel_vm(kernel, Some(&shell), Some(&image), "");

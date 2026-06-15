@@ -1,4 +1,4 @@
-# Minimal user-space stdlib, assembled and linked separately (PLAN 3 Phase C demo).
+# Minimal user-space stdlib, assembled and linked separately.
 # Exports putc/puts/exit so a program need not inline its own I/O:
 #   as stdlib.s stdlib.o && as hello_ld.s hello_ld.o && ld stdlib.o hello_ld.o hello && hello
 

@@ -1,4 +1,4 @@
-//! VM round-trip tests for physical register allocation (PLAN 1.1).
+//! VM round-trip tests for physical register allocation.
 //!
 //! Every test compiles the same program with register allocation off and on,
 //! runs both in the VM, and asserts identical exit outcome and UART output.

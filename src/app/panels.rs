@@ -3,9 +3,9 @@ use egui::{Frame, Layout, Margin, RichText, Stroke};
 use full_stack::compilation_pipeline::TargetMode;
 use full_stack::view::debug::SessionStatus;
 use full_stack::view::{
-    AssemblyView, AstView, CacheView, CfgView, CompilerView, CpuStateView, ExecutionView,
+    ui_theme, AssemblyView, AstView, CacheView, CfgView, CompilerView, CpuStateView, ExecutionView,
     FramebufferView, IoView, IrView, MemoryView, PipelineView, SourceView, StackView, TokensView,
-    VmExecutionView, ui_theme,
+    VmExecutionView,
 };
 
 const IDE_VIEWS: &[(&str, fn() -> Box<dyn CompilerView>)] = &[
@@ -114,7 +114,12 @@ impl FullStackApp {
                     .on_hover_text("Boot the kernel and auto-run this program in the shell")
                     .clicked()
                 {
-                    let program_id = self.catalog.selected_program_id.clone();
+                    // Running a fragment runs its parent program.
+                    let program_id = self
+                        .catalog
+                        .current_program()
+                        .map(|p| p.parent_id.clone().unwrap_or_else(|| p.id.clone()))
+                        .unwrap_or_else(|| self.catalog.selected_program_id.clone());
                     let prepared = self
                         .ensure_kernel_binary()
                         .and_then(|()| self.compile_and_store_hosted(&program_id));
@@ -153,6 +158,11 @@ impl FullStackApp {
 
             // Target selector: hidden for stdlib, OS, and userspace programs.
             if !is_stdlib && !is_os && !is_user {
+                // Freestanding perma-freezes in the VM, so it is not offered here.
+                // Coerce any persisted Freestanding selection back to Hosted.
+                if self.target_mode == TargetMode::Freestanding {
+                    self.set_target_mode(TargetMode::Hosted);
+                }
                 ui.separator();
                 ui.label("Target:");
                 let prev_mode = self.target_mode;
@@ -167,11 +177,6 @@ impl FullStackApp {
                         );
                         ui.selectable_value(
                             &mut self.target_mode,
-                            TargetMode::Freestanding,
-                            TargetMode::Freestanding.label(),
-                        );
-                        ui.selectable_value(
-                            &mut self.target_mode,
                             TargetMode::Kernel,
                             TargetMode::Kernel.label(),
                         );
@@ -181,19 +186,6 @@ impl FullStackApp {
                     self.target_mode = prev_mode;
                     self.user_set_target_mode = true;
                     self.set_target_mode(new_mode);
-                }
-
-                if self.target_mode == TargetMode::Freestanding {
-                    ui.label("Base:");
-                    let lb_response = ui.add(
-                        egui::TextEdit::singleline(&mut self.load_base_input)
-                            .desired_width(90.0)
-                            .font(egui::TextStyle::Monospace)
-                            .hint_text("0x80200000"),
-                    );
-                    if lb_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                        self.compile();
-                    }
                 }
             }
 

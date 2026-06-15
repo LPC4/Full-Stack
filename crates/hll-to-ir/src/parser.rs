@@ -95,7 +95,21 @@ impl<'a> Parser<'a> {
             }
             Some(Token::External) => {
                 self.advance();
-                self.parse_function_decl(true)?
+                // `external name: (params) -> ret` is a function; `external name: type`
+                // is a global defined in another module (resolved at link).
+                if self.peek_n(1) == Some(&Token::Colon) && self.peek_n(2) == Some(&Token::LParen) {
+                    self.parse_function_decl(true)?
+                } else {
+                    let name = self.expect_ident()?;
+                    self.expect_colon()?;
+                    let ty = self.parse_type()?;
+                    DeclNode::Variable {
+                        name,
+                        ty,
+                        init: None,
+                        is_extern: true,
+                    }
+                }
             }
             Some(Token::Import) => {
                 self.advance();
@@ -231,7 +245,12 @@ impl<'a> Parser<'a> {
             None
         };
 
-        Ok(DeclNode::Variable { name, ty, init })
+        Ok(DeclNode::Variable {
+            name,
+            ty,
+            init,
+            is_extern: false,
+        })
     }
 
     fn parse_function_decl(&mut self, is_extern: bool) -> Result<DeclNode, ParserError> {
@@ -791,7 +810,7 @@ impl<'a> Parser<'a> {
                             match self.peek() {
                                 Some(Token::Comma) => {
                                     self.advance(); // consume comma
-                                    // Check if we're at closing bracket now
+                                                    // Check if we're at closing bracket now
                                     if self.check_gt_or_shr() {
                                         break;
                                     }

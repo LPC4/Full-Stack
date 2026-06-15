@@ -2,6 +2,17 @@
 
 use hll_to_ir::stdlib::get_stdlib_source;
 
+/// What a catalog entry is, for badge + grouping in the file list.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum CatalogBadge {
+    /// Compiles + links into something runnable (tools, demos, examples, kernel).
+    Runnable,
+    /// Read-only reference source that does not link into anything (stdlib).
+    Reference,
+    /// A translation unit that is part of a runnable program (aux module, kernel fragment).
+    Fragment,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Debug)]
 pub enum ProgramKind {
     Example,
@@ -19,6 +30,8 @@ pub struct ProgramFile {
     pub source: String,
     #[serde(default)]
     pub standalone: bool, // compile without linking stdlib (set for runtime/stdlib reference files)
+    #[serde(default)]
+    pub parent_id: Option<String>, // set for aux translation units and kernel fragments; their owner's id
     #[serde(default)]
     pub undo_stack: Vec<String>,
     #[serde(default)]
@@ -51,6 +64,7 @@ impl ProgramFile {
             kind: ProgramKind::Example,
             source: source.to_owned(),
             standalone: false,
+            parent_id: None,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             description: description.to_owned(),
@@ -64,6 +78,7 @@ impl ProgramFile {
             kind: ProgramKind::Custom,
             source,
             standalone: false,
+            parent_id: None,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             description: String::from("Your personal in-memory program."),
@@ -77,6 +92,7 @@ impl ProgramFile {
             kind: ProgramKind::Stdlib,
             source: source.to_owned(),
             standalone: false,
+            parent_id: None,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             description: description.to_owned(),
@@ -90,6 +106,7 @@ impl ProgramFile {
             kind: ProgramKind::Os,
             source: source.to_owned(),
             standalone: false,
+            parent_id: None,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             description: description.to_owned(),
@@ -103,6 +120,7 @@ impl ProgramFile {
             kind: ProgramKind::User,
             source: source.to_owned(),
             standalone: false,
+            parent_id: None,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             description: description.to_owned(),
@@ -124,13 +142,24 @@ impl ProgramFile {
     pub fn is_user(&self) -> bool {
         matches!(self.kind, ProgramKind::User)
     }
+
+    /// Runnability classification for the catalog badge + grouping.
+    pub fn badge(&self) -> CatalogBadge {
+        if self.parent_id.is_some() {
+            CatalogBadge::Fragment
+        } else if self.is_stdlib() || self.standalone {
+            CatalogBadge::Reference
+        } else {
+            CatalogBadge::Runnable
+        }
+    }
 }
 
 fn built_in_programs() -> Vec<ProgramFile> {
     // Keep the catalog's "Standard Library" source in lock-step with the compiler pipeline.
     let stdlib_combined = get_stdlib_source();
 
-    vec![
+    let mut programs = vec![
         // Stdlib program (read-only, single combined file)
         ProgramFile::stdlib(
             "stdlib",
@@ -147,6 +176,7 @@ fn built_in_programs() -> Vec<ProgramFile> {
                 os_runtime::kernel::RUNTIME,
             );
             p.standalone = true;
+            p.parent_id = Some("os-my-kernel".to_owned());
             p
         },
         {
@@ -157,6 +187,7 @@ fn built_in_programs() -> Vec<ProgramFile> {
                 os_runtime::kernel::CHECKS,
             );
             p.standalone = true;
+            p.parent_id = Some("os-my-kernel".to_owned());
             p
         },
         {
@@ -167,6 +198,7 @@ fn built_in_programs() -> Vec<ProgramFile> {
                 os_runtime::kernel::UTILITIES,
             );
             p.standalone = true;
+            p.parent_id = Some("os-my-kernel".to_owned());
             p
         },
         {
@@ -177,6 +209,7 @@ fn built_in_programs() -> Vec<ProgramFile> {
                 os_runtime::kernel::TRAP_ENTRY,
             );
             p.standalone = true;
+            p.parent_id = Some("os-my-kernel".to_owned());
             p
         },
         {
@@ -187,6 +220,7 @@ fn built_in_programs() -> Vec<ProgramFile> {
                 os_runtime::kernel::TRAP_HANDLER,
             );
             p.standalone = true;
+            p.parent_id = Some("os-my-kernel".to_owned());
             p
         },
         {
@@ -197,6 +231,7 @@ fn built_in_programs() -> Vec<ProgramFile> {
                 os_runtime::kernel::PMM,
             );
             p.standalone = true;
+            p.parent_id = Some("os-my-kernel".to_owned());
             p
         },
         {
@@ -207,6 +242,7 @@ fn built_in_programs() -> Vec<ProgramFile> {
                 os_runtime::kernel::VMM,
             );
             p.standalone = true;
+            p.parent_id = Some("os-my-kernel".to_owned());
             p
         },
         {
@@ -217,6 +253,7 @@ fn built_in_programs() -> Vec<ProgramFile> {
                 os_runtime::kernel::PROCESS,
             );
             p.standalone = true;
+            p.parent_id = Some("os-my-kernel".to_owned());
             p
         },
         {
@@ -227,6 +264,7 @@ fn built_in_programs() -> Vec<ProgramFile> {
                 os_runtime::kernel::SYSCALL,
             );
             p.standalone = true;
+            p.parent_id = Some("os-my-kernel".to_owned());
             p
         },
         {
@@ -237,6 +275,7 @@ fn built_in_programs() -> Vec<ProgramFile> {
                 os_runtime::kernel::SCHEDULER,
             );
             p.standalone = true;
+            p.parent_id = Some("os-my-kernel".to_owned());
             p
         },
         {
@@ -247,6 +286,7 @@ fn built_in_programs() -> Vec<ProgramFile> {
                 os_runtime::kernel::FS,
             );
             p.standalone = true;
+            p.parent_id = Some("os-my-kernel".to_owned());
             p
         },
         // Compilable kernel: select this to build the full OS
@@ -256,56 +296,36 @@ fn built_in_programs() -> Vec<ProgramFile> {
             "Compilable kernel: ties Entry, Checks, Utilities, PMM, VMM, and trap modules together. Select Kernel target mode to run.",
             os_runtime::kernel::MY_KERNEL,
         ),
-        // Userspace programs (read-only): the hosted programs that run under the
-        // kernel. Compile in Hosted target mode; the shell boots them as pid 1.
-        ProgramFile::user(
-            "user-shell",
-            "Shell",
-            "Interactive shell (pid 1): ls, cd, run, cat, edit, as, file management.",
-            os_runtime::user::SHELL,
-        ),
-        ProgramFile::user(
-            "user-edit",
-            "Editor",
-            "ed-style line editor launched by the shell's `edit` command.",
-            os_runtime::user::EDIT,
-        ),
-        ProgramFile::user(
-            "user-as",
-            "Assembler",
-            "In-VM RV64I assembler launched by the shell's `as` command.",
-            os_runtime::user::AS,
-        ),
-        ProgramFile::user(
-            "user-cc",
-            "Compiler",
-            "In-VM HLL-0 compiler launched by the shell's `cc` command.",
-            os_runtime::user::CC,
-        ),
-        ProgramFile::user(
-            "user-cube",
-            "Cube Demo",
-            "Spinning 3D wireframe cube on the framebuffer device.",
-            os_runtime::user::CUBE,
-        ),
-        ProgramFile::user(
-            "user-mandelbrot",
-            "Mandelbrot Demo",
-            "Framebuffer Mandelbrot renderer.",
-            os_runtime::user::MANDELBROT,
-        ),
-        ProgramFile::user(
-            "user-life",
-            "Game of Life Demo",
-            "Conway's Game of Life on the framebuffer (P pause, R reseed, space step).",
-            os_runtime::user::LIFE,
-        ),
-        ProgramFile::user(
-            "user-hello",
-            "Hello",
-            "Minimal user program: prints a greeting, then yields forever.",
-            os_runtime::user::USER_HELLO,
-        ),
+    ];
+
+    // Userspace programs (read-only) derive from the single os_runtime::user
+    // catalog: the hosted tools and demos the shell boots. Compile in Hosted
+    // target mode; the shell boots them as pid 1 or via bare-name execution.
+    for prog in os_runtime::user::PROGRAMS
+        .iter()
+        .filter(|p| p.is_compiled())
+    {
+        let parent_id = format!("user-{}", prog.name);
+        programs.push(ProgramFile::user(
+            &parent_id,
+            prog.title,
+            prog.description,
+            prog.source,
+        ));
+        // Each aux translation unit is an editable child module of its program.
+        for (aux_name, aux_source) in prog.aux_modules() {
+            let mut module = ProgramFile::user(
+                &format!("{parent_id}-{aux_name}"),
+                &format!("{aux_name}.hll"),
+                "Linked translation unit of the parent program.",
+                aux_source,
+            );
+            module.parent_id = Some(parent_id.clone());
+            programs.push(module);
+        }
+    }
+
+    programs.extend([
         // Example programs
         ProgramFile::example(
             "example-core-basics",
@@ -379,7 +399,9 @@ fn built_in_programs() -> Vec<ProgramFile> {
                 "/programs/example/generics_and_strings.hll"
             )),
         ),
-    ]
+    ]);
+
+    programs
 }
 
 pub fn blank_custom_program_source() -> String {
@@ -429,6 +451,7 @@ impl ProgramCatalog {
                     updated.source = built_in.source;
                     updated.description = built_in.description;
                     updated.standalone = built_in.standalone;
+                    updated.parent_id = built_in.parent_id;
                 }
                 merged_programs.push(updated);
             } else {
@@ -601,5 +624,66 @@ impl ProgramCatalog {
 
     pub fn get_programs_by_kind(&self, kind: ProgramKind) -> Vec<&ProgramFile> {
         self.programs.iter().filter(|p| p.kind == kind).collect()
+    }
+
+    /// Catalog entries whose `parent_id` is `parent_id`, in catalog order.
+    pub fn children_of(&self, parent_id: &str) -> Vec<&ProgramFile> {
+        self.programs
+            .iter()
+            .filter(|p| p.parent_id.as_deref() == Some(parent_id))
+            .collect()
+    }
+
+    /// The (possibly edited) source of each aux module of `parent_id`, in order.
+    /// Drives the link path so edits to aux units take effect on compile.
+    pub fn child_sources(&self, parent_id: &str) -> Vec<String> {
+        self.children_of(parent_id)
+            .iter()
+            .map(|p| p.source.clone())
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn find<'a>(programs: &'a [ProgramFile], id: &str) -> &'a ProgramFile {
+        programs
+            .iter()
+            .find(|p| p.id == id)
+            .unwrap_or_else(|| panic!("missing catalog entry {id}"))
+    }
+
+    #[test]
+    fn aux_modules_nest_under_their_program() {
+        let programs = built_in_programs();
+        let aux = find(&programs, "user-as-as_object");
+        assert_eq!(aux.parent_id.as_deref(), Some("user-as"));
+        assert_eq!(aux.badge(), CatalogBadge::Fragment);
+        // The primary program is runnable; the linker pulls the aux from the catalog.
+        assert_eq!(find(&programs, "user-as").badge(), CatalogBadge::Runnable);
+    }
+
+    #[test]
+    fn kernel_fragments_nest_under_my_kernel() {
+        let programs = built_in_programs();
+        let pmm = find(&programs, "os-kernel-pmm");
+        assert_eq!(pmm.parent_id.as_deref(), Some("os-my-kernel"));
+        assert_eq!(pmm.badge(), CatalogBadge::Fragment);
+        assert_eq!(find(&programs, "os-my-kernel").badge(), CatalogBadge::Runnable);
+    }
+
+    #[test]
+    fn stdlib_is_reference() {
+        assert_eq!(find(&built_in_programs(), "stdlib").badge(), CatalogBadge::Reference);
+    }
+
+    #[test]
+    fn child_sources_returns_aux_units() {
+        let catalog = ProgramCatalog::default();
+        let sources = catalog.child_sources("user-cc");
+        assert_eq!(sources.len(), 1, "cc has one aux translation unit");
+        assert!(!sources[0].is_empty());
     }
 }

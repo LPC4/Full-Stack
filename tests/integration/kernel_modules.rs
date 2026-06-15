@@ -180,7 +180,7 @@ fn kernel_frames_stay_within_immediate_range() {
     assert!(
         offenders.is_empty(),
         "kernel functions exceed the safe frame ceiling ({FRAME_WARN_BYTES} bytes); \
-         factor them into helpers (see PLAN 1.1 / 5.2):\n{}",
+         factor them into helpers:\n{}",
         offenders
             .iter()
             .map(|(f, s)| format!("  {f}: {s} bytes"))

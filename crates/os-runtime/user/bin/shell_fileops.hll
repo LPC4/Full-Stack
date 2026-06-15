@@ -1,0 +1,127 @@
+; File-management builtins (touch/mkdir/rm/rmdir/mv) split out of shell.hll and linked
+; with it; each resolves its operand to an absolute path via sh_join_path.
+
+external console_write:   (str: u8*)
+external console_writeln: (str: u8*)
+
+external sc_open:   (path: u8*, flags: u64) -> i64
+external sc_close:  (fd: i64)
+external sc_mkdir:  (path: u8*) -> i64
+external sc_unlink: (path: u8*) -> i64
+external sc_rmdir:  (path: u8*) -> i64
+external sc_rename: (old_path: u8*, new_path: u8*) -> i64
+
+; Path joiner, defined in shell.hll; resolved at link.
+external sh_join_path: (cwd: u8*, arg: u8*, out: u8*)
+
+; Create an empty file (open with the create flag, then close).
+export cmd_touch: (cwd: u8*, arg: u8*) {
+    if @arg == 0 {
+        console_writeln("touch: missing file name".data)
+        return
+    }
+    target: u8[256]
+    target_p: u8* = target[0]
+    sh_join_path(cwd, arg, target_p)
+    fd: i64 = sc_open(target_p, 2)
+    if fd < 0 {
+        console_write("touch: cannot create: ".data)
+        console_writeln(arg)
+        return
+    }
+    sc_close(fd)
+}
+
+; Create a directory.
+export cmd_mkdir: (cwd: u8*, arg: u8*) {
+    if @arg == 0 {
+        console_writeln("mkdir: missing directory name".data)
+        return
+    }
+    target: u8[256]
+    target_p: u8* = target[0]
+    sh_join_path(cwd, arg, target_p)
+    if sc_mkdir(target_p) < 0 {
+        console_write("mkdir: cannot create: ".data)
+        console_writeln(arg)
+    }
+}
+
+; Remove a regular file.
+export cmd_rm: (cwd: u8*, arg: u8*) {
+    if @arg == 0 {
+        console_writeln("rm: missing file name".data)
+        return
+    }
+    target: u8[256]
+    target_p: u8* = target[0]
+    sh_join_path(cwd, arg, target_p)
+    if sc_unlink(target_p) < 0 {
+        console_write("rm: cannot remove: ".data)
+        console_writeln(arg)
+    }
+}
+
+; Remove an empty directory.
+export cmd_rmdir: (cwd: u8*, arg: u8*) {
+    if @arg == 0 {
+        console_writeln("rmdir: missing directory name".data)
+        return
+    }
+    target: u8[256]
+    target_p: u8* = target[0]
+    sh_join_path(cwd, arg, target_p)
+    if sc_rmdir(target_p) < 0 {
+        console_write("rmdir: cannot remove: ".data)
+        console_writeln(arg)
+    }
+}
+
+; Move/rename: "mv <old> <new>". Splits arg on the first run of spaces.
+export cmd_mv: (cwd: u8*, arg: u8*) {
+    ; Find the space separating the two operands.
+    sp: u64 = 0
+    while @(arg + sp) != 0 {
+        if @(arg + sp) == ' ' {
+            break
+        }
+        sp = sp + 1
+    }
+    if @(arg + sp) == 0 {
+        console_writeln("mv: usage: mv <old> <new>".data)
+        return
+    }
+    ; Copy the first operand out before we walk past it.
+    src: u8[128]
+    src_p: u8* = src[0]
+    i: u64 = 0
+    while i < sp {
+        if i >= 127 {
+            break
+        }
+        d: u8* = src_p + i
+        @d = @(arg + i)
+        i = i + 1
+    }
+    st: u8* = src_p + i
+    @st = 0 as u8
+    ; Skip the separating space(s) to reach the destination operand.
+    while @(arg + sp) == ' ' {
+        sp = sp + 1
+    }
+    if @(arg + sp) == 0 {
+        console_writeln("mv: usage: mv <old> <new>".data)
+        return
+    }
+    dst_arg: u8* = arg + sp
+    old_abs: u8[256]
+    old_p: u8* = old_abs[0]
+    sh_join_path(cwd, src_p, old_p)
+    new_abs: u8[256]
+    new_p: u8* = new_abs[0]
+    sh_join_path(cwd, dst_arg, new_p)
+    if sc_rename(old_p, new_p) < 0 {
+        console_write("mv: cannot move: ".data)
+        console_writeln(src_p)
+    }
+}

@@ -1,0 +1,290 @@
+; ET_REL object serializer for the in-VM assembler. Split out of as.hll and linked
+; by the host toolchain. The assembled state (out/code/data/labels/relocs)
+; lives in as.hll and is shared via external globals.
+
+external cstr_eq:  (a: u8*, b: u8*) -> i64
+external cstr_len: (s: u8*) -> u64
+
+; Helpers and the output buffer owned by as.hll; resolved at link time.
+external fail:          (msg: u8*)
+external wr_le:         (off: u64, val: u64, n: u64)
+external is_globl:      (name: u8*) -> i64
+external label_defined: (name: u8*) -> i64
+
+; Shared assembler state defined in as.hll (no storage emitted here).
+external out:      u8[32768]
+external code:     u8[8192]
+external code_len: u64
+external data:     u8[8192]
+external data_len: u64
+
+; The label and relocation tables, defined in as.hll. Types are file-scoped, so
+; the layout is duplicated here to match (must stay in sync with as.hll).
+type Label = { name: u8[16], addr: i64, sec: i64 }
+external labels:    Label[64]
+external lbl_count: i64
+
+type Reloc = { sym: u8[16], off: i64, kind: i64 }
+external relocs: Reloc[256]
+external nreloc: i64
+
+; Ordered ELF symbol table built for object output: index 0 is the null symbol,
+; then locals, then globals (defined .globl + undefined externals). Names packed
+; 16 bytes each; value is a section-relative offset; shndx 0 = undefined.
+sym_pool: u8[2048]
+sym_val: i64[128]
+sym_shndx: i64[128]
+sym_name_off: i64[128]
+nsym: i64 = 0
+first_global: i64 = 0
+
+; Copy a NUL-terminated string into out at byte offset off; returns its length.
+out_str: (off: u64, src: u8*) -> u64 {
+    i: u64 = 0
+    while @(src + i) != 0 {
+        d: u8* = out[0] + off + i
+        @d = @(src + i)
+        i = i + 1
+    }
+    return i
+}
+
+; Copy n bytes from src into out at byte offset off.
+out_bytes: (off: u64, src: u8*, n: u64) {
+    i: u64 = 0
+    while i < n {
+        d: u8* = out[0] + off + i
+        @d = @(src + i)
+        i = i + 1
+    }
+}
+
+; Append a symbol to the ordered table (name, section-relative value, shndx).
+push_sym: (name: u8*, value: i64, shndx: i64) {
+    if nsym >= 128 {
+        fail("too many symbols".data)
+        return
+    }
+    dst: u8* = sym_pool[0] + (nsym as u64) * 16
+    i: u64 = 0
+    while i < 15 {
+        c: u8 = @(name + i)
+        e: u8* = dst + i
+        @e = c
+        if c == 0 {
+            break
+        }
+        i = i + 1
+    }
+    t: u8* = dst + i
+    @t = 0 as u8
+    @sym_val[nsym] = value
+    @sym_shndx[nsym] = shndx
+    nsym = nsym + 1
+}
+
+; Index of `name` in the symbol table, or -1 if absent.
+sym_index: (name: u8*) -> i64 {
+    i: i64 = 1
+    while i < nsym {
+        cand: u8* = sym_pool[0] + (i as u64) * 16
+        if cstr_eq(cand, name) == 1 {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+; Build the ordered symbol table: null, locals, globals (defined), externals.
+build_symbols: () {
+    nsym = 0
+    push_sym("".data, 0, 0)
+    ; Locals: defined labels not exported via .globl.
+    i: i64 = 0
+    while i < lbl_count {
+        lab: Label* = labels[i]
+        nm: u8* = lab as u8*
+        if is_globl(nm) == 0 {
+            shndx: i64 = 1
+            if @lab.sec == 1 {
+                shndx = 2
+            }
+            push_sym(nm, @lab.addr, shndx)
+        }
+        i = i + 1
+    }
+    first_global = nsym
+    ; Globals: defined labels exported via .globl.
+    i = 0
+    while i < lbl_count {
+        lab: Label* = labels[i]
+        nm: u8* = lab as u8*
+        if is_globl(nm) == 1 {
+            shndx: i64 = 1
+            if @lab.sec == 1 {
+                shndx = 2
+            }
+            push_sym(nm, @lab.addr, shndx)
+        }
+        i = i + 1
+    }
+    ; Externals: relocation targets with no local definition (undefined, shndx 0).
+    i = 0
+    while i < nreloc {
+        r: Reloc* = relocs[i]
+        rn: u8* = r as u8*
+        if label_defined(rn) == 0 {
+            if sym_index(rn) < 0 {
+                push_sym(rn, 0, 0)
+            }
+        }
+        i = i + 1
+    }
+}
+
+; Write one 24-byte ELF64 symbol entry at byte offset off.
+wr_sym: (off: u64, name_off: u64, bind: u64, shndx: u64, value: u64) {
+    wr_le(off, name_off, 4)
+    wr_le(off + 4, bind * 16, 1)
+    wr_le(off + 5, 0, 1)
+    wr_le(off + 6, shndx, 2)
+    wr_le(off + 8, value, 8)
+    wr_le(off + 16, 0, 8)
+}
+
+; Write one 64-byte ELF64 section header at byte offset off.
+wr_shdr: (off: u64, name: u64, sht: u64, flags: u64, soff: u64, size: u64, link: u64, info: u64, entsize: u64) {
+    wr_le(off, name, 4)
+    wr_le(off + 4, sht, 4)
+    wr_le(off + 8, flags, 8)
+    wr_le(off + 16, 0, 8)
+    wr_le(off + 24, soff, 8)
+    wr_le(off + 32, size, 8)
+    wr_le(off + 40, link, 4)
+    wr_le(off + 44, info, 4)
+    wr_le(off + 48, 4, 8)
+    wr_le(off + 56, entsize, 8)
+}
+
+; Build the whole ET_REL image into out[]; returns its total byte length. Section
+; layout: ehdr, .text, .data, .rela.text, .symtab, .strtab, .shstrtab, shdrs.
+export write_object: () -> u64 {
+    build_symbols()
+
+    text_off: u64 = 64
+    data_off: u64 = text_off + code_len
+    rela_off: u64 = (data_off + data_len + 7) / 8 * 8
+    rela_len: u64 = (nreloc as u64) * 24
+    symtab_off: u64 = (rela_off + rela_len + 7) / 8 * 8
+    symtab_len: u64 = (nsym as u64) * 24
+
+    ; .strtab: names packed after symtab; record each symbol's name offset.
+    strtab_off: u64 = symtab_off + symtab_len
+    cursor: u64 = 1
+    si: i64 = 1
+    while si < nsym {
+        @sym_name_off[si] = cursor as i64
+        nm: u8* = sym_pool[0] + (si as u64) * 16
+        cursor = cursor + cstr_len(nm) + 1
+        si = si + 1
+    }
+    strtab_len: u64 = cursor
+
+    ; .shstrtab: fixed section names at known offsets (NUL separators are pre-zeroed).
+    shstr_off: u64 = strtab_off + strtab_len
+    out_str(shstr_off + 1, ".text".data)
+    out_str(shstr_off + 7, ".data".data)
+    out_str(shstr_off + 13, ".rela.text".data)
+    out_str(shstr_off + 24, ".symtab".data)
+    out_str(shstr_off + 32, ".strtab".data)
+    out_str(shstr_off + 40, ".shstrtab".data)
+    shstr_len: u64 = 50
+    shoff: u64 = (shstr_off + shstr_len + 7) / 8 * 8
+
+    ; --- ELF header ---
+    @out[0] = 0x7F as u8
+    @out[1] = 69 as u8
+    @out[2] = 76 as u8
+    @out[3] = 70 as u8
+    @out[4] = 2 as u8
+    @out[5] = 1 as u8
+    @out[6] = 1 as u8
+    wr_le(16, 1, 2)            ; e_type = ET_REL
+    wr_le(18, 243, 2)          ; e_machine = EM_RISCV
+    wr_le(20, 1, 4)            ; e_version
+    wr_le(40, shoff, 8)        ; e_shoff
+    wr_le(48, 5, 4)            ; e_flags
+    wr_le(52, 64, 2)           ; e_ehsize
+    wr_le(58, 64, 2)           ; e_shentsize
+    wr_le(60, 7, 2)            ; e_shnum
+    wr_le(62, 6, 2)            ; e_shstrndx (.shstrtab)
+
+    ; --- Section payloads ---
+    out_bytes(text_off, code[0], code_len)
+    out_bytes(data_off, data[0], data_len)
+
+    ; .rela.text entries: r_offset, r_info = (sym<<32)|type, r_addend = 0.
+    ri: i64 = 0
+    while ri < nreloc {
+        r: Reloc* = relocs[ri]
+        rn: u8* = r as u8*
+        eoff: u64 = rela_off + (ri as u64) * 24
+        rtype: u64 = 19
+        if @r.kind == 1 {
+            rtype = 17
+        }
+        if @r.kind == 2 {
+            rtype = 23
+        }
+        sidx: i64 = sym_index(rn)
+        if sidx < 0 {
+            sidx = 0
+        }
+        info: u64 = (sidx as u64) * 4294967296 + rtype
+        roff: i64 = @r.off
+        wr_le(eoff, roff as u64, 8)
+        wr_le(eoff + 8, info, 8)
+        wr_le(eoff + 16, 0, 8)
+        ri = ri + 1
+    }
+
+    ; .symtab entries.
+    si = 0
+    while si < nsym {
+        eoff: u64 = symtab_off + (si as u64) * 24
+        bind: u64 = 0
+        if si >= first_global {
+            bind = 1
+        }
+        noff: u64 = 0
+        if si > 0 {
+            no: i64 = @sym_name_off[si]
+            noff = no as u64
+        }
+        shx: i64 = @sym_shndx[si]
+        val: i64 = @sym_val[si]
+        wr_sym(eoff, noff, bind, shx as u64, val as u64)
+        si = si + 1
+    }
+
+    ; .strtab bytes.
+    si = 1
+    while si < nsym {
+        nm: u8* = sym_pool[0] + (si as u64) * 16
+        no: i64 = @sym_name_off[si]
+        out_str(strtab_off + (no as u64), nm)
+        si = si + 1
+    }
+
+    ; --- Section headers (indices 0..6) ---
+    ; 0 NULL is the pre-zeroed 64 bytes at shoff.
+    wr_shdr(shoff + 64, 1, 1, 6, text_off, code_len, 0, 0, 0)        ; .text PROGBITS A|X
+    wr_shdr(shoff + 128, 7, 1, 3, data_off, data_len, 0, 0, 0)       ; .data PROGBITS A|W
+    wr_shdr(shoff + 192, 13, 4, 0, rela_off, rela_len, 4, 1, 24)     ; .rela.text -> symtab/.text
+    wr_shdr(shoff + 256, 24, 2, 0, symtab_off, symtab_len, 5, first_global as u64, 24) ; .symtab
+    wr_shdr(shoff + 320, 32, 3, 0, strtab_off, strtab_len, 0, 0, 0)  ; .strtab
+    wr_shdr(shoff + 384, 40, 3, 0, shstr_off, shstr_len, 0, 0, 0)    ; .shstrtab
+
+    return shoff + 448
+}

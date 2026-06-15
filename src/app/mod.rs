@@ -18,12 +18,13 @@ use full_stack::view::ide::vm_execution_view::VmExecutionResult;
 use full_stack::view::{
     AssemblyView, AstView, BgPreset, CacheView, CfgView, CompilationState, CompilerView,
     CpuStateView, DisassemblyView, ExecutionView, FramebufferView, IoView, IrView, MemoryView,
-    PipelineView, ProgramCatalog, SourceView, StackView, TokensView, UiTheme, VmExecutionView,
-    apply_ui_theme,
+    PipelineView, ProgramCatalog, ProgramFile, SourceView, StackView, TokensView, UiTheme,
+    VmExecutionView, apply_ui_theme,
 };
 use hll_to_ir::stdlib::{
     get_kernel_stdlib_source, get_stdlib_source_for_mode, get_stdlib_type_prelude,
 };
+use std::collections::HashMap;
 use std::fmt;
 use virtual_machine::cpu::StepOutcome;
 use virtual_machine::virtual_machine::VirtualMachine;
@@ -276,22 +277,10 @@ pub struct FullStackApp {
     selected_inject_program_id: String,
     #[serde(skip)]
     kernel_binary: Option<AssembledOutput>,
+    // Compiled hosted user programs (shell, tools, demos), keyed by the
+    // os_runtime::user catalog name. Replaces the per-tool ensure_* fields.
     #[serde(skip)]
-    shell_binary: Option<AssembledOutput>,
-    #[serde(skip)]
-    edit_binary: Option<AssembledOutput>,
-    #[serde(skip)]
-    fbdemo_binary: Option<AssembledOutput>,
-    #[serde(skip)]
-    cube_binary: Option<AssembledOutput>,
-    #[serde(skip)]
-    life_binary: Option<AssembledOutput>,
-    #[serde(skip)]
-    as_binary: Option<AssembledOutput>,
-    #[serde(skip)]
-    cc_binary: Option<AssembledOutput>,
-    #[serde(skip)]
-    ld_binary: Option<AssembledOutput>,
+    user_binaries: HashMap<&'static str, AssembledOutput>,
     #[serde(skip)]
     vm_output_view_id: u64,
     settings: AppSettings,
@@ -333,14 +322,7 @@ impl Default for FullStackApp {
             machine_window: MachineWindow::default(),
             selected_inject_program_id: String::new(),
             kernel_binary: None,
-            shell_binary: None,
-            edit_binary: None,
-            fbdemo_binary: None,
-            cube_binary: None,
-            life_binary: None,
-            as_binary: None,
-            cc_binary: None,
-            ld_binary: None,
+            user_binaries: HashMap::new(),
             vm_output_view_id: 0,
             settings: AppSettings::default(),
             show_settings: false,
@@ -555,13 +537,23 @@ impl FullStackApp {
             return;
         }
 
-        // Get the user's kernel module source.
-        let user_source = self.catalog.get_selected_source();
-        let module_name = self
-            .catalog
-            .current_program()
-            .map(|p| p.name.trim().to_owned())
-            .unwrap_or_else(|| "kernel".to_owned());
+        // Get the kernel source. Selecting a kernel fragment builds the whole
+        // kernel (its parent), not the fragment alone -- otherwise the fragment's
+        // globals collide with the stdlib objects at link.
+        let Some(build) = self.resolve_build_program() else {
+            self.compilation_state.set_error("no program selected".to_owned());
+            self.compilation_state.just_compiled = false;
+            return;
+        };
+        let user_source = build.source.clone();
+        let module_name = {
+            let name = build.name.trim();
+            if name.is_empty() {
+                "kernel".to_owned()
+            } else {
+                name.to_owned()
+            }
+        };
 
         // Compile the user kernel module in its own pipeline without concatenation.
         let mut kernel_user_pipeline = CompilationPipeline::new();
@@ -651,19 +643,33 @@ impl FullStackApp {
         self.kernel_binary = self.compilation_state.assembled().cloned();
     }
 
-    fn compile(&mut self) {
-        let user_source = self.catalog.get_selected_source();
-        let is_stdlib = self
-            .catalog
-            .current_program()
-            .map(|p| p.is_stdlib() || p.standalone)
-            .unwrap_or(false);
+    /// The program a build should target: the parent if a fragment (aux module /
+    /// kernel module) is selected, otherwise the selected program itself. A
+    /// fragment only links as part of its parent, so every build path resolves
+    /// through here.
+    fn resolve_build_program(&self) -> Option<ProgramFile> {
+        let current = self.catalog.current_program()?;
+        let build_id = current
+            .parent_id
+            .clone()
+            .unwrap_or_else(|| current.id.clone());
+        self.catalog
+            .all_programs()
+            .iter()
+            .find(|p| p.id == build_id)
+            .cloned()
+    }
 
-        let is_os_program = self
-            .catalog
-            .current_program()
-            .map(|p| p.is_os() && !p.standalone)
-            .unwrap_or(false);
+    fn compile(&mut self) {
+        // Selecting a fragment builds its parent so it links cleanly and the
+        // fragment's edits are folded in via the aux/module link path below.
+        let Some(build) = self.resolve_build_program() else {
+            return;
+        };
+
+        let user_source = build.source.clone();
+        let is_stdlib = build.is_stdlib() || build.standalone;
+        let is_os_program = build.is_os() && !build.standalone;
 
         // Reset user-set target mode when the selected program changes.
         let current_id = self.catalog.selected_program_id.clone();
@@ -686,18 +692,14 @@ impl FullStackApp {
         }
 
         self.pipeline.set_target_mode(self.target_mode);
-        let artifact_stem = self
-            .catalog
-            .current_program()
-            .map(|program| {
-                let name = program.name.trim();
-                if name.is_empty() {
-                    program.id.clone()
-                } else {
-                    name.to_owned()
-                }
-            })
-            .unwrap_or_else(|| "program".to_owned());
+        let artifact_stem = {
+            let name = build.name.trim();
+            if name.is_empty() {
+                build.id.clone()
+            } else {
+                name.to_owned()
+            }
+        };
         self.pipeline.set_artifact_stem(Some(artifact_stem));
         match self.target_mode {
             TargetMode::Hosted => {
@@ -734,7 +736,29 @@ impl FullStackApp {
         } else {
             Some(self.stdlib_tokens.as_slice())
         };
-        let result = self.pipeline.run_full(&user_source, stdlib_tokens);
+        let mut result = self.pipeline.run_full(&user_source, stdlib_tokens);
+
+        // A split catalog program carries aux translation units that run_full does
+        // not see (it only built the primary object). Re-link the primary with the
+        // aux objects so cross-module references resolve.
+        // Pull aux sources from the catalog (not the embedded const) so edits to
+        // the aux translation units take effect on compile.
+        let aux_sources: Vec<String> = self.catalog.child_sources(&build.id);
+        if !aux_sources.is_empty()
+            && !result.has_errors()
+            && let Some(tokens) = result.asm.as_ref().map(|a| a.tokens.clone())
+        {
+            match self.link_hosted_aux(&self.pipeline, self.target_mode, &tokens, stdlib_tokens, &aux_sources) {
+                Ok(assembled) => {
+                    result.binary = Some(BinaryOutput { assembled });
+                    result.assembler_error = None;
+                }
+                Err(e) => {
+                    result.binary = None;
+                    result.assembler_error = Some(e);
+                }
+            }
+        }
 
         if result.has_errors() {
             self.compilation_state
@@ -771,18 +795,78 @@ impl FullStackApp {
         }
     }
 
+    /// Re-link a hosted program's primary object with its aux translation units.
+    /// Mirrors `run_full`'s link (stdlib first, then the primary) but adds the aux
+    /// objects, each compiled with a distinct string prefix to avoid rodata clashes.
+    /// `pipeline` supplies the link layout/entry; `stdlib_tokens` is `None` when the
+    /// stdlib is already concatenated into the primary module.
+    fn link_hosted_aux(
+        &self,
+        pipeline: &CompilationPipeline,
+        target: TargetMode,
+        user_tokens: &[RvInstruction],
+        stdlib_tokens: Option<&[RvInstruction]>,
+        aux_sources: &[String],
+    ) -> Result<AssembledOutput, String> {
+        let user_obj = pipeline
+            .assemble_named("user", user_tokens)
+            .map_err(|e| format!("assembler error: {}", e.message))?;
+
+        let mut aux_objs: Vec<AssembledOutput> = Vec::with_capacity(aux_sources.len());
+        for (i, src) in aux_sources.iter().enumerate() {
+            let mut p = CompilationPipeline::new();
+            p.set_target_mode(target);
+            p.set_write_artifacts(false);
+            p.set_type_prelude(get_stdlib_type_prelude());
+            p.set_string_prefix(Some(format!("aux{i}_str_")));
+            let r = p.compile(src).map_err(|e| format!("aux compile error: {e}"))?;
+            let (_, t) = p.compile_ir_to_assembly_with_tokens(&r.ir_program);
+            aux_objs.push(
+                p.assemble_named(&format!("aux{i}"), &t)
+                    .map_err(|e| format!("aux assembler error: {}", e.message))?,
+            );
+        }
+
+        let stdlib_obj = match stdlib_tokens {
+            Some(t) => Some(
+                pipeline
+                    .assemble_named("stdlib", t)
+                    .map_err(|e| format!("assembler error: {}", e.message))?,
+            ),
+            None => None,
+        };
+
+        let aux_names: Vec<String> = (0..aux_objs.len()).map(|i| format!("aux{i}")).collect();
+        let mut modules: Vec<(&str, &AssembledOutput)> = Vec::new();
+        if let Some(s) = stdlib_obj.as_ref() {
+            modules.push(("stdlib", s));
+        }
+        modules.push(("user", &user_obj));
+        for (n, o) in aux_names.iter().zip(aux_objs.iter()) {
+            modules.push((n.as_str(), o));
+        }
+        pipeline
+            .link_assembled_objects_named("user", &modules)
+            .map_err(|e| format!("linker error: {}", e.message))
+    }
+
     /// Compile the program with the given id as Hosted and store the result in
     /// `compilation_state.last_hosted_binary` on success.
     fn compile_and_store_hosted(&mut self, program_id: &str) -> Result<(), String> {
-        // Find program source by id
-        let program_opt = self
+        // A fragment runs only as part of its parent program; build the parent.
+        let program = self
             .catalog
             .all_programs()
             .iter()
-            .find(|p| p.id == program_id);
-        let program = match program_opt {
+            .find(|p| p.id == program_id)
+            .ok_or_else(|| format!("program id not found: {program_id}"))?;
+        let build_id = program
+            .parent_id
+            .clone()
+            .unwrap_or_else(|| program_id.to_owned());
+        let program = match self.catalog.all_programs().iter().find(|p| p.id == build_id) {
             Some(p) => p,
-            None => return Err(format!("program id not found: {program_id}")),
+            None => return Err(format!("program id not found: {build_id}")),
         };
 
         // Build pipeline and compile concatenated stdlib + program source
@@ -800,6 +884,21 @@ impl FullStackApp {
             r if r.has_errors() => return Err(r.format_diagnostics()),
             r => r,
         };
+
+        // Split programs (aux translation units) need the aux objects linked in;
+        // run_full only built the primary (stdlib already concatenated into it).
+        let aux_sources: Vec<String> = self.catalog.child_sources(&build_id);
+        if !aux_sources.is_empty() {
+            let tokens = result
+                .asm
+                .as_ref()
+                .map(|a| a.tokens.clone())
+                .ok_or_else(|| "no assembly produced".to_owned())?;
+            let assembled =
+                self.link_hosted_aux(&user_pipeline, TargetMode::Hosted, &tokens, None, &aux_sources)?;
+            self.compilation_state.last_hosted_binary = Some(assembled);
+            return Ok(());
+        }
 
         if let Some(ref asm_err) = result.assembler_error {
             return Err(format!("assembler error: {asm_err}"));
@@ -857,258 +956,84 @@ impl FullStackApp {
         Ok(())
     }
 
-    /// Compile the bundled interactive shell as a hosted binary, caching the
-    /// result so repeated boots reuse it.
-    fn ensure_shell_binary(&mut self) -> Result<(), String> {
-        if self.shell_binary.is_some() {
+    /// Compile a bundled user program (by its `os_runtime::user` catalog name)
+    /// as a hosted binary, caching the result so repeated boots reuse it. One
+    /// method for every tool/demo -- they differ only in source + cache key.
+    fn ensure_user_binary(&mut self, name: &'static str) -> Result<(), String> {
+        if self.user_binaries.contains_key(name) {
             return Ok(());
         }
+        let prog = os_runtime::user::program(name)
+            .ok_or_else(|| format!("unknown user program: {name}"))?;
+
         let mut pipeline = CompilationPipeline::new();
         pipeline.set_target_mode(TargetMode::Hosted);
         pipeline.set_write_artifacts(false);
         pipeline.set_type_prelude(get_stdlib_type_prelude());
 
-        let source = format!(
+        // The primary translation unit carries the stdlib (concatenated). For a
+        // single-file program this is the whole build; run_full compiles and links
+        // it in one shot.
+        let main_src = format!(
             "{}\n{}",
             get_stdlib_source_for_mode(TargetMode::Hosted),
-            os_runtime::user::SHELL
+            prog.source
         );
-        let result = pipeline.run_full(&source, None);
-        if result.has_errors() {
-            return Err(result.format_diagnostics());
-        }
-        if let Some(ref asm_err) = result.assembler_error {
-            return Err(format!("assembler error: {asm_err}"));
-        }
-        match result.binary.as_ref() {
-            Some(bin) => {
-                self.shell_binary = Some(bin.assembled.clone());
-                Ok(())
+        if prog.aux_sources.is_empty() {
+            let result = pipeline.run_full(&main_src, None);
+            if result.has_errors() {
+                return Err(result.format_diagnostics());
             }
-            None => Err("shell produced no binary".to_owned()),
-        }
-    }
-
-    /// Compile the bundled line editor as a hosted binary, caching the result
-    /// so repeated boots reuse it. Installed at `/bin/edit.elf` by the boot image
-    /// builder so the shell's `edit` command can exec it.
-    fn ensure_edit_binary(&mut self) -> Result<(), String> {
-        if self.edit_binary.is_some() {
+            if let Some(ref asm_err) = result.assembler_error {
+                return Err(format!("assembler error: {asm_err}"));
+            }
+            let bin = result
+                .binary
+                .ok_or_else(|| format!("{name} produced no binary"))?;
+            self.user_binaries.insert(name, bin.assembled);
             return Ok(());
         }
-        let mut pipeline = CompilationPipeline::new();
-        pipeline.set_target_mode(TargetMode::Hosted);
-        pipeline.set_write_artifacts(false);
-        pipeline.set_type_prelude(get_stdlib_type_prelude());
 
-        let source = format!(
-            "{}\n{}",
-            get_stdlib_source_for_mode(TargetMode::Hosted),
-            os_runtime::user::EDIT
-        );
-        let result = pipeline.run_full(&source, None);
-        if result.has_errors() {
-            return Err(result.format_diagnostics());
-        }
-        if let Some(ref asm_err) = result.assembler_error {
-            return Err(format!("assembler error: {asm_err}"));
-        }
-        match result.binary.as_ref() {
-            Some(bin) => {
-                self.edit_binary = Some(bin.assembled.clone());
-                Ok(())
-            }
-            None => Err("editor produced no binary".to_owned()),
-        }
-    }
+        // Separate compilation: compile the primary unit and each aux
+        // unit to its own object, then link them. Each aux gets a distinct string
+        // prefix so their rodata labels do not collide with the primary unit's.
+        let main = pipeline
+            .compile(&main_src)
+            .map_err(|e| format!("{name} compile error: {e}"))?;
+        let (_, main_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&main.ir_program);
+        let main_obj = pipeline
+            .assemble_named(name, &main_tokens)
+            .map_err(|e| format!("{name} assemble error: {}", e.message))?;
 
-    /// Compile the bundled framebuffer demo as a hosted binary, caching it.
-    fn ensure_fbdemo_binary(&mut self) -> Result<(), String> {
-        if self.fbdemo_binary.is_some() {
-            return Ok(());
+        let mut aux_objs: Vec<AssembledOutput> = Vec::with_capacity(prog.aux_sources.len());
+        for (i, src) in prog.aux_sources.iter().enumerate() {
+            let mut aux_pipeline = CompilationPipeline::new();
+            aux_pipeline.set_target_mode(TargetMode::Hosted);
+            aux_pipeline.set_write_artifacts(false);
+            aux_pipeline.set_type_prelude(get_stdlib_type_prelude());
+            aux_pipeline.set_string_prefix(Some(format!("aux{i}_str_")));
+            let aux = aux_pipeline
+                .compile(src)
+                .map_err(|e| format!("{name} aux compile error: {e}"))?;
+            let (_, aux_tokens) = aux_pipeline.compile_ir_to_assembly_with_tokens(&aux.ir_program);
+            aux_objs.push(
+                aux_pipeline
+                    .assemble_named(&format!("{name}_aux{i}"), &aux_tokens)
+                    .map_err(|e| format!("{name} aux assemble error: {}", e.message))?,
+            );
         }
-        let mut pipeline = CompilationPipeline::new();
-        pipeline.set_target_mode(TargetMode::Hosted);
-        pipeline.set_write_artifacts(false);
-        pipeline.set_type_prelude(get_stdlib_type_prelude());
 
-        let source = format!(
-            "{}\n{}",
-            get_stdlib_source_for_mode(TargetMode::Hosted),
-            os_runtime::user::MANDELBROT
-        );
-        let result = pipeline.run_full(&source, None);
-        if result.has_errors() {
-            return Err(result.format_diagnostics());
+        let aux_names: Vec<String> =
+            (0..aux_objs.len()).map(|i| format!("{name}_aux{i}")).collect();
+        let mut modules: Vec<(&str, &AssembledOutput)> = vec![(name, &main_obj)];
+        for (n, o) in aux_names.iter().zip(aux_objs.iter()) {
+            modules.push((n.as_str(), o));
         }
-        if let Some(ref asm_err) = result.assembler_error {
-            return Err(format!("assembler error: {asm_err}"));
-        }
-        match result.binary.as_ref() {
-            Some(bin) => {
-                self.fbdemo_binary = Some(bin.assembled.clone());
-                Ok(())
-            }
-            None => Err("fbdemo produced no binary".to_owned()),
-        }
-    }
-
-    /// Compile the bundled spinning-cube demo as a hosted binary, caching it.
-    fn ensure_cube_binary(&mut self) -> Result<(), String> {
-        if self.cube_binary.is_some() {
-            return Ok(());
-        }
-        let mut pipeline = CompilationPipeline::new();
-        pipeline.set_target_mode(TargetMode::Hosted);
-        pipeline.set_write_artifacts(false);
-        pipeline.set_type_prelude(get_stdlib_type_prelude());
-
-        let source = format!(
-            "{}\n{}",
-            get_stdlib_source_for_mode(TargetMode::Hosted),
-            os_runtime::user::CUBE
-        );
-        let result = pipeline.run_full(&source, None);
-        if result.has_errors() {
-            return Err(result.format_diagnostics());
-        }
-        if let Some(ref asm_err) = result.assembler_error {
-            return Err(format!("assembler error: {asm_err}"));
-        }
-        match result.binary.as_ref() {
-            Some(bin) => {
-                self.cube_binary = Some(bin.assembled.clone());
-                Ok(())
-            }
-            None => Err("cube produced no binary".to_owned()),
-        }
-    }
-
-    /// Compile the bundled Game of Life demo as a hosted binary, caching it.
-    fn ensure_life_binary(&mut self) -> Result<(), String> {
-        if self.life_binary.is_some() {
-            return Ok(());
-        }
-        let mut pipeline = CompilationPipeline::new();
-        pipeline.set_target_mode(TargetMode::Hosted);
-        pipeline.set_write_artifacts(false);
-        pipeline.set_type_prelude(get_stdlib_type_prelude());
-
-        let source = format!(
-            "{}\n{}",
-            get_stdlib_source_for_mode(TargetMode::Hosted),
-            os_runtime::user::LIFE
-        );
-        let result = pipeline.run_full(&source, None);
-        if result.has_errors() {
-            return Err(result.format_diagnostics());
-        }
-        if let Some(ref asm_err) = result.assembler_error {
-            return Err(format!("assembler error: {asm_err}"));
-        }
-        match result.binary.as_ref() {
-            Some(bin) => {
-                self.life_binary = Some(bin.assembled.clone());
-                Ok(())
-            }
-            None => Err("life produced no binary".to_owned()),
-        }
-    }
-
-    /// Compile the bundled in-VM assembler as a hosted binary, caching it.
-    /// Installed at `/bin/as.elf` so the shell's `as <src> <out>` command works.
-    fn ensure_as_binary(&mut self) -> Result<(), String> {
-        if self.as_binary.is_some() {
-            return Ok(());
-        }
-        let mut pipeline = CompilationPipeline::new();
-        pipeline.set_target_mode(TargetMode::Hosted);
-        pipeline.set_write_artifacts(false);
-        pipeline.set_type_prelude(get_stdlib_type_prelude());
-
-        let source = format!(
-            "{}\n{}",
-            get_stdlib_source_for_mode(TargetMode::Hosted),
-            os_runtime::user::AS
-        );
-        let result = pipeline.run_full(&source, None);
-        if result.has_errors() {
-            return Err(result.format_diagnostics());
-        }
-        if let Some(ref asm_err) = result.assembler_error {
-            return Err(format!("assembler error: {asm_err}"));
-        }
-        match result.binary.as_ref() {
-            Some(bin) => {
-                self.as_binary = Some(bin.assembled.clone());
-                Ok(())
-            }
-            None => Err("assembler produced no binary".to_owned()),
-        }
-    }
-
-    /// Compile the bundled in-VM HLL-0 compiler as a hosted binary, caching it.
-    /// Installed at `/bin/cc.elf` so the shell's `cc <src.hll> <out.s>` works.
-    fn ensure_cc_binary(&mut self) -> Result<(), String> {
-        if self.cc_binary.is_some() {
-            return Ok(());
-        }
-        let mut pipeline = CompilationPipeline::new();
-        pipeline.set_target_mode(TargetMode::Hosted);
-        pipeline.set_write_artifacts(false);
-        pipeline.set_type_prelude(get_stdlib_type_prelude());
-
-        let source = format!(
-            "{}\n{}",
-            get_stdlib_source_for_mode(TargetMode::Hosted),
-            os_runtime::user::CC
-        );
-        let result = pipeline.run_full(&source, None);
-        if result.has_errors() {
-            return Err(result.format_diagnostics());
-        }
-        if let Some(ref asm_err) = result.assembler_error {
-            return Err(format!("assembler error: {asm_err}"));
-        }
-        match result.binary.as_ref() {
-            Some(bin) => {
-                self.cc_binary = Some(bin.assembled.clone());
-                Ok(())
-            }
-            None => Err("compiler produced no binary".to_owned()),
-        }
-    }
-
-    /// Compile the bundled in-VM linker as a hosted binary, caching it.
-    /// Installed at `/bin/ld.elf` so the shell's `ld <obj>... <out>` works.
-    fn ensure_ld_binary(&mut self) -> Result<(), String> {
-        if self.ld_binary.is_some() {
-            return Ok(());
-        }
-        let mut pipeline = CompilationPipeline::new();
-        pipeline.set_target_mode(TargetMode::Hosted);
-        pipeline.set_write_artifacts(false);
-        pipeline.set_type_prelude(get_stdlib_type_prelude());
-
-        let source = format!(
-            "{}\n{}",
-            get_stdlib_source_for_mode(TargetMode::Hosted),
-            os_runtime::user::LD
-        );
-        let result = pipeline.run_full(&source, None);
-        if result.has_errors() {
-            return Err(result.format_diagnostics());
-        }
-        if let Some(ref asm_err) = result.assembler_error {
-            return Err(format!("assembler error: {asm_err}"));
-        }
-        match result.binary.as_ref() {
-            Some(bin) => {
-                self.ld_binary = Some(bin.assembled.clone());
-                Ok(())
-            }
-            None => Err("linker produced no binary".to_owned()),
-        }
+        let assembled = pipeline
+            .link_assembled_objects_named(name, &modules)
+            .map_err(|e| format!("{name} link error: {}", e.message))?;
+        self.user_binaries.insert(name, assembled);
+        Ok(())
     }
 
     /// Build the filesystem image the shell boots with: a `/home` directory and,
@@ -1118,80 +1043,19 @@ impl FullStackApp {
     fn build_boot_fs_image(&self) -> Vec<u8> {
         let mut entries = boot_fs_static_entries();
 
-        // Install the line editor at /bin/edit.elf so the shell's `edit` command
-        // can exec it. Without this the editor is compiled but never reachable.
-        let edit_holder;
-        if let Some(asm) = self.edit_binary.as_ref() {
-            edit_holder = assembled_to_elf_file(asm);
-            entries.push(FsEntry::File {
-                path: "/bin/edit.elf",
-                data: &edit_holder,
-            });
-        }
-
-        // Install the Mandelbrot framebuffer demo at /home/demo/mandelbrot.elf so
-        // a bare `mandelbrot` paints the framebuffer device.
-        let fbdemo_holder;
-        if let Some(asm) = self.fbdemo_binary.as_ref() {
-            fbdemo_holder = assembled_to_elf_file(asm);
-            entries.push(FsEntry::File {
-                path: "/home/demo/mandelbrot.elf",
-                data: &fbdemo_holder,
-            });
-        }
-
-        // Install the spinning-cube demo at /home/demo/cube.elf so a bare `cube`
-        // animates a rotating wireframe on the framebuffer device.
-        let cube_holder;
-        if let Some(asm) = self.cube_binary.as_ref() {
-            cube_holder = assembled_to_elf_file(asm);
-            entries.push(FsEntry::File {
-                path: "/home/demo/cube.elf",
-                data: &cube_holder,
-            });
-        }
-
-        // Install Conway's Game of Life at /home/demo/life.elf so a bare `life`
-        // animates a cellular automaton on the framebuffer device.
-        let life_holder;
-        if let Some(asm) = self.life_binary.as_ref() {
-            life_holder = assembled_to_elf_file(asm);
-            entries.push(FsEntry::File {
-                path: "/home/demo/life.elf",
-                data: &life_holder,
-            });
-        }
-
-        // Install the in-VM assembler at /bin/as.elf so `as <src> <out>` works.
-        let as_holder;
-        if let Some(asm) = self.as_binary.as_ref() {
-            as_holder = assembled_to_elf_file(asm);
-            entries.push(FsEntry::File {
-                path: "/bin/as.elf",
-                data: &as_holder,
-            });
-        }
-
-        // Install the in-VM HLL-0 compiler at /bin/cc.elf so `cc <src.hll> <out.s>`
-        // works, completing the self-hosting toolchain alongside `as`.
-        let cc_holder;
-        if let Some(asm) = self.cc_binary.as_ref() {
-            cc_holder = assembled_to_elf_file(asm);
-            entries.push(FsEntry::File {
-                path: "/bin/cc.elf",
-                data: &cc_holder,
-            });
-        }
-
-        // Install the in-VM linker at /bin/ld.elf so `ld <obj>... <out>` works,
-        // completing separate compilation alongside `as`/`cc`.
-        let ld_holder;
-        if let Some(asm) = self.ld_binary.as_ref() {
-            ld_holder = assembled_to_elf_file(asm);
-            entries.push(FsEntry::File {
-                path: "/bin/ld.elf",
-                data: &ld_holder,
-            });
+        // Install every compiled tool/demo at its catalog install path. The ELF
+        // byte buffers must outlive `entries` (which borrows them), so own them
+        // here and push the FsEntry references afterward.
+        let elf_holders: Vec<(&'static str, Vec<u8>)> = os_runtime::user::PROGRAMS
+            .iter()
+            .filter_map(|prog| {
+                let path = prog.install_path?;
+                let asm = self.user_binaries.get(prog.name)?;
+                Some((path, assembled_to_elf_file(asm)))
+            })
+            .collect();
+        for (path, data) in &elf_holders {
+            entries.push(FsEntry::File { path, data });
         }
 
         // If a program is selected, write it into /home as an executable file.
@@ -1378,46 +1242,22 @@ impl eframe::App for FullStackApp {
             if let Some(assembled) = kernel {
                 // Boot the interactive shell as pid 1, with a filesystem image
                 // that holds any selected program as a runnable file.
-                match self.ensure_shell_binary() {
+                match self.ensure_user_binary("shell") {
                     Ok(()) => {
-                        // Best-effort: install the editor so `edit` works. A
-                        // failure here should not stop the shell from booting.
-                        if let Err(e) = self.ensure_edit_binary() {
-                            self.compilation_state
-                                .set_error(format!("editor compile failed: {e}"));
-                        }
-                        // Best-effort: install the Mandelbrot demo for `mandelbrot`.
-                        if let Err(e) = self.ensure_fbdemo_binary() {
-                            self.compilation_state
-                                .set_error(format!("fbdemo compile failed: {e}"));
-                        }
-                        // Best-effort: install the spinning-cube demo for `cube`.
-                        if let Err(e) = self.ensure_cube_binary() {
-                            self.compilation_state
-                                .set_error(format!("cube compile failed: {e}"));
-                        }
-                        // Best-effort: install the Game of Life demo for `life`.
-                        if let Err(e) = self.ensure_life_binary() {
-                            self.compilation_state
-                                .set_error(format!("life compile failed: {e}"));
-                        }
-                        // Best-effort: install the in-VM assembler for `as <src> <out>`.
-                        if let Err(e) = self.ensure_as_binary() {
-                            self.compilation_state
-                                .set_error(format!("assembler compile failed: {e}"));
-                        }
-                        // Best-effort: install the in-VM compiler for `cc <src.hll> <out.s>`.
-                        if let Err(e) = self.ensure_cc_binary() {
-                            self.compilation_state
-                                .set_error(format!("compiler compile failed: {e}"));
-                        }
-                        // Best-effort: install the in-VM linker for `ld <obj>... <out>`.
-                        if let Err(e) = self.ensure_ld_binary() {
-                            self.compilation_state
-                                .set_error(format!("linker compile failed: {e}"));
+                        // Best-effort: compile every auto-installed tool/demo so
+                        // the shell can exec it. A failure on any one should not
+                        // stop the shell from booting.
+                        for prog in os_runtime::user::PROGRAMS
+                            .iter()
+                            .filter(|p| p.is_compiled() && p.install_path.is_some())
+                        {
+                            if let Err(e) = self.ensure_user_binary(prog.name) {
+                                self.compilation_state
+                                    .set_error(format!("{} compile failed: {e}", prog.name));
+                            }
                         }
                         let fs_image = self.build_boot_fs_image();
-                        let shell = self.shell_binary.clone();
+                        let shell = self.user_binaries.get("shell").cloned();
                         // The shell idles waiting for keystrokes; give it a large
                         // step budget so the session does not time out between
                         // inputs (it ends when the user types `exit`).
@@ -1532,7 +1372,7 @@ fn sanitize_program_filename(name: &str) -> String {
 /// The always-present part of the boot filesystem image: the Unix-shaped
 /// directory tree (`/bin`, `/home`, `/home/demo`, `/home/src`), a readme, and the
 /// example assembly sources. Compiled binaries (editor, demos, assembler) are
-/// appended by [`FullStackApp::build_boot_fs_image`] when available. See PLAN 2.1.
+/// appended by [`FullStackApp::build_boot_fs_image`] when available.
 fn boot_fs_static_entries() -> Vec<FsEntry<'static>> {
     // Bare-name execution finds demos on PATH; the readme points at the layout.
     let readme: &[u8] = b"Full-Stack OS. Type 'help' for the full command list.\n\
@@ -1554,7 +1394,7 @@ Link:      as stdlib.s stdlib.o  &&  as hello_ld.s hello_ld.o\n\
            ld stdlib.o hello_ld.o hello  &&  run hello   (exits 42)\n\
 Examples in /home/src: hello.hll array.s stdlib.s hello_ld.s\n";
 
-    vec![
+    let mut entries = vec![
         FsEntry::Dir { path: "/bin" },
         FsEntry::Dir { path: "/home" },
         FsEntry::Dir { path: "/home/demo" },
@@ -1563,27 +1403,23 @@ Examples in /home/src: hello.hll array.s stdlib.s hello_ld.s\n";
             path: "/readme.txt",
             data: readme,
         },
-        // Example assembly source so `as` can be tried immediately.
-        FsEntry::File {
-            path: "/home/src/array.s",
-            data: os_runtime::user::EXAMPLE_ARRAY_S.as_bytes(),
-        },
-        // Pure HLL-0 source so `cc` can be tried immediately.
-        FsEntry::File {
-            path: "/home/src/hello.hll",
-            data: os_runtime::user::CC_DEMO_HLL.as_bytes(),
-        },
-        // A tiny stdlib and a client that links against it, for the `as`+`ld`
-        // separate-compilation demo.
-        FsEntry::File {
-            path: "/home/src/stdlib.s",
-            data: os_runtime::user::EXAMPLE_STDLIB_S.as_bytes(),
-        },
-        FsEntry::File {
-            path: "/home/src/hello_ld.s",
-            data: os_runtime::user::EXAMPLE_HELLO_LD_S.as_bytes(),
-        },
-    ]
+    ];
+
+    // Example sources (/home/src) are installed verbatim from the user catalog so
+    // the toolchain can be tried out of the box. Sources are 'static.
+    use os_runtime::user::UserProgramKind;
+    for prog in os_runtime::user::PROGRAMS {
+        if prog.kind == UserProgramKind::Example
+            && let Some(path) = prog.install_path
+        {
+            entries.push(FsEntry::File {
+                path,
+                data: prog.source.as_bytes(),
+            });
+        }
+    }
+
+    entries
 }
 
 fn run_in_vm(
@@ -1621,7 +1457,7 @@ fn run_in_vm(
 mod boot_fs_tests {
     use super::*;
 
-    // PLAN 2.1: the boot image is laid out Unix-style -- tools in /bin, demos in
+    // The boot image is laid out Unix-style -- tools in /bin, demos in
     // /home/demo, example sources in /home/src -- not all dumped in /bin or /home.
     #[test]
     fn boot_fs_static_layout_is_unix_shaped() {

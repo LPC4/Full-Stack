@@ -1,5 +1,5 @@
 use egui::RichText;
-use full_stack::view::{ProgramKind, ui_theme};
+use full_stack::view::{ui_theme, ProgramKind};
 
 use super::{CatalogExportKind, FullStackApp};
 
@@ -151,15 +151,23 @@ impl FullStackApp {
             }
 
             ui.add_space(8.0);
-            self.render_program_section(ui, ProgramKind::Stdlib, "Standard Library");
+            // Intent groups, top-level entries only; aux modules and kernel
+            // fragments render nested under their parent (see render_catalog_group).
+            let runnable_tools = self.group_ids(|p| p.is_user() && p.parent_id.is_none());
+            let kernel = self.group_ids(|p| p.id == "os-my-kernel");
+            let reference = self.group_ids(|p| p.is_stdlib());
+            let examples = self.group_ids(|p| p.kind == ProgramKind::Example);
+            let custom = self.group_ids(|p| p.kind == ProgramKind::Custom);
+
+            self.render_catalog_group(ui, "Programs", true, &runnable_tools);
             ui.separator();
-            self.render_program_section(ui, ProgramKind::Os, "OS");
+            self.render_catalog_group(ui, "Operating System", true, &kernel);
             ui.separator();
-            self.render_program_section(ui, ProgramKind::User, "Userspace Programs");
+            self.render_catalog_group(ui, "Standard Library", false, &reference);
             ui.separator();
-            self.render_program_section(ui, ProgramKind::Example, "Examples");
+            self.render_catalog_group(ui, "Examples", false, &examples);
             ui.separator();
-            self.render_program_section(ui, ProgramKind::Custom, "Your programs");
+            self.render_catalog_group(ui, "My Files", true, &custom);
 
             let is_custom = self
                 .catalog
@@ -174,58 +182,138 @@ impl FullStackApp {
         });
     }
 
-    fn render_program_section(&mut self, ui: &mut egui::Ui, kind: ProgramKind, title: &str) {
-        let entries: Vec<(String, String)> = self
-            .catalog
-            .get_programs_by_kind(kind)
+    /// Catalog entry ids (top-level, in display order) matching `pred`.
+    fn group_ids(&self, pred: impl Fn(&full_stack::view::ProgramFile) -> bool) -> Vec<String> {
+        self.catalog
+            .all_programs()
             .iter()
-            .map(|p| (p.id.clone(), p.name.clone()))
-            .collect();
+            .filter(|p| pred(p))
+            .map(|p| p.id.clone())
+            .collect()
+    }
 
-        if entries.is_empty() {
+    /// Render one collapsible intent group. A program that has child modules
+    /// looks like a normal file with a trailing "…"; clicking it selects the
+    /// program and reveals its modules (no separate expander arrow).
+    fn render_catalog_group(
+        &mut self,
+        ui: &mut egui::Ui,
+        title: &str,
+        default_open: bool,
+        top_level: &[String],
+    ) {
+        if top_level.is_empty() {
             return;
         }
-
-        let header_label = format!("{title} ({})", entries.len());
+        let header_label = format!("{title} ({})", top_level.len());
         egui::CollapsingHeader::new(header_label)
-            .default_open(true)
+            .default_open(default_open)
             .show(ui, |ui| {
-                for (id, name) in &entries {
-                    let is_rename_active = self.rename_id.as_deref() == Some(id.as_str());
-                    if is_rename_active {
-                        let response = ui.text_edit_singleline(&mut self.rename_buffer);
-                        response.request_focus();
-                        let enter_pressed = ui.input(|i| i.key_pressed(egui::Key::Enter));
-                        if response.lost_focus() || enter_pressed {
-                            if let Some(program) = self.catalog.current_program_mut() {
-                                if program.id == *id {
-                                    program.name = self.rename_buffer.trim().to_owned();
-                                }
-                            }
-                            self.rename_id = None;
-                            ui.ctx().request_repaint();
-                        }
-                    } else {
-                        let selected = *id == self.catalog.selected_program_id;
-                        let can_rename = kind == ProgramKind::Custom;
-                        let response = if can_rename {
-                            ui.selectable_label(selected, name)
-                                .on_hover_text("double-click to rename")
-                        } else {
-                            ui.selectable_label(selected, name)
-                        };
-                        if response.clicked() {
-                            self.catalog.select_program(id);
-                            self.compile();
-                        }
-                        if response.double_clicked() && can_rename {
-                            self.rename_buffer = name.clone();
-                            self.rename_id = Some(id.clone());
-                            ui.ctx().request_repaint();
+                for id in top_level {
+                    let child_ids: Vec<String> = self
+                        .catalog
+                        .children_of(id)
+                        .iter()
+                        .map(|c| c.id.clone())
+                        .collect();
+                    if child_ids.is_empty() {
+                        self.render_catalog_row(ui, id, 0, false);
+                        continue;
+                    }
+                    // Click the program (which carries a "…") to select it and
+                    // reveal its modules; click again to hide them. State lives in
+                    // egui temp memory, closed by default.
+                    let expand_id = ui.make_persistent_id(("catalog_expand", id));
+                    let mut expanded = ui.data(|d| d.get_temp::<bool>(expand_id)).unwrap_or(false);
+                    if self.render_catalog_row(ui, id, 0, !expanded) {
+                        expanded = !expanded;
+                        ui.data_mut(|d| d.insert_temp(expand_id, expanded));
+                    }
+                    if expanded {
+                        for child_id in &child_ids {
+                            self.render_catalog_row(ui, child_id, 1, false);
                         }
                     }
                 }
             });
+    }
+
+    /// Render a single catalog row at the given nesting depth: indent, selectable
+    /// name (with a trailing "…" when `has_more`), and a runnability badge chip.
+    /// Handles selection + custom-file rename; returns whether the row was clicked.
+    fn render_catalog_row(
+        &mut self,
+        ui: &mut egui::Ui,
+        id: &str,
+        depth: usize,
+        has_more: bool,
+    ) -> bool {
+        let Some(program) = self.catalog.all_programs().iter().find(|p| p.id == id) else {
+            return false;
+        };
+        let name = program.name.clone();
+        let badge = program.badge();
+        let can_rename = program.is_custom();
+        let selected = id == self.catalog.selected_program_id;
+
+        if self.rename_id.as_deref() == Some(id) {
+            let response = ui.text_edit_singleline(&mut self.rename_buffer);
+            response.request_focus();
+            let enter_pressed = ui.input(|i| i.key_pressed(egui::Key::Enter));
+            if response.lost_focus() || enter_pressed {
+                if let Some(program) = self.catalog.current_program_mut() {
+                    if program.id == id {
+                        program.name = self.rename_buffer.trim().to_owned();
+                    }
+                }
+                self.rename_id = None;
+                ui.ctx().request_repaint();
+            }
+            return false;
+        }
+
+        let label = if has_more {
+            format!("{name} …")
+        } else {
+            name.clone()
+        };
+        let mut response = ui
+            .horizontal(|ui| {
+                if depth > 0 {
+                    ui.add_space(depth as f32 * 14.0);
+                }
+                let resp = ui.selectable_label(selected, label);
+                Self::badge_chip(ui, badge);
+                resp
+            })
+            .inner;
+
+        if can_rename {
+            response = response.on_hover_text("double-click to rename");
+        }
+        let clicked = response.clicked();
+        if clicked {
+            self.catalog.select_program(id);
+            self.compile();
+        }
+        if can_rename && response.double_clicked() {
+            self.rename_buffer = name;
+            self.rename_id = Some(id.to_owned());
+            ui.ctx().request_repaint();
+        }
+        clicked
+    }
+
+    /// Small colored chip indicating an entry's runnability.
+    fn badge_chip(ui: &mut egui::Ui, badge: full_stack::view::CatalogBadge) {
+        use full_stack::view::CatalogBadge;
+        let theme = ui_theme();
+        let (label, color) = match badge {
+            CatalogBadge::Runnable => ("run", theme.accent),
+            CatalogBadge::Reference => ("ref", theme.text_dim),
+            CatalogBadge::Fragment => ("frag", theme.text_dim),
+        };
+        ui.label(RichText::new(label).small().weak().color(color));
     }
 
     #[cfg(not(target_arch = "wasm32"))]

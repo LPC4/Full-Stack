@@ -1,5 +1,5 @@
 # Sum a five-element array built on the stack and exit with the total (42).
-# Showcases the expanded in-VM assembler subset (PLAN 1.1): a stack frame,
+# Showcases the expanded in-VM assembler subset: a stack frame,
 # sd/ld with offset(reg) addressing, slli index scaling, and a bge-controlled
 # loop. Assemble and run from the shell:
 #   as /home/src/array.s /home/array.elf

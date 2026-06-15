@@ -149,15 +149,14 @@ fn rom_image_assembles() {
 // rather than when the user selects it in the GUI.
 #[test]
 fn userspace_catalog_programs_compile_hosted() {
-    let programs = [
-        ("shell", os_runtime::user::SHELL),
-        ("edit", os_runtime::user::EDIT),
-        ("as", os_runtime::user::AS),
-        ("cube", os_runtime::user::CUBE),
-        ("mandelbrot", os_runtime::user::MANDELBROT),
-        ("user_hello", os_runtime::user::USER_HELLO),
-    ];
-    for (name, src) in programs {
+    // Iterate the single user-program catalog so a newly added tool/demo is
+    // covered automatically. Only compiled programs (tools + demos) are HLL;
+    // example sources and fixtures are not host-HLL and are excluded.
+    for prog in os_runtime::user::PROGRAMS
+        .iter()
+        .filter(|p| p.is_compiled())
+    {
+        let (name, src) = (prog.name, prog.source);
         let mut pipeline = CompilationPipeline::new();
         pipeline.set_write_artifacts(false);
         let stdlib = pipeline
@@ -174,8 +173,34 @@ fn userspace_catalog_programs_compile_hosted() {
         let user_obj = pipeline
             .assemble(&user_tokens)
             .unwrap_or_else(|e| panic!("{name}: user assemble failed: {e:?}"));
+
+        // Aux translation units: each compiled with a distinct string
+        // prefix so rodata labels do not collide, then linked alongside the primary.
+        let aux_objs: Vec<AssembledOutput> = prog
+            .aux_sources
+            .iter()
+            .enumerate()
+            .map(|(i, a)| {
+                let mut p = CompilationPipeline::new();
+                p.set_write_artifacts(false);
+                p.set_string_prefix(Some(format!("aux{i}_str_")));
+                let r = p
+                    .compile(a)
+                    .unwrap_or_else(|e| panic!("{name}: aux{i} compile failed: {e:?}"));
+                let (_, t) = p.compile_ir_to_assembly_with_tokens(&r.ir_program);
+                p.assemble(&t)
+                    .unwrap_or_else(|e| panic!("{name}: aux{i} assemble failed: {e:?}"))
+            })
+            .collect();
+
+        let aux_names: Vec<String> = (0..aux_objs.len()).map(|i| format!("aux{i}")).collect();
+        let mut modules: Vec<(&str, &AssembledOutput)> =
+            vec![("stdlib", &stdlib_obj), ("user", &user_obj)];
+        for (n, o) in aux_names.iter().zip(aux_objs.iter()) {
+            modules.push((n.as_str(), o));
+        }
         pipeline
-            .link_assembled_objects(&[("stdlib", &stdlib_obj), ("user", &user_obj)])
+            .link_assembled_objects(&modules)
             .unwrap_or_else(|e| panic!("{name}: link failed: {e:?}"));
     }
 }
@@ -836,6 +861,70 @@ fn cross_module_chain_three_works() {
     };
     // 10 + 20 + 12 = 42
     assert_eq!(exit, Some(42), "3-module chain should return 42");
+}
+
+/// A global defined in one module and declared `external` in another must resolve
+/// to the SAME storage: module B writes `shared` directly and via module A's
+/// `bump`, and both writes must land in one cell (21 + 21 = 42).
+#[test]
+fn cross_module_external_global_shared_storage() {
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_write_artifacts(false);
+
+    let stdlib = pipeline
+        .compile(&get_stdlib_source())
+        .expect("stdlib compile");
+    let (_, stdlib_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&stdlib.ir_program);
+    let stdlib_obj = pipeline
+        .assemble_named("stdlib", &stdlib_tokens)
+        .expect("stdlib assemble");
+
+    // Module A owns the global and mutates it through a function.
+    let module_a = r#"
+    shared: i64 = 0
+    bump: () -> () {
+        shared = shared + 21
+    }
+    "#;
+
+    // Module B sees the global and the function as external.
+    let module_b = r#"
+    external shared: i64
+    external bump: () -> ()
+
+    main: () -> i32 {
+        bump()
+        shared = shared + 21
+        return i32(shared)
+    }
+    "#;
+
+    let a_result = pipeline.compile(module_a).expect("module a compile");
+    let (_, a_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&a_result.ir_program);
+    let a_obj = pipeline.assemble_named("a", &a_tokens).expect("a assemble");
+
+    let b_result = pipeline.compile(module_b).expect("module b compile");
+    let (_, b_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&b_result.ir_program);
+    let b_obj = pipeline.assemble_named("b", &b_tokens).expect("b assemble");
+
+    let linked = pipeline
+        .link_assembled_objects_named(
+            "test",
+            &[("stdlib", &stdlib_obj), ("a", &a_obj), ("b", &b_obj)],
+        )
+        .expect("link");
+
+    let mut vm = VirtualMachine::new(&linked);
+    let run = vm.run(5_000_000);
+    let exit = match run.outcome {
+        StepOutcome::Halted(code) => Some(code),
+        _ => None,
+    };
+    assert_eq!(
+        exit,
+        Some(42),
+        "external global did not share storage across modules"
+    );
 }
 
 // --- Kernel subsystem runtime tests ---
