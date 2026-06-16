@@ -444,8 +444,7 @@ pub mod user {
         UserProgram {
             name: "life",
             title: "Game of Life Demo",
-            description:
-                "Conway's Game of Life on the framebuffer (P pause, R reseed, space step).",
+            description: "Conway's Game of Life on the framebuffer (P pause, R reseed, space step).",
             kind: Demo,
             install_path: Some("/home/demo/life.elf"),
             source: LIFE,
