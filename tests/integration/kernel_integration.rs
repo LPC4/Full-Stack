@@ -1675,11 +1675,6 @@ fn cc_host_compiles() {
     );
 }
 
-// The self-hosting headline. Inject a pure HLL-0 program, then
-// `cc src.hll out.s && as out.s out.elf && run out.elf` -- all inside the VM. The
-// program prints "HLL0\nY" and exits sum_to(8)=36, exercising the whole in-VM
-// toolchain (compiler -> assembler -> loader). The source mirrors hello.hll but
-// drops the inline-asm putc (cc emits putc as an intrinsic helper).
 // The separate-compilation headline. Two hand-written .s files are
 // assembled to ET_REL objects, linked into one ELF, and run -- all in-VM:
 //   as a.s a.o && as b.s b.o && ld a.o b.o prog && prog
@@ -1739,21 +1734,38 @@ val:
 }
 
 // The separate-compilation payoff with a real stdlib: a client
-// program (`hello_ld.s`) inlines no I/O -- it calls puts/putc/exit, all resolved
-// at link time against a separately assembled `stdlib.s`. Exercises cross-module
-// CALL_PLT relocations (the externals), an intra-module local call (puts -> putc,
-// no relocation), and a PCREL_HI20 `la` into the client's own merged `.data`.
+// program inlines no I/O -- it calls puts/putc/exit, all resolved at link time
+// against a separately assembled `stdlib.s`. Exercises cross-module CALL_PLT
+// relocations (the externals), an intra-module local call (puts -> putc, no
+// relocation), and a PCREL_HI20 `la` into the client's own merged `.data`.
 // Prints "hello from stdlib!" and exits 42.
 #[test]
 fn kernel_ld_links_stdlib_and_runs() {
+    let client_s = b"\
+.globl _start
+.text
+_start:
+  la a0, msg
+  call puts
+  li a0, 33
+  call putc
+  li a0, 10
+  call putc
+  li a0, 42
+  call exit
+.data
+msg:
+  .asciz \"hello from stdlib\"
+";
+
     let (outcome, uart) = run_tool_session(
         &["as", "ld"],
         &[
             ("/stdlib.s", user::EXAMPLE_STDLIB_S.as_bytes()),
-            ("/hello_ld.s", user::EXAMPLE_HELLO_LD_S.as_bytes()),
+            ("/client.s", client_s),
         ],
-        "as /stdlib.s /stdlib.o\nas /hello_ld.s /hello_ld.o\n\
-ld /stdlib.o /hello_ld.o /hello\nrun /hello\nexit\n",
+        "as /stdlib.s /stdlib.o\nas /client.s /client.o\n\
+ld /stdlib.o /client.o /hello\nrun /hello\nexit\n",
         300_000_000,
     );
 
@@ -1763,7 +1775,7 @@ ld /stdlib.o /hello_ld.o /hello\nrun /hello\nexit\n",
         "the linked program faulted; uart={uart:?}"
     );
     assert!(
-        uart.contains("as: wrote /stdlib.o") && uart.contains("as: wrote /hello_ld.o"),
+        uart.contains("as: wrote /stdlib.o") && uart.contains("as: wrote /client.o"),
         "assembler did not emit both objects; uart={uart:?}"
     );
     assert!(
@@ -1784,12 +1796,23 @@ ld /stdlib.o /hello_ld.o /hello\nrun /hello\nexit\n",
     );
 }
 
+// The self-hosting headline. Inject a pure HLL-0 program, then compile, assemble,
+// and link it against the asm stdlib (for putc) -- all inside the VM:
+//   cc prog.hll prog.s; as prog.s prog.o; as stdlib.s stdlib.o
+//   ld stdlib.o prog.o prog; run prog
+// The program prints "HLL0\nY" and exits sum_to(8)=36, exercising the whole in-VM
+// toolchain (compiler -> assembler -> linker -> loader). putc is no longer a cc
+// intrinsic: it is an external resolved at link time against stdlib.s.
 #[test]
 fn kernel_cc_compiles_and_runs() {
     let (outcome, uart) = run_tool_session(
-        &["as", "cc"],
-        &[("/prog.hll", user::CC_DEMO_HLL.as_bytes())],
-        "cc /prog.hll /prog.s\nas /prog.s /prog.elf\nrun /prog.elf\nexit\n",
+        &["as", "cc", "ld"],
+        &[
+            ("/prog.hll", user::CC_DEMO_HLL.as_bytes()),
+            ("/stdlib.s", user::EXAMPLE_STDLIB_S.as_bytes()),
+        ],
+        "cc /prog.hll /prog.s\nas /prog.s /prog.o\nas /stdlib.s /stdlib.o\n\
+ld /stdlib.o /prog.o /prog\nrun /prog\nexit\n",
         300_000_000,
     );
 
@@ -1803,8 +1826,8 @@ fn kernel_cc_compiles_and_runs() {
         "compiler did not report success; uart={uart:?}"
     );
     assert!(
-        uart.contains("as: wrote /prog.elf"),
-        "assembler did not report success; uart={uart:?}"
+        uart.contains("ld: wrote /prog"),
+        "linker did not report success; uart={uart:?}"
     );
     assert!(
         uart.contains("HLL0"),
@@ -1825,9 +1848,13 @@ fn kernel_cc_compiles_and_runs() {
 #[test]
 fn kernel_cc_interactive_relative_paths_and_barename() {
     let (outcome, uart) = run_tool_session(
-        &["as", "cc"],
-        &[("/home/src/hello.hll", user::CC_DEMO_HLL.as_bytes())],
-        "cd /home/src\ncc hello.hll hello.s\nas hello.s hello.elf\nhello\nexit\n",
+        &["as", "cc", "ld"],
+        &[
+            ("/home/src/hello.hll", user::CC_DEMO_HLL.as_bytes()),
+            ("/home/src/stdlib.s", user::EXAMPLE_STDLIB_S.as_bytes()),
+        ],
+        "cd /home/src\ncc hello.hll hello.s\nas hello.s hello.o\nas stdlib.s stdlib.o\n\
+ld stdlib.o hello.o hello\nhello\nexit\n",
         300_000_000,
     );
 
@@ -1856,11 +1883,15 @@ fn kernel_cc_interactive_relative_paths_and_barename() {
 // bare name, exercising cwd resolution of an extensionless ELF.
 #[test]
 fn kernel_cc_tool_arg_trailing_space() {
-    // Trailing spaces after the output operand on both tool invocations.
+    // Trailing spaces after the output operand on the cc/as/ld invocations.
     let (outcome, uart) = run_tool_session(
-        &["as", "cc"],
-        &[("/home/src/hello.hll", user::CC_DEMO_HLL.as_bytes())],
-        "cd /home/src\ncc hello.hll hello.s \nas hello.s hello \nhello\nexit\n",
+        &["as", "cc", "ld"],
+        &[
+            ("/home/src/hello.hll", user::CC_DEMO_HLL.as_bytes()),
+            ("/home/src/stdlib.s", user::EXAMPLE_STDLIB_S.as_bytes()),
+        ],
+        "cd /home/src\ncc hello.hll hello.s \nas hello.s hello.o \nas stdlib.s stdlib.o\n\
+ld stdlib.o hello.o hello \nhello\nexit\n",
         300_000_000,
     );
 

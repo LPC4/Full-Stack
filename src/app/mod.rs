@@ -1409,10 +1409,10 @@ Add '&' to run in the background; jobs / fg <job> / kill <pid> manage jobs.\n\
 Send output to a file:  echo hi > note.txt   cat a b >> log.txt\n\
 Pipe programs:          cat a | filter      (up to 4 stages)\n\
 Assemble:  as /home/src/array.s /home/array.elf  then run it with  array\n\
-Compile:   cc /home/src/hello.hll /home/hello.s  then  as  it and run it\n\
-Link:      as stdlib.s stdlib.o  &&  as hello_ld.s hello_ld.o\n\
-           ld stdlib.o hello_ld.o hello  &&  run hello   (exits 42)\n\
-Examples in /home/src: hello.hll array.s stdlib.s hello_ld.s\n";
+Compile + link (one step per line; no && yet):\n\
+  cc hello.hll hello.s    as hello.s hello.o    as stdlib.s stdlib.o\n\
+  ld stdlib.o hello.o hello    hello   (prints HLL0, exits 36)\n\
+Examples in /home/src: hello.hll array.s stdlib.s\n";
 
     let mut entries = vec![
         FsEntry::Dir { path: "/bin" },

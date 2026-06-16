@@ -274,11 +274,12 @@ pub mod user {
         "/user/examples/array.s"
     ));
 
-    /// Pure HLL-0 sample for the in-VM `cc` (no inline-asm putc, so it is meant
-    /// for `cc`, not the host). Installed at `/home/src/hello.hll`.
+    /// HLL-0 sample for the in-VM `cc`. Calls `putc` but does not define it; the
+    /// symbol is resolved at link time against `EXAMPLE_STDLIB_S`, so this is the
+    /// headline `cc`+`as`+`ld` client. Installed at `/home/src/hello.hll`.
     pub const CC_DEMO_HLL: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/user/examples/cc_demo.hll"
+        "/user/examples/hello.hll"
     ));
 
     /// Tiny user-space stdlib (`putc`/`puts`/`exit`) as assembly, meant to be
@@ -287,14 +288,6 @@ pub mod user {
     pub const EXAMPLE_STDLIB_S: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/user/examples/stdlib.s"
-    ));
-
-    /// Client program that inlines no I/O: calls `puts`/`putc`/`exit` resolved from
-    /// `EXAMPLE_STDLIB_S` at link time. Pairs with it for the headline
-    /// `as`+`ld` separate-compilation demo. Installed at `/home/src/hello_ld.s`.
-    pub const EXAMPLE_HELLO_LD_S: &str = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/user/examples/hello_ld.s"
     ));
 
     // --- fixtures: frozen test inputs, not installed ---
@@ -451,7 +444,8 @@ pub mod user {
         UserProgram {
             name: "life",
             title: "Game of Life Demo",
-            description: "Conway's Game of Life on the framebuffer (P pause, R reseed, space step).",
+            description:
+                "Conway's Game of Life on the framebuffer (P pause, R reseed, space step).",
             kind: Demo,
             install_path: Some("/home/demo/life.elf"),
             source: LIFE,
@@ -482,7 +476,7 @@ pub mod user {
         UserProgram {
             name: "ex_hello_hll",
             title: "hello.hll",
-            description: "Pure HLL-0 sample for the in-VM `cc`.",
+            description: "HLL-0 sample for `cc`, linked against stdlib.s by `ld`.",
             kind: Example,
             install_path: Some("/home/src/hello.hll"),
             source: CC_DEMO_HLL,
@@ -492,20 +486,10 @@ pub mod user {
         UserProgram {
             name: "ex_stdlib",
             title: "stdlib.s",
-            description: "Tiny user-space stdlib for the `as`+`ld` separate-compilation demo.",
+            description: "Tiny user-space stdlib (putc/puts/exit) linked into cc programs by `ld`.",
             kind: Example,
             install_path: Some("/home/src/stdlib.s"),
             source: EXAMPLE_STDLIB_S,
-            aux_sources: &[],
-            aux_names: &[],
-        },
-        UserProgram {
-            name: "ex_hello_ld",
-            title: "hello_ld.s",
-            description: "Client linked against stdlib.s by `ld`.",
-            kind: Example,
-            install_path: Some("/home/src/hello_ld.s"),
-            source: EXAMPLE_HELLO_LD_S,
             aux_sources: &[],
             aux_names: &[],
         },

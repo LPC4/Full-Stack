@@ -738,7 +738,8 @@ function so the source also compiles and runs on the host toolchain;
 hand-written target side by side and checks they behave identically.
 
 The in-VM compiler now exists: `user/bin/cc.hll` (installed at `/bin/cc.elf`, OS spec 10.4)
-parses this subset and emits the stack-machine assembly described here. Because cc treats
-`putc` as the built-in I/O intrinsic and emits the helper itself, its input omits the
-inline-asm `putc` definition (`user/examples/cc_demo.hll` is the pure-HLL-0 sample);
-`kernel_cc_compiles_and_runs` exercises the full in-VM `cc` -> `as` -> run toolchain.
+parses this subset and emits the stack-machine assembly described here. cc has no built-in
+I/O: a `putc` call lowers to a plain `call putc`, left undefined and resolved at link time
+against the asm stdlib (`user/examples/stdlib.s`). The pure-HLL-0 sample
+`user/examples/hello.hll` omits any `putc` definition; `kernel_cc_compiles_and_runs`
+exercises the full in-VM `cc` -> `as` -> `ld` -> run toolchain.

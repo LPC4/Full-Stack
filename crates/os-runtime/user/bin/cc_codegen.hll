@@ -12,7 +12,6 @@ external call_args: i64*
 external nfn:       i64
 external cur_fn:    i64
 external nlabel:    i64
-external putc_used: i64
 
 ; Token kinds used by gen_binop (compile-time; mirror cc.hll).
 const TK_PLUS = 11
@@ -268,13 +267,6 @@ gen_function: (fi: i64, is_main: i64) {
     }
 }
 
-; The putc intrinsic, emitted as a callable helper: write(1, &ch, 1).
-emit_putc_helper: () {
-    emit_str("putc:\n  addi sp, sp, -16\n  sd a0, 0(sp)\n  li a0, 1\n".data)
-    emit_str("  addi a1, sp, 0\n  li a2, 1\n  li a7, 64\n  ecall\n".data)
-    emit_str("  addi sp, sp, 16\n  ret\n".data)
-}
-
 export gen_program: () {
     emit_str(".text\n.globl _start\n".data)
     mi: i64 = -1
@@ -297,8 +289,5 @@ export gen_program: () {
             gen_function(fi, 0)
         }
         fi = fi + 1
-    }
-    if putc_used == 1 {
-        emit_putc_helper()
     }
 }

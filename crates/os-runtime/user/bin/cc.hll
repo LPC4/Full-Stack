@@ -92,7 +92,6 @@ asmlen: u64 = 0
 ; Set once on any error so main aborts with a non-zero exit. Other globals used by
 ; codegen: the function being emitted and a monotonic label counter.
 err_flag: i64 = 0
-putc_used: i64 = 0
 cur_fn: i64 = 0
 nlabel: i64 = 0
 
@@ -580,9 +579,6 @@ parse_primary: () -> i64 {
             adv()
             n: i64 = mk(ND_CALL)
             set_name(n, nm[0])
-            if cstr_eq(nm[0], "putc".data) == 1 {
-                putc_used = 1
-            }
             astart: i64 = ncallarg
             cnt: i64 = 0
             if cur_kind() != TK_RPAREN {
@@ -919,7 +915,6 @@ main: () -> i32 {
     nnode = 0
     ncallarg = 0
     nlabel = 0
-    putc_used = 0
     asmlen = 0
     tokenize()
     parse_program()

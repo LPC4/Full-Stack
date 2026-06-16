@@ -634,11 +634,14 @@ top, one 8-byte slot per local below them, addressed through `fp` -- while the
 hardware stack below `sp` holds expression temporaries: a binary operator pushes
 its left operand, evaluates the right into `a0`, pops the left into `t0`, and
 combines. `main` is emitted as `_start` and exits via the `a7=93` ecall with its
-return value; other functions `ret`. `putc` is the only I/O intrinsic: cc emits it
-as a callable helper doing `write(1, &ch, 1)` (`a7=64`) and `call`s it like any
-function. Integer arithmetic is normalized to 32 bits with a trailing `addiw`. The
-frozen codegen target is `user/fixtures/hello.s`; `user/examples/cc_demo.hll` is a
-ready-to-compile pure-HLL-0 sample installed at `/home/src/hello.hll`.
+return value; other functions `ret`. cc has no built-in I/O: a call to `putc`
+emits a plain `call putc` to an undefined symbol, resolved at link time against a
+separately assembled stdlib (`user/examples/stdlib.s` defines `putc`/`puts`/`exit`
+in assembly). Integer arithmetic is normalized to 32 bits with a trailing `addiw`.
+The frozen codegen target is `user/fixtures/hello.s`; `user/examples/hello.hll` is a
+ready-to-compile pure-HLL-0 sample installed at `/home/src/hello.hll` -- build it
+with `cc hello.hll hello.s`, `as hello.s hello.o`, `as stdlib.s stdlib.o`,
+`ld stdlib.o hello.o hello`.
 
 ### 10.5 Framebuffer demos (`cube.hll`, `mandelbrot.hll`, `life.hll`)
 
@@ -658,9 +661,9 @@ them from the shell and view in the Machine window's FB tab.
 
 `user/demo/user_hello.hll` prints a greeting via `sys_write` then yields in a loop
 (a minimal pid-1). `user/examples/array.s` (=42) is the sample assembly input for the
-in-VM assembler, installed at `/home/src/array.s`. `user/examples/stdlib.s` +
-`hello_ld.s` are the separate-compilation pair for the `as`+`ld` demo (also under
-`/home/src`).
+in-VM assembler, installed at `/home/src/array.s`. `user/examples/stdlib.s` is the
+asm stdlib (`putc`/`puts`/`exit`) that a cc-compiled client (`hello.hll`) links
+against via `ld`; both are installed under `/home/src`.
 
 
 ## Appendix: Memory map quick reference

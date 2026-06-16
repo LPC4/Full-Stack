@@ -1,0 +1,28 @@
+; HLL-0 program for the in-VM `cc` (prints "HLL0\nY", exits 36). It calls putc but
+; does not define it: putc is resolved at link time against the separately
+; assembled stdlib.s, not a built-in intrinsic. Build it in-VM with:
+;   cc hello.hll hello.s && as hello.s hello.o && as stdlib.s stdlib.o
+;   ld stdlib.o hello.o hello && hello
+
+sum_to: (n: i32) -> i32 {
+    total: i32 = 0
+    i: i32 = 1
+    while i <= n {
+        total = total + i
+        i = i + 1
+    }
+    return total
+}
+
+main: () -> i32 {
+    putc('H')
+    putc('L')
+    putc('L')
+    putc('0')
+    putc('\n')
+    n: i32 = sum_to(8)
+    if n > 30 {
+        putc('Y')
+    }
+    return n
+}
