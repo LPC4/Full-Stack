@@ -29,7 +29,7 @@ pub fn get_stdlib_modules_for_mode(mode: TargetMode) -> Vec<(&'static str, &'sta
     match mode {
         TargetMode::Hosted => vec![
             ("types", stdlib::TYPES),
-            ("memory_allocator", stdlib::MEMORY_ALLOCATOR),
+            ("memory_allocator", stdlib::MEMORY_ALLOCATOR_HOSTED),
             ("string_utils", stdlib::STRING_UTILS),
             ("runtime", stdlib::HOSTED_RUNTIME),
             ("syscalls", stdlib::HOSTED_SYSCALLS),
@@ -101,7 +101,7 @@ pub fn get_stdlib_type_prelude() -> Vec<(String, IrType)> {
 /// Hosted stdlib: includes the Linux-syscall runtime and entry point. See _LANG_SPECIFICATIONS.md.
 pub fn get_stdlib_source() -> String {
     let capacity = stdlib::TYPES.len()
-        + stdlib::MEMORY_ALLOCATOR.len()
+        + stdlib::MEMORY_ALLOCATOR_HOSTED.len()
         + stdlib::STRING_UTILS.len()
         + stdlib::HOSTED_RUNTIME.len()
         + stdlib::HOSTED_SYSCALLS.len()
@@ -111,7 +111,7 @@ pub fn get_stdlib_source() -> String {
     append_section(
         &mut combined,
         "; --- stdlib: memory_allocator ---\n",
-        stdlib::MEMORY_ALLOCATOR,
+        stdlib::MEMORY_ALLOCATOR_HOSTED,
     );
     append_section(
         &mut combined,

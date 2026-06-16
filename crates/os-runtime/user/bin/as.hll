@@ -27,13 +27,14 @@ const HDR = 4096
 ; Bytes of NOP padding between the text and data regions (the M-mode halt quirk).
 const PAD = 32
 
-; Source text, assembled code, and the ELF output image.
-src: u8[8192]
+; Source text, assembled code, and the ELF output image. The big buffers are
+; heap-allocated once at startup (see main / as_object's lazy init).
+src: u8* = null
 src_len: u64 = 0
-code: u8[8192]
+code: u8* = null
 code_len: u64 = 0
 ; Data section bytes, appended after the text + NOP pad in the final image.
-data: u8[8192]
+data: u8* = null
 data_len: u64 = 0
 ; Current section: 0 = text, 1 = data. Switched by .text/.data directives.
 cur_sec: i64 = 0
@@ -41,17 +42,17 @@ cur_sec: i64 = 0
 text_total: i64 = 0
 ; Output image: ELF header + program header in the first page, payload from HDR on.
 ; Also reused as the ET_REL object image in object mode (text/data/relocs/symtab).
-out: u8[32768]
+out: u8* = null
 
 ; A label definition: 16-byte name, byte address, and owning section (0 text, 1 data).
 type Label = { name: u8[16], addr: i64, sec: i64 }
 
 ; Label table; resolve_labels() rewrites data addresses to absolute positions.
-labels: Label[64]
+labels: Label* = null
 lbl_count: i64 = 0
 
 ; Token table for one line: up to 6 tokens, 24 bytes each (one lexeme per slot).
-tokbuf: u8[144]
+tokbuf: u8* = null
 ntok: i64 = 0
 
 ; Set once on any assembly error so main can abort with a non-zero exit.
@@ -64,13 +65,13 @@ err_flag: i64 = 0
 obj_mode: i64 = 0
 
 ; Names exported via `.globl`, packed 16 bytes each (symtab STB_GLOBAL bind).
-glbl_names: u8[512]
+glbl_names: u8* = null
 glbl_count: i64 = 0
 
 ; One relocation: 16-byte target symbol name, byte offset in .text, and kind
 ; (0 = CALL_PLT auipc+jalr, 1 = JAL, 2 = LA/PCREL_HI20 auipc+addi).
 type Reloc = { sym: u8[16], off: i64, kind: i64 }
-relocs: Reloc[256]
+relocs: Reloc* = null
 nreloc: i64 = 0
 
 ; Pointer to token i in the line token table.
@@ -1342,6 +1343,16 @@ ends_dot_o: (path: u8*) -> i64 {
 }
 
 main: () -> i32 {
+    ; Allocate the assembler's working buffers on the heap (formerly fixed .bss).
+    src = new(u8, 8192)
+    code = new(u8, 8192)
+    data = new(u8, 8192)
+    out = new(u8, 32768)
+    labels = new(Label, 64)
+    tokbuf = new(u8, 144)
+    glbl_names = new(u8, 512)
+    relocs = new(Reloc, 256)
+
     arg: u8* = ARG_BASE as u8*
     src_path: u8[128]
     out_path: u8[128]

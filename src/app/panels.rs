@@ -3,9 +3,9 @@ use egui::{Frame, Layout, Margin, RichText, Stroke};
 use full_stack::compilation_pipeline::TargetMode;
 use full_stack::view::debug::SessionStatus;
 use full_stack::view::{
-    ui_theme, AssemblyView, AstView, CacheView, CfgView, CompilerView, CpuStateView, ExecutionView,
+    AssemblyView, AstView, CacheView, CfgView, CompilerView, CpuStateView, ExecutionView,
     FramebufferView, IoView, IrView, MemoryView, PipelineView, SourceView, StackView, TokensView,
-    VmExecutionView,
+    VmExecutionView, ui_theme,
 };
 
 const IDE_VIEWS: &[(&str, fn() -> Box<dyn CompilerView>)] = &[

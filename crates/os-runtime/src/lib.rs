@@ -44,10 +44,20 @@ pub mod stdlib {
         "/stdlib/common/types.hll"
     ));
 
-    /// Bump-pointer allocator (`malloc`, `free`, `heap_raw_alloc`).
+    /// Bump-pointer allocator over a fixed 64 KB `.bss` buffer (`malloc`, `free`,
+    /// `heap_raw_alloc`). Used by the kernel and freestanding builds, which have
+    /// no syscalls. Userspace uses `MEMORY_ALLOCATOR_HOSTED` instead.
     pub const MEMORY_ALLOCATOR: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/stdlib/common/memory_allocator.hll"
+    ));
+
+    /// Growable userspace allocator (`malloc`, `free`, `heap_raw_alloc`) backed by
+    /// the `brk` syscall, so U-mode programs can grow the heap past 64 KB. Used
+    /// only in hosted mode; same API as `MEMORY_ALLOCATOR`.
+    pub const MEMORY_ALLOCATOR_HOSTED: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/stdlib/hosted/memory_allocator.hll"
     ));
 
     /// String utilities (`str_len`, `str_equals`, `str_copy`, `str_concat`).
@@ -441,8 +451,7 @@ pub mod user {
         UserProgram {
             name: "life",
             title: "Game of Life Demo",
-            description:
-                "Conway's Game of Life on the framebuffer (P pause, R reseed, space step).",
+            description: "Conway's Game of Life on the framebuffer (P pause, R reseed, space step).",
             kind: Demo,
             install_path: Some("/home/demo/life.elf"),
             source: LIFE,

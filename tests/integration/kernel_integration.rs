@@ -564,6 +564,37 @@ main: () -> i32 {
     );
 }
 
+// The growable heap (sbrk syscall) lets a user program allocate well past the old
+// fixed 64 KB limit. Five 50 KB blocks (~244 KB + headers) force several sbrk page
+// grows; writing/reading the far end of each block proves the new pages are mapped
+// and backed by real memory. A null return (OOM) or an unmapped far end faults or
+// returns non-zero; a clean exit 0 proves the heap grew correctly.
+#[test]
+fn user_heap_grows_past_64k() {
+    run_example_in_kernel(
+        r#"
+main: () -> i32 {
+    i: u64 = 0
+    while i < 5 {
+        p: u8* = malloc(50000)
+        if p == null {
+            return 1
+        }
+        far: u8* = p + 49999
+        v: u8 = (i + 1) as u8
+        @far = v
+        if (@far) != v {
+            return 2
+        }
+        i = i + 1
+    }
+    return 0
+}
+"#,
+        "user_heap_grows_past_64k",
+    );
+}
+
 // --- Framebuffer device (map_fb syscall + fbdemo program) ---
 
 // Reference Mandelbrot membership using the exact Q16.16 integer math from
@@ -3386,6 +3417,47 @@ fn os_inspector_sees_shell_as_pid1() {
         shell_proc.state <= 3,
         "decoded a nonsense state {} (PCB offsets wrong?)",
         shell_proc.state
+    );
+}
+
+// The per-process stack view walks the selected process's user stack by software
+// Sv39 translation against its page-table root. After the shell has run and made
+// syscalls, its saved trap-frame sp is a real, mapped user-stack address below
+// the canonical base, so the walk must yield at least one mapped word.
+#[test]
+fn os_inspector_walks_pid1_stack() {
+    use full_stack::view::debug::os_view::{self, OsSymbols, Role};
+
+    let kernel = cached_kernel();
+    let shell = compile_hosted_program("shell");
+    let image = build_fs_image(&[FsEntry::Dir { path: "/home" }]);
+
+    let mut vm = setup_kernel_vm(kernel, Some(&shell), Some(&image), "");
+    let _ = vm.run(80_000_000);
+
+    let sym = OsSymbols::from_kernel(kernel).expect("kernel scheduler symbols resolve");
+    let procs = os_view::capture(&vm, &sym);
+    let shell_proc = procs
+        .iter()
+        .find(|p| p.role == Role::Running)
+        .expect("a running process");
+
+    assert!(
+        shell_proc.sp != 0 && shell_proc.sp < 0x8000_0000,
+        "saved sp {:#x} is not a user-stack address (trap-frame offset wrong?)",
+        shell_proc.sp
+    );
+    assert!(
+        shell_proc.page_root != 0,
+        "pid 1 should have its own page-table root"
+    );
+
+    let stack = os_view::capture_stack(&vm, shell_proc);
+    assert!(!stack.is_empty(), "stack walk produced no words");
+    assert!(
+        stack[0].va == shell_proc.sp && stack[0].mapped,
+        "the word at sp {:#x} should translate and be mapped",
+        shell_proc.sp
     );
 }
 

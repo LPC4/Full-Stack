@@ -671,12 +671,18 @@ mod tests {
         let pmm = find(&programs, "os-kernel-pmm");
         assert_eq!(pmm.parent_id.as_deref(), Some("os-my-kernel"));
         assert_eq!(pmm.badge(), CatalogBadge::Fragment);
-        assert_eq!(find(&programs, "os-my-kernel").badge(), CatalogBadge::Runnable);
+        assert_eq!(
+            find(&programs, "os-my-kernel").badge(),
+            CatalogBadge::Runnable
+        );
     }
 
     #[test]
     fn stdlib_is_reference() {
-        assert_eq!(find(&built_in_programs(), "stdlib").badge(), CatalogBadge::Reference);
+        assert_eq!(
+            find(&built_in_programs(), "stdlib").badge(),
+            CatalogBadge::Reference
+        );
     }
 
     #[test]

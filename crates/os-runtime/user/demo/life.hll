@@ -16,10 +16,10 @@ const CELLS = 1200
 ; Live-cell colour (opaque green).
 const ALIVE_COLOR = 0xFF66FF99
 
-; Current and next generation, one byte per cell (1 = alive). Fully written
-; before being read, so they never rely on bss zero-init.
-cur: u8[1200]
-nxt: u8[1200]
+; Current and next generation, one byte per cell (1 = alive). Heap-allocated once
+; at startup (see main); fully written before being read.
+cur: u8* = null
+nxt: u8* = null
 
 ; Framebuffer base virtual address (filled in by sc_map_fb).
 _fb_base: u64 = 0
@@ -215,6 +215,9 @@ main: () -> i32 {
         return 1
     }
     _fb_base = base
+
+    cur = new(u8, CELLS)
+    nxt = new(u8, CELLS)
 
     enable_double_buffer()
     seed()

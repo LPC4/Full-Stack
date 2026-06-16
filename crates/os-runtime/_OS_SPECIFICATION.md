@@ -197,6 +197,8 @@ Offset  Size  Field
 344     8     exit_code       exit code, read by the parent's wait
 352     8     stdout_fd       redirected stdout kernel fd, 0 = console (7.7)
 360     8     stdin_fd        redirected stdin kernel fd, 0 = console (7.7)
+368     8     fb_mapped       1 once the framebuffer is mapped, for the DBMODE reset (7.5)
+376     8     heap_brk        current program break, 0 until first brk (7.8)
 ```
 
 The `trap_frame` layout matches the on-stack frame built by the trap entry (6.1),
@@ -326,6 +328,7 @@ helpers that programs link against.
 | `108` | `poll_key` | -- | event or -1 | Pop a key event from the keyboard device; -1 if none (7.5) |
 | `110` | `exec_redir` | `a0=path*`, `a1=arg*`, `a2=out*`, `a3=in*`, `a4=append` | pid or -1 | Exec with stdout/stdin bound to FS files (7.7); `out`/`in` may be null |
 | `129` | `kill` | `a0=pid`, `a1=sig` | 0 or -1 | Signal a pid; only `SIGKILL` (9) is honoured (7.6); -1 if not a live killable pid; pid 1 is protected |
+| `214` | `brk` | `a0=addr` | new break | Set/query the program break (Linux semantics); grows the heap (7.8). `a0=0` queries; break unchanged on OOM |
 | `220` | `fork` | -- | child / 0 / -1 | Clone the caller (5.5) |
 | `260` | `wait` | -- | code / -1 / -2 | Reap any exited child; -1 none; -2 Ctrl-C (fork test) |
 | `261` | `waitpid` | `a0=pid` | code / -1 / -2 | Reap the specific child pid, else poll / Ctrl-C-tear-down; -1 if not ours |
@@ -468,6 +471,33 @@ sink (truncating with `ftruncate` or seeking to end with `lseek`) and any `<` ta
 as the source, runs the builtin, then closes both. Only `cat` consumes the source;
 the others ignore it. This makes `cat a b >> log`, `ls /home/demo > files.txt`,
 `echo hi > note.txt`, and `cat < in.txt` behave like a real shell.
+
+### 7.8 Growable user heap (`brk`)
+
+Each process has a growable heap that lives in its own address space, between the
+framebuffer window and the exec-arg page: it grows **up** from `USER_HEAP_BASE`
+(`0x6000_0000`) toward `USER_ARG_BASE`, below the user stack. The current program
+break is a per-PCB field (5.1, PCB index 47), `0` until first use and lazily
+resolved to `USER_HEAP_BASE`.
+
+`brk` (syscall `214`, Linux semantics) sets the break to `a0`, or queries it when
+`a0 == 0`. Growing maps fresh zeroed pages `R|W|U` (no execute -- W^X) into the
+caller's own root for `[brk, addr)`; the break only ever moves to page-aligned
+ceilings, so the mapped range is whole pages. On out-of-memory the break is left
+unchanged and the old value returned, so the caller detects failure by comparing
+the result to its request. `fork` copies the break onto the child (the heap pages
+themselves are duplicated by the per-process address-space copy, 4.3); `exec`
+starts from a fresh zeroed PCB, so a new image gets an empty heap.
+
+The hosted userspace allocator (`stdlib/hosted/memory_allocator.hll`) is a bump
+allocator over the break: it queries the initial break with `brk(0)` and raises it
+with `brk(page_up(new_top))` whenever an allocation would cross the current
+ceiling, returning null only when `brk` fails to grow. This replaces the old fixed
+64 KB `.bss` buffer, so `malloc`/`new` can now grow past 64 KB. The kernel and
+freestanding builds keep the fixed-buffer allocator (`stdlib/common`), since they
+have no syscalls. The bare-VM hosted path (no kernel) services the same `brk` in
+the M-mode firmware (`boot/trap.s`) against a flat break pointer at
+`RAM_BASE + 32 MiB - 8`; the real-`qemu` path uses Linux's own `brk`.
 
 
 ## 8. Filesystem (`fs.hll`)

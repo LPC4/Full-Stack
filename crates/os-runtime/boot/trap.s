@@ -21,6 +21,8 @@ _dispatch_ecall:
     beq a7, t0, sys_exit
     li t0, 94
     beq a7, t0, sys_exit
+    li t0, 214
+    beq a7, t0, sys_brk
     j sys_unknown
 
 # sys_write(fd=a0, buf=a1, len=a2) -> bytes written
@@ -49,6 +51,21 @@ _write_error:
 sys_exit:
     li t0, 268500992
     sd a0, 0(t0)
+    j _advance_mepc_and_mret
+
+# sys_brk(addr=a0) -> resulting break. Flat model: the break pointer lives at
+# HEAP_PTR_ADDR (RAM_BASE + 32 MiB - 8 = 0x81FFFFF8), no paging. addr==0 queries.
+# Build the address as (1<<31) + 0x01FFFFF8 to avoid sign-extending a bit-31 li.
+sys_brk:
+    li t0, 1
+    slli t0, t0, 31
+    li t1, 33554424
+    add t0, t0, t1
+    beqz a0, _brk_query
+    sd a0, 0(t0)
+    j _advance_mepc_and_mret
+_brk_query:
+    ld a0, 0(t0)
     j _advance_mepc_and_mret
 
 sys_unknown:

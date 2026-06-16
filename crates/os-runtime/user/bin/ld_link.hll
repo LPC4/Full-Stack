@@ -18,13 +18,14 @@ external sec_find:     (f: u8*, want: u8*) -> i64
 external sec_index_of: (f: u8*, name: u8*) -> i64
 external gsym_lookup:  (name: u8*) -> i64
 
-; Linker state defined in ld.hll; resolved at link.
-external objbuf:       u8[32768]
-external merged_text:  u8[12288]
+; Linker state defined in ld.hll; resolved at link. The big buffers are heap
+; pointers allocated by ld.hll's main before apply_relocs/emit_exec run.
+external objbuf:       u8*
+external merged_text:  u8*
 external mtext_len:    u64
-external merged_data:  u8[8192]
+external merged_data:  u8*
 external mdata_len:    u64
-external out:          u8[24576]
+external out:          u8*
 external mod_base:     i64[8]
 external mod_text_off: i64[8]
 external mod_data_off: i64[8]

@@ -25,9 +25,9 @@ const MAXLINES = 200
 const LINEW = 128
 
 ; Line storage (MAXLINES * LINEW, null-terminated lines) and a scratch buffer
-; used for loading and saving the file.
-lines: u8[25600]
-scratch: u8[25600]
+; used for loading and saving the file. Heap-allocated once at startup (see main).
+lines: u8* = null
+scratch: u8* = null
 nlines: i64 = 0
 ; Current line, 1-based; 0 when the buffer is empty.
 cur: i64 = 0
@@ -496,6 +496,9 @@ ed_help: () {
 }
 
 main: () -> i32 {
+    lines = new(u8, MAXLINES * LINEW)
+    scratch = new(u8, MAXLINES * LINEW)
+
     path: u8* = ARG_BASE as u8*
     ed_load(path)
 

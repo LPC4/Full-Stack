@@ -18,6 +18,7 @@ const PCB_OFF_PARENT_PID    = 336
 const PCB_OFF_EXIT_CODE     = 344
 const PCB_OFF_STDOUT_FD     = 352
 const PCB_OFF_STDIN_FD      = 360
+const PCB_OFF_HEAP_BRK      = 376
 const PCB_SIZE              = 384
 
 ; PCB field indices (u64 array view) for the trailing scalar fields.
@@ -31,6 +32,9 @@ const PCB_IDX_STDIN_FD   = 45
 ; 1 once the process has mapped the framebuffer; drives the DBMODE reset on the
 ; last framebuffer user's exit (see syscall.hll fb_release_on_exit, OS spec 7.5).
 const PCB_IDX_FB_MAPPED  = 46
+; Current program break (top of the growable heap), or 0 until the first brk.
+; See syscall.hll sys_brk_impl, OS spec ch.4.3 / 7.8.
+const PCB_IDX_HEAP_BRK   = 47
 
 ; VMM flags for user-accessible pages.
 const VMM_U = 16
@@ -179,6 +183,16 @@ process_stdin_fd: (pcb: u64*) -> u64 {
 
 process_set_stdin_fd: (pcb: u64*, fd: u64) {
     @pcb[PCB_IDX_STDIN_FD] = fd
+}
+
+; Program break (top of the growable heap). 0 means "not yet initialised"; the
+; sbrk handler resolves that to USER_HEAP_BASE on first use.
+process_heap_brk: (pcb: u64*) -> u64 {
+    return @pcb[PCB_IDX_HEAP_BRK]
+}
+
+process_set_heap_brk: (pcb: u64*, brk: u64) {
+    @pcb[PCB_IDX_HEAP_BRK] = brk
 }
 
 ; Address of the embedded 288-byte trap frame, for context copies.

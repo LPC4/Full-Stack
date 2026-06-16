@@ -541,7 +541,8 @@ impl FullStackApp {
         // kernel (its parent), not the fragment alone -- otherwise the fragment's
         // globals collide with the stdlib objects at link.
         let Some(build) = self.resolve_build_program() else {
-            self.compilation_state.set_error("no program selected".to_owned());
+            self.compilation_state
+                .set_error("no program selected".to_owned());
             self.compilation_state.just_compiled = false;
             return;
         };
@@ -748,7 +749,13 @@ impl FullStackApp {
             && !result.has_errors()
             && let Some(tokens) = result.asm.as_ref().map(|a| a.tokens.clone())
         {
-            match self.link_hosted_aux(&self.pipeline, self.target_mode, &tokens, stdlib_tokens, &aux_sources) {
+            match self.link_hosted_aux(
+                &self.pipeline,
+                self.target_mode,
+                &tokens,
+                stdlib_tokens,
+                &aux_sources,
+            ) {
                 Ok(assembled) => {
                     result.binary = Some(BinaryOutput { assembled });
                     result.assembler_error = None;
@@ -819,7 +826,9 @@ impl FullStackApp {
             p.set_write_artifacts(false);
             p.set_type_prelude(get_stdlib_type_prelude());
             p.set_string_prefix(Some(format!("aux{i}_str_")));
-            let r = p.compile(src).map_err(|e| format!("aux compile error: {e}"))?;
+            let r = p
+                .compile(src)
+                .map_err(|e| format!("aux compile error: {e}"))?;
             let (_, t) = p.compile_ir_to_assembly_with_tokens(&r.ir_program);
             aux_objs.push(
                 p.assemble_named(&format!("aux{i}"), &t)
@@ -864,7 +873,12 @@ impl FullStackApp {
             .parent_id
             .clone()
             .unwrap_or_else(|| program_id.to_owned());
-        let program = match self.catalog.all_programs().iter().find(|p| p.id == build_id) {
+        let program = match self
+            .catalog
+            .all_programs()
+            .iter()
+            .find(|p| p.id == build_id)
+        {
             Some(p) => p,
             None => return Err(format!("program id not found: {build_id}")),
         };
@@ -894,8 +908,13 @@ impl FullStackApp {
                 .as_ref()
                 .map(|a| a.tokens.clone())
                 .ok_or_else(|| "no assembly produced".to_owned())?;
-            let assembled =
-                self.link_hosted_aux(&user_pipeline, TargetMode::Hosted, &tokens, None, &aux_sources)?;
+            let assembled = self.link_hosted_aux(
+                &user_pipeline,
+                TargetMode::Hosted,
+                &tokens,
+                None,
+                &aux_sources,
+            )?;
             self.compilation_state.last_hosted_binary = Some(assembled);
             return Ok(());
         }
@@ -1023,8 +1042,9 @@ impl FullStackApp {
             );
         }
 
-        let aux_names: Vec<String> =
-            (0..aux_objs.len()).map(|i| format!("{name}_aux{i}")).collect();
+        let aux_names: Vec<String> = (0..aux_objs.len())
+            .map(|i| format!("{name}_aux{i}"))
+            .collect();
         let mut modules: Vec<(&str, &AssembledOutput)> = vec![(name, &main_obj)];
         for (n, o) in aux_names.iter().zip(aux_objs.iter()) {
             modules.push((n.as_str(), o));

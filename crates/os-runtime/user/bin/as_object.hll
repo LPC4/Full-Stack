@@ -11,30 +11,31 @@ external wr_le:         (off: u64, val: u64, n: u64)
 external is_globl:      (name: u8*) -> i64
 external label_defined: (name: u8*) -> i64
 
-; Shared assembler state defined in as.hll (no storage emitted here).
-external out:      u8[32768]
-external code:     u8[8192]
+; Shared assembler state defined in as.hll (no storage emitted here). The buffers
+; are heap pointers allocated by as.hll's main before write_object runs.
+external out:      u8*
+external code:     u8*
 external code_len: u64
-external data:     u8[8192]
+external data:     u8*
 external data_len: u64
 
 ; The label and relocation tables, defined in as.hll. Types are file-scoped, so
 ; the layout is duplicated here to match (must stay in sync with as.hll).
 type Label = { name: u8[16], addr: i64, sec: i64 }
-external labels:    Label[64]
+external labels:    Label*
 external lbl_count: i64
 
 type Reloc = { sym: u8[16], off: i64, kind: i64 }
-external relocs: Reloc[256]
+external relocs: Reloc*
 external nreloc: i64
 
 ; Ordered ELF symbol table built for object output: index 0 is the null symbol,
 ; then locals, then globals (defined .globl + undefined externals). Names packed
 ; 16 bytes each; value is a section-relative offset; shndx 0 = undefined.
-sym_pool: u8[2048]
-sym_val: i64[128]
-sym_shndx: i64[128]
-sym_name_off: i64[128]
+sym_pool: u8* = null
+sym_val: i64* = null
+sym_shndx: i64* = null
+sym_name_off: i64* = null
 nsym: i64 = 0
 first_global: i64 = 0
 
@@ -170,6 +171,14 @@ wr_shdr: (off: u64, name: u64, sht: u64, flags: u64, soff: u64, size: u64, link:
 ; Build the whole ET_REL image into out[]; returns its total byte length. Section
 ; layout: ehdr, .text, .data, .rela.text, .symtab, .strtab, .shstrtab, shdrs.
 export write_object: () -> u64 {
+    ; Lazily allocate the symbol-table buffers on first use (formerly fixed .bss).
+    if sym_pool == null {
+        sym_pool = new(u8, 2048)
+        sym_val = new(i64, 128)
+        sym_shndx = new(i64, 128)
+        sym_name_off = new(i64, 128)
+    }
+
     build_symbols()
 
     text_off: u64 = 64

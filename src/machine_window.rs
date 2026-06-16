@@ -93,6 +93,14 @@ pub enum FbTab {
     Debug,
 }
 
+/// Which inspector the Debug tab shows under its shared pause/step controls.
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+enum DebugView {
+    #[default]
+    Cpu,
+    Os,
+}
+
 enum BootPhase {
     Idle,
     Running {
@@ -143,6 +151,8 @@ pub struct MachineWindow {
     /// Guest-physical addresses of the kernel scheduler globals, resolved at boot.
     /// `None` for non-kernel images; drives the Debug tab's process inspector.
     os_symbols: Option<OsSymbols>,
+    /// Which inspector the Debug tab currently shows (CPU vs OS/processes).
+    debug_view: DebugView,
 }
 
 // --- Public API ---
@@ -702,8 +712,9 @@ impl MachineWindow {
         }
     }
 
-    /// Read-only CPU/pipeline/cache inspector with pause, single-step, and a PC
-    /// breakpoint. Only meaningful while the VM is running.
+    /// Read-only CPU/pipeline/cache + OS-process inspector with pause, single-step,
+    /// and a PC breakpoint. The CPU and OS views share the controls and one scroll
+    /// area (a single scroll area avoids the nested-scrollbar jitter while running).
     fn render_debugger(&mut self, ui: &mut egui::Ui) {
         if !matches!(self.phase, BootPhase::Running { .. }) {
             ui.colored_label(term_dim(), "Boot the kernel to inspect CPU state.");
@@ -756,8 +767,22 @@ impl MachineWindow {
             }
         });
 
+        // --- Sub-view selector: CPU vs OS/processes ---
+        let has_os = self.os_symbols.is_some();
+        ui.horizontal(|ui| {
+            ui.selectable_value(&mut self.debug_view, DebugView::Cpu, "CPU");
+            ui.add_enabled_ui(has_os, |ui| {
+                ui.selectable_value(&mut self.debug_view, DebugView::Os, "OS")
+                    .on_disabled_hover_text("Boot the kernel to inspect processes");
+            });
+        });
+        if !has_os {
+            self.debug_view = DebugView::Cpu;
+        }
+
         ui.separator();
 
+        let view = self.debug_view;
         let os_symbols = self.os_symbols;
         let BootPhase::Running { vm, .. } = &self.phase else {
             return;
@@ -766,21 +791,24 @@ impl MachineWindow {
         egui::ScrollArea::vertical()
             .id_salt("mw_debugger")
             .auto_shrink([false, false])
-            .show(ui, |ui| {
-                if let Some(sym) = os_symbols.as_ref() {
-                    dbg_heading(ui, "PROCESSES");
-                    os_view::render(ui, vm, sym);
+            .show(ui, |ui| match view {
+                DebugView::Cpu => {
+                    render_pipeline(ui, vm);
                     ui.add_space(8.0);
+                    render_pipeline_stats(ui, vm);
+                    ui.add_space(8.0);
+                    render_cache_stats(ui, vm);
+                    ui.add_space(8.0);
+                    render_registers(ui, vm);
+                    ui.add_space(8.0);
+                    render_disasm(ui, vm);
                 }
-                render_pipeline(ui, vm);
-                ui.add_space(8.0);
-                render_pipeline_stats(ui, vm);
-                ui.add_space(8.0);
-                render_cache_stats(ui, vm);
-                ui.add_space(8.0);
-                render_registers(ui, vm);
-                ui.add_space(8.0);
-                render_disasm(ui, vm);
+                DebugView::Os => {
+                    if let Some(sym) = os_symbols.as_ref() {
+                        dbg_heading(ui, "PROCESSES");
+                        os_view::render(ui, vm, sym);
+                    }
+                }
             });
 
         // Keep state fresh while running; while paused, a slower tick is enough.

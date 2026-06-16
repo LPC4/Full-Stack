@@ -1,0 +1,97 @@
+; Growable userspace heap. Unlike the freestanding/kernel allocator (a fixed
+; 64 KB .bss buffer), this one grows the program break via the brk syscall (214,
+; Linux semantics), so malloc/new can grow past 64 KB. U-mode only. See OS spec 7.8.
+
+; Next free byte and the current break (mapped ceiling). 0 = uninitialised.
+heap_cur: u64 = 0
+heap_top: u64 = 0
+heap_list: HeapBlock* = null
+
+; brk argument/return scratch (inline asm cannot reach locals).
+_brk_a0:  u64 = 0
+_brk_ret: u64 = 0
+
+; brk(addr): move the program break to `addr` (0 queries it). Returns the resulting
+; break -- equal to `addr` on success, the unchanged break on failure. Syscall 214.
+heap_brk: (addr: u64) -> u64 {
+    _brk_a0 = addr
+    asm {
+        la t0, _brk_a0
+        ld a0, 0(t0)
+        li a7, 214
+        ecall
+        la t0, _brk_ret
+        sd a0, 0(t0)
+    }
+    return _brk_ret
+}
+
+; Bump-allocates n bytes, rounded up to 8-byte alignment, raising the break via
+; brk (to a page boundary) when the bump pointer would cross it. Null on OOM.
+heap_raw_alloc: (n: u64) -> u8* {
+    aligned: u64 = ((n + 7) / 8) * 8
+    if heap_cur == 0 {
+        base: u64 = heap_brk(0)
+        heap_cur = base
+        heap_top = base
+    }
+    new_cur: u64 = heap_cur + aligned
+    if new_cur > heap_top {
+        new_top: u64 = ((new_cur + 4095) / 4096) * 4096
+        got: u64 = heap_brk(new_top)
+        if got < new_top {
+            return null
+        }
+        heap_top = new_top
+    }
+    ptr: u8* = heap_cur as u8*
+    heap_cur = new_cur
+    return ptr
+}
+
+malloc: (size: u64) -> u8* {
+    requested: u64 = size
+    if requested == 0 {
+        requested = 1
+    }
+
+    current: HeapBlock* = heap_list
+    while current != null {
+        if @current.is_free != 0 and @current.size >= requested {
+            @current.is_free = 0
+            return @current.ptr
+        }
+        current = @current.next
+    }
+
+    block: HeapBlock* = heap_raw_alloc(32) as HeapBlock*
+    if block == null {
+        return null
+    }
+    payload: u8* = heap_raw_alloc(requested)
+    if payload == null {
+        return null
+    }
+    @block = {
+        .next    = heap_list,
+        .ptr     = payload,
+        .size    = requested,
+        .is_free = 0,
+    }
+    heap_list = block
+    return payload
+}
+
+free: (ptr: u8*) {
+    if ptr == null {
+        return
+    }
+    current: HeapBlock* = heap_list
+    while current != null {
+        if @current.ptr == ptr {
+            @current.is_free = 1
+            return
+        }
+        current = @current.next
+    }
+}

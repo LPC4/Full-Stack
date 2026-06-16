@@ -1,5 +1,5 @@
 use egui::RichText;
-use full_stack::view::{ui_theme, ProgramKind};
+use full_stack::view::{ProgramKind, ui_theme};
 
 use super::{CatalogExportKind, FullStackApp};
 

@@ -8,7 +8,7 @@ external emit_str: (s: u8*)
 external emit_int: (v: i64)
 external perr:     (msg: u8*)
 
-external call_args: i64[512]
+external call_args: i64*
 external nfn:       i64
 external cur_fn:    i64
 external nlabel:    i64
@@ -42,10 +42,10 @@ const ND_EXPR = 10
 ; Shared AST tables (defined in cc.hll). Types are file-scoped, so the layout is
 ; duplicated here and must stay in sync with cc.hll.
 type Node = { name: u8[16], kind: i64, a: i64, b: i64, c: i64, next: i64 }
-external nodes: Node[1024]
+external nodes: Node*
 
 type Fn = { name: u8[16], nparams: i64, nlocals: i64, body: i64 }
-external fns: Fn[64]
+external fns: Fn*
 
 gen_binop: (op: i64) {
     if op == TK_PLUS {

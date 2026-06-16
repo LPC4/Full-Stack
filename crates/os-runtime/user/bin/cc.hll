@@ -55,37 +55,38 @@ const ND_RETURN = 9
 const ND_EXPR = 10
 
 ; --- Source and token stream ---
-src: u8[8192]
+; The big tables are heap-allocated once at startup (see main); formerly fixed .bss.
+src: u8* = null
 src_len: u64 = 0
 
 ; One token: 16-byte lexeme (IDENT), then kind and integer value (INT). The lexeme
 ; is the first field so a slot pointer doubles as its char pointer.
 type Token = { text: u8[16], kind: i64, val: i64 }
-toks: Token[2048]
+toks: Token* = null
 ntok: i64 = 0
 
 ; --- AST: array of nodes, statements linked via the `next` field (-1 = end) ---
 ; The 16-byte name (CALL target only) is first so a node pointer doubles as it.
 type Node = { name: u8[16], kind: i64, a: i64, b: i64, c: i64, next: i64 }
-nodes: Node[1024]
+nodes: Node* = null
 nnode: i64 = 0
 
 ; Call argument expression nodes, referenced by ND_CALL via (start, count).
-call_args: i64[512]
+call_args: i64* = null
 ncallarg: i64 = 0
 
 ; Function table; the 16-byte name is first so a slot pointer doubles as it.
 type Fn = { name: u8[16], nparams: i64, nlocals: i64, body: i64 }
-fns: Fn[64]
+fns: Fn* = null
 nfn: i64 = 0
 
 ; Locals of the function currently being parsed (params first, then declarations).
-loc_name: u8[1024]
+loc_name: u8* = null
 loc_count: i64 = 0
 
 ; Parser cursor and the assembled output text.
 pos: i64 = 0
-asmout: u8[32768]
+asmout: u8* = null
 asmlen: u64 = 0
 
 ; Set once on any error so main aborts with a non-zero exit. Other globals used by
@@ -880,6 +881,15 @@ split_arg: (arg: u8*, src_path: u8*, out_path: u8*) -> i64 {
 }
 
 main: () -> i32 {
+    ; Allocate the compiler's working tables on the heap (formerly fixed .bss).
+    src = new(u8, 8192)
+    toks = new(Token, 2048)
+    nodes = new(Node, 1024)
+    call_args = new(i64, 512)
+    fns = new(Fn, 64)
+    loc_name = new(u8, 1024)
+    asmout = new(u8, 32768)
+
     arg: u8* = ARG_BASE as u8*
     src_path: u8[128]
     out_path: u8[128]

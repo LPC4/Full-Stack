@@ -26,6 +26,7 @@ const SYSCALL_FORK     = 220   ; clone the current process; returns child pid / 
 const SYSCALL_WAIT     = 260   ; reap any exited child; returns its exit code / -1
 const SYSCALL_WAITPID  = 261   ; reap a specific child by pid; -2 on Ctrl-C, -1 if not ours
 const SYSCALL_KILL     = 129   ; send a signal to a pid; only SIGKILL is honoured
+const SYSCALL_BRK      = 214   ; set/query the caller's program break (Linux brk)
 
 ; Signal numbers. Only SIGKILL is implemented (uncatchable teardown). See OS spec ch.7.6.
 const SIGKILL = 9
@@ -46,6 +47,11 @@ const WAIT_INTERRUPTED = 0xFFFFFFFFFFFFFFFE  ; -2 as u64
 const USER_CODE_BASE = 0x40000000
 ; R + W + X + U page flags (vmm_map adds V).
 const USER_PAGE_FLAGS = 30
+
+; Growable per-process heap. Grows up from USER_HEAP_BASE toward the arg page,
+; below the user stack; backed on demand by brk. R + W + U (no execute, W^X).
+const USER_HEAP_BASE  = 0x60000000
+const USER_HEAP_FLAGS = 22
 
 ; Per-process page holding the exec argument string; zeroed when there is none.
 const USER_ARG_BASE  = 0x7FF00000
@@ -73,6 +79,7 @@ external pmm_alloc:                 () -> u8*
 external pmm_free:                  (page: u8*)
 external vmm_map:                   (va: u64, pa: u64, flags: u64)
 external vmm_new_root:              () -> u64
+external vmm_set_root:              (root_pa: u64)
 external vmm_fork_copy:             (parent_root: u64, child_root: u64)
 
 external process_create:            (entry_pc: u64) -> u64*
@@ -88,6 +95,8 @@ external process_stdout_fd:         (pcb: u64*) -> u64
 external process_set_stdout_fd:     (pcb: u64*, fd: u64)
 external process_stdin_fd:          (pcb: u64*) -> u64
 external process_set_stdin_fd:      (pcb: u64*, fd: u64)
+external process_heap_brk:          (pcb: u64*) -> u64
+external process_set_heap_brk:      (pcb: u64*, brk: u64)
 
 external scheduler_add:                 (pcb: u64*)
 external scheduler_current:             () -> u64*
@@ -416,6 +425,9 @@ sys_fork_impl: (frame: u64*) -> i64 {
     process_set_root(child, child_root)
     process_set_parent(child, ppid)
 
+    ; Inherit the heap break; vmm_fork_copy duplicates the heap pages themselves.
+    process_set_heap_brk(child, process_heap_brk(parent))
+
     ; Duplicate the parent's user address space (code + stack) into the child.
     vmm_fork_copy(parent_root, child_root)
 
@@ -631,6 +643,53 @@ sys_map_fb_impl: (frame: u64*) -> u64 {
     return SYSACT_CONTINUE
 }
 
+; brk(addr): set the caller's program break to `addr` (Linux semantics). addr == 0
+; queries the current break. Growing maps new R|W|U pages into the caller's own
+; root; the break starts at USER_HEAP_BASE. Returns the resulting break (unchanged
+; on OOM, so the caller can detect failure). See OS spec ch.7.8.
+sys_brk_impl: (frame: u64*) -> u64 {
+    cur: u64* = scheduler_current()
+    if cur == null {
+        @frame[10] = 0xFFFFFFFFFFFFFFFF
+        return SYSACT_CONTINUE
+    }
+    addr: u64 = @frame[10]
+
+    brk: u64 = process_heap_brk(cur)
+    if brk == 0 {
+        brk = USER_HEAP_BASE
+    }
+
+    ; Query, or a request that does not grow the heap: report the current break.
+    if addr <= brk {
+        @frame[10] = brk
+        return SYSACT_CONTINUE
+    }
+
+    ; Grow: map every page in [page_up(brk), page_up(addr)). The break is always
+    ; page-aligned (callers request page-aligned ceilings), so this is [brk, addr).
+    map_from: u64 = ((brk + 4095) / 4096) * 4096
+    map_to:   u64 = ((addr + 4095) / 4096) * 4096
+
+    vmm_set_root(process_root(cur))
+    a: u64 = map_from
+    while a < map_to {
+        page_pa: u8* = pmm_alloc()
+        if page_pa == null {
+            ; OOM: leave the break where it was so the caller sees the failure.
+            @frame[10] = brk
+            return SYSACT_CONTINUE
+        }
+        memset(page_pa, 0, 4096)
+        vmm_map(a, page_pa as u64, USER_HEAP_FLAGS)
+        a = a + 4096
+    }
+
+    process_set_heap_brk(cur, addr)
+    @frame[10] = addr
+    return SYSACT_CONTINUE
+}
+
 ; Dispatch a U-mode ecall by a7; args in a0-a3, result to a0. See OS spec ch.7.
 syscall_dispatch: (frame: u64*) -> u64 {
     num: u64 = @frame[17]
@@ -793,6 +852,10 @@ syscall_dispatch: (frame: u64*) -> u64 {
 
     if num == SYSCALL_KILL {
         return sys_kill_impl(frame)
+    }
+
+    if num == SYSCALL_BRK {
+        return sys_brk_impl(frame)
     }
 
     if num == SYSCALL_YIELD {
