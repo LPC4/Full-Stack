@@ -13,6 +13,10 @@ pub struct CompileConfig {
     pub strict: bool,
     pub string_prefix: Option<String>,
     pub type_prelude: Vec<(String, IrType)>,
+    /// HLL source prepended to the unit before lexing (a shared definitions header).
+    /// `None` falls back to the kernel `layout.hll` in kernel mode, else nothing, so
+    /// every kernel TU shares one copy of the PCB / trap-frame / VMM consts (in HLL).
+    pub source_prelude: Option<String>,
 }
 
 impl Default for CompileConfig {
@@ -22,6 +26,7 @@ impl Default for CompileConfig {
             strict: false,
             string_prefix: None,
             type_prelude: Vec::new(),
+            source_prelude: None,
         }
     }
 }
@@ -44,11 +49,31 @@ impl HllCompiler {
         Self { config }
     }
 
+    /// `source` with the effective prelude prepended: an explicit `source_prelude`,
+    /// else the shared kernel `layout.hll` in kernel mode, else unchanged.
+    fn with_source_prelude(&self, source: &str) -> String {
+        let prelude: &str = match &self.config.source_prelude {
+            Some(p) => p.as_str(),
+            None if self.config.target == TargetMode::Kernel => os_runtime::kernel::LAYOUT,
+            None => "",
+        };
+        if prelude.is_empty() {
+            source.to_owned()
+        } else {
+            format!("{prelude}\n{source}")
+        }
+    }
+
     /// Lex, parse, (optionally) analyse, and lower `source` to IR.
     ///
     /// Returns `Err` only on hard failures (lex errors, parse errors, IR
     /// lowering errors).  Warnings are surfaced via `HllOutput::diagnostics`.
     pub fn compile(&self, source: &str) -> Result<HllOutput, Vec<Diagnostic>> {
+        // Prepend the shared definitions header (kernel layout, or an explicit prelude)
+        // so separately-compiled TUs share one HLL definition of their common consts.
+        let prepended = self.with_source_prelude(source);
+        let source = prepended.as_str();
+
         // Phase 1: Lex
         let token_spans = Lexer::tokenize(source);
 

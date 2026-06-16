@@ -6,12 +6,7 @@ external memset:    (dst: u8*, value: u8, n: u64) -> u8*
 external memcpy:    (dst: u8*, src: u8*, n: u64) -> u8*
 external kpanic:    (msg: u8*)
 
-const VMM_V = 1
-const VMM_R = 2
-const VMM_W = 4
-const VMM_X = 8
-const VMM_U = 16
-const VMM_G = 32
+; VMM_V/R/W/X/U/G page-flag bits come from the shared kernel layout (layout.hll).
 
 ; Panics if bits [63:39] are not copies of bit 38 (non-canonical address).
 assert_canonical: (va: u64) {
@@ -93,9 +88,9 @@ vmm_map_1gib: (va: u64, pa: u64, flags: u64) {
 ; can fault into the kernel under its own satp. See OS spec ch.4.3.
 vmm_map_kernel: (root: u64) {
     vmm_set_root(root)
-    vmm_map_1gib(0x00000000, 0, 38)
-    vmm_map_1gib(0x80000000, 0x80000000, 46)
-    vmm_map_1gib(0xC0000000, 0xC0000000, 46)
+    vmm_map_1gib(0x00000000, 0, VMM_G + VMM_W + VMM_R)
+    vmm_map_1gib(0x80000000, 0x80000000, VMM_G + VMM_X + VMM_W + VMM_R)
+    vmm_map_1gib(0xC0000000, 0xC0000000, VMM_G + VMM_X + VMM_W + VMM_R)
 }
 
 ; Allocate a fresh root table, stamp the shared kernel mappings into it, and

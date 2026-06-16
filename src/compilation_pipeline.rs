@@ -159,6 +159,9 @@ pub struct CompilationPipeline {
     link_layout: Option<LinkLayout>,
     string_prefix: Option<String>,
     type_prelude: Vec<(String, IrType)>,
+    // Raw HLL source prepended to every compiled unit (e.g. a shared `layout.hll` of
+    // consts/structs). Lets separately-compiled TUs share definitions without a Rust copy.
+    source_prelude: String,
     artifact_root: PathBuf,
     artifact_stem: RefCell<Option<String>>,
     last_artifact_stem: RefCell<Option<String>>,
@@ -184,6 +187,7 @@ impl CompilationPipeline {
             link_layout: None,
             string_prefix: None,
             type_prelude: Vec::new(),
+            source_prelude: String::new(),
             artifact_root: PathBuf::from("out"),
             artifact_stem: RefCell::new(None),
             last_artifact_stem: RefCell::new(None),
@@ -203,6 +207,7 @@ impl CompilationPipeline {
             link_layout: config.link_layout,
             string_prefix: config.string_prefix,
             type_prelude: Vec::new(),
+            source_prelude: String::new(),
             artifact_root: PathBuf::from("out"),
             artifact_stem: RefCell::new(None),
             last_artifact_stem: RefCell::new(None),
@@ -270,6 +275,23 @@ impl CompilationPipeline {
 
     pub fn set_type_prelude(&mut self, types: Vec<(String, IrType)>) {
         self.type_prelude = types;
+    }
+
+    /// Set HLL source prepended to every compiled unit (a shared definitions header,
+    /// e.g. the kernel `layout.hll`). Shares consts/structs across separately-compiled
+    /// TUs while keeping the single definition in HLL, not Rust.
+    pub fn set_source_prelude(&mut self, src: impl Into<String>) {
+        self.source_prelude = src.into();
+    }
+
+    /// The explicit source prelude to pass to the compiler, or `None` to let it apply
+    /// the default (the shared kernel `layout.hll` in kernel mode).
+    fn config_source_prelude(&self) -> Option<String> {
+        if self.source_prelude.is_empty() {
+            None
+        } else {
+            Some(self.source_prelude.clone())
+        }
     }
 
     pub fn set_artifact_root(&mut self, root: impl Into<PathBuf>) {
@@ -387,6 +409,7 @@ impl CompilationPipeline {
             strict: self.run_semantic_analysis,
             string_prefix: self.string_prefix.clone(),
             type_prelude: self.type_prelude.clone(),
+            source_prelude: self.config_source_prelude(),
         });
 
         let mut out = compiler
@@ -454,6 +477,7 @@ impl CompilationPipeline {
             strict: self.run_semantic_analysis,
             string_prefix: self.string_prefix.clone(),
             type_prelude: self.type_prelude.clone(),
+            source_prelude: self.config_source_prelude(),
         });
 
         let mut out = match compiler.compile(source) {

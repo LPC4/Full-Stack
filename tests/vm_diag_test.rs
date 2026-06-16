@@ -24,6 +24,7 @@ fn kernel_asm_diag() {
         strict: true,
         string_prefix: Some("__kern_str_".to_owned()),
         type_prelude: Vec::new(),
+        source_prelude: None,
     });
     let stdlib_out = stdlib_compiler
         .compile(&get_kernel_stdlib_source())
@@ -37,6 +38,7 @@ fn kernel_asm_diag() {
         strict: true,
         string_prefix: None,
         type_prelude: Vec::new(),
+        source_prelude: None,
     });
     let user_out = user_compiler
         .compile(kernel::MY_KERNEL)

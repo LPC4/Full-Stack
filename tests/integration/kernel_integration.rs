@@ -119,21 +119,22 @@ fn cached_kernel_multi_module() -> &'static AssembledOutput {
 
 // Compile a hosted user program (links the hosted stdlib).
 fn compile_hosted(src: &str) -> AssembledOutput {
-    compile_hosted_modules(src, &[])
+    compile_hosted_modules(src, &[], "")
 }
 
 // Compile a catalog program (primary + any aux translation units) the way the app
-// boot path does -- looks the source and aux modules up by catalog name.
+// boot path does -- looks the source, aux modules, and shared layout up by name.
 fn compile_hosted_program(name: &str) -> AssembledOutput {
     let prog = user::program(name).expect("program in catalog");
-    compile_hosted_modules(prog.source, prog.aux_sources)
+    compile_hosted_modules(prog.source, prog.aux_sources, prog.layout)
 }
 
 // Compile a hosted program that may span multiple translation units:
 // the primary unit carries the stdlib; each aux unit is compiled to its own
 // object with a distinct string prefix (so rodata labels do not collide) and the
-// objects are linked together.
-fn compile_hosted_modules(src: &str, aux: &[&str]) -> AssembledOutput {
+// objects are linked together. `layout` is a shared HLL header prepended to every
+// unit (primary + aux) so split TUs agree on their shared type/const definitions.
+fn compile_hosted_modules(src: &str, aux: &[&str], layout: &str) -> AssembledOutput {
     let full = format!(
         "{}\n{}",
         get_stdlib_source_for_mode(TargetMode::Hosted),
@@ -143,6 +144,7 @@ fn compile_hosted_modules(src: &str, aux: &[&str]) -> AssembledOutput {
     pipeline.set_target_mode(TargetMode::Hosted);
     pipeline.set_write_artifacts(false);
     pipeline.set_type_prelude(get_stdlib_type_prelude());
+    pipeline.set_source_prelude(layout);
     let result = pipeline.compile(&full).expect("hosted compile");
     let (_, tokens) = pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program);
     let main_obj = pipeline
@@ -161,6 +163,7 @@ fn compile_hosted_modules(src: &str, aux: &[&str]) -> AssembledOutput {
             p.set_target_mode(TargetMode::Hosted);
             p.set_write_artifacts(false);
             p.set_type_prelude(get_stdlib_type_prelude());
+            p.set_source_prelude(layout);
             p.set_string_prefix(Some(format!("aux{i}_str_")));
             let r = p.compile(a).expect("aux compile");
             let (_, t) = p.compile_ir_to_assembly_with_tokens(&r.ir_program);
@@ -281,7 +284,11 @@ fn run_tool_session(
         .map(|name| {
             let prog = user::program(name).expect("tool not in user catalog");
             let path = prog.install_path.expect("tool has no install path");
-            let elf = assembled_to_elf_file(&compile_hosted_modules(prog.source, prog.aux_sources));
+            let elf = assembled_to_elf_file(&compile_hosted_modules(
+                prog.source,
+                prog.aux_sources,
+                prog.layout,
+            ));
             (path, elf)
         })
         .collect();
@@ -1668,7 +1675,7 @@ fn kernel_cc_target_roundtrips() {
 // without booting the kernel.
 #[test]
 fn cc_host_compiles() {
-    let out = compile_hosted(user::CC);
+    let out = compile_hosted_modules(user::CC, &[], user::CC_LAYOUT);
     assert!(
         !out.to_flat_binary().is_empty(),
         "cc.hll produced an empty binary"

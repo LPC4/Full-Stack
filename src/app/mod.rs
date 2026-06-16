@@ -737,6 +737,10 @@ impl FullStackApp {
         } else {
             Some(self.stdlib_tokens.as_slice())
         };
+        // Split tools (cc/as) share record layouts via a header prepended to every
+        // unit; apply it to the primary compile and (below) the aux compiles.
+        let layout = self.catalog.layout_of(&build.id).to_owned();
+        self.pipeline.set_source_prelude(layout.clone());
         let mut result = self.pipeline.run_full(&user_source, stdlib_tokens);
 
         // A split catalog program carries aux translation units that run_full does
@@ -755,6 +759,7 @@ impl FullStackApp {
                 &tokens,
                 stdlib_tokens,
                 &aux_sources,
+                &layout,
             ) {
                 Ok(assembled) => {
                     result.binary = Some(BinaryOutput { assembled });
@@ -766,6 +771,8 @@ impl FullStackApp {
                 }
             }
         }
+        // The pipeline is reused across compiles; clear the per-program prelude.
+        self.pipeline.set_source_prelude("");
 
         if result.has_errors() {
             self.compilation_state
@@ -814,6 +821,7 @@ impl FullStackApp {
         user_tokens: &[RvInstruction],
         stdlib_tokens: Option<&[RvInstruction]>,
         aux_sources: &[String],
+        layout: &str,
     ) -> Result<AssembledOutput, String> {
         let user_obj = pipeline
             .assemble_named("user", user_tokens)
@@ -825,6 +833,7 @@ impl FullStackApp {
             p.set_target_mode(target);
             p.set_write_artifacts(false);
             p.set_type_prelude(get_stdlib_type_prelude());
+            p.set_source_prelude(layout);
             p.set_string_prefix(Some(format!("aux{i}_str_")));
             let r = p
                 .compile(src)
@@ -883,11 +892,14 @@ impl FullStackApp {
             None => return Err(format!("program id not found: {build_id}")),
         };
 
-        // Build pipeline and compile concatenated stdlib + program source
+        // Build pipeline and compile concatenated stdlib + program source.
+        // Split tools (cc/as) prepend a shared record-layout header to every unit.
+        let layout = program.layout.clone();
         let mut user_pipeline = CompilationPipeline::new();
         user_pipeline.set_target_mode(TargetMode::Hosted);
         user_pipeline.set_write_artifacts(false);
         user_pipeline.set_type_prelude(get_stdlib_type_prelude());
+        user_pipeline.set_source_prelude(layout.clone());
 
         let user_source = format!(
             "{}\n{}",
@@ -914,6 +926,7 @@ impl FullStackApp {
                 &tokens,
                 None,
                 &aux_sources,
+                &layout,
             )?;
             self.compilation_state.last_hosted_binary = Some(assembled);
             return Ok(());
@@ -989,6 +1002,7 @@ impl FullStackApp {
         pipeline.set_target_mode(TargetMode::Hosted);
         pipeline.set_write_artifacts(false);
         pipeline.set_type_prelude(get_stdlib_type_prelude());
+        pipeline.set_source_prelude(prog.layout);
 
         // The primary translation unit carries the stdlib (concatenated). For a
         // single-file program this is the whole build; run_full compiles and links
@@ -1030,6 +1044,7 @@ impl FullStackApp {
             aux_pipeline.set_target_mode(TargetMode::Hosted);
             aux_pipeline.set_write_artifacts(false);
             aux_pipeline.set_type_prelude(get_stdlib_type_prelude());
+            aux_pipeline.set_source_prelude(prog.layout);
             aux_pipeline.set_string_prefix(Some(format!("aux{i}_str_")));
             let aux = aux_pipeline
                 .compile(src)

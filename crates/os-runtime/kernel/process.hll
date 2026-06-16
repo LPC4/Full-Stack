@@ -1,46 +1,6 @@
-; PCB layout (48 x u64 = 384 bytes): scalar fields, two redirected-stdio fds, then
-; the trap frame at [5..40] (x0-x31, sepc, scause, stval, sstatus). Full map: OS spec 5.2.
-
-const PROC_READY   = 0
-const PROC_RUNNING = 1
-const PROC_BLOCKED = 2
-const PROC_EXITED  = 3
-
-; PCB byte offsets from base.
-const PCB_OFF_PID           = 0
-const PCB_OFF_STATE         = 8
-const PCB_OFF_NEXT          = 16
-const PCB_OFF_USER_STACK_PA = 24
-const PCB_OFF_ENTRY_PC      = 32
-const PCB_OFF_TRAP_FRAME    = 40
-const PCB_OFF_PAGE_ROOT     = 328
-const PCB_OFF_PARENT_PID    = 336
-const PCB_OFF_EXIT_CODE     = 344
-const PCB_OFF_STDOUT_FD     = 352
-const PCB_OFF_STDIN_FD      = 360
-const PCB_OFF_HEAP_BRK      = 376
-const PCB_SIZE              = 384
-
-; PCB field indices (u64 array view) for the trailing scalar fields.
-const PCB_IDX_PAGE_ROOT  = 41
-const PCB_IDX_PARENT_PID = 42
-const PCB_IDX_EXIT_CODE  = 43
-; Redirected stdio: kernel fd backing the process's stdout / stdin, or 0 for the
-; console (UART). Bound by exec when the shell requests `>`/`>>`/`<`. See ch.7.7.
-const PCB_IDX_STDOUT_FD  = 44
-const PCB_IDX_STDIN_FD   = 45
-; 1 once the process has mapped the framebuffer; drives the DBMODE reset on the
-; last framebuffer user's exit (see syscall.hll fb_release_on_exit, OS spec 7.5).
-const PCB_IDX_FB_MAPPED  = 46
-; Current program break (top of the growable heap), or 0 until the first brk.
-; See syscall.hll sys_brk_impl, OS spec ch.4.3 / 7.8.
-const PCB_IDX_HEAP_BRK   = 47
-
-; VMM flags for user-accessible pages.
-const VMM_U = 16
-const VMM_R = 2
-const VMM_W = 4
-const VMM_V = 1
+; Process control block lifecycle. The PCB layout (PCB_OFF_*/PCB_IDX_*/PCB_SIZE),
+; process states (PROC_*), trap-frame slots (TF_*), and VMM page-flag bits come from
+; the shared kernel layout (layout.hll). Full PCB map: OS spec 5.2.
 
 external kmalloc:      (size: u64) -> u8*
 external memset:       (dst: u8*, value: u8, n: u64) -> u8*
@@ -75,14 +35,14 @@ process_create_at: (entry_pc: u64, stack_top: u64) -> u64* {
     memset(pcb_bytes, 0, PCB_SIZE)
     pcb: u64* = pcb_bytes as u64*
 
-    @pcb[0] = next_pid
+    @pcb[PCB_IDX_PID] = next_pid
     next_pid = next_pid + 1
-    @pcb[1] = PROC_READY
+    @pcb[PCB_IDX_STATE] = PROC_READY
 
     ; Give the process its own address space and make it the active root so the
     ; user stack (and any code the caller maps afterwards) lands inside it.
     root_pa: u64 = vmm_new_root()
-    @pcb[41] = root_pa
+    @pcb[PCB_IDX_PAGE_ROOT] = root_pa
     vmm_set_root(root_pa)
 
     ; User stack: a few pages below stack_top.
@@ -95,17 +55,17 @@ process_create_at: (entry_pc: u64, stack_top: u64) -> u64* {
             kpanic("process_create: out of memory for user stack".data)
         }
         page_va: u64 = stack_top - (sp_i + 1) * 0x1000
-        vmm_map(page_va, page_pa as u64, 22)  ; R|W|U=22; vmm_map adds V.
+        vmm_map(page_va, page_pa as u64, VMM_R + VMM_W + VMM_U)  ; vmm_map adds V.
         last_page_pa = page_pa as u64
         sp_i = sp_i + 1
     }
-    @pcb[3] = last_page_pa
-    @pcb[4] = entry_pc
+    @pcb[PCB_IDX_USER_STACK_PA] = last_page_pa
+    @pcb[PCB_IDX_ENTRY_PC] = entry_pc
 
     ; Initial frame: sp = stack top, sepc = entry, sstatus = U-mode with IRQs on.
-    @pcb[5 + 2]  = stack_top
-    @pcb[5 + 32] = entry_pc
-    @pcb[5 + 35] = 0x13
+    @pcb[PCB_IDX_TRAP_FRAME + TF_SP]  = stack_top
+    @pcb[PCB_IDX_TRAP_FRAME + TF_SEPC] = entry_pc
+    @pcb[PCB_IDX_TRAP_FRAME + TF_SSTATUS] = 0x13
 
     return pcb
 }
@@ -122,9 +82,9 @@ process_alloc: () -> u64* {
     pcb_bytes: u8* = kmalloc(PCB_SIZE)
     memset(pcb_bytes, 0, PCB_SIZE)
     pcb: u64* = pcb_bytes as u64*
-    @pcb[0] = next_pid
+    @pcb[PCB_IDX_PID] = next_pid
     next_pid = next_pid + 1
-    @pcb[1] = PROC_READY
+    @pcb[PCB_IDX_STATE] = PROC_READY
     return pcb
 }
 
@@ -132,15 +92,15 @@ process_alloc: () -> u64* {
 ; Keep PCB layout (OS spec ch.5.1) here; callers use these, not raw indices.
 
 process_pid: (pcb: u64*) -> u64 {
-    return @pcb[0]
+    return @pcb[PCB_IDX_PID]
 }
 
 process_state: (pcb: u64*) -> u64 {
-    return @pcb[1]
+    return @pcb[PCB_IDX_STATE]
 }
 
 process_set_state: (pcb: u64*, s: u64) {
-    @pcb[1] = s
+    @pcb[PCB_IDX_STATE] = s
 }
 
 process_root: (pcb: u64*) -> u64 {

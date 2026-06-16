@@ -44,8 +44,7 @@ text_total: i64 = 0
 ; Also reused as the ET_REL object image in object mode (text/data/relocs/symtab).
 out: u8* = null
 
-; A label definition: 16-byte name, byte address, and owning section (0 text, 1 data).
-type Label = { name: u8[16], addr: i64, sec: i64 }
+; Label / Reloc record layouts come from the shared as_layout.hll header.
 
 ; Label table; resolve_labels() rewrites data addresses to absolute positions.
 labels: Label* = null
@@ -68,9 +67,6 @@ obj_mode: i64 = 0
 glbl_names: u8* = null
 glbl_count: i64 = 0
 
-; One relocation: 16-byte target symbol name, byte offset in .text, and kind
-; (0 = CALL_PLT auipc+jalr, 1 = JAL, 2 = LA/PCREL_HI20 auipc+addi).
-type Reloc = { sym: u8[16], off: i64, kind: i64 }
 relocs: Reloc* = null
 nreloc: i64 = 0
 

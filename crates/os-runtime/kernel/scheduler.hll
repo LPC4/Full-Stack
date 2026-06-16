@@ -9,8 +9,7 @@ external klog_int:   (label: u8*, val: i64)
 external klog_error: (msg: u8*)
 external fb_release_on_exit: (pcb: u64*)
 
-; Index of the parent_pid field in the PCB (see process.hll PCB layout).
-const PCB_IDX_PARENT_PID = 42
+; PCB_IDX_* indices and PROC_* states come from the shared kernel layout (layout.hll).
 
 current_process:  u64* = null
 ready_queue_head: u64* = null
@@ -34,16 +33,16 @@ scheduler_current: () -> u64* {
 
 ; Append pcb to the tail of the ready queue.
 scheduler_add: (pcb: u64*) {
-    @pcb[2] = 0
+    @pcb[PCB_IDX_LINK] = 0
     if ready_queue_head == null {
         ready_queue_head = pcb
         return
     }
     curr: u64* = ready_queue_head
-    while @curr[2] != 0 {
-        curr = (@curr[2]) as u64*
+    while @curr[PCB_IDX_LINK] != 0 {
+        curr = (@curr[PCB_IDX_LINK]) as u64*
     }
-    @curr[2] = pcb as u64
+    @curr[PCB_IDX_LINK] = pcb as u64
 }
 
 ; --- Context switch ---
@@ -60,16 +59,16 @@ schedule: (frame: u64*, action: u64) {
     }
 
     if current_process != null {
-        memcpy((current_process as u64 + 40) as u8*, frame as u8*, 288)
+        memcpy((current_process as u64 + PCB_OFF_TRAP_FRAME) as u8*, frame as u8*, TF_BYTES)
 
         if action == 2 {
-            @current_process[1] = 3  ; EXITED
+            @current_process[PCB_IDX_STATE] = PROC_EXITED
             fb_release_on_exit(current_process)
         } else {
             if action == 3 {
-                @current_process[1] = 2  ; BLOCKED (not re-enqueued; woken later)
+                @current_process[PCB_IDX_STATE] = PROC_BLOCKED
             } else {
-                @current_process[1] = 0  ; READY
+                @current_process[PCB_IDX_STATE] = PROC_READY
                 scheduler_add(current_process)
             }
         }
@@ -79,13 +78,13 @@ schedule: (frame: u64*, action: u64) {
     if next == null {
         return
     }
-    ready_queue_head = (@next[2]) as u64*
-    @next[2] = 0
+    ready_queue_head = (@next[PCB_IDX_LINK]) as u64*
+    @next[PCB_IDX_LINK] = 0
 
     current_process = next
     ; Switch into the next process's address space before restoring its context.
-    vmm_switch(@next[41])
-    memcpy(frame as u8*, (next as u64 + 40) as u8*, 288)
+    vmm_switch(@next[PCB_IDX_PAGE_ROOT])
+    memcpy(frame as u8*, (next as u64 + PCB_OFF_TRAP_FRAME) as u8*, TF_BYTES)
 }
 
 ; Record the process about to block on UART input so the RX interrupt can wake
@@ -102,8 +101,8 @@ scheduler_wake_input_waiter: () -> u64 {
         return 0
     }
     input_waiter = null
-    @w[1] = 0  ; READY
-    @w[2] = ready_queue_head as u64
+    @w[PCB_IDX_STATE] = PROC_READY
+    @w[PCB_IDX_LINK] = ready_queue_head as u64
     ready_queue_head = w
     return 1
 }
@@ -122,10 +121,10 @@ scheduler_ready_empty: () -> u64 {
 scheduler_pid_in_queue: (pid: u64) -> u64 {
     curr: u64* = ready_queue_head
     while curr != null {
-        if @curr[0] == pid {
+        if @curr[PCB_IDX_PID] == pid {
             return 1
         }
-        curr = (@curr[2]) as u64*
+        curr = (@curr[PCB_IDX_LINK]) as u64*
     }
     return 0
 }
@@ -134,12 +133,12 @@ scheduler_pid_in_queue: (pid: u64) -> u64 {
 ; 0 if it is a zombie or unknown.
 scheduler_pid_alive: (pid: u64) -> u64 {
     if current_process != null {
-        if @current_process[0] == pid {
+        if @current_process[PCB_IDX_PID] == pid {
             return 1
         }
     }
     if input_waiter != null {
-        if @input_waiter[0] == pid {
+        if @input_waiter[PCB_IDX_PID] == pid {
             return 1
         }
     }
@@ -151,7 +150,7 @@ scheduler_pid_alive: (pid: u64) -> u64 {
 ; Add an EXITED process to the zombie list so its parent can later reap its
 ; exit code. Reuses the [2] link field (the process is no longer ready).
 scheduler_make_zombie: (pcb: u64*) {
-    @pcb[2] = zombie_head as u64
+    @pcb[PCB_IDX_LINK] = zombie_head as u64
     zombie_head = pcb
 }
 
@@ -159,10 +158,10 @@ scheduler_make_zombie: (pcb: u64*) {
 scheduler_find_zombie_pid: (pid: u64) -> u64* {
     curr: u64* = zombie_head
     while curr != null {
-        if @curr[0] == pid {
+        if @curr[PCB_IDX_PID] == pid {
             return curr
         }
-        curr = (@curr[2]) as u64*
+        curr = (@curr[PCB_IDX_LINK]) as u64*
     }
     return null
 }
@@ -174,7 +173,7 @@ scheduler_find_zombie_child: (parent_pid: u64) -> u64* {
         if @curr[PCB_IDX_PARENT_PID] == parent_pid {
             return curr
         }
-        curr = (@curr[2]) as u64*
+        curr = (@curr[PCB_IDX_LINK]) as u64*
     }
     return null
 }
@@ -183,14 +182,14 @@ scheduler_find_zombie_child: (parent_pid: u64) -> u64* {
 ; (page-table teardown is deferred; leaking is safe for now).
 scheduler_remove_zombie: (pcb: u64*) {
     if zombie_head == pcb {
-        zombie_head = (@pcb[2]) as u64*
+        zombie_head = (@pcb[PCB_IDX_LINK]) as u64*
         return
     }
     prev: u64* = zombie_head
     while prev != null {
-        nxt: u64* = (@prev[2]) as u64*
+        nxt: u64* = (@prev[PCB_IDX_LINK]) as u64*
         if nxt == pcb {
-            @prev[2] = @pcb[2]
+            @prev[PCB_IDX_LINK] = @pcb[PCB_IDX_LINK]
             return
         }
         prev = nxt
@@ -205,16 +204,16 @@ scheduler_kill_child: (parent_pid: u64) -> u64 {
     while curr != null {
         if @curr[PCB_IDX_PARENT_PID] == parent_pid {
             if prev == null {
-                ready_queue_head = (@curr[2]) as u64*
+                ready_queue_head = (@curr[PCB_IDX_LINK]) as u64*
             } else {
-                @prev[2] = @curr[2]
+                @prev[PCB_IDX_LINK] = @curr[PCB_IDX_LINK]
             }
-            @curr[1] = 3  ; EXITED
+            @curr[PCB_IDX_STATE] = PROC_EXITED
             fb_release_on_exit(curr)
             return 1
         }
         prev = curr
-        curr = (@curr[2]) as u64*
+        curr = (@curr[PCB_IDX_LINK]) as u64*
     }
     return 0
 }
@@ -225,18 +224,18 @@ scheduler_kill_pid: (pid: u64) -> u64 {
     prev: u64* = 0 as u64*
     curr: u64* = ready_queue_head
     while curr != null {
-        if @curr[0] == pid {
+        if @curr[PCB_IDX_PID] == pid {
             if prev == null {
-                ready_queue_head = (@curr[2]) as u64*
+                ready_queue_head = (@curr[PCB_IDX_LINK]) as u64*
             } else {
-                @prev[2] = @curr[2]
+                @prev[PCB_IDX_LINK] = @curr[PCB_IDX_LINK]
             }
-            @curr[1] = 3  ; EXITED
+            @curr[PCB_IDX_STATE] = PROC_EXITED
             fb_release_on_exit(curr)
             return 1
         }
         prev = curr
-        curr = (@curr[2]) as u64*
+        curr = (@curr[PCB_IDX_LINK]) as u64*
     }
     return 0
 }
@@ -249,7 +248,7 @@ scheduler_has_children: (parent_pid: u64) -> u64 {
         if @curr[PCB_IDX_PARENT_PID] == parent_pid {
             return 1
         }
-        curr = (@curr[2]) as u64*
+        curr = (@curr[PCB_IDX_LINK]) as u64*
     }
     ; A child sleeping on input has left the ready queue but is still alive.
     if input_waiter != null {
@@ -262,7 +261,7 @@ scheduler_has_children: (parent_pid: u64) -> u64 {
         if @z[PCB_IDX_PARENT_PID] == parent_pid {
             return 1
         }
-        z = (@z[2]) as u64*
+        z = (@z[PCB_IDX_LINK]) as u64*
     }
     return 0
 }

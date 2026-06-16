@@ -33,6 +33,8 @@ pub struct ProgramFile {
     #[serde(default)]
     pub parent_id: Option<String>, // set for aux translation units and kernel fragments; their owner's id
     #[serde(default)]
+    pub layout: String, // shared HLL header prepended to this program's primary + aux units at compile (empty if none)
+    #[serde(default)]
     pub undo_stack: Vec<String>,
     #[serde(default)]
     pub redo_stack: Vec<String>,
@@ -65,6 +67,7 @@ impl ProgramFile {
             source: source.to_owned(),
             standalone: false,
             parent_id: None,
+            layout: String::new(),
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             description: description.to_owned(),
@@ -79,6 +82,7 @@ impl ProgramFile {
             source,
             standalone: false,
             parent_id: None,
+            layout: String::new(),
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             description: String::from("Your personal in-memory program."),
@@ -93,6 +97,7 @@ impl ProgramFile {
             source: source.to_owned(),
             standalone: false,
             parent_id: None,
+            layout: String::new(),
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             description: description.to_owned(),
@@ -107,6 +112,7 @@ impl ProgramFile {
             source: source.to_owned(),
             standalone: false,
             parent_id: None,
+            layout: String::new(),
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             description: description.to_owned(),
@@ -121,6 +127,7 @@ impl ProgramFile {
             source: source.to_owned(),
             standalone: false,
             parent_id: None,
+            layout: String::new(),
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             description: description.to_owned(),
@@ -306,12 +313,9 @@ fn built_in_programs() -> Vec<ProgramFile> {
         .filter(|p| p.is_compiled())
     {
         let parent_id = format!("user-{}", prog.name);
-        programs.push(ProgramFile::user(
-            &parent_id,
-            prog.title,
-            prog.description,
-            prog.source,
-        ));
+        let mut primary = ProgramFile::user(&parent_id, prog.title, prog.description, prog.source);
+        primary.layout = prog.layout.to_owned();
+        programs.push(primary);
         // Each aux translation unit is an editable child module of its program.
         for (aux_name, aux_source) in prog.aux_modules() {
             let mut module = ProgramFile::user(
@@ -641,6 +645,16 @@ impl ProgramCatalog {
             .iter()
             .map(|p| p.source.clone())
             .collect()
+    }
+
+    /// The shared layout header for the program `id` (prepended to its primary and
+    /// aux units at compile), or `""` if it has none.
+    pub fn layout_of(&self, id: &str) -> &str {
+        self.programs
+            .iter()
+            .find(|p| p.id == id)
+            .map(|p| p.layout.as_str())
+            .unwrap_or("")
     }
 }
 

@@ -19,13 +19,11 @@ external code_len: u64
 external data:     u8*
 external data_len: u64
 
-; The label and relocation tables, defined in as.hll. Types are file-scoped, so
-; the layout is duplicated here to match (must stay in sync with as.hll).
-type Label = { name: u8[16], addr: i64, sec: i64 }
+; The label and relocation tables, defined in as.hll. Their layouts (Label/Reloc)
+; come from the shared as_layout.hll header, so they cannot drift between units.
 external labels:    Label*
 external lbl_count: i64
 
-type Reloc = { sym: u8[16], off: i64, kind: i64 }
 external relocs: Reloc*
 external nreloc: i64
 

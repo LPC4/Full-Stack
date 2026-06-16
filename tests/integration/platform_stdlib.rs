@@ -159,6 +159,7 @@ fn userspace_catalog_programs_compile_hosted() {
         let (name, src) = (prog.name, prog.source);
         let mut pipeline = CompilationPipeline::new();
         pipeline.set_write_artifacts(false);
+        pipeline.set_source_prelude(prog.layout);
         let stdlib = pipeline
             .compile(&get_stdlib_source())
             .unwrap_or_else(|e| panic!("{name}: stdlib compile failed: {e:?}"));
@@ -183,6 +184,7 @@ fn userspace_catalog_programs_compile_hosted() {
             .map(|(i, a)| {
                 let mut p = CompilationPipeline::new();
                 p.set_write_artifacts(false);
+                p.set_source_prelude(prog.layout);
                 p.set_string_prefix(Some(format!("aux{i}_str_")));
                 let r = p
                     .compile(a)
@@ -419,6 +421,8 @@ fn run_kernel_hll(user_src: &str) -> (String, Option<i64>) {
 
     let mut user_pipeline = CompilationPipeline::new();
     user_pipeline.set_write_artifacts(false);
+    // user_src is kernel source (a kmain); give it the shared kernel layout header.
+    user_pipeline.set_source_prelude(os_runtime::kernel::LAYOUT);
     let user = user_pipeline.compile(user_src).expect("user compile");
     let (_, user_tokens) = user_pipeline.compile_ir_to_assembly_with_tokens(&user.ir_program);
 

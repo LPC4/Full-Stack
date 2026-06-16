@@ -1,0 +1,70 @@
+; Shared kernel layout: the single definition of the PCB layout, trap-frame slots,
+; process states, and Sv39 page-flag bits. Prepended to every kernel translation unit
+; before compilation (see compilation_pipeline source prelude) so the separately-compiled
+; modules share one copy instead of hand-mirroring these consts. Full PCB map: OS spec 5.2.
+
+; --- Process states ---
+const PROC_READY   = 0
+const PROC_RUNNING = 1
+const PROC_BLOCKED = 2
+const PROC_EXITED  = 3
+
+; --- PCB byte offsets from base (48 x u64 = 384 bytes) ---
+const PCB_OFF_PID           = 0
+const PCB_OFF_STATE         = 8
+const PCB_OFF_NEXT          = 16
+const PCB_OFF_USER_STACK_PA = 24
+const PCB_OFF_ENTRY_PC      = 32
+const PCB_OFF_TRAP_FRAME    = 40
+const PCB_OFF_PAGE_ROOT     = 328
+const PCB_OFF_PARENT_PID    = 336
+const PCB_OFF_EXIT_CODE     = 344
+const PCB_OFF_STDOUT_FD     = 352
+const PCB_OFF_STDIN_FD      = 360
+const PCB_OFF_HEAP_BRK      = 376
+const PCB_SIZE              = 384
+
+; --- PCB field indices (u64 array view) ---
+; Leading scalar fields, the embedded trap frame at [5..40], then trailing fields.
+const PCB_IDX_PID           = 0
+const PCB_IDX_STATE         = 1
+const PCB_IDX_LINK          = 2    ; next PCB in the ready / zombie list
+const PCB_IDX_USER_STACK_PA = 3
+const PCB_IDX_ENTRY_PC      = 4
+const PCB_IDX_TRAP_FRAME    = 5    ; base of the embedded trap frame (x0..sstatus)
+const PCB_IDX_PAGE_ROOT     = 41
+const PCB_IDX_PARENT_PID    = 42
+const PCB_IDX_EXIT_CODE     = 43
+; Redirected stdio: kernel fd backing the process's stdout / stdin, or 0 for the
+; console (UART). Bound by exec when the shell requests `>`/`>>`/`<`. See ch.7.7.
+const PCB_IDX_STDOUT_FD     = 44
+const PCB_IDX_STDIN_FD      = 45
+; 1 once the process has mapped the framebuffer; drives the DBMODE reset on the
+; last framebuffer user's exit (see syscall.hll fb_release_on_exit, OS spec 7.5).
+const PCB_IDX_FB_MAPPED     = 46
+; Current program break (top of the growable heap), or 0 until the first brk. See ch.4.3 / 7.8.
+const PCB_IDX_HEAP_BRK      = 47
+
+; --- Trap-frame word slots (36 u64: x0..x31, sepc, scause, stval, sstatus) ---
+; Relative to PCB_IDX_TRAP_FRAME inside a PCB, or absolute in a bare frame: u64*.
+; Syscall args arrive in a0-a4/a7; the result is written back to a0. See OS spec ch.5.1.
+const TF_SP       = 2     ; x2 (stack pointer)
+const TF_A0       = 10
+const TF_A1       = 11
+const TF_A2       = 12
+const TF_A3       = 13
+const TF_A4       = 14
+const TF_A7       = 17
+const TF_SEPC     = 32
+const TF_SCAUSE   = 33
+const TF_STVAL    = 34
+const TF_SSTATUS  = 35
+const TF_BYTES    = 288   ; 36 u64; size of a saved trap frame for context memcpy
+
+; --- Sv39 PTE permission bits (VMM_V added internally by vmm_map). See vmm.hll ---
+const VMM_V = 1
+const VMM_R = 2
+const VMM_W = 4
+const VMM_X = 8
+const VMM_U = 16
+const VMM_G = 32

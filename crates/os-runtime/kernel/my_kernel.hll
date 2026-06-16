@@ -33,6 +33,7 @@ external fs_init:               (base_pa: u64, image_size: u64)
 const USER_BINARY_PA = 0x87F00000
 const USER_META_PA   = 0x87EFF000   ; [0]=entry_va (u64), [8]=size_bytes (u64)
 const USER_CODE_VA   = 0x40000000
+; VMM_R/W/X/U page-flag bits come from the shared kernel layout (layout.hll).
 
 ; Scratch globals for spawn_user_process (asm blocks can reference globals).
 user_entry: u64 = 0
@@ -225,7 +226,7 @@ spawn_user_process: () {
         memcpy(dst_page, src_page_pa as u8*, page_size)
 
         user_va: u64 = USER_CODE_VA + offset
-        vmm_map(user_va, dst_page as u64, 30)  ; R+W+X+U (VMM_V added internally)
+        vmm_map(user_va, dst_page as u64, VMM_R + VMM_W + VMM_X + VMM_U)
 
         i = i + 1
     }

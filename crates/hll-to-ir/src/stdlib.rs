@@ -156,7 +156,10 @@ pub fn get_kernel_stdlib_source() -> String {
         + kernel::SCHEDULER.len()
         + kernel::FS.len()
         + 512;
-    let mut combined = String::with_capacity(capacity);
+    let mut combined = String::with_capacity(capacity + kernel::LAYOUT.len());
+    // The shared kernel layout header (PCB / trap-frame / VMM consts) comes first so
+    // every kernel module in the bundle resolves it, regardless of compile mode.
+    append_section(&mut combined, "; --- kernel: layout ---\n", kernel::LAYOUT);
     append_section(&mut combined, "; --- stdlib: types ---\n", stdlib::TYPES);
     append_section(
         &mut combined,

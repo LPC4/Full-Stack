@@ -1,0 +1,10 @@
+; Shared AST record layouts for the compiler, prepended to every `cc` translation
+; unit (cc.hll + cc_codegen.hll) before compilation so the two units agree on one
+; definition instead of hand-mirroring these types. HLL types are file-scoped.
+
+; An AST node: 16-byte name (CALL target only) first so a node pointer doubles as
+; its char pointer; then kind, operands a/b/c, and the next-statement link (-1 = end).
+type Node = { name: u8[16], kind: i64, a: i64, b: i64, c: i64, next: i64 }
+
+; A function table entry; the 16-byte name is first so a slot pointer doubles as it.
+type Fn = { name: u8[16], nparams: i64, nlocals: i64, body: i64 }

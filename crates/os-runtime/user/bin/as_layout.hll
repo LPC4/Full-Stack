@@ -1,0 +1,10 @@
+; Shared record layouts for the assembler, prepended to every `as` translation unit
+; (as.hll + as_object.hll) before compilation so the two units agree on one
+; definition instead of hand-mirroring these types. HLL types are file-scoped.
+
+; A label definition: 16-byte name, byte address, and owning section (0 text, 1 data).
+type Label = { name: u8[16], addr: i64, sec: i64 }
+
+; One relocation: 16-byte target symbol name, byte offset in .text, and kind
+; (0 = CALL_PLT auipc+jalr, 1 = JAL, 2 = LA/PCREL_HI20 auipc+addi).
+type Reloc = { sym: u8[16], off: i64, kind: i64 }

@@ -18,6 +18,7 @@ fn compiled_stdlib() -> &'static AssembledOutput {
             strict: true,
             string_prefix: Some("__kern_str_".to_owned()),
             type_prelude: Vec::new(),
+            source_prelude: None,
         });
         let out = compiler
             .compile(&get_kernel_stdlib_source())
@@ -36,6 +37,7 @@ fn run_kernel_hll(user_src: &str) -> (String, Option<i64>) {
         strict: true,
         string_prefix: None,
         type_prelude: Vec::new(),
+        source_prelude: None,
     });
     let user_out = user_compiler
         .compile(user_src)
@@ -246,25 +248,26 @@ fn process_hll_defines_create_and_init() {
         kernel::PROCESS.contains("process_init"),
         "process.hll must define process_init"
     );
+    // The PCB-layout consts live in the shared layout.hll, prepended to every kernel TU.
     assert!(
-        kernel::PROCESS.contains("PROC_READY"),
-        "process.hll must define PROC_READY constant"
+        kernel::LAYOUT.contains("PROC_READY"),
+        "layout.hll must define PROC_READY constant"
     );
     assert!(
-        kernel::PROCESS.contains("PROC_EXITED"),
-        "process.hll must define PROC_EXITED constant"
+        kernel::LAYOUT.contains("PROC_EXITED"),
+        "layout.hll must define PROC_EXITED constant"
     );
 }
 
 #[test]
-fn process_hll_layout_constants_defined() {
+fn kernel_layout_constants_defined() {
     assert!(
-        kernel::PROCESS.contains("PCB_SIZE"),
-        "process.hll must define PCB_SIZE"
+        kernel::LAYOUT.contains("PCB_SIZE"),
+        "layout.hll must define PCB_SIZE"
     );
     assert!(
-        kernel::PROCESS.contains("PCB_OFF_TRAP_FRAME"),
-        "process.hll must define PCB_OFF_TRAP_FRAME"
+        kernel::LAYOUT.contains("PCB_OFF_TRAP_FRAME"),
+        "layout.hll must define PCB_OFF_TRAP_FRAME"
     );
 }
 

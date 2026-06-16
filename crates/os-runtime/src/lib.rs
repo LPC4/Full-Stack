@@ -114,6 +114,12 @@ pub mod stdlib {
 
 /// Kernel-mode HLL source fragments.
 pub mod kernel {
+    /// Shared kernel layout: PCB map, trap-frame slots, process states, page-flag bits.
+    /// Prepended to every kernel TU so the modules share one definition (see the
+    /// pipeline source prelude). Single source of truth for these consts, in HLL.
+    pub const LAYOUT: &str =
+        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/kernel/layout.hll"));
+
     /// Kernel entry: minimal kernel entrypoint (`_kernel_start` -> `kmain`).
     pub const RUNTIME: &str =
         include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/kernel/entry.hll"));
@@ -207,6 +213,13 @@ pub mod user {
     /// and launched by the shell's `as <src> <out>` command.
     pub const AS: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/user/bin/as.hll"));
 
+    /// Shared record layouts (`Label`/`Reloc`) for `as`, prepended to every `as`
+    /// translation unit so the two units share one definition. See UserProgram::layout.
+    pub const AS_LAYOUT: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/user/bin/as_layout.hll"
+    ));
+
     /// ET_REL object serializer for `as`, split into its own translation unit and
     /// linked with `AS` by the host toolchain. Shares the assembler state with
     /// `as.hll` via `external` globals.
@@ -220,6 +233,13 @@ pub mod user {
     /// subset. Installed at `/bin/cc.elf` and launched by the shell's
     /// `cc <src.hll> <out.s>` command; pairs with `as` for the self-hosting demo.
     pub const CC: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/user/bin/cc.hll"));
+
+    /// Shared AST record layouts (`Node`/`Fn`) for `cc`, prepended to every `cc`
+    /// translation unit so the two units share one definition. See UserProgram::layout.
+    pub const CC_LAYOUT: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/user/bin/cc_layout.hll"
+    ));
 
     /// HLL-0 code generator for `cc`, split into its own translation unit and
     /// linked with `CC` by the host toolchain. Walks the shared AST
@@ -345,6 +365,10 @@ pub mod user {
         /// Display names for `aux_sources`, parallel by index. Used by the GUI
         /// catalog to show each aux unit as a named, editable module.
         pub aux_names: &'static [&'static str],
+        /// Shared definitions header (HLL `type`s/consts) prepended to the primary
+        /// and every aux unit before compilation, so split TUs share one layout
+        /// definition instead of mirroring it. Empty for programs that need none.
+        pub layout: &'static str,
     }
 
     impl UserProgram {
@@ -379,6 +403,7 @@ pub mod user {
             source: SHELL,
             aux_sources: &[SHELL_FILEOPS],
             aux_names: &["shell_fileops"],
+            layout: "",
         },
         UserProgram {
             name: "edit",
@@ -389,6 +414,7 @@ pub mod user {
             source: EDIT,
             aux_sources: &[],
             aux_names: &[],
+            layout: "",
         },
         UserProgram {
             name: "as",
@@ -399,6 +425,7 @@ pub mod user {
             source: AS,
             aux_sources: &[AS_OBJECT],
             aux_names: &["as_object"],
+            layout: AS_LAYOUT,
         },
         UserProgram {
             name: "cc",
@@ -409,6 +436,7 @@ pub mod user {
             source: CC,
             aux_sources: &[CC_CODEGEN],
             aux_names: &["cc_codegen"],
+            layout: CC_LAYOUT,
         },
         UserProgram {
             name: "ld",
@@ -419,6 +447,7 @@ pub mod user {
             source: LD,
             aux_sources: &[LD_LINK],
             aux_names: &["ld_link"],
+            layout: "",
         },
         // Demos (/home/demo). `hello` is injected on demand, not auto-installed.
         UserProgram {
@@ -430,6 +459,7 @@ pub mod user {
             source: CUBE,
             aux_sources: &[],
             aux_names: &[],
+            layout: "",
         },
         UserProgram {
             name: "mandelbrot",
@@ -440,6 +470,7 @@ pub mod user {
             source: MANDELBROT,
             aux_sources: &[],
             aux_names: &[],
+            layout: "",
         },
         UserProgram {
             name: "life",
@@ -450,6 +481,7 @@ pub mod user {
             source: LIFE,
             aux_sources: &[],
             aux_names: &[],
+            layout: "",
         },
         UserProgram {
             name: "hello",
@@ -460,6 +492,7 @@ pub mod user {
             source: USER_HELLO,
             aux_sources: &[],
             aux_names: &[],
+            layout: "",
         },
         // Example sources (/home/src): installed verbatim, not compiled here.
         UserProgram {
@@ -471,6 +504,7 @@ pub mod user {
             source: EXAMPLE_ARRAY_S,
             aux_sources: &[],
             aux_names: &[],
+            layout: "",
         },
         UserProgram {
             name: "ex_hello_hll",
@@ -481,6 +515,7 @@ pub mod user {
             source: CC_DEMO_HLL,
             aux_sources: &[],
             aux_names: &[],
+            layout: "",
         },
         UserProgram {
             name: "ex_stdlib",
@@ -491,6 +526,7 @@ pub mod user {
             source: EXAMPLE_STDLIB_S,
             aux_sources: &[],
             aux_names: &[],
+            layout: "",
         },
         // Fixtures: frozen test inputs, not installed.
         UserProgram {
@@ -502,6 +538,7 @@ pub mod user {
             source: CC_HELLO_HLL,
             aux_sources: &[],
             aux_names: &[],
+            layout: "",
         },
         UserProgram {
             name: "fx_hello_s",
@@ -512,6 +549,7 @@ pub mod user {
             source: CC_HELLO_S,
             aux_sources: &[],
             aux_names: &[],
+            layout: "",
         },
     ];
 

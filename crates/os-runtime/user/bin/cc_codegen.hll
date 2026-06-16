@@ -38,12 +38,9 @@ const ND_WHILE = 8
 const ND_RETURN = 9
 const ND_EXPR = 10
 
-; Shared AST tables (defined in cc.hll). Types are file-scoped, so the layout is
-; duplicated here and must stay in sync with cc.hll.
-type Node = { name: u8[16], kind: i64, a: i64, b: i64, c: i64, next: i64 }
+; Shared AST tables defined in cc.hll. Their layouts (Node/Fn) come from the shared
+; cc_layout.hll header, so they cannot drift between units.
 external nodes: Node*
-
-type Fn = { name: u8[16], nparams: i64, nlocals: i64, body: i64 }
 external fns: Fn*
 
 gen_binop: (op: i64) {

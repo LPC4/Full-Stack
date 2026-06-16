@@ -66,8 +66,7 @@ toks: Token* = null
 ntok: i64 = 0
 
 ; --- AST: array of nodes, statements linked via the `next` field (-1 = end) ---
-; The 16-byte name (CALL target only) is first so a node pointer doubles as it.
-type Node = { name: u8[16], kind: i64, a: i64, b: i64, c: i64, next: i64 }
+; Node / Fn record layouts come from the shared cc_layout.hll header.
 nodes: Node* = null
 nnode: i64 = 0
 
@@ -75,8 +74,6 @@ nnode: i64 = 0
 call_args: i64* = null
 ncallarg: i64 = 0
 
-; Function table; the 16-byte name is first so a slot pointer doubles as it.
-type Fn = { name: u8[16], nparams: i64, nlocals: i64, body: i64 }
 fns: Fn* = null
 nfn: i64 = 0
 

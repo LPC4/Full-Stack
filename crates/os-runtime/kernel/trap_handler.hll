@@ -7,6 +7,8 @@ external schedule:          (frame: u64*, action: u64)
 external scheduler_wake_input_waiter: () -> u64
 kernel_tick: u64
 
+; Trap-frame slots TF_SEPC/SCAUSE/STVAL come from the shared kernel layout (layout.hll).
+
 trap_handler: (frame: u64*) {
     ; Ensure S-mode can access U-flagged pages (needed for syscall buffer reads).
     asm {
@@ -16,7 +18,7 @@ trap_handler: (frame: u64*) {
         csrw sstatus, t0
     }
 
-    scause_u: u64 = @frame[33]
+    scause_u: u64 = @frame[TF_SCAUSE]
     scause_i: i64 = scause_u as i64
 
     ; Bit 63 set = interrupt (negative when cast to i64).
@@ -68,7 +70,7 @@ trap_handler: (frame: u64*) {
     ; Always advance sepc past the ecall; non-zero actions trigger schedule.
     if scause_u == 8 {
         action: u64 = syscall_dispatch(frame)
-        @frame[32] = @frame[32] + 4
+        @frame[TF_SEPC] = @frame[TF_SEPC] + 4
         if action != 0 {
             schedule(frame, action)
         }
@@ -76,7 +78,7 @@ trap_handler: (frame: u64*) {
     }
 
     klog_hex("exception scause".data, scause_u)
-    klog_hex("exception sepc".data, @frame[32])
-    klog_hex("exception stval".data, @frame[34])
+    klog_hex("exception sepc".data, @frame[TF_SEPC])
+    klog_hex("exception stval".data, @frame[TF_STVAL])
     kpanic("unhandled exception".data)
 }
