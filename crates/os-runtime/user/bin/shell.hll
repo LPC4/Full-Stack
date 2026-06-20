@@ -345,9 +345,13 @@ sh_print_dec: (v: i64) {
     }
 }
 
+; Exit status of the last foreground child, for `&&` chaining (run_line). -2 is Ctrl-C.
+last_exit: i64 = 0
+
 ; Wait on a foreground child, then report status. -2 means Ctrl-C. See OS spec ch.7.2.
 sh_wait_foreground: (pid: i64) {
     code: i64 = sc_waitpid(pid)
+    last_exit = code
     two: i64 = 2
     if code + two == 0 {
         console_writeln("^C".data)
@@ -1330,6 +1334,93 @@ cmd_pipe: (cwd: u8*, line: u8*) {
     }
 }
 
+; Run a line as an `&&` chain: each segment runs only if the previous exited 0.
+; Splits on top-level `&&`; a lone trailing `&` still means background. The exit
+; status of the last foreground child is tracked in last_exit.
+run_line: (cwd: u8*, line: u8*) {
+    l: u64 = cstr_len(line)
+
+    ; Record the [start, end) byte range of each `&&`-separated segment.
+    starts: u64[8]
+    ends: u64[8]
+    count: u64 = 0
+    seg: u64 = 0
+    i: u64 = 0
+    while i < l {
+        is_sep: i64 = 0
+        if @(line + i) == '&' {
+            if @(line + (i + 1)) == '&' {
+                is_sep = 1
+            }
+        }
+        if is_sep == 1 {
+            if count < 8 {
+                sp: u64* = starts[count]
+                @sp = seg
+                ep: u64* = ends[count]
+                @ep = i
+                count = count + 1
+            }
+            seg = i + 2
+            i = i + 2
+        } else {
+            i = i + 1
+        }
+    }
+    if count < 8 {
+        sp: u64* = starts[count]
+        @sp = seg
+        ep: u64* = ends[count]
+        @ep = l
+        count = count + 1
+    }
+
+    ; No separator: run the line directly (avoids the segment copy).
+    if count < 2 {
+        handle_command(cwd, line)
+        return
+    }
+
+    part: u8[256]
+    part_p: u8* = part[0]
+    s: u64 = 0
+    while s < count {
+        sp: u64* = starts[s]
+        st: u64 = @sp
+        ep: u64* = ends[s]
+        en: u64 = @ep
+        while st < en {
+            if @(line + st) != ' ' {
+                break
+            }
+            st = st + 1
+        }
+        while en > st {
+            if @(line + (en - 1)) != ' ' {
+                break
+            }
+            en = en - 1
+        }
+        k: u64 = 0
+        j: u64 = st
+        while j < en {
+            d: u8* = part_p + k
+            @d = @(line + j)
+            k = k + 1
+            j = j + 1
+        }
+        term: u8* = part_p + k
+        @term = 0 as u8
+
+        last_exit = 0
+        handle_command(cwd, part_p)
+        if last_exit != 0 {
+            return
+        }
+        s = s + 1
+    }
+}
+
 handle_command: (cwd: u8*, line: u8*) {
     if @line == 0 {
         return
@@ -1450,7 +1541,7 @@ main: () -> i32 {
         console_write(cwd_p)
         console_write("$ ".data)
         sh_read_line(line_p)
-        handle_command(cwd_p, line_p)
+        run_line(cwd_p, line_p)
     }
     return 0
 }

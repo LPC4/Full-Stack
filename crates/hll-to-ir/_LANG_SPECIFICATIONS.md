@@ -671,7 +671,7 @@ across FFI boundaries.
 - Types are preserved exactly for debugger visualization.
 - Lifetime ranges are tracked for stack and heap regions.
 - Optimized builds maintain semantic equivalence with a source-level mapping.
-
+ 
 ## Appendix D: HLL-0 (the self-hosting subset)
 
 HLL-0 is the deliberately tiny subset the in-VM compiler `cc` (PLAN 1.2) accepts. It is

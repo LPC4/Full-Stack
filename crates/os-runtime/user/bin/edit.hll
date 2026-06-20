@@ -498,6 +498,10 @@ ed_help: () {
 main: () -> i32 {
     lines = new(u8, MAXLINES * LINEW)
     scratch = new(u8, MAXLINES * LINEW)
+    if lines == null or scratch == null {
+        console_writeln("edit: out of memory".data)
+        return 1
+    }
 
     path: u8* = ARG_BASE as u8*
     ed_load(path)

@@ -882,6 +882,10 @@ main: () -> i32 {
     fns = new(Fn, 64)
     loc_name = new(u8, 1024)
     asmout = new(u8, 32768)
+    if src == null or toks == null or nodes == null or call_args == null or fns == null or loc_name == null or asmout == null {
+        console_writeln("cc: out of memory".data)
+        return 1
+    }
 
     arg: u8* = ARG_BASE as u8*
     src_path: u8[128]

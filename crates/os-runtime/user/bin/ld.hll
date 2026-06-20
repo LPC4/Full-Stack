@@ -294,6 +294,10 @@ main: () -> i32 {
     gsym_names = new(u8, 1024)
     gsym_addr = new(i64, 64)
     path_pool = new(u8, 2048)
+    if objbuf == null or merged_text == null or merged_data == null or out == null or gsym_names == null or gsym_addr == null or path_pool == null {
+        console_writeln("ld: out of memory".data)
+        return 1
+    }
 
     arg: u8* = ARG_BASE as u8*
     parse_args(arg)

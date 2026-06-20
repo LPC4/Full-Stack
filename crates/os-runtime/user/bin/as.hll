@@ -1348,6 +1348,10 @@ main: () -> i32 {
     tokbuf = new(u8, 144)
     glbl_names = new(u8, 512)
     relocs = new(Reloc, 256)
+    if src == null or code == null or data == null or out == null or labels == null or tokbuf == null or glbl_names == null or relocs == null {
+        console_writeln("as: out of memory".data)
+        return 1
+    }
 
     arg: u8* = ARG_BASE as u8*
     src_path: u8[128]

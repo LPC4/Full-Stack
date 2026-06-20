@@ -602,6 +602,34 @@ main: () -> i32 {
     );
 }
 
+// brk must refuse a request that would grow the heap into the arg page / stack
+// (above USER_ARG_BASE = 0x7FF00000): it returns the unchanged break so the caller
+// sees the failure, and a later in-bounds grow still succeeds.
+#[test]
+fn user_brk_refuses_growth_into_arg_page() {
+    run_example_in_kernel(
+        r#"
+main: () -> i32 {
+    base: u64 = heap_brk(0)
+    big: u64 = 0x7FFFF000
+    got: u64 = heap_brk(big)
+    if got >= big {
+        return 1
+    }
+    if got != base {
+        return 2
+    }
+    ok: u64 = heap_brk(base + 4096)
+    if ok < base + 4096 {
+        return 3
+    }
+    return 0
+}
+"#,
+        "user_brk_refuses_growth_into_arg_page",
+    );
+}
+
 // --- Framebuffer device (map_fb syscall + fbdemo program) ---
 
 // Reference Mandelbrot membership using the exact Q16.16 integer math from
@@ -974,6 +1002,67 @@ loop:
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
         "shell did not survive the run and exit cleanly; outcome={outcome:?} uart={uart:?}"
+    );
+}
+
+// The shell chains `cmd1 && cmd2` on one line, running the second only if the first
+// exits 0. Assemble then run in a single line and confirm both stages ran. PLAN 4.2.
+#[test]
+fn kernel_shell_and_chains_on_success() {
+    let source = b"\
+  li a0, 7
+  li a7, 93
+  ecall
+";
+
+    let (outcome, uart) = run_tool_session(
+        &["as"],
+        &[("/prog.s", source)],
+        "as /prog.s /prog.elf && run /prog.elf\nexit\n",
+        200_000_000,
+    );
+
+    assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
+    assert!(
+        uart.contains("as: wrote /prog.elf"),
+        "first stage did not run; uart={uart:?}"
+    );
+    assert!(
+        uart.contains("[exit 7]"),
+        "second stage did not run after `&&`; uart={uart:?}"
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "shell did not exit cleanly; outcome={outcome:?} uart={uart:?}"
+    );
+}
+
+// A failing first command (a non-zero exit) short-circuits the `&&` chain: the
+// second command must not run. Guards the exit-code gating in run_line. PLAN 4.2.
+#[test]
+fn kernel_shell_and_stops_on_failure() {
+    let (outcome, uart) = run_tool_session(
+        &["as"],
+        &[],
+        "as /missing.s /out.elf && echo SECOND_RAN\nexit\n",
+        200_000_000,
+    );
+
+    assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
+    assert!(
+        uart.contains("as: cannot open"),
+        "first stage did not fail as expected; uart={uart:?}"
+    );
+    // The marker appears once as the echoed command line; if `echo` had run it would
+    // appear a second time as output. Gating means exactly one occurrence.
+    assert_eq!(
+        uart.matches("SECOND_RAN").count(),
+        1,
+        "second stage ran despite the first failing; uart={uart:?}"
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "shell did not exit cleanly; outcome={outcome:?} uart={uart:?}"
     );
 }
 

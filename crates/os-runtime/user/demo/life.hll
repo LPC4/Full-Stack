@@ -218,6 +218,10 @@ main: () -> i32 {
 
     cur = new(u8, CELLS)
     nxt = new(u8, CELLS)
+    if cur == null or nxt == null {
+        console_writeln("life: out of memory".data)
+        return 1
+    }
 
     enable_double_buffer()
     seed()

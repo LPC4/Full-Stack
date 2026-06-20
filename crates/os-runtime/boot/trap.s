@@ -56,12 +56,16 @@ sys_exit:
 # sys_brk(addr=a0) -> resulting break. Flat model: the break pointer lives at
 # HEAP_PTR_ADDR (RAM_BASE + 32 MiB - 8 = 0x81FFFFF8), no paging. addr==0 queries.
 # Build the address as (1<<31) + 0x01FFFFF8 to avoid sign-extending a bit-31 li.
+# A request at or above HEAP_PTR_ADDR would grow into the break-pointer word and the
+# stack above it, so refuse it: fall through to _brk_query and return the unchanged
+# break (same failure contract as the kernel handler / hosted allocator).
 sys_brk:
     li t0, 1
     slli t0, t0, 31
     li t1, 33554424
     add t0, t0, t1
     beqz a0, _brk_query
+    bgeu a0, t0, _brk_query
     sd a0, 0(t0)
     j _advance_mepc_and_mret
 _brk_query:

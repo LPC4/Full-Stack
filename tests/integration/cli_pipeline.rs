@@ -76,7 +76,10 @@ fn hll_to_asm_text(src: &str) -> String {
 fn ir_output_contains_function_name() {
     let src = "add: (a: i32, b: i32) -> i32 { return a + b }";
     let ir = hll_to_ir_text(src);
-    assert!(ir.contains("add"), "IR should contain the function name 'add'");
+    assert!(
+        ir.contains("add"),
+        "IR should contain the function name 'add'"
+    );
 }
 
 #[test]
@@ -221,3 +224,10 @@ fn run_zero_exit_code() {
     let (_, code) = run_hll(src);
     assert_eq!(code, 0);
 }
+
+// NOTE: the flat firmware `brk` (boot/trap.s) now bounds growth at HEAP_PTR_ADDR
+// (PLAN 6.3a), mirroring the kernel guard. It is not covered by a bare-VM test here
+// because `heap_brk(0)` on the bare VM returns 0 even though `from_elf` writes the
+// break-pointer word at 0x81FFFFF8 (verified: RAM holds heap_base, the firmware load
+// still reads 0). That is a separate, pre-existing defect in the untested bare-VM
+// hosted heap path; the kernel `brk` bound is covered by user_brk_refuses_growth_into_arg_page.

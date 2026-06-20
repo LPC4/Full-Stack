@@ -672,6 +672,14 @@ sys_brk_impl: (frame: u64*) -> u64 {
     map_from: u64 = ((brk + 4095) / 4096) * 4096
     map_to:   u64 = ((addr + 4095) / 4096) * 4096
 
+    ; Refuse a request that would grow into the arg page / user stack above. Without
+    ; this, a runaway alloc maps over USER_ARG_BASE and corrupts the process. Leave the
+    ; break unchanged so the caller sees the failure (same contract as OOM).
+    if map_to > USER_ARG_BASE {
+        @frame[TF_A0] = brk
+        return SYSACT_CONTINUE
+    }
+
     vmm_set_root(process_root(cur))
     a: u64 = map_from
     while a < map_to {
