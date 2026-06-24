@@ -5,10 +5,22 @@ type Box<Box<i32>> = {value: Box<i32>}
 define i32 main() {
 entry:
 	; local var: boxed
-	$boxed = stack_alloc Box<i32>
+	$boxed = stack_alloc Box<i32>*
+	$0 = heap_alloc Box<i32>
+	write Box<i32>* $0 @ $boxed
 	; local var: legacy
-	$legacy = stack_alloc Box_i32
+	$legacy = stack_alloc Box_i32*
+	$1 = heap_alloc Box_i32
+	write Box_i32* $1 @ $legacy
 	; local var: double
-	$double = stack_alloc Box<Box<i32>>
+	$double = stack_alloc Box<Box<i32>>*
+	$2 = heap_alloc Box<Box<i32>>
+	write Box<Box<i32>>* $2 @ $double
+	$3 = read Box<i32>* @ $boxed
+	heap_free $3
+	$4 = read Box_i32* @ $legacy
+	heap_free $4
+	$5 = read Box<Box<i32>>* @ $double
+	heap_free $5
 	ret 0
 }

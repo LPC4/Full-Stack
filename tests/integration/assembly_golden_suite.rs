@@ -33,9 +33,9 @@ fn execute_assembly_golden_suite() {
     hll_files.sort();
 
     let mut tests_run = 0;
-    let mut pipeline = CompilationPipeline::new_v1();
+    let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
-    
+
     pipeline.set_write_artifacts(false); // Don't create gigabytes of files during tests
     let update_goldens = golden_support::should_update_goldens("UPDATE_ASM_GOLDENS");
 
@@ -94,4 +94,3 @@ fn execute_assembly_golden_suite() {
         tests_run
     );
 }
-

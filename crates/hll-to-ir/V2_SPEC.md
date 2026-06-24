@@ -85,8 +85,9 @@ form the grammar forbids:
 - `@str_ptr = { data: data, length: length }` (S11.1:565)
 
 This is the most natural-looking literal in the doc and it is not in the language.
-**V2 direction:** make `Point { x: 1, y: 2 }` (named struct literal) first-class and
-grammatical; drop the `.field =` shorthand or define it precisely.
+**V2 direction:** make `.field = expr` the single field-init form (so `:` always introduces a
+type), used both for named literals `Point { .x = 1, .y = 2 }` and anonymous literals
+`{ .x = 1, .y = 2 }`. See D4 for the resolved form.
 
 ### R4. `@arr[i].field` is shown but rejected (med)
 
@@ -300,17 +301,19 @@ Reading an undeclared name on the LHS of `=` is a compile error (catches typos).
 
 #### D4. One struct-literal form (fixes R3, C3)
 
-A struct literal is `field: expr` pairs in braces, optionally prefixed by the type name:
+A struct literal is `.field = expr` pairs in braces, optionally prefixed by the type name:
 
 ```hll
-p := Point { x: 1.0, y: 2.0 }     ; named -- type is explicit
-q: Point = { x: 1.0, y: 2.0 }     ; anonymous -- type inferred from the annotation
-@ptr = { x: 3.0, y: 4.0 }         ; anonymous -- type inferred from the lvalue
+p := Point { .x = 1.0, .y = 2.0 } ; named -- type is explicit
+q: Point = { .x = 1.0, .y = 2.0 } ; anonymous -- type inferred from the annotation
+@ptr = { .x = 3.0, .y = 4.0 }     ; anonymous -- type inferred from the lvalue
 ```
 
-`field_init = identifier ":" expression`. The `.field = expr` shorthand and the
-`field: Type = expr` typed-init forms are **removed**; field order is free, all fields must
-be present for a named literal, and missing fields in an anonymous literal default to zero.
+`field_init = "." identifier "=" expression`. Field initialization uses `.field = expr` so
+that `:` always introduces a *type* (declarations, parameters, struct field types) and never a
+value. The `field: expr` and the `field: Type = expr` typed-init forms are **removed**; field
+order is free, all fields must be present for a named literal, and missing fields in an
+anonymous literal default to zero.
 
 ---
 

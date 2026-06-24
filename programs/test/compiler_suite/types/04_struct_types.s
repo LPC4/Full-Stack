@@ -34,19 +34,19 @@ calc_offset__entry:
 ; Load {x: f32, y: f32}* from memory into $$0
 	addi   t0, sp, 0
 	ld     s2, 0(t0)
+; Address of field 'x' at offset 0
 	addi   t0, zero, 0
 	addi   t1, t0, 0
 	add    s2, s2, t1
 ; Load {x: f32, y: f32}* from memory into $$2
 	addi   t0, sp, 0
 	ld     s3, 0(t0)
-	addi   t0, zero, 0
-	addi   t1, t0, 0
-	add    s3, s3, t1
-; Load f32 from memory into $$4
-	flw    ft1, 0(s3)
+; Access field 'x' at offset 0
+; Load f32 from memory into $$3
+	addi   t0, s3, 0
+	flw    ft1, 0(t0)
 	fsw    ft1, 16(sp)
-; Load f32 from memory into $$5
+; Load f32 from memory into $$4
 	addi   t0, sp, 8
 	flw    ft2, 0(t0)
 	fsw    ft2, 24(sp)
@@ -59,22 +59,22 @@ calc_offset__entry:
 	flw    ft6, 16(sp)
 	fsw    ft6, 0(s2)
 ; assignment
-; Load {x: f32, y: f32}* from memory into $$7
+; Load {x: f32, y: f32}* from memory into $$6
 	addi   t0, sp, 0
 	ld     s2, 0(t0)
+; Address of field 'y' at offset 4
 	addi   t0, zero, 4
 	addi   t1, t0, 0
 	add    s2, s2, t1
-; Load {x: f32, y: f32}* from memory into $$9
+; Load {x: f32, y: f32}* from memory into $$8
 	addi   t0, sp, 0
 	ld     s3, 0(t0)
-	addi   t0, zero, 4
-	addi   t1, t0, 0
-	add    s3, s3, t1
-; Load f32 from memory into $$11
-	flw    ft7, 0(s3)
+; Access field 'y' at offset 4
+; Load f32 from memory into $$9
+	addi   t0, s3, 4
+	flw    ft7, 0(t0)
 	fsw    ft7, 16(sp)
-; Load f32 from memory into $$12
+; Load f32 from memory into $$10
 	addi   t0, sp, 8
 	flw    ft0, 0(t0)
 	fsw    ft0, 24(sp)
@@ -86,23 +86,21 @@ calc_offset__entry:
 ; Store f32 to memory
 	flw    ft4, 16(sp)
 	fsw    ft4, 0(s2)
+; Load {x: f32, y: f32}* from memory into $$12
+	addi   t0, sp, 0
+	ld     s2, 0(t0)
+; Access field 'x' at offset 0
+; Load f32 from memory into $$13
+	addi   t0, s2, 0
+	flw    ft5, 0(t0)
+	fsw    ft5, 16(sp)
 ; Load {x: f32, y: f32}* from memory into $$14
 	addi   t0, sp, 0
 	ld     s2, 0(t0)
-	addi   t0, zero, 0
-	addi   t1, t0, 0
-	add    s2, s2, t1
-; Load f32 from memory into $$16
-	flw    ft5, 0(s2)
-	fsw    ft5, 16(sp)
-; Load {x: f32, y: f32}* from memory into $$17
-	addi   t0, sp, 0
-	ld     s2, 0(t0)
-	addi   t0, zero, 4
-	addi   t1, t0, 0
-	add    s2, s2, t1
-; Load f32 from memory into $$19
-	flw    ft6, 0(s2)
+; Access field 'y' at offset 4
+; Load f32 from memory into $$15
+	addi   t0, s2, 4
+	flw    ft6, 0(t0)
 	fsw    ft6, 24(sp)
 ; mul operation on f32
 	flw    ft7, 16(sp)

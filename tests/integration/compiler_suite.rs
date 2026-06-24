@@ -33,9 +33,9 @@ fn execute_compiler_test_suite() {
     hll_files.sort();
 
     let mut tests_run = 0;
-    let mut pipeline = CompilationPipeline::new_v1();
+    let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
-    
+
     pipeline.set_write_artifacts(false); // Don't create gigabytes of files during tests
     let update_goldens = golden_support::should_update_goldens("UPDATE_GOLDENS");
 
@@ -61,10 +61,7 @@ fn execute_compiler_test_suite() {
             let ir_path = path.with_extension("ir");
             if update_goldens {
                 fs::write(&ir_path, &actual_ir).expect("Failed to write golden ir file");
-                println!(
-                    "Updated golden IR file for {:?}",
-                    path.file_name().unwrap()
-                );
+                println!("Updated golden IR file for {:?}", path.file_name().unwrap());
                 tests_run += 1;
             } else if ir_path.exists() {
                 let expected_ir = fs::read_to_string(&ir_path)
@@ -96,4 +93,3 @@ fn execute_compiler_test_suite() {
         tests_run
     );
 }
-

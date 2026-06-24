@@ -74,10 +74,10 @@ malloc: (size: u64) -> u8* {
         return null
     }
     @block = {
-        next:    heap_list,
-        ptr:     payload,
-        size:    requested,
-        is_free: 0,
+        .next    = heap_list,
+        .ptr     = payload,
+        .size    = requested,
+        .is_free = 0,
     }
     heap_list = block
     return payload

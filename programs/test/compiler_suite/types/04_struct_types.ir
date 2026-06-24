@@ -10,28 +10,30 @@ entry:
 	write f32 $shift @ $shift_ptr
 	; assignment
 	$0 = read {x: f32, y: f32}* @ $p_ptr
+	; Address of field 'x' at offset 0
 	$1 = offset f32 $0, 0
 	$2 = read {x: f32, y: f32}* @ $p_ptr
-	$3 = offset f32 $2, 0
-	$4 = read f32 @ $3
-	$5 = read f32 @ $shift_ptr
-	$6 = math add f32 $4, $5
-	write f32 $6 @ $1
+	; Access field 'x' at offset 0
+	$3 = read f32 @ $2 + 0
+	$4 = read f32 @ $shift_ptr
+	$5 = math add f32 $3, $4
+	write f32 $5 @ $1
 	; assignment
-	$7 = read {x: f32, y: f32}* @ $p_ptr
-	$8 = offset f32 $7, 4
-	$9 = read {x: f32, y: f32}* @ $p_ptr
-	$10 = offset f32 $9, 4
-	$11 = read f32 @ $10
-	$12 = read f32 @ $shift_ptr
-	$13 = math add f32 $11, $12
-	write f32 $13 @ $8
+	$6 = read {x: f32, y: f32}* @ $p_ptr
+	; Address of field 'y' at offset 4
+	$7 = offset f32 $6, 4
+	$8 = read {x: f32, y: f32}* @ $p_ptr
+	; Access field 'y' at offset 4
+	$9 = read f32 @ $8 + 4
+	$10 = read f32 @ $shift_ptr
+	$11 = math add f32 $9, $10
+	write f32 $11 @ $7
+	$12 = read {x: f32, y: f32}* @ $p_ptr
+	; Access field 'x' at offset 0
+	$13 = read f32 @ $12 + 0
 	$14 = read {x: f32, y: f32}* @ $p_ptr
-	$15 = offset f32 $14, 0
-	$16 = read f32 @ $15
-	$17 = read {x: f32, y: f32}* @ $p_ptr
-	$18 = offset f32 $17, 4
-	$19 = read f32 @ $18
-	$20 = math mul f32 $16, $19
-	ret $20
+	; Access field 'y' at offset 4
+	$15 = read f32 @ $14 + 4
+	$16 = math mul f32 $13, $15
+	ret $16
 }

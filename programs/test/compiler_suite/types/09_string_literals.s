@@ -20,7 +20,7 @@ main__entry:
 	addi   t1, zero, 11
 	sd     t1, 0(t0)
 	addi   t0, sp, 0
-; Store {data: i8*, length: i64} to memory
+; Store i8[] to memory
 	ld     t1, 16(sp)
 	sd     t1, 0(t0)
 	ld     t2, 24(sp)
@@ -35,7 +35,7 @@ main__entry:
 	addi   t1, zero, 20
 	sd     t1, 0(t0)
 	addi   t0, sp, 32
-; Store {data: i8*, length: i64} to memory
+; Store i8[] to memory
 	ld     t1, 48(sp)
 	sd     t1, 0(t0)
 	ld     t2, 56(sp)
@@ -50,7 +50,7 @@ main__entry:
 	addi   t1, zero, 0
 	sd     t1, 0(t0)
 	addi   t0, sp, 64
-; Store {data: i8*, length: i64} to memory
+; Store i8[] to memory
 	ld     t1, 80(sp)
 	sd     t1, 0(t0)
 	ld     t2, 88(sp)

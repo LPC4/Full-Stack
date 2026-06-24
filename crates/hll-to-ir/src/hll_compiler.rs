@@ -858,7 +858,7 @@ mod tests {
             ..CompileConfig::default()
         })
         .compile(
-            "; @version 2\nstruct Point { x: i32 }\nmain: () -> i32 {\n    p := Point { x: 5 }\n    return p.x\n}\n",
+            "; @version 2\nstruct Point { x: i32 }\nmain: () -> i32 {\n    p := Point { .x = 5 }\n    return p.x\n}\n",
         )
         .expect("V2 pragma should let a struct decl compile under a V1 default");
         assert!(output.ir.to_string().contains("main"));
@@ -1104,8 +1104,8 @@ struct Point {
 }
 
 main: () -> i32 {
-    named := Point { y: 2, x: 1 }
-    contextual: Point = { x: 3, y: 4 }
+    named := Point { .y = 2, .x = 1 }
+    contextual: Point = { .x = 3, .y = 4 }
     return named.x + named.y + contextual.x + contextual.y
 }
 "#,
@@ -1116,9 +1116,9 @@ main: () -> i32 {
     #[test]
     fn v2_named_struct_literal_reports_field_errors() {
         for (literal, expected) in [
-            ("Point { x: 1, x: 2 }", "duplicate field `x`"),
-            ("Point { x: 1 }", "missing field `y`"),
-            ("Point { x: 1, y: 2, z: 3 }", "unknown field `z`"),
+            ("Point { .x = 1, .x = 2 }", "duplicate field `x`"),
+            ("Point { .x = 1 }", "missing field `y`"),
+            ("Point { .x = 1, .y = 2, .z = 3 }", "unknown field `z`"),
         ] {
             let source = format!(
                 "struct Point {{ x: i32, y: i32 }}\nmain: () -> i32 {{ value := {literal}\nreturn 0\n}}"
@@ -1141,8 +1141,8 @@ main: () -> i32 {
 struct Point { x: i32, y: i32 }
 
 main: () -> i32 {
-    point: Point = { x: 7 }
-    point = { y: 9 }
+    point: Point = { .x = 7 }
+    point = { .y = 9 }
     return point.x + point.y
 }
 "#,
@@ -1155,9 +1155,9 @@ main: () -> i32 {
     #[test]
     fn v2_contextual_struct_literal_validates_fields() {
         for (literal, expected) in [
-            ("{ x: 1, x: 2 }", "duplicate field `x`"),
-            ("{ z: 1 }", "unknown field `z`"),
-            ("{ x: true }", "field `x` expects `i32`"),
+            ("{ .x = 1, .x = 2 }", "duplicate field `x`"),
+            ("{ .z = 1 }", "unknown field `z`"),
+            ("{ .x = true }", "field `x` expects `i32`"),
         ] {
             let source = format!(
                 "struct Point {{ x: i32, y: i32 }}\nmain: () -> i32 {{ value: Point = {literal}\nreturn 0\n}}"
@@ -1180,7 +1180,7 @@ main: () -> i32 {
 struct Point { x: i32, y: i32 }
 
 make_point: () -> Point {
-    return { x: 5 }
+    return { .x = 5 }
 }
 
 sum_point: (point: Point) -> i32 {
@@ -1188,7 +1188,7 @@ sum_point: (point: Point) -> i32 {
 }
 
 main: () -> i32 {
-    return sum_point({ y: 7 }) + sum_point(make_point())
+    return sum_point({ .y = 7 }) + sum_point(make_point())
 }
 "#,
         )
@@ -1200,7 +1200,7 @@ main: () -> i32 {
         let errors = match compile_v2(
             r#"
 main: () -> i32 {
-    value := { x: 1 }
+    value := { .x = 1 }
     return 0
 }
 "#,

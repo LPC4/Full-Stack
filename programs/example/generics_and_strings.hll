@@ -18,7 +18,7 @@ sum_pair: (pair: Pair) -> i32 {
 }
 
 make_pair: (left: i32, right: i32) -> Pair {
-    return { left: left, right: right }
+    return { .left = left, .right = right }
 }
 
 main: () -> i32 {

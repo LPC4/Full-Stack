@@ -1,38 +1,40 @@
 use full_stack::compilation_pipeline::CompilationPipeline;
 
 #[test]
-fn rejects_address_of_dereference_expression() {
+fn allows_address_of_dereference_place() {
+    // `@ptr` is a place, so `&@ptr` is a valid (redundant) way to write `ptr`.
     let source = r#"
 main: () -> i32 {
     ptr: i32* = new(i32)
-    bad: i32* = &@ptr
-    free(ptr)
-    return 0
+    same: i32* = &@ptr
+    @same = 7
+    defer free(ptr)
+    return @ptr
 }
 "#;
 
-    let mut pipeline = CompilationPipeline::new_v1();
-    pipeline.set_write_artifacts(false);
-    
+    let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
     let result = pipeline.compile(source);
-    assert!(result.is_err(), "expected `&@ptr` to be rejected");
+    assert!(
+        result.is_ok(),
+        "expected `&@ptr` to compile as a place address: {:?}",
+        result.err()
+    );
 }
 
 #[test]
 fn allows_address_of_stack_array_element() {
     let source = r#"
 main: () -> i32 {
-    arr: i32[4]
-    p: i32** = &(arr[0])
-    @@p = 7
-    return @(arr[0])
+    arr: i32[4] = []
+    p: i32* = &arr[0]
+    @p = 7
+    return arr[0]
 }
 "#;
 
-    let mut pipeline = CompilationPipeline::new_v1();
-    pipeline.set_write_artifacts(false);
-    
+    let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
     let result = pipeline.compile(source);
     assert!(
@@ -50,20 +52,18 @@ sum_pair: (pair: { left: i32, right: i32 }) -> i32 {
 }
 
 make_pair: (left: i32, right: i32) -> { left: i32, right: i32 } {
-    return { left: i32 = left, right: i32 = right }
+    return { .left = left, .right = right }
 }
 
 main: () -> i32 {
     pair: { left: i32, right: i32 } = make_pair(2, 3)
     other: { left: i32, right: i32 }* = new({ left: i32, right: i32 })
     @other = { .left = 4, .right = 5 }
-    return sum_pair(pair) + @other.left + @other.right
+    return sum_pair(pair) + other.left + other.right
 }
 "#;
 
-    let mut pipeline = CompilationPipeline::new_v1();
-    pipeline.set_write_artifacts(false);
-    
+    let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
     let result = pipeline.compile(source);
     assert!(
@@ -77,14 +77,12 @@ main: () -> i32 {
 fn allows_typed_struct_literals() {
     let source = r#"
 main: () -> i32 {
-    value: { left: i32, right: i32 } = { left: i32 = 7, right: i32 = 11 }
+    value: { left: i32, right: i32 } = { .left = 7, .right = 11 }
     return value.left + value.right
 }
 "#;
 
-    let mut pipeline = CompilationPipeline::new_v1();
-    pipeline.set_write_artifacts(false);
-    
+    let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
     let result = pipeline.compile(source);
     assert!(
@@ -107,9 +105,7 @@ main: () -> i32 {
 }
 "#;
 
-    let mut pipeline = CompilationPipeline::new_v1();
-    pipeline.set_write_artifacts(false);
-    
+    let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
     let result = pipeline.compile(source);
     assert!(
@@ -122,12 +118,12 @@ main: () -> i32 {
 #[test]
 fn allows_struct_destructuring_from_type_alias() {
     let source = r#"
-type Result = {
+struct Outcome {
     value: i32,
     success: bool
 }
 
-get_result: () -> Result {
+get_result: () -> Outcome {
     return { .value = 42, .success = true }
 }
 
@@ -140,14 +136,12 @@ main: () -> i32 {
 }
 "#;
 
-    let mut pipeline = CompilationPipeline::new_v1();
-    pipeline.set_write_artifacts(false);
-    
+    let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
     let result = pipeline.compile(source);
     assert!(
         result.is_ok(),
-        "expected `Result` destructuring to compile successfully: {:?}",
+        "expected `Outcome` destructuring to compile successfully: {:?}",
         result.err()
     );
 }
@@ -155,21 +149,19 @@ main: () -> i32 {
 #[test]
 fn allows_generic_placeholder_arithmetic() {
     let source = r#"
-type Box<T> = {
+struct Box<T> {
     val: T,
     ptr: T*
 }
 
 main: () -> i32 {
     box1: Box<i32>* = new(Box<i32>)
-    @box1.val = 42
-    return @box1.val + 58
+    box1.val = 42
+    return box1.val + 58
 }
 "#;
 
-    let mut pipeline = CompilationPipeline::new_v1();
-    pipeline.set_write_artifacts(false);
-    
+    let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
     let result = pipeline.compile(source);
     assert!(
@@ -180,23 +172,21 @@ main: () -> i32 {
 }
 
 #[test]
-fn allows_deref_after_array_indexing() {
+fn allows_array_index_place_access() {
     let source = r#"
 main: () -> i32 {
-    arr: i32[4]
-    @arr[0] = 7
-    return @arr[0]
+    arr: i32[4] = []
+    arr[0] = 7
+    return arr[0]
 }
 "#;
 
-    let mut pipeline = CompilationPipeline::new_v1();
-    pipeline.set_write_artifacts(false);
-    
+    let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
     let result = pipeline.compile(source);
     assert!(
         result.is_ok(),
-        "expected `@arr[0]` to compile successfully: {:?}",
+        "expected `arr[0]` place access to compile successfully: {:?}",
         result.err()
     );
 }
@@ -205,23 +195,21 @@ main: () -> i32 {
 fn allows_stack_and_heap_arrays() {
     let source = r#"
 main: () -> i32 {
-    stack: i32[3]
-    @stack[0] = 1
-    @stack[1] = 2
-    @stack[2] = @stack[0] + @stack[1]
+    stack: i32[3] = []
+    stack[0] = 1
+    stack[1] = 2
+    stack[2] = stack[0] + stack[1]
 
     heap: i32* = new(i32, 2)
     defer free(heap)
-    @heap[0] = @stack[2]
-    @heap[1] = 4
+    heap[0] = stack[2]
+    heap[1] = 4
 
-    return @heap[0] + @heap[1]
+    return heap[0] + heap[1]
 }
 "#;
 
-    let mut pipeline = CompilationPipeline::new_v1();
-    pipeline.set_write_artifacts(false);
-    
+    let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
     let result = pipeline.compile(source);
     assert!(
@@ -238,9 +226,7 @@ fn allows_array_literals_through_assembly() {
         "/programs/example/array_initialization.hll"
     ));
 
-    let mut pipeline = CompilationPipeline::new_v1();
-    pipeline.set_write_artifacts(false);
-    
+    let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
     let result = pipeline
         .compile(source)
@@ -256,7 +242,7 @@ fn allows_array_literals_through_assembly() {
 #[test]
 fn allows_named_struct_alias_through_assembly() {
     let source = r#"
-type Point = {
+struct Point {
     x: i32,
     y: i32
 }
@@ -267,9 +253,7 @@ main: () -> i32 {
 }
 "#;
 
-    let mut pipeline = CompilationPipeline::new_v1();
-    pipeline.set_write_artifacts(false);
-    
+    let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
     let result = pipeline
         .compile(source)
@@ -295,9 +279,7 @@ main: () -> i32 {
 }
 "#;
 
-    let mut pipeline = CompilationPipeline::new_v1();
-    pipeline.set_write_artifacts(false);
-    
+    let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
     let result = pipeline
         .compile(source)
@@ -311,12 +293,9 @@ main: () -> i32 {
 }
 
 #[test]
-fn allows_string_literals_against_text_alias() {
+fn allows_string_literals_against_slice_alias() {
     let source = r#"
-type Text = {
-    data: u8*,
-    length: u64
-}
+type Text = u8[]
 
 main: () -> i32 {
     greeting: Text = "hello"
@@ -324,14 +303,12 @@ main: () -> i32 {
 }
 "#;
 
-    let mut pipeline = CompilationPipeline::new_v1();
-    pipeline.set_write_artifacts(false);
-    
+    let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
     let result = pipeline.compile(source);
     assert!(
         result.is_ok(),
-        "expected string literals to compile against `Text` aliases: {:?}",
+        "expected string literals to compile against a `u8[]` alias: {:?}",
         result.err()
     );
 }
@@ -378,14 +355,12 @@ fn all_launch_examples_compile() {
             "generics_strings_consts",
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-            "/programs/example/generics_and_strings.hll"
+                "/programs/example/generics_and_strings.hll"
             )),
         ),
     ];
 
-    let mut pipeline = CompilationPipeline::new_v1();
-    pipeline.set_write_artifacts(false);
-    
+    let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
     for (name, source) in examples {
         let result = pipeline.compile(source);
@@ -399,9 +374,10 @@ fn all_launch_examples_compile() {
 }
 
 #[test]
-fn rejects_struct_type_without_commas() {
+fn allows_newline_separated_struct_fields() {
+    // Newlines terminate statements, so struct fields may be separated by newlines.
     let source = r#"
-type Point = {
+struct Point {
     x: f32
     y: f32
 }
@@ -411,14 +387,13 @@ main: () -> i32 {
 }
 "#;
 
-    let mut pipeline = CompilationPipeline::new_v1();
-    pipeline.set_write_artifacts(false);
-    
+    let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
     let result = pipeline.compile(source);
     assert!(
-        result.is_err(),
-        "expected missing commas in struct type definitions to be rejected"
+        result.is_ok(),
+        "expected newline-separated struct fields to compile: {:?}",
+        result.err()
     );
 }
 
@@ -434,9 +409,7 @@ main: () -> i32 {
 }
 "#;
 
-    let mut pipeline = CompilationPipeline::new_v1();
-    pipeline.set_write_artifacts(false);
-    
+    let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
     let result = pipeline.compile(source);
     assert!(
@@ -455,9 +428,7 @@ leak: () -> i32* {
 }
 "#;
 
-    let mut pipeline = CompilationPipeline::new_v1();
-    pipeline.set_write_artifacts(false);
-    
+    let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
     let result = pipeline.compile(source);
     assert!(
@@ -469,7 +440,7 @@ leak: () -> i32* {
 #[test]
 fn rejects_returning_address_of_local_field() {
     let source = r#"
-type Point = {
+struct Point {
     x: i32,
     y: i32
 }
@@ -480,9 +451,7 @@ leak: () -> i32* {
 }
 "#;
 
-    let mut pipeline = CompilationPipeline::new_v1();
-    pipeline.set_write_artifacts(false);
-    
+    let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
     let result = pipeline.compile(source);
     assert!(
@@ -495,14 +464,12 @@ leak: () -> i32* {
 fn rejects_returning_address_of_local_array_element() {
     let source = r#"
 leak: () -> i32* {
-    arr: i32[4]
+    arr: i32[4] = []
     return &(arr[0])
 }
 "#;
 
-    let mut pipeline = CompilationPipeline::new_v1();
-    pipeline.set_write_artifacts(false);
-    
+    let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
     let result = pipeline.compile(source);
     assert!(
@@ -510,4 +477,3 @@ leak: () -> i32* {
         "expected returning the address of a local array element to be rejected"
     );
 }
-

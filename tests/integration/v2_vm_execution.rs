@@ -122,7 +122,7 @@ struct Point {
 }
 
 main: () -> i32 {
-    pts: Point[2] = [Point { x: 1, y: 2 }, Point { x: 3, y: 4 }]
+    pts: Point[2] = [Point { .x = 1, .y = 2 }, Point { .x = 3, .y = 4 }]
     pts[1].x = 36
     first: Point* = &pts[0]
     return pts[1].x + first.y
@@ -183,8 +183,8 @@ struct Point {
 }
 
 main: () -> i32 {
-    named := Point { y: 2, x: 1 }
-    contextual: Point = { x: 3, y: 4 }
+    named := Point { .y = 2, .x = 1 }
+    contextual: Point = { .x = 3, .y = 4 }
     return named.x + named.y + contextual.x + contextual.y
 }
 "#,
@@ -203,7 +203,7 @@ struct Point {
 }
 
 main: () -> i32 {
-    point: Point = { x: 7 }
+    point: Point = { .x = 7 }
     return point.x + point.y
 }
 "#,
@@ -225,7 +225,7 @@ struct Point {
 }
 
 make_point: () -> Point {
-    return { x: 5, y: 7 }
+    return { .x = 5, .y = 7 }
 }
 
 main: () -> i32 {
@@ -406,7 +406,7 @@ struct Point {
 }
 
 main: () -> i32 {
-    pts: Point[3] = [Point { x: 1, y: 2 }, Point { x: 3, y: 4 }, Point { x: 5, y: 6 }]
+    pts: Point[3] = [Point { .x = 1, .y = 2 }, Point { .x = 3, .y = 4 }, Point { .x = 5, .y = 6 }]
     total: i32 = 0
     for p in pts {
         total = total + p.x + p.y
@@ -447,7 +447,7 @@ struct Point {
 }
 
 main: () -> i32 {
-    pts: Point[3] = [Point { x: 1, y: 1 }, Point { x: 5, y: 6 }, Point { x: 9, y: 9 }]
+    pts: Point[3] = [Point { .x = 1, .y = 1 }, Point { .x = 5, .y = 6 }, Point { .x = 9, .y = 9 }]
     base: Point* = &pts[0]
     mid: Point* = base + 1
     return mid.x + mid.y
@@ -689,7 +689,7 @@ struct Point {
 }
 
 main: () -> i32 {
-    pts: Point[3] = [{ x: 1, y: 2 }, { x: 3, y: 4 }, { x: 5, y: 6 }]
+    pts: Point[3] = [{ .x = 1, .y = 2 }, { .x = 3, .y = 4 }, { .x = 5, .y = 6 }]
     total: i32 = 0
     for p in pts {
         total = total + p.x + p.y
@@ -713,7 +713,7 @@ struct Point {
 }
 
 main: () -> i32 {
-    pts: Point[2] = [{ x: 1 }, { x: 2, y: 7 }]
+    pts: Point[2] = [{ .x = 1 }, { .x = 2, .y = 7 }]
     return pts[0].x + pts[0].y + pts[1].x + pts[1].y
 }
 "#,
@@ -759,7 +759,7 @@ struct Point {
 }
 
 main: () -> i32 {
-    pts: Point[1] = [{ x: 1, z: 2 }]
+    pts: Point[1] = [{ .x = 1, .z = 2 }]
     return pts[0].x
 }
 "#,
@@ -1567,7 +1567,7 @@ sum: (pair: Pair) -> i32 {
 }
 
 main: () -> i32 {
-    pair: Pair = Pair { left: 19, right: 23 }
+    pair: Pair = Pair { .left = 19, .right = 23 }
     return sum(pair)
 }
 "#,
@@ -1609,7 +1609,7 @@ mutate: (value: Triple) -> i32 {
 }
 
 main: () -> i32 {
-    value: Triple = Triple { first: 10, second: 12, third: 20 }
+    value: Triple = Triple { .first = 10, .second = 12, .third = 20 }
     ignored: i32 = mutate(value)
     return (value.first + value.second + value.third) as i32
 }
@@ -1632,7 +1632,7 @@ sum: (a: i32, b: i32, c: i32, d: i32, e: i32, f: i32, g: i32, h: i32, pair: Pair
 }
 
 main: () -> i32 {
-    pair: Pair = Pair { left: 15, right: 19 }
+    pair: Pair = Pair { .left = 15, .right = 19 }
     return sum(1, 1, 1, 1, 1, 1, 1, 1, pair)
 }
 "#,

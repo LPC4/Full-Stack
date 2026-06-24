@@ -1,15 +1,15 @@
-; Test string literal compilation to inline structs
-; String literals should compile to { data: u8*, length: u64 } structs
+; Test string literal compilation to u8[] slices
+; String literals lower to a { ptr: u8*, len: u64 } slice fat pointer
 
 main: () -> i32 {
     ; Declare variables with type annotations and assign string literals
-    str1: { data: u8*, length: u64 } = "Hello World"
+    str1: u8[] = "Hello World"
 
     ; String with escape sequences
-    str2: { data: u8*, length: u64 } = "Line 1\nLine 2\tTabbed"
+    str2: u8[] = "Line 1\nLine 2\tTabbed"
 
     ; Empty string
-    str3: { data: u8*, length: u64 } = ""
+    str3: u8[] = ""
 
-    return 0;
+    return 0
 }

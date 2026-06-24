@@ -2010,12 +2010,16 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_v2_struct_literal_fields(&mut self) -> Result<Vec<FieldInit>, ParserError> {
+        // Canonical field init is `.name = expr` so `:` always introduces a type.
         self.expect_lbrace()?;
         let mut fields = Vec::new();
         self.consume_terminators();
         while !self.check_rbrace() {
+            if !self.match_dot() {
+                return Err(self.error("struct literal fields use `.name = expr`"));
+            }
             let name = self.expect_ident()?;
-            self.expect_colon()?;
+            self.expect_assign()?;
             let expr = self.parse_expression()?;
             fields.push(FieldInit {
                 name,
@@ -2539,7 +2543,7 @@ mod tests {
 
     #[test]
     fn v2_parses_named_struct_literal() {
-        let source = "struct Point { x: i32 }\nvalue := Point { x: 1 }";
+        let source = "struct Point { x: i32 }\nvalue := Point { .x = 1 }";
         let mut parser =
             Parser::new_with_spans_and_version(Lexer::tokenize(source), LanguageVersion::V2);
         let program = parser.parse_program().unwrap();
