@@ -9,6 +9,8 @@ pub enum Type {
     Primitive(String),
     Pointer(Box<Self>),
     Array(usize, Box<Self>),
+    // T[] slice: a {ptr, len} fat pointer, bounds-checked at use (V2).
+    Slice(Box<Self>),
     Struct(Vec<FieldDecl>),
     Named { name: String, args: Vec<Self> },
 }
@@ -35,6 +37,10 @@ pub enum DeclNode {
         // here, only the name + type are recorded so references resolve at link.
         is_extern: bool,
     },
+    InferredVariable {
+        name: String,
+        init: Expression,
+    },
     Function {
         name: String,
         generics: Vec<String>,
@@ -48,6 +54,18 @@ pub enum DeclNode {
         generics: Vec<String>,
         ty: Type,
     },
+    Struct {
+        name: String,
+        generics: Vec<String>,
+        fields: Vec<FieldDecl>,
+    },
+    // A tagged union (V2). Lowers to `{ tag: i32, payload }` where `payload` is
+    // sized to the largest variant.
+    Enum {
+        name: String,
+        generics: Vec<String>,
+        variants: Vec<Variant>,
+    },
     Const {
         name: String,
         init: Expression,
@@ -55,6 +73,14 @@ pub enum DeclNode {
     Import {
         path: String,
     },
+}
+
+// One arm of an `enum`. An empty `payload` is a unit variant (`None`); a
+// non-empty one is a tuple-like variant (`Circle(f64)`, `Rect(f64, f64)`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Variant {
+    pub name: String,
+    pub payload: Vec<Type>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -86,6 +112,11 @@ pub enum Statement {
         cond: Expression,
         body: Block,
     },
+    For {
+        var: String,
+        iter: ForIter,
+        body: Block,
+    },
     Return(Option<Expression>),
     Defer(Expression),
     AsmBlock {
@@ -98,6 +129,23 @@ pub enum Statement {
         ty: Type,
         init: Option<Expression>,
     },
+    InferredVariableDecl {
+        name: String,
+        init: Expression,
+    },
+}
+
+// The iterable in a `for` loop.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ForIter {
+    // `start..end`, half-open unless `inclusive` (`..=`).
+    Range {
+        start: Expression,
+        end: Expression,
+        inclusive: bool,
+    },
+    // `arr` -- iterate a fixed array's elements by value.
+    Each(Expression),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -119,7 +167,41 @@ pub enum Expression {
         target_ty: Type,
         expr: Box<Self>,
     },
+    // `match scrutinee { pattern -> block ... }` (V2). Exhaustive over the
+    // scrutinee enum's variants.
+    Match {
+        scrutinee: Box<Self>,
+        arms: Vec<MatchArm>,
+    },
+    // `expr?` (V2): propagate failure with a visible early return.
+    Try(Box<Self>),
     Primary(PrimaryExpr),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MatchArm {
+    pub pattern: Pattern,
+    // Statements executed before the arm yields. A `Pattern -> { ... }` arm fills
+    // this; a `Pattern -> expr` value arm leaves it empty.
+    pub body: Block,
+    // Some(expr) for a value arm (`Pattern -> expr`); None for a statement arm.
+    // A `match` whose arms all carry a value is value-producing.
+    pub value: Option<Expression>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Pattern {
+    // `_` -- matches anything, binds nothing.
+    Wildcard,
+    // A bare lowercase name -- catch-all that binds the scrutinee.
+    Binding(String),
+    // `Variant(b0, b1)` or `Enum::Variant(...)`; `bindings` names each payload
+    // slot (`_` discards). An empty `bindings` is a unit-variant pattern.
+    Variant {
+        enum_name: Option<String>,
+        variant: String,
+        bindings: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -180,10 +262,15 @@ pub enum PrimaryExpr {
     Grouped(Box<Expression>),
     FunctionCall {
         name: String,
+        type_arguments: Vec<Type>,
         arguments: Vec<Expression>,
     },
     ArrayLiteral(Vec<Expression>),
     StructLiteral(Vec<FieldInit>),
+    NamedStructLiteral {
+        name: String,
+        fields: Vec<FieldInit>,
+    },
     FieldAccess {
         expr: Box<Expression>,
         field: String,
@@ -191,6 +278,14 @@ pub enum PrimaryExpr {
     ArrayIndex {
         expr: Box<Expression>,
         index: Box<Expression>,
+    },
+    // `arr[a..b]` / `arr[a..=b]` -- a sub-slice (V2). Open endpoints default to
+    // 0 (start) and the source length (end).
+    Slice {
+        expr: Box<Expression>,
+        start: Option<Box<Expression>>,
+        end: Option<Box<Expression>>,
+        inclusive: bool,
     },
     New {
         ty: Type,

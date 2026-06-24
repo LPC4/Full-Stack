@@ -1,7 +1,7 @@
 use asm_to_binary::assembler::link_layout::LinkLayout;
 use asm_to_binary::{AssembledOutput, Assembler, ObjectLinker};
 use hll_to_ir::stdlib::get_kernel_stdlib_source;
-use hll_to_ir::{CompileConfig, HllCompiler, TargetMode};
+use hll_to_ir::{CompileConfig, HllCompiler, LanguageVersion, TargetMode};
 use ir_to_asm::CompilerRv64;
 use os_runtime::kernel;
 use std::sync::OnceLock;
@@ -19,6 +19,7 @@ fn compiled_stdlib() -> &'static AssembledOutput {
             string_prefix: Some("__kern_str_".to_owned()),
             type_prelude: Vec::new(),
             source_prelude: None,
+            language_version: LanguageVersion::V1,
         });
         let out = compiler
             .compile(&get_kernel_stdlib_source())
@@ -38,6 +39,7 @@ fn run_kernel_hll(user_src: &str) -> (String, Option<i64>) {
         string_prefix: None,
         type_prelude: Vec::new(),
         source_prelude: None,
+        language_version: LanguageVersion::V1,
     });
     let user_out = user_compiler
         .compile(user_src)

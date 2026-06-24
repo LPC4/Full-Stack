@@ -33,7 +33,7 @@ fn execute_compiler_test_suite() {
     hll_files.sort();
 
     let mut tests_run = 0;
-    let mut pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new_v1();
     pipeline.set_write_artifacts(false);
     
     pipeline.set_write_artifacts(false); // Don't create gigabytes of files during tests

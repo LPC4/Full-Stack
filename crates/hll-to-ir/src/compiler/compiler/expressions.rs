@@ -5,6 +5,9 @@ use super::{
 use crate::ast::{PrimaryExpr, Type};
 use crate::ir::{FloatWidth, IntWidth, IrCastMode};
 
+// Diagnostic exit code for a failed slice bounds check (SIGABRT convention).
+const SLICE_BOUNDS_TRAP_CODE: u32 = 134;
+
 impl HighLevelCompiler {
     /// Evaluate expression in Value mode (rvalue context).
     pub(super) fn lower_expression(&mut self, expression: &Expression) -> Option<LoweredValue> {
@@ -30,12 +33,32 @@ impl HighLevelCompiler {
             Expression::Unary { op, expr } => self.lower_unary_expr(op, expr, mode),
             Expression::Cast { target_ty, expr } => self.lower_cast(target_ty, expr),
             Expression::Assignment { target, rvalue } => self.lower_assignment(target, rvalue),
+            Expression::Match { .. } => {
+                self.context.error(
+                    "a value `match` is only supported directly as a binding initializer, \
+                     assignment rvalue, or `return` value (HLL V2 M7)"
+                        .to_owned(),
+                );
+                None
+            }
+            Expression::Try(expr) => self.lower_try(expr, mode),
         }
     }
 
     fn lower_primary(&mut self, primary: &PrimaryExpr, mode: EvalMode) -> Option<LoweredValue> {
         match primary {
-            PrimaryExpr::Identifier(name) => self.lower_identifier(name, mode),
+            PrimaryExpr::Identifier(name) => {
+                // A bare name matching a unit enum variant constructs that variant.
+                if mode == EvalMode::Value
+                    && self
+                        .enum_variants
+                        .get(name)
+                        .is_some_and(|info| info.payload.is_empty())
+                {
+                    return self.lower_enum_construct(name, &[]);
+                }
+                self.lower_identifier(name, mode)
+            }
             PrimaryExpr::Literal(literal) => Some(self.lower_literal(literal)),
             PrimaryExpr::Grouped(expr) => self.lower_expr(expr, mode),
             PrimaryExpr::FieldAccess { expr, field } => {
@@ -44,6 +67,12 @@ impl HighLevelCompiler {
             PrimaryExpr::ArrayIndex { expr, index } => {
                 self.lower_array_index_expr(expr, index, mode)
             }
+            PrimaryExpr::Slice {
+                expr,
+                start,
+                end,
+                inclusive,
+            } => self.lower_slice_expr(expr, start.as_deref(), end.as_deref(), *inclusive),
             PrimaryExpr::New { ty, args } => {
                 use crate::ir::IrInstruction;
                 let dest = self.new_temp();
@@ -100,10 +129,16 @@ impl HighLevelCompiler {
                     is_unsigned: false,
                 })
             }
-            PrimaryExpr::FunctionCall { name, arguments } => {
+            PrimaryExpr::FunctionCall {
+                name, arguments, ..
+            } => {
                 // Function call results are rvalues with no addressable storage.
                 if mode == EvalMode::Address {
                     return None;
+                }
+                // A call whose name is an enum variant constructs that variant.
+                if self.enum_variants.contains_key(name) {
+                    return self.lower_enum_construct(name, arguments);
                 }
                 if name == "free" {
                     if arguments.len() != 1 {
@@ -133,8 +168,13 @@ impl HighLevelCompiler {
                 }
 
                 let mut arg_values = Vec::new();
-                for arg in arguments {
-                    if let Some(lowered) = self.lower_expr(arg, EvalMode::Value) {
+                let param_types = self.function_param_types.get(name).cloned();
+                for (index, arg) in arguments.iter().enumerate() {
+                    let lowered = match param_types.as_ref().and_then(|params| params.get(index)) {
+                        Some(expected) => self.lower_value_for_type(arg, expected),
+                        None => self.lower_expr(arg, EvalMode::Value),
+                    };
+                    if let Some(lowered) = lowered {
                         arg_values.push(lowered.value);
                     } else {
                         self.context
@@ -227,7 +267,73 @@ impl HighLevelCompiler {
                     is_unsigned: false,
                 })
             }
+            PrimaryExpr::NamedStructLiteral { name, fields } => {
+                self.lower_named_struct_literal(name, fields)
+            }
         }
+    }
+
+    fn lower_named_struct_literal(
+        &mut self,
+        name: &str,
+        fields: &[crate::ast::FieldInit],
+    ) -> Option<LoweredValue> {
+        let nominal_ty = IrType::Named(name.to_owned());
+        let resolved = self.resolve_named_type(&nominal_ty);
+        let IrType::Aggregate(declared_fields) = resolved else {
+            self.context
+                .error(format!("named literal type `{name}` is not a struct"));
+            return None;
+        };
+
+        let dest = self.new_temp();
+        self.push_instruction(IrInstruction::Alloc {
+            dest: dest.clone(),
+            ty: nominal_ty.clone(),
+            count: None,
+        });
+
+        let mut seen = std::collections::HashSet::new();
+        for field in fields {
+            if !seen.insert(field.name.clone()) {
+                self.context.error(format!(
+                    "duplicate field `{}` in `{name}` literal",
+                    field.name
+                ));
+                return None;
+            }
+            let Some((offset, field_ty)) =
+                self.aggregate_field_offset_and_type(&declared_fields, &field.name)
+            else {
+                self.context.error(format!(
+                    "unknown field `{}` in `{name}` literal",
+                    field.name
+                ));
+                return None;
+            };
+            let value = self.lower_value_for_type(&field.expr, &field_ty)?;
+            self.push_instruction(IrInstruction::Store {
+                ty: field_ty,
+                value: value.value,
+                ptr: dest.clone(),
+                offset: Some(offset),
+            });
+        }
+
+        if let Some((missing, _)) = declared_fields
+            .iter()
+            .find(|(field_name, _)| !seen.contains(field_name))
+        {
+            self.context
+                .error(format!("missing field `{missing}` in `{name}` literal"));
+            return None;
+        }
+
+        Some(LoweredValue {
+            value: IrValue::Register(dest),
+            ty: nominal_ty,
+            is_unsigned: false,
+        })
     }
 
     fn lower_identifier(&mut self, name: &str, mode: EvalMode) -> Option<LoweredValue> {
@@ -312,12 +418,16 @@ impl HighLevelCompiler {
     ) -> Option<LoweredValue> {
         // `@ptr.field`: evaluate the inner pointer in Value mode -- its register is the base pointer.
         // `x.field`: evaluate the base in Address mode -- the slot pointer is the aggregate pointer.
-        let base_addr = match expr {
-            Expression::Unary {
-                op: UnaryOp::Dereference,
-                expr: inner,
-            } => self.lower_expr(inner, EvalMode::Value)?,
-            _ => self.lower_expr(expr, EvalMode::Address)?,
+        let base_addr = if self.language_version == crate::LanguageVersion::V2 {
+            self.lower_expr(expr, EvalMode::Address)?
+        } else {
+            match expr {
+                Expression::Unary {
+                    op: UnaryOp::Dereference,
+                    expr: inner,
+                } => self.lower_expr(inner, EvalMode::Value)?,
+                _ => self.lower_expr(expr, EvalMode::Address)?,
+            }
         };
         self.lower_field_access_mode(&base_addr, field, mode)
     }
@@ -343,6 +453,14 @@ impl HighLevelCompiler {
                 };
                 (reg, fields)
             }
+            // A slice exposes `ptr` and `len` over its { ptr, len } layout.
+            IrType::Slice(elem) => {
+                let reg = match &base_addr.value {
+                    IrValue::Register(r) => r.clone(),
+                    _ => return None,
+                };
+                (reg, Self::slice_fields(&elem))
+            }
             IrType::Pointer(inner) => {
                 let inner_resolved = self.resolve_named_type(&inner);
                 match inner_resolved {
@@ -352,6 +470,13 @@ impl HighLevelCompiler {
                             _ => return None,
                         };
                         (reg, fields)
+                    }
+                    IrType::Slice(elem) => {
+                        let reg = match &base_addr.value {
+                            IrValue::Register(r) => r.clone(),
+                            _ => return None,
+                        };
+                        (reg, Self::slice_fields(&elem))
                     }
                     IrType::Pointer(inner_inner) => {
                         let inner_inner_resolved = self.resolve_named_type(&inner_inner);
@@ -367,21 +492,26 @@ impl HighLevelCompiler {
                                 ptr: slot_reg,
                                 offset: None,
                             });
-                            // Field access yields *field_T; the caller must use @ to load the value.
-                            let (offset, field_ty) =
-                                self.aggregate_field_offset_and_type(&fields, field)?;
-                            let dest = self.new_temp();
-                            self.push_instruction(IrInstruction::Offset {
-                                dest: dest.clone(),
-                                ty: field_ty.clone(),
-                                ptr: loaded,
-                                bytes: IrValue::Integer(offset),
-                            });
-                            return Some(LoweredValue {
-                                value: IrValue::Register(dest),
-                                ty: IrType::Pointer(Box::new(field_ty)),
-                                is_unsigned: false,
-                            });
+                            // V1: field access through a heap pointer in a stack
+                            // slot yields *field_T; the caller uses `@` to load.
+                            // V2 auto-dereferences via the common path below.
+                            if self.language_version == crate::LanguageVersion::V1 {
+                                let (offset, field_ty) =
+                                    self.aggregate_field_offset_and_type(&fields, field)?;
+                                let dest = self.new_temp();
+                                self.push_instruction(IrInstruction::Offset {
+                                    dest: dest.clone(),
+                                    ty: field_ty.clone(),
+                                    ptr: loaded,
+                                    bytes: IrValue::Integer(offset),
+                                });
+                                return Some(LoweredValue {
+                                    value: IrValue::Register(dest),
+                                    ty: IrType::Pointer(Box::new(field_ty)),
+                                    is_unsigned: false,
+                                });
+                            }
+                            (loaded, fields)
                         } else {
                             return None;
                         }
@@ -438,6 +568,12 @@ impl HighLevelCompiler {
         index: &Expression,
         mode: EvalMode,
     ) -> Option<LoweredValue> {
+        if self.language_version == crate::LanguageVersion::V2 {
+            let base = self.lower_expr(expr, EvalMode::Address)?;
+            let idx = self.lower_expr(index, EvalMode::Value)?;
+            return self.lower_array_index_mode(&base, &idx, mode);
+        }
+
         match expr {
             Expression::Unary {
                 op: UnaryOp::Dereference,
@@ -465,6 +601,23 @@ impl HighLevelCompiler {
         mode: EvalMode,
     ) -> Option<LoweredValue> {
         let resolved_ty = self.resolve_named_type(&base.ty);
+
+        // Slice operand: index through the { ptr, len } fat pointer. base.value is
+        // the address of the slice storage (a place or a slice value's slot).
+        let slice_elem = match &resolved_ty {
+            IrType::Slice(elem) => Some((**elem).clone()),
+            IrType::Pointer(inner) => match self.resolve_named_type(inner) {
+                IrType::Slice(elem) => Some(*elem),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(elem_ty) = slice_elem {
+            let IrValue::Register(slot) = base.value.clone() else {
+                return None;
+            };
+            return self.lower_slice_index_mode(&slot, &elem_ty, index, mode);
+        }
 
         // Find the pointer that addresses the first element and the element type.
         let (indexable_ptr, element_ty) = match resolved_ty {
@@ -555,6 +708,264 @@ impl HighLevelCompiler {
         }
     }
 
+    // The { ptr, len } fields of a slice, used for `.ptr` / `.len` access.
+    fn slice_fields(elem: &IrType) -> Vec<(String, IrType)> {
+        vec![
+            ("ptr".to_owned(), IrType::Pointer(Box::new(elem.clone()))),
+            ("len".to_owned(), IrType::Integer(IntWidth::I64)),
+        ]
+    }
+
+    // Index a slice: load { ptr, len } from the fat pointer, bounds-check the
+    // index against len, then compute the element address.
+    fn lower_slice_index_mode(
+        &mut self,
+        slot: &crate::ir::IrRegister,
+        elem_ty: &IrType,
+        index: &LoweredValue,
+        mode: EvalMode,
+    ) -> Option<LoweredValue> {
+        let data_ptr = self.new_temp();
+        self.push_instruction(IrInstruction::Load {
+            dest: data_ptr.clone(),
+            ty: IrType::Pointer(Box::new(elem_ty.clone())),
+            ptr: slot.clone(),
+            offset: Some(0),
+        });
+        let len = self.new_temp();
+        self.push_instruction(IrInstruction::Load {
+            dest: len.clone(),
+            ty: IrType::Integer(IntWidth::I64),
+            ptr: slot.clone(),
+            offset: Some(8),
+        });
+        self.emit_bounds_check(&index.value, &IrValue::Register(len));
+
+        let elem_ptr = self.new_temp();
+        self.push_instruction(IrInstruction::Index {
+            dest: elem_ptr.clone(),
+            ty: elem_ty.clone(),
+            base_ptr: data_ptr,
+            idx: index.value.clone(),
+        });
+
+        match mode {
+            EvalMode::Address => Some(LoweredValue {
+                value: IrValue::Register(elem_ptr),
+                ty: IrType::Pointer(Box::new(elem_ty.clone())),
+                is_unsigned: false,
+            }),
+            EvalMode::Value => {
+                let dest = self.new_temp();
+                self.push_instruction(IrInstruction::Load {
+                    dest: dest.clone(),
+                    ty: elem_ty.clone(),
+                    ptr: elem_ptr,
+                    offset: None,
+                });
+                Some(LoweredValue {
+                    value: IrValue::Register(dest),
+                    ty: elem_ty.clone(),
+                    is_unsigned: false,
+                })
+            }
+        }
+    }
+
+    // Trap when `idx >= len` (unsigned, so a negative index is out of bounds too).
+    fn emit_bounds_check(&mut self, idx: &IrValue, len: &IrValue) {
+        let oob = self.new_temp();
+        self.push_instruction(IrInstruction::Cmp {
+            dest: oob.clone(),
+            op: crate::ir::IrCmpOp::Uge,
+            ty: IrType::Integer(IntWidth::I64),
+            lhs: idx.clone(),
+            rhs: len.clone(),
+        });
+        self.emit_trap_if(IrValue::Register(oob));
+    }
+
+    // Trap (SIGABRT-coded exit) when `cond` is true. Splits the current block:
+    // branch to a Trap block on failure, otherwise fall through to a fresh block.
+    // Phi correctness is unaffected because the backend ignores phi incoming
+    // labels and reconciles values by shared storage.
+    fn emit_trap_if(&mut self, cond: IrValue) {
+        let trap_label = self.new_label();
+        let ok_label = self.new_label();
+        self.set_terminator(crate::ir::IrTerminator::Branch {
+            cond,
+            then_label: trap_label.clone(),
+            else_label: ok_label.clone(),
+        });
+
+        self.start_new_block(trap_label.0.clone());
+        self.set_terminator(crate::ir::IrTerminator::Trap {
+            code: SLICE_BOUNDS_TRAP_CODE,
+        });
+
+        self.start_new_block(ok_label.0.clone());
+    }
+
+    // Build the data pointer, element type, and length of a sliceable base. The
+    // base must be an array or a slice; raw pointers have no known length.
+    fn slice_base_parts(
+        &mut self,
+        base: &LoweredValue,
+    ) -> Option<(crate::ir::IrRegister, IrType, IrValue)> {
+        let resolved = self.resolve_named_type(&base.ty);
+        let IrValue::Register(slot) = base.value.clone() else {
+            return None;
+        };
+
+        // Load { ptr, len } out of a slice fat pointer stored at `slot`.
+        let load_slice = |this: &mut Self, elem: IrType| {
+            let ptr = this.new_temp();
+            this.push_instruction(IrInstruction::Load {
+                dest: ptr.clone(),
+                ty: IrType::Pointer(Box::new(elem.clone())),
+                ptr: slot.clone(),
+                offset: Some(0),
+            });
+            let len = this.new_temp();
+            this.push_instruction(IrInstruction::Load {
+                dest: len.clone(),
+                ty: IrType::Integer(IntWidth::I64),
+                ptr: slot.clone(),
+                offset: Some(8),
+            });
+            (ptr, elem, IrValue::Register(len))
+        };
+
+        match resolved {
+            IrType::Array { element, len } => Some((slot, *element, IrValue::Integer(len as i64))),
+            IrType::Slice(elem) => Some(load_slice(self, *elem)),
+            IrType::Pointer(inner) => match self.resolve_named_type(&inner) {
+                IrType::Array { element, len } => {
+                    Some((slot, *element, IrValue::Integer(len as i64)))
+                }
+                IrType::Slice(elem) => Some(load_slice(self, *elem)),
+                _ => {
+                    self.context
+                        .error("only arrays and slices can be range-sliced".to_owned());
+                    None
+                }
+            },
+            _ => {
+                self.context
+                    .error("only arrays and slices can be range-sliced".to_owned());
+                None
+            }
+        }
+    }
+
+    // Lower `base[start..end]` to a new slice value `{ &base[start], end - start }`.
+    // Open endpoints default to 0 and the base length; `..=` adds one to `end`.
+    // Bounds-checked: traps if `end > len` or `start > end`.
+    fn lower_slice_expr(
+        &mut self,
+        base_expr: &Expression,
+        start: Option<&Expression>,
+        end: Option<&Expression>,
+        inclusive: bool,
+    ) -> Option<LoweredValue> {
+        if self.language_version != crate::LanguageVersion::V2 {
+            self.context
+                .error("range slicing requires language version V2".to_owned());
+            return None;
+        }
+
+        let base = self.lower_expr(base_expr, EvalMode::Address)?;
+        let (data_ptr, elem_ty, len_val) = self.slice_base_parts(&base)?;
+
+        let i64_ty = IrType::Integer(IntWidth::I64);
+        let start_val = match start {
+            Some(expr) => self.lower_expr(expr, EvalMode::Value)?.value,
+            None => IrValue::Integer(0),
+        };
+        let end_raw = match end {
+            Some(expr) => self.lower_expr(expr, EvalMode::Value)?.value,
+            None => len_val.clone(),
+        };
+        // `..=` is inclusive only when an explicit end is given.
+        let end_val = if inclusive && end.is_some() {
+            let t = self.new_temp();
+            self.push_instruction(IrInstruction::Math {
+                dest: t.clone(),
+                op: crate::ir::IrMathOp::Add,
+                ty: i64_ty.clone(),
+                lhs: end_raw,
+                rhs: IrValue::Integer(1),
+            });
+            IrValue::Register(t)
+        } else {
+            end_raw
+        };
+
+        // end > len  ->  trap
+        let end_oob = self.new_temp();
+        self.push_instruction(IrInstruction::Cmp {
+            dest: end_oob.clone(),
+            op: crate::ir::IrCmpOp::Ugt,
+            ty: i64_ty.clone(),
+            lhs: end_val.clone(),
+            rhs: len_val,
+        });
+        self.emit_trap_if(IrValue::Register(end_oob));
+        // start > end  ->  trap
+        let start_oob = self.new_temp();
+        self.push_instruction(IrInstruction::Cmp {
+            dest: start_oob.clone(),
+            op: crate::ir::IrCmpOp::Ugt,
+            ty: i64_ty.clone(),
+            lhs: start_val.clone(),
+            rhs: end_val.clone(),
+        });
+        self.emit_trap_if(IrValue::Register(start_oob));
+
+        // new length = end - start
+        let new_len = self.new_temp();
+        self.push_instruction(IrInstruction::Math {
+            dest: new_len.clone(),
+            op: crate::ir::IrMathOp::Sub,
+            ty: i64_ty.clone(),
+            lhs: end_val,
+            rhs: start_val.clone(),
+        });
+        // new data pointer = &base[start] (element-scaled)
+        let new_ptr = self.new_temp();
+        self.push_instruction(IrInstruction::Index {
+            dest: new_ptr.clone(),
+            ty: elem_ty.clone(),
+            base_ptr: data_ptr,
+            idx: start_val,
+        });
+
+        let slice_ty = IrType::Slice(Box::new(elem_ty.clone()));
+        let slot = self.new_temp();
+        self.push_instruction(IrInstruction::Alloc {
+            dest: slot.clone(),
+            ty: slice_ty.clone(),
+            count: None,
+        });
+        self.push_instruction(IrInstruction::Store {
+            ty: IrType::Pointer(Box::new(elem_ty)),
+            value: IrValue::Register(new_ptr),
+            ptr: slot.clone(),
+            offset: Some(0),
+        });
+        self.push_instruction(IrInstruction::Store {
+            ty: i64_ty,
+            value: IrValue::Register(new_len),
+            ptr: slot.clone(),
+            offset: Some(8),
+        });
+        Some(LoweredValue {
+            value: IrValue::Register(slot),
+            ty: slice_ty,
+            is_unsigned: false,
+        })
+    }
+
     fn lower_unary_expr(
         &mut self,
         op: &UnaryOp,
@@ -563,13 +974,15 @@ impl HighLevelCompiler {
     ) -> Option<LoweredValue> {
         match op {
             UnaryOp::AddressOf => {
-                if matches!(
-                    expr,
-                    Expression::Unary {
-                        op: UnaryOp::Dereference,
-                        ..
-                    }
-                ) {
+                if self.language_version == crate::LanguageVersion::V1
+                    && matches!(
+                        expr,
+                        Expression::Unary {
+                            op: UnaryOp::Dereference,
+                            ..
+                        }
+                    )
+                {
                     self.context.error(
                         "cannot take address of a dereference expression (`&@...` is invalid)"
                             .to_owned(),

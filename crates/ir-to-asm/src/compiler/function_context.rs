@@ -20,6 +20,13 @@ pub trait Rv64Backend {
     fn emit_load_to_slot(&mut self, slot: usize, addr_reg: Reg, ty: &IrType, offset: i32);
     fn emit_move_typed(&mut self, rd: Reg, rs: Reg, ty: &IrType);
     fn emit_load_typed(&mut self, rd: Reg, addr_reg: Reg, ty: &IrType, offset: i32);
+    fn copy_bytes_from_addr_to_slot(
+        &mut self,
+        slot: usize,
+        addr_reg: Reg,
+        offset: i32,
+        size: usize,
+    );
     fn emit_comment(&mut self, text: &str);
 }
 
@@ -245,6 +252,7 @@ impl FunctionContext {
             backend,
             func,
             0,
+            0,
             Some("--- Function Parameter Spills ---"),
             None,
         );
@@ -263,6 +271,7 @@ impl FunctionContext {
         self.emit_parameter_spills_from_index(
             backend,
             func,
+            0,
             1,
             None,
             Some("--- End Parameter Spills ---"),
@@ -280,6 +289,7 @@ impl FunctionContext {
             backend,
             func,
             8,
+            0,
             Some("--- Function Parameter Spills (asm-only) ---"),
             None,
         );
@@ -297,7 +307,8 @@ impl FunctionContext {
         self.emit_parameter_spills_from_index(
             backend,
             func,
-            8,
+            7,
+            1,
             Some("--- End Parameter Spills ---"),
             None,
         );
@@ -324,11 +335,12 @@ impl FunctionContext {
         &self,
         backend: &mut impl Rv64Backend,
         func: &IrFunction,
-        start_index: usize,
+        skip_params: usize,
+        abi_offset: usize,
         start_header: Option<&str>,
         empty_header: Option<&str>,
     ) {
-        if func.params.len() <= start_index {
+        if func.params.len() <= skip_params {
             if let Some(header) = empty_header {
                 backend.emit_comment(header);
             }
@@ -344,19 +356,44 @@ impl FunctionContext {
         let base = if self.omit_frame_pointer { SP } else { S0 };
         backend.emit_add_imm(caller_sp, base, frame_size);
 
-        for (index, param) in func.params.iter().enumerate().skip(start_index) {
+        for (index, param) in func.params.iter().enumerate().skip(skip_params) {
             let ty = self.frame.resolve_type(&param.ty, &self.type_aliases);
+            let abi_index = index + abi_offset;
+            let is_aggregate = matches!(
+                &ty,
+                IrType::Aggregate(_) | IrType::Array { .. } | IrType::Slice(_)
+            );
+            if is_aggregate {
+                let source = if abi_index < 8 {
+                    arg_reg(abi_index)
+                } else {
+                    let source = backend.alloc_temp_reg();
+                    let offset = ((abi_index - 8) * 8) as i32;
+                    backend.emit_ld(source, caller_sp, offset);
+                    source
+                };
+                let slot = self
+                    .slot_for_reg(&param.register)
+                    .expect("aggregate param slot");
+                let size = self.frame.type_size(&ty, &self.type_aliases);
+                backend.emit_comment(&format!(
+                    "Copy aggregate parameter '{}' from indirect ABI argument",
+                    param.register
+                ));
+                backend.copy_bytes_from_addr_to_slot(slot, source, 0, size);
+                continue;
+            }
             if let Some(phys) = self.phys_reg_for(&param.register) {
                 // Register-allocated parameter: move it into its assigned
                 // register, normalizing the width like a slot round-trip would.
-                if index < 8 {
+                if abi_index < 8 {
                     backend.emit_comment(&format!(
                         "Move parameter '{}' from register a{} to allocated register",
-                        param.register, index
+                        param.register, abi_index
                     ));
                     backend.emit_move_typed(phys, arg_reg(index), &ty);
                 } else {
-                    let offset = ((index - 8) * 8) as i32;
+                    let offset = ((abi_index - 8) * 8) as i32;
                     backend.emit_comment(&format!(
                         "Load parameter '{}' from caller's stack (offset {}) to allocated register",
                         param.register, offset
@@ -366,14 +403,14 @@ impl FunctionContext {
                 continue;
             }
             let slot = self.slot_for_reg(&param.register).expect("param slot");
-            if index < 8 {
+            if abi_index < 8 {
                 backend.emit_comment(&format!(
                     "Spill parameter '{}' from register a{} to stack slot {}",
-                    param.register, index, slot
+                    param.register, abi_index, slot
                 ));
-                backend.emit_store_from_tmp(SP, arg_reg(index), &ty, slot as i32);
+                backend.emit_store_from_tmp(SP, arg_reg(abi_index), &ty, slot as i32);
             } else {
-                let offset = ((index - 8) * 8) as i32;
+                let offset = ((abi_index - 8) * 8) as i32;
                 backend.emit_comment(&format!(
                     "Spill parameter '{}' from caller's stack (offset {}) to slot {}",
                     param.register, offset, slot

@@ -1,3 +1,4 @@
+; @version 2
 ; Syscall dispatch layer. See OS spec ch.7.
 
 const SYSCALL_EXIT     = 93
@@ -154,32 +155,32 @@ sys_readchar_block: (frame: u64*) -> u64 {
         ifd: u64 = process_stdin_fd(rcur)
         if ifd >= 2 {
             ipos: u64 = fs_get_pos(ifd as i64)
-            ch: u8[1]
-            chp: u8* = ch[0]
+            ch: u8[1] = []
+            chp: u8* = &ch[0]
             got: i64 = fs_read(ifd as i64, chp, ipos, 1)
             if got == 1 {
                 fs_set_pos(ifd as i64, ipos + 1)
-                @frame[TF_A0] = (@chp) as u64
+                frame[TF_A0] = (@chp) as u64
                 return SYSACT_CONTINUE
             }
-            @frame[TF_A0] = 0xFFFFFFFFFFFFFFFF
+            frame[TF_A0] = 0xFFFFFFFFFFFFFFFF
             return SYSACT_CONTINUE
         }
     }
     if input_pushback_valid != 0 {
         input_pushback_valid = 0
-        @frame[TF_A0] = input_pushback_byte
+        frame[TF_A0] = input_pushback_byte
         return SYSACT_CONTINUE
     }
     c: i64 = kuart_take()
     if c >= 0 {
-        @frame[TF_A0] = c as u64
+        frame[TF_A0] = c as u64
         return SYSACT_CONTINUE
     }
 
     cur: u64* = scheduler_current()
     if cur == null {
-        @frame[TF_A0] = 0xFFFFFFFFFFFFFFFF
+        frame[TF_A0] = 0xFFFFFFFFFFFFFFFF
         return SYSACT_CONTINUE
     }
 
@@ -188,7 +189,7 @@ sys_readchar_block: (frame: u64*) -> u64 {
     @ier = 1 as u8
 
     scheduler_set_input_waiter(cur)
-    @frame[TF_SEPC] = @frame[TF_SEPC] - 4  ; re-run the ecall once woken
+    frame[TF_SEPC] = frame[TF_SEPC] - 4  ; re-run the ecall once woken
     return SYSACT_BLOCK
 }
 
@@ -379,7 +380,7 @@ sys_exec_impl: (path: u8*, arg: u8*, out_path: u8*, in_path: u8*, out_append: u6
     }
 
     scheduler_add(pcb)
-    return (@pcb[PCB_IDX_PID]) as i64
+    return (pcb[PCB_IDX_PID]) as i64
 }
 
 ; Write len bytes from buf to UART (0x10000000).
@@ -436,8 +437,8 @@ sys_fork_impl: (frame: u64*) -> i64 {
     cframe_addr: u64 = child as u64 + PCB_OFF_TRAP_FRAME
     memcpy(cframe_addr as u8*, frame as u8*, TF_BYTES)
     cframe: u64* = cframe_addr as u64*
-    @cframe[TF_A0] = 0
-    @cframe[TF_SEPC] = @cframe[TF_SEPC] + 4
+    cframe[TF_A0] = 0
+    cframe[TF_SEPC] = cframe[TF_SEPC] + 4
 
     scheduler_add(child)
     return process_pid(child) as i64
@@ -447,7 +448,7 @@ sys_fork_impl: (frame: u64*) -> i64 {
 sys_wait_impl: (frame: u64*) -> u64 {
     parent: u64* = scheduler_current()
     if parent == null {
-        @frame[TF_A0] = 0xFFFFFFFFFFFFFFFF
+        frame[TF_A0] = 0xFFFFFFFFFFFFFFFF
         return SYSACT_CONTINUE
     }
     ppid: u64 = process_pid(parent)
@@ -456,7 +457,7 @@ sys_wait_impl: (frame: u64*) -> u64 {
     if z != null {
         code: i64 = process_exit_code(z)
         scheduler_remove_zombie(z)
-        @frame[TF_A0] = code as u64
+        frame[TF_A0] = code as u64
         return SYSACT_CONTINUE
     }
 
@@ -466,7 +467,7 @@ sys_wait_impl: (frame: u64*) -> u64 {
             c: i64 = kuart_take()
             if c == INPUT_INTR_CHAR {
                 scheduler_kill_child(ppid)
-                @frame[TF_A0] = WAIT_INTERRUPTED
+                frame[TF_A0] = WAIT_INTERRUPTED
                 return SYSACT_CONTINUE
             }
             if c >= 0 {
@@ -475,11 +476,11 @@ sys_wait_impl: (frame: u64*) -> u64 {
             }
         }
         ; Child still running: rewind sepc (epilogue adds 4) and reschedule.
-        @frame[TF_SEPC] = @frame[TF_SEPC] - 4
+        frame[TF_SEPC] = frame[TF_SEPC] - 4
         return SYSACT_SCHEDULE
     }
 
-    @frame[TF_A0] = 0xFFFFFFFFFFFFFFFF
+    frame[TF_A0] = 0xFFFFFFFFFFFFFFFF
     return SYSACT_CONTINUE
 }
 
@@ -488,16 +489,16 @@ sys_wait_impl: (frame: u64*) -> u64 {
 sys_waitpid_impl: (frame: u64*) -> u64 {
     parent: u64* = scheduler_current()
     if parent == null {
-        @frame[TF_A0] = 0xFFFFFFFFFFFFFFFF
+        frame[TF_A0] = 0xFFFFFFFFFFFFFFFF
         return SYSACT_CONTINUE
     }
-    target: u64 = @frame[TF_A0]
+    target: u64 = frame[TF_A0]
 
     z: u64* = scheduler_find_zombie_pid(target)
     if z != null {
         code: i64 = process_exit_code(z)
         scheduler_remove_zombie(z)
-        @frame[TF_A0] = code as u64
+        frame[TF_A0] = code as u64
         return SYSACT_CONTINUE
     }
 
@@ -509,7 +510,7 @@ sys_waitpid_impl: (frame: u64*) -> u64 {
             c: i64 = kuart_take()
             if c == INPUT_INTR_CHAR {
                 scheduler_kill_pid(target)
-                @frame[TF_A0] = WAIT_INTERRUPTED
+                frame[TF_A0] = WAIT_INTERRUPTED
                 return SYSACT_CONTINUE
             }
             if c >= 0 {
@@ -517,38 +518,38 @@ sys_waitpid_impl: (frame: u64*) -> u64 {
                 input_pushback_valid = 1
             }
         }
-        @frame[TF_SEPC] = @frame[TF_SEPC] - 4
+        frame[TF_SEPC] = frame[TF_SEPC] - 4
         return SYSACT_SCHEDULE
     }
 
-    @frame[TF_A0] = 0xFFFFFFFFFFFFFFFF
+    frame[TF_A0] = 0xFFFFFFFFFFFFFFFF
     return SYSACT_CONTINUE
 }
 
 ; Signal a pid (a0=pid, a1=sig). Only SIGKILL: unlink from the ready queue and mark
 ; EXITED (Ctrl-C teardown), leaving a zombie. pid 1 protected. 0 ok, -1 else. OS spec 7.6.
 sys_kill_impl: (frame: u64*) -> u64 {
-    pid: u64 = @frame[TF_A0]
-    sig: u64 = @frame[TF_A1]
+    pid: u64 = frame[TF_A0]
+    sig: u64 = frame[TF_A1]
     if sig != SIGKILL {
-        @frame[TF_A0] = 0xFFFFFFFFFFFFFFFF
+        frame[TF_A0] = 0xFFFFFFFFFFFFFFFF
         return SYSACT_CONTINUE
     }
     if pid == 1 {
-        @frame[TF_A0] = 0xFFFFFFFFFFFFFFFF
+        frame[TF_A0] = 0xFFFFFFFFFFFFFFFF
         return SYSACT_CONTINUE
     }
     if scheduler_kill_pid(pid) == 1 {
-        @frame[TF_A0] = 0
+        frame[TF_A0] = 0
     } else {
-        @frame[TF_A0] = 0xFFFFFFFFFFFFFFFF
+        frame[TF_A0] = 0xFFFFFFFFFFFFFFFF
     }
     return SYSACT_CONTINUE
 }
 
 ; Exit: pid 1 (or no/empty context) halts the VM; others become zombies. See OS spec ch.5.6.
 sys_exit_impl: (frame: u64*) -> u64 {
-    code: u64 = @frame[TF_A0]
+    code: u64 = frame[TF_A0]
     current: u64* = scheduler_current()
     if current == null {
         kshutdown(code as i64)
@@ -576,23 +577,23 @@ sys_exit_impl: (frame: u64*) -> u64 {
 
 ; Truncate fd a0 to a1 bytes. These small wrappers keep locals out of dispatch's frame.
 sys_ftruncate_impl: (frame: u64*) -> u64 {
-    fd:  i64 = (@frame[TF_A0]) as i64
-    len: u64 = @frame[TF_A1]
-    @frame[TF_A0] = fs_truncate(fd, len) as u64
+    fd:  i64 = (frame[TF_A0]) as i64
+    len: u64 = frame[TF_A1]
+    frame[TF_A0] = fs_truncate(fd, len) as u64
     return SYSACT_CONTINUE
 }
 
 ; Remove the regular file at the absolute path in a0.
 sys_unlink_impl: (frame: u64*) -> u64 {
-    path: u8* = (@frame[TF_A0]) as u8*
-    @frame[TF_A0] = fs_unlink(path) as u64
+    path: u8* = (frame[TF_A0]) as u8*
+    frame[TF_A0] = fs_unlink(path) as u64
     return SYSACT_CONTINUE
 }
 
 ; Remove the empty directory at the absolute path in a0.
 sys_rmdir_impl: (frame: u64*) -> u64 {
-    path: u8* = (@frame[TF_A0]) as u8*
-    @frame[TF_A0] = fs_rmdir(path) as u64
+    path: u8* = (frame[TF_A0]) as u8*
+    frame[TF_A0] = fs_rmdir(path) as u64
     return SYSACT_CONTINUE
 }
 
@@ -606,8 +607,8 @@ fb_acquire: (pcb: u64*) {
     if pcb == null {
         return
     }
-    if @pcb[PCB_IDX_FB_MAPPED] == 0 {
-        @pcb[PCB_IDX_FB_MAPPED] = 1
+    if pcb[PCB_IDX_FB_MAPPED] == 0 {
+        pcb[PCB_IDX_FB_MAPPED] = 1
         fb_user_count = fb_user_count + 1
     }
 }
@@ -618,10 +619,10 @@ fb_release_on_exit: (pcb: u64*) {
     if pcb == null {
         return
     }
-    if @pcb[PCB_IDX_FB_MAPPED] == 0 {
+    if pcb[PCB_IDX_FB_MAPPED] == 0 {
         return
     }
-    @pcb[PCB_IDX_FB_MAPPED] = 0
+    pcb[PCB_IDX_FB_MAPPED] = 0
     if fb_user_count != 0 {
         fb_user_count = fb_user_count - 1
     }
@@ -640,7 +641,7 @@ sys_map_fb_impl: (frame: u64*) -> u64 {
         i = i + 1
     }
     fb_acquire(scheduler_current())
-    @frame[TF_A0] = FB_USER_BASE
+    frame[TF_A0] = FB_USER_BASE
     return SYSACT_CONTINUE
 }
 
@@ -651,10 +652,10 @@ sys_map_fb_impl: (frame: u64*) -> u64 {
 sys_brk_impl: (frame: u64*) -> u64 {
     cur: u64* = scheduler_current()
     if cur == null {
-        @frame[TF_A0] = 0xFFFFFFFFFFFFFFFF
+        frame[TF_A0] = 0xFFFFFFFFFFFFFFFF
         return SYSACT_CONTINUE
     }
-    addr: u64 = @frame[TF_A0]
+    addr: u64 = frame[TF_A0]
 
     brk: u64 = process_heap_brk(cur)
     if brk == 0 {
@@ -663,7 +664,7 @@ sys_brk_impl: (frame: u64*) -> u64 {
 
     ; Query, or a request that does not grow the heap: report the current break.
     if addr <= brk {
-        @frame[TF_A0] = brk
+        frame[TF_A0] = brk
         return SYSACT_CONTINUE
     }
 
@@ -676,7 +677,7 @@ sys_brk_impl: (frame: u64*) -> u64 {
     ; this, a runaway alloc maps over USER_ARG_BASE and corrupts the process. Leave the
     ; break unchanged so the caller sees the failure (same contract as OOM).
     if map_to > USER_ARG_BASE {
-        @frame[TF_A0] = brk
+        frame[TF_A0] = brk
         return SYSACT_CONTINUE
     }
 
@@ -686,7 +687,7 @@ sys_brk_impl: (frame: u64*) -> u64 {
         page_pa: u8* = pmm_alloc()
         if page_pa == null {
             ; OOM: leave the break where it was so the caller sees the failure.
-            @frame[TF_A0] = brk
+            frame[TF_A0] = brk
             return SYSACT_CONTINUE
         }
         memset(page_pa, 0, 4096)
@@ -695,25 +696,25 @@ sys_brk_impl: (frame: u64*) -> u64 {
     }
 
     process_set_heap_brk(cur, addr)
-    @frame[TF_A0] = addr
+    frame[TF_A0] = addr
     return SYSACT_CONTINUE
 }
 
 ; Dispatch a U-mode ecall by a7; args in a0-a3, result to a0. See OS spec ch.7.
 syscall_dispatch: (frame: u64*) -> u64 {
-    num: u64 = @frame[TF_A7]
+    num: u64 = frame[TF_A7]
 
     if num == SYSCALL_EXIT {
         return sys_exit_impl(frame)
     }
 
     if num == SYSCALL_WRITE {
-        fd:  u64 = @frame[TF_A0]
-        buf: u8* = (@frame[TF_A1]) as u8*
-        len: u64 = @frame[TF_A2]
+        fd:  u64 = frame[TF_A0]
+        buf: u8* = (frame[TF_A1]) as u8*
+        len: u64 = frame[TF_A2]
         if fd < 2 {
             ; fd 0/1 -> redirected stdout file, or the UART console.
-            @frame[TF_A0] = sys_stdout_write(buf, len)
+            frame[TF_A0] = sys_stdout_write(buf, len)
             return SYSACT_CONTINUE
         }
         ; fd >= 2 -> file, use and advance stored position.
@@ -722,47 +723,47 @@ syscall_dispatch: (frame: u64*) -> u64 {
         if n >= 0 {
             fs_set_pos(fd as i64, pos + n as u64)
         }
-        @frame[TF_A0] = n as u64
+        frame[TF_A0] = n as u64
         return SYSACT_CONTINUE
     }
 
     if num == SYSCALL_OPEN {
-        path:  u8* = (@frame[TF_A0]) as u8*
-        flags: u64 = @frame[TF_A1]
+        path:  u8* = (frame[TF_A0]) as u8*
+        flags: u64 = frame[TF_A1]
         result: i64 = fs_open(path, flags)
-        @frame[TF_A0] = result as u64
+        frame[TF_A0] = result as u64
         return SYSACT_CONTINUE
     }
 
     if num == SYSCALL_CLOSE {
-        fd: i64 = (@frame[TF_A0]) as i64
+        fd: i64 = (frame[TF_A0]) as i64
         fs_close(fd)
-        @frame[TF_A0] = 0
+        frame[TF_A0] = 0
         return SYSACT_CONTINUE
     }
 
     if num == SYSCALL_READ {
-        fd:     i64 = (@frame[TF_A0]) as i64
-        buf:    u8* = (@frame[TF_A1]) as u8*
-        offset: u64 = @frame[TF_A2]
-        len:    u64 = @frame[TF_A3]
+        fd:     i64 = (frame[TF_A0]) as i64
+        buf:    u8* = (frame[TF_A1]) as u8*
+        offset: u64 = frame[TF_A2]
+        len:    u64 = frame[TF_A3]
         result: i64 = fs_read(fd, buf, offset, len)
-        @frame[TF_A0] = result as u64
+        frame[TF_A0] = result as u64
         return SYSACT_CONTINUE
     }
 
     if num == SYSCALL_RENAME {
-        old_path: u8* = (@frame[TF_A0]) as u8*
-        new_path: u8* = (@frame[TF_A1]) as u8*
+        old_path: u8* = (frame[TF_A0]) as u8*
+        new_path: u8* = (frame[TF_A1]) as u8*
         result: i64 = fs_rename(old_path, new_path)
-        @frame[TF_A0] = result as u64
+        frame[TF_A0] = result as u64
         return SYSACT_CONTINUE
     }
 
     if num == SYSCALL_MKDIR {
-        path: u8* = (@frame[TF_A0]) as u8*
+        path: u8* = (frame[TF_A0]) as u8*
         result: i64 = fs_mkdir(path)
-        @frame[TF_A0] = result as u64
+        frame[TF_A0] = result as u64
         return SYSACT_CONTINUE
     }
 
@@ -771,33 +772,33 @@ syscall_dispatch: (frame: u64*) -> u64 {
     }
 
     if num == SYSCALL_READDIR {
-        path:     u8* = (@frame[TF_A0]) as u8*
-        index:    u64 = @frame[TF_A1]
-        name_buf: u8* = (@frame[TF_A2]) as u8*
+        path:     u8* = (frame[TF_A0]) as u8*
+        index:    u64 = frame[TF_A1]
+        name_buf: u8* = (frame[TF_A2]) as u8*
         result: i64 = fs_readdir(path, index, name_buf)
-        @frame[TF_A0] = result as u64
+        frame[TF_A0] = result as u64
         return SYSACT_CONTINUE
     }
 
     if num == SYSCALL_STAT {
-        path: u8* = (@frame[TF_A0]) as u8*
+        path: u8* = (frame[TF_A0]) as u8*
         result: i64 = fs_stat(path)
-        @frame[TF_A0] = result as u64
+        frame[TF_A0] = result as u64
         return SYSACT_CONTINUE
     }
 
     if num == SYSCALL_EXEC {
         ; Args read inline to keep syscall_dispatch's (already large) frame small.
-        result: i64 = sys_exec_impl((@frame[TF_A0]) as u8*, (@frame[TF_A1]) as u8*, null, null, 0)
-        @frame[TF_A0] = result as u64
+        result: i64 = sys_exec_impl((frame[TF_A0]) as u8*, (frame[TF_A1]) as u8*, null, null, 0)
+        frame[TF_A0] = result as u64
         return SYSACT_CONTINUE
     }
 
     if num == SYSCALL_EXEC_REDIR {
         ; a0=path, a1=arg, a2=out_path, a3=in_path, a4=out_append.
-        r: i64 = sys_exec_impl((@frame[TF_A0]) as u8*, (@frame[TF_A1]) as u8*,
-                               (@frame[TF_A2]) as u8*, (@frame[TF_A3]) as u8*, @frame[TF_A4])
-        @frame[TF_A0] = r as u64
+        r: i64 = sys_exec_impl((frame[TF_A0]) as u8*, (frame[TF_A1]) as u8*,
+                               (frame[TF_A2]) as u8*, (frame[TF_A3]) as u8*, frame[TF_A4])
+        frame[TF_A0] = r as u64
         return SYSACT_CONTINUE
     }
 
@@ -807,9 +808,9 @@ syscall_dispatch: (frame: u64*) -> u64 {
 
     if num == SYSCALL_LSEEK {
         ; a0=fd, a1=offset (signed), a2=whence (0=SET,1=CUR,2=END). Returns new pos.
-        fd:     i64 = (@frame[TF_A0]) as i64
-        offset: i64 = (@frame[TF_A1]) as i64
-        whence: u64 = @frame[TF_A2]
+        fd:     i64 = (frame[TF_A0]) as i64
+        offset: i64 = (frame[TF_A1]) as i64
+        whence: u64 = frame[TF_A2]
         base: u64 = 0
         if whence == 1 {
             base = fs_get_pos(fd)
@@ -819,7 +820,7 @@ syscall_dispatch: (frame: u64*) -> u64 {
         }
         newpos: u64 = (base as i64 + offset) as u64
         fs_set_pos(fd, newpos)
-        @frame[TF_A0] = newpos
+        frame[TF_A0] = newpos
         return SYSACT_CONTINUE
     }
 
@@ -836,18 +837,18 @@ syscall_dispatch: (frame: u64*) -> u64 {
     }
 
     if num == SYSCALL_POLLKEY {
-        @frame[TF_A0] = sys_pollkey_impl() as u64
+        frame[TF_A0] = sys_pollkey_impl() as u64
         return SYSACT_CONTINUE
     }
 
     if num == SYSCALL_PIDALIVE {
-        pid: u64 = @frame[TF_A0]
-        @frame[TF_A0] = scheduler_pid_alive(pid)
+        pid: u64 = frame[TF_A0]
+        frame[TF_A0] = scheduler_pid_alive(pid)
         return SYSACT_CONTINUE
     }
 
     if num == SYSCALL_FORK {
-        @frame[TF_A0] = sys_fork_impl(frame) as u64
+        frame[TF_A0] = sys_fork_impl(frame) as u64
         return SYSACT_CONTINUE
     }
 
@@ -872,7 +873,7 @@ syscall_dispatch: (frame: u64*) -> u64 {
     }
 
     ; Unknown syscall.
-    klog_int("syscall: unknown number".data, num as i64)
-    @frame[TF_A0] = 0xFFFFFFFFFFFFFFFF
+    klog_int("syscall: unknown number".ptr, num as i64)
+    frame[TF_A0] = 0xFFFFFFFFFFFFFFFF
     return SYSACT_CONTINUE
 }

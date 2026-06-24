@@ -44,6 +44,30 @@ pub fn assign_stack_slots(
         }
     }
 
+    // A register stored as a composite is a composite even if its producer was
+    // typed as a scalar (e.g. an external aggregate-returning call); upgrade it.
+    for block in &func.blocks {
+        for inst in &block.instructions {
+            if let IrInstruction::Store {
+                ty,
+                value: IrValue::Register(reg),
+                ..
+            } = inst
+                && matches!(
+                    ty,
+                    IrType::Array { .. } | IrType::Aggregate(_) | IrType::Slice(_)
+                )
+                && let Some(entry) = vregs.iter_mut().find(|(r, _)| r == reg)
+                && !matches!(
+                    entry.1,
+                    IrType::Array { .. } | IrType::Aggregate(_) | IrType::Slice(_)
+                )
+            {
+                entry.1 = ty.clone();
+            }
+        }
+    }
+
     // Physical register allocation claims the hottest scalars first; whatever
     // it leaves behind falls through to slot coloring.
     if regalloc {

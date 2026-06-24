@@ -224,6 +224,11 @@ pub enum IrTerminator {
         then_label: IrLabel,
         else_label: IrLabel,
     },
+    // Abort with a diagnostic code and never return. Used by failed runtime
+    // checks like slice bounds. The block has no successor.
+    Trap {
+        code: u32,
+    },
 }
 
 impl fmt::Display for IrTerminator {
@@ -237,6 +242,17 @@ impl fmt::Display for IrTerminator {
                 then_label,
                 else_label,
             } => write!(f, "branch {cond} ? {then_label} : {else_label}"),
+            Self::Trap { code } => write!(f, "trap {code}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn trap_terminator_displays_code() {
+        assert_eq!(IrTerminator::Trap { code: 134 }.to_string(), "trap 134");
     }
 }

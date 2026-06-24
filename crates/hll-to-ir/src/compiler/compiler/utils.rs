@@ -86,6 +86,7 @@ impl HighLevelCompiler {
                     .map(|(name, ty)| (name.clone(), self.resolve_named_type(ty)))
                     .collect(),
             ),
+            IrType::Slice(inner) => IrType::Slice(Box::new(self.resolve_named_type(inner))),
             other => other.clone(),
         }
     }
@@ -107,6 +108,8 @@ impl HighLevelCompiler {
                 FloatWidth::F64 => 8,
             },
             IrType::Pointer(_) => 8,
+            // Fat pointer: { ptr: 8, len: 8 }.
+            IrType::Slice(_) => 16,
             IrType::Array { len, element } => len * self.type_size_in_bytes(element),
             IrType::Aggregate(fields) => {
                 let mut offset = 0i64;
@@ -138,7 +141,7 @@ impl HighLevelCompiler {
                 FloatWidth::F32 => 4,
                 FloatWidth::F64 => 8,
             },
-            IrType::Pointer(_) | IrType::Named(_) => 8,
+            IrType::Pointer(_) | IrType::Named(_) | IrType::Slice(_) => 8,
             IrType::Array { element, .. } => self.type_alignment_in_bytes(element),
             IrType::Aggregate(fields) => fields
                 .iter()

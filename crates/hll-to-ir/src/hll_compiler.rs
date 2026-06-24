@@ -1,15 +1,17 @@
-use crate::TargetMode;
 use crate::ast::{Block, DeclNode, Program, Statement};
 use crate::compiler::{Diagnostic, DiagnosticLevel, HighLevelCompiler, SemanticAnalyzer};
 use crate::ir::{IrProgram, IrType};
 use crate::lexer::Lexer;
+use crate::monomorphize::monomorphize_program;
 use crate::parser::Parser;
 use crate::token::Token;
+use crate::{LanguageVersion, TargetMode};
 
 // --- Public types ---
 
 pub struct CompileConfig {
     pub target: TargetMode,
+    pub language_version: LanguageVersion,
     pub strict: bool,
     pub string_prefix: Option<String>,
     pub type_prelude: Vec<(String, IrType)>,
@@ -23,6 +25,7 @@ impl Default for CompileConfig {
     fn default() -> Self {
         Self {
             target: TargetMode::Hosted,
+            language_version: LanguageVersion::V2,
             strict: false,
             string_prefix: None,
             type_prelude: Vec::new(),
@@ -69,6 +72,11 @@ impl HllCompiler {
     /// Returns `Err` only on hard failures (lex errors, parse errors, IR
     /// lowering errors).  Warnings are surfaced via `HllOutput::diagnostics`.
     pub fn compile(&self, source: &str) -> Result<HllOutput, Vec<Diagnostic>> {
+        // A per-file `; @version N` directive overrides the configured default,
+        // so the stdlib can migrate to V2 file by file (V1 sources still compile).
+        let language_version =
+            detect_version_pragma(source).unwrap_or(self.config.language_version);
+
         // Prepend the shared definitions header (kernel layout, or an explicit prelude)
         // so separately-compiled TUs share one HLL definition of their common consts.
         let prepended = self.with_source_prelude(source);
@@ -92,15 +100,20 @@ impl HllCompiler {
         let tokens_display = format!("{token_spans:#?}");
 
         // Phase 2: Parse
-        let ast = Parser::new_with_spans(token_spans)
+        let mut ast = Parser::new_with_spans_and_version(token_spans, language_version)
             .parse_program()
             .map_err(|e| vec![Diagnostic::new(DiagnosticLevel::Error, e.to_string())])?;
+
+        if language_version == LanguageVersion::V2 {
+            ast = monomorphize_program(&ast)
+                .map_err(|message| vec![Diagnostic::new(DiagnosticLevel::Error, message)])?;
+        }
 
         let ast_display = format!("{ast:#?}");
 
         // Phase 3: Semantic analysis (when strict mode enabled)
         if self.config.strict {
-            let mut analyzer = SemanticAnalyzer::new();
+            let mut analyzer = SemanticAnalyzer::with_language_version(language_version);
             analyzer.seed_types(&self.config.type_prelude);
             if analyzer.analyze_program(&ast).is_err()
                 || analyzer
@@ -121,12 +134,20 @@ impl HllCompiler {
         // Phase 4: IR lowering
         let prefix = self.config.string_prefix.as_deref().unwrap_or("str_");
         let mut compiler = HighLevelCompiler::with_string_prefix(prefix);
+        compiler.set_language_version(language_version);
         compiler.set_type_prelude(self.config.type_prelude.clone());
         let ir = compiler
             .compile_program(&ast)
             .map_err(|e| vec![Diagnostic::new(DiagnosticLevel::Error, format!("{e:?}"))])?;
 
         let mut diagnostics = compiler.diagnostics().to_vec();
+
+        if language_version == LanguageVersion::V1 {
+            diagnostics.push(Diagnostic::new(
+                DiagnosticLevel::Warning,
+                "HLL V1 compatibility mode is deprecated; migrate this source to V2",
+            ));
+        }
 
         // Hard-error on any error-level diagnostic from IR lowering.
         let ir_errors: Vec<String> = diagnostics
@@ -165,6 +186,28 @@ impl HllCompiler {
             ast_display,
         })
     }
+}
+
+/// Read a `; @version N` directive from a source file's leading comment lines.
+/// Scanning stops at the first non-comment line; `None` when no directive is present.
+fn detect_version_pragma(source: &str) -> Option<LanguageVersion> {
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Some(comment) = trimmed.strip_prefix(';') else {
+            break;
+        };
+        if let Some(rest) = comment.trim_start().strip_prefix("@version") {
+            return match rest.trim() {
+                "1" => Some(LanguageVersion::V1),
+                "2" => Some(LanguageVersion::V2),
+                _ => None,
+            };
+        }
+    }
+    None
 }
 
 // --- Freestanding asm-block validator (moved from root compilation_pipeline.rs) ---
@@ -306,6 +349,46 @@ mod tests {
     use crate::lexer::Lexer;
     use crate::parser::Parser;
     use crate::token::Token;
+    use crate::{
+        CompileConfig, Diagnostic, DiagnosticLevel, HllCompiler, HllOutput, LanguageVersion,
+        TargetMode,
+    };
+
+    fn compile_v2(source: &str) -> Result<HllOutput, Vec<Diagnostic>> {
+        HllCompiler::new(CompileConfig {
+            target: TargetMode::Hosted,
+            language_version: LanguageVersion::V2,
+            strict: true,
+            ..CompileConfig::default()
+        })
+        .compile(source)
+    }
+
+    #[test]
+    fn compile_config_defaults_to_v2() {
+        assert_eq!(
+            CompileConfig::default().language_version,
+            LanguageVersion::V2
+        );
+        assert_eq!(LanguageVersion::default(), LanguageVersion::V2);
+    }
+
+    #[test]
+    fn explicit_v1_mode_emits_deprecation_warning() {
+        let output = HllCompiler::new(CompileConfig {
+            language_version: LanguageVersion::V1,
+            ..CompileConfig::default()
+        })
+        .compile("main: () -> i32 { return 0 }")
+        .expect("V1 compatibility source should compile");
+
+        assert!(output.diagnostics.iter().any(|diagnostic| {
+            diagnostic.level == DiagnosticLevel::Warning
+                && diagnostic
+                    .message
+                    .contains("V1 compatibility mode is deprecated")
+        }));
+    }
 
     fn fixture_root() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../programs/test/fixtures")
@@ -763,5 +846,417 @@ mod tests {
             "IR should contain start function"
         );
         println!("=== test4.hll IR OUTPUT ===\n{ir_text}");
+    }
+
+    #[test]
+    fn version_pragma_selects_v2_for_a_v1_configured_compiler() {
+        // Configured V1, but the file opts into V2 via the header directive.
+        let output = HllCompiler::new(CompileConfig {
+            target: TargetMode::Hosted,
+            language_version: LanguageVersion::V1,
+            strict: true,
+            ..CompileConfig::default()
+        })
+        .compile(
+            "; @version 2\nstruct Point { x: i32 }\nmain: () -> i32 {\n    p := Point { x: 5 }\n    return p.x\n}\n",
+        )
+        .expect("V2 pragma should let a struct decl compile under a V1 default");
+        assert!(output.ir.to_string().contains("main"));
+    }
+
+    #[test]
+    fn version_pragma_absent_keeps_configured_version() {
+        // No directive: a `struct` decl must still be rejected under the V1 default.
+        let result = HllCompiler::new(CompileConfig {
+            target: TargetMode::Hosted,
+            language_version: LanguageVersion::V1,
+            strict: true,
+            ..CompileConfig::default()
+        })
+        .compile("struct Point { x: i32 }\nmain: () -> i32 { return 0 }\n");
+        assert!(result.is_err(), "struct under V1 default must fail");
+    }
+
+    #[test]
+    fn v2_array_index_is_a_value_place_and_addressable() {
+        let output = compile_v2(
+            r#"
+main: () -> i32 {
+    arr: i32[2] = [4, 5]
+    arr[1] = 7
+    first: i32* = &arr[0]
+    return arr[0] + arr[1] + @first
+}
+"#,
+        )
+        .expect("V2 indexed places should compile");
+
+        let ir = format!("{}", output.ir);
+        assert!(
+            ir.contains("index i32"),
+            "expected indexed address IR: {ir}"
+        );
+        assert!(
+            ir.contains("read i32"),
+            "expected indexed value load IR: {ir}"
+        );
+        assert!(
+            ir.contains("write i32"),
+            "expected indexed assignment IR: {ir}"
+        );
+    }
+
+    #[test]
+    fn v2_pointer_member_access_loads_the_field_value() {
+        compile_v2(
+            r#"
+struct Point {
+    x: i32
+    y: i32
+}
+
+main: () -> i32 {
+    point: Point* = new(Point)
+    point.x = 9
+    return point.x
+}
+"#,
+        )
+        .expect("V2 pointer member auto-deref should compile");
+    }
+
+    #[test]
+    fn v2_address_of_rejects_non_place_temporaries() {
+        let result = compile_v2(
+            r#"
+main: () -> i32 {
+    ptr: i32* = &(1 + 2)
+    return 0
+}
+"#,
+        );
+        let errors = match result {
+            Ok(_) => panic!("V2 must reject taking the address of a temporary"),
+            Err(errors) => errors,
+        };
+
+        assert!(
+            errors
+                .iter()
+                .any(|d| d.message.contains("address-of requires a place")),
+            "unexpected diagnostics: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn v2_inferred_bindings_lower_with_concrete_types() {
+        let output = compile_v2(
+            r#"
+noop: () {
+    return
+}
+
+main: () -> i32 {
+    number := 40
+    values := [1, 2]
+    pointer := &values[1]
+    noop()
+    return number + @pointer
+}
+"#,
+        )
+        .expect("V2 inferred bindings should compile");
+
+        let ir = format!("{}", output.ir);
+        assert!(ir.contains("inferred local var: number"));
+        assert!(ir.contains("inferred local var: values"));
+        assert!(ir.contains("inferred local var: pointer"));
+    }
+
+    #[test]
+    fn v2_rejects_duplicate_inferred_binding_in_same_scope() {
+        let result = compile_v2(
+            r#"
+main: () -> i32 {
+    value := 1
+    value := 2
+    return value
+}
+"#,
+        );
+        let errors = match result {
+            Ok(_) => panic!("duplicate inferred declarations must fail"),
+            Err(errors) => errors,
+        };
+
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.message.contains("duplicate inferred binding `value`"))
+        );
+    }
+
+    #[test]
+    fn v2_infers_top_level_binding_type() {
+        compile_v2(
+            r#"
+answer := 42
+
+main: () -> i32 {
+    return answer
+}
+"#,
+        )
+        .expect("V2 top-level inferred bindings should compile");
+    }
+
+    #[test]
+    fn v2_infers_pointer_named_struct_array_and_generic_types() {
+        let output = compile_v2(
+            r#"
+struct Point { x: i32 }
+struct Box<T> { value: T }
+
+main: () -> i32 {
+    point_ptr := new(Point)
+    point := @point_ptr
+    values := [1, 2, 3]
+    box_ptr := new(Box<i32>)
+    point.x = values[0]
+    return point.x
+}
+"#,
+        )
+        .expect("V2 inference should preserve aggregate and generic types");
+
+        let ir = output.ir.to_string();
+        assert!(ir.contains("type Box<i32>"), "missing specialization: {ir}");
+    }
+
+    #[test]
+    fn v2_assignment_cannot_create_a_binding() {
+        let result = compile_v2(
+            r#"
+main: () -> i32 {
+    typo = 1
+    return 0
+}
+"#,
+        );
+        let errors = match result {
+            Ok(_) => panic!("assignment to an undeclared name must fail"),
+            Err(errors) => errors,
+        };
+        assert!(errors.iter().any(|error| {
+            error
+                .message
+                .contains("assignment target `typo` is not declared")
+        }));
+    }
+
+    #[test]
+    fn v2_explicit_binding_requires_initializer() {
+        let result = compile_v2(
+            r#"
+main: () -> i32 {
+    value: i32
+    return 0
+}
+"#,
+        );
+        let errors = match result {
+            Ok(_) => panic!("uninitialized V2 binding must fail"),
+            Err(errors) => errors,
+        };
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.message.contains("require an initializer"))
+        );
+    }
+
+    #[test]
+    fn v2_type_is_restricted_to_aliases() {
+        let result = compile_v2(
+            r#"
+type Point = { x: i32 }
+main: () -> i32 { return 0 }
+"#,
+        );
+        let errors = match result {
+            Ok(_) => panic!("V2 record declarations must use `struct`"),
+            Err(errors) => errors,
+        };
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.message.contains("`type` is only for aliases"))
+        );
+    }
+
+    #[test]
+    fn v2_named_and_contextual_struct_literals_compile() {
+        compile_v2(
+            r#"
+struct Point {
+    x: i32
+    y: i32
+}
+
+main: () -> i32 {
+    named := Point { y: 2, x: 1 }
+    contextual: Point = { x: 3, y: 4 }
+    return named.x + named.y + contextual.x + contextual.y
+}
+"#,
+        )
+        .expect("canonical V2 struct literals should compile");
+    }
+
+    #[test]
+    fn v2_named_struct_literal_reports_field_errors() {
+        for (literal, expected) in [
+            ("Point { x: 1, x: 2 }", "duplicate field `x`"),
+            ("Point { x: 1 }", "missing field `y`"),
+            ("Point { x: 1, y: 2, z: 3 }", "unknown field `z`"),
+        ] {
+            let source = format!(
+                "struct Point {{ x: i32, y: i32 }}\nmain: () -> i32 {{ value := {literal}\nreturn 0\n}}"
+            );
+            let errors = match compile_v2(&source) {
+                Ok(_) => panic!("invalid literal unexpectedly compiled: {literal}"),
+                Err(errors) => errors,
+            };
+            assert!(
+                errors.iter().any(|error| error.message.contains(expected)),
+                "expected `{expected}` for `{literal}`, got {errors:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn v2_contextual_struct_literal_zero_fills_missing_fields() {
+        let output = compile_v2(
+            r#"
+struct Point { x: i32, y: i32 }
+
+main: () -> i32 {
+    point: Point = { x: 7 }
+    point = { y: 9 }
+    return point.x + point.y
+}
+"#,
+        )
+        .expect("contextual literals should default omitted fields to zero");
+        let ir = output.ir.to_string();
+        assert!(ir.contains("write i32 0"), "missing zero fill in IR: {ir}");
+    }
+
+    #[test]
+    fn v2_contextual_struct_literal_validates_fields() {
+        for (literal, expected) in [
+            ("{ x: 1, x: 2 }", "duplicate field `x`"),
+            ("{ z: 1 }", "unknown field `z`"),
+            ("{ x: true }", "field `x` expects `i32`"),
+        ] {
+            let source = format!(
+                "struct Point {{ x: i32, y: i32 }}\nmain: () -> i32 {{ value: Point = {literal}\nreturn 0\n}}"
+            );
+            let errors = match compile_v2(&source) {
+                Ok(_) => panic!("invalid contextual literal compiled: {literal}"),
+                Err(errors) => errors,
+            };
+            assert!(
+                errors.iter().any(|error| error.message.contains(expected)),
+                "expected `{expected}`, got {errors:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn v2_propagates_struct_context_through_arguments_and_returns() {
+        compile_v2(
+            r#"
+struct Point { x: i32, y: i32 }
+
+make_point: () -> Point {
+    return { x: 5 }
+}
+
+sum_point: (point: Point) -> i32 {
+    return point.x + point.y
+}
+
+main: () -> i32 {
+    return sum_point({ y: 7 }) + sum_point(make_point())
+}
+"#,
+        )
+        .expect("argument and return types should contextualize anonymous literals");
+    }
+
+    #[test]
+    fn v2_rejects_anonymous_literal_without_context() {
+        let errors = match compile_v2(
+            r#"
+main: () -> i32 {
+    value := { x: 1 }
+    return 0
+}
+"#,
+        ) {
+            Ok(_) => panic!("anonymous literal cannot infer its own nominal type"),
+            Err(errors) => errors,
+        };
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.message.contains("cannot infer `value`"))
+        );
+    }
+
+    #[test]
+    fn v2_monomorphizes_explicit_generic_function_calls() {
+        let output = compile_v2(
+            r#"
+identity: <T>(value: T) -> T {
+    return value
+}
+
+main: () -> i32 {
+    return identity<i32>(42)
+}
+"#,
+        )
+        .expect("explicit generic call should compile");
+        let ir = output.ir.to_string();
+        assert!(ir.contains("identity__i32"), "missing specialization: {ir}");
+        assert!(
+            !ir.contains("identity<T>"),
+            "generic template leaked to IR: {ir}"
+        );
+    }
+
+    #[test]
+    fn v2_rejects_wrong_generic_function_arity() {
+        let errors = match compile_v2(
+            r#"
+identity: <T>(value: T) -> T {
+    return value
+}
+
+main: () -> i32 {
+    return identity<i32, i64>(42)
+}
+"#,
+        ) {
+            Ok(_) => panic!("wrong generic arity must fail"),
+            Err(errors) => errors,
+        };
+        assert!(
+            errors
+                .iter()
+                .any(|error| { error.message.contains("expects 1 type arguments, got 2") })
+        );
     }
 }

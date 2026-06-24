@@ -365,6 +365,7 @@ impl TypeContext {
             IrType::Array { element, len } => {
                 format!("{}[{}]", self.get_type_name(element), len)
             }
+            IrType::Slice(element) => format!("{}[]", self.get_type_name(element)),
             IrType::Aggregate(fields) => {
                 let field_strs: Vec<String> = fields
                     .iter()

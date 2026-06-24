@@ -16,7 +16,7 @@ fn compile_fixture(subdir: &str, name: &str) -> String {
     let path = suite_root().join(subdir).join(format!("{name}.hll"));
     let source = fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("failed to read fixture {path:?}: {e}"));
-    let mut pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new_v1();
     pipeline.set_write_artifacts(false);
     
     pipeline.set_write_artifacts(false);
@@ -27,7 +27,7 @@ fn compile_fixture(subdir: &str, name: &str) -> String {
 }
 
 fn compile_inline(source: &str) -> String {
-    let mut pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new_v1();
     pipeline.set_write_artifacts(false);
     
     pipeline.set_write_artifacts(false);
@@ -133,7 +133,7 @@ const MANY_LOCALS: &str = r#"main: () -> i32 {
 fn many_locals_use_multiple_temp_registers() {
     // This validates the temp-cycling behavior of the stack-slot lowering, so
     // pin register allocation off (it would lift the locals out of slots).
-    let mut pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new_v1();
     pipeline.set_write_artifacts(false);
     pipeline.set_register_allocation(false);
     let result = pipeline.compile(MANY_LOCALS).expect("compilation failed");

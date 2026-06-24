@@ -1,7 +1,41 @@
 use super::{
-    Block, DeferredAction, Expression, HighLevelCompiler, IrInstruction, IrProgram, IrRegister,
-    IrTerminator, IrType, IrValue, Statement,
+    AssignTarget, BinaryOp, Block, DeferredAction, EvalMode, Expression, HighLevelCompiler,
+    IrInstruction, IrProgram, IrRegister, IrTerminator, IrType, IrValue, Literal, Statement,
 };
+use crate::ast::{MatchArm, PrimaryExpr};
+
+/// Rewrite each `continue` in `stmts` (but not inside nested loops) to run the
+/// loop `step` first, so a `for`-loop desugared to `while` still advances its
+/// counter on `continue`.
+fn rewrite_continue_with_step(stmts: &[Statement], step: &Statement) -> Vec<Statement> {
+    stmts.iter().map(|s| rewrite_stmt(s, step)).collect()
+}
+
+fn rewrite_stmt(stmt: &Statement, step: &Statement) -> Statement {
+    match stmt {
+        Statement::Continue => Statement::Block(Block {
+            statements: vec![step.clone(), Statement::Continue],
+        }),
+        Statement::Block(block) => Statement::Block(Block {
+            statements: rewrite_continue_with_step(&block.statements, step),
+        }),
+        Statement::If {
+            cond,
+            then_block,
+            else_branch,
+        } => Statement::If {
+            cond: cond.clone(),
+            then_block: Block {
+                statements: rewrite_continue_with_step(&then_block.statements, step),
+            },
+            else_branch: else_branch
+                .as_ref()
+                .map(|branch| Box::new(rewrite_stmt(branch, step))),
+        },
+        // Nested `while`/`for` own their own `continue`; do not descend.
+        other => other.clone(),
+    }
+}
 
 impl HighLevelCompiler {
     pub(super) fn lower_block(&mut self, ir_program: &mut IrProgram, block: &Block) {
@@ -22,11 +56,45 @@ impl HighLevelCompiler {
         log::trace!("Lowering statement: {statement:?}");
         match statement {
             Statement::Expression(expr) => {
-                let _ = self.lower_expression(expr);
+                // `match` lowers here where `ir_program` is available: bare as a
+                // statement, or as the rvalue of `place = match ...`.
+                match expr {
+                    Expression::Match { scrutinee, arms } => {
+                        self.lower_match(ir_program, scrutinee, arms);
+                    }
+                    Expression::Assignment { target, rvalue }
+                        if matches!(rvalue.as_ref(), Expression::Match { .. }) =>
+                    {
+                        let Expression::Match { scrutinee, arms } = rvalue.as_ref() else {
+                            unreachable!()
+                        };
+                        self.lower_assignment_match(ir_program, target, scrutinee, arms);
+                    }
+                    _ => {
+                        let _ = self.lower_expression(expr);
+                    }
+                }
             }
             Statement::Return(expr) => {
                 // Check if we're in a function that returns an aggregate (has sret)
                 let has_sret = self.context.symbols.lookup("__sret_ptr").is_some();
+
+                // A scalar/pointer `return match ...` lowers the match into a result
+                // slot; aggregate (sret) returns fall through to the normal path.
+                if !has_sret {
+                    if let Some(Expression::Match { scrutinee, arms }) = expr.as_ref() {
+                        let target = self.current_return_ty.clone();
+                        let value = self
+                            .lower_match_value(ir_program, scrutinee, arms, target)
+                            .map(|l| l.value);
+                        let defers = self.defers.clone();
+                        for action in defers.into_iter().rev() {
+                            self.emit_deferred_action(action);
+                        }
+                        self.set_terminator(IrTerminator::Return(value));
+                        return;
+                    }
+                }
 
                 if has_sret {
                     // For functions returning aggregates, we need to copy the value to sret
@@ -124,7 +192,17 @@ impl HighLevelCompiler {
                 });
 
                 if let Some(init_expr) = init {
-                    if let Some(lowered) = self.lower_value_for_type(init_expr, &lowered_ty) {
+                    let lowered = if let Expression::Match { scrutinee, arms } = init_expr {
+                        self.lower_match_value(
+                            ir_program,
+                            scrutinee,
+                            arms,
+                            Some(lowered_ty.clone()),
+                        )
+                    } else {
+                        self.lower_value_for_type(init_expr, &lowered_ty)
+                    };
+                    if let Some(lowered) = lowered {
                         self.push_instruction(IrInstruction::Store {
                             ty: lowered_ty.clone(),
                             value: lowered.value,
@@ -140,6 +218,61 @@ impl HighLevelCompiler {
                     IrValue::Register(ptr_reg),
                 );
             }
+            Statement::InferredVariableDecl { name, init } => {
+                if let Expression::Primary(crate::ast::PrimaryExpr::New { ty, .. }) = init {
+                    if let Err(error) = self.lower_type_with_program(ir_program, ty) {
+                        self.context.error(format!(
+                            "failed to resolve inferred type for `{name}`: {error:?}"
+                        ));
+                        return;
+                    }
+                }
+                // Evaluate the initializer before introducing the symbol, which
+                // preserves V2's no-self-reference rule for inferred bindings.
+                let lowered = if let Expression::Match { scrutinee, arms } = init {
+                    self.lower_match_value(ir_program, scrutinee, arms, None)
+                } else {
+                    self.lower_expression(init)
+                };
+                let Some(lowered) = lowered else {
+                    self.context
+                        .error(format!("failed to infer initializer type for `{name}`"));
+                    return;
+                };
+                if lowered.ty == IrType::Void
+                    || matches!(&lowered.ty, IrType::Named(n) if n == "unknown")
+                {
+                    self.context.error(format!(
+                        "initializer for `{name}` has no concrete value type"
+                    ));
+                    return;
+                }
+
+                if lowered.is_unsigned {
+                    self.context.unsigned_vars.insert(name.clone());
+                }
+
+                let ptr_reg = IrRegister::Named(name.clone());
+                self.push_instruction(IrInstruction::Comment(format!(
+                    "inferred local var: {name}"
+                )));
+                self.push_instruction(IrInstruction::Alloc {
+                    dest: ptr_reg.clone(),
+                    ty: lowered.ty.clone(),
+                    count: None,
+                });
+                self.push_instruction(IrInstruction::Store {
+                    ty: lowered.ty.clone(),
+                    value: lowered.value,
+                    ptr: ptr_reg.clone(),
+                    offset: None,
+                });
+                self.context.symbols.insert(
+                    name.clone(),
+                    IrType::Pointer(Box::new(lowered.ty)),
+                    IrValue::Register(ptr_reg),
+                );
+            }
             Statement::Block(block) => {
                 self.lower_block(ir_program, block);
             }
@@ -152,6 +285,9 @@ impl HighLevelCompiler {
             }
             Statement::While { cond, body } => {
                 self.lower_while(ir_program, cond, body);
+            }
+            Statement::For { var, iter, body } => {
+                self.lower_for(ir_program, var, iter, body);
             }
             Statement::Break => {
                 if let Some((_, break_label)) = self.loop_labels.last() {
@@ -180,6 +316,7 @@ impl HighLevelCompiler {
                 if let Expression::Primary(crate::ast::PrimaryExpr::FunctionCall {
                     name,
                     arguments,
+                    ..
                 }) = expr
                 {
                     let mut captured_args = Vec::new();
@@ -216,6 +353,43 @@ impl HighLevelCompiler {
                     self.defers.push(DeferredAction::Expr(expr.clone()));
                 }
             }
+        }
+    }
+
+    // Lower `place = match ...`: resolve the target address, then store each
+    // matched arm's value into it through the slot-based value match.
+    fn lower_assignment_match(
+        &mut self,
+        ir_program: &mut IrProgram,
+        target: &AssignTarget,
+        scrutinee: &Expression,
+        arms: &[MatchArm],
+    ) {
+        let Some(target_expr) = Self::assign_target_to_expression(target) else {
+            self.context
+                .error("unsupported assignment target for a `match` value".to_owned());
+            return;
+        };
+        let Some(addr) = self.lower_expr(&target_expr, EvalMode::Address) else {
+            return;
+        };
+        let (ptr_reg, store_ty) = match (&addr.value, &addr.ty) {
+            (IrValue::Register(reg), IrType::Pointer(inner)) => (reg.clone(), *inner.clone()),
+            _ => {
+                self.context
+                    .error("assignment target did not resolve to an address".to_owned());
+                return;
+            }
+        };
+        if let Some(lowered) =
+            self.lower_match_value(ir_program, scrutinee, arms, Some(store_ty.clone()))
+        {
+            self.push_instruction(IrInstruction::Store {
+                ty: store_ty,
+                value: lowered.value,
+                ptr: ptr_reg,
+                offset: None,
+            });
         }
     }
 
@@ -387,6 +561,308 @@ impl HighLevelCompiler {
                     .ssa_env
                     .insert(var_name.clone(), pre_loop_value.clone());
             }
+        }
+    }
+
+    // Desugar a `for` loop to a `while` loop, reusing the existing `while`
+    // lowering (phi/break/continue) -- no new IR.
+    pub(super) fn lower_for(
+        &mut self,
+        ir_program: &mut IrProgram,
+        var: &str,
+        iter: &crate::ast::ForIter,
+        body: &Block,
+    ) {
+        match iter {
+            crate::ast::ForIter::Range {
+                start,
+                end,
+                inclusive,
+            } => self.lower_for_range(ir_program, var, start, end, *inclusive, body),
+            crate::ast::ForIter::Each(seq) => self.lower_for_each(ir_program, var, seq, body),
+        }
+    }
+
+    // `for var in start..end { body }` becomes:
+    //   var := start
+    //   __for_end := end                 ; end evaluated once
+    //   while var < __for_end {          ; `<=` when inclusive
+    //       <body, continue -> step+continue>
+    //       var = var + 1                ; the step
+    //   }
+    fn lower_for_range(
+        &mut self,
+        ir_program: &mut IrProgram,
+        var: &str,
+        start: &Expression,
+        end: &Expression,
+        inclusive: bool,
+        body: &Block,
+    ) {
+        let id = self.for_loop_id;
+        self.for_loop_id += 1;
+        let end_name = format!("__for_end_{id}");
+
+        let ident = |name: &str| Expression::Primary(PrimaryExpr::Identifier(name.to_owned()));
+
+        let decl_var = Statement::InferredVariableDecl {
+            name: var.to_owned(),
+            init: start.clone(),
+        };
+        let decl_end = Statement::InferredVariableDecl {
+            name: end_name.clone(),
+            init: end.clone(),
+        };
+
+        let cond = Expression::Binary {
+            op: if inclusive {
+                BinaryOp::Lte
+            } else {
+                BinaryOp::Lt
+            },
+            left: Box::new(ident(var)),
+            right: Box::new(ident(&end_name)),
+        };
+
+        let step = Self::increment_stmt(var);
+
+        let mut body_stmts = rewrite_continue_with_step(&body.statements, &step);
+        body_stmts.push(step);
+
+        let while_stmt = Statement::While {
+            cond,
+            body: Block {
+                statements: body_stmts,
+            },
+        };
+
+        let desugared = Block {
+            statements: vec![decl_var, decl_end, while_stmt],
+        };
+        self.lower_block(ir_program, &desugared);
+    }
+
+    // `for var in arr { body }` over a fixed array `T[N]` becomes:
+    //   __for_ptr := &arr[0]                 ; base element pointer, once
+    //   __for_i   := 0
+    //   while __for_i < N {
+    //       var := __for_ptr[__for_i]        ; element value, element-scaled
+    //       <body, continue -> step+continue>
+    //       __for_i = __for_i + 1
+    //   }
+    fn lower_for_each(
+        &mut self,
+        ir_program: &mut IrProgram,
+        var: &str,
+        seq: &Expression,
+        body: &Block,
+    ) {
+        if self.seq_is_slice(seq) {
+            self.lower_for_each_slice(ir_program, var, seq, body);
+            return;
+        }
+        let Some(len) = self.for_each_array_len(seq) else {
+            self.context
+                .error("`for ... in <array>` requires a fixed-size array operand".to_owned());
+            return;
+        };
+
+        let id = self.for_loop_id;
+        self.for_loop_id += 1;
+        let ptr_name = format!("__for_ptr_{id}");
+        let idx_name = format!("__for_i_{id}");
+
+        let ident = |name: &str| Expression::Primary(PrimaryExpr::Identifier(name.to_owned()));
+        let int = |n: i64| Expression::Primary(PrimaryExpr::Literal(Literal::Integer(n)));
+
+        // __for_ptr := &arr[0]
+        let decl_ptr = Statement::InferredVariableDecl {
+            name: ptr_name.clone(),
+            init: Expression::Unary {
+                op: crate::ast::UnaryOp::AddressOf,
+                expr: Box::new(Expression::Primary(PrimaryExpr::ArrayIndex {
+                    expr: Box::new(seq.clone()),
+                    index: Box::new(int(0)),
+                })),
+            },
+        };
+        // __for_i := 0
+        let decl_idx = Statement::InferredVariableDecl {
+            name: idx_name.clone(),
+            init: int(0),
+        };
+
+        let cond = Expression::Binary {
+            op: BinaryOp::Lt,
+            left: Box::new(ident(&idx_name)),
+            right: Box::new(int(len)),
+        };
+
+        // var := __for_ptr[__for_i]
+        let bind_elem = Statement::InferredVariableDecl {
+            name: var.to_owned(),
+            init: Expression::Primary(PrimaryExpr::ArrayIndex {
+                expr: Box::new(ident(&ptr_name)),
+                index: Box::new(ident(&idx_name)),
+            }),
+        };
+
+        let step = Self::increment_stmt(&idx_name);
+
+        let mut body_stmts = vec![bind_elem];
+        body_stmts.extend(rewrite_continue_with_step(&body.statements, &step));
+        body_stmts.push(step);
+
+        let while_stmt = Statement::While {
+            cond,
+            body: Block {
+                statements: body_stmts,
+            },
+        };
+
+        let desugared = Block {
+            statements: vec![decl_ptr, decl_idx, while_stmt],
+        };
+        self.lower_block(ir_program, &desugared);
+    }
+
+    // True when `seq` is a slice: an identifier of slice type or a range-slice
+    // expression (`arr[a..b]`).
+    fn seq_is_slice(&self, seq: &Expression) -> bool {
+        match seq {
+            Expression::Primary(PrimaryExpr::Slice { .. }) => true,
+            Expression::Primary(PrimaryExpr::Identifier(name)) => {
+                let Some(info) = self.context.symbols.lookup(name) else {
+                    return false;
+                };
+                let ty = match self.resolve_named_type(&info.ty) {
+                    IrType::Pointer(inner) => self.resolve_named_type(&inner),
+                    other => other,
+                };
+                matches!(ty, IrType::Slice(_))
+            }
+            _ => false,
+        }
+    }
+
+    // `for var in <slice> { body }` over a slice becomes:
+    //   __for_len := slice.len           ; length read once
+    //   __for_i := 0
+    //   while __for_i < __for_len {
+    //       var := slice[__for_i]        ; bounds-checked element read
+    //       <body, continue -> step+continue>
+    //       __for_i = __for_i + 1
+    //   }
+    fn lower_for_each_slice(
+        &mut self,
+        ir_program: &mut IrProgram,
+        var: &str,
+        seq: &Expression,
+        body: &Block,
+    ) {
+        let id = self.for_loop_id;
+        self.for_loop_id += 1;
+        let len_name = format!("__for_len_{id}");
+        let idx_name = format!("__for_i_{id}");
+        let seq_name = format!("__for_seq_{id}");
+
+        let ident = |name: &str| Expression::Primary(PrimaryExpr::Identifier(name.to_owned()));
+        let int = |n: i64| Expression::Primary(PrimaryExpr::Literal(Literal::Integer(n)));
+
+        // Bind a non-identifier source (e.g. `arr[a..b]`) once so it is not
+        // re-evaluated per iteration; identifiers are read directly.
+        let (seq, bind_seq) = match seq {
+            Expression::Primary(PrimaryExpr::Identifier(_)) => (seq.clone(), None),
+            other => (
+                ident(&seq_name),
+                Some(Statement::InferredVariableDecl {
+                    name: seq_name.clone(),
+                    init: other.clone(),
+                }),
+            ),
+        };
+        let seq = &seq;
+
+        let decl_len = Statement::InferredVariableDecl {
+            name: len_name.clone(),
+            init: Expression::Primary(PrimaryExpr::FieldAccess {
+                expr: Box::new(seq.clone()),
+                field: "len".to_owned(),
+            }),
+        };
+        let decl_idx = Statement::InferredVariableDecl {
+            name: idx_name.clone(),
+            init: int(0),
+        };
+
+        let cond = Expression::Binary {
+            op: BinaryOp::Lt,
+            left: Box::new(ident(&idx_name)),
+            right: Box::new(ident(&len_name)),
+        };
+
+        let bind_elem = Statement::InferredVariableDecl {
+            name: var.to_owned(),
+            init: Expression::Primary(PrimaryExpr::ArrayIndex {
+                expr: Box::new(seq.clone()),
+                index: Box::new(ident(&idx_name)),
+            }),
+        };
+
+        let step = Self::increment_stmt(&idx_name);
+
+        let mut body_stmts = vec![bind_elem];
+        body_stmts.extend(rewrite_continue_with_step(&body.statements, &step));
+        body_stmts.push(step);
+
+        let while_stmt = Statement::While {
+            cond,
+            body: Block {
+                statements: body_stmts,
+            },
+        };
+
+        let mut statements = Vec::new();
+        statements.extend(bind_seq);
+        statements.push(decl_len);
+        statements.push(decl_idx);
+        statements.push(while_stmt);
+        let desugared = Block { statements };
+        self.lower_block(ir_program, &desugared);
+    }
+
+    // `<name> = <name> + 1` as a statement, the loop step.
+    fn increment_stmt(name: &str) -> Statement {
+        Statement::Expression(Expression::Assignment {
+            target: Box::new(AssignTarget::Identifier(name.to_owned())),
+            rvalue: Box::new(Expression::Binary {
+                op: BinaryOp::Add,
+                left: Box::new(Expression::Primary(PrimaryExpr::Identifier(
+                    name.to_owned(),
+                ))),
+                right: Box::new(Expression::Primary(PrimaryExpr::Literal(Literal::Integer(
+                    1,
+                )))),
+            }),
+        })
+    }
+
+    // Static element count of an array-typed identifier operand, or `None` if
+    // the operand is not a resolvable fixed array.
+    fn for_each_array_len(&self, seq: &Expression) -> Option<i64> {
+        let Expression::Primary(PrimaryExpr::Identifier(name)) = seq else {
+            return None;
+        };
+        let info = self.context.symbols.lookup(name)?;
+        let resolved = self.resolve_named_type(&info.ty);
+        let array_ty = match resolved {
+            IrType::Array { .. } => resolved,
+            IrType::Pointer(inner) => self.resolve_named_type(&inner),
+            _ => return None,
+        };
+        match array_ty {
+            IrType::Array { len, .. } => Some(len as i64),
+            _ => None,
         }
     }
 

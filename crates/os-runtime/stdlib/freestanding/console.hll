@@ -1,3 +1,4 @@
+; @version 2
 ; Console I/O via direct NS16550A UART MMIO (0x10000000).
 ; Direct writes avoid ecall so sp is never a user VA in M-mode (would read garbage).
 
@@ -28,6 +29,23 @@ console_writeln: (str: u8*) {
     console_putchar('\n')
 }
 
+; Stable slice entry points: print the exact byte range, no NUL scan.
+print: (s: u8[]) -> i32 {
+    p: u8* = s.ptr
+    i: u64 = 0
+    while i < s.len {
+        console_putchar((@(p + i)) as i32)
+        i = i + 1
+    }
+    return 0
+}
+
+println: (s: u8[]) -> i32 {
+    print(s)
+    console_putchar('\n')
+    return 0
+}
+
 console_print_int_rec: (n: i64) {
     if n == 0 {
         return
@@ -50,7 +68,7 @@ console_print_int: (n: i64) {
 }
 
 console_print_hex: (n: u64) {
-    buf: u8[16]
+    buf: u8[16] = []
     i: u64 = 16
     v: u64 = n
     while i > 0 {
@@ -65,7 +83,7 @@ console_print_hex: (n: u64) {
     }
     console_putchar('0')
     console_putchar('x')
-    buf_ptr: u8* = buf[0]
+    buf_ptr: u8* = &buf[0]
     j: u64 = 0
     while j < 16 {
         console_putchar((@(buf_ptr + j)) as i32)

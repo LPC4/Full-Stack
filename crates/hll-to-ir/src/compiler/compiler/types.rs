@@ -19,6 +19,7 @@ impl HighLevelCompiler {
                 len: *len,
                 element: Box::new(self.lower_type(inner)),
             },
+            Type::Slice(inner) => IrType::Slice(Box::new(self.lower_type(inner))),
             Type::Struct(fields) => IrType::Aggregate(
                 fields
                     .iter()
@@ -64,6 +65,9 @@ impl HighLevelCompiler {
                 len: *len,
                 element: Box::new(self.lower_type_with_program(ir_program, inner)?),
             }),
+            Type::Slice(inner) => Ok(IrType::Slice(Box::new(
+                self.lower_type_with_program(ir_program, inner)?,
+            ))),
             Type::Struct(fields) => Ok(IrType::Aggregate(
                 fields
                     .iter()
@@ -123,7 +127,11 @@ impl HighLevelCompiler {
         args: &[IrType],
     ) -> Type {
         match ty {
-            Type::Primitive(_) | Type::Pointer(_) | Type::Array(_, _) | Type::Struct(_) => {
+            Type::Primitive(_)
+            | Type::Pointer(_)
+            | Type::Array(_, _)
+            | Type::Slice(_)
+            | Type::Struct(_) => {
                 // Recursively substitute in nested types
                 self.substitute_in_type(ty, params, args)
             }
@@ -155,6 +163,9 @@ impl HighLevelCompiler {
                 *len,
                 Box::new(self.substitute_generic_type(inner, params, args)),
             ),
+            Type::Slice(inner) => {
+                Type::Slice(Box::new(self.substitute_generic_type(inner, params, args)))
+            }
             Type::Struct(fields) => Type::Struct(
                 fields
                     .iter()
@@ -210,6 +221,7 @@ impl HighLevelCompiler {
             IrType::Array { len, element } => {
                 Type::Array(*len, Box::new(self.ir_type_to_type(element)))
             }
+            IrType::Slice(element) => Type::Slice(Box::new(self.ir_type_to_type(element))),
             IrType::Aggregate(fields) => {
                 // Convert to struct type
                 Type::Struct(
@@ -244,7 +256,7 @@ impl HighLevelCompiler {
         }
 
         // Get the generic type definition
-        let generic_def = self.generic_type_defs.get(name).ok_or_else(|| {
+        let generic_def = self.generic_type_defs.get(name).cloned().ok_or_else(|| {
             CompilerError::UnsupportedDeclaration(format!("Unknown generic type `{name}`"))
         })?;
 
@@ -269,7 +281,17 @@ impl HighLevelCompiler {
         let specialized_ty =
             self.substitute_generic_type(&generic_def.ty, &generic_def.params, type_args);
 
-        let lowered_ty = self.lower_type(&specialized_ty);
+        // Cache before descending so a recursive concrete record refers back to
+        // its own stable name instead of specializing forever.
+        self.generic_type_cache
+            .insert(cache_key.clone(), specialized_name.clone());
+        let lowered_ty = match self.lower_type_with_program(ir_program, &specialized_ty) {
+            Ok(ty) => ty,
+            Err(error) => {
+                self.generic_type_cache.remove(&cache_key);
+                return Err(error);
+            }
+        };
 
         self.context
             .types
@@ -278,10 +300,6 @@ impl HighLevelCompiler {
             name: specialized_name.clone(),
             ty: lowered_ty,
         });
-
-        // Cache the result
-        self.generic_type_cache
-            .insert(cache_key, specialized_name.clone());
 
         Ok(specialized_name)
     }

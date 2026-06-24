@@ -1,3 +1,4 @@
+; @version 2
 ; Spinning wireframe cube: map_fb, then per frame rotate, project, clear, draw.
 ; RGBA8888 pixels, double-buffered, WASD via poll_key. See OS spec ch.10.4.
 
@@ -32,17 +33,17 @@ hold_d: i64 = 0
 _fb_base: u64 = 0
 
 ; Cube model-space vertex coordinates (f64), one entry per corner.
-vx: f64[8]
-vy: f64[8]
-vz: f64[8]
+vx: f64[8] = []
+vy: f64[8] = []
+vz: f64[8] = []
 
 ; Projected screen coordinates (integer pixels) for each vertex.
-sxv: i64[8]
-syv: i64[8]
+sxv: i64[8] = []
+syv: i64[8] = []
 
 ; Edge endpoints: edge i connects vertex ea[i] to vertex eb[i].
-ea: i64[12]
-eb: i64[12]
+ea: i64[12] = []
+eb: i64[12] = []
 
 ; Minsky-circle rotation state for two axes. (cos, sin) pairs that
 ; advance by a fixed small angle each frame; different steps tumble the cube.
@@ -113,19 +114,19 @@ init_cube: () {
     i: i64 = 0
     while i < 8 {
         if (i & 1) == 0 {
-            @vx[i] = -1.0
+            vx[i] = -1.0
         } else {
-            @vx[i] = 1.0
+            vx[i] = 1.0
         }
         if (i & 2) == 0 {
-            @vy[i] = -1.0
+            vy[i] = -1.0
         } else {
-            @vy[i] = 1.0
+            vy[i] = 1.0
         }
         if (i & 4) == 0 {
-            @vz[i] = -1.0
+            vz[i] = -1.0
         } else {
-            @vz[i] = 1.0
+            vz[i] = 1.0
         }
         i = i + 1
     }
@@ -133,30 +134,30 @@ init_cube: () {
 
 ; The 12 edges connect corners that differ in exactly one axis bit.
 init_edges: () {
-    @ea[0] = 0
-    @eb[0] = 1
-    @ea[1] = 0
-    @eb[1] = 2
-    @ea[2] = 0
-    @eb[2] = 4
-    @ea[3] = 1
-    @eb[3] = 3
-    @ea[4] = 1
-    @eb[4] = 5
-    @ea[5] = 2
-    @eb[5] = 3
-    @ea[6] = 2
-    @eb[6] = 6
-    @ea[7] = 3
-    @eb[7] = 7
-    @ea[8] = 4
-    @eb[8] = 5
-    @ea[9] = 4
-    @eb[9] = 6
-    @ea[10] = 5
-    @eb[10] = 7
-    @ea[11] = 6
-    @eb[11] = 7
+    ea[0] = 0
+    eb[0] = 1
+    ea[1] = 0
+    eb[1] = 2
+    ea[2] = 0
+    eb[2] = 4
+    ea[3] = 1
+    eb[3] = 3
+    ea[4] = 1
+    eb[4] = 5
+    ea[5] = 2
+    eb[5] = 3
+    ea[6] = 2
+    eb[6] = 6
+    ea[7] = 3
+    eb[7] = 7
+    ea[8] = 4
+    eb[8] = 5
+    ea[9] = 4
+    eb[9] = 6
+    ea[10] = 5
+    eb[10] = 7
+    ea[11] = 6
+    eb[11] = 7
 }
 
 ; Advance both rotation angles one step (Minsky recurrence, drift-stable).
@@ -219,9 +220,9 @@ apply_wasd: () {
 project_all: () {
     i: i64 = 0
     while i < 8 {
-        x: f64 = @vx[i]
-        y: f64 = @vy[i]
-        z: f64 = @vz[i]
+        x: f64 = vx[i]
+        y: f64 = vy[i]
+        z: f64 = vz[i]
 
         ; Rotate about Y.
         x1: f64 = x * cay + z * say
@@ -235,8 +236,8 @@ project_all: () {
 
         ; Perspective divide. zc stays positive because DIST > max |z2|.
         zc: f64 = z2 + DIST
-        @sxv[i] = (CX + (x2 * SCALE) / zc) as i64
-        @syv[i] = (CY - (y2 * SCALE) / zc) as i64
+        sxv[i] = (CX + (x2 * SCALE) / zc) as i64
+        syv[i] = (CY - (y2 * SCALE) / zc) as i64
 
         i = i + 1
     }
@@ -272,9 +273,9 @@ draw_cube: () {
     col: u32 = 0xFF33FF66 as u32
     i: i64 = 0
     while i < 12 {
-        a: i64 = @ea[i]
-        b: i64 = @eb[i]
-        draw_line(@sxv[a], @syv[a], @sxv[b], @syv[b], col)
+        a: i64 = ea[i]
+        b: i64 = eb[i]
+        draw_line(sxv[a], syv[a], sxv[b], syv[b], col)
         i = i + 1
     }
 }
@@ -282,7 +283,7 @@ draw_cube: () {
 main: () -> i32 {
     base: u64 = sc_map_fb()
     if base == 0 {
-        console_writeln("cube: map_fb failed".data)
+        console_writeln("cube: map_fb failed".ptr)
         return 1
     }
     _fb_base = base
@@ -290,7 +291,7 @@ main: () -> i32 {
     init_cube()
     init_edges()
     enable_double_buffer()
-    console_writeln("cube: rendering (WASD to rotate)".data)
+    console_writeln("cube: rendering (WASD to rotate)".ptr)
 
     while 1 == 1 {
         poll_input()

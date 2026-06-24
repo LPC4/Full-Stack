@@ -22,25 +22,29 @@ use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 fn cached_stdlib_obj() -> &'static AssembledOutput {
     static STDLIB: OnceLock<AssembledOutput> = OnceLock::new();
     STDLIB.get_or_init(|| {
-        let mut pipeline = CompilationPipeline::new();
+        let mut pipeline = CompilationPipeline::new_v1();
         pipeline.set_write_artifacts(false);
         let stdlib_result = pipeline
             .compile(&get_stdlib_source())
             .expect("stdlib compile failed");
         let (_, stdlib_tokens) =
             pipeline.compile_ir_to_assembly_with_tokens(&stdlib_result.ir_program);
-        pipeline.assemble(&stdlib_tokens).expect("stdlib assemble failed")
+        pipeline
+            .assemble(&stdlib_tokens)
+            .expect("stdlib assemble failed")
     })
 }
 
 /// Compile user HLL, link it against the cached stdlib object, and run in the VM.
 fn run_hll_with_limit(src: &str, max_steps: u64) -> (VirtualMachine, StepOutcome, String) {
-    let mut pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new_v1();
     pipeline.set_write_artifacts(false);
 
     let user_result = pipeline.compile(src).expect("user compile failed");
     let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program);
-    let user_obj = pipeline.assemble(&user_tokens).expect("user assemble failed");
+    let user_obj = pipeline
+        .assemble(&user_tokens)
+        .expect("user assemble failed");
 
     let assembled = pipeline
         .link_assembled_objects(&[("stdlib", cached_stdlib_obj()), ("user", &user_obj)])
@@ -54,11 +58,13 @@ fn run_hll_with_limit(src: &str, max_steps: u64) -> (VirtualMachine, StepOutcome
 /// Compile a directly-constructed IR program (for ops the HLL surface lacks),
 /// link against the cached stdlib, and run it.
 fn run_ir(program: &IrProgram) -> (VirtualMachine, StepOutcome, String) {
-    let mut pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new_v1();
     pipeline.set_write_artifacts(false);
 
     let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(program);
-    let user_obj = pipeline.assemble(&user_tokens).expect("user assemble failed");
+    let user_obj = pipeline
+        .assemble(&user_tokens)
+        .expect("user assemble failed");
 
     let assembled = pipeline
         .link_assembled_objects(&[("stdlib", cached_stdlib_obj()), ("user", &user_obj)])
@@ -111,14 +117,16 @@ fn run_hll(src: &str) -> (VirtualMachine, StepOutcome, String) {
 /// Compile a user program with the peephole pass either on or off, returning the
 /// optimized-or-not token stream alongside the VM run (exit outcome + UART).
 fn run_hll_peephole(src: &str, peephole: bool) -> (StepOutcome, String, usize) {
-    let mut pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new_v1();
     pipeline.set_write_artifacts(false);
     pipeline.set_peephole(peephole);
 
     let user_result = pipeline.compile(src).expect("user compile failed");
     let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program);
     let code_lines = user_tokens.iter().filter(|t| t.is_code()).count();
-    let user_obj = pipeline.assemble(&user_tokens).expect("user assemble failed");
+    let user_obj = pipeline
+        .assemble(&user_tokens)
+        .expect("user assemble failed");
 
     let assembled = pipeline
         .link_assembled_objects(&[("stdlib", cached_stdlib_obj()), ("user", &user_obj)])
@@ -175,14 +183,16 @@ fn peephole_preserves_behavior_and_shrinks_code() {
 /// Compile and run a user program with the frame pointer omitted or kept,
 /// returning the VM run (exit outcome + UART) and the emitted instruction count.
 fn run_hll_omit_fp(src: &str, omit_fp: bool) -> (StepOutcome, String, usize) {
-    let mut pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new_v1();
     pipeline.set_write_artifacts(false);
     pipeline.set_omit_frame_pointer(omit_fp);
 
     let user_result = pipeline.compile(src).expect("user compile failed");
     let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program);
     let code_lines = user_tokens.iter().filter(|t| t.is_code()).count();
-    let user_obj = pipeline.assemble(&user_tokens).expect("user assemble failed");
+    let user_obj = pipeline
+        .assemble(&user_tokens)
+        .expect("user assemble failed");
 
     let assembled = pipeline
         .link_assembled_objects(&[("stdlib", cached_stdlib_obj()), ("user", &user_obj)])
@@ -215,7 +225,10 @@ fn omit_frame_pointer_preserves_behavior() {
         format!("{omit_outcome:?}"),
         "omitting the frame pointer changed the exit outcome"
     );
-    assert_eq!(base_uart, omit_uart, "omitting the frame pointer changed UART output");
+    assert_eq!(
+        base_uart, omit_uart,
+        "omitting the frame pointer changed UART output"
+    );
     assert!(
         omit_lines <= base_lines,
         "omitting the frame pointer should not add instructions: {base_lines} -> {omit_lines}"
@@ -224,18 +237,17 @@ fn omit_frame_pointer_preserves_behavior() {
 
 /// Compile a user program with IR optimization on or off, returning the VM run
 /// (exit outcome + UART) and the emitted instruction count.
-fn run_hll_optimize(
-    src: &str,
-    opts: hll_to_ir::OptOptions,
-) -> (StepOutcome, String, usize) {
-    let mut pipeline = CompilationPipeline::new();
+fn run_hll_optimize(src: &str, opts: hll_to_ir::OptOptions) -> (StepOutcome, String, usize) {
+    let mut pipeline = CompilationPipeline::new_v1();
     pipeline.set_write_artifacts(false);
     pipeline.set_optimize(opts);
 
     let user_result = pipeline.compile(src).expect("user compile failed");
     let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program);
     let code_lines = user_tokens.iter().filter(|t| t.is_code()).count();
-    let user_obj = pipeline.assemble(&user_tokens).expect("user assemble failed");
+    let user_obj = pipeline
+        .assemble(&user_tokens)
+        .expect("user assemble failed");
 
     let assembled = pipeline
         .link_assembled_objects(&[("stdlib", cached_stdlib_obj()), ("user", &user_obj)])
@@ -299,34 +311,45 @@ fn ir_opt_preserves_control_flow_program() {
 
 #[test]
 fn hll_new_i32_and_return() {
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 main: () -> i32 {
     p: i32* = new(i32)
     @p = 42
     return @p
 }
-"#);
-    assert!(matches!(outcome, StepOutcome::Halted(42)), "expected Halted(42), got {outcome:?}");
+"#,
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(42)),
+        "expected Halted(42), got {outcome:?}"
+    );
 }
 
 // --- HLL full-pipeline VM tests ---
 
 #[test]
 fn hll_arithmetic_return() {
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 main: () -> i32 {
     a: i32 = 6
     b: i32 = 7
     return a * b
 }
-"#);
-    assert!(matches!(outcome, StepOutcome::Halted(42)), "expected Halted(42), got {outcome:?}");
+"#,
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(42)),
+        "expected Halted(42), got {outcome:?}"
+    );
 }
 
 #[test]
 fn hll_compound_assignment_all_operators() {
     // Each compound operator desugars to `lhs = lhs OP rhs` and runs end to end.
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 main: () -> i32 {
     x: i64 = 10
     x += 5
@@ -341,16 +364,21 @@ main: () -> i32 {
     x ^= 2
     return x as i32
 }
-"#);
+"#,
+    );
     // 10 +5=15 -3=12 *2=24 /4=6 %4=2 <<3=16 >>1=8 |1=9 &12=8 ^2=10.
-    assert!(matches!(outcome, StepOutcome::Halted(10)), "expected Halted(10), got {outcome:?}");
+    assert!(
+        matches!(outcome, StepOutcome::Halted(10)),
+        "expected Halted(10), got {outcome:?}"
+    );
 }
 
 #[test]
 fn hll_compound_assignment_on_array_element() {
     // A dereferenced array element is a valid compound-assign target; the lvalue
     // is evaluated twice (read then write) with no surprises for a simple index.
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 a: i64[3]
 main: () -> i32 {
     @a[0] = 5
@@ -360,26 +388,36 @@ main: () -> i32 {
     @a[0] *= 4
     return (@a[0] + @a[1]) as i32
 }
-"#);
+"#,
+    );
     // a[0]=5*4=20, a[1]=0+7=7 -> 27.
-    assert!(matches!(outcome, StepOutcome::Halted(27)), "expected Halted(27), got {outcome:?}");
+    assert!(
+        matches!(outcome, StepOutcome::Halted(27)),
+        "expected Halted(27), got {outcome:?}"
+    );
 }
 
 #[test]
 fn hll_return_zero() {
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 main: () -> i32 {
     return 0
 }
-"#);
-    assert!(matches!(outcome, StepOutcome::Halted(0)), "expected Halted(0), got {outcome:?}");
+"#,
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "expected Halted(0), got {outcome:?}"
+    );
 }
 
 #[test]
 fn hll_negative_integer_inits() {
     // Negative literals and literal arithmetic adopt the declared i64 width with
     // no explicit cast.
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 neg_one: () -> i64 {
     return -1
 }
@@ -391,52 +429,72 @@ main: () -> i32 {
     e: i64 = c + d
     return e as i32
 }
-"#);
+"#,
+    );
     // a=-42, b=-1, c=42, d=-1, e=41.
-    assert!(matches!(outcome, StepOutcome::Halted(41)), "expected Halted(41), got {outcome:?}");
+    assert!(
+        matches!(outcome, StepOutcome::Halted(41)),
+        "expected Halted(41), got {outcome:?}"
+    );
 }
 
 #[test]
 fn hll_global_scalar_initializer() {
     // A non-zero scalar global reads back its declared value.
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 g: i64 = 42
 main: () -> i32 {
     return g as i32
 }
-"#);
-    assert!(matches!(outcome, StepOutcome::Halted(42)), "expected Halted(42), got {outcome:?}");
+"#,
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(42)),
+        "expected Halted(42), got {outcome:?}"
+    );
 }
 
 #[test]
 fn hll_global_array_initializer() {
     // A non-zero array global initializer lands in .data and reads back.
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 arr: i64[4] = [10, 20, 12, 0]
 main: () -> i32 {
     s: i64 = @arr[0] + @arr[1] + @arr[2] + @arr[3]
     return s as i32
 }
-"#);
-    assert!(matches!(outcome, StepOutcome::Halted(42)), "expected Halted(42), got {outcome:?}");
+"#,
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(42)),
+        "expected Halted(42), got {outcome:?}"
+    );
 }
 
 #[test]
 fn hll_function_call_and_return() {
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 add: (a: i32, b: i32) -> i32 {
     return a + b
 }
 main: () -> i32 {
     return add(10, 32)
 }
-"#);
-    assert!(matches!(outcome, StepOutcome::Halted(42)), "expected Halted(42), got {outcome:?}");
+"#,
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(42)),
+        "expected Halted(42), got {outcome:?}"
+    );
 }
 
 #[test]
 fn hll_putchar_output() {
-    let (_, outcome, uart) = run_hll(r#"
+    let (_, outcome, uart) = run_hll(
+        r#"
 external putchar: (c: i32) -> i32
 
 main: () -> i32 {
@@ -445,14 +503,19 @@ main: () -> i32 {
     putchar(67)
     return 0
 }
-"#);
+"#,
+    );
     assert_eq!(uart, "ABC", "expected UART='ABC', got {uart:?}");
-    assert!(matches!(outcome, StepOutcome::Halted(0)), "expected Halted(0), got {outcome:?}");
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "expected Halted(0), got {outcome:?}"
+    );
 }
 
 #[test]
 fn hll_user_function_calls_putchar() {
-    let (_, outcome, uart) = run_hll(r#"
+    let (_, outcome, uart) = run_hll(
+        r#"
 external putchar: (c: i32) -> i32
 
 emit: (c: i32) -> i32 {
@@ -464,9 +527,13 @@ main: () -> i32 {
     emit(66)
     return 0
 }
-"#);
+"#,
+    );
     assert_eq!(uart, "AB", "expected UART='AB', got {uart:?}");
-    assert!(matches!(outcome, StepOutcome::Halted(0)), "expected Halted(0), got {outcome:?}");
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "expected Halted(0), got {outcome:?}"
+    );
 }
 
 // --- Keyboard device ---
@@ -495,11 +562,13 @@ main: () -> i32 {
 }
 "#;
 
-    let mut pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new_v1();
     pipeline.set_write_artifacts(false);
     let user_result = pipeline.compile(src).expect("user compile failed");
     let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program);
-    let user_obj = pipeline.assemble(&user_tokens).expect("user assemble failed");
+    let user_obj = pipeline
+        .assemble(&user_tokens)
+        .expect("user assemble failed");
     let assembled = pipeline
         .link_assembled_objects(&[("stdlib", cached_stdlib_obj()), ("user", &user_obj)])
         .expect("link failed");
@@ -511,7 +580,11 @@ main: () -> i32 {
     vm.keyboard_push(b'C' as u16, true);
 
     let run = vm.run(5_000_000);
-    assert_eq!(run.uart_output, "AC", "expected 'AC', got {:?}", run.uart_output);
+    assert_eq!(
+        run.uart_output, "AC",
+        "expected 'AC', got {:?}",
+        run.uart_output
+    );
     assert!(
         matches!(run.outcome, StepOutcome::Halted(0)),
         "expected Halted(0), got {:?}",
@@ -538,34 +611,43 @@ fn assemble_and_run(insns: Vec<RvInstruction>) -> (VirtualMachine, StepOutcome) 
 #[test]
 fn test_exit_zero() {
     let (_, outcome) = assemble_and_run(vec![
-        ri(RealInstruction::Addi(Addi::new(10, 0, 0))),   // a0 = 0
-        ri(RealInstruction::Addi(Addi::new(17, 0, 93))),  // a7 = 93 (exit)
+        ri(RealInstruction::Addi(Addi::new(10, 0, 0))), // a0 = 0
+        ri(RealInstruction::Addi(Addi::new(17, 0, 93))), // a7 = 93 (exit)
         ri(RealInstruction::Ecall(Ecall::new())),
     ]);
-    assert!(matches!(outcome, StepOutcome::Halted(0)), "expected Halted(0), got {outcome:?}");
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "expected Halted(0), got {outcome:?}"
+    );
 }
 
 #[test]
 fn test_exit_code_42() {
     let (_, outcome) = assemble_and_run(vec![
-        ri(RealInstruction::Addi(Addi::new(10, 0, 42))),  // a0 = 42
-        ri(RealInstruction::Addi(Addi::new(17, 0, 93))),  // a7 = 93 (exit)
+        ri(RealInstruction::Addi(Addi::new(10, 0, 42))), // a0 = 42
+        ri(RealInstruction::Addi(Addi::new(17, 0, 93))), // a7 = 93 (exit)
         ri(RealInstruction::Ecall(Ecall::new())),
     ]);
-    assert!(matches!(outcome, StepOutcome::Halted(42)), "expected Halted(42), got {outcome:?}");
+    assert!(
+        matches!(outcome, StepOutcome::Halted(42)),
+        "expected Halted(42), got {outcome:?}"
+    );
 }
 
 #[test]
 fn test_add_two_numbers() {
     // 10 + 20 = 30
     let (_, outcome) = assemble_and_run(vec![
-        ri(RealInstruction::Addi(Addi::new(11, 0, 10))),  // a1 = 10
-        ri(RealInstruction::Addi(Addi::new(12, 0, 20))),  // a2 = 20
-        ri(RealInstruction::Add(Add::new(10, 11, 12))),   // a0 = a1 + a2 = 30
-        ri(RealInstruction::Addi(Addi::new(17, 0, 93))),  // a7 = 93
+        ri(RealInstruction::Addi(Addi::new(11, 0, 10))), // a1 = 10
+        ri(RealInstruction::Addi(Addi::new(12, 0, 20))), // a2 = 20
+        ri(RealInstruction::Add(Add::new(10, 11, 12))),  // a0 = a1 + a2 = 30
+        ri(RealInstruction::Addi(Addi::new(17, 0, 93))), // a7 = 93
         ri(RealInstruction::Ecall(Ecall::new())),
     ]);
-    assert!(matches!(outcome, StepOutcome::Halted(30)), "expected Halted(30), got {outcome:?}");
+    assert!(
+        matches!(outcome, StepOutcome::Halted(30)),
+        "expected Halted(30), got {outcome:?}"
+    );
 }
 
 #[test]
@@ -578,7 +660,10 @@ fn test_subtract() {
         ri(RealInstruction::Addi(Addi::new(17, 0, 93))),  // a7 = 93
         ri(RealInstruction::Ecall(Ecall::new())),
     ]);
-    assert!(matches!(outcome, StepOutcome::Halted(63)), "expected Halted(63), got {outcome:?}");
+    assert!(
+        matches!(outcome, StepOutcome::Halted(63)),
+        "expected Halted(63), got {outcome:?}"
+    );
 }
 
 #[test]
@@ -586,14 +671,17 @@ fn test_memory_store_load() {
     // t0=x5, t1=x6, sp=x2, a0=x10, a7=x17
     // Store 99 to stack scratch space, load it back into a0, exit with it.
     let (_, outcome) = assemble_and_run(vec![
-        ri(RealInstruction::Addi(Addi::new(5, 0, 99))),   // t0 = 99
-        ri(RealInstruction::Addi(Addi::new(6, 2, -8))),   // t1 = sp - 8 (scratch address)
-        ri(RealInstruction::Sd(Sd::new(6, 5, 0))),        // sd t0, 0(t1)  - store 99
-        ri(RealInstruction::Ld(Ld::new(10, 6, 0))),       // ld a0, 0(t1)  - load 99
-        ri(RealInstruction::Addi(Addi::new(17, 0, 93))),  // a7 = 93
+        ri(RealInstruction::Addi(Addi::new(5, 0, 99))), // t0 = 99
+        ri(RealInstruction::Addi(Addi::new(6, 2, -8))), // t1 = sp - 8 (scratch address)
+        ri(RealInstruction::Sd(Sd::new(6, 5, 0))),      // sd t0, 0(t1)  - store 99
+        ri(RealInstruction::Ld(Ld::new(10, 6, 0))),     // ld a0, 0(t1)  - load 99
+        ri(RealInstruction::Addi(Addi::new(17, 0, 93))), // a7 = 93
         ri(RealInstruction::Ecall(Ecall::new())),
     ]);
-    assert!(matches!(outcome, StepOutcome::Halted(99)), "expected Halted(99), got {outcome:?}");
+    assert!(
+        matches!(outcome, StepOutcome::Halted(99)),
+        "expected Halted(99), got {outcome:?}"
+    );
 }
 
 #[test]
@@ -608,27 +696,33 @@ fn test_branch_loop() {
     // addi a7, x0, 93
     // ecall
     let (_, outcome) = assemble_and_run(vec![
-        ri(RealInstruction::Addi(Addi::new(5, 0, 5))),    // t0 = 5
-        ri(RealInstruction::Addi(Addi::new(5, 5, -1))),   // t0-- (loop body)
-        ri(RealInstruction::Bne(Bne::new(5, 0, -4))),     // if t0 != 0, branch to loop body
-        ri(RealInstruction::Add(Add::new(10, 5, 0))),     // a0 = t0 (= 0)
-        ri(RealInstruction::Addi(Addi::new(17, 0, 93))),  // a7 = 93
+        ri(RealInstruction::Addi(Addi::new(5, 0, 5))), // t0 = 5
+        ri(RealInstruction::Addi(Addi::new(5, 5, -1))), // t0-- (loop body)
+        ri(RealInstruction::Bne(Bne::new(5, 0, -4))),  // if t0 != 0, branch to loop body
+        ri(RealInstruction::Add(Add::new(10, 5, 0))),  // a0 = t0 (= 0)
+        ri(RealInstruction::Addi(Addi::new(17, 0, 93))), // a7 = 93
         ri(RealInstruction::Ecall(Ecall::new())),
     ]);
-    assert!(matches!(outcome, StepOutcome::Halted(0)), "expected Halted(0), got {outcome:?}");
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "expected Halted(0), got {outcome:?}"
+    );
 }
 
 #[test]
 fn test_multiply() {
     // 6 * 7 = 42
     let (_, outcome) = assemble_and_run(vec![
-        ri(RealInstruction::Addi(Addi::new(11, 0, 6))),   // a1 = 6
-        ri(RealInstruction::Addi(Addi::new(12, 0, 7))),   // a2 = 7
-        ri(RealInstruction::Mul(Mul::new(10, 11, 12))),   // a0 = 6 * 7 = 42
-        ri(RealInstruction::Addi(Addi::new(17, 0, 93))),  // a7 = 93
+        ri(RealInstruction::Addi(Addi::new(11, 0, 6))), // a1 = 6
+        ri(RealInstruction::Addi(Addi::new(12, 0, 7))), // a2 = 7
+        ri(RealInstruction::Mul(Mul::new(10, 11, 12))), // a0 = 6 * 7 = 42
+        ri(RealInstruction::Addi(Addi::new(17, 0, 93))), // a7 = 93
         ri(RealInstruction::Ecall(Ecall::new())),
     ]);
-    assert!(matches!(outcome, StepOutcome::Halted(42)), "expected Halted(42), got {outcome:?}");
+    assert!(
+        matches!(outcome, StepOutcome::Halted(42)),
+        "expected Halted(42), got {outcome:?}"
+    );
 }
 
 #[test]
@@ -641,7 +735,10 @@ fn test_divide() {
         ri(RealInstruction::Addi(Addi::new(17, 0, 93))),  // a7 = 93
         ri(RealInstruction::Ecall(Ecall::new())),
     ]);
-    assert!(matches!(outcome, StepOutcome::Halted(25)), "expected Halted(25), got {outcome:?}");
+    assert!(
+        matches!(outcome, StepOutcome::Halted(25)),
+        "expected Halted(25), got {outcome:?}"
+    );
 }
 
 #[test]
@@ -650,22 +747,22 @@ fn test_ecall_write_uart() {
     // t0=x5 (buffer pointer), t1=x6 (byte value), sp=x2
     // a0=x10, a1=x11, a2=x12, a7=x17
     let assembled = Assembler::assemble(&[
-        ri(RealInstruction::Addi(Addi::new(5, 2, -4))),   // t0 = sp - 4 (buffer ptr)
+        ri(RealInstruction::Addi(Addi::new(5, 2, -4))), // t0 = sp - 4 (buffer ptr)
         ri(RealInstruction::Addi(Addi::new(6, 0, 0x68))), // t1 = 'h' (104)
-        ri(RealInstruction::Sb(Sb::new(5, 6, 0))),        // sb t1, 0(t0)
+        ri(RealInstruction::Sb(Sb::new(5, 6, 0))),      // sb t1, 0(t0)
         ri(RealInstruction::Addi(Addi::new(6, 0, 0x69))), // t1 = 'i' (105)
-        ri(RealInstruction::Sb(Sb::new(5, 6, 1))),        // sb t1, 1(t0)
+        ri(RealInstruction::Sb(Sb::new(5, 6, 1))),      // sb t1, 1(t0)
         ri(RealInstruction::Addi(Addi::new(6, 0, 0x0A))), // t1 = '\n' (10)
-        ri(RealInstruction::Sb(Sb::new(5, 6, 2))),        // sb t1, 2(t0)
+        ri(RealInstruction::Sb(Sb::new(5, 6, 2))),      // sb t1, 2(t0)
         // ecall write: a0=1 (fd=stdout), a1=buf, a2=3 (len), a7=64
-        ri(RealInstruction::Addi(Addi::new(10, 0, 1))),   // a0 = 1 (fd)
-        ri(RealInstruction::Add(Add::new(11, 5, 0))),     // a1 = t0 (buf ptr)
-        ri(RealInstruction::Addi(Addi::new(12, 0, 3))),   // a2 = 3 (len)
-        ri(RealInstruction::Addi(Addi::new(17, 0, 64))),  // a7 = 64 (write)
-        ri(RealInstruction::Ecall(Ecall::new())),          // syscall write
+        ri(RealInstruction::Addi(Addi::new(10, 0, 1))), // a0 = 1 (fd)
+        ri(RealInstruction::Add(Add::new(11, 5, 0))),   // a1 = t0 (buf ptr)
+        ri(RealInstruction::Addi(Addi::new(12, 0, 3))), // a2 = 3 (len)
+        ri(RealInstruction::Addi(Addi::new(17, 0, 64))), // a7 = 64 (write)
+        ri(RealInstruction::Ecall(Ecall::new())),       // syscall write
         // exit(0)
-        ri(RealInstruction::Addi(Addi::new(17, 0, 93))),  // a7 = 93
-        ri(RealInstruction::Addi(Addi::new(10, 0, 0))),   // a0 = 0
+        ri(RealInstruction::Addi(Addi::new(17, 0, 93))), // a7 = 93
+        ri(RealInstruction::Addi(Addi::new(10, 0, 0))),  // a0 = 0
         ri(RealInstruction::Ecall(Ecall::new())),
     ])
     .expect("assembly failed");
@@ -687,16 +784,20 @@ fn test_div_by_zero() {
     // The ROM handler for sys_exit uses t0-t6 as scratch, so t0 (x5) would
     // be clobbered; s0 (x8) is safe.
     let (vm, _outcome) = assemble_and_run(vec![
-        ri(RealInstruction::Addi(Addi::new(11, 0, 42))),  // a1 = 42
-        ri(RealInstruction::Divu(Divu::new(10, 11, 0))),  // a0 = divu(42, 0) = u64::MAX
+        ri(RealInstruction::Addi(Addi::new(11, 0, 42))), // a1 = 42
+        ri(RealInstruction::Divu(Divu::new(10, 11, 0))), // a0 = divu(42, 0) = u64::MAX
         // Save result to s0 (x8) before overwriting a0 for exit
-        ri(RealInstruction::Add(Add::new(8, 10, 0))),     // s0 = a0 (preserved across ecall)
-        ri(RealInstruction::Addi(Addi::new(17, 0, 93))),  // a7 = 93
-        ri(RealInstruction::Addi(Addi::new(10, 0, 0))),   // a0 = 0 (exit code)
+        ri(RealInstruction::Add(Add::new(8, 10, 0))), // s0 = a0 (preserved across ecall)
+        ri(RealInstruction::Addi(Addi::new(17, 0, 93))), // a7 = 93
+        ri(RealInstruction::Addi(Addi::new(10, 0, 0))), // a0 = 0 (exit code)
         ri(RealInstruction::Ecall(Ecall::new())),
     ]);
     // s0=x8 should hold u64::MAX from the divu
-    assert_eq!(vm.peek_reg(8), u64::MAX, "divu by zero should produce u64::MAX");
+    assert_eq!(
+        vm.peek_reg(8),
+        u64::MAX,
+        "divu by zero should produce u64::MAX"
+    );
 }
 
 #[test]
@@ -704,12 +805,12 @@ fn test_csr_instret() {
     // Run a few nops, then read instret via csrrs a0, 0xC02, x0, then exit.
     // The exit code (as i64) should be > 3 (we ran at least 3 nops + csrrs + addi + ecall).
     let (_, outcome) = assemble_and_run(vec![
-        ri(RealInstruction::Addi(Addi::new(0, 0, 0))),    // nop 1
-        ri(RealInstruction::Addi(Addi::new(0, 0, 0))),    // nop 2
-        ri(RealInstruction::Addi(Addi::new(0, 0, 0))),    // nop 3
+        ri(RealInstruction::Addi(Addi::new(0, 0, 0))), // nop 1
+        ri(RealInstruction::Addi(Addi::new(0, 0, 0))), // nop 2
+        ri(RealInstruction::Addi(Addi::new(0, 0, 0))), // nop 3
         // csrrs a0, instret (0xC02), x0  - read instret, no write
         ri(RealInstruction::Csrrs(Csrrs::new(10, 0xC02, 0))),
-        ri(RealInstruction::Addi(Addi::new(17, 0, 93))),  // a7 = 93
+        ri(RealInstruction::Addi(Addi::new(17, 0, 93))), // a7 = 93
         ri(RealInstruction::Ecall(Ecall::new())),
     ]);
     // instret should be >= 3 (the 3 nops have retired; csrrs reads the count before incrementing)
@@ -760,7 +861,8 @@ fn qemu_04_pointers_and_memory() {
 /// Single new/free cycle, no defer.
 #[test]
 fn hll_new_and_free_basic() {
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 main: () -> i32 {
     p: i32* = new(i32)
     @p = 42
@@ -768,14 +870,19 @@ main: () -> i32 {
     free(p)
     return v
 }
-"#);
-    assert!(matches!(outcome, StepOutcome::Halted(42)), "expected Halted(42), got {outcome:?}");
+"#,
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(42)),
+        "expected Halted(42), got {outcome:?}"
+    );
 }
 
 /// Allocate, free, then reallocate - exercises the free-list reuse path.
 #[test]
 fn hll_new_free_reuse() {
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 main: () -> i32 {
     p: i32* = new(i32)
     @p = 1
@@ -786,22 +893,31 @@ main: () -> i32 {
     free(q)
     return v
 }
-"#);
-    assert!(matches!(outcome, StepOutcome::Halted(42)), "expected Halted(42), got {outcome:?}");
+"#,
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(42)),
+        "expected Halted(42), got {outcome:?}"
+    );
 }
 
 /// defer free on a heap pointer.
 #[test]
 fn hll_defer_free() {
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 main: () -> i32 {
     p: i32* = new(i32)
     defer free(p)
     @p = 42
     return @p
 }
-"#);
-    assert!(matches!(outcome, StepOutcome::Halted(42)), "expected Halted(42), got {outcome:?}");
+"#,
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(42)),
+        "expected Halted(42), got {outcome:?}"
+    );
 }
 
 #[test]
@@ -842,7 +958,8 @@ fn examples_exit_zero_in_vm() {
 /// All eight argument registers (a0-a7) are passed and summed correctly.
 #[test]
 fn call_eight_args_all_used() {
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 sum_eight: (a: i32, b: i32, c: i32, d: i32, e: i32, f: i32, g: i32, h: i32) -> i32 {
     return a + b + c + d + e + f + g + h
 }
@@ -853,7 +970,8 @@ main: () -> i32 {
     }
     return 1
 }
-"#);
+"#,
+    );
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
         "sum of 1..8 = 36, got {outcome:?}"
@@ -863,7 +981,8 @@ main: () -> i32 {
 /// The ninth argument must be passed via the caller's stack frame.
 #[test]
 fn call_ninth_arg() {
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 sum_nine: (a: i32, b: i32, c: i32, d: i32, e: i32, f: i32, g: i32, h: i32, ninth: i32) -> i32 {
     return a + b + c + d + e + f + g + h + ninth
 }
@@ -874,7 +993,8 @@ main: () -> i32 {
     }
     return 1
 }
-"#);
+"#,
+    );
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
         "sum of 1..9 = 45 (9th arg via stack), got {outcome:?}"
@@ -884,7 +1004,8 @@ main: () -> i32 {
 /// Values held across a function call must be restored (callee-saved or spilled).
 #[test]
 fn call_callee_saves_preserved() {
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 compute: (x: i32, y: i32) -> i32 {
     return x + y
 }
@@ -898,7 +1019,8 @@ main: () -> i32 {
     }
     return 1
 }
-"#);
+"#,
+    );
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
         "value alive across call must be preserved; inner result must be 7, got {outcome:?}"
@@ -908,7 +1030,8 @@ main: () -> i32 {
 /// Two-field struct returned inline (a0/a1 small-struct ABI).
 #[test]
 fn call_struct_return_two_fields() {
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 divide: (a: i32, b: i32) -> { quotient: i32, remainder: i32 } {
     return { .quotient = a / b, .remainder = a % b }
 }
@@ -921,7 +1044,8 @@ main: () -> i32 {
     }
     return 1
 }
-"#);
+"#,
+    );
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
         "17 / 5 = 3 remainder 2 (struct return), got {outcome:?}"
@@ -931,7 +1055,8 @@ main: () -> i32 {
 /// Return value must be usable in a subsequent expression.
 #[test]
 fn call_return_value_used_in_expr() {
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 double: (n: i32) -> i32 {
     return n * 2
 }
@@ -943,7 +1068,8 @@ main: () -> i32 {
     }
     return 1
 }
-"#);
+"#,
+    );
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
         "double(21) = 42, used in expression, got {outcome:?}"
@@ -957,7 +1083,8 @@ main: () -> i32 {
 /// 42 - exercises the ADDI-only path (value in [-2048, 2047]).
 #[test]
 fn li_small_positive() {
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 main: () -> i32 {
     v: i32 = 42
     if v == 42 {
@@ -965,14 +1092,19 @@ main: () -> i32 {
     }
     return 1
 }
-"#);
-    assert!(matches!(outcome, StepOutcome::Halted(0)), "li 42 should load 42, got {outcome:?}");
+"#,
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "li 42 should load 42, got {outcome:?}"
+    );
 }
 
 /// 2047 - last value that fits in a single ADDI.
 #[test]
 fn li_boundary_2047() {
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 main: () -> i32 {
     v: i32 = 2047
     if v == 2047 {
@@ -980,14 +1112,19 @@ main: () -> i32 {
     }
     return 1
 }
-"#);
-    assert!(matches!(outcome, StepOutcome::Halted(0)), "li 2047 should load 2047, got {outcome:?}");
+"#,
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "li 2047 should load 2047, got {outcome:?}"
+    );
 }
 
 /// 2048 - first value that requires the LUI path.
 #[test]
 fn li_boundary_2048() {
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 main: () -> i32 {
     v: i32 = 2048
     if v == 2048 {
@@ -995,7 +1132,8 @@ main: () -> i32 {
     }
     return 1
 }
-"#);
+"#,
+    );
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
         "li 2048 should load 2048 (LUI+ADDI path), got {outcome:?}"
@@ -1005,7 +1143,8 @@ main: () -> i32 {
 /// 0x7FFF_FFFF - last value before the sign-extension danger zone.
 #[test]
 fn li_max_signed_32bit() {
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 main: () -> i32 {
     v: i32 = 2147483647
     a: i32 = 1073741823
@@ -1015,7 +1154,8 @@ main: () -> i32 {
     }
     return 1
 }
-"#);
+"#,
+    );
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
         "li 0x7FFF_FFFF should load 2147483647, got {outcome:?}"
@@ -1025,7 +1165,8 @@ main: () -> i32 {
 /// 0x8000_0000 - first value where LUI sign-extends; zero-extension is required.
 #[test]
 fn li_sign_extend_boundary() {
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 main: () -> i32 {
     v: i64 = 2147483648
     a: i64 = 1048576
@@ -1036,7 +1177,8 @@ main: () -> i32 {
     }
     return 1
 }
-"#);
+"#,
+    );
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
         "li 0x8000_0000 should load 2147483648 (zero-extended), got {outcome:?}"
@@ -1046,7 +1188,8 @@ main: () -> i32 {
 /// 0x8010_0000 - the exact pmm_init address that exposed the original kernel bug.
 #[test]
 fn li_original_bug_value() {
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 main: () -> i32 {
     v: i64 = 2148532224
     a: i64 = 1048576
@@ -1056,7 +1199,8 @@ main: () -> i32 {
     }
     return 1
 }
-"#);
+"#,
+    );
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
         "li 0x8010_0000 should load 2148532224, got {outcome:?}"
@@ -1066,7 +1210,8 @@ main: () -> i32 {
 /// 0xFFFF_FFFF tests hi_adj overflow; slli/srli sequence must still produce correct bits.
 #[test]
 fn li_max_unsigned_32bit() {
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 main: () -> i32 {
     v: i64 = 4294967295
     a: i64 = 65535
@@ -1077,7 +1222,8 @@ main: () -> i32 {
     }
     return 1
 }
-"#);
+"#,
+    );
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
         "li 0xFFFF_FFFF should load 4294967295, got {outcome:?}"
@@ -1087,7 +1233,8 @@ main: () -> i32 {
 /// 0x1_0000_0000 - first true 64-bit value.
 #[test]
 fn li_true_64bit_small() {
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 main: () -> i32 {
     v: i64 = 4294967296
     a: i64 = 65536
@@ -1097,7 +1244,8 @@ main: () -> i32 {
     }
     return 1
 }
-"#);
+"#,
+    );
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
         "li 0x1_0000_0000 should load 4294967296 (true 64-bit path), got {outcome:?}"
@@ -1109,7 +1257,8 @@ main: () -> i32 {
 /// A global i32 starts at zero and can be written then read back correctly.
 #[test]
 fn global_i32_write_read() {
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 gval: i32 = 0
 
 main: () -> i32 {
@@ -1120,7 +1269,8 @@ main: () -> i32 {
     }
     return 1
 }
-"#);
+"#,
+    );
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
         "global i32 write 42 then read should return 42, got {outcome:?}"
@@ -1130,7 +1280,8 @@ main: () -> i32 {
 /// A global i64 can hold a large positive value (> i32::MAX).
 #[test]
 fn global_i64_write_large_value() {
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 big_addr: i64 = 0
 
 main: () -> i32 {
@@ -1143,7 +1294,8 @@ main: () -> i32 {
     }
     return 1
 }
-"#);
+"#,
+    );
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
         "global i64 should hold 0x8010_0000 (2148532224), got {outcome:?}"
@@ -1153,7 +1305,8 @@ main: () -> i32 {
 /// Two separate global variables do not alias each other.
 #[test]
 fn global_two_vars_independent() {
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 alpha: i32 = 0
 beta: i32 = 0
 
@@ -1169,7 +1322,8 @@ main: () -> i32 {
     }
     return 1
 }
-"#);
+"#,
+    );
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
         "two globals must be independent; alpha=10 beta=20, got {outcome:?}"
@@ -1179,7 +1333,8 @@ main: () -> i32 {
 /// Global variable in BSS section is zero-initialized at program start.
 #[test]
 fn global_bss_zero_init() {
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 uninit: i32 = 0
 
 main: () -> i32 {
@@ -1189,7 +1344,8 @@ main: () -> i32 {
     }
     return 1
 }
-"#);
+"#,
+    );
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
         "BSS global must start at 0, got {outcome:?}"
@@ -1199,7 +1355,8 @@ main: () -> i32 {
 /// Repeated writes accumulate correctly (global as a counter).
 #[test]
 fn global_i32_counter() {
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 counter: i32 = 0
 
 bump: () -> void {
@@ -1216,7 +1373,8 @@ main: () -> i32 {
     }
     return 1
 }
-"#);
+"#,
+    );
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
         "counter bumped 3 times should equal 3, got {outcome:?}"
@@ -1228,7 +1386,8 @@ main: () -> i32 {
 /// Store and load an i8: positive value 127 round-trips without corruption.
 #[test]
 fn mem_i8_store_load_positive() {
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 external free: (p: i8*) -> void
 
 main: () -> i32 {
@@ -1241,7 +1400,8 @@ main: () -> i32 {
     }
     return 1
 }
-"#);
+"#,
+    );
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
         "i8 store 127 -> load should read 127, got {outcome:?}"
@@ -1251,7 +1411,8 @@ main: () -> i32 {
 /// Store and load an i8: negative value -1 round-trips as -1 (lb sign-extends).
 #[test]
 fn mem_i8_store_load_negative() {
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 external free: (p: i8*) -> void
 
 main: () -> i32 {
@@ -1264,7 +1425,8 @@ main: () -> i32 {
     }
     return 1
 }
-"#);
+"#,
+    );
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
         "i8 store -1 -> load should read -1 (sign-extended), got {outcome:?}"
@@ -1274,7 +1436,8 @@ main: () -> i32 {
 /// Store and load an i16: value 1000 round-trips correctly.
 #[test]
 fn mem_i16_store_load() {
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 external free: (p: i16*) -> void
 
 main: () -> i32 {
@@ -1287,7 +1450,8 @@ main: () -> i32 {
     }
     return 1
 }
-"#);
+"#,
+    );
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
         "i16 store 1000 -> load should read 1000, got {outcome:?}"
@@ -1297,7 +1461,8 @@ main: () -> i32 {
 /// Store and load an i32: value 1234567 round-trips correctly.
 #[test]
 fn mem_i32_store_load() {
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 external free: (p: i32*) -> void
 
 main: () -> i32 {
@@ -1310,7 +1475,8 @@ main: () -> i32 {
     }
     return 1
 }
-"#);
+"#,
+    );
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
         "i32 store 1234567 -> load should read 1234567, got {outcome:?}"
@@ -1320,7 +1486,8 @@ main: () -> i32 {
 /// i64 store/load round-trip for large value 0x8010_0000.
 #[test]
 fn mem_i64_store_load_large() {
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 external free: (p: i64*) -> void
 
 main: () -> i32 {
@@ -1335,7 +1502,8 @@ main: () -> i32 {
     }
     return 1
 }
-"#);
+"#,
+    );
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
         "i64 store 0x8010_0000 -> load should read same value, got {outcome:?}"
@@ -1345,7 +1513,8 @@ main: () -> i32 {
 /// Store then overwrite: last written value wins.
 #[test]
 fn mem_i32_overwrite() {
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 external free: (p: i32*) -> void
 
 main: () -> i32 {
@@ -1359,7 +1528,8 @@ main: () -> i32 {
     }
     return 1
 }
-"#);
+"#,
+    );
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
         "second write should overwrite first; expected 42, got {outcome:?}"
@@ -1371,7 +1541,8 @@ main: () -> i32 {
 /// Two-field struct: fields land at the correct offsets.
 #[test]
 fn struct_two_field_access() {
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 type Point = { x: i32, y: i32 }
 
 make_point: (a: i32, b: i32) -> Point {
@@ -1387,7 +1558,8 @@ main: () -> i32 {
     }
     return 1
 }
-"#);
+"#,
+    );
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
         "struct fields x=3 y=7 must be readable at correct offsets, got {outcome:?}"
@@ -1397,7 +1569,8 @@ main: () -> i32 {
 /// Struct field arithmetic: compute a value from both fields.
 #[test]
 fn struct_field_arithmetic() {
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 divide: (a: i32, b: i32) -> { quotient: i32, remainder: i32 } {
     return { .quotient = a / b, .remainder = a % b }
 }
@@ -1410,7 +1583,8 @@ main: () -> i32 {
     }
     return 1
 }
-"#);
+"#,
+    );
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
         "23 / 7 = 3 remainder 2; quotient + remainder = 5, got {outcome:?}"
@@ -1420,7 +1594,8 @@ main: () -> i32 {
 /// Struct returned from one call fed into another.
 #[test]
 fn struct_return_chained() {
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 minmax: (a: i32, b: i32) -> { lo: i32, hi: i32 } {
     if a < b {
         return { .lo = a, .hi = b }
@@ -1440,7 +1615,8 @@ main: () -> i32 {
     }
     return 1
 }
-"#);
+"#,
+    );
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
         "minmax(10,3) -> lo=3,hi=10 -> span=7, got {outcome:?}"
@@ -1450,7 +1626,8 @@ main: () -> i32 {
 /// Two independent heap i32 allocations do not overlap.
 #[test]
 fn heap_two_i32_slots_independent() {
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 external free: (p: i32*) -> void
 
 main: () -> i32 {
@@ -1469,7 +1646,8 @@ main: () -> i32 {
     }
     return 1
 }
-"#);
+"#,
+    );
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
         "two heap i32 slots must be independent (p=100, q=200), got {outcome:?}"
@@ -1479,7 +1657,8 @@ main: () -> i32 {
 /// Three-field struct: middle field is at the correct byte offset.
 #[test]
 fn struct_three_field_middle_offset() {
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 type Triple = { a: i32, b: i32, c: i32 }
 
 make: (x: i32, y: i32, z: i32) -> Triple {
@@ -1493,7 +1672,8 @@ main: () -> i32 {
     }
     return 1
 }
-"#);
+"#,
+    );
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
         "middle field b=99 must be readable at offset 4, got {outcome:?}"
@@ -1503,7 +1683,8 @@ main: () -> i32 {
 /// Struct with mixed i32 and i64 fields: i64 must be aligned to 8 bytes.
 #[test]
 fn struct_mixed_i32_i64_fields() {
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 type Mixed = { small: i32, big: i64 }
 
 make_mixed: (s: i32, b: i64) -> Mixed {
@@ -1521,7 +1702,8 @@ main: () -> i32 {
     }
     return 1
 }
-"#);
+"#,
+    );
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
         "mixed struct: small=7 big=0x8010_0000, got {outcome:?}"
@@ -1535,7 +1717,8 @@ main: () -> i32 {
 /// Signed integer division with a negative dividend must use `div` (signed).
 #[test]
 fn ir_math_signed_div() {
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 main: () -> i32 {
     result: i32 = -8 / 2
     if result == -4 {
@@ -1543,7 +1726,8 @@ main: () -> i32 {
     }
     return 1
 }
-"#);
+"#,
+    );
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
         "signed -8 / 2 should equal -4, got {outcome:?}"
@@ -1553,7 +1737,8 @@ main: () -> i32 {
 /// Unsigned division: 100 / 3 = 33 (unsigned semantics).
 #[test]
 fn ir_math_udiv() {
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 main: () -> i32 {
     a: u32 = 100
     b: u32 = 3
@@ -1563,7 +1748,8 @@ main: () -> i32 {
     }
     return 1
 }
-"#);
+"#,
+    );
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
         "unsigned 100 / 3 = 33, got {outcome:?}"
@@ -1573,7 +1759,8 @@ main: () -> i32 {
 /// Signed comparison: -1 < 0 must be true (uses `slt`, not `sltu`).
 #[test]
 fn ir_cmp_signed_negative() {
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 main: () -> i32 {
     neg: i32 = -1
     zero: i32 = 0
@@ -1582,7 +1769,8 @@ main: () -> i32 {
     }
     return 1
 }
-"#);
+"#,
+    );
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
         "-1 < 0 should be true (signed), got {outcome:?}"
@@ -1592,7 +1780,8 @@ main: () -> i32 {
 /// Unsigned comparison: 0xFFFF_FFFF as u32 must be greater than 1.
 #[test]
 fn ir_cmp_unsigned_max() {
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 main: () -> i32 {
     big: u32 = 4294967295
     small: u32 = 1
@@ -1601,7 +1790,8 @@ main: () -> i32 {
     }
     return 1
 }
-"#);
+"#,
+    );
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
         "0xFFFF_FFFF > 1 should be true (unsigned), got {outcome:?}"
@@ -1611,7 +1801,8 @@ main: () -> i32 {
 /// Unary negation: 0 - 5 = -5.
 #[test]
 fn ir_unary_neg() {
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 main: () -> i32 {
     pos: i32 = 5
     neg: i32 = 0 - pos
@@ -1620,14 +1811,19 @@ main: () -> i32 {
     }
     return 1
 }
-"#);
-    assert!(matches!(outcome, StepOutcome::Halted(0)), "0 - 5 = -5, got {outcome:?}");
+"#,
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "0 - 5 = -5, got {outcome:?}"
+    );
 }
 
 /// All-ones value check (HLL has no bitwise-not surface op here).
 #[test]
 fn ir_unary_not() {
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 main: () -> i32 {
     all_ones: i32 = 0 - 1
     neg_one: i32 = 0 - 1
@@ -1636,14 +1832,19 @@ main: () -> i32 {
     }
     return 1
 }
-"#);
-    assert!(matches!(outcome, StepOutcome::Halted(0)), "bitwise all-ones check, got {outcome:?}");
+"#,
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "bitwise all-ones check, got {outcome:?}"
+    );
 }
 
 /// Array stride correctness: two separate heap i32 values sum to 30.
 #[test]
 fn ir_index_with_stride() {
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 external free: (p: i32*) -> void
 
 main: () -> i32 {
@@ -1659,7 +1860,8 @@ main: () -> i32 {
     }
     return 1
 }
-"#);
+"#,
+    );
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
         "two separate heap i32 values sum to 30, got {outcome:?}"
@@ -1685,9 +1887,16 @@ fn ir_math_shr_signed() {
         lhs: IrValue::Register(IrRegister::Named("shifted".into())),
         rhs: IrValue::Integer(-2),
     });
-    let program = pass_fail_ir("shr_signed", entry, IrValue::Register(IrRegister::Named("ok".into())));
+    let program = pass_fail_ir(
+        "shr_signed",
+        entry,
+        IrValue::Register(IrRegister::Named("ok".into())),
+    );
     let (_, outcome, _) = run_ir(&program);
-    assert!(matches!(outcome, StepOutcome::Halted(0)), "sra: -8 >> 2 == -2, got {outcome:?}");
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "sra: -8 >> 2 == -2, got {outcome:?}"
+    );
 }
 
 /// Left shift (`sll`): 1 << 10 must equal 1024. Built directly in IR.
@@ -1709,9 +1918,16 @@ fn ir_math_shl() {
         lhs: IrValue::Register(IrRegister::Named("result".into())),
         rhs: IrValue::Integer(1024),
     });
-    let program = pass_fail_ir("shl", entry, IrValue::Register(IrRegister::Named("ok".into())));
+    let program = pass_fail_ir(
+        "shl",
+        entry,
+        IrValue::Register(IrRegister::Named("ok".into())),
+    );
     let (_, outcome, _) = run_ir(&program);
-    assert!(matches!(outcome, StepOutcome::Halted(0)), "sll: 1 << 10 == 1024, got {outcome:?}");
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "sll: 1 << 10 == 1024, got {outcome:?}"
+    );
 }
 
 /// IR-level unary negation: IrUnaryOp::Neg applied to 7 yields -7.
@@ -1732,9 +1948,16 @@ fn ir_unary_neg_ir() {
         lhs: IrValue::Register(IrRegister::Named("neg_val".into())),
         rhs: IrValue::Integer(-7),
     });
-    let program = pass_fail_ir("neg", entry, IrValue::Register(IrRegister::Named("ok".into())));
+    let program = pass_fail_ir(
+        "neg",
+        entry,
+        IrValue::Register(IrRegister::Named("ok".into())),
+    );
     let (_, outcome, _) = run_ir(&program);
-    assert!(matches!(outcome, StepOutcome::Halted(0)), "neg 7 == -7, got {outcome:?}");
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "neg 7 == -7, got {outcome:?}"
+    );
 }
 
 /// Unsigned less-than comparison via IR: 2 < 5 must be true with `Ult`.
@@ -1749,9 +1972,16 @@ fn ir_cmp_ult() {
         lhs: IrValue::Integer(2),
         rhs: IrValue::Integer(5),
     });
-    let program = pass_fail_ir("ult", entry, IrValue::Register(IrRegister::Named("ok".into())));
+    let program = pass_fail_ir(
+        "ult",
+        entry,
+        IrValue::Register(IrRegister::Named("ok".into())),
+    );
     let (_, outcome, _) = run_ir(&program);
-    assert!(matches!(outcome, StepOutcome::Halted(0)), "ult: 2 < 5 should be true, got {outcome:?}");
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "ult: 2 < 5 should be true, got {outcome:?}"
+    );
 }
 
 /// Signed less-than comparison via IR: -1 < 0 must be true with `Slt`.
@@ -1766,9 +1996,16 @@ fn ir_cmp_slt_negative() {
         lhs: IrValue::Integer(-1),
         rhs: IrValue::Integer(0),
     });
-    let program = pass_fail_ir("slt", entry, IrValue::Register(IrRegister::Named("ok".into())));
+    let program = pass_fail_ir(
+        "slt",
+        entry,
+        IrValue::Register(IrRegister::Named("ok".into())),
+    );
     let (_, outcome, _) = run_ir(&program);
-    assert!(matches!(outcome, StepOutcome::Halted(0)), "slt: -1 < 0 should be true, got {outcome:?}");
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "slt: -1 < 0 should be true, got {outcome:?}"
+    );
 }
 
 // --- Floating-point lowering ---
@@ -1782,36 +2019,47 @@ fn ir_cmp_slt_negative() {
 fn float_f32_constant_and_add() {
     // Before the fix, `1.5: f32` materialized 0.0 (wrong low 32 bits), so the
     // sum was 0. Correct: 1.5 + 2.5 = 4.0 -> 4.
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 main: () -> i32 {
     a: f32 = 1.5
     b: f32 = 2.5
     c: f32 = a + b
     return c as i32
 }
-"#);
-    assert!(matches!(outcome, StepOutcome::Halted(4)), "expected Halted(4), got {outcome:?}");
+"#,
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(4)),
+        "expected Halted(4), got {outcome:?}"
+    );
 }
 
 #[test]
 fn float_f64_arithmetic_uses_fpu() {
     // Before the fix, f64 math fell through to the integer ALU and operated on
     // raw bit patterns. Correct: 3.5 * 2.0 = 7.0 -> 7.
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 main: () -> i32 {
     a: f64 = 3.5
     b: f64 = 2.0
     c: f64 = a * b
     return c as i32
 }
-"#);
-    assert!(matches!(outcome, StepOutcome::Halted(7)), "expected Halted(7), got {outcome:?}");
+"#,
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(7)),
+        "expected Halted(7), got {outcome:?}"
+    );
 }
 
 #[test]
 fn float_f64_div_and_sub() {
     // 20.0 / 4.0 = 5.0, then 5.0 - 2.0 = 3.0 -> 3.
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 main: () -> i32 {
     a: f64 = 20.0
     b: f64 = 4.0
@@ -1820,15 +2068,20 @@ main: () -> i32 {
     d: f64 = c - two
     return d as i32
 }
-"#);
-    assert!(matches!(outcome, StepOutcome::Halted(3)), "expected Halted(3), got {outcome:?}");
+"#,
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(3)),
+        "expected Halted(3), got {outcome:?}"
+    );
 }
 
 #[test]
 fn float_int_to_float_roundtrip() {
     // i32 -> f64 (fcvt.d.w) then f64 -> i32 (fcvt.w.d). Before the fix both
     // casts were a plain `mv` reinterpreting the bit pattern.
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 main: () -> i32 {
     n: i32 = 7
     three: f64 = 3.0
@@ -1836,14 +2089,19 @@ main: () -> i32 {
     g: f64 = f * three
     return g as i32
 }
-"#);
-    assert!(matches!(outcome, StepOutcome::Halted(21)), "expected Halted(21), got {outcome:?}");
+"#,
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(21)),
+        "expected Halted(21), got {outcome:?}"
+    );
 }
 
 #[test]
 fn float_f32_int_cast() {
     // i32 -> f32 -> i32 with a non-trivial intermediate value.
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 main: () -> i32 {
     n: i32 = 9
     f: f32 = n as f32
@@ -1851,15 +2109,20 @@ main: () -> i32 {
     h: f32 = g * 2.0
     return h as i32
 }
-"#);
+"#,
+    );
     // 9.0 + 0.5 = 9.5, * 2.0 = 19.0 -> 19.
-    assert!(matches!(outcome, StepOutcome::Halted(19)), "expected Halted(19), got {outcome:?}");
+    assert!(
+        matches!(outcome, StepOutcome::Halted(19)),
+        "expected Halted(19), got {outcome:?}"
+    );
 }
 
 #[test]
 fn float_f32_to_f64_widen() {
     // f32 -> f64 conversion (fcvt.d.s). 3.5 widened, + 1.5 = 5.0 -> 5.
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 main: () -> i32 {
     a: f32 = 3.5
     onefive: f64 = 1.5
@@ -1867,21 +2130,30 @@ main: () -> i32 {
     c: f64 = b + onefive
     return c as i32
 }
-"#);
-    assert!(matches!(outcome, StepOutcome::Halted(5)), "expected Halted(5), got {outcome:?}");
+"#,
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(5)),
+        "expected Halted(5), got {outcome:?}"
+    );
 }
 
 #[test]
 fn float_f64_to_f32_narrow() {
     // f64 -> f32 conversion (fcvt.s.d). 6.5 narrowed -> 6.
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 main: () -> i32 {
     a: f64 = 6.5
     b: f32 = a as f32
     return b as i32
 }
-"#);
-    assert!(matches!(outcome, StepOutcome::Halted(6)), "expected Halted(6), got {outcome:?}");
+"#,
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(6)),
+        "expected Halted(6), got {outcome:?}"
+    );
 }
 
 #[test]
@@ -1889,21 +2161,27 @@ fn float_f64_var_plus_bare_literal() {
     // A bare float literal infers as f32, but mixing it with an f64 var
     // used to be rejected as a type mismatch. It now promotes to f64. Both operand
     // orders must work: 4.0 + 1.5 = 5.5, then 1.5 + 5.5 = 7.0 -> 7.
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 main: () -> i32 {
     x: f64 = 4.0
     y: f64 = x + 1.5
     z: f64 = 1.5 + y
     return z as i32
 }
-"#);
-    assert!(matches!(outcome, StepOutcome::Halted(7)), "expected Halted(7), got {outcome:?}");
+"#,
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(7)),
+        "expected Halted(7), got {outcome:?}"
+    );
 }
 
 #[test]
 fn float_f64_negation() {
     // Unary negation via fsgnjn.d. -5.0 + 8.0 = 3.0 -> 3.
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 main: () -> i32 {
     a: f64 = 5.0
     eight: f64 = 8.0
@@ -1911,14 +2189,19 @@ main: () -> i32 {
     c: f64 = b + eight
     return c as i32
 }
-"#);
-    assert!(matches!(outcome, StepOutcome::Halted(3)), "expected Halted(3), got {outcome:?}");
+"#,
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(3)),
+        "expected Halted(3), got {outcome:?}"
+    );
 }
 
 #[test]
 fn float_f32_comparison() {
     // f32 less-than comparison must use flt.s.
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 main: () -> i32 {
     a: f32 = 1.5
     b: f32 = 2.5
@@ -1927,14 +2210,19 @@ main: () -> i32 {
     }
     return 0
 }
-"#);
-    assert!(matches!(outcome, StepOutcome::Halted(1)), "expected Halted(1), got {outcome:?}");
+"#,
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(1)),
+        "expected Halted(1), got {outcome:?}"
+    );
 }
 
 #[test]
 fn float_f64_comparison() {
     // f64 equality must use feq.d (not the integer comparator).
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 main: () -> i32 {
     a: f64 = 5.5
     b: f64 = 2.5
@@ -1945,8 +2233,12 @@ main: () -> i32 {
     }
     return 0
 }
-"#);
-    assert!(matches!(outcome, StepOutcome::Halted(1)), "expected Halted(1), got {outcome:?}");
+"#,
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(1)),
+        "expected Halted(1), got {outcome:?}"
+    );
 }
 
 #[test]
@@ -1954,7 +2246,8 @@ fn float_f64_arguments_passed_in_fp_registers() {
     // f64 call arguments must arrive in the float register file (fa0/fa1), not the
     // integer one. Regression for the Mandelbrot demo rendering all black because
     // mandel_pixel's f64 args came through as garbage.
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 sum3: (a: f64, b: f64, c: f64) -> f64 {
     return a + b + c
 }
@@ -1969,14 +2262,19 @@ main: () -> i32 {
     }
     return 0
 }
-"#);
-    assert!(matches!(outcome, StepOutcome::Halted(1)), "expected Halted(1), got {outcome:?}");
+"#,
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(1)),
+        "expected Halted(1), got {outcome:?}"
+    );
 }
 
 #[test]
 fn float_mixed_int_and_f64_arguments() {
     // Interleaved integer and float parameters must each land in the right file.
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 mix: (n: i64, a: f64, m: i64, b: f64) -> f64 {
     s: f64 = a + b
     nf: f64 = (n + m) as f64
@@ -1992,11 +2290,13 @@ main: () -> i32 {
     }
     return 0
 }
-"#);
-    assert!(matches!(outcome, StepOutcome::Halted(1)), "expected Halted(1), got {outcome:?}");
+"#,
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(1)),
+        "expected Halted(1), got {outcome:?}"
+    );
 }
-
-
 
 // --- Unsigned widening casts must zero-extend (not sign-extend) ---
 // A narrow unsigned value is loaded with a sign-extending lb/lh/lw; the widening
@@ -2007,7 +2307,8 @@ main: () -> i32 {
 /// u8 with its high bit set must widen to its 0..255 value, not a negative.
 #[test]
 fn cast_u8_high_bit_zero_extends() {
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 load_byte: (p: u8*) -> u64 {
     b: u8 = @p
     return b as u64
@@ -2020,7 +2321,8 @@ main: () -> i32 {
     }
     return 1
 }
-"#);
+"#,
+    );
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
         "u8 0xA4 must widen to 164, not a sign-extended negative; got {outcome:?}"
@@ -2030,7 +2332,8 @@ main: () -> i32 {
 /// u16 and u32 high-bit values must also zero-extend through `as u64`.
 #[test]
 fn cast_u16_u32_high_bit_zero_extend() {
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 main: () -> i32 {
     h: u16 = 0x8001 as u16
     wh: u64 = h as u64
@@ -2043,7 +2346,8 @@ main: () -> i32 {
     }
     return 1
 }
-"#);
+"#,
+    );
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
         "u16 0x8001 -> 32769 and u32 0x80000001 -> 2147483649; got {outcome:?}"
@@ -2053,7 +2357,8 @@ main: () -> i32 {
 /// The fix must not break signed widening: i8 -1 still sign-extends to i64 -1.
 #[test]
 fn cast_signed_i8_still_sign_extends() {
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 main: () -> i32 {
     b: i8 = 0 as i8
     b = b - 1
@@ -2063,7 +2368,8 @@ main: () -> i32 {
     }
     return 1
 }
-"#);
+"#,
+    );
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
         "i8 -1 must sign-extend to i64 -1; got {outcome:?}"
@@ -2074,7 +2380,8 @@ main: () -> i32 {
 /// byte loads through nested helper calls (the ELF-header read pattern).
 #[test]
 fn cast_nested_byte_composition_reads_u64() {
-    let (_, outcome, _) = run_hll(r#"
+    let (_, outcome, _) = run_hll(
+        r#"
 rd_u16: (p: u8*, off: u64) -> u64 {
     o1: u64 = off + 1
     lo: u8 = @(p + off)
@@ -2107,9 +2414,71 @@ main: () -> i32 {
     }
     return 1
 }
-"#);
+"#,
+    );
     assert!(
         matches!(outcome, StepOutcome::Halted(0)),
         "nested LE u64 read must compose all eight bytes; got {outcome:?}"
+    );
+}
+
+// --- Trap terminator (M5 bounds-check infrastructure) ---
+
+/// A `Trap` terminator aborts the program with its diagnostic code. It lowers to
+/// an exit syscall, so the VM halts with that code. Built directly in IR.
+#[test]
+fn ir_trap_terminator_halts_with_code() {
+    let mut entry = IrBlock::new("entry");
+    entry.set_terminator(IrTerminator::Trap { code: 134 });
+
+    let mut func = IrFunction::new("main", IrType::Integer(IntWidth::I32));
+    func.push_block(entry);
+    let mut program = IrProgram::new("trap_direct");
+    program.push_function(func);
+
+    let (_, outcome, _) = run_ir(&program);
+    assert!(
+        matches!(outcome, StepOutcome::Halted(134)),
+        "a reached trap must halt with its diagnostic code; got {outcome:?}"
+    );
+}
+
+/// A `Trap` reached only on one branch arm fires only when that arm is taken; the
+/// other arm returns normally. Here the condition is false, so the trap is skipped.
+#[test]
+fn ir_trap_not_taken_returns_normally() {
+    let i32_ty = IrType::Integer(IntWidth::I32);
+    let mut entry = IrBlock::new("entry");
+    // 1 == 2 is false -> take the else arm, which returns 7.
+    entry.push_instruction(IrInstruction::Cmp {
+        dest: IrRegister::Named("oob".into()),
+        op: IrCmpOp::Eq,
+        ty: i32_ty.clone(),
+        lhs: IrValue::Integer(1),
+        rhs: IrValue::Integer(2),
+    });
+    entry.set_terminator(IrTerminator::Branch {
+        cond: IrValue::Register(IrRegister::Named("oob".into())),
+        then_label: IrLabel::new("oob_trap"),
+        else_label: IrLabel::new("ok"),
+    });
+
+    let mut trap_block = IrBlock::new("oob_trap");
+    trap_block.set_terminator(IrTerminator::Trap { code: 134 });
+
+    let mut ok_block = IrBlock::new("ok");
+    ok_block.set_terminator(IrTerminator::Return(Some(IrValue::Integer(7))));
+
+    let mut func = IrFunction::new("main", i32_ty);
+    func.push_block(entry);
+    func.push_block(trap_block);
+    func.push_block(ok_block);
+    let mut program = IrProgram::new("trap_branch");
+    program.push_function(func);
+
+    let (_, outcome, _) = run_ir(&program);
+    assert!(
+        matches!(outcome, StepOutcome::Halted(7)),
+        "untaken trap arm must not fire; got {outcome:?}"
     );
 }

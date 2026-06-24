@@ -1,20 +1,21 @@
+; @version 2
 external malloc: (size: u64) -> u8*
 
-str_len: (text: Str) -> u64 {
-    return text.length
+str_len: (text: u8[]) -> u64 {
+    return text.len
 }
 
-str_is_empty: (text: Str) -> bool {
-    return text.length == 0
+str_is_empty: (text: u8[]) -> bool {
+    return text.len == 0
 }
 
-str_equals: (lhs: Str, rhs: Str) -> bool {
-    if lhs.length != rhs.length {
+str_equals: (lhs: u8[], rhs: u8[]) -> bool {
+    if lhs.len != rhs.len {
         return false
     }
     i: u64 = 0
-    while i < lhs.length {
-        if lhs.data[i] != rhs.data[i] {
+    while i < lhs.len {
+        if lhs[i] != rhs[i] {
             return false
         }
         i = i + 1
@@ -22,36 +23,33 @@ str_equals: (lhs: Str, rhs: Str) -> bool {
     return true
 }
 
-str_copy: (src: Str) -> Str* {
-    data: u8* = malloc(src.length)
+str_copy: (src: u8[]) -> u8[] {
+    data: u8* = malloc(src.len)
     i: u64 = 0
-    while i < src.length {
-        data[i] = src.data[i]
+    while i < src.len {
+        data[i] = src[i]
         i = i + 1
     }
-    copy: Str* = malloc(16) as Str*
-    @copy.data = data
-    @copy.length = src.length
+    copy: u8[] = src
+    copy.ptr = data
     return copy
 }
 
-str_concat: (left: Str, right: Str) -> Str* {
-    total: u64 = left.length + right.length
+str_concat: (left: u8[], right: u8[]) -> u8[] {
+    total: u64 = left.len + right.len
     data: u8* = malloc(total)
     i: u64 = 0
-    while i < left.length {
-        data[i] = left.data[i]
+    while i < left.len {
+        data[i] = left[i]
         i = i + 1
     }
     j: u64 = 0
-    while j < right.length {
-        data[left.length + j] = right.data[j]
+    while j < right.len {
+        data[left.len + j] = right[j]
         j = j + 1
     }
-    result: Str* = malloc(16) as Str*
-    @result = {
-        .data   = data,
-        .length = total,
-    }
+    result: u8[] = left
+    result.ptr = data
+    result.len = total
     return result
 }

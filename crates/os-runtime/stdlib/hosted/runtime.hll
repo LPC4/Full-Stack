@@ -1,3 +1,4 @@
+; @version 2
 ; Linux RV64 syscalls: 64 = sys_write, 93 = sys_exit.
 external main: () -> i32
 
@@ -21,6 +22,23 @@ puts: (str: u8*) -> i32 {
         putchar((@(str + i)) as i32)
         i = i + 1
     }
+    putchar('\n')
+    return 0
+}
+
+; Stable slice entry points: print the exact byte range, no NUL scan.
+print: (s: u8[]) -> i32 {
+    p: u8* = s.ptr
+    i: u64 = 0
+    while i < s.len {
+        putchar((@(p + i)) as i32)
+        i = i + 1
+    }
+    return 0
+}
+
+println: (s: u8[]) -> i32 {
+    print(s)
     putchar('\n')
     return 0
 }
@@ -104,7 +122,7 @@ console_print_int: (n: i64) {
 }
 
 console_print_hex: (n: u64) {
-    buf: u8[16]
+    buf: u8[16] = []
     i: u64 = 16
     v: u64 = n
     while i > 0 {
@@ -119,7 +137,7 @@ console_print_hex: (n: u64) {
     }
     putchar('0')
     putchar('x')
-    buf_ptr: u8* = buf[0]
+    buf_ptr: u8* = &buf[0]
     j: u64 = 0
     while j < 16 {
         putchar((@(buf_ptr + j)) as i32)

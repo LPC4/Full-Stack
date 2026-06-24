@@ -53,14 +53,19 @@ impl HighLevelCompiler {
                 });
                 let content_len = content.len();
 
-                let struct_fields = vec![
-                    (
-                        "data".to_owned(),
-                        IrType::Pointer(Box::new(IrType::Integer(IntWidth::I8))),
-                    ),
-                    ("length".to_owned(), IrType::Integer(IntWidth::I64)),
-                ];
-                let struct_ty = IrType::Aggregate(struct_fields);
+                // V2 strings are `u8[]` slices (same `{ ptr@0, len@8 }` layout); V1
+                // keeps the named `{ data, length }` aggregate so goldens stay stable.
+                let struct_ty = if self.language_version == crate::LanguageVersion::V2 {
+                    IrType::Slice(Box::new(IrType::Integer(IntWidth::I8)))
+                } else {
+                    IrType::Aggregate(vec![
+                        (
+                            "data".to_owned(),
+                            IrType::Pointer(Box::new(IrType::Integer(IntWidth::I8))),
+                        ),
+                        ("length".to_owned(), IrType::Integer(IntWidth::I64)),
+                    ])
+                };
 
                 let dest = self.new_temp();
                 self.push_instruction(IrInstruction::Alloc {
@@ -144,12 +149,135 @@ impl HighLevelCompiler {
         })
     }
 
+    // Lower an array literal against a known element type (V2). Each element is
+    // lowered with the declared element type as its context, so bare struct
+    // literals and width-flexible scalar literals are accepted inside `[...]`.
+    fn lower_array_literal_for_type(
+        &mut self,
+        elements: &[Expression],
+        element_ty: &IrType,
+        len: usize,
+    ) -> Option<LoweredValue> {
+        if elements.len() != len {
+            self.context.error(format!(
+                "array literal has {} elements, but the declared type expects {len}",
+                elements.len()
+            ));
+            return None;
+        }
+
+        let mut lowered_elements = Vec::with_capacity(elements.len());
+        for element in elements {
+            lowered_elements.push(self.lower_value_for_type(element, element_ty)?);
+        }
+
+        let array_ty = IrType::Array {
+            len,
+            element: Box::new(element_ty.clone()),
+        };
+        let dest = self.new_temp();
+        self.push_instruction(IrInstruction::Alloc {
+            dest: dest.clone(),
+            ty: array_ty.clone(),
+            count: None,
+        });
+
+        let element_size = self.type_size_in_bytes(&self.resolve_named_type(element_ty)) as i64;
+        let mut offset = 0i64;
+        for lowered in lowered_elements {
+            self.push_instruction(IrInstruction::Store {
+                ty: element_ty.clone(),
+                value: lowered.value,
+                ptr: dest.clone(),
+                offset: Some(offset),
+            });
+            offset += element_size;
+        }
+
+        Some(LoweredValue {
+            value: IrValue::Register(dest),
+            ty: array_ty,
+            is_unsigned: false,
+        })
+    }
+
+    /// Lower V2 element-scaled pointer arithmetic, or return `None` when neither
+    /// operand is a pointer (so the caller falls back to ordinary arithmetic).
+    /// Semantic analysis has already rejected illegal forms (pointer-minus-pointer,
+    /// integer-minus-pointer, arithmetic on unsized pointees), so here we only
+    /// classify `T* + n` / `n + T*` / `T* - n`.
+    fn lower_pointer_arith(
+        &mut self,
+        op: &BinaryOp,
+        lhs: &LoweredValue,
+        rhs: &LoweredValue,
+    ) -> Option<LoweredValue> {
+        let lhs_ptr = matches!(self.resolve_named_type(&lhs.ty), IrType::Pointer(_));
+        let rhs_ptr = matches!(self.resolve_named_type(&rhs.ty), IrType::Pointer(_));
+
+        // Pick the pointer base and integer offset; `n + ptr` is only valid for Add.
+        let (base, offset) = match (lhs_ptr, rhs_ptr) {
+            (true, false) => (lhs, rhs),
+            (false, true) if matches!(op, BinaryOp::Add) => (rhs, lhs),
+            _ => return None,
+        };
+
+        let IrType::Pointer(element_ty) = self.resolve_named_type(&base.ty) else {
+            return None;
+        };
+        let element_ty = *element_ty;
+
+        let base_reg = match &base.value {
+            IrValue::Register(r) => r.clone(),
+            _ => return None,
+        };
+
+        // Subtraction steps backward: negate the index before scaling.
+        let idx = if matches!(op, BinaryOp::Sub) {
+            let neg = self.new_temp();
+            self.push_instruction(IrInstruction::Math {
+                dest: neg.clone(),
+                op: IrMathOp::Sub,
+                ty: IrType::Integer(IntWidth::I64),
+                lhs: IrValue::Integer(0),
+                rhs: offset.value.clone(),
+            });
+            IrValue::Register(neg)
+        } else {
+            offset.value.clone()
+        };
+
+        let dest = self.new_temp();
+        self.push_instruction(IrInstruction::Index {
+            dest: dest.clone(),
+            ty: element_ty.clone(),
+            base_ptr: base_reg,
+            idx,
+        });
+        Some(LoweredValue {
+            value: IrValue::Register(dest),
+            ty: IrType::Pointer(Box::new(element_ty)),
+            is_unsigned: false,
+        })
+    }
+
     pub(super) fn lower_binary(
         &mut self,
         op: &BinaryOp,
         lhs: LoweredValue,
         rhs: LoweredValue,
     ) -> Option<LoweredValue> {
+        // V2: typed pointer arithmetic is element-scaled. `T* +/- n` advances by
+        // `n * sizeof(T)`, lowered through the `Index` instruction. Raw byte
+        // arithmetic stays available through `u8*` (sizeof(u8) == 1).
+        if self.language_version == crate::LanguageVersion::V2
+            && matches!(op, BinaryOp::Add | BinaryOp::Sub)
+        {
+            if let Some(result) = self.lower_pointer_arith(op, &lhs, &rhs) {
+                return Some(result);
+            }
+        }
+
         let dest = self.new_temp();
         match op {
             BinaryOp::Add
@@ -418,6 +546,27 @@ impl HighLevelCompiler {
         expr: &Expression,
         target_ty: &IrType,
     ) -> Option<LoweredValue> {
+        if self.language_version == crate::LanguageVersion::V2 {
+            if let Expression::Primary(crate::ast::PrimaryExpr::StructLiteral(fields)) = expr {
+                return self.lower_contextual_struct_literal(fields, target_ty);
+            }
+            // An array literal lowers each element against the declared element
+            // type, so contextual struct literals (`Point[N] = [{..}, ..]`) and
+            // width-flexible scalar literals get their context from the target.
+            if let IrType::Array { element, len } = self.resolve_named_type(target_ty) {
+                if let Expression::Primary(crate::ast::PrimaryExpr::ArrayLiteral(elems)) = expr {
+                    // `arr: T[N] = []` zero-fills; a non-empty literal sets each element.
+                    if elems.is_empty() {
+                        return self.lower_zero_value(target_ty);
+                    }
+                    return self.lower_array_literal_for_type(elems, &element, len);
+                }
+            }
+            // A fixed array coerces to a slice: build { ptr: &arr[0], len: N }.
+            if let IrType::Slice(elem) = self.resolve_named_type(target_ty) {
+                return self.lower_array_to_slice(expr, &elem);
+            }
+        }
         if matches!(self.resolve_named_type(target_ty), IrType::Integer(_)) {
             if let Some(v) = Self::fold_int_literal(expr) {
                 return Some(LoweredValue {
@@ -428,6 +577,215 @@ impl HighLevelCompiler {
             }
         }
         self.lower_expression(expr)
+    }
+
+    // Build a slice value from a fixed array. The array's address is &arr[0] and
+    // its length comes from the static array type. A slice-typed source is passed
+    // through unchanged (copy of the fat pointer).
+    fn lower_array_to_slice(
+        &mut self,
+        expr: &Expression,
+        elem_ty: &IrType,
+    ) -> Option<LoweredValue> {
+        let base = self
+            .lower_expr(expr, super::EvalMode::Address)
+            .or_else(|| self.lower_expr(expr, super::EvalMode::Value))?;
+        let resolved = self.resolve_named_type(&base.ty);
+
+        // Already a slice place or value: hand it straight back.
+        if matches!(&resolved, IrType::Slice(_))
+            || matches!(&resolved, IrType::Pointer(inner) if matches!(self.resolve_named_type(inner), IrType::Slice(_)))
+        {
+            return Some(base);
+        }
+
+        let array_ty = match resolved {
+            IrType::Array { .. } => resolved,
+            IrType::Pointer(inner) => self.resolve_named_type(&inner),
+            _ => {
+                self.context
+                    .error("only a fixed array can coerce to a slice".to_owned());
+                return None;
+            }
+        };
+        let IrType::Array { len, .. } = array_ty else {
+            self.context
+                .error("only a fixed array can coerce to a slice".to_owned());
+            return None;
+        };
+        let IrValue::Register(data_reg) = base.value else {
+            return None;
+        };
+
+        let slice_ty = IrType::Slice(Box::new(elem_ty.clone()));
+        let slot = self.new_temp();
+        self.push_instruction(IrInstruction::Alloc {
+            dest: slot.clone(),
+            ty: slice_ty.clone(),
+            count: None,
+        });
+        self.push_instruction(IrInstruction::Store {
+            ty: IrType::Pointer(Box::new(elem_ty.clone())),
+            value: IrValue::Register(data_reg),
+            ptr: slot.clone(),
+            offset: Some(0),
+        });
+        self.push_instruction(IrInstruction::Store {
+            ty: IrType::Integer(IntWidth::I64),
+            value: IrValue::Integer(len as i64),
+            ptr: slot.clone(),
+            offset: Some(8),
+        });
+        Some(LoweredValue {
+            value: IrValue::Register(slot),
+            ty: slice_ty,
+            is_unsigned: false,
+        })
+    }
+
+    fn lower_contextual_struct_literal(
+        &mut self,
+        fields: &[crate::ast::FieldInit],
+        target_ty: &IrType,
+    ) -> Option<LoweredValue> {
+        let resolved = self.resolve_named_type(target_ty);
+        let IrType::Aggregate(declared_fields) = resolved else {
+            self.context.error(format!(
+                "contextual struct literal target `{target_ty}` is not a struct"
+            ));
+            return None;
+        };
+
+        let mut values = std::collections::HashMap::new();
+        for field in fields {
+            if values.contains_key(&field.name) {
+                self.context.error(format!(
+                    "duplicate field `{}` in struct literal",
+                    field.name
+                ));
+                return None;
+            }
+            let Some((_, field_ty)) = declared_fields
+                .iter()
+                .find(|(field_name, _)| field_name == &field.name)
+            else {
+                self.context.error(format!(
+                    "unknown field `{}` in contextual struct literal",
+                    field.name
+                ));
+                return None;
+            };
+            let value = self.lower_value_for_type(&field.expr, field_ty)?;
+            values.insert(field.name.clone(), value);
+        }
+
+        let dest = self.new_temp();
+        self.push_instruction(IrInstruction::Alloc {
+            dest: dest.clone(),
+            ty: target_ty.clone(),
+            count: None,
+        });
+        for (field_name, field_ty) in &declared_fields {
+            let (offset, _) = self.aggregate_field_offset_and_type(&declared_fields, field_name)?;
+            let value = match values.remove(field_name) {
+                Some(value) => value.value,
+                None => self.lower_zero_value(field_ty)?.value,
+            };
+            self.push_instruction(IrInstruction::Store {
+                ty: field_ty.clone(),
+                value,
+                ptr: dest.clone(),
+                offset: Some(offset),
+            });
+        }
+
+        Some(LoweredValue {
+            value: IrValue::Register(dest),
+            ty: target_ty.clone(),
+            is_unsigned: false,
+        })
+    }
+
+    fn lower_zero_value(&mut self, ty: &IrType) -> Option<LoweredValue> {
+        let resolved = self.resolve_named_type(ty);
+        let value = match resolved {
+            IrType::Integer(_) => IrValue::Integer(0),
+            IrType::Float(_) => IrValue::Float(0.0),
+            IrType::Pointer(_) => IrValue::Null,
+            IrType::Aggregate(fields) => {
+                let dest = self.new_temp();
+                self.push_instruction(IrInstruction::Alloc {
+                    dest: dest.clone(),
+                    ty: ty.clone(),
+                    count: None,
+                });
+                for (name, field_ty) in &fields {
+                    let (offset, _) = self.aggregate_field_offset_and_type(&fields, name)?;
+                    let zero = self.lower_zero_value(field_ty)?;
+                    self.push_instruction(IrInstruction::Store {
+                        ty: field_ty.clone(),
+                        value: zero.value,
+                        ptr: dest.clone(),
+                        offset: Some(offset),
+                    });
+                }
+                IrValue::Register(dest)
+            }
+            IrType::Slice(_) => {
+                // A zero/empty slice is { ptr: null, len: 0 }.
+                let dest = self.new_temp();
+                self.push_instruction(IrInstruction::Alloc {
+                    dest: dest.clone(),
+                    ty: ty.clone(),
+                    count: None,
+                });
+                self.push_instruction(IrInstruction::Store {
+                    ty: IrType::Pointer(Box::new(IrType::Integer(IntWidth::I8))),
+                    value: IrValue::Null,
+                    ptr: dest.clone(),
+                    offset: Some(0),
+                });
+                self.push_instruction(IrInstruction::Store {
+                    ty: IrType::Integer(IntWidth::I64),
+                    value: IrValue::Integer(0),
+                    ptr: dest.clone(),
+                    offset: Some(8),
+                });
+                IrValue::Register(dest)
+            }
+            IrType::Array { len, element } => {
+                // Zero-fill each element. Local arrays are not implicitly zeroed
+                // (unlike .bss globals), so emit explicit element stores.
+                let dest = self.new_temp();
+                self.push_instruction(IrInstruction::Alloc {
+                    dest: dest.clone(),
+                    ty: ty.clone(),
+                    count: None,
+                });
+                let element_size =
+                    self.type_size_in_bytes(&self.resolve_named_type(&element)) as i64;
+                for i in 0..len {
+                    let zero = self.lower_zero_value(&element)?;
+                    self.push_instruction(IrInstruction::Store {
+                        ty: (*element).clone(),
+                        value: zero.value,
+                        ptr: dest.clone(),
+                        offset: Some(i as i64 * element_size),
+                    });
+                }
+                IrValue::Register(dest)
+            }
+            IrType::Named(_) | IrType::Void => {
+                self.context
+                    .error(format!("cannot synthesize a zero value for `{ty}`"));
+                return None;
+            }
+        };
+        Some(LoweredValue {
+            value,
+            ty: ty.clone(),
+            is_unsigned: false,
+        })
     }
 
     // Fold a bare or (grouped) negated integer literal to its i64 value.

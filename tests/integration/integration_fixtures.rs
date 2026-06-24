@@ -31,7 +31,7 @@ fn integration_hll_fixtures_compile() {
         !fixtures.is_empty(),
         "expected at least one integration fixture"
     );
-    let mut pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new_v1();
     pipeline.set_write_artifacts(false);
     // Integration fixtures exercise parser/lowering breadth; semantic generic resolution is still incomplete.
     pipeline.set_run_semantic_analysis(false);

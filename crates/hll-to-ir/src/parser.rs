@@ -1,10 +1,21 @@
 use super::ast::{
     AssignTarget, BinaryOp, Block, DeclNode, Declaration, Expression, FieldDecl, FieldInit,
-    Literal, Parameter, PrimaryExpr, Program, ReturnType, Statement, StructDestructureField, Type,
-    UnaryOp,
+    ForIter, Literal, MatchArm, Parameter, Pattern, PrimaryExpr, Program, ReturnType, Statement,
+    StructDestructureField, Type, UnaryOp, Variant,
 };
 
 use super::token::{CompoundOp, Span, Token};
+use crate::LanguageVersion;
+
+// The parsed contents of a `[...]` subscript: a plain index or a range slice.
+enum Subscript {
+    Index(Expression),
+    Range {
+        start: Option<Expression>,
+        end: Option<Expression>,
+        inclusive: bool,
+    },
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParserError {
@@ -28,6 +39,10 @@ pub struct Parser<'a> {
     pub spans: Vec<Span>,
     pub pos: usize,
     pub pending_gt_from_shr: bool, // Track if we have a virtual `>` waiting from a split `>>`
+    // Read by V2-only parse branches as syntax milestones land.
+    #[allow(dead_code)]
+    language_version: LanguageVersion,
+    type_names: std::collections::HashSet<String>,
 }
 
 impl<'a> Parser<'a> {
@@ -41,16 +56,36 @@ impl<'a> Parser<'a> {
             spans,
             pos: 0,
             pending_gt_from_shr: false,
+            language_version: LanguageVersion::V1,
+            type_names: std::collections::HashSet::new(),
         }
     }
 
-    pub fn new_with_spans(token_spans: Vec<(Token<'a>, Span)>) -> Self {
+    #[cfg(test)]
+    fn new_with_version(tokens: Vec<Token<'a>>, language_version: LanguageVersion) -> Self {
+        let spans = vec![Span::default(); tokens.len()];
+        Self {
+            tokens,
+            spans,
+            pos: 0,
+            pending_gt_from_shr: false,
+            language_version,
+            type_names: std::collections::HashSet::new(),
+        }
+    }
+
+    pub fn new_with_spans_and_version(
+        token_spans: Vec<(Token<'a>, Span)>,
+        language_version: LanguageVersion,
+    ) -> Self {
         let (tokens, spans): (Vec<_>, Vec<_>) = token_spans.into_iter().unzip();
         Self {
             tokens,
             spans,
             pos: 0,
             pending_gt_from_shr: false,
+            language_version,
+            type_names: std::collections::HashSet::new(),
         }
     }
 
@@ -91,13 +126,36 @@ impl<'a> Parser<'a> {
                 let generics = self.parse_generic_params()?;
                 self.expect_assign()?;
                 let ty = self.parse_type()?;
+                if self.language_version == LanguageVersion::V2 && matches!(ty, Type::Struct(_)) {
+                    return Err(self.error(
+                        "V2 record declarations use `struct Name { ... }`; `type` is only for aliases",
+                    ));
+                }
                 DeclNode::Type { name, generics, ty }
+            }
+            Some(Token::Struct) => {
+                if self.language_version != LanguageVersion::V2 {
+                    return Err(self.error("`struct` declarations require HLL V2"));
+                }
+                self.advance();
+                self.parse_struct_decl()?
+            }
+            Some(Token::Enum) => {
+                if self.language_version != LanguageVersion::V2 {
+                    return Err(self.error("`enum` declarations require HLL V2"));
+                }
+                self.advance();
+                self.parse_enum_decl()?
             }
             Some(Token::External) => {
                 self.advance();
                 // `external name: (params) -> ret` is a function; `external name: type`
                 // is a global defined in another module (resolved at link).
-                if self.peek_n(1) == Some(&Token::Colon) && self.peek_n(2) == Some(&Token::LParen) {
+                if self.peek_n(1) == Some(&Token::Colon)
+                    && (self.peek_n(2) == Some(&Token::LParen)
+                        || (self.language_version == LanguageVersion::V2
+                            && self.peek_n(2) == Some(&Token::Lt)))
+                {
                     self.parse_function_decl(true)?
                 } else {
                     let name = self.expect_ident()?;
@@ -124,7 +182,13 @@ impl<'a> Parser<'a> {
             }
             Some(Token::Ident(_)) => {
                 // Look ahead to determine if this is a function or variable declaration
-                if self.peek_n(1) == Some(&Token::Colon) && self.peek_n(2) == Some(&Token::LParen) {
+                if self.peek_n(1) == Some(&Token::ColonEqual) {
+                    self.parse_inferred_variable_decl()?
+                } else if self.peek_n(1) == Some(&Token::Colon)
+                    && (self.peek_n(2) == Some(&Token::LParen)
+                        || (self.language_version == LanguageVersion::V2
+                            && self.peek_n(2) == Some(&Token::Lt)))
+                {
                     self.parse_function_decl(false)?
                 } else {
                     self.parse_variable_decl()?
@@ -136,6 +200,12 @@ impl<'a> Parser<'a> {
             None => return Err(self.error("unexpected end of input")),
         };
 
+        if let DeclNode::Type { name, .. }
+        | DeclNode::Struct { name, .. }
+        | DeclNode::Enum { name, .. } = &decl
+        {
+            self.type_names.insert(name.clone());
+        }
         Ok(Declaration { decl })
     }
 
@@ -159,6 +229,7 @@ impl<'a> Parser<'a> {
         match self.peek() {
             Some(Token::If) => self.parse_if_statement(),
             Some(Token::While) => self.parse_while_statement(),
+            Some(Token::For) => self.parse_for_statement(),
             Some(Token::Return) => self.parse_return_statement(),
             Some(Token::Defer) => self.parse_defer_statement(),
             Some(Token::Asm) => self.parse_asm_block(),
@@ -192,10 +263,24 @@ impl<'a> Parser<'a> {
                 let init = if self.match_assign() {
                     Some(self.parse_expression()?)
                 } else {
+                    if self.language_version == LanguageVersion::V2 {
+                        return Err(self.error(
+                            "V2 explicit declarations require an initializer: `name: Type = expression`",
+                        ));
+                    }
                     None
                 };
 
                 Ok(Statement::VariableDecl { name, ty, init })
+            }
+            Some(Token::Ident(_)) if self.peek_n(1) == Some(&Token::ColonEqual) => {
+                if self.language_version != LanguageVersion::V2 {
+                    return Err(self.error("inferred declarations with `:=` require HLL V2"));
+                }
+                let name = self.expect_ident()?;
+                self.expect_colon_equal()?;
+                let init = self.parse_expression()?;
+                Ok(Statement::InferredVariableDecl { name, init })
             }
             Some(_) => Ok(Statement::Expression(self.parse_expression()?)),
             None => Err(self.error("unexpected end of input while parsing statement")),
@@ -217,12 +302,23 @@ impl<'a> Parser<'a> {
         let mut ty = self.parse_type_atom()?;
 
         loop {
+            // A virtual `>` still belongs to the enclosing generic type. Suffixes
+            // after `>>` therefore apply only after that outer close is consumed.
+            if self.pending_gt_from_shr {
+                break;
+            }
+
             if self.match_star() {
                 ty = Type::Pointer(Box::new(ty));
                 continue;
             }
 
             if self.match_lbracket() {
+                // T[] is a slice; T[N] is a fixed array.
+                if self.match_rbracket() {
+                    ty = Type::Slice(Box::new(ty));
+                    continue;
+                }
                 let size = self.parse_usize_literal()?;
                 self.expect_rbracket()?;
                 ty = Type::Array(size, Box::new(ty));
@@ -242,6 +338,11 @@ impl<'a> Parser<'a> {
         let init = if self.match_assign() {
             Some(self.parse_expression()?)
         } else {
+            if self.language_version == LanguageVersion::V2 {
+                return Err(self.error(
+                    "V2 explicit declarations require an initializer: `name: Type = expression`",
+                ));
+            }
             None
         };
 
@@ -253,15 +354,112 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_function_decl(&mut self, is_extern: bool) -> Result<DeclNode, ParserError> {
+    fn parse_inferred_variable_decl(&mut self) -> Result<DeclNode, ParserError> {
+        if self.language_version != LanguageVersion::V2 {
+            return Err(self.error("inferred declarations with `:=` require HLL V2"));
+        }
+        let name = self.expect_ident()?;
+        self.expect_colon_equal()?;
+        let init = self.parse_expression()?;
+        Ok(DeclNode::InferredVariable { name, init })
+    }
+
+    fn parse_struct_decl(&mut self) -> Result<DeclNode, ParserError> {
         let name = self.expect_ident()?;
         let generics = self.parse_generic_params()?;
+        self.expect_lbrace()?;
+        let mut fields = Vec::new();
+        self.consume_terminators();
 
+        while !self.check_rbrace() {
+            let field_name = self.expect_ident()?;
+            self.expect_colon()?;
+            let ty = self.parse_type()?;
+            fields.push(FieldDecl {
+                name: field_name,
+                ty,
+                init: None,
+            });
+
+            let newline_separated = matches!(self.peek(), Some(Token::StatementTerminator));
+            self.consume_terminators();
+            if self.match_comma() {
+                self.consume_terminators();
+            } else if !newline_separated && !self.check_rbrace() {
+                return Err(self.error("expected `,` or newline between struct fields"));
+            }
+        }
+
+        self.expect_rbrace()?;
+        Ok(DeclNode::Struct {
+            name,
+            generics,
+            fields,
+        })
+    }
+
+    fn parse_enum_decl(&mut self) -> Result<DeclNode, ParserError> {
+        let name = self.expect_ident()?;
+        let generics = self.parse_generic_params()?;
+        self.expect_lbrace()?;
+        let mut variants = Vec::new();
+        self.consume_terminators();
+
+        while !self.check_rbrace() {
+            let variant_name = self.expect_ident()?;
+            let mut payload = Vec::new();
+            if self.match_lparen() {
+                if !self.check_rparen() {
+                    loop {
+                        payload.push(self.parse_type()?);
+                        if self.match_comma() {
+                            if self.check_rparen() {
+                                break;
+                            }
+                            continue;
+                        }
+                        break;
+                    }
+                }
+                self.expect_rparen()?;
+            }
+            variants.push(Variant {
+                name: variant_name,
+                payload,
+            });
+
+            let newline_separated = matches!(self.peek(), Some(Token::StatementTerminator));
+            self.consume_terminators();
+            if self.match_comma() {
+                self.consume_terminators();
+            } else if !newline_separated && !self.check_rbrace() {
+                return Err(self.error("expected `,` or newline between enum variants"));
+            }
+        }
+
+        self.expect_rbrace()?;
+        Ok(DeclNode::Enum {
+            name,
+            generics,
+            variants,
+        })
+    }
+
+    fn parse_function_decl(&mut self, is_extern: bool) -> Result<DeclNode, ParserError> {
+        let name = self.expect_ident()?;
         self.expect_colon()?;
+
+        let generics = self.parse_generic_params()?;
 
         let params = self.parse_param_list()?;
 
         let return_type = if self.match_arrow() {
+            if self.language_version == LanguageVersion::V2
+                && self.peek() == Some(&Token::LParen)
+                && self.peek_n(1) == Some(&Token::RParen)
+            {
+                return Err(self.error("V2 void functions omit `->`; `-> ()` is not valid"));
+            }
             Some(self.parse_return_type()?)
         } else {
             None
@@ -344,6 +542,38 @@ impl<'a> Parser<'a> {
         let cond = self.parse_expression()?;
         let body = self.parse_block()?;
         Ok(Statement::While { cond, body })
+    }
+
+    fn parse_for_statement(&mut self) -> Result<Statement, ParserError> {
+        if self.language_version != LanguageVersion::V2 {
+            return Err(self.error("`for` loops require language version V2"));
+        }
+        self.expect_for()?;
+        let var = self.expect_ident()?;
+        if !self.match_in() {
+            return Err(self.error("expected `in` after the `for` loop variable"));
+        }
+        let first = self.parse_expression()?;
+        let iter = if self.match_dot_dot_eq() {
+            let end = self.parse_expression()?;
+            ForIter::Range {
+                start: first,
+                end,
+                inclusive: true,
+            }
+        } else if self.match_dot_dot() {
+            let end = self.parse_expression()?;
+            ForIter::Range {
+                start: first,
+                end,
+                inclusive: false,
+            }
+        } else {
+            // No range operator: iterate the expression's elements.
+            ForIter::Each(first)
+        };
+        let body = self.parse_block()?;
+        Ok(Statement::For { var, iter, body })
     }
 
     fn parse_return_statement(&mut self) -> Result<Statement, ParserError> {
@@ -687,6 +917,52 @@ impl<'a> Parser<'a> {
         Ok(expr)
     }
 
+    // Parse the contents of a `[...]` subscript: either a single index or a range
+    // (`a..b`, `a..=b`, `a..`, `..b`, `..`). Brackets are consumed by the caller.
+    fn parse_subscript(&mut self) -> Result<Subscript, ParserError> {
+        // Open-start range: `..end` or `..`.
+        if self.match_dot_dot_eq() {
+            return Ok(Subscript::Range {
+                start: None,
+                end: self.parse_optional_range_end()?,
+                inclusive: true,
+            });
+        }
+        if self.match_dot_dot() {
+            return Ok(Subscript::Range {
+                start: None,
+                end: self.parse_optional_range_end()?,
+                inclusive: false,
+            });
+        }
+
+        let first = self.parse_expression()?;
+        if self.match_dot_dot_eq() {
+            return Ok(Subscript::Range {
+                start: Some(first),
+                end: self.parse_optional_range_end()?,
+                inclusive: true,
+            });
+        }
+        if self.match_dot_dot() {
+            return Ok(Subscript::Range {
+                start: Some(first),
+                end: self.parse_optional_range_end()?,
+                inclusive: false,
+            });
+        }
+        Ok(Subscript::Index(first))
+    }
+
+    // A range end is omitted when the next token closes the subscript (`..]`).
+    fn parse_optional_range_end(&mut self) -> Result<Option<Expression>, ParserError> {
+        if self.check_rbracket() {
+            Ok(None)
+        } else {
+            Ok(Some(self.parse_expression()?))
+        }
+    }
+
     fn parse_postfix(&mut self, mut expr: Expression) -> Result<Expression, ParserError> {
         loop {
             if self.match_dot() {
@@ -699,12 +975,29 @@ impl<'a> Parser<'a> {
             }
 
             if self.match_lbracket() {
-                let index = self.parse_expression()?;
+                let subscript = self.parse_subscript()?;
                 self.expect_rbracket()?;
-                expr = Expression::Primary(PrimaryExpr::ArrayIndex {
-                    expr: Box::new(expr),
-                    index: Box::new(index),
-                });
+                expr = match subscript {
+                    Subscript::Index(index) => Expression::Primary(PrimaryExpr::ArrayIndex {
+                        expr: Box::new(expr),
+                        index: Box::new(index),
+                    }),
+                    Subscript::Range {
+                        start,
+                        end,
+                        inclusive,
+                    } => {
+                        if self.language_version != LanguageVersion::V2 {
+                            return Err(self.error("range slicing requires language version V2"));
+                        }
+                        Expression::Primary(PrimaryExpr::Slice {
+                            expr: Box::new(expr),
+                            start: start.map(Box::new),
+                            end: end.map(Box::new),
+                            inclusive,
+                        })
+                    }
+                };
                 continue;
             }
 
@@ -718,17 +1011,39 @@ impl<'a> Parser<'a> {
                 continue;
             }
 
-            if self.match_lparen() {
+            if self.language_version == LanguageVersion::V2
+                && matches!(self.peek(), Some(Token::Question))
+            {
+                self.advance();
+                expr = Expression::Try(Box::new(expr));
+                continue;
+            }
+
+            let type_arguments = if self.language_version == LanguageVersion::V2 {
+                self.try_parse_call_type_arguments()
+            } else {
+                None
+            };
+
+            if type_arguments.is_some() || self.match_lparen() {
                 let name = match expr {
                     Expression::Primary(PrimaryExpr::Identifier(name)) => name,
                     _ => return Err(self.error("function calls must target an identifier")),
                 };
 
+                let type_arguments = type_arguments.unwrap_or_default();
+
                 if name == "asm_reg" {
+                    if !type_arguments.is_empty() {
+                        return Err(self.error("asm_reg does not accept type arguments"));
+                    }
                     let reg = self.expect_ident()?;
                     self.expect_rparen()?;
                     expr = Expression::Primary(PrimaryExpr::AsmReg { reg });
                 } else if let Some(target_ty) = self.parse_type_name_as_cast(&name) {
+                    if !type_arguments.is_empty() {
+                        return Err(self.error("type casts do not accept type arguments"));
+                    }
                     let arguments = self.parse_argument_list_after_open_paren()?;
                     if arguments.len() != 1 {
                         return Err(self.error("type cast expects exactly one argument"));
@@ -739,7 +1054,11 @@ impl<'a> Parser<'a> {
                     };
                 } else {
                     let arguments = self.parse_argument_list_after_open_paren()?;
-                    expr = Expression::Primary(PrimaryExpr::FunctionCall { name, arguments });
+                    expr = Expression::Primary(PrimaryExpr::FunctionCall {
+                        name,
+                        type_arguments,
+                        arguments,
+                    });
                 }
                 continue;
             }
@@ -748,6 +1067,54 @@ impl<'a> Parser<'a> {
         }
 
         Ok(expr)
+    }
+
+    fn try_parse_call_type_arguments(&mut self) -> Option<Vec<Type>> {
+        if self.peek() != Some(&Token::Lt) {
+            return None;
+        }
+
+        let saved_pos = self.pos;
+        let saved_pending_gt = self.pending_gt_from_shr;
+        self.advance();
+        let parsed = (|| -> Result<Vec<Type>, ParserError> {
+            let mut args = Vec::new();
+            loop {
+                args.push(self.parse_type()?);
+                if self.match_comma() {
+                    continue;
+                }
+                break;
+            }
+            self.expect_generic_close()?;
+            self.expect_lparen()?;
+            Ok(args)
+        })();
+
+        match parsed {
+            Ok(args) => Some(args),
+            Err(_) => {
+                self.pos = saved_pos;
+                self.pending_gt_from_shr = saved_pending_gt;
+                None
+            }
+        }
+    }
+
+    fn expect_generic_close(&mut self) -> Result<(), ParserError> {
+        if self.pending_gt_from_shr {
+            self.pending_gt_from_shr = false;
+            return Ok(());
+        }
+        if self.match_gt() {
+            return Ok(());
+        }
+        if matches!(self.peek(), Some(Token::Shr) | Some(Token::Gte)) {
+            self.advance();
+            self.pending_gt_from_shr = true;
+            return Ok(());
+        }
+        Err(self.error("expected `>` to close type arguments"))
     }
 
     fn parse_type_atom(&mut self) -> Result<Type, ParserError> {
@@ -974,7 +1341,11 @@ impl<'a> Parser<'a> {
             | "bool" => Some(Type::Primitive(name.to_owned())),
             _ => {
                 // PascalCase identifiers are treated as named type casts (e.g. Str, HeapBlock).
-                if name.starts_with(|c: char| c.is_uppercase()) {
+                // V2 spells casts as `expr as T`, so `Name(args)` is left as a call there --
+                // this is what lets variant constructors like `Circle(7)` parse.
+                if self.language_version == LanguageVersion::V1
+                    && name.starts_with(|c: char| c.is_uppercase())
+                {
                     Some(Type::Named {
                         name: name.to_owned(),
                         args: Vec::new(),
@@ -1165,6 +1536,14 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn expect_colon_equal(&mut self) -> Result<(), ParserError> {
+        if self.match_colon_equal() {
+            Ok(())
+        } else {
+            Err(self.error("expected `:=`"))
+        }
+    }
+
     fn expect_lparen(&mut self) -> Result<(), ParserError> {
         if self.match_lparen() {
             Ok(())
@@ -1229,6 +1608,14 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn expect_for(&mut self) -> Result<(), ParserError> {
+        if self.match_for() {
+            Ok(())
+        } else {
+            Err(self.error("expected `for`"))
+        }
+    }
+
     fn expect_defer(&mut self) -> Result<(), ParserError> {
         if self.match_defer() {
             Ok(())
@@ -1239,14 +1626,17 @@ impl<'a> Parser<'a> {
 
     fn is_declaration_start(&self) -> bool {
         match self.peek() {
-            Some(Token::Const | Token::Type | Token::External | Token::Import | Token::Export) => {
-                true
-            }
+            Some(
+                Token::Const
+                | Token::Type
+                | Token::Struct
+                | Token::Enum
+                | Token::External
+                | Token::Import
+                | Token::Export,
+            ) => true,
             Some(Token::Ident(_)) => {
-                if self.peek_n(1) != Some(&Token::Colon) {
-                    return false;
-                }
-                true
+                self.peek_n(1) == Some(&Token::Colon) || self.peek_n(1) == Some(&Token::ColonEqual)
             }
             _ => false,
         }
@@ -1321,6 +1711,10 @@ impl<'a> Parser<'a> {
         self.match_variant(|t| matches!(t, Token::Colon))
     }
 
+    fn match_colon_equal(&mut self) -> bool {
+        self.match_variant(|t| matches!(t, Token::ColonEqual))
+    }
+
     fn match_lparen(&mut self) -> bool {
         self.match_variant(|t| matches!(t, Token::LParen))
     }
@@ -1366,7 +1760,15 @@ impl<'a> Parser<'a> {
             Some(Token::Ident(name)) => {
                 let id = name.to_string();
                 self.advance();
-                Expression::Primary(PrimaryExpr::Identifier(id))
+                if self.language_version == LanguageVersion::V2
+                    && self.type_names.contains(&id)
+                    && self.check_lbrace()
+                {
+                    let fields = self.parse_v2_struct_literal_fields()?;
+                    Expression::Primary(PrimaryExpr::NamedStructLiteral { name: id, fields })
+                } else {
+                    Expression::Primary(PrimaryExpr::Identifier(id))
+                }
             }
             Some(Token::I8) => {
                 self.advance();
@@ -1442,6 +1844,10 @@ impl<'a> Parser<'a> {
                 Expression::Primary(PrimaryExpr::ArrayLiteral(elements))
             }
             Some(Token::LBrace) => {
+                if self.language_version == LanguageVersion::V2 {
+                    let fields = self.parse_v2_struct_literal_fields()?;
+                    return Ok(Expression::Primary(PrimaryExpr::StructLiteral(fields)));
+                }
                 self.advance();
                 let mut fields = Vec::new();
                 self.consume_terminators(); // after '{'
@@ -1503,12 +1909,131 @@ impl<'a> Parser<'a> {
                 self.expect_rparen()?;
                 Expression::Primary(PrimaryExpr::New { ty, args })
             }
+            Some(Token::Match) => {
+                if self.language_version != LanguageVersion::V2 {
+                    return Err(self.error("`match` expressions require language version V2"));
+                }
+                return self.parse_match_expression();
+            }
             Some(tok) => {
                 return Err(self.error_with_token("unexpected token in primary expression", tok));
             }
             None => return Err(self.error("unexpected end of input")),
         };
         Ok(expr)
+    }
+
+    fn parse_match_expression(&mut self) -> Result<Expression, ParserError> {
+        self.advance(); // consume `match`
+        let scrutinee = self.parse_expression()?;
+        self.expect_lbrace()?;
+        let mut arms = Vec::new();
+        self.consume_terminators();
+
+        while !self.check_rbrace() {
+            let pattern = self.parse_pattern()?;
+            if !self.match_arrow() {
+                return Err(self.error("expected `->` after a match pattern"));
+            }
+            // `Pattern -> { ... }` is a statement arm; `Pattern -> expr` is a value
+            // arm whose expression becomes the match's value in that case.
+            let (body, value) = if self.check_lbrace() {
+                (self.parse_block()?, None)
+            } else {
+                (
+                    Block {
+                        statements: Vec::new(),
+                    },
+                    Some(self.parse_expression()?),
+                )
+            };
+            arms.push(MatchArm {
+                pattern,
+                body,
+                value,
+            });
+            self.consume_terminators();
+            // Arms may be comma-separated; the block boundary already separates them.
+            if self.match_comma() {
+                self.consume_terminators();
+            }
+        }
+
+        self.expect_rbrace()?;
+        Ok(Expression::Match {
+            scrutinee: Box::new(scrutinee),
+            arms,
+        })
+    }
+
+    // A match pattern: `_`, a bare binding (lowercase), or `Variant(b0, b1)` /
+    // bare `Variant` (capitalized). `_` discards a payload slot.
+    fn parse_pattern(&mut self) -> Result<Pattern, ParserError> {
+        let name = self.expect_ident()?;
+        if name == "_" {
+            return Ok(Pattern::Wildcard);
+        }
+
+        let starts_upper = name.chars().next().is_some_and(char::is_uppercase);
+        if !matches!(self.peek(), Some(Token::LParen)) {
+            return Ok(if starts_upper {
+                Pattern::Variant {
+                    enum_name: None,
+                    variant: name,
+                    bindings: Vec::new(),
+                }
+            } else {
+                Pattern::Binding(name)
+            });
+        }
+
+        self.expect_lparen()?;
+        let mut bindings = Vec::new();
+        if !self.check_rparen() {
+            loop {
+                bindings.push(self.expect_ident()?);
+                if self.match_comma() {
+                    if self.check_rparen() {
+                        break;
+                    }
+                    continue;
+                }
+                break;
+            }
+        }
+        self.expect_rparen()?;
+        Ok(Pattern::Variant {
+            enum_name: None,
+            variant: name,
+            bindings,
+        })
+    }
+
+    fn parse_v2_struct_literal_fields(&mut self) -> Result<Vec<FieldInit>, ParserError> {
+        self.expect_lbrace()?;
+        let mut fields = Vec::new();
+        self.consume_terminators();
+        while !self.check_rbrace() {
+            let name = self.expect_ident()?;
+            self.expect_colon()?;
+            let expr = self.parse_expression()?;
+            fields.push(FieldInit {
+                name,
+                ty: None,
+                expr,
+            });
+
+            self.consume_terminators();
+            if self.match_comma() {
+                self.consume_terminators();
+                continue;
+            }
+            if !self.check_rbrace() {
+                return Err(self.error("expected `,` between struct literal fields"));
+            }
+        }
+        self.expect_rbrace()?;
+        Ok(fields)
     }
 
     fn match_rparen(&mut self) -> bool {
@@ -1643,6 +2168,22 @@ impl<'a> Parser<'a> {
         self.match_variant(|t| matches!(t, Token::While))
     }
 
+    fn match_for(&mut self) -> bool {
+        self.match_variant(|t| matches!(t, Token::For))
+    }
+
+    fn match_in(&mut self) -> bool {
+        self.match_variant(|t| matches!(t, Token::In))
+    }
+
+    fn match_dot_dot(&mut self) -> bool {
+        self.match_variant(|t| matches!(t, Token::DotDot))
+    }
+
+    fn match_dot_dot_eq(&mut self) -> bool {
+        self.match_variant(|t| matches!(t, Token::DotDotEq))
+    }
+
     fn match_return(&mut self) -> bool {
         self.match_variant(|t| matches!(t, Token::Return))
     }
@@ -1728,8 +2269,291 @@ impl<'a> Parser<'a> {
 #[cfg(test)]
 mod tests {
     use super::Parser;
-    use crate::ast::{AssignTarget, DeclNode, Expression, ReturnType, Statement, Type};
+    use crate::LanguageVersion;
+    use crate::ast::{
+        AssignTarget, DeclNode, Expression, ForIter, Pattern, PrimaryExpr, ReturnType, Statement,
+        Type,
+    };
+    use crate::lexer::Lexer;
     use crate::token::Token;
+
+    #[test]
+    fn lexer_emits_colon_equal_as_one_token() {
+        let tokens: Vec<_> = Lexer::tokenize("value := 42")
+            .into_iter()
+            .map(|(token, _)| token)
+            .collect();
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Ident("value"),
+                Token::ColonEqual,
+                Token::Integer("42"),
+                Token::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn v2_parses_inferred_binding_as_declaration() {
+        let tokens = vec![
+            Token::Ident("value"),
+            Token::ColonEqual,
+            Token::Integer("42"),
+            Token::Eof,
+        ];
+        let mut parser = Parser::new_with_version(tokens, LanguageVersion::V2);
+        match parser.parse_statement().unwrap() {
+            Statement::InferredVariableDecl { name, init } => {
+                assert_eq!(name, "value");
+                assert!(matches!(
+                    init,
+                    Expression::Primary(crate::ast::PrimaryExpr::Literal(
+                        crate::ast::Literal::Integer(42)
+                    ))
+                ));
+            }
+            other => panic!("expected inferred declaration, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn v1_rejects_inferred_binding_syntax() {
+        let tokens = vec![
+            Token::Ident("value"),
+            Token::ColonEqual,
+            Token::Integer("42"),
+            Token::Eof,
+        ];
+        let error = Parser::new(tokens).parse_statement().unwrap_err();
+        assert!(error.message.contains("require HLL V2"));
+    }
+
+    #[test]
+    fn lexer_tokenizes_range_operators_not_as_floats() {
+        let tokens: Vec<_> = Lexer::tokenize("0..5 1..=4")
+            .into_iter()
+            .map(|(token, _)| token)
+            .collect();
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Integer("0"),
+                Token::DotDot,
+                Token::Integer("5"),
+                Token::Integer("1"),
+                Token::DotDotEq,
+                Token::Integer("4"),
+                Token::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn lexer_still_tokenizes_floats() {
+        let tokens: Vec<_> = Lexer::tokenize("3.14 0.5")
+            .into_iter()
+            .map(|(token, _)| token)
+            .collect();
+        assert_eq!(
+            tokens,
+            vec![Token::Float("3.14"), Token::Float("0.5"), Token::Eof],
+        );
+    }
+
+    #[test]
+    fn v2_parses_for_range_loop() {
+        let tokens = Lexer::tokenize("for i in 0..5 {\nx = x + i\n}")
+            .into_iter()
+            .map(|(token, _)| token)
+            .collect::<Vec<_>>();
+        let mut parser = Parser::new_with_version(tokens, LanguageVersion::V2);
+        match parser.parse_statement().unwrap() {
+            Statement::For { var, iter, body } => {
+                assert_eq!(var, "i");
+                assert!(matches!(
+                    iter,
+                    ForIter::Range {
+                        inclusive: false,
+                        ..
+                    }
+                ));
+                assert_eq!(body.statements.len(), 1);
+            }
+            other => panic!("expected for loop, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn v2_parses_inclusive_for_range_loop() {
+        let tokens = Lexer::tokenize("for i in 1..=4 {\n}")
+            .into_iter()
+            .map(|(token, _)| token)
+            .collect::<Vec<_>>();
+        let mut parser = Parser::new_with_version(tokens, LanguageVersion::V2);
+        match parser.parse_statement().unwrap() {
+            Statement::For { iter, .. } => assert!(matches!(
+                iter,
+                ForIter::Range {
+                    inclusive: true,
+                    ..
+                }
+            )),
+            other => panic!("expected inclusive for loop, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn v2_parses_range_slice_and_plain_index() {
+        // `arr[a..b]` parses to a Slice node; `arr[i]` stays an ArrayIndex.
+        let tokens = Lexer::tokenize("y = arr[1..4]\nz = arr[2]")
+            .into_iter()
+            .map(|(token, _)| token)
+            .collect::<Vec<_>>();
+        let mut parser = Parser::new_with_version(tokens, LanguageVersion::V2);
+        let Statement::Expression(Expression::Assignment { rvalue: slice, .. }) =
+            parser.parse_statement().unwrap()
+        else {
+            panic!("expected assignment");
+        };
+        assert!(matches!(
+            *slice,
+            Expression::Primary(PrimaryExpr::Slice {
+                start: Some(_),
+                end: Some(_),
+                inclusive: false,
+                ..
+            })
+        ));
+        let Statement::Expression(Expression::Assignment { rvalue: index, .. }) =
+            parser.parse_statement().unwrap()
+        else {
+            panic!("expected assignment");
+        };
+        assert!(matches!(
+            *index,
+            Expression::Primary(PrimaryExpr::ArrayIndex { .. })
+        ));
+    }
+
+    #[test]
+    fn v2_parses_open_ended_range_slices() {
+        // Open start and open end both parse with the missing endpoint as None.
+        for (src, has_start, has_end) in [
+            ("y = arr[..2]", false, true),
+            ("y = arr[3..]", true, false),
+            ("y = arr[..]", false, false),
+        ] {
+            let tokens = Lexer::tokenize(src)
+                .into_iter()
+                .map(|(token, _)| token)
+                .collect::<Vec<_>>();
+            let mut parser = Parser::new_with_version(tokens, LanguageVersion::V2);
+            let Statement::Expression(Expression::Assignment { rvalue, .. }) =
+                parser.parse_statement().unwrap()
+            else {
+                panic!("expected assignment for `{src}`");
+            };
+            match *rvalue {
+                Expression::Primary(PrimaryExpr::Slice { start, end, .. }) => {
+                    assert_eq!(start.is_some(), has_start, "start for `{src}`");
+                    assert_eq!(end.is_some(), has_end, "end for `{src}`");
+                }
+                other => panic!("expected slice for `{src}`, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn v1_rejects_range_slice() {
+        let tokens = Lexer::tokenize("y = arr[1..4]")
+            .into_iter()
+            .map(|(token, _)| token)
+            .collect::<Vec<_>>();
+        let mut parser = Parser::new_with_version(tokens, LanguageVersion::V1);
+        assert!(parser.parse_statement().is_err());
+    }
+
+    #[test]
+    fn v2_parses_for_each_loop() {
+        let tokens = Lexer::tokenize("for x in items {\n}")
+            .into_iter()
+            .map(|(token, _)| token)
+            .collect::<Vec<_>>();
+        let mut parser = Parser::new_with_version(tokens, LanguageVersion::V2);
+        match parser.parse_statement().unwrap() {
+            Statement::For { var, iter, .. } => {
+                assert_eq!(var, "x");
+                assert!(matches!(iter, ForIter::Each(_)));
+            }
+            other => panic!("expected for-each loop, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn v1_rejects_for_loop() {
+        let tokens = Lexer::tokenize("for i in 0..5 {\n}")
+            .into_iter()
+            .map(|(token, _)| token)
+            .collect::<Vec<_>>();
+        let error = Parser::new(tokens).parse_statement().unwrap_err();
+        assert!(error.message.contains("require language version V2"));
+    }
+
+    #[test]
+    fn v2_rejects_explicit_void_return_type() {
+        let tokens = vec![
+            Token::Ident("noop"),
+            Token::Colon,
+            Token::LParen,
+            Token::RParen,
+            Token::Minus,
+            Token::Gt,
+            Token::LParen,
+            Token::RParen,
+            Token::LBrace,
+            Token::RBrace,
+            Token::Eof,
+        ];
+        let error = Parser::new_with_version(tokens, LanguageVersion::V2)
+            .parse_program()
+            .unwrap_err();
+        assert!(error.message.contains("omit `->`"));
+    }
+
+    #[test]
+    fn v1_rejects_struct_declarations() {
+        let tokens = vec![
+            Token::Struct,
+            Token::Ident("Point"),
+            Token::LBrace,
+            Token::Ident("x"),
+            Token::Colon,
+            Token::I32,
+            Token::RBrace,
+            Token::Eof,
+        ];
+        let error = Parser::new(tokens).parse_program().unwrap_err();
+        assert!(error.message.contains("require HLL V2"));
+    }
+
+    #[test]
+    fn v2_parses_named_struct_literal() {
+        let source = "struct Point { x: i32 }\nvalue := Point { x: 1 }";
+        let mut parser =
+            Parser::new_with_spans_and_version(Lexer::tokenize(source), LanguageVersion::V2);
+        let program = parser.parse_program().unwrap();
+        match &program.declarations[1].decl {
+            DeclNode::InferredVariable { init, .. } => assert!(matches!(
+                init,
+                Expression::Primary(crate::ast::PrimaryExpr::NamedStructLiteral {
+                    name,
+                    fields
+                }) if name == "Point" && fields.len() == 1 && fields[0].ty.is_none()
+            )),
+            other => panic!("expected inferred named literal, got {other:?}"),
+        }
+    }
 
     #[test]
     fn parses_pointer_cast_syntax() {
@@ -2074,5 +2898,172 @@ mod tests {
             }
             other => panic!("unexpected declaration: {other:?}"),
         }
+    }
+
+    #[test]
+    fn parses_slice_and_array_type_suffixes() {
+        // `i32[]` is a slice; `i32[3]` is a fixed array.
+        let i32_ty = || Type::Named {
+            name: "i32".to_string(),
+            args: vec![],
+        };
+
+        let mut slice = Parser::new(vec![Token::Ident("i32"), Token::LBracket, Token::RBracket]);
+        assert_eq!(slice.parse_type().unwrap(), Type::Slice(Box::new(i32_ty())));
+
+        let mut array = Parser::new(vec![
+            Token::Ident("i32"),
+            Token::LBracket,
+            Token::Integer("3"),
+            Token::RBracket,
+        ]);
+        assert_eq!(
+            array.parse_type().unwrap(),
+            Type::Array(3, Box::new(i32_ty()))
+        );
+    }
+
+    #[test]
+    fn nested_generic_pointer_suffix_applies_to_outer_type() {
+        let tokens = Lexer::tokenize("Box<Pair<i32>>*")
+            .into_iter()
+            .map(|(token, _)| token)
+            .collect();
+        let mut parser = Parser::new_with_version(tokens, LanguageVersion::V2);
+        let ty = parser
+            .parse_type()
+            .expect("nested generic type should parse");
+        let Type::Pointer(inner) = ty else {
+            panic!("pointer suffix must apply to Box");
+        };
+        assert!(matches!(
+            *inner,
+            Type::Named { ref name, ref args }
+                if name == "Box"
+                    && matches!(&args[..], [Type::Named { name, args }] if name == "Pair" && args.len() == 1)
+        ));
+    }
+
+    fn tokens_of(src: &str) -> Vec<Token<'_>> {
+        Lexer::tokenize(src)
+            .into_iter()
+            .map(|(token, _)| token)
+            .collect()
+    }
+
+    #[test]
+    fn v2_parses_enum_with_unit_and_payload_variants() {
+        let src = "enum Shape {\nCircle(f64)\nRect(f64, f64)\nEmpty\n}";
+        let mut parser = Parser::new_with_version(tokens_of(src), LanguageVersion::V2);
+        let program = parser.parse_program().unwrap();
+        match &program.declarations[0].decl {
+            DeclNode::Enum {
+                name,
+                generics,
+                variants,
+            } => {
+                assert_eq!(name, "Shape");
+                assert!(generics.is_empty());
+                assert_eq!(variants.len(), 3);
+                assert_eq!(variants[0].name, "Circle");
+                assert_eq!(variants[0].payload.len(), 1);
+                assert_eq!(variants[1].payload.len(), 2);
+                assert!(variants[2].payload.is_empty());
+            }
+            other => panic!("expected enum, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn v2_parses_generic_enum() {
+        let src = "enum Option<T> {\nSome(T)\nNone\n}";
+        let mut parser = Parser::new_with_version(tokens_of(src), LanguageVersion::V2);
+        let program = parser.parse_program().unwrap();
+        match &program.declarations[0].decl {
+            DeclNode::Enum {
+                name,
+                generics,
+                variants,
+            } => {
+                assert_eq!(name, "Option");
+                assert_eq!(generics, &vec!["T".to_string()]);
+                assert_eq!(variants.len(), 2);
+            }
+            other => panic!("expected enum, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn v1_rejects_enum_declaration() {
+        let error = Parser::new(tokens_of("enum E {\nA\n}"))
+            .parse_declaration()
+            .unwrap_err();
+        assert!(error.message.contains("require HLL V2"));
+    }
+
+    #[test]
+    fn v2_parses_match_with_variant_and_wildcard_patterns() {
+        let src = "x = match s {\nCircle(r) -> {\nreturn r\n}\n_ -> {\nreturn 0\n}\n}";
+        let mut parser = Parser::new_with_version(tokens_of(src), LanguageVersion::V2);
+        let Statement::Expression(Expression::Assignment { rvalue, .. }) =
+            parser.parse_statement().unwrap()
+        else {
+            panic!("expected assignment");
+        };
+        let Expression::Match { scrutinee, arms } = *rvalue else {
+            panic!("expected match expression");
+        };
+        assert!(matches!(
+            *scrutinee,
+            Expression::Primary(PrimaryExpr::Identifier(ref n)) if n == "s"
+        ));
+        assert_eq!(arms.len(), 2);
+        match &arms[0].pattern {
+            Pattern::Variant {
+                variant, bindings, ..
+            } => {
+                assert_eq!(variant, "Circle");
+                assert_eq!(bindings, &vec!["r".to_string()]);
+            }
+            other => panic!("expected variant pattern, got {other:?}"),
+        }
+        assert!(matches!(arms[1].pattern, Pattern::Wildcard));
+    }
+
+    #[test]
+    fn v2_parses_value_match_arms() {
+        let src = "n := match s {\nCircle(r) -> r * r\n_ -> 0\n}";
+        let mut parser = Parser::new_with_version(tokens_of(src), LanguageVersion::V2);
+        let Statement::InferredVariableDecl { init, .. } = parser.parse_statement().unwrap() else {
+            panic!("expected inferred binding");
+        };
+        let Expression::Match { arms, .. } = init else {
+            panic!("expected match expression");
+        };
+        assert_eq!(arms.len(), 2);
+        // Value arms carry an expression and an empty statement body.
+        assert!(arms[0].value.is_some());
+        assert!(arms[0].body.statements.is_empty());
+        assert!(arms[1].value.is_some());
+    }
+
+    #[test]
+    fn v2_parses_postfix_question_as_try() {
+        let src = "n = parse(text)?";
+        let mut parser = Parser::new_with_version(tokens_of(src), LanguageVersion::V2);
+        let Statement::Expression(Expression::Assignment { rvalue, .. }) =
+            parser.parse_statement().unwrap()
+        else {
+            panic!("expected assignment");
+        };
+        assert!(matches!(*rvalue, Expression::Try(_)));
+    }
+
+    #[test]
+    fn v1_rejects_match_expression() {
+        let error = Parser::new(tokens_of("x = match s {\n_ -> {\n}\n}"))
+            .parse_statement()
+            .unwrap_err();
+        assert!(error.message.contains("require language version V2"));
     }
 }

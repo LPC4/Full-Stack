@@ -1,3 +1,4 @@
+; @version 2
 ; File-management builtins (touch/mkdir/rm/rmdir/mv) split out of shell.hll and linked
 ; with it; each resolves its operand to an absolute path via sh_join_path.
 
@@ -17,15 +18,15 @@ external sh_join_path: (cwd: u8*, arg: u8*, out: u8*)
 ; Create an empty file (open with the create flag, then close).
 export cmd_touch: (cwd: u8*, arg: u8*) {
     if @arg == 0 {
-        console_writeln("touch: missing file name".data)
+        console_writeln("touch: missing file name".ptr)
         return
     }
-    target: u8[256]
-    target_p: u8* = target[0]
+    target: u8[256] = []
+    target_p: u8* = &target[0]
     sh_join_path(cwd, arg, target_p)
     fd: i64 = sc_open(target_p, 2)
     if fd < 0 {
-        console_write("touch: cannot create: ".data)
+        console_write("touch: cannot create: ".ptr)
         console_writeln(arg)
         return
     }
@@ -35,14 +36,14 @@ export cmd_touch: (cwd: u8*, arg: u8*) {
 ; Create a directory.
 export cmd_mkdir: (cwd: u8*, arg: u8*) {
     if @arg == 0 {
-        console_writeln("mkdir: missing directory name".data)
+        console_writeln("mkdir: missing directory name".ptr)
         return
     }
-    target: u8[256]
-    target_p: u8* = target[0]
+    target: u8[256] = []
+    target_p: u8* = &target[0]
     sh_join_path(cwd, arg, target_p)
     if sc_mkdir(target_p) < 0 {
-        console_write("mkdir: cannot create: ".data)
+        console_write("mkdir: cannot create: ".ptr)
         console_writeln(arg)
     }
 }
@@ -50,14 +51,14 @@ export cmd_mkdir: (cwd: u8*, arg: u8*) {
 ; Remove a regular file.
 export cmd_rm: (cwd: u8*, arg: u8*) {
     if @arg == 0 {
-        console_writeln("rm: missing file name".data)
+        console_writeln("rm: missing file name".ptr)
         return
     }
-    target: u8[256]
-    target_p: u8* = target[0]
+    target: u8[256] = []
+    target_p: u8* = &target[0]
     sh_join_path(cwd, arg, target_p)
     if sc_unlink(target_p) < 0 {
-        console_write("rm: cannot remove: ".data)
+        console_write("rm: cannot remove: ".ptr)
         console_writeln(arg)
     }
 }
@@ -65,14 +66,14 @@ export cmd_rm: (cwd: u8*, arg: u8*) {
 ; Remove an empty directory.
 export cmd_rmdir: (cwd: u8*, arg: u8*) {
     if @arg == 0 {
-        console_writeln("rmdir: missing directory name".data)
+        console_writeln("rmdir: missing directory name".ptr)
         return
     }
-    target: u8[256]
-    target_p: u8* = target[0]
+    target: u8[256] = []
+    target_p: u8* = &target[0]
     sh_join_path(cwd, arg, target_p)
     if sc_rmdir(target_p) < 0 {
-        console_write("rmdir: cannot remove: ".data)
+        console_write("rmdir: cannot remove: ".ptr)
         console_writeln(arg)
     }
 }
@@ -88,12 +89,12 @@ export cmd_mv: (cwd: u8*, arg: u8*) {
         sp = sp + 1
     }
     if @(arg + sp) == 0 {
-        console_writeln("mv: usage: mv <old> <new>".data)
+        console_writeln("mv: usage: mv <old> <new>".ptr)
         return
     }
     ; Copy the first operand out before we walk past it.
-    src: u8[128]
-    src_p: u8* = src[0]
+    src: u8[128] = []
+    src_p: u8* = &src[0]
     i: u64 = 0
     while i < sp {
         if i >= 127 {
@@ -110,18 +111,18 @@ export cmd_mv: (cwd: u8*, arg: u8*) {
         sp = sp + 1
     }
     if @(arg + sp) == 0 {
-        console_writeln("mv: usage: mv <old> <new>".data)
+        console_writeln("mv: usage: mv <old> <new>".ptr)
         return
     }
     dst_arg: u8* = arg + sp
-    old_abs: u8[256]
-    old_p: u8* = old_abs[0]
+    old_abs: u8[256] = []
+    old_p: u8* = &old_abs[0]
     sh_join_path(cwd, src_p, old_p)
-    new_abs: u8[256]
-    new_p: u8* = new_abs[0]
+    new_abs: u8[256] = []
+    new_p: u8* = &new_abs[0]
     sh_join_path(cwd, dst_arg, new_p)
     if sc_rename(old_p, new_p) < 0 {
-        console_write("mv: cannot move: ".data)
+        console_write("mv: cannot move: ".ptr)
         console_writeln(src_p)
     }
 }

@@ -11,7 +11,7 @@ main: () -> i32 {
 }
 "#;
 
-    let mut pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new_v1();
     pipeline.set_write_artifacts(false);
     
     pipeline.set_write_artifacts(false);
@@ -30,7 +30,7 @@ main: () -> i32 {
 }
 "#;
 
-    let mut pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new_v1();
     pipeline.set_write_artifacts(false);
     
     pipeline.set_write_artifacts(false);
@@ -61,7 +61,7 @@ main: () -> i32 {
 }
 "#;
 
-    let mut pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new_v1();
     pipeline.set_write_artifacts(false);
     
     pipeline.set_write_artifacts(false);
@@ -82,7 +82,7 @@ main: () -> i32 {
 }
 "#;
 
-    let mut pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new_v1();
     pipeline.set_write_artifacts(false);
     
     pipeline.set_write_artifacts(false);
@@ -107,7 +107,7 @@ main: () -> i32 {
 }
 "#;
 
-    let mut pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new_v1();
     pipeline.set_write_artifacts(false);
     
     pipeline.set_write_artifacts(false);
@@ -140,7 +140,7 @@ main: () -> i32 {
 }
 "#;
 
-    let mut pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new_v1();
     pipeline.set_write_artifacts(false);
     
     pipeline.set_write_artifacts(false);
@@ -167,7 +167,7 @@ main: () -> i32 {
 }
 "#;
 
-    let mut pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new_v1();
     pipeline.set_write_artifacts(false);
     
     pipeline.set_write_artifacts(false);
@@ -189,7 +189,7 @@ main: () -> i32 {
 }
 "#;
 
-    let mut pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new_v1();
     pipeline.set_write_artifacts(false);
     
     pipeline.set_write_artifacts(false);
@@ -219,7 +219,7 @@ main: () -> i32 {
 }
 "#;
 
-    let mut pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new_v1();
     pipeline.set_write_artifacts(false);
     
     pipeline.set_write_artifacts(false);
@@ -238,7 +238,7 @@ fn allows_array_literals_through_assembly() {
         "/programs/example/array_initialization.hll"
     ));
 
-    let mut pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new_v1();
     pipeline.set_write_artifacts(false);
     
     pipeline.set_write_artifacts(false);
@@ -267,7 +267,7 @@ main: () -> i32 {
 }
 "#;
 
-    let mut pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new_v1();
     pipeline.set_write_artifacts(false);
     
     pipeline.set_write_artifacts(false);
@@ -295,7 +295,7 @@ main: () -> i32 {
 }
 "#;
 
-    let mut pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new_v1();
     pipeline.set_write_artifacts(false);
     
     pipeline.set_write_artifacts(false);
@@ -324,7 +324,7 @@ main: () -> i32 {
 }
 "#;
 
-    let mut pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new_v1();
     pipeline.set_write_artifacts(false);
     
     pipeline.set_write_artifacts(false);
@@ -383,7 +383,7 @@ fn all_launch_examples_compile() {
         ),
     ];
 
-    let mut pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new_v1();
     pipeline.set_write_artifacts(false);
     
     pipeline.set_write_artifacts(false);
@@ -411,7 +411,7 @@ main: () -> i32 {
 }
 "#;
 
-    let mut pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new_v1();
     pipeline.set_write_artifacts(false);
     
     pipeline.set_write_artifacts(false);
@@ -434,7 +434,7 @@ main: () -> i32 {
 }
 "#;
 
-    let mut pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new_v1();
     pipeline.set_write_artifacts(false);
     
     pipeline.set_write_artifacts(false);
@@ -455,7 +455,7 @@ leak: () -> i32* {
 }
 "#;
 
-    let mut pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new_v1();
     pipeline.set_write_artifacts(false);
     
     pipeline.set_write_artifacts(false);
@@ -480,7 +480,7 @@ leak: () -> i32* {
 }
 "#;
 
-    let mut pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new_v1();
     pipeline.set_write_artifacts(false);
     
     pipeline.set_write_artifacts(false);
@@ -500,7 +500,7 @@ leak: () -> i32* {
 }
 "#;
 
-    let mut pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new_v1();
     pipeline.set_write_artifacts(false);
     
     pipeline.set_write_artifacts(false);

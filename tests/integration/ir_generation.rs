@@ -20,7 +20,7 @@ use hll_to_ir::{IrCmpOp, IrInstruction, IrMathOp};
 use hll_to_ir::ir::instruction::IrTerminator;
 
 fn compile_ok(source: &str) -> full_stack::compilation_pipeline::CompilationResult {
-    let mut pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new_v1();
     pipeline.set_write_artifacts(false);
     pipeline
         .compile(source)
@@ -28,7 +28,7 @@ fn compile_ok(source: &str) -> full_stack::compilation_pipeline::CompilationResu
 }
 
 fn assert_semantic_error(source: &str, fragment: &str) {
-    let mut pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new_v1();
     pipeline.set_write_artifacts(false);
     let result = pipeline.compile(source);
     let err = result.expect_err("expected compilation to fail");
@@ -74,7 +74,7 @@ where
 
 #[test]
 fn compiles_minimal_valid_program() {
-    let mut pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new_v1();
     pipeline.set_write_artifacts(false);
     pipeline.set_run_semantic_analysis(false);
     assert!(pipeline.compile("main: () -> i32 { return 42 }").is_ok());
@@ -82,7 +82,7 @@ fn compiles_minimal_valid_program() {
 
 #[test]
 fn rejects_invalid_tokens() {
-    let result = CompilationPipeline::new().compile("@invalid_token!@#");
+    let result = CompilationPipeline::new_v1().compile("@invalid_token!@#");
     assert!(matches!(result.unwrap_err(), CompilationError::DiagnosticErrors(_)));
 }
 
@@ -242,7 +242,7 @@ main: () -> i32 {
 #[test]
 fn free_with_no_args_is_rejected() {
     assert!(
-        CompilationPipeline::new()
+        CompilationPipeline::new_v1()
             .compile("main: () -> i32 { ptr: i32* = new(i32)  free()  return 0 }")
             .is_err()
     );
@@ -277,7 +277,7 @@ main: () -> i32 {
 #[test]
 fn new_with_array_type_is_rejected() {
     assert!(
-        CompilationPipeline::new()
+        CompilationPipeline::new_v1()
             .compile(
                 r#"main: () -> i32 { arr: i32* = new([4]i32)  defer free(arr)  return 0 }"#
             )
@@ -291,7 +291,7 @@ fn has_terminator<F>(source: &str, pred: F) -> bool
 where
     F: Fn(&IrTerminator) -> bool,
 {
-    let result = CompilationPipeline::new()
+    let result = CompilationPipeline::new_v1()
         .compile(source)
         .unwrap_or_else(|e| panic!("expected ok, got: {e}"));
     result

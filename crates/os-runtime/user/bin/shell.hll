@@ -1,3 +1,4 @@
+; @version 2
 ; Interactive shell, pid 1. See OS spec ch.10.1.
 ; Syscall wrappers and C-string helpers come from the hosted stdlib.
 
@@ -176,8 +177,8 @@ sh_outch: (c: i32) {
         console_putchar(c)
         return
     }
-    b: u8[1]
-    bp: u8* = b[0]
+    b: u8[1] = []
+    bp: u8* = &b[0]
     @bp = c as u8
     sc_write(sh_sink_fd, bp, 1)
 }
@@ -209,8 +210,8 @@ sh_src_close: () {
 ; List a directory. No argument lists cwd; a file path just prints its name.
 ; Names starting with '.' are hidden (Unix convention; keeps pipe temps unseen).
 cmd_ls: (cwd: u8*, arg: u8*) {
-    target: u8[256]
-    target_p: u8* = target[0]
+    target: u8[256] = []
+    target_p: u8* = &target[0]
     if @arg == 0 {
         cstr_copy(target_p, cwd)
     } else {
@@ -218,7 +219,7 @@ cmd_ls: (cwd: u8*, arg: u8*) {
     }
     ty: i64 = sc_stat(target_p)
     if ty < 0 {
-        console_write("ls: no such path: ".data)
+        console_write("ls: no such path: ".ptr)
         console_writeln(arg)
         return
     }
@@ -226,8 +227,8 @@ cmd_ls: (cwd: u8*, arg: u8*) {
         sh_outln(arg)
         return
     }
-    name: u8[64]
-    name_p: u8* = name[0]
+    name: u8[64] = []
+    name_p: u8* = &name[0]
     i: u64 = 0
     done: i64 = 0
     while done == 0 {
@@ -262,29 +263,29 @@ cmd_cd: (cwd: u8*, arg: u8*) {
     if @arg == 0 {
         return
     }
-    if cstr_eq(arg, "/".data) == 1 {
+    if cstr_eq(arg, "/".ptr) == 1 {
         t: u8* = cwd + 1
         @t = 0 as u8
         return
     }
-    if cstr_eq(arg, ".".data) == 1 {
+    if cstr_eq(arg, ".".ptr) == 1 {
         return
     }
-    if cstr_eq(arg, "..".data) == 1 {
+    if cstr_eq(arg, "..".ptr) == 1 {
         sh_path_pop(cwd)
         return
     }
-    target: u8[256]
-    target_p: u8* = target[0]
+    target: u8[256] = []
+    target_p: u8* = &target[0]
     sh_join_path(cwd, arg, target_p)
     ty: i64 = sc_stat(target_p)
     if ty < 0 {
-        console_write("cd: no such directory: ".data)
+        console_write("cd: no such directory: ".ptr)
         console_writeln(arg)
         return
     }
     if ty != 2 {
-        console_write("cd: not a directory: ".data)
+        console_write("cd: not a directory: ".ptr)
         console_writeln(arg)
         return
     }
@@ -298,8 +299,8 @@ sh_is_exec: (path: u8*) -> i64 {
     if fd < 0 {
         return -1 as i64
     }
-    magic: u8[4]
-    magic_p: u8* = magic[0]
+    magic: u8[4] = []
+    magic_p: u8* = &magic[0]
     n: i64 = sc_read(fd, magic_p, 0, 4)
     sc_close(fd)
     if n != 4 {
@@ -328,8 +329,8 @@ sh_print_dec: (v: i64) {
         sh_outch('0')
         return
     }
-    digits: u8[24]
-    digits_p: u8* = digits[0]
+    digits: u8[24] = []
+    digits_p: u8* = &digits[0]
     n: u64 = 0
     uv: u64 = v as u64
     while uv > 0 {
@@ -354,12 +355,12 @@ sh_wait_foreground: (pid: i64) {
     last_exit = code
     two: i64 = 2
     if code + two == 0 {
-        console_writeln("^C".data)
+        console_writeln("^C".ptr)
         return
     }
-    console_write("[exit ".data)
+    console_write("[exit ".ptr)
     sh_print_dec(code)
-    console_writeln("]".data)
+    console_writeln("]".ptr)
 }
 
 ; --- Background job table ---
@@ -367,13 +368,13 @@ sh_wait_foreground: (pid: i64) {
 ; base+i: raw pointer arith is byte-scaled in HLL (lang spec 4.2).
 
 const MAX_JOBS = 8
-job_pids: i64[8]
+job_pids: i64[8] = []
 
 ; Record a backgrounded pid in the first free slot; returns the job id or -1.
 jobs_add: (pid: i64) -> i64 {
     i: u64 = 0
     while i < MAX_JOBS {
-        slot: i64* = job_pids[i]
+        slot: i64* = &job_pids[i]
         if @slot == 0 {
             @slot = pid
             return (i + 1) as i64
@@ -387,14 +388,14 @@ jobs_add: (pid: i64) -> i64 {
 jobs_reap: () {
     i: u64 = 0
     while i < MAX_JOBS {
-        slot: i64* = job_pids[i]
+        slot: i64* = &job_pids[i]
         pid: i64 = @slot
         if pid != 0 {
             if sc_pidalive(pid as u64) == 0 {
                 sc_waitpid(pid)
-                console_write("[".data)
+                console_write("[".ptr)
                 sh_print_dec((i + 1) as i64)
-                console_write("] done   pid ".data)
+                console_write("] done   pid ".ptr)
                 sh_print_dec(pid)
                 console_putchar('\n')
                 @slot = 0
@@ -427,46 +428,46 @@ cmd_jobs: () {
     i: u64 = 0
     any: i64 = 0
     while i < MAX_JOBS {
-        slot: i64* = job_pids[i]
+        slot: i64* = &job_pids[i]
         pid: i64 = @slot
         if pid != 0 {
             any = 1
-            sh_out("[".data)
+            sh_out("[".ptr)
             sh_print_dec((i + 1) as i64)
-            sh_out("] pid ".data)
+            sh_out("] pid ".ptr)
             sh_print_dec(pid)
             if sc_pidalive(pid as u64) == 1 {
-                sh_outln("   running".data)
+                sh_outln("   running".ptr)
             } else {
-                sh_outln("   done".data)
+                sh_outln("   done".ptr)
             }
         }
         i = i + 1
     }
     if any == 0 {
-        sh_outln("no background jobs".data)
+        sh_outln("no background jobs".ptr)
     }
 }
 
 ; Foreground a background job by 1-based id: remove it and wait on it.
 cmd_fg: (arg: u8*) {
     if @arg == 0 {
-        console_writeln("fg: usage: fg <job>".data)
+        console_writeln("fg: usage: fg <job>".ptr)
         return
     }
     jid: i64 = sh_parse_int(arg)
     if jid < 1 {
-        console_writeln("fg: no such job".data)
+        console_writeln("fg: no such job".ptr)
         return
     }
     if jid > MAX_JOBS {
-        console_writeln("fg: no such job".data)
+        console_writeln("fg: no such job".ptr)
         return
     }
-    slot: i64* = job_pids[(jid - 1) as u64]
+    slot: i64* = &job_pids[(jid - 1) as u64]
     pid: i64 = @slot
     if pid == 0 {
-        console_writeln("fg: no such job".data)
+        console_writeln("fg: no such job".ptr)
         return
     }
     @slot = 0
@@ -480,35 +481,35 @@ const SIGKILL = 9
 ; through the job table. The slot is left for jobs_reap to clear on the next prompt.
 cmd_kill: (arg: u8*) {
     if @arg == 0 {
-        console_writeln("kill: usage: kill <pid> | kill %<job>".data)
+        console_writeln("kill: usage: kill <pid> | kill %<job>".ptr)
         return
     }
     pid: i64 = 0
     if @arg == '%' {  ; job id like %1
         jid: i64 = sh_parse_int(arg + 1)
         if jid < 1 {
-            console_writeln("kill: no such job".data)
+            console_writeln("kill: no such job".ptr)
             return
         }
         if jid > MAX_JOBS {
-            console_writeln("kill: no such job".data)
+            console_writeln("kill: no such job".ptr)
             return
         }
-        slot: i64* = job_pids[(jid - 1) as u64]
+        slot: i64* = &job_pids[(jid - 1) as u64]
         pid = @slot
         if pid == 0 {
-            console_writeln("kill: no such job".data)
+            console_writeln("kill: no such job".ptr)
             return
         }
     } else {
         pid = sh_parse_int(arg)
     }
     if pid < 2 {
-        console_writeln("kill: invalid pid".data)
+        console_writeln("kill: invalid pid".ptr)
         return
     }
     if sc_kill(pid, SIGKILL) < 0 {
-        console_write("kill: no such process: ".data)
+        console_write("kill: no such process: ".ptr)
         sh_print_dec(pid)
         console_putchar('\n')
     }
@@ -522,7 +523,7 @@ sh_try_dir: (dir: u8*, name: u8*, out: u8*) -> i64 {
         return 1
     }
     l: u64 = cstr_len(out)
-    cstr_copy(out + l, ".elf".data)
+    cstr_copy(out + l, ".elf".ptr)
     if sh_is_exec(out) == 1 {
         return 1
     }
@@ -554,7 +555,7 @@ sh_resolve_program: (cwd: u8*, name: u8*, out: u8*) -> i64 {
             return 1
         }
         l: u64 = cstr_len(out)
-        cstr_copy(out + l, ".elf".data)
+        cstr_copy(out + l, ".elf".ptr)
         if sh_is_exec(out) == 1 {
             return 1
         }
@@ -563,10 +564,10 @@ sh_resolve_program: (cwd: u8*, name: u8*, out: u8*) -> i64 {
     if sh_try_dir(cwd, name, out) == 1 {
         return 1
     }
-    if sh_try_dir("/bin".data, name, out) == 1 {
+    if sh_try_dir("/bin".ptr, name, out) == 1 {
         return 1
     }
-    if sh_try_dir("/home/demo".data, name, out) == 1 {
+    if sh_try_dir("/home/demo".ptr, name, out) == 1 {
         return 1
     }
     return 0
@@ -577,15 +578,15 @@ sh_resolve_program: (cwd: u8*, name: u8*, out: u8*) -> i64 {
 sh_launch_redir: (target_p: u8*, name: u8*, bg: i64, out_p: u8*, in_p: u8*, out_append: u64) {
     pid: i64 = sc_exec_redir(target_p, 0 as u8*, out_p, in_p, out_append)
     if pid < 0 {
-        console_write("cannot exec: ".data)
+        console_write("cannot exec: ".ptr)
         console_writeln(name)
         return
     }
     if bg == 1 {
         jid: i64 = jobs_add(pid)
-        console_write("[".data)
+        console_write("[".ptr)
         sh_print_dec(jid)
-        console_write("] pid ".data)
+        console_write("] pid ".ptr)
         sh_print_dec(pid)
         console_putchar('\n')
         return
@@ -620,15 +621,15 @@ cmd_exec: (cwd: u8*, line: u8*) {
 
     ; Walk whitespace-delimited tokens, recognising > >> < and joining each
     ; redirect target to an absolute path immediately (keeps the frame small).
-    name: u8[256]
-    name_p: u8* = name[0]
+    name: u8[256] = []
+    name_p: u8* = &name[0]
     @name_p = 0 as u8
-    out_abs: u8[256]
-    out_abs_p: u8* = out_abs[0]
-    in_abs: u8[256]
-    in_abs_p: u8* = in_abs[0]
-    tok: u8[256]
-    tok_p: u8* = tok[0]
+    out_abs: u8[256] = []
+    out_abs_p: u8* = &out_abs[0]
+    in_abs: u8[256] = []
+    in_abs_p: u8* = &in_abs[0]
+    tok: u8[256] = []
+    tok_p: u8* = &tok[0]
     have_out: i64 = 0
     have_in: i64 = 0
     out_append: i64 = 0
@@ -660,13 +661,13 @@ cmd_exec: (cwd: u8*, line: u8*) {
         tt: u8* = tok_p + tn
         @tt = 0 as u8
 
-        if cstr_eq(tok_p, ">".data) == 1 {
+        if cstr_eq(tok_p, ">".ptr) == 1 {
             redir = 1
         } else {
-            if cstr_eq(tok_p, ">>".data) == 1 {
+            if cstr_eq(tok_p, ">>".ptr) == 1 {
                 redir = 2
             } else {
-                if cstr_eq(tok_p, "<".data) == 1 {
+                if cstr_eq(tok_p, "<".ptr) == 1 {
                     redir = 3
                 } else {
                     if redir == 3 {
@@ -695,10 +696,10 @@ cmd_exec: (cwd: u8*, line: u8*) {
     if @name_p == 0 {
         return
     }
-    target: u8[256]
-    target_p: u8* = target[0]
+    target: u8[256] = []
+    target_p: u8* = &target[0]
     if sh_resolve_program(cwd, name_p, target_p) == 0 {
-        console_write("unknown command: ".data)
+        console_write("unknown command: ".ptr)
         console_writeln(name_p)
         return
     }
@@ -717,7 +718,7 @@ cmd_exec: (cwd: u8*, line: u8*) {
 ; `run <file>` is kept as a hidden alias for bare-name execution (muscle memory).
 cmd_run: (cwd: u8*, arg: u8*) {
     if @arg == 0 {
-        console_writeln("run: missing file name".data)
+        console_writeln("run: missing file name".ptr)
         return
     }
     cmd_exec(cwd, arg)
@@ -725,8 +726,8 @@ cmd_run: (cwd: u8*, arg: u8*) {
 
 ; Copy an open fd from the start to EOF into the current sink.
 sh_cat_fd: (fd: i64) {
-    buf: u8[128]
-    buf_p: u8* = buf[0]
+    buf: u8[128] = []
+    buf_p: u8* = &buf[0]
     off: u64 = 0
     while 1 == 1 {
         n: i64 = sc_read(fd, buf_p, off, 128)
@@ -740,12 +741,12 @@ sh_cat_fd: (fd: i64) {
 
 ; Print one file's contents to the current sink.
 sh_cat_one: (cwd: u8*, name: u8*) {
-    target: u8[256]
-    target_p: u8* = target[0]
+    target: u8[256] = []
+    target_p: u8* = &target[0]
     sh_join_path(cwd, name, target_p)
     fd: i64 = sc_open(target_p, 0)
     if fd < 0 {
-        console_write("cat: no such file: ".data)
+        console_write("cat: no such file: ".ptr)
         console_writeln(name)
         return
     }
@@ -761,11 +762,11 @@ cmd_cat: (cwd: u8*, arg: u8*) {
             sh_cat_fd(sh_src_fd)
             return
         }
-        console_writeln("cat: missing file name".data)
+        console_writeln("cat: missing file name".ptr)
         return
     }
-    fname: u8[128]
-    fname_p: u8* = fname[0]
+    fname: u8[128] = []
+    fname_p: u8* = &fname[0]
     i: u64 = 0
     while @(arg + i) != 0 {
         while @(arg + i) == ' ' {
@@ -795,15 +796,15 @@ cmd_cat: (cwd: u8*, arg: u8*) {
 ; Launch the line editor on a file, passing the absolute path as its argument.
 cmd_edit: (cwd: u8*, arg: u8*) {
     if @arg == 0 {
-        console_writeln("edit: missing file name".data)
+        console_writeln("edit: missing file name".ptr)
         return
     }
-    target: u8[256]
-    target_p: u8* = target[0]
+    target: u8[256] = []
+    target_p: u8* = &target[0]
     sh_join_path(cwd, arg, target_p)
-    pid: i64 = sc_exec_arg("/bin/edit.elf".data, target_p)
+    pid: i64 = sc_exec_arg("/bin/edit.elf".ptr, target_p)
     if pid < 0 {
-        console_writeln("edit: cannot launch /bin/edit.elf".data)
+        console_writeln("edit: cannot launch /bin/edit.elf".ptr)
         return
     }
     sh_wait_foreground(pid)
@@ -825,8 +826,8 @@ sh_run_tool2: (cwd: u8*, arg: u8*, elf_p: u8*, usage: u8*) {
         return
     }
     ; Copy the source operand out before walking past it.
-    src: u8[128]
-    src_p: u8* = src[0]
+    src: u8[128] = []
+    src_p: u8* = &src[0]
     i: u64 = 0
     while i < sp {
         if i >= 127 {
@@ -848,8 +849,8 @@ sh_run_tool2: (cwd: u8*, arg: u8*, elf_p: u8*, usage: u8*) {
     }
     ; Copy the destination operand, stopping at the first trailing space so a stray
     ; space in the command line does not become part of the output filename.
-    dst: u8[128]
-    dst_p: u8* = dst[0]
+    dst: u8[128] = []
+    dst_p: u8* = &dst[0]
     j: u64 = 0
     while @(arg + sp) != 0 {
         if @(arg + sp) == ' ' {
@@ -866,14 +867,14 @@ sh_run_tool2: (cwd: u8*, arg: u8*, elf_p: u8*, usage: u8*) {
     dt: u8* = dst_p + j
     @dt = 0 as u8
     ; Build absolute paths and pack "abs_src abs_out" into one argument buffer.
-    src_abs: u8[256]
-    src_abs_p: u8* = src_abs[0]
+    src_abs: u8[256] = []
+    src_abs_p: u8* = &src_abs[0]
     sh_join_path(cwd, src_p, src_abs_p)
-    out_abs: u8[256]
-    out_abs_p: u8* = out_abs[0]
+    out_abs: u8[256] = []
+    out_abs_p: u8* = &out_abs[0]
     sh_join_path(cwd, dst_p, out_abs_p)
-    packed: u8[256]
-    packed_p: u8* = packed[0]
+    packed: u8[256] = []
+    packed_p: u8* = &packed[0]
     cstr_copy(packed_p, src_abs_p)
     pl: u64 = cstr_len(packed_p)
     sep: u8* = packed_p + pl
@@ -881,7 +882,7 @@ sh_run_tool2: (cwd: u8*, arg: u8*, elf_p: u8*, usage: u8*) {
     cstr_copy(packed_p + pl + 1, out_abs_p)
     pid: i64 = sc_exec_arg(elf_p, packed_p)
     if pid < 0 {
-        console_write("cannot launch ".data)
+        console_write("cannot launch ".ptr)
         console_writeln(elf_p)
         return
     }
@@ -890,20 +891,20 @@ sh_run_tool2: (cwd: u8*, arg: u8*, elf_p: u8*, usage: u8*) {
 
 ; Assemble: "as <src> <out>" -> /bin/as.elf.
 cmd_as: (cwd: u8*, arg: u8*) {
-    sh_run_tool2(cwd, arg, "/bin/as.elf".data, "as: usage: as <src> <out>".data)
+    sh_run_tool2(cwd, arg, "/bin/as.elf".ptr, "as: usage: as <src> <out>".ptr)
 }
 
 ; Compile HLL-0: "cc <src.hll> <out.s>" -> /bin/cc.elf.
 cmd_cc: (cwd: u8*, arg: u8*) {
-    sh_run_tool2(cwd, arg, "/bin/cc.elf".data, "cc: usage: cc <src.hll> <out.s>".data)
+    sh_run_tool2(cwd, arg, "/bin/cc.elf".ptr, "cc: usage: cc <src.hll> <out.s>".ptr)
 }
 
 ; Link: "ld <obj>... <out>" -> /bin/ld.elf. Each whitespace token is resolved to an
 ; absolute path and the lot is repacked space-separated for the linker (inputs
 ; first, output last). Unlike as/cc this takes a variable number of operands.
 cmd_ld: (cwd: u8*, arg: u8*) {
-    packed: u8[512]
-    packed_p: u8* = packed[0]
+    packed: u8[512] = []
+    packed_p: u8* = &packed[0]
     plen: u64 = 0
     i: u64 = 0
     ntok: i64 = 0
@@ -915,8 +916,8 @@ cmd_ld: (cwd: u8*, arg: u8*) {
             break
         }
         ; Copy one token out, then absolute-join it.
-        tok: u8[256]
-        tok_p: u8* = tok[0]
+        tok: u8[256] = []
+        tok_p: u8* = &tok[0]
         k: u64 = 0
         while @(arg + i) != 0 {
             if @(arg + i) == ' ' {
@@ -931,8 +932,8 @@ cmd_ld: (cwd: u8*, arg: u8*) {
         }
         tt: u8* = tok_p + k
         @tt = 0 as u8
-        abs: u8[256]
-        abs_p: u8* = abs[0]
+        abs: u8[256] = []
+        abs_p: u8* = &abs[0]
         sh_join_path(cwd, tok_p, abs_p)
         if ntok > 0 {
             sep: u8* = packed_p + plen
@@ -945,12 +946,12 @@ cmd_ld: (cwd: u8*, arg: u8*) {
         ntok = ntok + 1
     }
     if ntok < 2 {
-        console_writeln("ld: usage: ld <obj>... <out>".data)
+        console_writeln("ld: usage: ld <obj>... <out>".ptr)
         return
     }
-    pid: i64 = sc_exec_arg("/bin/ld.elf".data, packed_p)
+    pid: i64 = sc_exec_arg("/bin/ld.elf".ptr, packed_p)
     if pid < 0 {
-        console_writeln("cannot launch /bin/ld.elf".data)
+        console_writeln("cannot launch /bin/ld.elf".ptr)
         return
     }
     sh_wait_foreground(pid)
@@ -999,35 +1000,35 @@ sh_skip_word: (line: u8*) -> u8* {
 
 ; Print the command reference through the sink (so `help > file` works too).
 cmd_help: () {
-    sh_outln("Type a program name to run it. PATH is . then /bin then /home/demo.".data)
-    sh_outln("files     ls [dir]   cat <file>...   echo <text>   pwd".data)
-    sh_outln("          touch <f>   mkdir <d>   rm <f>   rmdir <d>   mv <old> <new>".data)
-    sh_outln("tools     edit <file>   cc <src.hll> <out.s>   as <src> <out>".data)
-    sh_outln("jobs      <prog> &   jobs   fg <job>   kill <pid>   kill %<job>".data)
-    sh_outln("redirect  <cmd> > file   <cmd> >> file   <prog> < file".data)
-    sh_outln("pipe      <cmd> | <cmd>   e.g. echo hi | cat   (up to 4 stages)".data)
-    sh_outln("control   Ctrl-C stops a foreground program.   exit  quits.".data)
+    sh_outln("Type a program name to run it. PATH is . then /bin then /home/demo.".ptr)
+    sh_outln("files     ls [dir]   cat <file>...   echo <text>   pwd".ptr)
+    sh_outln("          touch <f>   mkdir <d>   rm <f>   rmdir <d>   mv <old> <new>".ptr)
+    sh_outln("tools     edit <file>   cc <src.hll> <out.s>   as <src> <out>".ptr)
+    sh_outln("jobs      <prog> &   jobs   fg <job>   kill <pid>   kill %<job>".ptr)
+    sh_outln("redirect  <cmd> > file   <cmd> >> file   <prog> < file".ptr)
+    sh_outln("pipe      <cmd> | <cmd>   e.g. echo hi | cat   (up to 4 stages)".ptr)
+    sh_outln("control   Ctrl-C stops a foreground program.   exit  quits.".ptr)
 }
 
 ; 1 if `name` is a builtin that writes through the sink, so it can be redirected
 ; or used as a pipe source. Else 0.
 sh_is_out_builtin: (name: u8*) -> i64 {
-    if cstr_eq(name, "ls".data) == 1 {
+    if cstr_eq(name, "ls".ptr) == 1 {
         return 1
     }
-    if cstr_eq(name, "cat".data) == 1 {
+    if cstr_eq(name, "cat".ptr) == 1 {
         return 1
     }
-    if cstr_eq(name, "echo".data) == 1 {
+    if cstr_eq(name, "echo".ptr) == 1 {
         return 1
     }
-    if cstr_eq(name, "pwd".data) == 1 {
+    if cstr_eq(name, "pwd".ptr) == 1 {
         return 1
     }
-    if cstr_eq(name, "jobs".data) == 1 {
+    if cstr_eq(name, "jobs".ptr) == 1 {
         return 1
     }
-    if cstr_eq(name, "help".data) == 1 {
+    if cstr_eq(name, "help".ptr) == 1 {
         return 1
     }
     return 0
@@ -1035,23 +1036,23 @@ sh_is_out_builtin: (name: u8*) -> i64 {
 
 ; Run the named builtin on its args. Output goes through whatever sink is set.
 sh_dispatch_out_builtin: (cwd: u8*, cmd: u8*, args: u8*) {
-    if cstr_eq(cmd, "ls".data) == 1 {
+    if cstr_eq(cmd, "ls".ptr) == 1 {
         cmd_ls(cwd, args)
         return
     }
-    if cstr_eq(cmd, "cat".data) == 1 {
+    if cstr_eq(cmd, "cat".ptr) == 1 {
         cmd_cat(cwd, args)
         return
     }
-    if cstr_eq(cmd, "echo".data) == 1 {
+    if cstr_eq(cmd, "echo".ptr) == 1 {
         cmd_echo(args)
         return
     }
-    if cstr_eq(cmd, "pwd".data) == 1 {
+    if cstr_eq(cmd, "pwd".ptr) == 1 {
         cmd_pwd(cwd)
         return
     }
-    if cstr_eq(cmd, "jobs".data) == 1 {
+    if cstr_eq(cmd, "jobs".ptr) == 1 {
         cmd_jobs()
         return
     }
@@ -1067,12 +1068,12 @@ const MAX_PIPE_STAGES = 4
 ; Absolute path of the idx-th connecting temp file (idx 0..2).
 sh_pipe_temp: (idx: u64) -> u8* {
     if idx == 0 {
-        return "/.pipe0".data
+        return "/.pipe0".ptr
     }
     if idx == 1 {
-        return "/.pipe1".data
+        return "/.pipe1".ptr
     }
-    return "/.pipe2".data
+    return "/.pipe2".ptr
 }
 
 ; 1 if the line contains a pipe operator `|`, else 0.
@@ -1090,14 +1091,14 @@ sh_has_pipe: (line: u8*) -> i64 {
 ; Run one pipeline stage and wait. def_in/def_out are the pipe temp files for
 ; stdin/stdout (null = inherit); a `< > >>` on the stage itself takes priority.
 sh_run_stage: (cwd: u8*, line: u8*, def_in: u8*, def_out: u8*) {
-    clean: u8[256]
-    clean_p: u8* = clean[0]
-    out_abs: u8[256]
-    out_abs_p: u8* = out_abs[0]
-    in_abs: u8[256]
-    in_abs_p: u8* = in_abs[0]
-    tok: u8[256]
-    tok_p: u8* = tok[0]
+    clean: u8[256] = []
+    clean_p: u8* = &clean[0]
+    out_abs: u8[256] = []
+    out_abs_p: u8* = &out_abs[0]
+    in_abs: u8[256] = []
+    in_abs_p: u8* = &in_abs[0]
+    tok: u8[256] = []
+    tok_p: u8* = &tok[0]
     have_out: i64 = 0
     have_in: i64 = 0
     append: i64 = 0
@@ -1131,13 +1132,13 @@ sh_run_stage: (cwd: u8*, line: u8*, def_in: u8*, def_out: u8*) {
         tt: u8* = tok_p + tn
         @tt = 0 as u8
 
-        if cstr_eq(tok_p, ">".data) == 1 {
+        if cstr_eq(tok_p, ">".ptr) == 1 {
             mode = 1
         } else {
-            if cstr_eq(tok_p, ">>".data) == 1 {
+            if cstr_eq(tok_p, ">>".ptr) == 1 {
                 mode = 2
             } else {
-                if cstr_eq(tok_p, "<".data) == 1 {
+                if cstr_eq(tok_p, "<".ptr) == 1 {
                     mode = 3
                 } else {
                     if mode == 1 {
@@ -1179,8 +1180,8 @@ sh_run_stage: (cwd: u8*, line: u8*, def_in: u8*, def_out: u8*) {
     ct: u8* = clean_p + cn
     @ct = 0 as u8
 
-    name: u8[64]
-    name_p: u8* = name[0]
+    name: u8[64] = []
+    name_p: u8* = &name[0]
     sh_first_word(clean_p, name_p)
     if @name_p == 0 {
         return
@@ -1205,7 +1206,7 @@ sh_run_stage: (cwd: u8*, line: u8*, def_in: u8*, def_out: u8*) {
         if eff_out != null {
             fd: i64 = sc_open(eff_out, 2)
             if fd < 0 {
-                console_write("cannot open: ".data)
+                console_write("cannot open: ".ptr)
                 console_writeln(eff_out)
                 return
             }
@@ -1229,16 +1230,16 @@ sh_run_stage: (cwd: u8*, line: u8*, def_in: u8*, def_out: u8*) {
     }
 
     ; External program: exec with stdio wired, then wait without printing [exit N].
-    target: u8[256]
-    target_p: u8* = target[0]
+    target: u8[256] = []
+    target_p: u8* = &target[0]
     if sh_resolve_program(cwd, name_p, target_p) == 0 {
-        console_write("unknown command: ".data)
+        console_write("unknown command: ".ptr)
         console_writeln(name_p)
         return
     }
     pid: i64 = sc_exec_redir(target_p, 0 as u8*, eff_out, eff_in, eff_app)
     if pid < 0 {
-        console_write("cannot exec: ".data)
+        console_write("cannot exec: ".ptr)
         console_writeln(name_p)
         return
     }
@@ -1263,8 +1264,8 @@ cmd_pipe: (cwd: u8*, line: u8*) {
     }
 
     ; Record the [start, end) byte range of each stage between the '|' separators.
-    starts: u64[4]
-    ends: u64[4]
+    starts: u64[4] = []
+    ends: u64[4] = []
     count: u64 = 0
     seg: u64 = 0
     i: u64 = 0
@@ -1279,9 +1280,9 @@ cmd_pipe: (cwd: u8*, line: u8*) {
         }
         if cut == 1 {
             if count < MAX_PIPE_STAGES {
-                sp: u64* = starts[count]
+                sp: u64* = &starts[count]
                 @sp = seg
-                ep: u64* = ends[count]
+                ep: u64* = &ends[count]
                 @ep = i
                 count = count + 1
             }
@@ -1295,13 +1296,13 @@ cmd_pipe: (cwd: u8*, line: u8*) {
     }
 
     ; Run each stage, wiring stdin from the previous temp and stdout to the next.
-    stage: u8[256]
-    stage_p: u8* = stage[0]
+    stage: u8[256] = []
+    stage_p: u8* = &stage[0]
     s: u64 = 0
     while s < count {
-        sp: u64* = starts[s]
+        sp: u64* = &starts[s]
         st: u64 = @sp
-        ep: u64* = ends[s]
+        ep: u64* = &ends[s]
         en: u64 = @ep
         k: u64 = 0
         j: u64 = st
@@ -1341,8 +1342,8 @@ run_line: (cwd: u8*, line: u8*) {
     l: u64 = cstr_len(line)
 
     ; Record the [start, end) byte range of each `&&`-separated segment.
-    starts: u64[8]
-    ends: u64[8]
+    starts: u64[8] = []
+    ends: u64[8] = []
     count: u64 = 0
     seg: u64 = 0
     i: u64 = 0
@@ -1355,9 +1356,9 @@ run_line: (cwd: u8*, line: u8*) {
         }
         if is_sep == 1 {
             if count < 8 {
-                sp: u64* = starts[count]
+                sp: u64* = &starts[count]
                 @sp = seg
-                ep: u64* = ends[count]
+                ep: u64* = &ends[count]
                 @ep = i
                 count = count + 1
             }
@@ -1368,9 +1369,9 @@ run_line: (cwd: u8*, line: u8*) {
         }
     }
     if count < 8 {
-        sp: u64* = starts[count]
+        sp: u64* = &starts[count]
         @sp = seg
-        ep: u64* = ends[count]
+        ep: u64* = &ends[count]
         @ep = l
         count = count + 1
     }
@@ -1381,13 +1382,13 @@ run_line: (cwd: u8*, line: u8*) {
         return
     }
 
-    part: u8[256]
-    part_p: u8* = part[0]
+    part: u8[256] = []
+    part_p: u8* = &part[0]
     s: u64 = 0
     while s < count {
-        sp: u64* = starts[s]
+        sp: u64* = &starts[s]
         st: u64 = @sp
-        ep: u64* = ends[s]
+        ep: u64* = &ends[s]
         en: u64 = @ep
         while st < en {
             if @(line + st) != ' ' {
@@ -1429,93 +1430,93 @@ handle_command: (cwd: u8*, line: u8*) {
         cmd_pipe(cwd, line)
         return
     }
-    cmd: u8[32]
-    cmd_p: u8* = cmd[0]
+    cmd: u8[32] = []
+    cmd_p: u8* = &cmd[0]
     sh_first_word(line, cmd_p)
     if @cmd_p == 0 {
         return
     }
 
     ; Builtins with no redirectable output: run on the raw argument text.
-    if cstr_eq(cmd_p, "exit".data) == 1 {
+    if cstr_eq(cmd_p, "exit".ptr) == 1 {
         sc_exit(0)
         return
     }
-    if cstr_eq(cmd_p, "cd".data) == 1 {
+    if cstr_eq(cmd_p, "cd".ptr) == 1 {
         cmd_cd(cwd, sh_skip_word(line))
         return
     }
-    if cstr_eq(cmd_p, "fg".data) == 1 {
+    if cstr_eq(cmd_p, "fg".ptr) == 1 {
         cmd_fg(sh_skip_word(line))
         return
     }
-    if cstr_eq(cmd_p, "kill".data) == 1 {
+    if cstr_eq(cmd_p, "kill".ptr) == 1 {
         cmd_kill(sh_skip_word(line))
         return
     }
-    if cstr_eq(cmd_p, "edit".data) == 1 {
+    if cstr_eq(cmd_p, "edit".ptr) == 1 {
         cmd_edit(cwd, sh_skip_word(line))
         return
     }
-    if cstr_eq(cmd_p, "touch".data) == 1 {
+    if cstr_eq(cmd_p, "touch".ptr) == 1 {
         cmd_touch(cwd, sh_skip_word(line))
         return
     }
-    if cstr_eq(cmd_p, "mkdir".data) == 1 {
+    if cstr_eq(cmd_p, "mkdir".ptr) == 1 {
         cmd_mkdir(cwd, sh_skip_word(line))
         return
     }
-    if cstr_eq(cmd_p, "rmdir".data) == 1 {
+    if cstr_eq(cmd_p, "rmdir".ptr) == 1 {
         cmd_rmdir(cwd, sh_skip_word(line))
         return
     }
-    if cstr_eq(cmd_p, "rm".data) == 1 {
+    if cstr_eq(cmd_p, "rm".ptr) == 1 {
         cmd_rm(cwd, sh_skip_word(line))
         return
     }
-    if cstr_eq(cmd_p, "mv".data) == 1 {
+    if cstr_eq(cmd_p, "mv".ptr) == 1 {
         cmd_mv(cwd, sh_skip_word(line))
         return
     }
-    if cstr_eq(cmd_p, "as".data) == 1 {
+    if cstr_eq(cmd_p, "as".ptr) == 1 {
         cmd_as(cwd, sh_skip_word(line))
         return
     }
-    if cstr_eq(cmd_p, "cc".data) == 1 {
+    if cstr_eq(cmd_p, "cc".ptr) == 1 {
         cmd_cc(cwd, sh_skip_word(line))
         return
     }
-    if cstr_eq(cmd_p, "ld".data) == 1 {
+    if cstr_eq(cmd_p, "ld".ptr) == 1 {
         cmd_ld(cwd, sh_skip_word(line))
         return
     }
-    if cstr_eq(cmd_p, "run".data) == 1 {
+    if cstr_eq(cmd_p, "run".ptr) == 1 {
         cmd_run(cwd, sh_skip_word(line))
         return
     }
 
     ; Builtins whose output can be redirected with `>` / `>>`.
-    if cstr_eq(cmd_p, "ls".data) == 1 {
+    if cstr_eq(cmd_p, "ls".ptr) == 1 {
         sh_run_stage(cwd, line, 0 as u8*, 0 as u8*)
         return
     }
-    if cstr_eq(cmd_p, "cat".data) == 1 {
+    if cstr_eq(cmd_p, "cat".ptr) == 1 {
         sh_run_stage(cwd, line, 0 as u8*, 0 as u8*)
         return
     }
-    if cstr_eq(cmd_p, "echo".data) == 1 {
+    if cstr_eq(cmd_p, "echo".ptr) == 1 {
         sh_run_stage(cwd, line, 0 as u8*, 0 as u8*)
         return
     }
-    if cstr_eq(cmd_p, "pwd".data) == 1 {
+    if cstr_eq(cmd_p, "pwd".ptr) == 1 {
         sh_run_stage(cwd, line, 0 as u8*, 0 as u8*)
         return
     }
-    if cstr_eq(cmd_p, "jobs".data) == 1 {
+    if cstr_eq(cmd_p, "jobs".ptr) == 1 {
         sh_run_stage(cwd, line, 0 as u8*, 0 as u8*)
         return
     }
-    if cstr_eq(cmd_p, "help".data) == 1 {
+    if cstr_eq(cmd_p, "help".ptr) == 1 {
         sh_run_stage(cwd, line, 0 as u8*, 0 as u8*)
         return
     }
@@ -1525,21 +1526,21 @@ handle_command: (cwd: u8*, line: u8*) {
 }
 
 main: () -> i32 {
-    cwd: u8[256]
-    cwd_p: u8* = cwd[0]
+    cwd: u8[256] = []
+    cwd_p: u8* = &cwd[0]
     @cwd_p = '/' as u8
     second: u8* = cwd_p + 1
     @second = 0 as u8
 
-    line: u8[256]
-    line_p: u8* = line[0]
+    line: u8[256] = []
+    line_p: u8* = &line[0]
 
-    console_writeln("HLL shell ready. type 'help' for commands.".data)
+    console_writeln("HLL shell ready. type 'help' for commands.".ptr)
 
     while 1 == 1 {
         jobs_reap()
         console_write(cwd_p)
-        console_write("$ ".data)
+        console_write("$ ".ptr)
         sh_read_line(line_p)
         run_line(cwd_p, line_p)
     }

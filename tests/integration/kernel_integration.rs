@@ -10,7 +10,8 @@
 
 use asm_to_binary::AssembledOutput;
 use full_stack::compilation_pipeline::{
-    assembled_to_elf_file, build_fs_image, CompilationPipeline, FsEntry, TargetMode,
+    assembled_to_elf_file, build_fs_image, CompilationPipeline, FsEntry, LanguageVersion,
+    TargetMode,
 };
 use hll_to_ir::stdlib::{
     get_kernel_stdlib_source, get_stdlib_modules_for_mode, get_stdlib_source_for_mode,
@@ -34,7 +35,7 @@ const USER_CODE_VA: u64 = 0x4000_0000;
 fn cached_kernel() -> &'static AssembledOutput {
     static KERNEL: OnceLock<AssembledOutput> = OnceLock::new();
     KERNEL.get_or_init(|| {
-        let mut stdlib_pipeline = CompilationPipeline::new();
+        let mut stdlib_pipeline = CompilationPipeline::new_v1();
         stdlib_pipeline.set_string_prefix(Some("__kern_str_".to_owned()));
         stdlib_pipeline.set_write_artifacts(false);
         let stdlib = stdlib_pipeline
@@ -46,7 +47,7 @@ fn cached_kernel() -> &'static AssembledOutput {
             .assemble(&stdlib_tokens)
             .expect("stdlib assemble");
 
-        let mut kernel_pipeline = CompilationPipeline::new();
+        let mut kernel_pipeline = CompilationPipeline::new_v1();
         kernel_pipeline.set_target_mode(TargetMode::Kernel);
         kernel_pipeline.set_write_artifacts(false);
         let kernel_objs = kernel_pipeline
@@ -72,7 +73,7 @@ fn cached_kernel() -> &'static AssembledOutput {
 fn cached_kernel_multi_module() -> &'static AssembledOutput {
     static KERNEL: OnceLock<AssembledOutput> = OnceLock::new();
     KERNEL.get_or_init(|| {
-        let mut stdlib_pipeline = CompilationPipeline::new();
+        let mut stdlib_pipeline = CompilationPipeline::new_v1();
         stdlib_pipeline.set_target_mode(TargetMode::Kernel);
         stdlib_pipeline.set_string_prefix(Some("__kern_str_".to_owned()));
         stdlib_pipeline.set_write_artifacts(false);
@@ -83,7 +84,7 @@ fn cached_kernel_multi_module() -> &'static AssembledOutput {
             .compile_modules(&modules.iter().map(|(n, s)| (*n, *s)).collect::<Vec<_>>())
             .expect("stdlib multi-module compile");
 
-        let mut kernel_pipeline = CompilationPipeline::new();
+        let mut kernel_pipeline = CompilationPipeline::new_v1();
         kernel_pipeline.set_target_mode(TargetMode::Kernel);
         kernel_pipeline.set_write_artifacts(false);
         kernel_pipeline.set_entry_point(Some("_kernel_start".to_owned()));
@@ -117,51 +118,77 @@ fn cached_kernel_multi_module() -> &'static AssembledOutput {
 
 // --- Shared helpers ---
 
-// Compile a hosted user program (links the hosted stdlib).
+// Compile a hosted user program (links the hosted stdlib). Inline test programs
+// are authored in V2; their pragma still overrides this default.
 fn compile_hosted(src: &str) -> AssembledOutput {
-    compile_hosted_modules(src, &[], "")
+    compile_hosted_modules(src, &[], "", LanguageVersion::V2)
 }
 
-// Compile a catalog program (primary + any aux translation units) the way the app
-// boot path does -- looks the source, aux modules, and shared layout up by name.
+// Compile a V1 hosted user program (V1 examples and demos not yet migrated).
+fn compile_hosted_v1(src: &str) -> AssembledOutput {
+    compile_hosted_modules(src, &[], "", LanguageVersion::V1)
+}
+
+// Compile a catalog program (primary + aux units) the way the app boot path
+// does. Defaults to V1; each program's `; @version` pragma overrides.
 fn compile_hosted_program(name: &str) -> AssembledOutput {
     let prog = user::program(name).expect("program in catalog");
-    compile_hosted_modules(prog.source, prog.aux_sources, prog.layout)
+    compile_hosted_modules(
+        prog.source,
+        prog.aux_sources,
+        prog.layout,
+        LanguageVersion::V1,
+    )
 }
 
-// Compile a hosted program that may span multiple translation units:
-// the primary unit carries the stdlib; each aux unit is compiled to its own
-// object with a distinct string prefix (so rodata labels do not collide) and the
-// objects are linked together. `layout` is a shared HLL header prepended to every
-// unit (primary + aux) so split TUs agree on their shared type/const definitions.
-fn compile_hosted_modules(src: &str, aux: &[&str], layout: &str) -> AssembledOutput {
-    let full = format!(
-        "{}\n{}",
-        get_stdlib_source_for_mode(TargetMode::Hosted),
-        src
-    );
-    let mut pipeline = CompilationPipeline::new();
+// The hosted stdlib compiled once as its own object, linked against user
+// programs (each keeps its own `; @version`), mirroring the real CLI.
+fn cached_hosted_stdlib() -> &'static AssembledOutput {
+    static STDLIB: OnceLock<AssembledOutput> = OnceLock::new();
+    STDLIB.get_or_init(|| {
+        let mut pipeline = CompilationPipeline::new_v1();
+        pipeline.set_target_mode(TargetMode::Hosted);
+        pipeline.set_write_artifacts(false);
+        pipeline.set_type_prelude(get_stdlib_type_prelude());
+        pipeline.set_string_prefix(Some("_hstd_str_".to_owned()));
+        let result = pipeline
+            .compile(&get_stdlib_source_for_mode(TargetMode::Hosted))
+            .expect("hosted stdlib compile");
+        let (_, tokens) = pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program);
+        pipeline
+            .assemble_named("stdlib", &tokens)
+            .expect("hosted stdlib assemble")
+    })
+}
+
+// Compile a hosted program (primary + aux units) as separate objects, each
+// respecting its own `; @version` pragma, linked against the shared stdlib.
+fn compile_hosted_modules(
+    src: &str,
+    aux: &[&str],
+    layout: &str,
+    version: LanguageVersion,
+) -> AssembledOutput {
+    let mut pipeline = CompilationPipeline::new_v1();
     pipeline.set_target_mode(TargetMode::Hosted);
     pipeline.set_write_artifacts(false);
+    pipeline.set_language_version(version);
     pipeline.set_type_prelude(get_stdlib_type_prelude());
     pipeline.set_source_prelude(layout);
-    let result = pipeline.compile(&full).expect("hosted compile");
+    let result = pipeline.compile(src).expect("hosted compile");
     let (_, tokens) = pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program);
     let main_obj = pipeline
         .assemble_named("main", &tokens)
         .expect("hosted assemble");
 
-    if aux.is_empty() {
-        return main_obj;
-    }
-
     let aux_objs: Vec<AssembledOutput> = aux
         .iter()
         .enumerate()
         .map(|(i, a)| {
-            let mut p = CompilationPipeline::new();
+            let mut p = CompilationPipeline::new_v1();
             p.set_target_mode(TargetMode::Hosted);
             p.set_write_artifacts(false);
+            p.set_language_version(version);
             p.set_type_prelude(get_stdlib_type_prelude());
             p.set_source_prelude(layout);
             p.set_string_prefix(Some(format!("aux{i}_str_")));
@@ -172,8 +199,10 @@ fn compile_hosted_modules(src: &str, aux: &[&str], layout: &str) -> AssembledOut
         })
         .collect();
 
+    let stdlib_obj = cached_hosted_stdlib();
     let aux_names: Vec<String> = (0..aux_objs.len()).map(|i| format!("aux{i}")).collect();
-    let mut modules: Vec<(&str, &AssembledOutput)> = vec![("main", &main_obj)];
+    let mut modules: Vec<(&str, &AssembledOutput)> =
+        vec![("stdlib", stdlib_obj), ("main", &main_obj)];
     for (n, o) in aux_names.iter().zip(aux_objs.iter()) {
         modules.push((n.as_str(), o));
     }
@@ -288,6 +317,7 @@ fn run_tool_session(
                 prog.source,
                 prog.aux_sources,
                 prog.layout,
+                LanguageVersion::V1,
             ));
             (path, elf)
         })
@@ -337,7 +367,7 @@ fn run_tool_session(
 
 #[test]
 fn kernel_boot_full_sequence() {
-    let user = compile_hosted(user::USER_HELLO);
+    let user = compile_hosted_v1(user::USER_HELLO);
     let (_, outcome, uart) = boot_kernel(cached_kernel(), Some(&user), None, "", 10_000_000);
 
     match outcome {
@@ -399,7 +429,7 @@ fn kernel_boot_full_sequence() {
 
 #[test]
 fn kernel_boot_multi_module_with_user() {
-    let user = compile_hosted(user::USER_HELLO);
+    let user = compile_hosted_v1(user::USER_HELLO);
     let (_, outcome, uart) = boot_kernel(
         cached_kernel_multi_module(),
         Some(&user),
@@ -579,7 +609,8 @@ main: () -> i32 {
 #[test]
 fn user_heap_grows_past_64k() {
     run_example_in_kernel(
-        r#"
+        r#"; @version 1
+external malloc: (size: u64) -> u8*
 main: () -> i32 {
     i: u64 = 0
     while i < 5 {
@@ -608,7 +639,8 @@ main: () -> i32 {
 #[test]
 fn user_brk_refuses_growth_into_arg_page() {
     run_example_in_kernel(
-        r#"
+        r#"; @version 1
+external heap_brk: (addr: u64) -> u64
 main: () -> i32 {
     base: u64 = heap_brk(0)
     big: u64 = 0x7FFFF000
@@ -668,7 +700,7 @@ fn fbdemo_renders_mandelbrot_set() {
     const YMIN: i64 = -86016;
     const STEP: i64 = 717;
 
-    let user = compile_hosted(user::MANDELBROT);
+    let user = compile_hosted_v1(user::MANDELBROT);
     let (vm, outcome, uart) = boot_kernel(cached_kernel(), Some(&user), None, "", 2_000_000_000);
     assert_user_exit_ok(&uart, &outcome, "mandelbrot");
     assert!(
@@ -724,7 +756,7 @@ fn fbdemo_renders_mandelbrot_set() {
 // which would be timing-dependent.
 #[test]
 fn cube_demo_drives_framebuffer() {
-    let user = compile_hosted(user::CUBE);
+    let user = compile_hosted_v1(user::CUBE);
     let (vm, outcome, uart) = boot_kernel(cached_kernel(), Some(&user), None, "", 10_000_000);
 
     assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
@@ -770,7 +802,7 @@ fn cube_demo_drives_framebuffer() {
 // plus at least one live cell drawn (a non-black pixel) rather than exact cells.
 #[test]
 fn life_demo_drives_framebuffer() {
-    let user = compile_hosted(user::LIFE);
+    let user = compile_hosted_v1(user::LIFE);
     let (vm, outcome, uart) = boot_kernel(cached_kernel(), Some(&user), None, "", 20_000_000);
 
     assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
@@ -815,7 +847,7 @@ fn life_demo_drives_framebuffer() {
 #[test]
 #[ignore]
 fn cube_framebuffer_bench() {
-    let user = compile_hosted(user::CUBE);
+    let user = compile_hosted_v1(user::CUBE);
     let steps: u64 = 40_000_000;
 
     let start = std::time::Instant::now();
@@ -846,7 +878,7 @@ fn kernel_shell_ls_cd_run_exit() {
         r#"
 external console_writeln: (str: u8*)
 main: () -> i32 {
-    console_writeln("HELLO_FROM_CHILD".data)
+    console_writeln("HELLO_FROM_CHILD".ptr)
     return 0
 }
 "#,
@@ -906,10 +938,10 @@ external console_writeln: (str: u8*)
 g: i64 = 12345
 arr: i64[3] = [100, 200, 300]
 main: () -> i32 {
-    console_writeln("SCALAR".data)
+    console_writeln("SCALAR".ptr)
     print_int(g)
-    console_writeln("ARRAY".data)
-    print_int(@arr[0] + @arr[1] + @arr[2])
+    console_writeln("ARRAY".ptr)
+    print_int(arr[0] + arr[1] + arr[2])
     return 0
 }
 "#,
@@ -1321,7 +1353,7 @@ fn kernel_shell_bare_name_runs_program() {
         r#"
 external console_writeln: (str: u8*)
 main: () -> i32 {
-    console_writeln("BARE_NAME_RAN".data)
+    console_writeln("BARE_NAME_RAN".ptr)
     return 0
 }
 "#,
@@ -1408,7 +1440,7 @@ fn inode_size_of(image: &[u8], name: &str) -> Option<u32> {
 #[test]
 fn editor_loads_clears_appends_writes_and_truncates() {
     let shell = compile_hosted_program("shell");
-    let editor = compile_hosted(user::EDIT);
+    let editor = compile_hosted_v1(user::EDIT);
     let editor_exec = assembled_to_elf_file(&editor);
 
     let image = build_fs_image(&[
@@ -1527,7 +1559,7 @@ cat /doc.txt\nexit\n",
 #[test]
 fn editor_waits_while_idle_for_input() {
     let shell = compile_hosted_program("shell");
-    let editor_exec = assembled_to_elf_file(&compile_hosted(user::EDIT));
+    let editor_exec = assembled_to_elf_file(&compile_hosted_v1(user::EDIT));
 
     let image = build_fs_image(&[
         FsEntry::Dir { path: "/bin" },
@@ -1675,7 +1707,7 @@ fn kernel_loads_and_runs_elf() {
     let prog = compile_hosted(
         "external console_writeln: (s: u8*)\n\
          main: () -> i32 {\n\
-         \tconsole_writeln(\"elf ok\".data)\n\
+         \tconsole_writeln(\"elf ok\".ptr)\n\
          \treturn 7\n\
          }\n",
     );
@@ -1721,7 +1753,7 @@ fn kernel_loads_and_runs_elf() {
 // "HLL0" and exit 36, so source and frozen target agree.
 #[test]
 fn kernel_cc_target_roundtrips() {
-    let host_elf = assembled_to_elf_file(&compile_hosted(user::CC_HELLO_HLL));
+    let host_elf = assembled_to_elf_file(&compile_hosted_v1(user::CC_HELLO_HLL));
 
     // Run the host-compiled source, then assemble + run the hand-written target.
     let (outcome, uart) = run_tool_session(
@@ -1764,7 +1796,12 @@ fn kernel_cc_target_roundtrips() {
 // without booting the kernel.
 #[test]
 fn cc_host_compiles() {
-    let out = compile_hosted_modules(user::CC, &[], user::CC_LAYOUT);
+    let out = compile_hosted_modules(
+        user::CC,
+        &[user::CC_CODEGEN],
+        user::CC_LAYOUT,
+        LanguageVersion::V1,
+    );
     assert!(
         !out.to_flat_binary().is_empty(),
         "cc.hll produced an empty binary"
@@ -2020,7 +2057,7 @@ fn kernel_shell_survives_run_and_continues() {
         r#"
 external console_writeln: (str: u8*)
 main: () -> i32 {
-    console_writeln("RAN_CHILD".data)
+    console_writeln("RAN_CHILD".ptr)
     return 7
 }
 "#,
@@ -2284,7 +2321,7 @@ fn kernel_redirect_stdout_to_file() {
 external console_writeln: (str: u8*)
 external sc_exit: (code: i64)
 main: () -> i32 {
-    console_writeln("REDIRECT_OK".data)
+    console_writeln("REDIRECT_OK".ptr)
     sc_exit(0)
     return 0
 }
@@ -2330,7 +2367,7 @@ fn kernel_redirect_append() {
 external console_writeln: (str: u8*)
 external sc_exit: (code: i64)
 main: () -> i32 {
-    console_writeln("LINE".data)
+    console_writeln("LINE".ptr)
     sc_exit(0)
     return 0
 }
@@ -2542,7 +2579,7 @@ fn kernel_pipe_two_stage() {
 external console_writeln: (str: u8*)
 external sc_exit: (code: i64)
 main: () -> i32 {
-    console_writeln("PIPE_PAYLOAD".data)
+    console_writeln("PIPE_PAYLOAD".ptr)
     sc_exit(0)
     return 0
 }
@@ -2615,7 +2652,7 @@ fn kernel_pipe_to_file() {
 external console_writeln: (str: u8*)
 external sc_exit: (code: i64)
 main: () -> i32 {
-    console_writeln("VIA_PIPE".data)
+    console_writeln("VIA_PIPE".ptr)
     sc_exit(0)
     return 0
 }
@@ -2896,7 +2933,7 @@ main: () -> i32 {
     };
 
     // Boot to the prompt (the shell is now blocked in its first readchar).
-    for _ in 0..5_000_000u64 {
+    for _ in 0..10_000_000u64 {
         let _ = vm.step();
         let bytes = vm.uart_output();
         out.push_str(&String::from_utf8_lossy(&bytes));
@@ -2951,7 +2988,7 @@ spin: () {
 }
 main: () -> i32 {
     spin()
-    console_writeln("SLOW_DONE".data)
+    console_writeln("SLOW_DONE".ptr)
     sc_exit(7)
     return 0
 }
@@ -3026,16 +3063,16 @@ external sc_exit: (code: i64)
 main: () -> i32 {
     pid: i64 = sc_fork()
     if pid == 0 {
-        console_writeln("CHILD_RAN".data)
+        console_writeln("CHILD_RAN".ptr)
         sc_exit(42)
     }
 
-    console_writeln("PARENT_FORKED".data)
+    console_writeln("PARENT_FORKED".ptr)
     code: i64 = sc_wait()
     if code == 42 {
-        console_writeln("PARENT_REAPED_42".data)
+        console_writeln("PARENT_REAPED_42".ptr)
     } else {
-        console_writeln("PARENT_REAPED_WRONG".data)
+        console_writeln("PARENT_REAPED_WRONG".ptr)
     }
     sc_exit(0)
     return 0
@@ -3103,13 +3140,13 @@ spin: () {
 }
 
 main: () -> i32 {
-    console_writeln("SENTINEL_START".data)
+    console_writeln("SENTINEL_START".ptr)
     pid: i64 = sc_fork()
     if pid == 0 {
         n: u64 = 0
         while n < 8 {
             spin()
-            sc_write(1, "B".data, 1)
+            sc_write(1, "B".ptr, 1)
             n = n + 1
         }
         sc_exit(0)
@@ -3117,11 +3154,11 @@ main: () -> i32 {
     m: u64 = 0
     while m < 8 {
         spin()
-        sc_write(1, "A".data, 1)
+        sc_write(1, "A".ptr, 1)
         m = m + 1
     }
     sc_wait()
-    console_writeln("SENTINEL_END".data)
+    console_writeln("SENTINEL_END".ptr)
     sc_exit(0)
     return 0
 }
@@ -3187,11 +3224,11 @@ external sc_exit: (code: i64)
 main: () -> i32 {{
     p: u8* = {shared} as u8*
     @p = 0xAA as u8
-    console_writeln("PARENT_WROTE".data)
+    console_writeln("PARENT_WROTE".ptr)
 
-    pid: i64 = sc_exec("/child.elf".data)
+    pid: i64 = sc_exec("/child.elf".ptr)
     if pid < 0 {{
-        console_writeln("PARENT_EXEC_FAIL".data)
+        console_writeln("PARENT_EXEC_FAIL".ptr)
         sc_exit(1)
     }}
     while sc_pidalive(pid as u64) == 1 {{
@@ -3200,9 +3237,9 @@ main: () -> i32 {{
 
     v: u8 = @p
     if v == 0xAA as u8 {{
-        console_writeln("PARENT_FINAL_AA".data)
+        console_writeln("PARENT_FINAL_AA".ptr)
     }} else {{
-        console_writeln("PARENT_FINAL_CORRUPT".data)
+        console_writeln("PARENT_FINAL_CORRUPT".ptr)
     }}
     sc_exit(0)
     return 0
@@ -3220,9 +3257,9 @@ main: () -> i32 {{
     @p = 0xBB as u8
     v: u8 = @p
     if v == 0xBB as u8 {{
-        console_writeln("CHILD_FINAL_BB".data)
+        console_writeln("CHILD_FINAL_BB".ptr)
     }} else {{
-        console_writeln("CHILD_FINAL_BAD".data)
+        console_writeln("CHILD_FINAL_BAD".ptr)
     }}
     return 0
 }}
@@ -3273,7 +3310,7 @@ external sc_mkdir:  (path: u8*) -> i64
 external sc_rename: (old_path: u8*, new_path: u8*) -> i64
 
 fail: (label: u8*) -> i32 {
-    console_write("FS_FAIL: ".data)
+    console_write("FS_FAIL: ".ptr)
     console_writeln(label)
     return 1
 }
@@ -3290,45 +3327,45 @@ bytes_eq: (a: u8*, b: u8*, n: u64) -> i64 {
 }
 
 main: () -> i32 {
-    buf: u8[64]
+    buf: u8[64] = []
 
     ; 1. Read a pre-populated file.
-    fd: i64 = sc_open("/hello.txt".data, 0)
-    if fd < 2 { return fail("open hello".data) }
-    n: i64 = sc_read(fd, buf[0], 0, 13)
-    if n != 13 { return fail("read hello count".data) }
-    if bytes_eq(buf[0], "hello from fs".data, 13) == 0 { return fail("read hello data".data) }
+    fd: i64 = sc_open("/hello.txt".ptr, 0)
+    if fd < 2 { return fail("open hello".ptr) }
+    n: i64 = sc_read(fd, &buf[0], 0, 13)
+    if n != 13 { return fail("read hello count".ptr) }
+    if bytes_eq(&buf[0], "hello from fs".ptr, 13) == 0 { return fail("read hello data".ptr) }
     sc_close(fd)
 
     ; 2. Create a directory.
-    if sc_mkdir("/out".data) < 0 { return fail("mkdir out".data) }
+    if sc_mkdir("/out".ptr) < 0 { return fail("mkdir out".ptr) }
 
     ; 3. Create a file in it and write to it.
-    wfd: i64 = sc_open("/out/result.txt".data, 2)
-    if wfd < 2 { return fail("create result".data) }
-    w: i64 = sc_write(wfd, "data123".data, 7)
-    if w != 7 { return fail("write count".data) }
+    wfd: i64 = sc_open("/out/result.txt".ptr, 2)
+    if wfd < 2 { return fail("create result".ptr) }
+    w: i64 = sc_write(wfd, "data123".ptr, 7)
+    if w != 7 { return fail("write count".ptr) }
     sc_close(wfd)
 
     ; 4. Re-open and read back the written contents.
-    rfd: i64 = sc_open("/out/result.txt".data, 0)
-    if rfd < 2 { return fail("reopen result".data) }
-    rn: i64 = sc_read(rfd, buf[0], 0, 7)
-    if rn != 7 { return fail("readback count".data) }
-    if bytes_eq(buf[0], "data123".data, 7) == 0 { return fail("readback data".data) }
+    rfd: i64 = sc_open("/out/result.txt".ptr, 0)
+    if rfd < 2 { return fail("reopen result".ptr) }
+    rn: i64 = sc_read(rfd, &buf[0], 0, 7)
+    if rn != 7 { return fail("readback count".ptr) }
+    if bytes_eq(&buf[0], "data123".ptr, 7) == 0 { return fail("readback data".ptr) }
     sc_close(rfd)
 
     ; 5. Rename within the directory; old name must disappear.
-    if sc_rename("/out/result.txt".data, "/out/final.txt".data) != 0 {
-        return fail("rename".data)
+    if sc_rename("/out/result.txt".ptr, "/out/final.txt".ptr) != 0 {
+        return fail("rename".ptr)
     }
-    ffd: i64 = sc_open("/out/final.txt".data, 0)
-    if ffd < 2 { return fail("open final".data) }
+    ffd: i64 = sc_open("/out/final.txt".ptr, 0)
+    if ffd < 2 { return fail("open final".ptr) }
     sc_close(ffd)
-    gone: i64 = sc_open("/out/result.txt".data, 0)
-    if gone >= 0 { return fail("old name still present".data) }
+    gone: i64 = sc_open("/out/result.txt".ptr, 0)
+    if gone >= 0 { return fail("old name still present".ptr) }
 
-    console_writeln("FS_ALL_PASS".data)
+    console_writeln("FS_ALL_PASS".ptr)
     return 0
 }
 "#;

@@ -1,5 +1,7 @@
+; @version 2
+
 ; In-VM RV64I assembler: `as <src> <out>` two-pass assembles a static ELF64 (one
-; PT_LOAD at USER_CODE_BASE) for sys_exec. Subset, directives, encodings, NOP quirk: OS spec 10.3.
+; PT_LOAD at USER_CODE_BASE) for sys_exec. Subset/directives/encodings: OS spec 10.3.
 
 external console_write:   (str: u8*)
 external console_writeln: (str: u8*)
@@ -72,12 +74,12 @@ nreloc: i64 = 0
 
 ; Pointer to token i in the line token table.
 tok_at: (i: i64) -> u8* {
-    return tokbuf[0] + (i as u64) * 24
+    return tokbuf + (i as u64) * 24
 }
 
 ; Report an assembly error with a one-line message and remember the failure.
 fail: (msg: u8*) {
-    console_write("as: ".data)
+    console_write("as: ".ptr)
     console_writeln(msg)
     err_flag = 1
 }
@@ -196,103 +198,103 @@ parse_uint: (p: u8*) -> i64 {
 
 ; Map a register token to its number 0..31, or -1 on error (sets err_flag).
 reg_num: (p: u8*) -> i64 {
-    if cstr_eq(p, "zero".data) == 1 {
+    if cstr_eq(p, "zero".ptr) == 1 {
         return 0
     }
-    if cstr_eq(p, "ra".data) == 1 {
+    if cstr_eq(p, "ra".ptr) == 1 {
         return 1
     }
-    if cstr_eq(p, "sp".data) == 1 {
+    if cstr_eq(p, "sp".ptr) == 1 {
         return 2
     }
-    if cstr_eq(p, "gp".data) == 1 {
+    if cstr_eq(p, "gp".ptr) == 1 {
         return 3
     }
-    if cstr_eq(p, "tp".data) == 1 {
+    if cstr_eq(p, "tp".ptr) == 1 {
         return 4
     }
-    if cstr_eq(p, "t0".data) == 1 {
+    if cstr_eq(p, "t0".ptr) == 1 {
         return 5
     }
-    if cstr_eq(p, "t1".data) == 1 {
+    if cstr_eq(p, "t1".ptr) == 1 {
         return 6
     }
-    if cstr_eq(p, "t2".data) == 1 {
+    if cstr_eq(p, "t2".ptr) == 1 {
         return 7
     }
-    if cstr_eq(p, "fp".data) == 1 {
+    if cstr_eq(p, "fp".ptr) == 1 {
         return 8
     }
-    if cstr_eq(p, "s0".data) == 1 {
+    if cstr_eq(p, "s0".ptr) == 1 {
         return 8
     }
-    if cstr_eq(p, "s1".data) == 1 {
+    if cstr_eq(p, "s1".ptr) == 1 {
         return 9
     }
-    if cstr_eq(p, "a0".data) == 1 {
+    if cstr_eq(p, "a0".ptr) == 1 {
         return 10
     }
-    if cstr_eq(p, "a1".data) == 1 {
+    if cstr_eq(p, "a1".ptr) == 1 {
         return 11
     }
-    if cstr_eq(p, "a2".data) == 1 {
+    if cstr_eq(p, "a2".ptr) == 1 {
         return 12
     }
-    if cstr_eq(p, "a3".data) == 1 {
+    if cstr_eq(p, "a3".ptr) == 1 {
         return 13
     }
-    if cstr_eq(p, "a4".data) == 1 {
+    if cstr_eq(p, "a4".ptr) == 1 {
         return 14
     }
-    if cstr_eq(p, "a5".data) == 1 {
+    if cstr_eq(p, "a5".ptr) == 1 {
         return 15
     }
-    if cstr_eq(p, "a6".data) == 1 {
+    if cstr_eq(p, "a6".ptr) == 1 {
         return 16
     }
-    if cstr_eq(p, "a7".data) == 1 {
+    if cstr_eq(p, "a7".ptr) == 1 {
         return 17
     }
-    if cstr_eq(p, "s2".data) == 1 {
+    if cstr_eq(p, "s2".ptr) == 1 {
         return 18
     }
-    if cstr_eq(p, "s3".data) == 1 {
+    if cstr_eq(p, "s3".ptr) == 1 {
         return 19
     }
-    if cstr_eq(p, "s4".data) == 1 {
+    if cstr_eq(p, "s4".ptr) == 1 {
         return 20
     }
-    if cstr_eq(p, "s5".data) == 1 {
+    if cstr_eq(p, "s5".ptr) == 1 {
         return 21
     }
-    if cstr_eq(p, "s6".data) == 1 {
+    if cstr_eq(p, "s6".ptr) == 1 {
         return 22
     }
-    if cstr_eq(p, "s7".data) == 1 {
+    if cstr_eq(p, "s7".ptr) == 1 {
         return 23
     }
-    if cstr_eq(p, "s8".data) == 1 {
+    if cstr_eq(p, "s8".ptr) == 1 {
         return 24
     }
-    if cstr_eq(p, "s9".data) == 1 {
+    if cstr_eq(p, "s9".ptr) == 1 {
         return 25
     }
-    if cstr_eq(p, "s10".data) == 1 {
+    if cstr_eq(p, "s10".ptr) == 1 {
         return 26
     }
-    if cstr_eq(p, "s11".data) == 1 {
+    if cstr_eq(p, "s11".ptr) == 1 {
         return 27
     }
-    if cstr_eq(p, "t3".data) == 1 {
+    if cstr_eq(p, "t3".ptr) == 1 {
         return 28
     }
-    if cstr_eq(p, "t4".data) == 1 {
+    if cstr_eq(p, "t4".ptr) == 1 {
         return 29
     }
-    if cstr_eq(p, "t5".data) == 1 {
+    if cstr_eq(p, "t5".ptr) == 1 {
         return 30
     }
-    if cstr_eq(p, "t6".data) == 1 {
+    if cstr_eq(p, "t6".ptr) == 1 {
         return 31
     }
     ; Raw x<N> form.
@@ -304,7 +306,7 @@ reg_num: (p: u8*) -> i64 {
             }
         }
     }
-    fail("bad register".data)
+    fail("bad register".ptr)
     return -1
 }
 
@@ -385,14 +387,14 @@ parse_mem: (p: u8*) {
         i = i + 1
     }
     if @(p + i) != '(' {
-        fail("bad memory operand".data)
+        fail("bad memory operand".ptr)
         mem_reg = 0
         return
     }
     i = i + 1
     ; Copy the register name (up to the closing parenthesis) and resolve it.
-    rbuf: u8[8]
-    rp: u8* = rbuf[0]
+    rbuf: u8[8] = []
+    rp: u8* = &rbuf[0]
     k: u64 = 0
     while @(p + i) != 0 {
         c: u8 = @(p + i)
@@ -417,10 +419,10 @@ parse_mem: (p: u8*) {
 ; resolve_labels() rewrites data offsets to absolute payload positions after pass 1.
 add_label: (name: u8*, off: i64, sec: i64) {
     if lbl_count >= 64 {
-        fail("too many labels".data)
+        fail("too many labels".ptr)
         return
     }
-    lab: Label* = labels[lbl_count]
+    lab: Label* = &labels[lbl_count]
     dst: u8* = lab as u8*
     i: u64 = 0
     while 1 == 1 {
@@ -437,8 +439,8 @@ add_label: (name: u8*, off: i64, sec: i64) {
     }
     t: u8* = dst + i
     @t = 0 as u8
-    @lab.addr = off
-    @lab.sec = sec
+    lab.addr = off
+    lab.sec = sec
     lbl_count = lbl_count + 1
 }
 
@@ -447,9 +449,9 @@ add_label: (name: u8*, off: i64, sec: i64) {
 resolve_labels: () {
     i: i64 = 0
     while i < lbl_count {
-        lab: Label* = labels[i]
-        if @lab.sec == 1 {
-            @lab.addr = text_total + PAD + @lab.addr
+        lab: Label* = &labels[i]
+        if lab.sec == 1 {
+            lab.addr = text_total + PAD + lab.addr
         }
         i = i + 1
     }
@@ -459,14 +461,14 @@ resolve_labels: () {
 find_label: (name: u8*) -> i64 {
     i: i64 = 0
     while i < lbl_count {
-        lab: Label* = labels[i]
+        lab: Label* = &labels[i]
         cand: u8* = lab as u8*
         if cstr_eq(cand, name) == 1 {
-            return @lab.addr
+            return lab.addr
         }
         i = i + 1
     }
-    fail("undefined label".data)
+    fail("undefined label".ptr)
     return -1
 }
 
@@ -474,7 +476,7 @@ find_label: (name: u8*) -> i64 {
 label_defined: (name: u8*) -> i64 {
     i: i64 = 0
     while i < lbl_count {
-        lab: Label* = labels[i]
+        lab: Label* = &labels[i]
         cand: u8* = lab as u8*
         if cstr_eq(cand, name) == 1 {
             return 1
@@ -492,7 +494,7 @@ add_globl: (name: u8*) {
     if glbl_count >= 32 {
         return
     }
-    dst: u8* = glbl_names[0] + (glbl_count as u64) * 16
+    dst: u8* = glbl_names + (glbl_count as u64) * 16
     i: u64 = 0
     while i < 15 {
         c: u8 = @(name + i)
@@ -513,7 +515,7 @@ add_globl: (name: u8*) {
 is_globl: (name: u8*) -> i64 {
     i: i64 = 0
     while i < glbl_count {
-        cand: u8* = glbl_names[0] + (i as u64) * 16
+        cand: u8* = glbl_names + (i as u64) * 16
         if cstr_eq(cand, name) == 1 {
             return 1
         }
@@ -525,10 +527,10 @@ is_globl: (name: u8*) -> i64 {
 ; Record a relocation at .text byte offset `off` against `name` (kind as above).
 add_reloc: (name: u8*, off: i64, kind: i64) {
     if nreloc >= 256 {
-        fail("too many relocations".data)
+        fail("too many relocations".ptr)
         return
     }
-    r: Reloc* = relocs[nreloc]
+    r: Reloc* = &relocs[nreloc]
     dst: u8* = r as u8*
     i: u64 = 0
     while i < 15 {
@@ -542,8 +544,8 @@ add_reloc: (name: u8*, off: i64, kind: i64) {
     }
     t: u8* = dst + i
     @t = 0 as u8
-    @r.off = off
-    @r.kind = kind
+    r.off = off
+    r.kind = kind
     nreloc = nreloc + 1
 }
 
@@ -551,7 +553,7 @@ add_reloc: (name: u8*, off: i64, kind: i64) {
 
 push_byte: (b: u8) {
     if code_len < 8192 {
-        @code[code_len] = b
+        code[code_len] = b
         code_len = code_len + 1
     }
 }
@@ -568,7 +570,7 @@ emit_word: (w: u32) {
 wr_le: (off: u64, val: u64, n: u64) {
     k: u64 = 0
     while k < n {
-        d: u8* = out[0] + off + k
+        d: u8* = out +off + k
         @d = (val >> (k * 8)) as u8
         k = k + 1
     }
@@ -636,13 +638,13 @@ emit_li: (rd: i64, imm: i64) {
         }
     }
     if imm < 0 {
-        fail("li: negative immediate too wide".data)
+        fail("li: negative immediate too wide".ptr)
         return
     }
     ; lui carries a 20-bit field, so the split must fit hi in [0, 0xFFFFF].
     hi: i64 = (imm + 2048) / 4096
     if hi > 1048575 {
-        fail("li: immediate too wide".data)
+        fail("li: immediate too wide".ptr)
         return
     }
     lo: i64 = imm - hi * 4096
@@ -654,7 +656,7 @@ emit_li: (rd: i64, imm: i64) {
 
 push_data_byte: (b: u8) {
     if data_len < 8192 {
-        @data[data_len] = b
+        data[data_len] = b
         data_len = data_len + 1
     }
 }
@@ -690,7 +692,7 @@ data_string: (pass: i64, line_p: u8*, zt: i64) -> i64 {
         i = i + 1
     }
     if @(line_p + i) != '"' {
-        fail("string: missing quote".data)
+        fail("string: missing quote".ptr)
         return 0
     }
     i = i + 1
@@ -742,50 +744,50 @@ data_string: (pass: i64, line_p: u8*, zt: i64) -> i64 {
 ; directives emit (pass 2) and return the byte count they add to the data section.
 handle_directive: (pass: i64, base: i64, line_p: u8*) -> i64 {
     d: u8* = tok_at(base)
-    if cstr_eq(d, ".text".data) == 1 {
+    if cstr_eq(d, ".text".ptr) == 1 {
         cur_sec = 0
         return 0
     }
-    if cstr_eq(d, ".data".data) == 1 {
+    if cstr_eq(d, ".data".ptr) == 1 {
         cur_sec = 1
         return 0
     }
-    if cstr_eq(d, ".rodata".data) == 1 {
+    if cstr_eq(d, ".rodata".ptr) == 1 {
         cur_sec = 1
         return 0
     }
-    if cstr_eq(d, ".bss".data) == 1 {
+    if cstr_eq(d, ".bss".ptr) == 1 {
         cur_sec = 1
         return 0
     }
-    if cstr_eq(d, ".section".data) == 1 {
+    if cstr_eq(d, ".section".ptr) == 1 {
         a: u8* = tok_at(base + 1)
-        if cstr_eq(a, ".text".data) == 1 {
+        if cstr_eq(a, ".text".ptr) == 1 {
             cur_sec = 0
         } else {
             cur_sec = 1
         }
         return 0
     }
-    if cstr_eq(d, ".globl".data) == 1 {
+    if cstr_eq(d, ".globl".ptr) == 1 {
         if pass == 1 {
             add_globl(tok_at(base + 1))
         }
         return 0
     }
-    if cstr_eq(d, ".byte".data) == 1 {
+    if cstr_eq(d, ".byte".ptr) == 1 {
         if pass == 2 {
             push_data_byte(parse_imm(tok_at(base + 1)) as u8)
         }
         return 1
     }
-    if cstr_eq(d, ".word".data) == 1 {
+    if cstr_eq(d, ".word".ptr) == 1 {
         if pass == 2 {
             emit_data_word(parse_imm(tok_at(base + 1)) as u32)
         }
         return 4
     }
-    if cstr_eq(d, ".zero".data) == 1 {
+    if cstr_eq(d, ".zero".ptr) == 1 {
         n: i64 = parse_imm(tok_at(base + 1))
         if pass == 2 {
             k: i64 = 0
@@ -796,13 +798,13 @@ handle_directive: (pass: i64, base: i64, line_p: u8*) -> i64 {
         }
         return n
     }
-    if cstr_eq(d, ".asciz".data) == 1 {
+    if cstr_eq(d, ".asciz".ptr) == 1 {
         return data_string(pass, line_p, 1)
     }
-    if cstr_eq(d, ".ascii".data) == 1 {
+    if cstr_eq(d, ".ascii".ptr) == 1 {
         return data_string(pass, line_p, 0)
     }
-    fail("unknown directive".data)
+    fail("unknown directive".ptr)
     return 0
 }
 
@@ -814,32 +816,32 @@ encode_instr: (pass: i64, base: i64, pc: i64) -> i64 {
     o1: u8* = tok_at(base + 2)
     o2: u8* = tok_at(base + 3)
 
-    if cstr_eq(m, "ecall".data) == 1 {
+    if cstr_eq(m, "ecall".ptr) == 1 {
         if pass == 2 {
             emit_word(0x73 as u32)
         }
         return 4
     }
-    if cstr_eq(m, "ret".data) == 1 {
+    if cstr_eq(m, "ret".ptr) == 1 {
         if pass == 2 {
             emit_word(enc_i(0, 1, 0, 0, 0x67))
         }
         return 4
     }
-    if cstr_eq(m, "li".data) == 1 {
+    if cstr_eq(m, "li".ptr) == 1 {
         imm: i64 = parse_imm(o1)
         if pass == 2 {
             emit_li(reg_num(o0), imm)
         }
         return li_size(imm)
     }
-    if cstr_eq(m, "mv".data) == 1 {
+    if cstr_eq(m, "mv".ptr) == 1 {
         if pass == 2 {
             emit_word(enc_i(reg_num(o0), reg_num(o1), 0, 0, 0x13))
         }
         return 4
     }
-    if cstr_eq(m, "addi".data) == 1 {
+    if cstr_eq(m, "addi".ptr) == 1 {
         if pass == 2 {
             emit_word(enc_i(reg_num(o0), reg_num(o1), parse_imm(o2), 0, 0x13))
         }
@@ -847,37 +849,37 @@ encode_instr: (pass: i64, base: i64, pc: i64) -> i64 {
     }
     ; addiw is the 32-bit word add-immediate (opcode 0x1B); the host backend
     ; normalizes every i32 result through it, so the HLL-0 subset needs it.
-    if cstr_eq(m, "addiw".data) == 1 {
+    if cstr_eq(m, "addiw".ptr) == 1 {
         if pass == 2 {
             emit_word(enc_i(reg_num(o0), reg_num(o1), parse_imm(o2), 0, 0x1B))
         }
         return 4
     }
-    if cstr_eq(m, "add".data) == 1 {
+    if cstr_eq(m, "add".ptr) == 1 {
         if pass == 2 {
             emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 0, 0))
         }
         return 4
     }
-    if cstr_eq(m, "sub".data) == 1 {
+    if cstr_eq(m, "sub".ptr) == 1 {
         if pass == 2 {
             emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 0, 0x20))
         }
         return 4
     }
-    if cstr_eq(m, "and".data) == 1 {
+    if cstr_eq(m, "and".ptr) == 1 {
         if pass == 2 {
             emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 7, 0))
         }
         return 4
     }
-    if cstr_eq(m, "or".data) == 1 {
+    if cstr_eq(m, "or".ptr) == 1 {
         if pass == 2 {
             emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 6, 0))
         }
         return 4
     }
-    if cstr_eq(m, "xor".data) == 1 {
+    if cstr_eq(m, "xor".ptr) == 1 {
         if pass == 2 {
             emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 4, 0))
         }
@@ -885,79 +887,79 @@ encode_instr: (pass: i64, base: i64, pc: i64) -> i64 {
     }
     ; --- M-extension: 64-bit multiply / divide (opcode 0x33, funct7 = 0x01) ---
     ; Needed for HLL `* / %`; mirrors asm-to-binary rv64m encodings.
-    if cstr_eq(m, "mul".data) == 1 {
+    if cstr_eq(m, "mul".ptr) == 1 {
         if pass == 2 {
             emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 0, 1))
         }
         return 4
     }
-    if cstr_eq(m, "div".data) == 1 {
+    if cstr_eq(m, "div".ptr) == 1 {
         if pass == 2 {
             emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 4, 1))
         }
         return 4
     }
-    if cstr_eq(m, "divu".data) == 1 {
+    if cstr_eq(m, "divu".ptr) == 1 {
         if pass == 2 {
             emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 5, 1))
         }
         return 4
     }
-    if cstr_eq(m, "rem".data) == 1 {
+    if cstr_eq(m, "rem".ptr) == 1 {
         if pass == 2 {
             emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 6, 1))
         }
         return 4
     }
-    if cstr_eq(m, "remu".data) == 1 {
+    if cstr_eq(m, "remu".ptr) == 1 {
         if pass == 2 {
             emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 7, 1))
         }
         return 4
     }
-    if cstr_eq(m, "j".data) == 1 {
+    if cstr_eq(m, "j".ptr) == 1 {
         if pass == 2 {
             target: i64 = find_label(o0)
             emit_word(enc_j(0, target - pc))
         }
         return 4
     }
-    if cstr_eq(m, "beq".data) == 1 {
+    if cstr_eq(m, "beq".ptr) == 1 {
         if pass == 2 {
             target: i64 = find_label(o2)
             emit_word(enc_b(reg_num(o0), reg_num(o1), target - pc, 0))
         }
         return 4
     }
-    if cstr_eq(m, "bne".data) == 1 {
+    if cstr_eq(m, "bne".ptr) == 1 {
         if pass == 2 {
             target: i64 = find_label(o2)
             emit_word(enc_b(reg_num(o0), reg_num(o1), target - pc, 1))
         }
         return 4
     }
-    if cstr_eq(m, "blt".data) == 1 {
+    if cstr_eq(m, "blt".ptr) == 1 {
         if pass == 2 {
             target: i64 = find_label(o2)
             emit_word(enc_b(reg_num(o0), reg_num(o1), target - pc, 4))
         }
         return 4
     }
-    if cstr_eq(m, "bge".data) == 1 {
+    if cstr_eq(m, "bge".ptr) == 1 {
         if pass == 2 {
             target: i64 = find_label(o2)
             emit_word(enc_b(reg_num(o0), reg_num(o1), target - pc, 5))
         }
         return 4
     }
-    if cstr_eq(m, "bltu".data) == 1 {
+    if cstr_eq(m, "bltu".ptr) == 1 {
         if pass == 2 {
             target: i64 = find_label(o2)
             emit_word(enc_b(reg_num(o0), reg_num(o1), target - pc, 6))
         }
         return 4
     }
-    if cstr_eq(m, "bgeu".data) == 1 {
+    if cstr_eq(m, "bgeu".ptr) == 1 {
         if pass == 2 {
             target: i64 = find_label(o2)
             emit_word(enc_b(reg_num(o0), reg_num(o1), target - pc, 7))
@@ -966,7 +968,7 @@ encode_instr: (pass: i64, base: i64, pc: i64) -> i64 {
     }
 
     ; --- Jumps and PC-relative address materialization ---
-    if cstr_eq(m, "jal".data) == 1 {
+    if cstr_eq(m, "jal".ptr) == 1 {
         if pass == 2 {
             if obj_mode == 1 {
                 if label_defined(o1) == 0 {
@@ -980,14 +982,14 @@ encode_instr: (pass: i64, base: i64, pc: i64) -> i64 {
         }
         return 4
     }
-    if cstr_eq(m, "jalr".data) == 1 {
+    if cstr_eq(m, "jalr".ptr) == 1 {
         if pass == 2 {
             emit_word(enc_i(reg_num(o0), reg_num(o1), parse_imm(o2), 0, 0x67))
         }
         return 4
     }
     ; call/la expand to auipc + jalr/addi against the current pc (8 bytes).
-    if cstr_eq(m, "call".data) == 1 {
+    if cstr_eq(m, "call".ptr) == 1 {
         if pass == 2 {
             if obj_mode == 1 {
                 if label_defined(o0) == 0 {
@@ -1006,7 +1008,7 @@ encode_instr: (pass: i64, base: i64, pc: i64) -> i64 {
     }
     ; la always relocates in object mode (section merging shifts cross-section
     ; distances); the local pcrel is still prefilled and overwritten by ld.
-    if cstr_eq(m, "la".data) == 1 {
+    if cstr_eq(m, "la".ptr) == 1 {
         if pass == 2 {
             rd: i64 = reg_num(o0)
             if obj_mode == 1 {
@@ -1031,31 +1033,31 @@ encode_instr: (pass: i64, base: i64, pc: i64) -> i64 {
     }
 
     ; --- Register-register (R-type) ---
-    if cstr_eq(m, "sll".data) == 1 {
+    if cstr_eq(m, "sll".ptr) == 1 {
         if pass == 2 {
             emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 1, 0))
         }
         return 4
     }
-    if cstr_eq(m, "srl".data) == 1 {
+    if cstr_eq(m, "srl".ptr) == 1 {
         if pass == 2 {
             emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 5, 0))
         }
         return 4
     }
-    if cstr_eq(m, "sra".data) == 1 {
+    if cstr_eq(m, "sra".ptr) == 1 {
         if pass == 2 {
             emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 5, 0x20))
         }
         return 4
     }
-    if cstr_eq(m, "slt".data) == 1 {
+    if cstr_eq(m, "slt".ptr) == 1 {
         if pass == 2 {
             emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 2, 0))
         }
         return 4
     }
-    if cstr_eq(m, "sltu".data) == 1 {
+    if cstr_eq(m, "sltu".ptr) == 1 {
         if pass == 2 {
             emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 3, 0))
         }
@@ -1063,31 +1065,31 @@ encode_instr: (pass: i64, base: i64, pc: i64) -> i64 {
     }
 
     ; --- Register-immediate (I-type, opcode 0x13) ---
-    if cstr_eq(m, "andi".data) == 1 {
+    if cstr_eq(m, "andi".ptr) == 1 {
         if pass == 2 {
             emit_word(enc_i(reg_num(o0), reg_num(o1), parse_imm(o2), 7, 0x13))
         }
         return 4
     }
-    if cstr_eq(m, "ori".data) == 1 {
+    if cstr_eq(m, "ori".ptr) == 1 {
         if pass == 2 {
             emit_word(enc_i(reg_num(o0), reg_num(o1), parse_imm(o2), 6, 0x13))
         }
         return 4
     }
-    if cstr_eq(m, "xori".data) == 1 {
+    if cstr_eq(m, "xori".ptr) == 1 {
         if pass == 2 {
             emit_word(enc_i(reg_num(o0), reg_num(o1), parse_imm(o2), 4, 0x13))
         }
         return 4
     }
-    if cstr_eq(m, "slti".data) == 1 {
+    if cstr_eq(m, "slti".ptr) == 1 {
         if pass == 2 {
             emit_word(enc_i(reg_num(o0), reg_num(o1), parse_imm(o2), 2, 0x13))
         }
         return 4
     }
-    if cstr_eq(m, "sltiu".data) == 1 {
+    if cstr_eq(m, "sltiu".ptr) == 1 {
         if pass == 2 {
             emit_word(enc_i(reg_num(o0), reg_num(o1), parse_imm(o2), 3, 0x13))
         }
@@ -1095,19 +1097,19 @@ encode_instr: (pass: i64, base: i64, pc: i64) -> i64 {
     }
 
     ; --- Shift-immediate (shamt in the low bits; srai sets funct7=0x20) ---
-    if cstr_eq(m, "slli".data) == 1 {
+    if cstr_eq(m, "slli".ptr) == 1 {
         if pass == 2 {
             emit_word(enc_i(reg_num(o0), reg_num(o1), parse_imm(o2), 1, 0x13))
         }
         return 4
     }
-    if cstr_eq(m, "srli".data) == 1 {
+    if cstr_eq(m, "srli".ptr) == 1 {
         if pass == 2 {
             emit_word(enc_i(reg_num(o0), reg_num(o1), parse_imm(o2), 5, 0x13))
         }
         return 4
     }
-    if cstr_eq(m, "srai".data) == 1 {
+    if cstr_eq(m, "srai".ptr) == 1 {
         if pass == 2 {
             emit_word(enc_i(reg_num(o0), reg_num(o1), parse_imm(o2) | 0x400, 5, 0x13))
         }
@@ -1115,49 +1117,49 @@ encode_instr: (pass: i64, base: i64, pc: i64) -> i64 {
     }
 
     ; --- Loads (rd, offset(rs1); opcode 0x03) ---
-    if cstr_eq(m, "ld".data) == 1 {
+    if cstr_eq(m, "ld".ptr) == 1 {
         if pass == 2 {
             parse_mem(o1)
             emit_word(enc_i(reg_num(o0), mem_reg, mem_imm, 3, 0x03))
         }
         return 4
     }
-    if cstr_eq(m, "lw".data) == 1 {
+    if cstr_eq(m, "lw".ptr) == 1 {
         if pass == 2 {
             parse_mem(o1)
             emit_word(enc_i(reg_num(o0), mem_reg, mem_imm, 2, 0x03))
         }
         return 4
     }
-    if cstr_eq(m, "lwu".data) == 1 {
+    if cstr_eq(m, "lwu".ptr) == 1 {
         if pass == 2 {
             parse_mem(o1)
             emit_word(enc_i(reg_num(o0), mem_reg, mem_imm, 6, 0x03))
         }
         return 4
     }
-    if cstr_eq(m, "lh".data) == 1 {
+    if cstr_eq(m, "lh".ptr) == 1 {
         if pass == 2 {
             parse_mem(o1)
             emit_word(enc_i(reg_num(o0), mem_reg, mem_imm, 1, 0x03))
         }
         return 4
     }
-    if cstr_eq(m, "lhu".data) == 1 {
+    if cstr_eq(m, "lhu".ptr) == 1 {
         if pass == 2 {
             parse_mem(o1)
             emit_word(enc_i(reg_num(o0), mem_reg, mem_imm, 5, 0x03))
         }
         return 4
     }
-    if cstr_eq(m, "lb".data) == 1 {
+    if cstr_eq(m, "lb".ptr) == 1 {
         if pass == 2 {
             parse_mem(o1)
             emit_word(enc_i(reg_num(o0), mem_reg, mem_imm, 0, 0x03))
         }
         return 4
     }
-    if cstr_eq(m, "lbu".data) == 1 {
+    if cstr_eq(m, "lbu".ptr) == 1 {
         if pass == 2 {
             parse_mem(o1)
             emit_word(enc_i(reg_num(o0), mem_reg, mem_imm, 4, 0x03))
@@ -1166,28 +1168,28 @@ encode_instr: (pass: i64, base: i64, pc: i64) -> i64 {
     }
 
     ; --- Stores (rs2, offset(rs1); opcode 0x23) ---
-    if cstr_eq(m, "sd".data) == 1 {
+    if cstr_eq(m, "sd".ptr) == 1 {
         if pass == 2 {
             parse_mem(o1)
             emit_word(enc_s(mem_reg, reg_num(o0), mem_imm, 3))
         }
         return 4
     }
-    if cstr_eq(m, "sw".data) == 1 {
+    if cstr_eq(m, "sw".ptr) == 1 {
         if pass == 2 {
             parse_mem(o1)
             emit_word(enc_s(mem_reg, reg_num(o0), mem_imm, 2))
         }
         return 4
     }
-    if cstr_eq(m, "sh".data) == 1 {
+    if cstr_eq(m, "sh".ptr) == 1 {
         if pass == 2 {
             parse_mem(o1)
             emit_word(enc_s(mem_reg, reg_num(o0), mem_imm, 1))
         }
         return 4
     }
-    if cstr_eq(m, "sb".data) == 1 {
+    if cstr_eq(m, "sb".ptr) == 1 {
         if pass == 2 {
             parse_mem(o1)
             emit_word(enc_s(mem_reg, reg_num(o0), mem_imm, 0))
@@ -1196,27 +1198,27 @@ encode_instr: (pass: i64, base: i64, pc: i64) -> i64 {
     }
 
     ; --- Upper-immediate (rd, imm20) ---
-    if cstr_eq(m, "lui".data) == 1 {
+    if cstr_eq(m, "lui".ptr) == 1 {
         if pass == 2 {
             emit_word(enc_u(reg_num(o0), parse_imm(o1), 0x37))
         }
         return 4
     }
-    if cstr_eq(m, "auipc".data) == 1 {
+    if cstr_eq(m, "auipc".ptr) == 1 {
         if pass == 2 {
             emit_word(enc_u(reg_num(o0), parse_imm(o1), 0x17))
         }
         return 4
     }
 
-    if cstr_eq(m, "nop".data) == 1 {
+    if cstr_eq(m, "nop".ptr) == 1 {
         if pass == 2 {
             emit_word(enc_i(0, 0, 0, 0, 0x13))
         }
         return 4
     }
 
-    fail("unknown instruction".data)
+    fail("unknown instruction".ptr)
     return 0
 }
 
@@ -1227,13 +1229,13 @@ assemble: (pass: i64) {
     tpc: i64 = 0
     dpc: i64 = 0
     cur_sec = 0
-    line: u8[256]
-    line_p: u8* = line[0]
+    line: u8[256] = []
+    line_p: u8* = &line[0]
     while i < src_len {
         ; Extract one line (without the newline) into line_p.
         j: u64 = 0
         while i < src_len {
-            c: u8 = @src[i]
+            c: u8 = src[i]
             i = i + 1
             if c == '\n' {
                 break
@@ -1349,34 +1351,34 @@ main: () -> i32 {
     glbl_names = new(u8, 512)
     relocs = new(Reloc, 256)
     if src == null or code == null or data == null or out == null or labels == null or tokbuf == null or glbl_names == null or relocs == null {
-        console_writeln("as: out of memory".data)
+        console_writeln("as: out of memory".ptr)
         return 1
     }
 
     arg: u8* = ARG_BASE as u8*
-    src_path: u8[128]
-    out_path: u8[128]
-    src_pp: u8* = src_path[0]
-    out_pp: u8* = out_path[0]
+    src_path: u8[128] = []
+    out_path: u8[128] = []
+    src_pp: u8* = &src_path[0]
+    out_pp: u8* = &out_path[0]
     if split_arg(arg, src_pp, out_pp) == 0 {
-        console_writeln("as: usage: as <src> <out>".data)
+        console_writeln("as: usage: as <src> <out>".ptr)
         return 1
     }
 
     fd: i64 = sc_open(src_pp, 0)
     if fd < 0 {
-        console_write("as: cannot open ".data)
+        console_write("as: cannot open ".ptr)
         console_writeln(src_pp)
         return 1
     }
-    n: i64 = sc_read(fd, src[0], 0, 8191)
+    n: i64 = sc_read(fd, src, 0, 8191)
     sc_close(fd)
     if n <= 0 {
-        console_writeln("as: empty source".data)
+        console_writeln("as: empty source".ptr)
         return 1
     }
     src_len = n as u64
-    @src[src_len] = 0 as u8
+    src[src_len] = 0 as u8
 
     obj_mode = ends_dot_o(out_pp)
     lbl_count = 0
@@ -1403,14 +1405,14 @@ main: () -> i32 {
         ototal: u64 = write_object()
         oofd: i64 = sc_open(out_pp, 2)
         if oofd < 0 {
-            console_write("as: cannot create ".data)
+            console_write("as: cannot create ".ptr)
             console_writeln(out_pp)
             return 1
         }
-        sc_write(oofd, out[0], ototal)
+        sc_write(oofd, out,ototal)
         sc_ftruncate(oofd, ototal)
         sc_close(oofd)
-        console_write("as: wrote ".data)
+        console_write("as: wrote ".ptr)
         console_writeln(out_pp)
         return 0
     }
@@ -1425,7 +1427,7 @@ main: () -> i32 {
     ; The data section follows the text and its pad in the flat payload.
     di: u64 = 0
     while di < data_len {
-        push_byte(@data[di])
+        push_byte(data[di])
         di = di + 1
     }
 
@@ -1433,13 +1435,13 @@ main: () -> i32 {
     ; payload at HDR. sys_exec reads e_entry + the PT_LOAD and maps it at p_vaddr.
     base: u64 = USER_CODE_BASE as u64
     ; e_ident: 0x7F 'E' 'L' 'F', ELFCLASS64, ELFDATA2LSB, EV_CURRENT; rest zero.
-    @out[0] = 0x7F as u8
-    @out[1] = 69 as u8   ; 'E'
-    @out[2] = 76 as u8   ; 'L'
-    @out[3] = 70 as u8   ; 'F'
-    @out[4] = 2 as u8    ; ELFCLASS64
-    @out[5] = 1 as u8    ; ELFDATA2LSB (little-endian)
-    @out[6] = 1 as u8    ; EV_CURRENT
+    out[0] = 0x7F as u8
+    out[1] = 69 as u8   ; 'E'
+    out[2] = 76 as u8   ; 'L'
+    out[3] = 70 as u8   ; 'F'
+    out[4] = 2 as u8    ; ELFCLASS64
+    out[5] = 1 as u8    ; ELFDATA2LSB (little-endian)
+    out[6] = 1 as u8    ; EV_CURRENT
     wr_le(16, 2, 2)              ; e_type = ET_EXEC
     wr_le(18, 243, 2)            ; e_machine = EM_RISCV
     wr_le(20, 1, 4)              ; e_version = EV_CURRENT
@@ -1465,23 +1467,23 @@ main: () -> i32 {
     ; out[120..HDR] stay zero; the payload follows at the page boundary.
     i: u64 = 0
     while i < code_len {
-        d: u8* = out[0] + (HDR as u64) + i
-        @d = @code[i]
+        d: u8* = out +(HDR as u64) + i
+        @d = code[i]
         i = i + 1
     }
     total: u64 = (HDR as u64) + code_len
 
     ofd: i64 = sc_open(out_pp, 2)
     if ofd < 0 {
-        console_write("as: cannot create ".data)
+        console_write("as: cannot create ".ptr)
         console_writeln(out_pp)
         return 1
     }
-    sc_write(ofd, out[0], total)
+    sc_write(ofd, out,total)
     sc_ftruncate(ofd, total)
     sc_close(ofd)
 
-    console_write("as: wrote ".data)
+    console_write("as: wrote ".ptr)
     console_writeln(out_pp)
     return 0
 }

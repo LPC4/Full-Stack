@@ -1,16 +1,17 @@
+; @version 2
 ; Struct binding demo: named types, reordered fields, and partial destructuring.
-type Point = {
+struct Point {
     x: i32,
     y: i32,
 }
 
-type Pair = {
+struct Pair {
     left: i32,
     right: i32,
 }
 
 make_point: (x: i32, y: i32) -> Point {
-    return { .x = x, .y = y }
+    return { x: x, y: y }
 }
 
 pair_sum: (pair: Pair) -> i32 {
@@ -21,7 +22,7 @@ main: () -> i32 {
     p: Point = make_point(3, 4)
 
     { y: i32, x: i32 } = p
-    pair: Pair = { .left = x, .right = y }
+    pair: Pair = { left: x, right: y }
 
     { right: i32 } = pair
     if right != 4 {
@@ -31,5 +32,4 @@ main: () -> i32 {
     ; Exit 0 on success by subtracting the expected aggregate.
     return pair_sum(pair) + x + y - 14
 }
-
 

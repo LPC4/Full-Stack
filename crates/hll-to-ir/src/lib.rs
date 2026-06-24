@@ -3,6 +3,7 @@ pub(crate) mod compiler;
 pub mod hll_compiler;
 pub mod ir;
 pub(crate) mod lexer;
+pub(crate) mod monomorphize;
 pub(crate) mod parser;
 pub mod stdlib;
 pub(crate) mod token;
@@ -18,6 +19,16 @@ pub enum TargetMode {
     /// Supervisor-mode kernel - kernel stdlib linked, entry point is `_kernel_start`,
     /// VM boots via ROM `_start` (PMP + medeleg + mret into S-mode).
     Kernel,
+}
+
+/// Selects the source-language rules used by the front end.
+///
+/// V2 is the default language. Legacy sources must opt in to V1 explicitly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LanguageVersion {
+    V1,
+    #[default]
+    V2,
 }
 
 impl TargetMode {

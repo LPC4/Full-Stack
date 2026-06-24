@@ -83,19 +83,7 @@ pub fn get_stdlib_type_prelude() -> Vec<(String, IrType)> {
         ("is_free".to_owned(), IrType::Integer(IntWidth::I64)),
     ]);
 
-    vec![
-        (
-            "Str".to_owned(),
-            IrType::Aggregate(vec![
-                (
-                    "data".to_owned(),
-                    IrType::Pointer(Box::new(IrType::Integer(IntWidth::I8))),
-                ),
-                ("length".to_owned(), IrType::Integer(IntWidth::I64)),
-            ]),
-        ),
-        ("HeapBlock".to_owned(), heap_block),
-    ]
+    vec![("HeapBlock".to_owned(), heap_block)]
 }
 
 /// Hosted stdlib: includes the Linux-syscall runtime and entry point. See _LANG_SPECIFICATIONS.md.
@@ -157,6 +145,9 @@ pub fn get_kernel_stdlib_source() -> String {
         + kernel::FS.len()
         + 512;
     let mut combined = String::with_capacity(capacity + kernel::LAYOUT.len());
+    // The whole kernel stdlib is HLL V2; the concatenated bundle is one translation
+    // unit, so the version directive must lead it (layout.hll itself stays neutral).
+    combined.push_str("; @version 2\n");
     // The shared kernel layout header (PCB / trap-frame / VMM consts) comes first so
     // every kernel module in the bundle resolves it, regardless of compile mode.
     append_section(&mut combined, "; --- kernel: layout ---\n", kernel::LAYOUT);

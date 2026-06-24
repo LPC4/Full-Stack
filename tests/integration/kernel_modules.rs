@@ -14,7 +14,7 @@ use os_runtime::kernel;
 
 /// Compile one kernel HLL source as a standalone module and assert it succeeds.
 fn assert_kernel_module_compiles(name: &str, source: &str) {
-    let mut p = CompilationPipeline::new();
+    let mut p = CompilationPipeline::new_v1();
     p.set_target_mode(TargetMode::Kernel);
     p.set_write_artifacts(false);
     p.compile_modules(&[(name, source)])
@@ -26,7 +26,7 @@ fn assert_kernel_module_compiles(name: &str, source: &str) {
 #[test]
 fn kernel_stdlib_all_modules_compile() {
     let modules = get_stdlib_modules_for_mode(TargetMode::Kernel);
-    let mut p = CompilationPipeline::new();
+    let mut p = CompilationPipeline::new_v1();
     p.set_target_mode(TargetMode::Kernel);
     p.set_write_artifacts(false);
     p.set_string_prefix(Some("__kern_str_".to_owned()));
@@ -37,7 +37,7 @@ fn kernel_stdlib_all_modules_compile() {
 
 #[test]
 fn kernel_stdlib_full_bundle_compiles() {
-    let mut p = CompilationPipeline::new();
+    let mut p = CompilationPipeline::new_v1();
     p.set_target_mode(TargetMode::Kernel);
     p.set_write_artifacts(false);
     p.set_string_prefix(Some("__kern_str_".to_owned()));
@@ -149,7 +149,7 @@ fn frame_sizes(asm: &str) -> Vec<(String, u64)> {
 // Compile every kernel function and assert no frame exceeds the safe ceiling.
 #[test]
 fn kernel_frames_stay_within_immediate_range() {
-    let mut p = CompilationPipeline::new();
+    let mut p = CompilationPipeline::new_v1();
     p.set_target_mode(TargetMode::Kernel);
     p.set_write_artifacts(false);
     p.set_string_prefix(Some("__kern_str_".to_owned()));

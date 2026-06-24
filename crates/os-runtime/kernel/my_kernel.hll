@@ -1,3 +1,4 @@
+; @version 2
 ; Kernel initialization and boot orchestration.
 
 external klog_ok:               (msg: u8*)
@@ -51,7 +52,7 @@ kmain: () {
     boot_timer()
 
     ; TODO: parse device tree and enumerate devices
-    klog_warn("device tree: not implemented".data)
+    klog_warn("device tree: not implemented".ptr)
 
     boot_plic()
     boot_memory_diagnostics()
@@ -78,39 +79,39 @@ kmain: () {
     boot_interrupts()
 
     ; Idle loop, the scheduler takes over via timer preemption / yield.
-    klog_ok("entering scheduler idle loop".data)
+    klog_ok("entering scheduler idle loop".ptr)
     while 1 == 1 {
         asm { wfi }
     }
 }
 
 boot_console: () {
-    klog_ok("kernel starting".data)
-    klog_ok("console online".data)
-    klog_int("boot hart".data, 0)
+    klog_ok("kernel starting".ptr)
+    klog_ok("console online".ptr)
+    klog_int("boot hart".ptr, 0)
 }
 
 boot_traps: () {
     trap_init()
-    klog_ok("trap handler installed".data)
-    klog_ok("syscall handler online".data)
+    klog_ok("trap handler installed".ptr)
+    klog_ok("syscall handler online".ptr)
 }
 
 boot_timer: () {
     timer_set(1000000)
-    klog_ok("timer armed".data)
+    klog_ok("timer armed".ptr)
 }
 
 boot_plic: () {
     plic_init()
-    klog_ok("interrupt controller online".data)
+    klog_ok("interrupt controller online".ptr)
 }
 
 boot_memory_diagnostics: () {
-    klog_ok("running memory diagnostics...".data)
+    klog_ok("running memory diagnostics...".ptr)
     test_result: i64 = memory_self_test(256)
     if test_result == 0 {
-        klog_error("halt: memory test failed".data)
+        klog_error("halt: memory test failed".ptr)
         kshutdown(1)
     }
 }
@@ -118,23 +119,23 @@ boot_memory_diagnostics: () {
 boot_heap: () {
     probe: u8* = kmalloc(64)
     memset(probe, 0, 64)
-    klog_ok("heap ready".data)
+    klog_ok("heap ready".ptr)
 }
 
 boot_pmm: () {
     pmm_init(0x80100000, 0x87F00000)
     page1: u8* = pmm_alloc()
     if page1 == null {
-        klog_error("halt: pmm alloc failed".data)
+        klog_error("halt: pmm alloc failed".ptr)
         kshutdown(1)
     }
     pmm_free(page1)
     page2: u8* = pmm_alloc()
     if page2 != page1 {
-        klog_error("halt: pmm free list failed".data)
+        klog_error("halt: pmm free list failed".ptr)
         kshutdown(1)
     }
-    klog_ok("pmm ready".data)
+    klog_ok("pmm ready".ptr)
 }
 
 boot_vmm: () {
@@ -143,7 +144,7 @@ boot_vmm: () {
     ; stamps them into every per-process root (see vmm_new_root).
     vmm_map_kernel(vmm_get_root())
     vmm_enable()
-    klog_ok("[ VMM ] sv39 enabled".data)
+    klog_ok("[ VMM ] sv39 enabled".ptr)
 }
 
 boot_interrupts: () {
@@ -151,15 +152,15 @@ boot_interrupts: () {
 }
 
 boot_final: () {
-    klog_int("hart id".data, 0)
-    klog_int("ram MB".data, 128)
-    klog_ok("boot complete".data)
+    klog_int("hart id".ptr, 0)
+    klog_int("ram MB".ptr, 128)
+    klog_ok("boot complete".ptr)
 }
 
 boot_filesystem: () {
     fs_meta: u64* = 0x87BFF000 as u64*
-    fs_pa:   u64  = @fs_meta[0]
-    fs_sz:   u64  = @fs_meta[1]
+    fs_pa:   u64  = fs_meta[0]
+    fs_sz:   u64  = fs_meta[1]
     if fs_pa != 0 {
         fs_init(fs_pa, fs_sz)
     }
@@ -168,12 +169,12 @@ boot_filesystem: () {
 spawn_user_process: () {
     ; Probe the first qword at USER_BINARY_PA. If it is 0, no user binary is loaded.
     header_ptr: u64* = USER_BINARY_PA as u64*
-    if @header_ptr[0] == 0 {
-        klog_warn("[ PROC ] no user binary present".data)
+    if header_ptr[0] == 0 {
+        klog_warn("[ PROC ] no user binary present".ptr)
         return
     }
 
-    klog_ok("[ PROC ] spawning user process".data)
+    klog_ok("[ PROC ] spawning user process".ptr)
 
     src_user_pa: u64 = USER_BINARY_PA as u64
 
@@ -191,12 +192,12 @@ spawn_user_process: () {
     }
 
     if user_entry == 0 {
-        klog_warn("[ PROC ] user entry is 0, skipping".data)
+        klog_warn("[ PROC ] user entry is 0, skipping".ptr)
         return
     }
 
     if user_size == 0 {
-        klog_warn("[ PROC ] user size is 0, skipping".data)
+        klog_warn("[ PROC ] user size is 0, skipping".ptr)
         return
     }
 
@@ -204,8 +205,8 @@ spawn_user_process: () {
     page_size: u64 = 4096
     pages: u64 = (user_size + page_size - 1) / page_size
 
-    klog_int("[ PROC ] user_size bytes".data, user_size as i64)
-    klog_int("[ PROC ] pages to map".data, pages as i64)
+    klog_int("[ PROC ] user_size bytes".ptr, user_size as i64)
+    klog_int("[ PROC ] pages to map".ptr, pages as i64)
 
     ; Create the PCB first so its private page-table root becomes the active root;
     ; the code pages below are then mapped into that per-process address space.
@@ -215,7 +216,7 @@ spawn_user_process: () {
     while i < pages {
         dst_page: u8* = pmm_alloc()
         if dst_page == null {
-            klog_error("[ PROC ] halt: user page alloc failed".data)
+            klog_error("[ PROC ] halt: user page alloc failed".ptr)
             kshutdown(1)
         }
 
@@ -231,10 +232,10 @@ spawn_user_process: () {
         i = i + 1
     }
 
-    klog_int("[ PROC ] mapped pages at 0x40000000, count".data, pages as i64)
+    klog_int("[ PROC ] mapped pages at 0x40000000, count".ptr, pages as i64)
 
     scheduler_add(pcb)
 
     user_spawned = 1
-    klog_int("[ PROC ] pid 1 ready, entry".data, user_entry as i64)
+    klog_int("[ PROC ] pid 1 ready, entry".ptr, user_entry as i64)
 }

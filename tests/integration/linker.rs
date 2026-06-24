@@ -19,7 +19,7 @@ main: () -> i32 {
 }
 
 fn compile_sample() -> (AssembledOutput, Vec<u8>) {
-    let mut pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new_v1();
     pipeline.set_write_artifacts(false);
     
     pipeline.set_write_artifacts(false);

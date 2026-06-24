@@ -469,6 +469,10 @@ I-type, opcode `0x73`. `csr` is the 12-bit CSR address (bits 31-20). For immedia
 - **Floating Point:** `fa0`-`fa7` (`f10`-`f17`)
 - **Small structs/aggregates (<= 16 bytes):** May be passed in up to two registers (integer or FP as applicable)
 - **Large structs (> 16 bytes):** Passed by reference (pointer in integer register)
+- **Compiler-internal aggregate convention:** HLL/IR calls pass every by-value aggregate indirectly
+  through one integer argument slot, regardless of size. The callee immediately copies the bytes
+  into its own parameter slot, preserving value semantics. This is an internal convention, not the
+  external C ABI.
 - **Variadic / `va_list` arguments:** Per the RISC-V C ABI, all floating-point arguments that fall within the variable portion of a variadic argument list must be passed in **integer registers** (or on the stack), not FP registers. This applies regardless of available FP register slots.
 
 ### Return Values
@@ -498,6 +502,8 @@ I-type, opcode `0x73`. `csr` is the 12-bit CSR address (bits 31-20). For immedia
 
 3. **Immediate Validation:**
     - I-type / S-type: signed 12-bit: `[-2048, +2047]`
+    - Compiler-generated loads and stores outside that range materialize the effective address in
+      a scratch register and use a zero displacement.
     - B-type: signed 13-bit even: `[-4096, +4094]` <- *(note: upper bound is +4094, not +4096)*
     - J-type: signed 21-bit even: `[-1048576, +1048574]` <- *(note: upper bound is +1048574)*
     - U-type: any value where bits 31-12 fit (upper 20 bits)

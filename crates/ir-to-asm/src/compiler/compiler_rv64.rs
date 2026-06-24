@@ -129,7 +129,10 @@ impl CompilerRv64 {
 
     fn compile_function(&mut self, func: &hll_to_ir::IrFunction) {
         let return_type = self.resolve_ir_type(&func.return_type);
-        let is_aggregate = matches!(return_type, IrType::Aggregate(_) | IrType::Array { .. });
+        let is_aggregate = matches!(
+            return_type,
+            IrType::Aggregate(_) | IrType::Array { .. } | IrType::Slice(_)
+        );
         let needs_sret = is_aggregate && !self.can_return_in_registers(&return_type);
 
         let mut ctx = FunctionContext::new(&self.type_aliases);
@@ -156,7 +159,7 @@ impl CompilerRv64 {
         ctx.finalize();
 
         for (index, param) in func.params.iter().enumerate() {
-            ctx.set_param_index(&param.register, index);
+            ctx.set_param_index(&param.register, index + usize::from(needs_sret));
         }
 
         for block in &func.blocks {
@@ -316,7 +319,10 @@ impl CompilerRv64 {
             ptr_tmp
         };
         let resolved_ty = self.resolve_ir_type(ty);
-        if matches!(resolved_ty, IrType::Array { .. } | IrType::Aggregate(_)) {
+        if matches!(
+            resolved_ty,
+            IrType::Array { .. } | IrType::Aggregate(_) | IrType::Slice(_)
+        ) {
             let dest_slot = ctx.slot_for_reg(dest).expect("dest slot");
             self.emitter.copy_bytes_from_addr_to_slot(
                 dest_slot,
@@ -392,7 +398,10 @@ impl CompilerRv64 {
         let addr_tmp = self.resolve_ptr_to_addr(ptr, ctx, offset.map(|o| o as i32));
         let resolved_ty = self.resolve_ir_type(ty);
         self.emitter.emit_comment(&format!("Store {ty} to memory"));
-        if matches!(resolved_ty, IrType::Array { .. } | IrType::Aggregate(_)) {
+        if matches!(
+            resolved_ty,
+            IrType::Array { .. } | IrType::Aggregate(_) | IrType::Slice(_)
+        ) {
             let IrValue::Register(reg) = value else {
                 unreachable!("IR invariant: composite/array stores always have a register source")
             };
@@ -467,7 +476,10 @@ impl CompilerRv64 {
     ) {
         self.emitter.reset_temp_counter();
         let resolved_ty = self.resolve_ir_type(ty);
-        if matches!(resolved_ty, IrType::Aggregate(_) | IrType::Array { .. }) {
+        if matches!(
+            resolved_ty,
+            IrType::Aggregate(_) | IrType::Array { .. } | IrType::Slice(_)
+        ) {
             panic!("Math operations cannot be performed on aggregate/array type {resolved_ty:?}");
         }
         self.emitter
@@ -532,7 +544,10 @@ impl CompilerRv64 {
     ) {
         self.emitter.reset_temp_counter();
         let resolved_ty = self.resolve_ir_type(ty);
-        if matches!(resolved_ty, IrType::Aggregate(_) | IrType::Array { .. }) {
+        if matches!(
+            resolved_ty,
+            IrType::Aggregate(_) | IrType::Array { .. } | IrType::Slice(_)
+        ) {
             panic!("Unary operations cannot be performed on aggregate/array type {resolved_ty:?}");
         }
         if let IrType::Float(width) = resolved_ty {
@@ -564,7 +579,9 @@ impl CompilerRv64 {
             let result_tmp = self.result_reg_for(dest, ctx);
             match op {
                 IrUnaryOp::Neg => self.emitter.emit_neg(result_tmp, val_tmp),
-                IrUnaryOp::Not => self.emitter.emit_not(result_tmp, val_tmp),
+                // HLL `!`/`not` is logical negation (no bitwise-not operator exists),
+                // so `!x` is `x == 0`, not a bitwise complement.
+                IrUnaryOp::Not => self.emitter.emit_seqz(result_tmp, val_tmp),
             }
             self.commit_int_result(dest, result_tmp, &resolved_ty, ctx);
         }
@@ -581,7 +598,10 @@ impl CompilerRv64 {
     ) {
         self.emitter.reset_temp_counter();
         let resolved_ty = self.resolve_ir_type(ty);
-        if matches!(resolved_ty, IrType::Aggregate(_) | IrType::Array { .. }) {
+        if matches!(
+            resolved_ty,
+            IrType::Aggregate(_) | IrType::Array { .. } | IrType::Slice(_)
+        ) {
             panic!(
                 "Comparison operations cannot be performed on aggregate/array type {resolved_ty:?}"
             );
@@ -657,7 +677,10 @@ impl CompilerRv64 {
     ) {
         self.emitter.reset_temp_counter();
         let resolved_ty = self.resolve_ir_type(ty);
-        if matches!(resolved_ty, IrType::Aggregate(_) | IrType::Array { .. }) {
+        if matches!(
+            resolved_ty,
+            IrType::Aggregate(_) | IrType::Array { .. } | IrType::Slice(_)
+        ) {
             panic!("Cast operations cannot be performed on aggregate/array type {resolved_ty:?}");
         }
         let src_ty = self.resolve_value_type(value, ctx);
@@ -797,13 +820,21 @@ impl CompilerRv64 {
         ctx: &mut FunctionContext,
     ) {
         self.emitter.reset_temp_counter();
-        let func_return_type = self
-            .function_return_types
-            .get(function)
-            .cloned()
-            .unwrap_or(IrType::Integer(hll_to_ir::IntWidth::I64));
+        // For externals (absent from the IR) fall back to the dest register's
+        // type so aggregate/slice returns stay on the aggregate path.
+        let mut func_return_type = self.function_return_types.get(function).cloned();
+        if func_return_type.is_none()
+            && let Some(d) = dest.as_ref()
+        {
+            func_return_type = ctx.type_for_reg(d);
+        }
+        let func_return_type =
+            func_return_type.unwrap_or(IrType::Integer(hll_to_ir::IntWidth::I64));
         let resolved_ret_ty = self.resolve_ir_type(&func_return_type);
-        let is_agg_return = matches!(resolved_ret_ty, IrType::Aggregate(_) | IrType::Array { .. });
+        let is_agg_return = matches!(
+            resolved_ret_ty,
+            IrType::Aggregate(_) | IrType::Array { .. } | IrType::Slice(_)
+        );
         let needs_sret = is_agg_return && !self.can_return_in_registers(&resolved_ret_ty);
 
         self.emitter
@@ -829,67 +860,83 @@ impl CompilerRv64 {
         self.emitter
             .emit_comment(&format!("Passing {} arguments", args.len()));
 
-        // First 8 arguments go in a0-a7 (integer/pointer) or fa0-fa7 (float). The
-        // callee reads each param from the register file matching its type, so a
-        // float argument must be placed in the float arg register, not the integer
-        // one (otherwise the callee reads an unrelated fN register).
-        for arg in args {
-            if arg_index >= 8 {
-                break;
-            }
-            let ty = self.resolve_ir_type(&self.resolve_value_type(arg, ctx));
-            if let IrType::Float(w) = ty {
-                let ftmp = self.load_float_value_to_temp(arg, &IrType::Float(w), ctx);
-                self.emit_float_move(reg_for_arg(arg_index), ftmp, w);
+        // Aggregates use one indirect integer ABI argument. This gives every
+        // aggregate value-copy semantics without splitting its fields across the
+        // scalar register paths; the callee copies from the pointer into its slot.
+        let total_abi_args = arg_index + args.len();
+        let excess_count = total_abi_args.saturating_sub(8);
+        let aligned_bytes = if excess_count == 0 {
+            0
+        } else {
+            let stack_bytes = (excess_count * 8) as i64;
+            if stack_bytes % 16 == 0 {
+                stack_bytes
             } else {
-                let arg_tmp = self.load_value_to_temp(arg, ctx);
-                self.emitter.emit_mv(reg_for_arg(arg_index), arg_tmp);
+                stack_bytes + (16 - stack_bytes % 16)
+            }
+        };
+        if aligned_bytes > 0 {
+            self.emitter
+                .emit_comment("Pushing excess arguments to stack");
+        }
+
+        // Store overflow values below sp before moving sp, because aggregate
+        // source slots are addressed relative to the caller's current frame.
+        for arg in args {
+            let ty = self.resolve_ir_type(&self.resolve_value_type(arg, ctx));
+            let is_aggregate = matches!(
+                &ty,
+                IrType::Aggregate(_) | IrType::Array { .. } | IrType::Slice(_)
+            );
+            let value_reg = if is_aggregate {
+                let IrValue::Register(reg) = arg else {
+                    panic!("aggregate call argument must be a register")
+                };
+                let slot = ctx.slot_for_reg(reg).expect("aggregate argument slot");
+                let address = self.emitter.alloc_temp_reg();
+                self.emitter.emit_add_imm(address, SP, slot as i64);
+                address
+            } else if let IrType::Float(width) = &ty {
+                let width = *width;
+                let value = self.load_float_value_to_temp(arg, &IrType::Float(width), ctx);
+                if arg_index < 8 {
+                    self.emit_float_move(reg_for_arg(arg_index), value, width);
+                    arg_index += 1;
+                    continue;
+                }
+                value
+            } else {
+                self.load_value_to_temp(arg, ctx)
+            };
+
+            if arg_index < 8 {
+                self.emitter.emit_mv(reg_for_arg(arg_index), value_reg);
+            } else {
+                let offset = (((arg_index - 8) * 8) as i64 - aligned_bytes) as i32;
+                if matches!(ty, IrType::Float(_)) {
+                    match ty {
+                        IrType::Float(hll_to_ir::FloatWidth::F32) => {
+                            self.emitter.emit_fsw(SP, value_reg, offset);
+                        }
+                        IrType::Float(hll_to_ir::FloatWidth::F64) => {
+                            self.emitter.emit_fsd(SP, value_reg, offset);
+                        }
+                        _ => unreachable!(),
+                    }
+                } else {
+                    self.emitter.emit_sd(SP, value_reg, offset);
+                }
             }
             arg_index += 1;
         }
-
-        // Remaining arguments are pushed onto a 16-byte-aligned stack region.
-        if args.len() > 8 {
-            self.emitter
-                .emit_comment("Pushing excess arguments to stack");
-            let excess_count = args.len() - 8;
-            let stack_bytes = (excess_count * 8) as i64;
-            let aligned_bytes = if stack_bytes % 16 != 0 {
-                stack_bytes + (16 - stack_bytes % 16)
-            } else {
-                stack_bytes
-            };
-
-            // Store below sp first, then move sp: loading an argument from its
-            // stack slot must happen while sp still matches the frame layout.
-            for (i, arg) in args.iter().enumerate().skip(8) {
-                let offset = (((i - 8) * 8) as i64 - aligned_bytes) as i32;
-                let ty = self.resolve_ir_type(&self.resolve_value_type(arg, ctx));
-                if let IrType::Float(w) = ty {
-                    let ftmp = self.load_float_value_to_temp(arg, &IrType::Float(w), ctx);
-                    match w {
-                        hll_to_ir::FloatWidth::F32 => self.emitter.emit_fsw(SP, ftmp, offset),
-                        hll_to_ir::FloatWidth::F64 => self.emitter.emit_fsd(SP, ftmp, offset),
-                    }
-                } else {
-                    let arg_tmp = self.load_value_to_temp(arg, ctx);
-                    self.emitter.emit_sd(SP, arg_tmp, offset);
-                }
-            }
+        if aligned_bytes > 0 {
             self.emitter.emit_add_imm(SP, SP, -aligned_bytes);
         }
 
         self.emitter.emit_jal(RA, function);
 
         // Reclaim the stack space used for the excess arguments.
-        if args.len() > 8 {
-            let excess_count = args.len() - 8;
-            let stack_bytes = (excess_count * 8) as i64;
-            let aligned_bytes = if stack_bytes % 16 != 0 {
-                stack_bytes + (16 - stack_bytes % 16)
-            } else {
-                stack_bytes
-            };
+        if aligned_bytes > 0 {
             self.emitter.emit_add_imm(SP, SP, aligned_bytes);
         }
 
@@ -1053,6 +1100,13 @@ impl CompilerRv64 {
                 self.emitter.emit_bne(cond_tmp, ZERO, then_lbl);
                 self.emitter.emit_jal(ZERO, else_lbl);
             }
+            IrTerminator::Trap { code } => {
+                // Exit with the diagnostic code in a0 (syscall 93). The firmware
+                // turns this into a clean halt, so a failed check shows as that code.
+                self.emitter.emit_raw(&format!("\tli a0, {code}"));
+                self.emitter.emit_raw("\tli a7, 93");
+                self.emitter.emit_raw("\tecall");
+            }
         }
     }
 
@@ -1065,7 +1119,10 @@ impl CompilerRv64 {
                 }
                 _ => raw_val_type.clone(),
             };
-            let is_agg_return = matches!(resolved_val, IrType::Aggregate(_) | IrType::Array { .. });
+            let is_agg_return = matches!(
+                resolved_val,
+                IrType::Aggregate(_) | IrType::Array { .. } | IrType::Slice(_)
+            );
 
             if needs_sret && is_agg_return {
                 let IrValue::Register(reg) = val else {

@@ -57,6 +57,10 @@ pub enum Token<'a> {
     If,
     Else,
     While,
+    For,
+    In,
+    Enum,
+    Match,
     Break,
     Continue,
     Return,
@@ -84,9 +88,14 @@ pub enum Token<'a> {
 
     // Punctuation and Operators
     Colon,
+    ColonEqual,
     Comma,
     Dot,
+    DotDot,
+    DotDotEq,
     Assign,
+    // `?` postfix Result/Option propagation (V2).
+    Question,
     CompoundAssign(CompoundOp),
     Plus,
     Minus,
@@ -124,6 +133,7 @@ pub enum Token<'a> {
     Eof,
     Const,
     Type,
+    Struct,
     As,
     Import,
     Export,

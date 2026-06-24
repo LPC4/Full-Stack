@@ -9,17 +9,13 @@ pub const FB_WIDTH: usize = 320;
 pub const FB_HEIGHT: usize = 240;
 pub const FB_BPP: usize = 4;
 pub const FB_BYTES: usize = FB_WIDTH * FB_HEIGHT * FB_BPP;
-
 // Control block (one page), mapped immediately after the pixel buffer.
 pub const FB_CTRL_BYTES: usize = 4096;
-
 // Control register offsets (word writes): fill the buffer, swap back->front,
 // and enable double buffering respectively.
 pub const FB_FILL_REG: usize = 0;
 pub const FB_PRESENT_REG: usize = 4;
 pub const FB_DBMODE_REG: usize = 8;
-
-// Total device span: pixel buffer plus the control page.
 pub const FB_TOTAL_BYTES: usize = FB_BYTES + FB_CTRL_BYTES;
 
 /// A flat pixel buffer the guest draws into; the GUI reads it back for display.

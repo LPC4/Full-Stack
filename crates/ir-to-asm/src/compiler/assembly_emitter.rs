@@ -30,6 +30,9 @@ pub struct AssemblyEmitter {
     current_section: Option<String>,
     temp_counter: usize,
     float_temp_counter: usize,
+    // Temp registers held live across a sequence (e.g. block-copy base
+    // addresses); never handed out by temp alloc or offset legalization.
+    reserved_regs: Vec<Reg>,
 }
 
 impl AssemblyEmitter {
@@ -40,6 +43,7 @@ impl AssemblyEmitter {
             current_section: None,
             temp_counter: 0,
             float_temp_counter: 0,
+            reserved_regs: Vec::new(),
         }
     }
 
@@ -128,9 +132,23 @@ impl AssemblyEmitter {
     // --- Register allocation helpers ---
     pub fn alloc_temp_reg(&mut self) -> Reg {
         let temps = [T0, T1, T2, T3, T4, T5, T6];
-        let reg = temps[self.temp_counter % temps.len()];
-        self.temp_counter += 1;
-        reg
+        loop {
+            let reg = temps[self.temp_counter % temps.len()];
+            self.temp_counter += 1;
+            if !self.reserved_regs.contains(&reg) {
+                return reg;
+            }
+        }
+    }
+
+    // Run `body` with `regs` reserved so neither temp allocation nor offset
+    // legalization can clobber them; restores the prior reservation after.
+    fn with_reserved<R>(&mut self, regs: &[Reg], body: impl FnOnce(&mut Self) -> R) -> R {
+        let saved = std::mem::take(&mut self.reserved_regs);
+        self.reserved_regs = saved.iter().copied().chain(regs.iter().copied()).collect();
+        let out = body(self);
+        self.reserved_regs = saved;
+        out
     }
 
     pub fn alloc_float_temp_reg(&mut self) -> Reg {
@@ -140,14 +158,37 @@ impl AssemblyEmitter {
         reg
     }
 
+    fn legalize_memory_offset(
+        &mut self,
+        addr_reg: Reg,
+        offset: i32,
+        forbidden: &[Reg],
+    ) -> (Reg, i32) {
+        if (-2048..=2047).contains(&offset) {
+            return (addr_reg, offset);
+        }
+
+        let scratch = [T0, T1, T2, T3, T4, T5, T6]
+            .into_iter()
+            .find(|reg| {
+                *reg != addr_reg && !forbidden.contains(reg) && !self.reserved_regs.contains(reg)
+            })
+            .expect("memory address legalization requires one scratch register");
+        self.emit_li(scratch, offset as i64);
+        self.emit_add(scratch, addr_reg, scratch);
+        (scratch, 0)
+    }
+
     // --- Base integer instructions ---
     pub fn emit_addi(&mut self, rd: Reg, rs1: Reg, imm: i32) {
         self.emit_inst(RealInstruction::Addi(Addi::new(rd, rs1, imm)));
     }
     pub fn emit_sd(&mut self, base: Reg, src: Reg, offset: i32) {
+        let (base, offset) = self.legalize_memory_offset(base, offset, &[src]);
         self.emit_inst(RealInstruction::Sd(Sd::new(base, src, offset)));
     }
     pub fn emit_ld(&mut self, rd: Reg, base: Reg, offset: i32) {
+        let (base, offset) = self.legalize_memory_offset(base, offset, &[]);
         self.emit_inst(RealInstruction::Ld(Ld::new(rd, base, offset)));
     }
     pub fn emit_lw(&mut self, rd: Reg, base: Reg, offset: i32) {
@@ -486,6 +527,7 @@ impl AssemblyEmitter {
 
     // Typed load from `offset(addr_reg)` directly into an integer register.
     pub fn emit_load_typed(&mut self, rd: Reg, addr_reg: Reg, ty: &IrType, offset: i32) {
+        let (addr_reg, offset) = self.legalize_memory_offset(addr_reg, offset, &[]);
         match ty {
             IrType::Integer(w) => match w {
                 hll_to_ir::IntWidth::I1 | hll_to_ir::IntWidth::I8 => {
@@ -509,26 +551,28 @@ impl AssemblyEmitter {
 
     // --- Typed memory helpers ---
     pub fn emit_load_from_slot(&mut self, rd: Reg, slot: usize, ty: &IrType) {
+        let (base, offset) = self.legalize_memory_offset(SP, slot as i32, &[]);
         match ty {
             IrType::Integer(w) => match w {
                 hll_to_ir::IntWidth::I1 | hll_to_ir::IntWidth::I8 => {
-                    self.emit_lb(rd, SP, slot as i32);
+                    self.emit_lb(rd, base, offset);
                 }
-                hll_to_ir::IntWidth::I16 => self.emit_lh(rd, SP, slot as i32),
-                hll_to_ir::IntWidth::I32 => self.emit_lw(rd, SP, slot as i32),
-                hll_to_ir::IntWidth::I64 => self.emit_ld(rd, SP, slot as i32),
+                hll_to_ir::IntWidth::I16 => self.emit_lh(rd, base, offset),
+                hll_to_ir::IntWidth::I32 => self.emit_lw(rd, base, offset),
+                hll_to_ir::IntWidth::I64 => self.emit_ld(rd, base, offset),
             },
             IrType::Float(w) => match w {
-                hll_to_ir::FloatWidth::F32 => self.emit_flw(rd, SP, slot as i32),
-                hll_to_ir::FloatWidth::F64 => self.emit_fld(rd, SP, slot as i32),
+                hll_to_ir::FloatWidth::F32 => self.emit_flw(rd, base, offset),
+                hll_to_ir::FloatWidth::F64 => self.emit_fld(rd, base, offset),
             },
-            IrType::Pointer(_) | IrType::Named(_) => self.emit_ld(rd, SP, slot as i32),
-            _ => self.emit_ld(rd, SP, slot as i32),
+            IrType::Pointer(_) | IrType::Named(_) => self.emit_ld(rd, base, offset),
+            _ => self.emit_ld(rd, base, offset),
         }
     }
 
     pub fn emit_load_to_slot(&mut self, slot: usize, addr_reg: Reg, ty: &IrType, offset: i32) {
         let tmp = self.alloc_temp_reg();
+        let (addr_reg, offset) = self.legalize_memory_offset(addr_reg, offset, &[tmp]);
         match ty {
             IrType::Integer(w) => match w {
                 hll_to_ir::IntWidth::I1 | hll_to_ir::IntWidth::I8 => {
@@ -563,6 +607,12 @@ impl AssemblyEmitter {
     }
 
     pub fn emit_store_from_tmp(&mut self, addr_reg: Reg, val_reg: Reg, ty: &IrType, offset: i32) {
+        let forbidden = if matches!(ty, IrType::Float(_)) {
+            &[][..]
+        } else {
+            &[val_reg][..]
+        };
+        let (addr_reg, offset) = self.legalize_memory_offset(addr_reg, offset, forbidden);
         match ty {
             IrType::Integer(w) => match w {
                 hll_to_ir::IntWidth::I1 | hll_to_ir::IntWidth::I8 => {
@@ -603,39 +653,63 @@ impl AssemblyEmitter {
         offset: i32,
         size: usize,
     ) {
-        let mut remaining = size;
-        let mut current_offset = offset;
-        let mut current_slot = slot;
+        self.with_reserved(&[addr_reg], |s| {
+            let mut remaining = size;
+            let mut current_offset = offset;
+            let mut current_slot = slot;
 
-        while remaining >= 8 {
-            let tmp = self.alloc_temp_reg();
-            self.emit_inst(RealInstruction::Ld(Ld::new(tmp, addr_reg, current_offset)));
-            self.emit_inst(RealInstruction::Sd(Sd::new(SP, tmp, current_slot as i32)));
-            remaining -= 8;
-            current_offset += 8;
-            current_slot += 8;
-        }
-        while remaining >= 4 {
-            let tmp = self.alloc_temp_reg();
-            self.emit_inst(RealInstruction::Lw(Lw::new(tmp, addr_reg, current_offset)));
-            self.emit_inst(RealInstruction::Sw(Sw::new(SP, tmp, current_slot as i32)));
-            remaining -= 4;
-            current_offset += 4;
-            current_slot += 4;
-        }
-        let byte_tmp = self.alloc_temp_reg();
-        for i in 0..remaining {
-            self.emit_inst(RealInstruction::Lb(Lb::new(
-                byte_tmp,
-                addr_reg,
-                current_offset + i as i32,
-            )));
-            self.emit_inst(RealInstruction::Sb(Sb::new(
-                SP,
-                byte_tmp,
-                current_slot as i32 + i as i32,
-            )));
-        }
+            while remaining >= 8 {
+                let tmp = s.alloc_temp_reg();
+                s.emit_load_typed(
+                    tmp,
+                    addr_reg,
+                    &IrType::Integer(hll_to_ir::IntWidth::I64),
+                    current_offset,
+                );
+                s.emit_store_from_tmp(
+                    SP,
+                    tmp,
+                    &IrType::Integer(hll_to_ir::IntWidth::I64),
+                    current_slot as i32,
+                );
+                remaining -= 8;
+                current_offset += 8;
+                current_slot += 8;
+            }
+            while remaining >= 4 {
+                let tmp = s.alloc_temp_reg();
+                s.emit_load_typed(
+                    tmp,
+                    addr_reg,
+                    &IrType::Integer(hll_to_ir::IntWidth::I32),
+                    current_offset,
+                );
+                s.emit_store_from_tmp(
+                    SP,
+                    tmp,
+                    &IrType::Integer(hll_to_ir::IntWidth::I32),
+                    current_slot as i32,
+                );
+                remaining -= 4;
+                current_offset += 4;
+                current_slot += 4;
+            }
+            let byte_tmp = s.alloc_temp_reg();
+            for i in 0..remaining {
+                s.emit_load_typed(
+                    byte_tmp,
+                    addr_reg,
+                    &IrType::Integer(hll_to_ir::IntWidth::I8),
+                    current_offset + i as i32,
+                );
+                s.emit_store_from_tmp(
+                    SP,
+                    byte_tmp,
+                    &IrType::Integer(hll_to_ir::IntWidth::I8),
+                    current_slot as i32 + i as i32,
+                );
+            }
+        });
     }
 
     pub fn copy_bytes_from_slot_to_addr(
@@ -645,39 +719,60 @@ impl AssemblyEmitter {
         offset: i32,
         size: usize,
     ) {
-        let mut remaining = size;
-        let mut current_offset = offset;
-        let mut current_slot = slot;
+        self.with_reserved(&[addr_reg], |s| {
+            let mut remaining = size;
+            let mut current_offset = offset;
+            let mut current_slot = slot;
 
-        while remaining >= 8 {
-            let tmp = self.alloc_temp_reg();
-            self.emit_inst(RealInstruction::Ld(Ld::new(tmp, SP, current_slot as i32)));
-            self.emit_inst(RealInstruction::Sd(Sd::new(addr_reg, tmp, current_offset)));
-            remaining -= 8;
-            current_offset += 8;
-            current_slot += 8;
-        }
-        while remaining >= 4 {
-            let tmp = self.alloc_temp_reg();
-            self.emit_inst(RealInstruction::Lw(Lw::new(tmp, SP, current_slot as i32)));
-            self.emit_inst(RealInstruction::Sw(Sw::new(addr_reg, tmp, current_offset)));
-            remaining -= 4;
-            current_offset += 4;
-            current_slot += 4;
-        }
-        let byte_tmp = self.alloc_temp_reg();
-        for i in 0..remaining {
-            self.emit_inst(RealInstruction::Lb(Lb::new(
-                byte_tmp,
-                SP,
-                current_slot as i32 + i as i32,
-            )));
-            self.emit_inst(RealInstruction::Sb(Sb::new(
-                addr_reg,
-                byte_tmp,
-                current_offset + i as i32,
-            )));
-        }
+            while remaining >= 8 {
+                let tmp = s.alloc_temp_reg();
+                s.emit_load_from_slot(
+                    tmp,
+                    current_slot,
+                    &IrType::Integer(hll_to_ir::IntWidth::I64),
+                );
+                s.emit_store_from_tmp(
+                    addr_reg,
+                    tmp,
+                    &IrType::Integer(hll_to_ir::IntWidth::I64),
+                    current_offset,
+                );
+                remaining -= 8;
+                current_offset += 8;
+                current_slot += 8;
+            }
+            while remaining >= 4 {
+                let tmp = s.alloc_temp_reg();
+                s.emit_load_from_slot(
+                    tmp,
+                    current_slot,
+                    &IrType::Integer(hll_to_ir::IntWidth::I32),
+                );
+                s.emit_store_from_tmp(
+                    addr_reg,
+                    tmp,
+                    &IrType::Integer(hll_to_ir::IntWidth::I32),
+                    current_offset,
+                );
+                remaining -= 4;
+                current_offset += 4;
+                current_slot += 4;
+            }
+            let byte_tmp = s.alloc_temp_reg();
+            for i in 0..remaining {
+                s.emit_load_from_slot(
+                    byte_tmp,
+                    current_slot + i,
+                    &IrType::Integer(hll_to_ir::IntWidth::I8),
+                );
+                s.emit_store_from_tmp(
+                    addr_reg,
+                    byte_tmp,
+                    &IrType::Integer(hll_to_ir::IntWidth::I8),
+                    current_offset + i as i32,
+                );
+            }
+        });
     }
 
     pub fn copy_bytes_from_addr_to_addr(
@@ -688,55 +783,57 @@ impl AssemblyEmitter {
         src_offset: i32,
         size: usize,
     ) {
-        let mut remaining = size;
-        let mut current_dst_offset = dst_offset;
-        let mut current_src_offset = src_offset;
+        self.with_reserved(&[dst_addr, src_addr], |s| {
+            let mut remaining = size;
+            let mut current_dst_offset = dst_offset;
+            let mut current_src_offset = src_offset;
 
-        while remaining >= 8 {
-            let tmp = self.alloc_temp_reg();
-            self.emit_inst(RealInstruction::Ld(Ld::new(
-                tmp,
-                src_addr,
-                current_src_offset,
-            )));
-            self.emit_inst(RealInstruction::Sd(Sd::new(
-                dst_addr,
-                tmp,
-                current_dst_offset,
-            )));
-            remaining -= 8;
-            current_dst_offset += 8;
-            current_src_offset += 8;
-        }
-        while remaining >= 4 {
-            let tmp = self.alloc_temp_reg();
-            self.emit_inst(RealInstruction::Lw(Lw::new(
-                tmp,
-                src_addr,
-                current_src_offset,
-            )));
-            self.emit_inst(RealInstruction::Sw(Sw::new(
-                dst_addr,
-                tmp,
-                current_dst_offset,
-            )));
-            remaining -= 4;
-            current_dst_offset += 4;
-            current_src_offset += 4;
-        }
-        let byte_tmp = self.alloc_temp_reg();
-        for i in 0..remaining {
-            self.emit_inst(RealInstruction::Lb(Lb::new(
-                byte_tmp,
-                src_addr,
-                current_src_offset + i as i32,
-            )));
-            self.emit_inst(RealInstruction::Sb(Sb::new(
-                dst_addr,
-                byte_tmp,
-                current_dst_offset + i as i32,
-            )));
-        }
+            while remaining >= 8 {
+                let tmp = s.alloc_temp_reg();
+                s.emit_inst(RealInstruction::Ld(Ld::new(
+                    tmp,
+                    src_addr,
+                    current_src_offset,
+                )));
+                s.emit_inst(RealInstruction::Sd(Sd::new(
+                    dst_addr,
+                    tmp,
+                    current_dst_offset,
+                )));
+                remaining -= 8;
+                current_dst_offset += 8;
+                current_src_offset += 8;
+            }
+            while remaining >= 4 {
+                let tmp = s.alloc_temp_reg();
+                s.emit_inst(RealInstruction::Lw(Lw::new(
+                    tmp,
+                    src_addr,
+                    current_src_offset,
+                )));
+                s.emit_inst(RealInstruction::Sw(Sw::new(
+                    dst_addr,
+                    tmp,
+                    current_dst_offset,
+                )));
+                remaining -= 4;
+                current_dst_offset += 4;
+                current_src_offset += 4;
+            }
+            let byte_tmp = s.alloc_temp_reg();
+            for i in 0..remaining {
+                s.emit_inst(RealInstruction::Lb(Lb::new(
+                    byte_tmp,
+                    src_addr,
+                    current_src_offset + i as i32,
+                )));
+                s.emit_inst(RealInstruction::Sb(Sb::new(
+                    dst_addr,
+                    byte_tmp,
+                    current_dst_offset + i as i32,
+                )));
+            }
+        });
     }
 
     pub fn finish(&mut self) -> String {
@@ -796,6 +893,16 @@ impl Rv64Backend for AssemblyEmitter {
         Self::emit_load_typed(self, rd, addr_reg, ty, offset);
     }
 
+    fn copy_bytes_from_addr_to_slot(
+        &mut self,
+        slot: usize,
+        addr_reg: Reg,
+        offset: i32,
+        size: usize,
+    ) {
+        Self::copy_bytes_from_addr_to_slot(self, slot, addr_reg, offset, size);
+    }
+
     fn emit_comment(&mut self, text: &str) {
         Self::emit_comment(self, text);
     }
@@ -806,6 +913,7 @@ mod tests {
     use super::AssemblyEmitter;
     use asm_to_binary::real::RealInstruction;
     use asm_to_binary::rv_instruction::RvInstruction;
+    use hll_to_ir::{IntWidth, IrType};
 
     fn real_insns_for_li(imm: i64) -> Vec<RealInstruction> {
         let mut emitter = AssemblyEmitter::new();
@@ -818,6 +926,67 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    fn real_insns(emitter: &AssemblyEmitter) -> Vec<RealInstruction> {
+        emitter
+            .finish_tokens()
+            .into_iter()
+            .filter_map(|token| match token {
+                RvInstruction::Real(inst) => Some(inst),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn large_stack_store_materializes_effective_address() {
+        let mut emitter = AssemblyEmitter::new();
+        emitter.emit_store_from_tmp(2, 5, &IrType::Integer(IntWidth::I64), 2832);
+        let insns = real_insns(&emitter);
+
+        assert!(matches!(insns.last(), Some(RealInstruction::Sd(store))
+            if store.base != 2 && store.src == 5 && store.offset == 0));
+        assert!(
+            insns
+                .iter()
+                .any(|inst| matches!(inst, RealInstruction::Add(_)))
+        );
+    }
+
+    #[test]
+    fn large_stack_load_materializes_effective_address() {
+        let mut emitter = AssemblyEmitter::new();
+        emitter.emit_load_typed(10, 2, &IrType::Integer(IntWidth::I32), 4096);
+        let insns = real_insns(&emitter);
+
+        assert!(matches!(insns.last(), Some(RealInstruction::Lw(load))
+            if load.base != 2 && load.rd == 10 && load.offset == 0));
+        assert!(
+            insns
+                .iter()
+                .any(|inst| matches!(inst, RealInstruction::Add(_)))
+        );
+    }
+
+    #[test]
+    fn block_copy_never_clobbers_base_register() {
+        // A copy larger than the temp pool (7 regs) once round-robined a value
+        // temp onto the base address register, corrupting every later store.
+        let base = 5; // t0
+        let mut emitter = AssemblyEmitter::new();
+        emitter.copy_bytes_from_slot_to_addr(0, base, 0, 256);
+        for inst in real_insns(&emitter) {
+            match inst {
+                RealInstruction::Ld(l) => assert_ne!(l.rd, base, "load clobbers base"),
+                RealInstruction::Lw(l) => assert_ne!(l.rd, base, "load clobbers base"),
+                RealInstruction::Lb(l) => assert_ne!(l.rd, base, "load clobbers base"),
+                RealInstruction::Sd(s) => assert_eq!(s.base, base, "store lost base"),
+                RealInstruction::Sw(s) => assert_eq!(s.base, base, "store lost base"),
+                RealInstruction::Sb(s) => assert_eq!(s.base, base, "store lost base"),
+                _ => {}
+            }
+        }
     }
 
     #[test]

@@ -42,6 +42,25 @@ struct LoweredValue {
     is_unsigned: bool,
 }
 
+// Lowering metadata for a V2 `enum`. The runtime value is the aggregate
+// `{ tag: i64, payload: u8[payload_bytes] }` (payload omitted when all variants
+// are unit). `payload_bytes` is the largest variant's payload size, 8-aligned.
+#[derive(Debug, Clone)]
+struct EnumLayout {
+    payload_bytes: usize,
+}
+
+// Where a variant constructor lives: its enum, tag index, and payload types.
+#[derive(Debug, Clone)]
+struct VariantInfo {
+    enum_name: String,
+    index: usize,
+    payload: Vec<Type>,
+}
+
+// Enum value layout: tag at offset 0 (i64), payload area starts at offset 8.
+pub(super) const ENUM_PAYLOAD_BASE: i64 = 8;
+
 #[derive(Debug, Clone)]
 enum DeferredAction {
     Call {
@@ -64,6 +83,7 @@ pub struct HighLevelCompiler {
     generic_type_cache: std::collections::HashMap<(String, Vec<IrType>), String>,
     generic_type_defs: std::collections::HashMap<String, GenericTypeDef>,
     function_return_types: std::collections::HashMap<String, IrType>,
+    function_param_types: std::collections::HashMap<String, Vec<IrType>>,
     function_declarations: std::collections::HashMap<String, FunctionDecl>,
     pending_global_strings: Vec<IrGlobalString>,
     global_vars: std::collections::HashMap<String, IrType>,
@@ -73,6 +93,14 @@ pub struct HighLevelCompiler {
     prelude_types: Vec<(String, IrType)>,
     // Return type of the function being lowered, so `return` literals get its width.
     current_return_ty: Option<IrType>,
+    language_version: crate::LanguageVersion,
+    // Monotonic id for naming `for`-loop desugaring temporaries uniquely.
+    for_loop_id: usize,
+    // V2 enums: name -> layout, and variant-constructor name -> variant info.
+    enum_layouts: std::collections::HashMap<String, EnumLayout>,
+    enum_variants: std::collections::HashMap<String, VariantInfo>,
+    // Monotonic id for naming `match` arm binding temporaries uniquely.
+    match_id: usize,
 }
 
 impl HighLevelCompiler {
@@ -95,17 +123,27 @@ impl HighLevelCompiler {
             generic_type_cache: std::collections::HashMap::new(),
             generic_type_defs: std::collections::HashMap::new(),
             function_return_types: std::collections::HashMap::new(),
+            function_param_types: std::collections::HashMap::new(),
             function_declarations: std::collections::HashMap::new(),
             pending_global_strings: Vec::new(),
             global_vars: std::collections::HashMap::new(),
             string_prefix: prefix.to_owned(),
             prelude_types: Vec::new(),
             current_return_ty: None,
+            language_version: crate::LanguageVersion::V1,
+            for_loop_id: 0,
+            enum_layouts: std::collections::HashMap::new(),
+            enum_variants: std::collections::HashMap::new(),
+            match_id: 0,
         }
     }
 
     pub fn set_type_prelude(&mut self, types: Vec<(String, IrType)>) {
         self.prelude_types = types;
+    }
+
+    pub fn set_language_version(&mut self, version: crate::LanguageVersion) {
+        self.language_version = version;
     }
 }
 
@@ -149,10 +187,25 @@ impl HighLevelCompiler {
             });
         }
 
+        // Register enums before any function body lowers, so variant constructors
+        // and `match` resolve regardless of declaration order.
+        for declaration in &program.declarations {
+            if let DeclNode::Enum {
+                name,
+                generics,
+                variants,
+            } = &declaration.decl
+                && generics.is_empty()
+            {
+                self.register_enum(&mut ir_program, name, variants);
+            }
+        }
+
         for declaration in &program.declarations {
             if let DeclNode::Function {
                 name,
                 generics,
+                params,
                 return_type,
                 ..
             } = &declaration.decl
@@ -167,6 +220,15 @@ impl HighLevelCompiler {
                     .insert(final_name.clone(), return_ty.clone());
                 if final_name != *name {
                     self.function_return_types.insert(name.clone(), return_ty);
+                }
+                let param_types = params
+                    .iter()
+                    .map(|param| self.lower_type(&param.ty))
+                    .collect::<Vec<_>>();
+                self.function_param_types
+                    .insert(final_name.clone(), param_types.clone());
+                if final_name != *name {
+                    self.function_param_types.insert(name.clone(), param_types);
                 }
             }
         }
@@ -186,6 +248,7 @@ impl HighLevelCompiler {
 
 mod control_flow;
 mod declarations;
+mod enums;
 mod expressions;
 mod literals;
 mod types;

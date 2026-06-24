@@ -1,3 +1,4 @@
+; @version 2
 ; Compile-time math: pure functions folded into constants.
 
 factorial: (n: i32) -> i32 {
@@ -28,9 +29,9 @@ const BLEND       = blend(3, 3)     ; 6 + 6 = 12
 external printf: (format: u8*, value: i32) -> i32
 
 main: () -> i32 {
-    printf("Factorial 7 = %d\n".data, FACTORIAL_7)
-    printf("Sum 1..10   = %d\n".data, SUM_TO_10)
-    printf("Blend      = %d\n".data, BLEND)
+    printf("Factorial 7 = %d\n".ptr, FACTORIAL_7)
+    printf("Sum 1..10   = %d\n".ptr, SUM_TO_10)
+    printf("Blend      = %d\n".ptr, BLEND)
     ; Exit 0 on success by subtracting the expected blend value.
     return BLEND - 12
 }

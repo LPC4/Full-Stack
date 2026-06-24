@@ -1,3 +1,4 @@
+; @version 2
 ; Process control block lifecycle. The PCB layout (PCB_OFF_*/PCB_IDX_*/PCB_SIZE),
 ; process states (PROC_*), trap-frame slots (TF_*), and VMM page-flag bits come from
 ; the shared kernel layout (layout.hll). Full PCB map: OS spec 5.2.
@@ -19,7 +20,7 @@ const USER_STACK_BASE = 0x80000000
 next_pid: u64 = 1
 
 process_init: () {
-    klog_ok("process subsystem ready".data)
+    klog_ok("process subsystem ready".ptr)
 }
 
 ; Return the pid that the next process_create call will assign.
@@ -35,14 +36,14 @@ process_create_at: (entry_pc: u64, stack_top: u64) -> u64* {
     memset(pcb_bytes, 0, PCB_SIZE)
     pcb: u64* = pcb_bytes as u64*
 
-    @pcb[PCB_IDX_PID] = next_pid
+    pcb[PCB_IDX_PID] = next_pid
     next_pid = next_pid + 1
-    @pcb[PCB_IDX_STATE] = PROC_READY
+    pcb[PCB_IDX_STATE] = PROC_READY
 
     ; Give the process its own address space and make it the active root so the
     ; user stack (and any code the caller maps afterwards) lands inside it.
     root_pa: u64 = vmm_new_root()
-    @pcb[PCB_IDX_PAGE_ROOT] = root_pa
+    pcb[PCB_IDX_PAGE_ROOT] = root_pa
     vmm_set_root(root_pa)
 
     ; User stack: a few pages below stack_top.
@@ -52,20 +53,20 @@ process_create_at: (entry_pc: u64, stack_top: u64) -> u64* {
     while sp_i < stack_pages {
         page_pa: u8* = pmm_alloc()
         if page_pa == null {
-            kpanic("process_create: out of memory for user stack".data)
+            kpanic("process_create: out of memory for user stack".ptr)
         }
         page_va: u64 = stack_top - (sp_i + 1) * 0x1000
         vmm_map(page_va, page_pa as u64, VMM_R + VMM_W + VMM_U)  ; vmm_map adds V.
         last_page_pa = page_pa as u64
         sp_i = sp_i + 1
     }
-    @pcb[PCB_IDX_USER_STACK_PA] = last_page_pa
-    @pcb[PCB_IDX_ENTRY_PC] = entry_pc
+    pcb[PCB_IDX_USER_STACK_PA] = last_page_pa
+    pcb[PCB_IDX_ENTRY_PC] = entry_pc
 
     ; Initial frame: sp = stack top, sepc = entry, sstatus = U-mode with IRQs on.
-    @pcb[PCB_IDX_TRAP_FRAME + TF_SP]  = stack_top
-    @pcb[PCB_IDX_TRAP_FRAME + TF_SEPC] = entry_pc
-    @pcb[PCB_IDX_TRAP_FRAME + TF_SSTATUS] = 0x13
+    pcb[PCB_IDX_TRAP_FRAME + TF_SP]  = stack_top
+    pcb[PCB_IDX_TRAP_FRAME + TF_SEPC] = entry_pc
+    pcb[PCB_IDX_TRAP_FRAME + TF_SSTATUS] = 0x13
 
     return pcb
 }
@@ -82,9 +83,9 @@ process_alloc: () -> u64* {
     pcb_bytes: u8* = kmalloc(PCB_SIZE)
     memset(pcb_bytes, 0, PCB_SIZE)
     pcb: u64* = pcb_bytes as u64*
-    @pcb[PCB_IDX_PID] = next_pid
+    pcb[PCB_IDX_PID] = next_pid
     next_pid = next_pid + 1
-    @pcb[PCB_IDX_STATE] = PROC_READY
+    pcb[PCB_IDX_STATE] = PROC_READY
     return pcb
 }
 
@@ -92,67 +93,67 @@ process_alloc: () -> u64* {
 ; Keep PCB layout (OS spec ch.5.1) here; callers use these, not raw indices.
 
 process_pid: (pcb: u64*) -> u64 {
-    return @pcb[PCB_IDX_PID]
+    return pcb[PCB_IDX_PID]
 }
 
 process_state: (pcb: u64*) -> u64 {
-    return @pcb[PCB_IDX_STATE]
+    return pcb[PCB_IDX_STATE]
 }
 
 process_set_state: (pcb: u64*, s: u64) {
-    @pcb[PCB_IDX_STATE] = s
+    pcb[PCB_IDX_STATE] = s
 }
 
 process_root: (pcb: u64*) -> u64 {
-    return @pcb[PCB_IDX_PAGE_ROOT]
+    return pcb[PCB_IDX_PAGE_ROOT]
 }
 
 process_set_root: (pcb: u64*, root: u64) {
-    @pcb[PCB_IDX_PAGE_ROOT] = root
+    pcb[PCB_IDX_PAGE_ROOT] = root
 }
 
 process_parent: (pcb: u64*) -> u64 {
-    return @pcb[PCB_IDX_PARENT_PID]
+    return pcb[PCB_IDX_PARENT_PID]
 }
 
 process_set_parent: (pcb: u64*, ppid: u64) {
-    @pcb[PCB_IDX_PARENT_PID] = ppid
+    pcb[PCB_IDX_PARENT_PID] = ppid
 }
 
 process_exit_code: (pcb: u64*) -> i64 {
-    return (@pcb[PCB_IDX_EXIT_CODE]) as i64
+    return (pcb[PCB_IDX_EXIT_CODE]) as i64
 }
 
 process_set_exit_code: (pcb: u64*, code: i64) {
-    @pcb[PCB_IDX_EXIT_CODE] = code as u64
+    pcb[PCB_IDX_EXIT_CODE] = code as u64
 }
 
 ; Redirected stdout/stdin: the kernel fd backing this process's fd 1 / fd 0, or 0
 ; for the console (UART). See OS spec ch.7.7.
 process_stdout_fd: (pcb: u64*) -> u64 {
-    return @pcb[PCB_IDX_STDOUT_FD]
+    return pcb[PCB_IDX_STDOUT_FD]
 }
 
 process_set_stdout_fd: (pcb: u64*, fd: u64) {
-    @pcb[PCB_IDX_STDOUT_FD] = fd
+    pcb[PCB_IDX_STDOUT_FD] = fd
 }
 
 process_stdin_fd: (pcb: u64*) -> u64 {
-    return @pcb[PCB_IDX_STDIN_FD]
+    return pcb[PCB_IDX_STDIN_FD]
 }
 
 process_set_stdin_fd: (pcb: u64*, fd: u64) {
-    @pcb[PCB_IDX_STDIN_FD] = fd
+    pcb[PCB_IDX_STDIN_FD] = fd
 }
 
 ; Program break (top of the growable heap). 0 means "not yet initialised"; the
 ; sbrk handler resolves that to USER_HEAP_BASE on first use.
 process_heap_brk: (pcb: u64*) -> u64 {
-    return @pcb[PCB_IDX_HEAP_BRK]
+    return pcb[PCB_IDX_HEAP_BRK]
 }
 
 process_set_heap_brk: (pcb: u64*, brk: u64) {
-    @pcb[PCB_IDX_HEAP_BRK] = brk
+    pcb[PCB_IDX_HEAP_BRK] = brk
 }
 
 ; Address of the embedded 288-byte trap frame, for context copies.

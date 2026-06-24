@@ -1,3 +1,4 @@
+; @version 2
 ; Conway's Game of Life: a 40x30 toroidal grid rendered to the framebuffer.
 ; B3/S23 rules, double-buffered, with P/R/space keyboard control. See OS spec ch.10.5.
 
@@ -74,7 +75,7 @@ seed: () {
         if ((r >> 16) % 10) < 3 {
             v = 1 as u8
         }
-        @cur[i] = v
+        cur[i] = v
         i = i + 1
     }
 }
@@ -108,13 +109,13 @@ step: () {
                 xp = 0
             }
 
-            n: i64 = (@cur[ru + xm]) as i64 + (@cur[ru + x]) as i64 + (@cur[ru + xp]) as i64
-            n = n + (@cur[rc + xm]) as i64 + (@cur[rc + xp]) as i64
-            n = n + (@cur[rd + xm]) as i64 + (@cur[rd + x]) as i64 + (@cur[rd + xp]) as i64
+            n: i64 = (cur[ru + xm]) as i64 + (cur[ru + x]) as i64 + (cur[ru + xp]) as i64
+            n = n + (cur[rc + xm]) as i64 + (cur[rc + xp]) as i64
+            n = n + (cur[rd + xm]) as i64 + (cur[rd + x]) as i64 + (cur[rd + xp]) as i64
 
             idx: i64 = rc + x
             live: i64 = 0
-            if @cur[idx] != 0 {
+            if cur[idx] != 0 {
                 if n == 2 {
                     live = 1
                 }
@@ -126,14 +127,14 @@ step: () {
                     live = 1
                 }
             }
-            @nxt[idx] = live as u8
+            nxt[idx] = live as u8
             x = x + 1
         }
         y = y + 1
     }
     i: i64 = 0
     while i < CELLS {
-        @cur[i] = @nxt[i]
+        cur[i] = nxt[i]
         i = i + 1
     }
 }
@@ -167,7 +168,7 @@ render: () {
         rc: i64 = y * GW
         x: i64 = 0
         while x < GW {
-            if @cur[rc + x] != 0 {
+            if cur[rc + x] != 0 {
                 draw_cell(x, y, col)
             }
             x = x + 1
@@ -211,7 +212,7 @@ poll_input: () {
 main: () -> i32 {
     base: u64 = sc_map_fb()
     if base == 0 {
-        console_writeln("life: map_fb failed".data)
+        console_writeln("life: map_fb failed".ptr)
         return 1
     }
     _fb_base = base
@@ -219,13 +220,13 @@ main: () -> i32 {
     cur = new(u8, CELLS)
     nxt = new(u8, CELLS)
     if cur == null or nxt == null {
-        console_writeln("life: out of memory".data)
+        console_writeln("life: out of memory".ptr)
         return 1
     }
 
     enable_double_buffer()
     seed()
-    console_writeln("life: running (P pause, R reseed, space step)".data)
+    console_writeln("life: running (P pause, R reseed, space step)".ptr)
 
     while 1 == 1 {
         poll_input()

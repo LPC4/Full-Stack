@@ -140,6 +140,12 @@ terminator.
 
 `jump`, `branch`, and `ret` are terminators; `phi` and `call` are ordinary instructions.
 
+Aggregate call arguments have value semantics. RV64 lowering passes one pointer to the caller's
+aggregate bytes in the next integer ABI argument slot; the callee copies the complete value into
+its parameter slot before executing the entry block. The pointer is an ABI detail and does not
+change the IR parameter type. Register overflow stores the pointer in the ordinary outgoing stack
+argument area.
+
 ## 5. Structs and multiple returns
 
 The language has no tuples, so multiple returns are modeled as named structs. Structs are

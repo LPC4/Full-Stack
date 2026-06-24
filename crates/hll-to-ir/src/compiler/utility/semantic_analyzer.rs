@@ -1,11 +1,20 @@
+use crate::LanguageVersion;
 use crate::ast::*;
 use crate::compiler::*;
 use crate::ir::IrType;
+use crate::monomorphize::substitute_type;
 use std::collections::{HashMap, HashSet};
 use utility::diagnostics::Diagnostics;
 use utility::symbol_table::SymbolTable;
 use utility::type_context::TypeContext;
 use {DeclNode, Declaration, Expression, Program, ReturnType, Statement, Type, UnaryOp};
+
+// A V2 enum variant constructor: which enum it belongs to and its payload types.
+#[derive(Debug, Clone)]
+struct EnumVariantSig {
+    enum_name: String,
+    payloads: Vec<IrType>,
+}
 
 #[derive(Debug)]
 pub struct SemanticAnalyzer {
@@ -14,18 +23,33 @@ pub struct SemanticAnalyzer {
     diagnostics: Diagnostics,
     type_mapping: HashMap<String, String>,
     function_signatures: HashMap<String, String>,
+    function_parameters: HashMap<String, Vec<IrType>>,
+    generic_type_defs: HashMap<String, (Vec<String>, Type)>,
+    // V2 enums: variant constructor -> signature, and enum name -> its variant list.
+    enum_variants: HashMap<String, EnumVariantSig>,
+    enum_variant_names: HashMap<String, Vec<String>>,
     current_function: Option<String>,
+    language_version: LanguageVersion,
 }
 
 impl SemanticAnalyzer {
     pub fn new() -> Self {
+        Self::with_language_version(LanguageVersion::V1)
+    }
+
+    pub fn with_language_version(language_version: LanguageVersion) -> Self {
         Self {
             context: TypeContext::new(),
             symbols: SymbolTable::new(),
             diagnostics: Diagnostics::new(),
             type_mapping: HashMap::new(),
             function_signatures: HashMap::new(),
+            function_parameters: HashMap::new(),
+            generic_type_defs: HashMap::new(),
+            enum_variants: HashMap::new(),
+            enum_variant_names: HashMap::new(),
             current_function: None,
+            language_version,
         }
     }
 
@@ -70,10 +94,62 @@ impl SemanticAnalyzer {
 
     fn register_declaration(&mut self, decl: &Declaration) {
         match &decl.decl {
-            DeclNode::Type { name, ty, .. } => {
+            DeclNode::Type { name, generics, ty } => {
+                if !generics.is_empty() {
+                    self.generic_type_defs
+                        .insert(name.clone(), (generics.clone(), ty.clone()));
+                }
                 let ir_ty = self.ast_type_to_ir_type(ty);
                 self.context.register_type(name.clone(), ir_ty);
                 self.type_mapping.insert(name.clone(), format!("{ty:?}"));
+            }
+            DeclNode::Struct {
+                name,
+                generics,
+                fields,
+            } => {
+                let ty = Type::Struct(fields.clone());
+                if !generics.is_empty() {
+                    self.generic_type_defs
+                        .insert(name.clone(), (generics.clone(), ty.clone()));
+                }
+                let ir_ty = self.ast_type_to_ir_type(&ty);
+                self.context.register_type(name.clone(), ir_ty);
+                self.type_mapping.insert(name.clone(), format!("{ty:?}"));
+            }
+            DeclNode::Enum {
+                name,
+                generics,
+                variants,
+            } => {
+                // Register the enum name as an aggregate so `s: EnumName` resolves;
+                // the tag is enough for type identity (payload layout is the lowerer's).
+                if generics.is_empty() {
+                    let ir_ty = IrType::Aggregate(vec![(
+                        "tag".to_owned(),
+                        IrType::Integer(crate::ir::IntWidth::I64),
+                    )]);
+                    self.context.register_type(name.clone(), ir_ty);
+                    self.type_mapping.insert(name.clone(), name.clone());
+
+                    let mut variant_names = Vec::with_capacity(variants.len());
+                    for variant in variants {
+                        variant_names.push(variant.name.clone());
+                        let payloads = variant
+                            .payload
+                            .iter()
+                            .map(|ty| self.ast_type_to_ir_type(ty))
+                            .collect();
+                        self.enum_variants.insert(
+                            variant.name.clone(),
+                            EnumVariantSig {
+                                enum_name: name.clone(),
+                                payloads,
+                            },
+                        );
+                    }
+                    self.enum_variant_names.insert(name.clone(), variant_names);
+                }
             }
             DeclNode::Const { name, init } => {
                 // Infer the type from the initializer expression
@@ -85,7 +161,10 @@ impl SemanticAnalyzer {
                 }
             }
             DeclNode::Function {
-                name, return_type, ..
+                name,
+                params,
+                return_type,
+                ..
             } => {
                 self.type_mapping.insert(name.clone(), "fn".to_owned());
                 // Store the return type for function calls
@@ -99,6 +178,13 @@ impl SemanticAnalyzer {
                     None => "void".to_owned(),
                 };
                 self.function_signatures.insert(name.clone(), return_ty_str);
+                self.function_parameters.insert(
+                    name.clone(),
+                    params
+                        .iter()
+                        .map(|param| self.ast_type_to_ir_type(&param.ty))
+                        .collect(),
+                );
             }
             _ => {}
         }
@@ -130,13 +216,17 @@ impl SemanticAnalyzer {
                 self.current_function = None;
                 Ok(())
             }
-            DeclNode::Type { .. } | DeclNode::Const { .. } => Ok(()),
+            DeclNode::Type { .. }
+            | DeclNode::Struct { .. }
+            | DeclNode::Const { .. }
+            | DeclNode::Enum { .. } => Ok(()),
             DeclNode::Variable { name, ty, .. } => {
                 let ir_ty = self.ast_type_to_ir_type(ty);
                 self.symbols
                     .insert(name.clone(), ir_ty, crate::ir::IrValue::Null);
                 Ok(())
             }
+            DeclNode::InferredVariable { name, init } => self.check_inferred_binding(name, init),
         }
     }
 
@@ -161,14 +251,50 @@ impl SemanticAnalyzer {
                     return Err(());
                 }
 
+                if self.language_version == LanguageVersion::V2 {
+                    if let Expression::Primary(PrimaryExpr::StructLiteral(fields)) = expr {
+                        let expected = self
+                            .current_function
+                            .as_ref()
+                            .and_then(|name| self.function_signatures.get(name))
+                            .map(|name| self.resolve_type_string(name));
+                        if let Some(expected) = expected {
+                            self.check_contextual_struct_literal(fields, &expected)?;
+                            return Ok(());
+                        }
+                    }
+                }
                 let _ = self.infer_expression_type(expr)?;
                 Ok(())
             }
             Statement::Return(None) => Ok(()),
             Statement::VariableDecl { name, ty, init } => {
+                if self.symbols.contains_in_current_scope(name) {
+                    self.error(format!("duplicate binding `{name}` in the same scope"));
+                    return Err(());
+                }
                 let ir_ty = self.ast_type_to_ir_type(ty);
 
                 if let Some(init_expr) = init {
+                    if self.language_version == LanguageVersion::V2 {
+                        if let Expression::Primary(PrimaryExpr::StructLiteral(fields)) = init_expr {
+                            self.check_contextual_struct_literal(fields, &ir_ty)?;
+                            self.symbols
+                                .insert(name.clone(), ir_ty, crate::ir::IrValue::Null);
+                            return Ok(());
+                        }
+                        if let Expression::Primary(PrimaryExpr::ArrayLiteral(elements)) = init_expr
+                        {
+                            if let IrType::Array { element, len } =
+                                self.resolve_named_ir_type(&ir_ty)
+                            {
+                                self.check_contextual_array_literal(elements, &element, len)?;
+                                self.symbols
+                                    .insert(name.clone(), ir_ty, crate::ir::IrValue::Null);
+                                return Ok(());
+                            }
+                        }
+                    }
                     let init_ty = self.infer_expression_type(init_expr)?;
                     let resolved_decl_ty =
                         self.resolve_type_string(&self.context.get_type_name(&ir_ty));
@@ -197,7 +323,17 @@ impl SemanticAnalyzer {
                             && Self::is_float_type(&resolved_init_ty)
                             && Self::is_float_literal_expr(init_expr));
 
-                    if resolved_decl_ty != resolved_init_ty && !is_literal_widening_allowed {
+                    // A fixed array coerces to a slice of the same element type.
+                    let is_array_to_slice = self.language_version == LanguageVersion::V2
+                        && Self::is_array_to_slice_coercion(
+                            &self.context.get_type_name(&ir_ty),
+                            &init_ty,
+                        );
+
+                    if resolved_decl_ty != resolved_init_ty
+                        && !is_literal_widening_allowed
+                        && !is_array_to_slice
+                    {
                         self.error(format!(
                             "Type mismatch in variable initialization '{}': declared as {}, but expression yields {} (inferred_str: {}, resolved_decl: {:?}, resolved_init: {:?}, is_widening_allowed: {})",
                             name,
@@ -215,6 +351,9 @@ impl SemanticAnalyzer {
                 self.symbols
                     .insert(name.clone(), ir_ty, crate::ir::IrValue::Null);
                 Ok(())
+            }
+            Statement::InferredVariableDecl { name, init } => {
+                self.check_inferred_binding(name, init)
             }
             Statement::Block(block) => {
                 self.symbols.enter_scope();
@@ -258,6 +397,41 @@ impl SemanticAnalyzer {
                 self.symbols.exit_scope();
                 Ok(())
             }
+            Statement::For { var, iter, body } => {
+                // The loop variable's type depends on the iterator kind.
+                let var_ty = match iter {
+                    crate::ast::ForIter::Range {
+                        start,
+                        end,
+                        inclusive: _,
+                    } => {
+                        let start_ty = self.infer_expression_type(start)?;
+                        let end_ty = self.infer_expression_type(end)?;
+                        if !Self::is_integer_type(&self.resolve_type_string(&start_ty))
+                            || !Self::is_integer_type(&self.resolve_type_string(&end_ty))
+                        {
+                            self.error(format!(
+                                "for-range endpoints must be integers, found `{start_ty}..{end_ty}`"
+                            ));
+                            return Err(());
+                        }
+                        // The loop variable takes the start endpoint's type.
+                        self.parse_type_string(&start_ty)
+                    }
+                    crate::ast::ForIter::Each(seq) => {
+                        let seq_ty = self.infer_expression_type(seq)?;
+                        let elem_ty = self.infer_index_element_type(&seq_ty)?;
+                        self.parse_type_string(&elem_ty)
+                    }
+                };
+
+                self.symbols.enter_scope();
+                self.symbols
+                    .insert(var.clone(), var_ty, crate::ir::IrValue::Null);
+                self.check_block(body)?;
+                self.symbols.exit_scope();
+                Ok(())
+            }
             Statement::Defer(expr) => {
                 let _ = self.infer_expression_type(expr)?;
                 Ok(())
@@ -279,12 +453,54 @@ impl SemanticAnalyzer {
         }
     }
 
+    fn check_inferred_binding(&mut self, name: &str, init: &Expression) -> Result<(), ()> {
+        if self.symbols.contains_in_current_scope(name) {
+            self.error(format!(
+                "duplicate inferred binding `{name}` in the same scope"
+            ));
+            return Err(());
+        }
+        if self.language_version == LanguageVersion::V2
+            && matches!(init, Expression::Primary(PrimaryExpr::StructLiteral(_)))
+        {
+            self.error(format!(
+                "cannot infer `{name}` from an anonymous struct literal; use `Type {{ ... }}` or add an explicit type"
+            ));
+            return Err(());
+        }
+
+        // Infer before registering the name: `x := x` must not resolve to the
+        // binding currently being declared.
+        let inferred = self.infer_expression_type(init)?;
+        let ir_ty = self.resolve_type_string(&inferred);
+        if matches!(ir_ty, IrType::Void) || inferred == "unknown" || inferred == "*unknown" {
+            self.error(format!(
+                "cannot infer a concrete type for binding `{name}` from `{inferred}`"
+            ));
+            return Err(());
+        }
+
+        self.symbols
+            .insert(name.to_owned(), ir_ty, crate::ir::IrValue::Null);
+        Ok(())
+    }
+
     fn infer_expression_type(&mut self, expr: &Expression) -> Result<String, ()> {
         match expr {
             Expression::Primary(primary) => match primary {
                 PrimaryExpr::Identifier(name) => {
                     if let Some(info) = self.symbols.lookup(name) {
                         Ok(self.context.get_type_name(&info.ty))
+                    } else if let Some(sig) = self.enum_variants.get(name) {
+                        // A bare unit-variant constructor has its enum's type.
+                        if !sig.payloads.is_empty() {
+                            let enum_name = sig.enum_name.clone();
+                            self.error(format!(
+                                "enum variant `{name}` needs payload value(s); call it like `{name}(...)`"
+                            ));
+                            return Ok(enum_name);
+                        }
+                        Ok(sig.enum_name.clone())
                     } else if let Some(ty_name) = self.type_mapping.get(name) {
                         Ok(ty_name.clone())
                     } else {
@@ -298,7 +514,14 @@ impl SemanticAnalyzer {
                     Literal::Float(_) => Ok("f32".to_owned()),
                     Literal::Boolean(_) => Ok("i1".to_owned()),
                     Literal::Null => Ok("*unknown".to_owned()),
-                    Literal::String(_) => Ok("{ data: u8*, length: u64 }".to_owned()),
+                    Literal::String(_) => {
+                        // V2 strings are `u8[]` slices; V1 keeps the record shape.
+                        if self.language_version == LanguageVersion::V2 {
+                            Ok("u8[]".to_owned())
+                        } else {
+                            Ok("{ data: u8*, length: u64 }".to_owned())
+                        }
+                    }
                 },
                 PrimaryExpr::Grouped(expr) => self.infer_expression_type(expr),
                 PrimaryExpr::New { ty, .. } => {
@@ -322,8 +545,35 @@ impl SemanticAnalyzer {
                 PrimaryExpr::FunctionCall {
                     name, arguments, ..
                 } => {
+                    // A call whose name is an enum variant constructs that variant.
+                    if let Some(sig) = self.enum_variants.get(name).cloned() {
+                        if arguments.len() != sig.payloads.len() {
+                            self.error(format!(
+                                "enum variant `{name}` expects {} payload value(s), got {}",
+                                sig.payloads.len(),
+                                arguments.len()
+                            ));
+                            return Err(());
+                        }
+                        for arg in arguments {
+                            let _ = self.infer_expression_type(arg)?;
+                        }
+                        return Ok(sig.enum_name);
+                    }
+
                     // Type check arguments
-                    for arg in arguments {
+                    let parameter_types = self.function_parameters.get(name).cloned();
+                    for (index, arg) in arguments.iter().enumerate() {
+                        if self.language_version == LanguageVersion::V2 {
+                            if let (
+                                Some(expected),
+                                Expression::Primary(PrimaryExpr::StructLiteral(fields)),
+                            ) = (parameter_types.as_ref().and_then(|p| p.get(index)), arg)
+                            {
+                                self.check_contextual_struct_literal(fields, expected)?;
+                                continue;
+                            }
+                        }
                         let _ = self.infer_expression_type(arg)?;
                     }
 
@@ -413,6 +663,19 @@ impl SemanticAnalyzer {
                         self.infer_index_element_type(&base_ty)
                     }
                 }
+                PrimaryExpr::Slice {
+                    expr, start, end, ..
+                } => {
+                    if let Some(start) = start {
+                        let _ = self.infer_expression_type(start)?;
+                    }
+                    if let Some(end) = end {
+                        let _ = self.infer_expression_type(end)?;
+                    }
+                    let base_ty = self.infer_expression_type(expr)?;
+                    let elem_ty = self.infer_index_element_type(&base_ty)?;
+                    Ok(format!("{elem_ty}[]"))
+                }
                 PrimaryExpr::StructLiteral(fields) => {
                     let mut field_types = Vec::new();
                     for field in fields {
@@ -438,6 +701,9 @@ impl SemanticAnalyzer {
                     }
                     Ok(self.context.get_type_name(&IrType::Aggregate(field_types)))
                 }
+                PrimaryExpr::NamedStructLiteral { name, fields } => {
+                    self.infer_named_struct_literal_type(name, fields)
+                }
             },
             Expression::Binary { op, left, right } => {
                 let lhs_type = self.infer_expression_type(left)?;
@@ -454,6 +720,26 @@ impl SemanticAnalyzer {
             }
             Expression::Unary { op, expr: inner } => {
                 if op == &UnaryOp::AddressOf {
+                    if self.language_version == LanguageVersion::V2 {
+                        if !self.is_place_expression(inner) {
+                            self.error(
+                                "address-of requires a place (identifier, dereference, field, or indexed element)"
+                                    .to_owned(),
+                            );
+                            return Err(());
+                        }
+
+                        let inner_type = self.infer_expression_type(inner)?;
+                        return match self.context.check_unary_op(op, &inner_type) {
+                            Ok(result_type) => Ok(result_type),
+                            Err(err) => {
+                                self.diagnostics
+                                    .error(format!("Type error in unary operation: {err}"));
+                                Err(())
+                            }
+                        };
+                    }
+
                     if self.contains_dereference(inner) {
                         self.error(
                             "cannot take address of a dereference expression (`&@...` is invalid)"
@@ -611,7 +897,202 @@ impl SemanticAnalyzer {
 
                 Ok(target_name)
             }
+            Expression::Match { scrutinee, arms } => self.check_match(scrutinee, arms),
+            Expression::Try(expr) => self.check_try(expr),
         }
+    }
+
+    fn check_try(&mut self, expr: &Expression) -> Result<String, ()> {
+        let operand_ty = self.infer_expression_type(expr)?;
+        let family = if operand_ty.starts_with("Result__") {
+            "Result"
+        } else if operand_ty.starts_with("Option__") {
+            "Option"
+        } else {
+            self.error(format!(
+                "`?` requires `Result<T, E>` or `Option<T>`, found `{operand_ty}`"
+            ));
+            return Err(());
+        };
+
+        let return_ty = self
+            .current_function
+            .as_ref()
+            .and_then(|name| self.function_signatures.get(name))
+            .cloned()
+            .unwrap_or_else(|| "void".to_owned());
+        if !return_ty.starts_with(&format!("{family}__")) {
+            self.error(format!(
+                "`?` on `{operand_ty}` requires the enclosing function to return `{family}`"
+            ));
+            return Err(());
+        }
+
+        let success_prefix = if family == "Result" { "Ok" } else { "Some" };
+        let success = self
+            .enum_variants
+            .iter()
+            .find(|(name, sig)| {
+                sig.enum_name == operand_ty
+                    && (name.as_str() == success_prefix
+                        || name.starts_with(&format!("{success_prefix}__")))
+            })
+            .map(|(_, sig)| sig.clone());
+        let Some(success) = success else {
+            self.error(format!("invalid `{family}` specialization `{operand_ty}`"));
+            return Err(());
+        };
+        if success.payloads.len() != 1 {
+            self.error(format!("invalid `{family}` success variant layout"));
+            return Err(());
+        }
+
+        if family == "Result" {
+            let failure_payload = |enum_name: &str| {
+                self.enum_variants
+                    .iter()
+                    .find(|(name, sig)| {
+                        sig.enum_name == enum_name
+                            && (name.as_str() == "Err" || name.starts_with("Err__"))
+                    })
+                    .and_then(|(_, sig)| sig.payloads.first())
+                    .cloned()
+            };
+            if failure_payload(&operand_ty) != failure_payload(&return_ty) {
+                self.error(format!(
+                    "`?` cannot propagate `{operand_ty}` from a function returning `{return_ty}`"
+                ));
+                return Err(());
+            }
+        }
+
+        Ok(self.context.get_type_name(&success.payloads[0]))
+    }
+
+    // Type-check a `match`: the scrutinee must be an enum, every arm pattern must
+    // be a valid variant of it (payload arity respected), and the arms must be
+    // exhaustive (cover all variants or include a catch-all). Returns "void" --
+    // value-producing match is deferred.
+    fn check_match(&mut self, scrutinee: &Expression, arms: &[MatchArm]) -> Result<String, ()> {
+        let enum_name = self.infer_expression_type(scrutinee)?;
+        let Some(all_variants) = self.enum_variant_names.get(&enum_name).cloned() else {
+            self.error(format!("`match` scrutinee has non-enum type `{enum_name}`"));
+            return Err(());
+        };
+
+        // A `-> expr` value arm makes the match value-producing; either every arm
+        // yields a value (types must unify) or none do (a "void" statement match).
+        let value_arms = arms.iter().filter(|a| a.value.is_some()).count();
+        if value_arms != 0 && value_arms != arms.len() {
+            self.error(
+                "all `match` arms must produce a value or none may; mix not allowed".to_owned(),
+            );
+            return Err(());
+        }
+        let mut result_ty: Option<String> = None;
+
+        let mut covered: HashSet<String> = HashSet::new();
+        let mut has_catch_all = false;
+        for arm in arms {
+            if has_catch_all {
+                self.error("unreachable match arm after a catch-all pattern".to_owned());
+                return Err(());
+            }
+            self.symbols.enter_scope();
+            let arm_ok = match &arm.pattern {
+                Pattern::Wildcard => {
+                    has_catch_all = true;
+                    Ok(())
+                }
+                Pattern::Binding(name) => {
+                    has_catch_all = true;
+                    let ir_ty = self.ast_type_to_ir_type(&Type::Named {
+                        name: enum_name.clone(),
+                        args: Vec::new(),
+                    });
+                    self.symbols
+                        .insert(name.clone(), ir_ty, crate::ir::IrValue::Null);
+                    Ok(())
+                }
+                Pattern::Variant {
+                    variant, bindings, ..
+                } => self.check_variant_pattern(&enum_name, variant, bindings, &mut covered),
+            };
+            let body_result = arm_ok.and_then(|()| self.check_block(&arm.body));
+            // Infer the arm value while its payload bindings are still in scope.
+            let arm_value_ty = body_result.and_then(|()| match &arm.value {
+                Some(value) => self.infer_expression_type(value).map(Some),
+                None => Ok(None),
+            });
+            self.symbols.exit_scope();
+            if let Some(arm_ty) = arm_value_ty? {
+                match &result_ty {
+                    None => result_ty = Some(arm_ty),
+                    Some(existing) if *existing != arm_ty => {
+                        self.error(format!(
+                            "`match` arms produce different types: `{existing}` and `{arm_ty}`"
+                        ));
+                        return Err(());
+                    }
+                    Some(_) => {}
+                }
+            }
+        }
+
+        if !has_catch_all {
+            let missing: Vec<String> = all_variants
+                .iter()
+                .filter(|v| !covered.contains(*v))
+                .cloned()
+                .collect();
+            if !missing.is_empty() {
+                self.error(format!(
+                    "non-exhaustive `match` on `{enum_name}`: missing {}",
+                    missing.join(", ")
+                ));
+                return Err(());
+            }
+        }
+        Ok(result_ty.unwrap_or_else(|| "void".to_owned()))
+    }
+
+    // Validate one `Variant(bindings)` arm and bind its payload slots as locals.
+    fn check_variant_pattern(
+        &mut self,
+        enum_name: &str,
+        variant: &str,
+        bindings: &[String],
+        covered: &mut HashSet<String>,
+    ) -> Result<(), ()> {
+        let Some(sig) = self.enum_variants.get(variant).cloned() else {
+            self.error(format!("unknown enum variant `{variant}` in match arm"));
+            return Err(());
+        };
+        if sig.enum_name != enum_name {
+            self.error(format!(
+                "variant `{variant}` is not a variant of `{enum_name}`"
+            ));
+            return Err(());
+        }
+        if bindings.len() != sig.payloads.len() {
+            self.error(format!(
+                "variant `{variant}` binds {} value(s) but has {}",
+                bindings.len(),
+                sig.payloads.len()
+            ));
+            return Err(());
+        }
+        if !covered.insert(variant.to_owned()) {
+            self.error(format!("duplicate match arm for variant `{variant}`"));
+            return Err(());
+        }
+        for (binding, ty) in bindings.iter().zip(&sig.payloads) {
+            if binding != "_" {
+                self.symbols
+                    .insert(binding.clone(), ty.clone(), crate::ir::IrValue::Null);
+            }
+        }
+        Ok(())
     }
 
     fn returning_local_address_name(&self, expr: &Expression) -> Option<String> {
@@ -660,32 +1141,275 @@ impl SemanticAnalyzer {
             Expression::Primary(PrimaryExpr::ArrayIndex { expr, index }) => {
                 self.contains_dereference(expr) || self.contains_dereference(index)
             }
+            Expression::Primary(PrimaryExpr::Slice {
+                expr, start, end, ..
+            }) => {
+                self.contains_dereference(expr)
+                    || start
+                        .as_deref()
+                        .is_some_and(|s| self.contains_dereference(s))
+                    || end.as_deref().is_some_and(|e| self.contains_dereference(e))
+            }
             Expression::Primary(PrimaryExpr::FunctionCall { arguments, .. }) => {
                 arguments.iter().any(|arg| self.contains_dereference(arg))
             }
             Expression::Primary(PrimaryExpr::StructLiteral(fields)) => fields
                 .iter()
                 .any(|field| self.contains_dereference(&field.expr)),
+            Expression::Primary(PrimaryExpr::NamedStructLiteral { fields, .. }) => fields
+                .iter()
+                .any(|field| self.contains_dereference(&field.expr)),
             _ => false,
         }
     }
 
+    fn is_place_expression(&self, expr: &Expression) -> bool {
+        match expr {
+            Expression::Primary(PrimaryExpr::Identifier(_))
+            | Expression::Unary {
+                op: UnaryOp::Dereference,
+                ..
+            }
+            | Expression::Primary(PrimaryExpr::FieldAccess { .. })
+            | Expression::Primary(PrimaryExpr::ArrayIndex { .. }) => true,
+            Expression::Primary(PrimaryExpr::Grouped(inner)) => self.is_place_expression(inner),
+            _ => false,
+        }
+    }
+
+    fn infer_named_struct_literal_type(
+        &mut self,
+        name: &str,
+        fields: &[FieldInit],
+    ) -> Result<String, ()> {
+        let declared = self.resolve_type_string(name);
+        let IrType::Aggregate(declared_fields) = declared else {
+            self.error(format!(
+                "named struct literal references non-struct type `{name}`"
+            ));
+            return Err(());
+        };
+
+        let mut seen = HashSet::new();
+        for field in fields {
+            if !seen.insert(field.name.clone()) {
+                self.error(format!(
+                    "duplicate field `{}` in `{name}` literal",
+                    field.name
+                ));
+                return Err(());
+            }
+            let Some((_, expected_ty)) = declared_fields
+                .iter()
+                .find(|(field_name, _)| field_name == &field.name)
+            else {
+                self.error(format!(
+                    "unknown field `{}` in `{name}` literal",
+                    field.name
+                ));
+                return Err(());
+            };
+            let actual_name = self.infer_expression_type(&field.expr)?;
+            let actual_ty = self.resolve_type_string(&actual_name);
+            let expected_ty = self.resolve_named_ir_type(expected_ty);
+            let integer_literal_compatible = Self::is_integer_type(&expected_ty)
+                && Self::is_integer_type(&actual_ty)
+                && Self::is_const_int_expr(&field.expr);
+            let float_literal_compatible = Self::is_float_type(&expected_ty)
+                && Self::is_float_type(&actual_ty)
+                && Self::is_float_literal_expr(&field.expr);
+            if actual_ty != expected_ty && !integer_literal_compatible && !float_literal_compatible
+            {
+                self.error(format!(
+                    "field `{}` in `{name}` literal expects `{}`, found `{actual_name}`",
+                    field.name,
+                    self.context.get_type_name(&expected_ty)
+                ));
+                return Err(());
+            }
+        }
+
+        if let Some((missing, _)) = declared_fields
+            .iter()
+            .find(|(field_name, _)| !seen.contains(field_name))
+        {
+            self.error(format!("missing field `{missing}` in `{name}` literal"));
+            return Err(());
+        }
+        Ok(name.to_owned())
+    }
+
+    fn check_contextual_struct_literal(
+        &mut self,
+        fields: &[FieldInit],
+        expected: &IrType,
+    ) -> Result<(), ()> {
+        let resolved = self.resolve_named_ir_type(expected);
+        let IrType::Aggregate(declared_fields) = resolved else {
+            self.error(format!(
+                "contextual struct literal requires a struct target, found `{}`",
+                self.context.get_type_name(expected)
+            ));
+            return Err(());
+        };
+
+        let mut seen = HashSet::new();
+        for field in fields {
+            if !seen.insert(field.name.clone()) {
+                self.error(format!(
+                    "duplicate field `{}` in struct literal",
+                    field.name
+                ));
+                return Err(());
+            }
+            let Some((_, expected_ty)) = declared_fields
+                .iter()
+                .find(|(field_name, _)| field_name == &field.name)
+            else {
+                self.error(format!(
+                    "unknown field `{}` in contextual struct literal",
+                    field.name
+                ));
+                return Err(());
+            };
+            let actual_name = self.infer_expression_type(&field.expr)?;
+            let actual_ty = self.resolve_type_string(&actual_name);
+            let expected_ty = self.resolve_named_ir_type(expected_ty);
+            let compatible_literal = (Self::is_integer_type(&expected_ty)
+                && Self::is_integer_type(&actual_ty)
+                && Self::is_const_int_expr(&field.expr))
+                || (Self::is_float_type(&expected_ty)
+                    && Self::is_float_type(&actual_ty)
+                    && Self::is_float_literal_expr(&field.expr));
+            if actual_ty != expected_ty && !compatible_literal {
+                self.error(format!(
+                    "field `{}` expects `{}`, found `{actual_name}`",
+                    field.name,
+                    self.context.get_type_name(&expected_ty)
+                ));
+                return Err(());
+            }
+        }
+        Ok(())
+    }
+
+    // Check an array literal against a declared array type (V2). Bare struct
+    // literal elements are checked contextually; other elements must match the
+    // element type (with the usual scalar-literal width flexibility).
+    fn check_contextual_array_literal(
+        &mut self,
+        elements: &[Expression],
+        element_ty: &IrType,
+        len: usize,
+    ) -> Result<(), ()> {
+        // `arr: T[N] = []` is the explicit zero-fill form.
+        if elements.is_empty() {
+            return Ok(());
+        }
+        if elements.len() != len {
+            self.error(format!(
+                "array literal has {} elements, but the declared type expects {len}",
+                elements.len()
+            ));
+            return Err(());
+        }
+        let expected_ty = self.resolve_named_ir_type(element_ty);
+        for element in elements {
+            if let Expression::Primary(PrimaryExpr::StructLiteral(fields)) = element {
+                self.check_contextual_struct_literal(fields, element_ty)?;
+                continue;
+            }
+            let actual_name = self.infer_expression_type(element)?;
+            let actual_ty = self.resolve_type_string(&actual_name);
+            let compatible_literal = (Self::is_integer_type(&expected_ty)
+                && Self::is_integer_type(&actual_ty)
+                && Self::is_const_int_expr(element))
+                || (Self::is_float_type(&expected_ty)
+                    && Self::is_float_type(&actual_ty)
+                    && Self::is_float_literal_expr(element));
+            if actual_ty != expected_ty && !compatible_literal {
+                self.error(format!(
+                    "array element expects `{}`, found `{actual_name}`",
+                    self.context.get_type_name(&expected_ty)
+                ));
+                return Err(());
+            }
+        }
+        Ok(())
+    }
+
     fn ast_type_to_ir_type(&self, ty: &Type) -> IrType {
+        self.ast_type_to_ir_type_inner(ty, &mut HashSet::new())
+    }
+
+    fn ast_type_to_ir_type_inner(&self, ty: &Type, active: &mut HashSet<String>) -> IrType {
         match ty {
             Type::Primitive(name) => self.primitive_to_ir(name),
-            Type::Pointer(inner) => IrType::Pointer(Box::new(self.ast_type_to_ir_type(inner))),
+            Type::Pointer(inner) => {
+                IrType::Pointer(Box::new(self.ast_type_to_ir_type_inner(inner, active)))
+            }
             Type::Array(len, inner) => IrType::Array {
                 len: *len,
-                element: Box::new(self.ast_type_to_ir_type(inner)),
+                element: Box::new(self.ast_type_to_ir_type_inner(inner, active)),
             },
+            Type::Slice(inner) => {
+                IrType::Slice(Box::new(self.ast_type_to_ir_type_inner(inner, active)))
+            }
             Type::Struct(fields) => {
                 let field_types: Vec<(String, IrType)> = fields
                     .iter()
-                    .map(|f| (f.name.clone(), self.ast_type_to_ir_type(&f.ty)))
+                    .map(|f| {
+                        (
+                            f.name.clone(),
+                            self.ast_type_to_ir_type_inner(&f.ty, active),
+                        )
+                    })
                     .collect();
                 IrType::Aggregate(field_types)
             }
-            Type::Named { name, .. } => IrType::Named(name.clone()),
+            Type::Named { name, args } => {
+                if args.is_empty() {
+                    IrType::Named(name.clone())
+                } else if let Some((params, definition)) = self.generic_type_defs.get(name) {
+                    if params.len() != args.len() {
+                        return IrType::Named(name.clone());
+                    }
+                    let specialized_name = format!(
+                        "{name}<{}>",
+                        args.iter()
+                            .map(|arg| {
+                                self.context
+                                    .get_type_name(&self.ast_type_to_ir_type_inner(arg, active))
+                            })
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    );
+                    if !active.insert(specialized_name.clone()) {
+                        return IrType::Named(specialized_name);
+                    }
+                    let substitutions = params
+                        .iter()
+                        .cloned()
+                        .zip(args.iter().cloned())
+                        .collect::<HashMap<_, _>>();
+                    let resolved = self.ast_type_to_ir_type_inner(
+                        &substitute_type(definition, &substitutions),
+                        active,
+                    );
+                    active.remove(&specialized_name);
+                    resolved
+                } else {
+                    let args = args
+                        .iter()
+                        .map(|arg| {
+                            self.context
+                                .get_type_name(&self.ast_type_to_ir_type_inner(arg, active))
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    IrType::Named(format!("{name}<{args}>"))
+                }
+            }
         }
     }
 
@@ -757,6 +1481,19 @@ impl SemanticAnalyzer {
             return Ok("unknown".to_owned());
         }
 
+        // A slice `T[]` exposes `ptr` (*T) and `len` (i64).
+        if let Some(elem) = base_type.strip_suffix("[]") {
+            return match field {
+                "len" => Ok("i64".to_owned()),
+                "ptr" => Ok(format!("*{elem}")),
+                _ => {
+                    self.diagnostics
+                        .error(format!("unknown field `{field}` for slice `{base_type}`"));
+                    Err(())
+                }
+            };
+        }
+
         let resolved = self.resolve_type_string(base_type);
 
         let (fields, through_pointer) = match resolved {
@@ -779,7 +1516,7 @@ impl SemanticAnalyzer {
 
         if let Some((_, field_ty)) = fields.iter().find(|(name, _)| name == field) {
             let field_type_name = self.context.get_type_name(field_ty);
-            if through_pointer {
+            if through_pointer && self.language_version == LanguageVersion::V1 {
                 Ok(format!("*{field_type_name}"))
             } else {
                 Ok(field_type_name)
@@ -803,15 +1540,27 @@ impl SemanticAnalyzer {
         // Handle pointer-to-array: *T[N] -> *T
         if let Some(inner) = base_type.strip_prefix('*') {
             if let Some((element, _len)) = inner.split_once('[') {
-                return Ok(format!("*{element}"));
+                return Ok(if self.language_version == LanguageVersion::V2 {
+                    element.to_owned()
+                } else {
+                    format!("*{element}")
+                });
             }
             // Pointer to non-array: *T -> *T (indexing through pointer returns pointer to element)
-            return Ok(format!("*{inner}"));
+            return Ok(if self.language_version == LanguageVersion::V2 {
+                inner.to_owned()
+            } else {
+                format!("*{inner}")
+            });
         }
 
         // Handle direct array: T[N] -> *T (stack arrays follow the same pointer-element rule)
         if let Some((element, _rest)) = base_type.split_once('[') {
-            return Ok(format!("*{element}"));
+            return Ok(if self.language_version == LanguageVersion::V2 {
+                element.to_owned()
+            } else {
+                format!("*{element}")
+            });
         }
 
         // Resolve named types and check the underlying structure
@@ -826,11 +1575,19 @@ impl SemanticAnalyzer {
                     ));
                     return Ok("*unknown".to_owned());
                 }
-                Ok(format!("*{inner_name}"))
+                Ok(if self.language_version == LanguageVersion::V2 {
+                    inner_name
+                } else {
+                    format!("*{inner_name}")
+                })
             }
             IrType::Array { element, .. } => {
                 let element_name = self.context.get_type_name(element);
-                Ok(format!("*{element_name}"))
+                Ok(if self.language_version == LanguageVersion::V2 {
+                    element_name
+                } else {
+                    format!("*{element_name}")
+                })
             }
             IrType::Named(name) if name == "unknown" => {
                 self.diagnostics.warn(format!(
@@ -895,8 +1652,14 @@ impl SemanticAnalyzer {
         match target {
             AssignTarget::Identifier(name) => {
                 if self.symbols.lookup(name).is_none() {
-                    self.diagnostics
-                        .error(format!("Undefined identifier: {name}"));
+                    if self.language_version == LanguageVersion::V2 {
+                        self.error(format!(
+                            "assignment target `{name}` is not declared; use `{name} := ...` to create a binding"
+                        ));
+                    } else {
+                        self.diagnostics
+                            .error(format!("Undefined identifier: {name}"));
+                    }
                     return Err(());
                 }
                 Ok(())
@@ -929,6 +1692,12 @@ impl SemanticAnalyzer {
                         })
                         .collect(),
                 );
+            }
+        }
+
+        if let Some(elem) = trimmed.strip_suffix("[]") {
+            if !elem.is_empty() {
+                return IrType::Slice(Box::new(self.parse_type_string(elem)));
             }
         }
 
@@ -971,6 +1740,14 @@ impl SemanticAnalyzer {
                 .context
                 .resolve(name)
                 .cloned()
+                .or_else(|| {
+                    // Generic instantiation `Base<...>`: the semantic context
+                    // registers only the base definition, so fall back to it.
+                    // Type arguments are not yet substituted here (V1-loose
+                    // generics); monomorphization happens during lowering.
+                    name.split_once('<')
+                        .and_then(|(base, _)| self.context.resolve(base).cloned())
+                })
                 .map(|resolved| {
                     if !seen.insert(name.clone()) {
                         IrType::Named(name.clone())
@@ -1044,6 +1821,25 @@ impl SemanticAnalyzer {
 
     fn is_float_type(ty: &IrType) -> bool {
         matches!(ty, IrType::Float(_))
+    }
+
+    // True when `decl` is a slice `T[]` and `init` is an array `T[N]` of the same
+    // element type, e.g. decl "i32[]" against init "i32[3]".
+    fn is_array_to_slice_coercion(decl: &str, init: &str) -> bool {
+        let Some(elem) = decl.strip_suffix("[]") else {
+            return false;
+        };
+        let Some(open) = init.rfind('[') else {
+            return false;
+        };
+        let (init_elem, count) = init.split_at(open);
+        init_elem == elem
+            && count.starts_with('[')
+            && count.ends_with(']')
+            && count[1..count.len() - 1]
+                .chars()
+                .all(|c| c.is_ascii_digit())
+            && count.len() > 2
     }
 
     // A bare float literal (optionally grouped or negated). Such a literal is

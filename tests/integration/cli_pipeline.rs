@@ -13,7 +13,7 @@ const STDLIB_PREFIX: &str = "_s_";
 const USER_PREFIX: &str = "_u_";
 
 fn make_pipeline(mode: TargetMode, prefix: &str) -> CompilationPipeline {
-    let mut p = CompilationPipeline::new();
+    let mut p = CompilationPipeline::new_v1();
     p.set_target_mode(mode);
     p.set_string_prefix(Some(prefix.to_owned()));
     p.set_run_semantic_analysis(false);
@@ -49,6 +49,44 @@ fn run_hll(src: &str) -> (String, i64) {
     let mut vm = VirtualMachine::new(&assembled);
     let result = vm.run(5_000_000);
 
+    let code = match result.outcome {
+        StepOutcome::Halted(c) => c,
+        StepOutcome::Continue => panic!("program timed out"),
+    };
+    (result.uart_output, code)
+}
+
+/// Like `run_hll`, but the user program is compiled in V2 mode.
+fn run_hll_v2(src: &str) -> (String, i64) {
+    use full_stack::compilation_pipeline::LanguageVersion;
+
+    let stdlib_pipeline = make_pipeline(TargetMode::Hosted, STDLIB_PREFIX);
+    let stdlib_result = stdlib_pipeline
+        .compile(&get_stdlib_source())
+        .expect("stdlib compile failed");
+    let (_, stdlib_tokens) =
+        stdlib_pipeline.compile_ir_to_assembly_with_tokens(&stdlib_result.ir_program);
+
+    let mut user_pipeline = make_pipeline(TargetMode::Hosted, USER_PREFIX);
+    user_pipeline.set_language_version(LanguageVersion::V2);
+    user_pipeline.set_run_semantic_analysis(true);
+    let user_result = user_pipeline.compile(src).expect("user compile failed");
+    let (_, user_tokens) =
+        user_pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program);
+
+    let stdlib_obj = stdlib_pipeline
+        .assemble(&stdlib_tokens)
+        .expect("assemble stdlib object failed");
+    let user_obj = user_pipeline
+        .assemble(&user_tokens)
+        .expect("assemble user object failed");
+
+    let assembled = user_pipeline
+        .link_assembled_objects(&[("stdlib", &stdlib_obj), ("user", &user_obj)])
+        .expect("object link failed");
+
+    let mut vm = VirtualMachine::new(&assembled);
+    let result = vm.run(5_000_000);
     let code = match result.outcome {
         StepOutcome::Halted(c) => c,
         StepOutcome::Continue => panic!("program timed out"),
@@ -216,6 +254,68 @@ double: (n: i32) -> i32 { return n * 2 }
 main: () -> i32 { return double(21) }";
     let (_, code) = run_hll(src);
     assert_eq!(code, 42);
+}
+
+#[test]
+fn run_println_str_entry_point() {
+    // Slice entry points write the exact byte range; the trailing newline
+    // distinguishes `println`.
+    let src = "
+external print: (s: u8[]) -> i32
+external println: (s: u8[]) -> i32
+
+main: () -> i32 {
+    print(\"Hello, \")
+    println(\"world\")
+    return 0
+}";
+    let (uart, code) = run_hll(src);
+    assert_eq!(code, 0);
+    assert_eq!(uart, "Hello, world\n");
+}
+
+#[test]
+fn run_v2_string_slice_calls_stdlib_print() {
+    // A V2 string literal passes directly to the slice-based stdlib entry points.
+    let src = "
+external print: (s: u8[]) -> i32
+external println: (s: u8[]) -> i32
+
+main: () -> i32 {
+    print(\"Hello, \")
+    println(\"world\")
+    return 0
+}";
+    let (uart, code) = run_hll_v2(src);
+    assert_eq!(code, 0);
+    assert_eq!(uart, "Hello, world\n");
+}
+
+#[test]
+fn run_v2_slice_string_utilities() {
+    let src = "
+external print: (s: u8[]) -> i32
+external str_len: (s: u8[]) -> u64
+external str_is_empty: (s: u8[]) -> bool
+external str_equals: (lhs: u8[], rhs: u8[]) -> bool
+external str_copy: (s: u8[]) -> u8[]
+external str_concat: (lhs: u8[], rhs: u8[]) -> u8[]
+
+main: () -> i32 {
+    copy: u8[] = str_copy(\"ab\")
+    joined: u8[] = str_concat(copy, \"cd\")
+    if str_is_empty(joined) {
+        return 1
+    }
+    if !str_equals(joined, \"abcd\") {
+        return 2
+    }
+    print(joined)
+    return str_len(joined) as i32
+}";
+    let (uart, code) = run_hll_v2(src);
+    assert_eq!(code, 4);
+    assert_eq!(uart, "abcd");
 }
 
 #[test]

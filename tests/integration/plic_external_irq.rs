@@ -42,7 +42,7 @@ kmain: () -> () {
 "#;
 
 fn compile_and_run_kernel(kernel_src: &str) -> (String, Option<i64>, u64) {
-    let mut stdlib_pipeline = CompilationPipeline::new();
+    let mut stdlib_pipeline = CompilationPipeline::new_v1();
     stdlib_pipeline.set_string_prefix(Some("__kern_str_".to_owned()));
     let stdlib = stdlib_pipeline
         .compile(&get_kernel_stdlib_source())
@@ -50,7 +50,7 @@ fn compile_and_run_kernel(kernel_src: &str) -> (String, Option<i64>, u64) {
     let (_, stdlib_tokens) =
         stdlib_pipeline.compile_ir_to_assembly_with_tokens(&stdlib.ir_program);
 
-    let user_pipeline = CompilationPipeline::new();
+    let user_pipeline = CompilationPipeline::new_v1();
     let user = user_pipeline.compile(kernel_src).expect("kernel compile");
     let (_, user_tokens) = user_pipeline.compile_ir_to_assembly_with_tokens(&user.ir_program);
 

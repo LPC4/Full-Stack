@@ -2,11 +2,11 @@ use asm_to_binary::assembler::link_layout::LinkLayout;
 use asm_to_binary::assembler::{Assembler, AssemblerError};
 use asm_to_binary::rv_instruction::RvInstruction;
 use asm_to_binary::{AssembledOutput, LinkerError, ObjectLinker};
-pub use hll_to_ir::TargetMode;
 use hll_to_ir::{
     CompileConfig, Diagnostic, DiagnosticLevel, HllCompiler, IrProgram, IrType, OptOptions,
     optimize_ir,
 };
+pub use hll_to_ir::{LanguageVersion, TargetMode};
 use ir_to_asm::compiler::compiler_rv64::CompilerRv64;
 use std::cell::RefCell;
 use std::collections::hash_map::DefaultHasher;
@@ -154,13 +154,12 @@ impl Default for PipelineConfig {
 
 pub struct CompilationPipeline {
     run_semantic_analysis: bool,
+    language_version: LanguageVersion,
     target_mode: TargetMode,
     entry_point: Option<String>,
     link_layout: Option<LinkLayout>,
     string_prefix: Option<String>,
     type_prelude: Vec<(String, IrType)>,
-    // Raw HLL source prepended to every compiled unit (e.g. a shared `layout.hll` of
-    // consts/structs). Lets separately-compiled TUs share definitions without a Rust copy.
     source_prelude: String,
     artifact_root: PathBuf,
     artifact_stem: RefCell<Option<String>>,
@@ -182,6 +181,7 @@ impl CompilationPipeline {
     pub fn new() -> Self {
         Self {
             run_semantic_analysis: true,
+            language_version: LanguageVersion::V2,
             target_mode: TargetMode::Hosted,
             entry_point: None,
             link_layout: None,
@@ -199,9 +199,17 @@ impl CompilationPipeline {
         }
     }
 
+    /// Construct a pipeline for explicit V1 compatibility tests and sources.
+    pub fn new_v1() -> Self {
+        let mut pipeline = Self::new();
+        pipeline.language_version = LanguageVersion::V1;
+        pipeline
+    }
+
     pub fn from_config(config: PipelineConfig) -> Self {
         Self {
             run_semantic_analysis: config.run_semantic_analysis,
+            language_version: LanguageVersion::V2,
             target_mode: config.target_mode,
             entry_point: config.entry_point,
             link_layout: config.link_layout,
@@ -267,6 +275,14 @@ impl CompilationPipeline {
 
     pub fn set_run_semantic_analysis(&mut self, enabled: bool) {
         self.run_semantic_analysis = enabled;
+    }
+
+    pub fn language_version(&self) -> LanguageVersion {
+        self.language_version
+    }
+
+    pub fn set_language_version(&mut self, version: LanguageVersion) {
+        self.language_version = version;
     }
 
     pub fn set_string_prefix(&mut self, prefix: Option<String>) {
@@ -406,6 +422,7 @@ impl CompilationPipeline {
 
         let compiler = HllCompiler::new(CompileConfig {
             target: self.target_mode,
+            language_version: self.language_version,
             strict: self.run_semantic_analysis,
             string_prefix: self.string_prefix.clone(),
             type_prelude: self.type_prelude.clone(),
@@ -474,6 +491,7 @@ impl CompilationPipeline {
     ) -> PipelineResult {
         let compiler = HllCompiler::new(CompileConfig {
             target: self.target_mode,
+            language_version: self.language_version,
             strict: self.run_semantic_analysis,
             string_prefix: self.string_prefix.clone(),
             type_prelude: self.type_prelude.clone(),

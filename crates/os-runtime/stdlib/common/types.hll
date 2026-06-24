@@ -1,9 +1,10 @@
-type Str = {
+; @version 2
+struct Str {
     data: u8*,
     length: u64,
 }
 
-type HeapBlock = {
+struct HeapBlock {
     next: HeapBlock*,
     ptr: u8*,
     size: u64,

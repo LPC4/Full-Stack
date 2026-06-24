@@ -1,7 +1,7 @@
-; In-VM static linker: `ld <a.o> <b.o> ... <out>` -> ET_EXEC. Parses N relocatable
-; ELF objects (as.hll output), merges .text/.data, resolves the global symbol table,
-; applies CALL_PLT/JAL/PCREL_HI20 relocations, and emits a single-PT_LOAD executable
-; the kernel loads at USER_CODE_BASE. Mirrors host object_linker.rs. 
+; @version 2
+
+; In-VM static linker: `ld <a.o> <b.o> ... <out>` -> ET_EXEC. Merges .text/.data,
+; resolves globals, applies relocations, emits a PT_LOAD exec. See OS spec / object_linker.rs.
 
 external console_write:   (str: u8*)
 external console_writeln: (str: u8*)
@@ -42,9 +42,9 @@ out: u8* = null
 
 ; Per-module: file offset in objbuf, and this module's start offset within the
 ; merged text/data regions.
-mod_base: i64[8]
-mod_text_off: i64[8]
-mod_data_off: i64[8]
+mod_base: i64[8] = []
+mod_text_off: i64[8] = []
+mod_data_off: i64[8] = []
 nmod: i64 = 0
 
 ; Global symbol table (exported .globl definitions): 16-byte names + absolute addr.
@@ -60,7 +60,7 @@ err_flag: i64 = 0
 
 ; Argument path tokens (inputs..., output last).
 path_pool: u8* = null
-path_off: i64[16]
+path_off: i64[16] = []
 npath: i64 = 0
 
 ; --- Section lookup outputs (set by sec_find) ---
@@ -69,7 +69,7 @@ sec_size: u64 = 0
 sec_idx: i64 = 0
 
 fail: (msg: u8*) {
-    console_write("ld: ".data)
+    console_write("ld: ".ptr)
     console_writeln(msg)
     err_flag = 1
 }
@@ -90,7 +90,7 @@ rd_le: (p: u8*, off: u64, n: u64) -> u64 {
 wr_le: (off: u64, val: u64, n: u64) {
     k: u64 = 0
     while k < n {
-        d: u8* = out[0] + off + k
+        d: u8* = out + off + k
         @d = (val >> (k * 8)) as u8
         k = k + 1
     }
@@ -126,10 +126,10 @@ sec_find: (f: u8*, want: u8*) -> i64 {
 ; Record a defined global symbol; flag a conflicting redefinition.
 gsym_add: (name: u8*, addr: i64) {
     if ngsym >= 64 {
-        fail("too many global symbols".data)
+        fail("too many global symbols".ptr)
         return
     }
-    dst: u8* = gsym_names[0] + (ngsym as u64) * 16
+    dst: u8* = gsym_names + (ngsym as u64) * 16
     i: u64 = 0
     while i < 15 {
         c: u8 = @(name + i)
@@ -142,7 +142,7 @@ gsym_add: (name: u8*, addr: i64) {
     }
     t: u8* = dst + i
     @t = 0 as u8
-    @gsym_addr[ngsym] = addr
+    gsym_addr[ngsym] = addr
     ngsym = ngsym + 1
 }
 
@@ -150,9 +150,9 @@ gsym_add: (name: u8*, addr: i64) {
 gsym_lookup: (name: u8*) -> i64 {
     i: i64 = 0
     while i < ngsym {
-        cand: u8* = gsym_names[0] + (i as u64) * 16
+        cand: u8* = gsym_names + (i as u64) * 16
         if cstr_eq(cand, name) == 1 {
-            return @gsym_addr[i]
+            return gsym_addr[i]
         }
         i = i + 1
     }
@@ -166,35 +166,35 @@ gsym_lookup: (name: u8*) -> i64 {
 load_object: (m: i64, path: u8*) {
     fd: i64 = sc_open(path, 0)
     if fd < 0 {
-        fail("cannot open object".data)
+        fail("cannot open object".ptr)
         return
     }
-    dst: u8* = objbuf[0] + objbuf_len
+    dst: u8* = objbuf + objbuf_len
     n: i64 = sc_read(fd, dst, 0, 16384)
     sc_close(fd)
     if n <= 0 {
-        fail("empty object".data)
+        fail("empty object".ptr)
         return
     }
-    @mod_base[m] = objbuf_len as i64
+    mod_base[m] = objbuf_len as i64
     f: u8* = dst
 
-    @mod_text_off[m] = mtext_len as i64
-    if sec_find(f, ".text".data) == 1 {
+    mod_text_off[m] = mtext_len as i64
+    if sec_find(f, ".text".ptr) == 1 {
         i: u64 = 0
         while i < sec_size {
-            d: u8* = merged_text[0] + mtext_len + i
+            d: u8* = merged_text + mtext_len + i
             @d = @(f + sec_off + i)
             i = i + 1
         }
         mtext_len = mtext_len + sec_size
     }
 
-    @mod_data_off[m] = mdata_len as i64
-    if sec_find(f, ".data".data) == 1 {
+    mod_data_off[m] = mdata_len as i64
+    if sec_find(f, ".data".ptr) == 1 {
         i: u64 = 0
         while i < sec_size {
-            d: u8* = merged_data[0] + mdata_len + i
+            d: u8* = merged_data + mdata_len + i
             @d = @(f + sec_off + i)
             i = i + 1
         }
@@ -216,14 +216,14 @@ sec_index_of: (f: u8*, name: u8*) -> i64 {
 build_globals: () {
     m: i64 = 0
     while m < nmod {
-        mb: i64 = @mod_base[m]
-        f: u8* = objbuf[0] + (mb as u64)
-        ti: i64 = sec_index_of(f, ".text".data)
-        di: i64 = sec_index_of(f, ".data".data)
-        if sec_find(f, ".symtab".data) == 1 {
+        mb: i64 = mod_base[m]
+        f: u8* = objbuf + (mb as u64)
+        ti: i64 = sec_index_of(f, ".text".ptr)
+        di: i64 = sec_index_of(f, ".data".ptr)
+        if sec_find(f, ".symtab".ptr) == 1 {
             symoff: u64 = sec_off
             symsz: u64 = sec_size
-            sec_find(f, ".strtab".data)
+            sec_find(f, ".strtab".ptr)
             strp: u8* = f + sec_off
             nsyms: u64 = symsz / 24
             k: u64 = 0
@@ -237,11 +237,11 @@ build_globals: () {
                 ; bind == 1 (global) and defined in this module's text/data.
                 if info / 16 == 1 {
                     if shndx == ti {
-                        a: i64 = text_vbase + @mod_text_off[m] + (value as i64)
+                        a: i64 = text_vbase + mod_text_off[m] + (value as i64)
                         gsym_add(nm, a)
                     }
                     if shndx == di {
-                        a: i64 = data_vbase + @mod_data_off[m] + (value as i64)
+                        a: i64 = data_vbase + mod_data_off[m] + (value as i64)
                         gsym_add(nm, a)
                     }
                 }
@@ -268,17 +268,17 @@ parse_args: (arg: u8*) {
         if npath >= 16 {
             break
         }
-        @path_off[npath] = cur as i64
+        path_off[npath] = cur as i64
         while @(arg + i) != 0 {
             if @(arg + i) == ' ' {
                 break
             }
-            d: u8* = path_pool[0] + cur
+            d: u8* = path_pool + cur
             @d = @(arg + i)
             cur = cur + 1
             i = i + 1
         }
-        z: u8* = path_pool[0] + cur
+        z: u8* = path_pool + cur
         @z = 0 as u8
         cur = cur + 1
         npath = npath + 1
@@ -295,14 +295,14 @@ main: () -> i32 {
     gsym_addr = new(i64, 64)
     path_pool = new(u8, 2048)
     if objbuf == null or merged_text == null or merged_data == null or out == null or gsym_names == null or gsym_addr == null or path_pool == null {
-        console_writeln("ld: out of memory".data)
+        console_writeln("ld: out of memory".ptr)
         return 1
     }
 
     arg: u8* = ARG_BASE as u8*
     parse_args(arg)
     if npath < 2 {
-        console_writeln("ld: usage: ld <obj>... <out>".data)
+        console_writeln("ld: usage: ld <obj>... <out>".ptr)
         return 1
     }
 
@@ -316,8 +316,8 @@ main: () -> i32 {
     ; Load and merge each input object (all tokens but the last).
     m: i64 = 0
     while m < nmod {
-        po: i64 = @path_off[m]
-        p: u8* = path_pool[0] + (po as u64)
+        po: i64 = path_off[m]
+        p: u8* = path_pool + (po as u64)
         load_object(m, p)
         m = m + 1
     }
@@ -335,14 +335,14 @@ main: () -> i32 {
         return 1
     }
 
-    opo: i64 = @path_off[nmod]
-    outp: u8* = path_pool[0] + (opo as u64)
+    opo: i64 = path_off[nmod]
+    outp: u8* = path_pool + (opo as u64)
     emit_exec(outp)
     if err_flag != 0 {
         return 1
     }
 
-    console_write("ld: wrote ".data)
+    console_write("ld: wrote ".ptr)
     console_writeln(outp)
     return 0
 }

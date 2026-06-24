@@ -1,3 +1,4 @@
+; @version 2
 external kpanic:            (msg: u8*)
 external klog_int:          (label: u8*, val: i64)
 external klog_hex:          (label: u8*, val: u64)
@@ -5,7 +6,7 @@ external timer_set:         (interval: u64)
 external syscall_dispatch:  (frame: u64*) -> u64
 external schedule:          (frame: u64*, action: u64)
 external scheduler_wake_input_waiter: () -> u64
-kernel_tick: u64
+kernel_tick: u64 = 0
 
 ; Trap-frame slots TF_SEPC/SCAUSE/STVAL come from the shared kernel layout (layout.hll).
 
@@ -18,7 +19,7 @@ trap_handler: (frame: u64*) {
         csrw sstatus, t0
     }
 
-    scause_u: u64 = @frame[TF_SCAUSE]
+    scause_u: u64 = frame[TF_SCAUSE]
     scause_i: i64 = scause_u as i64
 
     ; Bit 63 set = interrupt (negative when cast to i64).
@@ -61,8 +62,8 @@ trap_handler: (frame: u64*) {
             return
         }
 
-        klog_hex("unhandled interrupt scause".data, scause_u)
-        kpanic("unhandled interrupt".data)
+        klog_hex("unhandled interrupt scause".ptr, scause_u)
+        kpanic("unhandled interrupt".ptr)
         return
     }
 
@@ -70,15 +71,15 @@ trap_handler: (frame: u64*) {
     ; Always advance sepc past the ecall; non-zero actions trigger schedule.
     if scause_u == 8 {
         action: u64 = syscall_dispatch(frame)
-        @frame[TF_SEPC] = @frame[TF_SEPC] + 4
+        frame[TF_SEPC] = frame[TF_SEPC] + 4
         if action != 0 {
             schedule(frame, action)
         }
         return
     }
 
-    klog_hex("exception scause".data, scause_u)
-    klog_hex("exception sepc".data, @frame[TF_SEPC])
-    klog_hex("exception stval".data, @frame[TF_STVAL])
-    kpanic("unhandled exception".data)
+    klog_hex("exception scause".ptr, scause_u)
+    klog_hex("exception sepc".ptr, frame[TF_SEPC])
+    klog_hex("exception stval".ptr, frame[TF_STVAL])
+    kpanic("unhandled exception".ptr)
 }

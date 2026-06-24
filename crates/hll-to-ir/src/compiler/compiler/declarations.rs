@@ -2,7 +2,7 @@ use super::{
     Block, CompilerError, DeclNode, Declaration, Expression, FunctionDecl, GenericTypeDef,
     HighLevelCompiler, IrFunction, IrGlobalVar, IrInstruction, IrParam, IrProgram, IrRegister,
     IrTerminator, IrType, IrTypeAlias, IrValue, Literal, LoweringContext, Program,
-    SemanticAnalyzer, Statement,
+    SemanticAnalyzer, Statement, Type,
 };
 
 #[derive(Debug, Clone)]
@@ -29,6 +29,16 @@ impl HighLevelCompiler {
         log::debug!("lowering declaration: {:?}", declaration.decl);
         match &declaration.decl {
             DeclNode::Import { .. } => return Ok(()),
+            // Enums are registered in a pre-pass (see compile_program); generic
+            // enums are not yet supported.
+            DeclNode::Enum { name, generics, .. } => {
+                if !generics.is_empty() {
+                    return Err(CompilerError::UnsupportedDeclaration(format!(
+                        "generic enum `{name}` is not yet implemented (HLL V2 M7)"
+                    )));
+                }
+                Ok(())
+            }
             DeclNode::Type { name, ty, generics } => {
                 if !generics.is_empty() {
                     // This is a generic type definition, store it for later specialization
@@ -77,6 +87,56 @@ impl HighLevelCompiler {
                     None => None,
                     Some(expr) => self.const_init_bytes(expr, &ir_ty),
                 };
+                ir_program.push_global_var(IrGlobalVar {
+                    name: name.clone(),
+                    ty: ir_ty,
+                    init: init_bytes,
+                });
+                Ok(())
+            }
+            DeclNode::Struct {
+                name,
+                generics,
+                fields,
+            } => {
+                let ty = Type::Struct(fields.clone());
+                if generics.is_empty() {
+                    let lowered = self.lower_type(&ty);
+                    self.context
+                        .types
+                        .register_type(name.clone(), lowered.clone());
+                    ir_program.push_type_alias(IrTypeAlias {
+                        name: name.clone(),
+                        ty: lowered,
+                    });
+                } else {
+                    self.generic_type_defs.insert(
+                        name.clone(),
+                        GenericTypeDef {
+                            params: generics.clone(),
+                            ty,
+                        },
+                    );
+                }
+                Ok(())
+            }
+            DeclNode::InferredVariable { name, init } => {
+                if let Expression::Primary(crate::ast::PrimaryExpr::New { ty, .. }) = init {
+                    self.lower_type_with_program(ir_program, ty)?;
+                }
+                let Some(lowered) = self.lower_expression(init) else {
+                    return Err(CompilerError::UnsupportedDeclaration(format!(
+                        "failed to infer global `{name}` initializer type"
+                    )));
+                };
+                if lowered.ty == IrType::Void {
+                    return Err(CompilerError::UnsupportedDeclaration(format!(
+                        "global `{name}` initializer has void type"
+                    )));
+                }
+                let ir_ty = lowered.ty;
+                self.global_vars.insert(name.clone(), ir_ty.clone());
+                let init_bytes = self.const_init_bytes(init, &ir_ty);
                 ir_program.push_global_var(IrGlobalVar {
                     name: name.clone(),
                     ty: ir_ty,
@@ -439,9 +499,9 @@ impl HighLevelCompiler {
             Expression::Primary(crate::ast::PrimaryExpr::Grouped(inner)) => {
                 self.eval_const_expr_with_env_and_context(inner, env, context)
             }
-            Expression::Primary(crate::ast::PrimaryExpr::FunctionCall { name, arguments }) => {
-                self.eval_const_function_call(name, arguments, env, context)
-            }
+            Expression::Primary(crate::ast::PrimaryExpr::FunctionCall {
+                name, arguments, ..
+            }) => self.eval_const_function_call(name, arguments, env, context),
             Expression::Primary(crate::ast::PrimaryExpr::FieldAccess { expr: inner, field }) => {
                 self.eval_const_field_access(inner, field, env, context)
             }
@@ -562,6 +622,12 @@ impl HighLevelCompiler {
                     mutable_env.insert(name.clone(), value);
                 }
                 Ok(None) // Variable declaration doesn't return a value
+            }
+            Statement::InferredVariableDecl { name, init } => {
+                let value =
+                    self.eval_const_expr_with_env_and_context(init, mutable_env, context)?;
+                mutable_env.insert(name.clone(), value);
+                Ok(None)
             }
             Statement::Return(expr) => {
                 // Return the evaluated expression

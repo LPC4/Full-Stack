@@ -77,9 +77,28 @@ impl<'a> Lexer<'a> {
             }
 
             // Punctuation & Operators
-            ':' => Token::Colon,
+            ':' => {
+                if self.peek_is('=') {
+                    self.advance();
+                    Token::ColonEqual
+                } else {
+                    Token::Colon
+                }
+            }
             ',' => Token::Comma,
-            '.' => Token::Dot,
+            '.' => {
+                if self.peek_is('.') {
+                    self.advance();
+                    if self.peek_is('=') {
+                        self.advance();
+                        Token::DotDotEq
+                    } else {
+                        Token::DotDot
+                    }
+                } else {
+                    Token::Dot
+                }
+            }
             '+' => self.op_or_compound(CompoundOp::Add, Token::Plus),
             // `-=` compound; `->` stays Minus then Gt (handled by the parser).
             '-' => self.op_or_compound(CompoundOp::Sub, Token::Minus),
@@ -87,6 +106,7 @@ impl<'a> Lexer<'a> {
             '/' => self.op_or_compound(CompoundOp::Div, Token::Slash),
             '%' => self.op_or_compound(CompoundOp::Mod, Token::Percent),
             '@' => Token::At,
+            '?' => Token::Question,
             '&' => {
                 if self.peek_is('&') {
                     self.advance();
@@ -175,11 +195,16 @@ impl<'a> Lexer<'a> {
         let text = &self.input[start..self.pos];
         match text {
             "type" => Token::Type,
+            "struct" => Token::Struct,
             "const" => Token::Const,
             "external" => Token::External,
             "if" => Token::If,
             "else" => Token::Else,
             "while" => Token::While,
+            "for" => Token::For,
+            "in" => Token::In,
+            "enum" => Token::Enum,
+            "match" => Token::Match,
             "break" => Token::Break,
             "continue" => Token::Continue,
             "return" => Token::Return,
@@ -232,6 +257,13 @@ impl<'a> Lexer<'a> {
                 if c.is_ascii_digit() {
                     self.advance();
                 } else if c == '.' && !is_float {
+                    // A `.` followed by another `.` is the range operator, not a
+                    // decimal point: leave it for `0..5` to tokenize as `0 .. 5`.
+                    let mut ahead = self.chars.clone();
+                    ahead.next();
+                    if ahead.peek() == Some(&'.') {
+                        break;
+                    }
                     is_float = true;
                     self.advance();
                 } else {

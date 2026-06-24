@@ -8,7 +8,7 @@ use full_stack::compilation_pipeline::CompilationPipeline;
 use hll_to_ir::IrInstruction;
 
 fn compile_ok(source: &str) -> full_stack::compilation_pipeline::CompilationResult {
-    let mut pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new_v1();
     pipeline.set_write_artifacts(false);
     pipeline
         .compile(source)

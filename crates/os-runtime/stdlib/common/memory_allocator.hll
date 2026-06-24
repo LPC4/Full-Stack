@@ -1,4 +1,5 @@
-heap_buffer: u8[65536]
+; @version 2
+heap_buffer: u8[65536] = []
 heap_bump: u64 = 0
 heap_list: HeapBlock* = null
 
@@ -9,7 +10,7 @@ heap_raw_alloc: (n: u64) -> u8* {
     if new_bump > 65536 {
         return null
     }
-    ptr: u8* = heap_buffer[heap_bump]
+    ptr: u8* = &heap_buffer[heap_bump]
     heap_bump = new_bump
     return ptr
 }
@@ -22,11 +23,11 @@ malloc: (size: u64) -> u8* {
 
     current: HeapBlock* = heap_list
     while current != null {
-        if @current.is_free != 0 and @current.size >= requested {
-            @current.is_free = 0
-            return @current.ptr
+        if current.is_free != 0 and current.size >= requested {
+            current.is_free = 0
+            return current.ptr
         }
-        current = @current.next
+        current = current.next
     }
 
     block: HeapBlock* = heap_raw_alloc(32) as HeapBlock*
@@ -38,10 +39,10 @@ malloc: (size: u64) -> u8* {
         return null
     }
     @block = {
-        .next    = heap_list,
-        .ptr     = payload,
-        .size    = requested,
-        .is_free = 0,
+        next:    heap_list,
+        ptr:     payload,
+        size:    requested,
+        is_free: 0,
     }
     heap_list = block
     return payload
@@ -53,10 +54,10 @@ free: (ptr: u8*) {
     }
     current: HeapBlock* = heap_list
     while current != null {
-        if @current.ptr == ptr {
-            @current.is_free = 1
+        if current.ptr == ptr {
+            current.is_free = 1
             return
         }
-        current = @current.next
+        current = current.next
     }
 }

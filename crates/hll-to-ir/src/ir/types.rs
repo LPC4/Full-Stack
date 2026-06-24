@@ -46,6 +46,9 @@ pub enum IrType {
     Pointer(Box<Self>),
     Aggregate(Vec<(String, Self)>),
     Array { len: usize, element: Box<Self> },
+    // Slice fat pointer {ptr, len}, 16 bytes. Kept separate from Aggregate so the
+    // front end can spot it for bounds checks, for-loops, and coercion.
+    Slice(Box<Self>),
     Named(String),
 }
 
@@ -73,6 +76,7 @@ impl fmt::Display for IrType {
                 write!(f, "}}")
             }
             Self::Array { len, element } => write!(f, "{element}[{len}]"),
+            Self::Slice(element) => write!(f, "{element}[]"),
             Self::Named(name) => write!(f, "{name}"),
         }
     }

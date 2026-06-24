@@ -6,7 +6,7 @@
 use full_stack::compilation_pipeline::{CompilationError, CompilationPipeline};
 
 fn reject(src: &str, fragment: &str) {
-    let mut p = CompilationPipeline::new();
+    let mut p = CompilationPipeline::new_v1();
     p.set_write_artifacts(false);
     let err = p
         .compile(src)
@@ -21,7 +21,7 @@ fn reject(src: &str, fragment: &str) {
 }
 
 fn accept(src: &str) {
-    let mut p = CompilationPipeline::new();
+    let mut p = CompilationPipeline::new_v1();
     p.set_write_artifacts(false);
     p.compile(src)
         .unwrap_or_else(|e| panic!("expected compile to succeed, got: {e}"));

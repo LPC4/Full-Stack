@@ -1,3 +1,4 @@
+; @version 2
 ; S-mode trap entry: switches to a dedicated kernel stack, saves all GPRs + CSRs
 ; to a 288-byte frame, calls trap_handler(frame), restores, and sret.
 
@@ -5,7 +6,7 @@ external trap_handler: (frame: u64*)
 
 ; Per-hart kernel trap stack (16 KiB).
 ; sscratch points just past the top (aligned down to 16 bytes).
-kernel_trap_stack: u64[2048]
+kernel_trap_stack: u64[2048] = []
 
 ; stvec points directly at stvec_entry, bypassing the HLL function prologue.
 _s_trap_host: () {

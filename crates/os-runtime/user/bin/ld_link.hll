@@ -1,3 +1,5 @@
+; @version 2
+
 ; Relocation patching and executable emission for the in-VM linker, split out of
 ; ld.hll. Reads the merged sections and symbol table ld.hll builds, via externals.
 
@@ -49,11 +51,11 @@ pcrel_split: (delta: i64) {
 }
 
 rdw_text: (off: i64) -> u32 {
-    return rd_le(merged_text[0], off as u64, 4) as u32
+    return rd_le(merged_text, off as u64, 4) as u32
 }
 
 wrw_text: (off: i64, w: u32) {
-    d: u8* = merged_text[0] + (off as u64)
+    d: u8* = merged_text + (off as u64)
     @d = w as u8
     d1: u8* = d + 1
     @d1 = (w >> 8) as u8
@@ -93,15 +95,15 @@ patch: (site: i64, delta: i64, rtype: u64) {
 export apply_relocs: () {
     m: i64 = 0
     while m < nmod {
-        mb: i64 = @mod_base[m]
-        f: u8* = objbuf[0] + (mb as u64)
-        ti: i64 = sec_index_of(f, ".text".data)
-        di: i64 = sec_index_of(f, ".data".data)
-        sec_find(f, ".symtab".data)
+        mb: i64 = mod_base[m]
+        f: u8* = objbuf + (mb as u64)
+        ti: i64 = sec_index_of(f, ".text".ptr)
+        di: i64 = sec_index_of(f, ".data".ptr)
+        sec_find(f, ".symtab".ptr)
         symoff: u64 = sec_off
-        sec_find(f, ".strtab".data)
+        sec_find(f, ".strtab".ptr)
         strp: u8* = f + sec_off
-        if sec_find(f, ".rela.text".data) == 1 {
+        if sec_find(f, ".rela.text".ptr) == 1 {
             roff: u64 = sec_off
             nr: u64 = sec_size / 24
             j: u64 = 0
@@ -117,19 +119,19 @@ export apply_relocs: () {
                 nm: u8* = strp + noff
                 target: i64 = 0
                 if shndx == ti {
-                    target = text_vbase + @mod_text_off[m] + (value as i64)
+                    target = text_vbase + mod_text_off[m] + (value as i64)
                 } else {
                     if shndx == di {
-                        target = data_vbase + @mod_data_off[m] + (value as i64)
+                        target = data_vbase + mod_data_off[m] + (value as i64)
                     } else {
                         target = gsym_lookup(nm)
                         if target < 0 {
-                            fail("undefined symbol".data)
+                            fail("undefined symbol".ptr)
                             target = 0
                         }
                     }
                 }
-                site: i64 = @mod_text_off[m] + (r_offset as i64)
+                site: i64 = mod_text_off[m] + (r_offset as i64)
                 delta: i64 = target - (text_vbase + site)
                 patch(site, delta, rtype)
                 j = j + 1
@@ -142,21 +144,21 @@ export apply_relocs: () {
 ; --- Output ---
 
 export emit_exec: (out_path: u8*) {
-    entry: i64 = gsym_lookup("_start".data)
+    entry: i64 = gsym_lookup("_start".ptr)
     if entry < 0 {
-        fail("no _start symbol".data)
+        fail("no _start symbol".ptr)
         return
     }
     base: u64 = USER_CODE_BASE as u64
     payload_len: u64 = mtext_len + (PAD as u64) + mdata_len
 
-    @out[0] = 0x7F as u8
-    @out[1] = 69 as u8
-    @out[2] = 76 as u8
-    @out[3] = 70 as u8
-    @out[4] = 2 as u8
-    @out[5] = 1 as u8
-    @out[6] = 1 as u8
+    out[0] = 0x7F as u8
+    out[1] = 69 as u8
+    out[2] = 76 as u8
+    out[3] = 70 as u8
+    out[4] = 2 as u8
+    out[5] = 1 as u8
+    out[6] = 1 as u8
     wr_le(16, 2, 2)              ; e_type = ET_EXEC
     wr_le(18, 243, 2)           ; e_machine = EM_RISCV
     wr_le(20, 1, 4)             ; e_version
@@ -179,8 +181,8 @@ export emit_exec: (out_path: u8*) {
     ; Payload: merged text, then 8 NOPs, then merged data.
     i: u64 = 0
     while i < mtext_len {
-        d: u8* = out[0] + (HDR as u64) + i
-        @d = @(merged_text[0] + i)
+        d: u8* = out + (HDR as u64) + i
+        @d = @(merged_text + i)
         i = i + 1
     }
     p: u64 = 0
@@ -190,18 +192,18 @@ export emit_exec: (out_path: u8*) {
     }
     i = 0
     while i < mdata_len {
-        d: u8* = out[0] + (HDR as u64) + mtext_len + (PAD as u64) + i
-        @d = @(merged_data[0] + i)
+        d: u8* = out + (HDR as u64) + mtext_len + (PAD as u64) + i
+        @d = @(merged_data + i)
         i = i + 1
     }
     total: u64 = (HDR as u64) + payload_len
 
     ofd: i64 = sc_open(out_path, 2)
     if ofd < 0 {
-        fail("cannot create output".data)
+        fail("cannot create output".ptr)
         return
     }
-    sc_write(ofd, out[0], total)
+    sc_write(ofd, out, total)
     sc_ftruncate(ofd, total)
     sc_close(ofd)
 }

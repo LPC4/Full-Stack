@@ -51,4 +51,10 @@ impl SymbolTable {
         }
         None
     }
+
+    pub fn contains_in_current_scope(&self, name: &str) -> bool {
+        self.scopes
+            .last()
+            .is_some_and(|scope| scope.contains_key(name))
+    }
 }

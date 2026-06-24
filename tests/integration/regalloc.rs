@@ -16,7 +16,7 @@ fn cached_stdlib_obj(regalloc: bool) -> &'static AssembledOutput {
     static STDLIB_ON: OnceLock<AssembledOutput> = OnceLock::new();
     let cell = if regalloc { &STDLIB_ON } else { &STDLIB_OFF };
     cell.get_or_init(|| {
-        let mut pipeline = CompilationPipeline::new();
+        let mut pipeline = CompilationPipeline::new_v1();
         pipeline.set_write_artifacts(false);
         pipeline.set_register_allocation(regalloc);
         let stdlib_result = pipeline
@@ -30,7 +30,7 @@ fn cached_stdlib_obj(regalloc: bool) -> &'static AssembledOutput {
 /// Compile and run with register allocation on or off; returns the VM outcome,
 /// UART output, emitted user-code instruction count, and executed cycles.
 fn run_with_regalloc(src: &str, regalloc: bool) -> (StepOutcome, String, usize, u64) {
-    let mut pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new_v1();
     pipeline.set_write_artifacts(false);
     pipeline.set_register_allocation(regalloc);
 
@@ -322,7 +322,7 @@ main: () -> i32 {
 "#;
     let (base_outcome, base_uart, _, _) = run_with_regalloc(src, false);
 
-    let mut pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new_v1();
     pipeline.set_write_artifacts(false);
     pipeline.set_register_allocation(true);
     pipeline.set_peephole(true);

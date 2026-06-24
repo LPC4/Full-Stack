@@ -1,3 +1,4 @@
+; @version 2
 ; Sv39 paging: 3-level tables, 4 KiB pages, per-process roots. See OS spec ch.4.3.
 ; PTE bits: [53:10] PPN, [7] D, [6] A, [5] G, [4] U, [3] X, [2] W, [1] R, [0] V.
 
@@ -13,11 +14,11 @@ assert_canonical: (va: u64) {
     bit38: u64 = (va >> 38) & 1
     if bit38 == 0 {
         if (va >> 39) != 0 {
-            kpanic("vmm: non-canonical virtual address (upper bits not zero)".data)
+            kpanic("vmm: non-canonical virtual address (upper bits not zero)".ptr)
         }
     } else {
         if (va >> 39) != 0x1FFFFFF {
-            kpanic("vmm: non-canonical virtual address (upper bits not all ones)".data)
+            kpanic("vmm: non-canonical virtual address (upper bits not all ones)".ptr)
         }
     }
 }
@@ -42,7 +43,7 @@ vmm_get_root: () -> u64 {
 vmm_alloc_pt: () -> u64* {
     page: u8* = pmm_alloc()
     if page == null {
-        kpanic("vmm: out of memory for page table".data)
+        kpanic("vmm: out of memory for page table".ptr)
     }
     memset(page, 0, 4096)
     return page as u64*
@@ -51,12 +52,12 @@ vmm_alloc_pt: () -> u64* {
 ; Return the next-level page table pointed to by `table[vpn]`.
 ; If the entry is not valid, allocates and links a new page table first.
 vmm_walk_or_alloc: (table: u64*, vpn: u64) -> u64* {
-    pte: u64 = @table[vpn]
+    pte: u64 = table[vpn]
     if pte % 2 != 0 {
         return ((pte >> 10) << 12) as u64*
     }
     t: u64* = vmm_alloc_pt()
-    @table[vpn] = ((t as u64 >> 12) << 10) + VMM_V
+    table[vpn] = ((t as u64 >> 12) << 10) + VMM_V
     return t
 }
 
@@ -72,7 +73,7 @@ vmm_map: (va: u64, pa: u64, flags: u64) {
     l2: u64* = vmm_active_root as u64*
     l1: u64* = vmm_walk_or_alloc(l2, vpn2)
     l0: u64* = vmm_walk_or_alloc(l1, vpn1)
-    @l0[vpn0] = ((pa >> 12) << 10) + flags + VMM_V
+    l0[vpn0] = ((pa >> 12) << 10) + flags + VMM_V
 }
 
 ; Map a 1 GiB superpage (single L2 leaf): `va` and `pa` must be 1 GiB-aligned.
@@ -81,7 +82,7 @@ vmm_map_1gib: (va: u64, pa: u64, flags: u64) {
     assert_canonical(va)
     vpn2: u64 = (va >> 30) & 0x1FF
     l2: u64* = vmm_active_root as u64*
-    @l2[vpn2] = ((pa >> 12) << 10) + flags + VMM_V
+    l2[vpn2] = ((pa >> 12) << 10) + flags + VMM_V
 }
 
 ; Stamp the shared kernel/RAM/MMIO 1 GiB superpages into `root` so every process
@@ -110,18 +111,18 @@ vmm_fork_copy: (parent_root: u64, child_root: u64) {
     l2: u64* = parent_root as u64*
     i2: u64 = 0
     while i2 < 512 {
-        e2: u64 = @l2[i2]
+        e2: u64 = l2[i2]
         ; Valid interior node (R=W=X=0); skip leaves (kernel superpages).
         if (e2 & 1) != 0 && (e2 & 14) == 0 {
             l1: u64* = ((e2 >> 10) << 12) as u64*
             i1: u64 = 0
             while i1 < 512 {
-                e1: u64 = @l1[i1]
+                e1: u64 = l1[i1]
                 if (e1 & 1) != 0 && (e1 & 14) == 0 {
                     l0: u64* = ((e1 >> 10) << 12) as u64*
                     i0: u64 = 0
                     while i0 < 512 {
-                        e0: u64 = @l0[i0]
+                        e0: u64 = l0[i0]
                         ; Valid leaf with the U bit set: a user page to copy.
                         if (e0 & 1) != 0 && (e0 & 16) != 0 {
                             va: u64 = (i2 << 30) | (i1 << 21) | (i0 << 12)
@@ -130,7 +131,7 @@ vmm_fork_copy: (parent_root: u64, child_root: u64) {
                             flags: u64 = e0 & 0x3FE
                             dst: u8* = pmm_alloc()
                             if dst == null {
-                                kpanic("vmm: out of memory in fork copy".data)
+                                kpanic("vmm: out of memory in fork copy".ptr)
                             }
                             memcpy(dst, src_pa as u8*, 4096)
                             vmm_set_root(child_root)

@@ -43,6 +43,9 @@ fn resolve_ir_type_inner(
                 })
                 .collect(),
         ),
+        IrType::Slice(element) => {
+            IrType::Slice(Box::new(resolve_ir_type_inner(element, type_aliases, seen)))
+        }
         other => other.clone(),
     }
 }
@@ -60,7 +63,7 @@ pub fn type_alignment(ty: &IrType, type_aliases: &HashMap<String, IrType>) -> us
             FloatWidth::F32 => 4,
             FloatWidth::F64 => 8,
         },
-        IrType::Pointer(_) | IrType::Named(_) => 8,
+        IrType::Pointer(_) | IrType::Named(_) | IrType::Slice(_) => 8,
         IrType::Array { element, .. } => type_alignment(&element, type_aliases),
         IrType::Aggregate(fields) => fields
             .iter()
@@ -84,6 +87,7 @@ pub fn type_size(ty: &IrType, type_aliases: &HashMap<String, IrType>) -> usize {
             FloatWidth::F64 => 8,
         },
         IrType::Pointer(_) => 8,
+        IrType::Slice(_) => 16,
         IrType::Array { len, element } => len * type_size(&element, type_aliases),
         IrType::Aggregate(fields) => {
             let mut offset: usize = 0;

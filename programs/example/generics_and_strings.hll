@@ -1,10 +1,11 @@
+; @version 2
 ; Feature showcase: generics, strings, and heap-backed values.
 
-type Box<T> = {
+struct Box<T> {
     value: T
 }
 
-type Pair = {
+struct Pair {
     left: i32,
     right: i32,
 }
@@ -17,29 +18,29 @@ sum_pair: (pair: Pair) -> i32 {
 }
 
 make_pair: (left: i32, right: i32) -> Pair {
-    return { .left = left, .right = right }
+    return { left: left, right: right }
 }
 
 main: () -> i32 {
     title: Box<u8*>* = new(Box<u8*>)
     defer free(title)
-    @title.value = "Feature showcase".data
-    puts(@title.value)
+    title.value = "Feature showcase".ptr
+    puts(title.value)
 
     pair_box: Box<Pair>* = new(Box<Pair>)
     defer free(pair_box)
-    @pair_box.value = make_pair(19, 23)
+    pair_box.value = make_pair(19, 23)
 
-    total: i32 = sum_pair(@pair_box.value)
+    total: i32 = sum_pair(pair_box.value)
     if total != 42 {
         return 1
     }
 
     inner: Box<i32>* = new(Box<i32>)
     defer free(inner)
-    @inner.value = total
-    printf("total=%d\n".data, @inner.value)
+    inner.value = total
+    printf("total=%d\n".ptr, inner.value)
 
     ; Exit 0 on success by subtracting the expected value.
-    return @inner.value - 42
+    return inner.value - 42
 }

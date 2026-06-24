@@ -1,3 +1,4 @@
+; @version 2
 ; Inode-based read-write filesystem. See _OS_SPECIFICATION.md for on-disk layout.
 
 ; --- Layout constants ---
@@ -370,7 +371,7 @@ fs_resolve: (path: u8*) -> i64 {
             return cur
         }
         ; Copy the next path component.
-        comp: u8[32]
+        comp: u8[32] = []
         len: u64 = 0
         while len < FS_NAME_LEN - 1 {
             c: u8 = @(path + pos + len)
@@ -380,15 +381,15 @@ fs_resolve: (path: u8*) -> i64 {
             if c == FS_SLASH {
                 break
             }
-            @comp[len] = c
+            comp[len] = c
             len = len + 1
         }
-        @comp[len] = 0 as u8
+        comp[len] = 0 as u8
         if len == 0 {
             return cur
         }
         pos = pos + len
-        found: i64 = fs_find_in_dir(cur as u64, comp[0])
+        found: i64 = fs_find_in_dir(cur as u64, &comp[0])
         if found < 0 {
             return -1 as i64
         }
@@ -430,14 +431,14 @@ fs_split_path: (path: u8*, name_buf: u8*) -> i64 {
                 return 0
             }
             ; Resolve the parent prefix "/a/b" up to (but excluding) the leaf.
-            parent_buf: u8[256]
+            parent_buf: u8[256] = []
             k: u64 = 0
             while k < i && k < 255 {
-                @parent_buf[k] = @(path + k)
+                parent_buf[k] = @(path + k)
                 k = k + 1
             }
-            @parent_buf[k] = 0 as u8
-            return fs_resolve(parent_buf[0])
+            parent_buf[k] = 0 as u8
+            return fs_resolve(&parent_buf[0])
         }
     }
     return -1 as i64
@@ -476,7 +477,7 @@ fs_create_at: (parent_inode: u64, name: u8*, node_type: u64) -> i64 {
 ; the kernel fd table, and logs the inode census.
 fs_init: (base_pa: u64, image_size: u64) {
     if fs_rd32(base_pa) != FS_MAGIC32 {
-        klog_warn("[  FS  ] bad magic, not mounting".data)
+        klog_warn("[  FS  ] bad magic, not mounting".ptr)
         return
     }
     fs_image_base = base_pa
@@ -500,8 +501,8 @@ fs_init: (base_pa: u64, image_size: u64) {
         }
         idx = idx + 1
     }
-    klog_int("[  FS  ] mounted, files".data, files)
-    klog_int("[  FS  ] dirs".data, dirs)
+    klog_int("[  FS  ] mounted, files".ptr, files)
+    klog_int("[  FS  ] dirs".ptr, dirs)
 }
 
 ; Open a file by absolute path. flags: 0=RO, 1=RW, 2=create (implies RW).
@@ -513,12 +514,12 @@ fs_open: (path: u8*, flags: u64) -> i64 {
     inode: i64 = fs_resolve(path)
     if flags == FS_OPEN_CREATE {
         if inode < 0 {
-            name_buf: u8[32]
-            parent: i64 = fs_split_path(path, name_buf[0])
+            name_buf: u8[32] = []
+            parent: i64 = fs_split_path(path, &name_buf[0])
             if parent < 0 {
                 return -1 as i64
             }
-            inode = fs_create_at(parent as u64, name_buf[0], FS_TYPE_FILE)
+            inode = fs_create_at(parent as u64, &name_buf[0], FS_TYPE_FILE)
             if inode < 0 {
                 return -1 as i64
             }
@@ -793,12 +794,12 @@ fs_mkdir: (path: u8*) -> i64 {
     if fs_ready == 0 {
         return -1 as i64
     }
-    name_buf: u8[32]
-    parent: i64 = fs_split_path(path, name_buf[0])
+    name_buf: u8[32] = []
+    parent: i64 = fs_split_path(path, &name_buf[0])
     if parent < 0 {
         return -1 as i64
     }
-    return fs_create_at(parent as u64, name_buf[0], FS_TYPE_DIR)
+    return fs_create_at(parent as u64, &name_buf[0], FS_TYPE_DIR)
 }
 
 ; Free all data blocks and return inode to the free pool. Does not touch directory entries.
@@ -828,12 +829,12 @@ fs_unlink: (path: u8*) -> i64 {
     if fs_inode_type(inode as u64) != FS_TYPE_FILE {
         return -1 as i64
     }
-    name_buf: u8[32]
-    parent: i64 = fs_split_path(path, name_buf[0])
+    name_buf: u8[32] = []
+    parent: i64 = fs_split_path(path, &name_buf[0])
     if parent < 0 {
         return -1 as i64
     }
-    if fs_remove_dirent(parent as u64, name_buf[0]) < 0 {
+    if fs_remove_dirent(parent as u64, &name_buf[0]) < 0 {
         return -1 as i64
     }
     fs_release_inode(inode as u64)
@@ -858,12 +859,12 @@ fs_rmdir: (path: u8*) -> i64 {
     if fs_inode_size(inode as u64) != 0 {
         return -1 as i64
     }
-    name_buf: u8[32]
-    parent: i64 = fs_split_path(path, name_buf[0])
+    name_buf: u8[32] = []
+    parent: i64 = fs_split_path(path, &name_buf[0])
     if parent < 0 {
         return -1 as i64
     }
-    if fs_remove_dirent(parent as u64, name_buf[0]) < 0 {
+    if fs_remove_dirent(parent as u64, &name_buf[0]) < 0 {
         return -1 as i64
     }
     fs_release_inode(inode as u64)
@@ -880,26 +881,26 @@ fs_rename: (old_path: u8*, new_path: u8*) -> i64 {
     if inode < 0 {
         return -1 as i64
     }
-    old_name: u8[32]
-    old_parent: i64 = fs_split_path(old_path, old_name[0])
+    old_name: u8[32] = []
+    old_parent: i64 = fs_split_path(old_path, &old_name[0])
     if old_parent < 0 {
         return -1 as i64
     }
-    new_name: u8[32]
-    new_parent: i64 = fs_split_path(new_path, new_name[0])
+    new_name: u8[32] = []
+    new_parent: i64 = fs_split_path(new_path, &new_name[0])
     if new_parent < 0 {
         return -1 as i64
     }
-    if fs_remove_dirent(old_parent as u64, old_name[0]) < 0 {
+    if fs_remove_dirent(old_parent as u64, &old_name[0]) < 0 {
         return -1 as i64
     }
-    if fs_add_dirent(new_parent as u64, new_name[0], inode as u64) < 0 {
+    if fs_add_dirent(new_parent as u64, &new_name[0], inode as u64) < 0 {
         ; Roll back: re-add to the original parent.
-        fs_add_dirent(old_parent as u64, old_name[0], inode as u64)
+        fs_add_dirent(old_parent as u64, &old_name[0], inode as u64)
         return -1 as i64
     }
     base: u64 = fs_inode_pa(inode as u64)
-    fs_strncpy((base + FS_IN_NAME) as u8*, new_name[0], FS_NAME_LEN)
+    fs_strncpy((base + FS_IN_NAME) as u8*, &new_name[0], FS_NAME_LEN)
     fs_wr16(base + FS_IN_PARENT, new_parent as u64)
     return 0
 }

@@ -21,6 +21,7 @@ fn kernel_asm_diag() {
     // -- compile stdlib -------------------------------------------------------
     let stdlib_compiler = HllCompiler::new(CompileConfig {
         target: TargetMode::Kernel,
+        language_version: hll_to_ir::LanguageVersion::V1,
         strict: true,
         string_prefix: Some("__kern_str_".to_owned()),
         type_prelude: Vec::new(),
@@ -35,6 +36,7 @@ fn kernel_asm_diag() {
     // -- compile user kernel --------------------------------------------------
     let user_compiler = HllCompiler::new(CompileConfig {
         target: TargetMode::Kernel,
+        language_version: hll_to_ir::LanguageVersion::V1,
         strict: true,
         string_prefix: None,
         type_prelude: Vec::new(),
@@ -126,7 +128,7 @@ fn kernel_asm_diag() {
 fn link_stdlib_and_run(user_src: &str) -> (String, Option<i64>) {
     use virtual_machine::virtual_machine::StepOutcome;
 
-    let mut pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new_v1();
     pipeline.set_write_artifacts(false);
 
     pipeline.set_write_artifacts(false);
@@ -158,7 +160,7 @@ fn link_stdlib_and_run(user_src: &str) -> (String, Option<i64>) {
 // is required by any user code that calls new(T) or free(ptr).
 #[test]
 fn stdlib_provides_malloc() {
-    let mut pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new_v1();
     pipeline.set_write_artifacts(false);
 
     pipeline.set_write_artifacts(false); // Don't create gigabytes of files during tests
@@ -242,7 +244,7 @@ main: () -> i32 {
 // Verify that the stdlib token stream contains the HLL-defined runtime symbols.
 #[test]
 fn stdlib_provides_runtime() {
-    let mut pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new_v1();
     pipeline.set_write_artifacts(false);
 
     pipeline.set_write_artifacts(false); // Don't create gigabytes of files during tests

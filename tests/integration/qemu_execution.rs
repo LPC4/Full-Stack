@@ -32,7 +32,7 @@ fn read_program(filename: &str) -> String {
 /// Uses two-stage compilation: compile stdlib and user code independently,
 /// then assemble them into objects and link the objects before generating ELF.
 fn compile_to_asm(source: &str) -> String {
-    let pipeline = CompilationPipeline::new();
+    let pipeline = CompilationPipeline::new_v1();
 
     // Stage 1: Compile stdlib
     let stdlib_result = pipeline
@@ -135,7 +135,7 @@ fn require_qemu_result(test_name: &'static str, result: Result<QemuResult, QemuS
 /// Uses two-stage compilation: compile stdlib and user code independently,
 /// then assemble and link through the pipeline.
 fn compile_to_elf(source: &str) -> Vec<u8> {
-    let pipeline = CompilationPipeline::new();
+    let pipeline = CompilationPipeline::new_v1();
 
     // Stage 1: Compile stdlib
     let stdlib_result = pipeline

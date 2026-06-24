@@ -20,7 +20,7 @@ const KLOG_SRC: &str = include_str!(concat!(
 ));
 
 fn run_hll(src: &str) -> (String, Option<i64>) {
-    let mut pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new_v1();
     pipeline.set_write_artifacts(false);
 
     pipeline.set_write_artifacts(false);
@@ -46,7 +46,7 @@ fn run_hll(src: &str) -> (String, Option<i64>) {
 
 #[test]
 fn kernel_stdlib_compiles_as_separate_modules() {
-    let mut pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new_v1();
     pipeline.set_target_mode(full_stack::compilation_pipeline::TargetMode::Kernel);
     pipeline.set_write_artifacts(false);
     pipeline.set_string_prefix(Some("__kern_str_".to_owned()));
@@ -70,7 +70,7 @@ fn kernel_stdlib_compiles_as_separate_modules() {
 
 #[test]
 fn kernel_boot_runs_with_separate_stdlib_objects() {
-    let mut stdlib_pipeline = CompilationPipeline::new();
+    let mut stdlib_pipeline = CompilationPipeline::new_v1();
     stdlib_pipeline.set_target_mode(PipelineTargetMode::Kernel);
     stdlib_pipeline.set_write_artifacts(false);
     stdlib_pipeline.set_string_prefix(Some("__kern_str_".to_owned()));
@@ -81,7 +81,7 @@ fn kernel_boot_runs_with_separate_stdlib_objects() {
         .compile_modules(&stdlib_modules)
         .expect("kernel stdlib modules compile");
 
-    let mut kernel_pipeline = CompilationPipeline::new();
+    let mut kernel_pipeline = CompilationPipeline::new_v1();
     kernel_pipeline.set_target_mode(PipelineTargetMode::Kernel);
     kernel_pipeline.set_write_artifacts(false);
     kernel_pipeline.set_type_prelude(get_stdlib_type_prelude());
@@ -157,13 +157,15 @@ fn userspace_catalog_programs_compile_hosted() {
         .filter(|p| p.is_compiled())
     {
         let (name, src) = (prog.name, prog.source);
-        let mut pipeline = CompilationPipeline::new();
+        let mut pipeline = CompilationPipeline::new_v1();
         pipeline.set_write_artifacts(false);
-        pipeline.set_source_prelude(prog.layout);
+        // The stdlib is self-contained: compile it before attaching the user
+        // program's layout prelude (which is V1-only and must not ride along).
         let stdlib = pipeline
             .compile(&get_stdlib_source())
             .unwrap_or_else(|e| panic!("{name}: stdlib compile failed: {e:?}"));
         let (_, stdlib_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&stdlib.ir_program);
+        pipeline.set_source_prelude(prog.layout);
         let user = pipeline
             .compile(src)
             .unwrap_or_else(|e| panic!("{name}: compile failed: {e:?}"));
@@ -182,7 +184,7 @@ fn userspace_catalog_programs_compile_hosted() {
             .iter()
             .enumerate()
             .map(|(i, a)| {
-                let mut p = CompilationPipeline::new();
+                let mut p = CompilationPipeline::new_v1();
                 p.set_write_artifacts(false);
                 p.set_source_prelude(prog.layout);
                 p.set_string_prefix(Some(format!("aux{i}_str_")));
@@ -365,7 +367,7 @@ fn klog_ok_output() {
         KLOG_SRC,
         r#"
 main: () -> i32 {
-    klog_ok("boot".data)
+    klog_ok("boot".ptr)
     return 0
 }
 "#,
@@ -380,7 +382,7 @@ fn klog_error_output() {
         KLOG_SRC,
         r#"
 main: () -> i32 {
-    klog_error("fault".data)
+    klog_error("fault".ptr)
     return 0
 }
 "#,
@@ -395,7 +397,7 @@ fn klog_int_output() {
         KLOG_SRC,
         r#"
 main: () -> i32 {
-    klog_int("count".data, 42)
+    klog_int("count".ptr, 42)
     return 0
 }
 "#,
@@ -410,7 +412,7 @@ main: () -> i32 {
 // The kernel stdlib uses the "__kern_str_" string-label prefix so rodata labels
 // never clash with user-code labels (which use "str_").
 fn run_kernel_hll(user_src: &str) -> (String, Option<i64>) {
-    let mut stdlib_pipeline = CompilationPipeline::new();
+    let mut stdlib_pipeline = CompilationPipeline::new_v1();
     stdlib_pipeline.set_string_prefix(Some("__kern_str_".to_owned()));
     stdlib_pipeline.set_write_artifacts(false);
 
@@ -419,7 +421,7 @@ fn run_kernel_hll(user_src: &str) -> (String, Option<i64>) {
         .expect("kernel stdlib compile");
     let (_, stdlib_tokens) = stdlib_pipeline.compile_ir_to_assembly_with_tokens(&stdlib.ir_program);
 
-    let mut user_pipeline = CompilationPipeline::new();
+    let mut user_pipeline = CompilationPipeline::new_v1();
     user_pipeline.set_write_artifacts(false);
     // user_src is kernel source (a kmain); give it the shared kernel layout header.
     user_pipeline.set_source_prelude(os_runtime::kernel::LAYOUT);
@@ -566,7 +568,7 @@ fn my_kernel_example_program() {
 // at link time with an error mentioning `kmain`.
 #[test]
 fn kernel_boot_missing_kmain_is_assemble_error() {
-    let mut stdlib_pipeline = CompilationPipeline::new();
+    let mut stdlib_pipeline = CompilationPipeline::new_v1();
     stdlib_pipeline.set_string_prefix(Some("__kern_str_".to_owned()));
     stdlib_pipeline.set_write_artifacts(false);
     let stdlib = stdlib_pipeline
@@ -575,7 +577,7 @@ fn kernel_boot_missing_kmain_is_assemble_error() {
     let (_, stdlib_tokens) = stdlib_pipeline.compile_ir_to_assembly_with_tokens(&stdlib.ir_program);
 
     // A hosted `main` program - no `kmain` defined.
-    let mut user_pipeline = CompilationPipeline::new();
+    let mut user_pipeline = CompilationPipeline::new_v1();
     user_pipeline.set_write_artifacts(false);
     let user = user_pipeline
         .compile("main: () -> i32 { return 0 }")
@@ -629,7 +631,7 @@ kmain: () -> () {
 /// the other calls it.  Verifies CallPlt relocations resolve correctly.
 #[test]
 fn cross_module_call_works() {
-    let mut pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new_v1();
     pipeline.set_write_artifacts(false);
 
     // Stdlib provides _start -> main -> exit.
@@ -682,7 +684,7 @@ fn cross_module_call_works() {
 /// Verify cross-module calls through an intermediate module.
 #[test]
 fn cross_module_la_works() {
-    let mut pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new_v1();
     pipeline.set_write_artifacts(false);
 
     let stdlib = pipeline
@@ -740,7 +742,7 @@ fn cross_module_la_works() {
 /// Cross-module JAL (tail-call) relocation.
 #[test]
 fn cross_module_tail_works() {
-    let mut pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new_v1();
     pipeline.set_write_artifacts(false);
 
     let stdlib = pipeline
@@ -800,7 +802,7 @@ fn cross_module_tail_works() {
 /// Three modules: A->B->C call chain.  Verifies the linker resolves deeply.
 #[test]
 fn cross_module_chain_three_works() {
-    let mut pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new_v1();
     pipeline.set_write_artifacts(false);
 
     let stdlib = pipeline
@@ -872,7 +874,7 @@ fn cross_module_chain_three_works() {
 /// `bump`, and both writes must land in one cell (21 + 21 = 42).
 #[test]
 fn cross_module_external_global_shared_storage() {
-    let mut pipeline = CompilationPipeline::new();
+    let mut pipeline = CompilationPipeline::new_v1();
     pipeline.set_write_artifacts(false);
 
     let stdlib = pipeline

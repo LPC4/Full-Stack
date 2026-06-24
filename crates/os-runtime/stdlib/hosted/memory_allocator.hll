@@ -1,3 +1,4 @@
+; @version 2
 ; Growable userspace heap. Unlike the freestanding/kernel allocator (a fixed
 ; 64 KB .bss buffer), this one grows the program break via the brk syscall (214,
 ; Linux semantics), so malloc/new can grow past 64 KB. U-mode only. See OS spec 7.8.
@@ -57,11 +58,11 @@ malloc: (size: u64) -> u8* {
 
     current: HeapBlock* = heap_list
     while current != null {
-        if @current.is_free != 0 and @current.size >= requested {
-            @current.is_free = 0
-            return @current.ptr
+        if current.is_free != 0 and current.size >= requested {
+            current.is_free = 0
+            return current.ptr
         }
-        current = @current.next
+        current = current.next
     }
 
     block: HeapBlock* = heap_raw_alloc(32) as HeapBlock*
@@ -73,10 +74,10 @@ malloc: (size: u64) -> u8* {
         return null
     }
     @block = {
-        .next    = heap_list,
-        .ptr     = payload,
-        .size    = requested,
-        .is_free = 0,
+        next:    heap_list,
+        ptr:     payload,
+        size:    requested,
+        is_free: 0,
     }
     heap_list = block
     return payload
@@ -88,10 +89,10 @@ free: (ptr: u8*) {
     }
     current: HeapBlock* = heap_list
     while current != null {
-        if @current.ptr == ptr {
-            @current.is_free = 1
+        if current.ptr == ptr {
+            current.is_free = 1
             return
         }
-        current = @current.next
+        current = current.next
     }
 }
