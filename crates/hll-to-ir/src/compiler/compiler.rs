@@ -181,6 +181,27 @@ impl HighLevelCompiler {
             });
         }
 
+        // Register concrete named types before computing enum payload layouts.
+        // Enums are otherwise visited first, and a struct payload would still be
+        // unresolved here and incorrectly contribute zero bytes to the layout.
+        for declaration in &program.declarations {
+            match &declaration.decl {
+                DeclNode::Type { name, ty, generics } if generics.is_empty() => {
+                    let lowered = self.lower_type(ty);
+                    self.context.types.register_type(name.clone(), lowered);
+                }
+                DeclNode::Struct {
+                    name,
+                    generics,
+                    fields,
+                } if generics.is_empty() => {
+                    let lowered = self.lower_type(&crate::ast::Type::Struct(fields.clone()));
+                    self.context.types.register_type(name.clone(), lowered);
+                }
+                _ => {}
+            }
+        }
+
         // Register enums before any function body lowers, so variant constructors
         // and `match` resolve regardless of declaration order.
         for declaration in &program.declarations {

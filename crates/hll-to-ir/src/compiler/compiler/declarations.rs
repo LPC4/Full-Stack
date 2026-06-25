@@ -29,8 +29,8 @@ impl HighLevelCompiler {
         log::debug!("lowering declaration: {:?}", declaration.decl);
         match &declaration.decl {
             DeclNode::Import { .. } => Ok(()),
-            // Enums are registered in a pre-pass (see compile_program); generic
-            // enums are not yet supported.
+            // Concrete enums are registered in a pre-pass (see compile_program);
+            // generic enums are specialized into concrete declarations first.
             DeclNode::Enum { name, generics, .. } => {
                 if !generics.is_empty() {
                     return Err(CompilerError::UnsupportedDeclaration(format!(

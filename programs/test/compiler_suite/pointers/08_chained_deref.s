@@ -25,8 +25,21 @@ chained_deref_assign__entry:
 	sw     s2, 0(t0)
 ; local var: ptr
 	addi   a0, zero, 4
+	addi   sp, sp, -16
+	sd     a0, 0(sp)
 	call malloc
+	ld     a1, 0(sp)
+	addi   sp, sp, 16
 	addi   s2, a0, 0
+	beq a0, zero, .Lheap_zero_done_0
+	beq a1, zero, .Lheap_zero_done_0
+	addi   t0, a0, 0
+.Lheap_zero_0:
+	sb     zero, 0(t0)
+	addi   t0, t0, 1
+	addi   a1, a1, -1
+	bne a1, zero, .Lheap_zero_0
+.Lheap_zero_done_0:
 	addi   t0, sp, 8
 ; Store i32* to memory
 	sd     s2, 0(t0)

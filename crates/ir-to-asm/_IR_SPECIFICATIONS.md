@@ -100,7 +100,7 @@ indexing from byte-scaled offsets.
 | Instruction | Syntax | Description |
 |-------------|--------|-------------|
 | `stack_alloc` | `$dest = stack_alloc <type> [count]` | Allocate stack space. Returns `type*`. |
-| `heap_alloc` | `$dest = heap_alloc <type> [x<count>]` | Allocate heap memory. Returns `type*`. Mirrors HLL `new(...)`; `count` may be a runtime register. |
+| `heap_alloc` | `$dest = heap_alloc <type> [x<count>]` | Allocate zero-initialized heap memory. Returns `type*`. Mirrors HLL `new(...)`; `count` may be a runtime register. |
 | `heap_free` | `heap_free $ptr` | Free heap memory. |
 | `read` | `$dest = read <type> @ $ptr [+ offset]` | Read from memory. `offset` is an immediate byte offset. |
 | `write` | `write <type> <value> @ $ptr [+ offset]` | Write `<value>` to `$ptr` plus `offset` bytes. |

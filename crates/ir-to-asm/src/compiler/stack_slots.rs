@@ -197,10 +197,10 @@ mod tests {
 
     fn heap_block_ty() -> IrType {
         IrType::Aggregate(vec![
-            ("next".to_string(), i64_ty()),
-            ("ptr".to_string(), i64_ty()),
-            ("size".to_string(), i64_ty()),
-            ("is_free".to_string(), i64_ty()),
+            ("next".to_owned(), i64_ty()),
+            ("ptr".to_owned(), i64_ty()),
+            ("size".to_owned(), i64_ty()),
+            ("is_free".to_owned(), i64_ty()),
         ])
     }
 

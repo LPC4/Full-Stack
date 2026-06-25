@@ -197,6 +197,43 @@ fn keeps_pointer_stack_values_64_bit() {
 }
 
 #[test]
+fn heap_alloc_zeroes_memory_and_skips_null() {
+    let mut program = IrProgram::new("test");
+    let mut func = IrFunction::new("alloc", int32());
+
+    let mut entry = IrBlock::new("entry");
+    entry.push_instruction(IrInstruction::HeapAlloc {
+        dest: IrRegister::Named("heap".into()),
+        ty: int32(),
+        count: Some(IrValue::Register(IrRegister::Named("count".into()))),
+    });
+    entry.set_terminator(IrTerminator::Return(Some(IrValue::Integer(0))));
+    func.push_param(IrParam {
+        ty: IrType::Integer(IntWidth::I64),
+        register: IrRegister::Named("count".into()),
+    });
+    func.push_block(entry);
+    program.push_function(func);
+
+    let asm = compile(&program);
+
+    assert!(asm.contains("\tcall malloc"), "expected malloc call, got:\n{asm}");
+    assert!(
+        asm.contains("\tbeq a0, zero, .Lheap_zero_done_0"),
+        "expected null guard before zeroing, got:\n{asm}"
+    );
+    assert!(
+        asm.contains(".Lheap_zero_0:")
+            && (asm.contains("\tsb zero, 0(") || asm.contains("\tsb     zero, 0(")),
+        "expected byte-zeroing loop, got:\n{asm}"
+    );
+    assert!(
+        asm.contains("\tbne a1, zero, .Lheap_zero_0"),
+        "expected runtime byte-count loop, got:\n{asm}"
+    );
+}
+
+#[test]
 fn lowers_stack_alloc_as_frame_address_not_memory_load() {
     let mut program = IrProgram::new("test");
     let mut func = IrFunction::new("stack_alloc", int32());
@@ -250,4 +287,3 @@ fn omits_destination_for_void_calls() {
         "expected no destination store for void call, got:\n{asm}"
     );
 }
-

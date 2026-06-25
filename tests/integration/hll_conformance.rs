@@ -24,7 +24,7 @@ fn cached_stdlib_objs() -> &'static [(String, AssembledOutput)] {
 }
 
 /// Compile a user program, link it against the cached stdlib, and run it in the VM.
-fn run_v2(src: &str) -> StepOutcome {
+fn run_hll(src: &str) -> StepOutcome {
     let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
 
@@ -47,7 +47,7 @@ fn run_v2(src: &str) -> StepOutcome {
 }
 
 fn assert_exit(src: &str, code: i64) {
-    let outcome = run_v2(src);
+    let outcome = run_hll(src);
     assert!(
         matches!(outcome, StepOutcome::Halted(c) if c == code),
         "expected Halted({code}), got {outcome:?}"
@@ -64,7 +64,7 @@ fn assert_compile_fails(src: &str) {
     );
 }
 
-// --- Milestone 1: place / value access model ---
+// --- Place / value access model ---
 
 #[test]
 fn array_index_read_write_and_address() {
@@ -126,7 +126,7 @@ main: () -> i32 {
     );
 }
 
-// --- Milestone 2: inferred binding syntax (`:=`) ---
+// --- Inferred binding syntax (`:=`) ---
 
 #[test]
 fn inferred_bindings_execute() {
@@ -163,7 +163,7 @@ main: () -> i32 {
     );
 }
 
-// --- Milestone 3: canonical struct literals ---
+// --- Canonical struct literals ---
 
 #[test]
 fn named_and_contextual_literals_execute() {
@@ -231,7 +231,7 @@ main: () -> i32 {
     );
 }
 
-// --- Milestone 5: `for` over ranges (lowers to `while`) ---
+// --- `for` over ranges (lowers to `while`) ---
 
 #[test]
 fn for_range_sums() {
@@ -347,7 +347,7 @@ main: () -> i32 {
     );
 }
 
-// --- Milestone 5: `for` over a fixed array ---
+// --- `for` over a fixed array ---
 
 #[test]
 fn for_each_array_sums() {
@@ -412,7 +412,7 @@ main: () -> i32 {
     );
 }
 
-// --- Milestone 4: typed, element-scaled pointer arithmetic ---
+// --- Typed, element-scaled pointer arithmetic ---
 
 #[test]
 fn pointer_arithmetic_is_element_scaled() {
@@ -467,7 +467,7 @@ main: () -> i32 {
     );
 }
 
-// --- Milestone 5: slices (T[] fat pointer) ---
+// --- Slices (T[] fat pointer) ---
 
 #[test]
 fn slice_from_array_indexes_and_len() {
@@ -553,7 +553,7 @@ main: () -> i32 {
     );
 }
 
-// --- Milestone 5: range slicing (arr[a..b]) ---
+// --- Range slicing (arr[a..b]) ---
 
 #[test]
 fn range_slice_from_array() {
@@ -669,7 +669,7 @@ main: () -> i32 {
     );
 }
 
-// --- Milestone 3: contextual struct literals inside array literals ---
+// --- Contextual struct literals inside array literals ---
 
 #[test]
 fn contextual_struct_literals_in_array() {
@@ -760,7 +760,7 @@ main: () -> i32 {
     );
 }
 
-// --- Milestone 6: monomorphized generics ---
+// --- Monomorphized generics ---
 
 #[test]
 fn explicit_generic_function_specializations_execute() {
@@ -910,6 +910,24 @@ main: () -> i32 {
 }
 
 #[test]
+fn generic_function_accepts_and_returns_slice_elements() {
+    assert_exit(
+        r#"
+first: <T>(values: T[]) -> T {
+    return values[0]
+}
+
+main: () -> i32 {
+    values: i32[2] = [42, 7]
+    view: i32[] = values
+    return first<i32>(view)
+}
+"#,
+        42,
+    );
+}
+
+#[test]
 fn generic_function_infers_nested_record_argument() {
     assert_exit(
         r#"
@@ -985,7 +1003,7 @@ main: () -> i32 {
     );
 }
 
-// --- Milestone 7: enums, patterns, and `match` ---
+// --- Enums, patterns, and `match` ---
 
 #[test]
 fn match_payload_variant_dispatch() {
@@ -1199,7 +1217,7 @@ main: () -> i32 {
     );
 }
 
-// --- Milestone 7: generic enums (Option / Result prelude) ---
+// --- Generic enums (Option / Result prelude) ---
 
 #[test]
 fn option_some_match_extracts_payload() {
@@ -1419,6 +1437,36 @@ widen: (n: i32) -> Result<i64, i32> {
 
 main: () -> i32 {
     result: Result<i64, i32> = widen(42)
+    match result {
+        Ok(value) -> {
+            return value as i32
+        }
+        Err(error) -> {
+            return error
+        }
+    }
+    return -1
+}
+"#,
+        42,
+    );
+}
+
+#[test]
+fn generic_result_try_propagates_error() {
+    assert_exit(
+        r#"
+fail: <T>(value: T) -> Result<T, i32> {
+    return Err(42)
+}
+
+forward: <T>(value: T) -> Result<T, i32> {
+    inner := fail<T>(value)?
+    return Ok(inner)
+}
+
+main: () -> i32 {
+    result: Result<i64, i32> = forward<i64>(99)
     match result {
         Ok(value) -> {
             return value as i32
@@ -1716,7 +1764,7 @@ main: () -> i32 {
     );
 }
 
-// --- Milestone 7: value-producing match ---
+// --- Value-producing match ---
 
 #[test]
 fn value_match_inferred_binding() {
@@ -1841,7 +1889,34 @@ main: () -> i32 {
     );
 }
 
-// --- Milestone 8: empty-literal array zero-fill ---
+#[test]
+fn value_match_returns_aggregate() {
+    assert_exit(
+        r#"
+enum Choice {
+    PairValue(Pair)
+    Empty
+}
+
+struct Pair {
+    left: i32
+    right: i32
+}
+
+main: () -> i32 {
+    choice: Choice = PairValue(Pair { .left = 19, .right = 23 })
+    pair: Pair = match choice {
+        PairValue(value) -> value
+        Empty -> Pair { .left = 0, .right = 0 }
+    }
+    return pair.left + pair.right
+}
+"#,
+        42,
+    );
+}
+
+// --- Empty-literal array zero-fill ---
 
 #[test]
 fn empty_array_literal_zero_fills() {
@@ -1879,7 +1954,7 @@ main: () -> i32 {
     );
 }
 
-// --- Milestone 8: strings are u8[] slices ---
+// --- Strings are u8[] slices ---
 
 #[test]
 fn string_literal_has_slice_len() {

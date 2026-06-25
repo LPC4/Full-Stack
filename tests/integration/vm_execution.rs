@@ -880,26 +880,34 @@ main: () -> i32 {
     );
 }
 
-/// Allocate, free, then reallocate - exercises the free-list reuse path.
+/// Allocate, dirty, free, then reallocate. `new` must clear reused storage.
 #[test]
-fn hll_new_free_reuse() {
+fn hll_new_zeroes_reused_dynamic_array() {
     let (_, outcome, _) = run_hll(
         r#"
+allocation_count: () -> u64 {
+    return 4
+}
+
 main: () -> i32 {
-    p: i32* = new(i32)
-    @p = 1
+    p: i32* = new(i32, 4)
+    p[0] = 11
+    p[1] = 22
+    p[2] = 33
+    p[3] = 44
     free(p)
-    q: i32* = new(i32)
-    @q = 42
-    v: i32 = @q
+
+    count: u64 = allocation_count()
+    q: i32* = new(i32, count)
+    result: i32 = q[0] + q[1] + q[2] + q[3]
     free(q)
-    return v
+    return result
 }
 "#,
     );
     assert!(
-        matches!(outcome, StepOutcome::Halted(42)),
-        "expected Halted(42), got {outcome:?}"
+        matches!(outcome, StepOutcome::Halted(0)),
+        "expected reused allocation to be zeroed, got {outcome:?}"
     );
 }
 

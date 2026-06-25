@@ -130,8 +130,21 @@ main__entry:
 	fsd    ft1, 0(t0)
 ; local var: ptr
 	addi   a0, zero, 4
+	addi   sp, sp, -16
+	sd     a0, 0(sp)
 	call malloc
+	ld     a1, 0(sp)
+	addi   sp, sp, 16
 	addi   s2, a0, 0
+	beq a0, zero, .Lheap_zero_done_0
+	beq a1, zero, .Lheap_zero_done_0
+	addi   t0, a0, 0
+.Lheap_zero_0:
+	sb     zero, 0(t0)
+	addi   t0, t0, 1
+	addi   a1, a1, -1
+	bne a1, zero, .Lheap_zero_0
+.Lheap_zero_done_0:
 	addi   t0, sp, 128
 ; Store i32* to memory
 	sd     s2, 0(t0)
@@ -157,8 +170,21 @@ main__entry:
 	call free
 ; local var: int_ptr
 	addi   a0, zero, 4
+	addi   sp, sp, -16
+	sd     a0, 0(sp)
 	call malloc
+	ld     a1, 0(sp)
+	addi   sp, sp, 16
 	addi   s2, a0, 0
+	beq a0, zero, .Lheap_zero_done_1
+	beq a1, zero, .Lheap_zero_done_1
+	addi   t0, a0, 0
+.Lheap_zero_1:
+	sb     zero, 0(t0)
+	addi   t0, t0, 1
+	addi   a1, a1, -1
+	bne a1, zero, .Lheap_zero_1
+.Lheap_zero_done_1:
 	addi   t0, sp, 144
 ; Store i32* to memory
 	sd     s2, 0(t0)

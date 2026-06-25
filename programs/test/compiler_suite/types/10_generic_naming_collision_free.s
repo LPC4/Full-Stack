@@ -14,22 +14,61 @@ main:
 main__entry:
 ; local var: boxed
 	addi   a0, zero, 4
+	addi   sp, sp, -16
+	sd     a0, 0(sp)
 	call malloc
+	ld     a1, 0(sp)
+	addi   sp, sp, 16
 	addi   s2, a0, 0
+	beq a0, zero, .Lheap_zero_done_0
+	beq a1, zero, .Lheap_zero_done_0
+	addi   t0, a0, 0
+.Lheap_zero_0:
+	sb     zero, 0(t0)
+	addi   t0, t0, 1
+	addi   a1, a1, -1
+	bne a1, zero, .Lheap_zero_0
+.Lheap_zero_done_0:
 	addi   t0, sp, 0
 ; Store Box<i32>* to memory
 	sd     s2, 0(t0)
 ; local var: legacy
 	addi   a0, zero, 4
+	addi   sp, sp, -16
+	sd     a0, 0(sp)
 	call malloc
+	ld     a1, 0(sp)
+	addi   sp, sp, 16
 	addi   s2, a0, 0
+	beq a0, zero, .Lheap_zero_done_1
+	beq a1, zero, .Lheap_zero_done_1
+	addi   t0, a0, 0
+.Lheap_zero_1:
+	sb     zero, 0(t0)
+	addi   t0, t0, 1
+	addi   a1, a1, -1
+	bne a1, zero, .Lheap_zero_1
+.Lheap_zero_done_1:
 	addi   t0, sp, 8
 ; Store Box_i32* to memory
 	sd     s2, 0(t0)
 ; local var: double
 	addi   a0, zero, 4
+	addi   sp, sp, -16
+	sd     a0, 0(sp)
 	call malloc
+	ld     a1, 0(sp)
+	addi   sp, sp, 16
 	addi   s2, a0, 0
+	beq a0, zero, .Lheap_zero_done_2
+	beq a1, zero, .Lheap_zero_done_2
+	addi   t0, a0, 0
+.Lheap_zero_2:
+	sb     zero, 0(t0)
+	addi   t0, t0, 1
+	addi   a1, a1, -1
+	bne a1, zero, .Lheap_zero_2
+.Lheap_zero_done_2:
 	addi   t0, sp, 16
 ; Store Box<Box<i32>>* to memory
 	sd     s2, 0(t0)

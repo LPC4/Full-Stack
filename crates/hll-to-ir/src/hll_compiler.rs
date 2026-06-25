@@ -309,7 +309,7 @@ mod tests {
     use crate::token::Token;
     use crate::{CompileConfig, Diagnostic, HllCompiler, HllOutput, TargetMode};
 
-    fn compile_v2(source: &str) -> Result<HllOutput, Vec<Diagnostic>> {
+    fn compile_hll(source: &str) -> Result<HllOutput, Vec<Diagnostic>> {
         HllCompiler::new(CompileConfig {
             target: TargetMode::Hosted,
             strict: true,
@@ -778,7 +778,7 @@ mod tests {
 
     #[test]
     fn array_index_is_a_value_place_and_addressable() {
-        let output = compile_v2(
+        let output = compile_hll(
             r#"
 main: () -> i32 {
     arr: i32[2] = [4, 5]
@@ -807,7 +807,7 @@ main: () -> i32 {
 
     #[test]
     fn pointer_member_access_loads_the_field_value() {
-        compile_v2(
+        compile_hll(
             r#"
 struct Point {
     x: i32
@@ -826,7 +826,7 @@ main: () -> i32 {
 
     #[test]
     fn address_of_rejects_non_place_temporaries() {
-        let result = compile_v2(
+        let result = compile_hll(
             r#"
 main: () -> i32 {
     ptr: i32* = &(1 + 2)
@@ -849,7 +849,7 @@ main: () -> i32 {
 
     #[test]
     fn inferred_bindings_lower_with_concrete_types() {
-        let output = compile_v2(
+        let output = compile_hll(
             r#"
 noop: () {
     return
@@ -874,7 +874,7 @@ main: () -> i32 {
 
     #[test]
     fn rejects_duplicate_inferred_binding_in_same_scope() {
-        let result = compile_v2(
+        let result = compile_hll(
             r#"
 main: () -> i32 {
     value := 1
@@ -897,7 +897,7 @@ main: () -> i32 {
 
     #[test]
     fn infers_top_level_binding_type() {
-        compile_v2(
+        compile_hll(
             r#"
 answer := 42
 
@@ -911,7 +911,7 @@ main: () -> i32 {
 
     #[test]
     fn infers_pointer_named_struct_array_and_generic_types() {
-        let output = compile_v2(
+        let output = compile_hll(
             r#"
 struct Point { x: i32 }
 struct Box<T> { value: T }
@@ -934,7 +934,7 @@ main: () -> i32 {
 
     #[test]
     fn assignment_cannot_create_a_binding() {
-        let result = compile_v2(
+        let result = compile_hll(
             r#"
 main: () -> i32 {
     typo = 1
@@ -955,7 +955,7 @@ main: () -> i32 {
 
     #[test]
     fn explicit_binding_requires_initializer() {
-        let result = compile_v2(
+        let result = compile_hll(
             r#"
 main: () -> i32 {
     value: i32
@@ -976,7 +976,7 @@ main: () -> i32 {
 
     #[test]
     fn type_is_restricted_to_aliases() {
-        let result = compile_v2(
+        let result = compile_hll(
             r#"
 type Point = { x: i32 }
 main: () -> i32 { return 0 }
@@ -995,7 +995,7 @@ main: () -> i32 { return 0 }
 
     #[test]
     fn named_and_contextual_struct_literals_compile() {
-        compile_v2(
+        compile_hll(
             r#"
 struct Point {
     x: i32
@@ -1022,7 +1022,7 @@ main: () -> i32 {
             let source = format!(
                 "struct Point {{ x: i32, y: i32 }}\nmain: () -> i32 {{ value := {literal}\nreturn 0\n}}"
             );
-            let errors = match compile_v2(&source) {
+            let errors = match compile_hll(&source) {
                 Ok(_) => panic!("invalid literal unexpectedly compiled: {literal}"),
                 Err(errors) => errors,
             };
@@ -1035,7 +1035,7 @@ main: () -> i32 {
 
     #[test]
     fn contextual_struct_literal_zero_fills_missing_fields() {
-        let output = compile_v2(
+        let output = compile_hll(
             r#"
 struct Point { x: i32, y: i32 }
 
@@ -1061,7 +1061,7 @@ main: () -> i32 {
             let source = format!(
                 "struct Point {{ x: i32, y: i32 }}\nmain: () -> i32 {{ value: Point = {literal}\nreturn 0\n}}"
             );
-            let errors = match compile_v2(&source) {
+            let errors = match compile_hll(&source) {
                 Ok(_) => panic!("invalid contextual literal compiled: {literal}"),
                 Err(errors) => errors,
             };
@@ -1074,7 +1074,7 @@ main: () -> i32 {
 
     #[test]
     fn propagates_struct_context_through_arguments_and_returns() {
-        compile_v2(
+        compile_hll(
             r#"
 struct Point { x: i32, y: i32 }
 
@@ -1096,7 +1096,7 @@ main: () -> i32 {
 
     #[test]
     fn rejects_anonymous_literal_without_context() {
-        let errors = match compile_v2(
+        let errors = match compile_hll(
             r#"
 main: () -> i32 {
     value := { .x = 1 }
@@ -1116,7 +1116,7 @@ main: () -> i32 {
 
     #[test]
     fn monomorphizes_explicit_generic_function_calls() {
-        let output = compile_v2(
+        let output = compile_hll(
             r#"
 identity: <T>(value: T) -> T {
     return value
@@ -1138,7 +1138,7 @@ main: () -> i32 {
 
     #[test]
     fn rejects_wrong_generic_function_arity() {
-        let errors = match compile_v2(
+        let errors = match compile_hll(
             r#"
 identity: <T>(value: T) -> T {
     return value

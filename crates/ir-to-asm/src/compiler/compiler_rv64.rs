@@ -32,6 +32,7 @@ pub struct CompilerRv64 {
     peephole: bool,
     regalloc: bool,
     omit_frame_pointer: bool,
+    heap_alloc_counter: usize,
 }
 
 impl Default for CompilerRv64 {
@@ -50,6 +51,7 @@ impl CompilerRv64 {
             peephole: false,
             regalloc: false,
             omit_frame_pointer: false,
+            heap_alloc_counter: 0,
         }
     }
 
@@ -97,6 +99,7 @@ impl CompilerRv64 {
         self.data.reset();
         self.type_aliases.clear();
         self.function_return_types.clear();
+        self.heap_alloc_counter = 0;
 
         for s in &program.global_strings {
             self.data.add_global_string(s);
@@ -1049,9 +1052,42 @@ impl CompilerRv64 {
             }
         }
 
+        // malloc may reuse a dirty free-list block, while HLL `new` promises
+        // zero-initialized storage. Preserve the byte count across the call.
+        self.emitter.emit_addi(SP, SP, -16);
+        self.emitter.emit_sd(SP, A0, 0);
         self.emitter.emit_raw("\tcall malloc");
+        self.emitter.emit_ld(A1, SP, 0);
+        self.emitter.emit_addi(SP, SP, 16);
+
         let ptr_ty = IrType::Pointer(Box::new(IrType::Void));
         self.store_int_result_from(dest, A0, &ptr_ty, ctx);
+
+        let alloc_id = self.heap_alloc_counter;
+        self.heap_alloc_counter += 1;
+        let zero_loop = format!(".Lheap_zero_{alloc_id}");
+        let zero_done = format!(".Lheap_zero_done_{alloc_id}");
+        self.emitter.emit_raw(&format!(
+            "\tbeq {}, {}, {zero_done}",
+            reg_name(A0, false),
+            reg_name(ZERO, false)
+        ));
+        self.emitter.emit_raw(&format!(
+            "\tbeq {}, {}, {zero_done}",
+            reg_name(A1, false),
+            reg_name(ZERO, false)
+        ));
+        let ptr_tmp = self.emitter.alloc_temp_reg();
+        self.emitter.emit_mv(ptr_tmp, A0);
+        self.emitter.emit_label(&zero_loop);
+        self.emitter
+            .emit_inst(asm_to_binary::real::RealInstruction::Sb(Sb::new(
+                ptr_tmp, ZERO, 0,
+            )));
+        self.emitter.emit_addi(ptr_tmp, ptr_tmp, 1);
+        self.emitter.emit_addi(A1, A1, -1);
+        self.emitter.emit_bne(A1, ZERO, &zero_loop);
+        self.emitter.emit_label(&zero_done);
     }
 
     fn lower_heap_free(&mut self, ptr: &hll_to_ir::IrRegister, ctx: &mut FunctionContext) {
