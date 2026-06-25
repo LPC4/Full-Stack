@@ -99,6 +99,7 @@ enum DebugView {
     #[default]
     Cpu,
     Os,
+    Syscalls,
 }
 
 enum BootPhase {
@@ -774,6 +775,8 @@ impl MachineWindow {
             ui.add_enabled_ui(has_os, |ui| {
                 ui.selectable_value(&mut self.debug_view, DebugView::Os, "OS")
                     .on_disabled_hover_text("Boot the kernel to inspect processes");
+                ui.selectable_value(&mut self.debug_view, DebugView::Syscalls, "Syscalls")
+                    .on_disabled_hover_text("Boot the kernel to trace syscalls");
             });
         });
         if !has_os {
@@ -807,6 +810,12 @@ impl MachineWindow {
                     if let Some(sym) = os_symbols.as_ref() {
                         dbg_heading(ui, "PROCESSES");
                         os_view::render(ui, vm, sym);
+                    }
+                }
+                DebugView::Syscalls => {
+                    if let Some(sym) = os_symbols.as_ref() {
+                        dbg_heading(ui, "SYSCALL TRACE");
+                        os_view::render_trace(ui, vm, sym);
                     }
                 }
             });

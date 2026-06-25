@@ -351,6 +351,19 @@ reaps a background job that finished first.
 | `SYSACT_EXIT_SCHEDULE` | 2 | Exit: mark EXITED, switch to next |
 | `SYSACT_BLOCK` | 3 | Sleep the caller (input wait); not re-enqueued (6.4) |
 
+`syscall_dispatch` is a thin wrapper that records every ecall into a bounded trace
+ring before returning the action; the heavy switch lives in `syscall_dispatch_inner`.
+
+**Syscall trace ring.** `trace_ring` is a fixed `u64[TRACE_ENTRIES * TRACE_FIELDS]`
+global written by `trace_record`. Each entry is `TRACE_FIELDS` (8) words: a
+monotonic `seq` (0 marks an empty slot), the caller `pid`, the syscall number, the
+first four args captured before dispatch, and the result (`a0` after dispatch). The
+slot for `seq` is `(seq - 1) % TRACE_ENTRIES`, so the ring keeps the most recent
+`TRACE_ENTRIES` calls. It is a read-only inspector feed: the GUI strace panel
+(`os_view::capture_trace`) drains it from guest memory each frame and renders the
+newest calls, filterable by pid, with negative returns highlighted. The kernel never
+reads the ring back.
+
 ### 7.4 Executable format (static ELF64)
 
 Filesystem executables are static ELF64 RISC-V binaries with a single `PT_LOAD`

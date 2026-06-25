@@ -40,6 +40,18 @@ const MAX_WALK: usize = 64;
 // Bound the stack walk: a full 4-page (16 KiB) stack is 2048 words; cap the render.
 const MAX_STACK_WORDS: usize = 256;
 
+// Syscall trace ring layout (kernel/syscall.hll). Must match the HLL constants.
+const TRACE_ENTRIES: usize = 256;
+const TRACE_FIELDS: usize = 8;
+const TRACE_F_SEQ: u64 = 0;
+const TRACE_F_PID: u64 = 1;
+const TRACE_F_NUM: u64 = 2;
+const TRACE_F_A0: u64 = 3;
+const TRACE_F_RET: u64 = 7;
+
+// How many of the most recent ecalls the panel shows (newest first).
+const MAX_TRACE_ROWS: usize = 64;
+
 /// Guest-physical addresses of the kernel scheduler globals.
 ///
 /// Resolved once at boot from the linked kernel symbol table. HLL globals keep
@@ -51,10 +63,12 @@ pub struct OsSymbols {
     ready_queue_head: u64,
     zombie_head: u64,
     input_waiter: u64,
+    trace_ring: u64,
+    trace_seq: u64,
 }
 
 impl OsSymbols {
-    /// Resolve the four scheduler globals, or `None` if the image lacks them
+    /// Resolve the scheduler globals, or `None` if the image lacks them
     /// (e.g. a non-kernel binary, so the panel simply hides itself).
     pub fn from_kernel(assembled: &AssembledOutput) -> Option<Self> {
         let pa = |n: &str| assembled.symbol_address(n).map(|off| RAM_BASE + off);
@@ -63,6 +77,8 @@ impl OsSymbols {
             ready_queue_head: pa("ready_queue_head")?,
             zombie_head: pa("zombie_head")?,
             input_waiter: pa("input_waiter")?,
+            trace_ring: pa("trace_ring")?,
+            trace_seq: pa("trace_seq")?,
         })
     }
 }
@@ -260,6 +276,150 @@ pub fn capture_stack(vm: &VirtualMachine, p: &ProcessInfo) -> Vec<StackWord> {
         va += 8;
     }
     out
+}
+
+/// One decoded entry from the syscall trace ring.
+pub struct TraceEntry {
+    pub seq: u64,
+    pub pid: u64,
+    pub num: u64,
+    pub a0: u64,
+    pub ret: u64,
+}
+
+/// Human name for a syscall number (kernel/syscall.hll SYSCALL_* constants).
+fn syscall_name(num: u64) -> &'static str {
+    match num {
+        2 => "yield",
+        46 => "ftruncate",
+        56 => "open",
+        57 => "close",
+        62 => "lseek",
+        63 => "read",
+        64 => "write",
+        82 => "rename",
+        83 => "mkdir",
+        93 => "exit",
+        100 => "readchar",
+        101 => "readdir",
+        102 => "stat",
+        103 => "exec",
+        104 => "pidalive",
+        105 => "unlink",
+        106 => "rmdir",
+        107 => "mapfb",
+        108 => "pollkey",
+        110 => "exec_redir",
+        129 => "kill",
+        214 => "brk",
+        220 => "fork",
+        260 => "wait",
+        261 => "waitpid",
+        _ => "?",
+    }
+}
+
+/// Drain the syscall trace ring from guest memory, returning the most recent
+/// entries newest-first (at most `MAX_TRACE_ROWS`). Read-only via `peek_bytes_raw`.
+pub fn capture_trace(vm: &VirtualMachine, sym: &OsSymbols) -> Vec<TraceEntry> {
+    let rd = |pa: u64| -> u64 {
+        let bytes = vm.peek_bytes_raw(pa, 8);
+        u64::from_le_bytes(bytes.try_into().unwrap_or([0u8; 8]))
+    };
+    let field = |slot: usize, f: u64| rd(sym.trace_ring + ((slot * TRACE_FIELDS) as u64 + f) * 8);
+
+    let total = rd(sym.trace_seq);
+    if total == 0 {
+        return Vec::new();
+    }
+
+    // Walk seq backwards from the newest; the slot for seq s is (s - 1) % ENTRIES.
+    let mut out = Vec::new();
+    let mut seq = total;
+    while seq > 0 && out.len() < MAX_TRACE_ROWS {
+        let slot = ((seq - 1) % TRACE_ENTRIES as u64) as usize;
+        // Stop if the ring has wrapped past this slot (it now holds a newer seq).
+        if field(slot, TRACE_F_SEQ) != seq {
+            break;
+        }
+        out.push(TraceEntry {
+            seq,
+            pid: field(slot, TRACE_F_PID),
+            num: field(slot, TRACE_F_NUM),
+            a0: field(slot, TRACE_F_A0),
+            ret: field(slot, TRACE_F_RET),
+        });
+        seq -= 1;
+    }
+    out
+}
+
+/// Render the syscall trace panel: the most recent ecalls newest-first, with an
+/// optional per-pid filter and error returns highlighted. Read-only.
+pub fn render_trace(ui: &mut egui::Ui, vm: &VirtualMachine, sym: &OsSymbols) {
+    let entries = capture_trace(vm, sym);
+    if entries.is_empty() {
+        ui.label(mono("no syscalls traced yet", Color32::GRAY));
+        return;
+    }
+
+    // Pid filter: 0 (default) shows every process; otherwise only that pid.
+    let filter_id = ui.make_persistent_id("mw_trace_pid_filter");
+    let mut filter = ui.data(|d| d.get_temp::<u64>(filter_id)).unwrap_or(0);
+    ui.horizontal_wrapped(|ui| {
+        ui.label(mono("pid filter:", Color32::from_rgb(160, 160, 160)));
+        if ui
+            .selectable_label(filter == 0, mono("all", Color32::LIGHT_GRAY))
+            .clicked()
+        {
+            filter = 0;
+        }
+        let mut pids: Vec<u64> = entries.iter().map(|e| e.pid).collect();
+        pids.sort_unstable();
+        pids.dedup();
+        for pid in pids {
+            let txt = mono(format!("{pid}"), Color32::LIGHT_GRAY);
+            if ui.selectable_label(filter == pid, txt).clicked() {
+                filter = pid;
+            }
+        }
+    });
+    ui.data_mut(|d| d.insert_temp(filter_id, filter));
+    ui.add_space(4.0);
+
+    let head = Color32::from_rgb(160, 160, 160);
+    egui::Grid::new("mw_syscall_trace")
+        .num_columns(5)
+        .spacing([12.0, 2.0])
+        .striped(true)
+        .show(ui, |ui| {
+            for h in ["seq", "pid", "syscall", "a0", "ret"] {
+                ui.label(mono(h, head));
+            }
+            ui.end_row();
+
+            for e in entries.iter().filter(|e| filter == 0 || e.pid == filter) {
+                let ret = e.ret as i64;
+                let ret_col = if ret < 0 {
+                    Color32::from_rgb(220, 120, 120)
+                } else {
+                    Color32::LIGHT_GRAY
+                };
+                ui.label(mono(format!("{}", e.seq), Color32::from_rgb(120, 120, 120)));
+                ui.label(mono(format!("{}", e.pid), Color32::LIGHT_GRAY));
+                ui.label(mono(
+                    format!("{} ({})", syscall_name(e.num), e.num),
+                    Color32::from_rgb(150, 190, 255),
+                ));
+                ui.label(mono(format!("{:#x}", e.a0), Color32::LIGHT_GRAY));
+                if ret < 0 {
+                    ui.label(mono(format!("{ret}"), ret_col));
+                } else {
+                    ui.label(mono(format!("{:#x}", e.ret), ret_col));
+                }
+                ui.end_row();
+            }
+        });
 }
 
 fn mono(text: impl Into<String>, col: Color32) -> RichText {

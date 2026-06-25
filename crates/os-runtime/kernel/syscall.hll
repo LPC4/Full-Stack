@@ -699,8 +699,62 @@ sys_brk_impl: (frame: u64*) -> u64 {
     return SYSACT_CONTINUE
 }
 
-; Dispatch a U-mode ecall by a7; args in a0-a3, result to a0. See OS spec ch.7.
+; --- Syscall trace ring (strace panel feed; OS spec ch.7, roadmap 2.4) ---
+; A bounded ring of recent ecalls, drained by the GUI from guest memory. Each
+; entry is TRACE_FIELDS u64s; `seq` is monotonic (0 = empty) for order/liveness.
+const TRACE_ENTRIES = 256
+const TRACE_FIELDS  = 8
+const TRACE_F_SEQ = 0
+const TRACE_F_PID = 1
+const TRACE_F_NUM = 2
+const TRACE_F_A0  = 3
+const TRACE_F_A1  = 4
+const TRACE_F_A2  = 5
+const TRACE_F_A3  = 6
+const TRACE_F_RET = 7
+
+trace_ring: u64[2048] = []   ; TRACE_ENTRIES * TRACE_FIELDS, zeroed at boot.
+trace_seq:  u64 = 0
+
+; Append one ecall record. The slot index wraps, so the ring holds the last
+; TRACE_ENTRIES calls; the seq field marks which slots are live and their order.
+trace_record: (pid: u64, num: u64, a0: u64, a1: u64, a2: u64, a3: u64, ret: u64) {
+    trace_seq = trace_seq + 1
+    slot: u64 = ((trace_seq - 1) % TRACE_ENTRIES) * TRACE_FIELDS
+    tp: u64* = &trace_ring[0]
+    tp[slot + TRACE_F_SEQ] = trace_seq
+    tp[slot + TRACE_F_PID] = pid
+    tp[slot + TRACE_F_NUM] = num
+    tp[slot + TRACE_F_A0]  = a0
+    tp[slot + TRACE_F_A1]  = a1
+    tp[slot + TRACE_F_A2]  = a2
+    tp[slot + TRACE_F_A3]  = a3
+    tp[slot + TRACE_F_RET] = ret
+}
+
+; Dispatch a U-mode ecall by a7; args in a0-a3, result to a0. Records the call
+; into the trace ring around the inner dispatch. See OS spec ch.7.
 syscall_dispatch: (frame: u64*) -> u64 {
+    cur: u64* = scheduler_current()
+    pid: u64 = 0
+    if cur != null {
+        pid = process_pid(cur)
+    }
+    ; Capture args before the inner dispatch overwrites a0 with the result.
+    num: u64 = frame[TF_A7]
+    a0: u64 = frame[TF_A0]
+    a1: u64 = frame[TF_A1]
+    a2: u64 = frame[TF_A2]
+    a3: u64 = frame[TF_A3]
+
+    action: u64 = syscall_dispatch_inner(frame)
+
+    trace_record(pid, num, a0, a1, a2, a3, frame[TF_A0])
+    return action
+}
+
+; Body of the syscall dispatch; wrapped by syscall_dispatch for trace recording.
+syscall_dispatch_inner: (frame: u64*) -> u64 {
     num: u64 = frame[TF_A7]
 
     if num == SYSCALL_EXIT {

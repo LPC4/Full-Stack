@@ -10,7 +10,7 @@
 
 use asm_to_binary::AssembledOutput;
 use full_stack::compilation_pipeline::{
-    assembled_to_elf_file, build_fs_image, CompilationPipeline, FsEntry, TargetMode,
+    CompilationPipeline, FsEntry, TargetMode, assembled_to_elf_file, build_fs_image,
 };
 use hll_to_ir::stdlib::{get_stdlib_modules_for_mode, get_stdlib_type_prelude};
 use os_runtime::{kernel, user};
@@ -3586,6 +3586,41 @@ fn os_inspector_walks_pid1_stack() {
         stack[0].va == shell_proc.sp && stack[0].mapped,
         "the word at sp {:#x} should translate and be mapped",
         shell_proc.sp
+    );
+}
+
+// The syscall trace ring records every U-mode ecall; the strace panel drains it.
+// After boot the shell has polled input (readchar), so the ring holds its calls.
+#[test]
+fn os_inspector_traces_shell_syscalls() {
+    use full_stack::view::debug::os_view::{self, OsSymbols};
+
+    let kernel = cached_kernel();
+    let shell = compile_hosted_program("shell");
+    let image = build_fs_image(&[FsEntry::Dir { path: "/home" }]);
+
+    let mut vm = setup_kernel_vm(kernel, Some(&shell), Some(&image), "");
+    let _ = vm.run(80_000_000);
+
+    let sym = OsSymbols::from_kernel(kernel).expect("kernel scheduler symbols resolve");
+    let trace = os_view::capture_trace(&vm, &sym);
+
+    assert!(
+        !trace.is_empty(),
+        "expected the shell to have traced syscalls"
+    );
+    // Newest first: seq is strictly decreasing and every entry is the shell (pid 1).
+    for pair in trace.windows(2) {
+        assert!(pair[0].seq > pair[1].seq, "trace not ordered newest-first");
+    }
+    assert!(
+        trace.iter().all(|e| e.pid == 1),
+        "only the shell (pid 1) has run, so every traced call should be its"
+    );
+    // The shell idles in readchar (syscall 100); it must show up in the ring.
+    assert!(
+        trace.iter().any(|e| e.num == 100),
+        "expected a readchar (100) syscall in the trace"
     );
 }
 
