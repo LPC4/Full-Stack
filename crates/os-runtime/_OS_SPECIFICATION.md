@@ -359,7 +359,10 @@ global written by `trace_record`. Each entry is `TRACE_FIELDS` (8) words: a
 monotonic `seq` (0 marks an empty slot), the caller `pid`, the syscall number, the
 first four args captured before dispatch, and the result (`a0` after dispatch). The
 slot for `seq` is `(seq - 1) % TRACE_ENTRIES`, so the ring keeps the most recent
-`TRACE_ENTRIES` calls. It is a read-only inspector feed: the GUI strace panel
+`TRACE_ENTRIES` calls. `trace_record` publishes lock-free: it fills the slot, writes
+its `seq`, then advances the `trace_seq` counter last, so a reader that samples
+mid-write sees either the old counter or a fully written newest entry (never a torn
+one). It is a read-only inspector feed: the GUI strace panel
 (`os_view::capture_trace`) drains it from guest memory each frame and renders the
 newest calls, filterable by pid, with negative returns highlighted. The kernel never
 reads the ring back.

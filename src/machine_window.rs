@@ -5,7 +5,8 @@
 use web_time::{Duration, Instant};
 
 use asm_to_binary::AssembledOutput;
-use egui::{Color32, Frame, Margin, RichText, Stroke, Vec2};
+use egui::{Color32, Frame, Margin, RichText, Stroke};
+use full_stack::view::debug::fs_view::{self, FsSymbols};
 use full_stack::view::debug::os_view::{self, OsSymbols};
 use full_stack::view::ui_theme;
 use virtual_machine::devices::framebuffer::{FB_HEIGHT, FB_WIDTH};
@@ -100,6 +101,7 @@ enum DebugView {
     Cpu,
     Os,
     Syscalls,
+    Files,
 }
 
 enum BootPhase {
@@ -152,6 +154,8 @@ pub struct MachineWindow {
     /// Guest-physical addresses of the kernel scheduler globals, resolved at boot.
     /// `None` for non-kernel images; drives the Debug tab's process inspector.
     os_symbols: Option<OsSymbols>,
+    /// Addresses of the kernel FS globals; drives the Debug tab's file inspector.
+    fs_symbols: Option<FsSymbols>,
     /// Which inspector the Debug tab currently shows (CPU vs OS/processes).
     debug_view: DebugView,
 }
@@ -174,6 +178,7 @@ impl MachineWindow {
         // Resolve the kernel scheduler globals so the Debug tab can walk live
         // process state. Absent on a non-kernel image (the panel hides itself).
         self.os_symbols = OsSymbols::from_kernel(assembled);
+        self.fs_symbols = FsSymbols::from_kernel(assembled);
 
         // Inject a filesystem image if provided. The kernel reads the image base
         // and size from the metadata page at FS_META_PA during boot.
@@ -232,8 +237,6 @@ impl MachineWindow {
 
         self.render_toolbar(ui, has_kernel, is_running);
 
-        let content_h = ui.available_height().max(100.0);
-
         let focused = self.terminal_focused && is_running;
         let ring = if focused {
             Stroke::new(1.5, term_cursor().gamma_multiply(0.7))
@@ -247,8 +250,9 @@ impl MachineWindow {
             .corner_radius(4.0)
             .inner_margin(Margin::same(10))
             .show(ui, |ui| {
-                ui.set_min_size(Vec2::new(ui.available_width(), content_h));
-                ui.set_max_height(content_h);
+                // Fill width only; forcing a min height poisons a floating window's
+                // stored size to the screen edge and blocks vertical shrink.
+                ui.set_min_width(ui.available_width());
                 match self.active_tab {
                     FbTab::BootLog => self.render_console(ui, is_running),
                     FbTab::Framebuffer => self.render_framebuffer(ui, is_running),
@@ -598,7 +602,9 @@ impl MachineWindow {
         // Blinking block cursor, shown only while the console is focused.
         let cursor_on = focused && (ui.input(|i| i.time) * 2.0) as i64 % 2 == 0;
 
-        egui::ScrollArea::vertical()
+        // Scroll both ways: long log lines scroll horizontally inside the window
+        // rather than widening it (the window then resizes only by hand).
+        egui::ScrollArea::both()
             .id_salt("mw_console")
             .stick_to_bottom(true)
             .auto_shrink([false, false])
@@ -777,6 +783,8 @@ impl MachineWindow {
                     .on_disabled_hover_text("Boot the kernel to inspect processes");
                 ui.selectable_value(&mut self.debug_view, DebugView::Syscalls, "Syscalls")
                     .on_disabled_hover_text("Boot the kernel to trace syscalls");
+                ui.selectable_value(&mut self.debug_view, DebugView::Files, "Files")
+                    .on_disabled_hover_text("Boot the kernel to inspect the filesystem");
             });
         });
         if !has_os {
@@ -787,11 +795,12 @@ impl MachineWindow {
 
         let view = self.debug_view;
         let os_symbols = self.os_symbols;
+        let fs_symbols = self.fs_symbols;
         let BootPhase::Running { vm, .. } = &self.phase else {
             return;
         };
 
-        egui::ScrollArea::vertical()
+        egui::ScrollArea::both()
             .id_salt("mw_debugger")
             .auto_shrink([false, false])
             .show(ui, |ui| match view {
@@ -816,6 +825,12 @@ impl MachineWindow {
                     if let Some(sym) = os_symbols.as_ref() {
                         dbg_heading(ui, "SYSCALL TRACE");
                         os_view::render_trace(ui, vm, sym);
+                    }
+                }
+                DebugView::Files => {
+                    if let Some(sym) = fs_symbols.as_ref() {
+                        dbg_heading(ui, "FILESYSTEM");
+                        fs_view::render(ui, vm, sym);
                     }
                 }
             });

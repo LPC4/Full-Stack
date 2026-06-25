@@ -1130,14 +1130,26 @@ impl eframe::App for FullStackApp {
             && self.compilation_state.assembled().is_some()
             && self.compilation_state.error_summary.is_none();
         let mut mw_open = self.machine_window.open;
+        // Open centered at half the viewport; bound by the screen so a wide boot
+        // log scrolls inside the window instead of stretching it to the edge.
+        let screen = ui.ctx().content_rect();
+        let default_w = (screen.width() * 0.5).clamp(480.0, 1100.0);
+        let default_h = (screen.height() * 0.5).clamp(320.0, 800.0);
+        let default_pos = egui::pos2(
+            screen.center().x - default_w / 2.0,
+            screen.center().y - default_h / 2.0,
+        );
         egui::Window::new("Machine")
+            // Fresh id so any previously persisted (poisoned screen-tall) size is
+            // discarded; the window then opens at the centered half-screen default.
+            .id(egui::Id::new("machine_window_v2"))
             .open(&mut mw_open)
-            .default_size([720.0, 480.0])
-            .min_size([600.0, 350.0])
-            .max_size([900.0, 700.0])
+            .default_pos(default_pos)
+            .default_size([default_w, default_h])
+            .min_size([480.0, 320.0])
+            .max_size([screen.width(), screen.height()])
             .resizable(true)
             .show(ui.ctx(), |ui| {
-                ui.set_max_width(900.0);
                 // Booting drops into an interactive shell (ls / cd / cat / exit).
                 // The selected program, if any, is placed in /home as a runnable
                 // file you can launch by typing its name (bare-name execution).

@@ -18,6 +18,7 @@ pub mod cache_view;
 pub mod cpu_state_view;
 pub mod disassembly_view;
 pub mod framebuffer_view;
+pub mod fs_view;
 pub mod io_view;
 pub mod memory_view;
 pub mod os_view;

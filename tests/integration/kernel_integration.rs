@@ -3624,6 +3624,55 @@ fn os_inspector_traces_shell_syscalls() {
     );
 }
 
+// The FS inspector walks the in-memory image from guest memory; this guards the
+// on-disk offsets, the tree reader, and the file-preview round-trip.
+#[test]
+fn fs_inspector_reads_tree_and_preview() {
+    use full_stack::view::debug::fs_view::{self, FsSymbols};
+
+    let kernel = cached_kernel();
+    let shell = compile_hosted_program("shell");
+    let body = b"hello from the fs inspector\n";
+    let image = build_fs_image(&[
+        FsEntry::Dir { path: "/home" },
+        FsEntry::File {
+            path: "/readme.txt",
+            data: body,
+        },
+    ]);
+
+    let mut vm = setup_kernel_vm(kernel, Some(&shell), Some(&image), "");
+    let _ = vm.run(80_000_000);
+
+    let sym = FsSymbols::from_kernel(kernel).expect("kernel FS symbols resolve");
+    let root = fs_view::capture(&vm, &sym).expect("FS should be mounted after boot");
+
+    assert_eq!(root.name, "/", "root node names the root directory");
+    assert!(root.is_dir, "root is a directory");
+
+    let home = root
+        .children
+        .iter()
+        .find(|c| c.name == "home")
+        .expect("/home should be in the tree");
+    assert!(home.is_dir, "/home should be a directory");
+
+    let readme = root
+        .children
+        .iter()
+        .find(|c| c.name == "readme.txt")
+        .expect("/readme.txt should be in the tree");
+    assert!(!readme.is_dir, "/readme.txt should be a file");
+    assert_eq!(
+        readme.size as usize,
+        body.len(),
+        "file size should match the written bytes"
+    );
+
+    let preview = fs_view::file_preview(&vm, &sym, readme);
+    assert_eq!(preview, body, "preview should round-trip the file contents");
+}
+
 // --- FS layout / symbol checks (no VM needed) ---
 
 #[test]

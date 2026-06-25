@@ -716,13 +716,12 @@ const TRACE_F_RET = 7
 trace_ring: u64[2048] = []   ; TRACE_ENTRIES * TRACE_FIELDS, zeroed at boot.
 trace_seq:  u64 = 0
 
-; Append one ecall record. The slot index wraps, so the ring holds the last
-; TRACE_ENTRIES calls; the seq field marks which slots are live and their order.
+; Append one ecall record into the wrapping ring (last TRACE_ENTRIES calls).
+; Publish-last: fill entry, write its seq, bump the counter last (see render note).
 trace_record: (pid: u64, num: u64, a0: u64, a1: u64, a2: u64, a3: u64, ret: u64) {
-    trace_seq = trace_seq + 1
-    slot: u64 = ((trace_seq - 1) % TRACE_ENTRIES) * TRACE_FIELDS
+    next: u64 = trace_seq + 1
+    slot: u64 = ((next - 1) % TRACE_ENTRIES) * TRACE_FIELDS
     tp: u64* = &trace_ring[0]
-    tp[slot + TRACE_F_SEQ] = trace_seq
     tp[slot + TRACE_F_PID] = pid
     tp[slot + TRACE_F_NUM] = num
     tp[slot + TRACE_F_A0]  = a0
@@ -730,6 +729,8 @@ trace_record: (pid: u64, num: u64, a0: u64, a1: u64, a2: u64, a3: u64, ret: u64)
     tp[slot + TRACE_F_A2]  = a2
     tp[slot + TRACE_F_A3]  = a3
     tp[slot + TRACE_F_RET] = ret
+    tp[slot + TRACE_F_SEQ] = next
+    trace_seq = next
 }
 
 ; Dispatch a U-mode ecall by a7; args in a0-a3, result to a0. Records the call
