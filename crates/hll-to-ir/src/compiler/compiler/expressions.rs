@@ -36,7 +36,7 @@ impl HighLevelCompiler {
             Expression::Match { .. } => {
                 self.context.error(
                     "a value `match` is only supported directly as a binding initializer, \
-                     assignment rvalue, or `return` value (HLL V2 M7)"
+                     assignment rvalue, or `return` value"
                         .to_owned(),
                 );
                 None
@@ -416,19 +416,7 @@ impl HighLevelCompiler {
         field: &str,
         mode: EvalMode,
     ) -> Option<LoweredValue> {
-        // `@ptr.field`: evaluate the inner pointer in Value mode -- its register is the base pointer.
-        // `x.field`: evaluate the base in Address mode -- the slot pointer is the aggregate pointer.
-        let base_addr = if self.language_version == crate::LanguageVersion::V2 {
-            self.lower_expr(expr, EvalMode::Address)?
-        } else {
-            match expr {
-                Expression::Unary {
-                    op: UnaryOp::Dereference,
-                    expr: inner,
-                } => self.lower_expr(inner, EvalMode::Value)?,
-                _ => self.lower_expr(expr, EvalMode::Address)?,
-            }
-        };
+        let base_addr = self.lower_expr(expr, EvalMode::Address)?;
         self.lower_field_access_mode(&base_addr, field, mode)
     }
 
@@ -492,25 +480,6 @@ impl HighLevelCompiler {
                                 ptr: slot_reg,
                                 offset: None,
                             });
-                            // V1: field access through a heap pointer in a stack
-                            // slot yields *field_T; the caller uses `@` to load.
-                            // V2 auto-dereferences via the common path below.
-                            if self.language_version == crate::LanguageVersion::V1 {
-                                let (offset, field_ty) =
-                                    self.aggregate_field_offset_and_type(&fields, field)?;
-                                let dest = self.new_temp();
-                                self.push_instruction(IrInstruction::Offset {
-                                    dest: dest.clone(),
-                                    ty: field_ty.clone(),
-                                    ptr: loaded,
-                                    bytes: IrValue::Integer(offset),
-                                });
-                                return Some(LoweredValue {
-                                    value: IrValue::Register(dest),
-                                    ty: IrType::Pointer(Box::new(field_ty)),
-                                    is_unsigned: false,
-                                });
-                            }
                             (loaded, fields)
                         } else {
                             return None;
@@ -568,30 +537,9 @@ impl HighLevelCompiler {
         index: &Expression,
         mode: EvalMode,
     ) -> Option<LoweredValue> {
-        if self.language_version == crate::LanguageVersion::V2 {
-            let base = self.lower_expr(expr, EvalMode::Address)?;
-            let idx = self.lower_expr(index, EvalMode::Value)?;
-            return self.lower_array_index_mode(&base, &idx, mode);
-        }
-
-        match expr {
-            Expression::Unary {
-                op: UnaryOp::Dereference,
-                expr: inner,
-            } => {
-                // `@arr[i]`: evaluate arr in Value mode to get the heap pointer.
-                let base = self.lower_expr(inner, EvalMode::Value)?;
-                let idx = self.lower_expr(index, EvalMode::Value)?;
-                self.lower_array_index_mode(&base, &idx, mode)
-            }
-            _ => {
-                // `arr[i]`: always returns the element pointer (Address).
-                // Callers must apply `@` to load the value.
-                let base = self.lower_expr(expr, EvalMode::Address)?;
-                let idx = self.lower_expr(index, EvalMode::Value)?;
-                self.lower_array_index_mode(&base, &idx, EvalMode::Address)
-            }
-        }
+        let base = self.lower_expr(expr, EvalMode::Address)?;
+        let idx = self.lower_expr(index, EvalMode::Value)?;
+        self.lower_array_index_mode(&base, &idx, mode)
     }
 
     pub(super) fn lower_array_index_mode(
@@ -868,12 +816,6 @@ impl HighLevelCompiler {
         end: Option<&Expression>,
         inclusive: bool,
     ) -> Option<LoweredValue> {
-        if self.language_version != crate::LanguageVersion::V2 {
-            self.context
-                .error("range slicing requires language version V2".to_owned());
-            return None;
-        }
-
         let base = self.lower_expr(base_expr, EvalMode::Address)?;
         let (data_ptr, elem_ty, len_val) = self.slice_base_parts(&base)?;
 
@@ -974,21 +916,6 @@ impl HighLevelCompiler {
     ) -> Option<LoweredValue> {
         match op {
             UnaryOp::AddressOf => {
-                if self.language_version == crate::LanguageVersion::V1
-                    && matches!(
-                        expr,
-                        Expression::Unary {
-                            op: UnaryOp::Dereference,
-                            ..
-                        }
-                    )
-                {
-                    self.context.error(
-                        "cannot take address of a dereference expression (`&@...` is invalid)"
-                            .to_owned(),
-                    );
-                    return None;
-                }
                 // `&x`: evaluate x in Address mode; the result is already a Pointer(T).
                 self.lower_expr(expr, EvalMode::Address)
             }
@@ -1013,14 +940,13 @@ impl HighLevelCompiler {
                         })
                     }
                     EvalMode::Value => {
-                        let ptr_reg = match ptr_val.value {
-                            IrValue::Register(r) => r,
-                            _ => {
-                                self.context
-                                    .diagnostics
-                                    .error("cannot dereference non-register value".to_owned());
-                                return None;
-                            }
+                        let ptr_reg = if let IrValue::Register(r) = ptr_val.value {
+                            r
+                        } else {
+                            self.context
+                                .diagnostics
+                                .error("cannot dereference non-register value".to_owned());
+                            return None;
                         };
                         let dest = self.new_temp();
                         self.push_instruction(IrInstruction::Load {
@@ -1144,15 +1070,15 @@ impl HighLevelCompiler {
         let target_expr = Self::assign_target_to_expression(target)?;
         let addr = self.lower_expr(&target_expr, EvalMode::Address)?;
 
-        let (ptr_reg, store_ty) = match (&addr.value, &addr.ty) {
-            (IrValue::Register(reg), IrType::Pointer(inner)) => (reg.clone(), *inner.clone()),
-            _ => {
+        let (ptr_reg, store_ty) =
+            if let (IrValue::Register(reg), IrType::Pointer(inner)) = (&addr.value, &addr.ty) {
+                (reg.clone(), *inner.clone())
+            } else {
                 self.context
                     .diagnostics
                     .error("assignment target did not resolve to a register address".to_owned());
                 return None;
-            }
-        };
+            };
 
         let lowered = self.lower_value_for_type(rvalue, &store_ty)?;
 

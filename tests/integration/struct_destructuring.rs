@@ -8,7 +8,7 @@ use full_stack::compilation_pipeline::CompilationPipeline;
 use hll_to_ir::IrInstruction;
 
 fn compile_ok(source: &str) -> full_stack::compilation_pipeline::CompilationResult {
-    let mut pipeline = CompilationPipeline::new_v1();
+    let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
     pipeline
         .compile(source)
@@ -85,7 +85,7 @@ main: () -> i32 {
 #[test]
 fn type_alias_struct_return_destructured() {
     compile_ok(r#"
-type Pair = { first: i32, second: i32 }
+struct Pair { first: i32, second: i32 }
 make_pair: (a: i32, b: i32) -> Pair { return { .first = a, .second = b } }
 main: () -> i32 {
     { first: i32, second: i32 } = make_pair(3, 4)

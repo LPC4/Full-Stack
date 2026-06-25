@@ -1,0 +1,56 @@
+; Pointers and places: &place, @ whole-pointee read/write, one-level member
+; auto-deref, &seq[i], element-scaled T* arithmetic, u8* byte escape hatch, casts, defer LIFO.
+
+external println: (s: u8[]) -> i32
+external print_int: (value: i64) -> i32
+
+struct Point {
+    x: i32
+    y: i32
+}
+
+main: () -> i32 {
+    println("-- pointers and places --")
+
+    ; &place and @ptr: read and write through a pointer to a local.
+    slot: i32 = 21
+    sp: i32* = &slot
+    @sp = @sp + 21
+    if slot != 42 { return 1 }
+
+    ; Pointer reinterpret round-trip: i32* -> u8* -> i32* preserves the value.
+    raw: u8* = sp as u8*
+    round_trip: i32* = raw as i32*
+    if @round_trip != 42 { return 2 }
+
+    ; Member access auto-dereferences one pointer level; @p reads the whole struct.
+    p: Point* = new(Point)
+    defer free(p)
+    p.x = 3
+    p.y = 4
+    whole: Point = @p
+    if whole.x + whole.y != 7 { return 3 }
+
+    ; Element-scaled arithmetic: buf + n advances by n elements, matching buf[n].
+    buf: i32* = new(i32, 4)
+    defer free(buf)
+    buf[0] = 10
+    buf[1] = 20
+    third: i32* = buf + 2          ; same place as &buf[2]
+    @third = 30
+    if buf[2] != 30 { return 4 }
+    if third != &buf[2] { return 5 }
+
+    ; u8* is the explicit byte-level escape hatch: +4 bytes == +1 i32 element.
+    by_element: u64 = (buf + 1) as u64
+    by_bytes: u64 = (buf as u8* + 4) as u64
+    if by_element != by_bytes { return 6 }
+    print_int(buf[0] + buf[1] + buf[2])
+
+    ; defer runs in LIFO order at scope exit: "second" prints before "first".
+    defer println("cleanup first (declared first, runs last)")
+    defer println("cleanup second (declared last, runs first)")
+
+    println("ok")
+    return 0
+}

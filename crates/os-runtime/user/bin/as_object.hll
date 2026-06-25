@@ -1,4 +1,3 @@
-; @version 2
 
 ; ET_REL object serializer for the in-VM assembler. Split out of as.hll and linked
 ; by the host toolchain. Assembled state (out/code/data/labels/relocs) lives in as.hll.

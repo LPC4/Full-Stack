@@ -1,9 +1,9 @@
 ; Function returning two values via inline struct
 divide: (a: i32, b: i32) -> { result: i32, success: bool } {
     if b == 0 {
-        return { result: i32 = 0, success: bool = false }
+        return { .result = 0, .success = false }
     }
-    return { result: i32 = a / b, success: bool = true }
+    return { .result = a / b, .success = true }
 }
 
 start: () {

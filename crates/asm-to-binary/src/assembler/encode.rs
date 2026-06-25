@@ -1,5 +1,5 @@
 /// Pass 2: encode typed tokens to bytes, resolving label references via the symbol table.
-/// See _RISCV_SPECIFICATIONS.md for pseudo-instruction expansion rules.
+/// See `_RISCV_SPECIFICATIONS.md` for pseudo-instruction expansion rules.
 use super::AssemblerError;
 use super::layout::Layout;
 use super::output::{AssembledOutput, RelocationKind, RelocationRecord};
@@ -334,7 +334,7 @@ fn resolve_absolute_symbol(
     None
 }
 
-/// Compute PC-relative (hi20, lo12) for a target address relative to current_addr.
+/// Compute PC-relative (hi20, lo12) for a target address relative to `current_addr`.
 fn pcrel_offsets(target_addr: u64, current_addr: u64) -> (i32, i32) {
     pcrel_split((target_addr as i64) - (current_addr as i64))
 }

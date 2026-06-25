@@ -1,4 +1,3 @@
-; @version 2
 ; Self-contained panic, safe before any init.
 _kpanic: () {
     asm {

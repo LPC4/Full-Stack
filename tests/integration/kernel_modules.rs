@@ -9,12 +9,12 @@
 /// link time, so they don't cause errors. Only truly undefined identifiers
 /// (used but never declared) produce a compile-time error.
 use full_stack::compilation_pipeline::{CompilationPipeline, TargetMode};
-use hll_to_ir::stdlib::{get_kernel_stdlib_source, get_stdlib_modules_for_mode, get_stdlib_type_prelude};
+use hll_to_ir::stdlib::{get_stdlib_modules_for_mode, get_stdlib_type_prelude};
 use os_runtime::kernel;
 
 /// Compile one kernel HLL source as a standalone module and assert it succeeds.
 fn assert_kernel_module_compiles(name: &str, source: &str) {
-    let mut p = CompilationPipeline::new_v1();
+    let mut p = CompilationPipeline::new();
     p.set_target_mode(TargetMode::Kernel);
     p.set_write_artifacts(false);
     p.compile_modules(&[(name, source)])
@@ -26,7 +26,7 @@ fn assert_kernel_module_compiles(name: &str, source: &str) {
 #[test]
 fn kernel_stdlib_all_modules_compile() {
     let modules = get_stdlib_modules_for_mode(TargetMode::Kernel);
-    let mut p = CompilationPipeline::new_v1();
+    let mut p = CompilationPipeline::new();
     p.set_target_mode(TargetMode::Kernel);
     p.set_write_artifacts(false);
     p.set_string_prefix(Some("__kern_str_".to_owned()));
@@ -37,12 +37,8 @@ fn kernel_stdlib_all_modules_compile() {
 
 #[test]
 fn kernel_stdlib_full_bundle_compiles() {
-    let mut p = CompilationPipeline::new_v1();
-    p.set_target_mode(TargetMode::Kernel);
-    p.set_write_artifacts(false);
-    p.set_string_prefix(Some("__kern_str_".to_owned()));
-    p.compile(&get_kernel_stdlib_source())
-        .unwrap_or_else(|e| panic!("kernel stdlib bundle failed to compile:\n{e}"));
+    CompilationPipeline::compile_stdlib_objects(TargetMode::Kernel)
+        .unwrap_or_else(|e| panic!("kernel stdlib failed to compile:\n{e}"));
 }
 
 // --- Individual kernel HLL modules ---
@@ -137,7 +133,9 @@ fn frame_sizes(asm: &str) -> Vec<(String, u64)> {
         } else if let Some(rest) = trimmed.strip_prefix("; Allocate stack frame:") {
             if let (Some(name), Some(size)) = (
                 current.take(),
-                rest.trim().strip_suffix(" bytes").and_then(|s| s.parse().ok()),
+                rest.trim()
+                    .strip_suffix(" bytes")
+                    .and_then(|s| s.parse().ok()),
             ) {
                 out.push((name, size));
             }
@@ -149,13 +147,16 @@ fn frame_sizes(asm: &str) -> Vec<(String, u64)> {
 // Compile every kernel function and assert no frame exceeds the safe ceiling.
 #[test]
 fn kernel_frames_stay_within_immediate_range() {
-    let mut p = CompilationPipeline::new_v1();
+    let mut p = CompilationPipeline::new();
     p.set_target_mode(TargetMode::Kernel);
     p.set_write_artifacts(false);
     p.set_string_prefix(Some("__kern_str_".to_owned()));
 
-    let mut sources: Vec<(&str, String)> =
-        vec![("kernel_stdlib", get_kernel_stdlib_source())];
+    p.set_type_prelude(get_stdlib_type_prelude());
+    let mut sources: Vec<(&str, String)> = get_stdlib_modules_for_mode(TargetMode::Kernel)
+        .iter()
+        .map(|(n, s)| (*n, (*s).to_owned()))
+        .collect();
     sources.push(("my_kernel", kernel::MY_KERNEL.to_owned()));
 
     let mut offenders: Vec<(String, u64)> = Vec::new();
@@ -175,7 +176,10 @@ fn kernel_frames_stay_within_immediate_range() {
     }
 
     // Guard against the parser silently matching nothing (asm format drift).
-    assert!(parsed_any, "no frame-size comments parsed; the asm format changed");
+    assert!(
+        parsed_any,
+        "no frame-size comments parsed; the asm format changed"
+    );
 
     assert!(
         offenders.is_empty(),

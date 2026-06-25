@@ -577,7 +577,7 @@ impl Instruction for Sret {
     }
 }
 
-/// SfenceVma - supervisor fence (opcode 0x12000073, sfence.vma x0, x0)
+/// `SfenceVma` - supervisor fence (opcode 0x12000073, sfence.vma x0, x0)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SfenceVma;
 

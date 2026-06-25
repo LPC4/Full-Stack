@@ -1,4 +1,3 @@
-; @version 2
 ; Interactive shell, pid 1. See OS spec ch.10.1.
 ; Syscall wrappers and C-string helpers come from the hosted stdlib.
 
@@ -364,8 +363,8 @@ sh_wait_foreground: (pid: i64) {
 }
 
 ; --- Background job table ---
-; Job id = slot index + 1; 0 marks a free slot. Index with job_pids[i], not
-; base+i: raw pointer arith is byte-scaled in HLL (lang spec 4.2).
+; Job id = slot index + 1; 0 marks a free slot. Index with job_pids[i] for a
+; bounds-checked, element-scaled place (lang spec 4.2, 5.1).
 
 const MAX_JOBS = 8
 job_pids: i64[8] = []

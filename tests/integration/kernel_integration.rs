@@ -10,13 +10,9 @@
 
 use asm_to_binary::AssembledOutput;
 use full_stack::compilation_pipeline::{
-    assembled_to_elf_file, build_fs_image, CompilationPipeline, FsEntry, LanguageVersion,
-    TargetMode,
+    assembled_to_elf_file, build_fs_image, CompilationPipeline, FsEntry, TargetMode,
 };
-use hll_to_ir::stdlib::{
-    get_kernel_stdlib_source, get_stdlib_modules_for_mode, get_stdlib_source_for_mode,
-    get_stdlib_type_prelude,
-};
+use hll_to_ir::stdlib::{get_stdlib_modules_for_mode, get_stdlib_type_prelude};
 use os_runtime::{kernel, user};
 use std::sync::OnceLock;
 use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
@@ -30,39 +26,32 @@ const USER_CODE_VA: u64 = 0x4000_0000;
 
 // --- Cached kernel binaries ---
 
-// Kernel built from the single-concatenated stdlib source plus my_kernel. This
-// is what most tests boot.
+// Kernel built from the per-module stdlib objects plus my_kernel (no source
+// concatenation). This is what most tests boot.
 fn cached_kernel() -> &'static AssembledOutput {
     static KERNEL: OnceLock<AssembledOutput> = OnceLock::new();
     KERNEL.get_or_init(|| {
-        let mut stdlib_pipeline = CompilationPipeline::new_v1();
-        stdlib_pipeline.set_string_prefix(Some("__kern_str_".to_owned()));
-        stdlib_pipeline.set_write_artifacts(false);
-        let stdlib = stdlib_pipeline
-            .compile(&get_kernel_stdlib_source())
+        let stdlib_objs = CompilationPipeline::compile_stdlib_objects(TargetMode::Kernel)
             .expect("kernel stdlib compile");
-        let (_, stdlib_tokens) =
-            stdlib_pipeline.compile_ir_to_assembly_with_tokens(&stdlib.ir_program);
-        let stdlib_obj = stdlib_pipeline
-            .assemble(&stdlib_tokens)
-            .expect("stdlib assemble");
 
-        let mut kernel_pipeline = CompilationPipeline::new_v1();
+        let mut kernel_pipeline = CompilationPipeline::new();
         kernel_pipeline.set_target_mode(TargetMode::Kernel);
         kernel_pipeline.set_write_artifacts(false);
+        kernel_pipeline.set_entry_point(Some("_kernel_start".to_owned()));
         let kernel_objs = kernel_pipeline
             .compile_modules(&[("my_kernel", kernel::MY_KERNEL)])
             .expect("kernel modules compile");
 
-        kernel_pipeline.set_entry_point(Some("_kernel_start".to_owned()));
+        let mut modules: Vec<(&str, &AssembledOutput)> =
+            stdlib_objs.iter().map(|(n, o)| (n.as_str(), o)).collect();
+        modules.push(("my_kernel", &kernel_objs[0]));
+        let stem: String = modules
+            .iter()
+            .map(|(n, _)| *n)
+            .collect::<Vec<_>>()
+            .join("_");
         kernel_pipeline
-            .link_assembled_objects_named(
-                "kernel_stdlib_my_kernel",
-                &[
-                    ("kernel_stdlib", &stdlib_obj),
-                    ("my_kernel", &kernel_objs[0]),
-                ],
-            )
+            .link_assembled_objects_named(&stem, &modules)
             .expect("kernel link")
     })
 }
@@ -73,7 +62,7 @@ fn cached_kernel() -> &'static AssembledOutput {
 fn cached_kernel_multi_module() -> &'static AssembledOutput {
     static KERNEL: OnceLock<AssembledOutput> = OnceLock::new();
     KERNEL.get_or_init(|| {
-        let mut stdlib_pipeline = CompilationPipeline::new_v1();
+        let mut stdlib_pipeline = CompilationPipeline::new();
         stdlib_pipeline.set_target_mode(TargetMode::Kernel);
         stdlib_pipeline.set_string_prefix(Some("__kern_str_".to_owned()));
         stdlib_pipeline.set_write_artifacts(false);
@@ -84,7 +73,7 @@ fn cached_kernel_multi_module() -> &'static AssembledOutput {
             .compile_modules(&modules.iter().map(|(n, s)| (*n, *s)).collect::<Vec<_>>())
             .expect("stdlib multi-module compile");
 
-        let mut kernel_pipeline = CompilationPipeline::new_v1();
+        let mut kernel_pipeline = CompilationPipeline::new();
         kernel_pipeline.set_target_mode(TargetMode::Kernel);
         kernel_pipeline.set_write_artifacts(false);
         kernel_pipeline.set_entry_point(Some("_kernel_start".to_owned()));
@@ -118,61 +107,34 @@ fn cached_kernel_multi_module() -> &'static AssembledOutput {
 
 // --- Shared helpers ---
 
-// Compile a hosted user program (links the hosted stdlib). Inline test programs
-// are authored in V2; their pragma still overrides this default.
+// Compile a hosted user program and link the hosted stdlib.
 fn compile_hosted(src: &str) -> AssembledOutput {
-    compile_hosted_modules(src, &[], "", LanguageVersion::V2)
-}
-
-// Compile a V1 hosted user program (V1 examples and demos not yet migrated).
-fn compile_hosted_v1(src: &str) -> AssembledOutput {
-    compile_hosted_modules(src, &[], "", LanguageVersion::V1)
+    compile_hosted_modules(src, &[], "")
 }
 
 // Compile a catalog program (primary + aux units) the way the app boot path
-// does. Defaults to V1; each program's `; @version` pragma overrides.
+// does.
 fn compile_hosted_program(name: &str) -> AssembledOutput {
     let prog = user::program(name).expect("program in catalog");
-    compile_hosted_modules(
-        prog.source,
-        prog.aux_sources,
-        prog.layout,
-        LanguageVersion::V1,
-    )
+    compile_hosted_modules(prog.source, prog.aux_sources, prog.layout)
 }
 
-// The hosted stdlib compiled once as its own object, linked against user
-// programs (each keeps its own `; @version`), mirroring the real CLI.
-fn cached_hosted_stdlib() -> &'static AssembledOutput {
-    static STDLIB: OnceLock<AssembledOutput> = OnceLock::new();
+// The hosted stdlib compiled once as per-module objects (no concatenation),
+// linked against user programs, mirroring the real CLI.
+fn cached_hosted_stdlib() -> &'static [(String, AssembledOutput)] {
+    static STDLIB: OnceLock<Vec<(String, AssembledOutput)>> = OnceLock::new();
     STDLIB.get_or_init(|| {
-        let mut pipeline = CompilationPipeline::new_v1();
-        pipeline.set_target_mode(TargetMode::Hosted);
-        pipeline.set_write_artifacts(false);
-        pipeline.set_type_prelude(get_stdlib_type_prelude());
-        pipeline.set_string_prefix(Some("_hstd_str_".to_owned()));
-        let result = pipeline
-            .compile(&get_stdlib_source_for_mode(TargetMode::Hosted))
-            .expect("hosted stdlib compile");
-        let (_, tokens) = pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program);
-        pipeline
-            .assemble_named("stdlib", &tokens)
-            .expect("hosted stdlib assemble")
+        CompilationPipeline::compile_stdlib_objects(TargetMode::Hosted)
+            .expect("hosted stdlib compile")
     })
 }
 
-// Compile a hosted program (primary + aux units) as separate objects, each
-// respecting its own `; @version` pragma, linked against the shared stdlib.
-fn compile_hosted_modules(
-    src: &str,
-    aux: &[&str],
-    layout: &str,
-    version: LanguageVersion,
-) -> AssembledOutput {
-    let mut pipeline = CompilationPipeline::new_v1();
+// Compile a hosted program (primary + aux units) as separate objects linked
+// against the shared stdlib.
+fn compile_hosted_modules(src: &str, aux: &[&str], layout: &str) -> AssembledOutput {
+    let mut pipeline = CompilationPipeline::new();
     pipeline.set_target_mode(TargetMode::Hosted);
     pipeline.set_write_artifacts(false);
-    pipeline.set_language_version(version);
     pipeline.set_type_prelude(get_stdlib_type_prelude());
     pipeline.set_source_prelude(layout);
     let result = pipeline.compile(src).expect("hosted compile");
@@ -185,10 +147,9 @@ fn compile_hosted_modules(
         .iter()
         .enumerate()
         .map(|(i, a)| {
-            let mut p = CompilationPipeline::new_v1();
+            let mut p = CompilationPipeline::new();
             p.set_target_mode(TargetMode::Hosted);
             p.set_write_artifacts(false);
-            p.set_language_version(version);
             p.set_type_prelude(get_stdlib_type_prelude());
             p.set_source_prelude(layout);
             p.set_string_prefix(Some(format!("aux{i}_str_")));
@@ -199,10 +160,12 @@ fn compile_hosted_modules(
         })
         .collect();
 
-    let stdlib_obj = cached_hosted_stdlib();
     let aux_names: Vec<String> = (0..aux_objs.len()).map(|i| format!("aux{i}")).collect();
-    let mut modules: Vec<(&str, &AssembledOutput)> =
-        vec![("stdlib", stdlib_obj), ("main", &main_obj)];
+    let mut modules: Vec<(&str, &AssembledOutput)> = cached_hosted_stdlib()
+        .iter()
+        .map(|(n, o)| (n.as_str(), o))
+        .collect();
+    modules.push(("main", &main_obj));
     for (n, o) in aux_names.iter().zip(aux_objs.iter()) {
         modules.push((n.as_str(), o));
     }
@@ -317,7 +280,6 @@ fn run_tool_session(
                 prog.source,
                 prog.aux_sources,
                 prog.layout,
-                LanguageVersion::V1,
             ));
             (path, elf)
         })
@@ -367,7 +329,7 @@ fn run_tool_session(
 
 #[test]
 fn kernel_boot_full_sequence() {
-    let user = compile_hosted_v1(user::USER_HELLO);
+    let user = compile_hosted(user::USER_HELLO);
     let (_, outcome, uart) = boot_kernel(cached_kernel(), Some(&user), None, "", 10_000_000);
 
     match outcome {
@@ -429,7 +391,7 @@ fn kernel_boot_full_sequence() {
 
 #[test]
 fn kernel_boot_multi_module_with_user() {
-    let user = compile_hosted_v1(user::USER_HELLO);
+    let user = compile_hosted(user::USER_HELLO);
     let (_, outcome, uart) = boot_kernel(
         cached_kernel_multi_module(),
         Some(&user),
@@ -479,33 +441,37 @@ const CORE_BASICS: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/programs/example/core_basics.hll"
 ));
-const POINTER_ARRAYS: &str = include_str!(concat!(
+const OPERATORS: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/programs/example/pointer_arrays.hll"
+    "/programs/example/operators.hll"
 ));
-const ARRAY_INITIALIZATION: &str = include_str!(concat!(
+const POINTERS_AND_PLACES: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/programs/example/array_initialization.hll"
+    "/programs/example/pointers_and_places.hll"
 ));
-const STRUCT_BINDING: &str = include_str!(concat!(
+const ARRAYS_SLICES_AND_RANGES: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/programs/example/struct_binding.hll"
+    "/programs/example/arrays_slices_and_ranges.hll"
 ));
-const CONTROL_FLOW_BASICS: &str = include_str!(concat!(
+const STRUCTS_AND_BINDING: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/programs/example/control_flow_basics.hll"
+    "/programs/example/structs_and_binding.hll"
 ));
-const CASTING_AND_POINTERS: &str = include_str!(concat!(
+const GENERICS: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/programs/example/casting_and_pointers.hll"
+    "/programs/example/generics.hll"
+));
+const ENUMS_MATCH_AND_RESULT: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/programs/example/enums_match_and_result.hll"
+));
+const STRINGS_AND_ITERATION: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/programs/example/strings_and_iteration.hll"
 ));
 const COMPILE_TIME_MATH: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/programs/example/compile_time_math.hll"
-));
-const GENERICS_AND_STRINGS: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/programs/example/generics_and_strings.hll"
 ));
 
 #[test]
@@ -514,38 +480,43 @@ fn example_core_basics_runs_in_kernel_userspace() {
 }
 
 #[test]
-fn example_pointer_arrays_runs_in_kernel_userspace() {
-    run_example_in_kernel(POINTER_ARRAYS, "pointer_arrays");
+fn example_operators_runs_in_kernel_userspace() {
+    run_example_in_kernel(OPERATORS, "operators");
 }
 
 #[test]
-fn example_array_initialization_runs_in_kernel_userspace() {
-    run_example_in_kernel(ARRAY_INITIALIZATION, "array_initialization");
+fn example_pointers_and_places_runs_in_kernel_userspace() {
+    run_example_in_kernel(POINTERS_AND_PLACES, "pointers_and_places");
 }
 
 #[test]
-fn example_struct_binding_runs_in_kernel_userspace() {
-    run_example_in_kernel(STRUCT_BINDING, "struct_binding");
+fn example_arrays_slices_and_ranges_runs_in_kernel_userspace() {
+    run_example_in_kernel(ARRAYS_SLICES_AND_RANGES, "arrays_slices_and_ranges");
 }
 
 #[test]
-fn example_control_flow_basics_runs_in_kernel_userspace() {
-    run_example_in_kernel(CONTROL_FLOW_BASICS, "control_flow_basics");
+fn example_structs_and_binding_runs_in_kernel_userspace() {
+    run_example_in_kernel(STRUCTS_AND_BINDING, "structs_and_binding");
 }
 
 #[test]
-fn example_casting_and_pointers_runs_in_kernel_userspace() {
-    run_example_in_kernel(CASTING_AND_POINTERS, "casting_and_pointers");
+fn example_generics_runs_in_kernel_userspace() {
+    run_example_in_kernel(GENERICS, "generics");
+}
+
+#[test]
+fn example_enums_match_and_result_runs_in_kernel_userspace() {
+    run_example_in_kernel(ENUMS_MATCH_AND_RESULT, "enums_match_and_result");
+}
+
+#[test]
+fn example_strings_and_iteration_runs_in_kernel_userspace() {
+    run_example_in_kernel(STRINGS_AND_ITERATION, "strings_and_iteration");
 }
 
 #[test]
 fn example_compile_time_math_runs_in_kernel_userspace() {
     run_example_in_kernel(COMPILE_TIME_MATH, "compile_time_math");
-}
-
-#[test]
-fn example_generics_and_strings_runs_in_kernel_userspace() {
-    run_example_in_kernel(GENERICS_AND_STRINGS, "generics_and_strings");
 }
 
 #[test]
@@ -609,8 +580,7 @@ main: () -> i32 {
 #[test]
 fn user_heap_grows_past_64k() {
     run_example_in_kernel(
-        r#"; @version 1
-external malloc: (size: u64) -> u8*
+        r#"external malloc: (size: u64) -> u8*
 main: () -> i32 {
     i: u64 = 0
     while i < 5 {
@@ -639,8 +609,7 @@ main: () -> i32 {
 #[test]
 fn user_brk_refuses_growth_into_arg_page() {
     run_example_in_kernel(
-        r#"; @version 1
-external heap_brk: (addr: u64) -> u64
+        r#"external heap_brk: (addr: u64) -> u64
 main: () -> i32 {
     base: u64 = heap_brk(0)
     big: u64 = 0x7FFFF000
@@ -700,7 +669,7 @@ fn fbdemo_renders_mandelbrot_set() {
     const YMIN: i64 = -86016;
     const STEP: i64 = 717;
 
-    let user = compile_hosted_v1(user::MANDELBROT);
+    let user = compile_hosted(user::MANDELBROT);
     let (vm, outcome, uart) = boot_kernel(cached_kernel(), Some(&user), None, "", 2_000_000_000);
     assert_user_exit_ok(&uart, &outcome, "mandelbrot");
     assert!(
@@ -756,7 +725,7 @@ fn fbdemo_renders_mandelbrot_set() {
 // which would be timing-dependent.
 #[test]
 fn cube_demo_drives_framebuffer() {
-    let user = compile_hosted_v1(user::CUBE);
+    let user = compile_hosted(user::CUBE);
     let (vm, outcome, uart) = boot_kernel(cached_kernel(), Some(&user), None, "", 10_000_000);
 
     assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
@@ -802,7 +771,7 @@ fn cube_demo_drives_framebuffer() {
 // plus at least one live cell drawn (a non-black pixel) rather than exact cells.
 #[test]
 fn life_demo_drives_framebuffer() {
-    let user = compile_hosted_v1(user::LIFE);
+    let user = compile_hosted(user::LIFE);
     let (vm, outcome, uart) = boot_kernel(cached_kernel(), Some(&user), None, "", 20_000_000);
 
     assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
@@ -845,9 +814,9 @@ fn life_demo_drives_framebuffer() {
 // Headless framebuffer throughput bench (a measurement, not a pass/fail). Run with:
 //   cargo test --release --test all -- --ignored cube_framebuffer_bench --nocapture
 #[test]
-#[ignore]
+#[ignore = "manual framebuffer throughput benchmark"]
 fn cube_framebuffer_bench() {
-    let user = compile_hosted_v1(user::CUBE);
+    let user = compile_hosted(user::CUBE);
     let steps: u64 = 40_000_000;
 
     let start = std::time::Instant::now();
@@ -1440,7 +1409,7 @@ fn inode_size_of(image: &[u8], name: &str) -> Option<u32> {
 #[test]
 fn editor_loads_clears_appends_writes_and_truncates() {
     let shell = compile_hosted_program("shell");
-    let editor = compile_hosted_v1(user::EDIT);
+    let editor = compile_hosted(user::EDIT);
     let editor_exec = assembled_to_elf_file(&editor);
 
     let image = build_fs_image(&[
@@ -1559,7 +1528,7 @@ cat /doc.txt\nexit\n",
 #[test]
 fn editor_waits_while_idle_for_input() {
     let shell = compile_hosted_program("shell");
-    let editor_exec = assembled_to_elf_file(&compile_hosted_v1(user::EDIT));
+    let editor_exec = assembled_to_elf_file(&compile_hosted(user::EDIT));
 
     let image = build_fs_image(&[
         FsEntry::Dir { path: "/bin" },
@@ -1753,7 +1722,7 @@ fn kernel_loads_and_runs_elf() {
 // "HLL0" and exit 36, so source and frozen target agree.
 #[test]
 fn kernel_cc_target_roundtrips() {
-    let host_elf = assembled_to_elf_file(&compile_hosted_v1(user::CC_HELLO_HLL));
+    let host_elf = assembled_to_elf_file(&compile_hosted(user::CC_HELLO_HLL));
 
     // Run the host-compiled source, then assemble + run the hand-written target.
     let (outcome, uart) = run_tool_session(
@@ -1796,12 +1765,7 @@ fn kernel_cc_target_roundtrips() {
 // without booting the kernel.
 #[test]
 fn cc_host_compiles() {
-    let out = compile_hosted_modules(
-        user::CC,
-        &[user::CC_CODEGEN],
-        user::CC_LAYOUT,
-        LanguageVersion::V1,
-    );
+    let out = compile_hosted_modules(user::CC, &[user::CC_CODEGEN], user::CC_LAYOUT);
     assert!(
         !out.to_flat_binary().is_empty(),
         "cc.hll produced an empty binary"

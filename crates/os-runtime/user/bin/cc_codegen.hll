@@ -1,4 +1,3 @@
-; @version 2
 
 ; HLL-0 code generator for `cc`, split out of cc.hll. Walks the shared AST tables
 ; (defined in cc.hll) via externals and emits naive stack-machine assembly into asmout.

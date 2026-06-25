@@ -1,35 +1,35 @@
-use full_stack::compilation_pipeline::CompilationPipeline;
-use hll_to_ir::stdlib::get_kernel_stdlib_source;
+use asm_to_binary::AssembledOutput;
+use full_stack::compilation_pipeline::{CompilationPipeline, TargetMode};
 use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 
 // Minimal test kernel that tests external interrupt delivery without full VMM setup
 const TEST_KERNEL_WITH_UART_IRQ: &str = r#"
-external klog_ok:      (msg: u8*) -> ()
-external klog_hex:     (label: u8*, val: u64) -> ()
-external kshutdown:    (code: i64) -> ()
-external trap_init:    () -> ()
-external plic_init:    () -> ()
+external klog_ok:      (msg: u8*)
+external klog_hex:     (label: u8*, val: u64)
+external kshutdown:    (code: i64)
+external trap_init:    ()
+external plic_init:    ()
 
-kmain: () -> () {
-    klog_ok("kernel starting".data)
+kmain: () {
+    klog_ok("kernel starting".ptr)
 
     ; Install trap handler and enable interrupts
     trap_init()
-    klog_ok("trap handler installed".data)
+    klog_ok("trap handler installed".ptr)
 
     ; Initialize PLIC routing
     plic_init()
-    klog_ok("interrupt controller online".data)
+    klog_ok("interrupt controller online".ptr)
 
     ; Enable UART RX interrupts: write IER[0] = 1 at UART base 0x10000000, offset 1
     asm {
-        li   t0, 0x10000001
-        li   t1, 1
-        sb   t1, 0(t0)
+        li   a0, 0x10000001
+        li   a1, 1
+        sb   a1, 0(a0)
     }
-    klog_ok("uart rx interrupts enabled".data)
+    klog_ok("uart rx interrupts enabled".ptr)
 
-    klog_ok("waiting for external interrupt".data)
+    klog_ok("waiting for external interrupt".ptr)
 
     ; Wait for external interrupt to arrive (WFI will be interrupted by pending IRQ)
     ; This will trigger the trap and deliver it to trap_handler
@@ -42,22 +42,19 @@ kmain: () -> () {
 "#;
 
 fn compile_and_run_kernel(kernel_src: &str) -> (String, Option<i64>, u64) {
-    let mut stdlib_pipeline = CompilationPipeline::new_v1();
-    stdlib_pipeline.set_string_prefix(Some("__kern_str_".to_owned()));
-    let stdlib = stdlib_pipeline
-        .compile(&get_kernel_stdlib_source())
+    let stdlib_objs = CompilationPipeline::compile_stdlib_objects(TargetMode::Kernel)
         .expect("kernel stdlib compile");
-    let (_, stdlib_tokens) =
-        stdlib_pipeline.compile_ir_to_assembly_with_tokens(&stdlib.ir_program);
 
-    let user_pipeline = CompilationPipeline::new_v1();
+    let user_pipeline = CompilationPipeline::new();
     let user = user_pipeline.compile(kernel_src).expect("kernel compile");
     let (_, user_tokens) = user_pipeline.compile_ir_to_assembly_with_tokens(&user.ir_program);
-
-    let stdlib_obj = stdlib_pipeline.assemble(&stdlib_tokens).expect("stdlib assemble");
     let user_obj = user_pipeline.assemble(&user_tokens).expect("user assemble");
+
+    let mut modules: Vec<(&str, &AssembledOutput)> =
+        stdlib_objs.iter().map(|(n, o)| (n.as_str(), o)).collect();
+    modules.push(("user", &user_obj));
     let assembled = user_pipeline
-        .link_assembled_objects(&[("kernel_stdlib", &stdlib_obj), ("user", &user_obj)])
+        .link_assembled_objects(&modules)
         .expect("link");
     let mut vm = VirtualMachine::new_kernel(&assembled);
 
@@ -140,7 +137,3 @@ fn plic_external_interrupt_has_correct_request_source() {
         uart
     );
 }
-
-
-
-

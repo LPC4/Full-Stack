@@ -1,4 +1,3 @@
-; @version 2
 
 ; Shared AST record layouts, prepended to every `cc` translation unit so cc.hll and
 ; cc_codegen.hll agree on one definition. HLL types are file-scoped.

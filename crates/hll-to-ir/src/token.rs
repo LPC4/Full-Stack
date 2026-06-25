@@ -94,7 +94,7 @@ pub enum Token<'a> {
     DotDot,
     DotDotEq,
     Assign,
-    // `?` postfix Result/Option propagation (V2).
+    // `?` postfix Result/Option propagation.
     Question,
     CompoundAssign(CompoundOp),
     Plus,

@@ -1,4 +1,3 @@
-; @version 2
 ; Boot entry point
 _kernel_start: () {
     kmain()

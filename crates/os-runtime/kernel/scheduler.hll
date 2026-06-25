@@ -1,4 +1,3 @@
-; @version 2
 ; Round-robin scheduler. current_process is the running PCB; ready_queue_head is the queue.
 ; schedule(frame, 1) = yield (re-enqueue as READY), schedule(frame, 2) = exit (mark EXITED).
 

@@ -1,0 +1,99 @@
+; Enums and error carriers: unit/payload variants, exhaustive statement match,
+; value-producing match, a wildcard arm, a generic user enum, Option, Result, and `?`.
+
+external println: (s: u8[]) -> i32
+external print_int: (value: i64) -> i32
+
+enum Shape {
+    Circle(i32)
+    Rect(i32, i32)
+    Empty
+}
+
+; A user-declared generic enum.
+enum Tree<T> {
+    Leaf(T)
+    Branch(T, T)
+}
+
+; Statement-position match: each arm is a block.
+area: (s: Shape) -> i32 {
+    match s {
+        Circle(r) -> {
+            return r * r
+        }
+        Rect(w, h) -> {
+            return w * h
+        }
+        Empty -> {
+            return 0
+        }
+    }
+    return -1
+}
+
+halve: (n: i32) -> Result<i32, i32> {
+    if n % 2 != 0 {
+        return Err(n)
+    }
+    return Ok(n / 2)
+}
+
+; `?` extracts Ok and early-returns Err, so quarter propagates halve's failure.
+quarter: (n: i32) -> Result<i32, i32> {
+    h := halve(n)?
+    return halve(h)
+}
+
+main: () -> i32 {
+    println("-- enums, match, result --")
+
+    circle: Shape = Circle(7)
+    rect: Shape = Rect(6, 7)
+    empty: Shape = Empty
+    if area(circle) != 49 { return 1 }
+    if area(rect) != 42 { return 2 }
+    if area(empty) != 0 { return 3 }
+
+    ; Value-producing match with a wildcard arm.
+    s: Shape = Rect(40, 2)
+    v := match s {
+        Rect(w, h) -> w + h
+        _ -> 0
+    }
+    if v != 42 { return 4 }
+
+    ; Generic user enum, matched for its payload.
+    t: Tree<i32> = Branch(15, 27)
+    sum := match t {
+        Leaf(a) -> a
+        Branch(a, b) -> a + b
+    }
+    if sum != 42 { return 5 }
+
+    ; Option<T> from the prelude.
+    opt: Option<i32> = Some(41)
+    got := match opt {
+        Some(x) -> x + 1
+        None -> 0
+    }
+    if got != 42 { return 6 }
+
+    ; Result<T, E> with `?`: quarter(20) succeeds, quarter(7) propagates Err(7).
+    good: Result<i32, i32> = quarter(20)
+    ok := match good {
+        Ok(x) -> x
+        Err(e) -> 0 - e
+    }
+    if ok != 5 { return 7 }
+    bad: Result<i32, i32> = quarter(7)
+    err := match bad {
+        Ok(x) -> x
+        Err(e) -> e
+    }
+    if err != 7 { return 8 }
+    print_int(ok)
+
+    println("ok")
+    return 0
+}

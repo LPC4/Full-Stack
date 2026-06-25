@@ -85,7 +85,7 @@ fn parse_directive_or_instruction(raw: &str, out: &mut Vec<AsmToken>) {
     let raw = if raw.trim_start().starts_with(".asciz") {
         raw
     } else {
-        match raw.find(|c| c == ';' || c == '#') {
+        match raw.find([';', '#']) {
             Some(i) => raw[..i].trim_end(),
             None => raw,
         }
@@ -151,7 +151,7 @@ fn push_directive(dir: Directive, out: &mut Vec<AsmToken>) {
 /// Unrecognised mnemonics are emitted as `AsmToken::Comment` so nothing is silently lost.
 fn parse_instruction_line(line: &str, out: &mut Vec<AsmToken>) {
     // Strip inline `;` or `#` comments before any operand parsing.
-    let line = match line.find(|c| c == ';' || c == '#') {
+    let line = match line.find([';', '#']) {
         Some(i) => line[..i].trim_end(),
         None => line,
     };
@@ -205,16 +205,20 @@ fn parse_instruction_line(line: &str, out: &mut Vec<AsmToken>) {
         }
 
         // --- Two-operand pseudos ---
-        "li" => match try_parse_li(rest) {
-            Some(tokens) => out.extend(tokens),
-            None => asm_warn!(out, "unrecognised li: {line}"),
-        },
-        "mv" => match parse_two_regs(rest) {
-            Some((rd, rs)) => {
-                out.push(AsmToken::Real(RealInstruction::Addi(Addi::new(rd, rs, 0))));
+        "li" => {
+            if let Some(tokens) = try_parse_li(rest) {
+                out.extend(tokens);
+            } else {
+                asm_warn!(out, "unrecognised li: {line}");
             }
-            None => asm_warn!(out, "unrecognised mv: {line}"),
-        },
+        }
+        "mv" => {
+            if let Some((rd, rs)) = parse_two_regs(rest) {
+                out.push(AsmToken::Real(RealInstruction::Addi(Addi::new(rd, rs, 0))));
+            } else {
+                asm_warn!(out, "unrecognised mv: {line}");
+            }
+        }
 
         // --- Stores: `rs2, imm(rs1)` format ---
         "sb" | "sw" | "sd" => {

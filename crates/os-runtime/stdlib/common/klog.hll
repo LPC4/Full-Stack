@@ -1,4 +1,3 @@
-; @version 2
 external console_putchar: (c: i32)
 external console_write: (str: u8*)
 external console_writeln: (str: u8*)

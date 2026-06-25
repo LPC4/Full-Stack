@@ -1,3 +1,26 @@
+#![expect(
+    clippy::cast_possible_wrap,
+    clippy::iter_over_hash_type,
+    clippy::let_underscore_untyped,
+    clippy::map_err_ignore,
+    clippy::match_same_arms,
+    clippy::match_wildcard_for_single_variants,
+    clippy::missing_assert_message,
+    clippy::missing_errors_doc,
+    clippy::too_long_first_doc_paragraph,
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    clippy::unnecessary_wraps,
+    reason = "legacy assembler structure and bit-preserving ISA conversions are intentional"
+)]
+#![cfg_attr(
+    test,
+    expect(
+        clippy::unwrap_used,
+        reason = "assembler unit tests unwrap setup and assertion values"
+    )
+)]
+
 #[macro_use]
 mod macros;
 

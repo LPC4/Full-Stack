@@ -1,4 +1,3 @@
-; @version 2
 ; File-management builtins (touch/mkdir/rm/rmdir/mv) split out of shell.hll and linked
 ; with it; each resolves its operand to an absolute path via sh_join_path.
 

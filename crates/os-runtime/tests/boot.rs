@@ -1,7 +1,7 @@
 use asm_to_binary::assembler::link_layout::LinkLayout;
 use asm_to_binary::{AssembledOutput, Assembler, ObjectLinker};
-use hll_to_ir::stdlib::get_kernel_stdlib_source;
-use hll_to_ir::{CompileConfig, HllCompiler, LanguageVersion, TargetMode};
+use hll_to_ir::stdlib::{get_stdlib_modules_for_mode, get_stdlib_type_prelude};
+use hll_to_ir::{CompileConfig, HllCompiler, TargetMode};
 use ir_to_asm::CompilerRv64;
 use os_runtime::kernel;
 use std::sync::OnceLock;
@@ -9,29 +9,36 @@ use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 
 // --- Helpers ---
 
-static STDLIB_OBJ: OnceLock<AssembledOutput> = OnceLock::new();
+static STDLIB_OBJS: OnceLock<Vec<(String, AssembledOutput)>> = OnceLock::new();
 
-fn compiled_stdlib() -> &'static AssembledOutput {
-    STDLIB_OBJ.get_or_init(|| {
-        let compiler = HllCompiler::new(CompileConfig {
-            target: TargetMode::Kernel,
-            strict: true,
-            string_prefix: Some("__kern_str_".to_owned()),
-            type_prelude: Vec::new(),
-            source_prelude: None,
-            language_version: LanguageVersion::V1,
-        });
-        let out = compiler
-            .compile(&get_kernel_stdlib_source())
-            .unwrap_or_else(|diags| panic!("kernel stdlib compile failed: {diags:?}"));
-        let mut rv = CompilerRv64::new();
-        let (_, tokens) = rv.compile_with_tokens(&out.ir);
-        Assembler::assemble(&tokens).unwrap_or_else(|e| panic!("stdlib assemble failed: {e}"))
+// Compile the kernel stdlib as independent per-module objects (no source concatenation).
+fn compiled_stdlib() -> &'static [(String, AssembledOutput)] {
+    STDLIB_OBJS.get_or_init(|| {
+        get_stdlib_modules_for_mode(TargetMode::Kernel)
+            .iter()
+            .map(|(name, src)| {
+                let compiler = HllCompiler::new(CompileConfig {
+                    target: TargetMode::Kernel,
+                    strict: true,
+                    string_prefix: Some("__kern_str_".to_owned()),
+                    type_prelude: get_stdlib_type_prelude(),
+                    source_prelude: None,
+                });
+                let out = compiler.compile(src).unwrap_or_else(|diags| {
+                    panic!("kernel stdlib `{name}` compile failed: {diags:?}")
+                });
+                let mut rv = CompilerRv64::new();
+                let (_, tokens) = rv.compile_with_tokens(&out.ir);
+                let obj = Assembler::assemble(&tokens)
+                    .unwrap_or_else(|e| panic!("stdlib `{name}` assemble failed: {e}"));
+                ((*name).to_owned(), obj)
+            })
+            .collect()
     })
 }
 
 fn run_kernel_hll(user_src: &str) -> (String, Option<i64>) {
-    let stdlib_obj = compiled_stdlib();
+    let stdlib_objs = compiled_stdlib();
 
     let user_compiler = HllCompiler::new(CompileConfig {
         target: TargetMode::Kernel,
@@ -39,7 +46,6 @@ fn run_kernel_hll(user_src: &str) -> (String, Option<i64>) {
         string_prefix: None,
         type_prelude: Vec::new(),
         source_prelude: None,
-        language_version: LanguageVersion::V1,
     });
     let user_out = user_compiler
         .compile(user_src)
@@ -49,8 +55,10 @@ fn run_kernel_hll(user_src: &str) -> (String, Option<i64>) {
 
     let user_obj =
         Assembler::assemble(&user_tokens).unwrap_or_else(|e| panic!("user assemble failed: {e}"));
-    let mut assembled = ObjectLinker::link(&[("kernel_stdlib", &stdlib_obj), ("user", &user_obj)])
-        .unwrap_or_else(|e| panic!("link failed: {e}"));
+    let mut modules: Vec<(&str, &AssembledOutput)> =
+        stdlib_objs.iter().map(|(n, o)| (n.as_str(), o)).collect();
+    modules.push(("user", &user_obj));
+    let mut assembled = ObjectLinker::link(&modules).unwrap_or_else(|e| panic!("link failed: {e}"));
     let layout = LinkLayout::freestanding_kernel();
     if layout.emit_layout_symbols {
         assembled.inject_layout_symbols(&layout);
@@ -359,36 +367,36 @@ fn trap_handler_calls_syscall_dispatch_on_umode_ecall() {
 fn kernel_boots_with_process_and_scheduler() {
     // Minimal kernel that initialises process + scheduler alongside normal boot.
     let test_kernel = "
-external klog_ok:               (msg: u8*) -> ()
-external klog_warn:             (msg: u8*) -> ()
-external klog_error:            (msg: u8*) -> ()
-external klog_int:              (label: u8*, val: i64) -> ()
+external klog_ok:               (msg: u8*)
+external klog_warn:             (msg: u8*)
+external klog_error:            (msg: u8*)
+external klog_int:              (label: u8*, val: i64)
 external kmalloc:               (size: u64) -> u8*
 external memset:                (dst: u8*, value: u8, n: u64) -> u8*
-external kshutdown:             (code: i64) -> ()
-external trap_init:             () -> ()
-external plic_init:             () -> ()
-external timer_set:             (interval: u64) -> ()
-external pmm_init:              (start: u64, end: u64) -> ()
+external kshutdown:             (code: i64)
+external trap_init:             ()
+external plic_init:             ()
+external timer_set:             (interval: u64)
+external pmm_init:              (start: u64, end: u64)
 external pmm_alloc:             () -> u8*
-external pmm_free:              (page: u8*) -> ()
-external vmm_init:              () -> ()
-external vmm_map_1gib:          (va: u64, pa: u64, flags: u64) -> ()
-external vmm_enable:            () -> ()
-external s_enable_interrupts: () -> ()
+external pmm_free:              (page: u8*)
+external vmm_init:              ()
+external vmm_map_1gib:          (va: u64, pa: u64, flags: u64)
+external vmm_enable:            ()
+external s_enable_interrupts: ()
 external memory_self_test:      (size: u64) -> i64
-external pmm_ops_test:          () -> ()
-external process_init:          () -> ()
+external pmm_ops_test:          ()
+external process_init:          ()
 external process_create:        (entry_pc: u64) -> u64*
-external scheduler_init:        () -> ()
-external scheduler_add:         (pcb: u64*) -> ()
+external scheduler_init:        ()
+external scheduler_add:         (pcb: u64*)
 
-kmain: () -> () {
-    klog_ok(\"kernel starting\".data)
+kmain: () {
+    klog_ok(\"kernel starting\".ptr)
     trap_init()
     timer_set(1000000)
     plic_init()
-    klog_ok(\"interrupt controller online\".data)
+    klog_ok(\"interrupt controller online\".ptr)
     memory_self_test(256)
     kmalloc(64)
     pmm_init(0x80100000, 0x87F00000)
@@ -399,7 +407,7 @@ kmain: () -> () {
     vmm_enable()
     process_init()
     scheduler_init()
-    klog_ok(\"boot complete\".data)
+    klog_ok(\"boot complete\".ptr)
     kshutdown(0)
 }
 ";
@@ -423,15 +431,15 @@ kmain: () -> () {
 
 const MALLOC_PRELUDE: &str = r#"
 external malloc:    (size: u64) -> u8*
-external free:      (ptr: u8*) -> ()
-external kshutdown: (code: i64) -> ()
+external free:      (ptr: u8*)
+external kshutdown: (code: i64)
 "#;
 
 #[test]
 fn malloc_returns_non_null_for_small_allocation() {
     let src = MALLOC_PRELUDE.to_owned()
         + r#"
-kmain: () -> () {
+kmain: () {
     p: u8* = malloc(8)
     if p == null {
         kshutdown(1)
@@ -448,7 +456,7 @@ kmain: () -> () {
 fn malloc_zero_size_returns_non_null() {
     let src = MALLOC_PRELUDE.to_owned()
         + r#"
-kmain: () -> () {
+kmain: () {
     p: u8* = malloc(0)
     if p == null {
         kshutdown(1)
@@ -469,8 +477,8 @@ kmain: () -> () {
 fn malloc_write_read_roundtrip() {
     let src = MALLOC_PRELUDE.to_owned()
         + r#"
-kmain: () -> () {
-    p: i64* = i64*(malloc(8))
+kmain: () {
+    p: i64* = malloc(8) as i64*
     if p == null {
         kshutdown(1)
         return
@@ -495,7 +503,7 @@ kmain: () -> () {
 fn malloc_multiple_allocations_are_distinct() {
     let src = MALLOC_PRELUDE.to_owned()
         + r#"
-kmain: () -> () {
+kmain: () {
     a: u8* = malloc(8)
     b: u8* = malloc(8)
     c: u8* = malloc(8)
@@ -538,7 +546,7 @@ kmain: () -> () {
 fn free_marks_block_reusable_on_next_same_size_malloc() {
     let src = MALLOC_PRELUDE.to_owned()
         + r#"
-kmain: () -> () {
+kmain: () {
     p: u8* = malloc(64)
     if p == null {
         kshutdown(1)
@@ -569,7 +577,7 @@ kmain: () -> () {
 fn free_null_is_a_noop() {
     let src = MALLOC_PRELUDE.to_owned()
         + r#"
-kmain: () -> () {
+kmain: () {
     free(null)
     kshutdown(0)
 }
@@ -586,7 +594,7 @@ kmain: () -> () {
 fn malloc_large_allocation_succeeds() {
     let src = MALLOC_PRELUDE.to_owned()
         + r#"
-kmain: () -> () {
+kmain: () {
     p: u8* = malloc(1024)
     if p == null {
         kshutdown(1)
@@ -607,7 +615,7 @@ kmain: () -> () {
 fn malloc_exhaustion_returns_null() {
     let src = MALLOC_PRELUDE.to_owned()
         + r#"
-kmain: () -> () {
+kmain: () {
     got_null: u64 = 0
     i: u64 = 0
     while i < 20 {
@@ -680,9 +688,9 @@ fn freestanding_console_putchar_uses_store_byte() {
 #[test]
 fn console_putchar_writes_exact_bytes_to_uart() {
     let src = r#"
-external console_putchar: (c: i32) -> ()
-external kshutdown: (code: i64) -> ()
-kmain: () -> () {
+external console_putchar: (c: i32)
+external kshutdown: (code: i64)
+kmain: () {
     console_putchar(65)
     console_putchar(66)
     console_putchar(67)
@@ -700,10 +708,10 @@ kmain: () -> () {
 #[test]
 fn console_write_writes_exact_string_to_uart() {
     let src = r#"
-external console_write: (str: u8*) -> ()
-external kshutdown: (code: i64) -> ()
-kmain: () -> () {
-    console_write("uart-check".data)
+external console_write: (str: u8*)
+external kshutdown: (code: i64)
+kmain: () {
+    console_write("uart-check".ptr)
     kshutdown(0)
 }
 "#;
@@ -721,9 +729,9 @@ fn console_print_int_produces_correct_decimal_digits() {
     // console_putchar stored the digit on a (possibly user-virtual) stack slot,
     // passed that address to M-mode via ecall, and M-mode read garbage.
     let src = r#"
-external console_print_int: (n: i64) -> ()
-external kshutdown: (code: i64) -> ()
-kmain: () -> () {
+external console_print_int: (n: i64)
+external kshutdown: (code: i64)
+kmain: () {
     console_print_int(0)
     console_print_int(42)
     console_print_int(-7)
@@ -749,9 +757,9 @@ kmain: () -> () {
 #[test]
 fn console_print_hex_produces_correct_hex_digits() {
     let src = r#"
-external console_print_hex: (n: u64) -> ()
-external kshutdown: (code: i64) -> ()
-kmain: () -> () {
+external console_print_hex: (n: u64)
+external kshutdown: (code: i64)
+kmain: () {
     console_print_hex(255)
     console_print_hex(0)
     kshutdown(0)

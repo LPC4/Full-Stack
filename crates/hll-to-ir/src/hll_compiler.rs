@@ -1,3 +1,4 @@
+use crate::TargetMode;
 use crate::ast::{Block, DeclNode, Program, Statement};
 use crate::compiler::{Diagnostic, DiagnosticLevel, HighLevelCompiler, SemanticAnalyzer};
 use crate::ir::{IrProgram, IrType};
@@ -5,13 +6,11 @@ use crate::lexer::Lexer;
 use crate::monomorphize::monomorphize_program;
 use crate::parser::Parser;
 use crate::token::Token;
-use crate::{LanguageVersion, TargetMode};
 
 // --- Public types ---
 
 pub struct CompileConfig {
     pub target: TargetMode,
-    pub language_version: LanguageVersion,
     pub strict: bool,
     pub string_prefix: Option<String>,
     pub type_prelude: Vec<(String, IrType)>,
@@ -25,7 +24,6 @@ impl Default for CompileConfig {
     fn default() -> Self {
         Self {
             target: TargetMode::Hosted,
-            language_version: LanguageVersion::V2,
             strict: false,
             string_prefix: None,
             type_prelude: Vec::new(),
@@ -72,11 +70,6 @@ impl HllCompiler {
     /// Returns `Err` only on hard failures (lex errors, parse errors, IR
     /// lowering errors).  Warnings are surfaced via `HllOutput::diagnostics`.
     pub fn compile(&self, source: &str) -> Result<HllOutput, Vec<Diagnostic>> {
-        // A per-file `; @version N` directive overrides the configured default,
-        // so the stdlib can migrate to V2 file by file (V1 sources still compile).
-        let language_version =
-            detect_version_pragma(source).unwrap_or(self.config.language_version);
-
         // Prepend the shared definitions header (kernel layout, or an explicit prelude)
         // so separately-compiled TUs share one HLL definition of their common consts.
         let prepended = self.with_source_prelude(source);
@@ -100,20 +93,18 @@ impl HllCompiler {
         let tokens_display = format!("{token_spans:#?}");
 
         // Phase 2: Parse
-        let mut ast = Parser::new_with_spans_and_version(token_spans, language_version)
+        let mut ast = Parser::new_with_spans(token_spans)
             .parse_program()
             .map_err(|e| vec![Diagnostic::new(DiagnosticLevel::Error, e.to_string())])?;
 
-        if language_version == LanguageVersion::V2 {
-            ast = monomorphize_program(&ast)
-                .map_err(|message| vec![Diagnostic::new(DiagnosticLevel::Error, message)])?;
-        }
+        ast = monomorphize_program(&ast)
+            .map_err(|message| vec![Diagnostic::new(DiagnosticLevel::Error, message)])?;
 
         let ast_display = format!("{ast:#?}");
 
         // Phase 3: Semantic analysis (when strict mode enabled)
         if self.config.strict {
-            let mut analyzer = SemanticAnalyzer::with_language_version(language_version);
+            let mut analyzer = SemanticAnalyzer::new();
             analyzer.seed_types(&self.config.type_prelude);
             if analyzer.analyze_program(&ast).is_err()
                 || analyzer
@@ -134,20 +125,12 @@ impl HllCompiler {
         // Phase 4: IR lowering
         let prefix = self.config.string_prefix.as_deref().unwrap_or("str_");
         let mut compiler = HighLevelCompiler::with_string_prefix(prefix);
-        compiler.set_language_version(language_version);
         compiler.set_type_prelude(self.config.type_prelude.clone());
         let ir = compiler
             .compile_program(&ast)
             .map_err(|e| vec![Diagnostic::new(DiagnosticLevel::Error, format!("{e:?}"))])?;
 
         let mut diagnostics = compiler.diagnostics().to_vec();
-
-        if language_version == LanguageVersion::V1 {
-            diagnostics.push(Diagnostic::new(
-                DiagnosticLevel::Warning,
-                "HLL V1 compatibility mode is deprecated; migrate this source to V2",
-            ));
-        }
 
         // Hard-error on any error-level diagnostic from IR lowering.
         let ir_errors: Vec<String> = diagnostics
@@ -186,28 +169,6 @@ impl HllCompiler {
             ast_display,
         })
     }
-}
-
-/// Read a `; @version N` directive from a source file's leading comment lines.
-/// Scanning stops at the first non-comment line; `None` when no directive is present.
-fn detect_version_pragma(source: &str) -> Option<LanguageVersion> {
-    for line in source.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let Some(comment) = trimmed.strip_prefix(';') else {
-            break;
-        };
-        if let Some(rest) = comment.trim_start().strip_prefix("@version") {
-            return match rest.trim() {
-                "1" => Some(LanguageVersion::V1),
-                "2" => Some(LanguageVersion::V2),
-                _ => None,
-            };
-        }
-    }
-    None
 }
 
 // --- Freestanding asm-block validator (moved from root compilation_pipeline.rs) ---
@@ -319,22 +280,19 @@ fn check_asm_lines(lines: &[String], diags: &mut Vec<Diagnostic>) {
             .and_then(|s| s.trim_start().strip_prefix(','))
         {
             let num_str = rest.trim();
-            if let Ok(n) = num_str.parse::<u64>() {
-                if let Some(&(_, name)) = LINUX_USERSPACE_SYSCALLS.iter().find(|&&(id, _)| id == n)
-                {
-                    diags.push(
-                        Diagnostic::new(
-                            DiagnosticLevel::Warning,
-                            format!(
-                                "asm block invokes Linux userspace syscall {n} ({name}) via ecall"
-                            ),
-                        )
-                        .with_note(
-                            "freestanding builds run without an OS; use MMIO or SBI ecalls \
+            if let Ok(n) = num_str.parse::<u64>()
+                && let Some(&(_, name)) = LINUX_USERSPACE_SYSCALLS.iter().find(|&&(id, _)| id == n)
+            {
+                diags.push(
+                    Diagnostic::new(
+                        DiagnosticLevel::Warning,
+                        format!("asm block invokes Linux userspace syscall {n} ({name}) via ecall"),
+                    )
+                    .with_note(
+                        "freestanding builds run without an OS; use MMIO or SBI ecalls \
                              (extension IDs  0x10) instead of Linux userspace syscall numbers",
-                        ),
-                    );
-                }
+                    ),
+                );
             }
         }
     }
@@ -349,45 +307,15 @@ mod tests {
     use crate::lexer::Lexer;
     use crate::parser::Parser;
     use crate::token::Token;
-    use crate::{
-        CompileConfig, Diagnostic, DiagnosticLevel, HllCompiler, HllOutput, LanguageVersion,
-        TargetMode,
-    };
+    use crate::{CompileConfig, Diagnostic, HllCompiler, HllOutput, TargetMode};
 
     fn compile_v2(source: &str) -> Result<HllOutput, Vec<Diagnostic>> {
         HllCompiler::new(CompileConfig {
             target: TargetMode::Hosted,
-            language_version: LanguageVersion::V2,
             strict: true,
             ..CompileConfig::default()
         })
         .compile(source)
-    }
-
-    #[test]
-    fn compile_config_defaults_to_v2() {
-        assert_eq!(
-            CompileConfig::default().language_version,
-            LanguageVersion::V2
-        );
-        assert_eq!(LanguageVersion::default(), LanguageVersion::V2);
-    }
-
-    #[test]
-    fn explicit_v1_mode_emits_deprecation_warning() {
-        let output = HllCompiler::new(CompileConfig {
-            language_version: LanguageVersion::V1,
-            ..CompileConfig::default()
-        })
-        .compile("main: () -> i32 { return 0 }")
-        .expect("V1 compatibility source should compile");
-
-        assert!(output.diagnostics.iter().any(|diagnostic| {
-            diagnostic.level == DiagnosticLevel::Warning
-                && diagnostic
-                    .message
-                    .contains("V1 compatibility mode is deprecated")
-        }));
     }
 
     fn fixture_root() -> PathBuf {
@@ -506,7 +434,7 @@ mod tests {
     fn test2_hll_lexes_struct_and_pointer_syntax() {
         let tokens = lex_fixture("parser/02_structs_and_pointers.hll");
 
-        assert!(contains_token(&tokens, |t| matches!(t, Token::Type)));
+        assert!(contains_token(&tokens, |t| matches!(t, Token::Struct)));
         assert!(contains_token(&tokens, |t| matches!(t, Token::LBrace)));
         assert!(contains_token(&tokens, |t| matches!(t, Token::Ampersand)));
         assert!(contains_token(&tokens, |t| matches!(t, Token::Defer)));
@@ -519,7 +447,7 @@ mod tests {
     fn test3_hll_lexes_nested_access_and_control_flow() {
         let tokens = lex_fixture("parser/03_nested_access_and_control_flow.hll");
 
-        assert!(contains_token(&tokens, |t| matches!(t, Token::Type)));
+        assert!(contains_token(&tokens, |t| matches!(t, Token::Struct)));
         assert!(contains_token(&tokens, |t| matches!(t, Token::While)));
         assert!(contains_token(&tokens, |t| matches!(t, Token::Break)));
         assert!(contains_token(&tokens, |t| matches!(t, Token::Or)));
@@ -606,14 +534,14 @@ mod tests {
         assert_eq!(
             program.declarations.len(),
             2,
-            "Expected 2 declarations (Node type, main function)"
+            "Expected 2 declarations (Node struct, main function)"
         );
 
         use crate::ast::*;
 
         match &program.declarations[0].decl {
-            DeclNode::Type { name, .. } => assert_eq!(name, "Node"),
-            _ => panic!("Expected Type Node declaration"),
+            DeclNode::Struct { name, .. } => assert_eq!(name, "Node"),
+            _ => panic!("Expected Struct Node declaration"),
         }
 
         match &program.declarations[1].decl {
@@ -641,8 +569,8 @@ mod tests {
         use crate::ast::*;
 
         match &program.declarations[0].decl {
-            DeclNode::Type { name, .. } => assert_eq!(name, "Container"),
-            _ => panic!("Expected Type Container declaration"),
+            DeclNode::Struct { name, .. } => assert_eq!(name, "Container"),
+            _ => panic!("Expected Struct Container declaration"),
         }
 
         match &program.declarations[1].decl {
@@ -849,36 +777,7 @@ mod tests {
     }
 
     #[test]
-    fn version_pragma_selects_v2_for_a_v1_configured_compiler() {
-        // Configured V1, but the file opts into V2 via the header directive.
-        let output = HllCompiler::new(CompileConfig {
-            target: TargetMode::Hosted,
-            language_version: LanguageVersion::V1,
-            strict: true,
-            ..CompileConfig::default()
-        })
-        .compile(
-            "; @version 2\nstruct Point { x: i32 }\nmain: () -> i32 {\n    p := Point { .x = 5 }\n    return p.x\n}\n",
-        )
-        .expect("V2 pragma should let a struct decl compile under a V1 default");
-        assert!(output.ir.to_string().contains("main"));
-    }
-
-    #[test]
-    fn version_pragma_absent_keeps_configured_version() {
-        // No directive: a `struct` decl must still be rejected under the V1 default.
-        let result = HllCompiler::new(CompileConfig {
-            target: TargetMode::Hosted,
-            language_version: LanguageVersion::V1,
-            strict: true,
-            ..CompileConfig::default()
-        })
-        .compile("struct Point { x: i32 }\nmain: () -> i32 { return 0 }\n");
-        assert!(result.is_err(), "struct under V1 default must fail");
-    }
-
-    #[test]
-    fn v2_array_index_is_a_value_place_and_addressable() {
+    fn array_index_is_a_value_place_and_addressable() {
         let output = compile_v2(
             r#"
 main: () -> i32 {
@@ -889,7 +788,7 @@ main: () -> i32 {
 }
 "#,
         )
-        .expect("V2 indexed places should compile");
+        .expect("indexed places should compile");
 
         let ir = format!("{}", output.ir);
         assert!(
@@ -907,7 +806,7 @@ main: () -> i32 {
     }
 
     #[test]
-    fn v2_pointer_member_access_loads_the_field_value() {
+    fn pointer_member_access_loads_the_field_value() {
         compile_v2(
             r#"
 struct Point {
@@ -922,11 +821,11 @@ main: () -> i32 {
 }
 "#,
         )
-        .expect("V2 pointer member auto-deref should compile");
+        .expect("pointer member auto-deref should compile");
     }
 
     #[test]
-    fn v2_address_of_rejects_non_place_temporaries() {
+    fn address_of_rejects_non_place_temporaries() {
         let result = compile_v2(
             r#"
 main: () -> i32 {
@@ -936,7 +835,7 @@ main: () -> i32 {
 "#,
         );
         let errors = match result {
-            Ok(_) => panic!("V2 must reject taking the address of a temporary"),
+            Ok(_) => panic!("taking the address of a temporary must fail"),
             Err(errors) => errors,
         };
 
@@ -949,7 +848,7 @@ main: () -> i32 {
     }
 
     #[test]
-    fn v2_inferred_bindings_lower_with_concrete_types() {
+    fn inferred_bindings_lower_with_concrete_types() {
         let output = compile_v2(
             r#"
 noop: () {
@@ -965,7 +864,7 @@ main: () -> i32 {
 }
 "#,
         )
-        .expect("V2 inferred bindings should compile");
+        .expect("inferred bindings should compile");
 
         let ir = format!("{}", output.ir);
         assert!(ir.contains("inferred local var: number"));
@@ -974,7 +873,7 @@ main: () -> i32 {
     }
 
     #[test]
-    fn v2_rejects_duplicate_inferred_binding_in_same_scope() {
+    fn rejects_duplicate_inferred_binding_in_same_scope() {
         let result = compile_v2(
             r#"
 main: () -> i32 {
@@ -997,7 +896,7 @@ main: () -> i32 {
     }
 
     #[test]
-    fn v2_infers_top_level_binding_type() {
+    fn infers_top_level_binding_type() {
         compile_v2(
             r#"
 answer := 42
@@ -1007,11 +906,11 @@ main: () -> i32 {
 }
 "#,
         )
-        .expect("V2 top-level inferred bindings should compile");
+        .expect("top-level inferred bindings should compile");
     }
 
     #[test]
-    fn v2_infers_pointer_named_struct_array_and_generic_types() {
+    fn infers_pointer_named_struct_array_and_generic_types() {
         let output = compile_v2(
             r#"
 struct Point { x: i32 }
@@ -1027,14 +926,14 @@ main: () -> i32 {
 }
 "#,
         )
-        .expect("V2 inference should preserve aggregate and generic types");
+        .expect("inference should preserve aggregate and generic types");
 
         let ir = output.ir.to_string();
         assert!(ir.contains("type Box<i32>"), "missing specialization: {ir}");
     }
 
     #[test]
-    fn v2_assignment_cannot_create_a_binding() {
+    fn assignment_cannot_create_a_binding() {
         let result = compile_v2(
             r#"
 main: () -> i32 {
@@ -1055,7 +954,7 @@ main: () -> i32 {
     }
 
     #[test]
-    fn v2_explicit_binding_requires_initializer() {
+    fn explicit_binding_requires_initializer() {
         let result = compile_v2(
             r#"
 main: () -> i32 {
@@ -1065,7 +964,7 @@ main: () -> i32 {
 "#,
         );
         let errors = match result {
-            Ok(_) => panic!("uninitialized V2 binding must fail"),
+            Ok(_) => panic!("uninitialized binding must fail"),
             Err(errors) => errors,
         };
         assert!(
@@ -1076,7 +975,7 @@ main: () -> i32 {
     }
 
     #[test]
-    fn v2_type_is_restricted_to_aliases() {
+    fn type_is_restricted_to_aliases() {
         let result = compile_v2(
             r#"
 type Point = { x: i32 }
@@ -1084,7 +983,7 @@ main: () -> i32 { return 0 }
 "#,
         );
         let errors = match result {
-            Ok(_) => panic!("V2 record declarations must use `struct`"),
+            Ok(_) => panic!("record declarations must use `struct`"),
             Err(errors) => errors,
         };
         assert!(
@@ -1095,7 +994,7 @@ main: () -> i32 { return 0 }
     }
 
     #[test]
-    fn v2_named_and_contextual_struct_literals_compile() {
+    fn named_and_contextual_struct_literals_compile() {
         compile_v2(
             r#"
 struct Point {
@@ -1110,11 +1009,11 @@ main: () -> i32 {
 }
 "#,
         )
-        .expect("canonical V2 struct literals should compile");
+        .expect("canonical struct literals should compile");
     }
 
     #[test]
-    fn v2_named_struct_literal_reports_field_errors() {
+    fn named_struct_literal_reports_field_errors() {
         for (literal, expected) in [
             ("Point { .x = 1, .x = 2 }", "duplicate field `x`"),
             ("Point { .x = 1 }", "missing field `y`"),
@@ -1135,7 +1034,7 @@ main: () -> i32 {
     }
 
     #[test]
-    fn v2_contextual_struct_literal_zero_fills_missing_fields() {
+    fn contextual_struct_literal_zero_fills_missing_fields() {
         let output = compile_v2(
             r#"
 struct Point { x: i32, y: i32 }
@@ -1153,7 +1052,7 @@ main: () -> i32 {
     }
 
     #[test]
-    fn v2_contextual_struct_literal_validates_fields() {
+    fn contextual_struct_literal_validates_fields() {
         for (literal, expected) in [
             ("{ .x = 1, .x = 2 }", "duplicate field `x`"),
             ("{ .z = 1 }", "unknown field `z`"),
@@ -1174,7 +1073,7 @@ main: () -> i32 {
     }
 
     #[test]
-    fn v2_propagates_struct_context_through_arguments_and_returns() {
+    fn propagates_struct_context_through_arguments_and_returns() {
         compile_v2(
             r#"
 struct Point { x: i32, y: i32 }
@@ -1196,7 +1095,7 @@ main: () -> i32 {
     }
 
     #[test]
-    fn v2_rejects_anonymous_literal_without_context() {
+    fn rejects_anonymous_literal_without_context() {
         let errors = match compile_v2(
             r#"
 main: () -> i32 {
@@ -1216,7 +1115,7 @@ main: () -> i32 {
     }
 
     #[test]
-    fn v2_monomorphizes_explicit_generic_function_calls() {
+    fn monomorphizes_explicit_generic_function_calls() {
         let output = compile_v2(
             r#"
 identity: <T>(value: T) -> T {
@@ -1238,7 +1137,7 @@ main: () -> i32 {
     }
 
     #[test]
-    fn v2_rejects_wrong_generic_function_arity() {
+    fn rejects_wrong_generic_function_arity() {
         let errors = match compile_v2(
             r#"
 identity: <T>(value: T) -> T {

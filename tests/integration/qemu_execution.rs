@@ -7,15 +7,14 @@
 /// If the WSL toolchain is absent the tests print a diagnostic with the exact
 /// missing prerequisite and return without failing, so CI on machines without
 /// the cross-toolchain stays green.
+use asm_to_binary::AssembledOutput;
 use full_stack::compilation_pipeline::CompilationPipeline;
-use hll_to_ir::stdlib::get_stdlib_source;
-use virtual_machine::bus::ELF_LOAD_BASE;
+use hll_to_ir::stdlib::{get_stdlib_modules_for_mode, get_stdlib_type_prelude};
+use hll_to_ir::TargetMode;
 use std::fmt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-
-
-
+use virtual_machine::bus::ELF_LOAD_BASE;
 
 fn qemu_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("programs/test/qemu")
@@ -23,8 +22,7 @@ fn qemu_dir() -> PathBuf {
 
 fn read_program(filename: &str) -> String {
     let path = qemu_dir().join(filename);
-    std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("failed to read {path:?}: {e}"))
+    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("failed to read {path:?}: {e}"))
 }
 
 /// Compile HLL source -> assembly text, stripping inline comments so the
@@ -32,22 +30,31 @@ fn read_program(filename: &str) -> String {
 /// Uses two-stage compilation: compile stdlib and user code independently,
 /// then assemble them into objects and link the objects before generating ELF.
 fn compile_to_asm(source: &str) -> String {
-    let pipeline = CompilationPipeline::new_v1();
-
-    // Stage 1: Compile stdlib
-    let stdlib_result = pipeline
-        .compile(&get_stdlib_source())
-        .unwrap_or_else(|e| panic!("stdlib compilation failed: {e}"));
-    let (stdlib_asm, _) =
-        pipeline.compile_ir_to_assembly_with_tokens(&stdlib_result.ir_program);
+    // Stage 1: compile each stdlib module independently (no source concatenation),
+    // each with a distinct rodata prefix, and join their assembly text for `as`.
+    let mut stdlib_asm = String::new();
+    for (i, (_, src)) in get_stdlib_modules_for_mode(TargetMode::Hosted)
+        .iter()
+        .enumerate()
+    {
+        let mut p = CompilationPipeline::new();
+        p.set_string_prefix(Some(format!("std{i}_str_")));
+        p.set_type_prelude(get_stdlib_type_prelude());
+        let r = p
+            .compile(src)
+            .unwrap_or_else(|e| panic!("stdlib compilation failed: {e}"));
+        let (asm, _) = p.compile_ir_to_assembly_with_tokens(&r.ir_program);
+        stdlib_asm.push_str(&asm);
+        stdlib_asm.push('\n');
+    }
 
     // Stage 2: Compile user code
-    let user_result = pipeline
+    let user_pipeline = CompilationPipeline::new();
+    let user_result = user_pipeline
         .compile(source)
         .unwrap_or_else(|e| panic!("HLL compilation failed: {e}"));
-    let (user_asm, _) = pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program);
+    let (user_asm, _) = user_pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program);
 
-    // Combine assembly outputs and strip comments
     let combined = format!("{}\n{}", stdlib_asm, user_asm);
     strip_comments(&combined)
 }
@@ -66,7 +73,7 @@ struct QemuResult {
     stdout: String,
 }
 
-#[allow(dead_code)]
+#[expect(dead_code, reason = "variants document platform-specific skip outcomes")]
 #[derive(Debug)]
 enum QemuSkipReason {
     NotWindows,
@@ -120,7 +127,10 @@ fn report_qemu_skip(test_name: &str, reason: QemuSkipReason) -> bool {
     false
 }
 
-fn require_qemu_result(test_name: &'static str, result: Result<QemuResult, QemuSkipReason>) -> Option<QemuResult> {
+fn require_qemu_result(
+    test_name: &'static str,
+    result: Result<QemuResult, QemuSkipReason>,
+) -> Option<QemuResult> {
     match result {
         Ok(value) => Some(value),
         Err(reason) => {
@@ -135,29 +145,26 @@ fn require_qemu_result(test_name: &'static str, result: Result<QemuResult, QemuS
 /// Uses two-stage compilation: compile stdlib and user code independently,
 /// then assemble and link through the pipeline.
 fn compile_to_elf(source: &str) -> Vec<u8> {
-    let pipeline = CompilationPipeline::new_v1();
+    let pipeline = CompilationPipeline::new();
 
-    // Stage 1: Compile stdlib
-    let stdlib_result = pipeline
-        .compile(&get_stdlib_source())
+    // Stage 1: compile the stdlib as independent per-module objects.
+    let stdlib_objs = CompilationPipeline::compile_stdlib_objects(TargetMode::Hosted)
         .unwrap_or_else(|e| panic!("stdlib compilation failed: {e}"));
-    let (_, stdlib_tokens) =
-        pipeline.compile_ir_to_assembly_with_tokens(&stdlib_result.ir_program);
 
     // Stage 2: Compile user code
     let user_result = pipeline
         .compile(source)
         .unwrap_or_else(|e| panic!("HLL compilation failed: {e}"));
     let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program);
-
-    let stdlib_obj = pipeline
-        .assemble(&stdlib_tokens)
-        .unwrap_or_else(|e| panic!("stdlib assembly failed: {e}"));
     let user_obj = pipeline
         .assemble(&user_tokens)
         .unwrap_or_else(|e| panic!("user assembly failed: {e}"));
+
+    let mut modules: Vec<(&str, &AssembledOutput)> =
+        stdlib_objs.iter().map(|(n, o)| (n.as_str(), o)).collect();
+    modules.push(("user", &user_obj));
     let assembled = pipeline
-        .link_assembled_objects(&[("stdlib", &stdlib_obj), ("user", &user_obj)])
+        .link_assembled_objects(&modules)
         .unwrap_or_else(|e| panic!("link failed: {e}"));
     assembled.to_elf(ELF_LOAD_BASE)
 }
@@ -290,15 +297,17 @@ fn run_hll_elf_via_qemu(source: &str) -> Result<QemuResult, QemuSkipReason> {
     run_elf_via_qemu(&elf)
 }
 
-
-
 /// Verifies i32 mul/div/mod/sub, i64 cast roundtrip, u32 unsigned arithmetic,
 /// abs/clamp/gcd helpers, signed vs unsigned comparisons, and operator
 /// precedence.  The program returns 42 if every check passes.
 #[test]
 fn qemu_01_arithmetic_and_types() {
     let source = read_program("01_arithmetic_and_types.hll");
-    let Some(result) = require_qemu_result("qemu_01_arithmetic_and_types", run_hll_via_qemu(&source)) else { return; };
+    let Some(result) =
+        require_qemu_result("qemu_01_arithmetic_and_types", run_hll_via_qemu(&source))
+    else {
+        return;
+    };
     assert_eq!(
         result.exit_code, 42,
         "01_arithmetic_and_types: expected exit 42 (all arithmetic checks pass); \
@@ -308,23 +317,22 @@ fn qemu_01_arithmetic_and_types() {
     );
 }
 
-
-
 /// Verifies if/else chains (categorise helper), while accumulation, break,
 /// continue, nested loops, compile-time const, and boolean infix `and`.
 /// The five sub-results sum to exactly 100.
 #[test]
 fn qemu_02_control_flow() {
     let source = read_program("02_control_flow.hll");
-    let Some(result) = require_qemu_result("qemu_02_control_flow", run_hll_via_qemu(&source)) else { return; };
+    let Some(result) = require_qemu_result("qemu_02_control_flow", run_hll_via_qemu(&source))
+    else {
+        return;
+    };
     assert_eq!(
         result.exit_code, 100,
         "02_control_flow: expected exit 100 (category=3 + sum=55 + break=7 + \
          evens=10 + inner=25); codes 201-206 name the failing sub-check"
     );
 }
-
-
 
 /// Verifies inline struct literals, named type aliases, struct pass-by-value,
 /// dot product, scaling, the small-struct RISC-V ABI return path
@@ -334,7 +342,12 @@ fn qemu_02_control_flow() {
 #[test]
 fn qemu_03_structs_and_destructuring() {
     let source = read_program("03_structs_and_destructuring.hll");
-    let Some(result) = require_qemu_result("qemu_03_structs_and_destructuring", run_hll_via_qemu(&source)) else { return; };
+    let Some(result) = require_qemu_result(
+        "qemu_03_structs_and_destructuring",
+        run_hll_via_qemu(&source),
+    ) else {
+        return;
+    };
     assert_eq!(
         result.exit_code, 0,
         "03_structs_and_destructuring: non-zero exit names the failing assertion \
@@ -344,8 +357,6 @@ fn qemu_03_structs_and_destructuring() {
          20-22=clamp_to, 23-24=add_vec, 25-26=inline, 27-28=struct pointer param)"
     );
 }
-
-
 
 /// Verifies new/free, defer free (guaranteed cleanup), address-of stack
 /// variables, pointer mutation via function parameters, pointer swap,
@@ -357,7 +368,11 @@ fn qemu_03_structs_and_destructuring() {
 #[test]
 fn qemu_04_pointers_and_memory() {
     let source = read_program("04_pointers_and_memory.hll");
-    let Some(result) = require_qemu_result("qemu_04_pointers_and_memory", run_hll_via_qemu(&source)) else { return; };
+    let Some(result) =
+        require_qemu_result("qemu_04_pointers_and_memory", run_hll_via_qemu(&source))
+    else {
+        return;
+    };
     assert_eq!(
         result.exit_code, 0,
         "04_pointers_and_memory: non-zero exit names the failing assertion \
@@ -367,8 +382,6 @@ fn qemu_04_pointers_and_memory() {
     );
 }
 
-
-
 /// Verifies iterative factorial and Fibonacci (with boundary values),
 /// is_prime (including edge cases 1, 2, even numbers), prime counting,
 /// power function, function composition (fibcount_primes), and external
@@ -377,7 +390,10 @@ fn qemu_04_pointers_and_memory() {
 #[test]
 fn qemu_05_functions_and_io() {
     let source = read_program("05_functions_and_io.hll");
-    let Some(result) = require_qemu_result("qemu_05_functions_and_io", run_hll_via_qemu(&source)) else { return; };
+    let Some(result) = require_qemu_result("qemu_05_functions_and_io", run_hll_via_qemu(&source))
+    else {
+        return;
+    };
 
     // Verify the I/O first so a mis-printed output gets its own message.
     assert_eq!(
@@ -394,8 +410,6 @@ fn qemu_05_functions_and_io() {
     );
 }
 
-
-
 /// Verifies that the assembled output can be exported as an ELF image and run
 /// directly under qemu-riscv64 without going through the GCC linker path.
 /// The arithmetic-and-types program is pure compute, so it avoids any libc or
@@ -403,13 +417,17 @@ fn qemu_05_functions_and_io() {
 #[test]
 fn qemu_06_elf_export_and_execution() {
     let source = read_program("01_arithmetic_and_types.hll");
-    let Some(result) = require_qemu_result("qemu_06_elf_export_and_execution", run_hll_elf_via_qemu(&source)) else { return; };
+    let Some(result) = require_qemu_result(
+        "qemu_06_elf_export_and_execution",
+        run_hll_elf_via_qemu(&source),
+    ) else {
+        return;
+    };
     assert_eq!(
         result.exit_code, 42,
         "06_elf_export_and_execution: expected exit 42 after running the exported ELF under qemu-riscv64"
     );
 }
-
 
 // These run on every platform (no WSL needed) and confirm the full
 // HLL -> IR -> assembly pipeline doesn't panic or error on any of the five

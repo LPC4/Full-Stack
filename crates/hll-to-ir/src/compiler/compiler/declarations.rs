@@ -28,13 +28,13 @@ impl HighLevelCompiler {
     ) -> Result<(), CompilerError> {
         log::debug!("lowering declaration: {:?}", declaration.decl);
         match &declaration.decl {
-            DeclNode::Import { .. } => return Ok(()),
+            DeclNode::Import { .. } => Ok(()),
             // Enums are registered in a pre-pass (see compile_program); generic
             // enums are not yet supported.
             DeclNode::Enum { name, generics, .. } => {
                 if !generics.is_empty() {
                     return Err(CompilerError::UnsupportedDeclaration(format!(
-                        "generic enum `{name}` is not yet implemented (HLL V2 M7)"
+                        "generic enum `{name}` is not yet implemented"
                     )));
                 }
                 Ok(())

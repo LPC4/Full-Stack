@@ -6,7 +6,7 @@ use asm_to_binary::riscv::rv64zicsr::Csrrs;
 use asm_to_binary::rv_instruction::RvInstruction;
 use asm_to_binary::AssembledOutput;
 use full_stack::compilation_pipeline::CompilationPipeline;
-use hll_to_ir::stdlib::get_stdlib_source;
+use hll_to_ir::TargetMode;
 use hll_to_ir::{
     IntWidth, IrBlock, IrCmpOp, IrFunction, IrInstruction, IrLabel, IrMathOp, IrProgram,
     IrRegister, IrTerminator, IrType, IrUnaryOp, IrValue,
@@ -19,25 +19,27 @@ use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 // The hosted stdlib is identical for every VM-execution test, so compile and
 // assemble it exactly once for the whole suite and link each user program
 // against the cached object. This avoids ~40 redundant stdlib compiles.
-fn cached_stdlib_obj() -> &'static AssembledOutput {
-    static STDLIB: OnceLock<AssembledOutput> = OnceLock::new();
+fn cached_stdlib_objs() -> &'static [(String, AssembledOutput)] {
+    static STDLIB: OnceLock<Vec<(String, AssembledOutput)>> = OnceLock::new();
     STDLIB.get_or_init(|| {
-        let mut pipeline = CompilationPipeline::new_v1();
-        pipeline.set_write_artifacts(false);
-        let stdlib_result = pipeline
-            .compile(&get_stdlib_source())
-            .expect("stdlib compile failed");
-        let (_, stdlib_tokens) =
-            pipeline.compile_ir_to_assembly_with_tokens(&stdlib_result.ir_program);
-        pipeline
-            .assemble(&stdlib_tokens)
-            .expect("stdlib assemble failed")
+        CompilationPipeline::compile_stdlib_objects(TargetMode::Hosted)
+            .expect("stdlib compile failed")
     })
+}
+
+/// The cached stdlib objects plus the user object, as a link module list.
+fn link_with_stdlib<'a>(user: &'a AssembledOutput) -> Vec<(&'a str, &'a AssembledOutput)> {
+    let mut modules: Vec<(&str, &AssembledOutput)> = cached_stdlib_objs()
+        .iter()
+        .map(|(n, o)| (n.as_str(), o))
+        .collect();
+    modules.push(("user", user));
+    modules
 }
 
 /// Compile user HLL, link it against the cached stdlib object, and run in the VM.
 fn run_hll_with_limit(src: &str, max_steps: u64) -> (VirtualMachine, StepOutcome, String) {
-    let mut pipeline = CompilationPipeline::new_v1();
+    let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
 
     let user_result = pipeline.compile(src).expect("user compile failed");
@@ -47,7 +49,7 @@ fn run_hll_with_limit(src: &str, max_steps: u64) -> (VirtualMachine, StepOutcome
         .expect("user assemble failed");
 
     let assembled = pipeline
-        .link_assembled_objects(&[("stdlib", cached_stdlib_obj()), ("user", &user_obj)])
+        .link_assembled_objects(&link_with_stdlib(&user_obj))
         .expect("link failed");
     let mut vm = VirtualMachine::new(&assembled);
     let run = vm.run(max_steps);
@@ -58,7 +60,7 @@ fn run_hll_with_limit(src: &str, max_steps: u64) -> (VirtualMachine, StepOutcome
 /// Compile a directly-constructed IR program (for ops the HLL surface lacks),
 /// link against the cached stdlib, and run it.
 fn run_ir(program: &IrProgram) -> (VirtualMachine, StepOutcome, String) {
-    let mut pipeline = CompilationPipeline::new_v1();
+    let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
 
     let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(program);
@@ -67,7 +69,7 @@ fn run_ir(program: &IrProgram) -> (VirtualMachine, StepOutcome, String) {
         .expect("user assemble failed");
 
     let assembled = pipeline
-        .link_assembled_objects(&[("stdlib", cached_stdlib_obj()), ("user", &user_obj)])
+        .link_assembled_objects(&link_with_stdlib(&user_obj))
         .expect("link failed");
     let mut vm = VirtualMachine::new(&assembled);
     let run = vm.run(5_000_000);
@@ -117,7 +119,7 @@ fn run_hll(src: &str) -> (VirtualMachine, StepOutcome, String) {
 /// Compile a user program with the peephole pass either on or off, returning the
 /// optimized-or-not token stream alongside the VM run (exit outcome + UART).
 fn run_hll_peephole(src: &str, peephole: bool) -> (StepOutcome, String, usize) {
-    let mut pipeline = CompilationPipeline::new_v1();
+    let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
     pipeline.set_peephole(peephole);
 
@@ -129,7 +131,7 @@ fn run_hll_peephole(src: &str, peephole: bool) -> (StepOutcome, String, usize) {
         .expect("user assemble failed");
 
     let assembled = pipeline
-        .link_assembled_objects(&[("stdlib", cached_stdlib_obj()), ("user", &user_obj)])
+        .link_assembled_objects(&link_with_stdlib(&user_obj))
         .expect("link failed");
     let mut vm = VirtualMachine::new(&assembled);
     let run = vm.run(5_000_000);
@@ -183,7 +185,7 @@ fn peephole_preserves_behavior_and_shrinks_code() {
 /// Compile and run a user program with the frame pointer omitted or kept,
 /// returning the VM run (exit outcome + UART) and the emitted instruction count.
 fn run_hll_omit_fp(src: &str, omit_fp: bool) -> (StepOutcome, String, usize) {
-    let mut pipeline = CompilationPipeline::new_v1();
+    let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
     pipeline.set_omit_frame_pointer(omit_fp);
 
@@ -195,7 +197,7 @@ fn run_hll_omit_fp(src: &str, omit_fp: bool) -> (StepOutcome, String, usize) {
         .expect("user assemble failed");
 
     let assembled = pipeline
-        .link_assembled_objects(&[("stdlib", cached_stdlib_obj()), ("user", &user_obj)])
+        .link_assembled_objects(&link_with_stdlib(&user_obj))
         .expect("link failed");
     let mut vm = VirtualMachine::new(&assembled);
     let run = vm.run(5_000_000);
@@ -238,7 +240,7 @@ fn omit_frame_pointer_preserves_behavior() {
 /// Compile a user program with IR optimization on or off, returning the VM run
 /// (exit outcome + UART) and the emitted instruction count.
 fn run_hll_optimize(src: &str, opts: hll_to_ir::OptOptions) -> (StepOutcome, String, usize) {
-    let mut pipeline = CompilationPipeline::new_v1();
+    let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
     pipeline.set_optimize(opts);
 
@@ -250,7 +252,7 @@ fn run_hll_optimize(src: &str, opts: hll_to_ir::OptOptions) -> (StepOutcome, Str
         .expect("user assemble failed");
 
     let assembled = pipeline
-        .link_assembled_objects(&[("stdlib", cached_stdlib_obj()), ("user", &user_obj)])
+        .link_assembled_objects(&link_with_stdlib(&user_obj))
         .expect("link failed");
     let mut vm = VirtualMachine::new(&assembled);
     let run = vm.run(5_000_000);
@@ -379,14 +381,14 @@ fn hll_compound_assignment_on_array_element() {
     // is evaluated twice (read then write) with no surprises for a simple index.
     let (_, outcome, _) = run_hll(
         r#"
-a: i64[3]
+a: i64[3] = []
 main: () -> i32 {
-    @a[0] = 5
-    @a[1] = 0
+    a[0] = 5
+    a[1] = 0
     i: i64 = 1
-    @a[i] += 7
-    @a[0] *= 4
-    return (@a[0] + @a[1]) as i32
+    a[i] += 7
+    a[0] *= 4
+    return (a[0] + a[1]) as i32
 }
 "#,
     );
@@ -462,7 +464,7 @@ fn hll_global_array_initializer() {
         r#"
 arr: i64[4] = [10, 20, 12, 0]
 main: () -> i32 {
-    s: i64 = @arr[0] + @arr[1] + @arr[2] + @arr[3]
+    s: i64 = arr[0] + arr[1] + arr[2] + arr[3]
     return s as i32
 }
 "#,
@@ -562,7 +564,7 @@ main: () -> i32 {
 }
 "#;
 
-    let mut pipeline = CompilationPipeline::new_v1();
+    let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
     let user_result = pipeline.compile(src).expect("user compile failed");
     let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program);
@@ -570,7 +572,7 @@ main: () -> i32 {
         .assemble(&user_tokens)
         .expect("user assemble failed");
     let assembled = pipeline
-        .link_assembled_objects(&[("stdlib", cached_stdlib_obj()), ("user", &user_obj)])
+        .link_assembled_objects(&link_with_stdlib(&user_obj))
         .expect("link failed");
 
     let mut vm = VirtualMachine::new(&assembled);
@@ -932,22 +934,19 @@ fn qemu_05_functions_and_io() {
 
 #[test]
 fn examples_exit_zero_in_vm() {
-    let files = [
-        "programs/example/core_basics.hll",
-        "programs/example/pointer_arrays.hll",
-        "programs/example/array_initialization.hll",
-        "programs/example/struct_binding.hll",
-        "programs/example/control_flow_basics.hll",
-        "programs/example/casting_and_pointers.hll",
-        "programs/example/compile_time_math.hll",
-        "programs/example/generics_and_strings.hll",
-    ];
+    // Derive the launchable set from the catalog so this gate never drifts from
+    // what the application actually offers (see program_catalog.rs).
+    use full_stack::view::{ProgramCatalog, ProgramKind};
+    let catalog = ProgramCatalog::default();
+    let examples = catalog.get_programs_by_kind(ProgramKind::Example);
+    assert!(!examples.is_empty(), "catalog exposes no example programs");
 
-    for file in files {
-        let (_, outcome, _uart) = run_hll_file(file);
+    for program in examples {
+        let (_, outcome, uart) = run_hll_with_limit(&program.source, 50_000_000);
         assert!(
             matches!(outcome, StepOutcome::Halted(0)),
-            "{file}: expected Halted(0), got {outcome:?}"
+            "{}: expected Halted(0), got {outcome:?}\nuart:\n{uart}",
+            program.name
         );
     }
 }
@@ -1543,7 +1542,7 @@ main: () -> i32 {
 fn struct_two_field_access() {
     let (_, outcome, _) = run_hll(
         r#"
-type Point = { x: i32, y: i32 }
+struct Point { x: i32, y: i32 }
 
 make_point: (a: i32, b: i32) -> Point {
     return { .x = a, .y = b }
@@ -1659,7 +1658,7 @@ main: () -> i32 {
 fn struct_three_field_middle_offset() {
     let (_, outcome, _) = run_hll(
         r#"
-type Triple = { a: i32, b: i32, c: i32 }
+struct Triple { a: i32, b: i32, c: i32 }
 
 make: (x: i32, y: i32, z: i32) -> Triple {
     return { .a = x, .b = y, .c = z }
@@ -1685,7 +1684,7 @@ main: () -> i32 {
 fn struct_mixed_i32_i64_fields() {
     let (_, outcome, _) = run_hll(
         r#"
-type Mixed = { small: i32, big: i64 }
+struct Mixed { small: i32, big: i64 }
 
 make_mixed: (s: i32, b: i64) -> Mixed {
     return { .small = s, .big = b }

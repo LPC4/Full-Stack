@@ -15,6 +15,10 @@
     clippy::print_stderr,
     reason = "CLI binary writes errors and diagnostics to stderr"
 )]
+#![expect(
+    clippy::map_err_ignore,
+    reason = "CLI maps parse failures to stable user-facing diagnostics"
+)]
 #![warn(rust_2018_idioms)]
 
 use asm_to_binary::AssembledOutput;
@@ -349,10 +353,6 @@ fn cmd_run(args: &Args) -> Result<ExitCode, CliError> {
     match result.outcome {
         StepOutcome::Halted(code) => {
             eprintln!("fsc: program exited with code {code}");
-            #[expect(
-                clippy::cast_possible_truncation,
-                reason = "POSIX exit codes are 0-255"
-            )]
             Ok(ExitCode::from((code & 0xFF) as u8))
         }
         StepOutcome::Continue => Err(CliError::Timeout(args.max_steps)),

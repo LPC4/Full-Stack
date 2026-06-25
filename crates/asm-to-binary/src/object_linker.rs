@@ -274,7 +274,7 @@ impl ObjectLinker {
 // --- Helpers ---
 
 /// Collect all distinct section kinds present across all modules, in canonical
-/// ELF load order: Text, RoData, Data, Custom(k), Bss.
+/// ELF load order: Text, `RoData`, Data, Custom(k), Bss.
 fn collect_ordered_kinds(modules: &[(&str, &AssembledOutput)]) -> Vec<SectionKind> {
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
@@ -294,12 +294,12 @@ fn collect_ordered_kinds(modules: &[(&str, &AssembledOutput)]) -> Vec<SectionKin
     // Custom sections in their first-appearance order
     for (_name, module) in modules {
         for sec in &module.sections {
-            if let Some(kind) = &sec.kind {
-                if !preferred.contains(kind) && !matches!(kind, SectionKind::Bss) {
-                    if seen.insert(kind.clone()) {
-                        out.push(kind.clone());
-                    }
-                }
+            if let Some(kind) = &sec.kind
+                && !preferred.contains(kind)
+                && !matches!(kind, SectionKind::Bss)
+                && seen.insert(kind.clone())
+            {
+                out.push(kind.clone());
             }
         }
     }
@@ -332,7 +332,7 @@ fn ordered_sections(module: &AssembledOutput) -> Vec<&SectionData> {
     out
 }
 
-/// Pre-compute a section map for a module: [(name, start_addr, end_addr)] in
+/// Pre-compute a section map for a module: [(name, `start_addr`, `end_addr`)] in
 /// the same order as `ordered_sections`.
 fn build_module_section_map(module: &AssembledOutput) -> Vec<(&str, u64, u64)> {
     let mut map = Vec::new();

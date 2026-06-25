@@ -287,7 +287,12 @@ fn infer_statement_calls(
                     infer_expression_calls(end, environment, generic_signatures, function_returns)?;
                 }
                 ForIter::Each(expr) => {
-                    infer_expression_calls(expr, environment, generic_signatures, function_returns)?
+                    infer_expression_calls(
+                        expr,
+                        environment,
+                        generic_signatures,
+                        function_returns,
+                    )?;
                 }
             }
             let mut nested = environment.clone();
@@ -352,12 +357,7 @@ fn infer_expression_calls(
                     function_returns,
                 )?;
                 if let Some(value) = &mut arm.value {
-                    infer_expression_calls(
-                        value,
-                        &mut nested,
-                        generic_signatures,
-                        function_returns,
-                    )?;
+                    infer_expression_calls(value, &nested, generic_signatures, function_returns)?;
                 }
             }
         }
@@ -1069,7 +1069,7 @@ fn type_mangle(ty: &Type) -> String {
 
 // --- Generic enum specialization (M7) ---
 // Concretize generic enums (incl. the Option/Result prelude) so only mangled,
-// monomorphic enums reach semantics/IR. See V2_SPEC.md "V2. Sum types".
+// monomorphic enums reach semantics/IR. See _LANG_SPECIFICATIONS.md 7.2.
 
 struct EnumTemplate {
     generics: Vec<String>,
@@ -1184,7 +1184,7 @@ impl EnumSpecializer {
             }
         }
 
-        EnumSpecializer {
+        Self {
             templates,
             variant_owner,
             base_of: HashMap::new(),
@@ -1219,7 +1219,7 @@ impl EnumSpecializer {
     fn rewrite_type(&mut self, ty: &mut Type) {
         match ty {
             Type::Pointer(inner) | Type::Array(_, inner) | Type::Slice(inner) => {
-                self.rewrite_type(inner)
+                self.rewrite_type(inner);
             }
             Type::Struct(fields) => {
                 for field in fields {
@@ -1408,7 +1408,7 @@ impl EnumSpecializer {
             }
             Expression::Primary(primary) => match primary {
                 PrimaryExpr::Grouped(expr) | PrimaryExpr::FieldAccess { expr, .. } => {
-                    self.rewrite_expr_types(expr)
+                    self.rewrite_expr_types(expr);
                 }
                 PrimaryExpr::FunctionCall {
                     type_arguments,
@@ -1489,10 +1489,9 @@ impl EnumSpecializer {
                 for param in params.iter() {
                     env.insert(param.name.clone(), param.ty.clone());
                 }
-                self.current_return = match return_type {
-                    Some(ReturnType::Single(ty)) => Some(ty.clone()),
-                    None => None,
-                };
+                self.current_return = return_type
+                    .as_mut()
+                    .map(|ReturnType::Single(ty)| ty.clone());
                 self.rewrite_block_uses(body, &mut env);
             }
         }
@@ -1844,13 +1843,12 @@ fn mangle_enum(base: &str, args: &[Type]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::LanguageVersion;
     use crate::lexer::Lexer;
     use crate::parser::Parser;
 
     fn program_of(src: &str) -> Program {
         let tokens = Lexer::tokenize(src);
-        Parser::new_with_spans_and_version(tokens, LanguageVersion::V2)
+        Parser::new_with_spans(tokens)
             .parse_program()
             .expect("program should parse")
     }

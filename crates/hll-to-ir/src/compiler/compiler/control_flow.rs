@@ -40,13 +40,13 @@ fn rewrite_stmt(stmt: &Statement, step: &Statement) -> Statement {
 impl HighLevelCompiler {
     pub(super) fn lower_block(&mut self, ir_program: &mut IrProgram, block: &Block) {
         for statement in &block.statements {
-            if let Some(b) = &self.current_block {
-                if b.terminator.is_some() {
-                    self.context
-                        .diagnostics
-                        .warn("statement appears after terminator - ignored");
-                    break;
-                }
+            if let Some(b) = &self.current_block
+                && b.terminator.is_some()
+            {
+                self.context
+                    .diagnostics
+                    .warn("statement appears after terminator - ignored");
+                break;
             }
             self.lower_statement(ir_program, statement);
         }
@@ -81,19 +81,17 @@ impl HighLevelCompiler {
 
                 // A scalar/pointer `return match ...` lowers the match into a result
                 // slot; aggregate (sret) returns fall through to the normal path.
-                if !has_sret {
-                    if let Some(Expression::Match { scrutinee, arms }) = expr.as_ref() {
-                        let target = self.current_return_ty.clone();
-                        let value = self
-                            .lower_match_value(ir_program, scrutinee, arms, target)
-                            .map(|l| l.value);
-                        let defers = self.defers.clone();
-                        for action in defers.into_iter().rev() {
-                            self.emit_deferred_action(action);
-                        }
-                        self.set_terminator(IrTerminator::Return(value));
-                        return;
+                if !has_sret && let Some(Expression::Match { scrutinee, arms }) = expr.as_ref() {
+                    let target = self.current_return_ty.clone();
+                    let value = self
+                        .lower_match_value(ir_program, scrutinee, arms, target)
+                        .map(|l| l.value);
+                    let defers = self.defers.clone();
+                    for action in defers.into_iter().rev() {
+                        self.emit_deferred_action(action);
                     }
+                    self.set_terminator(IrTerminator::Return(value));
+                    return;
                 }
 
                 if has_sret {
@@ -219,16 +217,16 @@ impl HighLevelCompiler {
                 );
             }
             Statement::InferredVariableDecl { name, init } => {
-                if let Expression::Primary(crate::ast::PrimaryExpr::New { ty, .. }) = init {
-                    if let Err(error) = self.lower_type_with_program(ir_program, ty) {
-                        self.context.error(format!(
-                            "failed to resolve inferred type for `{name}`: {error:?}"
-                        ));
-                        return;
-                    }
+                if let Expression::Primary(crate::ast::PrimaryExpr::New { ty, .. }) = init
+                    && let Err(error) = self.lower_type_with_program(ir_program, ty)
+                {
+                    self.context.error(format!(
+                        "failed to resolve inferred type for `{name}`: {error:?}"
+                    ));
+                    return;
                 }
                 // Evaluate the initializer before introducing the symbol, which
-                // preserves V2's no-self-reference rule for inferred bindings.
+                // preserves the no-self-reference rule for inferred bindings.
                 let lowered = if let Expression::Match { scrutinee, arms } = init {
                     self.lower_match_value(ir_program, scrutinee, arms, None)
                 } else {
@@ -373,14 +371,14 @@ impl HighLevelCompiler {
         let Some(addr) = self.lower_expr(&target_expr, EvalMode::Address) else {
             return;
         };
-        let (ptr_reg, store_ty) = match (&addr.value, &addr.ty) {
-            (IrValue::Register(reg), IrType::Pointer(inner)) => (reg.clone(), *inner.clone()),
-            _ => {
+        let (ptr_reg, store_ty) =
+            if let (IrValue::Register(reg), IrType::Pointer(inner)) = (&addr.value, &addr.ty) {
+                (reg.clone(), *inner.clone())
+            } else {
                 self.context
                     .error("assignment target did not resolve to an address".to_owned());
                 return;
-            }
-        };
+            };
         if let Some(lowered) =
             self.lower_match_value(ir_program, scrutinee, arms, Some(store_ty.clone()))
         {

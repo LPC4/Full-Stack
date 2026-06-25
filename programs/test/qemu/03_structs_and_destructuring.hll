@@ -1,6 +1,6 @@
 ; Comprehensive struct and destructuring test.
 ;
-; Covers: inline-struct literals, named type aliases, struct pass-by-value,
+; Covers: inline-struct literals, named structs, struct pass-by-value,
 ;         struct return by value (small-struct RISC-V ABI path),
 ;         full and partial destructuring, order-independent field binding,
 ;         struct mutation through pointer parameters.
@@ -8,9 +8,9 @@
 ; Returns 0 on full success. Each failure branch returns a unique
 ; non-zero error code that names the failing assertion.
 
-type Vec2 = { x: i32, y: i32 }
-type DivResult = { quotient: i32, remainder: i32 }
-type Range = { lo: i32, hi: i32 }
+struct Vec2 { x: i32, y: i32 }
+struct DivResult { quotient: i32, remainder: i32 }
+struct Range { lo: i32, hi: i32 }
 
 make_vec: (x: i32, y: i32) -> Vec2 {
     return { .x = x, .y = y }
@@ -53,8 +53,8 @@ clamp_to: (r: Range, v: i32) -> i32 {
 
 ; Write a Vec2 through a pointer (exercises struct pointer parameter)
 zero_vec: (v: Vec2*) -> i32 {
-    @v.x = 0
-    @v.y = 0
+    v.x = 0
+    v.y = 0
     return 0
 }
 

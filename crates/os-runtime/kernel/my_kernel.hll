@@ -1,4 +1,3 @@
-; @version 2
 ; Kernel initialization and boot orchestration.
 
 external klog_ok:               (msg: u8*)

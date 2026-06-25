@@ -1,4 +1,4 @@
-type Pair = {
+struct Pair {
     first: i32,
     second: i32
 }
@@ -12,4 +12,3 @@ main: () -> i32 {
     { first: i32 } = pair()
     return first + second
 }
-

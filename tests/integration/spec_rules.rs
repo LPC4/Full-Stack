@@ -223,7 +223,7 @@ main: () -> i32 {
 fn allows_array_literals_through_assembly() {
     let source = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/programs/example/array_initialization.hll"
+        "/programs/example/arrays_slices_and_ranges.hll"
     ));
 
     let mut pipeline = CompilationPipeline::new();
@@ -315,60 +315,66 @@ main: () -> i32 {
 
 #[test]
 fn all_launch_examples_compile() {
-    let examples = [
-        (
-            "core_syntax",
-            include_str!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/programs/example/core_basics.hll"
-            )),
-        ),
-        (
-            "pointers_arrays",
-            include_str!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/programs/example/pointer_arrays.hll"
-            )),
-        ),
-        (
-            "array_literals",
-            include_str!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/programs/example/array_initialization.hll"
-            )),
-        ),
-        (
-            "structs_destructuring",
-            include_str!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/programs/example/struct_binding.hll"
-            )),
-        ),
-        (
-            "control_flow_functions",
-            include_str!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/programs/example/control_flow_basics.hll"
-            )),
-        ),
-        (
-            "generics_strings_consts",
-            include_str!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/programs/example/generics_and_strings.hll"
-            )),
-        ),
-    ];
+    // The catalog is the single source of truth for launchable examples; iterate
+    // it so a newly added example is covered without editing this test.
+    use full_stack::view::{ProgramCatalog, ProgramKind};
+    let catalog = ProgramCatalog::default();
+    let examples = catalog.get_programs_by_kind(ProgramKind::Example);
+    assert!(!examples.is_empty(), "catalog exposes no example programs");
 
     let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
-    for (name, source) in examples {
-        let result = pipeline.compile(source);
+    for program in examples {
+        let result = pipeline.compile(&program.source);
         assert!(
             result.is_ok(),
             "expected launch example `{}` to compile successfully: {:?}",
-            name,
+            program.name,
             result.err()
+        );
+    }
+}
+
+// The examples collectively must showcase every implemented HLL feature family;
+// each needle below is a representative token some example must demonstrate.
+#[test]
+fn examples_cover_core_features() {
+    use full_stack::view::{ProgramCatalog, ProgramKind};
+    let catalog = ProgramCatalog::default();
+    let combined = catalog
+        .get_programs_by_kind(ProgramKind::Example)
+        .iter()
+        .map(|p| p.source.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let needles = [
+        (":=", "inferred declaration"),
+        ("const ", "compile-time constant"),
+        (" as ", "cast"),
+        ("+=", "compound assignment"),
+        ("@", "whole-pointee dereference"),
+        ("&", "address-of"),
+        ("new(", "heap allocation"),
+        ("defer ", "deferred cleanup"),
+        ("struct ", "struct declaration"),
+        (".len", "slice length"),
+        ("[..]", "array-to-slice coercion"),
+        ("..=", "inclusive range"),
+        ("for ", "for loop"),
+        ("enum ", "enum declaration"),
+        ("match ", "match expression"),
+        ("Option", "Option carrier"),
+        ("Result", "Result carrier"),
+        ("?", "try propagation"),
+        ("<i32>", "generic specialization"),
+        ("'A'", "character literal"),
+    ];
+
+    for (needle, feature) in needles {
+        assert!(
+            combined.contains(needle),
+            "no launchable example demonstrates {feature} (missing token `{needle}`)"
         );
     }
 }

@@ -1,4 +1,3 @@
-; @version 2
 
 ; In-VM RV64I assembler: `as <src> <out>` two-pass assembles a static ELF64 (one
 ; PT_LOAD at USER_CODE_BASE) for sys_exec. Subset/directives/encodings: OS spec 10.3.

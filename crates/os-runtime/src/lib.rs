@@ -44,17 +44,15 @@ pub mod stdlib {
         "/stdlib/common/types.hll"
     ));
 
-    /// Bump-pointer allocator over a fixed 64 KB `.bss` buffer (`malloc`, `free`,
-    /// `heap_raw_alloc`). Used by the kernel and freestanding builds, which have
-    /// no syscalls. Userspace uses `MEMORY_ALLOCATOR_HOSTED` instead.
+    /// Bump-pointer allocator over a fixed 64 KB `.bss` buffer (kernel/freestanding).
+    /// `malloc`/`free`/`heap_raw_alloc`; userspace uses `MEMORY_ALLOCATOR_HOSTED`.
     pub const MEMORY_ALLOCATOR: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/stdlib/common/memory_allocator.hll"
     ));
 
-    /// Growable userspace allocator (`malloc`, `free`, `heap_raw_alloc`) backed by
-    /// the `brk` syscall, so U-mode programs can grow the heap past 64 KB. Used
-    /// only in hosted mode; same API as `MEMORY_ALLOCATOR`.
+    /// Growable hosted allocator backed by the `brk` syscall (heap past 64 KB).
+    /// Same `malloc`/`free`/`heap_raw_alloc` API as `MEMORY_ALLOCATOR`.
     pub const MEMORY_ALLOCATOR_HOSTED: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/stdlib/hosted/memory_allocator.hll"
@@ -114,9 +112,8 @@ pub mod stdlib {
 
 /// Kernel-mode HLL source fragments.
 pub mod kernel {
-    /// Shared kernel layout: PCB map, trap-frame slots, process states, page-flag bits.
-    /// Prepended to every kernel TU so the modules share one definition (see the
-    /// pipeline source prelude). Single source of truth for these consts, in HLL.
+    /// Shared kernel layout: PCB map, trap-frame slots, process states, page flags.
+    /// Prepended to every kernel TU as the single HLL source of truth (source prelude).
     pub const LAYOUT: &str =
         include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/kernel/layout.hll"));
 
@@ -124,7 +121,7 @@ pub mod kernel {
     pub const RUNTIME: &str =
         include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/kernel/entry.hll"));
 
-    /// S-mode trap entry: stvec prologue/epilogue, trap_init, sscratch helpers.
+    /// S-mode trap entry: stvec prologue/epilogue, `trap_init`, sscratch helpers.
     /// The entry-point for all S-mode traps and interrupts.
     pub const TRAP_ENTRY: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -136,15 +133,13 @@ pub mod kernel {
     pub const UTILITIES: &str =
         include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/kernel/utilities.hll"));
 
-    /// Kernel checks and diagnostics: memory_self_test, etc.
+    /// Kernel checks and diagnostics (`memory_self_test`, etc.).
     /// Called during boot to validate kernel systems.
     pub const CHECKS: &str =
         include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/kernel/checks.hll"));
 
-    /// S-mode trap dispatcher: `trap_handler(frame: u64*)`.
-    /// Reads scause from the trap frame and dispatches to timer/external/software
-    /// interrupt handlers or exception handlers.  Depends on `kpanic`, `klog_hex`,
-    /// and `timer_set` (all provided by the kernel stdlib bundle).
+    /// S-mode trap dispatcher `trap_handler(frame: u64*)`: reads scause and routes.
+    /// Depends on `kpanic`, `klog_hex`, `timer_set` from the kernel stdlib bundle.
     pub const TRAP_HANDLER: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/kernel/trap_handler.hll"
@@ -183,10 +178,8 @@ pub mod kernel {
         include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/kernel/my_kernel.hll"));
 }
 
-/// User-space programs and example sources. The source tree mirrors the runtime
-/// boot FS: `user/bin` -> `/bin` tools, `user/demo` -> `/home/demo` demos,
-/// `user/examples` -> `/home/src` sample sources. `user/fixtures` holds frozen
-/// test inputs that are not installed.
+/// User-space programs and example sources, mirroring the runtime boot FS.
+/// `user/bin` -> `/bin`, `user/demo` -> `/home/demo`, `user/examples` -> `/home/src`.
 pub mod user {
     // --- bin: tools installed under /bin ---
 
@@ -195,17 +188,15 @@ pub mod user {
     pub const SHELL: &str =
         include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/user/bin/shell.hll"));
 
-    /// File-management builtins (`touch`/`mkdir`/`rm`/`rmdir`/`mv`) for the shell,
-    /// split into their own translation unit and linked with `SHELL` by the host
-    /// toolchain. They share `sh_join_path` via an `external` decl.
+    /// File-management builtins (`touch`/`mkdir`/`rm`/`rmdir`/`mv`) for the shell.
+    /// Own translation unit linked with `SHELL`; shares `sh_join_path` via `external`.
     pub const SHELL_FILEOPS: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/user/bin/shell_fileops.hll"
     ));
 
-    /// Tiny line editor (ed-like). Reads its target path from USER_ARG_BASE,
-    /// loads the file, and edits it with append/print/clear/write/quit commands.
-    /// Compiled in hosted mode and launched by the shell's `edit` command.
+    /// Tiny ed-like line editor; reads its path from `USER_ARG_BASE`.
+    /// Hosted; launched by the shell's `edit` command (append/print/clear/write/quit).
     pub const EDIT: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/user/bin/edit.hll"));
 
     /// Minimal in-VM RV64I assembler. Reads a `.s` file, assembles a small
@@ -213,29 +204,26 @@ pub mod user {
     /// and launched by the shell's `as <src> <out>` command.
     pub const AS: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/user/bin/as.hll"));
 
-    /// Shared record layouts (`Label`/`Reloc`) for `as`, prepended to every `as`
-    /// translation unit so the two units share one definition. See UserProgram::layout.
+    /// Shared record layouts (`Label`/`Reloc`) for `as`, prepended to every `as` unit.
+    /// One shared definition across its translation units; see `UserProgram::layout`.
     pub const AS_LAYOUT: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/user/bin/as_layout.hll"
     ));
 
-    /// ET_REL object serializer for `as`, split into its own translation unit and
-    /// linked with `AS` by the host toolchain. Shares the assembler state with
-    /// `as.hll` via `external` globals.
+    /// `ET_REL` object serializer for `as`, in its own unit linked with `AS`.
+    /// Shares the assembler state with `as.hll` via `external` globals.
     pub const AS_OBJECT: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/user/bin/as_object.hll"
     ));
 
-    /// Minimal in-VM HLL-0 compiler. Reads an `.hll` source, parses the
-    /// HLL-0 subset, and writes naive stack-machine assembly in the `/bin/as`
-    /// subset. Installed at `/bin/cc.elf` and launched by the shell's
-    /// `cc <src.hll> <out.s>` command; pairs with `as` for the self-hosting demo.
+    /// Minimal in-VM HLL-0 compiler: parses the HLL-0 subset, emits `/bin/as` assembly.
+    /// Installed at `/bin/cc.elf`; the shell's `cc <src.hll> <out.s>` pairs it with `as`.
     pub const CC: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/user/bin/cc.hll"));
 
-    /// Shared AST record layouts (`Node`/`Fn`) for `cc`, prepended to every `cc`
-    /// translation unit so the two units share one definition. See UserProgram::layout.
+    /// Shared AST record layouts (`Node`/`Fn`) for `cc`, prepended to every `cc` unit.
+    /// One shared definition across its translation units; see `UserProgram::layout`.
     pub const CC_LAYOUT: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/user/bin/cc_layout.hll"
@@ -249,10 +237,8 @@ pub mod user {
         "/user/bin/cc_codegen.hll"
     ));
 
-    /// In-VM static linker. Reads N relocatable `ET_REL` objects
-    /// produced by `as <src> <out>.o`, merges their sections, resolves the global
-    /// symbol table, applies relocations, and writes a runnable ELF. Installed at
-    /// `/bin/ld.elf` and launched by the shell's `ld <obj>... <out>` command.
+    /// In-VM static linker: merges N `ET_REL` objects, relocates, writes a runnable ELF.
+    /// Installed at `/bin/ld.elf`; launched by the shell's `ld <obj>... <out>` command.
     pub const LD: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/user/bin/ld.hll"));
 
     /// Relocation patching + executable emission for `ld`, split into its own
@@ -286,17 +272,15 @@ pub mod user {
 
     // --- examples: sample sources installed under /home/src ---
 
-    /// Example assembly source: sum a stack-built array, exit with the total (42).
-    /// Exercises the expanded assembler subset (sd/ld with offset(reg), slli, bge).
+    /// Example assembly: sum a stack-built array, exit with the total (42).
     /// Installed at `/home/src/array.s` so `as` can be tried out of the box.
     pub const EXAMPLE_ARRAY_S: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/user/examples/array.s"
     ));
 
-    /// HLL-0 sample for the in-VM `cc`. Calls `putc` but does not define it; the
-    /// symbol is resolved at link time against `EXAMPLE_STDLIB_S`, so this is the
-    /// headline `cc`+`as`+`ld` client. Installed at `/home/src/hello.hll`.
+    /// HLL-0 sample for the in-VM `cc`; calls `putc`, linked against `EXAMPLE_STDLIB_S`.
+    /// The headline `cc`+`as`+`ld` client. Installed at `/home/src/hello.hll`.
     pub const CC_DEMO_HLL: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/user/examples/hello.hll"
@@ -341,9 +325,8 @@ pub mod user {
         Fixture,
     }
 
-    /// One bundled user program: catalog identity, role, boot-FS install path
-    /// (`None` when not auto-installed), and embedded source. `PROGRAMS` is the
-    /// single list every consumer (boot FS image, GUI catalog, tests) iterates.
+    /// One bundled user program: identity, role, install path, and embedded source.
+    /// `PROGRAMS` is the single list every consumer (boot FS, GUI catalog, tests) uses.
     #[derive(Clone, Copy, Debug)]
     pub struct UserProgram {
         /// Stable key: cache key and (for Tool/Demo) catalog id `user-<name>`.
@@ -389,9 +372,8 @@ pub mod user {
 
     use UserProgramKind::{Demo, Example, Fixture, Tool};
 
-    /// Every bundled user program, in catalog display order. Adding a program
-    /// means appending one row here -- the boot FS image, the GUI catalog, and
-    /// the userspace compile test all derive from this single list.
+    /// Every bundled user program, in catalog display order.
+    /// Add a program by appending one row; boot FS, GUI catalog, and tests derive from it.
     pub const PROGRAMS: &[UserProgram] = &[
         // Tools (/bin). The shell is the init process, compiled but not installed.
         UserProgram {

@@ -6,7 +6,7 @@
 use full_stack::compilation_pipeline::{CompilationError, CompilationPipeline};
 
 fn reject(src: &str, fragment: &str) {
-    let mut p = CompilationPipeline::new_v1();
+    let mut p = CompilationPipeline::new();
     p.set_write_artifacts(false);
     let err = p
         .compile(src)
@@ -21,7 +21,7 @@ fn reject(src: &str, fragment: &str) {
 }
 
 fn accept(src: &str) {
-    let mut p = CompilationPipeline::new_v1();
+    let mut p = CompilationPipeline::new();
     p.set_write_artifacts(false);
     p.compile(src)
         .unwrap_or_else(|e| panic!("expected compile to succeed, got: {e}"));
@@ -115,7 +115,7 @@ main: () -> i32 {
 fn renamed_variable_residue_is_rejected() {
     reject(
         r#"
-spawn_user_process: () -> () {
+spawn_user_process: () {
     binary_pa: u64 = u64(0x87F00000)
     src_user_pa: u64 = computed_binary_pa
 }
@@ -129,7 +129,7 @@ spawn_user_process: () -> () {
 fn renamed_variable_residue_in_expr_is_rejected() {
     reject(
         r#"
-fn: () -> () {
+fn: () {
     actual_val: u64 = u64(4096)
     result: u64 = (old_name_val + 1) * 2
 }
@@ -222,7 +222,7 @@ fn global_variable_used_in_function_is_accepted() {
         r#"
 counter: u64 = 0
 
-bump: () -> () {
+bump: () {
     counter = counter + 1
 }
 

@@ -1,19 +1,19 @@
 ; Test for nested generic types: Box<Box<i32>>
-type Box<T> = {
+struct Box<T> {
     value: T
 }
 
 main: () -> i32 {
     ; Create inner box with i32
     inner: Box<i32>* = new(Box<i32>)
-    @inner.value = 42
+    inner.value = 42
     
     ; Create outer box containing the inner box
     outer: Box<Box<i32>>* = new(Box<Box<i32>>)
-    @outer.value = @inner
+    outer.value = @inner
     
     ; Access nested value through outer deref then field access
-    result: i32 = (@outer.value).value
+    result: i32 = outer.value.value
     
     ; Cleanup
     free(inner)
@@ -21,4 +21,3 @@ main: () -> i32 {
     
     return result
 }
-

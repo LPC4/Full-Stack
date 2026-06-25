@@ -1,4 +1,3 @@
-; @version 2
 ; Process control block lifecycle. The PCB layout (PCB_OFF_*/PCB_IDX_*/PCB_SIZE),
 ; process states (PROC_*), trap-frame slots (TF_*), and VMM page-flag bits come from
 ; the shared kernel layout (layout.hll). Full PCB map: OS spec 5.2.

@@ -1,5 +1,38 @@
+#![expect(
+    clippy::branches_sharing_code,
+    clippy::cast_possible_wrap,
+    clippy::collapsible_match,
+    clippy::iter_over_hash_type,
+    clippy::let_underscore_untyped,
+    clippy::manual_let_else,
+    clippy::map_err_ignore,
+    clippy::match_same_arms,
+    clippy::missing_errors_doc,
+    clippy::module_inception,
+    clippy::needless_pass_by_ref_mut,
+    clippy::needless_pass_by_value,
+    clippy::nonminimal_bool,
+    clippy::self_only_used_in_recursion,
+    clippy::too_many_lines,
+    clippy::unnecessary_wraps,
+    clippy::unused_self,
+    clippy::unwrap_used,
+    reason = "legacy compiler structure; keep new lint categories enforced while refactoring incrementally"
+)]
+#![cfg_attr(
+    test,
+    expect(
+        clippy::print_stdout,
+        clippy::ref_patterns,
+        clippy::single_char_pattern,
+        clippy::str_to_string,
+        reason = "compiler unit tests use direct diagnostics and compact fixture assertions"
+    )
+)]
+
 pub(crate) mod ast;
 pub(crate) mod compiler;
+pub(crate) mod conv;
 pub mod hll_compiler;
 pub mod ir;
 pub(crate) mod lexer;
@@ -19,16 +52,6 @@ pub enum TargetMode {
     /// Supervisor-mode kernel - kernel stdlib linked, entry point is `_kernel_start`,
     /// VM boots via ROM `_start` (PMP + medeleg + mret into S-mode).
     Kernel,
-}
-
-/// Selects the source-language rules used by the front end.
-///
-/// V2 is the default language. Legacy sources must opt in to V1 explicitly.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum LanguageVersion {
-    V1,
-    #[default]
-    V2,
 }
 
 impl TargetMode {

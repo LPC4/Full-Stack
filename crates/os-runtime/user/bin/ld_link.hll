@@ -1,4 +1,3 @@
-; @version 2
 
 ; Relocation patching and executable emission for the in-VM linker, split out of
 ; ld.hll. Reads the merged sections and symbol table ld.hll builds, via externals.

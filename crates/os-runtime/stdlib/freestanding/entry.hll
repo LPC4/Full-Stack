@@ -1,4 +1,3 @@
-; @version 2
 ; Entry: calls main then halts the VM by writing the exit code to SYSCON (0x10010000).
 
 external main: () -> i32

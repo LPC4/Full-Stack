@@ -6,41 +6,57 @@
 
 use asm_to_binary::AssembledOutput;
 use full_stack::compilation_pipeline::CompilationPipeline;
-use hll_to_ir::stdlib::get_stdlib_source;
+use hll_to_ir::stdlib::{get_stdlib_modules_for_mode, get_stdlib_type_prelude};
+use hll_to_ir::TargetMode;
 use std::sync::OnceLock;
 use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 
 // Stdlib compiled once per flag setting (the flag changes its codegen too).
-fn cached_stdlib_obj(regalloc: bool) -> &'static AssembledOutput {
-    static STDLIB_OFF: OnceLock<AssembledOutput> = OnceLock::new();
-    static STDLIB_ON: OnceLock<AssembledOutput> = OnceLock::new();
+// Each module is its own object (no source concatenation).
+fn cached_stdlib_objs(regalloc: bool) -> &'static [(String, AssembledOutput)] {
+    static STDLIB_OFF: OnceLock<Vec<(String, AssembledOutput)>> = OnceLock::new();
+    static STDLIB_ON: OnceLock<Vec<(String, AssembledOutput)>> = OnceLock::new();
     let cell = if regalloc { &STDLIB_ON } else { &STDLIB_OFF };
     cell.get_or_init(|| {
-        let mut pipeline = CompilationPipeline::new_v1();
+        let mut pipeline = CompilationPipeline::new();
         pipeline.set_write_artifacts(false);
         pipeline.set_register_allocation(regalloc);
-        let stdlib_result = pipeline
-            .compile(&get_stdlib_source())
-            .expect("stdlib compile failed");
-        let (_, tokens) = pipeline.compile_ir_to_assembly_with_tokens(&stdlib_result.ir_program);
-        pipeline.assemble(&tokens).expect("stdlib assemble failed")
+        pipeline.set_type_prelude(get_stdlib_type_prelude());
+        get_stdlib_modules_for_mode(TargetMode::Hosted)
+            .iter()
+            .map(|(name, src)| {
+                let r = pipeline.compile(src).expect("stdlib compile failed");
+                let (_, tokens) = pipeline.compile_ir_to_assembly_with_tokens(&r.ir_program);
+                let obj = pipeline
+                    .assemble_named(name, &tokens)
+                    .expect("stdlib assemble failed");
+                ((*name).to_owned(), obj)
+            })
+            .collect()
     })
 }
 
 /// Compile and run with register allocation on or off; returns the VM outcome,
 /// UART output, emitted user-code instruction count, and executed cycles.
 fn run_with_regalloc(src: &str, regalloc: bool) -> (StepOutcome, String, usize, u64) {
-    let mut pipeline = CompilationPipeline::new_v1();
+    let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
     pipeline.set_register_allocation(regalloc);
 
     let user_result = pipeline.compile(src).expect("user compile failed");
     let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program);
     let code_lines = user_tokens.iter().filter(|t| t.is_code()).count();
-    let user_obj = pipeline.assemble(&user_tokens).expect("user assemble failed");
+    let user_obj = pipeline
+        .assemble(&user_tokens)
+        .expect("user assemble failed");
 
+    let mut modules: Vec<(&str, &AssembledOutput)> = cached_stdlib_objs(regalloc)
+        .iter()
+        .map(|(n, o)| (n.as_str(), o))
+        .collect();
+    modules.push(("user", &user_obj));
     let assembled = pipeline
-        .link_assembled_objects(&[("stdlib", cached_stdlib_obj(regalloc)), ("user", &user_obj)])
+        .link_assembled_objects(&modules)
         .expect("link failed");
     let mut vm = VirtualMachine::new(&assembled);
     let run = vm.run(20_000_000);
@@ -62,7 +78,10 @@ fn assert_equivalent(src: &str) -> ((usize, u64), (usize, u64)) {
         format!("{alloc_outcome:?}"),
         "register allocation changed the exit outcome"
     );
-    assert_eq!(base_uart, alloc_uart, "register allocation changed UART output");
+    assert_eq!(
+        base_uart, alloc_uart,
+        "register allocation changed UART output"
+    );
     ((base_lines, base_cycles), (alloc_lines, alloc_cycles))
 }
 
@@ -183,7 +202,7 @@ fn regalloc_pointers_structs_and_arrays() {
         r#"
 external free: (p: i64*) -> void
 
-type Point = {
+struct Point {
     x: i64,
     y: i64,
 }
@@ -192,7 +211,7 @@ sum_buffer: (buf: i64*, len: i64) -> i64 {
     total: i64 = 0
     i: i64 = 0
     while i < len {
-        total = total + @buf[i]
+        total = total + buf[i]
         i = i + 1
     }
     return total
@@ -201,11 +220,11 @@ sum_buffer: (buf: i64*, len: i64) -> i64 {
 main: () -> i32 {
     p: Point = { .x = 17 as i64, .y = 25 as i64 }
     arr: i64[4] = [1 as i64, 2 as i64, 3 as i64, 4 as i64]
-    local: i64 = @arr[0] + @arr[1] + @arr[2] + @arr[3]
+    local: i64 = arr[0] + arr[1] + arr[2] + arr[3]
     buf: i64* = new(i64, 4)
     i: i64 = 0
     while i < 4 {
-        @buf[i] = i * 10
+        buf[i] = i * 10
         i = i + 1
     }
     s: i64 = sum_buffer(buf, 4)
@@ -276,13 +295,13 @@ main: () -> i32 {
     p: i64* = new(i64, 8)
     i: i64 = 0
     while i < 8 {
-        @p[i] = i * i
+        p[i] = i * i
         i = i + 1
     }
     total: i64 = 0
     i = 0
     while i < 8 {
-        total = total + @p[i]
+        total = total + p[i]
         i = i + 1
     }
     putchar(65 + (total % 26) as i32)
@@ -322,16 +341,23 @@ main: () -> i32 {
 "#;
     let (base_outcome, base_uart, _, _) = run_with_regalloc(src, false);
 
-    let mut pipeline = CompilationPipeline::new_v1();
+    let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
     pipeline.set_register_allocation(true);
     pipeline.set_peephole(true);
     pipeline.set_optimize(hll_to_ir::OptOptions::all());
     let user_result = pipeline.compile(src).expect("user compile failed");
     let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program);
-    let user_obj = pipeline.assemble(&user_tokens).expect("user assemble failed");
+    let user_obj = pipeline
+        .assemble(&user_tokens)
+        .expect("user assemble failed");
+    let mut modules: Vec<(&str, &AssembledOutput)> = cached_stdlib_objs(true)
+        .iter()
+        .map(|(n, o)| (n.as_str(), o))
+        .collect();
+    modules.push(("user", &user_obj));
     let assembled = pipeline
-        .link_assembled_objects(&[("stdlib", cached_stdlib_obj(true)), ("user", &user_obj)])
+        .link_assembled_objects(&modules)
         .expect("link failed");
     let mut vm = VirtualMachine::new(&assembled);
     let run = vm.run(20_000_000);
@@ -341,5 +367,8 @@ main: () -> i32 {
         format!("{:?}", run.outcome),
         "combined optimization flags changed the exit outcome"
     );
-    assert_eq!(base_uart, run.uart_output, "combined flags changed UART output");
+    assert_eq!(
+        base_uart, run.uart_output,
+        "combined flags changed UART output"
+    );
 }

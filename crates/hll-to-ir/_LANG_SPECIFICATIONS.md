@@ -1,52 +1,58 @@
 # HLL Language Specification
 
 HLL is a small systems language built around a consistency-first memory model. Memory
-operations are explicit, context-independent, and deterministic: there are no implicit
-conversions, no context-dependent dereferencing, and no hidden ownership. This document
-defines the syntax, type system, and semantics that the `hll-to-ir` front end implements.
+operations are explicit and deterministic: there are no hidden conversions, no hidden
+ownership, and no hidden dispatch. This document is the normative specification of the
+language the `hll-to-ir` front end implements. Sections describing unbuilt machinery are
+collected in the non-normative roadmap appendix and are clearly marked.
+
+There is one HLL language and one compiler. Earlier drafts of this document described a
+predecessor dialect; that dialect and its compiler mode no longer exist.
 
 ## 1. Core design principles
 
-HLL enforces a fully consistent pointer model.
+HLL enforces a consistent pointer and place model.
 
-### 1.1 The four golden rules
+### 1.1 The golden rules
 
-1. Pointers are always pointers. If a type contains `*`, it is a pointer type. There are
-   no implicit conversions between `T` and `T*`.
-2. Dereference explicitly with `@`. `@ptr` reads the value, `@ptr = value` writes it, and
-   field access uses `@ptr.field`. Array indexing returns pointers.
-3. Take an address explicitly with `&`. `&identifier` is a pointer to a stack variable, and
-   stack-safe lvalues such as `&arr[index]` are also valid. `&@ptr` is invalid.
-4. No mutable primitive parameters. All parameters are pass-by-value; mutation requires an
-   explicit pointer parameter (`T*`).
+1. Pointers are always pointers. If a type contains `*`, it is a pointer type. There are no
+   implicit conversions between `T` and `T*`.
+2. Indexing and fields produce places, not pointers. `seq[i]` is an assignable element place
+   of type `T`; `place.field` selects a field. `.` auto-dereferences exactly one pointer
+   level, so a field of `p: T*` is `p.field`. Take an address explicitly with `&`.
+3. `@` is reserved for a pointer's whole pointee. `@ptr` reads the entire pointee value and
+   `@ptr = value` writes it. Ordinary array and field access never needs `@`.
+4. No mutable primitive parameters. All parameters are pass-by-value; mutation of a caller's
+   storage requires an explicit pointer parameter (`T*`) and `&` at the call site.
 
-The duality principle: `@(&x)` equals `x` when `x` is a stack-safe lvalue. The reverse is
-not a blanket identity, and `&@ptr` is rejected.
+`&place` produces a pointer to a place; `&` rejects non-place temporaries (`&@ptr` is
+invalid). Returning the address of a local (`return &x`) is a compile-time error.
 
 ## 2. Syntax and lexical conventions
 
 | Feature | Rule |
 |---------|------|
-| Comments | Semicolon `;` (line comment; consumes the rest of the line) |
-| Statement termination | Significant newlines (one statement per line) |
-| Whitespace | Insignificant except as a token separator |
-| Type annotations | `name: Type = value` |
-| Type casting | Postfix `as`: `expr as TargetType`. The prefix form `TargetType(value)` is also accepted. |
+| Comments | Semicolon `;` starts a line comment and consumes the rest of the line. |
+| Blocks | Brace-delimited `{ ... }`. Indentation is insignificant. |
+| Statement termination | A newline terminates a complete statement. `;` is never a separator. |
+| Continuation | A statement continues onto the next line when the current line cannot yet form a complete statement: it ends with a binary operator, a comma, or an open `(`/`[`/`{`. |
+| Type annotations | `name: Type` (`:` always introduces a type, never a value). |
+| Type casting | Postfix `expr as Type` only. There is no prefix `Type(value)` cast form. |
 
 ### 2.1 Syntax examples
 
 ```hll
-x: i32 = 42
-y: f64 = 3.1415
-z: i32 = 42        ; trailing comment
+x: i32 = 42                ; explicitly typed declaration
+y := 3.1415               ; inferred declaration (f64 from the literal)
+z: i32 = 42               ; trailing comment
 
-; multi-line expression continuation
+; multi-line continuation: the first line ends on a binary operator
 w: i32 = 1 + 2
     + 3
 
-; explicit casting
-ptr: i32* = i32*(1000)
-int_val: i32 = i32(ptr)
+; explicit cast
+ptr: i32* = 1000 as i32*
+addr: i64 = ptr as i64
 ```
 
 ## 3. Type system and declarations
@@ -60,45 +66,58 @@ int_val: i32 = i32(ptr)
 | `f32`, `f64` | IEEE 754 floats | 4, 8 bytes | `0.0` |
 | `bool` | Boolean | 1 byte | `false` |
 
-`Str` is not a primitive. It is a standard-library struct holding a byte pointer and a
-length (`data: u8*`, `length: u64`). A string literal such as `"text"` evaluates to a
-compile-time anonymous inline struct with the exact shape `{ data: u8*, length: u64 }`.
-Anonymous inline structs are allowed anywhere a struct type is accepted.
+### 3.2 Bindings
 
-### 3.2 Declaration and initialization
+Declaration and assignment are syntactically separate, so `x = e` is never ambiguous:
+
+| Form | Meaning |
+|------|---------|
+| `name: T = expr` | declare `name` with explicit type `T` |
+| `name := expr` | declare `name`, inferring its type from `expr` |
+| `name = expr` | assign to an existing `name` (never declares) |
+
+Assigning a name that has not been declared is a compile-time error (this catches typos).
+Inference (`:=`) is local: it never crosses a function boundary and uses only the resolved
+type of the right-hand side, which must be a single concrete non-void type.
 
 ```hll
-; Initialized stack variable
-count: i32 = 10
-
-; Uninitialized stack array (contains undefined data)
-buffer: u8[1024]
-
-; Heap allocation (zero-initialized)
-data_ptr: i32* = new(i32)
-array_ptr: i32* = new(i32, 10)
-
-; Compile-time constant
-const MAX_SIZE = 100
+count: i32 = 10           ; explicit
+total := count + 5        ; inferred i32
+const MAX_SIZE = 100      ; compile-time constant
 ```
 
-Heap allocation rules:
+### 3.3 Initialization and allocation
 
-- `new(T)` allocates a single element of type `T` and returns `T*`.
-- `new(T, N)` allocates `N` contiguous elements of type `T` and returns `T*`. `N` may be a
-  runtime expression.
-- `new([N]T)` has been removed; use `new(T, N)` instead.
-- All heap allocations are zero-initialized.
+```hll
+buffer: u8[16] = []       ; fixed array, zero-filled by the empty literal
+values: i32[4] = [3, 5, 7, 11]
+data_ptr: i32* = new(i32)        ; one element, zero-initialized
+array_ptr: i32* = new(i32, 10)   ; N contiguous elements; N may be a runtime expression
+```
 
-String literals: `"text"` evaluates to a compile-time inline struct `{ data: u8*, length: u64 }`
-equivalent to `Str`, so `s: Str = "hello"` is valid with no wrapper call.
+- Every binding must have an initializer. The empty array literal `[]` zero-fills a fixed
+  array; because `;` is a comment, no `[0; N]` repeat form exists, and a bare
+  `buffer: u8[16]` (no initializer) is an error.
+- `new(T)` returns `T*` for a single element; `new(T, N)` returns `T*` for `N` elements. All
+  heap allocations are zero-initialized. Every allocation needs a matching `free()` or
+  `defer free()`; there is no garbage collection.
 
-Character literals: `'c'` is an integer literal equal to the ascii byte of `c` (default
-type `i32`, like any integer literal), so `putc('A')` and `putc(65)` are identical. Escapes
-`\n \t \r \b \0 \\ \' \"` are recognized; the body must be exactly one ascii character.
+### 3.4 Strings and character literals
 
-Initialization rules: stack variables must be initialized unless declared as an
-uninitialized buffer, and reading an uninitialized stack variable is a compile-time error.
+A string literal `"text"` is a `u8[]` slice (see 5.3): a `{ ptr: u8*, len: u64 }` fat
+pointer over read-only bytes. Its `.ptr` and `.len` fields, indexing, iteration, and range
+slicing all apply. This layout matches the legacy `Str` record, so a `u8[]` string links
+against `Str`-typed stdlib functions across translation units.
+
+```hll
+name: u8[] = "Ada"
+first: u8 = name[0]       ; bounds-checked element read
+raw: u8* = name.ptr       ; raw pointer for a C-string API
+```
+
+A character literal `'c'` is an integer literal equal to the ascii byte of `c` (default type
+`i32`), so `putc('A')` and `putc(65)` are identical. The escapes `\n \t \r \b \0 \\ \' \"`
+are recognized; the body must be exactly one ascii character.
 
 ## 4. Pointer semantics
 
@@ -106,243 +125,256 @@ uninitialized buffer, and reading an uninitialized stack variable is a compile-t
 
 | Operation | Syntax | Type rule | Example |
 |-----------|--------|-----------|---------|
-| Read | `@ptr` | `T* -> T` | `val: i32 = @x_ptr` |
-| Write | `@ptr = val` | `T* <- T` | `@x_ptr = 42` |
-| Address-of | `&val` | `T -> T*` | `x_ptr: i32* = &x` |
-| Allocate | `new(T)` | `void -> T*` | `p: Point* = new(Point)` |
+| Read whole pointee | `@ptr` | `T* -> T` | `val: i32 = @x_ptr` |
+| Write whole pointee | `@ptr = val` | `T* <- T` | `@x_ptr = 42` |
+| Address-of place | `&place` | `T -> T*` | `x_ptr: i32* = &x` |
+| Allocate | `new(T)` / `new(T, N)` | `-> T*` | `p: Point* = new(Point)` |
 | Deallocate | `free(ptr)` | `T* -> void` | `free(x_ptr)` |
-| Arithmetic | `@(ptr + offset)` | `T* -> T` | `byte: u8 = @(raw_ptr + 3)` |
-| Cast | `val as TargetType` | `S -> T` | `ptr as u8*` |
+| Cast | `expr as Type` | `S -> T` | `slot_ptr as u8*` |
 
-### 4.2 Pointer arithmetic constraints
+### 4.2 Pointer arithmetic
 
-- Offsets using `+` are always strictly in bytes.
-- Only addition is permitted for dereferencing: `@(ptr + offset)`.
-- The array index operator `[]` is the only operator that performs type-scaled offsets.
-- Pointer subtraction is invalid.
-- Pointer-to-pointer arithmetic is invalid.
+- `T* + n` and `T* - n` are element-scaled: the offset advances by `n * sizeof(T)`. This
+  agrees with `seq[i]`, so the two ways to reach element `i` mean the same thing.
+- Byte arithmetic is expressed on `u8*`, where the element size is 1.
+- Integer-minus-pointer and pointer-minus-pointer are invalid.
+- `@(ptr + n)` reads the element `n` steps after `ptr`. Raw-pointer indexing `ptr[n]` is the
+  element-place equivalent and is unchecked (slices add the bounds check; see 5.3).
 
 ## 5. Composite types
 
 ### 5.1 Arrays
 
-Array indexing always returns a pointer (`T*`), never a value.
+A fixed array is `T[N]`. Indexing produces an assignable place of type `T`, element-scaled.
+Use `&arr[i]` for the element's address; a fixed array does not silently decay to a pointer.
 
 ```hll
-local_arr: i32[5]
-@local_arr[0] = 10          ; write
-first: i32 = @local_arr[0]  ; read
-
-heap_arr: i32* = new(i32, 10)
-@heap_arr[3] = 42
-value: i32 = @heap_arr[3]
-
-; Array of structs
-points: Point* = new(Point, 5)
-@points[0] = { x: 1.0, y: 2.0 }
-x_val: f32 = @points[0].x
+nums: i32[5] = [1, 2, 3, 4, 5]
+nums[0] = 10                 ; write a place
+first: i32 = nums[0]         ; read a place
+addr: i32* = &nums[0]        ; explicit address
 ```
-
-Rules:
-
-- `arr[index]` yields `T*`. It is sugar for a type-scaled offset (it scales by `sizeof(T)`).
-- An explicit `@` is required for value operations (`@arr[index]`).
-- Raw pointer arithmetic `(ptr + offset)` is strictly byte-scaled.
-- Stack arrays get compile-time bounds checking; heap arrays get no runtime bounds checking.
-- Stack arrays cannot decay to pointers; use `&arr[0]` to obtain a pointer.
 
 ### 5.2 Structs
 
+`struct` introduces a plain data type. `type` is reserved for aliases only.
+
 ```hll
-type Point = {
+struct Point {
     x: f32,
-    y: f32
-}
-
-p1: Point = { .x = 1.0, .y = 2.0 }
-p1.x = 3.0                  ; stack: direct access
-
-p2_ptr: Point* = new(Point)
-@p2_ptr = { .x = 3.0, .y = 4.0 } ; heap: full struct write
-@p2_ptr.x = 5.0             ; heap: field write (requires @)
-```
-
-Struct type rule: fields are comma-separated; commas are required between fields and a
-trailing comma is allowed for multi-line definitions.
-
-Struct literal rule: anonymous inline structs may be used anywhere a struct type is
-accepted. Literals support shorthand field initialization with `{ .field = expr }` and,
-where an explicit annotation helps, the typed form `{ field: Type = expr }`.
-
-Field access rules:
-
-- Stack struct: `struct.field`.
-- Heap or stack pointer to struct: `@ptr.field`.
-
-### 5.3 Inline structs and destructuring
-
-HLL uses anonymous inline structs to group multiple values, including multiple returns.
-They are allowed anywhere a struct type is accepted: declarations, parameters, return
-types, type aliases, and intermediate expressions. An inline struct can be assigned
-directly to a variable or unpacked with explicit destructuring.
-
-```hll
-; Inline struct return type
-get_coordinates: () -> { x: f32, y: f32 } {
-    return { .y = 7.2, .x = 3.5 }
-}
-
-main: () -> () {
-    ; Option 1: direct assignment
-    coords = get_coordinates()
-    print(coords.x)
-    print(coords.y)
-
-    ; Option 2: struct destructuring (typed pattern)
-    ; Fields are matched by name, not position, so the order may differ from the source.
-    { y: f32, x: f32 } = get_coordinates()
-    print(x)
+    y: f32,
 }
 ```
 
-Partial destructuring discards data: list only the fields you need and omit the rest. The
-listed field order does not need to match the source struct.
+A struct literal is `.field = expr` pairs in braces, optionally prefixed by the type name. A
+named literal must set every field; a contextual literal whose type is known from the
+destination may omit fields, which default to zero. Field order is free; `:` never appears in
+a literal because it only introduces a type.
 
 ```hll
-; Extracts 'value', implicitly discards 'success'
-{ value: i32 } = try_operation()
+p := Point { .x = 1.0, .y = 2.0 }   ; named -- type explicit
+q: Point = { .x = 1.0, .y = 2.0 }   ; contextual -- type from the annotation
+@ptr = { .x = 3.0, .y = 4.0 }       ; contextual -- type from the lvalue
 ```
 
-## 6. Function semantics
-
-### 6.1 Parameters and returns
-
-- All parameters are pass-by-value.
-- Mutability requires a `T*` parameter and `&` at the call site.
-- Returning a stack address (`return &x`) is a compile-time error.
-- Multiple returns use anonymous inline struct syntax.
-- Void return: omit the `->` clause entirely. The `-> ()` form is accepted for
-  compatibility but deprecated; prefer `name: () { }` over `name: () -> () { }`.
-
-### 6.2 Module system
-
-Modules are file-scoped: each source file is one module.
+Field access uses `.` and auto-dereferences one pointer level:
 
 ```hll
-import "path/to/module"   ; declare a module dependency
-export fn_name: () { }    ; mark a declaration as visible to importers
+p.x = 3.0                ; p: Point        -- direct
+r.x = 3.0                ; r: Point*       -- auto-dereferences r
+whole: Point = @r        ; @ reads the whole pointee value
+@r = p                   ; @ writes the whole pointee value
 ```
 
-- `import` records the module path for the linker; the pipeline resolves it.
-- `export` marks a declaration as publicly visible. Declarations without `export` are
-  private by convention (the linker still sees them; the keyword documents intent and
-  enables future enforcement).
-- A module implicitly imports the `core` builtins (primitive types, `new`, `free`,
-  `defer`, `asm`).
+`@p.field` parses as `@(p.field)` (dereference a pointer stored in `field`); it is not
+`(@p).field`, which is redundant because `p.field` already performs the one permitted member
+auto-dereference.
+
+### 5.3 Slices and ranges
+
+A slice `T[]` is a bounds-checked, element-scaled fat pointer `{ ptr: T*, len: u64 }`.
+Copying a slice copies only the fat pointer.
+
+```hll
+nums: i32[5] = [1, 2, 3, 4, 5]
+view: i32[] = nums[1..4]     ; { &nums[1], 3 }, no copy
+mid: i32 = view[0]           ; bounds-checked element read
+mid_ptr: i32* = &view[0]     ; explicit element address
+length: u64 = view.len
+```
+
+- `arr[a..b]` and `slice[a..b]` produce a half-open sub-slice; `..=` is inclusive; open
+  endpoints default to `0` (start) and the source length (end).
+- Slice indexing is element-scaled and bounds-checked against `.len`. An out-of-bounds access
+  traps with a stable diagnostic code (see 7.4). Raw-pointer indexing is unchecked.
+- A fixed array coerces to a slice via `arr[..]`, and implicitly where a `T[]` is expected.
+
+### 5.4 Destructuring
+
+A returned (or stored) struct can be unpacked by a typed field pattern. Fields are matched by
+name, so the listed order need not match the declaration, and listing a subset discards the
+rest.
+
+```hll
+divide: (a: i32, b: i32) -> { quotient: i32, remainder: i32 } {
+    return { .quotient = a / b, .remainder = a % b }
+}
+
+main: () -> i32 {
+    s := divide(17, 5)               ; bind the whole struct
+    { remainder: i32, quotient: i32 } = divide(17, 5)   ; by name, any order
+    { quotient: i32 } = divide(17, 5)                   ; partial -- discard remainder
+    return quotient - 3
+}
+```
+
+## 6. Functions, generics, and modules
+
+### 6.1 Functions
+
+```hll
+add: (a: i32, b: i32) -> i32 { return a + b }   ; value-returning
+log_line: (s: u8[]) { println(s) }              ; void -- omit -> entirely
+```
+
+- A value-returning function names its return type after `->`.
+- A void function omits the arrow. The `-> ()` form does not exist. A bare `return` ends a
+  void function early.
+- All parameters are pass-by-value. Aggregates may use a hidden pointer in the ABI without
+  changing source semantics.
+- Multiple results are returned as an anonymous struct (5.4).
+
+### 6.2 Generics
+
+Type parameters on functions and structs are monomorphized: the compiler emits one concrete
+copy per distinct type argument set, name-mangled deterministically, with no boxing and no
+runtime type information.
+
+```hll
+struct Box<T> { value: T }
+
+max: <T>(a: T, b: T) -> T {
+    if a > b { return a }
+    return b
+}
+
+main: () -> i32 {
+    b: Box<i32>* = new(Box<i32>)
+    defer free(b)
+    b.value = max<i32>(19, 23)
+    return b.value - 23
+}
+```
+
+Type arguments may be explicit (`max<i32>(...)`) or inferred from structurally deducible
+literal, local, pointer, array, slice, and named-type arguments; an unconstrained argument
+must be given explicitly. The V2 core has no interface system, so generics are unconstrained:
+a specialization that uses an operation the concrete type does not support fails at the
+specialized site with an ordinary type error. A recursive specialization that does not
+converge is diagnosed rather than allowed to hang.
+
+### 6.3 Modules and `external`
+
+Each source file is one module; modules compile separately and link by object. There are
+three cross-module mechanisms:
+
+```hll
+import "path/to/module"               ; record a module dependency for the linker
+export helper: (x: i32) -> i32 { ... } ; make a declaration visible to importers
+external puts: (s: u8*) -> i32        ; name a symbol defined in another unit, resolved at link
+```
+
+- `external` declares a signature with no body; it pulls in no module and is resolved at link
+  time. The split userspace tools depend on it to share globals and functions.
+- Build paths never concatenate HLL source text to form a translation unit. Shared
+  declarations are composed through `external`, imports, or a shared declarations prelude;
+  all cross-unit composition happens by object linking.
 - Cyclic imports are rejected at compile time.
 
-```hll
-increment: (x_ptr: i32*) -> () {
-    @x_ptr = @x_ptr + 1
-}
-
-main: () -> () {
-    x: i32 = 5
-    increment(&x)
-}
-
-divide: (a: i32, b: i32) -> { quotient: i32, remainder: i32 } {
-    return { remainder: a % b, quotient: a / b }
-}
-
-main: () -> () {
-    ; Direct assignment
-    s = divide(10, 3)
-    print(s.quotient)
-
-    ; Struct destructuring by name, with fields listed in any order
-    { remainder: i32, quotient: i32 } = divide(10, 3)
-}
-```
-
-## 7. Control flow and resource management
+## 7. Control flow, enums, and resource management
 
 ### 7.1 Control flow
 
-- `while`, `if`, `else`, `break`, and `continue` are supported.
-- There is no `for` loop syntax (it would conflict semantically with comments).
-
-### 7.2 The defer statement
-
-- A deferred call runs when the enclosing function exits, in LIFO order.
-- Arguments are captured at declaration time, not at execution. Mutating a captured
-  variable afterward does not affect the deferred call.
-- A defer statement cannot contain a `return`.
+`if` / `else`, `while`, `break`, `continue`, and `for` are supported.
 
 ```hll
-; defer captures the value of `ptr` at this line, not when the function exits.
-defer free(ptr)
-ptr = new(i32)   ; reassigning ptr does not affect the deferred free
+sum := 0
+for n in 0..10 { sum += n }     ; range; ..= is inclusive
+for v in view { sum += v }      ; iterate an array or slice
 ```
 
-```hll
-process_data() {
-    file: File* = open("data.bin")
-    defer close(file)
+`for var in iterable { ... }` iterates a range, a fixed array, or a slice, and desugars to a
+`while` loop. The end of a range is evaluated once; `continue` still advances the loop.
 
-    buffer: u8[1024]
-    while !eof(file) {
-        read(file, buffer, 1024)
-        if error_occurred { return }
-        process(buffer)
+### 7.2 Enums, `match`, and `?`
+
+An enum is a tagged union with unit and payload variants. Its runtime layout is
+`{ tag: i64, payload }`, where the payload area is sized to the largest variant.
+
+```hll
+enum Shape { Circle(f64), Rect(f64, f64), Empty }
+
+area: (s: Shape) -> f64 {
+    match s {
+        Circle(r)  -> { return 3.14159 * r * r }
+        Rect(w, h) -> { return w * h }
+        Empty      -> { return 0.0 }
     }
 }
 ```
 
-Resource rule: every heap allocation needs a matching `free()` or `defer free()`. There is
-no garbage collection.
+A unit variant is constructed by naming it; a payload variant by calling it (`Circle(2.0)`).
+`match` is exhaustive: every variant must be covered, or a catch-all (`_` or a lowercase
+binding) provided. A `match` may produce a value when every arm is a `-> expr` value arm whose
+types agree; it is usable as a binding initializer, assignment right-hand side, or return
+value.
 
-### 7.3 Inline assembly
-
-Two forms of inline assembly emit raw RISC-V instructions or read hardware registers
-directly from HLL. They exist only for low-level system code (`_start`, syscall wrappers,
-and similar); application code should not need them.
-
-`asm_reg(name)` is a register-read expression. It reads the current value of a named ABI
-register as an `i64` and is valid anywhere an expression is accepted, including conditions
-and arithmetic.
+The prelude provides `Option<T>` (`Some(T)` / `None`) and `Result<T, E>` (`Ok(T)` /
+`Err(E)`) unless a user declaration shadows the name. Postfix `?` propagates failure with a
+visible early return:
 
 ```hll
-stack_ok: () -> bool {
-    return asm_reg(sp) > 0x10000
-}
-
-get_sp: () -> i64 {
-    return asm_reg(sp)
+run: (in: u8[]) -> Result<i32, ParseError> {
+    n := parse(in)?            ; Ok(v) yields v; Err(e) returns Err(e) from run
+    return Ok(n * 2)
 }
 ```
 
-`asm { }` is a verbatim assembly block. It emits raw RISC-V instruction lines interleaved
-with the surrounding compiled code. Each line is one instruction, whitespace-delimited and
-terminated by a newline or semicolon.
+`?` accepts only `Option<T>` and `Result<T, E>`, requires the enclosing return type to carry
+the propagated failure, and for `Result` requires compatible error payloads.
+
+### 7.3 The `defer` statement
+
+A deferred call runs when the enclosing function exits, in LIFO order. Arguments are captured
+at declaration time, not at execution, so reassigning a captured variable afterward does not
+affect the deferred call. A `defer` statement may not contain a `return`.
 
 ```hll
-putchar: (c: i32) -> i32 {
-    asm {
-        addi  sp, sp, -16
-        sd    ra, 8(sp)
-        sb    a0, 7(sp)
-        li    a0, 1
-        addi  a1, sp, 7
-        li    a2, 1
-        li    a7, 64
-        ecall
-        ld    ra, 8(sp)
-        addi  sp, sp, 16
-    }
-    return 0
-}
+ptr: i32* = new(i32)
+defer free(ptr)          ; captures this ptr value now
+ptr = new(i32)           ; the deferred free still targets the first allocation
+```
 
+### 7.4 Bounds and trap behavior
+
+A failed slice/array bounds check, and any other checked runtime failure, transfers to a
+non-returning trap with a stable diagnostic code. In the VM and kernel this is observable as a
+clean halt carrying that code; raw-pointer access is documented as unchecked.
+
+## 8. Inline assembly
+
+Two forms emit raw RISC-V or read hardware registers. They exist only for low-level system
+code (`_start`, syscall wrappers); application code should not need them.
+
+`asm_reg(name)` reads a named ABI register as an `i64` and is valid in any expression:
+
+```hll
+stack_ok: () -> bool { return asm_reg(sp) > 0x10000 }
+```
+
+`asm { }` is a verbatim block of RISC-V instructions, one per line, whitespace-delimited:
+
+```hll
 _start: () {
     asm {
         call main
@@ -352,62 +384,11 @@ _start: () {
 }
 ```
 
-Allowed registers (both forms): `sp`, `fp`, `ra`, `gp`, `tp`, `a0`-`a7`, `s1`-`s11`.
-
-- `fp` must be spelled `fp`; the `s0` alias is not accepted by name.
-- `gp` (global pointer) and `tp` (thread pointer) are available for OS-level use.
-- Temp registers `t0`-`t6` are not allowed. The register allocator may hold live values in
-  them at any asm site, so clobbering them would silently corrupt surrounding code.
-
-Restrictions on `asm { }` blocks:
-
-- No HLL variables or expressions inside; raw assembly text only.
-- No data directives (`.asciz`, `.word`, and so on); use HLL string or array literals for data.
-- Branches and labels within a block are permitted but must not target labels outside it.
-- Blocks cannot be nested.
-
-## 8. Compile-time evaluation and error handling
-
-### 8.1 Compile-time functions
-
-- Must be pure (no I/O, no side effects).
-- Cannot use `defer`, `new`, or `free`.
-- Operate only on compile-time known values.
-
-```hll
-const FACTORIAL_10 = compute_factorial(10)
-compute_factorial(n: i32): i32 {
-    if n <= 1 { return 1 }
-    return n * compute_factorial(n - 1)
-}
-```
-
-### 8.2 Error handling
-
-- There are no exceptions. Errors are returned as structs `{ value: T, error: E }`.
-- `null` indicates failure for pointer-returning functions.
-- Handling is explicit at each call site. Unwanted fields can be dropped via partial
-  destructuring, which matches by name rather than position.
-
-```hll
-open_file(path: Str*): { file: File*, error: Str* } {
-    if invalid_path(path) {
-        return { file: null, error: make_str("Invalid path") }
-    }
-    return { file: new(File), error: null }
-}
-
-main: () -> () {
-    path: Str* = make_str("data.txt")
-
-    ; We omit 'error' from the destructuring to implicitly discard it
-    { file: File* } = open_file(path)
-
-    if file == null {
-        ; Handle failure
-    }
-}
-```
+- Allowed registers (both forms): `sp`, `fp`, `ra`, `gp`, `tp`, `a0`-`a7`, `s1`-`s11`. Spell
+  the frame pointer `fp` (the `s0` alias is not accepted). Temporaries `t0`-`t6` are not
+  allowed: the register allocator may hold live values in them at any asm site.
+- An `asm { }` block contains raw assembly text only (no HLL expressions, no data directives).
+  Branches and labels inside a block must not target outside it, and blocks cannot nest.
 
 ## 9. Formal grammar (EBNF)
 
@@ -418,6 +399,7 @@ ident       = letter { letter | digit | "_" };
 integer     = digit { digit };
 hex_integer = "0x" hex_digit { hex_digit };
 float       = digit { digit } "." digit { digit } [ exponent ];
+char        = "'" ( any_char - "'" | escape ) "'";
 string      = '"' { any_char - '"' } '"';
 comment     = ";" { any_char - newline };
 newline     = "\n" | "\r\n";
@@ -427,63 +409,70 @@ newline     = "\n" | "\r\n";
 
 ```ebnf
 program        = { declaration };
-declaration    = variable_decl | function_decl | type_decl | const_decl
-               | import_decl | export_decl;
+declaration    = binding_decl | function_decl | struct_decl | enum_decl | type_decl
+               | const_decl | import_decl | export_decl | external_decl;
 import_decl    = "import" string;
 export_decl    = "export" declaration;
-variable_decl  = identifier [ ":" type ] [ "=" expression ];
+external_decl  = "external" identifier ":" [ type_params ] "(" [ param_list ] ")"
+                 [ "->" type ];
+binding_decl   = identifier ":" type "=" expression
+               | identifier ":=" expression;
+struct_decl    = "struct" identifier [ type_params ] "{" [ field_decl { "," field_decl }
+                 [ "," ] ] "}";
+enum_decl      = "enum" identifier [ type_params ] "{" variant { "," variant } "}";
+variant        = identifier [ "(" type { "," type } ")" ];
 type_decl      = "type" identifier "=" type;
 const_decl     = "const" identifier "=" expression;
-type           = primitive_type | identifier | struct_def | array_def | pointer_type;
-struct_def     = "{" [ field_decl { "," field_decl } [ "," ] ] "}";
 field_decl     = identifier ":" type;
-array_def      = "[" integer "]" type;
+type_params    = "<" identifier { "," identifier } ">";
+type           = primitive_type | identifier [ type_args ] | struct_def
+               | array_type | slice_type | pointer_type;
+type_args      = "<" type { "," type } ">";
+struct_def     = "{" [ field_decl { "," field_decl } [ "," ] ] "}";
+array_type     = type "[" integer "]";
+slice_type     = type "[" "]";
 pointer_type   = type "*";
 primitive_type = "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64"
                | "f32" | "f64" | "bool";
-function_decl  = identifier ":" "(" [ param_list ] ")" [ "->" return_type ] block;
+function_decl  = identifier ":" [ type_params ] "(" [ param_list ] ")" [ "->" type ] block;
 param_list     = parameter { "," parameter };
 parameter      = identifier ":" type;
-return_type    = type;
 block          = "{" { statement } "}";
-statement      = expression | if_stmt | while_stmt | return_stmt | defer_stmt
-               | variable_decl | asm_block;
+statement      = expression | binding_decl | assignment | destructure_assign
+               | if_stmt | while_stmt | for_stmt | return_stmt | defer_stmt | asm_block;
+assignment     = place ( "=" | compound_op ) expression;
+destructure_assign = "{" field_decl { "," field_decl } [ "," ] "}" "=" expression;
+compound_op    = "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^=" | "<<=" | ">>=";
 if_stmt        = "if" expression block [ "else" ( if_stmt | block ) ];
 while_stmt     = "while" expression block;
+for_stmt       = "for" identifier "in" ( range_expr | expression ) block;
+range_expr     = [ expression ] ( ".." | "..=" ) [ expression ];
 return_stmt    = "return" [ expression ];
 defer_stmt     = "defer" expression;
 asm_block      = "asm" "{" { asm_line } "}";
-asm_line       = { any_char - newline } newline;
-expression     = assignment | binary_expr | cast_expr | unary_expr | postfix_expr;
+expression     = match_expr | binary_expr | cast_expr | unary_expr | postfix_expr;
+match_expr     = "match" expression "{" arm { arm } "}";
+arm            = pattern "->" ( block | expression );
+pattern        = "_" | identifier | identifier "(" pattern { "," pattern } ")";
 cast_expr      = expression "as" type;
-assignment     = lvalue ( "=" | compound_op ) expression;
-compound_op    = "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^=" | "<<=" | ">>=";
-lvalue         = struct_destructure | dereference | field_access | array_index | identifier;
-struct_destructure = "{" [ identifier ":" type { "," identifier ":" type } [ "," ] ] "}";
-unary_expr     = unary_op expression;
-unary_op       = "-" | "!" | "&" | "@";
-postfix_expr   = primary_expr { "." identifier | "[" expression "]" | "as" type };
-primary_expr   = identifier | literal | "(" expression ")" | function_call | array_literal
-               | struct_literal | new_expr | asm_reg_expr;
+unary_expr     = ( "@" | "&" | "-" | "!" ) expression;
+postfix_expr   = primary_expr { "." identifier | "[" index_or_range "]"
+                 | "(" [ arg_list ] ")" | "?" };
+index_or_range = expression | range_expr;
+primary_expr   = identifier [ type_args ] | literal | "(" expression ")"
+               | array_literal | struct_literal | new_expr | asm_reg_expr;
 new_expr       = "new" "(" type [ "," expression ] ")";
 asm_reg_expr   = "asm_reg" "(" abi_reg ")";
-abi_reg        = "sp" | "fp" | "ra" | "gp" | "tp"
-               | "a0" | "a1" | "a2" | "a3" | "a4" | "a5" | "a6" | "a7"
-               | "s1" | "s2" | "s3" | "s4" | "s5" | "s6" | "s7" | "s8" | "s9" | "s10" | "s11";
-struct_literal = "{" [ field_init { "," field_init } [ "," ] ] "}";
-field_init     = shorthand_field_init | typed_field_init;
-shorthand_field_init = "." identifier "=" expression;
-typed_field_init = identifier ":" type "=" expression;
-dereference    = "@" expression;
-field_access   = expression "." identifier;
-array_index    = expression "[" expression "]";
+array_literal  = "[" [ expression { "," expression } ] "]";
+struct_literal = [ identifier ] "{" [ field_init { "," field_init } [ "," ] ] "}";
+field_init     = "." identifier "=" expression;
 ```
 
 ### 9.3 Operator precedence
 
 | Level | Operators | Associativity |
 |-------|-----------|---------------|
-| 1 | `() [] . as` | Left |
+| 1 | `() [] . ? as` (postfix) | Left |
 | 2 | `@ & - !` (unary) | Right |
 | 3 | `* / %` | Left |
 | 4 | `+ -` | Left |
@@ -495,202 +484,95 @@ array_index    = expression "[" expression "]";
 | 10 | `\|` (bitwise) | Left |
 | 11 | `and` | Left |
 | 12 | `or` | Left |
-| 13 | `=` | Right |
+| 13 | `=` and compound assignment | Right |
 
-Precedence is absolute: parentheses are required to override the default binding, and the
-parser rejects ambiguous expressions rather than guessing intent.
+`as` is a high-precedence postfix operator and applies to the single operand on its left.
+`a + b as u32` is `a + (b as u32)`, `ptr + 3 as u8*` is `ptr + (3 as u8*)`, and
+`@ptr as i32` is `@(ptr as i32)` (cast then dereference), not `(@ptr) as i32`.
+Parenthesize the operand to cast a larger expression or a dereference: write
+`(a + b) as u32` and `(@ptr) as i32`.
 
-The `as` and `@` interaction is a common trap. Because `as` is at level 1 (postfix) and `@`
-is at level 2 (prefix), `@x as T` parses as `@(x as T)` (cast first, then dereference). To
-dereference and then cast, use outer parentheses: `(@x) as T`.
-
-```hll
-; WRONG: parses as @(ptr as i32) - dereferencing an i32!
-val: i32 = @ptr as i32
-
-; CORRECT: dereference the u8*, then cast the resulting u8 to i32
-val: i32 = (@ptr) as i32
-```
-
-Evaluation order: binary expressions, function arguments, and struct literals are evaluated
-strictly left to right. `defer` cleanup runs in LIFO order at the enclosing scope exit.
+Evaluation order: binary operands, function arguments, and struct-literal fields are evaluated
+strictly left to right, each base/index/call expression exactly once. `defer` cleanup runs in
+LIFO order at scope exit.
 
 ### 9.4 Compound assignment
 
 `lhs OP= rhs` is shorthand for `lhs = lhs OP rhs`, available for `+= -= *= /= %=` and the
 bitwise/shift forms `&= |= ^= <<= >>=`. The right-hand side is the whole expression, so
-`x -= a + b` means `x = x - (a + b)`. The left-hand side is evaluated twice (once to read,
-once to write); HLL lvalues are simple (identifiers, fields, dereferenced array elements)
-with no side effects, so this is observationally equivalent to a single evaluation.
+`x -= a + b` means `x = x - (a + b)`.
 
 ## 10. Memory safety framework
 
-### 10.1 Formal model
-
-- Pointer type `T*` is the set of memory addresses holding values of type `T`.
-- Dereference is the partial functions `load: T* -> T` and `store: T* x T -> unit`, valid
-  only for active pointers.
-- There are no implicit conversions; the type system strictly separates `T` and `T*`, and
-  casting requires explicit syntax.
-
-### 10.2 Error prevention matrix
-
-| Error | Traditional cause | HLL prevention |
-|-------|-------------------|----------------|
-| Null dereference | Implicit assumptions | Explicit `@`, compile-time null tracking |
-| Use-after-free | Hidden ownership | Mandatory `free()`, compiler lifetime tracking |
-| Buffer overflow | Implicit bounds | Explicit indexing, stack bounds checks |
-| Memory leak | Untracked allocations | `defer free()`, compiler warnings |
-| Dangling pointers | Implicit copying | No stack-address returns, static ownership tracking |
-| Data races | Implicit sharing | All mutation via explicit pointers |
-
-If a program compiles successfully, it contains no dangling pointer dereferences (a
-single-threaded guarantee). Concurrency requires external synchronization primitives.
+- Pointer type `T*` is the set of addresses holding values of type `T`. There are no implicit
+  conversions; the type system separates `T` and `T*`, and casting requires explicit `as`.
+- `&` marks a place as escaping; returning a pointer to a local is a compile error.
+- Slice and array indexing are bounds-checked (5.3, 7.4); raw-pointer indexing is the explicit
+  unchecked escape hatch.
+- Every heap allocation needs a matching `free()`/`defer free()`. Memory safety is a
+  single-threaded guarantee; concurrency requires external synchronization.
 
 ## 11. Standard library reference
 
-### 11.1 Strings
+### 11.1 I/O entry points
 
 ```hll
-type Str = {
-    data: u8*,
-    length: u64
-}
-
-; String literals like "Hello World" evaluate to compile-time anonymous inline
-; structs with the exact shape: { data: u8*, length: u64 }
-make_str: (raw_str: { data: u8*, length: u64 }) -> Str* {
-    { data: u8*, length: u64 } = raw_str
-    str_ptr: Str* = new(Str)
-    @str_ptr = { data: data, length: length }
-    return str_ptr
-}
+print:   (s: u8[])       ; write s.ptr[0 .. s.len] to fd 1, no newline
+println: (s: u8[])       ; print + '\n'
+putc:    (ch: i32)       ; write the low byte of ch to fd 1 (the HLL-0 primitive)
 ```
 
-### 11.2 Vector
+`print`/`println` take a `u8[]` slice (string literals are slices) and write the exact byte
+range with no NUL scan. Each target mode supplies the same source-level contract: hosted uses
+a `write` ecall, freestanding and kernel userspace write the UART directly.
 
-```hll
-type Vector<T> = {
-    data: T*,
-    length: u64,
-    capacity: u64
-}
+### 11.2 Strings
 
-new_vector: <T>(initial_capacity: u64) -> Vector<T>* {
-    vec: Vector<T>* = new(Vector<T>)
-    @vec.length = 0
-    @vec.capacity = initial_capacity
-    @vec.data = new(T, initial_capacity)
-    return vec
-}
+A string value is a `u8[]` slice (3.4): `.ptr`, `.len`, bounds-checked indexing, `for`, and
+range slicing all apply. The standard string utilities operate on `u8[]`. The layout-compatible
+`Str` record (`{ data: u8*, length: u64 }`) is retained only as a legacy ABI declaration for
+linking against existing `Str`-typed entry points.
 
-push: <T>(vec: Vector<T>*, value: T) -> () {
-    if @vec.length >= @vec.capacity { resize_vector(vec, @vec.capacity * 2) }
-    @vec.data[@vec.length] = value
-    @vec.length = @vec.length + 1
-}
+### 11.3 Option and Result
 
-free_vector: <T>(vec: Vector<T>*) -> () {
-    free(@vec.data)
-    free(vec)
-}
-```
+`Option<T>` and `Result<T, E>` (7.2) are the standard carriers for absence and failure. Prefer
+them with `match` and `?` over ad-hoc `{ value, error }` records or `null` sentinels.
 
-### 11.3 Memory allocators
+## 12. Roadmap (non-normative)
 
-- Arena: `new_arena(size)`, `alloc_in_arena(arena, size)`, `free_arena(arena)` for batch
-  deallocation.
-- Pool: `new_pool<T>(count)`, `acquire<T>(pool)`, `release<T>(pool, obj)` for fixed-size
-  object recycling.
+The following are reserved or planned for a later language revision (V2.1). The compiler does
+not accept incomplete forms of them today; they are documented here only so the normative
+sections above are not mistaken for the full long-term design.
 
-### 11.4 I/O abstraction
+- **Classes, interfaces, and `dyn`.** First-class `class`/`interface` declarations with
+  methods, a `self` receiver, static dispatch by default, and opt-in `dyn` fat-pointer
+  polymorphism. `struct` remains the plain-data type; `type` remains alias-only.
+- **Generic bounds.** Interface-constrained type parameters (`<T: Shape>`), checked at the
+  instantiation site, once interfaces exist. The V2 core has only unconstrained generics.
+- **Name-only destructuring.** `{ quo, rem } := expr` binding by field name without repeating
+  types. The implemented form is the typed pattern in 5.4.
+- **String interpolation.** `"hi {name}"` lowering to a visible format over literal chunks.
+- **Allocators and richer runtime.** Arena/pool allocators, escape-analysis stack promotion,
+  SIMD lane generation, and debug-symbol generation.
 
-```hll
-type File = { handle: u64, buffer: u8*, buffer_size: u64, buffer_pos: u64, buffer_end: u64 }
-open_file: (path: Str*) -> { file: File*, error: Str* }
-read_byte: (f: File*) -> { byte: u8, eof: bool }
-close_file: (f: File*) -> ()
-```
+## Appendix A: HLL-0 (the self-hosting subset)
 
-Resource-allocating functions return cleanup routines; use `defer` for guaranteed release.
+HLL-0 is the deliberately tiny subset the in-VM compiler `cc` accepts. It is not a separate
+language: every HLL-0 program is also a valid HLL program except for the one I/O intrinsic
+below. HLL-0 drops everything that needs a type checker or heap: one numeric type, no
+pointers, structs, arrays, floats, casts, slices, `defer`, or inline `asm`.
 
-## 12. Interoperability and FFI
-
-### 12.1 C ABI compatibility
-
-| HLL | C |
-|-----|---|
-| `i32` / `u32` | `int` / `unsigned int` |
-| `f32` / `f64` | `float` / `double` |
-| `bool` | `_Bool` |
-| Standard structs | `struct` |
-| Function pointers | Function pointers |
-
-### 12.2 Ownership transfer protocols
-
-1. Caller retains ownership: C reads and writes but does not free; HLL calls `free()` later.
-2. Transfer to C: HLL passes a pointer and C assumes ownership; HLL must not call `free()`.
-3. Transfer from C: C allocates and returns a pointer; HLL assumes ownership and must call
-   `free()`.
-4. Shared reference counting: both sides follow an `atomic_increment` / `atomic_decrement`
-   protocol, and the last owner frees the memory.
-
-### 12.3 FFI wrapper pattern
-
-```hll
-external external_compute_sum: (values: f32*, count: i32) -> f32
-
-compute_sum_wrapper: (values: f32*, count: i32) -> f32 {
-    return external_compute_sum(values, count)
-}
-```
-
-Cross-boundary ownership must be documented explicitly; compiler guarantees do not apply
-across FFI boundaries.
-
-## 13. Compiler implementation notes
-
-### 13.1 Optimization opportunities
-
-- Alias analysis: explicit pointer operations enable precise tracking.
-- Dead-store elimination: write locations are unambiguous.
-- Vectorization: array indexing consistently yields pointers, enabling SIMD lane generation.
-- Escape analysis: the `&` operator explicitly marks escaping variables.
-
-### 13.2 Escape analysis rules
-
-1. `&x` marks `x` as potentially escaping.
-2. Returning a pointer to a stack variable is a compile error.
-3. Storing a stack pointer in heap or global memory marks an escape.
-4. Functions that store pointer parameters in global state cause the pointed-to values to
-   escape. Non-escaping heap allocations can then be promoted to stack allocations.
-
-### 13.3 Debug symbol generation
-
-- A source location is attached to every `@` and `&` operation.
-- Types are preserved exactly for debugger visualization.
-- Lifetime ranges are tracked for stack and heap regions.
-- Optimized builds maintain semantic equivalence with a source-level mapping.
- 
-## Appendix D: HLL-0 (the self-hosting subset)
-
-HLL-0 is the deliberately tiny subset the in-VM compiler `cc` (PLAN 1.2) accepts. It is
-*not* a separate language: every HLL-0 program is also a valid HLL program except for the
-one I/O intrinsic below. The point is to make a naive, self-hostable compiler tractable, so
-HLL-0 drops everything that needs a type checker or heap: there is one numeric type, no
-pointers, structs, arrays, floats, casts, `defer`, or inline `asm`.
-
-### D.1 Types
+### A.1 Types
 
 Only `i32`. Every local, parameter, and return value is `i32`; arithmetic wraps modulo 2^32
 (two's complement). There is no `bool`: comparisons yield `i32` `0`/`1`, and `if`/`while`
 conditions test "non-zero".
 
-### D.2 Program shape
+### A.2 Program shape
 
-A program is a list of function definitions. Execution starts at `main: () -> i32`; the
-`i32` it returns becomes the process exit code. Functions take zero or more `i32`
-parameters and return `i32`.
+A program is a list of function definitions. Execution starts at `main: () -> i32`; the `i32`
+it returns becomes the process exit code. Functions take zero or more `i32` parameters and
+return `i32`.
 
 ```hll
 name: (p0: i32, p1: i32) -> i32 {
@@ -698,7 +580,7 @@ name: (p0: i32, p1: i32) -> i32 {
 }
 ```
 
-### D.3 Statements
+### A.3 Statements
 
 | Statement | Form |
 |-----------|------|
@@ -711,35 +593,24 @@ name: (p0: i32, p1: i32) -> i32 {
 
 `break`/`continue`/`defer` are out of HLL-0 scope.
 
-### D.4 Expressions
+### A.4 Expressions
 
 Integer and `'c'` char literals, parameter/local identifiers, function calls `f(a, b)`, the
-binary operators `+ - * / %`, and the comparisons `< <= > >= == !=`. Comparisons produce
-`0`/`1`. A char literal is its ascii byte (escapes `\n \t \r \0` recognized), so `putc('A')`
-equals `putc(65)`. Operator precedence follows §9.3 (multiplicative above additive above
-comparison); parenthesize anything ambiguous.
+binary operators `+ - * / %`, and the comparisons `< <= > >= == !=` (which produce `0`/`1`).
+A char literal is its ascii byte, so `putc('A')` equals `putc(65)`. Multiplicative binds above
+additive above comparison; parenthesize anything ambiguous.
 
-### D.5 I/O intrinsic
+### A.5 I/O intrinsic
 
 `putc(ch: i32)` writes the low byte of `ch` to file descriptor 1. It is the only intrinsic;
-`cc` lowers it to a `write(1, &ch, 1)` ecall (a7=64) rather than a real call. All other
-output is built from `putc`. Process exit is `main`'s return value, lowered to an exit ecall
-(a7=93). This is the whole "ecall-based I/O" surface of HLL-0.
+`cc` lowers a `putc` call to a plain `call putc`, left undefined and resolved at link time
+against the asm stdlib (`user/examples/stdlib.s`). Process exit is `main`'s return value,
+lowered to an exit ecall. All other output is built from `putc`.
 
-### D.6 Codegen target
+### A.6 Codegen target
 
-`cc` emits naive stack-machine RISC-V in the subset the in-VM assembler `/bin/as` covers
-(PLAN §1.1): every local occupies a stack slot, operands are reloaded before each use,
-arguments pass in `a0..a7`, and each function keeps `ra` in its frame across calls. The
-frozen reference pair is `user/fixtures/hello.hll` (source) and `user/fixtures/hello.s`
-(the exact assembly `cc` must produce). `hello.hll` spells `putc` out as an inline-asm
-function so the source also compiles and runs on the host toolchain;
-`kernel_cc_target_roundtrips` runs the host-compiled source and the `/bin/as`-assembled
-hand-written target side by side and checks they behave identically.
-
-The in-VM compiler now exists: `user/bin/cc.hll` (installed at `/bin/cc.elf`, OS spec 10.4)
-parses this subset and emits the stack-machine assembly described here. cc has no built-in
-I/O: a `putc` call lowers to a plain `call putc`, left undefined and resolved at link time
-against the asm stdlib (`user/examples/stdlib.s`). The pure-HLL-0 sample
-`user/examples/hello.hll` omits any `putc` definition; `kernel_cc_compiles_and_runs`
-exercises the full in-VM `cc` -> `as` -> `ld` -> run toolchain.
+`cc` emits naive stack-machine RISC-V in the subset the in-VM assembler `/bin/as` covers:
+every local occupies a stack slot, operands are reloaded before each use, arguments pass in
+`a0..a7`, and each function keeps `ra` in its frame across calls. The pure-HLL-0 sample
+`user/examples/hello.hll` omits any `putc` definition; the in-VM `cc` -> `as` -> `ld` -> run
+toolchain assembles and links it against the asm stdlib.

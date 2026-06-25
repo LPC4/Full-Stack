@@ -1,4 +1,3 @@
-; @version 2
 ; Kernel diagnostics: memory integrity and PMM smoke tests.
 
 external kmalloc:       (size: u64) -> u8*

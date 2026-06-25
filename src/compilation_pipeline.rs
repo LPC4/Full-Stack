@@ -2,11 +2,11 @@ use asm_to_binary::assembler::link_layout::LinkLayout;
 use asm_to_binary::assembler::{Assembler, AssemblerError};
 use asm_to_binary::rv_instruction::RvInstruction;
 use asm_to_binary::{AssembledOutput, LinkerError, ObjectLinker};
+pub use hll_to_ir::TargetMode;
 use hll_to_ir::{
     CompileConfig, Diagnostic, DiagnosticLevel, HllCompiler, IrProgram, IrType, OptOptions,
     optimize_ir,
 };
-pub use hll_to_ir::{LanguageVersion, TargetMode};
 use ir_to_asm::compiler::compiler_rv64::CompilerRv64;
 use std::cell::RefCell;
 use std::collections::hash_map::DefaultHasher;
@@ -154,7 +154,6 @@ impl Default for PipelineConfig {
 
 pub struct CompilationPipeline {
     run_semantic_analysis: bool,
-    language_version: LanguageVersion,
     target_mode: TargetMode,
     entry_point: Option<String>,
     link_layout: Option<LinkLayout>,
@@ -181,7 +180,6 @@ impl CompilationPipeline {
     pub fn new() -> Self {
         Self {
             run_semantic_analysis: true,
-            language_version: LanguageVersion::V2,
             target_mode: TargetMode::Hosted,
             entry_point: None,
             link_layout: None,
@@ -199,17 +197,9 @@ impl CompilationPipeline {
         }
     }
 
-    /// Construct a pipeline for explicit V1 compatibility tests and sources.
-    pub fn new_v1() -> Self {
-        let mut pipeline = Self::new();
-        pipeline.language_version = LanguageVersion::V1;
-        pipeline
-    }
-
     pub fn from_config(config: PipelineConfig) -> Self {
         Self {
             run_semantic_analysis: config.run_semantic_analysis,
-            language_version: LanguageVersion::V2,
             target_mode: config.target_mode,
             entry_point: config.entry_point,
             link_layout: config.link_layout,
@@ -275,14 +265,6 @@ impl CompilationPipeline {
 
     pub fn set_run_semantic_analysis(&mut self, enabled: bool) {
         self.run_semantic_analysis = enabled;
-    }
-
-    pub fn language_version(&self) -> LanguageVersion {
-        self.language_version
-    }
-
-    pub fn set_language_version(&mut self, version: LanguageVersion) {
-        self.language_version = version;
     }
 
     pub fn set_string_prefix(&mut self, prefix: Option<String>) {
@@ -422,7 +404,6 @@ impl CompilationPipeline {
 
         let compiler = HllCompiler::new(CompileConfig {
             target: self.target_mode,
-            language_version: self.language_version,
             strict: self.run_semantic_analysis,
             string_prefix: self.string_prefix.clone(),
             type_prelude: self.type_prelude.clone(),
@@ -487,11 +468,10 @@ impl CompilationPipeline {
     pub fn run_full(
         &self,
         source: &str,
-        stdlib_tokens: Option<&[RvInstruction]>,
+        stdlib_objects: &[(&str, &AssembledOutput)],
     ) -> PipelineResult {
         let compiler = HllCompiler::new(CompileConfig {
             target: self.target_mode,
-            language_version: self.language_version,
             strict: self.run_semantic_analysis,
             string_prefix: self.string_prefix.clone(),
             type_prelude: self.type_prelude.clone(),
@@ -587,35 +567,10 @@ impl CompilationPipeline {
             }
         };
 
-        let stdlib_obj = match stdlib_tokens {
-            Some(tokens) => {
-                let stdlib_stem = match self.target_mode {
-                    TargetMode::Kernel => "kernel_stdlib".to_owned(),
-                    _ => "stdlib".to_owned(),
-                };
-                match self.assemble_named(&stdlib_stem, tokens) {
-                    Ok(obj) => Some(obj),
-                    Err(e) => {
-                        return PipelineResult {
-                            diagnostics,
-                            lex,
-                            parse,
-                            ir,
-                            asm,
-                            binary: None,
-                            assembler_error: Some(format!("assembler error: {}", e.message)),
-                            exec: None,
-                        };
-                    }
-                }
-            }
-            None => None,
-        };
-
-        let mut modules: Vec<(&str, &AssembledOutput)> = vec![("user", &user_obj)];
-        if let Some(ref stdlib) = stdlib_obj {
-            modules.insert(0, ("stdlib", stdlib));
-        }
+        // Link the user object against the pre-built stdlib objects (compiled as
+        // separate translation units; no source concatenation).
+        let mut modules: Vec<(&str, &AssembledOutput)> = stdlib_objects.to_vec();
+        modules.push(("user", &user_obj));
 
         let (binary, assembler_error) =
             match self.link_assembled_objects_named(&user_stem, &modules) {
@@ -820,6 +775,28 @@ impl CompilationPipeline {
         .map_err(|e| {
             CompilationError::FreestandingErrors(vec![format!("linker error: {}", e.message)])
         })
+    }
+
+    /// Compile the stdlib for `mode` as independent per-module objects (no source
+    /// concatenation), to link alongside the user program. Kernel gets its prefix.
+    pub fn compile_stdlib_objects(
+        mode: TargetMode,
+    ) -> Result<Vec<(String, AssembledOutput)>, CompilationError> {
+        let mut pipeline = CompilationPipeline::new();
+        pipeline.set_target_mode(mode);
+        pipeline.set_write_artifacts(false);
+        pipeline.set_type_prelude(hll_to_ir::stdlib::get_stdlib_type_prelude());
+        if mode == TargetMode::Kernel {
+            pipeline.set_string_prefix(Some("__kern_str_".to_owned()));
+        }
+        let modules = hll_to_ir::stdlib::get_stdlib_modules_for_mode(mode);
+        let module_refs: Vec<(&str, &str)> = modules.iter().map(|(n, s)| (*n, *s)).collect();
+        let objects = pipeline.compile_modules(&module_refs)?;
+        Ok(modules
+            .iter()
+            .map(|(name, _)| (*name).to_owned())
+            .zip(objects)
+            .collect())
     }
 }
 

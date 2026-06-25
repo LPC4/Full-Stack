@@ -20,10 +20,10 @@ impl HighLevelCompiler {
     }
 
     pub(super) fn set_terminator(&mut self, term: IrTerminator) {
-        if let Some(b) = self.current_block.as_mut() {
-            if b.terminator.is_none() {
-                b.set_terminator(term);
-            }
+        if let Some(b) = self.current_block.as_mut()
+            && b.terminator.is_none()
+        {
+            b.set_terminator(term);
         }
     }
 

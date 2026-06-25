@@ -1,4 +1,3 @@
-; @version 2
 ; Syscall dispatch layer. See OS spec ch.7.
 
 const SYSCALL_EXIT     = 93

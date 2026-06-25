@@ -1,5 +1,16 @@
+#![expect(
+    clippy::collapsible_if,
+    clippy::explicit_iter_loop,
+    clippy::match_wildcard_for_single_variants,
+    clippy::print_stderr,
+    clippy::unwrap_used,
+    reason = "manual VM diagnostic test emits traces and unwraps controlled fixtures"
+)]
+
+use asm_to_binary::AssembledOutput;
 use full_stack::compilation_pipeline::CompilationPipeline;
-use hll_to_ir::stdlib::get_stdlib_source;
+use hll_to_ir::TargetMode;
+use hll_to_ir::stdlib::{get_stdlib_modules_for_mode, get_stdlib_type_prelude};
 use virtual_machine::bus::ELF_LOAD_BASE;
 use virtual_machine::virtual_machine::VirtualMachine;
 
@@ -12,31 +23,37 @@ use virtual_machine::virtual_machine::VirtualMachine;
 #[test]
 fn kernel_asm_diag() {
     use asm_to_binary::rv_instruction::RvInstruction;
-    use hll_to_ir::stdlib::get_kernel_stdlib_source;
+    use hll_to_ir::stdlib::{get_stdlib_modules_for_mode, get_stdlib_type_prelude};
     use hll_to_ir::{CompileConfig, HllCompiler, TargetMode};
     use ir_to_asm::CompilerRv64;
     use os_runtime::kernel;
     use virtual_machine::virtual_machine::StepOutcome;
 
-    // -- compile stdlib -------------------------------------------------------
-    let stdlib_compiler = HllCompiler::new(CompileConfig {
-        target: TargetMode::Kernel,
-        language_version: hll_to_ir::LanguageVersion::V1,
-        strict: true,
-        string_prefix: Some("__kern_str_".to_owned()),
-        type_prelude: Vec::new(),
-        source_prelude: None,
-    });
-    let stdlib_out = stdlib_compiler
-        .compile(&get_kernel_stdlib_source())
-        .expect("stdlib compile");
-    let mut stdlib_rv = CompilerRv64::new();
-    let (stdlib_asm, stdlib_tokens) = stdlib_rv.compile_with_tokens(&stdlib_out.ir);
+    // -- compile stdlib (per module, no concatenation) ------------------------
+    let mut stdlib_asm = String::new();
+    let mut stdlib_tokens: Vec<RvInstruction> = Vec::new();
+    for (i, (_, src)) in get_stdlib_modules_for_mode(TargetMode::Kernel)
+        .iter()
+        .enumerate()
+    {
+        let compiler = HllCompiler::new(CompileConfig {
+            target: TargetMode::Kernel,
+            strict: true,
+            string_prefix: Some(format!("__kern{i}_str_")),
+            type_prelude: get_stdlib_type_prelude(),
+            source_prelude: None,
+        });
+        let out = compiler.compile(src).expect("stdlib module compile");
+        let mut rv = CompilerRv64::new();
+        let (asm, tokens) = rv.compile_with_tokens(&out.ir);
+        stdlib_asm.push_str(&asm);
+        stdlib_asm.push('\n');
+        stdlib_tokens.extend(tokens);
+    }
 
     // -- compile user kernel --------------------------------------------------
     let user_compiler = HllCompiler::new(CompileConfig {
         target: TargetMode::Kernel,
-        language_version: hll_to_ir::LanguageVersion::V1,
         strict: true,
         string_prefix: None,
         type_prelude: Vec::new(),
@@ -128,23 +145,18 @@ fn kernel_asm_diag() {
 fn link_stdlib_and_run(user_src: &str) -> (String, Option<i64>) {
     use virtual_machine::virtual_machine::StepOutcome;
 
-    let mut pipeline = CompilationPipeline::new_v1();
+    let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
 
-    pipeline.set_write_artifacts(false);
-    let stdlib_result = pipeline
-        .compile(&get_stdlib_source())
-        .expect("stdlib compile");
-    let (_, stdlib_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&stdlib_result.ir_program);
-
+    let stdlib_objs =
+        CompilationPipeline::compile_stdlib_objects(TargetMode::Hosted).expect("stdlib compile");
     let user_result = pipeline.compile(user_src).expect("user compile");
     let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program);
-
-    let stdlib_obj = pipeline.assemble(&stdlib_tokens).expect("stdlib assemble");
     let user_obj = pipeline.assemble(&user_tokens).expect("user assemble");
-    let assembled = pipeline
-        .link_assembled_objects(&[("stdlib", &stdlib_obj), ("user", &user_obj)])
-        .expect("link");
+    let mut modules: Vec<(&str, &AssembledOutput)> =
+        stdlib_objs.iter().map(|(n, o)| (n.as_str(), o)).collect();
+    modules.push(("user", &user_obj));
+    let assembled = pipeline.link_assembled_objects(&modules).expect("link");
     let elf = assembled.to_elf(ELF_LOAD_BASE);
     let mut vm = VirtualMachine::from_elf(&elf).expect("load elf");
     let run = vm.run(5_000_000);
@@ -160,14 +172,17 @@ fn link_stdlib_and_run(user_src: &str) -> (String, Option<i64>) {
 // is required by any user code that calls new(T) or free(ptr).
 #[test]
 fn stdlib_provides_malloc() {
-    let mut pipeline = CompilationPipeline::new_v1();
+    let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
 
-    pipeline.set_write_artifacts(false); // Don't create gigabytes of files during tests
-    let result = pipeline
-        .compile(&get_stdlib_source())
-        .expect("stdlib compile");
-    let (_, tokens) = pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program);
+    // Compile each stdlib module independently; malloc lives in the allocator module.
+    pipeline.set_type_prelude(get_stdlib_type_prelude());
+    let mut tokens = Vec::new();
+    for (_, src) in get_stdlib_modules_for_mode(TargetMode::Hosted).iter() {
+        let result = pipeline.compile(src).expect("stdlib compile");
+        let (_, t) = pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program);
+        tokens.extend(t);
+    }
     assert!(!tokens.is_empty(), "stdlib token stream must not be empty");
     let has_malloc = tokens.iter().any(|t| {
         use asm_to_binary::rv_instruction::RvInstruction;
@@ -197,9 +212,9 @@ main: () -> i32 {
 fn printf_constexpr() {
     let src = std::fs::read_to_string("programs/example/compile_time_math.hll").unwrap();
     let (uart, exit) = link_stdlib_and_run(&src);
-    assert!(
-        uart.contains("Factorial 7 = 5040"),
-        "expected 'Factorial 7 = 5040' in UART output, got: {uart:?}"
+    assert_eq!(
+        uart, "-- compile-time math --\n7205512787ok\n",
+        "compile-time example output changed"
     );
     assert_eq!(exit, Some(0));
 }
@@ -244,14 +259,17 @@ main: () -> i32 {
 // Verify that the stdlib token stream contains the HLL-defined runtime symbols.
 #[test]
 fn stdlib_provides_runtime() {
-    let mut pipeline = CompilationPipeline::new_v1();
+    let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
 
-    pipeline.set_write_artifacts(false); // Don't create gigabytes of files during tests
-    let result = pipeline
-        .compile(&get_stdlib_source())
-        .expect("stdlib compile");
-    let (_, tokens) = pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program);
+    // Compile each stdlib module independently and gather their token streams.
+    pipeline.set_type_prelude(get_stdlib_type_prelude());
+    let mut tokens = Vec::new();
+    for (_, src) in get_stdlib_modules_for_mode(TargetMode::Hosted).iter() {
+        let result = pipeline.compile(src).expect("stdlib compile");
+        let (_, t) = pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program);
+        tokens.extend(t);
+    }
     use asm_to_binary::rv_instruction::RvInstruction;
     let has = |name: &str| {
         tokens
@@ -273,7 +291,7 @@ fn puts_basic() {
 external puts: (str: u8*) -> i32
 
 main: () -> i32 {
-    puts("Hi".data)
+    puts("Hi".ptr)
     return 0
 }
 "#;

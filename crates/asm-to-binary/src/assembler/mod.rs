@@ -1,5 +1,5 @@
 /// Multi-pass assembler: `Vec<RvInstruction>` -> `AssembledOutput`.
-/// See _RISCV_SPECIFICATIONS.md for pass details (parse, layout, encode).
+/// See `_RISCV_SPECIFICATIONS.md` for pass details (parse, layout, encode).
 pub(crate) mod directive;
 pub(crate) mod encode;
 pub(crate) mod layout;

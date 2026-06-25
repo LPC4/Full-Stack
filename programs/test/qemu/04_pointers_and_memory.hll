@@ -62,26 +62,26 @@ main: () -> i32 {
     if @val != 21 { return 7 }
 
     ; --- stack array: write and read elements ---
-    arr: i32[5]
-    @arr[0] = 2
-    @arr[1] = 4
-    @arr[2] = 6
-    @arr[3] = 8
-    @arr[4] = 10
-    stack_sum: i32 = @arr[0] + @arr[1] + @arr[2] + @arr[3] + @arr[4]
+    arr: i32[5] = []
+    arr[0] = 2
+    arr[1] = 4
+    arr[2] = 6
+    arr[3] = 8
+    arr[4] = 10
+    stack_sum: i32 = arr[0] + arr[1] + arr[2] + arr[3] + arr[4]
     if stack_sum != 30 { return 8 }
 
     ; --- overwrite a stack element and re-verify ---
-    @arr[2] = 0
-    stack_sum2: i32 = @arr[0] + @arr[1] + @arr[2] + @arr[3] + @arr[4]
+    arr[2] = 0
+    stack_sum2: i32 = arr[0] + arr[1] + arr[2] + arr[3] + arr[4]
     if stack_sum2 != 24 { return 9 }
 
     ; --- address of stack array element via variable index ---
     idx: i32 = 3
-    elem_ptr: i32* = arr[idx]
+    elem_ptr: i32* = &arr[idx]
     if @elem_ptr != 8 { return 10 }
     @elem_ptr = 100
-    if @arr[3] != 100 { return 11 }
+    if arr[3] != 100 { return 11 }
 
     ; --- chained pointer: pointer to pointer ---
     inner: i32* = new(i32)
@@ -105,7 +105,7 @@ main: () -> i32 {
     heap_sum: i32 = @h1 + @h2 + @h3
     if heap_sum != 60 { return 14 }
 
-    ; --- pointer arithmetic (byte-scaled): advance by 4 bytes (sizeof i32) ---
+    ; --- pointer arithmetic (element-scaled): T* + n advances by n * sizeof(T) ---
     base: i32* = new(i32)
     defer free(base)
     @base = 55

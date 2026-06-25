@@ -1,4 +1,3 @@
-; @version 2
 ; Kernel platform helpers: shutdown, timer, and interrupt controller.
 
 external malloc:       (size: u64) -> u8*

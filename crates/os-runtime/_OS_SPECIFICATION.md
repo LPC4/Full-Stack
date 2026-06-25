@@ -686,4 +686,3 @@ against via `ld`; both are installed under `/home/src`.
 
 User virtual addresses (per process, in its own root): code `0x4000_0000`, stack
 top `0x8000_0000`, framebuffer `0x5000_0000`.
-

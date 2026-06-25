@@ -1,4 +1,3 @@
-; @version 2
 ; Spinning wireframe cube: map_fb, then per frame rotate, project, clear, draw.
 ; RGBA8888 pixels, double-buffered, WASD via poll_key. See OS spec ch.10.4.
 

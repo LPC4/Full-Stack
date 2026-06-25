@@ -9,7 +9,7 @@ pub enum Type {
     Primitive(String),
     Pointer(Box<Self>),
     Array(usize, Box<Self>),
-    // T[] slice: a {ptr, len} fat pointer, bounds-checked at use (V2).
+    // T[] slice: a {ptr, len} fat pointer, bounds-checked at use.
     Slice(Box<Self>),
     Struct(Vec<FieldDecl>),
     Named { name: String, args: Vec<Self> },
@@ -59,7 +59,7 @@ pub enum DeclNode {
         generics: Vec<String>,
         fields: Vec<FieldDecl>,
     },
-    // A tagged union (V2). Lowers to `{ tag: i32, payload }` where `payload` is
+    // A tagged union. Lowers to `{ tag: i32, payload }` where `payload` is
     // sized to the largest variant.
     Enum {
         name: String,
@@ -167,13 +167,13 @@ pub enum Expression {
         target_ty: Type,
         expr: Box<Self>,
     },
-    // `match scrutinee { pattern -> block ... }` (V2). Exhaustive over the
+    // `match scrutinee { pattern -> block ... }`. Exhaustive over the
     // scrutinee enum's variants.
     Match {
         scrutinee: Box<Self>,
         arms: Vec<MatchArm>,
     },
-    // `expr?` (V2): propagate failure with a visible early return.
+    // `expr?`: propagate failure with a visible early return.
     Try(Box<Self>),
     Primary(PrimaryExpr),
 }
@@ -189,7 +189,7 @@ pub struct MatchArm {
     pub value: Option<Expression>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Pattern {
     // `_` -- matches anything, binds nothing.
     Wildcard,
@@ -279,7 +279,7 @@ pub enum PrimaryExpr {
         expr: Box<Expression>,
         index: Box<Expression>,
     },
-    // `arr[a..b]` / `arr[a..=b]` -- a sub-slice (V2). Open endpoints default to
+    // `arr[a..b]` / `arr[a..=b]` -- a sub-slice. Open endpoints default to
     // 0 (start) and the source length (end).
     Slice {
         expr: Box<Expression>,

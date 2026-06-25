@@ -1,4 +1,4 @@
-//! IR-level optimization passes (const_fold, dce). Off by default; see _LANG_SPECIFICATIONS.md.
+//! IR-level optimization passes (`const_fold`, dce). Off by default; see _`LANG_SPECIFICATIONS.md`.
 
 mod const_fold;
 mod dce;

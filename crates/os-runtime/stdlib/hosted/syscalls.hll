@@ -1,4 +1,3 @@
-; @version 2
 ; Userspace syscall wrappers (sc_*) and C-string helpers. Args go through globals
 ; since inline asm cannot reach locals. Numbers and semantics: OS spec ch.7.
 

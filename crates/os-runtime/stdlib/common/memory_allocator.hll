@@ -1,4 +1,3 @@
-; @version 2
 heap_buffer: u8[65536] = []
 heap_bump: u64 = 0
 heap_list: HeapBlock* = null

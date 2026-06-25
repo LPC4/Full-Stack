@@ -1,4 +1,3 @@
-; @version 2
 ; Physical page allocator: bump range + magic-checked free list. See OS spec ch.4.1.
 ; Freed pages store next-ptr at byte 0 and PMM_FREE_MAGIC at byte 8.
 

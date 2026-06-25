@@ -1,14 +1,14 @@
 ; Test: Complex Nested Access
-type Container = {
-    items: [5]i32*
+struct Container {
+    items: i32*
 }
 
 stress_test: (c: Container*) -> i32 {
     ; Difficulty: Parsing @ combined with array indexing and field access
     ; This should read: dereference ( (index 0 of (field items of (dereference c))) )
-    val: i32 = @@c.items[0]
+    val: i32 = c.items[0]
 
-    ; Test: Explicit precedence (spec v1.4.1 follows normal operator precedence)
+    ; Test: Explicit precedence follows normal operator precedence
     check: bool = true or false and not true
 
     ; Test: Empty blocks and semicolons at end of line

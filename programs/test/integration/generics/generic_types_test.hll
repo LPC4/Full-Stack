@@ -1,4 +1,4 @@
-type Box<T> = {
+struct Box<T> {
     val: T,
     ptr: T*
 }
@@ -6,11 +6,11 @@ type Box<T> = {
 main: () -> i32 {
     ; Test generic type specialization with i32
     box1: Box<i32>* = new(Box<i32>)
-    @box1.val = 42
+    box1.val = 42
     
     ; Test generic type specialization with i64
     box2: Box<i64>* = new(Box<i64>)
-    @box2.val = 100
+    box2.val = 100
     
-    return @box1.val + 58
+    return box1.val + 58
 }

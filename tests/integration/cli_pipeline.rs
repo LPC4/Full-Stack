@@ -3,17 +3,16 @@
 //! These tests drive the same logic the `fsc` binary uses, calling the
 //! underlying library functions directly so no binary invocation is needed.
 
+use asm_to_binary::AssembledOutput;
 use full_stack::compilation_pipeline::{CompilationPipeline, TargetMode};
-use hll_to_ir::stdlib::get_stdlib_source;
 use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 
 // --- Shared helpers ---
 
-const STDLIB_PREFIX: &str = "_s_";
 const USER_PREFIX: &str = "_u_";
 
 fn make_pipeline(mode: TargetMode, prefix: &str) -> CompilationPipeline {
-    let mut p = CompilationPipeline::new_v1();
+    let mut p = CompilationPipeline::new();
     p.set_target_mode(mode);
     p.set_string_prefix(Some(prefix.to_owned()));
     p.set_run_semantic_analysis(false);
@@ -23,70 +22,27 @@ fn make_pipeline(mode: TargetMode, prefix: &str) -> CompilationPipeline {
 
 /// Compile HLL + hosted stdlib -> assembled output -> run -> (uart, exit_code).
 fn run_hll(src: &str) -> (String, i64) {
-    let stdlib_pipeline = make_pipeline(TargetMode::Hosted, STDLIB_PREFIX);
-    let stdlib_result = stdlib_pipeline
-        .compile(&get_stdlib_source())
+    let stdlib_objs = CompilationPipeline::compile_stdlib_objects(TargetMode::Hosted)
         .expect("stdlib compile failed");
-    let (_, stdlib_tokens) =
-        stdlib_pipeline.compile_ir_to_assembly_with_tokens(&stdlib_result.ir_program);
 
     let user_pipeline = make_pipeline(TargetMode::Hosted, USER_PREFIX);
     let user_result = user_pipeline.compile(src).expect("user compile failed");
     let (_, user_tokens) =
         user_pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program);
-
-    let stdlib_obj = stdlib_pipeline
-        .assemble(&stdlib_tokens)
-        .expect("assemble stdlib object failed");
     let user_obj = user_pipeline
         .assemble(&user_tokens)
         .expect("assemble user object failed");
 
+    let mut modules: Vec<(&str, &AssembledOutput)> =
+        stdlib_objs.iter().map(|(n, o)| (n.as_str(), o)).collect();
+    modules.push(("user", &user_obj));
     let assembled = user_pipeline
-        .link_assembled_objects(&[("stdlib", &stdlib_obj), ("user", &user_obj)])
+        .link_assembled_objects(&modules)
         .expect("object link failed");
 
     let mut vm = VirtualMachine::new(&assembled);
     let result = vm.run(5_000_000);
 
-    let code = match result.outcome {
-        StepOutcome::Halted(c) => c,
-        StepOutcome::Continue => panic!("program timed out"),
-    };
-    (result.uart_output, code)
-}
-
-/// Like `run_hll`, but the user program is compiled in V2 mode.
-fn run_hll_v2(src: &str) -> (String, i64) {
-    use full_stack::compilation_pipeline::LanguageVersion;
-
-    let stdlib_pipeline = make_pipeline(TargetMode::Hosted, STDLIB_PREFIX);
-    let stdlib_result = stdlib_pipeline
-        .compile(&get_stdlib_source())
-        .expect("stdlib compile failed");
-    let (_, stdlib_tokens) =
-        stdlib_pipeline.compile_ir_to_assembly_with_tokens(&stdlib_result.ir_program);
-
-    let mut user_pipeline = make_pipeline(TargetMode::Hosted, USER_PREFIX);
-    user_pipeline.set_language_version(LanguageVersion::V2);
-    user_pipeline.set_run_semantic_analysis(true);
-    let user_result = user_pipeline.compile(src).expect("user compile failed");
-    let (_, user_tokens) =
-        user_pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program);
-
-    let stdlib_obj = stdlib_pipeline
-        .assemble(&stdlib_tokens)
-        .expect("assemble stdlib object failed");
-    let user_obj = user_pipeline
-        .assemble(&user_tokens)
-        .expect("assemble user object failed");
-
-    let assembled = user_pipeline
-        .link_assembled_objects(&[("stdlib", &stdlib_obj), ("user", &user_obj)])
-        .expect("object link failed");
-
-    let mut vm = VirtualMachine::new(&assembled);
-    let result = vm.run(5_000_000);
     let code = match result.outcome {
         StepOutcome::Halted(c) => c,
         StepOutcome::Continue => panic!("program timed out"),
@@ -275,8 +231,8 @@ main: () -> i32 {
 }
 
 #[test]
-fn run_v2_string_slice_calls_stdlib_print() {
-    // A V2 string literal passes directly to the slice-based stdlib entry points.
+fn run_string_slice_calls_stdlib_print() {
+    // A string literal passes directly to the slice-based stdlib entry points.
     let src = "
 external print: (s: u8[]) -> i32
 external println: (s: u8[]) -> i32
@@ -286,13 +242,13 @@ main: () -> i32 {
     println(\"world\")
     return 0
 }";
-    let (uart, code) = run_hll_v2(src);
+    let (uart, code) = run_hll(src);
     assert_eq!(code, 0);
     assert_eq!(uart, "Hello, world\n");
 }
 
 #[test]
-fn run_v2_slice_string_utilities() {
+fn run_slice_string_utilities() {
     let src = "
 external print: (s: u8[]) -> i32
 external str_len: (s: u8[]) -> u64
@@ -313,7 +269,7 @@ main: () -> i32 {
     print(joined)
     return str_len(joined) as i32
 }";
-    let (uart, code) = run_hll_v2(src);
+    let (uart, code) = run_hll(src);
     assert_eq!(code, 4);
     assert_eq!(uart, "abcd");
 }

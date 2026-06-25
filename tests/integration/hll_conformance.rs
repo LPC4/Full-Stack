@@ -1,51 +1,46 @@
-// Execution-level coverage for the HLL V2 front end (PLAN.md Milestones 1-6).
+// Execution-level coverage for the canonical HLL front end.
 //
-// The V2 conformance tests in `hll-to-ir` stop at compile/IR shape. This suite
-// closes the gate the V2 plan names before repository migration: every
-// implemented V2 surface (place/value access, inferred bindings, canonical
+// The conformance tests in `hll-to-ir` stop at compile/IR shape. This suite
+// closes the execution gate: every implemented surface (place/value access,
+// inferred bindings, canonical
 // struct literals, pointer arithmetic, slices, and explicit generics) must compile,
-// assemble, link against the V1 hosted stdlib, and produce the right exit code
+// assemble, link against the hosted stdlib, and produce the right exit code
 // in the VM.
 
 use asm_to_binary::AssembledOutput;
 use full_stack::compilation_pipeline::CompilationPipeline;
-use hll_to_ir::stdlib::get_stdlib_source;
-use hll_to_ir::LanguageVersion;
+use hll_to_ir::TargetMode;
 use std::sync::OnceLock;
 use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 
-// The hosted stdlib is version-agnostic (V1 source); compile and assemble it
-// once for the whole suite and link every V2 user program against it.
-fn cached_stdlib_obj() -> &'static AssembledOutput {
-    static STDLIB: OnceLock<AssembledOutput> = OnceLock::new();
+// Compile the hosted stdlib once (per module, no concatenation) and link every
+// user program against the objects.
+fn cached_stdlib_objs() -> &'static [(String, AssembledOutput)] {
+    static STDLIB: OnceLock<Vec<(String, AssembledOutput)>> = OnceLock::new();
     STDLIB.get_or_init(|| {
-        let mut pipeline = CompilationPipeline::new();
-        pipeline.set_write_artifacts(false);
-        let stdlib_result = pipeline
-            .compile(&get_stdlib_source())
-            .expect("stdlib compile failed");
-        let (_, stdlib_tokens) =
-            pipeline.compile_ir_to_assembly_with_tokens(&stdlib_result.ir_program);
-        pipeline
-            .assemble(&stdlib_tokens)
-            .expect("stdlib assemble failed")
+        CompilationPipeline::compile_stdlib_objects(TargetMode::Hosted)
+            .expect("stdlib compile failed")
     })
 }
 
-/// Compile a V2 user program, link it against the cached stdlib, run in the VM.
+/// Compile a user program, link it against the cached stdlib, and run it in the VM.
 fn run_v2(src: &str) -> StepOutcome {
     let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
-    pipeline.set_language_version(LanguageVersion::V2);
 
-    let user_result = pipeline.compile(src).expect("V2 user compile failed");
+    let user_result = pipeline.compile(src).expect("user compile failed");
     let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program);
     let user_obj = pipeline
         .assemble(&user_tokens)
         .expect("user assemble failed");
 
+    let mut modules: Vec<(&str, &AssembledOutput)> = cached_stdlib_objs()
+        .iter()
+        .map(|(n, o)| (n.as_str(), o))
+        .collect();
+    modules.push(("user", &user_obj));
     let assembled = pipeline
-        .link_assembled_objects(&[("stdlib", cached_stdlib_obj()), ("user", &user_obj)])
+        .link_assembled_objects(&modules)
         .expect("link failed");
     let mut vm = VirtualMachine::new(&assembled);
     vm.run(5_000_000).outcome
@@ -59,11 +54,10 @@ fn assert_exit(src: &str, code: i64) {
     );
 }
 
-/// Assert a V2 program fails to compile (used for rejected diagnostics).
+/// Assert a program fails to compile (used for rejected diagnostics).
 fn assert_compile_fails(src: &str) {
     let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
-    pipeline.set_language_version(LanguageVersion::V2);
     assert!(
         pipeline.compile(src).is_err(),
         "expected the program to be rejected, but it compiled"
@@ -73,7 +67,7 @@ fn assert_compile_fails(src: &str) {
 // --- Milestone 1: place / value access model ---
 
 #[test]
-fn v2_array_index_read_write_and_address() {
+fn array_index_read_write_and_address() {
     // Index in value context reads; on the LHS it writes; &arr[i] takes its
     // address; @ reads the whole pointee. 10 + 5 + 30 = 45.
     assert_exit(
@@ -90,7 +84,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_pointer_member_auto_deref() {
+fn pointer_member_auto_deref() {
     // `.` auto-dereferences one pointer level for field read and write.
     assert_exit(
         r#"
@@ -111,7 +105,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_array_of_struct_element_place() {
+fn array_of_struct_element_place() {
     // Indexing an array of structs yields an element place; selecting a field
     // and taking &arr[i] both work without `@arr[i]`.
     assert_exit(
@@ -135,7 +129,7 @@ main: () -> i32 {
 // --- Milestone 2: inferred binding syntax (`:=`) ---
 
 #[test]
-fn v2_inferred_bindings_execute() {
+fn inferred_bindings_execute() {
     // `:=` infers primitive, array, and pointer types and runs end to end.
     assert_exit(
         r#"
@@ -151,7 +145,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_inferred_struct_pointer_binding() {
+fn inferred_struct_pointer_binding() {
     // `:=` over new(T) infers T*; field access through it works.
     assert_exit(
         r#"
@@ -172,7 +166,7 @@ main: () -> i32 {
 // --- Milestone 3: canonical struct literals ---
 
 #[test]
-fn v2_named_and_contextual_literals_execute() {
+fn named_and_contextual_literals_execute() {
     // Named literal (reordered fields) and a contextual literal from the
     // annotation. 1 + 2 + 3 + 4 = 10.
     assert_exit(
@@ -193,7 +187,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_contextual_literal_zero_fills() {
+fn contextual_literal_zero_fills() {
     // Omitted fields in an anonymous literal default to zero at runtime.
     assert_exit(
         r#"
@@ -212,10 +206,10 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_literal_context_through_return() {
+fn literal_context_through_return() {
     // An anonymous literal contextualizes from the function's return type and
     // the returned struct (by value, via sret) reads back correctly.
-    // NOTE: struct-by-value *arguments* are a separate ABI gap (PLAN.md 4.3),
+    // Struct-by-value arguments are a separate ABI limitation,
     // so this exercises only the return-context path.
     assert_exit(
         r#"
@@ -240,7 +234,7 @@ main: () -> i32 {
 // --- Milestone 5: `for` over ranges (lowers to `while`) ---
 
 #[test]
-fn v2_for_range_sums() {
+fn for_range_sums() {
     // Half-open `0..5` iterates 0,1,2,3,4 -> sum 10.
     assert_exit(
         r#"
@@ -257,7 +251,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_for_inclusive_range() {
+fn for_inclusive_range() {
     // Inclusive `1..=4` iterates 1,2,3,4 -> sum 10.
     assert_exit(
         r#"
@@ -274,7 +268,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_for_continue_still_steps() {
+fn for_continue_still_steps() {
     // `continue` must still advance the counter, else this would hang.
     // Sum of odd i in 0..6 = 1 + 3 + 5 = 9.
     assert_exit(
@@ -295,7 +289,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_for_break_exits() {
+fn for_break_exits() {
     // `break` leaves the loop: sum 0..5 before i == 5 = 10.
     assert_exit(
         r#"
@@ -315,7 +309,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_for_end_evaluated_once() {
+fn for_end_evaluated_once() {
     // The range end is captured once; mutating `n` in the body must not extend
     // the loop. 3 iterations regardless of `n` growing.
     assert_exit(
@@ -335,7 +329,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_nested_for_loops() {
+fn nested_for_loops() {
     // 3x3 nested loop body runs 9 times.
     assert_exit(
         r#"
@@ -356,7 +350,7 @@ main: () -> i32 {
 // --- Milestone 5: `for` over a fixed array ---
 
 #[test]
-fn v2_for_each_array_sums() {
+fn for_each_array_sums() {
     // `for x in arr` binds each element by value: 3 + 5 + 7 + 9 = 24.
     assert_exit(
         r#"
@@ -374,7 +368,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_for_each_array_with_continue() {
+fn for_each_array_with_continue() {
     // Skip values below 5: 7 + 9 = 16.
     assert_exit(
         r#"
@@ -395,7 +389,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_for_each_struct_array() {
+fn for_each_struct_array() {
     // Element is a struct value; field reads through the by-value binding.
     // (1+2) + (3+4) + (5+6) = 21.
     assert_exit(
@@ -421,7 +415,7 @@ main: () -> i32 {
 // --- Milestone 4: typed, element-scaled pointer arithmetic ---
 
 #[test]
-fn v2_pointer_arithmetic_is_element_scaled() {
+fn pointer_arithmetic_is_element_scaled() {
     // `p + 2` over an i32* advances by 2 elements (8 bytes), not 2 bytes.
     assert_exit(
         r#"
@@ -437,7 +431,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_pointer_arithmetic_walks_struct_array() {
+fn pointer_arithmetic_walks_struct_array() {
     // Element scaling uses sizeof(Point), so p + 1 lands on the next record.
     assert_exit(
         r#"
@@ -458,7 +452,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_pointer_subtraction_is_element_scaled() {
+fn pointer_subtraction_is_element_scaled() {
     // Element-scaled subtraction steps back one i32.
     assert_exit(
         r#"
@@ -476,7 +470,7 @@ main: () -> i32 {
 // --- Milestone 5: slices (T[] fat pointer) ---
 
 #[test]
-fn v2_slice_from_array_indexes_and_len() {
+fn slice_from_array_indexes_and_len() {
     // A fixed array coerces to a slice; indexing reads elements and .len gives
     // the count. 10 + 30 + 3 = 43.
     assert_exit(
@@ -492,7 +486,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_slice_element_write() {
+fn slice_element_write() {
     // Writing through a slice element place mutates the backing array. 5 + 20 = 25.
     assert_exit(
         r#"
@@ -508,7 +502,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_for_over_slice_sums() {
+fn for_over_slice_sums() {
     // `for x in slice` iterates each element. 1 + 2 + 3 + 4 = 10.
     assert_exit(
         r#"
@@ -527,7 +521,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_slice_out_of_bounds_traps() {
+fn slice_out_of_bounds_traps() {
     // Indexing past len fails the bounds check and aborts with the slice-bounds
     // diagnostic code (134) instead of reading out of bounds.
     assert_exit(
@@ -544,7 +538,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_slice_in_bounds_does_not_trap() {
+fn slice_in_bounds_does_not_trap() {
     // A runtime index that is in bounds passes the check and reads the element.
     assert_exit(
         r#"
@@ -562,7 +556,7 @@ main: () -> i32 {
 // --- Milestone 5: range slicing (arr[a..b]) ---
 
 #[test]
-fn v2_range_slice_from_array() {
+fn range_slice_from_array() {
     // arr[1..4] is the half-open sub-slice {20, 30, 40}. 20 + 40 + 3 = 63.
     assert_exit(
         r#"
@@ -577,7 +571,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_range_slice_inclusive() {
+fn range_slice_inclusive() {
     // arr[1..=3] includes index 3, so {20, 30, 40} -- same as arr[1..4].
     assert_exit(
         r#"
@@ -592,7 +586,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_range_slice_open_endpoints() {
+fn range_slice_open_endpoints() {
     // arr[..2] = {10,20} (len 2); arr[3..] = {40,50} (len 2); arr[..] = all (len 5).
     assert_exit(
         r#"
@@ -609,7 +603,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_for_over_range_subslice() {
+fn for_over_range_subslice() {
     // Iterate a range-produced sub-slice. 20 + 30 + 40 = 90.
     assert_exit(
         r#"
@@ -627,7 +621,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_range_slice_of_slice() {
+fn range_slice_of_slice() {
     // Re-slicing a slice indexes relative to the sub-slice. view = {20,30,40},
     // sub = view[1..3] = {30,40}. 30 + 40 = 70.
     assert_exit(
@@ -644,7 +638,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_range_slice_end_past_len_traps() {
+fn range_slice_end_past_len_traps() {
     // An end beyond the source length fails the slice bounds check (code 134).
     assert_exit(
         r#"
@@ -660,7 +654,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_range_slice_start_after_end_traps() {
+fn range_slice_start_after_end_traps() {
     // start > end is an invalid range and traps (code 134).
     assert_exit(
         r#"
@@ -678,7 +672,7 @@ main: () -> i32 {
 // --- Milestone 3: contextual struct literals inside array literals ---
 
 #[test]
-fn v2_contextual_struct_literals_in_array() {
+fn contextual_struct_literals_in_array() {
     // Bare `{ .. }` elements take the declared element type as context, so the
     // named `Point` prefix can be omitted. (1+2) + (3+4) + (5+6) = 21.
     assert_exit(
@@ -702,7 +696,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_contextual_array_literal_zero_fills() {
+fn contextual_array_literal_zero_fills() {
     // A contextual element with a missing field zero-fills it, like a contextual
     // struct literal in any other context. y defaults to 0: (1) + (2+7) = 10.
     assert_exit(
@@ -722,7 +716,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_array_literal_scalar_width_flexible() {
+fn array_literal_scalar_width_flexible() {
     // Bare integer literals adopt the declared element width (i64 here).
     assert_exit(
         r#"
@@ -736,7 +730,7 @@ main: () -> i64 {
 }
 
 #[test]
-fn v2_array_literal_wrong_element_count_rejected() {
+fn array_literal_wrong_element_count_rejected() {
     // The literal length must match the declared array length.
     assert_compile_fails(
         r#"
@@ -749,7 +743,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_contextual_array_element_unknown_field_rejected() {
+fn contextual_array_element_unknown_field_rejected() {
     // A contextual element naming a field the struct does not have is rejected.
     assert_compile_fails(
         r#"
@@ -769,7 +763,7 @@ main: () -> i32 {
 // --- Milestone 6: monomorphized generics ---
 
 #[test]
-fn v2_explicit_generic_function_specializations_execute() {
+fn explicit_generic_function_specializations_execute() {
     assert_exit(
         r#"
 identity: <T>(value: T) -> T {
@@ -787,7 +781,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_generic_function_specialization_is_cached() {
+fn generic_function_specialization_is_cached() {
     assert_exit(
         r#"
 add_one: <T>(value: T) -> T {
@@ -803,7 +797,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_generic_function_infers_literal_type_argument() {
+fn generic_function_infers_literal_type_argument() {
     assert_exit(
         r#"
 identity: <T>(value: T) -> T {
@@ -819,7 +813,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_generic_function_infers_local_binding_type() {
+fn generic_function_infers_local_binding_type() {
     assert_exit(
         r#"
 identity: <T>(value: T) -> T {
@@ -836,7 +830,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_generic_function_requires_explicit_unconstrained_type() {
+fn generic_function_requires_explicit_unconstrained_type() {
     assert_compile_fails(
         r#"
 make: <T>() -> T {
@@ -852,7 +846,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_generic_record_specialization_executes() {
+fn generic_record_specialization_executes() {
     assert_exit(
         r#"
 struct Box<T> {
@@ -870,7 +864,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_nested_generic_record_specialization_executes() {
+fn nested_generic_record_specialization_executes() {
     assert_exit(
         r#"
 struct Pair<T> {
@@ -894,7 +888,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_generic_function_uses_generic_record() {
+fn generic_function_uses_generic_record() {
     assert_exit(
         r#"
 struct Box<T> {
@@ -916,7 +910,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_generic_function_infers_nested_record_argument() {
+fn generic_function_infers_nested_record_argument() {
     assert_exit(
         r#"
 struct Box<T> {
@@ -938,7 +932,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_generic_function_rejects_conflicting_inference() {
+fn generic_function_rejects_conflicting_inference() {
     assert_compile_fails(
         r#"
 first: <T>(left: T, right: T) -> T {
@@ -953,7 +947,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_generic_record_specializations_have_distinct_layouts() {
+fn generic_record_specializations_have_distinct_layouts() {
     assert_exit(
         r#"
 struct Box<T> {
@@ -973,7 +967,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_recursive_generic_record_specialization_executes() {
+fn recursive_generic_record_specialization_executes() {
     assert_exit(
         r#"
 struct Node<T> {
@@ -994,7 +988,7 @@ main: () -> i32 {
 // --- Milestone 7: enums, patterns, and `match` ---
 
 #[test]
-fn v2_match_payload_variant_dispatch() {
+fn match_payload_variant_dispatch() {
     // Rect is tag 1; its two payload slots bind to w and h. 6 * 7 = 42.
     assert_exit(
         r#"
@@ -1025,7 +1019,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_match_selects_single_payload_arm() {
+fn match_selects_single_payload_arm() {
     // Circle is tag 0; binding r reads its one payload slot. 7 * 7 = 49.
     assert_exit(
         r#"
@@ -1056,7 +1050,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_match_unit_variants_with_wildcard() {
+fn match_unit_variants_with_wildcard() {
     // Unit variants carry no payload; the wildcard covers the rest. Green is tag 1.
     assert_exit(
         r#"
@@ -1087,7 +1081,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_match_unit_variant_falls_to_wildcard() {
+fn match_unit_variant_falls_to_wildcard() {
     // Blue (tag 2) is not named explicitly, so the wildcard arm runs.
     assert_exit(
         r#"
@@ -1115,7 +1109,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_match_mixed_payload_widths() {
+fn match_mixed_payload_widths() {
     // Pair packs an i64 then an i32 into the payload area; both read back.
     assert_exit(
         r#"
@@ -1142,7 +1136,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_match_non_exhaustive_is_rejected() {
+fn match_non_exhaustive_is_rejected() {
     assert_compile_fails(
         r#"
 enum E {
@@ -1164,7 +1158,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_enum_variant_wrong_arity_is_rejected() {
+fn enum_variant_wrong_arity_is_rejected() {
     assert_compile_fails(
         r#"
 enum Shape {
@@ -1181,7 +1175,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_match_unknown_variant_is_rejected() {
+fn match_unknown_variant_is_rejected() {
     assert_compile_fails(
         r#"
 enum Shape {
@@ -1208,7 +1202,7 @@ main: () -> i32 {
 // --- Milestone 7: generic enums (Option / Result prelude) ---
 
 #[test]
-fn v2_option_some_match_extracts_payload() {
+fn option_some_match_extracts_payload() {
     // The Option<i32> prelude enum: Some(41) binds v, returns v + 1.
     assert_exit(
         r#"
@@ -1230,7 +1224,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_option_none_takes_unit_arm() {
+fn option_none_takes_unit_arm() {
     assert_exit(
         r#"
 main: () -> i32 {
@@ -1251,7 +1245,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_result_ok_and_err_dispatch() {
+fn result_ok_and_err_dispatch() {
     // Result<i32, i32> returned from a function and matched at the call site.
     assert_exit(
         r#"
@@ -1280,7 +1274,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_result_err_arm_executes() {
+fn result_err_arm_executes() {
     assert_exit(
         r#"
 parse: (n: i32) -> Result<i32, i32> {
@@ -1308,7 +1302,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_distinct_option_specializations_coexist() {
+fn distinct_option_specializations_coexist() {
     // Option<i32> and Option<i64> are separate enums with their own constructors;
     // both must lower and run in the same program.
     assert_exit(
@@ -1341,7 +1335,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_user_generic_enum_specializes() {
+fn user_generic_enum_specializes() {
     // A user-declared generic enum, not just the prelude ones.
     assert_exit(
         r#"
@@ -1368,7 +1362,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_bare_constructor_without_context_is_rejected() {
+fn bare_constructor_without_context_is_rejected() {
     // `:=` gives no expected type, so a bare generic-enum constructor is ambiguous.
     assert_compile_fails(
         r#"
@@ -1381,7 +1375,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_result_try_extracts_success_value() {
+fn result_try_extracts_success_value() {
     assert_exit(
         r#"
 parse: (n: i32) -> Result<i32, i32> {
@@ -1411,7 +1405,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_result_try_propagates_error() {
+fn result_try_propagates_error() {
     assert_exit(
         r#"
 parse: (n: i32) -> Result<i32, i32> {
@@ -1441,7 +1435,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_option_try_extracts_and_propagates() {
+fn option_try_extracts_and_propagates() {
     assert_exit(
         r#"
 increment: () -> Option<i32> {
@@ -1468,7 +1462,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_option_try_propagates_none() {
+fn option_try_propagates_none() {
     assert_exit(
         r#"
 increment: () -> Option<i32> {
@@ -1495,7 +1489,70 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_try_rejects_non_carrier_operand() {
+fn match_on_call_returning_enum_by_value() {
+    // Matching directly on a call that returns an enum by value must spill the
+    // returned bytes to an addressable slot. Err(7) -> 0 - 7 = -7.
+    assert_exit(
+        r#"
+halve: (n: i32) -> Result<i32, i32> {
+    if n % 2 != 0 {
+        return Err(n)
+    }
+    return Ok(n / 2)
+}
+
+main: () -> i32 {
+    match halve(7) {
+        Ok(x) -> {
+            return x
+        }
+        Err(e) -> {
+            return 0 - e
+        }
+    }
+    return -1
+}
+"#,
+        -7,
+    );
+}
+
+#[test]
+fn inline_constructed_enum_as_call_argument() {
+    // A freshly constructed enum passed directly as a call argument. 7 * 7 = 49.
+    assert_exit(
+        r#"
+enum Shape {
+    Circle(i32)
+    Rect(i32, i32)
+    Empty
+}
+
+area: (s: Shape) -> i32 {
+    match s {
+        Circle(r) -> {
+            return r * r
+        }
+        Rect(w, h) -> {
+            return w * h
+        }
+        Empty -> {
+            return 0
+        }
+    }
+    return -1
+}
+
+main: () -> i32 {
+    return area(Circle(7))
+}
+"#,
+        49,
+    );
+}
+
+#[test]
+fn try_rejects_non_carrier_operand() {
     assert_compile_fails(
         r#"
 main: () -> i32 {
@@ -1507,7 +1564,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_try_rejects_incompatible_error_type() {
+fn try_rejects_incompatible_error_type() {
     assert_compile_fails(
         r#"
 parse: () -> Result<i32, i64> {
@@ -1529,7 +1586,7 @@ main: () -> i32 {
 // --- Aggregate by-value function ABI ---
 
 #[test]
-fn v2_enum_argument_is_passed_by_value() {
+fn enum_argument_is_passed_by_value() {
     assert_exit(
         r#"
 read: (value: Option<i32>) -> i32 {
@@ -1554,7 +1611,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_struct_argument_is_passed_by_value() {
+fn struct_argument_is_passed_by_value() {
     assert_exit(
         r#"
 struct Pair {
@@ -1576,7 +1633,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_slice_argument_is_passed_by_value() {
+fn slice_argument_is_passed_by_value() {
     assert_exit(
         r#"
 sum: (values: i32[]) -> i32 {
@@ -1594,7 +1651,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_large_struct_argument_is_copied() {
+fn large_struct_argument_is_copied() {
     assert_exit(
         r#"
 struct Triple {
@@ -1619,7 +1676,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_aggregate_argument_can_overflow_to_stack() {
+fn aggregate_argument_can_overflow_to_stack() {
     assert_exit(
         r#"
 struct Pair {
@@ -1641,7 +1698,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_slice_round_trips_through_function_return() {
+fn slice_round_trips_through_function_return() {
     assert_exit(
         r#"
 identity: (values: i32[]) -> i32[] {
@@ -1662,7 +1719,7 @@ main: () -> i32 {
 // --- Milestone 7: value-producing match ---
 
 #[test]
-fn v2_value_match_inferred_binding() {
+fn value_match_inferred_binding() {
     // `:=` infers i32 from the arms; Rect(6,7) -> 42.
     assert_exit(
         r#"
@@ -1687,7 +1744,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_value_match_typed_binding() {
+fn value_match_typed_binding() {
     assert_exit(
         r#"
 enum Shape {
@@ -1711,7 +1768,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_value_match_as_return_value() {
+fn value_match_as_return_value() {
     assert_exit(
         r#"
 enum Shape {
@@ -1737,7 +1794,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_value_match_assigned_to_existing_binding() {
+fn value_match_assigned_to_existing_binding() {
     assert_exit(
         r#"
 enum Color {
@@ -1762,7 +1819,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_value_match_with_wildcard_arm() {
+fn value_match_with_wildcard_arm() {
     assert_exit(
         r#"
 enum Color {
@@ -1787,7 +1844,7 @@ main: () -> i32 {
 // --- Milestone 8: empty-literal array zero-fill ---
 
 #[test]
-fn v2_empty_array_literal_zero_fills() {
+fn empty_array_literal_zero_fills() {
     // `buf: i32[4] = []` zeroes every element; summing them is 0, then we write one.
     assert_exit(
         r#"
@@ -1806,7 +1863,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_empty_byte_buffer_zero_fills() {
+fn empty_byte_buffer_zero_fills() {
     assert_exit(
         r#"
 main: () -> i32 {
@@ -1825,7 +1882,7 @@ main: () -> i32 {
 // --- Milestone 8: strings are u8[] slices ---
 
 #[test]
-fn v2_string_literal_has_slice_len() {
+fn string_literal_has_slice_len() {
     assert_exit(
         r#"
 main: () -> i32 {
@@ -1838,7 +1895,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_string_literal_indexes_bytes() {
+fn string_literal_indexes_bytes() {
     // 'e' is 101; element access is bounds-checked u8 indexing.
     assert_exit(
         r#"
@@ -1852,7 +1909,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_string_for_loop_sums_bytes() {
+fn string_for_loop_sums_bytes() {
     // 'A' (65) + 'B' (66) = 131.
     assert_exit(
         r#"
@@ -1870,7 +1927,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_string_range_slice() {
+fn string_range_slice() {
     // "hello"[1..3] is "el"; its length is 2 and first byte is 'e' (101).
     assert_exit(
         r#"
@@ -1885,7 +1942,7 @@ main: () -> i32 {
 }
 
 #[test]
-fn v2_value_match_mixed_value_and_block_arms_is_rejected() {
+fn value_match_mixed_value_and_block_arms_is_rejected() {
     assert_compile_fails(
         r#"
 enum Color {

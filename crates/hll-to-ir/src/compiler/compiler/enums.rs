@@ -3,6 +3,7 @@ use super::{
     IrRegister, IrTerminator, IrType, IrTypeAlias, IrValue, LoweredValue, VariantInfo,
 };
 use crate::ast::{Expression, MatchArm, Pattern, Type, Variant};
+use crate::conv::usize_to_i64;
 use crate::ir::IrCmpOp;
 
 // Diagnostic exit code for an unmatched (non-exhaustive) enum value.
@@ -88,7 +89,7 @@ impl HighLevelCompiler {
             op: IrCmpOp::Eq,
             ty: IrType::Integer(IntWidth::I64),
             lhs: IrValue::Register(tag),
-            rhs: IrValue::Integer(success.index as i64),
+            rhs: IrValue::Integer(usize_to_i64(success.index)),
         });
         let success_label = self.new_label();
         let failure_label = self.new_label();
@@ -99,13 +100,12 @@ impl HighLevelCompiler {
         });
 
         self.start_new_block(failure_label.0.clone());
-        let return_enum = match self.current_return_ty.clone() {
-            Some(IrType::Named(name)) => name,
-            _ => {
-                self.context
-                    .error("`?` requires an enum return type".to_owned());
-                return None;
-            }
+        let return_enum = if let Some(IrType::Named(name)) = self.current_return_ty.clone() {
+            name
+        } else {
+            self.context
+                .error("`?` requires an enum return type".to_owned());
+            return None;
         };
         let return_failure = self.find_enum_variant(&return_enum, failure_prefix)?;
         let return_layout = self.enum_layouts.get(&return_enum).cloned()?;
@@ -117,7 +117,7 @@ impl HighLevelCompiler {
         });
         self.push_instruction(IrInstruction::Store {
             ty: IrType::Integer(IntWidth::I64),
-            value: IrValue::Integer(return_failure.index as i64),
+            value: IrValue::Integer(usize_to_i64(return_failure.index)),
             ptr: return_ptr.clone(),
             offset: Some(0),
         });
@@ -211,9 +211,9 @@ impl HighLevelCompiler {
             let mut offset = 0i64;
             for ty in &variant.payload {
                 let ir_ty = self.lower_type(ty);
-                let align = self.type_alignment_in_bytes(&ir_ty) as i64;
+                let align = usize_to_i64(self.type_alignment_in_bytes(&ir_ty));
                 offset = Self::align_to(offset, align);
-                offset += self.type_size_in_bytes(&ir_ty) as i64;
+                offset += usize_to_i64(self.type_size_in_bytes(&ir_ty));
             }
             max = max.max(offset);
         }
@@ -241,10 +241,10 @@ impl HighLevelCompiler {
         let mut offset = 0i64;
         for ty in payload {
             let ir_ty = self.lower_type(ty);
-            let align = self.type_alignment_in_bytes(&ir_ty) as i64;
+            let align = usize_to_i64(self.type_alignment_in_bytes(&ir_ty));
             offset = Self::align_to(offset, align);
             out.push((ENUM_PAYLOAD_BASE + offset, ir_ty.clone()));
-            offset += self.type_size_in_bytes(&ir_ty) as i64;
+            offset += usize_to_i64(self.type_size_in_bytes(&ir_ty));
         }
         out
     }
@@ -275,7 +275,7 @@ impl HighLevelCompiler {
         });
         self.push_instruction(IrInstruction::Store {
             ty: IrType::Integer(IntWidth::I64),
-            value: IrValue::Integer(info.index as i64),
+            value: IrValue::Integer(usize_to_i64(info.index)),
             ptr: dest.clone(),
             offset: Some(0),
         });
@@ -298,16 +298,34 @@ impl HighLevelCompiler {
         })
     }
 
-    // Resolve the scrutinee to a pointer at the enum aggregate's bytes. A local or
-    // field is addressable; a constructed rvalue's register already is that pointer.
+    // Resolve the scrutinee to a pointer at the enum aggregate's bytes. An
+    // enum-by-value rvalue (a call result) is spilled to a slot to be addressable.
     fn enum_scrutinee_ptr(&mut self, scrutinee: &Expression) -> Option<IrRegister> {
-        let base = self
-            .lower_expr(scrutinee, EvalMode::Address)
-            .or_else(|| self.lower_expr(scrutinee, EvalMode::Value))?;
-        match base.value {
-            IrValue::Register(reg) => Some(reg),
-            _ => None,
+        if let Some(base) = self.lower_expr(scrutinee, EvalMode::Address)
+            && let IrValue::Register(reg) = base.value
+        {
+            return Some(reg);
         }
+        let base = self.lower_expr(scrutinee, EvalMode::Value)?;
+        let IrValue::Register(reg) = base.value else {
+            return None;
+        };
+        if matches!(self.resolve_named_type(&base.ty), IrType::Aggregate(_)) {
+            let slot = self.new_temp();
+            self.push_instruction(IrInstruction::Alloc {
+                dest: slot.clone(),
+                ty: base.ty.clone(),
+                count: None,
+            });
+            self.push_instruction(IrInstruction::Store {
+                ty: base.ty,
+                value: IrValue::Register(reg),
+                ptr: slot.clone(),
+                offset: None,
+            });
+            return Some(slot);
+        }
+        Some(reg)
     }
 
     // Lower a `match` in statement position: arms run for effect and any value
@@ -369,19 +387,18 @@ impl HighLevelCompiler {
                 if let IrInstruction::Alloc {
                     dest, ty: alloc_ty, ..
                 } = inst
+                    && dest == slot
                 {
-                    if dest == slot {
-                        *alloc_ty = ty.clone();
-                        return true;
-                    }
+                    *alloc_ty = ty.clone();
+                    return true;
                 }
             }
             false
         };
-        if let Some(block) = self.current_block.as_mut() {
-            if patch(block) {
-                return;
-            }
+        if let Some(block) = self.current_block.as_mut()
+            && patch(block)
+        {
+            return;
         }
         for block in self.current_blocks.iter_mut().rev() {
             if patch(block) {
@@ -463,7 +480,7 @@ impl HighLevelCompiler {
                         op: IrCmpOp::Eq,
                         ty: IrType::Integer(IntWidth::I64),
                         lhs: IrValue::Register(tag.clone()),
-                        rhs: IrValue::Integer(info.index as i64),
+                        rhs: IrValue::Integer(usize_to_i64(info.index)),
                     });
 
                     let then_label = self.new_label();

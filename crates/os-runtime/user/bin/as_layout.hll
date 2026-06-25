@@ -1,4 +1,3 @@
-; @version 2
 
 ; Shared record layouts for the assembler, prepended to every `as` translation unit
 ; so as.hll and as_object.hll agree on one definition. HLL types are file-scoped.

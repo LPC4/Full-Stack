@@ -53,19 +53,7 @@ impl HighLevelCompiler {
                 });
                 let content_len = content.len();
 
-                // V2 strings are `u8[]` slices (same `{ ptr@0, len@8 }` layout); V1
-                // keeps the named `{ data, length }` aggregate so goldens stay stable.
-                let struct_ty = if self.language_version == crate::LanguageVersion::V2 {
-                    IrType::Slice(Box::new(IrType::Integer(IntWidth::I8)))
-                } else {
-                    IrType::Aggregate(vec![
-                        (
-                            "data".to_owned(),
-                            IrType::Pointer(Box::new(IrType::Integer(IntWidth::I8))),
-                        ),
-                        ("length".to_owned(), IrType::Integer(IntWidth::I64)),
-                    ])
-                };
+                let struct_ty = IrType::Slice(Box::new(IrType::Integer(IntWidth::I8)));
 
                 let dest = self.new_temp();
                 self.push_instruction(IrInstruction::Alloc {
@@ -149,7 +137,7 @@ impl HighLevelCompiler {
         })
     }
 
-    // Lower an array literal against a known element type (V2). Each element is
+    // Lower an array literal against a known element type. Each element is
     // lowered with the declared element type as its context, so bare struct
     // literals and width-flexible scalar literals are accepted inside `[...]`.
     fn lower_array_literal_for_type(
@@ -201,7 +189,7 @@ impl HighLevelCompiler {
         })
     }
 
-    /// Lower V2 element-scaled pointer arithmetic, or return `None` when neither
+    /// Lower element-scaled pointer arithmetic, or return `None` when neither
     /// operand is a pointer (so the caller falls back to ordinary arithmetic).
     /// Semantic analysis has already rejected illegal forms (pointer-minus-pointer,
     /// integer-minus-pointer, arithmetic on unsized pointees), so here we only
@@ -267,15 +255,13 @@ impl HighLevelCompiler {
         lhs: LoweredValue,
         rhs: LoweredValue,
     ) -> Option<LoweredValue> {
-        // V2: typed pointer arithmetic is element-scaled. `T* +/- n` advances by
+        // Typed pointer arithmetic is element-scaled. `T* +/- n` advances by
         // `n * sizeof(T)`, lowered through the `Index` instruction. Raw byte
         // arithmetic stays available through `u8*` (sizeof(u8) == 1).
-        if self.language_version == crate::LanguageVersion::V2
-            && matches!(op, BinaryOp::Add | BinaryOp::Sub)
+        if matches!(op, BinaryOp::Add | BinaryOp::Sub)
+            && let Some(result) = self.lower_pointer_arith(op, &lhs, &rhs)
         {
-            if let Some(result) = self.lower_pointer_arith(op, &lhs, &rhs) {
-                return Some(result);
-            }
+            return Some(result);
         }
 
         let dest = self.new_temp();
@@ -438,8 +424,7 @@ impl HighLevelCompiler {
             IrValue::Register(r) => r.clone(),
             other => {
                 self.context.diagnostics.error(format!(
-                    "destructuring source must be a register pointer, got {:?}",
-                    other
+                    "destructuring source must be a register pointer, got {other:?}"
                 ));
                 return None;
             }
@@ -450,8 +435,7 @@ impl HighLevelCompiler {
             IrType::Pointer(inner) => self.resolve_named_type(inner),
             other => {
                 self.context.error(format!(
-                    "destructuring source type must be a pointer to an aggregate, got {}",
-                    other
+                    "destructuring source type must be a pointer to an aggregate, got {other}"
                 ));
                 return None;
             }
@@ -461,8 +445,7 @@ impl HighLevelCompiler {
             IrType::Aggregate(fields) => fields.clone(),
             other => {
                 self.context.error(format!(
-                    "destructuring source must point to an aggregate, got pointer to {}",
-                    other
+                    "destructuring source must point to an aggregate, got pointer to {other}"
                 ));
                 return None;
             }
@@ -481,13 +464,12 @@ impl HighLevelCompiler {
         // Process each field in the pattern (order independent)
         for field in fields {
             if let Some(name) = &field.name {
-                let (field_offset, field_ty) = match offset_map.get(name.as_str()) {
-                    Some(v) => v,
-                    None => {
-                        self.context
-                            .error(format!("field `{}` not found in aggregate type", name));
-                        return None;
-                    }
+                let (field_offset, field_ty) = if let Some(v) = offset_map.get(name.as_str()) {
+                    v
+                } else {
+                    self.context
+                        .error(format!("field `{name}` not found in aggregate type"));
+                    return None;
                 };
 
                 // Load the field value from the source pointer at the computed offset
@@ -505,7 +487,7 @@ impl HighLevelCompiler {
                         var_ptr.clone()
                     } else {
                         self.context
-                            .error(format!("variable `{}` is not register-backed", name));
+                            .error(format!("variable `{name}` is not register-backed"));
                         return None;
                     }
                 } else {
@@ -533,7 +515,7 @@ impl HighLevelCompiler {
                 });
             }
             // If field.name is None (should not happen), skip.
-            warn!("field.name is None")
+            warn!("field.name is None");
         }
 
         Some(addr.clone())
@@ -546,35 +528,33 @@ impl HighLevelCompiler {
         expr: &Expression,
         target_ty: &IrType,
     ) -> Option<LoweredValue> {
-        if self.language_version == crate::LanguageVersion::V2 {
-            if let Expression::Primary(crate::ast::PrimaryExpr::StructLiteral(fields)) = expr {
-                return self.lower_contextual_struct_literal(fields, target_ty);
-            }
-            // An array literal lowers each element against the declared element
-            // type, so contextual struct literals (`Point[N] = [{..}, ..]`) and
-            // width-flexible scalar literals get their context from the target.
-            if let IrType::Array { element, len } = self.resolve_named_type(target_ty) {
-                if let Expression::Primary(crate::ast::PrimaryExpr::ArrayLiteral(elems)) = expr {
-                    // `arr: T[N] = []` zero-fills; a non-empty literal sets each element.
-                    if elems.is_empty() {
-                        return self.lower_zero_value(target_ty);
-                    }
-                    return self.lower_array_literal_for_type(elems, &element, len);
-                }
-            }
-            // A fixed array coerces to a slice: build { ptr: &arr[0], len: N }.
-            if let IrType::Slice(elem) = self.resolve_named_type(target_ty) {
-                return self.lower_array_to_slice(expr, &elem);
-            }
+        if let Expression::Primary(crate::ast::PrimaryExpr::StructLiteral(fields)) = expr {
+            return self.lower_contextual_struct_literal(fields, target_ty);
         }
-        if matches!(self.resolve_named_type(target_ty), IrType::Integer(_)) {
-            if let Some(v) = Self::fold_int_literal(expr) {
-                return Some(LoweredValue {
-                    value: IrValue::Integer(v),
-                    ty: target_ty.clone(),
-                    is_unsigned: false,
-                });
+        // An array literal lowers each element against the declared element
+        // type, so contextual struct literals (`Point[N] = [{..}, ..]`) and
+        // width-flexible scalar literals get their context from the target.
+        if let IrType::Array { element, len } = self.resolve_named_type(target_ty)
+            && let Expression::Primary(crate::ast::PrimaryExpr::ArrayLiteral(elems)) = expr
+        {
+            // `arr: T[N] = []` zero-fills; a non-empty literal sets each element.
+            if elems.is_empty() {
+                return self.lower_zero_value(target_ty);
             }
+            return self.lower_array_literal_for_type(elems, &element, len);
+        }
+        // A fixed array coerces to a slice: build { ptr: &arr[0], len: N }.
+        if let IrType::Slice(elem) = self.resolve_named_type(target_ty) {
+            return self.lower_array_to_slice(expr, &elem);
+        }
+        if matches!(self.resolve_named_type(target_ty), IrType::Integer(_))
+            && let Some(v) = Self::fold_int_literal(expr)
+        {
+            return Some(LoweredValue {
+                value: IrValue::Integer(v),
+                ty: target_ty.clone(),
+                is_unsigned: false,
+            });
         }
         self.lower_expression(expr)
     }

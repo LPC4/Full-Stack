@@ -1,6 +1,7 @@
 // Program file management and catalog
 
-use hll_to_ir::stdlib::get_stdlib_source;
+use hll_to_ir::TargetMode;
+use hll_to_ir::stdlib::get_stdlib_modules_for_mode;
 
 /// What a catalog entry is, for badge + grouping in the file list.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -163,8 +164,13 @@ impl ProgramFile {
 }
 
 fn built_in_programs() -> Vec<ProgramFile> {
-    // Keep the catalog's "Standard Library" source in lock-step with the compiler pipeline.
-    let stdlib_combined = get_stdlib_source();
+    // Read-only reference view of the hosted stdlib (display only, not a build
+    // input): join the per-module sources the pipeline compiles separately.
+    let stdlib_combined = get_stdlib_modules_for_mode(TargetMode::Hosted)
+        .iter()
+        .map(|(name, src)| format!("; --- {name} ---\n{src}"))
+        .collect::<Vec<_>>()
+        .join("\n");
 
     let mut programs = vec![
         // Stdlib program (read-only, single combined file)
@@ -330,77 +336,87 @@ fn built_in_programs() -> Vec<ProgramFile> {
     }
 
     programs.extend([
-        // Example programs
+        // Example programs: one per feature family, each printing labeled output
+        // and returning exit 0 only when its self-checks pass.
         ProgramFile::example(
             "example-core-basics",
             "core_basics.hll",
-            "A compact starter program with constants, a helper, and one branch.",
+            "Typed and inferred declarations, const evaluation, functions, and loops.",
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
                 "/programs/example/core_basics.hll"
             )),
         ),
         ProgramFile::example(
-            "example-pointer-arrays",
-            "pointer_arrays.hll",
-            "Address-of, dereference, and heap cleanup with distinct pointer math.",
+            "example-operators",
+            "operators.hll",
+            "Arithmetic, logical, bitwise, shift, cast precedence, and compound assignment.",
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/programs/example/pointer_arrays.hll"
+                "/programs/example/operators.hll"
             )),
         ),
         ProgramFile::example(
-            "example-array-initialization",
-            "array_initialization.hll",
-            "Stack arrays mirrored into heap storage and read back through indexing.",
+            "example-pointers-and-places",
+            "pointers_and_places.hll",
+            "Address-of, @ deref, member auto-deref, element-scaled pointer math, casts, defer.",
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/programs/example/array_initialization.hll"
+                "/programs/example/pointers_and_places.hll"
             )),
         ),
         ProgramFile::example(
-            "example-struct-binding",
-            "struct_binding.hll",
-            "Named structs, reordered fields, and partial destructuring.",
+            "example-arrays-slices-and-ranges",
+            "arrays_slices_and_ranges.hll",
+            "Array literals, zero fill, slices, .len, ranges, and `for` over each.",
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/programs/example/struct_binding.hll"
+                "/programs/example/arrays_slices_and_ranges.hll"
             )),
         ),
         ProgramFile::example(
-            "example-control-flow-basics",
-            "control_flow_basics.hll",
-            "Loops, continue, and defer-based cleanup around a reusable helper.",
+            "example-structs-and-binding",
+            "structs_and_binding.hll",
+            "Named and contextual struct literals, aggregate calls/returns, and destructuring.",
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/programs/example/control_flow_basics.hll"
+                "/programs/example/structs_and_binding.hll"
             )),
         ),
         ProgramFile::example(
-            "example-casting-and-pointers",
-            "casting_and_pointers.hll",
-            "Explicit type casts, pointer reinterpretation, and formatted output.",
+            "example-generics",
+            "generics.hll",
+            "Explicit and inferred generic functions, generic structs, and recursive records.",
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/programs/example/casting_and_pointers.hll"
+                "/programs/example/generics.hll"
+            )),
+        ),
+        ProgramFile::example(
+            "example-enums-match-and-result",
+            "enums_match_and_result.hll",
+            "Enums, statement and value match, a generic enum, Option, Result, and `?`.",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/programs/example/enums_match_and_result.hll"
+            )),
+        ),
+        ProgramFile::example(
+            "example-strings-and-iteration",
+            "strings_and_iteration.hll",
+            "Strings as u8[] slices: indexing, range slicing, byte iteration, and char literals.",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/programs/example/strings_and_iteration.hll"
             )),
         ),
         ProgramFile::example(
             "example-compile-time-math",
             "compile_time_math.hll",
-            "Pure functions folded into constants before runtime.",
+            "Pure recursive functions folded into constants before runtime.",
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
                 "/programs/example/compile_time_math.hll"
-            )),
-        ),
-        ProgramFile::example(
-            "example-generics-and-strings",
-            "generics_and_strings.hll",
-            "A larger demo mixing generics, heap values, strings, and output.",
-            include_str!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/programs/example/generics_and_strings.hll"
             )),
         ),
     ]);
@@ -456,6 +472,7 @@ impl ProgramCatalog {
                     updated.description = built_in.description;
                     updated.standalone = built_in.standalone;
                     updated.parent_id = built_in.parent_id;
+                    updated.layout = built_in.layout;
                 }
                 merged_programs.push(updated);
             } else {
@@ -705,5 +722,18 @@ mod tests {
         let sources = catalog.child_sources("user-cc");
         assert_eq!(sources.len(), 1, "cc has one aux translation unit");
         assert!(!sources[0].is_empty());
+    }
+
+    // A persisted catalog from before the `layout` field defaults it to empty;
+    // ensure_consistency must restore it for read-only split tools (cc/as).
+    #[test]
+    fn ensure_consistency_restores_layout_for_read_only_programs() {
+        let mut catalog = ProgramCatalog::default();
+        for program in &mut catalog.programs {
+            program.layout.clear();
+        }
+        catalog.ensure_consistency();
+        assert_eq!(catalog.layout_of("user-cc"), os_runtime::user::CC_LAYOUT);
+        assert_eq!(catalog.layout_of("user-as"), os_runtime::user::AS_LAYOUT);
     }
 }

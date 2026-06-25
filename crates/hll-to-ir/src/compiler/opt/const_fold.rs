@@ -198,7 +198,7 @@ fn fold_math(op: IrMathOp, lhs: i64, rhs: i64, width: IntWidth) -> Option<i64> {
         IrMathOp::Xor => lhs ^ rhs,
         // RV64 sll/srl use the low 6 bits of the shift amount; srl is logical.
         IrMathOp::Shl => lhs.wrapping_shl((rhs & 0x3f) as u32),
-        IrMathOp::Shr => ((lhs as u64) >> (rhs & 0x3f)) as i64,
+        IrMathOp::Shr => crate::conv::u64_bits_to_i64((lhs as u64) >> (rhs & 0x3f)),
         IrMathOp::Div | IrMathOp::SDiv => {
             if rhs == 0 {
                 return None;
@@ -215,13 +215,13 @@ fn fold_math(op: IrMathOp, lhs: i64, rhs: i64, width: IntWidth) -> Option<i64> {
             if rhs == 0 {
                 return None;
             }
-            (lhs as u64).wrapping_div(rhs as u64) as i64
+            crate::conv::u64_bits_to_i64((lhs as u64).wrapping_div(rhs as u64))
         }
         IrMathOp::UMod => {
             if rhs == 0 {
                 return None;
             }
-            (lhs as u64).wrapping_rem(rhs as u64) as i64
+            crate::conv::u64_bits_to_i64((lhs as u64).wrapping_rem(rhs as u64))
         }
     };
     Some(sext(raw, width))

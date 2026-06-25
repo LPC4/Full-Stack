@@ -1,0 +1,61 @@
+; Arrays, slices, and ranges: array literals, empty zero-fill, slicing with
+; half-open/inclusive/open ranges, .ptr/.len, and `for` over ranges, arrays, and slices.
+
+external println: (s: u8[]) -> i32
+external print_int: (value: i64) -> i32
+
+main: () -> i32 {
+    println("-- arrays, slices, ranges --")
+
+    nums: i32[5] = [1, 2, 3, 4, 5]
+    nums[0] = 10            ; write a place, no @
+    if nums[0] != 10 { return 1 }
+
+    ; Empty literal zero-fills a fixed array.
+    zeros: i32[4] = []
+    zsum: i32 = 0
+    for z in zeros {
+        zsum = zsum + z
+    }
+    if zsum != 0 { return 2 }
+
+    ; `for` over a range; the end is exclusive, `..=` includes it.
+    range_sum: i32 = 0
+    for i in 1..5 {
+        range_sum = range_sum + i      ; 1 + 2 + 3 + 4 = 10
+    }
+    incl_sum: i32 = 0
+    for i in 1..=5 {
+        incl_sum = incl_sum + i        ; 1 + 2 + 3 + 4 + 5 = 15
+    }
+    if range_sum != 10 { return 3 }
+    if incl_sum != 15 { return 4 }
+
+    ; Half-open sub-slice nums[1..4] = {2, 3, 4}; .len and indexing apply.
+    view: i32[] = nums[1..4]
+    if view.len != 3 { return 5 }
+    if view[0] != 2 { return 6 }
+
+    ; Open-ended slices default to the start and the source length.
+    tail: i32[] = nums[3..]            ; {4, 5}
+    whole: i32[] = nums[..]            ; array coerces to a full slice
+    if tail.len != 2 { return 7 }
+    if whole.len != 5 { return 8 }
+
+    ; `for` over a slice, with continue/break.
+    view_sum: i32 = 0
+    for v in view {
+        if v == 3 {
+            continue                    ; skip the middle element
+        }
+        if v > 4 {
+            break
+        }
+        view_sum = view_sum + v         ; 2 + 4 = 6
+    }
+    if view_sum != 6 { return 9 }
+    print_int(view_sum)
+
+    println("ok")
+    return 0
+}

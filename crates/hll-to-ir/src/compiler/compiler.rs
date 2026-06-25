@@ -42,7 +42,7 @@ struct LoweredValue {
     is_unsigned: bool,
 }
 
-// Lowering metadata for a V2 `enum`. The runtime value is the aggregate
+// Lowering metadata for an `enum`. The runtime value is the aggregate
 // `{ tag: i64, payload: u8[payload_bytes] }` (payload omitted when all variants
 // are unit). `payload_bytes` is the largest variant's payload size, 8-aligned.
 #[derive(Debug, Clone)]
@@ -93,10 +93,9 @@ pub struct HighLevelCompiler {
     prelude_types: Vec<(String, IrType)>,
     // Return type of the function being lowered, so `return` literals get its width.
     current_return_ty: Option<IrType>,
-    language_version: crate::LanguageVersion,
     // Monotonic id for naming `for`-loop desugaring temporaries uniquely.
     for_loop_id: usize,
-    // V2 enums: name -> layout, and variant-constructor name -> variant info.
+    // Enums: name -> layout, and variant-constructor name -> variant info.
     enum_layouts: std::collections::HashMap<String, EnumLayout>,
     enum_variants: std::collections::HashMap<String, VariantInfo>,
     // Monotonic id for naming `match` arm binding temporaries uniquely.
@@ -130,7 +129,6 @@ impl HighLevelCompiler {
             string_prefix: prefix.to_owned(),
             prelude_types: Vec::new(),
             current_return_ty: None,
-            language_version: crate::LanguageVersion::V1,
             for_loop_id: 0,
             enum_layouts: std::collections::HashMap::new(),
             enum_variants: std::collections::HashMap::new(),
@@ -140,10 +138,6 @@ impl HighLevelCompiler {
 
     pub fn set_type_prelude(&mut self, types: Vec<(String, IrType)>) {
         self.prelude_types = types;
-    }
-
-    pub fn set_language_version(&mut self, version: crate::LanguageVersion) {
-        self.language_version = version;
     }
 }
 
@@ -161,7 +155,7 @@ impl HighLevelCompiler {
         );
 
         let mut semantic_analyzer = SemanticAnalyzer::new();
-        if let Err(_) = semantic_analyzer.analyze_program(program) {
+        if semantic_analyzer.analyze_program(program).is_err() {
             // Collect semantic errors and emit them as diagnostics
             for diagnostic in semantic_analyzer.diagnostics() {
                 self.context.diagnostics.error(diagnostic.message.clone());

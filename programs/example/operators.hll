@@ -1,0 +1,47 @@
+; Operator showcase: arithmetic, comparison, logical, bitwise, shift, cast
+; precedence, and compound assignment. main returns 0 only if every check holds.
+
+external println: (s: u8[]) -> i32
+external print_int: (value: i64) -> i32
+
+main: () -> i32 {
+    println("-- operators --")
+
+    ; Arithmetic and the multiplicative-over-additive precedence.
+    a: i32 = 2 + 3 * 4
+    if a != 14 { return 1 }
+
+    ; Comparison feeding the logical connectives.
+    in_range: bool = a > 10 and a < 20
+    either: bool = a == 0 or in_range
+    if not (in_range and either) { return 2 }
+
+    ; Bitwise AND/OR/XOR.
+    bits: i32 = 0xF0 | 0x0F
+    if bits != 0xFF { return 3 }
+    if (bits & 0x0F) != 0x0F { return 4 }
+    if (bits ^ 0xFF) != 0 { return 5 }
+    print_int(bits)
+
+    ; Shifts.
+    if (1 << 4) != 16 { return 6 }
+    if (256 >> 4) != 16 { return 7 }
+
+    ; Cast precedence: `as` binds tighter than `+`, so this is `5 + (wide as i32)`,
+    ; casting only `wide` to line the types up. `(5 + wide) as i32` would differ.
+    wide: i64 = 1000
+    combined: i32 = 5 + wide as i32
+    if combined != 1005 { return 8 }
+
+    ; Compound assignment, including a shift and a bitwise form.
+    acc: i32 = 1
+    acc += 5
+    acc *= 2
+    acc <<= 1
+    acc |= 1
+    if acc != 25 { return 9 }
+    print_int(acc)
+
+    println("ok")
+    return 0
+}

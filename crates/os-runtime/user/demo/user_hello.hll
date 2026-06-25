@@ -1,4 +1,3 @@
-; @version 2
 external console_writeln: (str: u8*)
 
 main: () -> i32 {

@@ -181,10 +181,10 @@ impl HighLevelCompiler {
                 args: type_args,
             } => {
                 // Check if this name is a generic parameter
-                if let Some(idx) = params.iter().position(|p| p == name) {
-                    if idx < args.len() {
-                        return self.ir_type_to_type(&args[idx]);
-                    }
+                if let Some(idx) = params.iter().position(|p| p == name)
+                    && idx < args.len()
+                {
+                    return self.ir_type_to_type(&args[idx]);
                 }
                 // Otherwise recursively substitute in type arguments
                 Type::Named {

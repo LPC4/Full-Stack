@@ -1,5 +1,5 @@
 ; Test for struct destructuring with explicit type annotations
-type Result = {
+struct Result {
     value: i32,
     success: bool
 }
@@ -8,7 +8,7 @@ get_result: () -> Result {
     return { .value = 42, .success = true }
 }
 
-type Outer = {
+struct Outer {
     inner: Result,
     count: i32
 }
@@ -41,4 +41,3 @@ main: () -> i32 {
     
     return value
 }
-

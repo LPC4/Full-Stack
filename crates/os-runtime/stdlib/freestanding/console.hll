@@ -1,4 +1,3 @@
-; @version 2
 ; Console I/O via direct NS16550A UART MMIO (0x10000000).
 ; Direct writes avoid ecall so sp is never a user VA in M-mode (would read garbage).
 

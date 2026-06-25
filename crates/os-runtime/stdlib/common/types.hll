@@ -1,4 +1,3 @@
-; @version 2
 struct Str {
     data: u8*,
     length: u64,

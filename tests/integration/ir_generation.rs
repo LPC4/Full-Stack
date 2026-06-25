@@ -13,14 +13,12 @@
 ///
 /// Semantic acceptance/rejection rules live in tests/integration/spec_rules.rs.
 /// Struct destructuring tests live in tests/unit/struct_destructuring.rs.
-use full_stack::compilation_pipeline::{
-    CompilationError, CompilationPipeline,
-};
-use hll_to_ir::{IrCmpOp, IrInstruction, IrMathOp};
 use hll_to_ir::ir::instruction::IrTerminator;
+use hll_to_ir::{IrCmpOp, IrInstruction, IrMathOp};
+use full_stack::compilation_pipeline::{CompilationError, CompilationPipeline};
 
 fn compile_ok(source: &str) -> full_stack::compilation_pipeline::CompilationResult {
-    let mut pipeline = CompilationPipeline::new_v1();
+    let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
     pipeline
         .compile(source)
@@ -28,7 +26,7 @@ fn compile_ok(source: &str) -> full_stack::compilation_pipeline::CompilationResu
 }
 
 fn assert_semantic_error(source: &str, fragment: &str) {
-    let mut pipeline = CompilationPipeline::new_v1();
+    let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
     let result = pipeline.compile(source);
     let err = result.expect_err("expected compilation to fail");
@@ -74,7 +72,7 @@ where
 
 #[test]
 fn compiles_minimal_valid_program() {
-    let mut pipeline = CompilationPipeline::new_v1();
+    let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
     pipeline.set_run_semantic_analysis(false);
     assert!(pipeline.compile("main: () -> i32 { return 42 }").is_ok());
@@ -82,7 +80,7 @@ fn compiles_minimal_valid_program() {
 
 #[test]
 fn rejects_invalid_tokens() {
-    let result = CompilationPipeline::new_v1().compile("@invalid_token!@#");
+    let result = CompilationPipeline::new().compile("@invalid_token!@#");
     assert!(matches!(result.unwrap_err(), CompilationError::DiagnosticErrors(_)));
 }
 
@@ -103,7 +101,7 @@ fn rejects_invalid_pointer_arithmetic() {
 #[test]
 fn unsigned_division_emits_udiv() {
     assert!(has_instruction(
-        r#"main: () -> i32 { a: u32 = 10  b: u32 = 2  c: u32 = a / b  return i32(c) }"#,
+        r#"main: () -> i32 { a: u32 = 10  b: u32 = 2  c: u32 = a / b  return c as i32 }"#,
         |i| matches!(i, IrInstruction::Math { op, .. } if *op == IrMathOp::UDiv),
     ));
 }
@@ -176,7 +174,7 @@ fn mixed_signed_unsigned_ops_both_emitted() {
 #[test]
 fn cast_i32_to_i64_emits_cast() {
     assert!(has_instruction(
-        r#"main: () -> i64 { a: i32 = 42  return i64(a) }"#,
+        r#"main: () -> i64 { a: i32 = 42  return a as i64 }"#,
         |i| matches!(i, IrInstruction::Cast { .. }),
     ));
 }
@@ -184,7 +182,7 @@ fn cast_i32_to_i64_emits_cast() {
 #[test]
 fn cast_u32_to_u64_emits_cast() {
     assert!(has_instruction(
-        r#"main: () -> u64 { a: u32 = 42  return u64(a) }"#,
+        r#"main: () -> u64 { a: u32 = 42  return a as u64 }"#,
         |i| matches!(i, IrInstruction::Cast { .. }),
     ));
 }
@@ -192,7 +190,7 @@ fn cast_u32_to_u64_emits_cast() {
 #[test]
 fn cast_i64_to_i32_emits_cast() {
     assert!(has_instruction(
-        r#"main: () -> i32 { a: i64 = 42  return i32(a) }"#,
+        r#"main: () -> i32 { a: i64 = 42  return a as i32 }"#,
         |i| matches!(i, IrInstruction::Cast { .. }),
     ));
 }
@@ -200,7 +198,7 @@ fn cast_i64_to_i32_emits_cast() {
 #[test]
 fn cast_i32_to_f64_emits_cast() {
     assert!(has_instruction(
-        r#"main: () -> f64 { a: i32 = 42  return f64(a) }"#,
+        r#"main: () -> f64 { a: i32 = 42  return a as f64 }"#,
         |i| matches!(i, IrInstruction::Cast { .. }),
     ));
 }
@@ -208,7 +206,7 @@ fn cast_i32_to_f64_emits_cast() {
 #[test]
 fn cast_pointer_to_pointer_emits_cast() {
     assert!(has_instruction(
-        r#"main: () -> i8* { a: i32* = new(i32)  return i8*(a) }"#,
+        r#"main: () -> i8* { a: i32* = new(i32)  return a as i8* }"#,
         |i| matches!(i, IrInstruction::Cast { .. }),
     ));
 }
@@ -217,7 +215,7 @@ fn cast_pointer_to_pointer_emits_cast() {
 fn chained_casts_emit_multiple_cast_instructions() {
     assert!(
         count_instructions(
-            r#"main: () -> i64 { a: i32 = 10  return i64(a) + i64(20) }"#,
+            r#"main: () -> i64 { a: i32 = 10  return (a as i64) + (20 as i64) }"#,
             |i| matches!(i, IrInstruction::Cast { .. }),
         ) >= 2
     );
@@ -242,7 +240,7 @@ main: () -> i32 {
 #[test]
 fn free_with_no_args_is_rejected() {
     assert!(
-        CompilationPipeline::new_v1()
+        CompilationPipeline::new()
             .compile("main: () -> i32 { ptr: i32* = new(i32)  free()  return 0 }")
             .is_err()
     );
@@ -277,7 +275,7 @@ main: () -> i32 {
 #[test]
 fn new_with_array_type_is_rejected() {
     assert!(
-        CompilationPipeline::new_v1()
+        CompilationPipeline::new()
             .compile(
                 r#"main: () -> i32 { arr: i32* = new([4]i32)  defer free(arr)  return 0 }"#
             )
@@ -291,7 +289,7 @@ fn has_terminator<F>(source: &str, pred: F) -> bool
 where
     F: Fn(&IrTerminator) -> bool,
 {
-    let result = CompilationPipeline::new_v1()
+    let result = CompilationPipeline::new()
         .compile(source)
         .unwrap_or_else(|e| panic!("expected ok, got: {e}"));
     result
@@ -395,8 +393,8 @@ main: () -> i32 {
 
 #[test]
 fn string_literal_creates_global_string() {
-    // String literals are { data: u8*, length: u64 } inline structs.
-    let source = r#"type Text = { data: u8*, length: u64 }
+    // String literals are byte slices.
+    let source = r#"type Text = u8[]
 main: () -> i32 {
     msg: Text = "hello"
     return 0
@@ -410,7 +408,7 @@ main: () -> i32 {
 
 #[test]
 fn string_literal_content_preserved() {
-    let source = r#"type Text = { data: u8*, length: u64 }
+    let source = r#"type Text = u8[]
 main: () -> i32 {
     msg: Text = "world"
     return 0
@@ -512,4 +510,3 @@ fn modulo_emits_rem_op() {
         |i| matches!(i, IrInstruction::Math { op, .. } if *op == IrMathOp::Mod),
     ));
 }
-

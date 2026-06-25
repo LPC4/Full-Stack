@@ -1,4 +1,3 @@
-; @version 2
 
 ; ed-style line editor, launched by the shell's `edit <file>`.
 ; Commands and rationale: OS spec ch.10.2 (type `h` for the in-editor help).

@@ -1,4 +1,4 @@
-type Node = {
+struct Node {
     val: i32,
     next: Node*
 }

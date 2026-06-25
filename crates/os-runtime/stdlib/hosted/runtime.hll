@@ -1,4 +1,3 @@
-; @version 2
 ; Linux RV64 syscalls: 64 = sys_write, 93 = sys_exit.
 external main: () -> i32
 

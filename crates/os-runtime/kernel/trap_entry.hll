@@ -1,4 +1,3 @@
-; @version 2
 ; S-mode trap entry: switches to a dedicated kernel stack, saves all GPRs + CSRs
 ; to a 288-byte frame, calls trap_handler(frame), restores, and sret.
 

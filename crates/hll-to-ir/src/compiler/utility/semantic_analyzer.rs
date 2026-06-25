@@ -1,15 +1,16 @@
-use crate::LanguageVersion;
-use crate::ast::*;
-use crate::compiler::*;
+use crate::ast::{
+    AssignTarget, BinaryOp, Block, DeclNode, Declaration, Expression, FieldInit, Literal, MatchArm,
+    Pattern, PrimaryExpr, Program, ReturnType, Statement, Type, UnaryOp,
+};
+use crate::compiler::{Diagnostic, utility};
 use crate::ir::IrType;
 use crate::monomorphize::substitute_type;
 use std::collections::{HashMap, HashSet};
 use utility::diagnostics::Diagnostics;
 use utility::symbol_table::SymbolTable;
 use utility::type_context::TypeContext;
-use {DeclNode, Declaration, Expression, Program, ReturnType, Statement, Type, UnaryOp};
 
-// A V2 enum variant constructor: which enum it belongs to and its payload types.
+// An enum variant constructor: which enum it belongs to and its payload types.
 #[derive(Debug, Clone)]
 struct EnumVariantSig {
     enum_name: String,
@@ -25,19 +26,14 @@ pub struct SemanticAnalyzer {
     function_signatures: HashMap<String, String>,
     function_parameters: HashMap<String, Vec<IrType>>,
     generic_type_defs: HashMap<String, (Vec<String>, Type)>,
-    // V2 enums: variant constructor -> signature, and enum name -> its variant list.
+    // Variant constructor -> signature, and enum name -> its variant list.
     enum_variants: HashMap<String, EnumVariantSig>,
     enum_variant_names: HashMap<String, Vec<String>>,
     current_function: Option<String>,
-    language_version: LanguageVersion,
 }
 
 impl SemanticAnalyzer {
     pub fn new() -> Self {
-        Self::with_language_version(LanguageVersion::V1)
-    }
-
-    pub fn with_language_version(language_version: LanguageVersion) -> Self {
         Self {
             context: TypeContext::new(),
             symbols: SymbolTable::new(),
@@ -49,7 +45,6 @@ impl SemanticAnalyzer {
             enum_variants: HashMap::new(),
             enum_variant_names: HashMap::new(),
             current_function: None,
-            language_version,
         }
     }
 
@@ -192,7 +187,6 @@ impl SemanticAnalyzer {
 
     fn check_declaration(&mut self, decl: &Declaration) -> Result<(), ()> {
         match &decl.decl {
-            DeclNode::Import { .. } => Ok(()),
             DeclNode::Function {
                 name, params, body, ..
             } => {
@@ -216,7 +210,8 @@ impl SemanticAnalyzer {
                 self.current_function = None;
                 Ok(())
             }
-            DeclNode::Type { .. }
+            DeclNode::Import { .. }
+            | DeclNode::Type { .. }
             | DeclNode::Struct { .. }
             | DeclNode::Const { .. }
             | DeclNode::Enum { .. } => Ok(()),
@@ -237,10 +232,11 @@ impl SemanticAnalyzer {
         Ok(())
     }
 
+    #[expect(clippy::too_many_lines, reason = "cohesive per-statement dispatch")]
     fn check_statement(&mut self, stmt: &Statement) -> Result<(), ()> {
         match stmt {
-            Statement::Expression(expr) => {
-                let _ = self.infer_expression_type(expr)?;
+            Statement::Expression(expr) | Statement::Defer(expr) => {
+                self.infer_expression_type(expr)?;
                 Ok(())
             }
             Statement::Return(Some(expr)) => {
@@ -251,23 +247,21 @@ impl SemanticAnalyzer {
                     return Err(());
                 }
 
-                if self.language_version == LanguageVersion::V2 {
-                    if let Expression::Primary(PrimaryExpr::StructLiteral(fields)) = expr {
-                        let expected = self
-                            .current_function
-                            .as_ref()
-                            .and_then(|name| self.function_signatures.get(name))
-                            .map(|name| self.resolve_type_string(name));
-                        if let Some(expected) = expected {
-                            self.check_contextual_struct_literal(fields, &expected)?;
-                            return Ok(());
-                        }
+                if let Expression::Primary(PrimaryExpr::StructLiteral(fields)) = expr {
+                    let expected = self
+                        .current_function
+                        .as_ref()
+                        .and_then(|name| self.function_signatures.get(name))
+                        .map(|name| self.resolve_type_string(name));
+                    if let Some(expected) = expected {
+                        self.check_contextual_struct_literal(fields, &expected)?;
+                        return Ok(());
                     }
                 }
-                let _ = self.infer_expression_type(expr)?;
+                self.infer_expression_type(expr)?;
                 Ok(())
             }
-            Statement::Return(None) => Ok(()),
+            Statement::Return(None) | Statement::Break | Statement::Continue => Ok(()),
             Statement::VariableDecl { name, ty, init } => {
                 if self.symbols.contains_in_current_scope(name) {
                     self.error(format!("duplicate binding `{name}` in the same scope"));
@@ -276,24 +270,19 @@ impl SemanticAnalyzer {
                 let ir_ty = self.ast_type_to_ir_type(ty);
 
                 if let Some(init_expr) = init {
-                    if self.language_version == LanguageVersion::V2 {
-                        if let Expression::Primary(PrimaryExpr::StructLiteral(fields)) = init_expr {
-                            self.check_contextual_struct_literal(fields, &ir_ty)?;
-                            self.symbols
-                                .insert(name.clone(), ir_ty, crate::ir::IrValue::Null);
-                            return Ok(());
-                        }
-                        if let Expression::Primary(PrimaryExpr::ArrayLiteral(elements)) = init_expr
-                        {
-                            if let IrType::Array { element, len } =
-                                self.resolve_named_ir_type(&ir_ty)
-                            {
-                                self.check_contextual_array_literal(elements, &element, len)?;
-                                self.symbols
-                                    .insert(name.clone(), ir_ty, crate::ir::IrValue::Null);
-                                return Ok(());
-                            }
-                        }
+                    if let Expression::Primary(PrimaryExpr::StructLiteral(fields)) = init_expr {
+                        self.check_contextual_struct_literal(fields, &ir_ty)?;
+                        self.symbols
+                            .insert(name.clone(), ir_ty, crate::ir::IrValue::Null);
+                        return Ok(());
+                    }
+                    if let Expression::Primary(PrimaryExpr::ArrayLiteral(elements)) = init_expr
+                        && let IrType::Array { element, len } = self.resolve_named_ir_type(&ir_ty)
+                    {
+                        self.check_contextual_array_literal(elements, &element, len)?;
+                        self.symbols
+                            .insert(name.clone(), ir_ty, crate::ir::IrValue::Null);
+                        return Ok(());
                     }
                     let init_ty = self.infer_expression_type(init_expr)?;
                     let resolved_decl_ty =
@@ -301,15 +290,10 @@ impl SemanticAnalyzer {
                     let resolved_init_ty = self.resolve_type_string(&init_ty);
 
                     log::debug!(
-                        "Variable '{}': declared as {:?}, inferred init as {}",
-                        name,
-                        ir_ty,
-                        init_ty
+                        "Variable '{name}': declared as {ir_ty:?}, inferred init as {init_ty}"
                     );
                     log::debug!(
-                        "  resolved_decl_ty={:?}, resolved_init_ty={:?}",
-                        resolved_decl_ty,
-                        resolved_init_ty
+                        "  resolved_decl_ty={resolved_decl_ty:?}, resolved_init_ty={resolved_init_ty:?}"
                     );
 
                     // A constant integer expression adopts the declared integer
@@ -324,11 +308,10 @@ impl SemanticAnalyzer {
                             && Self::is_float_literal_expr(init_expr));
 
                     // A fixed array coerces to a slice of the same element type.
-                    let is_array_to_slice = self.language_version == LanguageVersion::V2
-                        && Self::is_array_to_slice_coercion(
-                            &self.context.get_type_name(&ir_ty),
-                            &init_ty,
-                        );
+                    let is_array_to_slice = Self::is_array_to_slice_coercion(
+                        &self.context.get_type_name(&ir_ty),
+                        &init_ty,
+                    );
 
                     if resolved_decl_ty != resolved_init_ty
                         && !is_literal_widening_allowed
@@ -416,12 +399,12 @@ impl SemanticAnalyzer {
                             return Err(());
                         }
                         // The loop variable takes the start endpoint's type.
-                        self.parse_type_string(&start_ty)
+                        Self::parse_type_string(&start_ty)
                     }
                     crate::ast::ForIter::Each(seq) => {
                         let seq_ty = self.infer_expression_type(seq)?;
                         let elem_ty = self.infer_index_element_type(&seq_ty)?;
-                        self.parse_type_string(&elem_ty)
+                        Self::parse_type_string(&elem_ty)
                     }
                 };
 
@@ -430,10 +413,6 @@ impl SemanticAnalyzer {
                     .insert(var.clone(), var_ty, crate::ir::IrValue::Null);
                 self.check_block(body)?;
                 self.symbols.exit_scope();
-                Ok(())
-            }
-            Statement::Defer(expr) => {
-                let _ = self.infer_expression_type(expr)?;
                 Ok(())
             }
             Statement::AsmBlock { lines } => {
@@ -449,7 +428,6 @@ impl SemanticAnalyzer {
                 }
                 Ok(())
             }
-            Statement::Break | Statement::Continue => Ok(()),
         }
     }
 
@@ -460,9 +438,7 @@ impl SemanticAnalyzer {
             ));
             return Err(());
         }
-        if self.language_version == LanguageVersion::V2
-            && matches!(init, Expression::Primary(PrimaryExpr::StructLiteral(_)))
-        {
+        if matches!(init, Expression::Primary(PrimaryExpr::StructLiteral(_))) {
             self.error(format!(
                 "cannot infer `{name}` from an anonymous struct literal; use `Type {{ ... }}` or add an explicit type"
             ));
@@ -485,6 +461,7 @@ impl SemanticAnalyzer {
         Ok(())
     }
 
+    #[expect(clippy::too_many_lines, reason = "cohesive per-expression dispatch")]
     fn infer_expression_type(&mut self, expr: &Expression) -> Result<String, ()> {
         match expr {
             Expression::Primary(primary) => match primary {
@@ -514,14 +491,7 @@ impl SemanticAnalyzer {
                     Literal::Float(_) => Ok("f32".to_owned()),
                     Literal::Boolean(_) => Ok("i1".to_owned()),
                     Literal::Null => Ok("*unknown".to_owned()),
-                    Literal::String(_) => {
-                        // V2 strings are `u8[]` slices; V1 keeps the record shape.
-                        if self.language_version == LanguageVersion::V2 {
-                            Ok("u8[]".to_owned())
-                        } else {
-                            Ok("{ data: u8*, length: u64 }".to_owned())
-                        }
-                    }
+                    Literal::String(_) => Ok("u8[]".to_owned()),
                 },
                 PrimaryExpr::Grouped(expr) => self.infer_expression_type(expr),
                 PrimaryExpr::New { ty, .. } => {
@@ -556,7 +526,7 @@ impl SemanticAnalyzer {
                             return Err(());
                         }
                         for arg in arguments {
-                            let _ = self.infer_expression_type(arg)?;
+                            self.infer_expression_type(arg)?;
                         }
                         return Ok(sig.enum_name);
                     }
@@ -564,17 +534,15 @@ impl SemanticAnalyzer {
                     // Type check arguments
                     let parameter_types = self.function_parameters.get(name).cloned();
                     for (index, arg) in arguments.iter().enumerate() {
-                        if self.language_version == LanguageVersion::V2 {
-                            if let (
-                                Some(expected),
-                                Expression::Primary(PrimaryExpr::StructLiteral(fields)),
-                            ) = (parameter_types.as_ref().and_then(|p| p.get(index)), arg)
-                            {
-                                self.check_contextual_struct_literal(fields, expected)?;
-                                continue;
-                            }
+                        if let (
+                            Some(expected),
+                            Expression::Primary(PrimaryExpr::StructLiteral(fields)),
+                        ) = (parameter_types.as_ref().and_then(|p| p.get(index)), arg)
+                        {
+                            self.check_contextual_struct_literal(fields, expected)?;
+                            continue;
                         }
-                        let _ = self.infer_expression_type(arg)?;
+                        self.infer_expression_type(arg)?;
                     }
 
                     // Check if this is a type cast (e.g., u64(...), i32(...), etc.)
@@ -603,7 +571,7 @@ impl SemanticAnalyzer {
                         Ok(return_ty.clone())
                     } else {
                         // Unknown function, return unknown
-                        log::warn!("Unknown function/type cast: {}", name);
+                        log::warn!("Unknown function/type cast: {name}");
                         Ok("unknown".to_owned())
                     }
                 }
@@ -640,7 +608,7 @@ impl SemanticAnalyzer {
                     self.infer_field_access_type(&base_ty, field)
                 }
                 PrimaryExpr::ArrayIndex { expr, index } => {
-                    let _ = self.infer_expression_type(index)?;
+                    self.infer_expression_type(index)?;
                     let base_ty = match expr.as_ref() {
                         Expression::Unary {
                             op: UnaryOp::Dereference,
@@ -658,7 +626,7 @@ impl SemanticAnalyzer {
                         let indexed_ty = self.infer_index_element_type(&base_ty)?;
                         Ok(indexed_ty
                             .strip_prefix('*')
-                            .map_or(indexed_ty.clone(), ToString::to_string))
+                            .map_or_else(|| indexed_ty.clone(), ToString::to_string))
                     } else {
                         self.infer_index_element_type(&base_ty)
                     }
@@ -667,10 +635,10 @@ impl SemanticAnalyzer {
                     expr, start, end, ..
                 } => {
                     if let Some(start) = start {
-                        let _ = self.infer_expression_type(start)?;
+                        self.infer_expression_type(start)?;
                     }
                     if let Some(end) = end {
-                        let _ = self.infer_expression_type(end)?;
+                        self.infer_expression_type(end)?;
                     }
                     let base_ty = self.infer_expression_type(expr)?;
                     let elem_ty = self.infer_index_element_type(&base_ty)?;
@@ -695,7 +663,7 @@ impl SemanticAnalyzer {
                             }
                             annotated_ir
                         } else {
-                            self.parse_type_string(&expr_ty)
+                            Self::parse_type_string(&expr_ty)
                         };
                         field_types.push((field.name.clone(), inferred_ir));
                     }
@@ -719,73 +687,21 @@ impl SemanticAnalyzer {
                 }
             }
             Expression::Unary { op, expr: inner } => {
-                if op == &UnaryOp::AddressOf {
-                    if self.language_version == LanguageVersion::V2 {
-                        if !self.is_place_expression(inner) {
-                            self.error(
-                                "address-of requires a place (identifier, dereference, field, or indexed element)"
-                                    .to_owned(),
-                            );
-                            return Err(());
-                        }
+                if op == &UnaryOp::AddressOf && !Self::is_place_expression(inner) {
+                    self.error(
+                        "address-of requires a place (identifier, dereference, field, or indexed element)"
+                            .to_owned(),
+                    );
+                    return Err(());
+                }
 
-                        let inner_type = self.infer_expression_type(inner)?;
-                        return match self.context.check_unary_op(op, &inner_type) {
-                            Ok(result_type) => Ok(result_type),
-                            Err(err) => {
-                                self.diagnostics
-                                    .error(format!("Type error in unary operation: {err}"));
-                                Err(())
-                            }
-                        };
-                    }
-
-                    if self.contains_dereference(inner) {
-                        self.error(
-                            "cannot take address of a dereference expression (`&@...` is invalid)"
-                                .to_owned(),
-                        );
-                        return Err(());
-                    }
-
-                    if self.stack_address_root_name(inner).is_some() {
-                        // Special case for AddressOf: we need the pointer type of the operand,
-                        // not the dereferenced value type.
-                        if let Expression::Primary(PrimaryExpr::Identifier(name)) = inner.as_ref() {
-                            if let Some(info) = self.symbols.lookup(name) {
-                                let ty_name = self.context.get_type_name(&info.ty);
-                                return Ok(format!("*{ty_name}"));
-                            }
-
-                            self.diagnostics
-                                .error(format!("Undefined identifier: {name}"));
-                            return Err(());
-                        }
-
-                        let inner_type = self.infer_expression_type(inner)?;
-                        return match self.context.check_unary_op(op, &inner_type) {
-                            Ok(result_type) => Ok(result_type),
-                            Err(err) => {
-                                self.diagnostics
-                                    .error(format!("Type error in unary operation: {err}"));
-                                Err(())
-                            }
-                        };
-                    } else {
-                        self.error(
-                            "address-of requires an assignable l-value (identifier, field access, or array element)".to_owned(),
-                        );
+                let inner_type = self.infer_expression_type(inner)?;
+                match self.context.check_unary_op(op, &inner_type) {
+                    Ok(result_type) => Ok(result_type),
+                    Err(err) => {
+                        self.diagnostics
+                            .error(format!("Type error in unary operation: {err}"));
                         Err(())
-                    }
-                } else {
-                    let inner_type = self.infer_expression_type(inner)?;
-                    match self.context.check_unary_op(op, &inner_type) {
-                        Ok(result_type) => Ok(result_type),
-                        Err(err) => {
-                            self.diagnostics
-                                .error(format!("Type error in unary operation: {err}"));
-                            Err(())
-                        }
                     }
                 }
             }
@@ -815,7 +731,7 @@ impl SemanticAnalyzer {
                         }
                     };
 
-                    // Per spec v1.4.1: all fields must have explicit type annotations
+                    // Struct destructuring requires explicit field type annotations.
                     for field in fields {
                         let Some(name) = field.name.as_ref() else {
                             self.error(
@@ -887,8 +803,8 @@ impl SemanticAnalyzer {
                 let target_name = self.context.get_type_name(&target_ir);
 
                 // Validate that the cast is legal
-                let source_ir = self.parse_type_string(&source_type);
-                if !self.is_valid_cast(&source_ir, &target_ir) {
+                let source_ir = Self::parse_type_string(&source_type);
+                if !Self::is_valid_cast(&source_ir, &target_ir) {
                     self.error(format!(
                         "Invalid cast from `{source_type}` to `{target_name}`"
                     ));
@@ -1114,65 +1030,25 @@ impl SemanticAnalyzer {
                 self.symbols.lookup(name).map(|_| name.clone())
             }
             Expression::Primary(PrimaryExpr::Grouped(inner)) => self.stack_address_root_name(inner),
-            Expression::Primary(PrimaryExpr::FieldAccess { expr, .. }) => {
-                self.stack_address_root_name(expr)
-            }
-            Expression::Primary(PrimaryExpr::ArrayIndex { expr, .. }) => {
-                self.stack_address_root_name(expr)
-            }
+            Expression::Primary(
+                PrimaryExpr::FieldAccess { expr, .. } | PrimaryExpr::ArrayIndex { expr, .. },
+            ) => self.stack_address_root_name(expr),
             _ => None,
         }
     }
 
-    fn contains_dereference(&self, expr: &Expression) -> bool {
+    fn is_place_expression(expr: &Expression) -> bool {
         match expr {
-            Expression::Unary {
-                op: UnaryOp::Dereference,
-                ..
-            } => true,
-            Expression::Unary { expr, .. } => self.contains_dereference(expr),
-            Expression::Binary { left, right, .. } => {
-                self.contains_dereference(left) || self.contains_dereference(right)
-            }
-            Expression::Primary(PrimaryExpr::Grouped(inner)) => self.contains_dereference(inner),
-            Expression::Primary(PrimaryExpr::FieldAccess { expr, .. }) => {
-                self.contains_dereference(expr)
-            }
-            Expression::Primary(PrimaryExpr::ArrayIndex { expr, index }) => {
-                self.contains_dereference(expr) || self.contains_dereference(index)
-            }
-            Expression::Primary(PrimaryExpr::Slice {
-                expr, start, end, ..
-            }) => {
-                self.contains_dereference(expr)
-                    || start
-                        .as_deref()
-                        .is_some_and(|s| self.contains_dereference(s))
-                    || end.as_deref().is_some_and(|e| self.contains_dereference(e))
-            }
-            Expression::Primary(PrimaryExpr::FunctionCall { arguments, .. }) => {
-                arguments.iter().any(|arg| self.contains_dereference(arg))
-            }
-            Expression::Primary(PrimaryExpr::StructLiteral(fields)) => fields
-                .iter()
-                .any(|field| self.contains_dereference(&field.expr)),
-            Expression::Primary(PrimaryExpr::NamedStructLiteral { fields, .. }) => fields
-                .iter()
-                .any(|field| self.contains_dereference(&field.expr)),
-            _ => false,
-        }
-    }
-
-    fn is_place_expression(&self, expr: &Expression) -> bool {
-        match expr {
-            Expression::Primary(PrimaryExpr::Identifier(_))
+            Expression::Primary(
+                PrimaryExpr::Identifier(_)
+                | PrimaryExpr::FieldAccess { .. }
+                | PrimaryExpr::ArrayIndex { .. },
+            )
             | Expression::Unary {
                 op: UnaryOp::Dereference,
                 ..
-            }
-            | Expression::Primary(PrimaryExpr::FieldAccess { .. })
-            | Expression::Primary(PrimaryExpr::ArrayIndex { .. }) => true,
-            Expression::Primary(PrimaryExpr::Grouped(inner)) => self.is_place_expression(inner),
+            } => true,
+            Expression::Primary(PrimaryExpr::Grouped(inner)) => Self::is_place_expression(inner),
             _ => false,
         }
     }
@@ -1293,7 +1169,7 @@ impl SemanticAnalyzer {
         Ok(())
     }
 
-    // Check an array literal against a declared array type (V2). Bare struct
+    // Check an array literal against a declared array type. Bare struct
     // literal elements are checked contextually; other elements must match the
     // element type (with the usual scalar-literal width flexibility).
     fn check_contextual_array_literal(
@@ -1344,7 +1220,7 @@ impl SemanticAnalyzer {
 
     fn ast_type_to_ir_type_inner(&self, ty: &Type, active: &mut HashSet<String>) -> IrType {
         match ty {
-            Type::Primitive(name) => self.primitive_to_ir(name),
+            Type::Primitive(name) => Self::primitive_to_ir(name),
             Type::Pointer(inner) => {
                 IrType::Pointer(Box::new(self.ast_type_to_ir_type_inner(inner, active)))
             }
@@ -1413,16 +1289,12 @@ impl SemanticAnalyzer {
         }
     }
 
-    fn primitive_to_ir(&self, name: &str) -> IrType {
+    fn primitive_to_ir(name: &str) -> IrType {
         match name {
-            "i8" => IrType::Integer(crate::ir::IntWidth::I8),
-            "i16" => IrType::Integer(crate::ir::IntWidth::I16),
-            "i32" => IrType::Integer(crate::ir::IntWidth::I32),
-            "i64" => IrType::Integer(crate::ir::IntWidth::I64),
-            "u8" => IrType::Integer(crate::ir::IntWidth::I8),
-            "u16" => IrType::Integer(crate::ir::IntWidth::I16),
-            "u32" => IrType::Integer(crate::ir::IntWidth::I32),
-            "u64" => IrType::Integer(crate::ir::IntWidth::I64),
+            "i8" | "u8" => IrType::Integer(crate::ir::IntWidth::I8),
+            "i16" | "u16" => IrType::Integer(crate::ir::IntWidth::I16),
+            "i32" | "u32" => IrType::Integer(crate::ir::IntWidth::I32),
+            "i64" | "u64" => IrType::Integer(crate::ir::IntWidth::I64),
             "f32" => IrType::Float(crate::ir::FloatWidth::F32),
             "f64" => IrType::Float(crate::ir::FloatWidth::F64),
             "bool" => IrType::Integer(crate::ir::IntWidth::I1),
@@ -1431,7 +1303,7 @@ impl SemanticAnalyzer {
     }
 
     /// Parse an aggregate type string like `{ a: i32, b: i32 }` into field names and types.
-    fn parse_aggregate_type(&self, type_str: &str) -> Result<Vec<(Option<String>, String)>, ()> {
+    fn parse_aggregate_type(type_str: &str) -> Result<Vec<(Option<String>, String)>, ()> {
         let trimmed = type_str.trim();
         let (inner, named) = if trimmed.starts_with('{') && trimmed.ends_with('}') {
             (&trimmed[1..trimmed.len() - 1], true)
@@ -1496,7 +1368,7 @@ impl SemanticAnalyzer {
 
         let resolved = self.resolve_type_string(base_type);
 
-        let (fields, through_pointer) = match resolved {
+        let (fields, _through_pointer) = match resolved {
             IrType::Aggregate(fields) => (fields, false),
             IrType::Pointer(inner) => {
                 if let IrType::Aggregate(fields) = *inner {
@@ -1516,11 +1388,7 @@ impl SemanticAnalyzer {
 
         if let Some((_, field_ty)) = fields.iter().find(|(name, _)| name == field) {
             let field_type_name = self.context.get_type_name(field_ty);
-            if through_pointer && self.language_version == LanguageVersion::V1 {
-                Ok(format!("*{field_type_name}"))
-            } else {
-                Ok(field_type_name)
-            }
+            Ok(field_type_name)
         } else {
             self.diagnostics
                 .error(format!("unknown field `{field}` for type `{base_type}`"));
@@ -1540,27 +1408,14 @@ impl SemanticAnalyzer {
         // Handle pointer-to-array: *T[N] -> *T
         if let Some(inner) = base_type.strip_prefix('*') {
             if let Some((element, _len)) = inner.split_once('[') {
-                return Ok(if self.language_version == LanguageVersion::V2 {
-                    element.to_owned()
-                } else {
-                    format!("*{element}")
-                });
+                return Ok(element.to_owned());
             }
-            // Pointer to non-array: *T -> *T (indexing through pointer returns pointer to element)
-            return Ok(if self.language_version == LanguageVersion::V2 {
-                inner.to_owned()
-            } else {
-                format!("*{inner}")
-            });
+            return Ok(inner.to_owned());
         }
 
-        // Handle direct array: T[N] -> *T (stack arrays follow the same pointer-element rule)
+        // Handle direct array: T[N] -> T.
         if let Some((element, _rest)) = base_type.split_once('[') {
-            return Ok(if self.language_version == LanguageVersion::V2 {
-                element.to_owned()
-            } else {
-                format!("*{element}")
-            });
+            return Ok(element.to_owned());
         }
 
         // Resolve named types and check the underlying structure
@@ -1575,19 +1430,11 @@ impl SemanticAnalyzer {
                     ));
                     return Ok("*unknown".to_owned());
                 }
-                Ok(if self.language_version == LanguageVersion::V2 {
-                    inner_name
-                } else {
-                    format!("*{inner_name}")
-                })
+                Ok(inner_name)
             }
             IrType::Array { element, .. } => {
                 let element_name = self.context.get_type_name(element);
-                Ok(if self.language_version == LanguageVersion::V2 {
-                    element_name
-                } else {
-                    format!("*{element_name}")
-                })
+                Ok(element_name)
             }
             IrType::Named(name) if name == "unknown" => {
                 self.diagnostics.warn(format!(
@@ -1624,7 +1471,7 @@ impl SemanticAnalyzer {
                     }
                 } else {
                     // New variable - register it
-                    let ir_ty = self.parse_type_string(ty);
+                    let ir_ty = Self::parse_type_string(ty);
                     self.symbols
                         .insert(name.clone(), ir_ty, crate::ir::IrValue::Null);
                 }
@@ -1652,14 +1499,9 @@ impl SemanticAnalyzer {
         match target {
             AssignTarget::Identifier(name) => {
                 if self.symbols.lookup(name).is_none() {
-                    if self.language_version == LanguageVersion::V2 {
-                        self.error(format!(
-                            "assignment target `{name}` is not declared; use `{name} := ...` to create a binding"
-                        ));
-                    } else {
-                        self.diagnostics
-                            .error(format!("Undefined identifier: {name}"));
-                    }
+                    self.error(format!(
+                        "assignment target `{name}` is not declared; use `{name} := ...` to create a binding"
+                    ));
                     return Err(());
                 }
                 Ok(())
@@ -1668,7 +1510,7 @@ impl SemanticAnalyzer {
             AssignTarget::FieldAccess { expr, field: _ } => self.check_assign_target(expr),
             AssignTarget::ArrayIndex { expr, index } => {
                 self.check_assign_target(expr)?;
-                let _ = self.infer_expression_type(index)?;
+                self.infer_expression_type(index)?;
                 Ok(())
             }
             AssignTarget::StructDestructure(_) => {
@@ -1680,49 +1522,45 @@ impl SemanticAnalyzer {
     }
 
     /// Parse a type string back into an `IrType`
-    fn parse_type_string(&self, ty_str: &str) -> IrType {
+    fn parse_type_string(ty_str: &str) -> IrType {
         let trimmed = ty_str.trim();
-        if trimmed.starts_with('{') && trimmed.ends_with('}') {
-            if let Ok(fields) = self.parse_aggregate_type(trimmed) {
-                return IrType::Aggregate(
-                    fields
-                        .into_iter()
-                        .map(|(name, field_ty)| {
-                            (name.unwrap_or_default(), self.parse_type_string(&field_ty))
-                        })
-                        .collect(),
-                );
-            }
+        if trimmed.starts_with('{')
+            && trimmed.ends_with('}')
+            && let Ok(fields) = Self::parse_aggregate_type(trimmed)
+        {
+            return IrType::Aggregate(
+                fields
+                    .into_iter()
+                    .map(|(name, field_ty)| {
+                        (name.unwrap_or_default(), Self::parse_type_string(&field_ty))
+                    })
+                    .collect(),
+            );
         }
 
-        if let Some(elem) = trimmed.strip_suffix("[]") {
-            if !elem.is_empty() {
-                return IrType::Slice(Box::new(self.parse_type_string(elem)));
-            }
+        if let Some(elem) = trimmed.strip_suffix("[]")
+            && !elem.is_empty()
+        {
+            return IrType::Slice(Box::new(Self::parse_type_string(elem)));
         }
 
-        if let Some(inner) = trimmed.strip_suffix('*') {
-            if !inner.is_empty() {
-                return IrType::Pointer(Box::new(self.parse_type_string(inner)));
-            }
+        if let Some(inner) = trimmed.strip_suffix('*')
+            && !inner.is_empty()
+        {
+            return IrType::Pointer(Box::new(Self::parse_type_string(inner)));
         }
 
         match trimmed {
-            "i1" => IrType::Integer(crate::ir::IntWidth::I1),
-            "i8" => IrType::Integer(crate::ir::IntWidth::I8),
-            "i16" => IrType::Integer(crate::ir::IntWidth::I16),
-            "i32" => IrType::Integer(crate::ir::IntWidth::I32),
-            "i64" => IrType::Integer(crate::ir::IntWidth::I64),
-            "u8" => IrType::Integer(crate::ir::IntWidth::I8),
-            "u16" => IrType::Integer(crate::ir::IntWidth::I16),
-            "u32" => IrType::Integer(crate::ir::IntWidth::I32),
-            "u64" => IrType::Integer(crate::ir::IntWidth::I64),
+            "i1" | "bool" => IrType::Integer(crate::ir::IntWidth::I1),
+            "i8" | "u8" => IrType::Integer(crate::ir::IntWidth::I8),
+            "i16" | "u16" => IrType::Integer(crate::ir::IntWidth::I16),
+            "i32" | "u32" => IrType::Integer(crate::ir::IntWidth::I32),
+            "i64" | "u64" => IrType::Integer(crate::ir::IntWidth::I64),
             "f32" => IrType::Float(crate::ir::FloatWidth::F32),
             "f64" => IrType::Float(crate::ir::FloatWidth::F64),
-            "bool" => IrType::Integer(crate::ir::IntWidth::I1),
             other => {
                 if let Some(inner) = other.strip_prefix('*') {
-                    IrType::Pointer(Box::new(self.parse_type_string(inner)))
+                    IrType::Pointer(Box::new(Self::parse_type_string(inner)))
                 } else {
                     IrType::Named(other.to_owned())
                 }
@@ -1743,10 +1581,10 @@ impl SemanticAnalyzer {
                 .or_else(|| {
                     // Generic instantiation `Base<...>`: the semantic context
                     // registers only the base definition, so fall back to it.
-                    // Type arguments are not yet substituted here (V1-loose
+                    // Type arguments are not yet substituted here (permissive
                     // generics); monomorphization happens during lowering.
-                    name.split_once('<')
-                        .and_then(|(base, _)| self.context.resolve(base).cloned())
+                    let (base, _) = name.split_once('<')?;
+                    self.context.resolve(base).cloned()
                 })
                 .map(|resolved| {
                     if !seen.insert(name.clone()) {
@@ -1781,11 +1619,11 @@ impl SemanticAnalyzer {
     }
 
     fn resolve_type_string(&self, ty_str: &str) -> IrType {
-        self.resolve_named_ir_type(&self.parse_type_string(ty_str))
+        self.resolve_named_ir_type(&Self::parse_type_string(ty_str))
     }
 
     /// Check if a cast from source to target type is valid
-    fn is_valid_cast(&self, source: &IrType, target: &IrType) -> bool {
+    fn is_valid_cast(source: &IrType, target: &IrType) -> bool {
         // Allow casts between numeric types (integers and floats)
         let source_is_numeric = matches!(source, IrType::Integer(_) | IrType::Float(_));
         let target_is_numeric = matches!(target, IrType::Integer(_) | IrType::Float(_));

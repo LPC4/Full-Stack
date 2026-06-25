@@ -1,21 +1,67 @@
-; Core warmup: constants, a helper function, and one simple branch.
-const BASE = 12
-const OFFSET = 30
+; Core language basics: typed and inferred declarations, reassignment, const
+; with compile-time evaluation, value/void functions, if/else, while, break, continue.
 
-bump: (value: i32) -> i32 {
-    return value + 1
+external println: (s: u8[]) -> i32
+external print_int: (value: i64) -> i32
+
+; A pure function the compiler can fold into a const at compile time.
+square: (n: i32) -> i32 {
+    return n * n
+}
+
+const SIDE = 8
+const AREA = square(SIDE)   ; folded to 64 before runtime
+
+; Void function: no `->`. It mutates caller storage through a pointer parameter.
+bump: (slot: i32*) {
+    @slot = @slot + 1
+    return
+}
+
+; Sum the odd numbers, skipping evens and stopping early once the total exceeds 25.
+sum_odds_capped: (limit: i32) -> i32 {
+    total: i32 = 0
+    i: i32 = 0
+    while i < limit {
+        i = i + 1
+        if i % 2 == 0 {
+            continue
+        }
+        if total + i > 25 {
+            break
+        }
+        total = total + i
+    }
+    return total
 }
 
 main: () -> i32 {
-    start: i32 = bump(BASE)
-    total: i32 = start + OFFSET
+    println("-- core basics --")
 
-    if total != 43 {
+    count: i32 = 10        ; explicit declaration
+    doubled := count * 2   ; inferred i32
+    count = count + 5      ; reassignment of an existing binding
+    print_int(doubled)
+    print_int(count)
+
+    print_int(AREA)        ; 64, computed at compile time
+    if AREA != 64 {
         return 1
     }
 
-    ; Exit 0 on success by subtracting the expected total.
-    return total - 43
+    score: i32 = 0
+    bump(&score)
+    bump(&score)
+    if score != 2 {
+        return 2
+    }
+
+    odds := sum_odds_capped(20)   ; 1 + 3 + 5 + 7 + 9 = 25
+    print_int(odds)
+    if odds != 25 {
+        return 3
+    }
+
+    println("ok")
+    return 0
 }
-
-

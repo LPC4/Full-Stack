@@ -1,4 +1,3 @@
-; @version 2
 ; Inode-based read-write filesystem. See _OS_SPECIFICATION.md for on-disk layout.
 
 ; --- Layout constants ---

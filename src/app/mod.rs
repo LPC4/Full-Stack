@@ -21,9 +21,7 @@ use full_stack::view::{
     PipelineView, ProgramCatalog, ProgramFile, SourceView, StackView, TokensView, UiTheme,
     VmExecutionView, apply_ui_theme,
 };
-use hll_to_ir::stdlib::{
-    get_kernel_stdlib_source, get_stdlib_source_for_mode, get_stdlib_type_prelude,
-};
+use hll_to_ir::stdlib::get_stdlib_type_prelude;
 use std::collections::HashMap;
 use std::fmt;
 use virtual_machine::cpu::StepOutcome;
@@ -260,8 +258,6 @@ pub struct FullStackApp {
     #[serde(skip)]
     step_n_input: String,
     #[serde(skip)]
-    stdlib_tokens: Vec<RvInstruction>,
-    #[serde(skip)]
     stdlib_asm: String,
     #[serde(skip)]
     stdlib_objects: Vec<(String, AssembledOutput)>,
@@ -313,7 +309,6 @@ impl Default for FullStackApp {
             next_view_id: 0,
             mode: AppMode::Ide,
             step_n_input: "1".to_owned(),
-            stdlib_tokens: Vec::new(),
             stdlib_asm: String::new(),
             stdlib_objects: Vec::new(),
             target_mode: TargetMode::Hosted,
@@ -352,50 +347,44 @@ impl FullStackApp {
 
     fn init_stdlib_cache(&mut self) {
         let mode = self.pipeline.target_mode();
-        self.stdlib_tokens.clear();
+        self.stdlib_objects.clear();
         self.stdlib_asm.clear();
 
-        // Compile each stdlib HLL independently so we get per-module artifacts with no concatenation.
+        // Compile each stdlib HLL independently (no concatenation): one object per
+        // module to link with user programs, plus its IR for the disassembly view.
         let modules = hll_to_ir::stdlib::get_stdlib_modules_for_mode(mode);
         let mut std_pipeline = CompilationPipeline::new();
         std_pipeline.set_target_mode(mode);
+        std_pipeline.set_write_artifacts(false);
         std_pipeline.set_type_prelude(get_stdlib_type_prelude());
         if mode == TargetMode::Kernel {
             std_pipeline.set_string_prefix(Some("__kern_str_".to_owned()));
         }
 
-        match std_pipeline
-            .compile_modules(&modules.iter().map(|(n, s)| (*n, *s)).collect::<Vec<_>>())
-        {
-            Ok(objs) => {
-                self.stdlib_objects = modules
-                    .iter()
-                    .map(|(n, _)| n.to_string())
-                    .zip(objs.into_iter())
-                    .collect();
-            }
-            Err(e) => {
-                log::error!("stdlib multi-module compilation failed: {e:?}");
-                self.stdlib_objects.clear();
-            }
-        }
-
-        // Also compile the concatenated stdlib source for the token-level run_full() path used by hosted programs.
-        let full_source = get_stdlib_source_for_mode(mode);
-        std_pipeline.set_artifact_stem(Some("stdlib_concat".to_owned()));
-        match std_pipeline.compile(&full_source) {
-            Ok(result) => {
-                let (_, tokens) =
-                    std_pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program);
-                self.stdlib_tokens = tokens;
-                self.stdlib_asm = result.ir_program.to_string();
-            }
-            Err(e) => {
-                log::error!("stdlib concatenated compile failed: {e:?}");
-                self.stdlib_tokens.clear();
-                self.stdlib_asm.clear();
+        let mut objects = Vec::with_capacity(modules.len());
+        for (name, source) in &modules {
+            std_pipeline.set_artifact_stem(Some((*name).to_owned()));
+            let compiled = match std_pipeline.compile(source) {
+                Ok(c) => c,
+                Err(e) => {
+                    log::error!("stdlib module `{name}` compile failed: {e:?}");
+                    self.stdlib_asm.clear();
+                    return;
+                }
+            };
+            let (_, tokens) = std_pipeline.compile_ir_to_assembly_with_tokens(&compiled.ir_program);
+            self.stdlib_asm.push_str(&compiled.ir_program.to_string());
+            self.stdlib_asm.push('\n');
+            match std_pipeline.assemble_named(name, &tokens) {
+                Ok(obj) => objects.push(((*name).to_owned(), obj)),
+                Err(e) => {
+                    log::error!("stdlib module `{name}` assemble failed: {}", e.message);
+                    self.stdlib_asm.clear();
+                    return;
+                }
             }
         }
+        self.stdlib_objects = objects;
     }
 
     fn view<T: CompilerView + Default + 'static>(&mut self) -> ViewWrapper {
@@ -732,22 +721,24 @@ impl FullStackApp {
             return;
         }
 
-        let stdlib_tokens = if is_stdlib {
-            None
+        // Stdlib objects (compiled per-module, no concatenation) link with the
+        // user program; an stdlib build links nothing extra.
+        let stdlib_objects: Vec<(&str, &AssembledOutput)> = if is_stdlib {
+            Vec::new()
         } else {
-            Some(self.stdlib_tokens.as_slice())
+            self.stdlib_objects
+                .iter()
+                .map(|(n, o)| (n.as_str(), o))
+                .collect()
         };
         // Split tools (cc/as) share record layouts via a header prepended to every
         // unit; apply it to the primary compile and (below) the aux compiles.
         let layout = self.catalog.layout_of(&build.id).to_owned();
         self.pipeline.set_source_prelude(layout.clone());
-        let mut result = self.pipeline.run_full(&user_source, stdlib_tokens);
+        let mut result = self.pipeline.run_full(&user_source, &stdlib_objects);
 
-        // A split catalog program carries aux translation units that run_full does
-        // not see (it only built the primary object). Re-link the primary with the
-        // aux objects so cross-module references resolve.
-        // Pull aux sources from the catalog (not the embedded const) so edits to
-        // the aux translation units take effect on compile.
+        // Re-link with the aux objects so cross-module references resolve. Aux
+        // sources come from the catalog so editor edits take effect on compile.
         let aux_sources: Vec<String> = self.catalog.child_sources(&build.id);
         if !aux_sources.is_empty()
             && !result.has_errors()
@@ -755,9 +746,8 @@ impl FullStackApp {
         {
             match self.link_hosted_aux(
                 &self.pipeline,
-                self.target_mode,
                 &tokens,
-                stdlib_tokens,
+                &stdlib_objects,
                 &aux_sources,
                 &layout,
             ) {
@@ -809,20 +799,17 @@ impl FullStackApp {
         }
     }
 
-    /// Re-link a hosted program's primary object with its aux translation units.
-    /// Mirrors `run_full`'s link (stdlib first, then the primary) but adds the aux
-    /// objects, each compiled with a distinct string prefix to avoid rodata clashes.
-    /// `pipeline` supplies the link layout/entry; `stdlib_tokens` is `None` when the
-    /// stdlib is already concatenated into the primary module.
+    /// Re-link a primary object with the stdlib objects and the program's aux units
+    /// (each given a distinct string prefix). `pipeline` supplies layout/entry/mode.
     fn link_hosted_aux(
         &self,
         pipeline: &CompilationPipeline,
-        target: TargetMode,
         user_tokens: &[RvInstruction],
-        stdlib_tokens: Option<&[RvInstruction]>,
+        stdlib_objects: &[(&str, &AssembledOutput)],
         aux_sources: &[String],
         layout: &str,
     ) -> Result<AssembledOutput, String> {
+        let target = pipeline.target_mode();
         let user_obj = pipeline
             .assemble_named("user", user_tokens)
             .map_err(|e| format!("assembler error: {}", e.message))?;
@@ -845,20 +832,8 @@ impl FullStackApp {
             );
         }
 
-        let stdlib_obj = match stdlib_tokens {
-            Some(t) => Some(
-                pipeline
-                    .assemble_named("stdlib", t)
-                    .map_err(|e| format!("assembler error: {}", e.message))?,
-            ),
-            None => None,
-        };
-
         let aux_names: Vec<String> = (0..aux_objs.len()).map(|i| format!("aux{i}")).collect();
-        let mut modules: Vec<(&str, &AssembledOutput)> = Vec::new();
-        if let Some(s) = stdlib_obj.as_ref() {
-            modules.push(("stdlib", s));
-        }
+        let mut modules: Vec<(&str, &AssembledOutput)> = stdlib_objects.to_vec();
         modules.push(("user", &user_obj));
         for (n, o) in aux_names.iter().zip(aux_objs.iter()) {
             modules.push((n.as_str(), o));
@@ -892,27 +867,27 @@ impl FullStackApp {
             None => return Err(format!("program id not found: {build_id}")),
         };
 
-        // Build pipeline and compile concatenated stdlib + program source.
+        // Compile against per-module stdlib objects (no source concatenation).
         // Split tools (cc/as) prepend a shared record-layout header to every unit.
         let layout = program.layout.clone();
+        let program_source = program.source.clone();
         let mut user_pipeline = CompilationPipeline::new();
         user_pipeline.set_target_mode(TargetMode::Hosted);
         user_pipeline.set_write_artifacts(false);
         user_pipeline.set_type_prelude(get_stdlib_type_prelude());
         user_pipeline.set_source_prelude(layout.clone());
 
-        let user_source = format!(
-            "{}\n{}",
-            get_stdlib_source_for_mode(TargetMode::Hosted),
-            program.source
-        );
-        let result = match user_pipeline.run_full(&user_source, None) {
+        let stdlib_owned = CompilationPipeline::compile_stdlib_objects(TargetMode::Hosted)
+            .map_err(|e| format!("stdlib compile error: {e}"))?;
+        let stdlib_objects: Vec<(&str, &AssembledOutput)> =
+            stdlib_owned.iter().map(|(n, o)| (n.as_str(), o)).collect();
+        let result = match user_pipeline.run_full(&program_source, &stdlib_objects) {
             r if r.has_errors() => return Err(r.format_diagnostics()),
             r => r,
         };
 
         // Split programs (aux translation units) need the aux objects linked in;
-        // run_full only built the primary (stdlib already concatenated into it).
+        // run_full only built the primary against the stdlib objects.
         let aux_sources: Vec<String> = self.catalog.child_sources(&build_id);
         if !aux_sources.is_empty() {
             let tokens = result
@@ -922,9 +897,8 @@ impl FullStackApp {
                 .ok_or_else(|| "no assembly produced".to_owned())?;
             let assembled = self.link_hosted_aux(
                 &user_pipeline,
-                TargetMode::Hosted,
                 &tokens,
-                None,
+                &stdlib_objects,
                 &aux_sources,
                 &layout,
             )?;
@@ -952,21 +926,11 @@ impl FullStackApp {
             return Ok(());
         }
 
-        // Kernel stdlib: single concatenated source with the kernel string prefix.
-        let mut stdlib_pipeline = CompilationPipeline::new();
-        stdlib_pipeline.set_target_mode(TargetMode::Kernel);
-        stdlib_pipeline.set_write_artifacts(false);
-        stdlib_pipeline.set_string_prefix(Some("__kern_str_".to_owned()));
-        let stdlib = stdlib_pipeline
-            .compile(&get_kernel_stdlib_source())
+        // Kernel stdlib: each module compiled to its own object (no concatenation).
+        let stdlib_objs = CompilationPipeline::compile_stdlib_objects(TargetMode::Kernel)
             .map_err(|e| format!("kernel stdlib compile error: {e}"))?;
-        let (_, stdlib_tokens) =
-            stdlib_pipeline.compile_ir_to_assembly_with_tokens(&stdlib.ir_program);
-        let stdlib_obj = stdlib_pipeline
-            .assemble(&stdlib_tokens)
-            .map_err(|e| format!("kernel stdlib assemble error: {e}"))?;
 
-        // Kernel module, linked against the stdlib object at S-mode entry.
+        // Kernel module, linked against the stdlib objects at S-mode entry.
         let mut kernel_pipeline = CompilationPipeline::new();
         kernel_pipeline.set_target_mode(TargetMode::Kernel);
         kernel_pipeline.set_write_artifacts(false);
@@ -975,14 +939,16 @@ impl FullStackApp {
             .compile_modules(&[("my_kernel", os_runtime::kernel::MY_KERNEL)])
             .map_err(|e| format!("kernel module compile error: {e}"))?;
 
+        let mut modules: Vec<(&str, &AssembledOutput)> =
+            stdlib_objs.iter().map(|(n, o)| (n.as_str(), o)).collect();
+        modules.push(("my_kernel", &kernel_objs[0]));
+        let stem: String = modules
+            .iter()
+            .map(|(n, _)| *n)
+            .collect::<Vec<_>>()
+            .join("_");
         let assembled = kernel_pipeline
-            .link_assembled_objects_named(
-                "kernel_stdlib_my_kernel",
-                &[
-                    ("kernel_stdlib", &stdlib_obj),
-                    ("my_kernel", &kernel_objs[0]),
-                ],
-            )
+            .link_assembled_objects_named(&stem, &modules)
             .map_err(|e| format!("kernel link error: {}", e.message))?;
         self.kernel_binary = Some(assembled);
         Ok(())
@@ -1004,34 +970,12 @@ impl FullStackApp {
         pipeline.set_type_prelude(get_stdlib_type_prelude());
         pipeline.set_source_prelude(prog.layout);
 
-        // The primary translation unit carries the stdlib (concatenated). For a
-        // single-file program this is the whole build; run_full compiles and links
-        // it in one shot.
-        let main_src = format!(
-            "{}\n{}",
-            get_stdlib_source_for_mode(TargetMode::Hosted),
-            prog.source
-        );
-        if prog.aux_sources.is_empty() {
-            let result = pipeline.run_full(&main_src, None);
-            if result.has_errors() {
-                return Err(result.format_diagnostics());
-            }
-            if let Some(ref asm_err) = result.assembler_error {
-                return Err(format!("assembler error: {asm_err}"));
-            }
-            let bin = result
-                .binary
-                .ok_or_else(|| format!("{name} produced no binary"))?;
-            self.user_binaries.insert(name, bin.assembled);
-            return Ok(());
-        }
-
-        // Separate compilation: compile the primary unit and each aux
-        // unit to its own object, then link them. Each aux gets a distinct string
-        // prefix so their rodata labels do not collide with the primary unit's.
+        // Separate compilation: stdlib, primary, and aux units each compile to their
+        // own object and link together (no source concatenation; distinct prefixes).
+        let stdlib_objs = CompilationPipeline::compile_stdlib_objects(TargetMode::Hosted)
+            .map_err(|e| format!("{name} stdlib compile error: {e}"))?;
         let main = pipeline
-            .compile(&main_src)
+            .compile(prog.source)
             .map_err(|e| format!("{name} compile error: {e}"))?;
         let (_, main_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&main.ir_program);
         let main_obj = pipeline
@@ -1060,7 +1004,9 @@ impl FullStackApp {
         let aux_names: Vec<String> = (0..aux_objs.len())
             .map(|i| format!("{name}_aux{i}"))
             .collect();
-        let mut modules: Vec<(&str, &AssembledOutput)> = vec![(name, &main_obj)];
+        let mut modules: Vec<(&str, &AssembledOutput)> =
+            stdlib_objs.iter().map(|(n, o)| (n.as_str(), o)).collect();
+        modules.push((name, &main_obj));
         for (n, o) in aux_names.iter().zip(aux_objs.iter()) {
             modules.push((n.as_str(), o));
         }

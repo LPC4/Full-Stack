@@ -1,4 +1,3 @@
-; @version 2
 
 ; In-VM static linker: `ld <a.o> <b.o> ... <out>` -> ET_EXEC. Merges .text/.data,
 ; resolves globals, applies relocations, emits a PT_LOAD exec. See OS spec / object_linker.rs.

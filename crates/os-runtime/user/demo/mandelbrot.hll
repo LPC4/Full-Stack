@@ -1,4 +1,3 @@
-; @version 2
 ; Framebuffer demo: map_fb, render the Mandelbrot set (square pixels), exit.
 ; See OS spec ch.10.4.
 

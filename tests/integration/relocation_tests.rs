@@ -4,7 +4,7 @@ use asm_to_binary::rv_instruction::RvInstruction;
 use asm_to_binary::pseudo::PseudoInstruction;
 use asm_to_binary::real::RealInstruction;
 use asm_to_binary::riscv::rv64i::{Addi, Jalr};
-#[allow(unused_imports)]
+#[expect(unused_imports, reason = "kept with the relocation fixture imports for readability")]
 use asm_to_binary::AssembledOutput;
 
 #[test]

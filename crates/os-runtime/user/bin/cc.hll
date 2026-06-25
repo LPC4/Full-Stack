@@ -1,4 +1,3 @@
-; @version 2
 
 ; In-VM HLL-0 compiler: `cc <src.hll> <out.s>` -> naive stack-machine RISC-V for
 ; `/bin/as`. HLL-0 subset and codegen model: lang spec Appendix D, OS spec 10.4.

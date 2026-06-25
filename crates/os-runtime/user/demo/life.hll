@@ -1,4 +1,3 @@
-; @version 2
 ; Conway's Game of Life: a 40x30 toroidal grid rendered to the framebuffer.
 ; B3/S23 rules, double-buffered, with P/R/space keyboard control. See OS spec ch.10.5.
 

@@ -329,7 +329,7 @@ impl<'a> Lexer<'a> {
                             '\\' => b'\\',
                             '\'' => b'\'',
                             '"' => b'"',
-                            _ => return Token::Error(format!("unknown char escape: \\{}", e)),
+                            _ => return Token::Error(format!("unknown char escape: \\{e}")),
                         }
                     }
                     None => return Token::Error("unterminated char literal".to_owned()),
@@ -342,7 +342,7 @@ impl<'a> Lexer<'a> {
             }
             Some(c) => {
                 self.pos += c.len_utf8();
-                return Token::Error(format!("non-ascii char literal: {}", c));
+                return Token::Error(format!("non-ascii char literal: {c}"));
             }
             None => return Token::Error("unterminated char literal".to_owned()),
         };
@@ -574,7 +574,7 @@ mod tests {
     }
 
     #[test]
-    fn test_new_keywords_v150() {
+    fn test_new_keywords() {
         let input = "as import export";
         let mut lexer = Lexer::new(input);
         assert_eq!(lexer.next_token(), Token::As);

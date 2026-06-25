@@ -386,7 +386,10 @@ pub fn highlight_assembly(theme: &egui::Style, code: &str) -> LayoutJob {
 
             // Fallthrough: consume one Unicode code point so multi-byte chars
             // (e.g. em-dash in string literals) never cause a byte-boundary panic.
-            let c = line[start..].chars().next().unwrap();
+            let c = line[start..]
+                .chars()
+                .next()
+                .expect("start is within the non-empty source line");
             let char_len = c.len_utf8();
             job.append(
                 &line[start..start + char_len],

@@ -1,4 +1,3 @@
-; @version 2
 external malloc: (size: u64) -> u8*
 
 str_len: (text: u8[]) -> u64 {
