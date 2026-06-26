@@ -76,6 +76,16 @@ impl HighLevelCompiler {
                 .cloned()
                 .unwrap_or_else(|| IrType::Named(name.clone())),
             IrType::Pointer(inner) => IrType::Pointer(Box::new(self.resolve_named_type(inner))),
+            IrType::FunctionPointer {
+                params,
+                return_type,
+            } => IrType::FunctionPointer {
+                params: params
+                    .iter()
+                    .map(|ty| self.resolve_named_type(ty))
+                    .collect(),
+                return_type: Box::new(self.resolve_named_type(return_type)),
+            },
             IrType::Array { len, element } => IrType::Array {
                 len: *len,
                 element: Box::new(self.resolve_named_type(element)),
@@ -108,6 +118,7 @@ impl HighLevelCompiler {
                 FloatWidth::F64 => 8,
             },
             IrType::Pointer(_) => 8,
+            IrType::FunctionPointer { .. } => 8,
             // Fat pointer: { ptr: 8, len: 8 }.
             IrType::Slice(_) => 16,
             IrType::Array { len, element } => len * self.type_size_in_bytes(element),
@@ -141,7 +152,10 @@ impl HighLevelCompiler {
                 FloatWidth::F32 => 4,
                 FloatWidth::F64 => 8,
             },
-            IrType::Pointer(_) | IrType::Named(_) | IrType::Slice(_) => 8,
+            IrType::Pointer(_)
+            | IrType::FunctionPointer { .. }
+            | IrType::Named(_)
+            | IrType::Slice(_) => 8,
             IrType::Array { element, .. } => self.type_alignment_in_bytes(element),
             IrType::Aggregate(fields) => fields
                 .iter()

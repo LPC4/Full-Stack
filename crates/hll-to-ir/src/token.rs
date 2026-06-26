@@ -72,6 +72,7 @@ pub enum Token<'a> {
     True,
     False,
     Null,
+    Fn,
 
     // Primitive Types
     I8,

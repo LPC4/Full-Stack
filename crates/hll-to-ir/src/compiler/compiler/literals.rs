@@ -693,7 +693,7 @@ impl HighLevelCompiler {
         let value = match resolved {
             IrType::Integer(_) => IrValue::Integer(0),
             IrType::Float(_) => IrValue::Float(0.0),
-            IrType::Pointer(_) => IrValue::Null,
+            IrType::Pointer(_) | IrType::FunctionPointer { .. } => IrValue::Null,
             IrType::Aggregate(fields) => {
                 let dest = self.new_temp();
                 self.push_instruction(IrInstruction::Alloc {

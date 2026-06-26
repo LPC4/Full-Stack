@@ -968,9 +968,23 @@ impl<'a> Parser<'a> {
             let type_arguments = self.try_parse_call_type_arguments();
 
             if type_arguments.is_some() || self.match_lparen() {
+                // A non-identifier callee (field access, index, deref) is an
+                // indirect call through a function-pointer value.
                 let name = match expr {
                     Expression::Primary(PrimaryExpr::Identifier(name)) => name,
-                    _ => return Err(self.error("function calls must target an identifier")),
+                    callee => {
+                        if type_arguments.is_some() {
+                            return Err(
+                                self.error("type arguments are only valid on named function calls")
+                            );
+                        }
+                        let arguments = self.parse_argument_list_after_open_paren()?;
+                        expr = Expression::Primary(PrimaryExpr::CallExpr {
+                            callee: Box::new(callee),
+                            arguments,
+                        });
+                        continue;
+                    }
                 };
 
                 let type_arguments = type_arguments.unwrap_or_default();
@@ -1104,6 +1118,7 @@ impl<'a> Parser<'a> {
                 self.advance();
                 Ok(Type::Primitive("bool".into()))
             }
+            Some(Token::Fn) => self.parse_function_pointer_type(),
             Some(Token::Ident(_)) => {
                 let name = self.expect_ident()?;
                 let args = if self.match_lt() {
@@ -1162,6 +1177,44 @@ impl<'a> Parser<'a> {
             Some(tok) => Err(self.error_with_token("expected type", tok)),
             None => Err(self.error("unexpected end of input while parsing type")),
         }
+    }
+
+    fn parse_function_pointer_type(&mut self) -> Result<Type, ParserError> {
+        self.advance();
+        self.expect_lparen()?;
+        let mut params = Vec::new();
+        self.consume_terminators();
+        if !self.check_rparen() {
+            loop {
+                params.push(self.parse_type()?);
+                self.consume_terminators();
+                if self.match_comma() {
+                    self.consume_terminators();
+                    if self.check_rparen() {
+                        break;
+                    }
+                    continue;
+                }
+                break;
+            }
+        }
+        self.expect_rparen()?;
+
+        let return_type = if self.match_arrow() {
+            if matches!(self.peek(), Some(Token::LParen))
+                && matches!(self.peek_n(1), Some(Token::RParen))
+            {
+                return Err(self.error("void function pointer types omit `->`; use `fn(...)`"));
+            }
+            Some(Box::new(self.parse_type()?))
+        } else {
+            None
+        };
+
+        Ok(Type::Function {
+            params,
+            return_type,
+        })
     }
 
     fn parse_struct_type(&mut self) -> Result<Type, ParserError> {
@@ -2746,6 +2799,33 @@ mod tests {
         assert_eq!(
             array.parse_type().unwrap(),
             Type::Array(3, Box::new(i32_ty()))
+        );
+    }
+
+    #[test]
+    fn parses_function_pointer_type() {
+        let mut parser = Parser::new(vec![
+            Token::Fn,
+            Token::LParen,
+            Token::I32,
+            Token::Comma,
+            Token::I32,
+            Token::RParen,
+            Token::Minus,
+            Token::Gt,
+            Token::I32,
+            Token::Eof,
+        ]);
+
+        assert_eq!(
+            parser.parse_type().unwrap(),
+            Type::Function {
+                params: vec![
+                    Type::Primitive("i32".to_owned()),
+                    Type::Primitive("i32".to_owned())
+                ],
+                return_type: Some(Box::new(Type::Primitive("i32".to_owned()))),
+            }
         );
     }
 

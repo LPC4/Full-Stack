@@ -10,7 +10,6 @@
     clippy::ref_patterns,
     clippy::too_many_lines,
     clippy::type_complexity,
-    clippy::unused_self,
     clippy::unwrap_used,
     reason = "legacy GUI event handlers and controlled UI state access"
 )]

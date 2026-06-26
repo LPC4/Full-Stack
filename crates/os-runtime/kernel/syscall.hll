@@ -1,6 +1,15 @@
 ; Syscall dispatch layer. See OS spec ch.7.
 
 import "layout"
+import "klog"
+import "console"
+import "utilities"
+import "mem"
+import "pmm"
+import "vmm"
+import "process"
+import "scheduler"
+import "fs"
 
 const SYSCALL_EXIT     = 93
 const SYSCALL_WRITE    = 64
@@ -70,74 +79,13 @@ const FB_MAP_FLAGS = VMM_R + VMM_W + VMM_U
 const FB_PIXEL_BYTES = 307200   ; 320*240*4; the control page follows the pixels
 const FB_DBMODE_REG = 8         ; control-register offset: 0 = single, 1 = double
 
-external klog_int:                  (label: u8*, val: i64)
-external klog_error:                (msg: u8*)
-external console_putchar:           (c: i32)
-external kshutdown:                 (code: i64)
-external kmalloc:                   (size: u64) -> u8*
-external memset:                    (dst: u8*, value: u8, n: u64) -> u8*
-external memcpy:                    (dst: u8*, src: u8*, n: u64) -> u8*
-
-external pmm_alloc:                 () -> u8*
-external pmm_free:                  (page: u8*)
-external vmm_map:                   (va: u64, pa: u64, flags: u64)
-external vmm_new_root:              () -> u64
-external vmm_set_root:              (root_pa: u64)
-external vmm_fork_copy:             (parent_root: u64, child_root: u64)
-
-external process_create:            (entry_pc: u64) -> u64*
-external process_peek_pid:          () -> u64
-external process_alloc:             () -> u64*
-external process_pid:               (pcb: u64*) -> u64
-external process_root:              (pcb: u64*) -> u64
-external process_set_root:          (pcb: u64*, root: u64)
-external process_set_parent:        (pcb: u64*, ppid: u64)
-external process_exit_code:         (pcb: u64*) -> i64
-external process_set_exit_code:     (pcb: u64*, code: i64)
-external process_stdout_fd:         (pcb: u64*) -> u64
-external process_set_stdout_fd:     (pcb: u64*, fd: u64)
-external process_stdin_fd:          (pcb: u64*) -> u64
-external process_set_stdin_fd:      (pcb: u64*, fd: u64)
-external process_heap_brk:          (pcb: u64*) -> u64
-external process_set_heap_brk:      (pcb: u64*, brk: u64)
-
-external scheduler_add:                 (pcb: u64*)
-external scheduler_current:             () -> u64*
-external scheduler_set_input_waiter:    (pcb: u64*)
-external scheduler_ready_empty:         () -> u64
-external scheduler_pid_in_queue:        (pid: u64) -> u64
-external scheduler_pid_alive:           (pid: u64) -> u64
-external scheduler_make_zombie:         (pcb: u64*)
-external scheduler_find_zombie_child:   (parent_pid: u64) -> u64*
-external scheduler_find_zombie_pid:     (pid: u64) -> u64*
-external scheduler_kill_pid:            (pid: u64) -> u64
-external scheduler_remove_zombie:       (pcb: u64*)
-external scheduler_has_children:        (parent_pid: u64) -> u64
-external scheduler_kill_child:          (parent_pid: u64) -> u64
-
-external fs_open:              (path: u8*, flags: u64) -> i64
-external fs_close:             (fd: i64)
-external fs_read:              (fd: i64, buf: u8*, offset: u64, len: u64) -> i64
-external fs_write:             (fd: i64, buf: u8*, offset: u64, len: u64) -> i64
-external fs_rename:            (old_path: u8*, new_path: u8*) -> i64
-external fs_mkdir:             (path: u8*) -> i64
-external fs_unlink:            (path: u8*) -> i64
-external fs_rmdir:             (path: u8*) -> i64
-external fs_readdir:           (path: u8*, index: u64, name_buf: u8*) -> i64
-external fs_stat:              (path: u8*) -> i64
-external fs_get_pos:           (fd: i64) -> u64
-external fs_set_pos:           (fd: i64, pos: u64)
-external fs_truncate:          (fd: i64, len: u64) -> i64
-external fs_fd_size:           (fd: i64) -> u64
-
-
 ; One-byte input pushback: a byte peeked by the Ctrl-C check but not consumed,
 ; delivered ahead of the device by the next readchar. See OS spec ch.6.5.
 input_pushback_valid: u64 = 0
 input_pushback_byte:  u64 = 0
 
 ; Pop the next raw UART byte (0-255), or -1 if none. Ignores the pushback.
-kuart_take: () -> i64 {
+export kuart_take: () -> i64 {
     lsr_p: u8* = 0x10000005 as u8*
     if ((@lsr_p) as u64 & 1) == 0 {
         return -1 as i64
@@ -149,7 +97,7 @@ kuart_take: () -> i64 {
 
 ; Blocking UART read: returns the pushback or a ready byte, else sleeps the
 ; caller until the RX interrupt wakes it. See OS spec ch.6.4.
-sys_readchar_block: (frame: u64*) -> u64 {
+export sys_readchar_block: (frame: u64*) -> u64 {
     ; Redirected stdin (`prog < file`): hand back the next file byte, or -1 at EOF.
     rcur: u64* = scheduler_current()
     if rcur != null {
@@ -195,7 +143,7 @@ sys_readchar_block: (frame: u64*) -> u64 {
 }
 
 ; Pop a packed key event from the keyboard device, or -1 if none. See OS spec ch.7.5.
-sys_pollkey_impl: () -> i64 {
+export sys_pollkey_impl: () -> i64 {
     status_p: u32* = 0x10070000 as u32*
     if (@status_p) == 0 {
         return -1 as i64
@@ -207,22 +155,22 @@ sys_pollkey_impl: () -> i64 {
 
 ; --- Little-endian reads from a byte buffer (alignment-safe ELF parsing) ---
 
-rd_u16: (p: u8*, off: u64) -> u64 {
+export rd_u16: (p: u8*, off: u64) -> u64 {
     o1: u64 = off + 1
     lo: u8 = @(p + off)
     hi: u8 = @(p + o1)
     return (lo as u64) | ((hi as u64) << 8)
 }
-rd_u32: (p: u8*, off: u64) -> u64 {
+export rd_u32: (p: u8*, off: u64) -> u64 {
     return rd_u16(p, off) | (rd_u16(p, off + 2) << 16)
 }
-rd_u64: (p: u8*, off: u64) -> u64 {
+export rd_u64: (p: u8*, off: u64) -> u64 {
     return rd_u32(p, off) | (rd_u32(p, off + 4) << 32)
 }
 
 ; Map every PT_LOAD of a static ELF64 (open as `fd`, header in `hdr`) into the
 ; active root: copy [0,p_filesz), zero BSS. Returns segment count or -1. OS spec 7.4.
-load_elf_segments: (fd: i64, hdr: u8*) -> i64 {
+export load_elf_segments: (fd: i64, hdr: u8*) -> i64 {
     phoff: u64 = rd_u64(hdr, 32)       ; e_phoff
     phentsize: u64 = rd_u16(hdr, 54)   ; e_phentsize
     phnum: u64 = rd_u16(hdr, 56)       ; e_phnum
@@ -266,7 +214,7 @@ load_elf_segments: (fd: i64, hdr: u8*) -> i64 {
 
 ; Load a static ELF64 into a new process and enqueue it; arg staged at USER_ARG_BASE,
 ; out_path/in_path redirect child stdio (out_append seeks to end). pid or -1. OS spec 5.5/7.7.
-sys_exec_impl: (path: u8*, arg: u8*, out_path: u8*, in_path: u8*, out_append: u64) -> i64 {
+export sys_exec_impl: (path: u8*, arg: u8*, out_path: u8*, in_path: u8*, out_append: u64) -> i64 {
     fd: i64 = fs_open(path, 0)
     if fd < 2 {
         return -1 as i64
@@ -385,7 +333,7 @@ sys_exec_impl: (path: u8*, arg: u8*, out_path: u8*, in_path: u8*, out_append: u6
 }
 
 ; Write len bytes from buf to UART (0x10000000).
-sys_write_impl: (fd: u64, buf: u8*, len: u64) -> u64 {
+export sys_write_impl: (fd: u64, buf: u8*, len: u64) -> u64 {
     written: u64 = 0
     while written < len {
         c: i32 = (@(buf + written)) as i32
@@ -397,7 +345,7 @@ sys_write_impl: (fd: u64, buf: u8*, len: u64) -> u64 {
 
 ; Standard-output write (fd 0/1): append to a bound stdout redirect and advance,
 ; else write to the console. Returns bytes written. OS spec 7.7.
-sys_stdout_write: (buf: u8*, len: u64) -> u64 {
+export sys_stdout_write: (buf: u8*, len: u64) -> u64 {
     cur: u64* = scheduler_current()
     if cur != null {
         ofd: u64 = process_stdout_fd(cur)
@@ -415,7 +363,7 @@ sys_stdout_write: (buf: u8*, len: u64) -> u64 {
 }
 
 ; Fork: clone the caller's address space and trap frame; child returns 0. See OS spec ch.5.5.
-sys_fork_impl: (frame: u64*) -> i64 {
+export sys_fork_impl: (frame: u64*) -> i64 {
     parent: u64* = scheduler_current()
     if parent == null {
         return -1 as i64
@@ -446,7 +394,7 @@ sys_fork_impl: (frame: u64*) -> i64 {
 }
 
 ; Reap any exited child (code), poll if one still runs, or -1 if none. Used by the fork test.
-sys_wait_impl: (frame: u64*) -> u64 {
+export sys_wait_impl: (frame: u64*) -> u64 {
     parent: u64* = scheduler_current()
     if parent == null {
         frame[TF_A0] = 0xFFFFFFFFFFFFFFFF
@@ -487,7 +435,7 @@ sys_wait_impl: (frame: u64*) -> u64 {
 
 ; Reap the specific child a0 (code), else poll/Ctrl-C-tear-down that pid, else -1.
 ; Pids are unique, so no parent check is needed. See OS spec ch.7.2.
-sys_waitpid_impl: (frame: u64*) -> u64 {
+export sys_waitpid_impl: (frame: u64*) -> u64 {
     parent: u64* = scheduler_current()
     if parent == null {
         frame[TF_A0] = 0xFFFFFFFFFFFFFFFF
@@ -529,7 +477,7 @@ sys_waitpid_impl: (frame: u64*) -> u64 {
 
 ; Signal a pid (a0=pid, a1=sig). Only SIGKILL: unlink from the ready queue and mark
 ; EXITED (Ctrl-C teardown), leaving a zombie. pid 1 protected. 0 ok, -1 else. OS spec 7.6.
-sys_kill_impl: (frame: u64*) -> u64 {
+export sys_kill_impl: (frame: u64*) -> u64 {
     pid: u64 = frame[TF_A0]
     sig: u64 = frame[TF_A1]
     if sig != SIGKILL {
@@ -549,7 +497,7 @@ sys_kill_impl: (frame: u64*) -> u64 {
 }
 
 ; Exit: pid 1 (or no/empty context) halts the VM; others become zombies. See OS spec ch.5.6.
-sys_exit_impl: (frame: u64*) -> u64 {
+export sys_exit_impl: (frame: u64*) -> u64 {
     code: u64 = frame[TF_A0]
     current: u64* = scheduler_current()
     if current == null {
@@ -577,7 +525,7 @@ sys_exit_impl: (frame: u64*) -> u64 {
 }
 
 ; Truncate fd a0 to a1 bytes. These small wrappers keep locals out of dispatch's frame.
-sys_ftruncate_impl: (frame: u64*) -> u64 {
+export sys_ftruncate_impl: (frame: u64*) -> u64 {
     fd:  i64 = (frame[TF_A0]) as i64
     len: u64 = frame[TF_A1]
     frame[TF_A0] = fs_truncate(fd, len) as u64
@@ -585,14 +533,14 @@ sys_ftruncate_impl: (frame: u64*) -> u64 {
 }
 
 ; Remove the regular file at the absolute path in a0.
-sys_unlink_impl: (frame: u64*) -> u64 {
+export sys_unlink_impl: (frame: u64*) -> u64 {
     path: u8* = (frame[TF_A0]) as u8*
     frame[TF_A0] = fs_unlink(path) as u64
     return SYSACT_CONTINUE
 }
 
 ; Remove the empty directory at the absolute path in a0.
-sys_rmdir_impl: (frame: u64*) -> u64 {
+export sys_rmdir_impl: (frame: u64*) -> u64 {
     path: u8* = (frame[TF_A0]) as u8*
     frame[TF_A0] = fs_rmdir(path) as u64
     return SYSACT_CONTINUE
@@ -604,7 +552,7 @@ sys_rmdir_impl: (frame: u64*) -> u64 {
 fb_user_count: u64 = 0
 
 ; Mark a process as a framebuffer user on its first map_fb (PCB index 46).
-fb_acquire: (pcb: u64*) {
+export fb_acquire: (pcb: u64*) {
     if pcb == null {
         return
     }
@@ -616,7 +564,7 @@ fb_acquire: (pcb: u64*) {
 
 ; Called from every process-exit path. When the last framebuffer user leaves,
 ; reset DBMODE to single-buffered so the next single-buffered program is visible.
-fb_release_on_exit: (pcb: u64*) {
+export fb_release_on_exit: (pcb: u64*) {
     if pcb == null {
         return
     }
@@ -634,12 +582,11 @@ fb_release_on_exit: (pcb: u64*) {
 }
 
 ; Map the framebuffer into the caller's root; return its base VA. See OS spec ch.7.5.
-sys_map_fb_impl: (frame: u64*) -> u64 {
-    i: u64 = 0
-    while i < FB_PAGE_COUNT {
-        off: u64 = i * 4096
+export sys_map_fb_impl: (frame: u64*) -> u64 {
+    pages: u64 = FB_PAGE_COUNT as u64
+    for i in 0..pages {
+        off: u64 = (i as u64) * 4096
         vmm_map(FB_USER_BASE + off, FB_PHYS_BASE + off, FB_MAP_FLAGS)
-        i = i + 1
     }
     fb_acquire(scheduler_current())
     frame[TF_A0] = FB_USER_BASE
@@ -650,7 +597,7 @@ sys_map_fb_impl: (frame: u64*) -> u64 {
 ; queries the current break. Growing maps new R|W|U pages into the caller's own
 ; root; the break starts at USER_HEAP_BASE. Returns the resulting break (unchanged
 ; on OOM, so the caller can detect failure). See OS spec ch.7.8.
-sys_brk_impl: (frame: u64*) -> u64 {
+export sys_brk_impl: (frame: u64*) -> u64 {
     cur: u64* = scheduler_current()
     if cur == null {
         frame[TF_A0] = 0xFFFFFFFFFFFFFFFF
@@ -720,7 +667,7 @@ trace_seq:  u64 = 0
 
 ; Append one ecall record into the wrapping ring (last TRACE_ENTRIES calls).
 ; Publish-last: fill entry, write its seq, bump the counter last (see render note).
-trace_record: (pid: u64, num: u64, a0: u64, a1: u64, a2: u64, a3: u64, ret: u64) {
+export trace_record: (pid: u64, num: u64, a0: u64, a1: u64, a2: u64, a3: u64, ret: u64) {
     next: u64 = trace_seq + 1
     slot: u64 = ((next - 1) % TRACE_ENTRIES) * TRACE_FIELDS
     tp: u64* = &trace_ring[0]
@@ -737,7 +684,7 @@ trace_record: (pid: u64, num: u64, a0: u64, a1: u64, a2: u64, a3: u64, ret: u64)
 
 ; Dispatch a U-mode ecall by a7; args in a0-a3, result to a0. Records the call
 ; into the trace ring around the inner dispatch. See OS spec ch.7.
-syscall_dispatch: (frame: u64*) -> u64 {
+export syscall_dispatch: (frame: u64*) -> u64 {
     cur: u64* = scheduler_current()
     pid: u64 = 0
     if cur != null {
@@ -757,7 +704,7 @@ syscall_dispatch: (frame: u64*) -> u64 {
 }
 
 ; Body of the syscall dispatch; wrapped by syscall_dispatch for trace recording.
-syscall_dispatch_inner: (frame: u64*) -> u64 {
+export syscall_dispatch_inner: (frame: u64*) -> u64 {
     num: u64 = frame[TF_A7]
 
     if num == SYSCALL_EXIT {

@@ -8,11 +8,24 @@
 )]
 
 use asm_to_binary::AssembledOutput;
-use full_stack::compilation_pipeline::CompilationPipeline;
+use full_stack::compilation_pipeline::{CompilationPipeline, bundled_module_source};
 use hll_to_ir::TargetMode;
 use hll_to_ir::stdlib::{get_stdlib_modules_for_mode, get_stdlib_type_prelude};
 use virtual_machine::bus::ELF_LOAD_BASE;
 use virtual_machine::virtual_machine::VirtualMachine;
+
+fn direct_import_prelude(source: &str) -> String {
+    let mut prelude = String::new();
+    for name in hll_to_ir::imports::collect_imports(source).expect("collect imports") {
+        let module = bundled_module_source(&name)
+            .unwrap_or_else(|| panic!("missing bundled module `{name}`"));
+        let interface =
+            hll_to_ir::imports::extract_interface(module).expect("extract import interface");
+        prelude.push_str(&interface);
+        prelude.push('\n');
+    }
+    prelude
+}
 
 // --- Kernel diagnostic: compile + dump assembly, then step-trace the VM ---
 // Run with:  cargo test kernel_asm_diag -- --nocapture
@@ -36,12 +49,13 @@ fn kernel_asm_diag() {
         .iter()
         .enumerate()
     {
+        let source_prelude = direct_import_prelude(src);
         let compiler = HllCompiler::new(CompileConfig {
             target: TargetMode::Kernel,
             strict: true,
             string_prefix: Some(format!("__kern{i}_str_")),
             type_prelude: get_stdlib_type_prelude(),
-            source_prelude: None,
+            source_prelude: Some(source_prelude),
         });
         let out = compiler.compile(src).expect("stdlib module compile");
         let mut rv = CompilerRv64::new();
@@ -57,7 +71,7 @@ fn kernel_asm_diag() {
         strict: true,
         string_prefix: None,
         type_prelude: Vec::new(),
-        source_prelude: None,
+        source_prelude: Some(direct_import_prelude(kernel::MY_KERNEL)),
     });
     let user_out = user_compiler
         .compile(kernel::MY_KERNEL)

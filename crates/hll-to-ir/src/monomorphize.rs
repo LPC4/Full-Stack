@@ -423,6 +423,17 @@ fn infer_expression_calls(
                     )?;
                 }
             }
+            PrimaryExpr::CallExpr { callee, arguments } => {
+                infer_expression_calls(callee, environment, generic_signatures, function_returns)?;
+                for argument in arguments.iter_mut() {
+                    infer_expression_calls(
+                        argument,
+                        environment,
+                        generic_signatures,
+                        function_returns,
+                    )?;
+                }
+            }
             PrimaryExpr::FieldAccess { expr, .. } => {
                 infer_expression_calls(expr, environment, generic_signatures, function_returns)?;
             }
@@ -596,6 +607,7 @@ fn infer_expression_type(
             PrimaryExpr::StructLiteral(_)
             | PrimaryExpr::FieldAccess { .. }
             | PrimaryExpr::Slice { .. }
+            | PrimaryExpr::CallExpr { .. }
             | PrimaryExpr::AsmReg { .. },
         ) => None,
     }
@@ -800,6 +812,12 @@ fn rewrite_expression_calls(
                     rewrite_expression_calls(expr, substitutions, definitions, queue, queued)?;
                 }
             }
+            PrimaryExpr::CallExpr { callee, arguments } => {
+                rewrite_expression_calls(callee, substitutions, definitions, queue, queued)?;
+                for argument in arguments {
+                    rewrite_expression_calls(argument, substitutions, definitions, queue, queued)?;
+                }
+            }
             PrimaryExpr::FieldAccess { expr, .. } => {
                 rewrite_expression_calls(expr, substitutions, definitions, queue, queued)?;
             }
@@ -960,6 +978,12 @@ fn substitute_expression_types(expression: &mut Expression, substitutions: &Subs
                     substitute_expression_types(&mut field.expr, substitutions);
                 }
             }
+            PrimaryExpr::CallExpr { callee, arguments } => {
+                substitute_expression_types(callee, substitutions);
+                for argument in arguments {
+                    substitute_expression_types(argument, substitutions);
+                }
+            }
             PrimaryExpr::FieldAccess { expr, .. } => {
                 substitute_expression_types(expr, substitutions);
             }
@@ -1028,6 +1052,18 @@ pub(crate) fn substitute_type(ty: &Type, substitutions: &Substitutions) -> Type 
             Type::Array(*len, Box::new(substitute_type(inner, substitutions)))
         }
         Type::Slice(inner) => Type::Slice(Box::new(substitute_type(inner, substitutions))),
+        Type::Function {
+            params,
+            return_type,
+        } => Type::Function {
+            params: params
+                .iter()
+                .map(|param| substitute_type(param, substitutions))
+                .collect(),
+            return_type: return_type
+                .as_ref()
+                .map(|ty| Box::new(substitute_type(ty, substitutions))),
+        },
         Type::Struct(fields) => Type::Struct(
             fields
                 .iter()
@@ -1057,6 +1093,17 @@ fn type_mangle(ty: &Type) -> String {
         Type::Pointer(inner) => format!("ptr_{}", type_mangle(inner)),
         Type::Array(len, inner) => format!("arr{len}_{}", type_mangle(inner)),
         Type::Slice(inner) => format!("slice_{}", type_mangle(inner)),
+        Type::Function {
+            params,
+            return_type,
+        } => {
+            let params = params.iter().map(type_mangle).collect::<Vec<_>>().join("_");
+            let ret = return_type
+                .as_deref()
+                .map(type_mangle)
+                .unwrap_or_else(|| "void".to_owned());
+            format!("fn_{params}_ret_{ret}")
+        }
         Type::Struct(_) => "struct".to_owned(),
         Type::Named { name, args } if args.is_empty() => name.clone(),
         Type::Named { name, args } => format!(
@@ -1220,6 +1267,17 @@ impl EnumSpecializer {
         match ty {
             Type::Pointer(inner) | Type::Array(_, inner) | Type::Slice(inner) => {
                 self.rewrite_type(inner);
+            }
+            Type::Function {
+                params,
+                return_type,
+            } => {
+                for param in params {
+                    self.rewrite_type(param);
+                }
+                if let Some(return_type) = return_type {
+                    self.rewrite_type(return_type);
+                }
             }
             Type::Struct(fields) => {
                 for field in fields {
@@ -1409,6 +1467,12 @@ impl EnumSpecializer {
             Expression::Primary(primary) => match primary {
                 PrimaryExpr::Grouped(expr) | PrimaryExpr::FieldAccess { expr, .. } => {
                     self.rewrite_expr_types(expr);
+                }
+                PrimaryExpr::CallExpr { callee, arguments } => {
+                    self.rewrite_expr_types(callee);
+                    for argument in arguments {
+                        self.rewrite_expr_types(argument);
+                    }
                 }
                 PrimaryExpr::FunctionCall {
                     type_arguments,
@@ -1623,6 +1687,12 @@ impl EnumSpecializer {
                 }
                 PrimaryExpr::Grouped(expr) => self.rewrite_expr_uses(expr, expected, env),
                 PrimaryExpr::FieldAccess { expr, .. } => self.rewrite_expr_uses(expr, None, env),
+                PrimaryExpr::CallExpr { callee, arguments } => {
+                    self.rewrite_expr_uses(callee, None, env);
+                    for argument in arguments {
+                        self.rewrite_expr_uses(argument, None, env);
+                    }
+                }
                 PrimaryExpr::ArrayLiteral(elements) => {
                     let element = match expected {
                         Some(Type::Array(_, inner) | Type::Slice(inner)) => Some((**inner).clone()),

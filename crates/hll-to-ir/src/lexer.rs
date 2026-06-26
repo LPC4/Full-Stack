@@ -217,6 +217,7 @@ impl<'a> Lexer<'a> {
             "true" => Token::True,
             "false" => Token::False,
             "null" => Token::Null,
+            "fn" => Token::Fn,
             "as" => Token::As,
             "import" => Token::Import,
             "export" => Token::Export,

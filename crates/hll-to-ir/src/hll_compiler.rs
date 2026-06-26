@@ -1137,6 +1137,31 @@ main: () -> i32 {
     }
 
     #[test]
+    fn lowers_function_pointer_assignment_and_call() {
+        let output = compile_hll(
+            r#"
+type BinaryOp = fn(i32, i32) -> i32
+
+add: (a: i32, b: i32) -> i32 {
+    return a + b
+}
+
+main: () -> i32 {
+    op: BinaryOp = add
+    return op(2, 3)
+}
+"#,
+        )
+        .expect("function pointer assignment and indirect call should compile");
+        let ir = output.ir.to_string();
+        assert!(
+            ir.contains("function_addr add"),
+            "missing function address: {ir}"
+        );
+        assert!(ir.contains("indirect_call"), "missing indirect call: {ir}");
+    }
+
+    #[test]
     fn rejects_wrong_generic_function_arity() {
         let errors = match compile_hll(
             r#"

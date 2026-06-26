@@ -1,17 +1,14 @@
 import "layout"
-
-external kpanic:            (msg: u8*)
-external klog_int:          (label: u8*, val: i64)
-external klog_hex:          (label: u8*, val: u64)
-external timer_set:         (interval: u64)
-external syscall_dispatch:  (frame: u64*) -> u64
-external schedule:          (frame: u64*, action: u64)
-external scheduler_wake_input_waiter: () -> u64
+import "runtime"
+import "klog"
+import "utilities"
+import "syscall"
+import "scheduler"
 kernel_tick: u64 = 0
 
 ; Trap-frame slots TF_SEPC/SCAUSE/STVAL come from the shared kernel layout (layout.hll).
 
-trap_handler: (frame: u64*) {
+export trap_handler: (frame: u64*) {
     ; Ensure S-mode can access U-flagged pages (needed for syscall buffer reads).
     asm {
         csrr t0, sstatus

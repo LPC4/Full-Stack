@@ -2,14 +2,11 @@
 ; schedule(frame, 1) = yield (re-enqueue as READY), schedule(frame, 2) = exit (mark EXITED).
 
 import "layout"
-
-external memcpy:     (dst: u8*, src: u8*, n: u64) -> u8*
-external vmm_switch: (root_pa: u64)
-external kpanic:     (msg: u8*)
-external klog_ok:    (msg: u8*)
-external klog_int:   (label: u8*, val: i64)
-external klog_error: (msg: u8*)
-external fb_release_on_exit: (pcb: u64*)
+import "mem"
+import "vmm"
+import "runtime"
+import "klog"
+import "syscall"
 
 ; PCB_IDX_* indices and PROC_* states come from the shared kernel layout (layout.hll).
 
@@ -20,7 +17,7 @@ zombie_head:      u64* = null
 ; The single process BLOCKED waiting for UART input. Woken by the UART RX interrupt. null if none.
 input_waiter:     u64* = null
 
-scheduler_init: () {
+export scheduler_init: () {
     current_process  = null
     ready_queue_head = null
     zombie_head      = null
@@ -29,12 +26,12 @@ scheduler_init: () {
 }
 
 ; Return the currently running PCB (null if none).
-scheduler_current: () -> u64* {
+export scheduler_current: () -> u64* {
     return current_process
 }
 
 ; Append pcb to the tail of the ready queue.
-scheduler_add: (pcb: u64*) {
+export scheduler_add: (pcb: u64*) {
     pcb[PCB_IDX_LINK] = 0
     if ready_queue_head == null {
         ready_queue_head = pcb
@@ -50,7 +47,7 @@ scheduler_add: (pcb: u64*) {
 ; --- Context switch ---
 ; Save the current frame, restore the next process. action: 0/1 yield, 2 exit,
 ; 3 block. See OS spec ch.5.4 and 7.3.
-schedule: (frame: u64*, action: u64) {
+export schedule: (frame: u64*, action: u64) {
     ; A block with nothing else to run would strand the caller: leave it RUNNING
     ; to retry and clear the waiter.
     if action == 3 {
@@ -91,13 +88,13 @@ schedule: (frame: u64*, action: u64) {
 
 ; Record the process about to block on UART input so the RX interrupt can wake
 ; it. There is only one such reader at a time (the foreground input consumer).
-scheduler_set_input_waiter: (pcb: u64*) {
+export scheduler_set_input_waiter: (pcb: u64*) {
     input_waiter = pcb
 }
 
 ; Wake the input-blocked process to the front of the ready queue; 1 if woken.
 ; Called from the UART RX interrupt. See OS spec ch.6.4.
-scheduler_wake_input_waiter: () -> u64 {
+export scheduler_wake_input_waiter: () -> u64 {
     w: u64* = input_waiter
     if w == null {
         return 0
@@ -111,7 +108,7 @@ scheduler_wake_input_waiter: () -> u64 {
 
 ; Return 1 if the ready queue is empty, 0 otherwise.
 ; The exit syscall uses this to halt the VM once the last process leaves.
-scheduler_ready_empty: () -> u64 {
+export scheduler_ready_empty: () -> u64 {
     if ready_queue_head == null {
         return 1
     }
@@ -120,7 +117,7 @@ scheduler_ready_empty: () -> u64 {
 
 ; Return 1 if a READY process with the given pid is still queued, 0 otherwise.
 ; The shell polls this after exec to wait for a launched program to finish.
-scheduler_pid_in_queue: (pid: u64) -> u64 {
+export scheduler_pid_in_queue: (pid: u64) -> u64 {
     curr: u64* = ready_queue_head
     while curr != null {
         if curr[PCB_IDX_PID] == pid {
@@ -133,7 +130,7 @@ scheduler_pid_in_queue: (pid: u64) -> u64 {
 
 ; Return 1 if the pid names a live process (RUNNING, READY, or BLOCKED on input),
 ; 0 if it is a zombie or unknown.
-scheduler_pid_alive: (pid: u64) -> u64 {
+export scheduler_pid_alive: (pid: u64) -> u64 {
     if current_process != null {
         if current_process[PCB_IDX_PID] == pid {
             return 1
@@ -151,13 +148,13 @@ scheduler_pid_alive: (pid: u64) -> u64 {
 
 ; Add an EXITED process to the zombie list so its parent can later reap its
 ; exit code. Reuses the [2] link field (the process is no longer ready).
-scheduler_make_zombie: (pcb: u64*) {
+export scheduler_make_zombie: (pcb: u64*) {
     pcb[PCB_IDX_LINK] = zombie_head as u64
     zombie_head = pcb
 }
 
 ; Find the EXITED zombie with this exact pid (pids are unique), or null.
-scheduler_find_zombie_pid: (pid: u64) -> u64* {
+export scheduler_find_zombie_pid: (pid: u64) -> u64* {
     curr: u64* = zombie_head
     while curr != null {
         if curr[PCB_IDX_PID] == pid {
@@ -169,7 +166,7 @@ scheduler_find_zombie_pid: (pid: u64) -> u64* {
 }
 
 ; Find an EXITED child of parent_pid awaiting reaping. Returns its PCB or null.
-scheduler_find_zombie_child: (parent_pid: u64) -> u64* {
+export scheduler_find_zombie_child: (parent_pid: u64) -> u64* {
     curr: u64* = zombie_head
     while curr != null {
         if curr[PCB_IDX_PARENT_PID] == parent_pid {
@@ -182,7 +179,7 @@ scheduler_find_zombie_child: (parent_pid: u64) -> u64* {
 
 ; Unlink a reaped zombie from the zombie list. The PCB itself is left allocated
 ; (page-table teardown is deferred; leaking is safe for now).
-scheduler_remove_zombie: (pcb: u64*) {
+export scheduler_remove_zombie: (pcb: u64*) {
     if zombie_head == pcb {
         zombie_head = (pcb[PCB_IDX_LINK]) as u64*
         return
@@ -200,7 +197,7 @@ scheduler_remove_zombie: (pcb: u64*) {
 
 ; Ctrl-C teardown: unlink the first READY child of parent_pid and mark it EXITED
 ; (PCB/page tables leaked); 1 if killed. See OS spec ch.6.5.
-scheduler_kill_child: (parent_pid: u64) -> u64 {
+export scheduler_kill_child: (parent_pid: u64) -> u64 {
     prev: u64* = 0 as u64*
     curr: u64* = ready_queue_head
     while curr != null {
@@ -222,7 +219,7 @@ scheduler_kill_child: (parent_pid: u64) -> u64 {
 
 ; Pid-targeted Ctrl-C teardown: unlink the READY process with this exact pid and
 ; mark it EXITED (PCB/page tables leaked); 1 if killed. See OS spec ch.6.5.
-scheduler_kill_pid: (pid: u64) -> u64 {
+export scheduler_kill_pid: (pid: u64) -> u64 {
     prev: u64* = 0 as u64*
     curr: u64* = ready_queue_head
     while curr != null {
@@ -244,7 +241,7 @@ scheduler_kill_pid: (pid: u64) -> u64 {
 
 ; Return 1 if any READY or zombie process has parent_pid as its parent.
 ; Used by wait to distinguish "no children" from "children still running".
-scheduler_has_children: (parent_pid: u64) -> u64 {
+export scheduler_has_children: (parent_pid: u64) -> u64 {
     curr: u64* = ready_queue_head
     while curr != null {
         if curr[PCB_IDX_PARENT_PID] == parent_pid {

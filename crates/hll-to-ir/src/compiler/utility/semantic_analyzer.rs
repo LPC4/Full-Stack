@@ -161,7 +161,6 @@ impl SemanticAnalyzer {
                 return_type,
                 ..
             } => {
-                self.type_mapping.insert(name.clone(), "fn".to_owned());
                 // Store the return type for function calls
                 let return_ty_str = match return_type {
                     Some(rt) => match rt {
@@ -172,6 +171,15 @@ impl SemanticAnalyzer {
                     },
                     None => "void".to_owned(),
                 };
+                let fn_ty = IrType::FunctionPointer {
+                    params: params
+                        .iter()
+                        .map(|param| self.ast_type_to_ir_type(&param.ty))
+                        .collect(),
+                    return_type: Box::new(Self::parse_type_string(&return_ty_str)),
+                };
+                self.type_mapping
+                    .insert(name.clone(), self.context.get_type_name(&fn_ty));
                 self.function_signatures.insert(name.clone(), return_ty_str);
                 self.function_parameters.insert(
                     name.clone(),
@@ -569,6 +577,40 @@ impl SemanticAnalyzer {
                     // Look up the function's return type
                     if let Some(return_ty) = self.function_signatures.get(name) {
                         Ok(return_ty.clone())
+                    } else if let Some(info) = self.symbols.lookup(name).cloned() {
+                        let resolved = self.resolve_named_ir_type(&info.ty);
+                        let IrType::FunctionPointer {
+                            params,
+                            return_type,
+                        } = resolved
+                        else {
+                            self.error(format!("`{name}` is not callable"));
+                            return Err(());
+                        };
+                        if arguments.len() != params.len() {
+                            self.error(format!(
+                                "function pointer `{name}` expects {} argument(s), got {}",
+                                params.len(),
+                                arguments.len()
+                            ));
+                            return Err(());
+                        }
+                        for (index, (arg, expected)) in
+                            arguments.iter().zip(params.iter()).enumerate()
+                        {
+                            let actual_name = self.infer_expression_type(arg)?;
+                            let actual = self.resolve_type_string(&actual_name);
+                            if actual != self.resolve_named_ir_type(expected) {
+                                self.error(format!(
+                                    "argument {} to function pointer `{name}` expects `{}`, found `{}`",
+                                    index + 1,
+                                    self.context.get_type_name(expected),
+                                    self.context.get_type_name(&actual)
+                                ));
+                                return Err(());
+                            }
+                        }
+                        Ok(self.context.get_type_name(&return_type))
                     } else {
                         // Unknown function, return unknown
                         log::warn!("Unknown function/type cast: {name}");
@@ -605,6 +647,41 @@ impl SemanticAnalyzer {
                     let element_ty =
                         inferred_element_ty.expect("array must have at least one typed element");
                     Ok(format!("{}[{}]", element_ty, elements.len()))
+                }
+                PrimaryExpr::CallExpr { callee, arguments } => {
+                    let callee_ty = self.infer_expression_type(callee)?;
+                    let resolved = self.resolve_type_string(&callee_ty);
+                    let IrType::FunctionPointer {
+                        params,
+                        return_type,
+                    } = resolved
+                    else {
+                        self.error(format!("`{callee_ty}` is not callable"));
+                        return Err(());
+                    };
+                    if arguments.len() != params.len() {
+                        self.error(format!(
+                            "function pointer `{callee_ty}` expects {} argument(s), got {}",
+                            params.len(),
+                            arguments.len()
+                        ));
+                        return Err(());
+                    }
+                    for (index, (arg, expected)) in arguments.iter().zip(params.iter()).enumerate()
+                    {
+                        let actual_name = self.infer_expression_type(arg)?;
+                        let actual = self.resolve_type_string(&actual_name);
+                        if actual != self.resolve_named_ir_type(expected) {
+                            self.error(format!(
+                                "argument {} to function pointer `{callee_ty}` expects `{}`, found `{}`",
+                                index + 1,
+                                self.context.get_type_name(expected),
+                                self.context.get_type_name(&actual)
+                            ));
+                            return Err(());
+                        }
+                    }
+                    Ok(self.context.get_type_name(&return_type))
                 }
                 PrimaryExpr::FieldAccess { expr, field } => {
                     let base_ty = self.infer_expression_type(expr)?;
@@ -1234,6 +1311,21 @@ impl SemanticAnalyzer {
             Type::Slice(inner) => {
                 IrType::Slice(Box::new(self.ast_type_to_ir_type_inner(inner, active)))
             }
+            Type::Function {
+                params,
+                return_type,
+            } => IrType::FunctionPointer {
+                params: params
+                    .iter()
+                    .map(|param| self.ast_type_to_ir_type_inner(param, active))
+                    .collect(),
+                return_type: Box::new(
+                    return_type
+                        .as_deref()
+                        .map(|ty| self.ast_type_to_ir_type_inner(ty, active))
+                        .unwrap_or(IrType::Void),
+                ),
+            },
             Type::Struct(fields) => {
                 let field_types: Vec<(String, IrType)> = fields
                     .iter()
@@ -1527,6 +1619,12 @@ impl SemanticAnalyzer {
     /// Parse a type string back into an `IrType`
     fn parse_type_string(ty_str: &str) -> IrType {
         let trimmed = ty_str.trim();
+        if trimmed.starts_with("fn(")
+            && let Some(fn_ty) = Self::parse_function_type_string(trimmed)
+        {
+            return fn_ty;
+        }
+
         if trimmed.starts_with('{')
             && trimmed.ends_with('}')
             && let Ok(fields) = Self::parse_aggregate_type(trimmed)
@@ -1571,6 +1669,56 @@ impl SemanticAnalyzer {
         }
     }
 
+    fn parse_function_type_string(ty_str: &str) -> Option<IrType> {
+        let rest = ty_str.strip_prefix("fn(")?;
+        let mut depth = 0i32;
+        let mut close = None;
+        for (idx, ch) in rest.char_indices() {
+            match ch {
+                '(' | '{' | '[' | '<' => depth += 1,
+                ')' if depth == 0 => {
+                    close = Some(idx);
+                    break;
+                }
+                ')' | '}' | ']' | '>' => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+        }
+        let close = close?;
+        let params_src = &rest[..close];
+        let suffix = rest[close + 1..].trim();
+        let return_type = if let Some(ret) = suffix.strip_prefix("->") {
+            Self::parse_type_string(ret.trim())
+        } else if suffix.is_empty() {
+            IrType::Void
+        } else {
+            return None;
+        };
+
+        let mut params = Vec::new();
+        if !params_src.trim().is_empty() {
+            let mut depth = 0i32;
+            let mut start = 0usize;
+            for (idx, ch) in params_src.char_indices() {
+                match ch {
+                    '{' | '(' | '[' | '<' => depth += 1,
+                    '}' | ')' | ']' | '>' => depth = depth.saturating_sub(1),
+                    ',' if depth == 0 => {
+                        params.push(Self::parse_type_string(params_src[start..idx].trim()));
+                        start = idx + ch.len_utf8();
+                    }
+                    _ => {}
+                }
+            }
+            params.push(Self::parse_type_string(params_src[start..].trim()));
+        }
+
+        Some(IrType::FunctionPointer {
+            params,
+            return_type: Box::new(return_type),
+        })
+    }
+
     fn resolve_named_ir_type(&self, ty: &IrType) -> IrType {
         self.resolve_named_ir_type_inner(ty, &mut HashSet::new())
     }
@@ -1602,6 +1750,16 @@ impl SemanticAnalyzer {
             IrType::Pointer(inner) => {
                 IrType::Pointer(Box::new(self.resolve_named_ir_type_inner(inner, seen)))
             }
+            IrType::FunctionPointer {
+                params,
+                return_type,
+            } => IrType::FunctionPointer {
+                params: params
+                    .iter()
+                    .map(|param| self.resolve_named_ir_type_inner(param, seen))
+                    .collect(),
+                return_type: Box::new(self.resolve_named_ir_type_inner(return_type, seen)),
+            },
             IrType::Array { len, element } => IrType::Array {
                 len: *len,
                 element: Box::new(self.resolve_named_ir_type_inner(element, seen)),
@@ -1636,13 +1794,17 @@ impl SemanticAnalyzer {
         }
 
         // Allow pointer to pointer casts
-        if matches!(source, IrType::Pointer(_)) && matches!(target, IrType::Pointer(_)) {
+        if matches!(source, IrType::Pointer(_) | IrType::FunctionPointer { .. })
+            && matches!(target, IrType::Pointer(_) | IrType::FunctionPointer { .. })
+        {
             return true;
         }
 
         // Allow pointer to integer casts
-        let source_is_pointer = matches!(source, IrType::Pointer(_));
-        let target_is_pointer = matches!(target, IrType::Pointer(_));
+        let source_is_pointer =
+            matches!(source, IrType::Pointer(_) | IrType::FunctionPointer { .. });
+        let target_is_pointer =
+            matches!(target, IrType::Pointer(_) | IrType::FunctionPointer { .. });
         if (source_is_pointer && target_is_numeric) || (source_is_numeric && target_is_pointer) {
             return true;
         }

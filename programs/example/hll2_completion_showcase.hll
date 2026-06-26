@@ -1,0 +1,100 @@
+; HLL2 completion showcase. This file is meant to grow as the remaining HLL2
+; features land: function pointer fields, callable expressions, manual vtables,
+; methods-as-sugar, and later interfaces.
+
+external println: (s: u8[]) -> i32
+external print_int: (value: i64) -> i32
+
+type BinaryOp = fn(i32, i32) -> i32
+type UnaryOp = fn(i32) -> i32
+
+add: (a: i32, b: i32) -> i32 {
+    return a + b
+}
+
+mul: (a: i32, b: i32) -> i32 {
+    return a * b
+}
+
+square: (value: i32) -> i32 {
+    return value * value
+}
+
+negate: (value: i32) -> i32 {
+    return 0 - value
+}
+
+; A struct whose fields are function pointers: dependency injection and
+; vtable-like records without classes. Each field is just data.
+struct Calculator {
+    combine: BinaryOp,
+    transform: UnaryOp,
+}
+
+apply_binary: (op: BinaryOp, a: i32, b: i32) -> i32 {
+    return op(a, b)
+}
+
+; Callable expressions: the callee is a struct field, not a bare name.
+run_calculator: (calc: Calculator, a: i32, b: i32) -> i32 {
+    combined := calc.combine(a, b)
+    return calc.transform(combined)
+}
+
+apply_unary: (op: UnaryOp, value: i32) -> i32 {
+    return op(value)
+}
+
+choose_binary: (multiply: bool) -> BinaryOp {
+    if multiply {
+        return mul
+    }
+    return add
+}
+
+main: () -> i32 {
+    println("-- hll2 completion showcase --")
+
+    op: BinaryOp = add
+    sum := op(20, 22)
+    print_int(sum)
+    if sum != 42 { return 1 }
+
+    product := apply_binary(mul, 6, 7)
+    print_int(product)
+    if product != 42 { return 2 }
+
+    chosen := choose_binary(false)
+    if chosen(39, 3) != 42 { return 3 }
+
+    chosen = choose_binary(true)
+    if chosen(7, 6) != 42 { return 4 }
+
+    unary: UnaryOp = square
+    if apply_unary(unary, 6) != 36 { return 5 }
+    unary = negate
+    if unary(9) != -9 { return 6 }
+
+    ops: BinaryOp[2] = [add, mul]
+    selected: BinaryOp = ops[0]
+    if selected(10, 32) != 42 { return 7 }
+    selected = ops[1]
+    if selected(6, 7) != 42 { return 8 }
+
+    ; Struct fields containing function pointers, called as expressions.
+    calc: Calculator = Calculator { .combine = add, .transform = square }
+    if run_calculator(calc, 4, 2) != 36 { return 9 }
+    calc.combine = mul
+    calc.transform = negate
+    if run_calculator(calc, 7, 6) != -42 { return 10 }
+
+    ; The callee can also be an indexed function-pointer element.
+    if ops[0](40, 2) != 42 { return 11 }
+
+    ; Next HLL2 sections will become real code as they are implemented:
+    ; - explicit vtable structs
+    ; - static method sugar
+
+    println("ok")
+    return 0
+}

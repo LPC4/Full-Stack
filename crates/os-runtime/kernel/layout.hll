@@ -1,6 +1,63 @@
 ; Shared kernel layout module (PCB map, trap-frame slots, process states, Sv39 page
 ; flags). Kernel units pull these in with `import "layout"`; OS spec 5.2 has the PCB map.
 
+; --- Typed PCB / trap-frame views ---
+; Field order is part of the ABI: trap_entry.hll and boot/trap.s keep using raw offsets.
+export struct TrapFrame {
+    x0: u64,
+    x1: u64,
+    x2: u64,
+    x3: u64,
+    x4: u64,
+    x5: u64,
+    x6: u64,
+    x7: u64,
+    x8: u64,
+    x9: u64,
+    x10: u64,
+    x11: u64,
+    x12: u64,
+    x13: u64,
+    x14: u64,
+    x15: u64,
+    x16: u64,
+    x17: u64,
+    x18: u64,
+    x19: u64,
+    x20: u64,
+    x21: u64,
+    x22: u64,
+    x23: u64,
+    x24: u64,
+    x25: u64,
+    x26: u64,
+    x27: u64,
+    x28: u64,
+    x29: u64,
+    x30: u64,
+    x31: u64,
+    sepc: u64,
+    scause: u64,
+    stval: u64,
+    sstatus: u64,
+}
+
+export struct Pcb {
+    pid: u64,
+    state: u64,
+    next: u64,
+    user_stack_pa: u64,
+    entry_pc: u64,
+    frame: TrapFrame,
+    page_root: u64,
+    parent_pid: u64,
+    exit_code: u64,
+    stdout_fd: u64,
+    stdin_fd: u64,
+    fb_mapped: u64,
+    heap_brk: u64,
+}
+
 ; --- Process states ---
 export const PROC_READY   = 0
 export const PROC_RUNNING = 1

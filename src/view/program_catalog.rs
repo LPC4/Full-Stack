@@ -393,6 +393,15 @@ fn built_in_programs() -> Vec<ProgramFile> {
             )),
         ),
         ProgramFile::example(
+            "example-hll2-completion-showcase",
+            "hll2_completion_showcase.hll",
+            "Living HLL2 feature showcase, starting with function pointer aliases, values, calls, and arrays.",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/programs/example/hll2_completion_showcase.hll"
+            )),
+        ),
+        ProgramFile::example(
             "example-enums-match-and-result",
             "enums_match_and_result.hll",
             "Enums, statement and value match, a generic enum, Option, Result, and `?`.",

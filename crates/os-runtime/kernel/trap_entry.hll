@@ -1,6 +1,7 @@
 ; S-mode trap entry: switches to a dedicated kernel stack, saves all GPRs + CSRs
 ; to a 288-byte frame, calls trap_handler(frame), restores, and sret.
 
+; Boundary to the HLL trap dispatcher called from hand-written save/restore asm.
 external trap_handler: (frame: u64*)
 
 ; Per-hart kernel trap stack (16 KiB).
@@ -8,7 +9,7 @@ external trap_handler: (frame: u64*)
 kernel_trap_stack: u64[2048] = []
 
 ; stvec points directly at stvec_entry, bypassing the HLL function prologue.
-_s_trap_host: () {
+export _s_trap_host: () {
     asm {
         stvec_entry:
 
@@ -124,7 +125,7 @@ _s_trap_host: () {
 
 ; Initialize sscratch (kernel trap-stack top) and stvec, then enable interrupts.
 ; sscratch MUST be set before SIE is enabled so the first trap can switch stacks.
-trap_init: () {
+export trap_init: () {
     asm {
         ; sscratch = top of kernel_trap_stack, aligned down to 16 bytes.
         la   t0, kernel_trap_stack
@@ -150,7 +151,7 @@ trap_init: () {
 }
 
 ; Read sscratch into *out.
-sscratch_get_to: (out: u64*) {
+export sscratch_get_to: (out: u64*) {
     asm {
         csrr t0, sscratch
         sd   t0, 0(a0)
@@ -158,6 +159,6 @@ sscratch_get_to: (out: u64*) {
 }
 
 ; Write sscratch CSR.
-sscratch_set: (val: u64) {
+export sscratch_set: (val: u64) {
     asm { csrw sscratch, a0 }
 }

@@ -82,6 +82,12 @@ pub enum IrInstruction {
         function: String,
         args: Vec<IrValue>,
     },
+    IndirectCall {
+        dest: Option<IrRegister>,
+        callee: IrValue,
+        callee_ty: IrType,
+        args: Vec<IrValue>,
+    },
     Phi {
         dest: IrRegister,
         ty: IrType,
@@ -89,6 +95,10 @@ pub enum IrInstruction {
     },
     /// Load the address of a named global variable into `dest`.
     GlobalRef {
+        dest: IrRegister,
+        name: String,
+    },
+    FunctionAddr {
         dest: IrRegister,
         name: String,
     },
@@ -200,6 +210,24 @@ impl fmt::Display for IrInstruction {
                 }
                 write!(f, ")")
             }
+            Self::IndirectCall {
+                dest,
+                callee,
+                callee_ty,
+                args,
+            } => {
+                if let Some(dest) = dest {
+                    write!(f, "{dest} = ")?;
+                }
+                write!(f, "indirect_call {callee_ty} {callee}(")?;
+                for (index, arg) in args.iter().enumerate() {
+                    if index > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{arg}")?;
+                }
+                write!(f, ")")
+            }
             Self::Phi { dest, ty, incoming } => {
                 write!(f, "{dest} = phi {ty} ")?;
                 for (index, (value, label)) in incoming.iter().enumerate() {
@@ -211,6 +239,7 @@ impl fmt::Display for IrInstruction {
                 Ok(())
             }
             Self::GlobalRef { dest, name } => write!(f, "{dest} = global_ref {name}"),
+            Self::FunctionAddr { dest, name } => write!(f, "{dest} = function_addr {name}"),
         }
     }
 }

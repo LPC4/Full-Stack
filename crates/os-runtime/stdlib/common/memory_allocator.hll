@@ -3,7 +3,7 @@ heap_bump: u64 = 0
 heap_list: HeapBlock* = null
 
 ; Bump-allocates n bytes, rounded up to 8-byte alignment. Returns null on overflow.
-heap_raw_alloc: (n: u64) -> u8* {
+export heap_raw_alloc: (n: u64) -> u8* {
     aligned: u64 = ((n + 7) / 8) * 8
     new_bump: u64 = heap_bump + aligned
     if new_bump > 65536 {
@@ -14,7 +14,7 @@ heap_raw_alloc: (n: u64) -> u8* {
     return ptr
 }
 
-malloc: (size: u64) -> u8* {
+export malloc: (size: u64) -> u8* {
     requested: u64 = size
     if requested == 0 {
         requested = 1
@@ -47,7 +47,7 @@ malloc: (size: u64) -> u8* {
     return payload
 }
 
-free: (ptr: u8*) {
+export free: (ptr: u8*) {
     if ptr == null {
         return
     }

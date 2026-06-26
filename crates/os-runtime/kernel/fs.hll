@@ -55,11 +55,9 @@ const FS_SLASH = '/'
 
 ; --- Externals ---
 
-external kmalloc:   (size: u64) -> u8*
-external memset:    (dst: u8*, value: u8, n: u64) -> u8*
-external memcpy:    (dst: u8*, src: u8*, n: u64) -> u8*
-external klog_warn: (msg: u8*)
-external klog_int:  (label: u8*, val: i64)
+import "utilities"
+import "mem"
+import "klog"
 
 ; --- Global state ---
 
@@ -70,85 +68,85 @@ fs_ready:       u64 = 0
 
 ; --- Typed memory access ---
 
-fs_rd16: (addr: u64) -> u64 {
+export fs_rd16: (addr: u64) -> u64 {
     p: u16* = addr as u16*
     return (@p) as u64
 }
 
-fs_rd32: (addr: u64) -> u64 {
+export fs_rd32: (addr: u64) -> u64 {
     p: u32* = addr as u32*
     return (@p) as u64
 }
 
-fs_rd64: (addr: u64) -> u64 {
+export fs_rd64: (addr: u64) -> u64 {
     p: u64* = addr as u64*
     return @p
 }
 
-fs_wr8: (addr: u64, val: u64) {
+export fs_wr8: (addr: u64, val: u64) {
     p: u8* = addr as u8*
     @p = val as u8
 }
 
-fs_wr16: (addr: u64, val: u64) {
+export fs_wr16: (addr: u64, val: u64) {
     p: u16* = addr as u16*
     @p = val as u16
 }
 
-fs_wr32: (addr: u64, val: u64) {
+export fs_wr32: (addr: u64, val: u64) {
     p: u32* = addr as u32*
     @p = val as u32
 }
 
-fs_wr64: (addr: u64, val: u64) {
+export fs_wr64: (addr: u64, val: u64) {
     p: u64* = addr as u64*
     @p = val
 }
 
 ; --- Address helpers ---
 
-fs_inode_pa: (idx: u64) -> u64 {
+export fs_inode_pa: (idx: u64) -> u64 {
     return fs_image_base + FS_BLOCK_SIZE + idx * FS_INODE_SIZE
 }
 
-fs_block_pa: (blk: u64) -> u64 {
+export fs_block_pa: (blk: u64) -> u64 {
     return fs_image_base + blk * FS_BLOCK_SIZE
 }
 
-fs_dirent_pa: (blk: u64, slot: u64) -> u64 {
+export fs_dirent_pa: (blk: u64, slot: u64) -> u64 {
     return fs_image_base + blk * FS_BLOCK_SIZE + slot * FS_DIRENT_SIZE
 }
 
-fs_fd_pa: (fd: u64) -> u64 {
+export fs_fd_pa: (fd: u64) -> u64 {
     return fs_fd_table_pa + fd * FS_FD_ENTRY_SIZE
 }
 
 ; --- Inode field accessors ---
 
-fs_inode_type: (idx: u64) -> u64 {
+export fs_inode_type: (idx: u64) -> u64 {
     return (fs_rd16(fs_inode_pa(idx) + FS_IN_TYPE)) % 256
 }
 
-fs_inode_size: (idx: u64) -> u64 {
+export fs_inode_size: (idx: u64) -> u64 {
     return fs_rd32(fs_inode_pa(idx) + FS_IN_SIZE)
 }
 
-fs_inode_set_size: (idx: u64, sz: u64) {
+export fs_inode_set_size: (idx: u64, sz: u64) {
     fs_wr32(fs_inode_pa(idx) + FS_IN_SIZE, sz)
 }
 
-fs_inode_block: (idx: u64, slot: u64) -> u64 {
+export fs_inode_block: (idx: u64, slot: u64) -> u64 {
     return fs_rd16(fs_inode_pa(idx) + FS_IN_BLOCKS + slot * 2)
 }
 
-fs_inode_set_block: (idx: u64, slot: u64, blk: u64) {
+export fs_inode_set_block: (idx: u64, slot: u64, blk: u64) {
     fs_wr16(fs_inode_pa(idx) + FS_IN_BLOCKS + slot * 2, blk)
 }
 
 ; --- String helpers ---
 
 ; Null-terminated compare. Returns 1 if equal, 0 otherwise.
-fs_streq: (a: u8*, b: u8*) -> i64 {
+export fs_streq: (a: u8*, b: u8*) -> i64 {
     i: u64 = 0
     while 1 == 1 {
         ca: u8 = @(a + i)
@@ -165,7 +163,7 @@ fs_streq: (a: u8*, b: u8*) -> i64 {
 }
 
 ; Null-terminated copy of at most n bytes (padded with terminator).
-fs_strncpy: (dst: u8*, src: u8*, n: u64) {
+export fs_strncpy: (dst: u8*, src: u8*, n: u64) {
     i: u64 = 0
     while i < n {
         c: u8 = @(src + i)
@@ -183,7 +181,7 @@ fs_strncpy: (dst: u8*, src: u8*, n: u64) {
 ; --- Block allocation ---
 
 ; Allocate a free data block. Returns 0 if full.
-fs_alloc_block: () -> u64 {
+export fs_alloc_block: () -> u64 {
     bitmap_base: u64 = fs_image_base + FS_BITMAP_BLOCK * FS_BLOCK_SIZE
     block_count: u64 = fs_rd16(fs_image_base + FS_SB_BLOCK_COUNT)
     bit: u64 = 0
@@ -207,7 +205,7 @@ fs_alloc_block: () -> u64 {
 }
 
 ; Return block blk to the free-block bitmap.
-fs_free_block: (blk: u64) {
+export fs_free_block: (blk: u64) {
     if blk < FS_DATA_BLOCK_START {
         return
     }
@@ -223,7 +221,7 @@ fs_free_block: (blk: u64) {
 ; --- Inode allocation ---
 
 ; Allocate a free inode. Returns index, or -1 on failure.
-fs_alloc_inode: () -> i64 {
+export fs_alloc_inode: () -> i64 {
     bitmap_base: u64 = fs_image_base + FS_SB_INODE_BITMAP
     byte: u64 = 0
     while byte < 32 {
@@ -250,7 +248,7 @@ fs_alloc_inode: () -> i64 {
 }
 
 ; Return inode idx to the free-inode bitmap and mark it free.
-fs_free_inode: (idx: u64) {
+export fs_free_inode: (idx: u64) {
     bitmap_base: u64 = fs_image_base + FS_SB_INODE_BITMAP
     p: u8* = (bitmap_base + idx / 8) as u8*
     b: u8 = @p
@@ -263,18 +261,16 @@ fs_free_inode: (idx: u64) {
 ; --- Directory operations ---
 
 ; Find entry `name` in directory dir_inode. Returns child inode, or -1.
-fs_find_in_dir: (dir_inode: u64, name: u8*) -> i64 {
+export fs_find_in_dir: (dir_inode: u64, name: u8*) -> i64 {
     if fs_inode_type(dir_inode) != FS_TYPE_DIR {
         return -1 as i64
     }
-    blk_slot: u64 = 0
-    while blk_slot < FS_INODE_BLOCKS {
+    for blk_slot in 0..FS_INODE_BLOCKS {
         blk: u64 = fs_inode_block(dir_inode, blk_slot)
         if blk == 0 {
             break
         }
-        slot: u64 = 0
-        while slot < FS_DIRENTS_PER_BLOCK {
+        for slot in 0..FS_DIRENTS_PER_BLOCK {
             de: u64 = fs_dirent_pa(blk, slot)
             np: u8* = de as u8*
             if @np != 0 {
@@ -282,18 +278,15 @@ fs_find_in_dir: (dir_inode: u64, name: u8*) -> i64 {
                     return fs_rd16(de + FS_DE_INODE) as i64
                 }
             }
-            slot = slot + 1
         }
-        blk_slot = blk_slot + 1
     }
     return -1 as i64
 }
 
 ; Add a (child_name, child_inode) entry to directory dir_inode.
 ; Returns 0 on success, -1 on failure.
-fs_add_dirent: (dir_inode: u64, child_name: u8*, child_inode: u64) -> i64 {
-    blk_slot: u64 = 0
-    while blk_slot < FS_INODE_BLOCKS {
+export fs_add_dirent: (dir_inode: u64, child_name: u8*, child_inode: u64) -> i64 {
+    for blk_slot in 0..FS_INODE_BLOCKS {
         blk: u64 = fs_inode_block(dir_inode, blk_slot)
         if blk == 0 {
             new_blk: u64 = fs_alloc_block()
@@ -304,8 +297,7 @@ fs_add_dirent: (dir_inode: u64, child_name: u8*, child_inode: u64) -> i64 {
             fs_inode_set_block(dir_inode, blk_slot, new_blk)
             blk = new_blk
         }
-        slot: u64 = 0
-        while slot < FS_DIRENTS_PER_BLOCK {
+        for slot in 0..FS_DIRENTS_PER_BLOCK {
             de: u64 = fs_dirent_pa(blk, slot)
             np: u8* = de as u8*
             if @np == 0 {
@@ -314,24 +306,20 @@ fs_add_dirent: (dir_inode: u64, child_name: u8*, child_inode: u64) -> i64 {
                 fs_inode_set_size(dir_inode, fs_inode_size(dir_inode) + 1)
                 return 0
             }
-            slot = slot + 1
         }
-        blk_slot = blk_slot + 1
     }
     return -1 as i64
 }
 
 ; Remove entry `name` from directory dir_inode.
 ; Returns 0 on success, -1 if not found.
-fs_remove_dirent: (dir_inode: u64, name: u8*) -> i64 {
-    blk_slot: u64 = 0
-    while blk_slot < FS_INODE_BLOCKS {
+export fs_remove_dirent: (dir_inode: u64, name: u8*) -> i64 {
+    for blk_slot in 0..FS_INODE_BLOCKS {
         blk: u64 = fs_inode_block(dir_inode, blk_slot)
         if blk == 0 {
             break
         }
-        slot: u64 = 0
-        while slot < FS_DIRENTS_PER_BLOCK {
+        for slot in 0..FS_DIRENTS_PER_BLOCK {
             de: u64 = fs_dirent_pa(blk, slot)
             np: u8* = de as u8*
             if @np != 0 {
@@ -344,9 +332,7 @@ fs_remove_dirent: (dir_inode: u64, name: u8*) -> i64 {
                     return 0
                 }
             }
-            slot = slot + 1
         }
-        blk_slot = blk_slot + 1
     }
     return -1 as i64
 }
@@ -355,7 +341,7 @@ fs_remove_dirent: (dir_inode: u64, name: u8*) -> i64 {
 
 ; Resolve an absolute path to an inode index. Returns -1 on error.
 ; Root "/" is inode 0.
-fs_resolve: (path: u8*) -> i64 {
+export fs_resolve: (path: u8*) -> i64 {
     if @path != FS_SLASH {
         return -1 as i64
     }
@@ -399,7 +385,7 @@ fs_resolve: (path: u8*) -> i64 {
 
 ; Split an absolute path into its parent inode (returned) and leaf name
 ; (written to name_buf); -1 on error.
-fs_split_path: (path: u8*, name_buf: u8*) -> i64 {
+export fs_split_path: (path: u8*, name_buf: u8*) -> i64 {
     path_len: u64 = 0
     while @(path + path_len) != 0 {
         path_len = path_len + 1
@@ -445,7 +431,7 @@ fs_split_path: (path: u8*, name_buf: u8*) -> i64 {
 
 ; Allocate a new inode of node_type under parent_inode with the given name.
 ; Returns the new inode index, or -1 on error.
-fs_create_at: (parent_inode: u64, name: u8*, node_type: u64) -> i64 {
+export fs_create_at: (parent_inode: u64, name: u8*, node_type: u64) -> i64 {
     if fs_inode_type(parent_inode) != FS_TYPE_DIR {
         return -1 as i64
     }
@@ -474,7 +460,7 @@ fs_create_at: (parent_inode: u64, name: u8*, node_type: u64) -> i64 {
 
 ; Mount the filesystem image at base_pa. Validates the magic number, allocates
 ; the kernel fd table, and logs the inode census.
-fs_init: (base_pa: u64, image_size: u64) {
+export fs_init: (base_pa: u64, image_size: u64) {
     if fs_rd32(base_pa) != FS_MAGIC32 {
         klog_warn("[  FS  ] bad magic, not mounting".ptr)
         return
@@ -506,7 +492,7 @@ fs_init: (base_pa: u64, image_size: u64) {
 
 ; Open a file by absolute path. flags: 0=RO, 1=RW, 2=create (implies RW).
 ; Returns fd >= 2 on success, or -1 on error.
-fs_open: (path: u8*, flags: u64) -> i64 {
+export fs_open: (path: u8*, flags: u64) -> i64 {
     if fs_ready == 0 {
         return -1 as i64
     }
@@ -549,7 +535,7 @@ fs_open: (path: u8*, flags: u64) -> i64 {
 
 ; Read up to len bytes from fd at the given byte offset into buf.
 ; Returns bytes read, or -1 on error.
-fs_read: (fd: i64, buf: u8*, offset: u64, len: u64) -> i64 {
+export fs_read: (fd: i64, buf: u8*, offset: u64, len: u64) -> i64 {
     if fs_ready == 0 {
         return -1 as i64
     }
@@ -596,7 +582,7 @@ fs_read: (fd: i64, buf: u8*, offset: u64, len: u64) -> i64 {
 
 ; Write len bytes from buf to fd at the given byte offset, extending the file
 ; and allocating blocks as needed. Returns bytes written, or -1 on error.
-fs_write: (fd: i64, buf: u8*, offset: u64, len: u64) -> i64 {
+export fs_write: (fd: i64, buf: u8*, offset: u64, len: u64) -> i64 {
     if fs_ready == 0 {
         return -1 as i64
     }
@@ -648,7 +634,7 @@ fs_write: (fd: i64, buf: u8*, offset: u64, len: u64) -> i64 {
 
 ; Shrink the file behind fd to exactly `len` bytes: set the inode size and free
 ; data blocks past `len`. Returns 0 on success, -1 on error. Does not grow files.
-fs_truncate: (fd: i64, len: u64) -> i64 {
+export fs_truncate: (fd: i64, len: u64) -> i64 {
     if fs_ready == 0 {
         return -1 as i64
     }
@@ -668,14 +654,12 @@ fs_truncate: (fd: i64, len: u64) -> i64 {
     }
     ; Number of blocks the truncated file still needs; free the rest.
     keep: u64 = (len + FS_BLOCK_SIZE - 1) / FS_BLOCK_SIZE
-    blk_slot: u64 = keep
-    while blk_slot < FS_INODE_BLOCKS {
+    for blk_slot in keep..FS_INODE_BLOCKS {
         blk: u64 = fs_inode_block(inode, blk_slot)
         if blk != 0 {
             fs_free_block(blk)
             fs_inode_set_block(inode, blk_slot, 0)
         }
-        blk_slot = blk_slot + 1
     }
     fs_inode_set_size(inode, len)
     return 0
@@ -683,7 +667,7 @@ fs_truncate: (fd: i64, len: u64) -> i64 {
 
 ; Return the size in bytes of the file behind fd, or 0 if fd is invalid.
 ; Used to seek to end for append-mode (`>>`) redirection.
-fs_fd_size: (fd: i64) -> u64 {
+export fs_fd_size: (fd: i64) -> u64 {
     if fd < 2 {
         return 0
     }
@@ -695,7 +679,7 @@ fs_fd_size: (fd: i64) -> u64 {
 }
 
 ; Return the implicit sequential position for fd, or 0 if fd is invalid.
-fs_get_pos: (fd: i64) -> u64 {
+export fs_get_pos: (fd: i64) -> u64 {
     if fd < 2 {
         return 0
     }
@@ -703,7 +687,7 @@ fs_get_pos: (fd: i64) -> u64 {
 }
 
 ; Set the implicit sequential position for fd.
-fs_set_pos: (fd: i64, pos: u64) {
+export fs_set_pos: (fd: i64, pos: u64) {
     if fd < 2 {
         return
     }
@@ -711,7 +695,7 @@ fs_set_pos: (fd: i64, pos: u64) {
 }
 
 ; Release a file descriptor slot.
-fs_close: (fd: i64) {
+export fs_close: (fd: i64) {
     if fs_ready == 0 {
         return
     }
@@ -726,7 +710,7 @@ fs_close: (fd: i64) {
 }
 
 ; Create a file (type=1) or directory (type=2) under parent_path.
-fs_create: (parent_path: u8*, name: u8*, node_type: u8) -> i64 {
+export fs_create: (parent_path: u8*, name: u8*, node_type: u8) -> i64 {
     if fs_ready == 0 {
         return -1 as i64
     }
@@ -738,7 +722,7 @@ fs_create: (parent_path: u8*, name: u8*, node_type: u8) -> i64 {
 }
 
 ; Return the inode type at an absolute path (1=file, 2=dir), or -1 if missing.
-fs_stat: (path: u8*) -> i64 {
+export fs_stat: (path: u8*) -> i64 {
     if fs_ready == 0 {
         return -1 as i64
     }
@@ -750,7 +734,7 @@ fs_stat: (path: u8*) -> i64 {
 }
 
 ; Readdir: write the index-th entry name into name_buf, return its inode type (1/2) or -1.
-fs_readdir: (path: u8*, index: u64, name_buf: u8*) -> i64 {
+export fs_readdir: (path: u8*, index: u64, name_buf: u8*) -> i64 {
     if fs_ready == 0 {
         return -1 as i64
     }
@@ -762,14 +746,12 @@ fs_readdir: (path: u8*, index: u64, name_buf: u8*) -> i64 {
         return -1 as i64
     }
     count: u64 = 0
-    blk_slot: u64 = 0
-    while blk_slot < FS_INODE_BLOCKS {
+    for blk_slot in 0..FS_INODE_BLOCKS {
         blk: u64 = fs_inode_block(dir_inode as u64, blk_slot)
         if blk == 0 {
             break
         }
-        slot: u64 = 0
-        while slot < FS_DIRENTS_PER_BLOCK {
+        for slot in 0..FS_DIRENTS_PER_BLOCK {
             de: u64 = fs_dirent_pa(blk, slot)
             np: u8* = de as u8*
             if @np != 0 {
@@ -780,16 +762,14 @@ fs_readdir: (path: u8*, index: u64, name_buf: u8*) -> i64 {
                 }
                 count = count + 1
             }
-            slot = slot + 1
         }
-        blk_slot = blk_slot + 1
     }
     return -1 as i64
 }
 
 ; Create a directory at the given absolute path.
 ; Returns the new inode index, or -1 on error.
-fs_mkdir: (path: u8*) -> i64 {
+export fs_mkdir: (path: u8*) -> i64 {
     if fs_ready == 0 {
         return -1 as i64
     }
@@ -802,7 +782,7 @@ fs_mkdir: (path: u8*) -> i64 {
 }
 
 ; Free all data blocks and return inode to the free pool. Does not touch directory entries.
-fs_release_inode: (inode: u64) {
+export fs_release_inode: (inode: u64) {
     blk_slot: u64 = 0
     while blk_slot < FS_INODE_BLOCKS {
         blk: u64 = fs_inode_block(inode, blk_slot)
@@ -817,7 +797,7 @@ fs_release_inode: (inode: u64) {
 
 ; Remove a regular file: detach from parent, free data blocks and inode.
 ; Refuses directories (use fs_rmdir). 0 on success, -1 on error.
-fs_unlink: (path: u8*) -> i64 {
+export fs_unlink: (path: u8*) -> i64 {
     if fs_ready == 0 {
         return -1 as i64
     }
@@ -842,7 +822,7 @@ fs_unlink: (path: u8*) -> i64 {
 
 ; Remove an empty directory at an absolute path. Refuses the root, non-empty
 ; directories, and non-directories. Returns 0 on success, -1 on error.
-fs_rmdir: (path: u8*) -> i64 {
+export fs_rmdir: (path: u8*) -> i64 {
     if fs_ready == 0 {
         return -1 as i64
     }
@@ -872,7 +852,7 @@ fs_rmdir: (path: u8*) -> i64 {
 
 ; Move a file or directory from old_path to new_path (cross-directory allowed).
 ; Returns 0 on success, -1 on error.
-fs_rename: (old_path: u8*, new_path: u8*) -> i64 {
+export fs_rename: (old_path: u8*, new_path: u8*) -> i64 {
     if fs_ready == 0 {
         return -1 as i64
     }

@@ -258,7 +258,8 @@ fn value_reg(value: &IrValue) -> Option<IrRegister> {
 
 pub(super) fn inst_uses(inst: &IrInstruction) -> Vec<IrRegister> {
     use IrInstruction::{
-        Call, Cast, Cmp, HeapAlloc, HeapFree, Index, Load, Math, Offset, Phi, Store, Unary,
+        Call, Cast, Cmp, HeapAlloc, HeapFree, Index, IndirectCall, Load, Math, Offset, Phi, Store,
+        Unary,
     };
     let mut uses = Vec::new();
     match inst {
@@ -285,6 +286,12 @@ pub(super) fn inst_uses(inst: &IrInstruction) -> Vec<IrRegister> {
                 uses.extend(value_reg(arg));
             }
         }
+        IndirectCall { callee, args, .. } => {
+            uses.extend(value_reg(callee));
+            for arg in args {
+                uses.extend(value_reg(arg));
+            }
+        }
         Phi { incoming, .. } => {
             for (value, _) in incoming {
                 uses.extend(value_reg(value));
@@ -303,8 +310,8 @@ pub(super) fn inst_uses(inst: &IrInstruction) -> Vec<IrRegister> {
 
 pub(super) fn inst_defs(inst: &IrInstruction) -> Vec<IrRegister> {
     use IrInstruction::{
-        Alloc, Call, Cast, Cmp, GlobalRef, HeapAlloc, Index, Load, Math, Offset, Phi, ReadReg,
-        Unary,
+        Alloc, Call, Cast, Cmp, FunctionAddr, GlobalRef, HeapAlloc, Index, IndirectCall, Load,
+        Math, Offset, Phi, ReadReg, Unary,
     };
     match inst {
         Alloc { dest, .. }
@@ -318,8 +325,9 @@ pub(super) fn inst_defs(inst: &IrInstruction) -> Vec<IrRegister> {
         | Index { dest, .. }
         | HeapAlloc { dest, .. }
         | ReadReg { dest, .. }
-        | GlobalRef { dest, .. } => vec![dest.clone()],
-        Call { dest, .. } => dest.clone().into_iter().collect(),
+        | GlobalRef { dest, .. }
+        | FunctionAddr { dest, .. } => vec![dest.clone()],
+        Call { dest, .. } | IndirectCall { dest, .. } => dest.clone().into_iter().collect(),
         _ => Vec::new(),
     }
 }

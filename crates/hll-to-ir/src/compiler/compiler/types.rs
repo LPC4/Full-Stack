@@ -20,6 +20,18 @@ impl HighLevelCompiler {
                 element: Box::new(self.lower_type(inner)),
             },
             Type::Slice(inner) => IrType::Slice(Box::new(self.lower_type(inner))),
+            Type::Function {
+                params,
+                return_type,
+            } => IrType::FunctionPointer {
+                params: params.iter().map(|param| self.lower_type(param)).collect(),
+                return_type: Box::new(
+                    return_type
+                        .as_deref()
+                        .map(|ty| self.lower_type(ty))
+                        .unwrap_or(IrType::Void),
+                ),
+            },
             Type::Struct(fields) => IrType::Aggregate(
                 fields
                     .iter()
@@ -68,6 +80,22 @@ impl HighLevelCompiler {
             Type::Slice(inner) => Ok(IrType::Slice(Box::new(
                 self.lower_type_with_program(ir_program, inner)?,
             ))),
+            Type::Function {
+                params,
+                return_type,
+            } => Ok(IrType::FunctionPointer {
+                params: params
+                    .iter()
+                    .map(|param| self.lower_type_with_program(ir_program, param))
+                    .collect::<Result<Vec<_>, _>>()?,
+                return_type: Box::new(
+                    return_type
+                        .as_deref()
+                        .map(|ty| self.lower_type_with_program(ir_program, ty))
+                        .transpose()?
+                        .unwrap_or(IrType::Void),
+                ),
+            }),
             Type::Struct(fields) => Ok(IrType::Aggregate(
                 fields
                     .iter()
@@ -131,6 +159,7 @@ impl HighLevelCompiler {
             | Type::Pointer(_)
             | Type::Array(_, _)
             | Type::Slice(_)
+            | Type::Function { .. }
             | Type::Struct(_) => {
                 // Recursively substitute in nested types
                 self.substitute_in_type(ty, params, args)
@@ -166,6 +195,18 @@ impl HighLevelCompiler {
             Type::Slice(inner) => {
                 Type::Slice(Box::new(self.substitute_generic_type(inner, params, args)))
             }
+            Type::Function {
+                params: fn_params,
+                return_type,
+            } => Type::Function {
+                params: fn_params
+                    .iter()
+                    .map(|param| self.substitute_generic_type(param, params, args))
+                    .collect(),
+                return_type: return_type
+                    .as_ref()
+                    .map(|ty| Box::new(self.substitute_generic_type(ty, params, args))),
+            },
             Type::Struct(fields) => Type::Struct(
                 fields
                     .iter()
@@ -222,6 +263,20 @@ impl HighLevelCompiler {
                 Type::Array(*len, Box::new(self.ir_type_to_type(element)))
             }
             IrType::Slice(element) => Type::Slice(Box::new(self.ir_type_to_type(element))),
+            IrType::FunctionPointer {
+                params,
+                return_type,
+            } => Type::Function {
+                params: params
+                    .iter()
+                    .map(|param| self.ir_type_to_type(param))
+                    .collect(),
+                return_type: if matches!(return_type.as_ref(), IrType::Void) {
+                    None
+                } else {
+                    Some(Box::new(self.ir_type_to_type(return_type)))
+                },
+            },
             IrType::Aggregate(fields) => {
                 // Convert to struct type
                 Type::Struct(

@@ -182,7 +182,10 @@ every context switch. The VM's TLB is also flushed on any `satp` change.
 
 ### 5.1 Process control block (PCB)
 
-A process is a 384-byte PCB allocated with `kmalloc`:
+A process is a 384-byte PCB allocated with `kmalloc`. `layout.hll` exports typed
+`Pcb` and `TrapFrame` views with this exact field order; the `PCB_OFF_*`,
+`PCB_IDX_*`, and `TF_*` constants remain the ABI ground truth for asm and raw
+pointer code.
 
 ```
 Offset  Size  Field
@@ -203,6 +206,7 @@ Offset  Size  Field
 
 The `trap_frame` layout matches the on-stack frame built by the trap entry (6.1),
 so `schedule` saves/restores context with a single `memcpy` of those 288 bytes.
+A host-side layout assertion checks the typed views against the offsets above.
 
 ### 5.2 Address space and initial trap frame
 

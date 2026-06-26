@@ -106,10 +106,16 @@ fn fold_instruction(
         | IrInstruction::HeapAlloc { dest, .. }
         | IrInstruction::ReadReg { dest, .. }
         | IrInstruction::GlobalRef { dest, .. }
+        | IrInstruction::FunctionAddr { dest, .. }
         | IrInstruction::Alloc { dest, .. } => {
             consts.remove(dest);
         }
         IrInstruction::Call {
+            dest: Some(dest), ..
+        } => {
+            consts.remove(dest);
+        }
+        IrInstruction::IndirectCall {
             dest: Some(dest), ..
         } => {
             consts.remove(dest);
@@ -150,6 +156,12 @@ fn operand_uses_mut(inst: &mut IrInstruction) -> Vec<&mut IrValue> {
         IrInstruction::Offset { bytes, .. } => vec![bytes],
         IrInstruction::Index { idx, .. } => vec![idx],
         IrInstruction::Call { args, .. } => args.iter_mut().collect(),
+        IrInstruction::IndirectCall { callee, args, .. } => {
+            let mut uses = Vec::with_capacity(args.len() + 1);
+            uses.push(callee);
+            uses.extend(args.iter_mut());
+            uses
+        }
         IrInstruction::HeapAlloc {
             count: Some(count), ..
         } => vec![count],

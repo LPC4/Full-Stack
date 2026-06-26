@@ -86,8 +86,8 @@ fn collect_vregs_from_instruction(
     function_return_types: &HashMap<String, IrType>,
 ) {
     use IrInstruction::{
-        Alloc, Call, Cast, Cmp, GlobalRef, HeapAlloc, Index, Load, Math, Offset, Phi, ReadReg,
-        Unary,
+        Alloc, Call, Cast, Cmp, FunctionAddr, GlobalRef, HeapAlloc, Index, IndirectCall, Load,
+        Math, Offset, Phi, ReadReg, Unary,
     };
 
     match inst {
@@ -123,6 +123,19 @@ fn collect_vregs_from_instruction(
                 vregs.push((dest.clone(), ret_ty));
             }
         }
+        IndirectCall {
+            dest, callee_ty, ..
+        } => {
+            if let Some(dest) = dest
+                && !vregs.iter().any(|(r, _)| r == dest)
+            {
+                let ret_ty = match callee_ty {
+                    IrType::FunctionPointer { return_type, .. } => *return_type.clone(),
+                    _ => IrType::Integer(hll_to_ir::IntWidth::I64),
+                };
+                vregs.push((dest.clone(), ret_ty));
+            }
+        }
         Phi { dest, ty, .. } => {
             if !vregs.iter().any(|(r, _)| r == dest) {
                 vregs.push((dest.clone(), ty.clone()));
@@ -148,6 +161,17 @@ fn collect_vregs_from_instruction(
                 vregs.push((
                     dest.clone(),
                     IrType::Pointer(Box::new(IrType::Integer(hll_to_ir::IntWidth::I8))),
+                ));
+            }
+        }
+        FunctionAddr { dest, .. } => {
+            if !vregs.iter().any(|(r, _)| r == dest) {
+                vregs.push((
+                    dest.clone(),
+                    IrType::FunctionPointer {
+                        params: Vec::new(),
+                        return_type: Box::new(IrType::Void),
+                    },
                 ));
             }
         }

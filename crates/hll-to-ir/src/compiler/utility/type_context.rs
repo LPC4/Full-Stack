@@ -362,6 +362,21 @@ impl TypeContext {
             IrType::Integer(width) => format!("{width}"),
             IrType::Float(width) => format!("{width}"),
             IrType::Pointer(inner) => format!("*{}", self.get_type_name(inner)),
+            IrType::FunctionPointer {
+                params,
+                return_type,
+            } => {
+                let params = params
+                    .iter()
+                    .map(|param| self.get_type_name(param))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                if matches!(return_type.as_ref(), IrType::Void) {
+                    format!("fn({params})")
+                } else {
+                    format!("fn({params}) -> {}", self.get_type_name(return_type))
+                }
+            }
             IrType::Array { element, len } => {
                 format!("{}[{}]", self.get_type_name(element), len)
             }

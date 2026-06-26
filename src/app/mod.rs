@@ -9,8 +9,8 @@ use asm_to_binary::rv_instruction::RvInstruction;
 use egui::Color32;
 use egui_dock::{DockState, NodeIndex};
 use full_stack::compilation_pipeline::{
-    AsmOutput, BinaryOutput, CompilationPipeline, FsEntry, IrOutput, PipelineResult, TargetMode,
-    assembled_to_elf_file, build_fs_image,
+    AsmOutput, BinaryOutput, CompilationPipeline, FsEntry, IrOutput, ModuleResolver,
+    PipelineResult, TargetMode, assembled_to_elf_file, build_fs_image, bundled_module_source,
 };
 use full_stack::target_mode::infer_target_mode_for_source;
 use full_stack::view::debug::DebugSession;
@@ -340,12 +340,15 @@ impl FullStackApp {
         app.catalog.ensure_consistency();
         app.reset_layout();
         app.apply_settings(&cc.egui_ctx);
-        app.init_stdlib_cache();
+        if let Err(e) = app.init_stdlib_cache() {
+            app.compilation_state.set_error(e);
+            app.compilation_state.just_compiled = false;
+        }
         app.compile();
         app
     }
 
-    fn init_stdlib_cache(&mut self) {
+    fn init_stdlib_cache(&mut self) -> Result<(), String> {
         let mode = self.pipeline.target_mode();
         self.stdlib_objects.clear();
         self.stdlib_asm.clear();
@@ -355,6 +358,7 @@ impl FullStackApp {
         let modules = hll_to_ir::stdlib::get_stdlib_modules_for_mode(mode);
         let mut std_pipeline = CompilationPipeline::new();
         std_pipeline.set_target_mode(mode);
+        std_pipeline.set_module_resolver(Some(self.catalog_module_resolver()));
         std_pipeline.set_write_artifacts(false);
         std_pipeline.set_type_prelude(get_stdlib_type_prelude());
         if mode == TargetMode::Kernel {
@@ -367,9 +371,8 @@ impl FullStackApp {
             let compiled = match std_pipeline.compile(source) {
                 Ok(c) => c,
                 Err(e) => {
-                    log::error!("stdlib module `{name}` compile failed: {e:?}");
                     self.stdlib_asm.clear();
-                    return;
+                    return Err(format!("stdlib module `{name}` compile failed: {e:?}"));
                 }
             };
             let (_, tokens) = std_pipeline.compile_ir_to_assembly_with_tokens(&compiled.ir_program);
@@ -378,13 +381,16 @@ impl FullStackApp {
             match std_pipeline.assemble_named(name, &tokens) {
                 Ok(obj) => objects.push(((*name).to_owned(), obj)),
                 Err(e) => {
-                    log::error!("stdlib module `{name}` assemble failed: {}", e.message);
                     self.stdlib_asm.clear();
-                    return;
+                    return Err(format!(
+                        "stdlib module `{name}` assemble failed: {}",
+                        e.message
+                    ));
                 }
             }
         }
         self.stdlib_objects = objects;
+        Ok(())
     }
 
     fn view<T: CompilerView + Default + 'static>(&mut self) -> ViewWrapper {
@@ -488,7 +494,11 @@ impl FullStackApp {
                 self.pipeline.set_link_layout(Some(kernel_default));
             }
         }
-        self.init_stdlib_cache();
+        if let Err(e) = self.init_stdlib_cache() {
+            self.compilation_state.set_error(e);
+            self.compilation_state.just_compiled = false;
+            return;
+        }
         self.compile();
     }
 
@@ -517,11 +527,15 @@ impl FullStackApp {
     fn compile_kernel_with_modules(&mut self) {
         // Reuse cached per-module stdlib objects; rebuild if the cache is empty.
         if self.stdlib_objects.is_empty() {
-            self.init_stdlib_cache();
+            if let Err(e) = self.init_stdlib_cache() {
+                self.compilation_state.set_error(e);
+                self.compilation_state.just_compiled = false;
+                return;
+            }
         }
         if self.stdlib_objects.is_empty() {
             self.compilation_state
-                .set_error("kernel stdlib cache is empty after module compilation".to_owned());
+                .set_error("kernel stdlib cache produced no module objects".to_owned());
             self.compilation_state.just_compiled = false;
             return;
         }
@@ -548,6 +562,7 @@ impl FullStackApp {
         // Compile the user kernel module in its own pipeline without concatenation.
         let mut kernel_user_pipeline = CompilationPipeline::new();
         kernel_user_pipeline.set_target_mode(TargetMode::Kernel);
+        kernel_user_pipeline.set_module_resolver(Some(self.catalog_module_resolver()));
         kernel_user_pipeline.set_type_prelude(get_stdlib_type_prelude());
         kernel_user_pipeline.set_entry_point(Some("_kernel_start".to_owned()));
         kernel_user_pipeline.set_link_layout(Some(LinkLayout::freestanding_kernel()));
@@ -650,6 +665,36 @@ impl FullStackApp {
             .cloned()
     }
 
+    fn catalog_module_resolver(&self) -> ModuleResolver {
+        let mut sources: HashMap<String, String> = HashMap::new();
+        for program in self.catalog.all_programs() {
+            let key = match program.id.as_str() {
+                "os-kernel-entry" => Some("entry"),
+                "os-kernel-checks" => Some("checks"),
+                "os-kernel-utilities" => Some("utilities"),
+                "os-kernel-trap-entry" => Some("trap_entry"),
+                "os-kernel-trap-handler" => Some("trap_handler"),
+                "os-kernel-pmm" => Some("pmm"),
+                "os-kernel-vmm" => Some("vmm"),
+                "os-kernel-process" => Some("process"),
+                "os-kernel-syscall" => Some("syscall"),
+                "os-kernel-scheduler" => Some("scheduler"),
+                "os-kernel-fs" => Some("fs"),
+                "os-my-kernel" => Some("my_kernel"),
+                _ => None,
+            };
+            if let Some(key) = key {
+                sources.insert(key.to_owned(), program.source.clone());
+            }
+        }
+        Box::new(move |name: &str| {
+            sources
+                .get(name)
+                .cloned()
+                .or_else(|| bundled_module_source(name).map(str::to_owned))
+        })
+    }
+
     fn compile(&mut self) {
         // Selecting a fragment builds its parent so it links cleanly and the
         // fragment's edits are folded in via the aux/module link path below.
@@ -682,6 +727,8 @@ impl FullStackApp {
         }
 
         self.pipeline.set_target_mode(self.target_mode);
+        self.pipeline
+            .set_module_resolver(Some(self.catalog_module_resolver()));
         let artifact_stem = {
             let name = build.name.trim();
             if name.is_empty() {
@@ -818,6 +865,7 @@ impl FullStackApp {
         for (i, src) in aux_sources.iter().enumerate() {
             let mut p = CompilationPipeline::new();
             p.set_target_mode(target);
+            p.set_module_resolver(Some(self.catalog_module_resolver()));
             p.set_write_artifacts(false);
             p.set_type_prelude(get_stdlib_type_prelude());
             p.set_source_prelude(layout);
@@ -873,6 +921,7 @@ impl FullStackApp {
         let program_source = program.source.clone();
         let mut user_pipeline = CompilationPipeline::new();
         user_pipeline.set_target_mode(TargetMode::Hosted);
+        user_pipeline.set_module_resolver(Some(self.catalog_module_resolver()));
         user_pipeline.set_write_artifacts(false);
         user_pipeline.set_type_prelude(get_stdlib_type_prelude());
         user_pipeline.set_source_prelude(layout.clone());
@@ -933,6 +982,7 @@ impl FullStackApp {
         // Kernel module, linked against the stdlib objects at S-mode entry.
         let mut kernel_pipeline = CompilationPipeline::new();
         kernel_pipeline.set_target_mode(TargetMode::Kernel);
+        kernel_pipeline.set_module_resolver(Some(self.catalog_module_resolver()));
         kernel_pipeline.set_write_artifacts(false);
         kernel_pipeline.set_entry_point(Some("_kernel_start".to_owned()));
         let kernel_objs = kernel_pipeline
@@ -966,6 +1016,7 @@ impl FullStackApp {
 
         let mut pipeline = CompilationPipeline::new();
         pipeline.set_target_mode(TargetMode::Hosted);
+        pipeline.set_module_resolver(Some(self.catalog_module_resolver()));
         pipeline.set_write_artifacts(false);
         pipeline.set_type_prelude(get_stdlib_type_prelude());
         pipeline.set_source_prelude(prog.layout);
@@ -986,6 +1037,7 @@ impl FullStackApp {
         for (i, src) in prog.aux_sources.iter().enumerate() {
             let mut aux_pipeline = CompilationPipeline::new();
             aux_pipeline.set_target_mode(TargetMode::Hosted);
+            aux_pipeline.set_module_resolver(Some(self.catalog_module_resolver()));
             aux_pipeline.set_write_artifacts(false);
             aux_pipeline.set_type_prelude(get_stdlib_type_prelude());
             aux_pipeline.set_source_prelude(prog.layout);

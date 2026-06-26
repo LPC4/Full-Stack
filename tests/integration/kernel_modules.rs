@@ -109,6 +109,65 @@ fn my_kernel_compiles() {
     assert_kernel_module_compiles("my_kernel", kernel::MY_KERNEL);
 }
 
+#[test]
+fn pcb_and_trap_frame_struct_layout_matches_offsets() {
+    fn u64_offsets<'a>(fields: &'a [&'a str]) -> Vec<(&'a str, usize)> {
+        fields
+            .iter()
+            .enumerate()
+            .map(|(idx, name)| (*name, idx * 8))
+            .collect()
+    }
+
+    let trap_fields = [
+        "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11", "x12",
+        "x13", "x14", "x15", "x16", "x17", "x18", "x19", "x20", "x21", "x22", "x23",
+        "x24", "x25", "x26", "x27", "x28", "x29", "x30", "x31", "sepc", "scause",
+        "stval", "sstatus",
+    ];
+    let trap_offsets = u64_offsets(&trap_fields);
+    assert_eq!(trap_offsets[2].1, 16, "TrapFrame.x2 must match TF_SP");
+    assert_eq!(trap_offsets[10].1, 80, "TrapFrame.x10 must match TF_A0");
+    assert_eq!(trap_offsets[11].1, 88, "TrapFrame.x11 must match TF_A1");
+    assert_eq!(trap_offsets[12].1, 96, "TrapFrame.x12 must match TF_A2");
+    assert_eq!(trap_offsets[13].1, 104, "TrapFrame.x13 must match TF_A3");
+    assert_eq!(trap_offsets[14].1, 112, "TrapFrame.x14 must match TF_A4");
+    assert_eq!(trap_offsets[17].1, 136, "TrapFrame.x17 must match TF_A7");
+    assert_eq!(trap_offsets[32].1, 256, "TrapFrame.sepc must match TF_SEPC");
+    assert_eq!(
+        trap_offsets[33].1, 264,
+        "TrapFrame.scause must match TF_SCAUSE"
+    );
+    assert_eq!(trap_offsets[34].1, 272, "TrapFrame.stval must match TF_STVAL");
+    assert_eq!(
+        trap_offsets[35].1, 280,
+        "TrapFrame.sstatus must match TF_SSTATUS"
+    );
+    assert_eq!(trap_fields.len() * 8, 288, "TrapFrame must stay TF_BYTES");
+
+    let pcb_offsets = [
+        ("pid", 0),
+        ("state", 8),
+        ("next", 16),
+        ("user_stack_pa", 24),
+        ("entry_pc", 32),
+        ("frame", 40),
+        ("page_root", 328),
+        ("parent_pid", 336),
+        ("exit_code", 344),
+        ("stdout_fd", 352),
+        ("stdin_fd", 360),
+        ("fb_mapped", 368),
+        ("heap_brk", 376),
+    ];
+    let mut offset = 0;
+    for (field, expected) in pcb_offsets {
+        assert_eq!(offset, expected, "Pcb.{field} offset changed");
+        offset += if field == "frame" { 288 } else { 8 };
+    }
+    assert_eq!(offset, 384, "Pcb must stay PCB_SIZE");
+}
+
 // --- Frame-size guard ---
 // HLL gives every block-local its own stack slot, so a giant function can grow
 // a frame past the RV immediate range [-2048, 2047], at which point an `sd`/`ld`

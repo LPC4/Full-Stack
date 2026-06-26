@@ -1,51 +1,43 @@
-external malloc: (size: u64) -> u8*
+import "memory_allocator"
 
-str_len: (text: u8[]) -> u64 {
+export str_len: (text: u8[]) -> u64 {
     return text.len
 }
 
-str_is_empty: (text: u8[]) -> bool {
+export str_is_empty: (text: u8[]) -> bool {
     return text.len == 0
 }
 
-str_equals: (lhs: u8[], rhs: u8[]) -> bool {
+export str_equals: (lhs: u8[], rhs: u8[]) -> bool {
     if lhs.len != rhs.len {
         return false
     }
-    i: u64 = 0
-    while i < lhs.len {
+    for i in 0..lhs.len {
         if lhs[i] != rhs[i] {
             return false
         }
-        i = i + 1
     }
     return true
 }
 
-str_copy: (src: u8[]) -> u8[] {
+export str_copy: (src: u8[]) -> u8[] {
     data: u8* = malloc(src.len)
-    i: u64 = 0
-    while i < src.len {
+    for i in 0..src.len {
         data[i] = src[i]
-        i = i + 1
     }
     copy: u8[] = src
     copy.ptr = data
     return copy
 }
 
-str_concat: (left: u8[], right: u8[]) -> u8[] {
+export str_concat: (left: u8[], right: u8[]) -> u8[] {
     total: u64 = left.len + right.len
     data: u8* = malloc(total)
-    i: u64 = 0
-    while i < left.len {
+    for i in 0..left.len {
         data[i] = left[i]
-        i = i + 1
     }
-    j: u64 = 0
-    while j < right.len {
+    for j in 0..right.len {
         data[left.len + j] = right[j]
-        j = j + 1
     }
     result: u8[] = left
     result.ptr = data

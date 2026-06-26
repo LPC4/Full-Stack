@@ -11,18 +11,55 @@ use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 
 static STDLIB_OBJS: OnceLock<Vec<(String, AssembledOutput)>> = OnceLock::new();
 
+fn bundled_module_source(name: &str) -> Option<&'static str> {
+    match name {
+        "layout" => Some(kernel::LAYOUT),
+        "pmm" => Some(kernel::PMM),
+        "vmm" => Some(kernel::VMM),
+        "process" => Some(kernel::PROCESS),
+        "scheduler" => Some(kernel::SCHEDULER),
+        "fs" => Some(kernel::FS),
+        "syscall" => Some(kernel::SYSCALL),
+        "trap_entry" => Some(kernel::TRAP_ENTRY),
+        "trap_handler" => Some(kernel::TRAP_HANDLER),
+        "utilities" => Some(kernel::UTILITIES),
+        "checks" => Some(kernel::CHECKS),
+        "klog" => Some(os_runtime::stdlib::KLOG),
+        "mem" => Some(os_runtime::stdlib::MEM),
+        "string_utils" => Some(os_runtime::stdlib::STRING_UTILS),
+        "memory_allocator" => Some(os_runtime::stdlib::MEMORY_ALLOCATOR),
+        "runtime" => Some(os_runtime::stdlib::FREESTANDING_RUNTIME),
+        "console" => Some(os_runtime::stdlib::FREESTANDING_CONSOLE),
+        _ => None,
+    }
+}
+
+fn direct_import_prelude(source: &str) -> String {
+    let mut prelude = String::new();
+    for name in hll_to_ir::imports::collect_imports(source).expect("collect imports") {
+        let module = bundled_module_source(&name)
+            .unwrap_or_else(|| panic!("missing bundled module `{name}`"));
+        let interface =
+            hll_to_ir::imports::extract_interface(module).expect("extract import interface");
+        prelude.push_str(&interface);
+        prelude.push('\n');
+    }
+    prelude
+}
+
 // Compile the kernel stdlib as independent per-module objects (no source concatenation).
 fn compiled_stdlib() -> &'static [(String, AssembledOutput)] {
     STDLIB_OBJS.get_or_init(|| {
         get_stdlib_modules_for_mode(TargetMode::Kernel)
             .iter()
             .map(|(name, src)| {
+                let source_prelude = direct_import_prelude(src);
                 let compiler = HllCompiler::new(CompileConfig {
                     target: TargetMode::Kernel,
                     strict: true,
                     string_prefix: Some("__kern_str_".to_owned()),
                     type_prelude: get_stdlib_type_prelude(),
-                    source_prelude: None,
+                    source_prelude: Some(source_prelude),
                 });
                 let out = compiler.compile(src).unwrap_or_else(|diags| {
                     panic!("kernel stdlib `{name}` compile failed: {diags:?}")
@@ -45,7 +82,7 @@ fn run_kernel_hll(user_src: &str) -> (String, Option<i64>) {
         strict: true,
         string_prefix: None,
         type_prelude: Vec::new(),
-        source_prelude: None,
+        source_prelude: Some(direct_import_prelude(user_src)),
     });
     let user_out = user_compiler
         .compile(user_src)

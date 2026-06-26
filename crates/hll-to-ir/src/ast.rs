@@ -11,8 +11,15 @@ pub enum Type {
     Array(usize, Box<Self>),
     // T[] slice: a {ptr, len} fat pointer, bounds-checked at use.
     Slice(Box<Self>),
+    Function {
+        params: Vec<Self>,
+        return_type: Option<Box<Self>>,
+    },
     Struct(Vec<FieldDecl>),
-    Named { name: String, args: Vec<Self> },
+    Named {
+        name: String,
+        args: Vec<Self>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -266,6 +273,12 @@ pub enum PrimaryExpr {
     FunctionCall {
         name: String,
         type_arguments: Vec<Type>,
+        arguments: Vec<Expression>,
+    },
+    // A call through an arbitrary callee expression (function-pointer value,
+    // struct field, indexed element). Bare-name calls stay `FunctionCall`.
+    CallExpr {
+        callee: Box<Expression>,
         arguments: Vec<Expression>,
     },
     ArrayLiteral(Vec<Expression>),

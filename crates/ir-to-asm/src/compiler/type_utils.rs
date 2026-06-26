@@ -28,6 +28,16 @@ fn resolve_ir_type_inner(
         IrType::Pointer(inner) => {
             IrType::Pointer(Box::new(resolve_ir_type_inner(inner, type_aliases, seen)))
         }
+        IrType::FunctionPointer {
+            params,
+            return_type,
+        } => IrType::FunctionPointer {
+            params: params
+                .iter()
+                .map(|param| resolve_ir_type_inner(param, type_aliases, seen))
+                .collect(),
+            return_type: Box::new(resolve_ir_type_inner(return_type, type_aliases, seen)),
+        },
         IrType::Array { len, element } => IrType::Array {
             len: *len,
             element: Box::new(resolve_ir_type_inner(element, type_aliases, seen)),
@@ -63,7 +73,10 @@ pub fn type_alignment(ty: &IrType, type_aliases: &HashMap<String, IrType>) -> us
             FloatWidth::F32 => 4,
             FloatWidth::F64 => 8,
         },
-        IrType::Pointer(_) | IrType::Named(_) | IrType::Slice(_) => 8,
+        IrType::Pointer(_)
+        | IrType::FunctionPointer { .. }
+        | IrType::Named(_)
+        | IrType::Slice(_) => 8,
         IrType::Array { element, .. } => type_alignment(&element, type_aliases),
         IrType::Aggregate(fields) => fields
             .iter()
@@ -86,7 +99,7 @@ pub fn type_size(ty: &IrType, type_aliases: &HashMap<String, IrType>) -> usize {
             FloatWidth::F32 => 4,
             FloatWidth::F64 => 8,
         },
-        IrType::Pointer(_) => 8,
+        IrType::Pointer(_) | IrType::FunctionPointer { .. } => 8,
         IrType::Slice(_) => 16,
         IrType::Array { len, element } => len * type_size(&element, type_aliases),
         IrType::Aggregate(fields) => {

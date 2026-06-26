@@ -8,7 +8,7 @@ pmm_end:  u64 = 0
 pmm_free_head: u64 = 0
 
 ; Set the managed region [start, end).  Aligns start up to a page boundary.
-pmm_init: (start: u64, end: u64) {
+export pmm_init: (start: u64, end: u64) {
     page_size: u64 = 4096
     remainder: u64 = start % page_size
     pmm_bump = start + ((page_size - remainder) % page_size)
@@ -18,7 +18,7 @@ pmm_init: (start: u64, end: u64) {
 
 ; Allocate one 4 KiB page (free list first, then bump); null on OOM.
 ; Result is left in a0 by the asm; the implicit empty return preserves it.
-pmm_alloc: () -> u8* {
+export pmm_alloc: () -> u8* {
     asm {
         la   t0, pmm_free_head
         ld   t1, 0(t0)              ; t1 = free list head (0 = empty)
@@ -48,7 +48,7 @@ pmm_alloc: () -> u8* {
 }
 
 ; Return a page to the free list.  Null is silently ignored.
-pmm_free: (page: u8*) {
+export pmm_free: (page: u8*) {
     asm {
         beqz a0, .Lpmm_free_null
         la   t0, pmm_free_head

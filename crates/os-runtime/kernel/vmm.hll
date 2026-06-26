@@ -2,16 +2,14 @@
 ; PTE bits: [53:10] PPN, [7] D, [6] A, [5] G, [4] U, [3] X, [2] W, [1] R, [0] V.
 
 import "layout"
-
-external pmm_alloc: () -> u8*
-external memset:    (dst: u8*, value: u8, n: u64) -> u8*
-external memcpy:    (dst: u8*, src: u8*, n: u64) -> u8*
-external kpanic:    (msg: u8*)
+import "pmm"
+import "mem"
+import "runtime"
 
 ; VMM_V/R/W/X/U/G page-flag bits come from the shared kernel layout (layout.hll).
 
 ; Panics if bits [63:39] are not copies of bit 38 (non-canonical address).
-assert_canonical: (va: u64) {
+export assert_canonical: (va: u64) {
     bit38: u64 = (va >> 38) & 1
     if bit38 == 0 {
         if (va >> 39) != 0 {
@@ -31,17 +29,17 @@ vmm_root: u64 = 0
 vmm_active_root: u64 = 0
 
 ; Set the root that subsequent vmm_map / vmm_map_1gib calls write into.
-vmm_set_root: (root_pa: u64) {
+export vmm_set_root: (root_pa: u64) {
     vmm_active_root = root_pa
 }
 
 ; Return the currently active root PA.
-vmm_get_root: () -> u64 {
+export vmm_get_root: () -> u64 {
     return vmm_active_root
 }
 
 ; Allocate a zeroed 4 KiB page and return it as a u64* table pointer.
-vmm_alloc_pt: () -> u64* {
+export vmm_alloc_pt: () -> u64* {
     page: u8* = pmm_alloc()
     if page == null {
         kpanic("vmm: out of memory for page table".ptr)
@@ -52,7 +50,7 @@ vmm_alloc_pt: () -> u64* {
 
 ; Return the next-level page table pointed to by `table[vpn]`.
 ; If the entry is not valid, allocates and links a new page table first.
-vmm_walk_or_alloc: (table: u64*, vpn: u64) -> u64* {
+export vmm_walk_or_alloc: (table: u64*, vpn: u64) -> u64* {
     pte: u64 = table[vpn]
     if pte % 2 != 0 {
         return ((pte >> 10) << 12) as u64*
@@ -64,7 +62,7 @@ vmm_walk_or_alloc: (table: u64*, vpn: u64) -> u64* {
 
 ; Map one 4 KiB page: virtual `va` -> physical `pa`.
 ; `flags`: combine VMM_R/W/X/U/G; VMM_V is OR-ed in internally.
-vmm_map: (va: u64, pa: u64, flags: u64) {
+export vmm_map: (va: u64, pa: u64, flags: u64) {
     assert_canonical(va)
     ; VPN[2..0] = va >> 30/21/12, masked to 9 bits (512 entries per level).
     vpn2: u64 = (va >> 30) & 0x1FF
@@ -79,7 +77,7 @@ vmm_map: (va: u64, pa: u64, flags: u64) {
 
 ; Map a 1 GiB superpage (single L2 leaf): `va` and `pa` must be 1 GiB-aligned.
 ; This is used for the kernel's canonical identity-mapped boot ranges.
-vmm_map_1gib: (va: u64, pa: u64, flags: u64) {
+export vmm_map_1gib: (va: u64, pa: u64, flags: u64) {
     assert_canonical(va)
     vpn2: u64 = (va >> 30) & 0x1FF
     l2: u64* = vmm_active_root as u64*
@@ -88,7 +86,7 @@ vmm_map_1gib: (va: u64, pa: u64, flags: u64) {
 
 ; Stamp the shared kernel/RAM/MMIO 1 GiB superpages into `root` so every process
 ; can fault into the kernel under its own satp. See OS spec ch.4.3.
-vmm_map_kernel: (root: u64) {
+export vmm_map_kernel: (root: u64) {
     vmm_set_root(root)
     vmm_map_1gib(0x00000000, 0, VMM_G + VMM_W + VMM_R)
     vmm_map_1gib(0x80000000, 0x80000000, VMM_G + VMM_X + VMM_W + VMM_R)
@@ -97,7 +95,7 @@ vmm_map_kernel: (root: u64) {
 
 ; Allocate a fresh root table, stamp the shared kernel mappings into it, and
 ; return its PA. Restores the previously active root so callers map in explicitly.
-vmm_new_root: () -> u64 {
+export vmm_new_root: () -> u64 {
     saved: u64 = vmm_active_root
     root: u64* = vmm_alloc_pt()
     root_pa: u64 = root as u64
@@ -108,25 +106,23 @@ vmm_new_root: () -> u64 {
 
 ; Deep-copy the parent's user (U-flagged) pages into child_root for fork;
 ; kernel superpages stay shared. See OS spec ch.4.3.
-vmm_fork_copy: (parent_root: u64, child_root: u64) {
+export vmm_fork_copy: (parent_root: u64, child_root: u64) {
     l2: u64* = parent_root as u64*
-    i2: u64 = 0
-    while i2 < 512 {
+    table_entries: u64 = 512
+    for i2 in 0..table_entries {
         e2: u64 = l2[i2]
         ; Valid interior node (R=W=X=0); skip leaves (kernel superpages).
         if (e2 & 1) != 0 && (e2 & 14) == 0 {
             l1: u64* = ((e2 >> 10) << 12) as u64*
-            i1: u64 = 0
-            while i1 < 512 {
+            for i1 in 0..table_entries {
                 e1: u64 = l1[i1]
                 if (e1 & 1) != 0 && (e1 & 14) == 0 {
                     l0: u64* = ((e1 >> 10) << 12) as u64*
-                    i0: u64 = 0
-                    while i0 < 512 {
+                    for i0 in 0..table_entries {
                         e0: u64 = l0[i0]
                         ; Valid leaf with the U bit set: a user page to copy.
                         if (e0 & 1) != 0 && (e0 & 16) != 0 {
-                            va: u64 = (i2 << 30) | (i1 << 21) | (i0 << 12)
+                            va: u64 = ((i2 as u64) << 30) | ((i1 as u64) << 21) | ((i0 as u64) << 12)
                             src_pa: u64 = (e0 >> 10) << 12
                             ; Preserve permission bits but drop V; vmm_map re-adds it.
                             flags: u64 = e0 & 0x3FE
@@ -138,19 +134,16 @@ vmm_fork_copy: (parent_root: u64, child_root: u64) {
                             vmm_set_root(child_root)
                             vmm_map(va, dst as u64, flags)
                         }
-                        i0 = i0 + 1
                     }
                 }
-                i1 = i1 + 1
             }
         }
-        i2 = i2 + 1
     }
 }
 
 ; Switch the active address space: point satp at `root_pa` and flush the TLB.
 ; Also tracks it as the active root for subsequent vmm_map calls.
-vmm_switch: (root_pa: u64) {
+export vmm_switch: (root_pa: u64) {
     vmm_active_root = root_pa
     asm {
         la   t0, vmm_active_root
@@ -166,7 +159,7 @@ vmm_switch: (root_pa: u64) {
 
 ; Identity-map every 4 KiB page in [start, end) with `flags`.
 ; The caller must pass canonical addresses.
-vmm_map_range: (start: u64, end: u64, flags: u64) {
+export vmm_map_range: (start: u64, end: u64, flags: u64) {
     assert_canonical(start)
     assert_canonical(end - 1)
     page_start: u64 = (start / 4096) * 4096
@@ -179,7 +172,7 @@ vmm_map_range: (start: u64, end: u64, flags: u64) {
 }
 
 ; Allocate the root page table and record its physical address in vmm_root.
-vmm_init: () {
+export vmm_init: () {
     root: u64* = vmm_alloc_pt()
     vmm_root = root as u64
     vmm_active_root = root as u64
@@ -187,7 +180,7 @@ vmm_init: () {
 
 ; Enable Sv39 MMU after setting up all page table mappings.
 ; All mapped virtual addresses must already be canonical.
-vmm_enable: () {
+export vmm_enable: () {
     ; Disable interrupts before switching address spaces.
     asm {
         csrr t0, sstatus
@@ -207,7 +200,7 @@ vmm_enable: () {
 }
 
 ; Re-enable S-mode interrupts after MMU is stable.
-s_enable_interrupts: () {
+export s_enable_interrupts: () {
     asm {
         csrr t0, sstatus
         ori  t0, t0, 3           ; Set UIE and SIE

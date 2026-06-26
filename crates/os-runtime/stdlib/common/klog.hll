@@ -1,36 +1,32 @@
-external console_putchar: (c: i32)
-external console_write: (str: u8*)
-external console_writeln: (str: u8*)
-external console_print_int: (n: i64)
-external console_print_hex: (n: u64)
+import "console"
 
-klog: (msg: u8*) {
+export klog: (msg: u8*) {
     console_writeln(msg)
 }
 
-klog_ok: (msg: u8*) {
+export klog_ok: (msg: u8*) {
     console_write("[  OK  ] ".ptr)
     console_writeln(msg)
 }
 
-klog_warn: (msg: u8*) {
+export klog_warn: (msg: u8*) {
     console_write("[ WARN ] ".ptr)
     console_writeln(msg)
 }
 
-klog_error: (msg: u8*) {
+export klog_error: (msg: u8*) {
     console_write("[ ERR  ] ".ptr)
     console_writeln(msg)
 }
 
-klog_int: (label: u8*, val: i64) {
+export klog_int: (label: u8*, val: i64) {
     console_write(label)
     console_write(": ".ptr)
     console_print_int(val)
     console_putchar('\n')
 }
 
-klog_hex: (label: u8*, val: u64) {
+export klog_hex: (label: u8*, val: u64) {
     console_write(label)
     console_write(": ".ptr)
     console_print_hex(val)

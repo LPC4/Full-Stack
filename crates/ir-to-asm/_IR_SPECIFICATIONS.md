@@ -66,6 +66,7 @@ The IR mirrors the HLL front-end types closely to keep the semantic gap small.
 | `i1`, `i8`, `i16`, `i32`, `i64` | Integers (`i1` is boolean). Signedness is in the opcode, not the type. |
 | `f32`, `f64` | IEEE 754 floating point. |
 | `T*` | Pointer to type `T`. |
+| `fn(T, U) -> R` / `fn(T, U)` | Function pointer code address with parameter and return types. |
 | `T[N]` | Fixed-size array, for example `i32[10]`. |
 | `{name: T, ...}` | Aggregate (struct) type with named fields; names may be empty for anonymous aggregates. |
 | `Name` | A named type definition or alias. |
@@ -136,9 +137,12 @@ terminator.
 | `jump` | `jump label` | Unconditional jump to a basic block. |
 | `branch` | `branch $cond ? true_lbl : false_lbl` | Conditional branch on an `i1` register. |
 | `call` | `[$res =] call func(<value>, ...)` | Invoke a function. |
+| `indirect_call` | `[$res =] indirect_call fn(...) $callee(<value>, ...)` | Invoke a function pointer with `jalr`-style semantics. |
+| `function_addr` | `$dest = function_addr func` | Load a function symbol's code address. |
 | `ret` | `ret [$val]` | Return to the caller. |
 
-`jump`, `branch`, and `ret` are terminators; `phi` and `call` are ordinary instructions.
+`jump`, `branch`, and `ret` are terminators; `phi`, `call`, and `indirect_call` are
+ordinary instructions.
 
 Aggregate call arguments have value semantics. RV64 lowering passes one pointer to the caller's
 aggregate bytes in the next integer ABI argument slot; the callee copies the complete value into
@@ -307,6 +311,8 @@ cast_inst       = register "=" "cast" cast_mode value "->" type;
 cast_mode       = "trunc" | "zext" | "sext" | "bitcast" | "f2i" | "i2f";
 
 call_inst       = [ register "=" ] "call" identifier "(" [ arg_list ] ")";
+indirect_call_inst = [ register "=" ] "indirect_call" type value "(" [ arg_list ] ")";
+function_addr_inst = register "=" "function_addr" identifier;
 arg_list        = value { "," value };
 
 phi_inst        = register "=" "phi" type phi_arm { "," phi_arm };

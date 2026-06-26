@@ -232,8 +232,8 @@ impl CompilerRv64 {
 
     fn lower_instruction(&mut self, inst: &IrInstruction, ctx: &mut FunctionContext) {
         use IrInstruction::{
-            Alloc, Call, Cast, Cmp, Comment, GlobalRef, HeapAlloc, HeapFree, Index, InlineAsm,
-            Load, Math, Offset, Phi, ReadReg, Store, Unary,
+            Alloc, Call, Cast, Cmp, Comment, FunctionAddr, GlobalRef, HeapAlloc, HeapFree, Index,
+            IndirectCall, InlineAsm, Load, Math, Offset, Phi, ReadReg, Store, Unary,
         };
         match inst {
             Comment(s) => self.emitter.emit_comment(s),
@@ -297,8 +297,15 @@ impl CompilerRv64 {
                 function,
                 args,
             } => self.lower_call(dest, function, args, ctx),
+            IndirectCall {
+                dest,
+                callee,
+                callee_ty,
+                args,
+            } => self.lower_indirect_call(dest, callee, callee_ty, args, ctx),
             HeapAlloc { dest, ty, count } => self.lower_heap_alloc(dest, ty, count, ctx),
             HeapFree { ptr } => self.lower_heap_free(ptr, ctx),
+            FunctionAddr { dest, name } => self.lower_function_addr(dest, name, ctx),
         }
     }
 
@@ -1020,6 +1027,190 @@ impl CompilerRv64 {
         self.commit_canonical_result(dest, temp, &ptr_ty, ctx);
     }
 
+    fn lower_function_addr(
+        &mut self,
+        dest: &hll_to_ir::IrRegister,
+        name: &str,
+        ctx: &mut FunctionContext,
+    ) {
+        self.emitter.reset_temp_counter();
+        let temp = self.result_reg_for(dest, ctx);
+        self.emitter
+            .emit_raw(&format!("\tla {}, {}", reg_name(temp, false), name));
+        let ptr_ty = IrType::FunctionPointer {
+            params: Vec::new(),
+            return_type: Box::new(IrType::Void),
+        };
+        self.commit_canonical_result(dest, temp, &ptr_ty, ctx);
+    }
+
+    fn lower_indirect_call(
+        &mut self,
+        dest: &Option<hll_to_ir::IrRegister>,
+        callee: &IrValue,
+        callee_ty: &IrType,
+        args: &[IrValue],
+        ctx: &mut FunctionContext,
+    ) {
+        self.emitter.reset_temp_counter();
+        let func_return_type = match callee_ty {
+            IrType::FunctionPointer { return_type, .. } => *return_type.clone(),
+            _ => IrType::Integer(hll_to_ir::IntWidth::I64),
+        };
+        let resolved_ret_ty = self.resolve_ir_type(&func_return_type);
+        let is_agg_return = matches!(
+            resolved_ret_ty,
+            IrType::Aggregate(_) | IrType::Array { .. } | IrType::Slice(_)
+        );
+        let needs_sret = is_agg_return && !self.can_return_in_registers(&resolved_ret_ty);
+
+        self.emitter.emit_comment("--- Indirect Function Call ---");
+        if needs_sret {
+            self.emitter
+                .emit_comment("Using sret convention for large aggregate return");
+        }
+
+        let mut arg_index = 0;
+        if needs_sret {
+            if let Some(dest_reg) = dest {
+                let dest_slot = ctx.slot_for_reg(dest_reg).expect("dest slot for sret");
+                let sret_ptr = self.emitter.alloc_temp_reg();
+                self.emitter.emit_add_imm(sret_ptr, SP, dest_slot as i64);
+                self.emitter.emit_mv(reg_for_arg(0), sret_ptr);
+                arg_index = 1;
+            } else {
+                panic!("Call with aggregate return must have a destination");
+            }
+        }
+
+        self.emitter
+            .emit_comment(&format!("Passing {} arguments", args.len()));
+
+        let total_abi_args = arg_index + args.len();
+        let excess_count = total_abi_args.saturating_sub(8);
+        let aligned_bytes = if excess_count == 0 {
+            0
+        } else {
+            let stack_bytes = (excess_count * 8) as i64;
+            if stack_bytes % 16 == 0 {
+                stack_bytes
+            } else {
+                stack_bytes + (16 - stack_bytes % 16)
+            }
+        };
+        if aligned_bytes > 0 {
+            self.emitter
+                .emit_comment("Pushing excess arguments to stack");
+        }
+
+        for arg in args {
+            let ty = self.resolve_ir_type(&self.resolve_value_type(arg, ctx));
+            let is_aggregate = matches!(
+                &ty,
+                IrType::Aggregate(_) | IrType::Array { .. } | IrType::Slice(_)
+            );
+            let value_reg = if is_aggregate {
+                let IrValue::Register(reg) = arg else {
+                    panic!("aggregate call argument must be a register")
+                };
+                let slot = ctx.slot_for_reg(reg).expect("aggregate argument slot");
+                let address = self.emitter.alloc_temp_reg();
+                self.emitter.emit_add_imm(address, SP, slot as i64);
+                address
+            } else if let IrType::Float(width) = &ty {
+                let width = *width;
+                let value = self.load_float_value_to_temp(arg, &IrType::Float(width), ctx);
+                if arg_index < 8 {
+                    self.emit_float_move(reg_for_arg(arg_index), value, width);
+                    arg_index += 1;
+                    continue;
+                }
+                value
+            } else {
+                self.load_value_to_temp(arg, ctx)
+            };
+
+            if arg_index < 8 {
+                self.emitter.emit_mv(reg_for_arg(arg_index), value_reg);
+            } else {
+                let offset = (((arg_index - 8) * 8) as i64 - aligned_bytes) as i32;
+                if matches!(ty, IrType::Float(_)) {
+                    match ty {
+                        IrType::Float(hll_to_ir::FloatWidth::F32) => {
+                            self.emitter.emit_fsw(SP, value_reg, offset);
+                        }
+                        IrType::Float(hll_to_ir::FloatWidth::F64) => {
+                            self.emitter.emit_fsd(SP, value_reg, offset);
+                        }
+                        _ => unreachable!(),
+                    }
+                } else {
+                    self.emitter.emit_sd(SP, value_reg, offset);
+                }
+            }
+            arg_index += 1;
+        }
+
+        let callee_reg = self.load_value_to_temp(callee, ctx);
+        if aligned_bytes > 0 {
+            self.emitter.emit_add_imm(SP, SP, -aligned_bytes);
+        }
+        self.emitter.emit_jalr(RA, callee_reg, 0);
+        if aligned_bytes > 0 {
+            self.emitter.emit_add_imm(SP, SP, aligned_bytes);
+        }
+
+        if is_agg_return && !needs_sret {
+            self.emitter
+                .emit_comment("Unpacking small aggregate return from a0/a1");
+            if let Some(dest_reg) = dest {
+                let dest_slot = ctx.slot_for_reg(dest_reg).expect("dest slot");
+                let total_size = self.type_size(&resolved_ret_ty);
+                let chunk0 = total_size.min(8);
+                if chunk0 == 8 {
+                    self.emitter.emit_sd(SP, A0, dest_slot as i32);
+                } else if chunk0 >= 4 {
+                    self.emitter
+                        .emit_inst(RealInstruction::Sw(Sw::new(SP, A0, dest_slot as i32)));
+                } else if chunk0 >= 2 {
+                    self.emitter
+                        .emit_inst(RealInstruction::Sh(Sh::new(SP, A0, dest_slot as i32)));
+                } else {
+                    self.emitter
+                        .emit_inst(RealInstruction::Sb(Sb::new(SP, A0, dest_slot as i32)));
+                }
+                if total_size > 8 {
+                    let remaining = total_size - 8;
+                    if remaining >= 8 {
+                        self.emitter.emit_sd(SP, A1, (dest_slot + 8) as i32);
+                    } else if remaining >= 4 {
+                        self.emitter.emit_inst(RealInstruction::Sw(Sw::new(
+                            SP,
+                            A1,
+                            (dest_slot + 8) as i32,
+                        )));
+                    } else if remaining >= 2 {
+                        self.emitter.emit_inst(RealInstruction::Sh(Sh::new(
+                            SP,
+                            A1,
+                            (dest_slot + 8) as i32,
+                        )));
+                    } else {
+                        self.emitter.emit_inst(RealInstruction::Sb(Sb::new(
+                            SP,
+                            A1,
+                            (dest_slot + 8) as i32,
+                        )));
+                    }
+                }
+            }
+        } else if !is_agg_return && let Some(dest) = dest {
+            self.store_int_result_from(dest, A0, &resolved_ret_ty, ctx);
+        }
+        self.emitter
+            .emit_comment("--- End Indirect Function Call ---");
+    }
+
     fn lower_heap_alloc(
         &mut self,
         dest: &hll_to_ir::IrRegister,
@@ -1668,5 +1859,39 @@ mod tests {
                 "arg {overflow_index} (beyond a7) should return x0 (stack-passed marker)"
             );
         }
+    }
+
+    #[test]
+    fn indirect_call_lowers_to_jalr() {
+        let fn_ptr = IrRegister::Named("fn_ptr".to_owned());
+        let result = IrRegister::Named("result".to_owned());
+        let fn_ty = IrType::FunctionPointer {
+            params: vec![IrType::Integer(IntWidth::I32)],
+            return_type: Box::new(IrType::Integer(IntWidth::I32)),
+        };
+
+        let mut entry = IrBlock::new("entry");
+        entry.push_instruction(IrInstruction::FunctionAddr {
+            dest: fn_ptr.clone(),
+            name: "callee".to_owned(),
+        });
+        entry.push_instruction(IrInstruction::IndirectCall {
+            dest: Some(result.clone()),
+            callee: IrValue::Register(fn_ptr),
+            callee_ty: fn_ty,
+            args: vec![IrValue::Integer(7)],
+        });
+        entry.set_terminator(IrTerminator::Return(Some(IrValue::Register(result))));
+
+        let mut func = IrFunction::new("main", IrType::Integer(IntWidth::I32));
+        func.push_block(entry);
+        let mut program = IrProgram::new("test");
+        program.push_function(func);
+
+        let asm = CompilerRv64::new().compile(&program);
+        assert!(
+            asm.contains("jalr"),
+            "indirect call should emit jalr:\n{asm}"
+        );
     }
 }

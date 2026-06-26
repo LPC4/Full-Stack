@@ -251,6 +251,20 @@ log_line: (s: u8[]) { println(s) }              ; void -- omit -> entirely
   changing source semantics.
 - Multiple results are returned as an anonymous struct (5.4).
 
+Function pointer values use `fn(T, U) -> R` for a value-returning callable address and
+`fn(T, U)` for a void callable address. A bare function name in value position coerces to a
+matching function pointer type, and calling a binding of function pointer type uses the same
+`callee(args)` syntax as a direct call. Function pointers are raw code addresses; they do not
+carry closure environments.
+
+A function pointer is plain pointer-sized data, so a struct field, array element, or any
+other place may hold one. The callee in a call may therefore be an arbitrary expression, not
+only a bare name: `record.op(args)`, `table[i](args)`, and `(@handler)(event)` all evaluate
+the callee to a function pointer value and then call indirectly. A bare-name call still binds
+as a direct call (or enum constructor, cast, or generic instantiation); only a non-name callee
+becomes an indirect call. There is no implicit receiver: any state a function field needs is
+passed explicitly, usually as another field holding a pointer.
+
 ### 6.2 Generics
 
 Type parameters on functions and structs are monomorphized: the compiler emits one concrete
@@ -343,8 +357,9 @@ registry does not cover, but ordinary cross-module sharing should use `import`/`
 
 The mechanisms above are the target. Current status:
 
-- `external` is fully implemented and carries all cross-module linkage today. Every function
-  and global is emitted `.globl` unconditionally, so linkage needs only the `external` decl.
+- `external` is fully implemented and remains the low-level link primitive. Ordinary bundled
+  kernel APIs have migrated to `import`/`export`; hand-written `external` remains for boundary
+  symbols such as runtime entry points and trap assembly edges.
 - `export` is retained on the AST (`Declaration::exported`) instead of being stripped, but
   does not yet enforce visibility: an unexported name is still effectively public at link.
 - `import` interface resolution is implemented for the host pipeline. `CompilationPipeline`
@@ -354,11 +369,13 @@ The mechanisms above are the target. Current status:
   `HllCompiler` path do not resolve imports; the import decl is inert there.
 - The link graph is still carried by host wiring (`UserProgram.aux_sources`, catalog
   `parent_id`); `import`-driven link closure is not implemented yet.
-- The kernel shares `layout.hll` through `import "layout"`: each kernel TU that uses the PCB /
-  trap-frame / VMM consts imports it, and `layout.hll` marks each const `export`. The
-  kernel-mode source prelude (auto-prepended `layout.hll`) remains as the fallback for the raw
-  `HllCompiler` path, where the import is inert; both paths yield the same consts. The `as`/`cc`
-  split tools still use their `layout` headers (`set_source_prelude`) pending migration.
+- The bundled resolver covers kernel modules (`layout`, `trap_entry`, `pmm`, `vmm`, `process`,
+  `scheduler`, `fs`, `syscall`, `trap_handler`, `utilities`, `checks`) and kernel-facing stdlib
+  modules (`console`, `runtime`, `klog`, `mem`, `string_utils`, `memory_allocator`). Kernel TUs
+  import the providers they use; `layout.hll` exports the PCB/trap-frame structs and ABI consts.
+  The kernel-mode source prelude (auto-prepended `layout.hll`) remains as the fallback for the
+  raw `HllCompiler` path, where the import is inert; both paths yield the same consts. The
+  `as`/`cc` split tools still use their `layout` headers (`set_source_prelude`) pending migration.
 
 Migration order: (1) interface import for `type`/`const`/signatures, retiring the source
 prelude (kernel migrated; `as`/`cc` pending); (2) `import`-driven transitive link closure,
@@ -499,10 +516,11 @@ type_decl      = "type" identifier "=" type;
 const_decl     = "const" identifier "=" expression;
 field_decl     = identifier ":" type;
 type_params    = "<" identifier { "," identifier } ">";
-type           = primitive_type | identifier [ type_args ] | struct_def
+type           = primitive_type | identifier [ type_args ] | struct_def | function_pointer_type
                | array_type | slice_type | pointer_type;
 type_args      = "<" type { "," type } ">";
 struct_def     = "{" [ field_decl { "," field_decl } [ "," ] ] "}";
+function_pointer_type = "fn" "(" [ type { "," type } ] ")" [ "->" type ];
 array_type     = type "[" integer "]";
 slice_type     = type "[" "]";
 pointer_type   = type "*";

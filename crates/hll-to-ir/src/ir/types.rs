@@ -44,8 +44,15 @@ pub enum IrType {
     Integer(IntWidth),
     Float(FloatWidth),
     Pointer(Box<Self>),
+    FunctionPointer {
+        params: Vec<Self>,
+        return_type: Box<Self>,
+    },
     Aggregate(Vec<(String, Self)>),
-    Array { len: usize, element: Box<Self> },
+    Array {
+        len: usize,
+        element: Box<Self>,
+    },
     // Slice fat pointer {ptr, len}, 16 bytes. Kept separate from Aggregate so the
     // front end can spot it for bounds checks, for-loops, and coercion.
     Slice(Box<Self>),
@@ -60,6 +67,23 @@ impl fmt::Display for IrType {
             Self::Integer(width) => write!(f, "{width}"),
             Self::Float(width) => write!(f, "{width}"),
             Self::Pointer(inner) => write!(f, "{inner}*"),
+            Self::FunctionPointer {
+                params,
+                return_type,
+            } => {
+                write!(f, "fn(")?;
+                for (index, param) in params.iter().enumerate() {
+                    if index > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{param}")?;
+                }
+                if matches!(return_type.as_ref(), Self::Void) {
+                    write!(f, ")")
+                } else {
+                    write!(f, ") -> {return_type}")
+                }
+            }
             Self::Aggregate(fields) => {
                 write!(f, "{{")?;
                 for (index, (name, field_ty)) in fields.iter().enumerate() {

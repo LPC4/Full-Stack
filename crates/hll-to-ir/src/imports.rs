@@ -188,6 +188,21 @@ fn render_type(ty: &Type) -> Result<String, String> {
         Type::Pointer(inner) => format!("{}*", render_type(inner)?),
         Type::Array(size, inner) => format!("{}[{}]", render_type(inner)?, size),
         Type::Slice(inner) => format!("{}[]", render_type(inner)?),
+        Type::Function {
+            params,
+            return_type,
+        } => {
+            let params = params
+                .iter()
+                .map(render_type)
+                .collect::<Result<Vec<_>, _>>()?
+                .join(", ");
+            if let Some(return_type) = return_type {
+                format!("fn({params}) -> {}", render_type(return_type)?)
+            } else {
+                format!("fn({params})")
+            }
+        }
         Type::Named { name, args } => {
             if args.is_empty() {
                 name.clone()

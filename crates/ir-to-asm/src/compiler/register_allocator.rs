@@ -66,7 +66,7 @@ pub fn allocate_registers(
         }
         if !matches!(
             ctx.resolve_type(ty),
-            IrType::Integer(_) | IrType::Pointer(_)
+            IrType::Integer(_) | IrType::Pointer(_) | IrType::FunctionPointer { .. }
         ) {
             continue;
         }

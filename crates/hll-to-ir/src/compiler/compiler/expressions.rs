@@ -140,6 +140,12 @@ impl HighLevelCompiler {
                 if self.enum_variants.contains_key(name) {
                     return self.lower_enum_construct(name, arguments);
                 }
+                if name != "free"
+                    && !self.function_return_types.contains_key(name)
+                    && let Some(indirect) = self.lower_indirect_call(name, arguments)
+                {
+                    return Some(indirect);
+                }
                 if name == "free" {
                     if arguments.len() != 1 {
                         self.context
@@ -270,6 +276,13 @@ impl HighLevelCompiler {
             PrimaryExpr::NamedStructLiteral { name, fields } => {
                 self.lower_named_struct_literal(name, fields)
             }
+            PrimaryExpr::CallExpr { callee, arguments } => {
+                if mode == EvalMode::Address {
+                    return None;
+                }
+                let callee_val = self.lower_expr(callee, EvalMode::Value)?;
+                self.lower_call_through_value(callee_val, arguments, "callee expression")
+            }
         }
     }
 
@@ -374,6 +387,27 @@ impl HighLevelCompiler {
             }
         } else if let Some(const_val) = self.compile_time_consts.get(name).cloned() {
             Some(self.lower_literal(&const_val))
+        } else if mode == EvalMode::Value
+            && let Some(return_ty) = self.function_return_types.get(name).cloned()
+        {
+            let params = self
+                .function_param_types
+                .get(name)
+                .cloned()
+                .unwrap_or_default();
+            let dest = self.new_temp();
+            self.push_instruction(IrInstruction::FunctionAddr {
+                dest: dest.clone(),
+                name: name.to_owned(),
+            });
+            Some(LoweredValue {
+                value: IrValue::Register(dest),
+                ty: IrType::FunctionPointer {
+                    params,
+                    return_type: Box::new(return_ty),
+                },
+                is_unsigned: false,
+            })
         } else if let Some(gv_ty) = self.global_vars.get(name).cloned() {
             // Global variable: emit `la dest, name` to load its address.
             let addr_reg = self.new_temp();
@@ -408,6 +442,77 @@ impl HighLevelCompiler {
                 .error(format!("unknown identifier `{name}`"));
             None
         }
+    }
+
+    fn lower_indirect_call(
+        &mut self,
+        name: &str,
+        arguments: &[Expression],
+    ) -> Option<LoweredValue> {
+        let callee = self.lower_identifier(name, EvalMode::Value)?;
+        self.lower_call_through_value(callee, arguments, &format!("`{name}`"))
+    }
+
+    /// Lower a call whose callee is an already-lowered function-pointer value.
+    /// `desc` names the callee for diagnostics (e.g. a field path).
+    fn lower_call_through_value(
+        &mut self,
+        callee: LoweredValue,
+        arguments: &[Expression],
+        desc: &str,
+    ) -> Option<LoweredValue> {
+        let IrType::FunctionPointer {
+            params,
+            return_type,
+        } = self.resolve_named_type(&callee.ty)
+        else {
+            self.context
+                .diagnostics
+                .error(format!("{desc} is not callable"));
+            return None;
+        };
+
+        if arguments.len() != params.len() {
+            self.context.diagnostics.error(format!(
+                "function pointer {desc} expects {} argument(s), got {}",
+                params.len(),
+                arguments.len()
+            ));
+            return None;
+        }
+
+        let mut arg_values = Vec::new();
+        for (index, (arg, expected)) in arguments.iter().zip(params.iter()).enumerate() {
+            let Some(lowered) = self.lower_value_for_type(arg, expected) else {
+                self.context.diagnostics.error(format!(
+                    "failed to lower argument {} for indirect call {desc}",
+                    index + 1
+                ));
+                return None;
+            };
+            arg_values.push(lowered.value);
+        }
+
+        let dest = if *return_type == IrType::Void {
+            None
+        } else {
+            Some(self.new_temp())
+        };
+        self.push_instruction(IrInstruction::IndirectCall {
+            dest: dest.clone(),
+            callee: callee.value,
+            callee_ty: IrType::FunctionPointer {
+                params,
+                return_type: return_type.clone(),
+            },
+            args: arg_values,
+        });
+
+        Some(LoweredValue {
+            value: dest.map(IrValue::Register).unwrap_or(IrValue::Null),
+            ty: *return_type,
+            is_unsigned: false,
+        })
     }
 
     fn lower_field_access_expr(

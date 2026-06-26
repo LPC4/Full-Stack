@@ -1,10 +1,10 @@
+use asm_to_binary::AssembledOutput;
 use asm_to_binary::assembler::Assembler;
 use asm_to_binary::real::RealInstruction;
 use asm_to_binary::riscv::rv64i::*;
 use asm_to_binary::riscv::rv64m::*;
 use asm_to_binary::riscv::rv64zicsr::Csrrs;
 use asm_to_binary::rv_instruction::RvInstruction;
-use asm_to_binary::AssembledOutput;
 use full_stack::compilation_pipeline::CompilationPipeline;
 use hll_to_ir::TargetMode;
 use hll_to_ir::{
@@ -957,6 +957,53 @@ fn examples_exit_zero_in_vm() {
             program.name
         );
     }
+}
+
+/// A struct field holding a function pointer is called as an expression
+/// (`db.op(args)`), lowering to a field load plus an indirect call.
+#[test]
+fn struct_function_pointer_field_call() {
+    let (_, outcome, _) = run_hll(
+        r#"
+type BinaryOp = fn(i32, i32) -> i32
+add: (a: i32, b: i32) -> i32 { return a + b }
+mul: (a: i32, b: i32) -> i32 { return a * b }
+struct Ops { combine: BinaryOp }
+main: () -> i32 {
+    ops: Ops = Ops { .combine = add }
+    if ops.combine(20, 22) != 42 { return 1 }
+    ops.combine = mul
+    if ops.combine(6, 7) != 42 { return 2 }
+    return 0
+}
+"#,
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "struct fn-pointer field call should pass, got {outcome:?}"
+    );
+}
+
+/// An indexed function-pointer element is callable directly: `table[i](args)`.
+#[test]
+fn indexed_function_pointer_call() {
+    let (_, outcome, _) = run_hll(
+        r#"
+type BinaryOp = fn(i32, i32) -> i32
+add: (a: i32, b: i32) -> i32 { return a + b }
+mul: (a: i32, b: i32) -> i32 { return a * b }
+main: () -> i32 {
+    ops: BinaryOp[2] = [add, mul]
+    if ops[0](40, 2) != 42 { return 1 }
+    if ops[1](6, 7) != 42 { return 2 }
+    return 0
+}
+"#,
+    );
+    assert!(
+        matches!(outcome, StepOutcome::Halted(0)),
+        "indexed fn-pointer call should pass, got {outcome:?}"
+    );
 }
 
 // --- Calling convention (merged from calling_convention_exec.rs) ---

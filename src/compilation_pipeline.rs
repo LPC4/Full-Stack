@@ -856,13 +856,33 @@ impl CompilationPipeline {
     }
 }
 
-/// Default module resolver over bundled `os-runtime` sources: the shared kernel headers
-/// and the `PROGRAMS` table. The app installs a catalog-backed resolver for live sources.
-fn programs_module_resolver(name: &str) -> Option<String> {
+/// Bundled HLL modules addressable by `import "name"` in host builds.
+pub fn bundled_module_source(name: &str) -> Option<&'static str> {
     match name {
-        "layout" => Some(os_runtime::kernel::LAYOUT.to_owned()),
-        _ => os_runtime::user::program(name).map(|program| program.source.to_owned()),
+        "layout" => Some(os_runtime::kernel::LAYOUT),
+        "pmm" => Some(os_runtime::kernel::PMM),
+        "vmm" => Some(os_runtime::kernel::VMM),
+        "process" => Some(os_runtime::kernel::PROCESS),
+        "scheduler" => Some(os_runtime::kernel::SCHEDULER),
+        "fs" => Some(os_runtime::kernel::FS),
+        "syscall" => Some(os_runtime::kernel::SYSCALL),
+        "trap_entry" => Some(os_runtime::kernel::TRAP_ENTRY),
+        "trap_handler" => Some(os_runtime::kernel::TRAP_HANDLER),
+        "utilities" => Some(os_runtime::kernel::UTILITIES),
+        "checks" => Some(os_runtime::kernel::CHECKS),
+        "klog" => Some(os_runtime::stdlib::KLOG),
+        "mem" => Some(os_runtime::stdlib::MEM),
+        "string_utils" => Some(os_runtime::stdlib::STRING_UTILS),
+        "memory_allocator" => Some(os_runtime::stdlib::MEMORY_ALLOCATOR),
+        "runtime" => Some(os_runtime::stdlib::FREESTANDING_RUNTIME),
+        "console" => Some(os_runtime::stdlib::FREESTANDING_CONSOLE),
+        _ => os_runtime::user::program(name).map(|program| program.source),
     }
+}
+
+/// Default module resolver over bundled `os-runtime` sources.
+fn programs_module_resolver(name: &str) -> Option<String> {
+    bundled_module_source(name).map(str::to_owned)
 }
 
 fn sanitize_artifact_component(value: &str) -> String {
@@ -1382,6 +1402,36 @@ main: () -> i32 {
             message.contains("does_not_exist"),
             "unexpected error: {message}"
         );
+    }
+
+    #[test]
+    fn bundled_kernel_imports_resolve_and_extract_interfaces() {
+        const NAMES: &[&str] = &[
+            "layout",
+            "pmm",
+            "vmm",
+            "process",
+            "scheduler",
+            "fs",
+            "syscall",
+            "trap_entry",
+            "trap_handler",
+            "utilities",
+            "checks",
+            "klog",
+            "mem",
+            "string_utils",
+            "memory_allocator",
+            "runtime",
+            "console",
+        ];
+
+        for name in NAMES {
+            let source = bundled_module_source(name)
+                .unwrap_or_else(|| panic!("bundled resolver missed `{name}`"));
+            hll_to_ir::imports::extract_interface(source)
+                .unwrap_or_else(|e| panic!("interface extraction failed for `{name}`:\n{e}"));
+        }
     }
 }
 

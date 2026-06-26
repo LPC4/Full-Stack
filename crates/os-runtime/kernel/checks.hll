@@ -1,33 +1,26 @@
 ; Kernel diagnostics: memory integrity and PMM smoke tests.
 
-external kmalloc:       (size: u64) -> u8*
-external klog_error:    (msg: u8*)
-external klog_ok:       (msg: u8*)
-external kshutdown:     (code: i64)
-external pmm_alloc:     () -> u8*
-external pmm_free:      (page: u8*)
+import "utilities"
+import "klog"
+import "pmm"
 
 ; Write/read alternating pattern over `size` heap bytes. Returns 1 on pass, 0 on fail.
-memory_self_test: (size: u64) -> i64 {
+export memory_self_test: (size: u64) -> i64 {
     test_buf: u8* = kmalloc(size)
 
-    i: u64 = 0
-    while i < size {
+    for i in 0..size {
         pattern: u8 = 170
         if i % 2 != 0 { pattern = 85 }
         test_buf[i] = pattern
-        i = i + 1
     }
 
-    i = 0
-    while i < size {
+    for i in 0..size {
         expected: u8 = 170
         if i % 2 != 0 { expected = 85 }
         if test_buf[i] != expected {
             klog_error("memory self-test failed".ptr)
             return 0
         }
-        i = i + 1
     }
 
     klog_ok("memory self-test passed".ptr)
@@ -35,7 +28,7 @@ memory_self_test: (size: u64) -> i64 {
 }
 
 ; PMM smoke test: alloc, write, read, free. Halts on failure.
-pmm_ops_test: () {
+export pmm_ops_test: () {
     test_page: u8* = pmm_alloc()
     if test_page == null {
         klog_error("halt: test alloc failed".ptr)
