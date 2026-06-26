@@ -25,6 +25,9 @@ pub struct FieldDecl {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Declaration {
     pub decl: DeclNode,
+    // Marked `export`: visible to importing modules. Unexported declarations are
+    // module private. Carried for interface extraction and visibility checks.
+    pub exported: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]

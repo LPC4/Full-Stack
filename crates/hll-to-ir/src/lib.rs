@@ -34,6 +34,7 @@ pub(crate) mod ast;
 pub(crate) mod compiler;
 pub(crate) mod conv;
 pub mod hll_compiler;
+pub mod imports;
 pub mod ir;
 pub(crate) mod lexer;
 pub(crate) mod monomorphize;

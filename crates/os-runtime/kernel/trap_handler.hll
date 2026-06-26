@@ -1,3 +1,5 @@
+import "layout"
+
 external kpanic:            (msg: u8*)
 external klog_int:          (label: u8*, val: i64)
 external klog_hex:          (label: u8*, val: u64)

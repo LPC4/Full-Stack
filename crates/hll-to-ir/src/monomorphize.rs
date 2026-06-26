@@ -1814,6 +1814,7 @@ impl EnumSpecializer {
                     generics: Vec::new(),
                     variants,
                 },
+                exported: false,
             });
         }
         Ok(())

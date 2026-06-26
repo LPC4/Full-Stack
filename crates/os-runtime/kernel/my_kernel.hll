@@ -1,5 +1,7 @@
 ; Kernel initialization and boot orchestration.
 
+import "layout"
+
 external klog_ok:               (msg: u8*)
 external klog_warn:             (msg: u8*)
 external klog_error:            (msg: u8*)

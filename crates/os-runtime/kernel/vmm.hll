@@ -1,6 +1,8 @@
 ; Sv39 paging: 3-level tables, 4 KiB pages, per-process roots. See OS spec ch.4.3.
 ; PTE bits: [53:10] PPN, [7] D, [6] A, [5] G, [4] U, [3] X, [2] W, [1] R, [0] V.
 
+import "layout"
+
 external pmm_alloc: () -> u8*
 external memset:    (dst: u8*, value: u8, n: u64) -> u8*
 external memcpy:    (dst: u8*, src: u8*, n: u64) -> u8*

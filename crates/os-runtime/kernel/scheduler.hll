@@ -1,6 +1,8 @@
 ; Round-robin scheduler. current_process is the running PCB; ready_queue_head is the queue.
 ; schedule(frame, 1) = yield (re-enqueue as READY), schedule(frame, 2) = exit (mark EXITED).
 
+import "layout"
+
 external memcpy:     (dst: u8*, src: u8*, n: u64) -> u8*
 external vmm_switch: (root_pa: u64)
 external kpanic:     (msg: u8*)

@@ -1,5 +1,7 @@
 ; Syscall dispatch layer. See OS spec ch.7.
 
+import "layout"
+
 const SYSCALL_EXIT     = 93
 const SYSCALL_WRITE    = 64
 const SYSCALL_YIELD    = 2

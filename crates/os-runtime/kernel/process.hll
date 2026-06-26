@@ -2,6 +2,8 @@
 ; process states (PROC_*), trap-frame slots (TF_*), and VMM page-flag bits come from
 ; the shared kernel layout (layout.hll). Full PCB map: OS spec 5.2.
 
+import "layout"
+
 external kmalloc:      (size: u64) -> u8*
 external memset:       (dst: u8*, value: u8, n: u64) -> u8*
 external memcpy:       (dst: u8*, src: u8*, n: u64) -> u8*

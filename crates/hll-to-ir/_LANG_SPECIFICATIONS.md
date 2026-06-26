@@ -345,21 +345,25 @@ The mechanisms above are the target. Current status:
 
 - `external` is fully implemented and carries all cross-module linkage today. Every function
   and global is emitted `.globl` unconditionally, so linkage needs only the `external` decl.
-- `export` currently parses and is then stripped to its underlying declaration; it does not
-  yet enforce visibility (everything is effectively public).
-- `import` currently parses into an inert declaration and drives neither interface import nor
-  the link graph. The link graph is instead carried by host wiring: `UserProgram.aux_sources`
-  in `os-runtime` and catalog `parent_id`.
-- Shared `type`/`const` definitions are currently distributed by the source prelude (the
-  `layout` field / `set_source_prelude`), which textually prepends a shared header before
-  lexing. The interface-import path above is the intended replacement; once `import` carries
-  exported `type`/`const` definitions, the source prelude and the per-program `layout` headers
-  (for example `layout.hll`) are removed in favor of `import "layout"`.
+- `export` is retained on the AST (`Declaration::exported`) instead of being stripped, but
+  does not yet enforce visibility: an unexported name is still effectively public at link.
+- `import` interface resolution is implemented for the host pipeline. `CompilationPipeline`
+  carries a module resolver (name -> source) and, for each direct `import`, prepends the
+  target's extracted interface (`hll_to_ir::imports`): exported `type`/`const`/`struct`/`enum`
+  verbatim and exported `fn`/global as `external`. The in-VM `cc` toolchain and the raw
+  `HllCompiler` path do not resolve imports; the import decl is inert there.
+- The link graph is still carried by host wiring (`UserProgram.aux_sources`, catalog
+  `parent_id`); `import`-driven link closure is not implemented yet.
+- The kernel shares `layout.hll` through `import "layout"`: each kernel TU that uses the PCB /
+  trap-frame / VMM consts imports it, and `layout.hll` marks each const `export`. The
+  kernel-mode source prelude (auto-prepended `layout.hll`) remains as the fallback for the raw
+  `HllCompiler` path, where the import is inert; both paths yield the same consts. The `as`/`cc`
+  split tools still use their `layout` headers (`set_source_prelude`) pending migration.
 
 Migration order: (1) interface import for `type`/`const`/signatures, retiring the source
-prelude; (2) `import`-driven transitive link closure, retiring `aux_sources`; (3) `export`
-visibility enforcement. Steps 1 and 2 keep `external` and `layout` working as a fallback so
-tools migrate one at a time.
+prelude (kernel migrated; `as`/`cc` pending); (2) `import`-driven transitive link closure,
+retiring `aux_sources`; (3) `export` visibility enforcement. Steps 1 and 2 keep `external` and
+the `layout` prelude working as a fallback so tools migrate one at a time.
 
 ## 7. Control flow, enums, and resource management
 

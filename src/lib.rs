@@ -15,9 +15,8 @@
 #![cfg_attr(
     test,
     expect(
-        clippy::items_after_test_module,
         clippy::manual_let_else,
-        reason = "pipeline test helpers remain below the main test module pending extraction"
+        reason = "legacy pipeline test helpers remain while lint cleanup proceeds incrementally"
     )
 )]
 

@@ -90,6 +90,16 @@ impl<'a> Parser<'a> {
     pub fn parse_declaration(&mut self) -> Result<Declaration, ParserError> {
         self.consume_terminators();
 
+        // `export` marks the following declaration visible to importers. Record the
+        // flag and parse the underlying declaration; it is otherwise unchanged.
+        let exported = if matches!(self.peek(), Some(Token::Export)) {
+            self.advance();
+            self.consume_terminators();
+            true
+        } else {
+            false
+        };
+
         let decl = match self.peek() {
             Some(Token::Const) => {
                 self.advance();
@@ -145,12 +155,6 @@ impl<'a> Parser<'a> {
                 let path = self.expect_string_literal()?;
                 DeclNode::Import { path }
             }
-            Some(Token::Export) => {
-                // Strip the `export` keyword and parse the underlying declaration.
-                self.advance();
-                self.consume_terminators();
-                return self.parse_declaration();
-            }
             Some(Token::Ident(_)) => {
                 // Look ahead to determine if this is a function or variable declaration
                 if self.peek_n(1) == Some(&Token::ColonEqual) {
@@ -176,7 +180,7 @@ impl<'a> Parser<'a> {
         {
             self.type_names.insert(name.clone());
         }
-        Ok(Declaration { decl })
+        Ok(Declaration { decl, exported })
     }
 
     pub fn parse_block(&mut self) -> Result<Block, ParserError> {

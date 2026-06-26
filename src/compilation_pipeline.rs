@@ -152,6 +152,10 @@ impl Default for PipelineConfig {
 
 // --- Pipeline ---
 
+/// Resolves an `import "name"` to that module's HLL source, over the host module
+/// registry (catalog or `os-runtime` `PROGRAMS`). `None` means the name is unknown.
+pub type ModuleResolver = Box<dyn Fn(&str) -> Option<String>>;
+
 pub struct CompilationPipeline {
     run_semantic_analysis: bool,
     target_mode: TargetMode,
@@ -160,6 +164,7 @@ pub struct CompilationPipeline {
     string_prefix: Option<String>,
     type_prelude: Vec<(String, IrType)>,
     source_prelude: String,
+    module_resolver: Option<ModuleResolver>,
     artifact_root: PathBuf,
     artifact_stem: RefCell<Option<String>>,
     last_artifact_stem: RefCell<Option<String>>,
@@ -186,6 +191,7 @@ impl CompilationPipeline {
             string_prefix: None,
             type_prelude: Vec::new(),
             source_prelude: String::new(),
+            module_resolver: Some(Box::new(programs_module_resolver)),
             artifact_root: PathBuf::from("out"),
             artifact_stem: RefCell::new(None),
             last_artifact_stem: RefCell::new(None),
@@ -206,6 +212,7 @@ impl CompilationPipeline {
             string_prefix: config.string_prefix,
             type_prelude: Vec::new(),
             source_prelude: String::new(),
+            module_resolver: Some(Box::new(programs_module_resolver)),
             artifact_root: PathBuf::from("out"),
             artifact_stem: RefCell::new(None),
             last_artifact_stem: RefCell::new(None),
@@ -282,13 +289,44 @@ impl CompilationPipeline {
         self.source_prelude = src.into();
     }
 
-    /// The explicit source prelude to pass to the compiler, or `None` to let it apply
-    /// the default (the shared kernel `layout.hll` in kernel mode).
-    fn config_source_prelude(&self) -> Option<String> {
-        if self.source_prelude.is_empty() {
-            None
+    /// Set the resolver mapping `import "name"` to that module's source (default: the
+    /// `PROGRAMS`-backed lookup). Pass `None` to disable import resolution entirely.
+    pub fn set_module_resolver(&mut self, resolver: Option<ModuleResolver>) {
+        self.module_resolver = resolver;
+    }
+
+    /// Effective source prelude: each direct `import` in `source` contributes its
+    /// exported interface, ahead of any explicit `set_source_prelude`. Errors as diagnostics.
+    fn config_source_prelude(&self, source: &str) -> Result<Option<String>, Vec<Diagnostic>> {
+        let mut prelude = String::new();
+
+        if let Some(resolver) = &self.module_resolver {
+            let imports = hll_to_ir::imports::collect_imports(source)
+                .map_err(|msg| vec![Diagnostic::new(DiagnosticLevel::Error, msg)])?;
+            for name in imports {
+                let module_src = resolver(&name).ok_or_else(|| {
+                    vec![Diagnostic::new(
+                        DiagnosticLevel::Error,
+                        format!("cannot resolve import \"{name}\": no module with that name"),
+                    )]
+                })?;
+                let interface =
+                    hll_to_ir::imports::extract_interface(&module_src).map_err(|msg| {
+                        vec![Diagnostic::new(
+                            DiagnosticLevel::Error,
+                            format!("failed to extract interface of \"{name}\": {msg}"),
+                        )]
+                    })?;
+                prelude.push_str(&interface);
+            }
+        }
+
+        prelude.push_str(&self.source_prelude);
+
+        if prelude.is_empty() {
+            Ok(None)
         } else {
-            Some(self.source_prelude.clone())
+            Ok(Some(prelude))
         }
     }
 
@@ -402,12 +440,15 @@ impl CompilationPipeline {
     pub fn compile(&self, source: &str) -> Result<CompilationResult, CompilationError> {
         log::info!("Starting compilation pipeline");
 
+        let source_prelude = self
+            .config_source_prelude(source)
+            .map_err(CompilationError::DiagnosticErrors)?;
         let compiler = HllCompiler::new(CompileConfig {
             target: self.target_mode,
             strict: self.run_semantic_analysis,
             string_prefix: self.string_prefix.clone(),
             type_prelude: self.type_prelude.clone(),
-            source_prelude: self.config_source_prelude(),
+            source_prelude,
         });
 
         let mut out = compiler
@@ -470,12 +511,27 @@ impl CompilationPipeline {
         source: &str,
         stdlib_objects: &[(&str, &AssembledOutput)],
     ) -> PipelineResult {
+        let source_prelude = match self.config_source_prelude(source) {
+            Ok(prelude) => prelude,
+            Err(diagnostics) => {
+                return PipelineResult {
+                    diagnostics,
+                    lex: None,
+                    parse: None,
+                    ir: None,
+                    asm: None,
+                    binary: None,
+                    assembler_error: None,
+                    exec: None,
+                };
+            }
+        };
         let compiler = HllCompiler::new(CompileConfig {
             target: self.target_mode,
             strict: self.run_semantic_analysis,
             string_prefix: self.string_prefix.clone(),
             type_prelude: self.type_prelude.clone(),
-            source_prelude: self.config_source_prelude(),
+            source_prelude,
         });
 
         let mut out = match compiler.compile(source) {
@@ -797,6 +853,15 @@ impl CompilationPipeline {
             .map(|(name, _)| (*name).to_owned())
             .zip(objects)
             .collect())
+    }
+}
+
+/// Default module resolver over bundled `os-runtime` sources: the shared kernel headers
+/// and the `PROGRAMS` table. The app installs a catalog-backed resolver for live sources.
+fn programs_module_resolver(name: &str) -> Option<String> {
+    match name {
+        "layout" => Some(os_runtime::kernel::LAYOUT.to_owned()),
+        _ => os_runtime::user::program(name).map(|program| program.source.to_owned()),
     }
 }
 
@@ -1261,6 +1326,61 @@ mod fs_image_tests {
             image.len() >= 120 * BLOCK,
             "image too small ({} bytes) for the summed file contents",
             image.len()
+        );
+    }
+}
+
+#[cfg(test)]
+mod module_imports_tests {
+    use super::*;
+
+    // A unit's direct `import` pulls in the target's exported interface: types/consts
+    // fold locally and exported functions resolve as `external` references.
+    #[test]
+    fn import_pulls_exported_interface_into_importer() {
+        let provider = r#"
+export struct P { x: i32 }
+export const K = 5
+export helper: () -> i32 { return 7 }
+private_helper: () -> i32 { return 99 }
+"#;
+
+        let mut pipeline = CompilationPipeline::new();
+        pipeline.set_write_artifacts(false);
+        pipeline.set_module_resolver(Some(Box::new(move |name: &str| {
+            (name == "provider").then(|| provider.to_owned())
+        })));
+
+        let importer = r#"
+import "provider"
+main: () -> i32 {
+    p: P = { .x = K }
+    return p.x + helper()
+}
+"#;
+
+        let result = pipeline
+            .compile(importer)
+            .expect("import should resolve and compile");
+        let ir = result.ir_program.to_string();
+        assert!(ir.contains("main"), "missing main: {ir}");
+        assert!(ir.contains("helper"), "exported fn not referenced: {ir}");
+        // The private helper is not part of the interface and must not leak in.
+        assert!(!ir.contains("private_helper"), "private decl leaked: {ir}");
+    }
+
+    // An unknown import name is a compile error naming the missing module.
+    #[test]
+    fn unresolved_import_is_an_error() {
+        let pipeline = CompilationPipeline::new();
+        let importer = "import \"does_not_exist\"\nmain: () -> i32 { return 0 }\n";
+        let error = pipeline
+            .compile(importer)
+            .expect_err("unknown import must fail");
+        let message = error.to_string();
+        assert!(
+            message.contains("does_not_exist"),
+            "unexpected error: {message}"
         );
     }
 }
