@@ -298,51 +298,67 @@ converge is diagnosed rather than allowed to hang.
 
 Each source file is one module. Modules compile separately to their own object and compose
 only by object linking; build paths never concatenate HLL source text to form a translation
-unit. A module names what it offers with `export` and what it consumes with `import`. The
+unit. A module names what it offers with `export` and what it consumes with `import(...)`. The
 result is a single source of truth: the module graph and the shared interface both live in
 the HLL, not in host wiring tables.
 
 ```hll
-import "as_object"                     ; depend on module `as_object`
-export type Reloc = { off: u32, sym: u32 }   ; offer a type to importers
-export const TF_BYTES = 288            ; offer a constant to importers
-export write_object: () -> u64 { ... } ; offer a function to importers
+math := import("./math.hll")           ; bind module `math` (one new top-level name)
+
+export const ZERO = 0                  ; offer a constant to importers
+export struct Point { x: i32, y: i32 } ; offer a struct to importers
+export add: (a: i32, b: i32) -> i32 { ... } ; offer a function to importers
 external puts: (s: u8*) -> i32         ; low-level: a symbol from another unit, resolved at link
+
+main: () -> i32 {
+    return math.add(math.ZERO, 2)      ; exports are fields of the module value
+}
 ```
+
+#### `import(...)` is a compile-time module value
+
+`import(path)` is a compiler builtin expression that yields a compile-time module record. It is
+valid only in a top-level binding or constant (`alias := import(path)` or
+`const alias = import(path)`); it is rejected inside a function body. The record has no runtime
+storage, no address, and no IR value: it exists only so its exported declarations can be named
+as fields (`math.add`, `math.Point`, `math.ZERO`). An import binding introduces exactly one new
+top-level name; the target's exports do not enter the importer's bare namespace.
 
 #### Visibility
 
-`export` marks a declaration visible to importers; an unexported declaration is module
-private. Exportable forms are `type`, `const`, binding (global), `struct`, `enum`, and
-function declarations. A bare reference to an imported name that the target did not export is
-a compile error.
+`export` marks a declaration a field of the module value; an unexported declaration is module
+private and is not a field. Exportable forms are `type`, `const`, binding (global), `struct`,
+`enum`, and function declarations. Naming a missing or private member (`math.private_helper`)
+is a compile error that names the target module and the absent export.
 
-#### `import`
+#### Qualified access
 
-`import "name"` makes module `name`'s exported interface visible in the importer and records a
-link dependency. Resolving an import does two things:
+Exports are reached through the alias: `math.add(a, b)` calls exported `add`, `math.ZERO` reads
+exported const `ZERO`, `math.Point` names exported struct `Point` in type position. An exported
+function or global lowers to the same link reference an `external` would; an exported `type` or
+`const` folds in the importer with no link symbol. Qualified calls are direct calls, not
+indirect function-pointer calls.
 
-1. Interface: the resolver loads the target's source, the compiler parses it and pulls its
-   exported declarations into the importer's scope. Exported `type`/`const` definitions fold
-   locally in the importer exactly as a local definition would (no link symbol). Exported
-   functions and globals are injected as `external` references and resolved at link. The
-   importer never re-declares these by hand.
-2. Linkage: the import edge adds the target's object to the importer's transitive link
-   closure. The pipeline compiles each module in the closure once and links them together.
+#### Paths
 
-Imports are transitive for linkage and non-transitive for visibility: importing `a` links
-everything `a` needs, but does not re-export `a`'s own imports into the importer's namespace.
-Cyclic imports are rejected with a diagnostic that names the cycle. Interface extraction reads
-only declaration headers and `type`/`const` bodies; function bodies are never imported.
+| Form | Meaning |
+| --- | --- |
+| `import("./math.hll")` | Local file relative to the importing module. |
+| `import("../util/math.hll")` | Local file via a normalized relative path. |
+| `import("http")` | Standard library or package module named `http`. |
 
-#### Resolution (host)
+Bare package names must not resolve to local project files. Imports are pure: resolving one
+parses and type-checks the target's exported interface and adds a link edge, but does not run
+the target's top-level code. Effectful setup lives behind an explicit function (`db.init()`).
+Cyclic imports are rejected with a diagnostic that names the cycle.
 
-Import names resolve against the host module registry, not a filesystem path. The registry is
-the catalog plus the `os-runtime` `PROGRAMS` table; a name resolves to the source of the
-catalog entry or program with that key. Names are flat identifiers (`"as_object"`,
-`"layout"`), not directory paths, and resolution is case sensitive. The in-VM `cc` toolchain
-does not yet resolve imports from the guest filesystem; that is a later extension and the
-namespace is reserved for it.
+#### Legacy `import "name"` (compatibility)
+
+The earlier whole-module form `import "name"` (a string, no parentheses) pulls a module's
+entire exported interface into the importer's bare namespace unqualified, with no module value.
+It remains supported while bundled sources migrate to `import(...)`, and resolves against the
+host module registry (the catalog plus the `os-runtime` `PROGRAMS` table) by flat name. New
+code should prefer `alias := import(path)`.
 
 #### `external` (low level)
 
@@ -367,8 +383,19 @@ The mechanisms above are the target. Current status:
   target's extracted interface (`hll_to_ir::imports`): exported `type`/`const`/`struct`/`enum`
   verbatim and exported `fn`/global as `external`. The in-VM `cc` toolchain and the raw
   `HllCompiler` path do not resolve imports; the import decl is inert there.
-- The link graph is still carried by host wiring (`UserProgram.aux_sources`, catalog
-  `parent_id`); `import`-driven link closure is not implemented yet.
+- Qualified `alias := import(path)` is implemented for value, call, const, and type exports:
+  the pipeline resolves each module binding, prepends its interface, and passes the alias's
+  exported names to the compiler, which rewrites `alias.member`, `alias.member(args)`, and
+  `alias.Type` to the flat export reference and reports unknown or private members against the
+  named module. Qualified exports currently share the flat object symbol namespace (no per-module
+  mangling yet), so duplicate imported export names and imported exports that collide with local
+  top-level declarations are rejected during import resolution. Bare names resolve through the
+  target stdlib and host registry; paths beginning with `./`, `../`, `.\\`, `..\\`, or an absolute
+  path resolve from the importing source file's directory and never fall back to the registry.
+- The host pipeline can compile the transitive closure of qualified `import(path)` dependencies
+  into per-module objects with dependencies first and cycles rejected. Existing catalog
+  `aux_sources`/`parent_id` wiring remains for programs that have not migrated to import-driven
+  closure compilation.
 - The bundled resolver covers kernel modules (`layout`, `trap_entry`, `pmm`, `vmm`, `process`,
   `scheduler`, `fs`, `syscall`, `trap_handler`, `utilities`, `checks`) and kernel-facing stdlib
   modules (`console`, `runtime`, `klog`, `mem`, `string_utils`, `memory_allocator`). Kernel TUs
@@ -502,7 +529,9 @@ newline     = "\n" | "\r\n";
 program        = { declaration };
 declaration    = binding_decl | function_decl | struct_decl | enum_decl | type_decl
                | const_decl | import_decl | export_decl | external_decl;
-import_decl    = "import" string;
+import_decl    = module_import | "import" string;
+module_import  = identifier ":=" "import" "(" string ")"
+               | "const" identifier "=" "import" "(" string ")";
 export_decl    = "export" declaration;
 external_decl  = "external" identifier ":" [ type_params ] "(" [ param_list ] ")"
                  [ "->" type ];

@@ -156,6 +156,20 @@ impl Default for PipelineConfig {
 /// registry (catalog or `os-runtime` `PROGRAMS`). `None` means the name is unknown.
 pub type ModuleResolver = Box<dyn Fn(&str) -> Option<String>>;
 
+/// Outcome of resolving a unit's imports: the prelude to prepend and each qualified
+/// binding's exported names (alias -> exports), used by the qualified-access rewrite.
+struct ResolvedModules {
+    prelude: Option<String>,
+    aliases: std::collections::HashMap<String, std::collections::HashSet<String>>,
+}
+
+struct ResolvedModuleSource {
+    key: String,
+    source: String,
+    source_path: Option<PathBuf>,
+    is_stdlib: bool,
+}
+
 pub struct CompilationPipeline {
     run_semantic_analysis: bool,
     target_mode: TargetMode,
@@ -164,6 +178,7 @@ pub struct CompilationPipeline {
     string_prefix: Option<String>,
     type_prelude: Vec<(String, IrType)>,
     source_prelude: String,
+    current_source_path: Option<PathBuf>,
     module_resolver: Option<ModuleResolver>,
     artifact_root: PathBuf,
     artifact_stem: RefCell<Option<String>>,
@@ -191,6 +206,7 @@ impl CompilationPipeline {
             string_prefix: None,
             type_prelude: Vec::new(),
             source_prelude: String::new(),
+            current_source_path: None,
             module_resolver: Some(Box::new(programs_module_resolver)),
             artifact_root: PathBuf::from("out"),
             artifact_stem: RefCell::new(None),
@@ -212,6 +228,7 @@ impl CompilationPipeline {
             string_prefix: config.string_prefix,
             type_prelude: Vec::new(),
             source_prelude: String::new(),
+            current_source_path: None,
             module_resolver: Some(Box::new(programs_module_resolver)),
             artifact_root: PathBuf::from("out"),
             artifact_stem: RefCell::new(None),
@@ -289,45 +306,222 @@ impl CompilationPipeline {
         self.source_prelude = src.into();
     }
 
+    /// Set the filesystem path of the source currently being compiled. Relative
+    /// `import("./x.hll")` and `import("../x.hll")` resolve against this file's directory.
+    pub fn set_current_source_path(&mut self, path: Option<impl Into<PathBuf>>) {
+        self.current_source_path = path.map(Into::into);
+    }
+
     /// Set the resolver mapping `import "name"` to that module's source (default: the
     /// `PROGRAMS`-backed lookup). Pass `None` to disable import resolution entirely.
     pub fn set_module_resolver(&mut self, resolver: Option<ModuleResolver>) {
         self.module_resolver = resolver;
     }
 
-    /// Effective source prelude: each direct `import` in `source` contributes its
-    /// exported interface, ahead of any explicit `set_source_prelude`. Errors as diagnostics.
-    fn config_source_prelude(&self, source: &str) -> Result<Option<String>, Vec<Diagnostic>> {
-        let mut prelude = String::new();
+    /// Resolve a module path/name to a registry key: a leading `./` and a trailing `.hll`
+    /// are normalized away (`"./math.hll"` -> `"math"`), bare names pass through (`"http"`).
+    fn module_key(path: &str) -> &str {
+        path.trim_start_matches("./").trim_end_matches(".hll")
+    }
 
-        if let Some(resolver) = &self.module_resolver {
+    fn is_filesystem_import(path: &str) -> bool {
+        let candidate = Path::new(path);
+        candidate.is_absolute()
+            || path.starts_with("./")
+            || path.starts_with("../")
+            || path.starts_with(".\\")
+            || path.starts_with("..\\")
+    }
+
+    fn is_stdlib_module_for_target(&self, name: &str) -> bool {
+        hll_to_ir::stdlib::get_stdlib_modules_for_mode(self.target_mode)
+            .iter()
+            .any(|(module_name, _)| *module_name == name)
+    }
+
+    fn stdlib_module_source_for_target(&self, name: &str) -> Option<&'static str> {
+        hll_to_ir::stdlib::get_stdlib_modules_for_mode(self.target_mode)
+            .into_iter()
+            .find_map(|(module_name, source)| (module_name == name).then_some(source))
+    }
+
+    fn resolve_registry_module_source(&self, name: &str) -> Option<String> {
+        self.stdlib_module_source_for_target(name)
+            .map(str::to_owned)
+            .or_else(|| {
+                self.module_resolver
+                    .as_ref()
+                    .and_then(|resolver| resolver(name))
+            })
+    }
+
+    fn resolve_module_source(
+        &self,
+        path: &str,
+        base_source_path: Option<&Path>,
+    ) -> Result<Option<ResolvedModuleSource>, String> {
+        if Self::is_filesystem_import(path) {
+            let raw_path = Path::new(path);
+            let candidate = if raw_path.is_absolute() {
+                raw_path.to_path_buf()
+            } else {
+                let base_dir = base_source_path
+                    .and_then(Path::parent)
+                    .map(Path::to_path_buf)
+                    .unwrap_or_else(|| PathBuf::from("."));
+                base_dir.join(raw_path)
+            };
+            let canonical = candidate.canonicalize().map_err(|err| {
+                format!(
+                    "cannot resolve import(\"{path}\") from `{}`: {err}",
+                    base_source_path
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_else(|| ".".to_owned())
+                )
+            })?;
+            let source = fs::read_to_string(&canonical).map_err(|err| {
+                format!(
+                    "cannot read import(\"{path}\") at `{}`: {err}",
+                    canonical.display()
+                )
+            })?;
+            return Ok(Some(ResolvedModuleSource {
+                key: canonical.display().to_string(),
+                source,
+                source_path: Some(canonical),
+                is_stdlib: false,
+            }));
+        }
+
+        let key = Self::module_key(path);
+        Ok(self
+            .resolve_registry_module_source(key)
+            .map(|source| ResolvedModuleSource {
+                key: key.to_owned(),
+                source,
+                source_path: None,
+                is_stdlib: self.is_stdlib_module_for_target(key),
+            }))
+    }
+
+    fn require_module_source(&self, label: &str, key: &str) -> Result<String, Vec<Diagnostic>> {
+        self.resolve_module_source(key, self.current_source_path.as_deref())
+            .map_err(|msg| vec![Diagnostic::new(DiagnosticLevel::Error, msg)])?
+            .map(|resolved| resolved.source)
+            .ok_or_else(|| {
+                vec![Diagnostic::new(
+                    DiagnosticLevel::Error,
+                    format!("{label}: no module named `{key}`"),
+                )]
+            })
+    }
+
+    /// Resolve `source`'s imports: each `import "name"` and `alias := import("path")` adds its
+    /// exported interface to the prelude, and each qualified binding yields its export set.
+    fn resolve_modules(&self, source: &str) -> Result<ResolvedModules, Vec<Diagnostic>> {
+        let mut prelude = String::new();
+        let mut aliases: std::collections::HashMap<String, std::collections::HashSet<String>> =
+            std::collections::HashMap::new();
+        let local_names = hll_to_ir::imports::collect_declaration_names(source)
+            .map_err(|msg| vec![Diagnostic::new(DiagnosticLevel::Error, msg)])?;
+        let mut imported_exports: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
+
+        if self.module_resolver.is_some() || self.current_source_path.is_some() {
             let imports = hll_to_ir::imports::collect_imports(source)
                 .map_err(|msg| vec![Diagnostic::new(DiagnosticLevel::Error, msg)])?;
             for name in imports {
-                let module_src = resolver(&name).ok_or_else(|| {
+                let module_src = self
+                    .require_module_source(&format!("cannot resolve import \"{name}\""), &name)?;
+                let exports = hll_to_ir::imports::collect_exports(&module_src).map_err(|msg| {
                     vec![Diagnostic::new(
                         DiagnosticLevel::Error,
-                        format!("cannot resolve import \"{name}\": no module with that name"),
+                        format!("failed to read exports of \"{name}\": {msg}"),
                     )]
                 })?;
-                let interface =
-                    hll_to_ir::imports::extract_interface(&module_src).map_err(|msg| {
-                        vec![Diagnostic::new(
-                            DiagnosticLevel::Error,
-                            format!("failed to extract interface of \"{name}\": {msg}"),
-                        )]
-                    })?;
-                prelude.push_str(&interface);
+                Self::check_import_export_collisions(
+                    &name,
+                    &exports,
+                    &local_names,
+                    &mut imported_exports,
+                )?;
+                prelude.push_str(&Self::extract_or_error(&name, &module_src)?);
+            }
+
+            let module_imports = hll_to_ir::imports::collect_module_imports(source)
+                .map_err(|msg| vec![Diagnostic::new(DiagnosticLevel::Error, msg)])?;
+            for (alias, path) in module_imports {
+                if aliases.contains_key(&alias) {
+                    return Err(vec![Diagnostic::new(
+                        DiagnosticLevel::Error,
+                        format!("duplicate module import alias `{alias}`"),
+                    )]);
+                }
+                let module_src = self
+                    .require_module_source(&format!("cannot resolve import(\"{path}\")"), &path)?;
+                let exports = hll_to_ir::imports::collect_exports(&module_src).map_err(|msg| {
+                    vec![Diagnostic::new(
+                        DiagnosticLevel::Error,
+                        format!("failed to read exports of \"{path}\": {msg}"),
+                    )]
+                })?;
+                Self::check_import_export_collisions(
+                    &format!("{alias} ({path})"),
+                    &exports,
+                    &local_names,
+                    &mut imported_exports,
+                )?;
+                prelude.push_str(&Self::extract_or_error(&path, &module_src)?);
+                aliases.insert(alias, exports);
             }
         }
 
         prelude.push_str(&self.source_prelude);
 
-        if prelude.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(prelude))
+        Ok(ResolvedModules {
+            prelude: (!prelude.is_empty()).then_some(prelude),
+            aliases,
+        })
+    }
+
+    fn check_import_export_collisions(
+        label: &str,
+        exports: &std::collections::HashSet<String>,
+        local_names: &std::collections::HashSet<String>,
+        imported_exports: &mut std::collections::HashMap<String, String>,
+    ) -> Result<(), Vec<Diagnostic>> {
+        for export in exports {
+            if local_names.contains(export) {
+                return Err(vec![Diagnostic::new(
+                    DiagnosticLevel::Error,
+                    format!(
+                        "import `{label}` exports `{export}`, which conflicts with a top-level declaration in the importing module"
+                    ),
+                )]);
+            }
+            if let Some(previous) = imported_exports.get(export) {
+                return Err(vec![Diagnostic::new(
+                    DiagnosticLevel::Error,
+                    format!(
+                        "import `{label}` exports `{export}`, which conflicts with the same export from import `{previous}`"
+                    ),
+                )]);
+            }
         }
+        for export in exports {
+            imported_exports.insert(export.clone(), label.to_owned());
+        }
+        Ok(())
+    }
+
+    /// Extract `module_src`'s exported interface or report a labelled diagnostic.
+    fn extract_or_error(label: &str, module_src: &str) -> Result<String, Vec<Diagnostic>> {
+        hll_to_ir::imports::extract_interface(module_src).map_err(|msg| {
+            vec![Diagnostic::new(
+                DiagnosticLevel::Error,
+                format!("failed to extract interface of \"{label}\": {msg}"),
+            )]
+        })
     }
 
     pub fn set_artifact_root(&mut self, root: impl Into<PathBuf>) {
@@ -440,15 +634,16 @@ impl CompilationPipeline {
     pub fn compile(&self, source: &str) -> Result<CompilationResult, CompilationError> {
         log::info!("Starting compilation pipeline");
 
-        let source_prelude = self
-            .config_source_prelude(source)
+        let resolved = self
+            .resolve_modules(source)
             .map_err(CompilationError::DiagnosticErrors)?;
         let compiler = HllCompiler::new(CompileConfig {
             target: self.target_mode,
             strict: self.run_semantic_analysis,
             string_prefix: self.string_prefix.clone(),
             type_prelude: self.type_prelude.clone(),
-            source_prelude,
+            source_prelude: resolved.prelude,
+            module_aliases: resolved.aliases,
         });
 
         let mut out = compiler
@@ -511,8 +706,8 @@ impl CompilationPipeline {
         source: &str,
         stdlib_objects: &[(&str, &AssembledOutput)],
     ) -> PipelineResult {
-        let source_prelude = match self.config_source_prelude(source) {
-            Ok(prelude) => prelude,
+        let resolved = match self.resolve_modules(source) {
+            Ok(resolved) => resolved,
             Err(diagnostics) => {
                 return PipelineResult {
                     diagnostics,
@@ -531,7 +726,8 @@ impl CompilationPipeline {
             strict: self.run_semantic_analysis,
             string_prefix: self.string_prefix.clone(),
             type_prelude: self.type_prelude.clone(),
-            source_prelude,
+            source_prelude: resolved.prelude,
+            module_aliases: resolved.aliases,
         });
 
         let mut out = match compiler.compile(source) {
@@ -782,6 +978,100 @@ impl CompilationPipeline {
         Ok(result)
     }
 
+    /// Compile a primary unit plus every module reachable through its qualified `import("path")`
+    /// declarations (the link closure) into per-module objects, deps first, cycles rejected.
+    #[track_caller]
+    pub fn compile_program_closure(
+        &mut self,
+        primary_name: &str,
+        primary_src: &str,
+    ) -> Result<Vec<(String, AssembledOutput)>, CompilationError> {
+        let mut order: Vec<(String, String, Option<PathBuf>)> = Vec::new();
+        let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut stack: Vec<String> = Vec::new();
+        self.collect_import_closure(
+            primary_name,
+            primary_src,
+            self.current_source_path.clone(),
+            &mut order,
+            &mut visited,
+            &mut stack,
+        )?;
+
+        let saved_source_path = self.current_source_path.clone();
+        let mut objects = Vec::with_capacity(order.len());
+        for (module_name, source, source_path) in &order {
+            self.set_artifact_stem(Some(module_name.to_string()));
+            self.current_source_path = source_path.clone();
+            let compile_result = self.compile(source)?;
+            let (_, tokens) = self.compile_ir_to_assembly_with_tokens(&compile_result.ir_program);
+            let assembled = self
+                .assemble_named(module_name, &tokens)
+                .map_err(|e| CompilationError::FreestandingErrors(vec![e.message]))?;
+            objects.push(assembled);
+        }
+        self.current_source_path = saved_source_path;
+        Ok(order
+            .into_iter()
+            .map(|(name, _, _)| name)
+            .zip(objects)
+            .collect())
+    }
+
+    /// Post-order DFS of the qualified-import graph; each module's `(name, source)` is pushed
+    /// after its dependencies, and a revisit of an in-progress module is a cycle.
+    fn collect_import_closure(
+        &self,
+        name: &str,
+        source: &str,
+        source_path: Option<PathBuf>,
+        order: &mut Vec<(String, String, Option<PathBuf>)>,
+        visited: &mut std::collections::HashSet<String>,
+        stack: &mut Vec<String>,
+    ) -> Result<(), CompilationError> {
+        if visited.contains(name) {
+            return Ok(());
+        }
+        if stack.iter().any(|m| m == name) {
+            stack.push(name.to_owned());
+            return Err(CompilationError::FreestandingErrors(vec![format!(
+                "cyclic import: {}",
+                stack.join(" -> ")
+            )]));
+        }
+        stack.push(name.to_owned());
+
+        let module_imports = hll_to_ir::imports::collect_module_imports(source)
+            .map_err(|msg| CompilationError::FreestandingErrors(vec![msg]))?;
+        for (_alias, path) in module_imports {
+            let resolved = self
+                .resolve_module_source(&path, source_path.as_deref())
+                .map_err(|msg| CompilationError::FreestandingErrors(vec![msg]))?
+                .ok_or_else(|| {
+                    let key = Self::module_key(&path);
+                    CompilationError::FreestandingErrors(vec![format!(
+                        "cannot resolve import(\"{path}\"): no module named `{key}`"
+                    )])
+                })?;
+            if resolved.is_stdlib {
+                continue;
+            }
+            self.collect_import_closure(
+                &resolved.key,
+                &resolved.source,
+                resolved.source_path,
+                order,
+                visited,
+                stack,
+            )?;
+        }
+
+        stack.pop();
+        visited.insert(name.to_owned());
+        order.push((name.to_owned(), source.to_owned(), source_path));
+        Ok(())
+    }
+
     /// Link multiple compiled objects and apply layout post-processing.
     ///
     /// Returns the linked output ready to load into a VM.
@@ -876,6 +1166,11 @@ pub fn bundled_module_source(name: &str) -> Option<&'static str> {
         "memory_allocator" => Some(os_runtime::stdlib::MEMORY_ALLOCATOR),
         "runtime" => Some(os_runtime::stdlib::FREESTANDING_RUNTIME),
         "console" => Some(os_runtime::stdlib::FREESTANDING_CONSOLE),
+        // Example library module imported by the HLL2 showcase (`import("mathlib")`).
+        "mathlib" => Some(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/programs/example/modules/mathlib.hll"
+        ))),
         _ => os_runtime::user::program(name).map(|program| program.source),
     }
 }
@@ -1382,11 +1677,271 @@ main: () -> i32 {
         let result = pipeline
             .compile(importer)
             .expect("import should resolve and compile");
+        assert!(
+            result.diagnostics.iter().all(|diagnostic| {
+                !diagnostic
+                    .message
+                    .contains("extern function `helper` - definition omitted")
+            }),
+            "import-generated extern should not warn: {:?}",
+            result.diagnostics
+        );
         let ir = result.ir_program.to_string();
         assert!(ir.contains("main"), "missing main: {ir}");
         assert!(ir.contains("helper"), "exported fn not referenced: {ir}");
         // The private helper is not part of the interface and must not leak in.
         assert!(!ir.contains("private_helper"), "private decl leaked: {ir}");
+    }
+
+    #[test]
+    fn user_written_external_function_still_warns() {
+        let mut pipeline = CompilationPipeline::new();
+        pipeline.set_write_artifacts(false);
+
+        let result = pipeline
+            .compile(
+                r#"
+external helper: () -> i32
+main: () -> i32 { return helper() }
+"#,
+            )
+            .expect("external function program should compile");
+
+        assert!(
+            result.diagnostics.iter().any(|diagnostic| {
+                diagnostic.level == DiagnosticLevel::Warning
+                    && diagnostic
+                        .message
+                        .contains("extern function `helper` - definition omitted")
+            }),
+            "user-written external should still warn: {:?}",
+            result.diagnostics
+        );
+    }
+
+    // A qualified `alias := import("path")` binding reaches exported functions and consts
+    // through the alias; the importer's bare namespace stays clean.
+    #[test]
+    fn qualified_import_resolves_calls_and_consts() {
+        let provider = r#"
+export const ANSWER = 42
+export add: (a: i32, b: i32) -> i32 { return a + b }
+private_helper: () -> i32 { return 99 }
+"#;
+
+        let mut pipeline = CompilationPipeline::new();
+        pipeline.set_write_artifacts(false);
+        pipeline.set_module_resolver(Some(Box::new(move |name: &str| {
+            (name == "math").then(|| provider.to_owned())
+        })));
+
+        let importer = r#"
+math := import("math")
+main: () -> i32 {
+    return math.add(math.ANSWER, 0)
+}
+"#;
+
+        let result = pipeline
+            .compile(importer)
+            .expect("qualified import should resolve and compile");
+        let ir = result.ir_program.to_string();
+        assert!(ir.contains("call add("), "qualified call not lowered: {ir}");
+        assert!(!ir.contains("private_helper"), "private decl leaked: {ir}");
+    }
+
+    #[test]
+    fn qualified_import_resolves_exported_types() {
+        let provider = r#"
+export struct Point { x: i32, y: i32 }
+"#;
+
+        let mut pipeline = CompilationPipeline::new();
+        pipeline.set_write_artifacts(false);
+        pipeline.set_module_resolver(Some(Box::new(move |name: &str| {
+            (name == "geom").then(|| provider.to_owned())
+        })));
+
+        let importer = r#"
+geom := import("geom")
+main: () -> i32 {
+    p: geom.Point = { .x = 40, .y = 2 }
+    return p.x + p.y
+}
+"#;
+
+        let result = pipeline
+            .compile(importer)
+            .expect("qualified imported type should resolve and compile");
+        let ir = result.ir_program.to_string();
+        assert!(ir.contains("type Point"), "imported type missing: {ir}");
+    }
+
+    #[test]
+    fn filesystem_relative_import_resolves_from_source_path() {
+        let root = std::env::temp_dir().join(format!(
+            "full_stack_import_test_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).expect("create import test dir");
+        let main_path = root.join("main.hll");
+        let math_path = root.join("math.hll");
+        std::fs::write(
+            &math_path,
+            "export struct Point { x: i32, y: i32 }\n\
+             export add: (a: i32, b: i32) -> i32 { return a + b }\n",
+        )
+        .expect("write math module");
+        let main_src = r#"
+math := import("./math.hll")
+main: () -> i32 {
+    p: math.Point = { .x = 20, .y = 22 }
+    return math.add(p.x, p.y)
+}
+"#;
+        std::fs::write(&main_path, main_src).expect("write main module");
+
+        let mut pipeline = CompilationPipeline::new();
+        pipeline.set_write_artifacts(false);
+        pipeline.set_current_source_path(Some(main_path.clone()));
+        let objects = pipeline
+            .compile_program_closure("main", main_src)
+            .expect("filesystem import closure should compile");
+        assert_eq!(objects.len(), 2, "expected imported module plus main");
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn import_closure_rejects_cycles() {
+        let mut pipeline = CompilationPipeline::new();
+        pipeline.set_write_artifacts(false);
+        pipeline.set_module_resolver(Some(Box::new(|name: &str| match name {
+            "a" => Some(
+                "b := import(\"b\")\n\
+                 export fa: () -> i32 { return b.fb() }\n"
+                    .to_owned(),
+            ),
+            "b" => Some(
+                "a := import(\"a\")\n\
+                 export fb: () -> i32 { return 2 }\n"
+                    .to_owned(),
+            ),
+            _ => None,
+        })));
+
+        let primary = "a := import(\"a\")\nmain: () -> i32 { return a.fa() }\n";
+        let error = pipeline
+            .compile_program_closure("main", primary)
+            .expect_err("cyclic import closure must fail");
+        let message = error.to_string();
+        assert!(
+            message.contains("cyclic import"),
+            "unexpected error: {message}"
+        );
+    }
+
+    // Naming a missing or private export is a compile error that names the module.
+    #[test]
+    fn qualified_import_rejects_unknown_member() {
+        let provider = "export add: (a: i32, b: i32) -> i32 { return a + b }\n";
+        let mut pipeline = CompilationPipeline::new();
+        pipeline.set_write_artifacts(false);
+        pipeline.set_module_resolver(Some(Box::new(move |name: &str| {
+            (name == "math").then(|| provider.to_owned())
+        })));
+
+        let importer = r#"
+math := import("math")
+main: () -> i32 {
+    return math.subtract(1, 2)
+}
+"#;
+        let error = pipeline
+            .compile(importer)
+            .expect_err("unknown qualified member must fail");
+        let message = error.to_string();
+        assert!(
+            message.contains("module `math`") && message.contains("subtract"),
+            "unexpected error: {message}"
+        );
+    }
+
+    #[test]
+    fn qualified_import_rejects_duplicate_export_names() {
+        let mut pipeline = CompilationPipeline::new();
+        pipeline.set_write_artifacts(false);
+        pipeline.set_module_resolver(Some(Box::new(|name: &str| match name {
+            "a" => Some("export add: (x: i32) -> i32 { return x + 1 }\n".to_owned()),
+            "b" => Some("export add: (x: i32) -> i32 { return x + 2 }\n".to_owned()),
+            _ => None,
+        })));
+
+        let importer = r#"
+a := import("a")
+b := import("b")
+main: () -> i32 { return 0 }
+"#;
+        let error = pipeline
+            .compile(importer)
+            .expect_err("duplicate flat exports must fail before rewrite");
+        let message = error.to_string();
+        assert!(
+            message.contains("exports `add`") && message.contains("conflicts"),
+            "unexpected error: {message}"
+        );
+    }
+
+    #[test]
+    fn qualified_import_rejects_duplicate_aliases() {
+        let mut pipeline = CompilationPipeline::new();
+        pipeline.set_write_artifacts(false);
+        pipeline.set_module_resolver(Some(Box::new(|name: &str| match name {
+            "a" => Some("export const A = 1\n".to_owned()),
+            "b" => Some("export const B = 2\n".to_owned()),
+            _ => None,
+        })));
+
+        let importer = r#"
+m := import("a")
+m := import("b")
+main: () -> i32 { return 0 }
+"#;
+        let error = pipeline
+            .compile(importer)
+            .expect_err("duplicate aliases must fail");
+        let message = error.to_string();
+        assert!(
+            message.contains("duplicate module import alias `m`"),
+            "unexpected error: {message}"
+        );
+    }
+
+    #[test]
+    fn qualified_import_rejects_export_that_collides_with_local_declaration() {
+        let mut pipeline = CompilationPipeline::new();
+        pipeline.set_write_artifacts(false);
+        pipeline.set_module_resolver(Some(Box::new(|name: &str| {
+            (name == "math").then(|| "export const add = 1\n".to_owned())
+        })));
+
+        let importer = r#"
+math := import("math")
+add: () -> i32 { return 2 }
+main: () -> i32 { return add() }
+"#;
+        let error = pipeline
+            .compile(importer)
+            .expect_err("imported flat export must not collide with local declaration");
+        let message = error.to_string();
+        assert!(
+            message.contains("exports `add`") && message.contains("top-level declaration"),
+            "unexpected error: {message}"
+        );
     }
 
     // An unknown import name is a compile error naming the missing module.

@@ -325,6 +325,7 @@ fn all_launch_examples_compile() {
     let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
     for program in examples {
+        pipeline.set_current_source_path(program.source_path.clone());
         let result = pipeline.compile(&program.source);
         assert!(
             result.is_ok(),
@@ -333,6 +334,7 @@ fn all_launch_examples_compile() {
             result.err()
         );
     }
+    pipeline.set_current_source_path(None::<String>);
 }
 
 // The examples collectively must showcase every implemented HLL feature family;

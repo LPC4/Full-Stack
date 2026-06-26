@@ -1,8 +1,7 @@
 ; Enums and error carriers: unit/payload variants, exhaustive statement match,
 ; value-producing match, a wildcard arm, a generic user enum, Option, Result, and `?`.
 
-external println: (s: u8[]) -> i32
-external print_int: (value: i64) -> i32
+std := import("runtime")
 
 enum Shape {
     Circle(i32)
@@ -46,7 +45,7 @@ quarter: (n: i32) -> Result<i32, i32> {
 }
 
 main: () -> i32 {
-    println("-- enums, match, result --")
+    std.println("-- enums, match, result --")
 
     circle: Shape = Circle(7)
     rect: Shape = Rect(6, 7)
@@ -92,8 +91,8 @@ main: () -> i32 {
         Err(e) -> e
     }
     if err != 7 { return 8 }
-    print_int(ok)
+    std.print_int(ok)
 
-    println("ok")
+    std.println("ok")
     return 0
 }

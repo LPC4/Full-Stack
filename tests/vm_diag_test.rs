@@ -56,6 +56,7 @@ fn kernel_asm_diag() {
             string_prefix: Some(format!("__kern{i}_str_")),
             type_prelude: get_stdlib_type_prelude(),
             source_prelude: Some(source_prelude),
+            module_aliases: Default::default(),
         });
         let out = compiler.compile(src).expect("stdlib module compile");
         let mut rv = CompilerRv64::new();
@@ -72,6 +73,7 @@ fn kernel_asm_diag() {
         string_prefix: None,
         type_prelude: Vec::new(),
         source_prelude: Some(direct_import_prelude(kernel::MY_KERNEL)),
+        module_aliases: Default::default(),
     });
     let user_out = user_compiler
         .compile(kernel::MY_KERNEL)

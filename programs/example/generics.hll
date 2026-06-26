@@ -1,8 +1,7 @@
 ; Generics: explicit and inferred function specialization, generic structs,
 ; nested generic records (Box<Box<i32>>), a recursive generic record, and generic record I/O.
 
-external println: (s: u8[]) -> i32
-external print_int: (value: i64) -> i32
+std := import("runtime")
 
 struct Box<T> {
     value: T
@@ -31,12 +30,12 @@ unwrap: <T>(b: Box<T>) -> T {
 }
 
 main: () -> i32 {
-    println("-- generics --")
+    std.println("-- generics --")
 
     m := max<i32>(19, 23)   ; explicit specialization -> 23
     n := max(40, 2)         ; inferred from the i32 arguments -> 40
-    print_int(m)
-    print_int(n)
+    std.print_int(m)
+    std.print_int(n)
     if m != 23 or n != 40 { return 1 }
 
     ; Generic struct round-tripped through generic functions.
@@ -72,9 +71,9 @@ main: () -> i32 {
         total = total + cur.value
         cur = cur.next
     }
-    print_int(total)
+    std.print_int(total)
     if total != 6 { return 4 }
 
-    println("ok")
+    std.println("ok")
     return 0
 }

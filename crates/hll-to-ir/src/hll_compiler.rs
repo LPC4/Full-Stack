@@ -14,10 +14,12 @@ pub struct CompileConfig {
     pub strict: bool,
     pub string_prefix: Option<String>,
     pub type_prelude: Vec<(String, IrType)>,
-    /// HLL source prepended to the unit before lexing (a shared definitions header).
-    /// `None` falls back to the kernel `layout.hll` in kernel mode, else nothing, so
-    /// every kernel TU shares one copy of the PCB / trap-frame / VMM consts (in HLL).
+    /// HLL source prepended to the unit before lexing (a shared definitions header). `None`
+    /// falls back to the kernel `layout.hll` in kernel mode, else nothing.
     pub source_prelude: Option<String>,
+    /// Module aliases (`alias := import(path)`) mapped to the alias's exported names, supplied
+    /// by the host pipeline after interface resolution. Drives the qualified-access rewrite.
+    pub module_aliases: std::collections::HashMap<String, std::collections::HashSet<String>>,
 }
 
 impl Default for CompileConfig {
@@ -28,6 +30,7 @@ impl Default for CompileConfig {
             string_prefix: None,
             type_prelude: Vec::new(),
             source_prelude: None,
+            module_aliases: std::collections::HashMap::new(),
         }
     }
 }
@@ -96,6 +99,11 @@ impl HllCompiler {
         let mut ast = Parser::new_with_spans(token_spans)
             .parse_program()
             .map_err(|e| vec![Diagnostic::new(DiagnosticLevel::Error, e.to_string())])?;
+
+        // Resolve `alias.member` qualified access to flat export references before any
+        // later stage sees the AST (see `imports::rewrite_qualified_access`).
+        crate::imports::rewrite_qualified_access(&mut ast, &self.config.module_aliases)
+            .map_err(|message| vec![Diagnostic::new(DiagnosticLevel::Error, message)])?;
 
         ast = monomorphize_program(&ast)
             .map_err(|message| vec![Diagnostic::new(DiagnosticLevel::Error, message)])?;

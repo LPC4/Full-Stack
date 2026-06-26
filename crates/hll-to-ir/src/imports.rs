@@ -1,9 +1,11 @@
 //! Interface extraction for `import` / `export` (see `_LANG_SPECIFICATIONS.md` 6.3).
 //! Pure source-to-source helpers; import-name resolution lives in the host pipeline.
 
+use std::collections::{HashMap, HashSet};
+
 use crate::ast::{
-    BinaryOp, DeclNode, Expression, FieldDecl, Literal, Parameter, PrimaryExpr, Program,
-    ReturnType, Type, UnaryOp, Variant,
+    AssignTarget, BinaryOp, Block, DeclNode, Expression, FieldDecl, ForIter, Literal, Parameter,
+    PrimaryExpr, Program, ReturnType, Statement, StructDestructureField, Type, UnaryOp, Variant,
 };
 use crate::lexer::Lexer;
 use crate::parser::Parser;
@@ -33,6 +35,417 @@ pub fn collect_imports(source: &str) -> Result<Vec<String>, String> {
             _ => None,
         })
         .collect())
+}
+
+/// The qualified module bindings a unit declares, as `(alias, path)` in source order
+/// (its `alias := import("path")` / `const alias = import("path")` decls).
+pub fn collect_module_imports(source: &str) -> Result<Vec<(String, String)>, String> {
+    let program = parse_module(source)?;
+    Ok(program
+        .declarations
+        .iter()
+        .filter_map(|d| match &d.decl {
+            DeclNode::ModuleImport { alias, path } => Some((alias.clone(), path.clone())),
+            _ => None,
+        })
+        .collect())
+}
+
+/// The names a module exports (its `export`ed declarations), for qualified-access
+/// visibility checks. Re-exported `external` declarations still count as exports.
+pub fn collect_exports(source: &str) -> Result<HashSet<String>, String> {
+    let program = parse_module(source)?;
+    Ok(program
+        .declarations
+        .iter()
+        .filter(|d| d.exported)
+        .filter_map(|d| decl_name(&d.decl).map(str::to_owned))
+        .collect())
+}
+
+/// The top-level declaration names in a module, including module-import aliases.
+pub fn collect_declaration_names(source: &str) -> Result<HashSet<String>, String> {
+    let program = parse_module(source)?;
+    Ok(program
+        .declarations
+        .iter()
+        .filter_map(|d| decl_name(&d.decl).map(str::to_owned))
+        .collect())
+}
+
+/// The declared name of a declaration, if it has one.
+fn decl_name(decl: &DeclNode) -> Option<&str> {
+    match decl {
+        DeclNode::Variable { name, .. }
+        | DeclNode::InferredVariable { name, .. }
+        | DeclNode::Function { name, .. }
+        | DeclNode::Type { name, .. }
+        | DeclNode::Struct { name, .. }
+        | DeclNode::Enum { name, .. }
+        | DeclNode::Const { name, .. }
+        | DeclNode::ModuleImport { alias: name, .. } => Some(name),
+        DeclNode::Import { .. } => None,
+    }
+}
+
+// --- Qualified-access rewrite (see `_LANG_SPECIFICATIONS.md` 6.3) ---
+
+/// Rewrite `alias.member` / `alias.member(args)` to the flat export reference, validating each
+/// member against `aliases` (alias -> exported names). See `_LANG_SPECIFICATIONS.md` 6.3.
+pub fn rewrite_qualified_access(
+    program: &mut Program,
+    aliases: &HashMap<String, HashSet<String>>,
+) -> Result<(), String> {
+    if aliases.is_empty() {
+        return Ok(());
+    }
+    for decl in &mut program.declarations {
+        match &mut decl.decl {
+            DeclNode::Function {
+                params,
+                return_type,
+                body,
+                ..
+            } => {
+                for param in params {
+                    rewrite_type(&mut param.ty, aliases)?;
+                }
+                if let Some(ReturnType::Single(ty)) = return_type {
+                    rewrite_type(ty, aliases)?;
+                }
+                if let Some(body) = body {
+                    rewrite_block(body, aliases)?;
+                }
+            }
+            DeclNode::Variable { ty, init, .. } => {
+                rewrite_type(ty, aliases)?;
+                if let Some(init) = init {
+                    rewrite_expr(init, aliases)?;
+                }
+            }
+            DeclNode::InferredVariable { init, .. } | DeclNode::Const { init, .. } => {
+                rewrite_expr(init, aliases)?;
+            }
+            DeclNode::Type { ty, .. } => rewrite_type(ty, aliases)?,
+            DeclNode::Struct { fields, .. } => rewrite_fields(fields, aliases)?,
+            DeclNode::Enum { variants, .. } => {
+                for variant in variants {
+                    for payload in &mut variant.payload {
+                        rewrite_type(payload, aliases)?;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    for stmt in &mut program.statements {
+        rewrite_stmt(stmt, aliases)?;
+    }
+    Ok(())
+}
+
+fn rewrite_type(ty: &mut Type, aliases: &HashMap<String, HashSet<String>>) -> Result<(), String> {
+    match ty {
+        Type::Primitive(_) => {}
+        Type::Pointer(inner) | Type::Array(_, inner) | Type::Slice(inner) => {
+            rewrite_type(inner, aliases)?;
+        }
+        Type::Function {
+            params,
+            return_type,
+        } => {
+            for param in params {
+                rewrite_type(param, aliases)?;
+            }
+            if let Some(return_type) = return_type {
+                rewrite_type(return_type, aliases)?;
+            }
+        }
+        Type::Struct(fields) => rewrite_fields(fields, aliases)?,
+        Type::Named { name, args } => {
+            if let Some((base, field)) = name.split_once('.')
+                && aliases.contains_key(base)
+            {
+                *name = resolve_member(aliases, base, field)?;
+            }
+            for arg in args {
+                rewrite_type(arg, aliases)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn rewrite_fields(
+    fields: &mut [FieldDecl],
+    aliases: &HashMap<String, HashSet<String>>,
+) -> Result<(), String> {
+    for field in fields {
+        rewrite_type(&mut field.ty, aliases)?;
+        if let Some(init) = &mut field.init {
+            rewrite_expr(init, aliases)?;
+        }
+    }
+    Ok(())
+}
+
+fn rewrite_destructure_fields(
+    fields: &mut [StructDestructureField],
+    aliases: &HashMap<String, HashSet<String>>,
+) -> Result<(), String> {
+    for field in fields {
+        if let Some(ty) = &mut field.ty {
+            rewrite_type(ty, aliases)?;
+        }
+    }
+    Ok(())
+}
+
+fn resolve_member(
+    aliases: &HashMap<String, HashSet<String>>,
+    base: &str,
+    field: &str,
+) -> Result<String, String> {
+    match aliases.get(base) {
+        Some(exports) if exports.contains(field) => Ok(field.to_owned()),
+        Some(_) => Err(format!("module `{base}` has no exported member `{field}`")),
+        None => unreachable!("resolve_member called for a non-alias base"),
+    }
+}
+
+/// If `callee` is `alias.field` (a module-qualified path), return `(alias, field)`.
+fn qualified_path(callee: &Expression) -> Option<(String, String)> {
+    if let Expression::Primary(PrimaryExpr::FieldAccess { expr, field }) = callee
+        && let Expression::Primary(PrimaryExpr::Identifier(base)) = expr.as_ref()
+    {
+        return Some((base.clone(), field.clone()));
+    }
+    None
+}
+
+fn rewrite_expr(
+    expr: &mut Expression,
+    aliases: &HashMap<String, HashSet<String>>,
+) -> Result<(), String> {
+    // Replace a qualified call or field access at this node, then recurse into the
+    // (possibly rewritten) children.
+    let replacement = match expr {
+        Expression::Primary(PrimaryExpr::CallExpr { callee, arguments }) => {
+            match qualified_path(callee) {
+                Some((base, field)) if aliases.contains_key(&base) => {
+                    let name = resolve_member(aliases, &base, &field)?;
+                    Some(Expression::Primary(PrimaryExpr::FunctionCall {
+                        name,
+                        type_arguments: Vec::new(),
+                        arguments: std::mem::take(arguments),
+                    }))
+                }
+                _ => None,
+            }
+        }
+        Expression::Primary(PrimaryExpr::FieldAccess { expr: inner, field }) => {
+            match inner.as_ref() {
+                Expression::Primary(PrimaryExpr::Identifier(base))
+                    if aliases.contains_key(base) =>
+                {
+                    let name = resolve_member(aliases, base, field)?;
+                    Some(Expression::Primary(PrimaryExpr::Identifier(name)))
+                }
+                _ => None,
+            }
+        }
+        _ => None,
+    };
+    if let Some(rewritten) = replacement {
+        *expr = rewritten;
+    }
+
+    rewrite_expr_children(expr, aliases)
+}
+
+fn rewrite_expr_children(
+    expr: &mut Expression,
+    aliases: &HashMap<String, HashSet<String>>,
+) -> Result<(), String> {
+    match expr {
+        Expression::Assignment { target, rvalue } => {
+            rewrite_assign_target(target, aliases)?;
+            rewrite_expr(rvalue, aliases)?;
+        }
+        Expression::Binary { left, right, .. } => {
+            rewrite_expr(left, aliases)?;
+            rewrite_expr(right, aliases)?;
+        }
+        Expression::Unary { expr, .. } | Expression::Try(expr) => {
+            rewrite_expr(expr, aliases)?;
+        }
+        Expression::Cast { expr, target_ty } => {
+            rewrite_expr(expr, aliases)?;
+            rewrite_type(target_ty, aliases)?;
+        }
+        Expression::Match { scrutinee, arms } => {
+            rewrite_expr(scrutinee, aliases)?;
+            for arm in arms {
+                rewrite_block(&mut arm.body, aliases)?;
+                if let Some(value) = &mut arm.value {
+                    rewrite_expr(value, aliases)?;
+                }
+            }
+        }
+        Expression::Primary(primary) => rewrite_primary_children(primary, aliases)?,
+    }
+    Ok(())
+}
+
+fn rewrite_primary_children(
+    primary: &mut PrimaryExpr,
+    aliases: &HashMap<String, HashSet<String>>,
+) -> Result<(), String> {
+    match primary {
+        PrimaryExpr::Grouped(inner) => rewrite_expr(inner, aliases)?,
+        PrimaryExpr::FunctionCall {
+            type_arguments,
+            arguments,
+            ..
+        } => {
+            for ty in type_arguments {
+                rewrite_type(ty, aliases)?;
+            }
+            for arg in arguments {
+                rewrite_expr(arg, aliases)?;
+            }
+        }
+        PrimaryExpr::New { ty, args } => {
+            rewrite_type(ty, aliases)?;
+            for arg in args {
+                rewrite_expr(arg, aliases)?;
+            }
+        }
+        PrimaryExpr::CallExpr { callee, arguments } => {
+            rewrite_expr(callee, aliases)?;
+            for arg in arguments {
+                rewrite_expr(arg, aliases)?;
+            }
+        }
+        PrimaryExpr::ArrayLiteral(elements) => {
+            for element in elements {
+                rewrite_expr(element, aliases)?;
+            }
+        }
+        PrimaryExpr::StructLiteral(fields) => {
+            for field in fields {
+                rewrite_expr(&mut field.expr, aliases)?;
+            }
+        }
+        PrimaryExpr::NamedStructLiteral { fields, .. } => {
+            for field in fields {
+                rewrite_expr(&mut field.expr, aliases)?;
+            }
+        }
+        PrimaryExpr::FieldAccess { expr, .. } => rewrite_expr(expr, aliases)?,
+        PrimaryExpr::ArrayIndex { expr, index } => {
+            rewrite_expr(expr, aliases)?;
+            rewrite_expr(index, aliases)?;
+        }
+        PrimaryExpr::Slice {
+            expr, start, end, ..
+        } => {
+            rewrite_expr(expr, aliases)?;
+            if let Some(start) = start {
+                rewrite_expr(start, aliases)?;
+            }
+            if let Some(end) = end {
+                rewrite_expr(end, aliases)?;
+            }
+        }
+        PrimaryExpr::Identifier(_) | PrimaryExpr::Literal(_) | PrimaryExpr::AsmReg { .. } => {}
+    }
+    Ok(())
+}
+
+/// Rewrite a write to an exported global (`alias.global = ...`) to the flat target; unknown
+/// members fall through to downstream resolution and nested index expressions are recursed.
+fn rewrite_assign_target(
+    target: &mut AssignTarget,
+    aliases: &HashMap<String, HashSet<String>>,
+) -> Result<(), String> {
+    if let AssignTarget::FieldAccess { expr, field } = target
+        && let AssignTarget::Identifier(base) = expr.as_ref()
+        && aliases.get(base).is_some_and(|e| e.contains(field))
+    {
+        *target = AssignTarget::Identifier(field.clone());
+        return Ok(());
+    }
+    match target {
+        AssignTarget::Dereference(inner) | AssignTarget::FieldAccess { expr: inner, .. } => {
+            rewrite_assign_target(inner, aliases)?;
+        }
+        AssignTarget::ArrayIndex { expr, index } => {
+            rewrite_assign_target(expr, aliases)?;
+            rewrite_expr(index, aliases)?;
+        }
+        AssignTarget::StructDestructure(fields) => rewrite_destructure_fields(fields, aliases)?,
+        AssignTarget::Identifier(_) => {}
+    }
+    Ok(())
+}
+
+fn rewrite_stmt(
+    stmt: &mut Statement,
+    aliases: &HashMap<String, HashSet<String>>,
+) -> Result<(), String> {
+    match stmt {
+        Statement::Expression(expr) | Statement::Defer(expr) => rewrite_expr(expr, aliases)?,
+        Statement::Block(block) => rewrite_block(block, aliases)?,
+        Statement::If {
+            cond,
+            then_block,
+            else_branch,
+        } => {
+            rewrite_expr(cond, aliases)?;
+            rewrite_block(then_block, aliases)?;
+            if let Some(else_stmt) = else_branch {
+                rewrite_stmt(else_stmt, aliases)?;
+            }
+        }
+        Statement::While { cond, body } => {
+            rewrite_expr(cond, aliases)?;
+            rewrite_block(body, aliases)?;
+        }
+        Statement::For { iter, body, .. } => {
+            match iter {
+                ForIter::Range { start, end, .. } => {
+                    rewrite_expr(start, aliases)?;
+                    rewrite_expr(end, aliases)?;
+                }
+                ForIter::Each(expr) => rewrite_expr(expr, aliases)?,
+            }
+            rewrite_block(body, aliases)?;
+        }
+        Statement::Return(Some(expr)) => rewrite_expr(expr, aliases)?,
+        Statement::VariableDecl { ty, init, .. } => {
+            rewrite_type(ty, aliases)?;
+            if let Some(init) = init {
+                rewrite_expr(init, aliases)?;
+            }
+        }
+        Statement::InferredVariableDecl { init, .. } => rewrite_expr(init, aliases)?,
+        Statement::Return(None)
+        | Statement::AsmBlock { .. }
+        | Statement::Break
+        | Statement::Continue => {}
+    }
+    Ok(())
+}
+
+fn rewrite_block(
+    block: &mut Block,
+    aliases: &HashMap<String, HashSet<String>>,
+) -> Result<(), String> {
+    for stmt in &mut block.statements {
+        rewrite_stmt(stmt, aliases)?;
+    }
+    Ok(())
 }
 
 /// Render `source`'s exported interface as HLL suitable for prepending to an importer:
@@ -104,7 +517,7 @@ fn render_export(decl: &DeclNode) -> Result<Option<String>, String> {
                 return Ok(None);
             }
             format!(
-                "external {}: ({}){}",
+                "external {}: ({}){} ; @import-interface",
                 name,
                 render_params(params)?,
                 render_return(return_type.as_ref())?
@@ -125,7 +538,9 @@ fn render_export(decl: &DeclNode) -> Result<Option<String>, String> {
             }
             format!("external {}: {}", name, render_type(ty)?)
         }
-        DeclNode::InferredVariable { .. } | DeclNode::Import { .. } => return Ok(None),
+        DeclNode::InferredVariable { .. }
+        | DeclNode::Import { .. }
+        | DeclNode::ModuleImport { .. } => return Ok(None),
     };
     Ok(Some(rendered))
 }
@@ -296,6 +711,102 @@ fn unary_op(op: &UnaryOp) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn aliases(entries: &[(&str, &[&str])]) -> HashMap<String, HashSet<String>> {
+        entries
+            .iter()
+            .map(|(alias, exports)| {
+                (
+                    (*alias).to_owned(),
+                    exports.iter().map(|e| (*e).to_owned()).collect(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn collects_module_imports_and_exports() {
+        let source = r#"
+math := import("./math.hll")
+const http = import("http")
+export const ZERO = 0
+export add: (a: i32, b: i32) -> i32 { return a + b }
+secret: i32 = 7
+"#;
+        assert_eq!(
+            collect_module_imports(source).unwrap(),
+            vec![
+                ("math".to_owned(), "./math.hll".to_owned()),
+                ("http".to_owned(), "http".to_owned()),
+            ]
+        );
+        let exports = collect_exports(source).unwrap();
+        assert!(exports.contains("ZERO"));
+        assert!(exports.contains("add"));
+        assert!(!exports.contains("secret"));
+        // The importer's own module bindings are not exports.
+        assert!(!exports.contains("math"));
+
+        let names = collect_declaration_names(source).unwrap();
+        assert!(names.contains("math"));
+        assert!(names.contains("http"));
+        assert!(names.contains("ZERO"));
+        assert!(names.contains("add"));
+        assert!(names.contains("secret"));
+    }
+
+    #[test]
+    fn rewrites_qualified_call_and_const() {
+        let mut program = parse_module(
+            r#"
+math := import("./math.hll")
+main: () -> i32 {
+    return math.add(math.ZERO, 2)
+}
+"#,
+        )
+        .unwrap();
+        rewrite_qualified_access(&mut program, &aliases(&[("math", &["add", "ZERO"])])).unwrap();
+
+        let DeclNode::Function {
+            body: Some(body), ..
+        } = &program.declarations[1].decl
+        else {
+            panic!("expected main function");
+        };
+        let Statement::Return(Some(Expression::Primary(PrimaryExpr::FunctionCall {
+            name,
+            arguments,
+            ..
+        }))) = &body.statements[0]
+        else {
+            panic!("qualified call should rewrite to a flat FunctionCall");
+        };
+        assert_eq!(name, "add");
+        assert!(matches!(
+            &arguments[0],
+            Expression::Primary(PrimaryExpr::Identifier(n)) if n == "ZERO"
+        ));
+    }
+
+    #[test]
+    fn rejects_unknown_qualified_member() {
+        let mut program = parse_module(
+            r#"
+math := import("./math.hll")
+main: () -> i32 {
+    return math.nope(1)
+}
+"#,
+        )
+        .unwrap();
+        let err = rewrite_qualified_access(&mut program, &aliases(&[("math", &["add"])]))
+            .expect_err("unknown member must fail");
+        assert!(
+            err.contains("module `math`") && err.contains("nope"),
+            "{err}"
+        );
+    }
 
     #[test]
     fn collects_imports_in_source_order() {

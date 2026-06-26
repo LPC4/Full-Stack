@@ -129,7 +129,7 @@ spawn_user_process: () {
 fn renamed_variable_residue_in_expr_is_rejected() {
     reject(
         r#"
-fn: () {
+compute: () {
     actual_val: u64 = u64(4096)
     result: u64 = (old_name_val + 1) * 2
 }

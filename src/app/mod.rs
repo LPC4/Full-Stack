@@ -566,6 +566,7 @@ impl FullStackApp {
         kernel_user_pipeline.set_type_prelude(get_stdlib_type_prelude());
         kernel_user_pipeline.set_entry_point(Some("_kernel_start".to_owned()));
         kernel_user_pipeline.set_link_layout(Some(LinkLayout::freestanding_kernel()));
+        kernel_user_pipeline.set_current_source_path(build.source_path.clone());
         let kernel_modules = vec![(&module_name as &str, user_source.as_str())];
 
         let kernel_objects = match kernel_user_pipeline.compile_modules(&kernel_modules) {
@@ -654,6 +655,9 @@ impl FullStackApp {
     /// through here.
     fn resolve_build_program(&self) -> Option<ProgramFile> {
         let current = self.catalog.current_program()?;
+        if current.is_stdlib() {
+            return Some(current.clone());
+        }
         let build_id = current
             .parent_id
             .clone()
@@ -727,6 +731,7 @@ impl FullStackApp {
         }
 
         self.pipeline.set_target_mode(self.target_mode);
+        self.pipeline.set_type_prelude(get_stdlib_type_prelude());
         self.pipeline
             .set_module_resolver(Some(self.catalog_module_resolver()));
         let artifact_stem = {
@@ -738,6 +743,8 @@ impl FullStackApp {
             }
         };
         self.pipeline.set_artifact_stem(Some(artifact_stem));
+        self.pipeline
+            .set_current_source_path(build.source_path.clone());
         match self.target_mode {
             TargetMode::Hosted => {
                 self.pipeline.set_entry_point(None);
@@ -784,10 +791,29 @@ impl FullStackApp {
         self.pipeline.set_source_prelude(layout.clone());
         let mut result = self.pipeline.run_full(&user_source, &stdlib_objects);
 
-        // Re-link with the aux objects so cross-module references resolve. Aux
-        // sources come from the catalog so editor edits take effect on compile.
+        // Compile the objects for any qualified `import("...")` modules (the link closure
+        // minus the primary) so their symbols resolve, mirroring the aux-unit handling.
+        let mut closure_failed = false;
+        let import_deps: Vec<(String, AssembledOutput)> =
+            if !result.has_errors() && source_has_module_imports(&user_source) {
+                match self.pipeline.compile_program_closure("user", &user_source) {
+                    Ok(objs) => objs.into_iter().filter(|(n, _)| n != "user").collect(),
+                    Err(e) => {
+                        closure_failed = true;
+                        result.binary = None;
+                        result.assembler_error = Some(format!("import compile error: {e}"));
+                        Vec::new()
+                    }
+                }
+            } else {
+                Vec::new()
+            };
+
+        // Re-link with the aux and imported-module objects so cross-module references
+        // resolve. Sources come from the catalog so editor edits take effect on compile.
         let aux_sources: Vec<String> = self.catalog.child_sources(&build.id);
-        if !aux_sources.is_empty()
+        if !closure_failed
+            && (!aux_sources.is_empty() || !import_deps.is_empty())
             && !result.has_errors()
             && let Some(tokens) = result.asm.as_ref().map(|a| a.tokens.clone())
         {
@@ -796,6 +822,7 @@ impl FullStackApp {
                 &tokens,
                 &stdlib_objects,
                 &aux_sources,
+                &import_deps,
                 &layout,
             ) {
                 Ok(assembled) => {
@@ -810,6 +837,7 @@ impl FullStackApp {
         }
         // The pipeline is reused across compiles; clear the per-program prelude.
         self.pipeline.set_source_prelude("");
+        self.pipeline.set_current_source_path(None::<String>);
 
         if result.has_errors() {
             self.compilation_state
@@ -854,6 +882,7 @@ impl FullStackApp {
         user_tokens: &[RvInstruction],
         stdlib_objects: &[(&str, &AssembledOutput)],
         aux_sources: &[String],
+        import_deps: &[(String, AssembledOutput)],
         layout: &str,
     ) -> Result<AssembledOutput, String> {
         let target = pipeline.target_mode();
@@ -885,6 +914,10 @@ impl FullStackApp {
         modules.push(("user", &user_obj));
         for (n, o) in aux_names.iter().zip(aux_objs.iter()) {
             modules.push((n.as_str(), o));
+        }
+        // Objects for modules pulled in via qualified `import("...")` declarations.
+        for (name, obj) in import_deps {
+            modules.push((name.as_str(), obj));
         }
         pipeline
             .link_assembled_objects_named("user", &modules)
@@ -925,6 +958,7 @@ impl FullStackApp {
         user_pipeline.set_write_artifacts(false);
         user_pipeline.set_type_prelude(get_stdlib_type_prelude());
         user_pipeline.set_source_prelude(layout.clone());
+        user_pipeline.set_current_source_path(program.source_path.clone());
 
         let stdlib_owned = CompilationPipeline::compile_stdlib_objects(TargetMode::Hosted)
             .map_err(|e| format!("stdlib compile error: {e}"))?;
@@ -935,10 +969,24 @@ impl FullStackApp {
             r => r,
         };
 
-        // Split programs (aux translation units) need the aux objects linked in;
-        // run_full only built the primary against the stdlib objects.
+        // Objects for modules pulled in via qualified `import("...")` (the primary's link
+        // closure, minus the primary itself); run_full prepends only their interface.
+        let import_deps: Vec<(String, AssembledOutput)> =
+            if source_has_module_imports(&program_source) {
+                user_pipeline
+                    .compile_program_closure("user", &program_source)
+                    .map_err(|e| format!("import compile error: {e}"))?
+                    .into_iter()
+                    .filter(|(name, _)| name != "user")
+                    .collect()
+            } else {
+                Vec::new()
+            };
+
+        // Split programs (aux translation units) and qualified imports need their objects
+        // linked in; run_full only built the primary against the stdlib objects.
         let aux_sources: Vec<String> = self.catalog.child_sources(&build_id);
-        if !aux_sources.is_empty() {
+        if !aux_sources.is_empty() || !import_deps.is_empty() {
             let tokens = result
                 .asm
                 .as_ref()
@@ -949,6 +997,7 @@ impl FullStackApp {
                 &tokens,
                 &stdlib_objects,
                 &aux_sources,
+                &import_deps,
                 &layout,
             )?;
             self.compilation_state.last_hosted_binary = Some(assembled);
@@ -1383,6 +1432,14 @@ impl egui_dock::TabViewer for DockTabViewer<'_> {
 
 // --- Helpers ---
 
+/// Whether `source` declares any qualified `import("...")` module bindings, gating the
+/// extra import link-closure compile so non-importing programs pay nothing.
+fn source_has_module_imports(source: &str) -> bool {
+    hll_to_ir::imports::collect_module_imports(source)
+        .map(|imports| !imports.is_empty())
+        .unwrap_or(false)
+}
+
 fn parse_hex_or_dec(s: &str) -> Option<u64> {
     let s = s.trim();
     if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
@@ -1546,5 +1603,33 @@ mod boot_fs_tests {
             files.contains(&"/readme.txt"),
             "readme missing; files={files:?}"
         );
+    }
+
+    #[test]
+    fn stdlib_fragment_builds_itself_not_parent() {
+        let mut app = FullStackApp::default();
+        app.catalog.select_program("stdlib-runtime");
+
+        let build = app
+            .resolve_build_program()
+            .expect("selected stdlib fragment should resolve");
+
+        assert_eq!(build.id, "stdlib-runtime");
+        assert_eq!(build.parent_id.as_deref(), Some("stdlib"));
+    }
+
+    #[test]
+    fn stdlib_catalog_entries_compile_without_concatenating_modules() {
+        let mut app = FullStackApp::default();
+
+        for id in ["stdlib", "stdlib-memory_allocator"] {
+            app.catalog.select_program(id);
+            app.compile();
+            assert!(
+                app.compilation_state.error_summary.is_none(),
+                "{id} produced an error: {:?}",
+                app.compilation_state.error
+            );
+        }
     }
 }

@@ -257,6 +257,7 @@ fn compile_user_objects(
         let mut pipeline = make_pipeline(mode, "_u_");
         pipeline.set_run_semantic_analysis(false);
         pipeline.set_artifact_stem(Some(stem.clone()));
+        pipeline.set_current_source_path(Some(path.clone()));
         let compile_result = pipeline
             .compile(&src)
             .map_err(|e| CliError::Compile(e.to_string()))?;
@@ -278,6 +279,7 @@ fn cmd_hll_to_ir(args: &Args) -> Result<ExitCode, CliError> {
     let mut pipeline = make_pipeline(args.mode, "_u_");
     pipeline.set_run_semantic_analysis(false);
     pipeline.set_artifact_stem(Some(source_stem(input, "module")));
+    pipeline.set_current_source_path(Some(input.to_owned()));
 
     let result = pipeline
         .compile(&src)
@@ -303,6 +305,7 @@ fn cmd_hll_to_asm(args: &Args) -> Result<ExitCode, CliError> {
     let mut pipeline = make_pipeline(args.mode, "_u_");
     pipeline.set_run_semantic_analysis(false);
     pipeline.set_artifact_stem(Some(source_stem(input, "module")));
+    pipeline.set_current_source_path(Some(input.to_owned()));
 
     let result = pipeline
         .compile(&src)
@@ -364,7 +367,7 @@ fn cmd_run(args: &Args) -> Result<ExitCode, CliError> {
 /// Compile an HLL source file with the stdlib and return assembled output.
 fn assemble_from_hll_file(path: &str, mode: TargetMode) -> Result<AssembledOutput, CliError> {
     let src = fs::read_to_string(path)?;
-    compile_and_link(&src, mode, &source_stem(path, "module"))
+    compile_and_link(&src, mode, &source_stem(path, "module"), Some(path))
 }
 
 /// Parse a `.s` text file as assembly tokens, link with stdlib, and assemble.
@@ -391,12 +394,37 @@ fn assemble_from_s_file(path: &str, mode: TargetMode) -> Result<AssembledOutput,
 }
 
 /// Compile HLL source -> IR -> tokens, then link with stdlib and assemble.
-fn compile_and_link(src: &str, mode: TargetMode, stem: &str) -> Result<AssembledOutput, CliError> {
+fn compile_and_link(
+    src: &str,
+    mode: TargetMode,
+    stem: &str,
+    source_path: Option<&str>,
+) -> Result<AssembledOutput, CliError> {
     let stdlib_objects = compile_stdlib_objects(mode)?;
 
     let mut user_pipeline = make_pipeline(mode, "_u_");
     user_pipeline.set_run_semantic_analysis(false);
     user_pipeline.set_artifact_stem(Some(stem.to_owned()));
+    user_pipeline.set_current_source_path(source_path.map(str::to_owned));
+
+    if hll_to_ir::imports::collect_module_imports(src)
+        .map(|imports| !imports.is_empty())
+        .unwrap_or(false)
+    {
+        let closure = user_pipeline
+            .compile_program_closure(stem, src)
+            .map_err(|e| CliError::Compile(e.to_string()))?;
+        let mut modules: Vec<(&str, &AssembledOutput)> = stdlib_objects
+            .iter()
+            .map(|(n, o)| (n.as_str(), o))
+            .collect();
+        for (name, obj) in &closure {
+            modules.push((name.as_str(), obj));
+        }
+        return user_pipeline
+            .link_assembled_objects_named(stem, &modules)
+            .map_err(|e| CliError::Assemble(e.to_string()));
+    }
 
     let user_result = user_pipeline
         .compile(src)

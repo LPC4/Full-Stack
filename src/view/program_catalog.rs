@@ -30,6 +30,8 @@ pub struct ProgramFile {
     pub kind: ProgramKind,
     pub source: String,
     #[serde(default)]
+    pub source_path: Option<String>,
+    #[serde(default)]
     pub standalone: bool, // compile without linking stdlib (set for runtime/stdlib reference files)
     #[serde(default)]
     pub parent_id: Option<String>, // set for aux translation units and kernel fragments; their owner's id
@@ -66,6 +68,14 @@ impl ProgramFile {
             name: Self::display_name_from_file_name(file_name),
             kind: ProgramKind::Example,
             source: source.to_owned(),
+            source_path: Some(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("programs")
+                    .join("example")
+                    .join(file_name)
+                    .display()
+                    .to_string(),
+            ),
             standalone: false,
             parent_id: None,
             layout: String::new(),
@@ -81,6 +91,7 @@ impl ProgramFile {
             name,
             kind: ProgramKind::Custom,
             source,
+            source_path: None,
             standalone: false,
             parent_id: None,
             layout: String::new(),
@@ -96,6 +107,7 @@ impl ProgramFile {
             name: name.to_owned(),
             kind: ProgramKind::Stdlib,
             source: source.to_owned(),
+            source_path: None,
             standalone: false,
             parent_id: None,
             layout: String::new(),
@@ -111,6 +123,7 @@ impl ProgramFile {
             name: name.to_owned(),
             kind: ProgramKind::Os,
             source: source.to_owned(),
+            source_path: None,
             standalone: false,
             parent_id: None,
             layout: String::new(),
@@ -126,6 +139,7 @@ impl ProgramFile {
             name: name.to_owned(),
             kind: ProgramKind::User,
             source: source.to_owned(),
+            source_path: None,
             standalone: false,
             parent_id: None,
             layout: String::new(),
@@ -164,21 +178,14 @@ impl ProgramFile {
 }
 
 fn built_in_programs() -> Vec<ProgramFile> {
-    // Read-only reference view of the hosted stdlib (display only, not a build
-    // input): join the per-module sources the pipeline compiles separately.
-    let stdlib_combined = get_stdlib_modules_for_mode(TargetMode::Hosted)
-        .iter()
-        .map(|(name, src)| format!("; --- {name} ---\n{src}"))
-        .collect::<Vec<_>>()
-        .join("\n");
-
     let mut programs = vec![
-        // Stdlib program (read-only, single combined file)
+        // Stdlib parent. The actual stdlib files are child fragments below; the
+        // compiler also builds them per-module, so the GUI must not concatenate them.
         ProgramFile::stdlib(
             "stdlib",
             "Standard Library",
-            "Read-only standard library (types, memory, strings, io, runtime)",
-            &stdlib_combined,
+            "Read-only standard library modules.",
+            "; Select a standard library module below.\n",
         ),
         // OS / kernel source files (read-only, for reference -- not individually compilable)
         {
@@ -310,6 +317,17 @@ fn built_in_programs() -> Vec<ProgramFile> {
             os_runtime::kernel::MY_KERNEL,
         ),
     ];
+
+    for (module_name, module_source) in get_stdlib_modules_for_mode(TargetMode::Hosted) {
+        let mut module = ProgramFile::stdlib(
+            &format!("stdlib-{module_name}"),
+            &format!("{module_name}.hll"),
+            "Read-only hosted standard library translation unit.",
+            module_source,
+        );
+        module.parent_id = Some("stdlib".to_owned());
+        programs.push(module);
+    }
 
     // Userspace programs (read-only) derive from the single os_runtime::user
     // catalog: the hosted tools and demos the shell boots. Compile in Hosted
@@ -479,6 +497,7 @@ impl ProgramCatalog {
                     updated.kind = built_in.kind;
                     updated.source = built_in.source;
                     updated.description = built_in.description;
+                    updated.source_path = built_in.source_path;
                     updated.standalone = built_in.standalone;
                     updated.parent_id = built_in.parent_id;
                     updated.layout = built_in.layout;
@@ -604,14 +623,24 @@ impl ProgramCatalog {
     }
 
     pub fn create_custom_program(&mut self, source: String, name: String) {
+        self.create_custom_program_with_path(source, name, None::<String>);
+    }
+
+    pub fn create_custom_program_with_path(
+        &mut self,
+        source: String,
+        name: String,
+        source_path: Option<String>,
+    ) {
         let program_id = format!("custom-{}", self.next_custom_program_id);
         self.next_custom_program_id = self
             .next_custom_program_id
             .checked_add(1)
             .unwrap_or(self.next_custom_program_id);
 
-        self.programs
-            .push(ProgramFile::custom(program_id.clone(), name, source));
+        let mut program = ProgramFile::custom(program_id.clone(), name, source);
+        program.source_path = source_path;
+        self.programs.push(program);
         self.selected_program_id = program_id;
     }
 
@@ -726,6 +755,21 @@ mod tests {
     }
 
     #[test]
+    fn stdlib_modules_nest_under_standard_library() {
+        let programs = built_in_programs();
+        let parent = find(&programs, "stdlib");
+        assert_eq!(parent.badge(), CatalogBadge::Reference);
+        assert!(parent.source.contains("Select a standard library module"));
+
+        for (module_name, module_source) in get_stdlib_modules_for_mode(TargetMode::Hosted) {
+            let module = find(&programs, &format!("stdlib-{module_name}"));
+            assert_eq!(module.parent_id.as_deref(), Some("stdlib"));
+            assert_eq!(module.badge(), CatalogBadge::Fragment);
+            assert_eq!(module.source, module_source);
+        }
+    }
+
+    #[test]
     fn child_sources_returns_aux_units() {
         let catalog = ProgramCatalog::default();
         let sources = catalog.child_sources("user-cc");
@@ -744,5 +788,28 @@ mod tests {
         catalog.ensure_consistency();
         assert_eq!(catalog.layout_of("user-cc"), os_runtime::user::CC_LAYOUT);
         assert_eq!(catalog.layout_of("user-as"), os_runtime::user::AS_LAYOUT);
+    }
+
+    // Persisted app state from before `source_path` existed left bundled examples
+    // without a filesystem base, which broke `import("./modules/mathlib.hll")`.
+    #[test]
+    fn ensure_consistency_restores_source_path_for_read_only_examples() {
+        let mut catalog = ProgramCatalog::default();
+        let hll2 = catalog
+            .programs
+            .iter_mut()
+            .find(|program| program.id == "example-hll2-completion-showcase")
+            .expect("hll2 showcase entry");
+        hll2.source_path = None;
+
+        catalog.ensure_consistency();
+
+        let hll2 = find(&catalog.programs, "example-hll2-completion-showcase");
+        let source_path = hll2.source_path.as_deref().expect("restored source path");
+        assert!(
+            source_path.ends_with("programs\\example\\hll2_completion_showcase.hll")
+                || source_path.ends_with("programs/example/hll2_completion_showcase.hll"),
+            "unexpected source path: {source_path}"
+        );
     }
 }

@@ -105,8 +105,13 @@ impl<'a> Parser<'a> {
                 self.advance();
                 let name = self.expect_ident()?;
                 self.expect_assign()?;
-                let init = self.parse_expression()?;
-                DeclNode::Const { name, init }
+                if matches!(self.peek(), Some(Token::Import)) {
+                    let path = self.parse_import_call()?;
+                    DeclNode::ModuleImport { alias: name, path }
+                } else {
+                    let init = self.parse_expression()?;
+                    DeclNode::Const { name, init }
+                }
             }
             Some(Token::Type) => {
                 self.advance();
@@ -130,6 +135,10 @@ impl<'a> Parser<'a> {
                 self.parse_enum_decl()?
             }
             Some(Token::External) => {
+                let is_import_interface = self
+                    .current_span()
+                    .source_line
+                    .contains("; @import-interface");
                 self.advance();
                 // `external name: (params) -> ret` is a function; `external name: type`
                 // is a global defined in another module (resolved at link).
@@ -137,7 +146,7 @@ impl<'a> Parser<'a> {
                     && (self.peek_n(2) == Some(&Token::LParen)
                         || self.peek_n(2) == Some(&Token::Lt))
                 {
-                    self.parse_function_decl(true)?
+                    self.parse_function_decl(true, is_import_interface)?
                 } else {
                     let name = self.expect_ident()?;
                     self.expect_colon()?;
@@ -158,12 +167,21 @@ impl<'a> Parser<'a> {
             Some(Token::Ident(_)) => {
                 // Look ahead to determine if this is a function or variable declaration
                 if self.peek_n(1) == Some(&Token::ColonEqual) {
-                    self.parse_inferred_variable_decl()?
+                    // `alias := import("path")` is a module binding, not an ordinary
+                    // inferred variable; its RHS is the `import(...)` builtin.
+                    if self.peek_n(2) == Some(&Token::Import) {
+                        let alias = self.expect_ident()?;
+                        self.expect_colon_equal()?;
+                        let path = self.parse_import_call()?;
+                        DeclNode::ModuleImport { alias, path }
+                    } else {
+                        self.parse_inferred_variable_decl()?
+                    }
                 } else if self.peek_n(1) == Some(&Token::Colon)
                     && (self.peek_n(2) == Some(&Token::LParen)
                         || self.peek_n(2) == Some(&Token::Lt))
                 {
-                    self.parse_function_decl(false)?
+                    self.parse_function_decl(false, false)?
                 } else {
                     self.parse_variable_decl()?
                 }
@@ -247,9 +265,19 @@ impl<'a> Parser<'a> {
             Some(Token::Ident(_)) if self.peek_n(1) == Some(&Token::ColonEqual) => {
                 let name = self.expect_ident()?;
                 self.expect_colon_equal()?;
+                if matches!(self.peek(), Some(Token::Import)) {
+                    return Err(self.error(
+                        "`import(...)` is only valid as a top-level module binding \
+                         (`alias := import(\"...\")`), not inside a function body",
+                    ));
+                }
                 let init = self.parse_expression()?;
                 Ok(Statement::InferredVariableDecl { name, init })
             }
+            Some(Token::Import) => Err(self.error(
+                "`import(...)` is only valid as a top-level module binding \
+                 (`alias := import(\"...\")`), not inside a function body",
+            )),
             Some(_) => Ok(Statement::Expression(self.parse_expression()?)),
             None => Err(self.error("unexpected end of input while parsing statement")),
         }
@@ -323,6 +351,16 @@ impl<'a> Parser<'a> {
         self.expect_colon_equal()?;
         let init = self.parse_expression()?;
         Ok(DeclNode::InferredVariable { name, init })
+    }
+
+    /// Consume `import ( string )` and return the path literal, with `import` next.
+    /// Used by the `alias := import(...)` and `const alias = import(...)` module forms.
+    fn parse_import_call(&mut self) -> Result<String, ParserError> {
+        self.advance(); // `import`
+        self.expect_lparen()?;
+        let path = self.expect_string_literal()?;
+        self.expect_rparen()?;
+        Ok(path)
     }
 
     fn parse_struct_decl(&mut self) -> Result<DeclNode, ParserError> {
@@ -406,7 +444,11 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_function_decl(&mut self, is_extern: bool) -> Result<DeclNode, ParserError> {
+    fn parse_function_decl(
+        &mut self,
+        is_extern: bool,
+        is_import_interface: bool,
+    ) -> Result<DeclNode, ParserError> {
         let name = self.expect_ident()?;
         self.expect_colon()?;
 
@@ -438,6 +480,7 @@ impl<'a> Parser<'a> {
             return_type,
             body,
             is_extern,
+            is_import_interface,
         })
     }
 
@@ -1120,7 +1163,12 @@ impl<'a> Parser<'a> {
             }
             Some(Token::Fn) => self.parse_function_pointer_type(),
             Some(Token::Ident(_)) => {
-                let name = self.expect_ident()?;
+                let mut name = self.expect_ident()?;
+                if self.match_dot() {
+                    let member = self.expect_ident()?;
+                    name.push('.');
+                    name.push_str(&member);
+                }
                 let args = if self.match_lt() {
                     let mut args = Vec::new();
                     // Check for closing bracket, accounting for `>>` in nested generics
@@ -2746,6 +2794,83 @@ mod tests {
             DeclNode::Import { path } => assert_eq!(path, "core/io"),
             other => panic!("expected Import, got: {other:?}"),
         }
+    }
+
+    #[test]
+    fn parses_module_import_binding() {
+        use crate::token::Token;
+        let tokens = vec![
+            Token::Ident("math"),
+            Token::ColonEqual,
+            Token::Import,
+            Token::LParen,
+            Token::String(r#""./math.hll""#),
+            Token::RParen,
+            Token::Eof,
+        ];
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse_program().unwrap();
+        assert_eq!(program.declarations.len(), 1);
+        match &program.declarations[0].decl {
+            DeclNode::ModuleImport { alias, path } => {
+                assert_eq!(alias, "math");
+                assert_eq!(path, "./math.hll");
+            }
+            other => panic!("expected ModuleImport, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_const_module_import_binding() {
+        use crate::token::Token;
+        let tokens = vec![
+            Token::Const,
+            Token::Ident("http"),
+            Token::Assign,
+            Token::Import,
+            Token::LParen,
+            Token::String(r#""http""#),
+            Token::RParen,
+            Token::Eof,
+        ];
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse_program().unwrap();
+        match &program.declarations[0].decl {
+            DeclNode::ModuleImport { alias, path } => {
+                assert_eq!(alias, "http");
+                assert_eq!(path, "http");
+            }
+            other => panic!("expected ModuleImport, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_import_call_inside_function_body() {
+        use crate::token::Token;
+        // fn body: `m := import("x")` must be rejected as a body statement.
+        let tokens = vec![
+            Token::Ident("f"),
+            Token::Colon,
+            Token::LParen,
+            Token::RParen,
+            Token::LBrace,
+            Token::Ident("m"),
+            Token::ColonEqual,
+            Token::Import,
+            Token::LParen,
+            Token::String(r#""x""#),
+            Token::RParen,
+            Token::RBrace,
+            Token::Eof,
+        ];
+        let mut parser = Parser::new(tokens);
+        let err = parser
+            .parse_program()
+            .expect_err("import(...) in a body must be rejected");
+        assert!(
+            err.to_string().contains("top-level module binding"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]

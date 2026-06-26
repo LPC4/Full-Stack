@@ -116,6 +116,79 @@ fn run_hll(src: &str) -> (VirtualMachine, StepOutcome, String) {
     run_hll_with_limit(src, 5_000_000)
 }
 
+/// Compile a program's import closure (primary plus every qualified `import("...")` module),
+/// link it against the cached stdlib, and run. Backward-compatible with single-TU programs.
+fn run_hll_closure_with_path(
+    src: &str,
+    source_path: Option<&str>,
+    max_steps: u64,
+) -> (StepOutcome, String) {
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_write_artifacts(false);
+    pipeline.set_current_source_path(source_path.map(str::to_owned));
+    let closure = pipeline
+        .compile_program_closure("user", src)
+        .expect("closure compile failed");
+
+    let mut modules: Vec<(&str, &AssembledOutput)> = cached_stdlib_objs()
+        .iter()
+        .map(|(n, o)| (n.as_str(), o))
+        .collect();
+    for (name, obj) in &closure {
+        modules.push((name.as_str(), obj));
+    }
+    let assembled = pipeline
+        .link_assembled_objects(&modules)
+        .expect("link failed");
+    let mut vm = VirtualMachine::new(&assembled);
+    let run = vm.run(max_steps);
+    (run.outcome, run.uart_output.clone())
+}
+
+// A qualified `alias := import("path")` program links and runs its imported module: the
+// closure compiles `mathlib` alongside the primary, so `mathlib.add` resolves at link.
+#[test]
+fn qualified_import_closure_links_and_runs() {
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_write_artifacts(false);
+    pipeline.set_module_resolver(Some(Box::new(|name: &str| {
+        (name == "mathlib").then(|| {
+            "export const BIAS = 40\n\
+             export add: (a: i32, b: i32) -> i32 { return a + b }\n"
+                .to_owned()
+        })
+    })));
+
+    let primary = r#"
+mathlib := import("mathlib")
+main: () -> i32 {
+    return mathlib.add(mathlib.BIAS, 2)
+}
+"#;
+    let closure = pipeline
+        .compile_program_closure("user", primary)
+        .expect("closure compile failed");
+
+    let mut modules: Vec<(&str, &AssembledOutput)> = cached_stdlib_objs()
+        .iter()
+        .map(|(n, o)| (n.as_str(), o))
+        .collect();
+    for (name, obj) in &closure {
+        modules.push((name.as_str(), obj));
+    }
+    let assembled = pipeline
+        .link_assembled_objects(&modules)
+        .expect("link failed");
+    let mut vm = VirtualMachine::new(&assembled);
+    let run = vm.run(5_000_000);
+    assert!(
+        matches!(run.outcome, StepOutcome::Halted(42)),
+        "expected Halted(42), got {:?}; uart: {}",
+        run.outcome,
+        run.uart_output
+    );
+}
+
 /// Compile a user program with the peephole pass either on or off, returning the
 /// optimized-or-not token stream alongside the VM run (exit outcome + UART).
 fn run_hll_peephole(src: &str, peephole: bool) -> (StepOutcome, String, usize) {
@@ -950,7 +1023,12 @@ fn examples_exit_zero_in_vm() {
     assert!(!examples.is_empty(), "catalog exposes no example programs");
 
     for program in examples {
-        let (_, outcome, uart) = run_hll_with_limit(&program.source, 50_000_000);
+        // Use the import closure so examples may pull in qualified `import("...")` modules.
+        let (outcome, uart) = run_hll_closure_with_path(
+            &program.source,
+            program.source_path.as_deref(),
+            50_000_000,
+        );
         assert!(
             matches!(outcome, StepOutcome::Halted(0)),
             "{}: expected Halted(0), got {outcome:?}\nuart:\n{uart}",

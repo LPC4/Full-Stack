@@ -58,6 +58,9 @@ pub enum DeclNode {
         return_type: Option<ReturnType>,
         body: Option<Block>,
         is_extern: bool,
+        // Generated import-interface externs are link references, but should not
+        // produce user-facing "definition omitted" warnings.
+        is_import_interface: bool,
     },
     Type {
         name: String,
@@ -81,6 +84,12 @@ pub enum DeclNode {
         init: Expression,
     },
     Import {
+        path: String,
+    },
+    // `alias := import("path")` / `const alias = import("path")`: a compile-time module
+    // binding. Resolved by the host pipeline; exports are reached as `alias.member`.
+    ModuleImport {
+        alias: String,
         path: String,
     },
 }

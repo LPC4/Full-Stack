@@ -28,7 +28,7 @@ impl HighLevelCompiler {
     ) -> Result<(), CompilerError> {
         log::debug!("lowering declaration: {:?}", declaration.decl);
         match &declaration.decl {
-            DeclNode::Import { .. } => Ok(()),
+            DeclNode::Import { .. } | DeclNode::ModuleImport { .. } => Ok(()),
             // Concrete enums are registered in a pre-pass (see compile_program);
             // generic enums are specialized into concrete declarations first.
             DeclNode::Enum { name, generics, .. } => {
@@ -163,6 +163,7 @@ impl HighLevelCompiler {
                 return_type,
                 body,
                 is_extern,
+                is_import_interface,
                 ..
             } => {
                 let final_name = if generics.is_empty() {
@@ -173,9 +174,11 @@ impl HighLevelCompiler {
                 if *is_extern {
                     // External functions are provided by the linker (e.g. libc).
                     // The signature is already recorded.
-                    self.context.warn(format!(
-                        "extern function `{final_name}` - definition omitted (linker must provide it)"
-                    ));
+                    if !*is_import_interface {
+                        self.context.warn(format!(
+                            "extern function `{final_name}` - definition omitted (linker must provide it)"
+                        ));
+                    }
                     return Ok(());
                 }
 

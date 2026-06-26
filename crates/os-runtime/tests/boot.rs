@@ -60,6 +60,7 @@ fn compiled_stdlib() -> &'static [(String, AssembledOutput)] {
                     string_prefix: Some("__kern_str_".to_owned()),
                     type_prelude: get_stdlib_type_prelude(),
                     source_prelude: Some(source_prelude),
+                    module_aliases: Default::default(),
                 });
                 let out = compiler.compile(src).unwrap_or_else(|diags| {
                     panic!("kernel stdlib `{name}` compile failed: {diags:?}")
@@ -83,6 +84,7 @@ fn run_kernel_hll(user_src: &str) -> (String, Option<i64>) {
         string_prefix: None,
         type_prelude: Vec::new(),
         source_prelude: Some(direct_import_prelude(user_src)),
+        module_aliases: Default::default(),
     });
     let user_out = user_compiler
         .compile(user_src)

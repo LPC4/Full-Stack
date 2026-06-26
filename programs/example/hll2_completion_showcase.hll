@@ -2,8 +2,9 @@
 ; features land: function pointer fields, callable expressions, manual vtables,
 ; methods-as-sugar, and later interfaces.
 
-external println: (s: u8[]) -> i32
-external print_int: (value: i64) -> i32
+std := import("runtime")
+
+mathlib := import("./modules/mathlib.hll")
 
 type BinaryOp = fn(i32, i32) -> i32
 type UnaryOp = fn(i32) -> i32
@@ -53,15 +54,15 @@ choose_binary: (multiply: bool) -> BinaryOp {
 }
 
 main: () -> i32 {
-    println("-- hll2 completion showcase --")
+    std.println("-- hll2 completion showcase --")
 
     op: BinaryOp = add
     sum := op(20, 22)
-    print_int(sum)
+    std.print_int(sum)
     if sum != 42 { return 1 }
 
     product := apply_binary(mul, 6, 7)
-    print_int(product)
+    std.print_int(product)
     if product != 42 { return 2 }
 
     chosen := choose_binary(false)
@@ -91,10 +92,14 @@ main: () -> i32 {
     ; The callee can also be an indexed function-pointer element.
     if ops[0](40, 2) != 42 { return 11 }
 
+    ; Qualified access to an imported module: exported const and functions.
+    if mathlib.triple(14) != 42 { return 12 }
+    if mathlib.inc(mathlib.BIAS) != 41 { return 13 }
+
     ; Next HLL2 sections will become real code as they are implemented:
     ; - explicit vtable structs
     ; - static method sugar
 
-    println("ok")
+    std.println("ok")
     return 0
 }

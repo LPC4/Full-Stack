@@ -140,11 +140,13 @@ impl HighLevelCompiler {
                 if self.enum_variants.contains_key(name) {
                     return self.lower_enum_construct(name, arguments);
                 }
+                // A function-pointer binding calls indirectly; any other bare
+                // name stays a direct call so extern functions link as before.
                 if name != "free"
                     && !self.function_return_types.contains_key(name)
-                    && let Some(indirect) = self.lower_indirect_call(name, arguments)
+                    && self.is_function_pointer_binding(name)
                 {
-                    return Some(indirect);
+                    return self.lower_indirect_call(name, arguments);
                 }
                 if name == "free" {
                     if arguments.len() != 1 {
@@ -442,6 +444,27 @@ impl HighLevelCompiler {
                 .error(format!("unknown identifier `{name}`"));
             None
         }
+    }
+
+    /// True when `name` is a local or global binding of function-pointer type,
+    /// i.e. callable through an indirect call rather than a direct symbol call.
+    fn is_function_pointer_binding(&self, name: &str) -> bool {
+        // Locals live in `Pointer(T)` stack slots, so the value type is the
+        // pointee; globals store the value type directly.
+        let value_ty = if let Some(info) = self.context.symbols.lookup(name) {
+            match &info.ty {
+                IrType::Pointer(inner) => (**inner).clone(),
+                other => other.clone(),
+            }
+        } else if let Some(gv_ty) = self.global_vars.get(name) {
+            gv_ty.clone()
+        } else {
+            return false;
+        };
+        matches!(
+            self.resolve_named_type(&value_ty),
+            IrType::FunctionPointer { .. }
+        )
     }
 
     fn lower_indirect_call(

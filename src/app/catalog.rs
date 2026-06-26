@@ -162,7 +162,7 @@ impl FullStackApp {
             // fragments render nested under their parent (see render_catalog_group).
             let runnable_tools = self.group_ids(|p| p.is_user() && p.parent_id.is_none());
             let kernel = self.group_ids(|p| p.id == "os-my-kernel");
-            let reference = self.group_ids(|p| p.is_stdlib());
+            let reference = self.group_ids(|p| p.is_stdlib() && p.parent_id.is_none());
             let examples = self.group_ids(|p| p.kind == ProgramKind::Example);
             let custom = self.group_ids(|p| p.kind == ProgramKind::Custom);
 
@@ -415,7 +415,16 @@ impl FullStackApp {
                     .filter(|stem| !stem.trim().is_empty())
                     .map(|stem| stem.to_owned())
                     .unwrap_or_else(|| String::from("Imported Program"));
-                self.catalog.create_custom_program(source, name.clone());
+                let source_path = Path::new(&path)
+                    .canonicalize()
+                    .unwrap_or_else(|_| Path::new(&path).to_path_buf())
+                    .display()
+                    .to_string();
+                self.catalog.create_custom_program_with_path(
+                    source,
+                    name.clone(),
+                    Some(source_path),
+                );
                 self.rename_id = None;
                 self.catalog_message = Some(format!("imported `{name}` from `{path}`"));
                 self.compile();

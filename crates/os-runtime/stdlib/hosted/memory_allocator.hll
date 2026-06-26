@@ -13,7 +13,7 @@ _brk_ret: u64 = 0
 
 ; brk(addr): move the program break to `addr` (0 queries it). Returns the resulting
 ; break -- equal to `addr` on success, the unchanged break on failure. Syscall 214.
-heap_brk: (addr: u64) -> u64 {
+export heap_brk: (addr: u64) -> u64 {
     _brk_a0 = addr
     asm {
         la t0, _brk_a0
@@ -28,7 +28,7 @@ heap_brk: (addr: u64) -> u64 {
 
 ; Bump-allocates n bytes, rounded up to 8-byte alignment, raising the break via
 ; brk (to a page boundary) when the bump pointer would cross it. Null on OOM.
-heap_raw_alloc: (n: u64) -> u8* {
+export heap_raw_alloc: (n: u64) -> u8* {
     aligned: u64 = ((n + 7) / 8) * 8
     if heap_cur == 0 {
         base: u64 = heap_brk(0)
@@ -49,7 +49,7 @@ heap_raw_alloc: (n: u64) -> u8* {
     return ptr
 }
 
-malloc: (size: u64) -> u8* {
+export malloc: (size: u64) -> u8* {
     requested: u64 = size
     if requested == 0 {
         requested = 1
@@ -82,7 +82,7 @@ malloc: (size: u64) -> u8* {
     return payload
 }
 
-free: (ptr: u8*) {
+export free: (ptr: u8*) {
     if ptr == null {
         return
     }

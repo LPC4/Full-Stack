@@ -219,6 +219,7 @@ impl SemanticAnalyzer {
                 Ok(())
             }
             DeclNode::Import { .. }
+            | DeclNode::ModuleImport { .. }
             | DeclNode::Type { .. }
             | DeclNode::Struct { .. }
             | DeclNode::Const { .. }
