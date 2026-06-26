@@ -86,6 +86,11 @@ total := count + 5        ; inferred i32
 const MAX_SIZE = 100      ; compile-time constant
 ```
 
+A `const` initializer is evaluated at compile time over integer, float, boolean, and
+character values with the usual operators. Field access on a compile-time value (reaching
+into a struct literal from a `const`) is intentionally not part of constant evaluation; use
+a runtime binding for that.
+
 ### 3.3 Initialization and allocation
 
 ```hll
@@ -97,7 +102,9 @@ array_ptr: i32* = new(i32, 10)   ; N contiguous elements; N may be a runtime exp
 
 - Every binding must have an initializer. The empty array literal `[]` zero-fills a fixed
   array; because `;` is a comment, no `[0; N]` repeat form exists, and a bare
-  `buffer: u8[16]` (no initializer) is an error.
+  `buffer: u8[16]` (no initializer) is an error. `[]` carries no element type or length on
+  its own, so it is only valid where the array type is known from the binding or
+  destination; an `[]` in a context without an expected type is rejected.
 - `new(T)` returns `T*` for a single element; `new(T, N)` returns `T*` for `N` elements. All
   heap allocations are zero-initialized. Every allocation needs a matching `free()` or
   `defer free()`; there is no garbage collection.
@@ -273,23 +280,86 @@ a specialization that uses an operation the concrete type does not support fails
 specialized site with an ordinary type error. A recursive specialization that does not
 converge is diagnosed rather than allowed to hang.
 
-### 6.3 Modules and `external`
+### 6.3 Modules, `import`, and `export`
 
-Each source file is one module; modules compile separately and link by object. There are
-three cross-module mechanisms:
+Each source file is one module. Modules compile separately to their own object and compose
+only by object linking; build paths never concatenate HLL source text to form a translation
+unit. A module names what it offers with `export` and what it consumes with `import`. The
+result is a single source of truth: the module graph and the shared interface both live in
+the HLL, not in host wiring tables.
 
 ```hll
-import "path/to/module"               ; record a module dependency for the linker
-export helper: (x: i32) -> i32 { ... } ; make a declaration visible to importers
-external puts: (s: u8*) -> i32        ; name a symbol defined in another unit, resolved at link
+import "as_object"                     ; depend on module `as_object`
+export type Reloc = { off: u32, sym: u32 }   ; offer a type to importers
+export const TF_BYTES = 288            ; offer a constant to importers
+export write_object: () -> u64 { ... } ; offer a function to importers
+external puts: (s: u8*) -> i32         ; low-level: a symbol from another unit, resolved at link
 ```
 
-- `external` declares a signature with no body; it pulls in no module and is resolved at link
-  time. The split userspace tools depend on it to share globals and functions.
-- Build paths never concatenate HLL source text to form a translation unit. Shared
-  declarations are composed through `external`, imports, or a shared declarations prelude;
-  all cross-unit composition happens by object linking.
-- Cyclic imports are rejected at compile time.
+#### Visibility
+
+`export` marks a declaration visible to importers; an unexported declaration is module
+private. Exportable forms are `type`, `const`, binding (global), `struct`, `enum`, and
+function declarations. A bare reference to an imported name that the target did not export is
+a compile error.
+
+#### `import`
+
+`import "name"` makes module `name`'s exported interface visible in the importer and records a
+link dependency. Resolving an import does two things:
+
+1. Interface: the resolver loads the target's source, the compiler parses it and pulls its
+   exported declarations into the importer's scope. Exported `type`/`const` definitions fold
+   locally in the importer exactly as a local definition would (no link symbol). Exported
+   functions and globals are injected as `external` references and resolved at link. The
+   importer never re-declares these by hand.
+2. Linkage: the import edge adds the target's object to the importer's transitive link
+   closure. The pipeline compiles each module in the closure once and links them together.
+
+Imports are transitive for linkage and non-transitive for visibility: importing `a` links
+everything `a` needs, but does not re-export `a`'s own imports into the importer's namespace.
+Cyclic imports are rejected with a diagnostic that names the cycle. Interface extraction reads
+only declaration headers and `type`/`const` bodies; function bodies are never imported.
+
+#### Resolution (host)
+
+Import names resolve against the host module registry, not a filesystem path. The registry is
+the catalog plus the `os-runtime` `PROGRAMS` table; a name resolves to the source of the
+catalog entry or program with that key. Names are flat identifiers (`"as_object"`,
+`"layout"`), not directory paths, and resolution is case sensitive. The in-VM `cc` toolchain
+does not yet resolve imports from the guest filesystem; that is a later extension and the
+namespace is reserved for it.
+
+#### `external` (low level)
+
+`external name: (params) -> ret` and `external name: type` declare a symbol defined in another
+unit with no body, resolved at link. `external` pulls in no module and contributes no link
+edge; it only names a symbol the linker is expected to satisfy from some object already in the
+link set. It remains the primitive that `import` is built on: an imported function lowers to
+the same reference an `external` would. Hand-written `external` stays valid for cases the
+registry does not cover, but ordinary cross-module sharing should use `import`/`export`.
+
+#### Implementation status
+
+The mechanisms above are the target. Current status:
+
+- `external` is fully implemented and carries all cross-module linkage today. Every function
+  and global is emitted `.globl` unconditionally, so linkage needs only the `external` decl.
+- `export` currently parses and is then stripped to its underlying declaration; it does not
+  yet enforce visibility (everything is effectively public).
+- `import` currently parses into an inert declaration and drives neither interface import nor
+  the link graph. The link graph is instead carried by host wiring: `UserProgram.aux_sources`
+  in `os-runtime` and catalog `parent_id`.
+- Shared `type`/`const` definitions are currently distributed by the source prelude (the
+  `layout` field / `set_source_prelude`), which textually prepends a shared header before
+  lexing. The interface-import path above is the intended replacement; once `import` carries
+  exported `type`/`const` definitions, the source prelude and the per-program `layout` headers
+  (for example `layout.hll`) are removed in favor of `import "layout"`.
+
+Migration order: (1) interface import for `type`/`const`/signatures, retiring the source
+prelude; (2) `import`-driven transitive link closure, retiring `aux_sources`; (3) `export`
+visibility enforcement. Steps 1 and 2 keep `external` and `layout` working as a fallback so
+tools migrate one at a time.
 
 ## 7. Control flow, enums, and resource management
 

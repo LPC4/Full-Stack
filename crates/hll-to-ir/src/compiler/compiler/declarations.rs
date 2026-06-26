@@ -582,7 +582,7 @@ impl HighLevelCompiler {
         // For struct literals, we'd extract the field value
         // This would require storing struct literal information during const eval
         Err(format!(
-            "Field access `.{field}` on compile-time values is not yet supported"
+            "field access `.{field}` is not available in a compile-time constant expression"
         ))
     }
 

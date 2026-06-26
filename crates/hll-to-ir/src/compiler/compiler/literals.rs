@@ -85,9 +85,11 @@ impl HighLevelCompiler {
 
     pub(super) fn lower_array_literal(&mut self, elements: &[Expression]) -> Option<LoweredValue> {
         if elements.is_empty() {
-            self.context
-                .diagnostics
-                .error("empty array literals are not supported yet".to_owned());
+            self.context.diagnostics.error(
+                "an empty array literal `[]` needs a known array type; annotate the \
+                     binding or destination (for example `buf: u8[16] = []`)"
+                    .to_owned(),
+            );
             return None;
         }
 

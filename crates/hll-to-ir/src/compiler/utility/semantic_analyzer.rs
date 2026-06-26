@@ -577,8 +577,11 @@ impl SemanticAnalyzer {
                 }
                 PrimaryExpr::ArrayLiteral(elements) => {
                     if elements.is_empty() {
-                        self.diagnostics
-                            .error("empty array literals are not supported yet".to_owned());
+                        self.diagnostics.error(
+                            "an empty array literal `[]` needs a known array type; annotate \
+                                 the binding or destination (for example `buf: u8[16] = []`)"
+                                .to_owned(),
+                        );
                         return Err(());
                     }
 

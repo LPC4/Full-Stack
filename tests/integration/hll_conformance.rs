@@ -1954,6 +1954,20 @@ main: () -> i32 {
     );
 }
 
+#[test]
+fn untyped_empty_array_literal_is_rejected() {
+    // `[]` carries no element type or length, so an inferred binding has nothing to
+    // resolve it against; only a known array type (annotation/destination) accepts it.
+    assert_compile_fails(
+        r#"
+main: () -> i32 {
+    buf := []
+    return 0
+}
+"#,
+    );
+}
+
 // --- Strings are u8[] slices ---
 
 #[test]

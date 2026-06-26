@@ -6,6 +6,13 @@ use super::{CatalogExportKind, FullStackApp};
 #[cfg(not(target_arch = "wasm32"))]
 use std::{fs, path::Path};
 
+/// Outcome of rendering one catalog row. Left-click selection is applied inside
+/// the row; the group only needs the right-click signal to toggle expansion.
+#[derive(Default)]
+struct RowResponse {
+    secondary_clicked: bool,
+}
+
 impl FullStackApp {
     pub(super) fn catalog_ui(&mut self, ui: &mut egui::Ui) {
         ui.vertical(|ui| {
@@ -192,9 +199,8 @@ impl FullStackApp {
             .collect()
     }
 
-    /// Render one collapsible intent group. A program that has child modules
-    /// looks like a normal file with a trailing "…"; clicking it selects the
-    /// program and reveals its modules (no separate expander arrow).
+    /// Render one collapsible intent group. For a program with child modules,
+    /// left-click selects it and right-click reveals or hides the modules.
     fn render_catalog_group(
         &mut self,
         ui: &mut egui::Ui,
@@ -220,12 +226,12 @@ impl FullStackApp {
                         self.render_catalog_row(ui, id, 0, false);
                         continue;
                     }
-                    // Click the program (which carries a "…") to select it and
-                    // reveal its modules; click again to hide them. State lives in
-                    // egui temp memory, closed by default.
+                    // Left-click selects; right-click toggles modules. Expansion
+                    // state lives in egui temp memory, closed by default.
                     let expand_id = ui.make_persistent_id(("catalog_expand", id));
                     let mut expanded = ui.data(|d| d.get_temp::<bool>(expand_id)).unwrap_or(false);
-                    if self.render_catalog_row(ui, id, 0, !expanded) {
+                    let row = self.render_catalog_row(ui, id, 0, !expanded);
+                    if row.secondary_clicked {
                         expanded = !expanded;
                         ui.data_mut(|d| d.insert_temp(expand_id, expanded));
                     }
@@ -238,22 +244,22 @@ impl FullStackApp {
             });
     }
 
-    /// Render a single catalog row at the given nesting depth: indent, selectable
-    /// name (with a trailing "…" when `has_more`), and a runnability badge chip.
-    /// Handles selection + custom-file rename; returns whether the row was clicked.
+    /// Render a catalog row (indent, selectable name with trailing "..." when
+    /// `has_more`, badge). Selects on left-click; reports the clicks.
     fn render_catalog_row(
         &mut self,
         ui: &mut egui::Ui,
         id: &str,
         depth: usize,
         has_more: bool,
-    ) -> bool {
+    ) -> RowResponse {
         let Some(program) = self.catalog.all_programs().iter().find(|p| p.id == id) else {
-            return false;
+            return RowResponse::default();
         };
         let name = program.name.clone();
         let badge = program.badge();
         let can_rename = program.is_custom();
+        let has_children = !self.catalog.children_of(id).is_empty();
         let selected = id == self.catalog.selected_program_id;
 
         if self.rename_id.as_deref() == Some(id) {
@@ -269,11 +275,11 @@ impl FullStackApp {
                 self.rename_id = None;
                 ui.ctx().request_repaint();
             }
-            return false;
+            return RowResponse::default();
         }
 
         let label = if has_more {
-            format!("{name} …")
+            format!("{name} ...")
         } else {
             name.clone()
         };
@@ -288,11 +294,14 @@ impl FullStackApp {
             })
             .inner;
 
-        if can_rename {
+        // A row with children navigates on left-click and expands on right-click;
+        // a custom leaf row renames on double-click.
+        if has_children {
+            response = response.on_hover_text("Right-click to expand/collapse");
+        } else if can_rename {
             response = response.on_hover_text("double-click to rename");
         }
-        let clicked = response.clicked();
-        if clicked {
+        if response.clicked() {
             self.catalog.select_program(id);
             self.compile();
         }
@@ -301,7 +310,9 @@ impl FullStackApp {
             self.rename_id = Some(id.to_owned());
             ui.ctx().request_repaint();
         }
-        clicked
+        RowResponse {
+            secondary_clicked: response.secondary_clicked(),
+        }
     }
 
     /// Small colored chip indicating an entry's runnability.

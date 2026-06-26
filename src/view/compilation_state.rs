@@ -2,6 +2,7 @@ use crate::compilation_pipeline::PipelineResult;
 use crate::view::debug::DebugSession;
 use crate::view::ide::vm_execution_view::VmExecutionResult;
 use asm_to_binary::AssembledOutput;
+use hll_to_ir::Diagnostic;
 
 #[derive(Default)]
 pub struct CompilationState {
@@ -17,6 +18,9 @@ pub struct CompilationState {
     pub entry_symbol: String,
     pub load_base: u64,
     pub last_hosted_binary: Option<AssembledOutput>,
+    /// Set when a diagnostic is clicked: the 1-based source line the editor
+    /// should move its cursor to and scroll into view. Consumed by the source view.
+    pub goto_line: Option<u32>,
 }
 
 impl CompilationState {
@@ -58,6 +62,15 @@ impl CompilationState {
         } else {
             self.asm()
         }
+    }
+
+    /// Structured diagnostics from the last compile, if any. These carry level,
+    /// message, source span, and note, and survive even when compilation failed.
+    pub fn diagnostics(&self) -> &[Diagnostic] {
+        self.pipeline
+            .as_ref()
+            .map(|p| p.diagnostics.as_slice())
+            .unwrap_or(&[])
     }
 
     pub fn assembled(&self) -> Option<&AssembledOutput> {
