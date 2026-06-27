@@ -120,10 +120,9 @@ fn pcb_and_trap_frame_struct_layout_matches_offsets() {
     }
 
     let trap_fields = [
-        "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11", "x12",
-        "x13", "x14", "x15", "x16", "x17", "x18", "x19", "x20", "x21", "x22", "x23",
-        "x24", "x25", "x26", "x27", "x28", "x29", "x30", "x31", "sepc", "scause",
-        "stval", "sstatus",
+        "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11", "x12", "x13",
+        "x14", "x15", "x16", "x17", "x18", "x19", "x20", "x21", "x22", "x23", "x24", "x25", "x26",
+        "x27", "x28", "x29", "x30", "x31", "sepc", "scause", "stval", "sstatus",
     ];
     let trap_offsets = u64_offsets(&trap_fields);
     assert_eq!(trap_offsets[2].1, 16, "TrapFrame.x2 must match TF_SP");
@@ -138,7 +137,10 @@ fn pcb_and_trap_frame_struct_layout_matches_offsets() {
         trap_offsets[33].1, 264,
         "TrapFrame.scause must match TF_SCAUSE"
     );
-    assert_eq!(trap_offsets[34].1, 272, "TrapFrame.stval must match TF_STVAL");
+    assert_eq!(
+        trap_offsets[34].1, 272,
+        "TrapFrame.stval must match TF_STVAL"
+    );
     assert_eq!(
         trap_offsets[35].1, 280,
         "TrapFrame.sstatus must match TF_SSTATUS"
@@ -256,13 +258,30 @@ fn kernel_frames_stay_within_immediate_range() {
 
 #[test]
 fn kernel_stdlib_has_expected_module_count() {
+    // The kernel stdlib is true stdlib plus the boot entry; the kernel modules proper
+    // (vmm, pmm, syscall, ...) are now built from the my_kernel import closure.
     let modules = get_stdlib_modules_for_mode(TargetMode::Kernel);
-    // Kernel stdlib: types, memory_allocator, string_utils, mem, freestanding
-    // runtime, console, klog, trap_entry, utilities, checks, entry, trap_handler,
-    // pmm, vmm, process, syscall, scheduler, fs -- at least 18 modules.
     assert!(
-        modules.len() >= 18,
-        "expected at least 18 kernel stdlib modules, got {}",
+        modules.len() >= 8,
+        "expected at least 8 kernel stdlib modules, got {}",
         modules.len()
     );
+
+    // The kernel modules proper compile as separate objects via the closure.
+    let kernel_objs = CompilationPipeline::compile_kernel_module_objects()
+        .expect("kernel module closure compile");
+    let names: Vec<&str> = kernel_objs.iter().map(|(n, _)| n.as_str()).collect();
+    for expected in [
+        "my_kernel",
+        "vmm",
+        "pmm",
+        "syscall",
+        "scheduler",
+        "trap_handler",
+    ] {
+        assert!(
+            names.contains(&expected),
+            "kernel closure missing `{expected}`; got {names:?}"
+        );
+    }
 }

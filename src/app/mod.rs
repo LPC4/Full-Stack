@@ -567,47 +567,45 @@ impl FullStackApp {
         kernel_user_pipeline.set_entry_point(Some("_kernel_start".to_owned()));
         kernel_user_pipeline.set_link_layout(Some(LinkLayout::freestanding_kernel()));
         kernel_user_pipeline.set_current_source_path(build.source_path.clone());
-        let kernel_modules = vec![(&module_name as &str, user_source.as_str())];
-
-        let kernel_objects = match kernel_user_pipeline.compile_modules(&kernel_modules) {
-            Ok(objs) => objs,
-            Err(e) => {
-                self.compilation_state
-                    .set_error(format!("kernel module compile error: {e}"));
-                self.compilation_state.just_compiled = false;
-                return;
-            }
-        };
+        // Compile the kernel modules from the selected unit's import closure (mangling off:
+        // the kernel links flat and its inline asm names HLL symbols literally).
+        kernel_user_pipeline.set_module_mangling(false);
+        let kernel_objects =
+            match kernel_user_pipeline.compile_program_closure(&module_name, &user_source) {
+                Ok(objs) => objs,
+                Err(e) => {
+                    self.compilation_state
+                        .set_error(format!("kernel module compile error: {e}"));
+                    self.compilation_state.just_compiled = false;
+                    return;
+                }
+            };
 
         // Link kernel modules with stdlib at object level (no source concatenation).
-        let all_names: Vec<&str> = self
+        let mut modules: Vec<(&str, &AssembledOutput)> = self
             .stdlib_objects
             .iter()
-            .map(|(name, _)| name.as_str())
-            .chain(kernel_modules.iter().map(|(n, _)| *n))
+            .map(|(name, obj)| (name.as_str(), obj))
             .collect();
-        let mut object_refs: Vec<&AssembledOutput> = Vec::new();
-        object_refs.extend(self.stdlib_objects.iter().map(|(_, obj)| obj));
-        for obj in &kernel_objects {
-            object_refs.push(obj);
+        for (name, obj) in &kernel_objects {
+            modules.push((name.as_str(), obj));
         }
+        let stem = modules
+            .iter()
+            .map(|(n, _)| *n)
+            .collect::<Vec<_>>()
+            .join("_");
 
-        let final_assembled = match kernel_user_pipeline.link_assembled_objects_named(
-            &all_names.join("_"),
-            &all_names
-                .iter()
-                .zip(object_refs.iter())
-                .map(|(n, o)| (*n, *o))
-                .collect::<Vec<_>>(),
-        ) {
-            Ok(asm) => asm,
-            Err(e) => {
-                self.compilation_state
-                    .set_error(format!("kernel link error: {}", e.message));
-                self.compilation_state.just_compiled = false;
-                return;
-            }
-        };
+        let final_assembled =
+            match kernel_user_pipeline.link_assembled_objects_named(&stem, &modules) {
+                Ok(asm) => asm,
+                Err(e) => {
+                    self.compilation_state
+                        .set_error(format!("kernel link error: {}", e.message));
+                    self.compilation_state.just_compiled = false;
+                    return;
+                }
+            };
 
         // Prepend ROM firmware assembly so the disassembly view can follow the PC through boot.
         self.compilation_state.linked_asm_text =
@@ -1034,13 +1032,17 @@ impl FullStackApp {
         kernel_pipeline.set_module_resolver(Some(self.catalog_module_resolver()));
         kernel_pipeline.set_write_artifacts(false);
         kernel_pipeline.set_entry_point(Some("_kernel_start".to_owned()));
+        // Compile the kernel modules from the `my_kernel` import closure (mangling off).
+        kernel_pipeline.set_module_mangling(false);
         let kernel_objs = kernel_pipeline
-            .compile_modules(&[("my_kernel", os_runtime::kernel::MY_KERNEL)])
+            .compile_program_closure("my_kernel", os_runtime::kernel::MY_KERNEL)
             .map_err(|e| format!("kernel module compile error: {e}"))?;
 
         let mut modules: Vec<(&str, &AssembledOutput)> =
             stdlib_objs.iter().map(|(n, o)| (n.as_str(), o)).collect();
-        modules.push(("my_kernel", &kernel_objs[0]));
+        for (name, obj) in &kernel_objs {
+            modules.push((name.as_str(), obj));
+        }
         let stem: String = modules
             .iter()
             .map(|(n, _)| *n)

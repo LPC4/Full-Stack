@@ -55,9 +55,9 @@ const FS_SLASH = '/'
 
 ; --- Externals ---
 
-import "utilities"
-import "mem"
-import "klog"
+utilities := import("utilities")
+mem := import("mem")
+klog := import("klog")
 
 ; --- Global state ---
 

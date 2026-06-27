@@ -1,7 +1,7 @@
 ; Kernel platform helpers: shutdown, timer, and interrupt controller.
 
-import "memory_allocator"
-import "runtime"
+memory_allocator    := import("memory_allocator")
+runtime             := import("runtime")
 
 ; Panics on OOM instead of returning null.
 export kmalloc: (size: u64) -> u8* {

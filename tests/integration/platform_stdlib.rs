@@ -1,9 +1,9 @@
-use asm_to_binary::assembler::link_layout::LinkLayout;
 use asm_to_binary::AssembledOutput;
+use asm_to_binary::assembler::link_layout::LinkLayout;
 use full_stack::compilation_pipeline::CompilationPipeline;
 use full_stack::compilation_pipeline::TargetMode as PipelineTargetMode;
-use hll_to_ir::stdlib::{get_stdlib_modules_for_mode, get_stdlib_type_prelude};
 use hll_to_ir::TargetMode;
+use hll_to_ir::stdlib::{get_stdlib_modules_for_mode, get_stdlib_type_prelude};
 use os_runtime::kernel;
 use virtual_machine::rom::generate_rom_image;
 use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
@@ -56,9 +56,10 @@ fn kernel_stdlib_compiles_as_separate_modules() {
         modules.len(),
         "each stdlib hll should produce one object"
     );
+    // True stdlib + boot entry; kernel modules proper come from the my_kernel closure.
     assert!(
-        objs.len() >= 10,
-        "expected many kernel stdlib objects, got {}",
+        objs.len() >= 8,
+        "expected the kernel stdlib objects, got {}",
         objs.len()
     );
 }
@@ -82,28 +83,28 @@ fn kernel_boot_runs_with_separate_stdlib_objects() {
     kernel_pipeline.set_type_prelude(get_stdlib_type_prelude());
     kernel_pipeline.set_entry_point(Some("_kernel_start".to_owned()));
     kernel_pipeline.set_link_layout(Some(LinkLayout::freestanding_kernel()));
+    kernel_pipeline.set_module_mangling(false);
 
-    let kernel_modules = vec![("my_kernel", kernel::MY_KERNEL)];
     let kernel_objs = kernel_pipeline
-        .compile_modules(&kernel_modules)
+        .compile_program_closure("my_kernel", kernel::MY_KERNEL)
         .expect("kernel user modules compile");
 
-    let module_names: Vec<&str> = stdlib_modules
+    let mut modules: Vec<(&str, &AssembledOutput)> = stdlib_modules
         .iter()
         .map(|(name, _)| *name)
-        .chain(kernel_modules.iter().map(|(name, _)| *name))
+        .zip(stdlib_objs.iter())
         .collect();
-    let object_refs: Vec<&AssembledOutput> = stdlib_objs.iter().chain(kernel_objs.iter()).collect();
+    for (name, obj) in &kernel_objs {
+        modules.push((name.as_str(), obj));
+    }
+    let stem = modules
+        .iter()
+        .map(|(n, _)| *n)
+        .collect::<Vec<_>>()
+        .join("_");
 
     let final_assembled = kernel_pipeline
-        .link_assembled_objects_named(
-            &module_names.join("_"),
-            &module_names
-                .iter()
-                .zip(object_refs.iter())
-                .map(|(n, o)| (*n, *o))
-                .collect::<Vec<_>>(),
-        )
+        .link_assembled_objects_named(&stem, &modules)
         .expect("kernel link");
 
     let mut vm = VirtualMachine::new_kernel(&final_assembled);
@@ -405,6 +406,10 @@ main: () -> i32 {
 fn run_kernel_hll(user_src: &str) -> (String, Option<i64>) {
     let stdlib_objs = CompilationPipeline::compile_stdlib_objects(TargetMode::Kernel)
         .expect("kernel stdlib compile");
+    // Kernel module dependency objects (vmm, pmm, ...) from the my_kernel closure; drop the
+    // `my_kernel` object so the test's own kmain (`user`) supplies the entry.
+    let kernel_objs =
+        CompilationPipeline::compile_kernel_module_objects().expect("kernel modules compile");
 
     let mut user_pipeline = CompilationPipeline::new();
     user_pipeline.set_write_artifacts(false);
@@ -416,6 +421,11 @@ fn run_kernel_hll(user_src: &str) -> (String, Option<i64>) {
 
     let mut modules: Vec<(&str, &AssembledOutput)> =
         stdlib_objs.iter().map(|(n, o)| (n.as_str(), o)).collect();
+    for (name, obj) in &kernel_objs {
+        if name != "my_kernel" {
+            modules.push((name.as_str(), obj));
+        }
+    }
     modules.push(("user", &user_obj));
     let assembled = user_pipeline
         .link_assembled_objects(&modules)

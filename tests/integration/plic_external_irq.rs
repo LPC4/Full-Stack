@@ -44,6 +44,10 @@ kmain: () {
 fn compile_and_run_kernel(kernel_src: &str) -> (String, Option<i64>, u64) {
     let stdlib_objs = CompilationPipeline::compile_stdlib_objects(TargetMode::Kernel)
         .expect("kernel stdlib compile");
+    // Kernel module deps (trap_handler, vmm, ...) from the closure; drop `my_kernel` so the
+    // test's own kmain supplies the entry.
+    let kernel_objs =
+        CompilationPipeline::compile_kernel_module_objects().expect("kernel modules compile");
 
     let user_pipeline = CompilationPipeline::new();
     let user = user_pipeline.compile(kernel_src).expect("kernel compile");
@@ -52,6 +56,11 @@ fn compile_and_run_kernel(kernel_src: &str) -> (String, Option<i64>, u64) {
 
     let mut modules: Vec<(&str, &AssembledOutput)> =
         stdlib_objs.iter().map(|(n, o)| (n.as_str(), o)).collect();
+    for (name, obj) in &kernel_objs {
+        if name != "my_kernel" {
+            modules.push((name.as_str(), obj));
+        }
+    }
     modules.push(("user", &user_obj));
     let assembled = user_pipeline
         .link_assembled_objects(&modules)

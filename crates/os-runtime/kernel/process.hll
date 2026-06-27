@@ -2,13 +2,13 @@
 ; process states (PROC_*), trap-frame slots (TF_*), and VMM page-flag bits come from
 ; the shared kernel layout (layout.hll). Full PCB map: OS spec 5.2.
 
-import "layout"
-import "utilities"
-import "mem"
-import "pmm"
-import "vmm"
-import "runtime"
-import "klog"
+layout      := import("layout")
+utilities   := import("utilities")
+mem         := import("mem")
+pmm         := import("pmm")
+vmm         := import("vmm")
+runtime     := import("runtime")
+klog        := import("klog")
 
 ; Canonical user-stack top, shared by all processes (isolation is per-root, not
 ; by VA slotting). See OS spec ch.4.3.

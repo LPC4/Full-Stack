@@ -17,9 +17,12 @@ pub struct CompileConfig {
     /// HLL source prepended to the unit before lexing (a shared definitions header). `None`
     /// falls back to the kernel `layout.hll` in kernel mode, else nothing.
     pub source_prelude: Option<String>,
-    /// Module aliases (`alias := import(path)`) mapped to the alias's exported names, supplied
-    /// by the host pipeline after interface resolution. Drives the qualified-access rewrite.
-    pub module_aliases: std::collections::HashMap<String, std::collections::HashSet<String>>,
+    /// Module aliases (`alias := import(path)`) mapped to the alias's resolved exports/prefix,
+    /// supplied by the host pipeline after interface resolution. Drives the qualified rewrite.
+    pub module_aliases: std::collections::HashMap<String, crate::imports::ModuleAlias>,
+    /// When set, this unit's own top-level fn/global definitions (and internal references) are
+    /// mangled to `prefix__name`. Set by the closure build; `None` leaves names flat.
+    pub module_mangle_prefix: Option<String>,
 }
 
 impl Default for CompileConfig {
@@ -31,8 +34,15 @@ impl Default for CompileConfig {
             type_prelude: Vec::new(),
             source_prelude: None,
             module_aliases: std::collections::HashMap::new(),
+            module_mangle_prefix: None,
         }
     }
+}
+
+/// Names never mangled by the closure build: program/runtime entry points called by name
+/// from outside the module graph (the runtime `_start`, the C-style `main`).
+fn mangle_exempt() -> std::collections::HashSet<String> {
+    ["_start", "main"].into_iter().map(str::to_owned).collect()
 }
 
 pub struct HllOutput {
@@ -104,6 +114,12 @@ impl HllCompiler {
         // later stage sees the AST (see `imports::rewrite_qualified_access`).
         crate::imports::rewrite_qualified_access(&mut ast, &self.config.module_aliases)
             .map_err(|message| vec![Diagnostic::new(DiagnosticLevel::Error, message)])?;
+
+        // Mangle this unit's own definitions when it is built as one module of a link closure,
+        // so two modules can define the same private name without colliding at link.
+        if let Some(prefix) = &self.config.module_mangle_prefix {
+            crate::imports::mangle_module(&mut ast, prefix, &mangle_exempt());
+        }
 
         ast = monomorphize_program(&ast)
             .map_err(|message| vec![Diagnostic::new(DiagnosticLevel::Error, message)])?;

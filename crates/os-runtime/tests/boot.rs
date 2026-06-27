@@ -35,8 +35,20 @@ fn bundled_module_source(name: &str) -> Option<&'static str> {
 }
 
 fn direct_import_prelude(source: &str) -> String {
+    // Both legacy `import "name"` and qualified `name := import("name")` contribute their
+    // target's interface; the kernel links flat, so references stay unqualified.
+    let mut names = hll_to_ir::imports::collect_imports(source).expect("collect imports");
+    for (_alias, path) in
+        hll_to_ir::imports::collect_module_imports(source).expect("module imports")
+    {
+        names.push(
+            path.trim_start_matches("./")
+                .trim_end_matches(".hll")
+                .to_owned(),
+        );
+    }
     let mut prelude = String::new();
-    for name in hll_to_ir::imports::collect_imports(source).expect("collect imports") {
+    for name in names {
         let module = bundled_module_source(&name)
             .unwrap_or_else(|| panic!("missing bundled module `{name}`"));
         let interface =
@@ -47,10 +59,29 @@ fn direct_import_prelude(source: &str) -> String {
     prelude
 }
 
-// Compile the kernel stdlib as independent per-module objects (no source concatenation).
+// The kernel modules with code to compile: true stdlib + boot entry (from the stdlib list)
+// plus the kernel modules proper. `layout` is header-only and `my_kernel` is the user unit.
+fn kernel_code_modules() -> Vec<(&'static str, &'static str)> {
+    let mut mods = get_stdlib_modules_for_mode(TargetMode::Kernel);
+    mods.extend([
+        ("pmm", kernel::PMM),
+        ("vmm", kernel::VMM),
+        ("utilities", kernel::UTILITIES),
+        ("checks", kernel::CHECKS),
+        ("process", kernel::PROCESS),
+        ("scheduler", kernel::SCHEDULER),
+        ("syscall", kernel::SYSCALL),
+        ("fs", kernel::FS),
+        ("trap_entry", kernel::TRAP_ENTRY),
+        ("trap_handler", kernel::TRAP_HANDLER),
+    ]);
+    mods
+}
+
+// Compile the kernel stdlib + modules as independent per-module objects (no concatenation).
 fn compiled_stdlib() -> &'static [(String, AssembledOutput)] {
     STDLIB_OBJS.get_or_init(|| {
-        get_stdlib_modules_for_mode(TargetMode::Kernel)
+        kernel_code_modules()
             .iter()
             .map(|(name, src)| {
                 let source_prelude = direct_import_prelude(src);
@@ -61,6 +92,7 @@ fn compiled_stdlib() -> &'static [(String, AssembledOutput)] {
                     type_prelude: get_stdlib_type_prelude(),
                     source_prelude: Some(source_prelude),
                     module_aliases: Default::default(),
+                    module_mangle_prefix: None,
                 });
                 let out = compiler.compile(src).unwrap_or_else(|diags| {
                     panic!("kernel stdlib `{name}` compile failed: {diags:?}")
@@ -85,6 +117,7 @@ fn run_kernel_hll(user_src: &str) -> (String, Option<i64>) {
         type_prelude: Vec::new(),
         source_prelude: Some(direct_import_prelude(user_src)),
         module_aliases: Default::default(),
+        module_mangle_prefix: None,
     });
     let user_out = user_compiler
         .compile(user_src)

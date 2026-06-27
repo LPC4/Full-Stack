@@ -1,15 +1,15 @@
 ; Syscall dispatch layer. See OS spec ch.7.
 
-import "layout"
-import "klog"
-import "console"
-import "utilities"
-import "mem"
-import "pmm"
-import "vmm"
-import "process"
-import "scheduler"
-import "fs"
+layout      := import("layout")
+klog        := import("klog")
+console     := import("console")
+utilities   := import("utilities")
+mem         := import("mem")
+pmm         := import("pmm")
+vmm         := import("vmm")
+process     := import("process")
+scheduler   := import("scheduler")
+fs          := import("fs")
 
 const SYSCALL_EXIT     = 93
 const SYSCALL_WRITE    = 64

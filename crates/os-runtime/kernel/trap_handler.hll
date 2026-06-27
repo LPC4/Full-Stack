@@ -1,9 +1,10 @@
-import "layout"
-import "runtime"
-import "klog"
-import "utilities"
-import "syscall"
-import "scheduler"
+layout      := import("layout")
+runtime     := import("runtime")
+klog        := import("klog")
+utilities   := import("utilities")
+syscall     := import("syscall")
+scheduler   := import("scheduler")
+
 kernel_tick: u64 = 0
 
 ; Trap-frame slots TF_SEPC/SCAUSE/STVAL come from the shared kernel layout (layout.hll).

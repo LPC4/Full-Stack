@@ -38,13 +38,16 @@ fn cached_kernel() -> &'static AssembledOutput {
         kernel_pipeline.set_target_mode(TargetMode::Kernel);
         kernel_pipeline.set_write_artifacts(false);
         kernel_pipeline.set_entry_point(Some("_kernel_start".to_owned()));
+        kernel_pipeline.set_module_mangling(false);
         let kernel_objs = kernel_pipeline
-            .compile_modules(&[("my_kernel", kernel::MY_KERNEL)])
+            .compile_program_closure("my_kernel", kernel::MY_KERNEL)
             .expect("kernel modules compile");
 
         let mut modules: Vec<(&str, &AssembledOutput)> =
             stdlib_objs.iter().map(|(n, o)| (n.as_str(), o)).collect();
-        modules.push(("my_kernel", &kernel_objs[0]));
+        for (name, obj) in &kernel_objs {
+            modules.push((name.as_str(), obj));
+        }
         let stem: String = modules
             .iter()
             .map(|(n, _)| *n)
@@ -77,30 +80,27 @@ fn cached_kernel_multi_module() -> &'static AssembledOutput {
         kernel_pipeline.set_target_mode(TargetMode::Kernel);
         kernel_pipeline.set_write_artifacts(false);
         kernel_pipeline.set_entry_point(Some("_kernel_start".to_owned()));
-
-        let kernel_modules = vec![("my_kernel", kernel::MY_KERNEL)];
+        kernel_pipeline.set_module_mangling(false);
         let kernel_objects = kernel_pipeline
-            .compile_modules(&kernel_modules)
+            .compile_program_closure("my_kernel", kernel::MY_KERNEL)
             .expect("kernel modules compile");
 
-        let module_names: Vec<&str> = modules.iter().map(|(n, _)| *n).collect();
-        let mut all_names: Vec<&str> = module_names.clone();
-        all_names.extend(kernel_modules.iter().map(|(n, _)| *n));
-
-        let mut object_refs: Vec<&AssembledOutput> = stdlib_objects.iter().collect();
-        for obj in &kernel_objects {
-            object_refs.push(obj);
+        let mut all_modules: Vec<(&str, &AssembledOutput)> = modules
+            .iter()
+            .map(|(n, _)| *n)
+            .zip(stdlib_objects.iter())
+            .collect();
+        for (name, obj) in &kernel_objects {
+            all_modules.push((name.as_str(), obj));
         }
+        let stem = all_modules
+            .iter()
+            .map(|(n, _)| *n)
+            .collect::<Vec<_>>()
+            .join("_");
 
         kernel_pipeline
-            .link_assembled_objects_named(
-                &all_names.join("_"),
-                &all_names
-                    .iter()
-                    .zip(object_refs.iter())
-                    .map(|(n, o)| (*n, *o))
-                    .collect::<Vec<_>>(),
-            )
+            .link_assembled_objects_named(&stem, &all_modules)
             .expect("kernel link")
     })
 }

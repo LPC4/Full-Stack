@@ -8,121 +8,37 @@
 )]
 
 use asm_to_binary::AssembledOutput;
-use full_stack::compilation_pipeline::{CompilationPipeline, bundled_module_source};
+use full_stack::compilation_pipeline::CompilationPipeline;
 use hll_to_ir::TargetMode;
 use hll_to_ir::stdlib::{get_stdlib_modules_for_mode, get_stdlib_type_prelude};
 use virtual_machine::bus::ELF_LOAD_BASE;
 use virtual_machine::virtual_machine::VirtualMachine;
 
-fn direct_import_prelude(source: &str) -> String {
-    let mut prelude = String::new();
-    for name in hll_to_ir::imports::collect_imports(source).expect("collect imports") {
-        let module = bundled_module_source(&name)
-            .unwrap_or_else(|| panic!("missing bundled module `{name}`"));
-        let interface =
-            hll_to_ir::imports::extract_interface(module).expect("extract import interface");
-        prelude.push_str(&interface);
-        prelude.push('\n');
-    }
-    prelude
-}
-
-// --- Kernel diagnostic: compile + dump assembly, then step-trace the VM ---
-// Run with:  cargo test kernel_asm_diag -- --nocapture
-//
-// Shows:
-//  1. Full stdlib+kernel assembly (grep for "vmm_enable" / "vmm_map_1gib")
-//  2. UART output and step trace up to the hang point
+// --- Kernel diagnostic: build the kernel via the import closure, step-trace the VM ---
+// Run the test with nocapture to see the trace.
 #[test]
 fn kernel_asm_diag() {
-    use asm_to_binary::rv_instruction::RvInstruction;
-    use hll_to_ir::stdlib::{get_stdlib_modules_for_mode, get_stdlib_type_prelude};
-    use hll_to_ir::{CompileConfig, HllCompiler, TargetMode};
-    use ir_to_asm::CompilerRv64;
-    use os_runtime::kernel;
     use virtual_machine::virtual_machine::StepOutcome;
 
-    // -- compile stdlib (per module, no concatenation) ------------------------
-    let mut stdlib_asm = String::new();
-    let mut stdlib_tokens: Vec<RvInstruction> = Vec::new();
-    for (i, (_, src)) in get_stdlib_modules_for_mode(TargetMode::Kernel)
-        .iter()
-        .enumerate()
-    {
-        let source_prelude = direct_import_prelude(src);
-        let compiler = HllCompiler::new(CompileConfig {
-            target: TargetMode::Kernel,
-            strict: true,
-            string_prefix: Some(format!("__kern{i}_str_")),
-            type_prelude: get_stdlib_type_prelude(),
-            source_prelude: Some(source_prelude),
-            module_aliases: Default::default(),
-        });
-        let out = compiler.compile(src).expect("stdlib module compile");
-        let mut rv = CompilerRv64::new();
-        let (asm, tokens) = rv.compile_with_tokens(&out.ir);
-        stdlib_asm.push_str(&asm);
-        stdlib_asm.push('\n');
-        stdlib_tokens.extend(tokens);
+    let stdlib_objs =
+        CompilationPipeline::compile_stdlib_objects(TargetMode::Kernel).expect("stdlib compile");
+    let kernel_objs =
+        CompilationPipeline::compile_kernel_module_objects().expect("kernel module compile");
+
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_target_mode(TargetMode::Kernel);
+    pipeline.set_write_artifacts(false);
+    pipeline.set_entry_point(Some("_kernel_start".to_owned()));
+
+    let mut modules: Vec<(&str, &AssembledOutput)> =
+        stdlib_objs.iter().map(|(n, o)| (n.as_str(), o)).collect();
+    for (name, obj) in &kernel_objs {
+        modules.push((name.as_str(), obj));
     }
-
-    // -- compile user kernel --------------------------------------------------
-    let user_compiler = HllCompiler::new(CompileConfig {
-        target: TargetMode::Kernel,
-        strict: true,
-        string_prefix: None,
-        type_prelude: Vec::new(),
-        source_prelude: Some(direct_import_prelude(kernel::MY_KERNEL)),
-        module_aliases: Default::default(),
-    });
-    let user_out = user_compiler
-        .compile(kernel::MY_KERNEL)
-        .expect("user compile");
-    let mut user_rv = CompilerRv64::new();
-    let (user_asm, user_tokens) = user_rv.compile_with_tokens(&user_out.ir);
-
-    // -- print assembly around vmm_enable ------------------------------------
-    let full_asm = format!("{stdlib_asm}\n{user_asm}");
-    eprintln!("\n=== KERNEL ASSEMBLY (vmm section) ===");
-    let mut in_vmm = false;
-    for line in full_asm.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("vmm_") || trimmed.starts_with("vmm_enable") {
-            in_vmm = true;
-        }
-        if in_vmm {
-            eprintln!("{line}");
-            // stop after a blank line following a ret/jr
-            if (trimmed == "ret" || trimmed.starts_with("jr")) && {
-                in_vmm = false;
-                true
-            } {}
-        }
-    }
-
-    // -- assemble and run with step trace ------------------------------------
-    let mut tokens = stdlib_tokens;
-    tokens.extend(user_tokens);
-
-    // Print any unrecognised-instruction comments from the assembler
-    eprintln!("\n=== UNRECOGNISED INSTRUCTIONS ===");
-    let mut found_unrecognised = false;
-    for tok in &tokens {
-        if let RvInstruction::Comment(s) = tok {
-            if s.contains("unrecognised") {
-                eprintln!("  {s}");
-                found_unrecognised = true;
-            }
-        }
-    }
-    if !found_unrecognised {
-        eprintln!("  (none)");
-    }
-
-    let assembled = asm_to_binary::Assembler::assemble(&tokens).expect("assemble");
+    let assembled = pipeline.link_assembled_objects(&modules).expect("link");
     let mut vm = VirtualMachine::new_kernel(&assembled);
 
-    eprintln!("\n=== STEP TRACE (first 5000 steps) ===");
+    eprintln!("\n=== STEP TRACE (first 500000 steps) ===");
     let mut uart_so_far = String::new();
     for step in 0..500_000 {
         match vm.step() {

@@ -1,16 +1,16 @@
 ; Kernel initialization and boot orchestration.
 
-import "layout"
-import "klog"
-import "utilities"
-import "mem"
-import "trap_entry"
-import "pmm"
-import "vmm"
-import "checks"
-import "process"
-import "scheduler"
-import "fs"
+layout      := import("layout")
+klog        := import("klog")
+utilities   := import("utilities")
+mem         := import("mem")
+trap_entry  := import("trap_entry")
+pmm         := import("pmm")
+vmm         := import("vmm")
+checks      := import("checks")
+process     := import("process")
+scheduler   := import("scheduler")
+fs          := import("fs")
 
 ; Physical addresses where the test harness places user binary metadata.
 const USER_BINARY_PA = 0x87F00000

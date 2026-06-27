@@ -376,8 +376,9 @@ The mechanisms above are the target. Current status:
 - `external` is fully implemented and remains the low-level link primitive. Ordinary bundled
   kernel APIs have migrated to `import`/`export`; hand-written `external` remains for boundary
   symbols such as runtime entry points and trap assembly edges.
-- `export` is retained on the AST (`Declaration::exported`) instead of being stripped, but
-  does not yet enforce visibility: an unexported name is still effectively public at link.
+- `export` is retained on the AST (`Declaration::exported`). The closure build mangles every
+  module's own fn/global symbols to `module__name` (private and exported alike), so unexported
+  names no longer collide across modules even though `.globl` visibility is not yet narrowed.
 - `import` interface resolution is implemented for the host pipeline. `CompilationPipeline`
   carries a module resolver (name -> source) and, for each direct `import`, prepends the
   target's extracted interface (`hll_to_ir::imports`): exported `type`/`const`/`struct`/`enum`
@@ -387,27 +388,35 @@ The mechanisms above are the target. Current status:
   the pipeline resolves each module binding, prepends its interface, and passes the alias's
   exported names to the compiler, which rewrites `alias.member`, `alias.member(args)`, and
   `alias.Type` to the flat export reference and reports unknown or private members against the
-  named module. Qualified exports currently share the flat object symbol namespace (no per-module
-  mangling yet), so duplicate imported export names and imported exports that collide with local
-  top-level declarations are rejected during import resolution. Bare names resolve through the
-  target stdlib and host registry; paths beginning with `./`, `../`, `.\\`, `..\\`, or an absolute
-  path resolve from the importing source file's directory and never fall back to the registry.
-- The host pipeline can compile the transitive closure of qualified `import(path)` dependencies
-  into per-module objects with dependencies first and cycles rejected. Existing catalog
-  `aux_sources`/`parent_id` wiring remains for programs that have not migrated to import-driven
-  closure compilation.
+  named module. In a mangling closure build, each module's link-symbol exports resolve to
+  `module__name` (const/type exports still fold flat); imports of stdlib (precompiled-flat)
+  modules resolve flat. When mangling is off the flat namespace applies and duplicate imported
+  export names or collisions with local top-level declarations are rejected. Bare names resolve
+  through the target stdlib and host registry; paths beginning with `./`, `../`, `.\\`, `..\\`,
+  or an absolute path resolve from the importing source file's directory, not the registry.
+- The host pipeline compiles the transitive closure of qualified `import(path)` dependencies
+  into per-module objects, dependencies first. Per-module mangling is on by default (so two
+  modules may export the same name); `set_module_mangling(false)` disables it for the kernel,
+  whose inline asm names HLL symbols literally and which links with unique flat names. Cycles
+  are rejected under mangling and tolerated when flat (the kernel's `syscall`/`scheduler` pair).
+  Header-only modules (e.g. `layout`) are skipped by the closure and reach importers via the
+  prepended interface.
 - The bundled resolver covers kernel modules (`layout`, `trap_entry`, `pmm`, `vmm`, `process`,
   `scheduler`, `fs`, `syscall`, `trap_handler`, `utilities`, `checks`) and kernel-facing stdlib
   modules (`console`, `runtime`, `klog`, `mem`, `string_utils`, `memory_allocator`). Kernel TUs
-  import the providers they use; `layout.hll` exports the PCB/trap-frame structs and ABI consts.
-  The kernel-mode source prelude (auto-prepended `layout.hll`) remains as the fallback for the
-  raw `HllCompiler` path, where the import is inert; both paths yield the same consts. The
-  `as`/`cc` split tools still use their `layout` headers (`set_source_prelude`) pending migration.
+  import the providers they use with qualified `name := import("name")`; `layout.hll` exports the
+  PCB/trap-frame structs and ABI consts. The production kernel build (`ensure_kernel_binary`, the
+  GUI, the CLI, and the integration tests) drives the link set from the `my_kernel` closure with
+  mangling off, linking it against the precompiled stdlib objects plus the boot `entry`. The
+  kernel-mode source prelude (auto-prepended `layout.hll`) remains as the fallback for the raw
+  `HllCompiler` path, where the import is inert. The `as`/`cc` split tools still use their
+  `layout` headers (`set_source_prelude`) pending migration.
 
 Migration order: (1) interface import for `type`/`const`/signatures, retiring the source
-prelude (kernel migrated; `as`/`cc` pending); (2) `import`-driven transitive link closure,
-retiring `aux_sources`; (3) `export` visibility enforcement. Steps 1 and 2 keep `external` and
-the `layout` prelude working as a fallback so tools migrate one at a time.
+prelude (kernel migrated; `as`/`cc` pending); (2) `import`-driven transitive link closure with
+per-module mangling, now driving the kernel build (`aux_sources` retired for the kernel); (3)
+`export` visibility enforcement at the object level (`.globl` only for exports). `external` and
+the `layout` prelude remain as fallbacks so the remaining tools migrate one at a time.
 
 ## 7. Control flow, enums, and resource management
 

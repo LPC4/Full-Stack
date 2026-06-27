@@ -160,7 +160,7 @@ pub type ModuleResolver = Box<dyn Fn(&str) -> Option<String>>;
 /// binding's exported names (alias -> exports), used by the qualified-access rewrite.
 struct ResolvedModules {
     prelude: Option<String>,
-    aliases: std::collections::HashMap<String, std::collections::HashSet<String>>,
+    aliases: std::collections::HashMap<String, hll_to_ir::imports::ModuleAlias>,
 }
 
 struct ResolvedModuleSource {
@@ -179,6 +179,13 @@ pub struct CompilationPipeline {
     type_prelude: Vec<(String, IrType)>,
     source_prelude: String,
     current_source_path: Option<PathBuf>,
+    // Set during a closure build: mangle each module's own symbols by its `current_module_prefix`
+    // so separately compiled modules in the link set do not collide.
+    mangle_modules: bool,
+    current_module_prefix: Option<String>,
+    // Whether a closure build mangles per-module symbols. Off for the kernel, whose inline asm
+    // references HLL symbols by literal name and which already links with unique flat names.
+    mangle_in_closure: bool,
     module_resolver: Option<ModuleResolver>,
     artifact_root: PathBuf,
     artifact_stem: RefCell<Option<String>>,
@@ -207,6 +214,9 @@ impl CompilationPipeline {
             type_prelude: Vec::new(),
             source_prelude: String::new(),
             current_source_path: None,
+            mangle_modules: false,
+            current_module_prefix: None,
+            mangle_in_closure: true,
             module_resolver: Some(Box::new(programs_module_resolver)),
             artifact_root: PathBuf::from("out"),
             artifact_stem: RefCell::new(None),
@@ -229,6 +239,9 @@ impl CompilationPipeline {
             type_prelude: Vec::new(),
             source_prelude: String::new(),
             current_source_path: None,
+            mangle_modules: false,
+            current_module_prefix: None,
+            mangle_in_closure: true,
             module_resolver: Some(Box::new(programs_module_resolver)),
             artifact_root: PathBuf::from("out"),
             artifact_stem: RefCell::new(None),
@@ -318,10 +331,28 @@ impl CompilationPipeline {
         self.module_resolver = resolver;
     }
 
+    /// Enable or disable per-module symbol mangling in `compile_program_closure` (default on).
+    /// The kernel disables it: its inline asm names HLL symbols literally and it links flat.
+    pub fn set_module_mangling(&mut self, enabled: bool) {
+        self.mangle_in_closure = enabled;
+    }
+
     /// Resolve a module path/name to a registry key: a leading `./` and a trailing `.hll`
     /// are normalized away (`"./math.hll"` -> `"math"`), bare names pass through (`"http"`).
     fn module_key(path: &str) -> &str {
         path.trim_start_matches("./").trim_end_matches(".hll")
+    }
+
+    /// The symbol prefix a module's own definitions are mangled with in a closure build: its
+    /// file stem (for path imports) or registry key, sanitized to an identifier.
+    fn module_prefix(key: &str, source_path: Option<&Path>) -> String {
+        let raw = source_path
+            .and_then(Path::file_stem)
+            .and_then(|s| s.to_str())
+            .unwrap_or(key);
+        raw.chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+            .collect()
     }
 
     fn is_filesystem_import(path: &str) -> bool {
@@ -420,10 +451,17 @@ impl CompilationPipeline {
     /// exported interface to the prelude, and each qualified binding yields its export set.
     fn resolve_modules(&self, source: &str) -> Result<ResolvedModules, Vec<Diagnostic>> {
         let mut prelude = String::new();
-        let mut aliases: std::collections::HashMap<String, std::collections::HashSet<String>> =
+        let mut aliases: std::collections::HashMap<String, hll_to_ir::imports::ModuleAlias> =
             std::collections::HashMap::new();
-        let local_names = hll_to_ir::imports::collect_declaration_names(source)
+        // Module-import aliases are namespace handles, not symbol definitions, so they do not
+        // conflict with a same-named export (e.g. `klog := import("klog")` where klog exports klog).
+        let mut local_names = hll_to_ir::imports::collect_declaration_names(source)
             .map_err(|msg| vec![Diagnostic::new(DiagnosticLevel::Error, msg)])?;
+        for (alias, _) in hll_to_ir::imports::collect_module_imports(source)
+            .map_err(|msg| vec![Diagnostic::new(DiagnosticLevel::Error, msg)])?
+        {
+            local_names.remove(&alias);
+        }
         let mut imported_exports: std::collections::HashMap<String, String> =
             std::collections::HashMap::new();
 
@@ -457,22 +495,69 @@ impl CompilationPipeline {
                         format!("duplicate module import alias `{alias}`"),
                     )]);
                 }
-                let module_src = self
-                    .require_module_source(&format!("cannot resolve import(\"{path}\")"), &path)?;
-                let exports = hll_to_ir::imports::collect_exports(&module_src).map_err(|msg| {
-                    vec![Diagnostic::new(
-                        DiagnosticLevel::Error,
-                        format!("failed to read exports of \"{path}\": {msg}"),
-                    )]
-                })?;
-                Self::check_import_export_collisions(
-                    &format!("{alias} ({path})"),
-                    &exports,
-                    &local_names,
-                    &mut imported_exports,
-                )?;
-                prelude.push_str(&Self::extract_or_error(&path, &module_src)?);
-                aliases.insert(alias, exports);
+                let resolved = self
+                    .resolve_module_source(&path, self.current_source_path.as_deref())
+                    .map_err(|msg| vec![Diagnostic::new(DiagnosticLevel::Error, msg)])?
+                    .ok_or_else(|| {
+                        let key = Self::module_key(&path);
+                        vec![Diagnostic::new(
+                            DiagnosticLevel::Error,
+                            format!("cannot resolve import(\"{path}\"): no module named `{key}`"),
+                        )]
+                    })?;
+                let exports =
+                    hll_to_ir::imports::collect_exports(&resolved.source).map_err(|msg| {
+                        vec![Diagnostic::new(
+                            DiagnosticLevel::Error,
+                            format!("failed to read exports of \"{path}\": {msg}"),
+                        )]
+                    })?;
+                // Only modules the closure itself compiles are mangled. Stdlib modules are
+                // precompiled flat and skipped by the closure, so importing one resolves flat.
+                let mangle_this = self.mangle_modules && !resolved.is_stdlib;
+                let (prefix, mangled) = if mangle_this {
+                    let link_symbols =
+                        hll_to_ir::imports::collect_exported_link_symbols(&resolved.source)
+                            .map_err(|msg| {
+                                vec![Diagnostic::new(
+                                    DiagnosticLevel::Error,
+                                    format!("failed to read exports of \"{path}\": {msg}"),
+                                )]
+                            })?;
+                    (
+                        Self::module_prefix(&resolved.key, resolved.source_path.as_deref()),
+                        link_symbols,
+                    )
+                } else {
+                    (String::new(), std::collections::HashSet::new())
+                };
+                // The flat-namespace collision guard only applies when names stay flat across
+                // the whole link set, i.e. when this build is not mangling.
+                if !self.mangle_modules {
+                    Self::check_import_export_collisions(
+                        &format!("{alias} ({path})"),
+                        &exports,
+                        &local_names,
+                        &mut imported_exports,
+                    )?;
+                }
+                prelude.push_str(
+                    &hll_to_ir::imports::extract_interface_prefixed(&resolved.source, &prefix)
+                        .map_err(|msg| {
+                            vec![Diagnostic::new(
+                                DiagnosticLevel::Error,
+                                format!("failed to extract interface of \"{path}\": {msg}"),
+                            )]
+                        })?,
+                );
+                aliases.insert(
+                    alias,
+                    hll_to_ir::imports::ModuleAlias {
+                        prefix,
+                        exports,
+                        mangled,
+                    },
+                );
             }
         }
 
@@ -644,6 +729,10 @@ impl CompilationPipeline {
             type_prelude: self.type_prelude.clone(),
             source_prelude: resolved.prelude,
             module_aliases: resolved.aliases,
+            module_mangle_prefix: self
+                .mangle_modules
+                .then(|| self.current_module_prefix.clone())
+                .flatten(),
         });
 
         let mut out = compiler
@@ -728,6 +817,10 @@ impl CompilationPipeline {
             type_prelude: self.type_prelude.clone(),
             source_prelude: resolved.prelude,
             module_aliases: resolved.aliases,
+            module_mangle_prefix: self
+                .mangle_modules
+                .then(|| self.current_module_prefix.clone())
+                .flatten(),
         });
 
         let mut out = match compiler.compile(source) {
@@ -999,10 +1092,15 @@ impl CompilationPipeline {
         )?;
 
         let saved_source_path = self.current_source_path.clone();
+        let saved_mangle = self.mangle_modules;
+        let saved_prefix = self.current_module_prefix.clone();
+        self.mangle_modules = self.mangle_in_closure;
         let mut objects = Vec::with_capacity(order.len());
         for (module_name, source, source_path) in &order {
             self.set_artifact_stem(Some(module_name.to_string()));
             self.current_source_path = source_path.clone();
+            self.current_module_prefix =
+                Some(Self::module_prefix(module_name, source_path.as_deref()));
             let compile_result = self.compile(source)?;
             let (_, tokens) = self.compile_ir_to_assembly_with_tokens(&compile_result.ir_program);
             let assembled = self
@@ -1011,6 +1109,8 @@ impl CompilationPipeline {
             objects.push(assembled);
         }
         self.current_source_path = saved_source_path;
+        self.mangle_modules = saved_mangle;
+        self.current_module_prefix = saved_prefix;
         Ok(order
             .into_iter()
             .map(|(name, _, _)| name)
@@ -1033,11 +1133,16 @@ impl CompilationPipeline {
             return Ok(());
         }
         if stack.iter().any(|m| m == name) {
-            stack.push(name.to_owned());
-            return Err(CompilationError::FreestandingErrors(vec![format!(
-                "cyclic import: {}",
-                stack.join(" -> ")
-            )]));
+            // The qualified module system forbids cycles; the kernel's flat build (mangling off)
+            // tolerates them, since separate compilation only needs each module's interface.
+            if self.mangle_in_closure {
+                stack.push(name.to_owned());
+                return Err(CompilationError::FreestandingErrors(vec![format!(
+                    "cyclic import: {}",
+                    stack.join(" -> ")
+                )]));
+            }
+            return Ok(());
         }
         stack.push(name.to_owned());
 
@@ -1053,7 +1158,12 @@ impl CompilationPipeline {
                         "cannot resolve import(\"{path}\"): no module named `{key}`"
                     )])
                 })?;
-            if resolved.is_stdlib {
+            // Stdlib modules are precompiled separately; header-only modules (e.g. `layout`)
+            // produce no object and reach the importer through the prepended interface.
+            if resolved.is_stdlib
+                || !hll_to_ir::imports::defines_code(&resolved.source)
+                    .map_err(|msg| CompilationError::FreestandingErrors(vec![msg]))?
+            {
                 continue;
             }
             self.collect_import_closure(
@@ -1143,6 +1253,19 @@ impl CompilationPipeline {
             .map(|(name, _)| (*name).to_owned())
             .zip(objects)
             .collect())
+    }
+
+    /// Compile the kernel modules reachable from `my_kernel` via the qualified-import closure,
+    /// deps first, as per-module objects. Mangling is off: the kernel links flat.
+    pub fn compile_kernel_module_objects()
+    -> Result<Vec<(String, AssembledOutput)>, CompilationError> {
+        let mut pipeline = CompilationPipeline::new();
+        pipeline.set_target_mode(TargetMode::Kernel);
+        pipeline.set_write_artifacts(false);
+        pipeline.set_type_prelude(hll_to_ir::stdlib::get_stdlib_type_prelude());
+        pipeline.set_string_prefix(Some("__kern_str_".to_owned()));
+        pipeline.set_module_mangling(false);
+        pipeline.compile_program_closure("my_kernel", os_runtime::kernel::MY_KERNEL)
     }
 }
 

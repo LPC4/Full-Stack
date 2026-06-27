@@ -1,8 +1,8 @@
 ; Kernel diagnostics: memory integrity and PMM smoke tests.
 
-import "utilities"
-import "klog"
-import "pmm"
+utilities   := import("utilities")
+klog        := import("klog")
+pmm         := import("pmm")
 
 ; Write/read alternating pattern over `size` heap bytes. Returns 1 on pass, 0 on fail.
 export memory_self_test: (size: u64) -> i64 {

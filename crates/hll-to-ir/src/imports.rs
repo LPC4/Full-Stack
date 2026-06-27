@@ -10,6 +10,24 @@ use crate::ast::{
 use crate::lexer::Lexer;
 use crate::parser::Parser;
 
+/// A resolved module-import binding. `mangled` is the link-symbol subset of `exports` that
+/// resolves to `prefix__name`; the rest (const/type/...) fold and resolve to the flat name.
+#[derive(Debug, Clone, Default)]
+pub struct ModuleAlias {
+    pub prefix: String,
+    pub exports: HashSet<String>,
+    pub mangled: HashSet<String>,
+}
+
+/// `prefix__name`, or `name` verbatim when `prefix` is empty (no mangling).
+fn mangled_name(prefix: &str, name: &str) -> String {
+    if prefix.is_empty() {
+        name.to_owned()
+    } else {
+        format!("{prefix}__{name}")
+    }
+}
+
 /// Parse `source` into an AST, surfacing lex/parse failures as a message.
 fn parse_module(source: &str) -> Result<Program, String> {
     let token_spans = Lexer::tokenize(source);
@@ -63,6 +81,50 @@ pub fn collect_exports(source: &str) -> Result<HashSet<String>, String> {
         .collect())
 }
 
+/// The exported names that become link symbols (non-extern, non-generic functions and
+/// non-extern globals), i.e. the exports a closure build mangles to `prefix__name`.
+pub fn collect_exported_link_symbols(source: &str) -> Result<HashSet<String>, String> {
+    let program = parse_module(source)?;
+    Ok(program
+        .declarations
+        .iter()
+        .filter(|d| d.exported)
+        .filter_map(|d| match &d.decl {
+            DeclNode::Function {
+                name,
+                generics,
+                is_extern: false,
+                ..
+            } if generics.is_empty() => Some(name.clone()),
+            DeclNode::Variable {
+                name,
+                is_extern: false,
+                ..
+            } => Some(name.clone()),
+            _ => None,
+        })
+        .collect())
+}
+
+/// Whether a module defines code to assemble (a function body or non-extern global). Header-only
+/// modules (only consts/types, e.g. `layout`) produce no object and are skipped by the closure.
+pub fn defines_code(source: &str) -> Result<bool, String> {
+    let program = parse_module(source)?;
+    Ok(program.declarations.iter().any(|d| {
+        matches!(
+            &d.decl,
+            DeclNode::Function {
+                body: Some(_),
+                is_extern: false,
+                ..
+            } | DeclNode::Variable {
+                is_extern: false,
+                ..
+            } | DeclNode::InferredVariable { .. }
+        )
+    }))
+}
+
 /// The top-level declaration names in a module, including module-import aliases.
 pub fn collect_declaration_names(source: &str) -> Result<HashSet<String>, String> {
     let program = parse_module(source)?;
@@ -94,7 +156,7 @@ fn decl_name(decl: &DeclNode) -> Option<&str> {
 /// member against `aliases` (alias -> exported names). See `_LANG_SPECIFICATIONS.md` 6.3.
 pub fn rewrite_qualified_access(
     program: &mut Program,
-    aliases: &HashMap<String, HashSet<String>>,
+    aliases: &HashMap<String, ModuleAlias>,
 ) -> Result<(), String> {
     if aliases.is_empty() {
         return Ok(());
@@ -144,7 +206,7 @@ pub fn rewrite_qualified_access(
     Ok(())
 }
 
-fn rewrite_type(ty: &mut Type, aliases: &HashMap<String, HashSet<String>>) -> Result<(), String> {
+fn rewrite_type(ty: &mut Type, aliases: &HashMap<String, ModuleAlias>) -> Result<(), String> {
     match ty {
         Type::Primitive(_) => {}
         Type::Pointer(inner) | Type::Array(_, inner) | Type::Slice(inner) => {
@@ -178,7 +240,7 @@ fn rewrite_type(ty: &mut Type, aliases: &HashMap<String, HashSet<String>>) -> Re
 
 fn rewrite_fields(
     fields: &mut [FieldDecl],
-    aliases: &HashMap<String, HashSet<String>>,
+    aliases: &HashMap<String, ModuleAlias>,
 ) -> Result<(), String> {
     for field in fields {
         rewrite_type(&mut field.ty, aliases)?;
@@ -191,7 +253,7 @@ fn rewrite_fields(
 
 fn rewrite_destructure_fields(
     fields: &mut [StructDestructureField],
-    aliases: &HashMap<String, HashSet<String>>,
+    aliases: &HashMap<String, ModuleAlias>,
 ) -> Result<(), String> {
     for field in fields {
         if let Some(ty) = &mut field.ty {
@@ -202,12 +264,18 @@ fn rewrite_destructure_fields(
 }
 
 fn resolve_member(
-    aliases: &HashMap<String, HashSet<String>>,
+    aliases: &HashMap<String, ModuleAlias>,
     base: &str,
     field: &str,
 ) -> Result<String, String> {
     match aliases.get(base) {
-        Some(exports) if exports.contains(field) => Ok(field.to_owned()),
+        Some(alias) if alias.exports.contains(field) => {
+            if alias.mangled.contains(field) {
+                Ok(mangled_name(&alias.prefix, field))
+            } else {
+                Ok(field.to_owned())
+            }
+        }
         Some(_) => Err(format!("module `{base}` has no exported member `{field}`")),
         None => unreachable!("resolve_member called for a non-alias base"),
     }
@@ -225,7 +293,7 @@ fn qualified_path(callee: &Expression) -> Option<(String, String)> {
 
 fn rewrite_expr(
     expr: &mut Expression,
-    aliases: &HashMap<String, HashSet<String>>,
+    aliases: &HashMap<String, ModuleAlias>,
 ) -> Result<(), String> {
     // Replace a qualified call or field access at this node, then recurse into the
     // (possibly rewritten) children.
@@ -265,7 +333,7 @@ fn rewrite_expr(
 
 fn rewrite_expr_children(
     expr: &mut Expression,
-    aliases: &HashMap<String, HashSet<String>>,
+    aliases: &HashMap<String, ModuleAlias>,
 ) -> Result<(), String> {
     match expr {
         Expression::Assignment { target, rvalue } => {
@@ -299,7 +367,7 @@ fn rewrite_expr_children(
 
 fn rewrite_primary_children(
     primary: &mut PrimaryExpr,
-    aliases: &HashMap<String, HashSet<String>>,
+    aliases: &HashMap<String, ModuleAlias>,
 ) -> Result<(), String> {
     match primary {
         PrimaryExpr::Grouped(inner) => rewrite_expr(inner, aliases)?,
@@ -367,13 +435,19 @@ fn rewrite_primary_children(
 /// members fall through to downstream resolution and nested index expressions are recursed.
 fn rewrite_assign_target(
     target: &mut AssignTarget,
-    aliases: &HashMap<String, HashSet<String>>,
+    aliases: &HashMap<String, ModuleAlias>,
 ) -> Result<(), String> {
     if let AssignTarget::FieldAccess { expr, field } = target
         && let AssignTarget::Identifier(base) = expr.as_ref()
-        && aliases.get(base).is_some_and(|e| e.contains(field))
+        && let Some(alias) = aliases.get(base)
+        && alias.exports.contains(field)
     {
-        *target = AssignTarget::Identifier(field.clone());
+        let resolved = if alias.mangled.contains(field) {
+            mangled_name(&alias.prefix, field)
+        } else {
+            field.clone()
+        };
+        *target = AssignTarget::Identifier(resolved);
         return Ok(());
     }
     match target {
@@ -392,7 +466,7 @@ fn rewrite_assign_target(
 
 fn rewrite_stmt(
     stmt: &mut Statement,
-    aliases: &HashMap<String, HashSet<String>>,
+    aliases: &HashMap<String, ModuleAlias>,
 ) -> Result<(), String> {
     match stmt {
         Statement::Expression(expr) | Statement::Defer(expr) => rewrite_expr(expr, aliases)?,
@@ -438,26 +512,313 @@ fn rewrite_stmt(
     Ok(())
 }
 
-fn rewrite_block(
-    block: &mut Block,
-    aliases: &HashMap<String, HashSet<String>>,
-) -> Result<(), String> {
+fn rewrite_block(block: &mut Block, aliases: &HashMap<String, ModuleAlias>) -> Result<(), String> {
     for stmt in &mut block.statements {
         rewrite_stmt(stmt, aliases)?;
     }
     Ok(())
 }
 
+// --- Per-module symbol mangling (see `_LANG_SPECIFICATIONS.md` 6.3) ---
+
+/// Rename a module's own top-level fn/global names (and internal refs) to `prefix__name`.
+/// `external` decls, `exempt` names (entry points), types, and consts keep their name.
+pub fn mangle_module(program: &mut Program, prefix: &str, exempt: &HashSet<String>) {
+    if prefix.is_empty() {
+        return;
+    }
+    let mut targets: HashSet<String> = HashSet::new();
+    for decl in &program.declarations {
+        match &decl.decl {
+            DeclNode::Function {
+                name,
+                is_extern: false,
+                ..
+            }
+            | DeclNode::Variable {
+                name,
+                is_extern: false,
+                ..
+            }
+            | DeclNode::InferredVariable { name, .. } => {
+                targets.insert(name.clone());
+            }
+            _ => {}
+        }
+    }
+    for name in exempt {
+        targets.remove(name);
+    }
+    if targets.is_empty() {
+        return;
+    }
+    Mangler {
+        prefix,
+        targets,
+        scopes: Vec::new(),
+    }
+    .run(program);
+}
+
+/// Walks an AST renaming references to a module's mangled top-level symbols, honoring local
+/// bindings (params, locals, loop and match bindings) that shadow a top-level name.
+struct Mangler<'a> {
+    prefix: &'a str,
+    targets: HashSet<String>,
+    scopes: Vec<HashSet<String>>,
+}
+
+impl Mangler<'_> {
+    fn run(&mut self, program: &mut Program) {
+        for decl in &mut program.declarations {
+            match &mut decl.decl {
+                DeclNode::Function {
+                    name,
+                    params,
+                    body,
+                    is_extern: false,
+                    ..
+                } => {
+                    self.rename_def(name);
+                    self.scopes
+                        .push(params.iter().map(|p| p.name.clone()).collect());
+                    if let Some(body) = body {
+                        self.block(body);
+                    }
+                    self.scopes.pop();
+                }
+                DeclNode::Variable {
+                    name,
+                    init,
+                    is_extern: false,
+                    ..
+                } => {
+                    self.rename_def(name);
+                    if let Some(init) = init {
+                        self.expr(init);
+                    }
+                }
+                DeclNode::InferredVariable { name, init } => {
+                    self.rename_def(name);
+                    self.expr(init);
+                }
+                DeclNode::Const { init, .. } => self.expr(init),
+                _ => {}
+            }
+        }
+        self.scopes.push(HashSet::new());
+        for stmt in &mut program.statements {
+            self.stmt(stmt);
+        }
+        self.scopes.pop();
+    }
+
+    fn rename_def(&self, name: &mut String) {
+        if self.targets.contains(name) {
+            *name = format!("{}__{}", self.prefix, name);
+        }
+    }
+
+    fn mangle_ref(&self, name: &mut String) {
+        if self.targets.contains(name) && !self.scopes.iter().any(|s| s.contains(name)) {
+            *name = format!("{}__{}", self.prefix, name);
+        }
+    }
+
+    fn bind(&mut self, name: &str) {
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.insert(name.to_owned());
+        }
+    }
+
+    fn block(&mut self, block: &mut Block) {
+        self.scopes.push(HashSet::new());
+        for stmt in &mut block.statements {
+            self.stmt(stmt);
+        }
+        self.scopes.pop();
+    }
+
+    fn stmt(&mut self, stmt: &mut Statement) {
+        match stmt {
+            Statement::Expression(expr) | Statement::Defer(expr) => self.expr(expr),
+            Statement::Block(block) => self.block(block),
+            Statement::If {
+                cond,
+                then_block,
+                else_branch,
+            } => {
+                self.expr(cond);
+                self.block(then_block);
+                if let Some(else_stmt) = else_branch {
+                    self.stmt(else_stmt);
+                }
+            }
+            Statement::While { cond, body } => {
+                self.expr(cond);
+                self.block(body);
+            }
+            Statement::For { var, iter, body } => {
+                match iter {
+                    ForIter::Range { start, end, .. } => {
+                        self.expr(start);
+                        self.expr(end);
+                    }
+                    ForIter::Each(expr) => self.expr(expr),
+                }
+                self.scopes.push(HashSet::new());
+                self.bind(var);
+                for stmt in &mut body.statements {
+                    self.stmt(stmt);
+                }
+                self.scopes.pop();
+            }
+            Statement::Return(Some(expr)) => self.expr(expr),
+            Statement::VariableDecl { name, init, .. } => {
+                if let Some(init) = init {
+                    self.expr(init);
+                }
+                self.bind(name);
+            }
+            Statement::InferredVariableDecl { name, init } => {
+                self.expr(init);
+                self.bind(name);
+            }
+            Statement::Return(None)
+            | Statement::AsmBlock { .. }
+            | Statement::Break
+            | Statement::Continue => {}
+        }
+    }
+
+    fn expr(&mut self, expr: &mut Expression) {
+        match expr {
+            Expression::Assignment { target, rvalue } => {
+                self.assign_target(target);
+                self.expr(rvalue);
+            }
+            Expression::Binary { left, right, .. } => {
+                self.expr(left);
+                self.expr(right);
+            }
+            Expression::Unary { expr, .. } | Expression::Try(expr) => self.expr(expr),
+            Expression::Cast { expr, .. } => self.expr(expr),
+            Expression::Match { scrutinee, arms } => {
+                self.expr(scrutinee);
+                for arm in arms {
+                    self.scopes.push(pattern_bindings(&arm.pattern));
+                    self.block(&mut arm.body);
+                    if let Some(value) = &mut arm.value {
+                        self.expr(value);
+                    }
+                    self.scopes.pop();
+                }
+            }
+            Expression::Primary(primary) => self.primary(primary),
+        }
+    }
+
+    fn primary(&mut self, primary: &mut PrimaryExpr) {
+        match primary {
+            PrimaryExpr::Identifier(name) => self.mangle_ref(name),
+            PrimaryExpr::FunctionCall {
+                name, arguments, ..
+            } => {
+                self.mangle_ref(name);
+                for arg in arguments {
+                    self.expr(arg);
+                }
+            }
+            PrimaryExpr::CallExpr { callee, arguments } => {
+                self.expr(callee);
+                for arg in arguments {
+                    self.expr(arg);
+                }
+            }
+            PrimaryExpr::Grouped(inner) => self.expr(inner),
+            PrimaryExpr::New { args, .. } => {
+                for arg in args {
+                    self.expr(arg);
+                }
+            }
+            PrimaryExpr::ArrayLiteral(elements) => {
+                for element in elements {
+                    self.expr(element);
+                }
+            }
+            PrimaryExpr::StructLiteral(fields) => {
+                for field in fields {
+                    self.expr(&mut field.expr);
+                }
+            }
+            PrimaryExpr::NamedStructLiteral { fields, .. } => {
+                for field in fields {
+                    self.expr(&mut field.expr);
+                }
+            }
+            PrimaryExpr::FieldAccess { expr, .. } => self.expr(expr),
+            PrimaryExpr::ArrayIndex { expr, index } => {
+                self.expr(expr);
+                self.expr(index);
+            }
+            PrimaryExpr::Slice {
+                expr, start, end, ..
+            } => {
+                self.expr(expr);
+                if let Some(start) = start {
+                    self.expr(start);
+                }
+                if let Some(end) = end {
+                    self.expr(end);
+                }
+            }
+            PrimaryExpr::Literal(_) | PrimaryExpr::AsmReg { .. } => {}
+        }
+    }
+
+    fn assign_target(&mut self, target: &mut AssignTarget) {
+        match target {
+            AssignTarget::Identifier(name) => self.mangle_ref(name),
+            AssignTarget::Dereference(inner) | AssignTarget::FieldAccess { expr: inner, .. } => {
+                self.assign_target(inner);
+            }
+            AssignTarget::ArrayIndex { expr, index } => {
+                self.assign_target(expr);
+                self.expr(index);
+            }
+            AssignTarget::StructDestructure(_) => {}
+        }
+    }
+}
+
+/// The names a match pattern binds in its arm (catch-all binding or variant payload slots).
+fn pattern_bindings(pattern: &crate::ast::Pattern) -> HashSet<String> {
+    use crate::ast::Pattern;
+    match pattern {
+        Pattern::Binding(name) => HashSet::from([name.clone()]),
+        Pattern::Variant { bindings, .. } => {
+            bindings.iter().filter(|b| *b != "_").cloned().collect()
+        }
+        Pattern::Wildcard => HashSet::new(),
+    }
+}
+
 /// Render `source`'s exported interface as HLL suitable for prepending to an importer:
 /// `type`/`const`/`struct`/`enum` verbatim, `fn`/global as `external`, the rest omitted.
 pub fn extract_interface(source: &str) -> Result<String, String> {
+    extract_interface_prefixed(source, "")
+}
+
+/// As [`extract_interface`], but mangling exported `fn`/global names to `prefix__name` so an
+/// importer's mangled references resolve to the target module's mangled definitions.
+pub fn extract_interface_prefixed(source: &str, prefix: &str) -> Result<String, String> {
     let program = parse_module(source)?;
     let mut out = String::new();
     for decl in &program.declarations {
         if !decl.exported {
             continue;
         }
-        if let Some(rendered) = render_export(&decl.decl)? {
+        if let Some(rendered) = render_export(&decl.decl, prefix)? {
             out.push_str(&rendered);
             out.push('\n');
         }
@@ -467,7 +828,7 @@ pub fn extract_interface(source: &str) -> Result<String, String> {
 
 /// Render one exported declaration as an interface line, or `None` if it contributes
 /// nothing an importer can use (e.g. a generic function, which cannot be `external`).
-fn render_export(decl: &DeclNode) -> Result<Option<String>, String> {
+fn render_export(decl: &DeclNode, prefix: &str) -> Result<Option<String>, String> {
     let rendered = match decl {
         DeclNode::Type { name, generics, ty } => {
             format!(
@@ -518,7 +879,7 @@ fn render_export(decl: &DeclNode) -> Result<Option<String>, String> {
             }
             format!(
                 "external {}: ({}){} ; @import-interface",
-                name,
+                mangled_name(prefix, name),
                 render_params(params)?,
                 render_return(return_type.as_ref())?
             )
@@ -536,7 +897,11 @@ fn render_export(decl: &DeclNode) -> Result<Option<String>, String> {
             if *is_extern {
                 return Ok(None);
             }
-            format!("external {}: {}", name, render_type(ty)?)
+            format!(
+                "external {}: {}",
+                mangled_name(prefix, name),
+                render_type(ty)?
+            )
         }
         DeclNode::InferredVariable { .. }
         | DeclNode::Import { .. }
@@ -712,13 +1077,24 @@ fn unary_op(op: &UnaryOp) -> &'static str {
 mod tests {
     use super::*;
 
-    fn aliases(entries: &[(&str, &[&str])]) -> HashMap<String, HashSet<String>> {
+    fn aliases(entries: &[(&str, &[&str])]) -> HashMap<String, ModuleAlias> {
+        prefixed_aliases(entries.iter().map(|(a, e)| ("", *a, *e)))
+    }
+
+    fn prefixed_aliases<'a>(
+        entries: impl IntoIterator<Item = (&'a str, &'a str, &'a [&'a str])>,
+    ) -> HashMap<String, ModuleAlias> {
         entries
-            .iter()
-            .map(|(alias, exports)| {
+            .into_iter()
+            .map(|(prefix, alias, exports)| {
+                let exports: HashSet<String> = exports.iter().map(|e| (*e).to_owned()).collect();
                 (
-                    (*alias).to_owned(),
-                    exports.iter().map(|e| (*e).to_owned()).collect(),
+                    alias.to_owned(),
+                    ModuleAlias {
+                        prefix: prefix.to_owned(),
+                        mangled: exports.clone(),
+                        exports,
+                    },
                 )
             })
             .collect()
@@ -806,6 +1182,151 @@ main: () -> i32 {
             err.contains("module `math`") && err.contains("nope"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn qualified_access_resolves_to_mangled_export_names() {
+        let mut program = parse_module(
+            r#"
+m := import("vmm")
+main: () -> i32 {
+    return m.map_page(m.PAGES)
+}
+"#,
+        )
+        .unwrap();
+        rewrite_qualified_access(
+            &mut program,
+            &prefixed_aliases([("vmm", "m", &["map_page", "PAGES"][..])]),
+        )
+        .unwrap();
+
+        let DeclNode::Function {
+            body: Some(body), ..
+        } = &program.declarations[1].decl
+        else {
+            panic!("expected main");
+        };
+        let Statement::Return(Some(Expression::Primary(PrimaryExpr::FunctionCall {
+            name,
+            arguments,
+            ..
+        }))) = &body.statements[0]
+        else {
+            panic!("expected a function call");
+        };
+        assert_eq!(name, "vmm__map_page");
+        assert!(matches!(
+            &arguments[0],
+            Expression::Primary(PrimaryExpr::Identifier(n)) if n == "vmm__PAGES"
+        ));
+    }
+
+    #[test]
+    fn mangle_module_renames_defs_and_internal_refs() {
+        let mut program = parse_module(
+            r#"
+external puts: (s: u8*) -> i32
+count: i64 = 0
+helper: () -> i64 { return count }
+api: () -> i64 {
+    helper()
+    puts(null)
+    count = count + 1
+    return count
+}
+main: () -> i32 { return 0 }
+"#,
+        )
+        .unwrap();
+        let exempt = HashSet::from(["main".to_owned()]);
+        mangle_module(&mut program, "vmm", &exempt);
+
+        let names: Vec<&str> = program
+            .declarations
+            .iter()
+            .filter_map(|d| decl_name(&d.decl))
+            .collect();
+        assert!(names.contains(&"vmm__count"));
+        assert!(names.contains(&"vmm__helper"));
+        assert!(names.contains(&"vmm__api"));
+        // Entry point and hand-written external keep their ABI names.
+        assert!(names.contains(&"main"));
+        assert!(names.contains(&"puts"));
+
+        let DeclNode::Function {
+            body: Some(body), ..
+        } = &program
+            .declarations
+            .iter()
+            .find(|d| decl_name(&d.decl) == Some("vmm__api"))
+            .unwrap()
+            .decl
+        else {
+            panic!("expected api");
+        };
+        // Internal call to a mangled fn is rewritten; the external call is not.
+        let Statement::Expression(Expression::Primary(PrimaryExpr::FunctionCall {
+            name: call0,
+            ..
+        })) = &body.statements[0]
+        else {
+            panic!("expected helper() call");
+        };
+        assert_eq!(call0, "vmm__helper");
+        let Statement::Expression(Expression::Primary(PrimaryExpr::FunctionCall {
+            name: call1,
+            ..
+        })) = &body.statements[1]
+        else {
+            panic!("expected puts() call");
+        };
+        assert_eq!(call1, "puts");
+    }
+
+    #[test]
+    fn mangle_module_skips_shadowing_local() {
+        let mut program = parse_module(
+            r#"
+count: i64 = 5
+f: () -> i64 {
+    count := 9
+    return count
+}
+"#,
+        )
+        .unwrap();
+        mangle_module(&mut program, "m", &HashSet::new());
+
+        let DeclNode::Function {
+            body: Some(body), ..
+        } = &program.declarations[1].decl
+        else {
+            panic!("expected f");
+        };
+        // The local `count` shadows the global, so the return must not be mangled.
+        let Statement::Return(Some(Expression::Primary(PrimaryExpr::Identifier(name)))) =
+            &body.statements[1]
+        else {
+            panic!("expected return of identifier");
+        };
+        assert_eq!(name, "count");
+    }
+
+    #[test]
+    fn extract_interface_prefixed_mangles_only_link_symbols() {
+        let source = r#"
+export const TF_BYTES = 288
+export struct Reloc { sym: u8[16], off: i64, kind: i64 }
+export write_object: () -> u64 { return 0 }
+export count: i64 = 0
+"#;
+        let interface = extract_interface_prefixed(source, "as").unwrap();
+        // Functions and globals are mangled; types and consts fold unmangled.
+        assert!(interface.contains("external as__write_object: () -> u64"));
+        assert!(interface.contains("external as__count: i64"));
+        assert!(interface.contains("const TF_BYTES = 288"));
+        assert!(interface.contains("struct Reloc {"));
     }
 
     #[test]

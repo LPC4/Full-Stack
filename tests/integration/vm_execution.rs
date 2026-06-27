@@ -189,6 +189,54 @@ main: () -> i32 {
     );
 }
 
+// Per-module mangling lets two closure modules reuse a symbol name without a link collision:
+// primary and `mathlib` both define `helper` and `add`, each kept distinct by its prefix.
+#[test]
+fn qualified_import_closure_mangles_colliding_names() {
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_write_artifacts(false);
+    pipeline.set_module_resolver(Some(Box::new(|name: &str| {
+        (name == "mathlib").then(|| {
+            "export add: (a: i32, b: i32) -> i32 { return helper(a) + b }\n\
+             helper: (x: i32) -> i32 { return x + 1 }\n"
+                .to_owned()
+        })
+    })));
+
+    // The primary defines its own `add` and `helper` that collide by name with mathlib's.
+    let primary = r#"
+mathlib := import("mathlib")
+helper: (x: i32) -> i32 { return x * 10 }
+add: (a: i32, b: i32) -> i32 { return helper(a) + b }
+main: () -> i32 {
+    return add(2, 0) + mathlib.add(1, 1)
+}
+"#;
+    let closure = pipeline
+        .compile_program_closure("user", primary)
+        .expect("closure compile failed");
+
+    let mut modules: Vec<(&str, &AssembledOutput)> = cached_stdlib_objs()
+        .iter()
+        .map(|(n, o)| (n.as_str(), o))
+        .collect();
+    for (name, obj) in &closure {
+        modules.push((name.as_str(), obj));
+    }
+    let assembled = pipeline
+        .link_assembled_objects(&modules)
+        .expect("link failed");
+    let mut vm = VirtualMachine::new(&assembled);
+    let run = vm.run(5_000_000);
+    // primary add(2,0) = 2*10 = 20; mathlib.add(1,1) = (1+1)+1 = 3; total 23.
+    assert!(
+        matches!(run.outcome, StepOutcome::Halted(23)),
+        "expected Halted(23), got {:?}; uart: {}",
+        run.outcome,
+        run.uart_output
+    );
+}
+
 /// Compile a user program with the peephole pass either on or off, returning the
 /// optimized-or-not token stream alongside the VM run (exit outcome + UART).
 fn run_hll_peephole(src: &str, peephole: bool) -> (StepOutcome, String, usize) {
@@ -1024,11 +1072,8 @@ fn examples_exit_zero_in_vm() {
 
     for program in examples {
         // Use the import closure so examples may pull in qualified `import("...")` modules.
-        let (outcome, uart) = run_hll_closure_with_path(
-            &program.source,
-            program.source_path.as_deref(),
-            50_000_000,
-        );
+        let (outcome, uart) =
+            run_hll_closure_with_path(&program.source, program.source_path.as_deref(), 50_000_000);
         assert!(
             matches!(outcome, StepOutcome::Halted(0)),
             "{}: expected Halted(0), got {outcome:?}\nuart:\n{uart}",

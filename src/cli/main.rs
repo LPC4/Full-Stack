@@ -406,6 +406,10 @@ fn compile_and_link(
     user_pipeline.set_run_semantic_analysis(false);
     user_pipeline.set_artifact_stem(Some(stem.to_owned()));
     user_pipeline.set_current_source_path(source_path.map(str::to_owned));
+    // The kernel links flat (its inline asm names HLL symbols literally); never mangle it.
+    if mode == TargetMode::Kernel {
+        user_pipeline.set_module_mangling(false);
+    }
 
     if hll_to_ir::imports::collect_module_imports(src)
         .map(|imports| !imports.is_empty())

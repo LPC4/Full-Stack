@@ -25,6 +25,8 @@ pub fn get_stdlib_modules_for_mode(mode: TargetMode) -> Vec<(&'static str, &'sta
             ("console", stdlib::FREESTANDING_CONSOLE),
             ("entry", stdlib::FREESTANDING_ENTRY),
         ],
+        // True stdlib plus the boot entry (`_kernel_start`). The kernel modules proper
+        // (vmm, pmm, syscall, ...) are compiled from the `my_kernel` import closure.
         TargetMode::Kernel => vec![
             ("types", stdlib::TYPES),
             ("memory_allocator", stdlib::MEMORY_ALLOCATOR),
@@ -33,17 +35,7 @@ pub fn get_stdlib_modules_for_mode(mode: TargetMode) -> Vec<(&'static str, &'sta
             ("runtime", stdlib::FREESTANDING_RUNTIME),
             ("console", stdlib::FREESTANDING_CONSOLE),
             ("klog", stdlib::KLOG),
-            ("trap_entry", kernel::TRAP_ENTRY),
-            ("utilities", kernel::UTILITIES),
-            ("checks", kernel::CHECKS),
             ("entry", kernel::RUNTIME),
-            ("trap_handler", kernel::TRAP_HANDLER),
-            ("pmm", kernel::PMM),
-            ("vmm", kernel::VMM),
-            ("process", kernel::PROCESS),
-            ("syscall", kernel::SYSCALL),
-            ("scheduler", kernel::SCHEDULER),
-            ("fs", kernel::FS),
         ],
     }
 }

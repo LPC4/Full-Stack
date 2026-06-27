@@ -1,8 +1,9 @@
 ; S-mode trap entry: switches to a dedicated kernel stack, saves all GPRs + CSRs
 ; to a 288-byte frame, calls trap_handler(frame), restores, and sret.
 
-; Boundary to the HLL trap dispatcher called from hand-written save/restore asm.
-external trap_handler: (frame: u64*)
+; The HLL trap dispatcher, reached from the save/restore asm via `call trap_handler`. Imported
+; (under a distinct alias) so the build closure compiles it and prepends its link interface.
+trap_handler_dep := import("trap_handler")
 
 ; Per-hart kernel trap stack (16 KiB).
 ; sscratch points just past the top (aligned down to 16 bytes).

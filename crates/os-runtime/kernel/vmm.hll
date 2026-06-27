@@ -1,10 +1,10 @@
 ; Sv39 paging: 3-level tables, 4 KiB pages, per-process roots. See OS spec ch.4.3.
 ; PTE bits: [53:10] PPN, [7] D, [6] A, [5] G, [4] U, [3] X, [2] W, [1] R, [0] V.
 
-import "layout"
-import "pmm"
-import "mem"
-import "runtime"
+layout  := import("layout")
+pmm     := import("pmm")
+mem     := import("mem")
+runtime := import("runtime")
 
 ; VMM_V/R/W/X/U/G page-flag bits come from the shared kernel layout (layout.hll).
 
