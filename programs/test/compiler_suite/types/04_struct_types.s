@@ -1,6 +1,5 @@
 .section .text
 ; Function: calc_offset
-.globl calc_offset
 calc_offset:
 ; --- Function Prologue ---
 ; Allocate stack frame: 64 bytes

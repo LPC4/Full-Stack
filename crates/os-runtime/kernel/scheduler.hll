@@ -62,7 +62,7 @@ export schedule: (frame: u64*, action: u64) {
 
         if action == 2 {
             current_process[PCB_IDX_STATE] = PROC_EXITED
-            fb_release_on_exit(current_process)
+            syscall.fb_release_on_exit(current_process)
         } else {
             if action == 3 {
                 current_process[PCB_IDX_STATE] = PROC_BLOCKED
@@ -208,7 +208,7 @@ export scheduler_kill_child: (parent_pid: u64) -> u64 {
                 prev[PCB_IDX_LINK] = curr[PCB_IDX_LINK]
             }
             curr[PCB_IDX_STATE] = PROC_EXITED
-            fb_release_on_exit(curr)
+            syscall.fb_release_on_exit(curr)
             return 1
         }
         prev = curr
@@ -230,7 +230,7 @@ export scheduler_kill_pid: (pid: u64) -> u64 {
                 prev[PCB_IDX_LINK] = curr[PCB_IDX_LINK]
             }
             curr[PCB_IDX_STATE] = PROC_EXITED
-            fb_release_on_exit(curr)
+            syscall.fb_release_on_exit(curr)
             return 1
         }
         prev = curr

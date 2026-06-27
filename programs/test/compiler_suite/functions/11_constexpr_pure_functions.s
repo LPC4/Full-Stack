@@ -1,6 +1,5 @@
 .section .text
 ; Function: factorial
-.globl factorial
 factorial:
 ; --- Function Prologue ---
 ; Allocate stack frame: 32 bytes
@@ -84,7 +83,6 @@ factorial__label_2:
 ; --- End Epilogue ---
 ; End of function
 ; Function: fibonacci
-.globl fibonacci
 fibonacci:
 ; --- Function Prologue ---
 ; Allocate stack frame: 32 bytes
@@ -205,7 +203,6 @@ fibonacci__label_8:
 ; --- End Epilogue ---
 ; End of function
 ; Function: add_multiply
-.globl add_multiply
 add_multiply:
 ; --- Function Prologue ---
 ; Allocate stack frame: 64 bytes
@@ -274,7 +271,6 @@ add_multiply__entry:
 ; --- End Epilogue ---
 ; End of function
 ; Function: max_value
-.globl max_value
 max_value:
 ; --- Function Prologue ---
 ; Allocate stack frame: 48 bytes
@@ -351,7 +347,6 @@ max_value__label_11:
 ; --- End Epilogue ---
 ; End of function
 ; Function: main
-.globl main
 main:
 ; --- Function Prologue ---
 ; Allocate stack frame: 16 bytes

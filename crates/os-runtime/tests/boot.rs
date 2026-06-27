@@ -522,6 +522,53 @@ fn trap_handler_calls_syscall_dispatch_on_umode_ecall() {
     );
 }
 
+#[test]
+fn kernel_modules_reference_imports_only_through_aliases() {
+    // Quality gate: a kernel module must reach another module's functions/globals through its
+    // qualified import alias, never by bare flat name. Inline asm is the sole exempt path (6.3).
+    let modules = [
+        ("entry", kernel::RUNTIME),
+        ("trap_entry", kernel::TRAP_ENTRY),
+        ("trap_handler", kernel::TRAP_HANDLER),
+        ("utilities", kernel::UTILITIES),
+        ("checks", kernel::CHECKS),
+        ("pmm", kernel::PMM),
+        ("vmm", kernel::VMM),
+        ("process", kernel::PROCESS),
+        ("syscall", kernel::SYSCALL),
+        ("scheduler", kernel::SCHEDULER),
+        ("fs", kernel::FS),
+        ("my_kernel", kernel::MY_KERNEL),
+    ];
+    for (name, source) in modules {
+        // The link symbols (functions + non-extern globals) of every imported module, minus this
+        // module's own declarations. Const/type/struct exports fold flat by design and are skipped.
+        let local = hll_to_ir::imports::collect_declaration_names(source).expect("decl names");
+        let mut imported: HashSet<String> = HashSet::new();
+        for (_alias, path) in
+            hll_to_ir::imports::collect_module_imports(source).expect("module imports")
+        {
+            let key = module_key(&path);
+            let module_src = bundled_module_source(&key)
+                .unwrap_or_else(|| panic!("missing bundled module `{key}`"));
+            imported.extend(
+                hll_to_ir::imports::collect_exported_link_symbols(module_src)
+                    .expect("link symbols"),
+            );
+        }
+        imported.retain(|symbol| !local.contains(symbol));
+
+        let refs = hll_to_ir::imports::collect_bare_references(source).expect("bare references");
+        let mut leaks: Vec<&String> = refs.intersection(&imported).collect();
+        leaks.sort();
+        assert!(
+            leaks.is_empty(),
+            "{name}.hll references imported symbols by bare flat name (use the import alias, \
+             e.g. `fs.read`): {leaks:?}"
+        );
+    }
+}
+
 // --- Compile / boot smoke test ---
 
 #[test]

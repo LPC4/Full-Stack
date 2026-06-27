@@ -1,6 +1,5 @@
 .section .text
 ; Function: sum_to_n
-.globl sum_to_n
 sum_to_n:
 ; --- Function Prologue ---
 ; Allocate stack frame: 48 bytes
@@ -94,7 +93,6 @@ sum_to_n__label_2:
 ; --- End Epilogue ---
 ; End of function
 ; Function: factorial_while
-.globl factorial_while
 factorial_while:
 ; --- Function Prologue ---
 ; Allocate stack frame: 48 bytes
@@ -188,7 +186,6 @@ factorial_while__label_5:
 ; --- End Epilogue ---
 ; End of function
 ; Function: main
-.globl main
 main:
 ; --- Function Prologue ---
 ; Allocate stack frame: 16 bytes

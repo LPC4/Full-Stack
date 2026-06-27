@@ -1,6 +1,5 @@
 .section .text
 ; Function: chained_deref_assign
-.globl chained_deref_assign
 chained_deref_assign:
 ; --- Function Prologue ---
 ; Allocate stack frame: 48 bytes

@@ -22,8 +22,15 @@ fn kernel_asm_diag() {
 
     let stdlib_objs =
         CompilationPipeline::compile_stdlib_objects(TargetMode::Kernel).expect("stdlib compile");
-    let kernel_objs =
+    let mut kernel_objs =
         CompilationPipeline::compile_kernel_module_objects().expect("kernel module compile");
+    // The kernel build marks `kmain` as an ABI export (kernel.build); the flat closure
+    // leaves it local, so mark it here or `entry`'s external reference stays unresolved.
+    for (_, obj) in &mut kernel_objs {
+        if obj.has_symbol("kmain") {
+            obj.mark_entry_global("kmain");
+        }
+    }
 
     let mut pipeline = CompilationPipeline::new();
     pipeline.set_target_mode(TargetMode::Kernel);

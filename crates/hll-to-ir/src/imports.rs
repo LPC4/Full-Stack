@@ -151,6 +151,188 @@ fn decl_name(decl: &DeclNode) -> Option<&str> {
     }
 }
 
+// --- Bare-reference collection (cross-module qualified-access enforcement) ---
+
+/// Every bare identifier and unqualified call name in `source` (qualified `alias.member` and
+/// inline `asm` surface no member name); intersect with a module's link symbols to flag 6.3 leaks.
+pub fn collect_bare_references(source: &str) -> Result<HashSet<String>, String> {
+    let program = parse_module(source)?;
+    let mut refs = HashSet::new();
+    for decl in &program.declarations {
+        match &decl.decl {
+            DeclNode::Function {
+                body: Some(body), ..
+            } => collect_block_refs(body, &mut refs),
+            DeclNode::Variable {
+                init: Some(init), ..
+            } => collect_expr_refs(init, &mut refs),
+            DeclNode::InferredVariable { init, .. } | DeclNode::Const { init, .. } => {
+                collect_expr_refs(init, &mut refs);
+            }
+            _ => {}
+        }
+    }
+    for stmt in &program.statements {
+        collect_stmt_refs(stmt, &mut refs);
+    }
+    Ok(refs)
+}
+
+fn collect_block_refs(block: &Block, refs: &mut HashSet<String>) {
+    for stmt in &block.statements {
+        collect_stmt_refs(stmt, refs);
+    }
+}
+
+fn collect_stmt_refs(stmt: &Statement, refs: &mut HashSet<String>) {
+    match stmt {
+        Statement::Expression(expr) | Statement::Defer(expr) => collect_expr_refs(expr, refs),
+        Statement::Block(block) => collect_block_refs(block, refs),
+        Statement::If {
+            cond,
+            then_block,
+            else_branch,
+        } => {
+            collect_expr_refs(cond, refs);
+            collect_block_refs(then_block, refs);
+            if let Some(else_stmt) = else_branch {
+                collect_stmt_refs(else_stmt, refs);
+            }
+        }
+        Statement::While { cond, body } => {
+            collect_expr_refs(cond, refs);
+            collect_block_refs(body, refs);
+        }
+        Statement::For { iter, body, .. } => {
+            match iter {
+                ForIter::Range { start, end, .. } => {
+                    collect_expr_refs(start, refs);
+                    collect_expr_refs(end, refs);
+                }
+                ForIter::Each(expr) => collect_expr_refs(expr, refs),
+            }
+            collect_block_refs(body, refs);
+        }
+        Statement::Return(Some(expr)) => collect_expr_refs(expr, refs),
+        Statement::VariableDecl { init, .. } => {
+            if let Some(init) = init {
+                collect_expr_refs(init, refs);
+            }
+        }
+        Statement::InferredVariableDecl { init, .. } => collect_expr_refs(init, refs),
+        // Inline asm is the qualified-access escape hatch: it names link symbols literally and
+        // is not modelled as identifier nodes, so it never contributes a bare reference here.
+        Statement::Return(None)
+        | Statement::AsmBlock { .. }
+        | Statement::Break
+        | Statement::Continue => {}
+    }
+}
+
+fn collect_expr_refs(expr: &Expression, refs: &mut HashSet<String>) {
+    match expr {
+        Expression::Assignment { target, rvalue } => {
+            collect_assign_target_refs(target, refs);
+            collect_expr_refs(rvalue, refs);
+        }
+        Expression::Binary { left, right, .. } => {
+            collect_expr_refs(left, refs);
+            collect_expr_refs(right, refs);
+        }
+        Expression::Unary { expr, .. } | Expression::Try(expr) | Expression::Cast { expr, .. } => {
+            collect_expr_refs(expr, refs);
+        }
+        Expression::Match { scrutinee, arms } => {
+            collect_expr_refs(scrutinee, refs);
+            for arm in arms {
+                collect_block_refs(&arm.body, refs);
+                if let Some(value) = &arm.value {
+                    collect_expr_refs(value, refs);
+                }
+            }
+        }
+        Expression::Primary(primary) => collect_primary_refs(primary, refs),
+    }
+}
+
+fn collect_primary_refs(primary: &PrimaryExpr, refs: &mut HashSet<String>) {
+    match primary {
+        PrimaryExpr::Identifier(name) => {
+            refs.insert(name.clone());
+        }
+        PrimaryExpr::FunctionCall {
+            name, arguments, ..
+        } => {
+            refs.insert(name.clone());
+            for arg in arguments {
+                collect_expr_refs(arg, refs);
+            }
+        }
+        PrimaryExpr::Grouped(inner) => collect_expr_refs(inner, refs),
+        PrimaryExpr::New { args, .. } => {
+            for arg in args {
+                collect_expr_refs(arg, refs);
+            }
+        }
+        PrimaryExpr::CallExpr { callee, arguments } => {
+            collect_expr_refs(callee, refs);
+            for arg in arguments {
+                collect_expr_refs(arg, refs);
+            }
+        }
+        PrimaryExpr::ArrayLiteral(elements) => {
+            for element in elements {
+                collect_expr_refs(element, refs);
+            }
+        }
+        PrimaryExpr::StructLiteral(fields) => {
+            for field in fields {
+                collect_expr_refs(&field.expr, refs);
+            }
+        }
+        PrimaryExpr::NamedStructLiteral { fields, .. } => {
+            for field in fields {
+                collect_expr_refs(&field.expr, refs);
+            }
+        }
+        // The member of a qualified access is a field, not an identifier node, so only the
+        // base (the import alias) is recursed into here.
+        PrimaryExpr::FieldAccess { expr, .. } => collect_expr_refs(expr, refs),
+        PrimaryExpr::ArrayIndex { expr, index } => {
+            collect_expr_refs(expr, refs);
+            collect_expr_refs(index, refs);
+        }
+        PrimaryExpr::Slice {
+            expr, start, end, ..
+        } => {
+            collect_expr_refs(expr, refs);
+            if let Some(start) = start {
+                collect_expr_refs(start, refs);
+            }
+            if let Some(end) = end {
+                collect_expr_refs(end, refs);
+            }
+        }
+        PrimaryExpr::Literal(_) | PrimaryExpr::AsmReg { .. } => {}
+    }
+}
+
+fn collect_assign_target_refs(target: &AssignTarget, refs: &mut HashSet<String>) {
+    match target {
+        AssignTarget::Identifier(name) => {
+            refs.insert(name.clone());
+        }
+        AssignTarget::Dereference(inner) | AssignTarget::FieldAccess { expr: inner, .. } => {
+            collect_assign_target_refs(inner, refs);
+        }
+        AssignTarget::ArrayIndex { expr, index } => {
+            collect_assign_target_refs(expr, refs);
+            collect_expr_refs(index, refs);
+        }
+        AssignTarget::StructDestructure(_) => {}
+    }
+}
+
 // --- Qualified-access rewrite (see `_LANG_SPECIFICATIONS.md` 6.3) ---
 
 /// Rewrite `alias.member` / `alias.member(args)` to the flat export reference, validating each

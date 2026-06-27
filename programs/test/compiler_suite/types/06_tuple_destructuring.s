@@ -1,6 +1,5 @@
 .section .text
 ; Function: divide
-.globl divide
 divide:
 ; --- Function Prologue ---
 ; Allocate stack frame: 64 bytes
@@ -72,7 +71,6 @@ divide__entry:
 ; --- End Epilogue ---
 ; End of function
 ; Function: test_tuple_destructuring
-.globl test_tuple_destructuring
 test_tuple_destructuring:
 ; --- Function Prologue ---
 ; Allocate stack frame: 48 bytes

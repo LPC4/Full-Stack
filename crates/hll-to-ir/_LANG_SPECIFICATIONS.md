@@ -345,6 +345,13 @@ spelling when it can map it unambiguously to an exported symbol: `pmm.alloc()` r
 `klog_ok`. This is a source-level namespace convenience only; it does not rename object symbols
 or change `.globl` visibility.
 
+Inside an `asm { }` block the qualified `alias.member` spelling does not apply: inline assembly
+names HLL symbols by their literal flat link name (`call trap_handler`, `la t0, pmm_free_head`).
+This is the one allowed escape from qualified access. A module that calls an imported symbol only
+from inline asm still imports it (e.g. `trap_handler_dep := import("trap_handler")`) so the build
+closure compiles the provider and prepends its link interface; the alias binding may go otherwise
+unused. Such modules must be built with per-module mangling off so the literal names resolve.
+
 #### Paths
 
 | Form | Meaning |

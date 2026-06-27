@@ -9,8 +9,8 @@
 /// the cross-toolchain stays green.
 use asm_to_binary::AssembledOutput;
 use full_stack::compilation_pipeline::CompilationPipeline;
-use hll_to_ir::stdlib::{get_stdlib_modules_for_mode, get_stdlib_type_prelude};
 use hll_to_ir::TargetMode;
+use hll_to_ir::stdlib::{get_stdlib_modules_for_mode, get_stdlib_type_prelude};
 use std::fmt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -73,16 +73,24 @@ struct QemuResult {
     stdout: String,
 }
 
-#[expect(dead_code, reason = "variants document platform-specific skip outcomes")]
+#[expect(
+    dead_code,
+    reason = "variants document platform-specific skip outcomes"
+)]
 #[derive(Debug)]
 enum QemuSkipReason {
     NotWindows,
     WslUnavailable(String),
     WslLaunchFailed(String),
     WslWaitFailed(String),
+    WslTimedOut(u64),
     MissingRiscv64Gcc,
     MissingQemuRiscv64,
 }
+
+/// Bounded wait for WSL + qemu-riscv64; a broken or unstarted WSL can block
+/// `wsl.exe` indefinitely, so a timeout degrades to a skip rather than hanging.
+const QEMU_WAIT_TIMEOUT_SECS: u64 = 60;
 
 impl fmt::Display for QemuSkipReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -102,6 +110,10 @@ impl fmt::Display for QemuSkipReason {
             Self::WslWaitFailed(msg) => write!(
                 f,
                 "WSL terminated unexpectedly while waiting for QEMU ({msg}). Reinstall or repair WSL2 if this persists"
+            ),
+            Self::WslTimedOut(secs) => write!(
+                f,
+                "WSL/QEMU did not respond within {secs}s and was terminated. WSL is likely not started or is unhealthy; run `wsl --shutdown` then retry, or repair WSL2"
             ),
             Self::MissingRiscv64Gcc => write!(
                 f,
@@ -239,10 +251,27 @@ echo "---EXIT:$?---"
             }
         };
 
-        let output = match child.wait_with_output() {
-            Ok(o) => o,
-            Err(e) => {
-                return Err(QemuSkipReason::WslWaitFailed(e.to_string()));
+        // Wait on a helper thread so a hung WSL cannot block the test forever; on
+        // timeout, kill the wsl.exe process tree and report it as an unavailable toolchain.
+        let pid = child.id();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(child.wait_with_output());
+        });
+        let output = match rx.recv_timeout(std::time::Duration::from_secs(QEMU_WAIT_TIMEOUT_SECS)) {
+            Ok(Ok(o)) => o,
+            Ok(Err(e)) => return Err(QemuSkipReason::WslWaitFailed(e.to_string())),
+            Err(_) => {
+                // Best-effort, fire-and-forget: an unhealthy WSL can make `taskkill`
+                // itself block, so do not wait on it or the test would hang again.
+                let _ = Command::new("taskkill")
+                    .args(["/T", "/F", "/PID", &pid.to_string()])
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .spawn();
+                return Err(QemuSkipReason::WslTimedOut(QEMU_WAIT_TIMEOUT_SECS));
             }
         };
 
@@ -257,21 +286,24 @@ echo "---EXIT:$?---"
         }
 
         let sentinel_prefix = "---EXIT:";
-        let exit_code = combined
-            .lines()
-            .rev()
-            .find_map(|line| {
-                let trimmed = line.trim();
-                if trimmed.starts_with(sentinel_prefix) && trimmed.ends_with("---") {
-                    let inner = &trimmed[sentinel_prefix.len()..trimmed.len() - 3];
-                    inner.parse::<i32>().ok()
-                } else {
-                    None
-                }
-            })
-            .unwrap_or_else(|| {
-                panic!("could not find exit-code sentinel in WSL output:\n{combined}\nstderr:\n{stderr}")
-            });
+        let exit_code = combined.lines().rev().find_map(|line| {
+            let trimmed = line.trim();
+            if trimmed.starts_with(sentinel_prefix) && trimmed.ends_with("---") {
+                let inner = &trimmed[sentinel_prefix.len()..trimmed.len() - 3];
+                inner.parse::<i32>().ok()
+            } else {
+                None
+            }
+        });
+        let Some(exit_code) = exit_code else {
+            // bash always echoes the sentinel, so its absence means WSL never ran the
+            // script (stopped/unhealthy distro); skip, per the toolchain-absent policy.
+            return Err(QemuSkipReason::WslLaunchFailed(format!(
+                "no exit-code sentinel in WSL output (stdout={:?}, stderr={:?})",
+                combined.trim(),
+                stderr.trim()
+            )));
+        };
 
         let stdout = combined
             .lines()

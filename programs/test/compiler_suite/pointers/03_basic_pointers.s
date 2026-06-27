@@ -1,6 +1,5 @@
 .section .text
 ; Function: pointers
-.globl pointers
 pointers:
 ; --- Function Prologue ---
 ; Allocate stack frame: 48 bytes

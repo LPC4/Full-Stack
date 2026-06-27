@@ -1,6 +1,5 @@
 .section .text
 ; Function: test_simple
-.globl test_simple
 test_simple:
 ; --- Function Prologue ---
 ; Allocate stack frame: 32 bytes

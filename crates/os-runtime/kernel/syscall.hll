@@ -337,7 +337,7 @@ export sys_write_impl: (fd: u64, buf: u8*, len: u64) -> u64 {
     written: u64 = 0
     while written < len {
         c: i32 = (@(buf + written)) as i32
-        console_putchar(c)
+        console.putchar(c)
         written = written + 1
     }
     return written
@@ -758,14 +758,14 @@ export syscall_dispatch_inner: (frame: u64*) -> u64 {
     if num == SYSCALL_RENAME {
         old_path: u8* = (frame[TF_A0]) as u8*
         new_path: u8* = (frame[TF_A1]) as u8*
-        result: i64 = fs_rename(old_path, new_path)
+        result: i64 = fs.rename(old_path, new_path)
         frame[TF_A0] = result as u64
         return SYSACT_CONTINUE
     }
 
     if num == SYSCALL_MKDIR {
         path: u8* = (frame[TF_A0]) as u8*
-        result: i64 = fs_mkdir(path)
+        result: i64 = fs.mkdir(path)
         frame[TF_A0] = result as u64
         return SYSACT_CONTINUE
     }
@@ -778,14 +778,14 @@ export syscall_dispatch_inner: (frame: u64*) -> u64 {
         path:     u8* = (frame[TF_A0]) as u8*
         index:    u64 = frame[TF_A1]
         name_buf: u8* = (frame[TF_A2]) as u8*
-        result: i64 = fs_readdir(path, index, name_buf)
+        result: i64 = fs.readdir(path, index, name_buf)
         frame[TF_A0] = result as u64
         return SYSACT_CONTINUE
     }
 
     if num == SYSCALL_STAT {
         path: u8* = (frame[TF_A0]) as u8*
-        result: i64 = fs_stat(path)
+        result: i64 = fs.stat(path)
         frame[TF_A0] = result as u64
         return SYSACT_CONTINUE
     }

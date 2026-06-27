@@ -1,6 +1,5 @@
 .section .text
 ; Function: main
-.globl main
 main:
 ; --- Function Prologue ---
 ; Allocate stack frame: 48 bytes

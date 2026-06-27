@@ -1,6 +1,5 @@
 .section .text
 ; Function: control_suite
-.globl control_suite
 control_suite:
 ; --- Function Prologue ---
 ; Allocate stack frame: 32 bytes
