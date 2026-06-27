@@ -1,6 +1,6 @@
 name = "my_kernel"
 target = "kernel"
-root = "my_kernel.hll"
+root = "core/my_kernel.hll"
 entry = "_kernel_start"
 stdlib = "kernel"
 import_closure = true

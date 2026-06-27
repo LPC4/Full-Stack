@@ -34,19 +34,15 @@ external cstr_eq:          (a: u8*, b: u8*) -> i64
 external cstr_copy:        (dst: u8*, src: u8*)
 external cstr_starts_with: (s: u8*, prefix: u8*) -> i64
 
-; File-management builtins, split into shell_fileops.hll and linked by the host
-; toolchain. They share `sh_join_path` (defined here) via an external decl.
-external cmd_touch: (cwd: u8*, arg: u8*)
-external cmd_mkdir: (cwd: u8*, arg: u8*)
-external cmd_rm:    (cwd: u8*, arg: u8*)
-external cmd_rmdir: (cwd: u8*, arg: u8*)
-external cmd_mv:    (cwd: u8*, arg: u8*)
+; File-management builtins. They share `sh_join_path` (defined here) through
+; link-time symbols.
+fileops := import("./shell_fileops.hll")
 
 ; --- Path helpers ---
 
 ; Build an absolute path from `cwd` and `arg` into out.
 ; An arg starting with '/' is absolute; otherwise it is joined onto cwd.
-sh_join_path: (cwd: u8*, arg: u8*, out: u8*) {
+export sh_join_path: (cwd: u8*, arg: u8*, out: u8*) {
     if @arg == '/' {
         cstr_copy(out, arg)
         return
@@ -1458,23 +1454,23 @@ handle_command: (cwd: u8*, line: u8*) {
         return
     }
     if cstr_eq(cmd_p, "touch".ptr) == 1 {
-        cmd_touch(cwd, sh_skip_word(line))
+        fileops.cmd_touch(cwd, sh_skip_word(line))
         return
     }
     if cstr_eq(cmd_p, "mkdir".ptr) == 1 {
-        cmd_mkdir(cwd, sh_skip_word(line))
+        fileops.cmd_mkdir(cwd, sh_skip_word(line))
         return
     }
     if cstr_eq(cmd_p, "rmdir".ptr) == 1 {
-        cmd_rmdir(cwd, sh_skip_word(line))
+        fileops.cmd_rmdir(cwd, sh_skip_word(line))
         return
     }
     if cstr_eq(cmd_p, "rm".ptr) == 1 {
-        cmd_rm(cwd, sh_skip_word(line))
+        fileops.cmd_rm(cwd, sh_skip_word(line))
         return
     }
     if cstr_eq(cmd_p, "mv".ptr) == 1 {
-        cmd_mv(cwd, sh_skip_word(line))
+        fileops.cmd_mv(cwd, sh_skip_word(line))
         return
     }
     if cstr_eq(cmd_p, "as".ptr) == 1 {

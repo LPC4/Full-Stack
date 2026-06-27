@@ -1,6 +1,6 @@
 name = "kernel_snippet"
 target = "kernel"
-root = "../../crates/os-runtime/kernel/my_kernel.hll"
+root = "../../crates/os-runtime/kernel/core/my_kernel.hll"
 entry = "_kernel_start"
 stdlib = "kernel"
 import_closure = false

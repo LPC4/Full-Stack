@@ -159,11 +159,6 @@ impl<'a> Parser<'a> {
                     }
                 }
             }
-            Some(Token::Import) => {
-                self.advance();
-                let path = self.expect_string_literal()?;
-                DeclNode::Import { path }
-            }
             Some(Token::Ident(_)) => {
                 // Look ahead to determine if this is a function or variable declaration
                 if self.peek_n(1) == Some(&Token::ColonEqual) {
@@ -1659,7 +1654,6 @@ impl<'a> Parser<'a> {
                 | Token::Struct
                 | Token::Enum
                 | Token::External
-                | Token::Import
                 | Token::Export,
             ) => true,
             Some(Token::Ident(_)) => {
@@ -2784,16 +2778,17 @@ mod tests {
     }
 
     #[test]
-    fn parses_import_declaration() {
+    fn rejects_legacy_import_declaration() {
         use crate::token::Token;
         let tokens = vec![Token::Import, Token::String(r#""core/io""#), Token::Eof];
         let mut parser = Parser::new(tokens);
-        let program = parser.parse_program().unwrap();
-        assert_eq!(program.declarations.len(), 1);
-        match &program.declarations[0].decl {
-            DeclNode::Import { path } => assert_eq!(path, "core/io"),
-            other => panic!("expected Import, got: {other:?}"),
-        }
+        let err = parser
+            .parse_program()
+            .expect_err("legacy import string syntax must be rejected");
+        assert!(
+            err.to_string().contains("top-level module binding"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]

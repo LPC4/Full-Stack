@@ -152,8 +152,8 @@ impl Default for PipelineConfig {
 
 // --- Pipeline ---
 
-/// Resolves an `import "name"` to that module's HLL source, over the host module
-/// registry (catalog or `os-runtime` `PROGRAMS`). `None` means the name is unknown.
+/// Resolves an `import("name")` module binding to HLL source, over the host module
+/// registry or filesystem. `None` means the name is unknown.
 pub type ModuleResolver = Box<dyn Fn(&str) -> Option<String>>;
 
 /// Outcome of resolving a unit's imports: the prelude to prepend and each qualified
@@ -325,7 +325,7 @@ impl CompilationPipeline {
         self.current_source_path = path.map(Into::into);
     }
 
-    /// Set the resolver mapping `import "name"` to that module's source (default: the
+    /// Set the resolver mapping `import("name")` to that module's source (default: the
     /// `PROGRAMS`-backed lookup). Pass `None` to disable import resolution entirely.
     pub fn set_module_resolver(&mut self, resolver: Option<ModuleResolver>) {
         self.module_resolver = resolver;
@@ -380,9 +380,8 @@ impl CompilationPipeline {
         self.stdlib_module_source_for_target(name)
             .map(str::to_owned)
             .or_else(|| {
-                self.module_resolver
-                    .as_ref()
-                    .and_then(|resolver| resolver(name))
+                let resolver = self.module_resolver.as_ref()?;
+                resolver(name)
             })
     }
 
@@ -435,20 +434,8 @@ impl CompilationPipeline {
             }))
     }
 
-    fn require_module_source(&self, label: &str, key: &str) -> Result<String, Vec<Diagnostic>> {
-        self.resolve_module_source(key, self.current_source_path.as_deref())
-            .map_err(|msg| vec![Diagnostic::new(DiagnosticLevel::Error, msg)])?
-            .map(|resolved| resolved.source)
-            .ok_or_else(|| {
-                vec![Diagnostic::new(
-                    DiagnosticLevel::Error,
-                    format!("{label}: no module named `{key}`"),
-                )]
-            })
-    }
-
-    /// Resolve `source`'s imports: each `import "name"` and `alias := import("path")` adds its
-    /// exported interface to the prelude, and each qualified binding yields its export set.
+    /// Resolve `source`'s module imports. Each `alias := import("path")` adds its exported
+    /// interface to the prelude and yields an export set for qualified access.
     fn resolve_modules(&self, source: &str) -> Result<ResolvedModules, Vec<Diagnostic>> {
         let mut prelude = String::new();
         let mut aliases: std::collections::HashMap<String, hll_to_ir::imports::ModuleAlias> =
@@ -466,26 +453,6 @@ impl CompilationPipeline {
             std::collections::HashMap::new();
 
         if self.module_resolver.is_some() || self.current_source_path.is_some() {
-            let imports = hll_to_ir::imports::collect_imports(source)
-                .map_err(|msg| vec![Diagnostic::new(DiagnosticLevel::Error, msg)])?;
-            for name in imports {
-                let module_src = self
-                    .require_module_source(&format!("cannot resolve import \"{name}\""), &name)?;
-                let exports = hll_to_ir::imports::collect_exports(&module_src).map_err(|msg| {
-                    vec![Diagnostic::new(
-                        DiagnosticLevel::Error,
-                        format!("failed to read exports of \"{name}\": {msg}"),
-                    )]
-                })?;
-                Self::check_import_export_collisions(
-                    &name,
-                    &exports,
-                    &local_names,
-                    &mut imported_exports,
-                )?;
-                prelude.push_str(&Self::extract_or_error(&name, &module_src)?);
-            }
-
             let module_imports = hll_to_ir::imports::collect_module_imports(source)
                 .map_err(|msg| vec![Diagnostic::new(DiagnosticLevel::Error, msg)])?;
             for (alias, path) in module_imports {
@@ -577,8 +544,11 @@ impl CompilationPipeline {
         local_names: &std::collections::HashSet<String>,
         imported_exports: &mut std::collections::HashMap<String, String>,
     ) -> Result<(), Vec<Diagnostic>> {
-        for export in exports {
-            if local_names.contains(export) {
+        // Sort for deterministic diagnostics across runs (sets are unordered).
+        let mut sorted_exports: Vec<&String> = exports.iter().collect();
+        sorted_exports.sort();
+        for export in &sorted_exports {
+            if local_names.contains(*export) {
                 return Err(vec![Diagnostic::new(
                     DiagnosticLevel::Error,
                     format!(
@@ -586,7 +556,7 @@ impl CompilationPipeline {
                     ),
                 )]);
             }
-            if let Some(previous) = imported_exports.get(export) {
+            if let Some(previous) = imported_exports.get(*export) {
                 return Err(vec![Diagnostic::new(
                     DiagnosticLevel::Error,
                     format!(
@@ -595,20 +565,10 @@ impl CompilationPipeline {
                 )]);
             }
         }
-        for export in exports {
+        for export in sorted_exports {
             imported_exports.insert(export.clone(), label.to_owned());
         }
         Ok(())
-    }
-
-    /// Extract `module_src`'s exported interface or report a labelled diagnostic.
-    fn extract_or_error(label: &str, module_src: &str) -> Result<String, Vec<Diagnostic>> {
-        hll_to_ir::imports::extract_interface(module_src).map_err(|msg| {
-            vec![Diagnostic::new(
-                DiagnosticLevel::Error,
-                format!("failed to extract interface of \"{label}\": {msg}"),
-            )]
-        })
     }
 
     pub fn set_artifact_root(&mut self, root: impl Into<PathBuf>) {
@@ -1106,7 +1066,7 @@ impl CompilationPipeline {
         self.mangle_modules = self.mangle_in_closure;
         let mut objects = Vec::with_capacity(order.len());
         for (module_name, source, source_path) in &order {
-            self.set_artifact_stem(Some(module_name.to_string()));
+            self.set_artifact_stem(Some(module_name.clone()));
             self.current_source_path = source_path.clone();
             self.current_module_prefix =
                 Some(Self::module_prefix(module_name, source_path.as_deref()));
@@ -1281,33 +1241,9 @@ impl CompilationPipeline {
     }
 }
 
-/// Bundled HLL modules addressable by `import "name"` in host builds.
+/// Bundled HLL modules addressable by `import("name")` in host builds.
 pub fn bundled_module_source(name: &str) -> Option<&'static str> {
-    match name {
-        "layout" => Some(os_runtime::kernel::LAYOUT),
-        "pmm" => Some(os_runtime::kernel::PMM),
-        "vmm" => Some(os_runtime::kernel::VMM),
-        "process" => Some(os_runtime::kernel::PROCESS),
-        "scheduler" => Some(os_runtime::kernel::SCHEDULER),
-        "fs" => Some(os_runtime::kernel::FS),
-        "syscall" => Some(os_runtime::kernel::SYSCALL),
-        "trap_entry" => Some(os_runtime::kernel::TRAP_ENTRY),
-        "trap_handler" => Some(os_runtime::kernel::TRAP_HANDLER),
-        "utilities" => Some(os_runtime::kernel::UTILITIES),
-        "checks" => Some(os_runtime::kernel::CHECKS),
-        "klog" => Some(os_runtime::stdlib::KLOG),
-        "mem" => Some(os_runtime::stdlib::MEM),
-        "string_utils" => Some(os_runtime::stdlib::STRING_UTILS),
-        "memory_allocator" => Some(os_runtime::stdlib::MEMORY_ALLOCATOR),
-        "runtime" => Some(os_runtime::stdlib::FREESTANDING_RUNTIME),
-        "console" => Some(os_runtime::stdlib::FREESTANDING_CONSOLE),
-        // Example library module imported by the HLL2 showcase (`import("mathlib")`).
-        "mathlib" => Some(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/programs/example/modules/mathlib.hll"
-        ))),
-        _ => os_runtime::user::program(name).map(|program| program.source),
-    }
+    os_runtime::module_source(name).or_else(|| crate::userspace::module_source(name))
 }
 
 fn module_member_aliases(
@@ -1316,13 +1252,16 @@ fn module_member_aliases(
     exports: &std::collections::HashSet<String>,
 ) -> std::collections::HashMap<String, String> {
     let mut aliases = std::collections::HashMap::new();
+    // Sort for deterministic alias resolution (the export set is unordered).
+    let mut sorted_exports: Vec<&String> = exports.iter().collect();
+    sorted_exports.sort();
     for prefix in [alias, key] {
         let prefix = prefix.trim_end_matches(".hll");
         if prefix.is_empty() {
             continue;
         }
         let prefix = format!("{prefix}_");
-        for export in exports {
+        for export in &sorted_exports {
             let Some(short) = export.strip_prefix(&prefix) else {
                 continue;
             };
@@ -1330,17 +1269,17 @@ fn module_member_aliases(
                 continue;
             }
             match aliases.get(short) {
-                Some(existing) if existing != export => {
+                Some(existing) if existing != *export => {
                     aliases.remove(short);
                 }
                 Some(_) => {}
                 None => {
-                    aliases.insert(short.to_owned(), export.clone());
+                    aliases.insert(short.to_owned(), (*export).clone());
                 }
             }
         }
     }
-    for export in exports {
+    for export in &sorted_exports {
         if let Some(short) = export.strip_prefix('k')
             && short
                 .chars()
@@ -1349,7 +1288,7 @@ fn module_member_aliases(
         {
             aliases
                 .entry(short.to_owned())
-                .or_insert_with(|| export.clone());
+                .or_insert_with(|| (*export).clone());
         }
     }
     aliases
@@ -1396,7 +1335,7 @@ fn sanitize_artifact_component(value: &str) -> String {
 
 /// Canonical on-disk filesystem layout constants.
 ///
-/// Mirrors `FS_*` in `kernel/fs.hll`. See _`OS_SPECIFICATION.md` for filesystem layout.
+/// Mirrors `FS_*` in `kernel/fs/fs.hll`. See _`OS_SPECIFICATION.md` for filesystem layout.
 ///
 ///
 ///
@@ -1767,7 +1706,7 @@ mod fs_image_tests {
     fn fs_layout_matches_fs_hll() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/crates/os-runtime/kernel/fs.hll"
+            "/crates/os-runtime/kernel/fs/fs.hll"
         );
         let src = std::fs::read_to_string(path).expect("read fs.hll");
 
@@ -1862,10 +1801,10 @@ private_helper: () -> i32 { return 99 }
         })));
 
         let importer = r#"
-import "provider"
+provider := import("provider")
 main: () -> i32 {
-    p: P = { .x = K }
-    return p.x + helper()
+    p: provider.P = { .x = provider.K }
+    return p.x + provider.helper()
 }
 "#;
 
@@ -1979,7 +1918,7 @@ main: () -> i32 {
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .expect("system clock before unix epoch")
                 .as_nanos()
         ));
         std::fs::create_dir_all(&root).expect("create import test dir");

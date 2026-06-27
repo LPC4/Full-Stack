@@ -1,0 +1,34 @@
+console := import("console")
+
+export klog: (msg: u8*) {
+    console.writeln(msg)
+}
+
+export klog_ok: (msg: u8*) {
+    console.write("[  OK  ] ".ptr)
+    console.writeln(msg)
+}
+
+export klog_warn: (msg: u8*) {
+    console.write("[ WARN ] ".ptr)
+    console.writeln(msg)
+}
+
+export klog_error: (msg: u8*) {
+    console.write("[ ERR  ] ".ptr)
+    console.writeln(msg)
+}
+
+export klog_int: (label: u8*, val: i64) {
+    console.write(label)
+    console.write(": ".ptr)
+    console.print_int(val)
+    console.putchar('\n')
+}
+
+export klog_hex: (label: u8*, val: u64) {
+    console.write(label)
+    console.write(": ".ptr)
+    console.print_hex(val)
+    console.putchar('\n')
+}

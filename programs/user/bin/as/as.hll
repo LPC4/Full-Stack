@@ -15,9 +15,9 @@ external sc_exit:      (code: i64)
 external cstr_eq:      (a: u8*, b: u8*) -> i64
 external cstr_len:     (s: u8*) -> u64
 
-; ET_REL object serializer, split into as_object.hll and linked by the host
-; toolchain. Reads the shared assembler state (out/code/data/labels/relocs).
-external write_object: () -> u64
+; ET_REL object serializer. It reads the shared assembler state
+; (out/code/data/labels/relocs) through link-time symbols.
+object := import("./as_object.hll")
 
 ; Page the kernel maps with this program's argument string. Matches USER_ARG_BASE.
 const ARG_BASE = 0x7FF00000
@@ -32,24 +32,24 @@ const PAD = 32
 ; heap-allocated once at startup (see main / as_object's lazy init).
 src: u8* = null
 src_len: u64 = 0
-code: u8* = null
-code_len: u64 = 0
+export code: u8* = null
+export code_len: u64 = 0
 ; Data section bytes, appended after the text + NOP pad in the final image.
-data: u8* = null
-data_len: u64 = 0
+export data: u8* = null
+export data_len: u64 = 0
 ; Current section: 0 = text, 1 = data. Switched by .text/.data directives.
 cur_sec: i64 = 0
 ; Final text size after pass 1; data labels resolve to text_total + PAD + offset.
 text_total: i64 = 0
 ; Output image: ELF header + program header in the first page, payload from HDR on.
 ; Also reused as the ET_REL object image in object mode (text/data/relocs/symtab).
-out: u8* = null
+export out: u8* = null
 
 ; Label / Reloc record layouts come from the shared as_layout.hll header.
 
 ; Label table; resolve_labels() rewrites data addresses to absolute positions.
-labels: Label* = null
-lbl_count: i64 = 0
+export labels: Label* = null
+export lbl_count: i64 = 0
 
 ; Token table for one line: up to 6 tokens, 24 bytes each (one lexeme per slot).
 tokbuf: u8* = null
@@ -68,8 +68,8 @@ obj_mode: i64 = 0
 glbl_names: u8* = null
 glbl_count: i64 = 0
 
-relocs: Reloc* = null
-nreloc: i64 = 0
+export relocs: Reloc* = null
+export nreloc: i64 = 0
 
 ; Pointer to token i in the line token table.
 tok_at: (i: i64) -> u8* {
@@ -77,7 +77,7 @@ tok_at: (i: i64) -> u8* {
 }
 
 ; Report an assembly error with a one-line message and remember the failure.
-fail: (msg: u8*) {
+export fail: (msg: u8*) {
     console_write("as: ".ptr)
     console_writeln(msg)
     err_flag = 1
@@ -472,7 +472,7 @@ find_label: (name: u8*) -> i64 {
 }
 
 ; 1 if `name` is a locally-defined label (no error on miss, unlike find_label).
-label_defined: (name: u8*) -> i64 {
+export label_defined: (name: u8*) -> i64 {
     i: i64 = 0
     while i < lbl_count {
         lab: Label* = &labels[i]
@@ -511,7 +511,7 @@ add_globl: (name: u8*) {
 }
 
 ; 1 if `name` was exported via `.globl`.
-is_globl: (name: u8*) -> i64 {
+export is_globl: (name: u8*) -> i64 {
     i: i64 = 0
     while i < glbl_count {
         cand: u8* = glbl_names + (i as u64) * 16
@@ -566,7 +566,7 @@ emit_word: (w: u32) {
 
 ; Write an `n`-byte little-endian value into the output image at byte offset `off`.
 ; Used to lay down the ELF header and program header fields.
-wr_le: (off: u64, val: u64, n: u64) {
+export wr_le: (off: u64, val: u64, n: u64) {
     k: u64 = 0
     while k < n {
         d: u8* = out +off + k
@@ -1401,7 +1401,7 @@ main: () -> i32 {
 
     ; Object output: emit a relocatable ELF for ld.hll, then write and return.
     if obj_mode == 1 {
-        ototal: u64 = write_object()
+        ototal: u64 = object.write_object()
         oofd: i64 = sc_open(out_pp, 2)
         if oofd < 0 {
             console_write("as: cannot create ".ptr)

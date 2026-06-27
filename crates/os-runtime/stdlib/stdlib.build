@@ -1,0 +1,3 @@
+hosted = ["types", "memory_allocator=memory_allocator_hosted", "string_utils", "runtime=runtime_hosted", "syscalls"]
+freestanding = ["types", "memory_allocator", "string_utils", "runtime", "console", "entry"]
+kernel = ["types", "memory_allocator", "string_utils", "mem", "runtime", "console", "klog", "entry=kernel_entry"]

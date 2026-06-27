@@ -11,11 +11,11 @@ use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 
 const MEM_SRC: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/crates/os-runtime/stdlib/common/mem.hll"
+    "/crates/os-runtime/stdlib/core/mem.hll"
 ));
 const KLOG_SRC: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/crates/os-runtime/stdlib/common/klog.hll"
+    "/crates/os-runtime/stdlib/kernel/klog.hll"
 ));
 
 fn run_hll(src: &str) -> (String, Option<i64>) {
@@ -159,7 +159,7 @@ fn userspace_catalog_programs_compile_hosted() {
     // Iterate the single user-program catalog so a newly added tool/demo is
     // covered automatically. Only compiled programs (tools + demos) are HLL;
     // example sources and fixtures are not host-HLL and are excluded.
-    for prog in os_runtime::user::PROGRAMS
+    for prog in full_stack::userspace::PROGRAMS
         .iter()
         .filter(|p| p.is_compiled())
     {

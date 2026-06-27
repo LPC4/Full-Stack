@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/build-manifest",
     "crates/os-runtime",
     "crates/asm-to-binary",
     "crates/virtual-machine",
@@ -24,6 +25,7 @@ name = "fsc"
 path = "src/cli/main.rs"
 
 [dependencies]
+build_manifest  = { path = "crates/build-manifest" }
 os_runtime      = { path = "crates/os-runtime" }
 hll_to_ir       = { path = "crates/hll-to-ir" }
 ir_to_asm       = { path = "crates/ir-to-asm" }
@@ -44,6 +46,9 @@ hll_to_ir       = { path = "crates/hll-to-ir" }
 ir_to_asm       = { path = "crates/ir-to-asm" }
 asm_to_binary   = { path = "crates/asm-to-binary" }
 virtual_machine = { path = "crates/virtual-machine" }
+
+[build-dependencies]
+build_manifest  = { path = "crates/build-manifest" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 env_logger = "0.11.8"

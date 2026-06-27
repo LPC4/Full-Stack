@@ -83,9 +83,6 @@ pub enum DeclNode {
         name: String,
         init: Expression,
     },
-    Import {
-        path: String,
-    },
     // `alias := import("path")` / `const alias = import("path")`: a compile-time module
     // binding. Resolved by the host pipeline; exports are reached as `alias.member`.
     ModuleImport {

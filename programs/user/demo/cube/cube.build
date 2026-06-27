@@ -1,0 +1,8 @@
+name = "cube"
+title = "Cube Demo"
+description = "Spinning 3D wireframe cube on the framebuffer device."
+kind = "demo"
+install_path = "/home/demo/cube.elf"
+target = "hosted"
+stdlib = "hosted"
+root = "cube.hll"

@@ -1,5 +1,4 @@
 #![expect(
-    clippy::collapsible_if,
     clippy::explicit_iter_loop,
     clippy::match_wildcard_for_single_variants,
     clippy::print_stderr,
@@ -149,7 +148,8 @@ main: () -> i32 {
 
 #[test]
 fn printf_constexpr() {
-    let src = std::fs::read_to_string("programs/example/compile_time_math.hll").unwrap();
+    let src = std::fs::read_to_string("programs/example/compile_time_math/compile_time_math.hll")
+        .unwrap();
     let (uart, exit) = link_stdlib_and_run(&src);
     assert_eq!(
         uart, "-- compile-time math --\n7205512787ok\n",

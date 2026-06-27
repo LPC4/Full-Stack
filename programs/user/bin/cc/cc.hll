@@ -12,9 +12,8 @@ external sc_ftruncate: (fd: i64, len: u64) -> i64
 external sc_close:     (fd: i64)
 external cstr_eq:      (a: u8*, b: u8*) -> i64
 
-; Code generator, split into cc_codegen.hll and linked by the host toolchain.
-; Walks the shared AST tables (defined here) and fills asmout.
-external gen_program: ()
+; Code generator. Walks the shared AST tables (defined here) and fills asmout.
+codegen := import("./cc_codegen.hll")
 
 ; Page the kernel maps with this program's argument string (matches USER_ARG_BASE).
 const ARG_BASE = 0x7FF00000
@@ -68,15 +67,15 @@ ntok: i64 = 0
 
 ; --- AST: array of nodes, statements linked via the `next` field (-1 = end) ---
 ; Node / Fn record layouts come from the shared cc_layout.hll header.
-nodes: Node* = null
+export nodes: Node* = null
 nnode: i64 = 0
 
 ; Call argument expression nodes, referenced by ND_CALL via (start, count).
-call_args: i64* = null
+export call_args: i64* = null
 ncallarg: i64 = 0
 
-fns: Fn* = null
-nfn: i64 = 0
+export fns: Fn* = null
+export nfn: i64 = 0
 
 ; Locals of the function currently being parsed (params first, then declarations).
 loc_name: u8* = null
@@ -90,11 +89,11 @@ asmlen: u64 = 0
 ; Set once on any error so main aborts with a non-zero exit. Other globals used by
 ; codegen: the function being emitted and a monotonic label counter.
 err_flag: i64 = 0
-cur_fn: i64 = 0
-nlabel: i64 = 0
+export cur_fn: i64 = 0
+export nlabel: i64 = 0
 
 ; Report an error once and remember the failure.
-perr: (msg: u8*) {
+export perr: (msg: u8*) {
     if err_flag == 0 {
         console_write("cc: ".ptr)
         console_writeln(msg)
@@ -177,7 +176,7 @@ emit_ch: (c: u8) {
     }
 }
 
-emit_str: (s: u8*) {
+export emit_str: (s: u8*) {
     i: u64 = 0
     while @(s + i) != 0 {
         emit_ch(@(s + i))
@@ -186,7 +185,7 @@ emit_str: (s: u8*) {
 }
 
 ; Append a signed decimal integer.
-emit_int: (v: i64) {
+export emit_int: (v: i64) {
     if v < 0 {
         emit_ch('-' as u8)
         v = 0 - v
@@ -923,7 +922,7 @@ main: () -> i32 {
     if err_flag != 0 {
         return 1
     }
-    gen_program()
+    codegen.gen_program()
     if err_flag != 0 {
         return 1
     }

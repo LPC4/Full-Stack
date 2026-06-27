@@ -1,0 +1,6 @@
+name = "ex_array"
+title = "array.s"
+description = "Example assembly: sum a stack array, exit 42. Try with `as`."
+kind = "example"
+install_path = "/home/src/array.s"
+root = "array.s"

@@ -10,7 +10,7 @@ pub enum CatalogBadge {
     Runnable,
     /// Read-only reference source that does not link into anything (stdlib).
     Reference,
-    /// A translation unit that is part of a runnable program (aux module, kernel fragment).
+    /// A translation unit that is part of a runnable program (helper module, kernel fragment).
     Fragment,
 }
 
@@ -36,9 +36,9 @@ pub struct ProgramFile {
     #[serde(default)]
     pub standalone: bool, // compile without linking stdlib (set for runtime/stdlib reference files)
     #[serde(default)]
-    pub parent_id: Option<String>, // set for aux translation units and kernel fragments; their owner's id
+    pub parent_id: Option<String>, // set for helper modules and kernel fragments; their owner's id
     #[serde(default)]
-    pub layout: String, // shared HLL header prepended to this program's primary + aux units at compile (empty if none)
+    pub layout: String, // shared HLL header prepended before compile (empty if none)
     #[serde(default)]
     pub undo_stack: Vec<String>,
     #[serde(default)]
@@ -64,7 +64,13 @@ impl ProgramFile {
             .join(" ")
     }
 
-    pub fn example(id: &str, file_name: &str, description: &str, source: &str) -> Self {
+    pub fn example(
+        id: &str,
+        folder_name: &str,
+        file_name: &str,
+        description: &str,
+        source: &str,
+    ) -> Self {
         Self {
             id: id.to_owned(),
             name: Self::display_name_from_file_name(file_name),
@@ -74,6 +80,7 @@ impl ProgramFile {
                 std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                     .join("programs")
                     .join("example")
+                    .join(folder_name)
                     .join(file_name)
                     .display()
                     .to_string(),
@@ -82,8 +89,8 @@ impl ProgramFile {
                 std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                     .join("programs")
                     .join("example")
-                    .join(file_name.trim_end_matches(".hll"))
-                    .with_extension("build")
+                    .join(folder_name)
+                    .join(format!("{folder_name}.build"))
                     .display()
                     .to_string(),
             ),
@@ -365,28 +372,21 @@ fn built_in_programs() -> Vec<ProgramFile> {
         programs.push(module);
     }
 
-    // Userspace programs (read-only) derive from the single os_runtime::user
+    // Userspace programs (read-only) derive from the generated userspace
     // catalog: the hosted tools and demos the shell boots. Compile in Hosted
     // target mode; the shell boots them as pid 1 or via bare-name execution.
-    for prog in os_runtime::user::PROGRAMS
+    for prog in crate::userspace::PROGRAMS
         .iter()
         .filter(|p| p.is_compiled())
     {
         let parent_id = format!("user-{}", prog.name);
         let mut primary = ProgramFile::user(&parent_id, prog.title, prog.description, prog.source);
         primary.layout = prog.layout.to_owned();
+        // Carry the on-disk paths so relative imports (`import("./ld_link.hll")`) resolve
+        // from the tool's own directory and its `.build` manifest drives mangling/closure.
+        primary.source_path = Some(prog.source_path.to_owned());
+        primary.build_path = Some(prog.build_path.to_owned());
         programs.push(primary);
-        // Each aux translation unit is an editable child module of its program.
-        for (aux_name, aux_source) in prog.aux_modules() {
-            let mut module = ProgramFile::user(
-                &format!("{parent_id}-{aux_name}"),
-                &format!("{aux_name}.hll"),
-                "Linked translation unit of the parent program.",
-                aux_source,
-            );
-            module.parent_id = Some(parent_id.clone());
-            programs.push(module);
-        }
     }
 
     programs.extend([
@@ -394,92 +394,102 @@ fn built_in_programs() -> Vec<ProgramFile> {
         // and returning exit 0 only when its self-checks pass.
         ProgramFile::example(
             "example-core-basics",
+            "core_basics",
             "core_basics.hll",
             "Typed and inferred declarations, const evaluation, functions, and loops.",
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/programs/example/core_basics.hll"
+                "/programs/example/core_basics/core_basics.hll"
             )),
         ),
         ProgramFile::example(
             "example-operators",
+            "operators",
             "operators.hll",
             "Arithmetic, logical, bitwise, shift, cast precedence, and compound assignment.",
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/programs/example/operators.hll"
+                "/programs/example/operators/operators.hll"
             )),
         ),
         ProgramFile::example(
             "example-pointers-and-places",
+            "pointers_and_places",
             "pointers_and_places.hll",
             "Address-of, @ deref, member auto-deref, element-scaled pointer math, casts, defer.",
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/programs/example/pointers_and_places.hll"
+                "/programs/example/pointers_and_places/pointers_and_places.hll"
             )),
         ),
         ProgramFile::example(
             "example-arrays-slices-and-ranges",
+            "arrays_slices_and_ranges",
             "arrays_slices_and_ranges.hll",
             "Array literals, zero fill, slices, .len, ranges, and `for` over each.",
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/programs/example/arrays_slices_and_ranges.hll"
+                "/programs/example/arrays_slices_and_ranges/arrays_slices_and_ranges.hll"
             )),
         ),
         ProgramFile::example(
             "example-structs-and-binding",
+            "structs_and_binding",
             "structs_and_binding.hll",
             "Named and contextual struct literals, aggregate calls/returns, and destructuring.",
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/programs/example/structs_and_binding.hll"
+                "/programs/example/structs_and_binding/structs_and_binding.hll"
             )),
         ),
         ProgramFile::example(
             "example-generics",
+            "generics",
             "generics.hll",
             "Explicit and inferred generic functions, generic structs, and recursive records.",
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/programs/example/generics.hll"
+                "/programs/example/generics/generics.hll"
             )),
         ),
         ProgramFile::example(
             "example-hll2-completion-showcase",
+            "hll2_completion_showcase",
             "hll2_completion_showcase.hll",
             "Living HLL2 feature showcase, starting with function pointer aliases, values, calls, and arrays.",
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/programs/example/hll2_completion_showcase.hll"
+                "/programs/example/hll2_completion_showcase/hll2_completion_showcase.hll"
             )),
         ),
         ProgramFile::example(
             "example-enums-match-and-result",
+            "enums_match_and_result",
             "enums_match_and_result.hll",
             "Enums, statement and value match, a generic enum, Option, Result, and `?`.",
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/programs/example/enums_match_and_result.hll"
+                "/programs/example/enums_match_and_result/enums_match_and_result.hll"
             )),
         ),
         ProgramFile::example(
             "example-strings-and-iteration",
+            "strings_and_iteration",
             "strings_and_iteration.hll",
             "Strings as u8[] slices: indexing, range slicing, byte iteration, and char literals.",
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/programs/example/strings_and_iteration.hll"
+                "/programs/example/strings_and_iteration/strings_and_iteration.hll"
             )),
         ),
         ProgramFile::example(
             "example-compile-time-math",
+            "compile_time_math",
             "compile_time_math.hll",
             "Pure recursive functions folded into constants before runtime.",
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/programs/example/compile_time_math.hll"
+                "/programs/example/compile_time_math/compile_time_math.hll"
             )),
         ),
     ]);
@@ -534,6 +544,7 @@ impl ProgramCatalog {
                     updated.source = built_in.source;
                     updated.description = built_in.description;
                     updated.source_path = built_in.source_path;
+                    updated.build_path = built_in.build_path;
                     updated.standalone = built_in.standalone;
                     updated.parent_id = built_in.parent_id;
                     updated.layout = built_in.layout;
@@ -729,17 +740,7 @@ impl ProgramCatalog {
             .collect()
     }
 
-    /// The (possibly edited) source of each aux module of `parent_id`, in order.
-    /// Drives the link path so edits to aux units take effect on compile.
-    pub fn child_sources(&self, parent_id: &str) -> Vec<String> {
-        self.children_of(parent_id)
-            .iter()
-            .map(|p| p.source.clone())
-            .collect()
-    }
-
-    /// The shared layout header for the program `id` (prepended to its primary and
-    /// aux units at compile), or `""` if it has none.
+    /// The shared layout header for the program `id`, or `""` if it has none.
     pub fn layout_of(&self, id: &str) -> &str {
         self.programs
             .iter()
@@ -761,13 +762,35 @@ mod tests {
     }
 
     #[test]
-    fn aux_modules_nest_under_their_program() {
+    fn bundled_user_tool_helpers_are_imported_by_source_path() {
         let programs = built_in_programs();
-        let aux = find(&programs, "user-as-as_object");
-        assert_eq!(aux.parent_id.as_deref(), Some("user-as"));
-        assert_eq!(aux.badge(), CatalogBadge::Fragment);
-        // The primary program is runnable; the linker pulls the aux from the catalog.
-        assert_eq!(find(&programs, "user-as").badge(), CatalogBadge::Runnable);
+        let as_prog = find(&programs, "user-as");
+        assert_eq!(as_prog.badge(), CatalogBadge::Runnable);
+        assert!(as_prog.source.contains("import(\"./as_object.hll\")"));
+        assert!(
+            programs
+                .iter()
+                .all(|program| program.id != "user-as-as_object")
+        );
+
+        // The tool's on-disk paths must be carried so relative imports resolve from its own
+        // directory and its `.build` manifest drives the closure (mangling off).
+        let ld = find(&programs, "user-ld");
+        assert!(ld.source.contains("import(\"./ld_link.hll\")"));
+        let source_path = ld.source_path.as_deref().expect("ld source_path");
+        assert!(
+            source_path
+                .replace('\\', "/")
+                .ends_with("programs/user/bin/ld/ld.hll"),
+            "unexpected ld source_path: {source_path}"
+        );
+        let build_path = ld.build_path.as_deref().expect("ld build_path");
+        assert!(
+            build_path
+                .replace('\\', "/")
+                .ends_with("programs/user/bin/ld/ld.build"),
+            "unexpected ld build_path: {build_path}"
+        );
     }
 
     #[test]
@@ -805,14 +828,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn child_sources_returns_aux_units() {
-        let catalog = ProgramCatalog::default();
-        let sources = catalog.child_sources("user-cc");
-        assert_eq!(sources.len(), 1, "cc has one aux translation unit");
-        assert!(!sources[0].is_empty());
-    }
-
     // A persisted catalog from before the `layout` field defaults it to empty;
     // ensure_consistency must restore it for read-only split tools (cc/as).
     #[test]
@@ -822,8 +837,8 @@ mod tests {
             program.layout.clear();
         }
         catalog.ensure_consistency();
-        assert_eq!(catalog.layout_of("user-cc"), os_runtime::user::CC_LAYOUT);
-        assert_eq!(catalog.layout_of("user-as"), os_runtime::user::AS_LAYOUT);
+        assert_eq!(catalog.layout_of("user-cc"), crate::userspace::CC_LAYOUT);
+        assert_eq!(catalog.layout_of("user-as"), crate::userspace::AS_LAYOUT);
     }
 
     // Persisted app state from before `source_path` existed left bundled examples
@@ -843,8 +858,11 @@ mod tests {
         let hll2 = find(&catalog.programs, "example-hll2-completion-showcase");
         let source_path = hll2.source_path.as_deref().expect("restored source path");
         assert!(
-            source_path.ends_with("programs\\example\\hll2_completion_showcase.hll")
-                || source_path.ends_with("programs/example/hll2_completion_showcase.hll"),
+            source_path.ends_with(
+                "programs\\example\\hll2_completion_showcase\\hll2_completion_showcase.hll"
+            ) || source_path.ends_with(
+                "programs/example/hll2_completion_showcase/hll2_completion_showcase.hll"
+            ),
             "unexpected source path: {source_path}"
         );
     }

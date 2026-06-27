@@ -1,0 +1,5 @@
+name = "fx_hello_s"
+title = "hello.s (fixture)"
+description = "Frozen codegen target `cc` must emit for the reference source."
+kind = "fixture"
+root = "hello.s"

@@ -43,19 +43,6 @@ fn parse_module(source: &str) -> Result<Program, String> {
         .map_err(|e| e.to_string())
 }
 
-/// The names a module imports, in source order (its direct `import "name"` decls).
-pub fn collect_imports(source: &str) -> Result<Vec<String>, String> {
-    let program = parse_module(source)?;
-    Ok(program
-        .declarations
-        .iter()
-        .filter_map(|d| match &d.decl {
-            DeclNode::Import { path } => Some(path.clone()),
-            _ => None,
-        })
-        .collect())
-}
-
 /// The qualified module bindings a unit declares, as `(alias, path)` in source order
 /// (its `alias := import("path")` / `const alias = import("path")` decls).
 pub fn collect_module_imports(source: &str) -> Result<Vec<(String, String)>, String> {
@@ -147,7 +134,6 @@ fn decl_name(decl: &DeclNode) -> Option<&str> {
         | DeclNode::Enum { name, .. }
         | DeclNode::Const { name, .. }
         | DeclNode::ModuleImport { alias: name, .. } => Some(name),
-        DeclNode::Import { .. } => None,
     }
 }
 
@@ -380,7 +366,7 @@ pub fn rewrite_qualified_access(
                     }
                 }
             }
-            _ => {}
+            DeclNode::ModuleImport { .. } => {}
         }
     }
     for stmt in &mut program.statements {
@@ -1100,9 +1086,7 @@ fn render_export(decl: &DeclNode, prefix: &str) -> Result<Option<String>, String
                 render_type(ty)?
             )
         }
-        DeclNode::InferredVariable { .. }
-        | DeclNode::Import { .. }
-        | DeclNode::ModuleImport { .. } => return Ok(None),
+        DeclNode::InferredVariable { .. } | DeclNode::ModuleImport { .. } => return Ok(None),
     };
     Ok(Some(rendered))
 }
@@ -1562,19 +1546,6 @@ export count: i64 = 0
         assert!(interface.contains("external as__count: i64"));
         assert!(interface.contains("const TF_BYTES = 288"));
         assert!(interface.contains("struct Reloc {"));
-    }
-
-    #[test]
-    fn collects_imports_in_source_order() {
-        let source = r#"
-import "as_layout"
-import "as_object"
-main: () -> i32 { return 0 }
-"#;
-        assert_eq!(
-            collect_imports(source).unwrap(),
-            vec!["as_layout".to_owned(), "as_object".to_owned()]
-        );
     }
 
     #[test]

@@ -1,6 +1,6 @@
 # os-runtime
 
-Boot firmware, S-mode kernel, standard library, and userspace sources for the Full-Stack VM.
+Boot firmware, S-mode kernel, and standard-library sources for the Full-Stack VM.
 
 This crate is not a Rust library to link against. It holds the RISC-V assembly (`.s`) and
 HLL (`.hll`) sources that the compiler pipeline assembles into a bootable kernel image, plus
@@ -13,12 +13,12 @@ only exposes each source file as a compile-time string constant so `hll-to-ir` a
 ```
 boot/       M-mode ROM firmware (assembly): reset stub and hosted trap handler
 kernel/     S-mode kernel sources (HLL): traps, memory, processes, syscalls, fs
-stdlib/     shared HLL stdlib, split into common / hosted / freestanding bundles
-user/       U-mode programs (HLL): bin/ tools (shell, editor, as, cc, ld),
-            demo/ framebuffer demos, examples/ + fixtures/ sample sources
+stdlib/     shared HLL stdlib: core / hosted / kernel / free bundles
 src/        thin Rust crate exposing every source file as a string constant
 tests/      Rust tests over ROM, boot sequence, allocator, PMM, and subsystems
 ```
+
+Boot-FS userspace tools, demos, samples, and fixtures live in `programs/user/`.
 
 ## Compilation modes
 
@@ -39,10 +39,10 @@ Power-on / VM reset
   boot/trap.s      _m_trap (ROM 0x100): M-mode ecall dispatch for hosted programs
                    (sys_write -> UART, sys_exit -> SYSCON halt)
 
-  kernel/entry.hll      _kernel_start: calls kmain(), panics if it returns
-  kernel/my_kernel.hll  kmain(): console, traps, timer, PLIC, memory diagnostics,
-                        heap, PMM, Sv39 VMM, process_init, scheduler_init,
-                        spawn pid 1, mount filesystem, enable interrupts, idle WFI
+  kernel/core/entry.hll      _kernel_start: calls kmain(), panics if it returns
+  kernel/core/my_kernel.hll  kmain(): console, traps, timer, PLIC, memory diagnostics,
+                             heap, PMM, Sv39 VMM, process_init, scheduler_init,
+                             spawn pid 1, mount filesystem, enable interrupts, idle WFI
 ```
 
 After `kmain` enters the idle loop the scheduler takes over: the CLINT timer preempts the
@@ -52,16 +52,16 @@ running process every tick, and `sret` resumes whichever process is next in the 
 
 | Source | Provides |
 |--------|----------|
-| `trap_entry.hll` | S-mode stvec prologue/epilogue, dedicated kernel trap stack via sscratch, `trap_init` |
-| `trap_handler.hll` | Dispatch for timer (cause 5), external (cause 9), software (cause 1), U-mode ecall (cause 8) |
-| `utilities.hll` | `kmalloc`, `kshutdown`, CLINT timer get/set, `plic_init` |
-| `checks.hll` | Boot-time `memory_self_test`, `pmm_ops_test` diagnostics |
-| `pmm.hll` | Physical page allocator (4 KiB pages, bump + free-list, double-free guard) |
-| `vmm.hll` | Sv39 page tables: `vmm_init`, `vmm_enable`, `vmm_map`, `vmm_map_1gib`, `vmm_map_range` |
-| `process.hll` | 352-byte PCB (pid, state, saved trap frame, page-table root, parent pid, exit code), per-pid user stack slots, `process_create`, `process_peek_pid` |
-| `scheduler.hll` | Round-robin ready queue, `schedule`, queue introspection for exec/wait |
-| `syscall.hll` | U-mode ecall dispatch table (see below) |
-| `fs.hll` | Inode-based read-write filesystem mounted from an injected image |
+| `kernel/trap/trap_entry.hll` | S-mode stvec prologue/epilogue, dedicated kernel trap stack via sscratch, `trap_init` |
+| `kernel/trap/trap_handler.hll` | Dispatch for timer (cause 5), external (cause 9), software (cause 1), U-mode ecall (cause 8) |
+| `kernel/core/utilities.hll` | `kmalloc`, `kshutdown`, CLINT timer get/set, `plic_init` |
+| `kernel/core/checks.hll` | Boot-time `memory_self_test`, `pmm_ops_test` diagnostics |
+| `kernel/mm/pmm.hll` | Physical page allocator (4 KiB pages, bump + free-list, double-free guard) |
+| `kernel/mm/vmm.hll` | Sv39 page tables: `vmm_init`, `vmm_enable`, `vmm_map`, `vmm_map_1gib`, `vmm_map_range` |
+| `kernel/sched/process.hll` | 352-byte PCB (pid, state, saved trap frame, page-table root, parent pid, exit code), per-pid user stack slots, `process_create`, `process_peek_pid` |
+| `kernel/sched/scheduler.hll` | Round-robin ready queue, `schedule`, queue introspection for exec/wait |
+| `kernel/core/syscall.hll` | U-mode ecall dispatch table (see below) |
+| `kernel/fs/fs.hll` | Inode-based read-write filesystem mounted from an injected image |
 
 ## Filesystem
 

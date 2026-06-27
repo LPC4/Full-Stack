@@ -1,0 +1,11 @@
+name = "as"
+title = "Assembler"
+description = "In-VM RV64I assembler launched by the shell's `as` command."
+kind = "tool"
+install_path = "/bin/as.elf"
+target = "hosted"
+stdlib = "hosted"
+root = "as.hll"
+source_prelude = "as_layout.hll"
+import_closure = true
+mangle_symbols = false

@@ -531,6 +531,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "build_manifest"
+version = "0.1.0"
+
+[[package]]
 name = "bumpalo"
 version = "3.20.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1268,6 +1272,7 @@ name = "full_stack"
 version = "1.0.0"
 dependencies = [
  "asm_to_binary",
+ "build_manifest",
  "eframe",
  "egui",
  "egui_dock",
@@ -1556,6 +1561,7 @@ checksum = "dfa686283ad6dd069f105e5ab091b04c62850d3e4cf5d67debad1933f55023df"
 name = "hll_to_ir"
 version = "0.1.0"
 dependencies = [
+ "build_manifest",
  "log",
  "os_runtime",
 ]

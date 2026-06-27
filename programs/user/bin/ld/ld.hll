@@ -13,10 +13,9 @@ external sc_close:     (fd: i64)
 external cstr_eq:      (a: u8*, b: u8*) -> i64
 external cstr_len:     (s: u8*) -> u64
 
-; Relocation patching + executable emission, split into ld_link.hll and linked by
-; the host toolchain. They read the merged sections/symbol table built here.
-external apply_relocs: ()
-external emit_exec:    (out_path: u8*)
+; Relocation patching + executable emission. The module reads the merged
+; sections/symbol table built here through shared link-time symbols.
+link := import("./ld_link.hll")
 
 const ARG_BASE = 0x7FF00000
 const USER_CODE_BASE = 0x40000000
@@ -27,24 +26,24 @@ const PAD = 32
 
 ; Concatenated input object files; per-module byte offset in mod_base. The big
 ; buffers are heap-allocated once at startup (see main); formerly fixed .bss.
-objbuf: u8* = null
+export objbuf: u8* = null
 objbuf_len: u64 = 0
 
 ; Merged section bytes across all modules (text first, then data after the pad).
-merged_text: u8* = null
-mtext_len: u64 = 0
-merged_data: u8* = null
-mdata_len: u64 = 0
+export merged_text: u8* = null
+export mtext_len: u64 = 0
+export merged_data: u8* = null
+export mdata_len: u64 = 0
 
 ; Output executable image.
-out: u8* = null
+export out: u8* = null
 
 ; Per-module: file offset in objbuf, and this module's start offset within the
 ; merged text/data regions.
-mod_base: i64[8] = []
-mod_text_off: i64[8] = []
-mod_data_off: i64[8] = []
-nmod: i64 = 0
+export mod_base: i64[8] = []
+export mod_text_off: i64[8] = []
+export mod_data_off: i64[8] = []
+export nmod: i64 = 0
 
 ; Global symbol table (exported .globl definitions): 16-byte names + absolute addr.
 gsym_names: u8* = null
@@ -52,8 +51,8 @@ gsym_addr: i64* = null
 ngsym: i64 = 0
 
 ; Virtual base of the merged text and data regions (set after all objects load).
-text_vbase: i64 = 0
-data_vbase: i64 = 0
+export text_vbase: i64 = 0
+export data_vbase: i64 = 0
 
 err_flag: i64 = 0
 
@@ -63,18 +62,18 @@ path_off: i64[16] = []
 npath: i64 = 0
 
 ; --- Section lookup outputs (set by sec_find) ---
-sec_off: u64 = 0
-sec_size: u64 = 0
+export sec_off: u64 = 0
+export sec_size: u64 = 0
 sec_idx: i64 = 0
 
-fail: (msg: u8*) {
+export fail: (msg: u8*) {
     console_write("ld: ".ptr)
     console_writeln(msg)
     err_flag = 1
 }
 
 ; Read an n-byte little-endian value at p+off.
-rd_le: (p: u8*, off: u64, n: u64) -> u64 {
+export rd_le: (p: u8*, off: u64, n: u64) -> u64 {
     v: u64 = 0
     k: u64 = 0
     while k < n {
@@ -86,7 +85,7 @@ rd_le: (p: u8*, off: u64, n: u64) -> u64 {
 }
 
 ; Write an n-byte little-endian value into out at byte offset off.
-wr_le: (off: u64, val: u64, n: u64) {
+export wr_le: (off: u64, val: u64, n: u64) {
     k: u64 = 0
     while k < n {
         d: u8* = out + off + k
@@ -97,7 +96,7 @@ wr_le: (off: u64, val: u64, n: u64) {
 
 ; Find section `want` in object `f` (by .shstrtab name). On hit sets sec_off,
 ; sec_size, sec_idx and returns 1; else returns 0.
-sec_find: (f: u8*, want: u8*) -> i64 {
+export sec_find: (f: u8*, want: u8*) -> i64 {
     shoff: u64 = rd_le(f, 40, 8)
     shnum: u64 = rd_le(f, 60, 2)
     shstrndx: u64 = rd_le(f, 62, 2)
@@ -146,7 +145,7 @@ gsym_add: (name: u8*, addr: i64) {
 }
 
 ; Absolute address of a global symbol, or -1 if undefined.
-gsym_lookup: (name: u8*) -> i64 {
+export gsym_lookup: (name: u8*) -> i64 {
     i: i64 = 0
     while i < ngsym {
         cand: u8* = gsym_names + (i as u64) * 16
@@ -204,7 +203,7 @@ load_object: (m: i64, path: u8*) {
 }
 
 ; Section index of `.text`/`.data` in module f, or -1 if absent.
-sec_index_of: (f: u8*, name: u8*) -> i64 {
+export sec_index_of: (f: u8*, name: u8*) -> i64 {
     if sec_find(f, name) == 1 {
         return sec_idx
     }
@@ -329,14 +328,14 @@ main: () -> i32 {
     data_vbase = USER_CODE_BASE + (mtext_len as i64) + PAD
 
     build_globals()
-    apply_relocs()
+    link.apply_relocs()
     if err_flag != 0 {
         return 1
     }
 
     opo: i64 = path_off[nmod]
     outp: u8* = path_pool + (opo as u64)
-    emit_exec(outp)
+    link.emit_exec(outp)
     if err_flag != 0 {
         return 1
     }

@@ -27,7 +27,7 @@ use full_stack::view::{
 use hll_to_ir::stdlib::get_stdlib_type_prelude;
 use std::collections::HashMap;
 use std::fmt;
-use std::sync::Arc;
+use std::rc::Rc;
 use virtual_machine::cpu::StepOutcome;
 use virtual_machine::virtual_machine::VirtualMachine;
 
@@ -278,7 +278,7 @@ pub struct FullStackApp {
     #[serde(skip)]
     kernel_binary: Option<AssembledOutput>,
     // Compiled hosted user programs (shell, tools, demos), keyed by the
-    // os_runtime::user catalog name. Replaces the per-tool ensure_* fields.
+    // generated userspace catalog name. Replaces the per-tool ensure_* fields.
     #[serde(skip)]
     user_binaries: HashMap<&'static str, AssembledOutput>,
     #[serde(skip)]
@@ -605,7 +605,7 @@ impl FullStackApp {
         self.kernel_binary = self.compilation_state.assembled().cloned();
     }
 
-    /// The program a build should target: the parent if a fragment (aux module /
+    /// The program a build should target: the parent if a fragment (helper module /
     /// kernel module) is selected, otherwise the selected program itself. A
     /// fragment only links as part of its parent, so every build path resolves
     /// through here.
@@ -657,7 +657,7 @@ impl FullStackApp {
 
     fn catalog_build_resolver(&self) -> BuildModuleResolver {
         let resolver = self.catalog_module_resolver();
-        Arc::new(move |name: &str| resolver(name))
+        Rc::new(move |name: &str| resolver(name))
     }
 
     fn manifest_for_program(&self, program: &ProgramFile, target: TargetMode) -> BuildManifest {
@@ -704,21 +704,6 @@ impl FullStackApp {
             _ => Some("_u_".to_owned()),
         };
         manifest.run_semantic_analysis = target == TargetMode::Kernel;
-        manifest.legacy_aux = if target == TargetMode::Kernel {
-            Vec::new()
-        } else {
-            self.catalog
-                .children_of(&program.id)
-                .into_iter()
-                .map(|child| match &child.source_path {
-                    Some(path) => BuildSource::inline_with_path(&child.id, &child.source, path),
-                    None => BuildSource::inline(&child.id, &child.source),
-                })
-                .collect()
-        };
-        if target != TargetMode::Kernel && !manifest.legacy_aux.is_empty() {
-            manifest.import_closure = ImportClosurePolicy::Disabled;
-        }
         if target == TargetMode::Kernel {
             manifest.import_closure = ImportClosurePolicy::Enabled {
                 mangle_symbols: false,
@@ -813,8 +798,7 @@ impl FullStackApp {
                 .map(|(n, o)| (n.as_str(), o))
                 .collect()
         };
-        // Split tools (cc/as) share record layouts via a header prepended to every
-        // unit; apply it to the primary compile and (below) the aux compiles.
+        // Split tools (cc/as) share record layouts via a header prepended before compile.
         let layout = self.catalog.layout_of(&build.id).to_owned();
         self.pipeline.set_source_prelude(layout.clone());
         let mut result = self.pipeline.run_full(&user_source, &stdlib_objects);
@@ -923,14 +907,14 @@ impl FullStackApp {
         Ok(())
     }
 
-    /// Compile a bundled user program (by its `os_runtime::user` catalog name)
+    /// Compile a bundled user program by its generated userspace catalog name.
     /// as a hosted binary, caching the result so repeated boots reuse it. One
     /// method for every tool/demo -- they differ only in source + cache key.
     fn ensure_user_binary(&mut self, name: &'static str) -> Result<(), String> {
         if self.user_binaries.contains_key(name) {
             return Ok(());
         }
-        let prog = os_runtime::user::program(name)
+        let prog = full_stack::userspace::program(name)
             .ok_or_else(|| format!("unknown user program: {name}"))?;
 
         let manifest = BuildManifest::from_user_program(prog);
@@ -950,7 +934,7 @@ impl FullStackApp {
         // Install every compiled tool/demo at its catalog install path. The ELF
         // byte buffers must outlive `entries` (which borrows them), so own them
         // here and push the FsEntry references afterward.
-        let elf_holders: Vec<(&'static str, Vec<u8>)> = os_runtime::user::PROGRAMS
+        let elf_holders: Vec<(&'static str, Vec<u8>)> = full_stack::userspace::PROGRAMS
             .iter()
             .filter_map(|prog| {
                 let path = prog.install_path?;
@@ -1163,7 +1147,7 @@ impl eframe::App for FullStackApp {
                         // Best-effort: compile every auto-installed tool/demo so
                         // the shell can exec it. A failure on any one should not
                         // stop the shell from booting.
-                        for prog in os_runtime::user::PROGRAMS
+                        for prog in full_stack::userspace::PROGRAMS
                             .iter()
                             .filter(|p| p.is_compiled() && p.install_path.is_some())
                         {
@@ -1356,8 +1340,8 @@ Examples in /home/src: hello.hll array.s stdlib.s\n";
 
     // Example sources (/home/src) are installed verbatim from the user catalog so
     // the toolchain can be tried out of the box. Sources are 'static.
-    use os_runtime::user::UserProgramKind;
-    for prog in os_runtime::user::PROGRAMS {
+    use full_stack::userspace::UserProgramKind;
+    for prog in full_stack::userspace::PROGRAMS {
         if prog.kind == UserProgramKind::Example
             && let Some(path) = prog.install_path
         {

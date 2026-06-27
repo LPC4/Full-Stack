@@ -1,0 +1,8 @@
+name = "edit"
+title = "Editor"
+description = "ed-style line editor launched by the shell's `edit` command."
+kind = "tool"
+install_path = "/bin/edit.elf"
+target = "hosted"
+stdlib = "hosted"
+root = "edit.hll"

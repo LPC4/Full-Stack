@@ -9,6 +9,7 @@ name = "hll_to_ir"
 path = "src/lib.rs"
 
 [dependencies]
+build_manifest = { path = "../build-manifest" }
 os_runtime = { path = "../os-runtime" }
 log      = "0.4.27"
 

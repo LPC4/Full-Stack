@@ -223,7 +223,7 @@ main: () -> i32 {
 fn allows_array_literals_through_assembly() {
     let source = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/programs/example/arrays_slices_and_ranges.hll"
+        "/programs/example/arrays_slices_and_ranges/arrays_slices_and_ranges.hll"
     ));
 
     let mut pipeline = CompilationPipeline::new();

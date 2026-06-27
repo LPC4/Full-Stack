@@ -69,7 +69,7 @@ $ life                  ; Conway's Game of Life on a toroidal grid
 ```
 
 The shell, editor (`edit`), compiler (`cc`), assembler (`as`), and linker (`ld`) are
-ordinary HLL programs in `crates/os-runtime/user/`, compiled by this pipeline and
+ordinary HLL programs in `programs/user/`, compiled by this pipeline and
 installed into the filesystem image. Nothing about them is privileged, they reach the
 kernel only through `ecall`.
 
@@ -206,8 +206,10 @@ arrays, slices and ranges, pointers, `as` casts, compound assignment, the `?` op
 | `crates/ir-to-asm/` | IR to RISC-V assembly: register allocation, slot coloring, peephole |
 | `crates/asm-to-binary/` | Assembler, linker, ELF output (executables and relocatable objects) |
 | `crates/virtual-machine/` | VM: 5-stage CPU pipeline, caches, MMU, devices, bus |
-| `crates/os-runtime/` | Boot firmware, kernel sources, standard library, user programs |
-| `programs/` | Example HLL programs and the golden compiler test suite |
+| `crates/os-runtime/` | Boot firmware, kernel sources, and standard library |
+| `programs/user/` | Boot-FS userspace tools, demos, samples, and fixtures |
+| `programs/example/` | Host-compiled example HLL programs, one folder per program |
+| `programs/test/` | Golden compiler fixtures and integration HLL inputs |
 | `tests/` | Rust integration tests (VM execution, compiler suite, kernel boots) |
 
 

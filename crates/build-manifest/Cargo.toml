@@ -1,0 +1,12 @@
+[package]
+name = "build_manifest"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.92"
+
+[lib]
+name = "build_manifest"
+path = "src/lib.rs"
+
+[lints]
+workspace = true

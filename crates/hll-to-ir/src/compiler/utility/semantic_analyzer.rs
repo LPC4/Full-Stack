@@ -218,8 +218,7 @@ impl SemanticAnalyzer {
                 self.current_function = None;
                 Ok(())
             }
-            DeclNode::Import { .. }
-            | DeclNode::ModuleImport { .. }
+            DeclNode::ModuleImport { .. }
             | DeclNode::Type { .. }
             | DeclNode::Struct { .. }
             | DeclNode::Const { .. }

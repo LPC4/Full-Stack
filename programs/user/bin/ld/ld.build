@@ -1,0 +1,10 @@
+name = "ld"
+title = "Linker"
+description = "In-VM static linker launched by the shell's `ld` command."
+kind = "tool"
+install_path = "/bin/ld.elf"
+target = "hosted"
+stdlib = "hosted"
+root = "ld.hll"
+import_closure = true
+mangle_symbols = false

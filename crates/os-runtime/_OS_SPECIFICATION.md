@@ -1,10 +1,11 @@
 # RISC-V RV64 Bare-Metal Runtime Specification
 
-This document specifies the runtime that lives in `crates/os-runtime/`: the boot
-firmware (`boot/`), the reference kernel (`kernel/`), the three standard-library
-bundles (`stdlib/`), and the userspace programs (`user/`). It is the contract those
-components keep with each other and with the VM. The HLL language, IR, assembler,
-and the machine itself are specified elsewhere and are only referenced here:
+This document specifies the runtime owned by `crates/os-runtime/`: the boot
+firmware (`boot/`), the reference kernel (`kernel/`), and the standard-library
+bundles (`stdlib/`). Boot-FS userspace programs live in `programs/user/` and are
+cataloged by the root `full_stack` crate, but their kernel/stdlib contract is
+specified here. The HLL language, IR, assembler, and the machine itself are
+specified elsewhere and are only referenced here:
 
 - HLL language: `crates/hll-to-ir/_LANG_SPECIFICATIONS.md`
 - IR: `crates/ir-to-asm/_IR_SPECIFICATIONS.md`
@@ -15,14 +16,14 @@ and the machine itself are specified elsewhere and are only referenced here:
 
 1. Overview
 2. Boot firmware (`boot/`)
-3. Kernel initialization (`kernel/entry.hll`, `my_kernel.hll`)
+3. Kernel initialization (`kernel/core/entry.hll`, `my_kernel.hll`)
 4. Memory management (`vmm.hll`, `pmm.hll`, allocator)
 5. Processes and scheduling (`process.hll`, `scheduler.hll`)
 6. Traps and interrupts (`trap_entry.hll`, `trap_handler.hll`)
 7. Syscall interface (`syscall.hll`, `stdlib/hosted/syscalls.hll`)
 8. Filesystem (`fs.hll`)
 9. Standard library (`stdlib/`)
-10. Userspace programs (`user/`)
+10. Userspace programs (`programs/user/`)
 - Appendix A: Memory map quick reference
 - Appendix B: Syscall quick reference
 
@@ -37,15 +38,15 @@ comments cite the chapter rather than repeating its content.
 | Path | Component | Chapter |
 |------|-----------|---------|
 | `boot/startup.s`, `boot/trap.s` | M-mode ROM firmware and trap vectors | 2 |
-| `kernel/entry.hll`, `my_kernel.hll` | S-mode entry and `kmain` boot sequence | 3 |
-| `kernel/vmm.hll`, `pmm.hll` | Sv39 paging and physical page allocator | 4 |
-| `kernel/process.hll`, `scheduler.hll` | PCB, scheduler, fork/exec | 5 |
-| `kernel/trap_entry.hll`, `trap_handler.hll` | Trap entry and dispatch | 6 |
-| `kernel/syscall.hll`, `stdlib/hosted/syscalls.hll` | Syscall ABI, table, wrappers | 7 |
-| `kernel/fs.hll` | Inode filesystem | 8 |
-| `kernel/utilities.hll`, `checks.hll` | HAL primitives, boot diagnostics | 3, 9 |
-| `stdlib/common/`, `freestanding/`, `hosted/` | Standard-library bundles | 9 |
-| `user/bin/` (`shell.hll`, `edit.hll`, `as.hll`, `cc.hll`, `ld.hll`), `user/demo/` (`cube.hll`, `mandelbrot.hll`, `life.hll`) | Userspace programs | 10 |
+| `kernel/core/entry.hll`, `my_kernel.hll` | S-mode entry and `kmain` boot sequence | 3 |
+| `kernel/mm/vmm.hll`, `pmm.hll` | Sv39 paging and physical page allocator | 4 |
+| `kernel/sched/process.hll`, `scheduler.hll` | PCB, scheduler, fork/exec | 5 |
+| `kernel/trap/trap_entry.hll`, `trap_handler.hll` | Trap entry and dispatch | 6 |
+| `kernel/core/syscall.hll`, `stdlib/hosted/syscalls.hll` | Syscall ABI, table, wrappers | 7 |
+| `kernel/fs/fs.hll` | Inode filesystem | 8 |
+| `kernel/core/utilities.hll`, `checks.hll` | HAL primitives, boot diagnostics | 3, 9 |
+| `stdlib/core/`, `hosted/`, `kernel/`, `free/` | Standard-library bundles | 9 |
+| `programs/user/bin/`, `programs/user/demo/`, `programs/user/sample/`, `programs/user/fixture/` | Userspace programs and boot-FS samples | 10 |
 
 ### 1.2 Layered model
 
@@ -99,7 +100,7 @@ traps here and is treated as exit -- see the assembler NOP-padding note in 10.3.
 The **S-mode** entry path is in `trap_entry.hll` (chapter 6).
 
 
-## 3. Kernel initialization (`kernel/entry.hll`, `my_kernel.hll`)
+## 3. Kernel initialization (`kernel/core/entry.hll`, `my_kernel.hll`)
 
 ### 3.1 Entry stub
 
@@ -150,7 +151,7 @@ page that is still mapped: pages are only reused after an explicit `pmm_free`.
 ### 4.2 Kernel heap (`kmalloc` / `malloc`)
 
 `kmalloc` (`utilities.hll`) wraps the stdlib `malloc` and panics on OOM. `malloc`
-(`stdlib/common/memory_allocator.hll`) is a bump-plus-free-list allocator over a
+(`stdlib/core/memory_allocator.hll`) is a bump-plus-free-list allocator over a
 static `heap_buffer: u8[65536]` living in kernel BSS -- distinct from `pmm` memory
 and from user pages, so heap allocations never alias process address spaces.
 
@@ -517,7 +518,7 @@ allocator over the break: it queries the initial break with `brk(0)` and raises 
 with `brk(page_up(new_top))` whenever an allocation would cross the current
 ceiling, returning null only when `brk` fails to grow. This replaces the old fixed
 64 KB `.bss` buffer, so `malloc`/`new` can now grow past 64 KB. The kernel and
-freestanding builds keep the fixed-buffer allocator (`stdlib/common`), since they
+freestanding builds keep the fixed-buffer allocator (`stdlib/core`), since they
 have no syscalls. The bare-VM hosted path (no kernel) services the same `brk` in
 the M-mode firmware (`boot/trap.s`) against a flat break pointer at
 `RAM_BASE + 32 MiB - 8`; the real-`qemu` path uses Linux's own `brk`.
@@ -559,18 +560,19 @@ Addresses are in Appendix A.
 
 ## 9. Standard library (`stdlib/`)
 
-Three bundles share `common/` and are selected by the compiler's target mode (see
+Three bundles share `stdlib/core/` and are selected by the compiler's target mode
+from the explicit ordered lists in `stdlib/stdlib.build` (see
 `_LANG_SPECIFICATIONS.md` / `_IR_SPECIFICATIONS.md` for mode selection; this
-chapter documents only what the bundles provide).
+chapter documents only what the bundles provide). The directory names are
+organizational; the manifest order is authoritative.
 
-### 9.1 `common/`
+### 9.1 `core/`
 
 `types` (width aliases), `mem` (`memset`/`memcpy`/`memmove`/`memcmp`),
 `memory_allocator` (`malloc`/`free` over the static heap, 4.2), `string_utils`
-(`str_*`), and `klog` (`klog.ok`/`warn`/`error`/`int`/`hex` -- formatted UART log,
-lowered to the stable `klog_*` link symbols).
+(`str_*`).
 
-### 9.2 `freestanding/`
+### 9.2 `free/`
 
 `entry` (`_start` -> `main` -> SYSCON halt), `console` (direct NS16550A MMIO:
 `console_putchar`/`write`/`writeln`/`print_int`/`print_hex`), and `runtime`
@@ -582,10 +584,16 @@ lowered to the stable `klog_*` link symbols).
 userspace `sc_*` wrappers for the syscalls in 7.2, plus C-string helpers). Linked
 by U-mode programs that run under the kernel.
 
-### 9.4 HAL primitives
+### 9.4 `kernel/`
+
+`klog` (`klog.ok`/`warn`/`error`/`int`/`hex` -- formatted UART log, lowered to the
+stable `klog_*` link symbols). It imports `console` through a qualified module
+record, so stdlib internals do not use the legacy whole-module import form.
+
+### 9.5 HAL primitives
 
 The kernel bundle calls these directly (no syscall layer); implementations are in
-`utilities.hll` and `freestanding/console.hll`. Console: `console_putchar`/`write`/
+`utilities.hll` and `free/console.hll`. Console: `console_putchar`/`write`/
 `writeln`/`print_int`/`print_hex`. Halt/panic: `kshutdown` (write exit code to
 SYSCON `0x1001_0000`), `kpanic`. Timer/IRQ: `timer_get` (CLINT MTIME `0x0200_BFF8`),
 `timer_set` (MTIMECMP hart 0 `0x0200_4000`), `plic_init` (enable UART source 10 on
@@ -594,7 +602,7 @@ through `asm {}` blocks (a `li` of the device address then a load/store) because
 S-mode `sp` may hold a user VA and `ecall` is unavailable.
 
 
-## 10. Userspace programs (`user/`)
+## 10. Userspace programs (`programs/user/`)
 
 ### 10.1 Shell (`shell.hll`)
 
@@ -660,9 +668,10 @@ its left operand, evaluates the right into `a0`, pops the left into `t0`, and
 combines. `main` is emitted as `_start` and exits via the `a7=93` ecall with its
 return value; other functions `ret`. cc has no built-in I/O: a call to `putc`
 emits a plain `call putc` to an undefined symbol, resolved at link time against a
-separately assembled stdlib (`user/examples/stdlib.s` defines `putc`/`puts`/`exit`
+separately assembled stdlib (`programs/user/sample/stdlib/stdlib.s` defines `putc`/`puts`/`exit`
 in assembly). Integer arithmetic is normalized to 32 bits with a trailing `addiw`.
-The frozen codegen target is `user/fixtures/hello.s`; `user/examples/hello.hll` is a
+The frozen codegen target is `programs/user/fixture/hello_s/hello.s`;
+`programs/user/sample/hello/hello.hll` is a
 ready-to-compile pure-HLL-0 sample installed at `/home/src/hello.hll` -- build it
 with `cc hello.hll hello.s`, `as hello.s hello.o`, `as stdlib.s stdlib.o`,
 `ld stdlib.o hello.o hello`.
@@ -683,9 +692,9 @@ them from the shell and view in the Machine window's FB tab.
 
 ### 10.6 Hello and examples
 
-`user/demo/user_hello.hll` prints a greeting via `sys_write` then yields in a loop
-(a minimal pid-1). `user/examples/array.s` (=42) is the sample assembly input for the
-in-VM assembler, installed at `/home/src/array.s`. `user/examples/stdlib.s` is the
+`programs/user/demo/hello/user_hello.hll` prints a greeting via `sys_write` then yields in a loop
+(a minimal pid-1). `programs/user/sample/array/array.s` (=42) is the sample assembly input for the
+in-VM assembler, installed at `/home/src/array.s`. `programs/user/sample/stdlib/stdlib.s` is the
 asm stdlib (`putc`/`puts`/`exit`) that a cc-compiled client (`hello.hll`) links
 against via `ld`; both are installed under `/home/src`.
 

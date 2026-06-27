@@ -243,10 +243,12 @@ fn cmd_link(args: &Args) -> Result<ExitCode, CliError> {
             mangle_symbols: false,
         };
     }
-    for path in args.inputs.iter().skip(1) {
-        manifest
-            .legacy_aux
-            .push(BuildSource::path(source_stem(path, "module"), path));
+    if args.inputs.len() > 1 {
+        return Err(CliError::Usage(
+            "multiple HLL inputs are no longer linked positionally; use a .build root with \
+             import(...) dependencies"
+                .to_owned(),
+        ));
     }
 
     let artifacts = BuildExecutor::build(&manifest).map_err(|e| match e {

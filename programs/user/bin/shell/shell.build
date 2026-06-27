@@ -1,0 +1,9 @@
+name = "shell"
+title = "Shell"
+description = "Interactive shell (pid 1): ls, cd, run, cat, edit, as, file management."
+kind = "tool"
+target = "hosted"
+stdlib = "hosted"
+root = "shell.hll"
+import_closure = true
+mangle_symbols = false

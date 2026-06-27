@@ -9,7 +9,7 @@ use eframe::egui::{self, Color32, RichText};
 use virtual_machine::bus::RAM_BASE;
 use virtual_machine::virtual_machine::VirtualMachine;
 
-// PCB field byte offsets (kernel/process.hll; OS spec 5.1). The PCB is 384 bytes;
+// PCB field byte offsets (kernel/sched/process.hll; OS spec 5.1). The PCB is 384 bytes;
 // the ready queue and zombie list both link through `next` at offset 16.
 const PCB_OFF_PID: u64 = 0;
 const PCB_OFF_STATE: u64 = 8;
@@ -40,7 +40,7 @@ const MAX_WALK: usize = 64;
 // Bound the stack walk: a full 4-page (16 KiB) stack is 2048 words; cap the render.
 const MAX_STACK_WORDS: usize = 256;
 
-// Syscall trace ring layout (kernel/syscall.hll). Must match the HLL constants.
+// Syscall trace ring layout (kernel/core/syscall.hll). Must match the HLL constants.
 const TRACE_ENTRIES: usize = 256;
 const TRACE_FIELDS: usize = 8;
 const TRACE_F_SEQ: u64 = 0;
@@ -287,7 +287,7 @@ pub struct TraceEntry {
     pub ret: u64,
 }
 
-/// Human name for a syscall number (kernel/syscall.hll SYSCALL_* constants).
+/// Human name for a syscall number (kernel/core/syscall.hll SYSCALL_* constants).
 fn syscall_name(num: u64) -> &'static str {
     match num {
         2 => "yield",

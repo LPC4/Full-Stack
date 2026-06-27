@@ -1,12 +1,12 @@
 //! Filesystem inspector: walks the in-memory FS image from guest memory into a
-//! read-only tree with a file preview. Layout (kernel/fs.hll; OS spec 8) is here.
+//! read-only tree with a file preview. Layout (kernel/fs/fs.hll; OS spec 8) is here.
 
 use asm_to_binary::AssembledOutput;
 use eframe::egui::{self, Color32, RichText};
 use virtual_machine::bus::RAM_BASE;
 use virtual_machine::virtual_machine::VirtualMachine;
 
-// FS on-disk layout (kernel/fs.hll). Must match the HLL constants.
+// FS on-disk layout (kernel/fs/fs.hll). Must match the HLL constants.
 const BLOCK_SIZE: u64 = 4096;
 const INODE_SIZE: u64 = 128;
 const INODE_BLOCKS: u64 = 44;

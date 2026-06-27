@@ -13,35 +13,18 @@ use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 static STDLIB_OBJS: OnceLock<Vec<(String, AssembledOutput)>> = OnceLock::new();
 
 fn bundled_module_source(name: &str) -> Option<&'static str> {
-    match name {
-        "layout" => Some(kernel::LAYOUT),
-        "pmm" => Some(kernel::PMM),
-        "vmm" => Some(kernel::VMM),
-        "process" => Some(kernel::PROCESS),
-        "scheduler" => Some(kernel::SCHEDULER),
-        "fs" => Some(kernel::FS),
-        "syscall" => Some(kernel::SYSCALL),
-        "trap_entry" => Some(kernel::TRAP_ENTRY),
-        "trap_handler" => Some(kernel::TRAP_HANDLER),
-        "utilities" => Some(kernel::UTILITIES),
-        "checks" => Some(kernel::CHECKS),
-        "klog" => Some(os_runtime::stdlib::KLOG),
-        "mem" => Some(os_runtime::stdlib::MEM),
-        "string_utils" => Some(os_runtime::stdlib::STRING_UTILS),
-        "memory_allocator" => Some(os_runtime::stdlib::MEMORY_ALLOCATOR),
-        "runtime" => Some(os_runtime::stdlib::FREESTANDING_RUNTIME),
-        "console" => Some(os_runtime::stdlib::FREESTANDING_CONSOLE),
-        _ => None,
-    }
+    os_runtime::module_source(name)
 }
 
 fn direct_imports(source: &str) -> (String, HashMap<String, hll_to_ir::imports::ModuleAlias>) {
-    // Both legacy `import "name"` and qualified `name := import("name")` contribute their
-    // target's interface; the kernel links flat, so references stay unqualified.
-    let mut names = hll_to_ir::imports::collect_imports(source).expect("collect imports");
     let module_imports =
         hll_to_ir::imports::collect_module_imports(source).expect("module imports");
-    names.extend(module_imports.iter().map(|(_alias, path)| module_key(path)));
+    // Qualified imports contribute their target's interface; the kernel links flat,
+    // so literal asm references and prefixed HLL calls stay unmangled.
+    let names = module_imports
+        .iter()
+        .map(|(_alias, path)| module_key(path))
+        .collect::<Vec<_>>();
     let mut prelude = String::new();
     let mut aliases = HashMap::new();
     for name in names {

@@ -9,9 +9,9 @@
 // files, which each recompiled the kernel independently.
 
 use asm_to_binary::AssembledOutput;
-use full_stack::build::{BuildExecutor, BuildManifest, BuildSource, ImportClosurePolicy};
+use full_stack::build::{BuildExecutor, BuildManifest};
 use full_stack::compilation_pipeline::{FsEntry, assembled_to_elf_file, build_fs_image};
-use os_runtime::user;
+use full_stack::userspace as user;
 use std::sync::OnceLock;
 use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 
@@ -61,7 +61,10 @@ fn cached_kernel_multi_module() -> &'static AssembledOutput {
 
 // Compile a hosted user program and link the hosted stdlib.
 fn compile_hosted(src: &str) -> AssembledOutput {
-    compile_hosted_modules(src, &[], "")
+    let manifest = BuildManifest::hosted("main", src);
+    BuildExecutor::build(&manifest)
+        .expect("hosted manifest build")
+        .linked
 }
 
 // Compile a catalog program (primary + aux units) the way the app boot path
@@ -70,26 +73,6 @@ fn compile_hosted_program(name: &str) -> AssembledOutput {
     let prog = user::program(name).expect("program in catalog");
     BuildExecutor::build(&BuildManifest::from_user_program(prog))
         .expect("catalog hosted manifest build")
-        .linked
-}
-
-// Compile a hosted program (primary + aux units) as separate objects linked
-// against the shared stdlib.
-fn compile_hosted_modules(src: &str, aux: &[&str], layout: &str) -> AssembledOutput {
-    let mut manifest = BuildManifest::hosted("main", src);
-    manifest.source_prelude = (!layout.is_empty()).then(|| layout.to_owned());
-    manifest.legacy_aux = aux
-        .iter()
-        .enumerate()
-        .map(|(index, source)| {
-            BuildSource::inline(format!("aux{index}"), (*source).to_owned())
-        })
-        .collect();
-    if !manifest.legacy_aux.is_empty() {
-        manifest.import_closure = ImportClosurePolicy::Disabled;
-    }
-    BuildExecutor::build(&manifest)
-        .expect("hosted manifest build")
         .linked
 }
 
@@ -178,6 +161,20 @@ fn run_example_in_kernel(user_src: &str, label: &str) {
     assert_user_exit_ok(&uart, &outcome, label);
 }
 
+fn run_example_manifest_in_kernel(name: &str) {
+    let manifest_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("programs/example")
+        .join(name)
+        .join(format!("{name}.build"));
+    let manifest = BuildManifest::from_file(&manifest_path)
+        .unwrap_or_else(|e| panic!("{}: parse failed: {e}", manifest_path.display()));
+    let user = BuildExecutor::build(&manifest)
+        .unwrap_or_else(|e| panic!("{}: build failed: {e}", manifest_path.display()))
+        .linked;
+    let (_, outcome, uart) = boot_kernel(cached_kernel(), Some(&user), None, "", 10_000_000);
+    assert_user_exit_ok(&uart, &outcome, name);
+}
+
 // Boot the shell with a set of `tools` installed (each named by its catalog key;
 // source, aux modules, and install path come from the user catalog) plus extra
 // `files`, drive `session` over UART, and return (outcome, uart). Collapses the
@@ -195,11 +192,7 @@ fn run_tool_session(
         .map(|name| {
             let prog = user::program(name).expect("tool not in user catalog");
             let path = prog.install_path.expect("tool has no install path");
-            let elf = assembled_to_elf_file(&compile_hosted_modules(
-                prog.source,
-                prog.aux_sources,
-                prog.layout,
-            ));
+            let elf = assembled_to_elf_file(&compile_hosted_program(name));
             (path, elf)
         })
         .collect();
@@ -356,86 +349,49 @@ fn kernel_boot_multi_module_no_user_binary() {
 
 // --- Example programs in kernel userspace (merged from kernel_example_injection.rs) ---
 
-const CORE_BASICS: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/programs/example/core_basics.hll"
-));
-const OPERATORS: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/programs/example/operators.hll"
-));
-const POINTERS_AND_PLACES: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/programs/example/pointers_and_places.hll"
-));
-const ARRAYS_SLICES_AND_RANGES: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/programs/example/arrays_slices_and_ranges.hll"
-));
-const STRUCTS_AND_BINDING: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/programs/example/structs_and_binding.hll"
-));
-const GENERICS: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/programs/example/generics.hll"
-));
-const ENUMS_MATCH_AND_RESULT: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/programs/example/enums_match_and_result.hll"
-));
-const STRINGS_AND_ITERATION: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/programs/example/strings_and_iteration.hll"
-));
-const COMPILE_TIME_MATH: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/programs/example/compile_time_math.hll"
-));
-
 #[test]
 fn example_core_basics_runs_in_kernel_userspace() {
-    run_example_in_kernel(CORE_BASICS, "core_basics");
+    run_example_manifest_in_kernel("core_basics");
 }
 
 #[test]
 fn example_operators_runs_in_kernel_userspace() {
-    run_example_in_kernel(OPERATORS, "operators");
+    run_example_manifest_in_kernel("operators");
 }
 
 #[test]
 fn example_pointers_and_places_runs_in_kernel_userspace() {
-    run_example_in_kernel(POINTERS_AND_PLACES, "pointers_and_places");
+    run_example_manifest_in_kernel("pointers_and_places");
 }
 
 #[test]
 fn example_arrays_slices_and_ranges_runs_in_kernel_userspace() {
-    run_example_in_kernel(ARRAYS_SLICES_AND_RANGES, "arrays_slices_and_ranges");
+    run_example_manifest_in_kernel("arrays_slices_and_ranges");
 }
 
 #[test]
 fn example_structs_and_binding_runs_in_kernel_userspace() {
-    run_example_in_kernel(STRUCTS_AND_BINDING, "structs_and_binding");
+    run_example_manifest_in_kernel("structs_and_binding");
 }
 
 #[test]
 fn example_generics_runs_in_kernel_userspace() {
-    run_example_in_kernel(GENERICS, "generics");
+    run_example_manifest_in_kernel("generics");
 }
 
 #[test]
 fn example_enums_match_and_result_runs_in_kernel_userspace() {
-    run_example_in_kernel(ENUMS_MATCH_AND_RESULT, "enums_match_and_result");
+    run_example_manifest_in_kernel("enums_match_and_result");
 }
 
 #[test]
 fn example_strings_and_iteration_runs_in_kernel_userspace() {
-    run_example_in_kernel(STRINGS_AND_ITERATION, "strings_and_iteration");
+    run_example_manifest_in_kernel("strings_and_iteration");
 }
 
 #[test]
 fn example_compile_time_math_runs_in_kernel_userspace() {
-    run_example_in_kernel(COMPILE_TIME_MATH, "compile_time_math");
+    run_example_manifest_in_kernel("compile_time_math");
 }
 
 #[test]
@@ -1684,7 +1640,7 @@ fn kernel_cc_target_roundtrips() {
 // without booting the kernel.
 #[test]
 fn cc_host_compiles() {
-    let out = compile_hosted_modules(user::CC, &[user::CC_CODEGEN], user::CC_LAYOUT);
+    let out = compile_hosted_program("cc");
     assert!(
         !out.to_flat_binary().is_empty(),
         "cc.hll produced an empty binary"

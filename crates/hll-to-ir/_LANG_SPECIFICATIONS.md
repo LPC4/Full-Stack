@@ -294,6 +294,11 @@ a specialization that uses an operation the concrete type does not support fails
 specialized site with an ordinary type error. A recursive specialization that does not
 converge is diagnosed rather than allowed to hang.
 
+Generics do not cross a module boundary yet. A module interface carries an exported function
+only as an `external` signature, not its body, so an importer cannot monomorphize an imported
+generic at the use site. Until interfaces carry generic bodies, a generic must live in the
+module that instantiates it.
+
 ### 6.3 Modules, `import`, and `export`
 
 Each source file is one module. Modules compile separately to their own object and compose
@@ -365,13 +370,9 @@ parses and type-checks the target's exported interface and adds a link edge, but
 the target's top-level code. Effectful setup lives behind an explicit function (`db.init()`).
 Cyclic imports are rejected with a diagnostic that names the cycle.
 
-#### Legacy `import "name"` (compatibility)
-
-The earlier whole-module form `import "name"` (a string, no parentheses) pulls a module's
-entire exported interface into the importer's bare namespace unqualified, with no module value.
-It remains supported while bundled sources migrate to `import(...)`, and resolves against the
-host module registry (the catalog plus the `os-runtime` `PROGRAMS` table) by flat name. New
-code should prefer `alias := import(path)`.
+The earlier whole-module form `import "name"` is no longer accepted. Imports must bind a
+module value (`alias := import(path)` or `const alias = import(path)`) and exported members
+must be reached through that alias.
 
 #### `external` (low level)
 
@@ -420,21 +421,24 @@ The mechanisms above are the target. Current status:
   prepended interface.
 - The bundled resolver covers kernel modules (`layout`, `trap_entry`, `pmm`, `vmm`, `process`,
   `scheduler`, `fs`, `syscall`, `trap_handler`, `utilities`, `checks`) and kernel-facing stdlib
-  modules (`console`, `runtime`, `klog`, `mem`, `string_utils`, `memory_allocator`). Kernel TUs
-  import the providers they use with qualified `name := import("name")`; `layout.hll` exports the
-  PCB/trap-frame structs and ABI consts. The production kernel build (`ensure_kernel_binary`, the
-  GUI, the CLI, and the integration tests) drives the link set from the `my_kernel` closure with
-  mangling off, linking it against the precompiled stdlib objects plus the boot `entry`. The
-  kernel-mode source prelude (auto-prepended `layout.hll`) remains as the fallback for the raw
-  `HllCompiler` path, where the import is inert. The `as`/`cc` split tools still use their
-  `layout` headers (`set_source_prelude`) pending migration.
+  modules (`console`, `runtime`, `klog`, `mem`, `string_utils`, `memory_allocator`) through the
+  generated `os_runtime::module_source` registry. `hll_to_ir::stdlib` reads the ordered
+  `stdlib/stdlib.build` lists for hosted, freestanding, and kernel module order; the folders are
+  organizational only. Kernel TUs import the providers they use with qualified
+  `name := import("name")`; `layout.hll` exports the PCB/trap-frame structs and ABI consts. The
+  production kernel build (`ensure_kernel_binary`, the GUI, the CLI, and the integration tests)
+  drives the link set from the `my_kernel` closure with mangling off, linking it against the
+  precompiled stdlib objects plus the boot `entry`. The kernel-mode source prelude
+  (auto-prepended `layout.hll`) remains as the fallback for the raw `HllCompiler` path, where the
+  import is inert. The split `as`/`cc`/`ld`/`shell` tools are also closure-built through
+  qualified relative imports; `as` and `cc` keep their layout headers as shared record prelude.
 
 Migration order: (1) interface import for `type`/`const`/signatures, retiring the source
-prelude (kernel migrated; `as`/`cc` pending); (2) `import`-driven transitive link closure with
-per-module mangling, now driving the kernel build (`aux_sources` retired for the kernel); (3)
-`export` visibility enforcement at the object level (`.globl` only for exports), now
-implemented for host HLL builds. `external` and the `layout` prelude remain as fallbacks so the
-remaining tools migrate one at a time.
+prelude where possible; `as`/`cc` still need layout prelude for shared records); (2)
+`import`-driven transitive link closure with per-module mangling, now driving the kernel and
+userspace tool builds (`aux_sources` retired for bundled manifests); (3) `export` visibility
+enforcement at the object level (`.globl` only for exports), now implemented for host HLL builds.
+`external` remains for ABI/syscall declarations and explicit cross-object symbols.
 
 ## 7. Control flow, enums, and resource management
 
@@ -752,7 +756,7 @@ additive above comparison; parenthesize anything ambiguous.
 
 `putc(ch: i32)` writes the low byte of `ch` to file descriptor 1. It is the only intrinsic;
 `cc` lowers a `putc` call to a plain `call putc`, left undefined and resolved at link time
-against the asm stdlib (`user/examples/stdlib.s`). Process exit is `main`'s return value,
+against the asm stdlib (`programs/user/sample/stdlib/stdlib.s`). Process exit is `main`'s return value,
 lowered to an exit ecall. All other output is built from `putc`.
 
 ### A.6 Codegen target
@@ -760,5 +764,6 @@ lowered to an exit ecall. All other output is built from `putc`.
 `cc` emits naive stack-machine RISC-V in the subset the in-VM assembler `/bin/as` covers:
 every local occupies a stack slot, operands are reloaded before each use, arguments pass in
 `a0..a7`, and each function keeps `ra` in its frame across calls. The pure-HLL-0 sample
-`user/examples/hello.hll` omits any `putc` definition; the in-VM `cc` -> `as` -> `ld` -> run
+`programs/user/sample/hello/hello.hll` omits any `putc` definition; the in-VM
+`cc` -> `as` -> `ld` -> run
 toolchain assembles and links it against the asm stdlib.

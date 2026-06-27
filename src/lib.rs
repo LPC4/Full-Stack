@@ -23,4 +23,5 @@
 pub mod build;
 pub mod compilation_pipeline;
 pub mod target_mode;
+pub mod userspace;
 pub mod view;

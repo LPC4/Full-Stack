@@ -4,9 +4,9 @@ use asm_to_binary::{AssembledOutput, LinkerError};
 use std::fmt;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::rc::Rc;
 
-pub type BuildModuleResolver = Arc<dyn Fn(&str) -> Option<String> + 'static>;
+pub type BuildModuleResolver = Rc<dyn Fn(&str) -> Option<String> + 'static>;
 
 /// Build description for one linkable HLL program.
 ///
@@ -20,7 +20,6 @@ pub struct BuildManifest {
     pub root: BuildSource,
     pub stdlib: StdlibPolicy,
     pub import_closure: ImportClosurePolicy,
-    pub legacy_aux: Vec<BuildSource>,
     pub source_prelude: Option<String>,
     pub string_prefix: Option<String>,
     pub link_layout: Option<LinkLayout>,
@@ -43,7 +42,6 @@ impl BuildManifest {
             import_closure: ImportClosurePolicy::Enabled {
                 mangle_symbols: true,
             },
-            legacy_aux: Vec::new(),
             source_prelude: None,
             string_prefix: Some("_u_".to_owned()),
             link_layout: None,
@@ -66,7 +64,6 @@ impl BuildManifest {
             import_closure: ImportClosurePolicy::Enabled {
                 mangle_symbols: false,
             },
-            legacy_aux: Vec::new(),
             source_prelude: None,
             string_prefix: Some("__kern_str_".to_owned()),
             link_layout: None,
@@ -78,16 +75,18 @@ impl BuildManifest {
         }
     }
 
-    pub fn from_user_program(program: &os_runtime::user::UserProgram) -> Self {
+    pub fn from_user_program(program: &crate::userspace::UserProgram) -> Self {
         let mut manifest = Self::hosted(program.name, program.source);
+        manifest.root =
+            BuildSource::inline_with_path(program.name, program.source, program.source_path);
+        manifest.import_closure = if program.import_closure {
+            ImportClosurePolicy::Enabled {
+                mangle_symbols: program.mangle_symbols,
+            }
+        } else {
+            ImportClosurePolicy::Disabled
+        };
         manifest.source_prelude = (!program.layout.is_empty()).then(|| program.layout.to_owned());
-        manifest.legacy_aux = program
-            .aux_modules()
-            .map(|(name, source)| BuildSource::inline(name, source))
-            .collect();
-        if !manifest.legacy_aux.is_empty() {
-            manifest.import_closure = ImportClosurePolicy::Disabled;
-        }
         manifest
     }
 
@@ -95,13 +94,13 @@ impl BuildManifest {
         let path = path.into();
         let text = fs::read_to_string(&path).map_err(BuildError::Io)?;
         let base_dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));
-        let values = parse_manifest_kv(&text)?;
+        let values = build_manifest::parse(&text).map_err(|err| BuildError::Manifest(err.0))?;
 
         let root_path = values
             .get("root")
             .ok_or_else(|| BuildError::Manifest("build manifest missing `root`".to_owned()))?;
         let root_path = resolve_manifest_path(base_dir, root_path);
-        let name = values.get("name").cloned().unwrap_or_else(|| {
+        let name = values.string("name").unwrap_or_else(|| {
             root_path
                 .file_stem()
                 .and_then(|stem| stem.to_str())
@@ -110,7 +109,7 @@ impl BuildManifest {
         });
         let target = values
             .get("target")
-            .map(|value| parse_target_mode(value))
+            .map(parse_target_mode)
             .transpose()?
             .unwrap_or(TargetMode::Hosted);
 
@@ -121,18 +120,14 @@ impl BuildManifest {
         manifest.target = target;
         manifest.name = name.clone();
         manifest.root = BuildSource::path(name, root_path);
-        manifest.entry = values.get("entry").cloned();
+        manifest.entry = values.string("entry");
         manifest.stdlib = values
             .get("stdlib")
             .map(|value| parse_stdlib_policy(value, target))
             .transpose()?
             .unwrap_or(StdlibPolicy::ForTarget);
 
-        if let Some(enabled) = values
-            .get("import_closure")
-            .map(|value| parse_bool(value))
-            .transpose()?
-        {
+        if let Some(enabled) = values.bool("import_closure").map_err(manifest_error)? {
             manifest.import_closure = if enabled {
                 ImportClosurePolicy::Enabled {
                     mangle_symbols: !matches!(target, TargetMode::Kernel),
@@ -141,10 +136,7 @@ impl BuildManifest {
                 ImportClosurePolicy::Disabled
             };
         }
-        if let Some(mangle_symbols) = values
-            .get("mangle_symbols")
-            .map(|value| parse_bool(value))
-            .transpose()?
+        if let Some(mangle_symbols) = values.bool("mangle_symbols").map_err(manifest_error)?
             && matches!(manifest.import_closure, ImportClosurePolicy::Enabled { .. })
         {
             manifest.import_closure = ImportClosurePolicy::Enabled { mangle_symbols };
@@ -154,25 +146,8 @@ impl BuildManifest {
             let path = resolve_manifest_path(base_dir, path);
             manifest.source_prelude = Some(fs::read_to_string(path).map_err(BuildError::Io)?);
         }
-        if let Some(aux) = values.get("legacy_aux") {
-            manifest.legacy_aux = parse_string_list(aux)?
-                .into_iter()
-                .map(|path| {
-                    let path = resolve_manifest_path(base_dir, &path);
-                    let name = path
-                        .file_stem()
-                        .and_then(|stem| stem.to_str())
-                        .unwrap_or("aux")
-                        .to_owned();
-                    BuildSource::path(name, path)
-                })
-                .collect();
-            if !manifest.legacy_aux.is_empty() {
-                manifest.import_closure = ImportClosurePolicy::Disabled;
-            }
-        }
-        if let Some(exports) = values.get("abi_exports") {
-            manifest.abi_exports = parse_string_list(exports)?;
+        if let Some(exports) = values.list("abi_exports").map_err(manifest_error)? {
+            manifest.abi_exports = exports;
         }
 
         Ok(manifest)
@@ -273,7 +248,6 @@ pub struct BuildPlan {
     pub stdlib: StdlibPolicy,
     pub import_closure: ImportClosurePolicy,
     pub root: String,
-    pub legacy_aux: Vec<String>,
     pub extra_objects: Vec<String>,
     pub abi_exports: Vec<String>,
     pub has_source_prelude: bool,
@@ -326,11 +300,6 @@ impl BuildExecutor {
             stdlib: manifest.stdlib,
             import_closure: manifest.import_closure,
             root: manifest.root.name().to_owned(),
-            legacy_aux: manifest
-                .legacy_aux
-                .iter()
-                .map(|source| source.name().to_owned())
-                .collect(),
             extra_objects: manifest
                 .extra_objects
                 .iter()
@@ -369,9 +338,6 @@ impl BuildExecutor {
                 {
                     if name == root.name {
                         Self::mark_abi_exports(manifest, &mut assembled);
-                        if !manifest.legacy_aux.is_empty() {
-                            Self::mark_all_defined_symbols_global(&mut assembled);
-                        }
                     }
                     units.push(BuiltUnit { name, assembled });
                 }
@@ -379,21 +345,8 @@ impl BuildExecutor {
             ImportClosurePolicy::Disabled => {
                 let mut root_unit = Self::compile_one(&mut pipeline, &root)?;
                 Self::mark_abi_exports(manifest, &mut root_unit.assembled);
-                if !manifest.legacy_aux.is_empty() {
-                    Self::mark_all_defined_symbols_global(&mut root_unit.assembled);
-                }
                 units.push(root_unit);
             }
-        }
-
-        for (index, aux) in manifest.legacy_aux.iter().enumerate() {
-            let loaded = aux.load()?;
-            let mut aux_pipeline = Self::pipeline_for(manifest);
-            aux_pipeline.set_current_source_path(loaded.source_path.clone());
-            aux_pipeline.set_string_prefix(Some(format!("{}_aux{index}_str_", manifest.name)));
-            let mut aux_unit = Self::compile_one(&mut aux_pipeline, &loaded)?;
-            Self::mark_all_defined_symbols_global(&mut aux_unit.assembled);
-            units.push(aux_unit);
         }
 
         let modules: Vec<(&str, &AssembledOutput)> = units
@@ -447,17 +400,6 @@ impl BuildExecutor {
         }
     }
 
-    fn mark_all_defined_symbols_global(assembled: &mut AssembledOutput) {
-        let symbols: Vec<String> = assembled
-            .symbols_iter()
-            .filter(|(name, _addr)| is_legacy_export_symbol(name))
-            .map(|(name, _addr)| name.to_owned())
-            .collect();
-        for symbol in symbols {
-            assembled.mark_entry_global(&symbol);
-        }
-    }
-
     fn pipeline_for(manifest: &BuildManifest) -> CompilationPipeline {
         let mut pipeline = CompilationPipeline::new();
         pipeline.set_target_mode(manifest.target);
@@ -473,79 +415,15 @@ impl BuildExecutor {
             pipeline.set_source_prelude(prelude.clone());
         }
         if let Some(resolver) = &manifest.module_resolver {
-            let resolver = Arc::clone(resolver);
+            let resolver = Rc::clone(resolver);
             pipeline.set_module_resolver(Some(Box::new(move |name| resolver(name))));
         }
         pipeline
     }
 }
 
-fn is_legacy_export_symbol(name: &str) -> bool {
-    !name.starts_with('.') && !name.contains("__")
-}
-
-fn parse_manifest_kv(text: &str) -> Result<std::collections::HashMap<String, String>, BuildError> {
-    let mut values = std::collections::HashMap::new();
-    for (index, raw_line) in text.lines().enumerate() {
-        let line = raw_line
-            .split_once('#')
-            .map_or(raw_line, |(head, _)| head)
-            .trim();
-        if line.is_empty() {
-            continue;
-        }
-        let Some((key, value)) = line.split_once('=') else {
-            return Err(BuildError::Manifest(format!(
-                "line {}: expected `key = value`",
-                index + 1
-            )));
-        };
-        values.insert(key.trim().to_owned(), parse_scalar(value.trim())?);
-    }
-    Ok(values)
-}
-
-fn parse_scalar(value: &str) -> Result<String, BuildError> {
-    if value.starts_with('[') || matches!(value, "true" | "false") {
-        return Ok(value.to_owned());
-    }
-    parse_quoted(value)
-}
-
-fn parse_quoted(value: &str) -> Result<String, BuildError> {
-    let Some(inner) = value.strip_prefix('"').and_then(|v| v.strip_suffix('"')) else {
-        return Err(BuildError::Manifest(format!(
-            "expected quoted string, got `{value}`"
-        )));
-    };
-    Ok(inner.replace("\\\"", "\"").replace("\\\\", "\\"))
-}
-
-fn parse_string_list(value: &str) -> Result<Vec<String>, BuildError> {
-    let Some(inner) = value.strip_prefix('[').and_then(|v| v.strip_suffix(']')) else {
-        return Err(BuildError::Manifest(format!(
-            "expected string list, got `{value}`"
-        )));
-    };
-    let mut out = Vec::new();
-    for item in inner.split(',') {
-        let item = item.trim();
-        if item.is_empty() {
-            continue;
-        }
-        out.push(parse_quoted(item)?);
-    }
-    Ok(out)
-}
-
-fn parse_bool(value: &str) -> Result<bool, BuildError> {
-    match value {
-        "true" => Ok(true),
-        "false" => Ok(false),
-        _ => Err(BuildError::Manifest(format!(
-            "expected boolean `true` or `false`, got `{value}`"
-        ))),
-    }
+fn manifest_error(err: build_manifest::ManifestError) -> BuildError {
+    BuildError::Manifest(err.0)
 }
 
 fn parse_target_mode(value: &str) -> Result<TargetMode, BuildError> {
@@ -617,39 +495,51 @@ main: () -> i32 {
     }
 
     #[test]
-    fn manifest_builds_legacy_aux_program() {
+    fn manifest_builds_import_closure_program() {
         let mut manifest = BuildManifest::hosted(
-            "manifest_aux",
+            "manifest_modules",
             r#"
-external helper: () -> i32
+helper := import("helper")
 
 main: () -> i32 {
-    return helper()
+    return helper.value()
 }
 "#,
         );
-        manifest.import_closure = ImportClosurePolicy::Disabled;
-        manifest.stdlib = StdlibPolicy::Explicit(TargetMode::Hosted);
-        manifest.legacy_aux.push(BuildSource::inline(
-            "helper_mod",
+        manifest.root = BuildSource::inline_with_path(
+            "manifest_modules",
             r#"
-export helper: () -> i32 {
-    return 7
+helper := import("helper")
+
+main: () -> i32 {
+    return helper.value()
 }
 "#,
-        ));
+            "manifest_modules.hll",
+        );
+        manifest.stdlib = StdlibPolicy::Explicit(TargetMode::Hosted);
+        manifest.module_resolver = Some(std::rc::Rc::new(|name| {
+            (name == "helper").then(|| {
+                r#"
+export value: () -> i32 {
+    return 7
+}
+"#
+                .to_owned()
+            })
+        }));
 
-        let artifacts = BuildExecutor::build(&manifest).expect("manifest aux build");
+        let artifacts = BuildExecutor::build(&manifest).expect("manifest closure build");
         assert!(
-            artifacts.linked.has_symbol("helper"),
-            "linked output should contain aux export"
+            artifacts.linked.has_symbol("helper__value"),
+            "linked output should contain imported helper export"
         );
     }
 
     #[test]
     fn file_manifest_builds_hosted_example() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("programs/example/core_basics.build");
+            .join("programs/example/core_basics/core_basics.build");
         let manifest = BuildManifest::from_file(path).expect("parse hosted build file");
         assert_eq!(manifest.name, "core_basics");
         assert_eq!(manifest.target, TargetMode::Hosted);
@@ -661,11 +551,8 @@ export helper: () -> i32 {
     #[test]
     fn all_example_file_manifests_build() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("programs/example");
-        let mut paths: Vec<_> = std::fs::read_dir(dir)
-            .expect("read examples directory")
-            .map(|entry| entry.expect("example directory entry").path())
-            .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("build"))
-            .collect();
+        let mut paths = Vec::new();
+        collect_build_files(&dir, &mut paths);
         paths.sort();
         assert!(!paths.is_empty(), "expected example build manifests");
 
@@ -679,6 +566,17 @@ export helper: () -> i32 {
                 "{} should link a hosted main",
                 path.display()
             );
+        }
+    }
+
+    fn collect_build_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(dir).expect("read examples directory") {
+            let path = entry.expect("example directory entry").path();
+            if path.is_dir() {
+                collect_build_files(&path, out);
+            } else if path.extension().and_then(|ext| ext.to_str()) == Some("build") {
+                out.push(path);
+            }
         }
     }
 
@@ -697,5 +595,15 @@ export helper: () -> i32 {
                 mangle_symbols: false
             }
         ));
+    }
+
+    // The split `ld` tool imports `./ld_link.hll`; building through its `.build` manifest must
+    // resolve that relative import from the tool's own directory and link cleanly.
+    #[test]
+    fn file_manifest_builds_ld_with_relative_import() {
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("programs/user/bin/ld/ld.build");
+        let manifest = BuildManifest::from_file(path).expect("parse ld build file");
+        BuildExecutor::build(&manifest).expect("ld builds with its relative import resolved");
     }
 }
