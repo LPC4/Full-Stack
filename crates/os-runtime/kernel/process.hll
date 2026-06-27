@@ -17,7 +17,7 @@ const USER_STACK_BASE = 0x80000000
 next_pid: u64 = 1
 
 export process_init: () {
-    klog_ok("process subsystem ready".ptr)
+    klog.ok("process subsystem ready".ptr)
 }
 
 ; Return the pid that the next process_create call will assign.
@@ -27,10 +27,10 @@ export process_peek_pid: () -> u64 {
 }
 
 ; Create a new user process whose stack lives at the given top VA.
-; Returns a u64* pointer to the PCB; the caller passes it to scheduler_add().
+; Returns a u64* pointer to the PCB; the caller passes it to scheduler.add().
 export process_create_at: (entry_pc: u64, stack_top: u64) -> u64* {
-    pcb_bytes: u8* = kmalloc(PCB_SIZE)
-    memset(pcb_bytes, 0, PCB_SIZE)
+    pcb_bytes: u8* = utilities.malloc(PCB_SIZE)
+    mem.memset(pcb_bytes, 0, PCB_SIZE)
     pcb: u64* = pcb_bytes as u64*
 
     pcb[PCB_IDX_PID] = next_pid
@@ -39,20 +39,20 @@ export process_create_at: (entry_pc: u64, stack_top: u64) -> u64* {
 
     ; Give the process its own address space and make it the active root so the
     ; user stack (and any code the caller maps afterwards) lands inside it.
-    root_pa: u64 = vmm_new_root()
+    root_pa: u64 = vmm.new_root()
     pcb[PCB_IDX_PAGE_ROOT] = root_pa
-    vmm_set_root(root_pa)
+    vmm.set_root(root_pa)
 
     ; User stack: a few pages below stack_top.
     stack_pages:  u64 = 4
     last_page_pa: u64 = 0
     for sp_i in 0..stack_pages {
-        page_pa: u8* = pmm_alloc()
+        page_pa: u8* = pmm.alloc()
         if page_pa == null {
-            kpanic("process_create: out of memory for user stack".ptr)
+            runtime.panic("process_create: out of memory for user stack".ptr)
         }
         page_va: u64 = stack_top - (sp_i + 1) * 0x1000
-        vmm_map(page_va, page_pa as u64, VMM_R + VMM_W + VMM_U)  ; vmm_map adds V.
+        vmm.map(page_va, page_pa as u64, VMM_R + VMM_W + VMM_U)  ; vmm_map adds V.
         last_page_pa = page_pa as u64
     }
     pcb[PCB_IDX_USER_STACK_PA] = last_page_pa
@@ -75,8 +75,8 @@ export process_create: (entry_pc: u64) -> u64* {
 ; Allocate a zeroed PCB with the next pid but no address space or stack.
 ; Used by fork, which supplies the child's root and copies memory itself.
 export process_alloc: () -> u64* {
-    pcb_bytes: u8* = kmalloc(PCB_SIZE)
-    memset(pcb_bytes, 0, PCB_SIZE)
+    pcb_bytes: u8* = utilities.malloc(PCB_SIZE)
+    mem.memset(pcb_bytes, 0, PCB_SIZE)
     pcb: u64* = pcb_bytes as u64*
     pcb[PCB_IDX_PID] = next_pid
     next_pid = next_pid + 1

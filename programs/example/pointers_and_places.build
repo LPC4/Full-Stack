@@ -1,0 +1,7 @@
+name = "pointers_and_places"
+target = "hosted"
+root = "pointers_and_places.hll"
+entry = "_start"
+stdlib = "hosted"
+import_closure = true
+mangle_symbols = true

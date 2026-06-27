@@ -9,11 +9,9 @@
 // files, which each recompiled the kernel independently.
 
 use asm_to_binary::AssembledOutput;
-use full_stack::compilation_pipeline::{
-    CompilationPipeline, FsEntry, TargetMode, assembled_to_elf_file, build_fs_image,
-};
-use hll_to_ir::stdlib::{get_stdlib_modules_for_mode, get_stdlib_type_prelude};
-use os_runtime::{kernel, user};
+use full_stack::build::{BuildExecutor, BuildManifest, BuildSource, ImportClosurePolicy};
+use full_stack::compilation_pipeline::{FsEntry, assembled_to_elf_file, build_fs_image};
+use os_runtime::user;
 use std::sync::OnceLock;
 use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 
@@ -31,31 +29,14 @@ const USER_CODE_VA: u64 = 0x4000_0000;
 fn cached_kernel() -> &'static AssembledOutput {
     static KERNEL: OnceLock<AssembledOutput> = OnceLock::new();
     KERNEL.get_or_init(|| {
-        let stdlib_objs = CompilationPipeline::compile_stdlib_objects(TargetMode::Kernel)
-            .expect("kernel stdlib compile");
-
-        let mut kernel_pipeline = CompilationPipeline::new();
-        kernel_pipeline.set_target_mode(TargetMode::Kernel);
-        kernel_pipeline.set_write_artifacts(false);
-        kernel_pipeline.set_entry_point(Some("_kernel_start".to_owned()));
-        kernel_pipeline.set_module_mangling(false);
-        let kernel_objs = kernel_pipeline
-            .compile_program_closure("my_kernel", kernel::MY_KERNEL)
-            .expect("kernel modules compile");
-
-        let mut modules: Vec<(&str, &AssembledOutput)> =
-            stdlib_objs.iter().map(|(n, o)| (n.as_str(), o)).collect();
-        for (name, obj) in &kernel_objs {
-            modules.push((name.as_str(), obj));
-        }
-        let stem: String = modules
-            .iter()
-            .map(|(n, _)| *n)
-            .collect::<Vec<_>>()
-            .join("_");
-        kernel_pipeline
-            .link_assembled_objects_named(&stem, &modules)
-            .expect("kernel link")
+        let manifest = BuildManifest::from_file(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("crates/os-runtime/kernel/kernel.build"),
+        )
+        .expect("kernel build file parse");
+        BuildExecutor::build(&manifest)
+            .expect("kernel manifest build")
+            .linked
     })
 }
 
@@ -65,43 +46,14 @@ fn cached_kernel() -> &'static AssembledOutput {
 fn cached_kernel_multi_module() -> &'static AssembledOutput {
     static KERNEL: OnceLock<AssembledOutput> = OnceLock::new();
     KERNEL.get_or_init(|| {
-        let mut stdlib_pipeline = CompilationPipeline::new();
-        stdlib_pipeline.set_target_mode(TargetMode::Kernel);
-        stdlib_pipeline.set_string_prefix(Some("__kern_str_".to_owned()));
-        stdlib_pipeline.set_write_artifacts(false);
-        stdlib_pipeline.set_type_prelude(get_stdlib_type_prelude());
-
-        let modules = get_stdlib_modules_for_mode(TargetMode::Kernel);
-        let stdlib_objects = stdlib_pipeline
-            .compile_modules(&modules.iter().map(|(n, s)| (*n, *s)).collect::<Vec<_>>())
-            .expect("stdlib multi-module compile");
-
-        let mut kernel_pipeline = CompilationPipeline::new();
-        kernel_pipeline.set_target_mode(TargetMode::Kernel);
-        kernel_pipeline.set_write_artifacts(false);
-        kernel_pipeline.set_entry_point(Some("_kernel_start".to_owned()));
-        kernel_pipeline.set_module_mangling(false);
-        let kernel_objects = kernel_pipeline
-            .compile_program_closure("my_kernel", kernel::MY_KERNEL)
-            .expect("kernel modules compile");
-
-        let mut all_modules: Vec<(&str, &AssembledOutput)> = modules
-            .iter()
-            .map(|(n, _)| *n)
-            .zip(stdlib_objects.iter())
-            .collect();
-        for (name, obj) in &kernel_objects {
-            all_modules.push((name.as_str(), obj));
-        }
-        let stem = all_modules
-            .iter()
-            .map(|(n, _)| *n)
-            .collect::<Vec<_>>()
-            .join("_");
-
-        kernel_pipeline
-            .link_assembled_objects_named(&stem, &all_modules)
-            .expect("kernel link")
+        let manifest = BuildManifest::from_file(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("crates/os-runtime/kernel/kernel.build"),
+        )
+        .expect("kernel build file parse");
+        BuildExecutor::build(&manifest)
+            .expect("kernel build file build")
+            .linked
     })
 }
 
@@ -116,62 +68,29 @@ fn compile_hosted(src: &str) -> AssembledOutput {
 // does.
 fn compile_hosted_program(name: &str) -> AssembledOutput {
     let prog = user::program(name).expect("program in catalog");
-    compile_hosted_modules(prog.source, prog.aux_sources, prog.layout)
-}
-
-// The hosted stdlib compiled once as per-module objects (no concatenation),
-// linked against user programs, mirroring the real CLI.
-fn cached_hosted_stdlib() -> &'static [(String, AssembledOutput)] {
-    static STDLIB: OnceLock<Vec<(String, AssembledOutput)>> = OnceLock::new();
-    STDLIB.get_or_init(|| {
-        CompilationPipeline::compile_stdlib_objects(TargetMode::Hosted)
-            .expect("hosted stdlib compile")
-    })
+    BuildExecutor::build(&BuildManifest::from_user_program(prog))
+        .expect("catalog hosted manifest build")
+        .linked
 }
 
 // Compile a hosted program (primary + aux units) as separate objects linked
 // against the shared stdlib.
 fn compile_hosted_modules(src: &str, aux: &[&str], layout: &str) -> AssembledOutput {
-    let mut pipeline = CompilationPipeline::new();
-    pipeline.set_target_mode(TargetMode::Hosted);
-    pipeline.set_write_artifacts(false);
-    pipeline.set_type_prelude(get_stdlib_type_prelude());
-    pipeline.set_source_prelude(layout);
-    let result = pipeline.compile(src).expect("hosted compile");
-    let (_, tokens) = pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program);
-    let main_obj = pipeline
-        .assemble_named("main", &tokens)
-        .expect("hosted assemble");
-
-    let aux_objs: Vec<AssembledOutput> = aux
+    let mut manifest = BuildManifest::hosted("main", src);
+    manifest.source_prelude = (!layout.is_empty()).then(|| layout.to_owned());
+    manifest.legacy_aux = aux
         .iter()
         .enumerate()
-        .map(|(i, a)| {
-            let mut p = CompilationPipeline::new();
-            p.set_target_mode(TargetMode::Hosted);
-            p.set_write_artifacts(false);
-            p.set_type_prelude(get_stdlib_type_prelude());
-            p.set_source_prelude(layout);
-            p.set_string_prefix(Some(format!("aux{i}_str_")));
-            let r = p.compile(a).expect("aux compile");
-            let (_, t) = p.compile_ir_to_assembly_with_tokens(&r.ir_program);
-            p.assemble_named(&format!("aux{i}"), &t)
-                .expect("aux assemble")
+        .map(|(index, source)| {
+            BuildSource::inline(format!("aux{index}"), (*source).to_owned())
         })
         .collect();
-
-    let aux_names: Vec<String> = (0..aux_objs.len()).map(|i| format!("aux{i}")).collect();
-    let mut modules: Vec<(&str, &AssembledOutput)> = cached_hosted_stdlib()
-        .iter()
-        .map(|(n, o)| (n.as_str(), o))
-        .collect();
-    modules.push(("main", &main_obj));
-    for (n, o) in aux_names.iter().zip(aux_objs.iter()) {
-        modules.push((n.as_str(), o));
+    if !manifest.legacy_aux.is_empty() {
+        manifest.import_closure = ImportClosurePolicy::Disabled;
     }
-    pipeline
-        .link_assembled_objects_named("main", &modules)
-        .expect("hosted link")
+    BuildExecutor::build(&manifest)
+        .expect("hosted manifest build")
+        .linked
 }
 
 // Boot the kernel, optionally injecting an FS image and a pid-1 user binary, and

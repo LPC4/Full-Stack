@@ -1,0 +1,7 @@
+name = "core_basics"
+target = "hosted"
+root = "core_basics.hll"
+entry = "_start"
+stdlib = "hosted"
+import_closure = true
+mangle_symbols = true

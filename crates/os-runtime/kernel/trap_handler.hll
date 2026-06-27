@@ -28,7 +28,7 @@ export trap_handler: (frame: u64*) {
         ; Timer interrupt (cause 5): tick and reschedule.
         if cause_code == 5 {
             kernel_tick = kernel_tick + 1
-            timer_set(1000000)
+            utilities.timer_set(1000000)
             schedule(frame, 1)  ; SYSACT_SCHEDULE
             return
         }
@@ -49,8 +49,8 @@ export trap_handler: (frame: u64*) {
             @ier = 0 as u8
             ; Wake the input sleeper (pushed to the ready-queue front) and
             ; preempt the current job so it runs immediately.
-            if scheduler_wake_input_waiter() == 1 {
-                schedule(frame, 1)
+            if scheduler.wake_input_waiter() == 1 {
+                scheduler.schedule(frame, 1)
             }
             return
         }
@@ -61,24 +61,24 @@ export trap_handler: (frame: u64*) {
             return
         }
 
-        klog_hex("unhandled interrupt scause".ptr, scause_u)
-        kpanic("unhandled interrupt".ptr)
+        klog.hex("unhandled interrupt scause".ptr, scause_u)
+        runtime.panic("unhandled interrupt".ptr)
         return
     }
 
     ; U-mode ecall (cause 8): dispatch to syscall layer.
     ; Always advance sepc past the ecall; non-zero actions trigger schedule.
     if scause_u == 8 {
-        action: u64 = syscall_dispatch(frame)
+        action: u64 = syscall.dispatch(frame)
         frame[TF_SEPC] = frame[TF_SEPC] + 4
         if action != 0 {
-            schedule(frame, action)
+            scheduler.schedule(frame, action)
         }
         return
     }
 
-    klog_hex("exception scause".ptr, scause_u)
-    klog_hex("exception sepc".ptr, frame[TF_SEPC])
-    klog_hex("exception stval".ptr, frame[TF_STVAL])
-    kpanic("unhandled exception".ptr)
+    klog.hex("exception scause".ptr, scause_u)
+    klog.hex("exception sepc".ptr, frame[TF_SEPC])
+    klog.hex("exception stval".ptr, frame[TF_STVAL])
+    runtime.panic("unhandled exception".ptr)
 }

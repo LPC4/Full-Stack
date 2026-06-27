@@ -6,7 +6,7 @@ pmm         := import("pmm")
 
 ; Write/read alternating pattern over `size` heap bytes. Returns 1 on pass, 0 on fail.
 export memory_self_test: (size: u64) -> i64 {
-    test_buf: u8* = kmalloc(size)
+    test_buf: u8* = utilities.malloc(size)
 
     for i in 0..size {
         pattern: u8 = 170
@@ -18,27 +18,27 @@ export memory_self_test: (size: u64) -> i64 {
         expected: u8 = 170
         if i % 2 != 0 { expected = 85 }
         if test_buf[i] != expected {
-            klog_error("memory self-test failed".ptr)
+            klog.error("memory self-test failed".ptr)
             return 0
         }
     }
 
-    klog_ok("memory self-test passed".ptr)
+    klog.ok("memory self-test passed".ptr)
     return 1
 }
 
 ; PMM smoke test: alloc, write, read, free. Halts on failure.
 export pmm_ops_test: () {
-    test_page: u8* = pmm_alloc()
+    test_page: u8* = pmm.alloc()
     if test_page == null {
-        klog_error("halt: test alloc failed".ptr)
-        kshutdown(1)
+        klog.error("halt: test alloc failed".ptr)
+        utilities.shutdown(1)
     }
     test_page[0] = 42
     if test_page[0] != 42 {
-        klog_error("halt: test write/read failed".ptr)
-        kshutdown(1)
+        klog.error("halt: test write/read failed".ptr)
+        utilities.shutdown(1)
     }
-    pmm_free(test_page)
-    klog_ok("memory ops test passed".ptr)
+    pmm.free(test_page)
+    klog.ok("memory ops test passed".ptr)
 }

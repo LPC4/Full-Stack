@@ -5,9 +5,9 @@ runtime             := import("runtime")
 
 ; Panics on OOM instead of returning null.
 export kmalloc: (size: u64) -> u8* {
-    ptr: u8* = malloc(size)
+    ptr: u8* = memory_allocator.malloc(size)
     if ptr == null {
-        kpanic("kmalloc: out of memory".ptr)
+        runtime.panic("kmalloc: out of memory".ptr)
     }
     return ptr
 }

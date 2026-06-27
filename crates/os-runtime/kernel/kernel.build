@@ -1,0 +1,8 @@
+name = "my_kernel"
+target = "kernel"
+root = "my_kernel.hll"
+entry = "_kernel_start"
+stdlib = "kernel"
+import_closure = true
+mangle_symbols = false
+abi_exports = ["kmain"]

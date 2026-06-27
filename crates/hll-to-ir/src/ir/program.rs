@@ -53,6 +53,7 @@ pub struct IrFunction {
     pub return_type: IrType,
     pub params: Vec<IrParam>,
     pub blocks: Vec<IrBlock>,
+    pub exported: bool,
 }
 
 impl IrFunction {
@@ -62,7 +63,12 @@ impl IrFunction {
             return_type,
             params: Vec::new(),
             blocks: Vec::new(),
+            exported: true,
         }
+    }
+
+    pub fn set_exported(&mut self, exported: bool) {
+        self.exported = exported;
     }
 
     pub fn push_block(&mut self, block: IrBlock) {
@@ -100,6 +106,7 @@ pub struct IrGlobalVar {
     pub ty: IrType,
     /// Raw initial bytes; `None` means zero-initialised (goes in `.bss`).
     pub init: Option<Vec<u8>>,
+    pub exported: bool,
 }
 
 #[derive(Debug)]

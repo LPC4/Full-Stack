@@ -1,5 +1,6 @@
 use asm_to_binary::AssembledOutput;
 use asm_to_binary::assembler::link_layout::LinkLayout;
+use full_stack::build::{BuildExecutor, BuildManifest};
 use full_stack::compilation_pipeline::CompilationPipeline;
 use full_stack::compilation_pipeline::TargetMode as PipelineTargetMode;
 use hll_to_ir::TargetMode;
@@ -85,9 +86,19 @@ fn kernel_boot_runs_with_separate_stdlib_objects() {
     kernel_pipeline.set_link_layout(Some(LinkLayout::freestanding_kernel()));
     kernel_pipeline.set_module_mangling(false);
 
-    let kernel_objs = kernel_pipeline
+    let mut kernel_objs = kernel_pipeline
         .compile_program_closure("my_kernel", kernel::MY_KERNEL)
         .expect("kernel user modules compile");
+    let kernel_manifest = BuildManifest::from_file(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("crates/os-runtime/kernel/kernel.build"),
+    )
+    .expect("kernel build manifest");
+    for export in &kernel_manifest.abi_exports {
+        if let Some((_name, obj)) = kernel_objs.iter_mut().find(|(name, _)| name == "my_kernel") {
+            obj.mark_entry_global(export);
+        }
+    }
 
     let mut modules: Vec<(&str, &AssembledOutput)> = stdlib_modules
         .iter()
@@ -152,52 +163,9 @@ fn userspace_catalog_programs_compile_hosted() {
         .iter()
         .filter(|p| p.is_compiled())
     {
-        let (name, src) = (prog.name, prog.source);
-        let mut pipeline = CompilationPipeline::new();
-        pipeline.set_write_artifacts(false);
-        // The stdlib is self-contained: compile it before attaching the user
-        // program's layout prelude, which must not ride along.
-        let stdlib_objs = CompilationPipeline::compile_stdlib_objects(TargetMode::Hosted)
-            .unwrap_or_else(|e| panic!("{name}: stdlib compile failed: {e:?}"));
-        pipeline.set_source_prelude(prog.layout);
-        let user = pipeline
-            .compile(src)
-            .unwrap_or_else(|e| panic!("{name}: compile failed: {e:?}"));
-        let (_, user_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&user.ir_program);
-        let user_obj = pipeline
-            .assemble(&user_tokens)
-            .unwrap_or_else(|e| panic!("{name}: user assemble failed: {e:?}"));
-
-        // Aux translation units: each compiled with a distinct string
-        // prefix so rodata labels do not collide, then linked alongside the primary.
-        let aux_objs: Vec<AssembledOutput> = prog
-            .aux_sources
-            .iter()
-            .enumerate()
-            .map(|(i, a)| {
-                let mut p = CompilationPipeline::new();
-                p.set_write_artifacts(false);
-                p.set_source_prelude(prog.layout);
-                p.set_string_prefix(Some(format!("aux{i}_str_")));
-                let r = p
-                    .compile(a)
-                    .unwrap_or_else(|e| panic!("{name}: aux{i} compile failed: {e:?}"));
-                let (_, t) = p.compile_ir_to_assembly_with_tokens(&r.ir_program);
-                p.assemble(&t)
-                    .unwrap_or_else(|e| panic!("{name}: aux{i} assemble failed: {e:?}"))
-            })
-            .collect();
-
-        let aux_names: Vec<String> = (0..aux_objs.len()).map(|i| format!("aux{i}")).collect();
-        let mut modules: Vec<(&str, &AssembledOutput)> =
-            stdlib_objs.iter().map(|(n, o)| (n.as_str(), o)).collect();
-        modules.push(("user", &user_obj));
-        for (n, o) in aux_names.iter().zip(aux_objs.iter()) {
-            modules.push((n.as_str(), o));
-        }
-        pipeline
-            .link_assembled_objects(&modules)
-            .unwrap_or_else(|e| panic!("{name}: link failed: {e:?}"));
+        let manifest = BuildManifest::from_user_program(prog);
+        BuildExecutor::build(&manifest)
+            .unwrap_or_else(|e| panic!("{}: manifest build failed: {e}", prog.name));
     }
 }
 
@@ -404,6 +372,10 @@ main: () -> i32 {
 // The kernel stdlib uses the "__kern_str_" string-label prefix so rodata labels
 // never clash with user-code labels (which use "str_").
 fn run_kernel_hll(user_src: &str) -> (String, Option<i64>) {
+    let snippet_manifest = BuildManifest::from_file(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/kernel_snippet.build"),
+    )
+    .expect("kernel snippet build file parse");
     let stdlib_objs = CompilationPipeline::compile_stdlib_objects(TargetMode::Kernel)
         .expect("kernel stdlib compile");
     // Kernel module dependency objects (vmm, pmm, ...) from the my_kernel closure; drop the
@@ -417,7 +389,10 @@ fn run_kernel_hll(user_src: &str) -> (String, Option<i64>) {
     user_pipeline.set_source_prelude(os_runtime::kernel::LAYOUT);
     let user = user_pipeline.compile(user_src).expect("user compile");
     let (_, user_tokens) = user_pipeline.compile_ir_to_assembly_with_tokens(&user.ir_program);
-    let user_obj = user_pipeline.assemble(&user_tokens).expect("user assemble");
+    let mut user_obj = user_pipeline.assemble(&user_tokens).expect("user assemble");
+    for export in &snippet_manifest.abi_exports {
+        user_obj.mark_entry_global(export);
+    }
 
     let mut modules: Vec<(&str, &AssembledOutput)> =
         stdlib_objs.iter().map(|(n, o)| (n.as_str(), o)).collect();
@@ -628,7 +603,7 @@ fn cross_module_call_works() {
         CompilationPipeline::compile_stdlib_objects(TargetMode::Hosted).expect("stdlib compile");
 
     let module_a = r#"
-    add_one: (x: i32) -> i32 {
+    export add_one: (x: i32) -> i32 {
         return x + 1
     }
     "#;
@@ -677,7 +652,7 @@ fn cross_module_la_works() {
 
     // Module A: a helper returning 99
     let module_a = r#"
-    get_99: () -> i32 {
+    export get_99: () -> i32 {
         return 99
     }
     "#;
@@ -735,7 +710,7 @@ fn cross_module_tail_works() {
         return x + 100
     }
 
-    tail_to_add_100: (x: i32) -> i32 {
+    export tail_to_add_100: (x: i32) -> i32 {
         return add_100(x)
     }
     "#;
@@ -786,7 +761,7 @@ fn cross_module_chain_three_works() {
         CompilationPipeline::compile_stdlib_objects(TargetMode::Hosted).expect("stdlib compile");
 
     let module_a = r#"
-    get_ten: () -> i32 {
+    export get_ten: () -> i32 {
         return 10
     }
     "#;
@@ -794,7 +769,7 @@ fn cross_module_chain_three_works() {
     let module_b = r#"
     external get_ten: () -> i32
 
-    add_twenty: () -> i32 {
+    export add_twenty: () -> i32 {
         return get_ten() + 20
     }
     "#;
@@ -851,8 +826,8 @@ fn cross_module_external_global_shared_storage() {
 
     // Module A owns the global and mutates it through a function.
     let module_a = r#"
-    shared: i64 = 0
-    bump: () {
+    export shared: i64 = 0
+    export bump: () {
         shared = shared + 21
     }
     "#;

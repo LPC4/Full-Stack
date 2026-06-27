@@ -1,6 +1,9 @@
 ; Physical page allocator: bump range + magic-checked free list. See OS spec ch.4.1.
 ; Freed pages store next-ptr at byte 0 and PMM_FREE_MAGIC at byte 8.
 
+klog      := import("klog")
+utilities := import("utilities")
+
 const PMM_FREE_MAGIC = 0xCAFE
 
 pmm_bump: u64 = 0
@@ -59,4 +62,20 @@ export pmm_free: (page: u8*) {
         sd   a0, 0(t0)              ; pmm_free_head = page
     .Lpmm_free_null:
     }
+}
+
+export pmm_boot: () {
+    pmm_init(0x80100000, 0x87F00000)
+    page1: u8* = pmm_alloc()
+    if page1 == null {
+        klog.error("halt: pmm alloc failed".ptr)
+        utilities.shutdown(1)
+    }
+    pmm_free(page1)
+    page2: u8* = pmm_alloc()
+    if page2 != page1 {
+        klog.error("halt: pmm free list failed".ptr)
+        utilities.shutdown(1)
+    }
+    klog.ok("pmm ready".ptr)
 }

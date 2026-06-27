@@ -23,6 +23,7 @@
 
 use asm_to_binary::AssembledOutput;
 use asm_to_binary::rv_instruction::RvInstruction;
+use full_stack::build::{BuildExecutor, BuildManifest, BuildSource, ImportClosurePolicy};
 use full_stack::compilation_pipeline::{CompilationPipeline, TargetMode};
 use hll_to_ir::stdlib::{get_stdlib_modules_for_mode, get_stdlib_type_prelude};
 use std::fmt;
@@ -205,34 +206,55 @@ fn cmd_link(args: &Args) -> Result<ExitCode, CliError> {
         ));
     }
 
-    // Compile stdlib modules for the target mode.
-    let stdlib_objects = compile_stdlib_objects(args.mode)?;
-
-    // Compile each input HLL file to its own object.
-    let user_objects = compile_user_objects(&args.inputs, args.mode)?;
-
-    // Build module list: stdlib first, then user modules.
-    let mut modules: Vec<(&str, &AssembledOutput)> = stdlib_objects
-        .iter()
-        .map(|(n, o)| (n.as_str(), o))
-        .collect();
-    for (name, obj) in &user_objects {
-        modules.push((name.as_str(), obj));
+    if args.inputs.len() == 1 && has_extension(&args.inputs[0], "build") {
+        let mut manifest = BuildManifest::from_file(&args.inputs[0]).map_err(|e| match e {
+            full_stack::build::BuildError::Compile(err) => CliError::Compile(err.to_string()),
+            other => CliError::Assemble(other.to_string()),
+        })?;
+        manifest.write_artifacts = true;
+        let target = manifest.target;
+        let entry = manifest.entry.clone();
+        let layout = manifest.link_layout.clone();
+        let artifacts = BuildExecutor::build(&manifest).map_err(|e| match e {
+            full_stack::build::BuildError::Compile(err) => CliError::Compile(err.to_string()),
+            other => CliError::Assemble(other.to_string()),
+        })?;
+        let mut pipeline = make_pipeline(target, "_u_");
+        pipeline.set_entry_point(entry);
+        pipeline.set_link_layout(layout);
+        let elf_bytes = artifacts.linked.to_elf_with_entry(
+            pipeline.effective_load_base(),
+            pipeline.effective_entry_point(),
+        );
+        let output_path = args.output.as_deref().unwrap_or("out.elf");
+        fs::write(output_path, &elf_bytes)?;
+        eprintln!("fsc: wrote linked ELF to `{output_path}`");
+        return Ok(ExitCode::SUCCESS);
     }
 
-    // Determine the output stem.
-    let stem = args
-        .first_input()
-        .map(|p| source_stem(p, "linked"))
-        .unwrap_or_else(|| "linked".to_owned());
+    let first = args.first_input().expect("inputs checked above");
+    let stem = source_stem(first, "linked");
+    let mut manifest = BuildManifest::hosted(stem.clone(), "");
+    manifest.target = args.mode;
+    manifest.root = BuildSource::path(stem.clone(), first);
+    manifest.write_artifacts = true;
+    if args.mode == TargetMode::Kernel {
+        manifest.import_closure = ImportClosurePolicy::Enabled {
+            mangle_symbols: false,
+        };
+    }
+    for path in args.inputs.iter().skip(1) {
+        manifest
+            .legacy_aux
+            .push(BuildSource::path(source_stem(path, "module"), path));
+    }
 
-    let mut pipeline = make_pipeline(args.mode, "_u_");
-    pipeline.set_artifact_stem(Some(stem.clone()));
-
-    let linked = pipeline
-        .link_assembled_objects_named(&stem, &modules)
-        .map_err(|e| CliError::Assemble(e.to_string()))?;
-
+    let artifacts = BuildExecutor::build(&manifest).map_err(|e| match e {
+        full_stack::build::BuildError::Compile(err) => CliError::Compile(err.to_string()),
+        other => CliError::Assemble(other.to_string()),
+    })?;
+    let pipeline = make_pipeline(args.mode, "_u_");
+    let linked = artifacts.linked;
     let elf_bytes = linked.to_elf_with_entry(
         pipeline.effective_load_base(),
         pipeline.effective_entry_point(),
@@ -243,31 +265,6 @@ fn cmd_link(args: &Args) -> Result<ExitCode, CliError> {
     eprintln!("fsc: wrote linked ELF to `{output_path}`");
 
     Ok(ExitCode::SUCCESS)
-}
-
-/// Compile a list of HLL source files into independent assembled objects.
-fn compile_user_objects(
-    paths: &[String],
-    mode: TargetMode,
-) -> Result<Vec<(String, AssembledOutput)>, CliError> {
-    let mut result = Vec::with_capacity(paths.len());
-    for path in paths {
-        let src = fs::read_to_string(path)?;
-        let stem = source_stem(path, "module");
-        let mut pipeline = make_pipeline(mode, "_u_");
-        pipeline.set_run_semantic_analysis(false);
-        pipeline.set_artifact_stem(Some(stem.clone()));
-        pipeline.set_current_source_path(Some(path.clone()));
-        let compile_result = pipeline
-            .compile(&src)
-            .map_err(|e| CliError::Compile(e.to_string()))?;
-        let (_, tokens) = pipeline.compile_ir_to_assembly_with_tokens(&compile_result.ir_program);
-        let obj = pipeline
-            .assemble_named(&stem, &tokens)
-            .map_err(|e| CliError::Assemble(e.to_string()))?;
-        result.push((stem, obj));
-    }
-    Ok(result)
 }
 
 // --- hll-to-ir ---
@@ -344,6 +341,8 @@ fn cmd_run(args: &Args) -> Result<ExitCode, CliError> {
              instructions not in the built-in parser may be silently skipped"
         );
         assemble_from_s_file(input, args.mode)?
+    } else if has_extension(input, "build") {
+        assemble_from_manifest_file(input)?
     } else {
         assemble_from_hll_file(input, args.mode)?
     };
@@ -368,6 +367,19 @@ fn cmd_run(args: &Args) -> Result<ExitCode, CliError> {
 fn assemble_from_hll_file(path: &str, mode: TargetMode) -> Result<AssembledOutput, CliError> {
     let src = fs::read_to_string(path)?;
     compile_and_link(&src, mode, &source_stem(path, "module"), Some(path))
+}
+
+fn assemble_from_manifest_file(path: &str) -> Result<AssembledOutput, CliError> {
+    let manifest = BuildManifest::from_file(path).map_err(|e| match e {
+        full_stack::build::BuildError::Compile(err) => CliError::Compile(err.to_string()),
+        other => CliError::Assemble(other.to_string()),
+    })?;
+    BuildExecutor::build(&manifest)
+        .map(|artifacts| artifacts.linked)
+        .map_err(|e| match e {
+            full_stack::build::BuildError::Compile(err) => CliError::Compile(err.to_string()),
+            other => CliError::Assemble(other.to_string()),
+        })
 }
 
 /// Parse a `.s` text file as assembly tokens, link with stdlib, and assemble.
@@ -400,57 +412,23 @@ fn compile_and_link(
     stem: &str,
     source_path: Option<&str>,
 ) -> Result<AssembledOutput, CliError> {
-    let stdlib_objects = compile_stdlib_objects(mode)?;
-
-    let mut user_pipeline = make_pipeline(mode, "_u_");
-    user_pipeline.set_run_semantic_analysis(false);
-    user_pipeline.set_artifact_stem(Some(stem.to_owned()));
-    user_pipeline.set_current_source_path(source_path.map(str::to_owned));
-    // The kernel links flat (its inline asm names HLL symbols literally); never mangle it.
+    let mut manifest = BuildManifest::hosted(stem.to_owned(), src);
+    manifest.target = mode;
+    manifest.root = match source_path {
+        Some(path) => BuildSource::inline_with_path(stem, src, path),
+        None => BuildSource::inline(stem, src),
+    };
     if mode == TargetMode::Kernel {
-        user_pipeline.set_module_mangling(false);
+        manifest.import_closure = ImportClosurePolicy::Enabled {
+            mangle_symbols: false,
+        };
     }
-
-    if hll_to_ir::imports::collect_module_imports(src)
-        .map(|imports| !imports.is_empty())
-        .unwrap_or(false)
-    {
-        let closure = user_pipeline
-            .compile_program_closure(stem, src)
-            .map_err(|e| CliError::Compile(e.to_string()))?;
-        let mut modules: Vec<(&str, &AssembledOutput)> = stdlib_objects
-            .iter()
-            .map(|(n, o)| (n.as_str(), o))
-            .collect();
-        for (name, obj) in &closure {
-            modules.push((name.as_str(), obj));
-        }
-        return user_pipeline
-            .link_assembled_objects_named(stem, &modules)
-            .map_err(|e| CliError::Assemble(e.to_string()));
-    }
-
-    let user_result = user_pipeline
-        .compile(src)
-        .map_err(|e| CliError::Compile(e.to_string()))?;
-
-    let (_, user_tokens) =
-        user_pipeline.compile_ir_to_assembly_with_tokens(&user_result.ir_program);
-
-    let user_obj = user_pipeline
-        .assemble_named(stem, &user_tokens)
-        .map_err(|e| CliError::Assemble(format!("user object assembly failed: {e}")))?;
-
-    // Build the module list: stdlib objects first, then user object.
-    let mut modules: Vec<(&str, &AssembledOutput)> = stdlib_objects
-        .iter()
-        .map(|(n, o)| (n.as_str(), o))
-        .collect();
-    modules.push(("user", &user_obj));
-
-    user_pipeline
-        .link_assembled_objects_named(stem, &modules)
-        .map_err(|e| CliError::Assemble(e.to_string()))
+    BuildExecutor::build(&manifest)
+        .map(|artifacts| artifacts.linked)
+        .map_err(|e| match e {
+            full_stack::build::BuildError::Compile(err) => CliError::Compile(err.to_string()),
+            other => CliError::Assemble(other.to_string()),
+        })
 }
 
 /// Compile each stdlib module independently and return (name, object) pairs.

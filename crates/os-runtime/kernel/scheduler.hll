@@ -22,7 +22,7 @@ export scheduler_init: () {
     ready_queue_head = null
     zombie_head      = null
     input_waiter     = null
-    klog_ok("scheduler ready".ptr)
+    klog.ok("scheduler ready".ptr)
 }
 
 ; Return the currently running PCB (null if none).
@@ -58,7 +58,7 @@ export schedule: (frame: u64*, action: u64) {
     }
 
     if current_process != null {
-        memcpy((current_process as u64 + PCB_OFF_TRAP_FRAME) as u8*, frame as u8*, TF_BYTES)
+        mem.memcpy((current_process as u64 + PCB_OFF_TRAP_FRAME) as u8*, frame as u8*, TF_BYTES)
 
         if action == 2 {
             current_process[PCB_IDX_STATE] = PROC_EXITED
@@ -82,8 +82,8 @@ export schedule: (frame: u64*, action: u64) {
 
     current_process = next
     ; Switch into the next process's address space before restoring its context.
-    vmm_switch(next[PCB_IDX_PAGE_ROOT])
-    memcpy(frame as u8*, (next as u64 + PCB_OFF_TRAP_FRAME) as u8*, TF_BYTES)
+    vmm.switch(next[PCB_IDX_PAGE_ROOT])
+    mem.memcpy(frame as u8*, (next as u64 + PCB_OFF_TRAP_FRAME) as u8*, TF_BYTES)
 }
 
 ; Record the process about to block on UART input so the RX interrupt can wake

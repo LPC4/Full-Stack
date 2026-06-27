@@ -99,16 +99,16 @@ export kuart_take: () -> i64 {
 ; caller until the RX interrupt wakes it. See OS spec ch.6.4.
 export sys_readchar_block: (frame: u64*) -> u64 {
     ; Redirected stdin (`prog < file`): hand back the next file byte, or -1 at EOF.
-    rcur: u64* = scheduler_current()
+    rcur: u64* = scheduler.current()
     if rcur != null {
-        ifd: u64 = process_stdin_fd(rcur)
+        ifd: u64 = process.stdin_fd(rcur)
         if ifd >= 2 {
-            ipos: u64 = fs_get_pos(ifd as i64)
+            ipos: u64 = fs.get_pos(ifd as i64)
             ch: u8[1] = []
             chp: u8* = &ch[0]
-            got: i64 = fs_read(ifd as i64, chp, ipos, 1)
+            got: i64 = fs.read(ifd as i64, chp, ipos, 1)
             if got == 1 {
-                fs_set_pos(ifd as i64, ipos + 1)
+                fs.set_pos(ifd as i64, ipos + 1)
                 frame[TF_A0] = (@chp) as u64
                 return SYSACT_CONTINUE
             }
@@ -127,7 +127,7 @@ export sys_readchar_block: (frame: u64*) -> u64 {
         return SYSACT_CONTINUE
     }
 
-    cur: u64* = scheduler_current()
+    cur: u64* = scheduler.current()
     if cur == null {
         frame[TF_A0] = 0xFFFFFFFFFFFFFFFF
         return SYSACT_CONTINUE
@@ -137,7 +137,7 @@ export sys_readchar_block: (frame: u64*) -> u64 {
     ier: u8* = UART_IER_ADDR as u8*
     @ier = 1 as u8
 
-    scheduler_set_input_waiter(cur)
+    scheduler.set_input_waiter(cur)
     frame[TF_SEPC] = frame[TF_SEPC] - 4  ; re-run the ecall once woken
     return SYSACT_BLOCK
 }
@@ -174,11 +174,11 @@ export load_elf_segments: (fd: i64, hdr: u8*) -> i64 {
     phoff: u64 = rd_u64(hdr, 32)       ; e_phoff
     phentsize: u64 = rd_u16(hdr, 54)   ; e_phentsize
     phnum: u64 = rd_u16(hdr, 56)       ; e_phnum
-    ph: u8* = kmalloc(64)
+    ph: u8* = utilities.malloc(64)
     loaded: i64 = 0
     pi: u64 = 0
     while pi < phnum {
-        hn: i64 = fs_read(fd, ph, phoff + pi * phentsize, 56)
+        hn: i64 = fs.read(fd, ph, phoff + pi * phentsize, 56)
         if hn < 56 {
             return -1 as i64
         }
@@ -190,19 +190,19 @@ export load_elf_segments: (fd: i64, hdr: u8*) -> i64 {
             p_memsz:  u64 = rd_u64(ph, 40)
             seg_off: u64 = 0
             while seg_off < p_memsz {
-                page_pa: u8* = pmm_alloc()
+                page_pa: u8* = pmm.alloc()
                 if page_pa == null {
                     return -1 as i64
                 }
-                memset(page_pa, 0, 4096)
+                mem.memset(page_pa, 0, 4096)
                 if seg_off < p_filesz {
                     to_read: u64 = p_filesz - seg_off
                     if to_read > 4096 {
                         to_read = 4096
                     }
-                    fs_read(fd, page_pa, p_offset + seg_off, to_read)
+                    fs.read(fd, page_pa, p_offset + seg_off, to_read)
                 }
-                vmm_map(p_vaddr + seg_off, page_pa as u64, USER_PAGE_FLAGS)
+                vmm.map(p_vaddr + seg_off, page_pa as u64, USER_PAGE_FLAGS)
                 seg_off = seg_off + 4096
             }
             loaded = loaded + 1
@@ -215,7 +215,7 @@ export load_elf_segments: (fd: i64, hdr: u8*) -> i64 {
 ; Load a static ELF64 into a new process and enqueue it; arg staged at USER_ARG_BASE,
 ; out_path/in_path redirect child stdio (out_append seeks to end). pid or -1. OS spec 5.5/7.7.
 export sys_exec_impl: (path: u8*, arg: u8*, out_path: u8*, in_path: u8*, out_append: u64) -> i64 {
-    fd: i64 = fs_open(path, 0)
+    fd: i64 = fs.open(path, 0)
     if fd < 2 {
         return -1 as i64
     }
@@ -225,32 +225,32 @@ export sys_exec_impl: (path: u8*, arg: u8*, out_path: u8*, in_path: u8*, out_app
     out_fd: i64 = 0
     in_fd:  i64 = 0
     if out_path != null {
-        out_fd = fs_open(out_path, 2)  ; create (implies RW)
+        out_fd = fs.open(out_path, 2)  ; create (implies RW)
         if out_fd < 2 {
-            fs_close(fd)
+            fs.close(fd)
             return -1 as i64
         }
         if out_append != 0 {
-            fs_set_pos(out_fd, fs_fd_size(out_fd))
+            fs.set_pos(out_fd, fs.fd_size(out_fd))
         } else {
-            fs_truncate(out_fd, 0)
-            fs_set_pos(out_fd, 0)
+            fs.truncate(out_fd, 0)
+            fs.set_pos(out_fd, 0)
         }
     }
     if in_path != null {
-        in_fd = fs_open(in_path, 0)  ; read-only
+        in_fd = fs.open(in_path, 0)  ; read-only
         if in_fd < 2 {
             if out_fd >= 2 {
-                fs_close(out_fd)
+                fs.close(out_fd)
             }
-            fs_close(fd)
+            fs.close(fd)
             return -1 as i64
         }
     }
 
     ; Stage the argument into a kernel buffer before process_create switches roots.
-    arg_buf: u8* = kmalloc(USER_ARG_MAX + 1)
-    memset(arg_buf, 0, USER_ARG_MAX + 1)
+    arg_buf: u8* = utilities.malloc(USER_ARG_MAX + 1)
+    mem.memset(arg_buf, 0, USER_ARG_MAX + 1)
     if arg != null {
         ai: u64 = 0
         while ai < USER_ARG_MAX {
@@ -266,69 +266,69 @@ export sys_exec_impl: (path: u8*, arg: u8*, out_path: u8*, in_path: u8*, out_app
 
     ; Read the ELF header and validate the magic; the entry is the absolute VA in
     ; e_entry. The in-VM assembler and the host both link user code at USER_CODE_BASE.
-    hdr: u8* = kmalloc(64)
-    hn: i64 = fs_read(fd, hdr, 0, 64)
+    hdr: u8* = utilities.malloc(64)
+    hn: i64 = fs.read(fd, hdr, 0, 64)
     if hn < 64 {
-        fs_close(fd)
+        fs.close(fd)
         return -1 as i64
     }
     if @hdr != 0x7F {
-        fs_close(fd)
+        fs.close(fd)
         return -1 as i64
     }
     if @(hdr + 1) != 69 {
-        fs_close(fd)
+        fs.close(fd)
         return -1 as i64
     }
     if @(hdr + 2) != 76 {
-        fs_close(fd)
+        fs.close(fd)
         return -1 as i64
     }
     if @(hdr + 3) != 70 {
-        fs_close(fd)
+        fs.close(fd)
         return -1 as i64
     }
     entry: u64 = rd_u64(hdr, 24)
 
     ; Parent the child to its launcher (captured before the root switches).
-    parent_pcb: u64* = scheduler_current()
+    parent_pcb: u64* = scheduler.current()
     parent_pid_v: u64 = 0
     if parent_pcb != null {
-        parent_pid_v = process_pid(parent_pcb)
+        parent_pid_v = process.pid(parent_pcb)
     }
 
     ; Create the process first so the child's page-table root is active; the
     ; payload pages below then map into the child's address space.
-    pcb: u64* = process_create(entry)
-    process_set_parent(pcb, parent_pid_v)
+    pcb: u64* = process.create(entry)
+    process.set_parent(pcb, parent_pid_v)
 
     ; Bind the redirect fds onto the child so sys_write (fd 1) / readchar (fd 0)
     ; route to the file instead of the console. 0 means "inherit the console".
     if out_fd >= 2 {
-        process_set_stdout_fd(pcb, out_fd as u64)
+        process.set_stdout_fd(pcb, out_fd as u64)
     }
     if in_fd >= 2 {
-        process_set_stdin_fd(pcb, in_fd as u64)
+        process.set_stdin_fd(pcb, in_fd as u64)
     }
 
     ; Map the argument page into the child and copy the staged string in. Always
     ; mapped, so a program can read USER_ARG_BASE even when it has no argument.
-    arg_pa: u8* = pmm_alloc()
+    arg_pa: u8* = pmm.alloc()
     if arg_pa == null {
-        fs_close(fd)
+        fs.close(fd)
         return -1 as i64
     }
-    memcpy(arg_pa, arg_buf, USER_ARG_MAX + 1)
-    vmm_map(USER_ARG_BASE, arg_pa as u64, USER_ARG_FLAGS)
+    mem.memcpy(arg_pa, arg_buf, USER_ARG_MAX + 1)
+    vmm.map(USER_ARG_BASE, arg_pa as u64, USER_ARG_FLAGS)
 
     ; Load the ELF segments into the child's (now active) address space.
     segs: i64 = load_elf_segments(fd, hdr)
-    fs_close(fd)
+    fs.close(fd)
     if segs <= 0 {
         return -1 as i64
     }
 
-    scheduler_add(pcb)
+    scheduler.add(pcb)
     return (pcb[PCB_IDX_PID]) as i64
 }
 
@@ -346,16 +346,16 @@ export sys_write_impl: (fd: u64, buf: u8*, len: u64) -> u64 {
 ; Standard-output write (fd 0/1): append to a bound stdout redirect and advance,
 ; else write to the console. Returns bytes written. OS spec 7.7.
 export sys_stdout_write: (buf: u8*, len: u64) -> u64 {
-    cur: u64* = scheduler_current()
+    cur: u64* = scheduler.current()
     if cur != null {
-        ofd: u64 = process_stdout_fd(cur)
+        ofd: u64 = process.stdout_fd(cur)
         if ofd >= 2 {
-            pos: u64 = fs_get_pos(ofd as i64)
-            n: i64 = fs_write(ofd as i64, buf, pos, len)
+            pos: u64 = fs.get_pos(ofd as i64)
+            n: i64 = fs.write(ofd as i64, buf, pos, len)
             if n < 0 {
                 return 0
             }
-            fs_set_pos(ofd as i64, pos + n as u64)
+            fs.set_pos(ofd as i64, pos + n as u64)
             return n as u64
         }
     }
@@ -364,58 +364,58 @@ export sys_stdout_write: (buf: u8*, len: u64) -> u64 {
 
 ; Fork: clone the caller's address space and trap frame; child returns 0. See OS spec ch.5.5.
 export sys_fork_impl: (frame: u64*) -> i64 {
-    parent: u64* = scheduler_current()
+    parent: u64* = scheduler.current()
     if parent == null {
         return -1 as i64
     }
-    parent_root: u64 = process_root(parent)
-    ppid: u64 = process_pid(parent)
+    parent_root: u64 = process.root(parent)
+    ppid: u64 = process.pid(parent)
 
-    child: u64* = process_alloc()
-    child_root: u64 = vmm_new_root()
-    process_set_root(child, child_root)
-    process_set_parent(child, ppid)
+    child: u64* = process.alloc()
+    child_root: u64 = vmm.new_root()
+    process.set_root(child, child_root)
+    process.set_parent(child, ppid)
 
     ; Inherit the heap break; vmm_fork_copy duplicates the heap pages themselves.
-    process_set_heap_brk(child, process_heap_brk(parent))
+    process.set_heap_brk(child, process.heap_brk(parent))
 
     ; Duplicate the parent's user address space (code + stack) into the child.
-    vmm_fork_copy(parent_root, child_root)
+    vmm.fork_copy(parent_root, child_root)
 
     ; Child inherits the context but returns 0 and resumes past the ecall.
     cframe_addr: u64 = child as u64 + PCB_OFF_TRAP_FRAME
-    memcpy(cframe_addr as u8*, frame as u8*, TF_BYTES)
+    mem.memcpy(cframe_addr as u8*, frame as u8*, TF_BYTES)
     cframe: u64* = cframe_addr as u64*
     cframe[TF_A0] = 0
     cframe[TF_SEPC] = cframe[TF_SEPC] + 4
 
-    scheduler_add(child)
-    return process_pid(child) as i64
+    scheduler.add(child)
+    return process.pid(child) as i64
 }
 
 ; Reap any exited child (code), poll if one still runs, or -1 if none. Used by the fork test.
 export sys_wait_impl: (frame: u64*) -> u64 {
-    parent: u64* = scheduler_current()
+    parent: u64* = scheduler.current()
     if parent == null {
         frame[TF_A0] = 0xFFFFFFFFFFFFFFFF
         return SYSACT_CONTINUE
     }
-    ppid: u64 = process_pid(parent)
+    ppid: u64 = process.pid(parent)
 
-    z: u64* = scheduler_find_zombie_child(ppid)
+    z: u64* = scheduler.find_zombie_child(ppid)
     if z != null {
-        code: i64 = process_exit_code(z)
-        scheduler_remove_zombie(z)
+        code: i64 = process.exit_code(z)
+        scheduler.remove_zombie(z)
         frame[TF_A0] = code as u64
         return SYSACT_CONTINUE
     }
 
-    if scheduler_has_children(ppid) == 1 {
+    if scheduler.has_children(ppid) == 1 {
         ; Peek for a Ctrl-C foreground teardown; stash any other byte. See OS spec ch.6.5.
         if input_pushback_valid == 0 {
             c: i64 = kuart_take()
             if c == INPUT_INTR_CHAR {
-                scheduler_kill_child(ppid)
+                scheduler.kill_child(ppid)
                 frame[TF_A0] = WAIT_INTERRUPTED
                 return SYSACT_CONTINUE
             }
@@ -436,29 +436,29 @@ export sys_wait_impl: (frame: u64*) -> u64 {
 ; Reap the specific child a0 (code), else poll/Ctrl-C-tear-down that pid, else -1.
 ; Pids are unique, so no parent check is needed. See OS spec ch.7.2.
 export sys_waitpid_impl: (frame: u64*) -> u64 {
-    parent: u64* = scheduler_current()
+    parent: u64* = scheduler.current()
     if parent == null {
         frame[TF_A0] = 0xFFFFFFFFFFFFFFFF
         return SYSACT_CONTINUE
     }
     target: u64 = frame[TF_A0]
 
-    z: u64* = scheduler_find_zombie_pid(target)
+    z: u64* = scheduler.find_zombie_pid(target)
     if z != null {
-        code: i64 = process_exit_code(z)
-        scheduler_remove_zombie(z)
+        code: i64 = process.exit_code(z)
+        scheduler.remove_zombie(z)
         frame[TF_A0] = code as u64
         return SYSACT_CONTINUE
     }
 
     ; "Alive" must include a child blocked on input (input_waiter), not just ready-
     ; queue members, else waiting on an interactive child returns -1 when it blocks.
-    if scheduler_pid_alive(target) == 1 {
+    if scheduler.pid_alive(target) == 1 {
         ; Peek for a Ctrl-C teardown of this exact pid; stash any other byte.
         if input_pushback_valid == 0 {
             c: i64 = kuart_take()
             if c == INPUT_INTR_CHAR {
-                scheduler_kill_pid(target)
+                scheduler.kill_pid(target)
                 frame[TF_A0] = WAIT_INTERRUPTED
                 return SYSACT_CONTINUE
             }
@@ -488,7 +488,7 @@ export sys_kill_impl: (frame: u64*) -> u64 {
         frame[TF_A0] = 0xFFFFFFFFFFFFFFFF
         return SYSACT_CONTINUE
     }
-    if scheduler_kill_pid(pid) == 1 {
+    if scheduler.kill_pid(pid) == 1 {
         frame[TF_A0] = 0
     } else {
         frame[TF_A0] = 0xFFFFFFFFFFFFFFFF
@@ -499,28 +499,28 @@ export sys_kill_impl: (frame: u64*) -> u64 {
 ; Exit: pid 1 (or no/empty context) halts the VM; others become zombies. See OS spec ch.5.6.
 export sys_exit_impl: (frame: u64*) -> u64 {
     code: u64 = frame[TF_A0]
-    current: u64* = scheduler_current()
+    current: u64* = scheduler.current()
     if current == null {
-        kshutdown(code as i64)
+        utilities.shutdown(code as i64)
     }
-    if process_pid(current) == 1 {
-        kshutdown(code as i64)
+    if process.pid(current) == 1 {
+        utilities.shutdown(code as i64)
     }
     ; Nothing else runnable: no one to switch to or reap us, so halt.
-    if scheduler_ready_empty() == 1 {
-        kshutdown(code as i64)
+    if scheduler.ready_empty() == 1 {
+        utilities.shutdown(code as i64)
     }
     ; Release any redirected stdio fds so the FS slot is freed for reuse.
-    ofd: u64 = process_stdout_fd(current)
+    ofd: u64 = process.stdout_fd(current)
     if ofd >= 2 {
-        fs_close(ofd as i64)
+        fs.close(ofd as i64)
     }
-    ifd: u64 = process_stdin_fd(current)
+    ifd: u64 = process.stdin_fd(current)
     if ifd >= 2 {
-        fs_close(ifd as i64)
+        fs.close(ifd as i64)
     }
-    process_set_exit_code(current, code as i64)
-    scheduler_make_zombie(current)
+    process.set_exit_code(current, code as i64)
+    scheduler.make_zombie(current)
     return SYSACT_EXIT_SCHEDULE
 }
 
@@ -528,21 +528,21 @@ export sys_exit_impl: (frame: u64*) -> u64 {
 export sys_ftruncate_impl: (frame: u64*) -> u64 {
     fd:  i64 = (frame[TF_A0]) as i64
     len: u64 = frame[TF_A1]
-    frame[TF_A0] = fs_truncate(fd, len) as u64
+    frame[TF_A0] = fs.truncate(fd, len) as u64
     return SYSACT_CONTINUE
 }
 
 ; Remove the regular file at the absolute path in a0.
 export sys_unlink_impl: (frame: u64*) -> u64 {
     path: u8* = (frame[TF_A0]) as u8*
-    frame[TF_A0] = fs_unlink(path) as u64
+    frame[TF_A0] = fs.unlink(path) as u64
     return SYSACT_CONTINUE
 }
 
 ; Remove the empty directory at the absolute path in a0.
 export sys_rmdir_impl: (frame: u64*) -> u64 {
     path: u8* = (frame[TF_A0]) as u8*
-    frame[TF_A0] = fs_rmdir(path) as u64
+    frame[TF_A0] = fs.rmdir(path) as u64
     return SYSACT_CONTINUE
 }
 
@@ -586,9 +586,9 @@ export sys_map_fb_impl: (frame: u64*) -> u64 {
     pages: u64 = FB_PAGE_COUNT as u64
     for i in 0..pages {
         off: u64 = (i as u64) * 4096
-        vmm_map(FB_USER_BASE + off, FB_PHYS_BASE + off, FB_MAP_FLAGS)
+        vmm.map(FB_USER_BASE + off, FB_PHYS_BASE + off, FB_MAP_FLAGS)
     }
-    fb_acquire(scheduler_current())
+    fb_acquire(scheduler.current())
     frame[TF_A0] = FB_USER_BASE
     return SYSACT_CONTINUE
 }
@@ -598,14 +598,14 @@ export sys_map_fb_impl: (frame: u64*) -> u64 {
 ; root; the break starts at USER_HEAP_BASE. Returns the resulting break (unchanged
 ; on OOM, so the caller can detect failure). See OS spec ch.7.8.
 export sys_brk_impl: (frame: u64*) -> u64 {
-    cur: u64* = scheduler_current()
+    cur: u64* = scheduler.current()
     if cur == null {
         frame[TF_A0] = 0xFFFFFFFFFFFFFFFF
         return SYSACT_CONTINUE
     }
     addr: u64 = frame[TF_A0]
 
-    brk: u64 = process_heap_brk(cur)
+    brk: u64 = process.heap_brk(cur)
     if brk == 0 {
         brk = USER_HEAP_BASE
     }
@@ -629,21 +629,21 @@ export sys_brk_impl: (frame: u64*) -> u64 {
         return SYSACT_CONTINUE
     }
 
-    vmm_set_root(process_root(cur))
+    vmm.set_root(process.root(cur))
     a: u64 = map_from
     while a < map_to {
-        page_pa: u8* = pmm_alloc()
+        page_pa: u8* = pmm.alloc()
         if page_pa == null {
             ; OOM: leave the break where it was so the caller sees the failure.
             frame[TF_A0] = brk
             return SYSACT_CONTINUE
         }
-        memset(page_pa, 0, 4096)
-        vmm_map(a, page_pa as u64, USER_HEAP_FLAGS)
+        mem.memset(page_pa, 0, 4096)
+        vmm.map(a, page_pa as u64, USER_HEAP_FLAGS)
         a = a + 4096
     }
 
-    process_set_heap_brk(cur, addr)
+    process.set_heap_brk(cur, addr)
     frame[TF_A0] = addr
     return SYSACT_CONTINUE
 }
@@ -685,10 +685,10 @@ export trace_record: (pid: u64, num: u64, a0: u64, a1: u64, a2: u64, a3: u64, re
 ; Dispatch a U-mode ecall by a7; args in a0-a3, result to a0. Records the call
 ; into the trace ring around the inner dispatch. See OS spec ch.7.
 export syscall_dispatch: (frame: u64*) -> u64 {
-    cur: u64* = scheduler_current()
+    cur: u64* = scheduler.current()
     pid: u64 = 0
     if cur != null {
-        pid = process_pid(cur)
+        pid = process.pid(cur)
     }
     ; Capture args before the inner dispatch overwrites a0 with the result.
     num: u64 = frame[TF_A7]
@@ -721,10 +721,10 @@ export syscall_dispatch_inner: (frame: u64*) -> u64 {
             return SYSACT_CONTINUE
         }
         ; fd >= 2 -> file, use and advance stored position.
-        pos: u64 = fs_get_pos(fd as i64)
-        n: i64 = fs_write(fd as i64, buf, pos, len)
+        pos: u64 = fs.get_pos(fd as i64)
+        n: i64 = fs.write(fd as i64, buf, pos, len)
         if n >= 0 {
-            fs_set_pos(fd as i64, pos + n as u64)
+            fs.set_pos(fd as i64, pos + n as u64)
         }
         frame[TF_A0] = n as u64
         return SYSACT_CONTINUE
@@ -733,14 +733,14 @@ export syscall_dispatch_inner: (frame: u64*) -> u64 {
     if num == SYSCALL_OPEN {
         path:  u8* = (frame[TF_A0]) as u8*
         flags: u64 = frame[TF_A1]
-        result: i64 = fs_open(path, flags)
+        result: i64 = fs.open(path, flags)
         frame[TF_A0] = result as u64
         return SYSACT_CONTINUE
     }
 
     if num == SYSCALL_CLOSE {
         fd: i64 = (frame[TF_A0]) as i64
-        fs_close(fd)
+        fs.close(fd)
         frame[TF_A0] = 0
         return SYSACT_CONTINUE
     }
@@ -750,7 +750,7 @@ export syscall_dispatch_inner: (frame: u64*) -> u64 {
         buf:    u8* = (frame[TF_A1]) as u8*
         offset: u64 = frame[TF_A2]
         len:    u64 = frame[TF_A3]
-        result: i64 = fs_read(fd, buf, offset, len)
+        result: i64 = fs.read(fd, buf, offset, len)
         frame[TF_A0] = result as u64
         return SYSACT_CONTINUE
     }
@@ -816,13 +816,13 @@ export syscall_dispatch_inner: (frame: u64*) -> u64 {
         whence: u64 = frame[TF_A2]
         base: u64 = 0
         if whence == 1 {
-            base = fs_get_pos(fd)
+            base = fs.get_pos(fd)
         }
         if whence == 2 {
-            base = fs_fd_size(fd)
+            base = fs.fd_size(fd)
         }
         newpos: u64 = (base as i64 + offset) as u64
-        fs_set_pos(fd, newpos)
+        fs.set_pos(fd, newpos)
         frame[TF_A0] = newpos
         return SYSACT_CONTINUE
     }
@@ -846,7 +846,7 @@ export syscall_dispatch_inner: (frame: u64*) -> u64 {
 
     if num == SYSCALL_PIDALIVE {
         pid: u64 = frame[TF_A0]
-        frame[TF_A0] = scheduler_pid_alive(pid)
+        frame[TF_A0] = scheduler.pid_alive(pid)
         return SYSACT_CONTINUE
     }
 
@@ -876,7 +876,7 @@ export syscall_dispatch_inner: (frame: u64*) -> u64 {
     }
 
     ; Unknown syscall.
-    klog_int("syscall: unknown number".ptr, num as i64)
+    klog.int("syscall: unknown number".ptr, num as i64)
     frame[TF_A0] = 0xFFFFFFFFFFFFFFFF
     return SYSACT_CONTINUE
 }

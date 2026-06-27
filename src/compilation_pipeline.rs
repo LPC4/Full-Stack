@@ -550,10 +550,12 @@ impl CompilationPipeline {
                             )]
                         })?,
                 );
+                let member_aliases = module_member_aliases(&alias, &resolved.key, &exports);
                 aliases.insert(
                     alias,
                     hll_to_ir::imports::ModuleAlias {
                         prefix,
+                        member_aliases,
                         exports,
                         mangled,
                     },
@@ -986,7 +988,14 @@ impl CompilationPipeline {
         stem: &str,
         tokens: &[RvInstruction],
     ) -> Result<AssembledOutput, AssemblerError> {
-        let assembled = Assembler::assemble(tokens)?;
+        let mut assembled = Assembler::assemble(tokens)?;
+        let entry = self.effective_entry_point();
+        if assembled.has_symbol(entry) {
+            assembled.mark_entry_global(entry);
+        }
+        if self.target_mode == TargetMode::Hosted && assembled.has_symbol("main") {
+            assembled.mark_entry_global("main");
+        }
         let stem = sanitize_artifact_component(stem);
         *self.last_artifact_stem.borrow_mut() = Some(stem.clone());
         #[cfg(not(target_arch = "wasm32"))]
@@ -1247,7 +1256,10 @@ impl CompilationPipeline {
         }
         let modules = hll_to_ir::stdlib::get_stdlib_modules_for_mode(mode);
         let module_refs: Vec<(&str, &str)> = modules.iter().map(|(n, s)| (*n, *s)).collect();
-        let objects = pipeline.compile_modules(&module_refs)?;
+        let mut objects = pipeline.compile_modules(&module_refs)?;
+        for object in &mut objects {
+            mark_all_defined_symbols_global(object);
+        }
         Ok(modules
             .iter()
             .map(|(name, _)| (*name).to_owned())
@@ -1296,6 +1308,66 @@ pub fn bundled_module_source(name: &str) -> Option<&'static str> {
         ))),
         _ => os_runtime::user::program(name).map(|program| program.source),
     }
+}
+
+fn module_member_aliases(
+    alias: &str,
+    key: &str,
+    exports: &std::collections::HashSet<String>,
+) -> std::collections::HashMap<String, String> {
+    let mut aliases = std::collections::HashMap::new();
+    for prefix in [alias, key] {
+        let prefix = prefix.trim_end_matches(".hll");
+        if prefix.is_empty() {
+            continue;
+        }
+        let prefix = format!("{prefix}_");
+        for export in exports {
+            let Some(short) = export.strip_prefix(&prefix) else {
+                continue;
+            };
+            if short.is_empty() {
+                continue;
+            }
+            match aliases.get(short) {
+                Some(existing) if existing != export => {
+                    aliases.remove(short);
+                }
+                Some(_) => {}
+                None => {
+                    aliases.insert(short.to_owned(), export.clone());
+                }
+            }
+        }
+    }
+    for export in exports {
+        if let Some(short) = export.strip_prefix('k')
+            && short
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_ascii_lowercase())
+        {
+            aliases
+                .entry(short.to_owned())
+                .or_insert_with(|| export.clone());
+        }
+    }
+    aliases
+}
+
+fn mark_all_defined_symbols_global(assembled: &mut AssembledOutput) {
+    let symbols: Vec<String> = assembled
+        .symbols_iter()
+        .filter(|(name, _addr)| is_legacy_export_symbol(name))
+        .map(|(name, _addr)| name.to_owned())
+        .collect();
+    for symbol in symbols {
+        assembled.mark_entry_global(&symbol);
+    }
+}
+
+fn is_legacy_export_symbol(name: &str) -> bool {
+    !name.starts_with('.') && !name.contains("__")
 }
 
 /// Default module resolver over bundled `os-runtime` sources.

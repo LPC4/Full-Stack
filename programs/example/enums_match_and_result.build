@@ -1,0 +1,7 @@
+name = "enums_match_and_result"
+target = "hosted"
+root = "enums_match_and_result.hll"
+entry = "_start"
+stdlib = "hosted"
+import_closure = true
+mangle_symbols = true

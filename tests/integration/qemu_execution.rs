@@ -447,8 +447,8 @@ fn qemu_programs_compile_to_asm_without_error() {
         // compile_to_asm panics on error, which becomes a test failure.
         let asm = compile_to_asm(&source);
         assert!(
-            asm.contains(".globl main") || asm.contains(".globl "),
-            "{filename}: expected at least one .globl directive in output"
+            asm.contains("main:"),
+            "{filename}: expected a main label in output"
         );
     }
 }

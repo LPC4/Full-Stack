@@ -17,6 +17,7 @@ pub struct ModuleAlias {
     pub prefix: String,
     pub exports: HashSet<String>,
     pub mangled: HashSet<String>,
+    pub member_aliases: HashMap<String, String>,
 }
 
 /// `prefix__name`, or `name` verbatim when `prefix` is empty (no mangling).
@@ -269,14 +270,22 @@ fn resolve_member(
     field: &str,
 ) -> Result<String, String> {
     match aliases.get(base) {
-        Some(alias) if alias.exports.contains(field) => {
-            if alias.mangled.contains(field) {
-                Ok(mangled_name(&alias.prefix, field))
+        Some(alias) => {
+            let export = alias
+                .member_aliases
+                .get(field)
+                .map(String::as_str)
+                .unwrap_or(field);
+            if alias.exports.contains(export) {
+                if alias.mangled.contains(export) {
+                    Ok(mangled_name(&alias.prefix, export))
+                } else {
+                    Ok(export.to_owned())
+                }
             } else {
-                Ok(field.to_owned())
+                Err(format!("module `{base}` has no exported member `{field}`"))
             }
         }
-        Some(_) => Err(format!("module `{base}` has no exported member `{field}`")),
         None => unreachable!("resolve_member called for a non-alias base"),
     }
 }
@@ -440,15 +449,21 @@ fn rewrite_assign_target(
     if let AssignTarget::FieldAccess { expr, field } = target
         && let AssignTarget::Identifier(base) = expr.as_ref()
         && let Some(alias) = aliases.get(base)
-        && alias.exports.contains(field)
     {
-        let resolved = if alias.mangled.contains(field) {
-            mangled_name(&alias.prefix, field)
-        } else {
-            field.clone()
-        };
-        *target = AssignTarget::Identifier(resolved);
-        return Ok(());
+        let export = alias
+            .member_aliases
+            .get(field)
+            .map(String::as_str)
+            .unwrap_or(field);
+        if alias.exports.contains(export) {
+            let resolved = if alias.mangled.contains(export) {
+                mangled_name(&alias.prefix, export)
+            } else {
+                export.to_owned()
+            };
+            *target = AssignTarget::Identifier(resolved);
+            return Ok(());
+        }
     }
     match target {
         AssignTarget::Dereference(inner) | AssignTarget::FieldAccess { expr: inner, .. } => {
@@ -1093,6 +1108,7 @@ mod tests {
                     ModuleAlias {
                         prefix: prefix.to_owned(),
                         mangled: exports.clone(),
+                        member_aliases: HashMap::new(),
                         exports,
                     },
                 )
@@ -1163,6 +1179,43 @@ main: () -> i32 {
             &arguments[0],
             Expression::Primary(PrimaryExpr::Identifier(n)) if n == "ZERO"
         ));
+    }
+
+    #[test]
+    fn rewrites_short_qualified_member_aliases() {
+        let mut program = parse_module(
+            r#"
+klog := import("klog")
+main: () {
+    klog.ok("boot".ptr)
+}
+"#,
+        )
+        .unwrap();
+        let mut map = HashMap::new();
+        map.insert(
+            "klog".to_owned(),
+            ModuleAlias {
+                prefix: String::new(),
+                exports: HashSet::from(["klog_ok".to_owned()]),
+                mangled: HashSet::new(),
+                member_aliases: HashMap::from([("ok".to_owned(), "klog_ok".to_owned())]),
+            },
+        );
+        rewrite_qualified_access(&mut program, &map).unwrap();
+
+        let DeclNode::Function {
+            body: Some(body), ..
+        } = &program.declarations[1].decl
+        else {
+            panic!("expected main function");
+        };
+        let Statement::Expression(Expression::Primary(PrimaryExpr::FunctionCall { name, .. })) =
+            &body.statements[0]
+        else {
+            panic!("short qualified call should rewrite to a flat FunctionCall");
+        };
+        assert_eq!(name, "klog_ok");
     }
 
     #[test]

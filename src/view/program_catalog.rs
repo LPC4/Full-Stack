@@ -32,6 +32,8 @@ pub struct ProgramFile {
     #[serde(default)]
     pub source_path: Option<String>,
     #[serde(default)]
+    pub build_path: Option<String>,
+    #[serde(default)]
     pub standalone: bool, // compile without linking stdlib (set for runtime/stdlib reference files)
     #[serde(default)]
     pub parent_id: Option<String>, // set for aux translation units and kernel fragments; their owner's id
@@ -76,6 +78,15 @@ impl ProgramFile {
                     .display()
                     .to_string(),
             ),
+            build_path: Some(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("programs")
+                    .join("example")
+                    .join(file_name.trim_end_matches(".hll"))
+                    .with_extension("build")
+                    .display()
+                    .to_string(),
+            ),
             standalone: false,
             parent_id: None,
             layout: String::new(),
@@ -92,6 +103,7 @@ impl ProgramFile {
             kind: ProgramKind::Custom,
             source,
             source_path: None,
+            build_path: None,
             standalone: false,
             parent_id: None,
             layout: String::new(),
@@ -108,6 +120,7 @@ impl ProgramFile {
             kind: ProgramKind::Stdlib,
             source: source.to_owned(),
             source_path: None,
+            build_path: None,
             standalone: false,
             parent_id: None,
             layout: String::new(),
@@ -124,6 +137,7 @@ impl ProgramFile {
             kind: ProgramKind::Os,
             source: source.to_owned(),
             source_path: None,
+            build_path: None,
             standalone: false,
             parent_id: None,
             layout: String::new(),
@@ -140,6 +154,7 @@ impl ProgramFile {
             kind: ProgramKind::User,
             source: source.to_owned(),
             source_path: None,
+            build_path: None,
             standalone: false,
             parent_id: None,
             layout: String::new(),
@@ -310,12 +325,33 @@ fn built_in_programs() -> Vec<ProgramFile> {
             p
         },
         // Compilable kernel: select this to build the full OS
-        ProgramFile::os(
-            "os-my-kernel",
-            "My Kernel",
-            "Compilable kernel: ties Entry, Checks, Utilities, PMM, VMM, and trap modules together. Select Kernel target mode to run.",
-            os_runtime::kernel::MY_KERNEL,
-        ),
+        {
+            let mut p = ProgramFile::os(
+                "os-my-kernel",
+                "My Kernel",
+                "Compilable kernel: ties Entry, Checks, Utilities, PMM, VMM, and trap modules together. Select Kernel target mode to run.",
+                os_runtime::kernel::MY_KERNEL,
+            );
+            p.build_path = Some(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("crates")
+                    .join("os-runtime")
+                    .join("kernel")
+                    .join("kernel.build")
+                    .display()
+                    .to_string(),
+            );
+            p.source_path = Some(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("crates")
+                    .join("os-runtime")
+                    .join("kernel")
+                    .join("my_kernel.hll")
+                    .display()
+                    .to_string(),
+            );
+            p
+        },
     ];
 
     for (module_name, module_source) in get_stdlib_modules_for_mode(TargetMode::Hosted) {

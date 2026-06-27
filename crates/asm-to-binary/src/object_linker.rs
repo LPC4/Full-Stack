@@ -170,6 +170,26 @@ impl ObjectLinker {
             }
         }
 
+        let mut output_symbols = all_symbols.clone();
+        let mut local_output_candidates: HashMap<String, Option<u64>> = HashMap::new();
+        for ((_mi, name), addr) in &local_symbol_addrs {
+            if output_symbols.contains_key(name) {
+                continue;
+            }
+            match local_output_candidates.get_mut(name) {
+                Some(slot) if *slot != Some(*addr) => *slot = None,
+                Some(_) => {}
+                None => {
+                    local_output_candidates.insert(name.clone(), Some(*addr));
+                }
+            }
+        }
+        for (name, addr) in local_output_candidates {
+            if let Some(addr) = addr {
+                output_symbols.insert(name, addr);
+            }
+        }
+
         // Apply relocations
         for (mi, (module_name, module)) in modules.iter().enumerate() {
             let mod_sec_map = build_module_section_map(module);
@@ -264,7 +284,7 @@ impl ObjectLinker {
 
         Ok(AssembledOutput {
             sections,
-            symbol_table: all_symbols,
+            symbol_table: output_symbols,
             global_symbols: global_names,
             relocations: Vec::new(),
         })

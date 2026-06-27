@@ -117,14 +117,17 @@ boot_timer      arm CLINT timer via timer_set(1_000_000)
 boot_plic       enable the UART RX IRQ on PLIC S-mode context 1
 diagnostics     memory_self_test, pmm_ops_test (checks.hll)
 boot_heap       smoke-test kmalloc
-boot_pmm        pmm_init(0x8010_0000, 0x87F0_0000) + alloc/free probe
-boot_vmm        vmm_init, stamp kernel maps, vmm_enable (write satp, sfence)
-process/sched   process_init, scheduler_init
-spawn_user      copy + map the pid-1 binary, process_create, scheduler_add
-boot_filesystem read FS metadata page, fs_init (mount the image)
-boot_interrupts s_enable_interrupts (only after pid 1 is enqueued)
+pmm.boot        pmm_init(0x8010_0000, 0x87F0_0000) + alloc/free probe
+vmm.boot        vmm_init, stamp kernel maps, vmm_enable (write satp, sfence)
+process/sched   process.init, scheduler.init
+spawn_user      copy + map the pid-1 binary, process.create, scheduler.add
+boot_filesystem read FS metadata page, fs.init (mount the image)
+boot_interrupts vmm.s_enable_interrupts (only after pid 1 is enqueued)
 idle            WFI loop; the timer preempts into pid 1
 ```
+
+The production kernel is built from `kernel/kernel.build`. ABI-visible symbols such as `kmain`
+are declared there with `abi_exports`; they are not implicit compiler globals.
 
 ### 3.3 Physical memory the kernel programs
 
@@ -564,7 +567,8 @@ chapter documents only what the bundles provide).
 
 `types` (width aliases), `mem` (`memset`/`memcpy`/`memmove`/`memcmp`),
 `memory_allocator` (`malloc`/`free` over the static heap, 4.2), `string_utils`
-(`str_*`), and `klog` (`klog_ok`/`warn`/`error`/`int`/`hex` -- formatted UART log).
+(`str_*`), and `klog` (`klog.ok`/`warn`/`error`/`int`/`hex` -- formatted UART log,
+lowered to the stable `klog_*` link symbols).
 
 ### 9.2 `freestanding/`
 

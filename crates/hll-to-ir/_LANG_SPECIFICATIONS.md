@@ -339,6 +339,12 @@ function or global lowers to the same link reference an `external` would; an exp
 `const` folds in the importer with no link symbol. Qualified calls are direct calls, not
 indirect function-pointer calls.
 
+For modules that preserve legacy flat link symbols, the host pipeline also accepts a short member
+spelling when it can map it unambiguously to an exported symbol: `pmm.alloc()` resolves to
+`pmm_alloc`, `scheduler.init()` resolves to `scheduler_init`, and `klog.ok()` resolves to
+`klog_ok`. This is a source-level namespace convenience only; it does not rename object symbols
+or change `.globl` visibility.
+
 #### Paths
 
 | Form | Meaning |
@@ -376,9 +382,11 @@ The mechanisms above are the target. Current status:
 - `external` is fully implemented and remains the low-level link primitive. Ordinary bundled
   kernel APIs have migrated to `import`/`export`; hand-written `external` remains for boundary
   symbols such as runtime entry points and trap assembly edges.
-- `export` is retained on the AST (`Declaration::exported`). The closure build mangles every
-  module's own fn/global symbols to `module__name` (private and exported alike), so unexported
-  names no longer collide across modules even though `.globl` visibility is not yet narrowed.
+- `export` is retained on the AST (`Declaration::exported`) and carried into IR for functions
+  and globals. The RV64 backend emits `.globl` only for exported declarations; private
+  declarations remain local object symbols. The closure build still mangles every module's own
+  fn/global symbols to `module__name` (private and exported alike) so unexported names do not
+  collide across modules.
 - `import` interface resolution is implemented for the host pipeline. `CompilationPipeline`
   carries a module resolver (name -> source) and, for each direct `import`, prepends the
   target's extracted interface (`hll_to_ir::imports`): exported `type`/`const`/`struct`/`enum`
@@ -388,8 +396,10 @@ The mechanisms above are the target. Current status:
   the pipeline resolves each module binding, prepends its interface, and passes the alias's
   exported names to the compiler, which rewrites `alias.member`, `alias.member(args)`, and
   `alias.Type` to the flat export reference and reports unknown or private members against the
-  named module. In a mangling closure build, each module's link-symbol exports resolve to
-  `module__name` (const/type exports still fold flat); imports of stdlib (precompiled-flat)
+  named module. Short member aliases are generated from exported names by stripping the import
+  alias prefix (`pmm_alloc` -> `alloc`) or a kernel `k` prefix (`kshutdown` -> `shutdown`) when
+  the mapping is unique. In a mangling closure build, each module's link-symbol exports resolve
+  to `module__name` (const/type exports still fold flat); imports of stdlib (precompiled-flat)
   modules resolve flat. When mangling is off the flat namespace applies and duplicate imported
   export names or collisions with local top-level declarations are rejected. Bare names resolve
   through the target stdlib and host registry; paths beginning with `./`, `../`, `.\\`, `..\\`,
@@ -415,8 +425,9 @@ The mechanisms above are the target. Current status:
 Migration order: (1) interface import for `type`/`const`/signatures, retiring the source
 prelude (kernel migrated; `as`/`cc` pending); (2) `import`-driven transitive link closure with
 per-module mangling, now driving the kernel build (`aux_sources` retired for the kernel); (3)
-`export` visibility enforcement at the object level (`.globl` only for exports). `external` and
-the `layout` prelude remain as fallbacks so the remaining tools migrate one at a time.
+`export` visibility enforcement at the object level (`.globl` only for exports), now
+implemented for host HLL builds. `external` and the `layout` prelude remain as fallbacks so the
+remaining tools migrate one at a time.
 
 ## 7. Control flow, enums, and resource management
 

@@ -1,5 +1,5 @@
 ; Shared kernel layout module (PCB map, trap-frame slots, process states, Sv39 page
-; flags). Kernel units pull these in with `import "layout"`; OS spec 5.2 has the PCB map.
+; flags). Kernel units pull these in with `layout := import("layout")`; OS spec 5.2 has the PCB map.
 
 ; --- Typed PCB / trap-frame views ---
 ; Field order is part of the ABI: trap_entry.hll and boot/trap.s keep using raw offsets.

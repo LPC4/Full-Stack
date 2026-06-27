@@ -91,6 +91,7 @@ impl HighLevelCompiler {
                     name: name.clone(),
                     ty: ir_ty,
                     init: init_bytes,
+                    exported: declaration.exported,
                 });
                 Ok(())
             }
@@ -141,6 +142,7 @@ impl HighLevelCompiler {
                     name: name.clone(),
                     ty: ir_ty,
                     init: init_bytes,
+                    exported: declaration.exported,
                 });
                 Ok(())
             }
@@ -221,6 +223,7 @@ impl HighLevelCompiler {
                 };
 
                 let mut function = IrFunction::new(final_name.clone(), ir_return_ty);
+                function.set_exported(declaration.exported);
 
                 // Store the function's ACTUAL return type (before sret transformation) for call-site lookup
                 self.function_return_types

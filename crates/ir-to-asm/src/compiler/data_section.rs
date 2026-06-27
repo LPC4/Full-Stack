@@ -37,15 +37,26 @@ impl DataSection {
     /// No-op; type aliases are not emitted to assembly.
     pub fn add_type_alias(&mut self, _alias: &IrTypeAlias) {}
 
-    pub fn add_bss_symbol(&mut self, name: &str, size: usize, align: usize) {
-        self.bss.push(format!(".globl {name}"));
+    pub fn add_bss_symbol(&mut self, name: &str, size: usize, align: usize, exported: bool) {
+        if exported {
+            self.bss.push(format!(".globl {name}"));
+        }
         self.bss.push(format!(".balign {align}"));
         self.bss.push(format!("{name}:"));
         self.bss.push(format!("\t.space {size}"));
     }
 
-    pub fn add_data_symbol(&mut self, name: &str, size: usize, align: usize, init: &[u8]) {
-        self.data.push(format!(".globl {name}"));
+    pub fn add_data_symbol(
+        &mut self,
+        name: &str,
+        size: usize,
+        align: usize,
+        init: &[u8],
+        exported: bool,
+    ) {
+        if exported {
+            self.data.push(format!(".globl {name}"));
+        }
         self.data.push(format!(".balign {align}"));
         self.data.push(format!("{name}:"));
         // One `.byte` per byte: the directive parser takes a single value each.

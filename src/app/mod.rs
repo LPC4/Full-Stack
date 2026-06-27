@@ -5,9 +5,12 @@ mod settings;
 use crate::machine_window::MachineWindow;
 use asm_to_binary::AssembledOutput;
 use asm_to_binary::assembler::link_layout::LinkLayout;
-use asm_to_binary::rv_instruction::RvInstruction;
 use egui::Color32;
 use egui_dock::{DockState, NodeIndex};
+use full_stack::build::{
+    BuildExecutor, BuildManifest, BuildModuleResolver, BuildSource, ImportClosurePolicy,
+    StdlibPolicy,
+};
 use full_stack::compilation_pipeline::{
     AsmOutput, BinaryOutput, CompilationPipeline, FsEntry, IrOutput, ModuleResolver,
     PipelineResult, TargetMode, assembled_to_elf_file, build_fs_image, bundled_module_source,
@@ -24,6 +27,7 @@ use full_stack::view::{
 use hll_to_ir::stdlib::get_stdlib_type_prelude;
 use std::collections::HashMap;
 use std::fmt;
+use std::sync::Arc;
 use virtual_machine::cpu::StepOutcome;
 use virtual_machine::virtual_machine::VirtualMachine;
 
@@ -550,62 +554,16 @@ impl FullStackApp {
             return;
         };
         let user_source = build.source.clone();
-        let module_name = {
-            let name = build.name.trim();
-            if name.is_empty() {
-                "kernel".to_owned()
-            } else {
-                name.to_owned()
+        let manifest = self.manifest_for_program(&build, TargetMode::Kernel);
+        let final_assembled = match BuildExecutor::build(&manifest) {
+            Ok(artifacts) => artifacts.linked,
+            Err(e) => {
+                self.compilation_state
+                    .set_error(format!("kernel manifest build error: {e}"));
+                self.compilation_state.just_compiled = false;
+                return;
             }
         };
-
-        // Compile the user kernel module in its own pipeline without concatenation.
-        let mut kernel_user_pipeline = CompilationPipeline::new();
-        kernel_user_pipeline.set_target_mode(TargetMode::Kernel);
-        kernel_user_pipeline.set_module_resolver(Some(self.catalog_module_resolver()));
-        kernel_user_pipeline.set_type_prelude(get_stdlib_type_prelude());
-        kernel_user_pipeline.set_entry_point(Some("_kernel_start".to_owned()));
-        kernel_user_pipeline.set_link_layout(Some(LinkLayout::freestanding_kernel()));
-        kernel_user_pipeline.set_current_source_path(build.source_path.clone());
-        // Compile the kernel modules from the selected unit's import closure (mangling off:
-        // the kernel links flat and its inline asm names HLL symbols literally).
-        kernel_user_pipeline.set_module_mangling(false);
-        let kernel_objects =
-            match kernel_user_pipeline.compile_program_closure(&module_name, &user_source) {
-                Ok(objs) => objs,
-                Err(e) => {
-                    self.compilation_state
-                        .set_error(format!("kernel module compile error: {e}"));
-                    self.compilation_state.just_compiled = false;
-                    return;
-                }
-            };
-
-        // Link kernel modules with stdlib at object level (no source concatenation).
-        let mut modules: Vec<(&str, &AssembledOutput)> = self
-            .stdlib_objects
-            .iter()
-            .map(|(name, obj)| (name.as_str(), obj))
-            .collect();
-        for (name, obj) in &kernel_objects {
-            modules.push((name.as_str(), obj));
-        }
-        let stem = modules
-            .iter()
-            .map(|(n, _)| *n)
-            .collect::<Vec<_>>()
-            .join("_");
-
-        let final_assembled =
-            match kernel_user_pipeline.link_assembled_objects_named(&stem, &modules) {
-                Ok(asm) => asm,
-                Err(e) => {
-                    self.compilation_state
-                        .set_error(format!("kernel link error: {}", e.message));
-                    self.compilation_state.just_compiled = false;
-                    return;
-                }
-            };
 
         // Prepend ROM firmware assembly so the disassembly view can follow the PC through boot.
         self.compilation_state.linked_asm_text =
@@ -695,6 +653,78 @@ impl FullStackApp {
                 .cloned()
                 .or_else(|| bundled_module_source(name).map(str::to_owned))
         })
+    }
+
+    fn catalog_build_resolver(&self) -> BuildModuleResolver {
+        let resolver = self.catalog_module_resolver();
+        Arc::new(move |name: &str| resolver(name))
+    }
+
+    fn manifest_for_program(&self, program: &ProgramFile, target: TargetMode) -> BuildManifest {
+        let mut manifest = program
+            .build_path
+            .as_ref()
+            .and_then(|path| BuildManifest::from_file(path).ok())
+            .unwrap_or_else(|| match target {
+                TargetMode::Kernel => {
+                    BuildManifest::kernel(program.id.clone(), program.source.clone())
+                }
+                TargetMode::Hosted | TargetMode::Freestanding => {
+                    BuildManifest::hosted(program.id.clone(), program.source.clone())
+                }
+            });
+        manifest.target = target;
+        let root_name = manifest.name.clone();
+        manifest.root = match &program.source_path {
+            Some(path) => BuildSource::inline_with_path(root_name, &program.source, path),
+            None => BuildSource::inline(root_name, &program.source),
+        };
+        manifest.entry = match target {
+            TargetMode::Hosted => None,
+            TargetMode::Kernel => Some("_kernel_start".to_owned()),
+            TargetMode::Freestanding => Some(self.pipeline.effective_entry_point().to_owned()),
+        };
+        manifest.link_layout = Some(self.pipeline.effective_link_layout());
+        manifest.source_prelude = (!program.layout.is_empty()).then(|| program.layout.clone());
+        manifest.module_resolver = Some(self.catalog_build_resolver());
+        manifest.stdlib = match target {
+            TargetMode::Hosted => StdlibPolicy::Explicit(TargetMode::Hosted),
+            TargetMode::Freestanding => StdlibPolicy::Explicit(TargetMode::Freestanding),
+            TargetMode::Kernel => StdlibPolicy::Explicit(TargetMode::Kernel),
+        };
+        if manifest.abi_exports.is_empty() {
+            manifest.abi_exports = match target {
+                TargetMode::Hosted => vec!["main".to_owned()],
+                TargetMode::Freestanding => vec![self.pipeline.effective_entry_point().to_owned()],
+                TargetMode::Kernel => vec!["kmain".to_owned()],
+            };
+        }
+        manifest.string_prefix = match target {
+            TargetMode::Kernel => Some("__kern_str_".to_owned()),
+            _ => Some("_u_".to_owned()),
+        };
+        manifest.run_semantic_analysis = target == TargetMode::Kernel;
+        manifest.legacy_aux = if target == TargetMode::Kernel {
+            Vec::new()
+        } else {
+            self.catalog
+                .children_of(&program.id)
+                .into_iter()
+                .map(|child| match &child.source_path {
+                    Some(path) => BuildSource::inline_with_path(&child.id, &child.source, path),
+                    None => BuildSource::inline(&child.id, &child.source),
+                })
+                .collect()
+        };
+        if target != TargetMode::Kernel && !manifest.legacy_aux.is_empty() {
+            manifest.import_closure = ImportClosurePolicy::Disabled;
+        }
+        if target == TargetMode::Kernel {
+            manifest.import_closure = ImportClosurePolicy::Enabled {
+                mangle_symbols: false,
+            };
+        }
+        manifest
     }
 
     fn compile(&mut self) {
@@ -789,47 +819,18 @@ impl FullStackApp {
         self.pipeline.set_source_prelude(layout.clone());
         let mut result = self.pipeline.run_full(&user_source, &stdlib_objects);
 
-        // Compile the objects for any qualified `import("...")` modules (the link closure
-        // minus the primary) so their symbols resolve, mirroring the aux-unit handling.
-        let mut closure_failed = false;
-        let import_deps: Vec<(String, AssembledOutput)> =
-            if !result.has_errors() && source_has_module_imports(&user_source) {
-                match self.pipeline.compile_program_closure("user", &user_source) {
-                    Ok(objs) => objs.into_iter().filter(|(n, _)| n != "user").collect(),
-                    Err(e) => {
-                        closure_failed = true;
-                        result.binary = None;
-                        result.assembler_error = Some(format!("import compile error: {e}"));
-                        Vec::new()
-                    }
-                }
-            } else {
-                Vec::new()
-            };
-
-        // Re-link with the aux and imported-module objects so cross-module references
-        // resolve. Sources come from the catalog so editor edits take effect on compile.
-        let aux_sources: Vec<String> = self.catalog.child_sources(&build.id);
-        if !closure_failed
-            && (!aux_sources.is_empty() || !import_deps.is_empty())
-            && !result.has_errors()
-            && let Some(tokens) = result.asm.as_ref().map(|a| a.tokens.clone())
-        {
-            match self.link_hosted_aux(
-                &self.pipeline,
-                &tokens,
-                &stdlib_objects,
-                &aux_sources,
-                &import_deps,
-                &layout,
-            ) {
-                Ok(assembled) => {
-                    result.binary = Some(BinaryOutput { assembled });
+        if !is_stdlib && !result.has_errors() {
+            let manifest = self.manifest_for_program(&build, self.target_mode);
+            match BuildExecutor::build(&manifest) {
+                Ok(artifacts) => {
+                    result.binary = Some(BinaryOutput {
+                        assembled: artifacts.linked,
+                    });
                     result.assembler_error = None;
                 }
-                Err(e) => {
+                Err(err) => {
                     result.binary = None;
-                    result.assembler_error = Some(e);
+                    result.assembler_error = Some(format!("manifest build error: {err}"));
                 }
             }
         }
@@ -872,56 +873,6 @@ impl FullStackApp {
         }
     }
 
-    /// Re-link a primary object with the stdlib objects and the program's aux units
-    /// (each given a distinct string prefix). `pipeline` supplies layout/entry/mode.
-    fn link_hosted_aux(
-        &self,
-        pipeline: &CompilationPipeline,
-        user_tokens: &[RvInstruction],
-        stdlib_objects: &[(&str, &AssembledOutput)],
-        aux_sources: &[String],
-        import_deps: &[(String, AssembledOutput)],
-        layout: &str,
-    ) -> Result<AssembledOutput, String> {
-        let target = pipeline.target_mode();
-        let user_obj = pipeline
-            .assemble_named("user", user_tokens)
-            .map_err(|e| format!("assembler error: {}", e.message))?;
-
-        let mut aux_objs: Vec<AssembledOutput> = Vec::with_capacity(aux_sources.len());
-        for (i, src) in aux_sources.iter().enumerate() {
-            let mut p = CompilationPipeline::new();
-            p.set_target_mode(target);
-            p.set_module_resolver(Some(self.catalog_module_resolver()));
-            p.set_write_artifacts(false);
-            p.set_type_prelude(get_stdlib_type_prelude());
-            p.set_source_prelude(layout);
-            p.set_string_prefix(Some(format!("aux{i}_str_")));
-            let r = p
-                .compile(src)
-                .map_err(|e| format!("aux compile error: {e}"))?;
-            let (_, t) = p.compile_ir_to_assembly_with_tokens(&r.ir_program);
-            aux_objs.push(
-                p.assemble_named(&format!("aux{i}"), &t)
-                    .map_err(|e| format!("aux assembler error: {}", e.message))?,
-            );
-        }
-
-        let aux_names: Vec<String> = (0..aux_objs.len()).map(|i| format!("aux{i}")).collect();
-        let mut modules: Vec<(&str, &AssembledOutput)> = stdlib_objects.to_vec();
-        modules.push(("user", &user_obj));
-        for (n, o) in aux_names.iter().zip(aux_objs.iter()) {
-            modules.push((n.as_str(), o));
-        }
-        // Objects for modules pulled in via qualified `import("...")` declarations.
-        for (name, obj) in import_deps {
-            modules.push((name.as_str(), obj));
-        }
-        pipeline
-            .link_assembled_objects_named("user", &modules)
-            .map_err(|e| format!("linker error: {}", e.message))
-    }
-
     /// Compile the program with the given id as Hosted and store the result in
     /// `compilation_state.last_hosted_binary` on success.
     fn compile_and_store_hosted(&mut self, program_id: &str) -> Result<(), String> {
@@ -946,72 +897,11 @@ impl FullStackApp {
             None => return Err(format!("program id not found: {build_id}")),
         };
 
-        // Compile against per-module stdlib objects (no source concatenation).
-        // Split tools (cc/as) prepend a shared record-layout header to every unit.
-        let layout = program.layout.clone();
-        let program_source = program.source.clone();
-        let mut user_pipeline = CompilationPipeline::new();
-        user_pipeline.set_target_mode(TargetMode::Hosted);
-        user_pipeline.set_module_resolver(Some(self.catalog_module_resolver()));
-        user_pipeline.set_write_artifacts(false);
-        user_pipeline.set_type_prelude(get_stdlib_type_prelude());
-        user_pipeline.set_source_prelude(layout.clone());
-        user_pipeline.set_current_source_path(program.source_path.clone());
-
-        let stdlib_owned = CompilationPipeline::compile_stdlib_objects(TargetMode::Hosted)
-            .map_err(|e| format!("stdlib compile error: {e}"))?;
-        let stdlib_objects: Vec<(&str, &AssembledOutput)> =
-            stdlib_owned.iter().map(|(n, o)| (n.as_str(), o)).collect();
-        let result = match user_pipeline.run_full(&program_source, &stdlib_objects) {
-            r if r.has_errors() => return Err(r.format_diagnostics()),
-            r => r,
-        };
-
-        // Objects for modules pulled in via qualified `import("...")` (the primary's link
-        // closure, minus the primary itself); run_full prepends only their interface.
-        let import_deps: Vec<(String, AssembledOutput)> =
-            if source_has_module_imports(&program_source) {
-                user_pipeline
-                    .compile_program_closure("user", &program_source)
-                    .map_err(|e| format!("import compile error: {e}"))?
-                    .into_iter()
-                    .filter(|(name, _)| name != "user")
-                    .collect()
-            } else {
-                Vec::new()
-            };
-
-        // Split programs (aux translation units) and qualified imports need their objects
-        // linked in; run_full only built the primary against the stdlib objects.
-        let aux_sources: Vec<String> = self.catalog.child_sources(&build_id);
-        if !aux_sources.is_empty() || !import_deps.is_empty() {
-            let tokens = result
-                .asm
-                .as_ref()
-                .map(|a| a.tokens.clone())
-                .ok_or_else(|| "no assembly produced".to_owned())?;
-            let assembled = self.link_hosted_aux(
-                &user_pipeline,
-                &tokens,
-                &stdlib_objects,
-                &aux_sources,
-                &import_deps,
-                &layout,
-            )?;
-            self.compilation_state.last_hosted_binary = Some(assembled);
-            return Ok(());
-        }
-
-        if let Some(ref asm_err) = result.assembler_error {
-            return Err(format!("assembler error: {asm_err}"));
-        }
-
-        if let Some(bin) = result.binary.as_ref() {
-            self.compilation_state.last_hosted_binary = Some(bin.assembled.clone());
-            return Ok(());
-        }
-
-        Err("no assembled binary produced".to_owned())
+        let manifest = self.manifest_for_program(program, TargetMode::Hosted);
+        let artifacts = BuildExecutor::build(&manifest)
+            .map_err(|e| format!("{build_id} manifest build error: {e}"))?;
+        self.compilation_state.last_hosted_binary = Some(artifacts.linked);
+        Ok(())
     }
 
     /// Compile the default kernel (kernel stdlib + `my_kernel`) into `kernel_binary`,
@@ -1022,36 +912,14 @@ impl FullStackApp {
             return Ok(());
         }
 
-        // Kernel stdlib: each module compiled to its own object (no concatenation).
-        let stdlib_objs = CompilationPipeline::compile_stdlib_objects(TargetMode::Kernel)
-            .map_err(|e| format!("kernel stdlib compile error: {e}"))?;
-
-        // Kernel module, linked against the stdlib objects at S-mode entry.
-        let mut kernel_pipeline = CompilationPipeline::new();
-        kernel_pipeline.set_target_mode(TargetMode::Kernel);
-        kernel_pipeline.set_module_resolver(Some(self.catalog_module_resolver()));
-        kernel_pipeline.set_write_artifacts(false);
-        kernel_pipeline.set_entry_point(Some("_kernel_start".to_owned()));
-        // Compile the kernel modules from the `my_kernel` import closure (mangling off).
-        kernel_pipeline.set_module_mangling(false);
-        let kernel_objs = kernel_pipeline
-            .compile_program_closure("my_kernel", os_runtime::kernel::MY_KERNEL)
-            .map_err(|e| format!("kernel module compile error: {e}"))?;
-
-        let mut modules: Vec<(&str, &AssembledOutput)> =
-            stdlib_objs.iter().map(|(n, o)| (n.as_str(), o)).collect();
-        for (name, obj) in &kernel_objs {
-            modules.push((name.as_str(), obj));
-        }
-        let stem: String = modules
-            .iter()
-            .map(|(n, _)| *n)
-            .collect::<Vec<_>>()
-            .join("_");
-        let assembled = kernel_pipeline
-            .link_assembled_objects_named(&stem, &modules)
-            .map_err(|e| format!("kernel link error: {}", e.message))?;
-        self.kernel_binary = Some(assembled);
+        let manifest = BuildManifest::from_file(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("crates/os-runtime/kernel/kernel.build"),
+        )
+        .map_err(|e| format!("kernel build file error: {e}"))?;
+        let artifacts = BuildExecutor::build(&manifest)
+            .map_err(|e| format!("kernel manifest build error: {e}"))?;
+        self.kernel_binary = Some(artifacts.linked);
         Ok(())
     }
 
@@ -1065,58 +933,10 @@ impl FullStackApp {
         let prog = os_runtime::user::program(name)
             .ok_or_else(|| format!("unknown user program: {name}"))?;
 
-        let mut pipeline = CompilationPipeline::new();
-        pipeline.set_target_mode(TargetMode::Hosted);
-        pipeline.set_module_resolver(Some(self.catalog_module_resolver()));
-        pipeline.set_write_artifacts(false);
-        pipeline.set_type_prelude(get_stdlib_type_prelude());
-        pipeline.set_source_prelude(prog.layout);
-
-        // Separate compilation: stdlib, primary, and aux units each compile to their
-        // own object and link together (no source concatenation; distinct prefixes).
-        let stdlib_objs = CompilationPipeline::compile_stdlib_objects(TargetMode::Hosted)
-            .map_err(|e| format!("{name} stdlib compile error: {e}"))?;
-        let main = pipeline
-            .compile(prog.source)
-            .map_err(|e| format!("{name} compile error: {e}"))?;
-        let (_, main_tokens) = pipeline.compile_ir_to_assembly_with_tokens(&main.ir_program);
-        let main_obj = pipeline
-            .assemble_named(name, &main_tokens)
-            .map_err(|e| format!("{name} assemble error: {}", e.message))?;
-
-        let mut aux_objs: Vec<AssembledOutput> = Vec::with_capacity(prog.aux_sources.len());
-        for (i, src) in prog.aux_sources.iter().enumerate() {
-            let mut aux_pipeline = CompilationPipeline::new();
-            aux_pipeline.set_target_mode(TargetMode::Hosted);
-            aux_pipeline.set_module_resolver(Some(self.catalog_module_resolver()));
-            aux_pipeline.set_write_artifacts(false);
-            aux_pipeline.set_type_prelude(get_stdlib_type_prelude());
-            aux_pipeline.set_source_prelude(prog.layout);
-            aux_pipeline.set_string_prefix(Some(format!("aux{i}_str_")));
-            let aux = aux_pipeline
-                .compile(src)
-                .map_err(|e| format!("{name} aux compile error: {e}"))?;
-            let (_, aux_tokens) = aux_pipeline.compile_ir_to_assembly_with_tokens(&aux.ir_program);
-            aux_objs.push(
-                aux_pipeline
-                    .assemble_named(&format!("{name}_aux{i}"), &aux_tokens)
-                    .map_err(|e| format!("{name} aux assemble error: {}", e.message))?,
-            );
-        }
-
-        let aux_names: Vec<String> = (0..aux_objs.len())
-            .map(|i| format!("{name}_aux{i}"))
-            .collect();
-        let mut modules: Vec<(&str, &AssembledOutput)> =
-            stdlib_objs.iter().map(|(n, o)| (n.as_str(), o)).collect();
-        modules.push((name, &main_obj));
-        for (n, o) in aux_names.iter().zip(aux_objs.iter()) {
-            modules.push((n.as_str(), o));
-        }
-        let assembled = pipeline
-            .link_assembled_objects_named(name, &modules)
-            .map_err(|e| format!("{name} link error: {}", e.message))?;
-        self.user_binaries.insert(name, assembled);
+        let manifest = BuildManifest::from_user_program(prog);
+        let artifacts = BuildExecutor::build(&manifest)
+            .map_err(|e| format!("{name} manifest build error: {e}"))?;
+        self.user_binaries.insert(name, artifacts.linked);
         Ok(())
     }
 
@@ -1432,15 +1252,40 @@ impl egui_dock::TabViewer for DockTabViewer<'_> {
     }
 }
 
-// --- Helpers ---
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-/// Whether `source` declares any qualified `import("...")` module bindings, gating the
-/// extra import link-closure compile so non-importing programs pay nothing.
-fn source_has_module_imports(source: &str) -> bool {
-    hll_to_ir::imports::collect_module_imports(source)
-        .map(|imports| !imports.is_empty())
-        .unwrap_or(false)
+    #[test]
+    fn gui_kernel_manifest_preserves_kernel_build_metadata() {
+        let mut app = FullStackApp::default();
+        app.pipeline.set_target_mode(TargetMode::Kernel);
+        app.pipeline
+            .set_entry_point(Some("_kernel_start".to_owned()));
+        app.pipeline
+            .set_link_layout(Some(LinkLayout::freestanding_kernel()));
+
+        let program = app
+            .catalog
+            .all_programs()
+            .iter()
+            .find(|program| program.id == "os-my-kernel")
+            .expect("kernel catalog entry")
+            .clone();
+        let manifest = app.manifest_for_program(&program, TargetMode::Kernel);
+        let plan = BuildExecutor::plan(&manifest);
+
+        assert_eq!(plan.root, "my_kernel");
+        assert_eq!(plan.entry.as_deref(), Some("_kernel_start"));
+        assert_eq!(plan.abi_exports, vec!["kmain".to_owned()]);
+
+        let artifacts = BuildExecutor::build(&manifest).expect("gui kernel manifest build");
+        assert!(artifacts.linked.has_symbol("_kernel_start"));
+        assert!(artifacts.linked.has_symbol("kmain"));
+    }
 }
+
+// --- Helpers ---
 
 fn parse_hex_or_dec(s: &str) -> Option<u64> {
     let s = s.trim();

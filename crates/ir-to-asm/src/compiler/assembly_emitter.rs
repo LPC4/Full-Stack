@@ -82,19 +82,23 @@ impl AssemblyEmitter {
         self.switch_section(".text");
     }
 
-    pub fn start_function(&mut self, name: &str) {
+    pub fn start_function(&mut self, name: &str, exported: bool) {
         self.switch_section(".text");
         self.lines
             .push("\t; ========================================".to_owned());
         self.lines.push(format!("\t; Function: {name}"));
         self.lines
             .push("\t; ========================================".to_owned());
-        self.lines.push(format!(".globl {name}"));
+        if exported {
+            self.lines.push(format!(".globl {name}"));
+        }
         self.lines.push(format!("{name}:"));
         self.tokens
             .push(RvInstruction::Comment(format!("Function: {name}")));
-        self.tokens
-            .push(RvInstruction::Directive(format!(".globl {name}")));
+        if exported {
+            self.tokens
+                .push(RvInstruction::Directive(format!(".globl {name}")));
+        }
         self.tokens.push(RvInstruction::Label(name.to_owned()));
     }
 

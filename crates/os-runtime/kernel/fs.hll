@@ -293,7 +293,7 @@ export fs_add_dirent: (dir_inode: u64, child_name: u8*, child_inode: u64) -> i64
             if new_blk == 0 {
                 return -1 as i64
             }
-            memset(fs_block_pa(new_blk) as u8*, 0, FS_BLOCK_SIZE)
+            mem.memset(fs_block_pa(new_blk) as u8*, 0, FS_BLOCK_SIZE)
             fs_inode_set_block(dir_inode, blk_slot, new_blk)
             blk = new_blk
         }
@@ -462,15 +462,15 @@ export fs_create_at: (parent_inode: u64, name: u8*, node_type: u64) -> i64 {
 ; the kernel fd table, and logs the inode census.
 export fs_init: (base_pa: u64, image_size: u64) {
     if fs_rd32(base_pa) != FS_MAGIC32 {
-        klog_warn("[  FS  ] bad magic, not mounting".ptr)
+        klog.warn("[  FS  ] bad magic, not mounting".ptr)
         return
     }
     fs_image_base = base_pa
     fs_image_size = image_size
 
-    fd_table: u8* = kmalloc(FS_MAX_FD * FS_FD_ENTRY_SIZE)
+    fd_table: u8* = utilities.malloc(FS_MAX_FD * FS_FD_ENTRY_SIZE)
     fs_fd_table_pa = fd_table as u64
-    memset(fd_table, 0, FS_MAX_FD * FS_FD_ENTRY_SIZE)
+    mem.memset(fd_table, 0, FS_MAX_FD * FS_FD_ENTRY_SIZE)
     fs_ready = 1
 
     files: i64 = 0
@@ -486,8 +486,8 @@ export fs_init: (base_pa: u64, image_size: u64) {
         }
         idx = idx + 1
     }
-    klog_int("[  FS  ] mounted, files".ptr, files)
-    klog_int("[  FS  ] dirs".ptr, dirs)
+    klog.int("[  FS  ] mounted, files".ptr, files)
+    klog.int("[  FS  ] dirs".ptr, dirs)
 }
 
 ; Open a file by absolute path. flags: 0=RO, 1=RW, 2=create (implies RW).
@@ -574,7 +574,7 @@ export fs_read: (fd: i64, buf: u8*, offset: u64, len: u64) -> i64 {
         if chunk > FS_BLOCK_SIZE - blk_off {
             chunk = FS_BLOCK_SIZE - blk_off
         }
-        memcpy(buf + done, (fs_block_pa(blk) + blk_off) as u8*, chunk)
+        mem.memcpy(buf + done, (fs_block_pa(blk) + blk_off) as u8*, chunk)
         done = done + chunk
     }
     return done as i64
@@ -614,7 +614,7 @@ export fs_write: (fd: i64, buf: u8*, offset: u64, len: u64) -> i64 {
             if new_blk == 0 {
                 break
             }
-            memset(fs_block_pa(new_blk) as u8*, 0, FS_BLOCK_SIZE)
+            mem.memset(fs_block_pa(new_blk) as u8*, 0, FS_BLOCK_SIZE)
             fs_inode_set_block(inode, blk_slot, new_blk)
             blk = new_blk
         }
@@ -622,7 +622,7 @@ export fs_write: (fd: i64, buf: u8*, offset: u64, len: u64) -> i64 {
         if chunk > FS_BLOCK_SIZE - blk_off {
             chunk = FS_BLOCK_SIZE - blk_off
         }
-        memcpy((fs_block_pa(blk) + blk_off) as u8*, buf + done, chunk)
+        mem.memcpy((fs_block_pa(blk) + blk_off) as u8*, buf + done, chunk)
         done = done + chunk
     }
     end: u64 = offset + done

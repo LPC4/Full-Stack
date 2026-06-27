@@ -108,8 +108,10 @@ impl CompilerRv64 {
             let size = self.type_size(&gv.ty).max(1);
             let align = size.min(8);
             match &gv.init {
-                None => self.data.add_bss_symbol(&gv.name, size, align),
-                Some(bytes) => self.data.add_data_symbol(&gv.name, size, align, bytes),
+                None => self.data.add_bss_symbol(&gv.name, size, align, gv.exported),
+                Some(bytes) => self
+                    .data
+                    .add_data_symbol(&gv.name, size, align, bytes, gv.exported),
             }
         }
         for alias in &program.type_aliases {
@@ -169,7 +171,7 @@ impl CompilerRv64 {
             ctx.map_label(&block.label, format!("{}__{}", func.name, block.label.0));
         }
 
-        self.emitter.start_function(&func.name);
+        self.emitter.start_function(&func.name, func.exported);
         ctx.emit_prologue(&mut self.emitter);
 
         if needs_sret {

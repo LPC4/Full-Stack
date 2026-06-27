@@ -4,6 +4,7 @@ use hll_to_ir::stdlib::{get_stdlib_modules_for_mode, get_stdlib_type_prelude};
 use hll_to_ir::{CompileConfig, HllCompiler, TargetMode};
 use ir_to_asm::CompilerRv64;
 use os_runtime::kernel;
+use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 
@@ -34,20 +35,15 @@ fn bundled_module_source(name: &str) -> Option<&'static str> {
     }
 }
 
-fn direct_import_prelude(source: &str) -> String {
+fn direct_imports(source: &str) -> (String, HashMap<String, hll_to_ir::imports::ModuleAlias>) {
     // Both legacy `import "name"` and qualified `name := import("name")` contribute their
     // target's interface; the kernel links flat, so references stay unqualified.
     let mut names = hll_to_ir::imports::collect_imports(source).expect("collect imports");
-    for (_alias, path) in
-        hll_to_ir::imports::collect_module_imports(source).expect("module imports")
-    {
-        names.push(
-            path.trim_start_matches("./")
-                .trim_end_matches(".hll")
-                .to_owned(),
-        );
-    }
+    let module_imports =
+        hll_to_ir::imports::collect_module_imports(source).expect("module imports");
+    names.extend(module_imports.iter().map(|(_alias, path)| module_key(path)));
     let mut prelude = String::new();
+    let mut aliases = HashMap::new();
     for name in names {
         let module = bundled_module_source(&name)
             .unwrap_or_else(|| panic!("missing bundled module `{name}`"));
@@ -56,7 +52,97 @@ fn direct_import_prelude(source: &str) -> String {
         prelude.push_str(&interface);
         prelude.push('\n');
     }
-    prelude
+    for (alias, path) in module_imports {
+        let key = module_key(&path);
+        let module =
+            bundled_module_source(&key).unwrap_or_else(|| panic!("missing bundled module `{key}`"));
+        let exports = hll_to_ir::imports::collect_exports(module).expect("collect exports");
+        aliases.insert(
+            alias.clone(),
+            hll_to_ir::imports::ModuleAlias {
+                prefix: String::new(),
+                exports: exports.clone(),
+                mangled: HashSet::new(),
+                member_aliases: module_member_aliases(&alias, &key, &exports),
+            },
+        );
+    }
+    (prelude, aliases)
+}
+
+fn module_key(path: &str) -> String {
+    path.trim_start_matches("./")
+        .trim_end_matches(".hll")
+        .to_owned()
+}
+
+fn module_member_aliases(
+    alias: &str,
+    key: &str,
+    exports: &HashSet<String>,
+) -> HashMap<String, String> {
+    let mut aliases = HashMap::new();
+    for prefix in [alias, key] {
+        let prefix = prefix.trim_end_matches(".hll");
+        if prefix.is_empty() {
+            continue;
+        }
+        let prefix = format!("{prefix}_");
+        for export in exports {
+            let Some(short) = export.strip_prefix(&prefix) else {
+                continue;
+            };
+            if short.is_empty() {
+                continue;
+            }
+            match aliases.get(short) {
+                Some(existing) if existing != export => {
+                    aliases.remove(short);
+                }
+                Some(_) => {}
+                None => {
+                    aliases.insert(short.to_owned(), export.clone());
+                }
+            }
+        }
+    }
+    for export in exports {
+        if let Some(short) = export.strip_prefix('k')
+            && short
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_ascii_lowercase())
+        {
+            aliases
+                .entry(short.to_owned())
+                .or_insert_with(|| export.clone());
+        }
+    }
+    aliases
+}
+
+fn kernel_snippet_abi_exports() -> Vec<String> {
+    let manifest = include_str!("../../../tests/fixtures/kernel_snippet.build");
+    for raw_line in manifest.lines() {
+        let line = raw_line.trim();
+        let Some(value) = line.strip_prefix("abi_exports") else {
+            continue;
+        };
+        let Some((_eq, value)) = value.split_once('=') else {
+            continue;
+        };
+        let value = value.trim();
+        let Some(inner) = value.strip_prefix('[').and_then(|v| v.strip_suffix(']')) else {
+            continue;
+        };
+        return inner
+            .split(',')
+            .map(str::trim)
+            .filter_map(|item| item.strip_prefix('"').and_then(|v| v.strip_suffix('"')))
+            .map(str::to_owned)
+            .collect();
+    }
+    panic!("kernel_snippet.build must declare abi_exports");
 }
 
 // The kernel modules with code to compile: true stdlib + boot entry (from the stdlib list)
@@ -84,14 +170,14 @@ fn compiled_stdlib() -> &'static [(String, AssembledOutput)] {
         kernel_code_modules()
             .iter()
             .map(|(name, src)| {
-                let source_prelude = direct_import_prelude(src);
+                let (source_prelude, module_aliases) = direct_imports(src);
                 let compiler = HllCompiler::new(CompileConfig {
                     target: TargetMode::Kernel,
                     strict: true,
                     string_prefix: Some("__kern_str_".to_owned()),
                     type_prelude: get_stdlib_type_prelude(),
                     source_prelude: Some(source_prelude),
-                    module_aliases: Default::default(),
+                    module_aliases,
                     module_mangle_prefix: None,
                 });
                 let out = compiler.compile(src).unwrap_or_else(|diags| {
@@ -109,14 +195,15 @@ fn compiled_stdlib() -> &'static [(String, AssembledOutput)] {
 
 fn run_kernel_hll(user_src: &str) -> (String, Option<i64>) {
     let stdlib_objs = compiled_stdlib();
+    let (source_prelude, module_aliases) = direct_imports(user_src);
 
     let user_compiler = HllCompiler::new(CompileConfig {
         target: TargetMode::Kernel,
         strict: true,
         string_prefix: None,
         type_prelude: Vec::new(),
-        source_prelude: Some(direct_import_prelude(user_src)),
-        module_aliases: Default::default(),
+        source_prelude: Some(source_prelude),
+        module_aliases,
         module_mangle_prefix: None,
     });
     let user_out = user_compiler
@@ -125,8 +212,11 @@ fn run_kernel_hll(user_src: &str) -> (String, Option<i64>) {
     let mut user_rv = CompilerRv64::new();
     let (_, user_tokens) = user_rv.compile_with_tokens(&user_out.ir);
 
-    let user_obj =
+    let mut user_obj =
         Assembler::assemble(&user_tokens).unwrap_or_else(|e| panic!("user assemble failed: {e}"));
+    for export in kernel_snippet_abi_exports() {
+        user_obj.mark_entry_global(&export);
+    }
     let mut modules: Vec<(&str, &AssembledOutput)> =
         stdlib_objs.iter().map(|(n, o)| (n.as_str(), o)).collect();
     modules.push(("user", &user_obj));
@@ -135,7 +225,6 @@ fn run_kernel_hll(user_src: &str) -> (String, Option<i64>) {
     if layout.emit_layout_symbols {
         assembled.inject_layout_symbols(&layout);
     }
-    assembled.mark_entry_global("_kernel_start");
 
     let mut vm = VirtualMachine::new_kernel(&assembled);
     let run = vm.run(10_000_000);
@@ -221,23 +310,23 @@ fn my_kernel_calls_trap_init() {
 #[test]
 fn my_kernel_arms_timer() {
     assert!(
-        kernel::MY_KERNEL.contains("timer_set("),
-        "reference kernel must arm the CLINT timer via timer_set"
+        kernel::MY_KERNEL.contains("utilities.timer_set("),
+        "reference kernel must arm the CLINT timer via utilities.timer_set"
     );
 }
 
 #[test]
 fn my_kernel_initializes_interrupt_controller() {
     assert!(
-        kernel::MY_KERNEL.contains("plic_init()"),
-        "reference kernel must initialize the interrupt controller via plic_init"
+        kernel::MY_KERNEL.contains("utilities.plic_init()"),
+        "reference kernel must initialize the interrupt controller via utilities.plic_init"
     );
 }
 
 #[test]
 fn my_kernel_warns_for_unimplemented_device_tree() {
     assert!(
-        kernel::MY_KERNEL.contains("klog_warn") && kernel::MY_KERNEL.contains("device tree"),
+        kernel::MY_KERNEL.contains("klog.warn") && kernel::MY_KERNEL.contains("device tree"),
         "unimplemented device-tree stub must emit a warning, not ok"
     );
 }
@@ -420,12 +509,12 @@ fn scheduler_hll_defines_schedule() {
 #[test]
 fn trap_handler_calls_syscall_dispatch_on_umode_ecall() {
     assert!(
-        kernel::TRAP_HANDLER.contains("syscall_dispatch"),
-        "trap handler must call syscall_dispatch on U-mode ecall"
+        kernel::TRAP_HANDLER.contains("syscall.dispatch"),
+        "trap handler must call syscall.dispatch on U-mode ecall"
     );
     assert!(
-        kernel::TRAP_HANDLER.contains("schedule("),
-        "trap handler must call schedule when syscall action != 0"
+        kernel::TRAP_HANDLER.contains("scheduler.schedule("),
+        "trap handler must call scheduler.schedule when syscall action != 0"
     );
     assert!(
         kernel::TRAP_HANDLER.contains("scause_u == 8"),

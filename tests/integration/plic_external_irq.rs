@@ -1,4 +1,5 @@
 use asm_to_binary::AssembledOutput;
+use full_stack::build::BuildManifest;
 use full_stack::compilation_pipeline::{CompilationPipeline, TargetMode};
 use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 
@@ -42,6 +43,10 @@ kmain: () {
 "#;
 
 fn compile_and_run_kernel(kernel_src: &str) -> (String, Option<i64>, u64) {
+    let snippet_manifest = BuildManifest::from_file(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/kernel_snippet.build"),
+    )
+    .expect("kernel snippet build file parse");
     let stdlib_objs = CompilationPipeline::compile_stdlib_objects(TargetMode::Kernel)
         .expect("kernel stdlib compile");
     // Kernel module deps (trap_handler, vmm, ...) from the closure; drop `my_kernel` so the
@@ -52,7 +57,10 @@ fn compile_and_run_kernel(kernel_src: &str) -> (String, Option<i64>, u64) {
     let user_pipeline = CompilationPipeline::new();
     let user = user_pipeline.compile(kernel_src).expect("kernel compile");
     let (_, user_tokens) = user_pipeline.compile_ir_to_assembly_with_tokens(&user.ir_program);
-    let user_obj = user_pipeline.assemble(&user_tokens).expect("user assemble");
+    let mut user_obj = user_pipeline.assemble(&user_tokens).expect("user assemble");
+    for export in &snippet_manifest.abi_exports {
+        user_obj.mark_entry_global(export);
+    }
 
     let mut modules: Vec<(&str, &AssembledOutput)> =
         stdlib_objs.iter().map(|(n, o)| (n.as_str(), o)).collect();

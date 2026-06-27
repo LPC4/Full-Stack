@@ -1,4 +1,4 @@
-use asm_to_binary::AssembledOutput;
+use asm_to_binary::{AssembledOutput, ObjectLinker};
 use full_stack::compilation_pipeline::CompilationPipeline;
 use virtual_machine::bus::ELF_LOAD_BASE;
 
@@ -12,24 +12,26 @@ helper: (n: i32) -> i32 {
     return i
 }
 
-main: () -> i32 {
+export main: () -> i32 {
     return helper(3)
 }
 "#
 }
 
-fn compile_sample() -> (AssembledOutput, Vec<u8>) {
+fn compile_object(source: &str) -> AssembledOutput {
     let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
-    
-    pipeline.set_write_artifacts(false);
     let result = pipeline
-        .compile(sample_source())
+        .compile(source)
         .unwrap_or_else(|e| panic!("failed to compile sample source: {e}"));
     let (_asm, tokens) = pipeline.compile_ir_to_assembly_with_tokens(&result.ir_program);
-    let assembled = pipeline
+    pipeline
         .assemble(&tokens)
-        .unwrap_or_else(|e| panic!("failed to assemble sample source: {e}"));
+        .unwrap_or_else(|e| panic!("failed to assemble sample source: {e}"))
+}
+
+fn compile_sample() -> (AssembledOutput, Vec<u8>) {
+    let assembled = compile_object(sample_source());
     let elf = assembled.to_elf(ELF_LOAD_BASE);
     (assembled, elf)
 }
@@ -221,6 +223,62 @@ fn elf_symbol_table_marks_globals_and_locals() {
         local.section_index as usize,
         section_index_for_addr(&sections, local.value),
         "local label `{local_name}` should reference the section that contains its address"
+    );
+}
+
+#[test]
+fn hll_exports_control_object_global_visibility() {
+    let assembled = compile_object(
+        r#"
+secret: () -> i32 { return 41 }
+private_data: i64 = 1
+
+export api: () -> i32 {
+    return secret()
+}
+
+export shared: i64 = 7
+"#,
+    );
+
+    assert!(assembled.has_symbol("secret"), "private function label should exist");
+    assert!(
+        !assembled.is_symbol_global("secret"),
+        "unexported function should stay local"
+    );
+    assert!(
+        !assembled.is_symbol_global("private_data"),
+        "unexported global should stay local"
+    );
+    assert!(assembled.is_symbol_global("api"), "exported function should be global");
+    assert!(
+        assembled.is_symbol_global("shared"),
+        "exported global should be global"
+    );
+}
+
+#[test]
+fn object_linker_does_not_resolve_external_to_private_symbol() {
+    let defining = compile_object(
+        r#"
+hidden: () -> i32 { return 9 }
+"#,
+    );
+    let referencing = compile_object(
+        r#"
+external hidden: () -> i32
+
+main: () -> i32 {
+    return hidden()
+}
+"#,
+    );
+
+    let err = ObjectLinker::link(&[("defining", &defining), ("referencing", &referencing)])
+        .expect_err("private symbol should not satisfy an external relocation");
+    assert!(
+        err.message.contains("undefined external symbol `hidden`"),
+        "unexpected linker error: {err}"
     );
 }
 

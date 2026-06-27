@@ -5,6 +5,7 @@ layout  := import("layout")
 pmm     := import("pmm")
 mem     := import("mem")
 runtime := import("runtime")
+klog    := import("klog")
 
 ; VMM_V/R/W/X/U/G page-flag bits come from the shared kernel layout (layout.hll).
 
@@ -13,11 +14,11 @@ export assert_canonical: (va: u64) {
     bit38: u64 = (va >> 38) & 1
     if bit38 == 0 {
         if (va >> 39) != 0 {
-            kpanic("vmm: non-canonical virtual address (upper bits not zero)".ptr)
+            runtime.panic("vmm: non-canonical virtual address (upper bits not zero)".ptr)
         }
     } else {
         if (va >> 39) != 0x1FFFFFF {
-            kpanic("vmm: non-canonical virtual address (upper bits not all ones)".ptr)
+            runtime.panic("vmm: non-canonical virtual address (upper bits not all ones)".ptr)
         }
     }
 }
@@ -40,11 +41,11 @@ export vmm_get_root: () -> u64 {
 
 ; Allocate a zeroed 4 KiB page and return it as a u64* table pointer.
 export vmm_alloc_pt: () -> u64* {
-    page: u8* = pmm_alloc()
+    page: u8* = pmm.alloc()
     if page == null {
-        kpanic("vmm: out of memory for page table".ptr)
+        runtime.panic("vmm: out of memory for page table".ptr)
     }
-    memset(page, 0, 4096)
+    mem.memset(page, 0, 4096)
     return page as u64*
 }
 
@@ -126,11 +127,11 @@ export vmm_fork_copy: (parent_root: u64, child_root: u64) {
                             src_pa: u64 = (e0 >> 10) << 12
                             ; Preserve permission bits but drop V; vmm_map re-adds it.
                             flags: u64 = e0 & 0x3FE
-                            dst: u8* = pmm_alloc()
+                            dst: u8* = pmm.alloc()
                             if dst == null {
-                                kpanic("vmm: out of memory in fork copy".ptr)
+                                runtime.panic("vmm: out of memory in fork copy".ptr)
                             }
-                            memcpy(dst, src_pa as u8*, 4096)
+                            mem.memcpy(dst, src_pa as u8*, 4096)
                             vmm_set_root(child_root)
                             vmm_map(va, dst as u64, flags)
                         }
@@ -197,6 +198,15 @@ export vmm_enable: () {
         csrw 0x180, t0
         sfence.vma x0, x0       ; Flush TLB after SATP change.
     }
+}
+
+export vmm_boot: () {
+    vmm_init()
+    ; Stamp the shared kernel/MMIO mappings into the boot root. The same routine
+    ; stamps them into every per-process root (see vmm_new_root).
+    vmm_map_kernel(vmm_get_root())
+    vmm_enable()
+    klog.ok("[ VMM ] sv39 enabled".ptr)
 }
 
 ; Re-enable S-mode interrupts after MMU is stable.

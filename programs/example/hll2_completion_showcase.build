@@ -1,0 +1,7 @@
+name = "hll2_completion_showcase"
+target = "hosted"
+root = "hll2_completion_showcase.hll"
+entry = "_start"
+stdlib = "hosted"
+import_closure = true
+mangle_symbols = true

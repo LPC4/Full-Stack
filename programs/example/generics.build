@@ -1,0 +1,7 @@
+name = "generics"
+target = "hosted"
+root = "generics.hll"
+entry = "_start"
+stdlib = "hosted"
+import_closure = true
+mangle_symbols = true
