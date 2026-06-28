@@ -401,6 +401,22 @@ impl CompilationPipeline {
                     .unwrap_or_else(|| PathBuf::from("."));
                 base_dir.join(raw_path)
             };
+
+            // Prefer the embedded table so bundled programs resolve identically on every
+            // platform (the browser cannot canonicalize); the virtual source_path re-derives.
+            let normalized = normalize_lexical(&candidate);
+            if let Some(key) = programs_key(&normalized)
+                && let Some(source) = crate::userspace::source_by_path(&key)
+            {
+                return Ok(Some(ResolvedModuleSource {
+                    source: source.to_owned(),
+                    source_path: Some(PathBuf::from(&key)),
+                    key,
+                    is_stdlib: false,
+                }));
+            }
+
+            // Native fallback: raw on-disk paths outside the bundled `programs/` tree.
             let canonical = candidate.canonicalize().map_err(|err| {
                 format!(
                     "cannot resolve import(\"{path}\") from `{}`: {err}",
@@ -1314,6 +1330,41 @@ fn programs_module_resolver(name: &str) -> Option<String> {
     bundled_module_source(name).map(str::to_owned)
 }
 
+/// Resolve `.` and `..` components lexically, without touching the filesystem.
+fn normalize_lexical(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                if !out.pop() {
+                    out.push("..");
+                }
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+/// Map a normalized path onto its repo-relative `programs/...` key, if it traverses a
+/// `programs` directory, so a relative import can hit the embedded source table.
+fn programs_key(path: &Path) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+    let mut found = false;
+    for component in path.components() {
+        if let std::path::Component::Normal(part) = component {
+            if !found && part == "programs" {
+                found = true;
+            }
+            if found {
+                parts.push(part.to_string_lossy().into_owned());
+            }
+        }
+    }
+    found.then(|| parts.join("/"))
+}
+
 fn sanitize_artifact_component(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     for ch in value.chars() {
@@ -1909,6 +1960,46 @@ main: () -> i32 {
             .expect("qualified imported type should resolve and compile");
         let ir = result.ir_program.to_string();
         assert!(ir.contains("type Point"), "imported type missing: {ir}");
+    }
+
+    #[test]
+    fn normalize_lexical_resolves_dot_segments() {
+        assert_eq!(
+            normalize_lexical(Path::new("programs/user/bin/shell/./../as/as_object.hll")),
+            PathBuf::from("programs/user/bin/as/as_object.hll")
+        );
+    }
+
+    #[test]
+    fn embedded_source_files_include_tool_helpers() {
+        for key in [
+            "programs/user/bin/shell/shell_fileops.hll",
+            "programs/user/bin/as/as_object.hll",
+            "programs/user/bin/cc/cc_codegen.hll",
+            "programs/user/bin/ld/ld_link.hll",
+        ] {
+            assert!(
+                crate::userspace::source_by_path(key).is_some(),
+                "missing embedded helper: {key}"
+            );
+        }
+    }
+
+    #[test]
+    fn relative_import_resolves_from_embedded_table_without_fs() {
+        let pipeline = CompilationPipeline::new();
+        // A virtual base under programs/ stands in for the WASM case with no filesystem.
+        let base = PathBuf::from("programs/user/bin/shell/shell.hll");
+        let resolved = pipeline
+            .resolve_module_source("./shell_fileops.hll", Some(base.as_path()))
+            .expect("resolve ok")
+            .expect("embedded helper present");
+        assert_eq!(resolved.key, "programs/user/bin/shell/shell_fileops.hll");
+        assert!(!resolved.source.is_empty());
+        assert_eq!(
+            resolved.source_path.as_deref(),
+            Some(Path::new("programs/user/bin/shell/shell_fileops.hll"))
+        );
     }
 
     #[test]

@@ -70,8 +70,65 @@ fn generate_userspace(manifest_dir: &Path, out_dir: &Path) {
     let mut programs: Vec<Program> = build_files.iter().map(|path| Program::load(path)).collect();
     programs.sort_by(|a, b| (a.kind.rank(), &a.name).cmp(&(b.kind.rank(), &b.name)));
 
-    let code = render_userspace(&programs);
+    let programs_dir = manifest_dir.join("programs");
+    println!("cargo:rerun-if-changed={}", programs_dir.display());
+    let mut source_files = Vec::new();
+    collect_source_files(&programs_dir, manifest_dir, &mut source_files);
+    source_files.sort_by(|a, b| a.key.cmp(&b.key));
+
+    let mut code = render_userspace(&programs);
+    code.push_str(&render_source_files(&source_files));
     fs::write(out_dir.join("userspace.rs"), code).expect("failed to write userspace.rs");
+}
+
+/// Walk `programs/` and record every `.hll` keyed by its forward-slash, repo-relative path.
+/// These back WASM-safe relative-import resolution where the filesystem is unavailable.
+fn collect_source_files(dir: &Path, manifest_dir: &Path, out: &mut Vec<SourceFile>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_source_files(&path, manifest_dir, out);
+            continue;
+        }
+        if path.extension().and_then(|ext| ext.to_str()) != Some("hll") {
+            continue;
+        }
+        println!("cargo:rerun-if-changed={}", path.display());
+        let rel = path.strip_prefix(manifest_dir).expect("source under crate");
+        let key = rel.to_string_lossy().replace('\\', "/");
+        out.push(SourceFile { key, path });
+    }
+}
+
+struct SourceFile {
+    key: String,
+    path: PathBuf,
+}
+
+fn render_source_files(sources: &[SourceFile]) -> String {
+    let mut out = String::new();
+    out.push_str("\n/// Every bundled `programs/**/*.hll` keyed by repo-relative path.\n");
+    out.push_str("pub static SOURCE_FILES: &[(&str, &str)] = &[\n");
+    for source in sources {
+        writeln!(
+            out,
+            "    (\"{}\", include_str!(\"{}\")),",
+            escape(&source.key),
+            source.path.to_string_lossy().replace('\\', "/")
+        )
+        .expect("write");
+    }
+    out.push_str("];\n\n");
+    out.push_str(
+        "/// Look up a bundled program source by its repo-relative `programs/...` path.\n\
+         pub fn source_by_path(key: &str) -> Option<&'static str> {\n\
+             SOURCE_FILES.iter().find(|(path, _)| *path == key).map(|(_, source)| *source)\n\
+         }\n",
+    );
+    out
 }
 
 fn collect_build_files(dir: &Path, out: &mut Vec<PathBuf>) {
