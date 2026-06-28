@@ -1,11 +1,10 @@
+console := import("console")
+sys := import("sys")
 ; Spinning wireframe cube: map_fb, then per frame rotate, project, clear, draw.
 ; RGBA8888 pixels, double-buffered, WASD via poll_key. See OS spec ch.10.4.
 
-external console_writeln: (str: u8*)
 ; Map the framebuffer (syscall 107); returns its base VA (0 on failure).
-external sc_map_fb: () -> u64
 ; Pop the next keyboard event (syscall 108); packed event or -1 when none.
-external sc_poll_key: () -> i64
 
 ; Camera distance pushed onto z so the projected z stays positive.
 DIST: f64 = 4.0
@@ -28,7 +27,7 @@ hold_a: i64 = 0
 hold_s: i64 = 0
 hold_d: i64 = 0
 
-; Framebuffer base virtual address (filled in by sc_map_fb).
+; Framebuffer base virtual address (filled in by sys.map_fb).
 _fb_base: u64 = 0
 
 ; Cube model-space vertex coordinates (f64), one entry per corner.
@@ -171,7 +170,7 @@ advance_angles: () {
 ; letters as their uppercase ASCII scancode with bit 16 set on a press.
 poll_input: () {
     while 1 == 1 {
-        ev: i64 = sc_poll_key()
+        ev: i64 = sys.poll_key()
         if ev < 0 {
             return
         }
@@ -280,9 +279,9 @@ draw_cube: () {
 }
 
 main: () -> i32 {
-    base: u64 = sc_map_fb()
+    base: u64 = sys.map_fb()
     if base == 0 {
-        console_writeln("cube: map_fb failed".ptr)
+        console.writeln("cube: map_fb failed".ptr)
         return 1
     }
     _fb_base = base
@@ -290,7 +289,7 @@ main: () -> i32 {
     init_cube()
     init_edges()
     enable_double_buffer()
-    console_writeln("cube: rendering (WASD to rotate)".ptr)
+    console.writeln("cube: rendering (WASD to rotate)".ptr)
 
     while 1 == 1 {
         poll_input()

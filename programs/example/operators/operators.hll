@@ -1,10 +1,10 @@
 ; Operator showcase: arithmetic, comparison, logical, bitwise, shift, cast
 ; precedence, and compound assignment. main returns 0 only if every check holds.
 
-std := import("runtime")
+console := import("console")
 
 main: () -> i32 {
-    std.println("-- operators --")
+    console.println("-- operators --")
 
     ; Arithmetic and the multiplicative-over-additive precedence.
     a: i32 = 2 + 3 * 4
@@ -20,7 +20,7 @@ main: () -> i32 {
     if bits != 0xFF { return 3 }
     if (bits & 0x0F) != 0x0F { return 4 }
     if (bits ^ 0xFF) != 0 { return 5 }
-    std.print_int(bits)
+    console.print_int(bits)
 
     ; Shifts.
     if (1 << 4) != 16 { return 6 }
@@ -39,8 +39,8 @@ main: () -> i32 {
     acc <<= 1
     acc |= 1
     if acc != 25 { return 9 }
-    std.print_int(acc)
+    console.print_int(acc)
 
-    std.println("ok")
+    console.println("ok")
     return 0
 }

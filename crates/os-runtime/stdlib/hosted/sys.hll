@@ -1,5 +1,5 @@
-; Userspace syscall wrappers (sc_*) and C-string helpers. Args go through globals
-; since inline asm cannot reach locals. Numbers and semantics: OS spec ch.7.
+; Userspace syscall wrappers. Args go through globals because inline asm cannot reach locals.
+; Numbers and semantics: OS spec ch.7.
 
 ; --- Syscall argument marshalling ---
 
@@ -10,8 +10,7 @@ _a3: u64 = 0
 _a4: u64 = 0
 _ret: i64 = 0
 
-; Read one byte from the UART (syscall 100). Returns the byte or -1 if none.
-sc_readchar: () -> i64 {
+export sys_readchar: () -> i64 {
     asm {
         li a7, 100
         ecall
@@ -21,16 +20,14 @@ sc_readchar: () -> i64 {
     return _ret
 }
 
-; Voluntarily yield the CPU to the scheduler (syscall 2).
-sc_yield: () {
+export sys_yield: () {
     asm {
         li a7, 2
         ecall
     }
 }
 
-; Terminate the calling process with `code` (syscall 93).
-sc_exit: (code: i64) {
+export sys_exit: (code: i64) {
     _a0 = code as u64
     asm {
         la t0, _a0
@@ -40,8 +37,7 @@ sc_exit: (code: i64) {
     }
 }
 
-; Open a file (syscall 56). flags: 0=RO, 1=RW, 2=create. Returns fd>=2 or -1.
-sc_open: (path: u8*, flags: u64) -> i64 {
+export sys_open: (path: u8*, flags: u64) -> i64 {
     _a0 = path as u64
     _a1 = flags
     asm {
@@ -57,8 +53,7 @@ sc_open: (path: u8*, flags: u64) -> i64 {
     return _ret
 }
 
-; Read up to len bytes from fd at offset into buf (syscall 63). Bytes read or -1.
-sc_read: (fd: i64, buf: u8*, offset: u64, len: u64) -> i64 {
+export sys_read: (fd: i64, buf: u8*, offset: u64, len: u64) -> i64 {
     _a0 = fd as u64
     _a1 = buf as u64
     _a2 = offset
@@ -80,8 +75,7 @@ sc_read: (fd: i64, buf: u8*, offset: u64, len: u64) -> i64 {
     return _ret
 }
 
-; Write len bytes from buf to fd (syscall 64). fd 0/1 -> UART; >=2 -> filesystem.
-sc_write: (fd: i64, buf: u8*, len: u64) -> i64 {
+export sys_write: (fd: i64, buf: u8*, len: u64) -> i64 {
     _a0 = fd as u64
     _a1 = buf as u64
     _a2 = len
@@ -100,8 +94,7 @@ sc_write: (fd: i64, buf: u8*, len: u64) -> i64 {
     return _ret
 }
 
-; Close a file descriptor (syscall 57).
-sc_close: (fd: i64) {
+export sys_close: (fd: i64) {
     _a0 = fd as u64
     asm {
         la t0, _a0
@@ -111,8 +104,7 @@ sc_close: (fd: i64) {
     }
 }
 
-; Truncate fd to an exact length (syscall 46). Returns 0 or -1.
-sc_ftruncate: (fd: i64, len: u64) -> i64 {
+export sys_ftruncate: (fd: i64, len: u64) -> i64 {
     _a0 = fd as u64
     _a1 = len
     asm {
@@ -128,9 +120,7 @@ sc_ftruncate: (fd: i64, len: u64) -> i64 {
     return _ret
 }
 
-; Reposition a file fd (syscall 62). whence: 0=SET, 1=CUR, 2=END. Returns the new
-; absolute position. Used by the shell to seek to end for `>>` append redirection.
-sc_lseek: (fd: i64, offset: i64, whence: u64) -> i64 {
+export sys_lseek: (fd: i64, offset: i64, whence: u64) -> i64 {
     _a0 = fd as u64
     _a1 = offset as u64
     _a2 = whence
@@ -149,8 +139,7 @@ sc_lseek: (fd: i64, offset: i64, whence: u64) -> i64 {
     return _ret
 }
 
-; Inode type at a path (syscall 102): 1=file, 2=dir, -1=missing.
-sc_stat: (path: u8*) -> i64 {
+export sys_stat: (path: u8*) -> i64 {
     _a0 = path as u64
     asm {
         la t0, _a0
@@ -163,9 +152,7 @@ sc_stat: (path: u8*) -> i64 {
     return _ret
 }
 
-; List the index-th entry of `path` (syscall 101); writes its name into name_buf.
-; Returns the entry type (1=file, 2=dir) or -1 past the end.
-sc_readdir: (path: u8*, index: u64, name_buf: u8*) -> i64 {
+export sys_readdir: (path: u8*, index: u64, name_buf: u8*) -> i64 {
     _a0 = path as u64
     _a1 = index
     _a2 = name_buf as u64
@@ -184,9 +171,7 @@ sc_readdir: (path: u8*, index: u64, name_buf: u8*) -> i64 {
     return _ret
 }
 
-; Load and run an executable, passing `arg` (null-terminated, readable at
-; USER_ARG_BASE) (syscall 103). Returns the new pid or -1.
-sc_exec_arg: (path: u8*, arg: u8*) -> i64 {
+export sys_exec_arg: (path: u8*, arg: u8*) -> i64 {
     _a0 = path as u64
     _a1 = arg as u64
     asm {
@@ -202,14 +187,11 @@ sc_exec_arg: (path: u8*, arg: u8*) -> i64 {
     return _ret
 }
 
-; Load and run an executable with no argument. Returns the new pid or -1.
-sc_exec: (path: u8*) -> i64 {
-    return sc_exec_arg(path, 0 as u8*)
+export sys_exec: (path: u8*) -> i64 {
+    return sys_exec_arg(path, 0 as u8*)
 }
 
-; Exec with stdout/stdin redirected to FS files (syscall 110). out_path/in_path may
-; be null; out_append != 0 appends (`>>`) else truncates (`>`). Returns pid or -1.
-sc_exec_redir: (path: u8*, arg: u8*, out_path: u8*, in_path: u8*, out_append: u64) -> i64 {
+export sys_exec_redir: (path: u8*, arg: u8*, out_path: u8*, in_path: u8*, out_append: u64) -> i64 {
     _a0 = path as u64
     _a1 = arg as u64
     _a2 = out_path as u64
@@ -234,8 +216,7 @@ sc_exec_redir: (path: u8*, arg: u8*, out_path: u8*, in_path: u8*, out_append: u6
     return _ret
 }
 
-; Create a directory (syscall 83). Returns >=0 or -1.
-sc_mkdir: (path: u8*) -> i64 {
+export sys_mkdir: (path: u8*) -> i64 {
     _a0 = path as u64
     asm {
         la t0, _a0
@@ -248,8 +229,7 @@ sc_mkdir: (path: u8*) -> i64 {
     return _ret
 }
 
-; Move/rename a file or directory (syscall 82). Returns 0 or -1.
-sc_rename: (old_path: u8*, new_path: u8*) -> i64 {
+export sys_rename: (old_path: u8*, new_path: u8*) -> i64 {
     _a0 = old_path as u64
     _a1 = new_path as u64
     asm {
@@ -265,8 +245,7 @@ sc_rename: (old_path: u8*, new_path: u8*) -> i64 {
     return _ret
 }
 
-; Remove a regular file (syscall 105). Returns 0 or -1.
-sc_unlink: (path: u8*) -> i64 {
+export sys_unlink: (path: u8*) -> i64 {
     _a0 = path as u64
     asm {
         la t0, _a0
@@ -279,8 +258,7 @@ sc_unlink: (path: u8*) -> i64 {
     return _ret
 }
 
-; Remove an empty directory (syscall 106). Returns 0 or -1.
-sc_rmdir: (path: u8*) -> i64 {
+export sys_rmdir: (path: u8*) -> i64 {
     _a0 = path as u64
     asm {
         la t0, _a0
@@ -293,8 +271,7 @@ sc_rmdir: (path: u8*) -> i64 {
     return _ret
 }
 
-; 1 while the given pid is still runnable, 0 once it has exited (syscall 104).
-sc_pidalive: (pid: u64) -> i64 {
+export sys_pidalive: (pid: u64) -> i64 {
     _a0 = pid
     asm {
         la t0, _a0
@@ -307,8 +284,7 @@ sc_pidalive: (pid: u64) -> i64 {
     return _ret
 }
 
-; Map the framebuffer device and return its base VA (syscall 107), 0 on failure.
-sc_map_fb: () -> u64 {
+export sys_map_fb: () -> u64 {
     asm {
         li a7, 107
         ecall
@@ -318,8 +294,7 @@ sc_map_fb: () -> u64 {
     return _ret as u64
 }
 
-; Pop the next key event from the keyboard device (syscall 108); -1 when none.
-sc_poll_key: () -> i64 {
+export sys_poll_key: () -> i64 {
     asm {
         li a7, 108
         ecall
@@ -329,9 +304,7 @@ sc_poll_key: () -> i64 {
     return _ret
 }
 
-; Clone the caller (syscall 220): child pid in the parent, 0 in the child, -1 on
-; error.
-sc_fork: () -> i64 {
+export sys_fork: () -> i64 {
     asm {
         li a7, 220
         ecall
@@ -341,8 +314,7 @@ sc_fork: () -> i64 {
     return _ret
 }
 
-; Reap an exited child and return its exit code, or -1 if none (syscall 260).
-sc_wait: () -> i64 {
+export sys_wait: () -> i64 {
     asm {
         li a7, 260
         ecall
@@ -352,9 +324,7 @@ sc_wait: () -> i64 {
     return _ret
 }
 
-; Wait for a specific child by pid (syscall 261). Returns its exit code, the
-; interrupt sentinel (-2) on Ctrl-C, or -1 if pid is not a child of the caller.
-sc_waitpid: (pid: i64) -> i64 {
+export sys_waitpid: (pid: i64) -> i64 {
     _a0 = pid as u64
     asm {
         la t0, _a0
@@ -367,9 +337,7 @@ sc_waitpid: (pid: i64) -> i64 {
     return _ret
 }
 
-; Send signal `sig` to `pid` (syscall 129). Only SIGKILL (9) is honoured.
-; Returns 0 on success, -1 if the pid is not a live, killable process.
-sc_kill: (pid: i64, sig: i64) -> i64 {
+export sys_kill: (pid: i64, sig: i64) -> i64 {
     _a0 = pid as u64
     _a1 = sig as u64
     asm {
@@ -385,56 +353,40 @@ sc_kill: (pid: i64, sig: i64) -> i64 {
     return _ret
 }
 
-; --- Null-terminated C-string helpers ---
-
-; Length of a null-terminated string (excluding the terminator).
-cstr_len: (s: u8*) -> u64 {
-    n: u64 = 0
-    while @(s + n) != 0 {
-        n = n + 1
-    }
-    return n
+; Legacy flat ABI entry points. Source should import `sys` and call short members
+; such as `sys.open`; these wrappers keep older standalone snippets linkable.
+export sc_readchar: () -> i64 { return sys_readchar() }
+export sc_yield: () { sys_yield() }
+export sc_exit: (code: i64) { sys_exit(code) }
+export sc_open: (path: u8*, flags: u64) -> i64 { return sys_open(path, flags) }
+export sc_read: (fd: i64, buf: u8*, offset: u64, len: u64) -> i64 {
+    return sys_read(fd, buf, offset, len)
 }
-
-; 1 if two null-terminated strings are equal, 0 otherwise.
-cstr_eq: (a: u8*, b: u8*) -> i64 {
-    i: u64 = 0
-    while 1 == 1 {
-        ca: u8 = @(a + i)
-        cb: u8 = @(b + i)
-        if ca != cb {
-            return 0
-        }
-        if ca == 0 {
-            return 1
-        }
-        i = i + 1
-    }
-    return 0
+export sc_write: (fd: i64, buf: u8*, len: u64) -> i64 { return sys_write(fd, buf, len) }
+export sc_close: (fd: i64) { sys_close(fd) }
+export sc_ftruncate: (fd: i64, len: u64) -> i64 { return sys_ftruncate(fd, len) }
+export sc_lseek: (fd: i64, offset: i64, whence: u64) -> i64 {
+    return sys_lseek(fd, offset, whence)
 }
-
-; Copy a null-terminated string from src to dst (including the terminator).
-cstr_copy: (dst: u8*, src: u8*) {
-    i: u64 = 0
-    while 1 == 1 {
-        c: u8 = @(src + i)
-        d: u8* = dst + i
-        @d = c
-        if c == 0 {
-            return
-        }
-        i = i + 1
-    }
+export sc_stat: (path: u8*) -> i64 { return sys_stat(path) }
+export sc_readdir: (path: u8*, index: u64, name_buf: u8*) -> i64 {
+    return sys_readdir(path, index, name_buf)
 }
-
-; 1 if `s` begins with `prefix`, 0 otherwise.
-cstr_starts_with: (s: u8*, prefix: u8*) -> i64 {
-    i: u64 = 0
-    while @(prefix + i) != 0 {
-        if @(s + i) != @(prefix + i) {
-            return 0
-        }
-        i = i + 1
-    }
-    return 1
+export sc_exec_arg: (path: u8*, arg: u8*) -> i64 { return sys_exec_arg(path, arg) }
+export sc_exec: (path: u8*) -> i64 { return sys_exec(path) }
+export sc_exec_redir: (path: u8*, arg: u8*, out_path: u8*, in_path: u8*, out_append: u64) -> i64 {
+    return sys_exec_redir(path, arg, out_path, in_path, out_append)
 }
+export sc_mkdir: (path: u8*) -> i64 { return sys_mkdir(path) }
+export sc_rename: (old_path: u8*, new_path: u8*) -> i64 {
+    return sys_rename(old_path, new_path)
+}
+export sc_unlink: (path: u8*) -> i64 { return sys_unlink(path) }
+export sc_rmdir: (path: u8*) -> i64 { return sys_rmdir(path) }
+export sc_pidalive: (pid: u64) -> i64 { return sys_pidalive(pid) }
+export sc_map_fb: () -> u64 { return sys_map_fb() }
+export sc_poll_key: () -> i64 { return sys_poll_key() }
+export sc_fork: () -> i64 { return sys_fork() }
+export sc_wait: () -> i64 { return sys_wait() }
+export sc_waitpid: (pid: i64) -> i64 { return sys_waitpid(pid) }
+export sc_kill: (pid: i64, sig: i64) -> i64 { return sys_kill(pid, sig) }

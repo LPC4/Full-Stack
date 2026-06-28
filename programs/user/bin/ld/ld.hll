@@ -1,17 +1,8 @@
-
 ; In-VM static linker: `ld <a.o> <b.o> ... <out>` -> ET_EXEC. Merges .text/.data,
 ; resolves globals, applies relocations, emits a PT_LOAD exec. See OS spec / object_linker.rs.
-
-external console_write:   (str: u8*)
-external console_writeln: (str: u8*)
-
-external sc_open:      (path: u8*, flags: u64) -> i64
-external sc_read:      (fd: i64, buf: u8*, offset: u64, len: u64) -> i64
-external sc_write:     (fd: i64, buf: u8*, len: u64) -> i64
-external sc_ftruncate: (fd: i64, len: u64) -> i64
-external sc_close:     (fd: i64)
-external cstr_eq:      (a: u8*, b: u8*) -> i64
-external cstr_len:     (s: u8*) -> u64
+console := import("console")
+sys := import("sys")
+cstr := import("cstr")
 
 ; Relocation patching + executable emission. The module reads the merged
 ; sections/symbol table built here through shared link-time symbols.
@@ -69,8 +60,8 @@ export sec_size: u64 = 0
 sec_idx: i64 = 0
 
 export fail: (msg: u8*) {
-    console_write("ld: ".ptr)
-    console_writeln(msg)
+    console.write("ld: ".ptr)
+    console.writeln(msg)
     err_flag = 1
 }
 
@@ -105,7 +96,7 @@ export sec_find: (f: u8*, want: u8*) -> i64 {
         h: u8* = f + shoff + i * 64
         name_off: u64 = rd_le(h, 0, 4)
         nm: u8* = shstr + name_off
-        if cstr_eq(nm, want) == 1 {
+        if cstr.eq(nm, want) == 1 {
             sec_off = rd_le(h, 24, 8)
             sec_size = rd_le(h, 32, 8)
             sec_idx = i as i64
@@ -133,7 +124,7 @@ gsym_add: (name: u8*, addr: i64) {
 export gsym_lookup: (name: u8*) -> i64 {
     for i in 0..ngsym {
         cand: u8* = gsym_names + (i as u64) * 16
-        if cstr_eq(cand, name) == 1 {
+        if cstr.eq(cand, name) == 1 {
             return gsym_addr[i]
         }
     }
@@ -145,14 +136,14 @@ export gsym_lookup: (name: u8*) -> i64 {
 ; Read one object file into objbuf and merge its .text/.data into the output
 ; regions, recording this module's per-region start offsets.
 load_object: (m: i64, path: u8*) {
-    fd: i64 = sc_open(path, 0)
+    fd: i64 = sys.open(path, 0)
     if fd < 0 {
         fail("cannot open object".ptr)
         return
     }
     dst: u8* = objbuf + objbuf_len
-    n: i64 = sc_read(fd, dst, 0, 16384)
-    sc_close(fd)
+    n: i64 = sys.read(fd, dst, 0, 16384)
+    sys.close(fd)
     if n <= 0 {
         fail("empty object".ptr)
         return
@@ -268,14 +259,14 @@ main: () -> i32 {
     gsym_addr = new(i64, 64)
     path_pool = new(u8, 2048)
     if objbuf == null or merged_text == null or merged_data == null or out == null or gsym_names == null or gsym_addr == null or path_pool == null {
-        console_writeln("ld: out of memory".ptr)
+        console.writeln("ld: out of memory".ptr)
         return 1
     }
 
     arg: u8* = ARG_BASE as u8*
     parse_args(arg)
     if npath < 2 {
-        console_writeln("ld: usage: ld <obj>... <out>".ptr)
+        console.writeln("ld: usage: ld <obj>... <out>".ptr)
         return 1
     }
 
@@ -313,7 +304,7 @@ main: () -> i32 {
         return 1
     }
 
-    console_write("ld: wrote ".ptr)
-    console_writeln(outp)
+    console.write("ld: wrote ".ptr)
+    console.writeln(outp)
     return 0
 }

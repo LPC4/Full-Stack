@@ -9,9 +9,9 @@
 //!   kernel/core/entry.hll     S-mode kernel entry (_kernel_start -> kmain)
 //!
 //! Hosted / userspace programs
-//!   stdlib/hosted/runtime.hll     _start -> main() -> sys_exit
+//!   stdlib/hosted/runtime.hll     _start -> main() -> sys.exit
 //!   stdlib/free/                  bare-metal programs (no Linux syscalls)
-//!   stdlib/core/                  shared: types, malloc, string utils, mem
+//!   stdlib/core/                  shared: types, malloc, string, mem
 //! ```
 //!
 //! Consumers:
@@ -60,7 +60,7 @@ pub mod stdlib {
         "/stdlib/hosted/memory_allocator.hll"
     ));
 
-    /// String utilities (`str_len`, `str_equals`, `str_copy`, `str_concat`).
+    /// String utilities (`string_len`, `string_equals`, `string_copy`, `string_concat`).
     pub const STRING_UTILS: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/stdlib/core/string_utils.hll"
@@ -75,17 +75,16 @@ pub mod stdlib {
         "/stdlib/kernel/klog.hll"
     ));
 
-    /// Hosted (Linux userspace) runtime: `_start`, `putchar`, `puts`, `print_int`, `exit`.
+    /// Hosted userspace runtime: `_start` calls `main`, then `sys.exit`.
     pub const HOSTED_RUNTIME: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/stdlib/hosted/runtime.hll"
     ));
 
-    /// Hosted userspace syscall wrappers (`sc_open`, `sc_read`, ...) and C-string
-    /// helpers (`cstr_len`, `cstr_eq`, ...), shared by the bundled user programs.
-    pub const HOSTED_SYSCALLS: &str = include_str!(concat!(
+    /// Hosted userspace syscall wrappers (`sys_open`, `sys_read`, ...).
+    pub const HOSTED_SYS: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/stdlib/hosted/syscalls.hll"
+        "/stdlib/hosted/sys.hll"
     ));
 
     /// Freestanding runtime: `_kpanic` / `kpanic` (UART direct-write, no syscalls).

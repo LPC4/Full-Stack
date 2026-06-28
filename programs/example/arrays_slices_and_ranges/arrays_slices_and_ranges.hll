@@ -1,10 +1,10 @@
 ; Arrays, slices, and ranges: array literals, empty zero-fill, slicing with
 ; half-open/inclusive/open ranges, .ptr/.len, and `for` over ranges, arrays, and slices.
 
-std := import("runtime")
+console := import("console")
 
 main: () -> i32 {
-    std.println("-- arrays, slices, ranges --")
+    console.println("-- arrays, slices, ranges --")
 
     nums: i32[5] = [1, 2, 3, 4, 5]
     nums[0] = 10            ; write a place, no @
@@ -53,8 +53,8 @@ main: () -> i32 {
         view_sum = view_sum + v         ; 2 + 4 = 6
     }
     if view_sum != 6 { return 9 }
-    std.print_int(view_sum)
+    console.print_int(view_sum)
 
-    std.println("ok")
+    console.println("ok")
     return 0
 }

@@ -1,7 +1,7 @@
 ; Compile-time math: pure (even recursive) functions evaluated at compile time
 ; and folded into constants before the program runs.
 
-std := import("runtime")
+console := import("console")
 
 factorial: (n: i32) -> i32 {
     if n <= 1 {
@@ -29,20 +29,20 @@ const FIB_10 = fib(10)        ; 55
 const GCD_48_36 = gcd(48, 36) ; 12
 
 main: () -> i32 {
-    std.println("-- compile-time math --")
+    console.println("-- compile-time math --")
 
-    std.print_int(FACT_6)
-    std.print_int(FIB_10)
-    std.print_int(GCD_48_36)
+    console.print_int(FACT_6)
+    console.print_int(FIB_10)
+    console.print_int(GCD_48_36)
 
     if FACT_6 != 720 { return 1 }
     if FIB_10 != 55 { return 2 }
     if GCD_48_36 != 12 { return 3 }
 
     total := FACT_6 + FIB_10 + GCD_48_36   ; 787
-    std.print_int(total)
+    console.print_int(total)
     if total != 787 { return 4 }
 
-    std.println("ok")
+    console.println("ok")
     return 0
 }

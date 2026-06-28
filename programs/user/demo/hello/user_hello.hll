@@ -1,7 +1,7 @@
-external console_writeln: (str: u8*)
+console := import("console")
 
 main: () -> i32 {
-    console_writeln("hello from user mode!".ptr)
+    console.writeln("hello from user mode!".ptr)
     while 1 == 1 {
         asm {
             li   a7, 2      ; yield

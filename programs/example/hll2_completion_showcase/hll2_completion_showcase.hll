@@ -2,7 +2,7 @@
 ; features land: function pointer fields, callable expressions, manual vtables,
 ; methods-as-sugar, and later interfaces.
 
-std := import("runtime")
+console := import("console")
 
 mathlib := import("./modules/mathlib.hll")
 
@@ -54,15 +54,15 @@ choose_binary: (multiply: bool) -> BinaryOp {
 }
 
 main: () -> i32 {
-    std.println("-- hll2 completion showcase --")
+    console.println("-- hll2 completion showcase --")
 
     op: BinaryOp = add
     sum := op(20, 22)
-    std.print_int(sum)
+    console.print_int(sum)
     if sum != 42 { return 1 }
 
     product := apply_binary(mul, 6, 7)
-    std.print_int(product)
+    console.print_int(product)
     if product != 42 { return 2 }
 
     chosen := choose_binary(false)
@@ -100,6 +100,6 @@ main: () -> i32 {
     ; - explicit vtable structs
     ; - static method sugar
 
-    std.println("ok")
+    console.println("ok")
     return 0
 }

@@ -1,11 +1,10 @@
+console := import("console")
+sys := import("sys")
 ; Conway's Game of Life: a 40x30 toroidal grid rendered to the framebuffer.
 ; B3/S23 rules, double-buffered, with P/R/space keyboard control. See OS spec ch.10.5.
 
-external console_writeln: (str: u8*)
 ; Map the framebuffer (syscall 107); returns its base VA (0 on failure).
-external sc_map_fb: () -> u64
 ; Pop the next keyboard event (syscall 108); packed event or -1 when none.
-external sc_poll_key: () -> i64
 
 ; Grid dimensions and the pixel size of each cell. GW*CELL = 320, GH*CELL = 240.
 const GW = 40
@@ -21,7 +20,7 @@ const ALIVE_COLOR = 0xFF66FF99
 cur: u8* = null
 nxt: u8* = null
 
-; Framebuffer base virtual address (filled in by sc_map_fb).
+; Framebuffer base virtual address (filled in by sys.map_fb).
 _fb_base: u64 = 0
 
 ; Linear-congruential RNG state, advanced by rng_next for the random seed fill.
@@ -181,7 +180,7 @@ render: () {
 ; Drain pending key events: P toggles pause, R reseeds, space single-steps.
 poll_input: () {
     while 1 == 1 {
-        ev: i64 = sc_poll_key()
+        ev: i64 = sys.poll_key()
         if ev < 0 {
             return
         }
@@ -209,9 +208,9 @@ poll_input: () {
 }
 
 main: () -> i32 {
-    base: u64 = sc_map_fb()
+    base: u64 = sys.map_fb()
     if base == 0 {
-        console_writeln("life: map_fb failed".ptr)
+        console.writeln("life: map_fb failed".ptr)
         return 1
     }
     _fb_base = base
@@ -219,13 +218,13 @@ main: () -> i32 {
     cur = new(u8, CELLS)
     nxt = new(u8, CELLS)
     if cur == null or nxt == null {
-        console_writeln("life: out of memory".ptr)
+        console.writeln("life: out of memory".ptr)
         return 1
     }
 
     enable_double_buffer()
     seed()
-    console_writeln("life: running (P pause, R reseed, space step)".ptr)
+    console.writeln("life: running (P pause, R reseed, space step)".ptr)
 
     while 1 == 1 {
         poll_input()

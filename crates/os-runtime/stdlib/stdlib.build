@@ -1,3 +1,3 @@
-hosted = ["types", "memory_allocator=memory_allocator_hosted", "string_utils", "runtime=runtime_hosted", "syscalls"]
-freestanding = ["types", "memory_allocator", "string_utils", "runtime", "console", "entry"]
-kernel = ["types", "memory_allocator", "string_utils", "mem", "runtime", "console", "klog", "entry=kernel_entry"]
+hosted = ["types", "memory_allocator=memory_allocator_hosted", "string=string_utils", "mem", "cstr=cstr_hosted", "sys=sys_hosted", "console=console_hosted", "runtime=runtime_hosted"]
+freestanding = ["types", "memory_allocator", "string=string_utils", "mem", "runtime", "console", "entry"]
+kernel = ["types", "memory_allocator", "string=string_utils", "mem", "runtime", "console", "klog", "entry=kernel_entry"]

@@ -217,12 +217,11 @@ fn run_println_str_entry_point() {
     // Slice entry points write the exact byte range; the trailing newline
     // distinguishes `println`.
     let src = "
-external print: (s: u8[]) -> i32
-external println: (s: u8[]) -> i32
+console := import(\"console\")
 
 main: () -> i32 {
-    print(\"Hello, \")
-    println(\"world\")
+    console.print(\"Hello, \")
+    console.println(\"world\")
     return 0
 }";
     let (uart, code) = run_hll(src);
@@ -234,12 +233,11 @@ main: () -> i32 {
 fn run_string_slice_calls_stdlib_print() {
     // A string literal passes directly to the slice-based stdlib entry points.
     let src = "
-external print: (s: u8[]) -> i32
-external println: (s: u8[]) -> i32
+console := import(\"console\")
 
 main: () -> i32 {
-    print(\"Hello, \")
-    println(\"world\")
+    console.print(\"Hello, \")
+    console.println(\"world\")
     return 0
 }";
     let (uart, code) = run_hll(src);
@@ -250,24 +248,20 @@ main: () -> i32 {
 #[test]
 fn run_slice_string_utilities() {
     let src = "
-external print: (s: u8[]) -> i32
-external str_len: (s: u8[]) -> u64
-external str_is_empty: (s: u8[]) -> bool
-external str_equals: (lhs: u8[], rhs: u8[]) -> bool
-external str_copy: (s: u8[]) -> u8[]
-external str_concat: (lhs: u8[], rhs: u8[]) -> u8[]
+console := import(\"console\")
+string := import(\"string\")
 
 main: () -> i32 {
-    copy: u8[] = str_copy(\"ab\")
-    joined: u8[] = str_concat(copy, \"cd\")
-    if str_is_empty(joined) {
+    copy: u8[] = string.copy(\"ab\")
+    joined: u8[] = string.concat(copy, \"cd\")
+    if string.is_empty(joined) {
         return 1
     }
-    if !str_equals(joined, \"abcd\") {
+    if !string.equals(joined, \"abcd\") {
         return 2
     }
-    print(joined)
-    return str_len(joined) as i32
+    console.print(joined)
+    return string.len(joined) as i32
 }";
     let (uart, code) = run_hll(src);
     assert_eq!(code, 4);

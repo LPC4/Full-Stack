@@ -59,9 +59,9 @@ main: () -> i32 {
 fn undefined_local_as_call_arg_is_rejected() {
     reject(
         r#"
-external putchar: (c: i32) -> i32
+external sink: (c: i32) -> i32
 main: () -> i32 {
-    putchar(missing_var)
+    sink(missing_var)
     return 0
 }
 "#,

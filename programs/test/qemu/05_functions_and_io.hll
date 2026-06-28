@@ -1,7 +1,7 @@
-; Functions and I/O test. Covers external putchar, recursion, composition, bool returns.
+; Functions and I/O test. Covers console output, recursion, composition, bool returns.
 ; Success: writes "PASS\n" and returns 0. Failure: unique non-zero code.
 
-external putchar: (c: i32) -> i32
+console := import("console")
 
 ; --- pure computation helpers ---
 
@@ -68,7 +68,7 @@ power: (base: i32, exp: i32) -> i32 {
 
 ; --- I/O helper: emit one character ---
 emit: (c: i32) -> i32 {
-    putchar(c)
+    console.putchar(c)
     return 0
 }
 

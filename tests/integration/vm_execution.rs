@@ -618,12 +618,12 @@ main: () -> i32 {
 fn hll_putchar_output() {
     let (_, outcome, uart) = run_hll(
         r#"
-external putchar: (c: i32) -> i32
+console := import("console")
 
 main: () -> i32 {
-    putchar(65)
-    putchar(66)
-    putchar(67)
+    console.putchar(65)
+    console.putchar(66)
+    console.putchar(67)
     return 0
 }
 "#,
@@ -639,10 +639,10 @@ main: () -> i32 {
 fn hll_user_function_calls_putchar() {
     let (_, outcome, uart) = run_hll(
         r#"
-external putchar: (c: i32) -> i32
+console := import("console")
 
 emit: (c: i32) -> i32 {
-    putchar(c)
+    console.putchar(c)
     return 0
 }
 main: () -> i32 {
@@ -667,7 +667,7 @@ main: () -> i32 {
 #[test]
 fn keyboard_device_delivers_press_events_to_guest() {
     let src = r#"
-external putchar: (c: i32) -> i32
+console := import("console")
 
 main: () -> i32 {
     while 1 == 1 {
@@ -678,7 +678,7 @@ main: () -> i32 {
         data_p: u32* = 0x10070004 as u32*
         ev: u32 = @data_p
         if (ev & 0x10000) != 0 {
-            putchar((ev & 0xFF) as i32)
+            console.putchar((ev & 0xFF) as i32)
         }
     }
     return 0

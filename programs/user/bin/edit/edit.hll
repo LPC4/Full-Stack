@@ -1,23 +1,8 @@
-
 ; ed-style line editor, launched by the shell's `edit <file>`.
 ; Commands and rationale: OS spec ch.10.2 (type `h` for the in-editor help).
-
-
-external console_putchar:   (c: i32)
-external console_write:     (str: u8*)
-external console_writeln:   (str: u8*)
-external console_print_int: (n: i64)
-
-; Userspace syscalls and C-string helpers (defined in the hosted stdlib).
-external sc_readchar:  () -> i64
-external sc_yield:     ()
-external sc_exit:      (code: i64)
-external sc_open:      (path: u8*, flags: u64) -> i64
-external sc_read:      (fd: i64, buf: u8*, offset: u64, len: u64) -> i64
-external sc_write:     (fd: i64, buf: u8*, len: u64) -> i64
-external sc_close:     (fd: i64)
-external sc_ftruncate: (fd: i64, len: u64) -> i64
-external cstr_len:     (s: u8*) -> u64
+console := import("console")
+sys := import("sys")
+cstr := import("cstr")
 
 ; Shared byte/text helpers (substring search, char classes).
 text := import("text")
@@ -44,25 +29,25 @@ ed_read_line: (buf: u8*) {
     n: u64 = 0
     done: i64 = 0
     while done == 0 {
-        c: i64 = sc_readchar()
+        c: i64 = sys.readchar()
         if c < 0 {
-            sc_yield()
+            sys.yield()
         } else {
             match c {
                 '\n' -> {
-                    console_putchar('\n')
+                    console.putchar('\n')
                     done = 1
                 }
                 '\r' -> {
-                    console_putchar('\n')
+                    console.putchar('\n')
                     done = 1
                 }
                 '\b' -> {
                     if n > 0 {
                         n = n - 1
-                        console_putchar('\b')
-                        console_putchar(' ')
-                        console_putchar('\b')
+                        console.putchar('\b')
+                        console.putchar(' ')
+                        console.putchar('\b')
                     }
                 }
                 _ -> {
@@ -70,7 +55,7 @@ ed_read_line: (buf: u8*) {
                         d: u8* = buf + n
                         @d = c as u8
                         n = n + 1
-                        console_putchar(c as i32)
+                        console.putchar(c as i32)
                     }
                 }
             }
@@ -116,7 +101,7 @@ copy_line: (dst: i64, src: i64) {
 ; Insert `src` as a new line at 0-based position pos, shifting later lines down.
 insert_at: (pos: i64, src: u8*) {
     if nlines >= MAXLINES {
-        console_writeln("edit: buffer full".ptr)
+        console.writeln("edit: buffer full".ptr)
         return
     }
     k: i64 = nlines
@@ -163,20 +148,20 @@ fix_cur: () {
 ed_load: (path: u8*) {
     nlines = 0
     cur = 0
-    fd: i64 = sc_open(path, 2)
+    fd: i64 = sys.open(path, 2)
     if fd < 0 {
         return
     }
     bp: u8* = scratch
     total: u64 = 0
     while total < 25599 {
-        n: i64 = sc_read(fd, bp + total, total, 25599 - total)
+        n: i64 = sys.read(fd, bp + total, total, 25599 - total)
         if n <= 0 {
             break
         }
         total = total + n as u64
     }
-    sc_close(fd)
+    sys.close(fd)
 
     ; Split the raw bytes into lines on '\n'.
     line: u8[256] = []
@@ -234,52 +219,52 @@ ed_write: (path: u8*) {
         }
     }
 
-    fd: i64 = sc_open(path, 2)
+    fd: i64 = sys.open(path, 2)
     if fd < 0 {
-        console_writeln("edit: write failed (open)".ptr)
+        console.writeln("edit: write failed (open)".ptr)
         return
     }
     if total > 0 {
-        n: i64 = sc_write(fd, bp, total)
+        n: i64 = sys.write(fd, bp, total)
         if n < 0 {
-            console_writeln("edit: write failed".ptr)
-            sc_close(fd)
+            console.writeln("edit: write failed".ptr)
+            sys.close(fd)
             return
         }
     }
-    sc_ftruncate(fd, total)
-    sc_close(fd)
-    console_writeln("edit: written".ptr)
+    sys.ftruncate(fd, total)
+    sys.close(fd)
+    console.writeln("edit: written".ptr)
 }
 
 ; --- Commands ---
 
 ed_print: () {
     if nlines == 0 {
-        console_writeln("(empty)".ptr)
+        console.writeln("(empty)".ptr)
         return
     }
     for i in 0..nlines {
         if (i + 1) == cur {
-            console_write("> ".ptr)
+            console.write("> ".ptr)
         } else {
-            console_write("  ".ptr)
+            console.write("  ".ptr)
         }
-        console_print_int(i + 1)
-        console_write(": ".ptr)
-        console_writeln(lptr(i))
+        console.print_int(i + 1)
+        console.write(": ".ptr)
+        console.writeln(lptr(i))
     }
 }
 
 ; Read lines until a lone "." and insert them starting at 0-based pos. Returns
 ; the 0-based index just past the last inserted line.
 read_block_into: (pos: i64) -> i64 {
-    console_writeln("(enter lines, end with '.')".ptr)
+    console.writeln("(enter lines, end with '.')".ptr)
     line: u8[256] = []
     lp: u8* = &line[0]
     p: i64 = pos
     while 1 == 1 {
-        console_write("* ".ptr)
+        console.write("* ".ptr)
         ed_read_line(lp)
         if @lp == '.' {
             if @(lp + 1) == 0 {
@@ -336,11 +321,11 @@ ed_delete: (arg: u8*) {
         target = n
     }
     if target < 1 {
-        console_writeln("edit: no line".ptr)
+        console.writeln("edit: no line".ptr)
         return
     }
     if target > nlines {
-        console_writeln("edit: no such line".ptr)
+        console.writeln("edit: no such line".ptr)
         return
     }
     delete_at(target - 1)
@@ -351,7 +336,7 @@ ed_delete: (arg: u8*) {
 ; Replace the current line with the text after the command character.
 ed_replace: (arg: u8*) {
     if cur < 1 {
-        console_writeln("edit: no current line".ptr)
+        console.writeln("edit: no current line".ptr)
         return
     }
     i: u64 = 0
@@ -365,7 +350,7 @@ ed_replace: (arg: u8*) {
 ;   s<delim>old<delim>new<delim>   e.g.  s/foo/bar/
 ed_subst: (arg: u8*) {
     if cur < 1 {
-        console_writeln("edit: no current line".ptr)
+        console.writeln("edit: no current line".ptr)
         return
     }
     i: u64 = 0
@@ -374,7 +359,7 @@ ed_subst: (arg: u8*) {
     }
     delim: u8 = @(arg + i)
     if delim == 0 {
-        console_writeln("edit: usage s/old/new/".ptr)
+        console.writeln("edit: usage s/old/new/".ptr)
         return
     }
     i = i + 1
@@ -417,7 +402,7 @@ ed_subst: (arg: u8*) {
     cl: u8* = lptr(cur - 1)
     at: i64 = text.find_sub(cl, oldp)
     if at < 0 {
-        console_writeln("edit: not found".ptr)
+        console.writeln("edit: not found".ptr)
         return
     }
     ; Build prefix + replacement + suffix into a scratch line.
@@ -438,7 +423,7 @@ ed_subst: (arg: u8*) {
         out = out + 1
         rk = rk + 1
     }
-    p = (at as u64) + cstr_len(oldp)
+    p = (at as u64) + cstr.len(oldp)
     while @(cl + p) != 0 {
         d: u8* = tp + out
         @d = @(cl + p)
@@ -462,15 +447,15 @@ ed_goto: (arg: u8*) {
 }
 
 ed_help: () {
-    console_writeln("edit: p=print  g <n> (or just <n>)=goto  a=append  i=insert".ptr)
-    console_writeln("      d=delete  c=clear  r=replace  s/old/new/  w=write  q=quit".ptr)
+    console.writeln("edit: p=print  g <n> (or just <n>)=goto  a=append  i=insert".ptr)
+    console.writeln("      d=delete  c=clear  r=replace  s/old/new/  w=write  q=quit".ptr)
 }
 
 main: () -> i32 {
     lines = new(u8, MAXLINES * LINEW)
     scratch = new(u8, MAXLINES * LINEW)
     if lines == null or scratch == null {
-        console_writeln("edit: out of memory".ptr)
+        console.writeln("edit: out of memory".ptr)
         return 1
     }
 
@@ -482,7 +467,7 @@ main: () -> i32 {
     line: u8[256] = []
     line_p: u8* = &line[0]
     while 1 == 1 {
-        console_write("edit> ".ptr)
+        console.write("edit> ".ptr)
         ed_read_line(line_p)
         c: u8 = @line_p
         if c == 0 {
@@ -501,14 +486,14 @@ main: () -> i32 {
                 'c' -> {
                     nlines = 0
                     cur = 0
-                    console_writeln("edit: cleared".ptr)
+                    console.writeln("edit: cleared".ptr)
                 }
                 'r' -> { ed_replace(line_p + 1) }
                 's' -> { ed_subst(line_p + 1) }
                 'w' -> { ed_write(path) }
-                'q' -> { sc_exit(0) }
+                'q' -> { sys.exit(0) }
                 'h' -> { ed_help() }
-                _   -> { console_writeln("edit: unknown command (h for help)".ptr) }
+                _   -> { console.writeln("edit: unknown command (h for help)".ptr) }
             }
         }
     }

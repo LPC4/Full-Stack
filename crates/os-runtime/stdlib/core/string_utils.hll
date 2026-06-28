@@ -1,14 +1,14 @@
 memory_allocator := import("memory_allocator")
 
-export str_len: (text: u8[]) -> u64 {
+export string_len: (text: u8[]) -> u64 {
     return text.len
 }
 
-export str_is_empty: (text: u8[]) -> bool {
+export string_is_empty: (text: u8[]) -> bool {
     return text.len == 0
 }
 
-export str_equals: (lhs: u8[], rhs: u8[]) -> bool {
+export string_equals: (lhs: u8[], rhs: u8[]) -> bool {
     if lhs.len != rhs.len {
         return false
     }
@@ -20,7 +20,7 @@ export str_equals: (lhs: u8[], rhs: u8[]) -> bool {
     return true
 }
 
-export str_copy: (src: u8[]) -> u8[] {
+export string_copy: (src: u8[]) -> u8[] {
     data: u8* = memory_allocator.malloc(src.len)
     for i in 0..src.len {
         data[i] = src[i]
@@ -30,7 +30,7 @@ export str_copy: (src: u8[]) -> u8[] {
     return copy
 }
 
-export str_concat: (left: u8[], right: u8[]) -> u8[] {
+export string_concat: (left: u8[], right: u8[]) -> u8[] {
     total: u64 = left.len + right.len
     data: u8* = memory_allocator.malloc(total)
     for i in 0..left.len {

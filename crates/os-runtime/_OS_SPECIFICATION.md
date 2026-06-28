@@ -20,7 +20,7 @@ specified elsewhere and are only referenced here:
 4. Memory management (`vmm.hll`, `pmm.hll`, allocator)
 5. Processes and scheduling (`process.hll`, `scheduler.hll`)
 6. Traps and interrupts (`trap_entry.hll`, `trap_handler.hll`)
-7. Syscall interface (`syscall.hll`, `stdlib/hosted/syscalls.hll`)
+7. Syscall interface (`syscall.hll`, `stdlib/hosted/sys.hll`)
 8. Filesystem (`fs.hll`)
 9. Standard library (`stdlib/`)
 10. Userspace programs (`programs/user/`)
@@ -42,7 +42,7 @@ comments cite the chapter rather than repeating its content.
 | `kernel/mm/vmm.hll`, `pmm.hll` | Sv39 paging and physical page allocator | 4 |
 | `kernel/sched/process.hll`, `scheduler.hll` | PCB, scheduler, fork/exec | 5 |
 | `kernel/trap/trap_entry.hll`, `trap_handler.hll` | Trap entry and dispatch | 6 |
-| `kernel/core/syscall.hll`, `stdlib/hosted/syscalls.hll` | Syscall ABI, table, wrappers | 7 |
+| `kernel/core/syscall.hll`, `stdlib/hosted/sys.hll` | Syscall ABI, table, wrappers | 7 |
 | `kernel/fs/fs.hll` | Inode filesystem | 8 |
 | `kernel/core/utilities.hll`, `checks.hll` | HAL primitives, boot diagnostics | 3, 9 |
 | `stdlib/core/`, `hosted/`, `kernel/`, `free/` | Standard-library bundles | 9 |
@@ -300,7 +300,7 @@ compute-bound children and best-effort for input readers (their `readchar` races
 the wait peek).
 
 
-## 7. Syscall interface (`syscall.hll`, `stdlib/hosted/syscalls.hll`)
+## 7. Syscall interface (`syscall.hll`, `stdlib/hosted/sys.hll`)
 
 ### 7.1 Calling convention
 
@@ -308,8 +308,9 @@ U-mode programs trap with `ecall`. The number is in `a7`; up to four arguments i
 `a0`-`a3`; the result is written back to `a0` in the trap frame. The S-mode handler
 catches cause 8, dispatches via `syscall_dispatch`, and advances `sepc` by 4.
 Standard numbers follow the Linux RISC-V ABI; the 100-range is project-specific.
-`stdlib/hosted/syscalls.hll` provides the userspace `sc_*` wrappers and C-string
-helpers that programs link against.
+`stdlib/hosted/sys.hll` provides the userspace `sys.*` wrappers and
+`stdlib/hosted/cstr.hll` provides `cstr.*` helpers. Userspace programs import those modules;
+hand-written `external` declarations are reserved for ABI/runtime edges.
 
 ### 7.2 Syscall table
 
@@ -568,21 +569,22 @@ organizational; the manifest order is authoritative.
 
 ### 9.1 `core/`
 
-`types` (width aliases), `mem` (`memset`/`memcpy`/`memmove`/`memcmp`),
-`memory_allocator` (`malloc`/`free` over the static heap, 4.2), `string_utils`
-(`str_*`).
+`types` (width aliases), `mem` (`set`/`copy`/`move`/`cmp`, with legacy ABI symbols
+`memset`/`memcpy`/`memmove`/`memcmp` retained), `memory_allocator` (`malloc`/`free` over the
+static heap, 4.2), and `string` (`len`/`is_empty`/`equals`/`copy`/`concat`).
 
 ### 9.2 `free/`
 
 `entry` (`_start` -> `main` -> SYSCON halt), `console` (direct NS16550A MMIO:
-`console_putchar`/`write`/`writeln`/`print_int`/`print_hex`), and `runtime`
+`putchar`/`write`/`writeln`/`print_int`/`print_hex`), and `runtime`
 (`kpanic` = UART message + WFI loop). For bare-metal programs without a kernel.
 
 ### 9.3 `hosted/`
 
-`runtime` (`_start` -> `main` -> `exit` via Linux ecalls) and `syscalls` (the
-userspace `sc_*` wrappers for the syscalls in 7.2, plus C-string helpers). Linked
-by U-mode programs that run under the kernel.
+`runtime` (`_start` -> `main` -> `sys.exit`), `sys` (the userspace wrappers for the
+syscalls in 7.2), `cstr` (null-terminated string helpers), and hosted `console` (stdout
+through `sys.write`, so redirection works). Linked by U-mode programs that run under the
+kernel.
 
 ### 9.4 `kernel/`
 
@@ -593,8 +595,9 @@ record, so stdlib internals do not use the legacy whole-module import form.
 ### 9.5 HAL primitives
 
 The kernel bundle calls these directly (no syscall layer); implementations are in
-`utilities.hll` and `free/console.hll`. Console: `console_putchar`/`write`/
-`writeln`/`print_int`/`print_hex`. Halt/panic: `kshutdown` (write exit code to
+`utilities.hll` and `free/console.hll`. Source uses `console.putchar`/`write`/
+`writeln`/`print_int`/`print_hex`; the underlying flat link symbols keep the
+`console_` prefix. Halt/panic: `kshutdown` (write exit code to
 SYSCON `0x1001_0000`), `kpanic`. Timer/IRQ: `timer_get` (CLINT MTIME `0x0200_BFF8`),
 `timer_set` (MTIMECMP hart 0 `0x0200_4000`), `plic_init` (enable UART source 10 on
 S-mode context 1), `trap_init` (install `stvec`, enable STIE+SEIE). MMIO is reached
@@ -692,7 +695,7 @@ them from the shell and view in the Machine window's FB tab.
 
 ### 10.6 Hello and examples
 
-`programs/user/demo/hello/user_hello.hll` prints a greeting via `sys_write` then yields in a loop
+`programs/user/demo/hello/user_hello.hll` prints a greeting via `console.writeln` then yields in a loop
 (a minimal pid-1). `programs/user/sample/array/array.s` (=42) is the sample assembly input for the
 in-VM assembler, installed at `/home/src/array.s`. `programs/user/sample/stdlib/stdlib.s` is the
 asm stdlib (`putc`/`puts`/`exit`) that a cc-compiled client (`hello.hll`) links

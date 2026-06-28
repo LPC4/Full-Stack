@@ -1,7 +1,7 @@
 ; Pointers and places: &place, @ whole-pointee read/write, one-level member
 ; auto-deref, &seq[i], element-scaled T* arithmetic, u8* byte escape hatch, casts, defer LIFO.
 
-std := import("runtime")
+console := import("console")
 
 struct Point {
     x: i32
@@ -9,7 +9,7 @@ struct Point {
 }
 
 main: () -> i32 {
-    std.println("-- pointers and places --")
+    console.println("-- pointers and places --")
 
     ; &place and @ptr: read and write through a pointer to a local.
     slot: i32 = 21
@@ -44,12 +44,12 @@ main: () -> i32 {
     by_element: u64 = (buf + 1) as u64
     by_bytes: u64 = (buf as u8* + 4) as u64
     if by_element != by_bytes { return 6 }
-    std.print_int(buf[0] + buf[1] + buf[2])
+    console.print_int(buf[0] + buf[1] + buf[2])
 
     ; defer runs in LIFO order at scope exit: "second" prints before "first".
-    defer std.println("cleanup first (declared first, runs last)")
-    defer std.println("cleanup second (declared last, runs first)")
+    defer console.println("cleanup first (declared first, runs last)")
+    defer console.println("cleanup second (declared last, runs first)")
 
-    std.println("ok")
+    console.println("ok")
     return 0
 }

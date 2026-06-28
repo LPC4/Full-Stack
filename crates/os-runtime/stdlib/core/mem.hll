@@ -5,11 +5,19 @@ export memset: (dst: u8*, value: u8, n: u64) -> u8* {
     return dst
 }
 
+export mem_set: (dst: u8*, value: u8, n: u64) -> u8* {
+    return memset(dst, value, n)
+}
+
 export memcpy: (dst: u8*, src: u8*, n: u64) -> u8* {
     for i in 0..n {
         dst[i] = @(src + i)
     }
     return dst
+}
+
+export mem_copy: (dst: u8*, src: u8*, n: u64) -> u8* {
+    return memcpy(dst, src, n)
 }
 
 ; Backward copy (high->low): safe when dst >= src; use memcpy when dst < src with overlap.
@@ -23,6 +31,10 @@ export memmove: (dst: u8*, src: u8*, n: u64) -> u8* {
         dst[i] = @(src + i)
     }
     return dst
+}
+
+export mem_move: (dst: u8*, src: u8*, n: u64) -> u8* {
+    return memmove(dst, src, n)
 }
 
 ; Bytes >= 128 are negative as i32; sign-mismatch cases handled for correct unsigned ordering.
@@ -44,4 +56,8 @@ export memcmp: (a: u8*, b: u8*, n: u64) -> i32 {
         }
     }
     return 0
+}
+
+export mem_cmp: (a: u8*, b: u8*, n: u64) -> i32 {
+    return memcmp(a, b, n)
 }

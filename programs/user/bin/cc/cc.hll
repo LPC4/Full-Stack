@@ -1,21 +1,12 @@
-
 ; In-VM HLL-0 compiler: `cc <src.hll> <out.s>` -> naive stack-machine RISC-V for
 ; `/bin/as`. HLL-0 subset and codegen model: lang spec Appendix D, OS spec 10.4.
-
-external console_write:   (str: u8*)
-external console_writeln: (str: u8*)
-
-external sc_open:      (path: u8*, flags: u64) -> i64
-external sc_read:      (fd: i64, buf: u8*, offset: u64, len: u64) -> i64
-external sc_write:     (fd: i64, buf: u8*, len: u64) -> i64
-external sc_ftruncate: (fd: i64, len: u64) -> i64
-external sc_close:     (fd: i64)
-external cstr_eq:      (a: u8*, b: u8*) -> i64
+console := import("console")
+sys := import("sys")
+cstr := import("cstr")
+text := import("text")
 
 ; Code generator. Walks the shared AST tables (defined here) and fills asmout.
 codegen := import("./cc_codegen.hll")
-; Shared byte/text helpers (char classes, name copy, arg splitting).
-text := import("text")
 
 ; Page the kernel maps with this program's argument string (matches USER_ARG_BASE).
 const ARG_BASE = 0x7FF00000
@@ -97,8 +88,8 @@ export nlabel: i64 = 0
 ; Report an error once and remember the failure.
 export perr: (msg: u8*) {
     if err_flag == 0 {
-        console_write("cc: ".ptr)
-        console_writeln(msg)
+        console.write("cc: ".ptr)
+        console.writeln(msg)
     }
     err_flag = 1
 }
@@ -426,7 +417,7 @@ add_local: (name: u8*) -> i64 {
 find_local: (name: u8*) -> i64 {
     for i in 0..loc_count {
         c: u8* = loc_name + (i as u64) * 16
-        if cstr_eq(c, name) == 1 {
+        if cstr.eq(c, name) == 1 {
             return i
         }
     }
@@ -600,7 +591,7 @@ parse_stmt: () -> i64 {
     k: i64 = cur_kind()
     if k == TK_IDENT {
         t: u8* = cur_txt()
-        if cstr_eq(t, "return".ptr) == 1 {
+        if cstr.eq(t, "return".ptr) == 1 {
             adv()
             e: i64 = parse_expr()
             n: i64 = mk(ND_RETURN)
@@ -608,7 +599,7 @@ parse_stmt: () -> i64 {
             nd.a = e
             return n
         }
-        if cstr_eq(t, "if".ptr) == 1 {
+        if cstr.eq(t, "if".ptr) == 1 {
             adv()
             c: i64 = parse_expr()
             expect(TK_LBRACE, "expected { after if".ptr)
@@ -620,7 +611,7 @@ parse_stmt: () -> i64 {
             nd.b = body
             return n
         }
-        if cstr_eq(t, "while".ptr) == 1 {
+        if cstr.eq(t, "while".ptr) == 1 {
             adv()
             c: i64 = parse_expr()
             expect(TK_LBRACE, "expected { after while".ptr)
@@ -769,7 +760,7 @@ main: () -> i32 {
     loc_name = new(u8, 1024)
     asmout = new(u8, 32768)
     if src == null or toks == null or nodes == null or call_args == null or fns == null or loc_name == null or asmout == null {
-        console_writeln("cc: out of memory".ptr)
+        console.writeln("cc: out of memory".ptr)
         return 1
     }
 
@@ -779,20 +770,20 @@ main: () -> i32 {
     src_pp: u8* = &src_path[0]
     out_pp: u8* = &out_path[0]
     if text.split_two(arg, src_pp, out_pp) == false {
-        console_writeln("cc: usage: cc <src.hll> <out.s>".ptr)
+        console.writeln("cc: usage: cc <src.hll> <out.s>".ptr)
         return 1
     }
 
-    fd: i64 = sc_open(src_pp, 0)
+    fd: i64 = sys.open(src_pp, 0)
     if fd < 0 {
-        console_write("cc: cannot open ".ptr)
-        console_writeln(src_pp)
+        console.write("cc: cannot open ".ptr)
+        console.writeln(src_pp)
         return 1
     }
-    n: i64 = sc_read(fd, src, 0, 8191)
-    sc_close(fd)
+    n: i64 = sys.read(fd, src, 0, 8191)
+    sys.close(fd)
     if n <= 0 {
-        console_writeln("cc: empty source".ptr)
+        console.writeln("cc: empty source".ptr)
         return 1
     }
     src_len = n as u64
@@ -813,17 +804,17 @@ main: () -> i32 {
         return 1
     }
 
-    ofd: i64 = sc_open(out_pp, 2)
+    ofd: i64 = sys.open(out_pp, 2)
     if ofd < 0 {
-        console_write("cc: cannot create ".ptr)
-        console_writeln(out_pp)
+        console.write("cc: cannot create ".ptr)
+        console.writeln(out_pp)
         return 1
     }
-    sc_write(ofd, asmout, asmlen)
-    sc_ftruncate(ofd, asmlen)
-    sc_close(ofd)
+    sys.write(ofd, asmout, asmlen)
+    sys.ftruncate(ofd, asmlen)
+    sys.close(ofd)
 
-    console_write("cc: wrote ".ptr)
-    console_writeln(out_pp)
+    console.write("cc: wrote ".ptr)
+    console.writeln(out_pp)
     return 0
 }

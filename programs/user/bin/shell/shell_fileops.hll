@@ -1,79 +1,69 @@
 ; File-management builtins (touch/mkdir/rm/rmdir/mv) split out of shell.hll and linked
-; with it; each resolves its operand to an absolute path via sh_join_path.
-
-external console_write:   (str: u8*)
-external console_writeln: (str: u8*)
-
-external sc_open:   (path: u8*, flags: u64) -> i64
-external sc_close:  (fd: i64)
-external sc_mkdir:  (path: u8*) -> i64
-external sc_unlink: (path: u8*) -> i64
-external sc_rmdir:  (path: u8*) -> i64
-external sc_rename: (old_path: u8*, new_path: u8*) -> i64
-
-; Path joiner, defined in shell.hll; resolved at link.
-external sh_join_path: (cwd: u8*, arg: u8*, out: u8*)
+; with it; each resolves its operand to an absolute path via shell_state.sh_join_path.
+shell_state := import("./shell.hll")
+console := import("console")
+sys := import("sys")
 
 ; Create an empty file (open with the create flag, then close).
 export cmd_touch: (cwd: u8*, arg: u8*) {
     if @arg == 0 {
-        console_writeln("touch: missing file name".ptr)
+        console.writeln("touch: missing file name".ptr)
         return
     }
     target: u8[256] = []
     target_p: u8* = &target[0]
-    sh_join_path(cwd, arg, target_p)
-    fd: i64 = sc_open(target_p, 2)
+    shell_state.sh_join_path(cwd, arg, target_p)
+    fd: i64 = sys.open(target_p, 2)
     if fd < 0 {
-        console_write("touch: cannot create: ".ptr)
-        console_writeln(arg)
+        console.write("touch: cannot create: ".ptr)
+        console.writeln(arg)
         return
     }
-    sc_close(fd)
+    sys.close(fd)
 }
 
 ; Create a directory.
 export cmd_mkdir: (cwd: u8*, arg: u8*) {
     if @arg == 0 {
-        console_writeln("mkdir: missing directory name".ptr)
+        console.writeln("mkdir: missing directory name".ptr)
         return
     }
     target: u8[256] = []
     target_p: u8* = &target[0]
-    sh_join_path(cwd, arg, target_p)
-    if sc_mkdir(target_p) < 0 {
-        console_write("mkdir: cannot create: ".ptr)
-        console_writeln(arg)
+    shell_state.sh_join_path(cwd, arg, target_p)
+    if sys.mkdir(target_p) < 0 {
+        console.write("mkdir: cannot create: ".ptr)
+        console.writeln(arg)
     }
 }
 
 ; Remove a regular file.
 export cmd_rm: (cwd: u8*, arg: u8*) {
     if @arg == 0 {
-        console_writeln("rm: missing file name".ptr)
+        console.writeln("rm: missing file name".ptr)
         return
     }
     target: u8[256] = []
     target_p: u8* = &target[0]
-    sh_join_path(cwd, arg, target_p)
-    if sc_unlink(target_p) < 0 {
-        console_write("rm: cannot remove: ".ptr)
-        console_writeln(arg)
+    shell_state.sh_join_path(cwd, arg, target_p)
+    if sys.unlink(target_p) < 0 {
+        console.write("rm: cannot remove: ".ptr)
+        console.writeln(arg)
     }
 }
 
 ; Remove an empty directory.
 export cmd_rmdir: (cwd: u8*, arg: u8*) {
     if @arg == 0 {
-        console_writeln("rmdir: missing directory name".ptr)
+        console.writeln("rmdir: missing directory name".ptr)
         return
     }
     target: u8[256] = []
     target_p: u8* = &target[0]
-    sh_join_path(cwd, arg, target_p)
-    if sc_rmdir(target_p) < 0 {
-        console_write("rmdir: cannot remove: ".ptr)
-        console_writeln(arg)
+    shell_state.sh_join_path(cwd, arg, target_p)
+    if sys.rmdir(target_p) < 0 {
+        console.write("rmdir: cannot remove: ".ptr)
+        console.writeln(arg)
     }
 }
 
@@ -88,7 +78,7 @@ export cmd_mv: (cwd: u8*, arg: u8*) {
         sp = sp + 1
     }
     if @(arg + sp) == 0 {
-        console_writeln("mv: usage: mv <old> <new>".ptr)
+        console.writeln("mv: usage: mv <old> <new>".ptr)
         return
     }
     ; Copy the first operand out before we walk past it.
@@ -109,18 +99,18 @@ export cmd_mv: (cwd: u8*, arg: u8*) {
         sp = sp + 1
     }
     if @(arg + sp) == 0 {
-        console_writeln("mv: usage: mv <old> <new>".ptr)
+        console.writeln("mv: usage: mv <old> <new>".ptr)
         return
     }
     dst_arg: u8* = arg + sp
     old_abs: u8[256] = []
     old_p: u8* = &old_abs[0]
-    sh_join_path(cwd, src_p, old_p)
+    shell_state.sh_join_path(cwd, src_p, old_p)
     new_abs: u8[256] = []
     new_p: u8* = &new_abs[0]
-    sh_join_path(cwd, dst_arg, new_p)
-    if sc_rename(old_p, new_p) < 0 {
-        console_write("mv: cannot move: ".ptr)
-        console_writeln(src_p)
+    shell_state.sh_join_path(cwd, dst_arg, new_p)
+    if sys.rename(old_p, new_p) < 0 {
+        console.write("mv: cannot move: ".ptr)
+        console.writeln(src_p)
     }
 }

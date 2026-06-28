@@ -9,10 +9,6 @@ use os_runtime::kernel;
 use virtual_machine::rom::generate_rom_image;
 use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 
-const MEM_SRC: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/crates/os-runtime/stdlib/core/mem.hll"
-));
 const KLOG_SRC: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/crates/os-runtime/stdlib/kernel/klog.hll"
@@ -135,8 +131,8 @@ fn kernel_boot_runs_with_separate_stdlib_objects() {
     );
 }
 
-// Prepend extra HLL source (e.g. mem.hll, klog.hll) to user_src and compile
-// as one unit, linked against the stdlib.
+// Prepend extra HLL source (e.g. klog.hll) to user_src and compile as one unit,
+// linked against the stdlib.
 fn run_with(extra: &str, user_src: &str) -> (String, Option<i64>) {
     run_hll(&format!("{extra}\n{user_src}"))
 }
@@ -151,7 +147,7 @@ fn rom_image_assembles() {
 }
 
 // Every userspace catalog program must compile, assemble, and link against the
-// hosted stdlib (which now provides the shared sc_* / cstr_* helpers). Guards the
+// hosted stdlib (which now provides importable sys/cstr helpers). Guards the
 // "Userspace Programs" catalog section so a broken program is caught at test time
 // rather than when the user selects it in the GUI.
 #[test]
@@ -169,23 +165,92 @@ fn userspace_catalog_programs_compile_hosted() {
     }
 }
 
+#[test]
+fn userspace_hll_sources_do_not_declare_externals() {
+    fn visit(dir: &std::path::Path, failures: &mut Vec<String>) {
+        for entry in std::fs::read_dir(dir).expect("read programs/user tree") {
+            let entry = entry.expect("read programs/user entry");
+            let path = entry.path();
+            if path.is_dir() {
+                visit(&path, failures);
+                continue;
+            }
+            if path.extension().and_then(|ext| ext.to_str()) != Some("hll") {
+                continue;
+            }
+            let src = std::fs::read_to_string(&path).expect("read hll source");
+            for (idx, line) in src.lines().enumerate() {
+                if line.trim_start().starts_with("external ") {
+                    failures.push(format!("{}:{}", path.display(), idx + 1));
+                }
+            }
+        }
+    }
+
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("programs/user");
+    let mut failures = Vec::new();
+    visit(&root, &mut failures);
+    assert!(
+        failures.is_empty(),
+        "userspace HLL sources should use imports, not externals: {failures:?}"
+    );
+}
+
+#[test]
+fn hosted_stdlib_imports_are_the_source_api() {
+    let (uart, exit) = run_hll(
+        r#"
+console := import("console")
+sys := import("sys")
+cstr := import("cstr")
+string := import("string")
+mem := import("mem")
+memory_allocator := import("memory_allocator")
+
+main: () -> i32 {
+    p: u8* = memory_allocator.malloc(4)
+    q: u8* = memory_allocator.malloc(4)
+    p[0] = 79
+    p[1] = 75
+    p[2] = 0
+    mem.copy(q, p, 3)
+    if cstr.eq(q, "OK".ptr) != 1 {
+        return 1
+    }
+    if string.equals("hi", "hi") == false {
+        return 2
+    }
+    fd: i64 = sys.open("/missing".ptr, 0)
+    if fd >= 0 {
+        sys.close(fd)
+        return 3
+    }
+    console.writeln(q)
+    return 0
+}
+"#,
+    );
+    assert_eq!(uart, "OK\n");
+    assert_eq!(exit, Some(0));
+}
+
 // --- mem.hll ---
 
 #[test]
 fn memset_fills_buffer() {
-    let (uart, exit) = run_with(
-        MEM_SRC,
+    let (uart, exit) = run_hll(
         r#"
-external putchar: (c: i32) -> i32
+console := import("console")
+mem := import("mem")
 
 main: () -> i32 {
     buf: u8[4] = []
     buf_ptr: u8* = &buf[0]
-    memset(buf_ptr, 88, 4)
-    putchar(buf_ptr[0] as i32)
-    putchar(buf_ptr[1] as i32)
-    putchar(buf_ptr[2] as i32)
-    putchar(buf_ptr[3] as i32)
+    mem.set(buf_ptr, 88, 4)
+    console.putchar(buf_ptr[0] as i32)
+    console.putchar(buf_ptr[1] as i32)
+    console.putchar(buf_ptr[2] as i32)
+    console.putchar(buf_ptr[3] as i32)
     return 0
 }
 "#,
@@ -196,10 +261,10 @@ main: () -> i32 {
 
 #[test]
 fn memcpy_copies_bytes() {
-    let (uart, exit) = run_with(
-        MEM_SRC,
+    let (uart, exit) = run_hll(
         r#"
-external putchar: (c: i32) -> i32
+console := import("console")
+mem := import("mem")
 
 main: () -> i32 {
     src: u8[3] = []
@@ -209,10 +274,10 @@ main: () -> i32 {
     dst: u8[3] = []
     src_ptr: u8* = &src[0]
     dst_ptr: u8* = &dst[0]
-    memcpy(dst_ptr, src_ptr, 3)
-    putchar(dst_ptr[0] as i32)
-    putchar(dst_ptr[1] as i32)
-    putchar(dst_ptr[2] as i32)
+    mem.copy(dst_ptr, src_ptr, 3)
+    console.putchar(dst_ptr[0] as i32)
+    console.putchar(dst_ptr[1] as i32)
+    console.putchar(dst_ptr[2] as i32)
     return 0
 }
 "#,
@@ -225,14 +290,14 @@ main: () -> i32 {
 fn memmove_dst_greater_than_src() {
     // Copies bytes high-to-low (memmove), so dst > src overlaps are safe.
     // buf = [A,B,C,D,E]; memmove(buf+1, buf, 4) -> [A,A,B,C,D]
-    let (uart, exit) = run_with(
-        MEM_SRC,
+    let (uart, exit) = run_hll(
         r#"
-external putchar: (c: i32) -> i32
-external malloc: (size: u64) -> u8*
+console := import("console")
+mem := import("mem")
+memory_allocator := import("memory_allocator")
 
 main: () -> i32 {
-    buf: u8* = malloc(5)
+    buf: u8* = memory_allocator.malloc(5)
     buf[0] = 65
     buf[1] = 66
     buf[2] = 67
@@ -240,12 +305,12 @@ main: () -> i32 {
     buf[4] = 69
     one: u64 = 1
     dst: u8* = &buf[one]
-    memmove(dst, buf, 4)
-    putchar(buf[0] as i32)
-    putchar(buf[1] as i32)
-    putchar(buf[2] as i32)
-    putchar(buf[3] as i32)
-    putchar(buf[4] as i32)
+    mem.move(dst, buf, 4)
+    console.putchar(buf[0] as i32)
+    console.putchar(buf[1] as i32)
+    console.putchar(buf[2] as i32)
+    console.putchar(buf[3] as i32)
+    console.putchar(buf[4] as i32)
     return 0
 }
 "#,
@@ -256,10 +321,10 @@ main: () -> i32 {
 
 #[test]
 fn memcmp_equal_returns_zero() {
-    let (uart, exit) = run_with(
-        MEM_SRC,
+    let (uart, exit) = run_hll(
         r#"
-external putchar: (c: i32) -> i32
+console := import("console")
+mem := import("mem")
 
 main: () -> i32 {
     a: u8[3] = []
@@ -272,12 +337,12 @@ main: () -> i32 {
     b[2] = 67
     a_ptr: u8* = &a[0]
     b_ptr: u8* = &b[0]
-    result: i32 = memcmp(a_ptr, b_ptr, 3)
+    result: i32 = mem.cmp(a_ptr, b_ptr, 3)
     if result == 0 {
-        putchar(80)
-        putchar(65)
-        putchar(83)
-        putchar(83)
+        console.putchar(80)
+        console.putchar(65)
+        console.putchar(83)
+        console.putchar(83)
     }
     return 0
 }
@@ -290,10 +355,10 @@ main: () -> i32 {
 #[test]
 fn memcmp_detects_difference() {
     // a = "AB", b = "AC": a < b, so memcmp returns -1.
-    let (uart, exit) = run_with(
-        MEM_SRC,
+    let (uart, exit) = run_hll(
         r#"
-external putchar: (c: i32) -> i32
+console := import("console")
+mem := import("mem")
 
 main: () -> i32 {
     a: u8[2] = []
@@ -304,12 +369,12 @@ main: () -> i32 {
     b[1] = 67
     a_ptr: u8* = &a[0]
     b_ptr: u8* = &b[0]
-    result: i32 = memcmp(a_ptr, b_ptr, 2)
+    result: i32 = mem.cmp(a_ptr, b_ptr, 2)
     if result < 0 {
-        putchar(80)
-        putchar(65)
-        putchar(83)
-        putchar(83)
+        console.putchar(80)
+        console.putchar(65)
+        console.putchar(83)
+        console.putchar(83)
     }
     return 0
 }

@@ -132,12 +132,12 @@ fn stdlib_provides_malloc() {
 #[test]
 fn putchar_basic() {
     let src = r#"
-external putchar: (c: i32) -> i32
+console := import("console")
 
 main: () -> i32 {
-    putchar(72)
-    putchar(105)
-    putchar(10)
+    console.putchar(72)
+    console.putchar(105)
+    console.putchar(10)
     return 0
 }
 "#;
@@ -170,8 +170,7 @@ fn functions_and_io() {
 #[test]
 fn asm_reg_reads_sp() {
     let src = r#"
-external putchar: (c: i32) -> i32
-external print_int: (n: i64) -> i32
+console := import("console")
 
 get_sp: () -> i64 {
     return asm_reg(sp)
@@ -182,10 +181,10 @@ main: () -> i32 {
     ; Stack pointer lives in the upper half of the 128 MiB VM address space,
     ; so it must be above 0 and the high bit of a 64-bit word should be clear.
     if sp_val > 0 {
-        putchar(80)  ; 'P'
-        putchar(65)  ; 'A'
-        putchar(83)  ; 'S'
-        putchar(83)  ; 'S'
+        console.putchar(80)  ; 'P'
+        console.putchar(65)  ; 'A'
+        console.putchar(83)  ; 'S'
+        console.putchar(83)  ; 'S'
     }
     return 0
 }
@@ -215,22 +214,20 @@ fn stdlib_provides_runtime() {
             .iter()
             .any(|t| matches!(t, RvInstruction::Label(n) if n == name))
     };
-    assert!(has("putchar"), "stdlib must define putchar");
-    assert!(has("puts"), "stdlib must define puts");
+    assert!(has("console_putchar"), "stdlib must define console_putchar");
     assert!(has("print_int"), "stdlib must define print_int");
-    assert!(has("printf"), "stdlib must define printf");
-    assert!(has("exit"), "stdlib must define exit");
+    assert!(has("sys_exit"), "stdlib must define sys_exit");
     assert!(has("_start"), "stdlib must define _start");
 }
 
-// Verify puts writes a null-terminated string plus newline.
+// Verify console.writeln writes a null-terminated string plus newline.
 #[test]
 fn puts_basic() {
     let src = r#"
-external puts: (str: u8*) -> i32
+console := import("console")
 
 main: () -> i32 {
-    puts("Hi".ptr)
+    console.writeln("Hi".ptr)
     return 0
 }
 "#;
@@ -243,16 +240,15 @@ main: () -> i32 {
 #[test]
 fn print_int_basic() {
     let src = r#"
-external print_int: (n: i64) -> i32
-external putchar: (c: i32) -> i32
+console := import("console")
 
 main: () -> i32 {
-    print_int(42)
-    putchar(10)
-    print_int(-7)
-    putchar(10)
-    print_int(0)
-    putchar(10)
+    console.print_int(42)
+    console.putchar(10)
+    console.print_int(-7)
+    console.putchar(10)
+    console.print_int(0)
+    console.putchar(10)
     return 0
 }
 "#;
@@ -267,10 +263,8 @@ main: () -> i32 {
 #[test]
 fn asm_block_round_trip() {
     let src = r#"
-external putchar: (c: i32) -> i32
-
 ; Writes a single byte via the Linux write syscall (syscall 64).
-; This mirrors what putchar does in extern_stubs, implemented in HLL inline asm.
+; This mirrors a low-level write wrapper, implemented in HLL inline asm.
 write_byte: (c: i32) -> i32 {
     asm {
         addi  sp, sp, -16

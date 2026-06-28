@@ -1,13 +1,13 @@
 ; Strings and iteration: a string literal is a u8[] slice with .ptr/.len,
 ; bounds-checked byte indexing, range slicing, `for` over its bytes, and char literals.
 
-std := import("runtime")
+console := import("console")
 
 main: () -> i32 {
-    std.println("-- strings and iteration --")
+    console.println("-- strings and iteration --")
 
     name: u8[] = "Ada Lovelace"
-    std.print_int(name.len as i64)        ; 12
+    console.print_int(name.len as i64)        ; 12
     if name.len as i32 != 12 { return 1 }
 
     ; Indexing yields a byte; the char literal 'A' is the integer 65.
@@ -15,7 +15,7 @@ main: () -> i32 {
 
     ; Half-open range slice: the first three bytes spell "Ada".
     first: u8[] = name[0..3]
-    std.println(first)
+    console.println(first)
     if first.len as i32 != 3 { return 3 }
 
     ; Iterate the bytes and count the upper-case letters (A-Z): 'A' and 'L'.
@@ -26,15 +26,15 @@ main: () -> i32 {
             uppers = uppers + 1
         }
     }
-    std.print_int(uppers)
+    console.print_int(uppers)
     if uppers != 2 { return 4 }
 
     ; Character-literal escapes are ascii bytes: '\n' is 10, '\t' is 9.
     if '\n' != 10 or '\t' != 9 { return 5 }
 
     ; .ptr exposes a raw u8* for a C-string style API.
-    std.puts("done".ptr)
+    console.puts("done".ptr)
 
-    std.println("ok")
+    console.println("ok")
     return 0
 }

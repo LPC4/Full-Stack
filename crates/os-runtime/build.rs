@@ -65,10 +65,16 @@ fn source_key(rel: &Path) -> String {
         .and_then(|stem| stem.to_str())
         .expect("hll stem");
 
-    if components == ["stdlib", "hosted", "memory_allocator.hll"] {
+    if components == ["stdlib", "hosted", "console.hll"] {
+        "console_hosted".to_owned()
+    } else if components == ["stdlib", "hosted", "cstr.hll"] {
+        "cstr_hosted".to_owned()
+    } else if components == ["stdlib", "hosted", "memory_allocator.hll"] {
         "memory_allocator_hosted".to_owned()
     } else if components == ["stdlib", "hosted", "runtime.hll"] {
         "runtime_hosted".to_owned()
+    } else if components == ["stdlib", "hosted", "sys.hll"] {
+        "sys_hosted".to_owned()
     } else if components == ["kernel", "core", "entry.hll"] {
         "kernel_entry".to_owned()
     } else {

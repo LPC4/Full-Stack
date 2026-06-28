@@ -80,9 +80,12 @@ mod tests {
             [
                 "types",
                 "memory_allocator",
-                "string_utils",
+                "string",
+                "mem",
+                "cstr",
+                "sys",
+                "console",
                 "runtime",
-                "syscalls"
             ]
         );
 
@@ -106,7 +109,7 @@ mod tests {
             [
                 "types",
                 "memory_allocator",
-                "string_utils",
+                "string",
                 "mem",
                 "runtime",
                 "console",

@@ -420,8 +420,8 @@ The mechanisms above are the target. Current status:
   Header-only modules (e.g. `layout`) are skipped by the closure and reach importers via the
   prepended interface.
 - The bundled resolver covers kernel modules (`layout`, `trap_entry`, `pmm`, `vmm`, `process`,
-  `scheduler`, `fs`, `syscall`, `trap_handler`, `utilities`, `checks`) and kernel-facing stdlib
-  modules (`console`, `runtime`, `klog`, `mem`, `string_utils`, `memory_allocator`) through the
+  `scheduler`, `fs`, `syscall`, `trap_handler`, `utilities`, `checks`) and stdlib modules
+  (`console`, `sys`, `cstr`, `runtime`, `klog`, `mem`, `string`, `memory_allocator`) through the
   generated `os_runtime::module_source` registry. `hll_to_ir::stdlib` reads the ordered
   `stdlib/stdlib.build` lists for hosted, freestanding, and kernel module order; the folders are
   organizational only. Kernel TUs import the providers they use with qualified
@@ -432,6 +432,8 @@ The mechanisms above are the target. Current status:
   (auto-prepended `layout.hll`) remains as the fallback for the raw `HllCompiler` path, where the
   import is inert. The split `as`/`cc`/`ld`/`shell` tools are also closure-built through
   qualified relative imports; `as` and `cc` keep their layout headers as shared record prelude.
+  User programs use qualified stdlib imports rather than hand-written `external` declarations;
+  `external` remains reserved for ABI/runtime edges such as `_start` calling user `main`.
 
 Migration order: (1) interface import for `type`/`const`/signatures, retiring the source
 prelude where possible; `as`/`cc` still need layout prelude for shared records); (2)
@@ -688,22 +690,39 @@ bitwise/shift forms `&= |= ^= <<= >>=`. The right-hand side is the whole express
 
 ## 11. Standard library reference
 
-### 11.1 I/O entry points
+### 11.1 Standard library modules
 
 ```hll
-print:   (s: u8[])       ; write s.ptr[0 .. s.len] to fd 1, no newline
-println: (s: u8[])       ; print + '\n'
-putc:    (ch: i32)       ; write the low byte of ch to fd 1 (the HLL-0 primitive)
+console := import("console")
+sys     := import("sys")       ; hosted targets only
+cstr    := import("cstr")      ; hosted targets
+string  := import("string")
+mem     := import("mem")
+alloc   := import("memory_allocator")
 ```
 
-`print`/`println` take a `u8[]` slice (string literals are slices) and write the exact byte
-range with no NUL scan. Each target mode supplies the same source-level contract: hosted uses
-a `write` ecall, freestanding and kernel userspace write the UART directly.
+The normal source API is qualified through imports:
+
+```hll
+console.writeln("hello".ptr)
+fd: i64 = sys.open("/tmp/a".ptr, 0)
+same: i64 = cstr.eq("a".ptr, "a".ptr)
+ok: bool = string.equals("x", "x")
+mem.copy(dst, src, n)
+ptr: u8* = alloc.malloc(64)
+```
+
+`console.print`/`console.println` take a `u8[]` slice (string literals are slices) and write
+the exact byte range with no NUL scan. `console.putchar`, `console.write`,
+`console.writeln`, `console.print_int`, and `console.print_hex` keep unique prefixed link
+symbols internally but are reached through the short qualified member names above. Hosted
+targets provide `sys.*` syscall wrappers; freestanding and kernel targets omit that module.
 
 ### 11.2 Strings
 
 A string value is a `u8[]` slice (3.4): `.ptr`, `.len`, bounds-checked indexing, `for`, and
-range slicing all apply. The standard string utilities operate on `u8[]`. The layout-compatible
+range slicing all apply. The standard string utilities operate on `u8[]` through the
+`string` module. The layout-compatible
 `Str` record (`{ data: u8*, length: u64 }`) is retained only as a legacy ABI declaration for
 linking against existing `Str`-typed entry points.
 

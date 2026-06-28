@@ -1,11 +1,11 @@
+console := import("console")
+sys := import("sys")
 ; Framebuffer demo: map_fb, render the Mandelbrot set (square pixels), exit.
 ; See OS spec ch.10.4.
 
-external console_writeln: (str: u8*)
 ; Map the framebuffer (syscall 107); returns its base VA (0 on failure).
-external sc_map_fb: () -> u64
 
-; Framebuffer base virtual address (filled in by sc_map_fb).
+; Framebuffer base virtual address (filled in by sys.map_fb).
 _fb_base: u64 = 0
 
 ; Framebuffer dimensions.
@@ -54,9 +54,9 @@ mandel_pixel: (cx: f64, cy: f64) -> u32 {
 }
 
 main: () -> i32 {
-    base: u64 = sc_map_fb()
+    base: u64 = sys.map_fb()
     if base == 0 {
-        console_writeln("mandelbrot: map_fb failed".ptr)
+        console.writeln("mandelbrot: map_fb failed".ptr)
         return 1
     }
     _fb_base = base
@@ -77,6 +77,6 @@ main: () -> i32 {
         py = py + 1
     }
 
-    console_writeln("mandelbrot: rendered".ptr)
+    console.writeln("mandelbrot: rendered".ptr)
     return 0
 }

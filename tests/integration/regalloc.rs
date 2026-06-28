@@ -288,7 +288,7 @@ fn regalloc_heap_alloc_and_uart_output() {
     // exercises stdlib calls with allocated arguments.
     assert_equivalent(
         r#"
-external putchar: (c: i32) -> i32
+console := import("console")
 external free: (p: i64*) -> void
 
 main: () -> i32 {
@@ -304,8 +304,8 @@ main: () -> i32 {
         total = total + p[i]
         i = i + 1
     }
-    putchar(65 + (total % 26) as i32)
-    putchar(10)
+    console.putchar(65 + (total % 26) as i32)
+    console.putchar(10)
     free(p)
     return (total % 256) as i32
 }

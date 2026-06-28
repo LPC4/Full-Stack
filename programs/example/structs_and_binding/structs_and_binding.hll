@@ -1,7 +1,7 @@
 ; Structs and binding: named and contextual literals, omitted-field zero fill,
 ; structs inside arrays, aggregate arguments and returns, and typed destructuring.
 
-std := import("runtime")
+console := import("console")
 
 struct Point {
     x: i32
@@ -34,7 +34,7 @@ divmod: (a: i32, b: i32) -> { quotient: i32, remainder: i32 } {
 }
 
 main: () -> i32 {
-    std.println("-- structs and binding --")
+    console.println("-- structs and binding --")
 
     ; Named literal: every field set, order free.
     origin := Point { .y = 0, .x = 0 }
@@ -64,8 +64,8 @@ main: () -> i32 {
     if quotient != 3 or remainder != 2 { return 5 }
     { count: i32 } = gather()
     if count != 4 { return 6 }
-    std.print_int(grid_sum + quotient + count)
+    console.print_int(grid_sum + quotient + count)
 
-    std.println("ok")
+    console.println("ok")
     return 0
 }

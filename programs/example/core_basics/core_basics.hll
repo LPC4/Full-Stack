@@ -1,7 +1,7 @@
 ; Core language basics: typed and inferred declarations, reassignment, const
 ; with compile-time evaluation, value/void functions, if/else, while, break, continue.
 
-std := import("runtime")
+console := import("console")
 
 ; A pure function the compiler can fold into a const at compile time.
 square: (n: i32) -> i32 {
@@ -35,15 +35,15 @@ sum_odds_capped: (limit: i32) -> i32 {
 }
 
 main: () -> i32 {
-    std.println("-- core basics --")
+    console.println("-- core basics --")
 
     count: i32 = 10        ; explicit declaration
     doubled := count * 2   ; inferred i32
     count = count + 5      ; reassignment of an existing binding
-    std.print_int(doubled)
-    std.print_int(count)
+    console.print_int(doubled)
+    console.print_int(count)
 
-    std.print_int(AREA)        ; 64, computed at compile time
+    console.print_int(AREA)        ; 64, computed at compile time
     if AREA != 64 {
         return 1
     }
@@ -56,11 +56,11 @@ main: () -> i32 {
     }
 
     odds := sum_odds_capped(20)   ; 1 + 3 + 5 + 7 + 9 = 25
-    std.print_int(odds)
+    console.print_int(odds)
     if odds != 25 {
         return 3
     }
 
-    std.println("ok")
+    console.println("ok")
     return 0
 }

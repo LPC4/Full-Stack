@@ -1067,6 +1067,8 @@ impl CompilationPipeline {
         let mut order: Vec<(String, String, Option<PathBuf>)> = Vec::new();
         let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut stack: Vec<String> = Vec::new();
+        let mut stack_keys: Vec<String> = Vec::new();
+        let mut stack_sources: Vec<String> = Vec::new();
         self.collect_import_closure(
             primary_name,
             primary_src,
@@ -1074,6 +1076,8 @@ impl CompilationPipeline {
             &mut order,
             &mut visited,
             &mut stack,
+            &mut stack_keys,
+            &mut stack_sources,
         )?;
 
         let saved_source_path = self.current_source_path.clone();
@@ -1113,11 +1117,17 @@ impl CompilationPipeline {
         order: &mut Vec<(String, String, Option<PathBuf>)>,
         visited: &mut std::collections::HashSet<String>,
         stack: &mut Vec<String>,
+        stack_keys: &mut Vec<String>,
+        stack_sources: &mut Vec<String>,
     ) -> Result<(), CompilationError> {
         if visited.contains(name) {
             return Ok(());
         }
-        if stack.iter().any(|m| m == name) {
+        let identity = source_identity(name, source_path.as_deref());
+        if stack.iter().any(|m| m == name)
+            || stack_keys.iter().any(|key| key == &identity)
+            || stack_sources.iter().any(|seen| seen == source)
+        {
             // The qualified module system forbids cycles; the kernel's flat build (mangling off)
             // tolerates them, since separate compilation only needs each module's interface.
             if self.mangle_in_closure {
@@ -1130,6 +1140,8 @@ impl CompilationPipeline {
             return Ok(());
         }
         stack.push(name.to_owned());
+        stack_keys.push(identity);
+        stack_sources.push(source.to_owned());
 
         let module_imports = hll_to_ir::imports::collect_module_imports(source)
             .map_err(|msg| CompilationError::FreestandingErrors(vec![msg]))?;
@@ -1158,10 +1170,14 @@ impl CompilationPipeline {
                 order,
                 visited,
                 stack,
+                stack_keys,
+                stack_sources,
             )?;
         }
 
         stack.pop();
+        stack_keys.pop();
+        stack_sources.pop();
         visited.insert(name.to_owned());
         order.push((name.to_owned(), source.to_owned(), source_path));
         Ok(())
@@ -1308,6 +1324,12 @@ fn module_member_aliases(
         }
     }
     aliases
+}
+
+fn source_identity(name: &str, source_path: Option<&Path>) -> String {
+    source_path
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| name.to_owned())
 }
 
 fn mark_all_defined_symbols_global(assembled: &mut AssembledOutput) {
