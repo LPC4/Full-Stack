@@ -92,8 +92,7 @@ patch: (site: i64, delta: i64, rtype: u64) {
 
 ; Apply every relocation in every module's .rela.text.
 export apply_relocs: () {
-    m: i64 = 0
-    while m < nmod {
+    for m in 0..nmod {
         mb: i64 = mod_base[m]
         f: u8* = objbuf + (mb as u64)
         ti: i64 = sec_index_of(f, ".text".ptr)
@@ -105,8 +104,7 @@ export apply_relocs: () {
         if sec_find(f, ".rela.text".ptr) == 1 {
             roff: u64 = sec_off
             nr: u64 = sec_size / 24
-            j: u64 = 0
-            while j < nr {
+            for j in 0..nr {
                 e: u8* = f + roff + j * 24
                 r_offset: u64 = rd_le(e, 0, 8)
                 rtype: u64 = rd_le(e, 8, 4)
@@ -133,10 +131,8 @@ export apply_relocs: () {
                 site: i64 = mod_text_off[m] + (r_offset as i64)
                 delta: i64 = target - (text_vbase + site)
                 patch(site, delta, rtype)
-                j = j + 1
             }
         }
-        m = m + 1
     }
 }
 
@@ -178,22 +174,16 @@ export emit_exec: (out_path: u8*) {
     wr_le(112, 4096, 8)         ; p_align
 
     ; Payload: merged text, then 8 NOPs, then merged data.
-    i: u64 = 0
-    while i < mtext_len {
+    for i in 0..mtext_len {
         d: u8* = out + (HDR as u64) + i
         @d = @(merged_text + i)
-        i = i + 1
     }
-    p: u64 = 0
-    while p < 8 {
-        wr_le((HDR as u64) + mtext_len + p * 4, 0x13, 4)
-        p = p + 1
+    for p in 0..8 {
+        wr_le((HDR as u64) + mtext_len + (p as u64) * 4, 0x13, 4)
     }
-    i = 0
-    while i < mdata_len {
+    for i in 0..mdata_len {
         d: u8* = out + (HDR as u64) + mtext_len + (PAD as u64) + i
         @d = @(merged_data + i)
-        i = i + 1
     }
     total: u64 = (HDR as u64) + payload_len
 

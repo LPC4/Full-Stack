@@ -5,6 +5,9 @@
 external cstr_eq:  (a: u8*, b: u8*) -> i64
 external cstr_len: (s: u8*) -> u64
 
+; Shared byte/text helpers (16-byte name copy).
+text := import("text")
+
 ; Helpers and the output buffer owned by as.hll; resolved at link time.
 external fail:          (msg: u8*)
 external wr_le:         (off: u64, val: u64, n: u64)
@@ -50,11 +53,9 @@ out_str: (off: u64, src: u8*) -> u64 {
 
 ; Copy n bytes from src into out at byte offset off.
 out_bytes: (off: u64, src: u8*, n: u64) {
-    i: u64 = 0
-    while i < n {
-        d: u8* = out +off + i
+    for i in 0..n {
+        d: u8* = out + off + i
         @d = @(src + i)
-        i = i + 1
     }
 }
 
@@ -65,18 +66,7 @@ push_sym: (name: u8*, value: i64, shndx: i64) {
         return
     }
     dst: u8* = sym_pool + (nsym as u64) * 16
-    i: u64 = 0
-    while i < 15 {
-        c: u8 = @(name + i)
-        e: u8* = dst + i
-        @e = c
-        if c == 0 {
-            break
-        }
-        i = i + 1
-    }
-    t: u8* = dst + i
-    @t = 0 as u8
+    text.copy_name16(dst, name)
     sym_val[nsym] = value
     sym_shndx[nsym] = shndx
     nsym = nsym + 1
@@ -84,13 +74,11 @@ push_sym: (name: u8*, value: i64, shndx: i64) {
 
 ; Index of `name` in the symbol table, or -1 if absent.
 sym_index: (name: u8*) -> i64 {
-    i: i64 = 1
-    while i < nsym {
+    for i in 1..nsym {
         cand: u8* = sym_pool + (i as u64) * 16
         if cstr_eq(cand, name) == 1 {
             return i
         }
-        i = i + 1
     }
     return -1
 }
@@ -100,8 +88,7 @@ build_symbols: () {
     nsym = 0
     push_sym("".ptr, 0, 0)
     ; Locals: defined labels not exported via .globl.
-    i: i64 = 0
-    while i < lbl_count {
+    for i in 0..lbl_count {
         lab: Label* = &labels[i]
         nm: u8* = lab as u8*
         if is_globl(nm) == 0 {
@@ -111,12 +98,10 @@ build_symbols: () {
             }
             push_sym(nm, lab.addr, shndx)
         }
-        i = i + 1
     }
     first_global = nsym
     ; Globals: defined labels exported via .globl.
-    i = 0
-    while i < lbl_count {
+    for i in 0..lbl_count {
         lab: Label* = &labels[i]
         nm: u8* = lab as u8*
         if is_globl(nm) == 1 {
@@ -126,11 +111,9 @@ build_symbols: () {
             }
             push_sym(nm, lab.addr, shndx)
         }
-        i = i + 1
     }
     ; Externals: relocation targets with no local definition (undefined, shndx 0).
-    i = 0
-    while i < nreloc {
+    for i in 0..nreloc {
         r: Reloc* = &relocs[i]
         rn: u8* = r as u8*
         if label_defined(rn) == 0 {
@@ -138,7 +121,6 @@ build_symbols: () {
                 push_sym(rn, 0, 0)
             }
         }
-        i = i + 1
     }
 }
 
@@ -189,12 +171,10 @@ export write_object: () -> u64 {
     ; .strtab: names packed after symtab; record each symbol's name offset.
     strtab_off: u64 = symtab_off + symtab_len
     cursor: u64 = 1
-    si: i64 = 1
-    while si < nsym {
+    for si in 1..nsym {
         sym_name_off[si] = cursor as i64
         nm: u8* = sym_pool + (si as u64) * 16
         cursor = cursor + cstr_len(nm) + 1
-        si = si + 1
     }
     strtab_len: u64 = cursor
 
@@ -232,8 +212,7 @@ export write_object: () -> u64 {
     out_bytes(data_off, data, data_len)
 
     ; .rela.text entries: r_offset, r_info = (sym<<32)|type, r_addend = 0.
-    ri: i64 = 0
-    while ri < nreloc {
+    for ri in 0..nreloc {
         r: Reloc* = &relocs[ri]
         rn: u8* = r as u8*
         eoff: u64 = rela_off + (ri as u64) * 24
@@ -253,12 +232,10 @@ export write_object: () -> u64 {
         wr_le(eoff, roff as u64, 8)
         wr_le(eoff + 8, info, 8)
         wr_le(eoff + 16, 0, 8)
-        ri = ri + 1
     }
 
     ; .symtab entries.
-    si = 0
-    while si < nsym {
+    for si in 0..nsym {
         eoff: u64 = symtab_off + (si as u64) * 24
         bind: u64 = 0
         if si >= first_global {
@@ -272,16 +249,13 @@ export write_object: () -> u64 {
         shx: i64 = sym_shndx[si]
         val: i64 = sym_val[si]
         wr_sym(eoff, noff, bind, shx as u64, val as u64)
-        si = si + 1
     }
 
     ; .strtab bytes.
-    si = 1
-    while si < nsym {
+    for si in 1..nsym {
         nm: u8* = sym_pool + (si as u64) * 16
         no: i64 = sym_name_off[si]
         out_str(strtab_off + (no as u64), nm)
-        si = si + 1
     }
 
     ; --- Section headers (indices 0..6) ---

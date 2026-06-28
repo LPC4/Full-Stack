@@ -16,6 +16,8 @@ external cstr_len:     (s: u8*) -> u64
 ; Relocation patching + executable emission. The module reads the merged
 ; sections/symbol table built here through shared link-time symbols.
 link := import("./ld_link.hll")
+; Shared byte/text helpers (16-byte name copy).
+text := import("text")
 
 const ARG_BASE = 0x7FF00000
 const USER_CODE_BASE = 0x40000000
@@ -75,22 +77,18 @@ export fail: (msg: u8*) {
 ; Read an n-byte little-endian value at p+off.
 export rd_le: (p: u8*, off: u64, n: u64) -> u64 {
     v: u64 = 0
-    k: u64 = 0
-    while k < n {
+    for k in 0..n {
         b: u8 = @(p + off + k)
         v = v | ((b as u64) << (k * 8))
-        k = k + 1
     }
     return v
 }
 
 ; Write an n-byte little-endian value into out at byte offset off.
 export wr_le: (off: u64, val: u64, n: u64) {
-    k: u64 = 0
-    while k < n {
+    for k in 0..n {
         d: u8* = out + off + k
         @d = (val >> (k * 8)) as u8
-        k = k + 1
     }
 }
 
@@ -103,8 +101,7 @@ export sec_find: (f: u8*, want: u8*) -> i64 {
     sh_hdr: u8* = f + shoff + shstrndx * 64
     shstr_off: u64 = rd_le(sh_hdr, 24, 8)
     shstr: u8* = f + shstr_off
-    i: u64 = 0
-    while i < shnum {
+    for i in 0..shnum {
         h: u8* = f + shoff + i * 64
         name_off: u64 = rd_le(h, 0, 4)
         nm: u8* = shstr + name_off
@@ -114,7 +111,6 @@ export sec_find: (f: u8*, want: u8*) -> i64 {
             sec_idx = i as i64
             return 1
         }
-        i = i + 1
     }
     return 0
 }
@@ -128,31 +124,18 @@ gsym_add: (name: u8*, addr: i64) {
         return
     }
     dst: u8* = gsym_names + (ngsym as u64) * 16
-    i: u64 = 0
-    while i < 15 {
-        c: u8 = @(name + i)
-        e: u8* = dst + i
-        @e = c
-        if c == 0 {
-            break
-        }
-        i = i + 1
-    }
-    t: u8* = dst + i
-    @t = 0 as u8
+    text.copy_name16(dst, name)
     gsym_addr[ngsym] = addr
     ngsym = ngsym + 1
 }
 
 ; Absolute address of a global symbol, or -1 if undefined.
 export gsym_lookup: (name: u8*) -> i64 {
-    i: i64 = 0
-    while i < ngsym {
+    for i in 0..ngsym {
         cand: u8* = gsym_names + (i as u64) * 16
         if cstr_eq(cand, name) == 1 {
             return gsym_addr[i]
         }
-        i = i + 1
     }
     return -1
 }
@@ -179,22 +162,18 @@ load_object: (m: i64, path: u8*) {
 
     mod_text_off[m] = mtext_len as i64
     if sec_find(f, ".text".ptr) == 1 {
-        i: u64 = 0
-        while i < sec_size {
+        for i in 0..sec_size {
             d: u8* = merged_text + mtext_len + i
             @d = @(f + sec_off + i)
-            i = i + 1
         }
         mtext_len = mtext_len + sec_size
     }
 
     mod_data_off[m] = mdata_len as i64
     if sec_find(f, ".data".ptr) == 1 {
-        i: u64 = 0
-        while i < sec_size {
+        for i in 0..sec_size {
             d: u8* = merged_data + mdata_len + i
             @d = @(f + sec_off + i)
-            i = i + 1
         }
         mdata_len = mdata_len + sec_size
     }
@@ -212,8 +191,7 @@ export sec_index_of: (f: u8*, name: u8*) -> i64 {
 
 ; Collect every defined global symbol into the global table.
 build_globals: () {
-    m: i64 = 0
-    while m < nmod {
+    for m in 0..nmod {
         mb: i64 = mod_base[m]
         f: u8* = objbuf + (mb as u64)
         ti: i64 = sec_index_of(f, ".text".ptr)
@@ -224,8 +202,7 @@ build_globals: () {
             sec_find(f, ".strtab".ptr)
             strp: u8* = f + sec_off
             nsyms: u64 = symsz / 24
-            k: u64 = 0
-            while k < nsyms {
+            for k in 0..nsyms {
                 s: u8* = f + symoff + k * 24
                 info: u64 = rd_le(s, 4, 1)
                 shndx: i64 = rd_le(s, 6, 2) as i64
@@ -243,10 +220,8 @@ build_globals: () {
                         gsym_add(nm, a)
                     }
                 }
-                k = k + 1
             }
         }
-        m = m + 1
     }
 }
 
@@ -312,12 +287,10 @@ main: () -> i32 {
     nmod = npath - 1
 
     ; Load and merge each input object (all tokens but the last).
-    m: i64 = 0
-    while m < nmod {
+    for m in 0..nmod {
         po: i64 = path_off[m]
         p: u8* = path_pool + (po as u64)
         load_object(m, p)
-        m = m + 1
     }
     if err_flag != 0 {
         return 1

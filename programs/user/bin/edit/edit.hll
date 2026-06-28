@@ -19,6 +19,9 @@ external sc_close:     (fd: i64)
 external sc_ftruncate: (fd: i64, len: u64) -> i64
 external cstr_len:     (s: u8*) -> u64
 
+; Shared byte/text helpers (substring search, char classes).
+text := import("text")
+
 ; Page the kernel maps with this program's argument string (the file path).
 const ARG_BASE = 0x7FF00000
 ; Line buffer geometry: up to MAXLINES lines of up to LINEW-1 chars each.
@@ -103,11 +106,9 @@ set_line: (i: i64, src: u8*) {
 copy_line: (dst: i64, src: i64) {
     dp: u8* = lptr(dst)
     sp: u8* = lptr(src)
-    k: u64 = 0
-    while k < 128 {
+    for k in 0..128 {
         d: u8* = dp + k
         @d = @(sp + k)
-        k = k + 1
     }
 }
 
@@ -214,8 +215,7 @@ ed_write: (path: u8*) {
     ; Join the lines back into scratch with a '\n' after each.
     bp: u8* = scratch
     total: u64 = 0
-    i: i64 = 0
-    while i < nlines {
+    for i in 0..nlines {
         sp: u8* = lptr(i)
         k: u64 = 0
         while @(sp + k) != 0 {
@@ -231,7 +231,6 @@ ed_write: (path: u8*) {
             @d = '\n' as u8
             total = total + 1
         }
-        i = i + 1
     }
 
     fd: i64 = sc_open(path, 2)
@@ -259,8 +258,7 @@ ed_print: () {
         console_writeln("(empty)".ptr)
         return
     }
-    i: i64 = 0
-    while i < nlines {
+    for i in 0..nlines {
         if (i + 1) == cur {
             console_write("> ".ptr)
         } else {
@@ -269,7 +267,6 @@ ed_print: () {
         console_print_int(i + 1)
         console_write(": ".ptr)
         console_writeln(lptr(i))
-        i = i + 1
     }
 }
 
@@ -316,19 +313,13 @@ parse_num: (p: u8*) -> i64 {
     while @(p + i) == ' ' {
         i = i + 1
     }
-    if @(p + i) < '0' {
-        return -1
-    }
-    if @(p + i) > '9' {
+    if text.is_digit(@(p + i)) == false {
         return -1
     }
     v: i64 = 0
     while @(p + i) != 0 {
         c: u8 = @(p + i)
-        if c < '0' {
-            break
-        }
-        if c > '9' {
+        if text.is_digit(c) == false {
             break
         }
         v = v * 10 + (c as i64 - 48)
@@ -367,28 +358,6 @@ ed_replace: (arg: u8*) {
         i = i + 1
     }
     set_line(cur - 1, arg + i)
-}
-
-; Find needle in hay; return the 0-based byte index or -1.
-str_find: (hay: u8*, needle: u8*) -> i64 {
-    if @needle == 0 {
-        return -1
-    }
-    i: u64 = 0
-    while @(hay + i) != 0 {
-        j: u64 = 0
-        while 1 == 1 {
-            if @(needle + j) == 0 {
-                return i as i64
-            }
-            if @(hay + i + j) != @(needle + j) {
-                break
-            }
-            j = j + 1
-        }
-        i = i + 1
-    }
-    return -1
 }
 
 ; Substitute the first occurrence of old with new on the current line:
@@ -445,7 +414,7 @@ ed_subst: (arg: u8*) {
     @rt = 0 as u8
 
     cl: u8* = lptr(cur - 1)
-    at: i64 = str_find(cl, oldp)
+    at: i64 = text.find_sub(cl, oldp)
     if at < 0 {
         console_writeln("edit: not found".ptr)
         return
@@ -518,11 +487,9 @@ main: () -> i32 {
         if c == 0 {
             ; blank line: do nothing
         } else {
-            if c >= '0' {
-                if c <= '9' {
-                    ed_goto(line_p)
-                    continue
-                }
+            if text.is_digit(c) {
+                ed_goto(line_p)
+                continue
             }
             if c == 'g' {
                 ed_goto(line_p + 1)

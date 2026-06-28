@@ -1,0 +1,104 @@
+
+; Shared byte/text helpers for the userspace tools (cc, as, ld, edit, shell).
+; Pure pointer/byte ops, no stdlib deps, so it links into any tool's closure.
+
+; --- Character classes ---
+
+export is_space: (c: u8) -> bool {
+    return c == ' ' or c == '\t' or c == '\r' or c == '\n'
+}
+
+export is_digit: (c: u8) -> bool {
+    return c >= '0' and c <= '9'
+}
+
+export is_alpha: (c: u8) -> bool {
+    if c == '_' {
+        return true
+    }
+    if c >= 'a' and c <= 'z' {
+        return true
+    }
+    return c >= 'A' and c <= 'Z'
+}
+
+export is_alnum: (c: u8) -> bool {
+    return is_alpha(c) or is_digit(c)
+}
+
+; --- Name slots ---
+
+; Copy a NUL-terminated string into a fixed 16-byte name slot, 15 chars + NUL.
+export copy_name16: (dst: u8*, src: u8*) {
+    for i in 0..15 {
+        c: u8 = @(src + i)
+        d: u8* = dst + i
+        @d = c
+        if c == 0 {
+            return
+        }
+    }
+    last: u8* = dst + 15
+    @last = 0 as u8
+}
+
+; --- Search ---
+
+; First 0-based index of `needle` in `hay`, or -1 (an empty needle never matches).
+export find_sub: (hay: u8*, needle: u8*) -> i64 {
+    if @needle == 0 {
+        return -1
+    }
+    i: u64 = 0
+    while @(hay + i) != 0 {
+        j: u64 = 0
+        while true {
+            if @(needle + j) == 0 {
+                return i as i64
+            }
+            if @(hay + i + j) != @(needle + j) {
+                break
+            }
+            j = j + 1
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+; --- Argument splitting ---
+
+; Split `arg` at the first space into `a` (before) and `b` (after, spaces skipped),
+; both NUL-terminated. Returns false when there is no second field.
+export split_two: (arg: u8*, a: u8*, b: u8*) -> bool {
+    i: u64 = 0
+    while @(arg + i) != 0 {
+        if @(arg + i) == ' ' {
+            break
+        }
+        da: u8* = a + i
+        @da = @(arg + i)
+        i = i + 1
+    }
+    ta: u8* = a + i
+    @ta = 0 as u8
+    if @(arg + i) == 0 {
+        return false
+    }
+    while @(arg + i) == ' ' {
+        i = i + 1
+    }
+    if @(arg + i) == 0 {
+        return false
+    }
+    k: u64 = 0
+    while @(arg + i) != 0 {
+        db: u8* = b + k
+        @db = @(arg + i)
+        i = i + 1
+        k = k + 1
+    }
+    tb: u8* = b + k
+    @tb = 0 as u8
+    return true
+}

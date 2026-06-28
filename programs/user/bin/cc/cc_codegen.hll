@@ -96,11 +96,9 @@ gen_call: (n: i64) {
     start: i64 = nd.b
     cnt: i64 = nd.c
     ; Evaluate args left to right, pushing each result.
-    j: i64 = 0
-    while j < cnt {
+    for j in 0..cnt {
         gen_expr(call_args[start + j])
         emit_str("  addi sp, sp, -16\n  sd a0, 0(sp)\n".ptr)
-        j = j + 1
     }
     ; Pop into a0..a(cnt-1); the last pushed (top of stack) is the highest arg reg.
     k: i64 = cnt - 1
@@ -238,14 +236,12 @@ gen_function: (fi: i64, is_main: i64) {
     emit_str("(sp)\n  addi fp, sp, 0\n".ptr)
     ; Spill incoming args a0..a(np-1) into their local slots.
     np: i64 = f.nparams
-    k: i64 = 0
-    while k < np {
+    for k in 0..np {
         emit_str("  sd a".ptr)
         emit_int(k)
         emit_str(", ".ptr)
         emit_int(k * 8)
         emit_str("(fp)\n".ptr)
-        k = k + 1
     }
     gen_block(f.body)
     ; Epilogue: discard temporaries, restore ra/fp, return or exit.
@@ -268,24 +264,20 @@ gen_function: (fi: i64, is_main: i64) {
 export gen_program: () {
     emit_str(".text\n.globl _start\n".ptr)
     mi: i64 = -1
-    fi: i64 = 0
-    while fi < nfn {
+    for fi in 0..nfn {
         p: u8* = (&fns[fi]) as u8*
         if cstr_eq(p, "main".ptr) == 1 {
             mi = fi
         }
-        fi = fi + 1
     }
     if mi < 0 {
         perr("no main function".ptr)
         return
     }
     gen_function(mi, 1)
-    fi = 0
-    while fi < nfn {
+    for fi in 0..nfn {
         if fi != mi {
             gen_function(fi, 0)
         }
-        fi = fi + 1
     }
 }

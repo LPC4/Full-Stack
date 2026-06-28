@@ -18,6 +18,8 @@ external cstr_len:     (s: u8*) -> u64
 ; ET_REL object serializer. It reads the shared assembler state
 ; (out/code/data/labels/relocs) through link-time symbols.
 object := import("./as_object.hll")
+; Shared byte/text helpers (char classes, arg splitting).
+text := import("text")
 
 ; Page the kernel maps with this program's argument string. Matches USER_ARG_BASE.
 const ARG_BASE = 0x7FF00000
@@ -1288,41 +1290,6 @@ assemble: (pass: i64) {
     }
 }
 
-; Split the argument "src out" at the first space into two path buffers.
-split_arg: (arg: u8*, src_path: u8*, out_path: u8*) -> i64 {
-    i: u64 = 0
-    while @(arg + i) != 0 {
-        if @(arg + i) == ' ' {
-            break
-        }
-        d: u8* = src_path + i
-        @d = @(arg + i)
-        i = i + 1
-    }
-    st: u8* = src_path + i
-    @st = 0 as u8
-    if @(arg + i) == 0 {
-        return 0
-    }
-    ; Skip the separating space(s).
-    while @(arg + i) == ' ' {
-        i = i + 1
-    }
-    if @(arg + i) == 0 {
-        return 0
-    }
-    k: u64 = 0
-    while @(arg + i) != 0 {
-        d: u8* = out_path + k
-        @d = @(arg + i)
-        i = i + 1
-        k = k + 1
-    }
-    ot: u8* = out_path + k
-    @ot = 0 as u8
-    return 1
-}
-
 ; --- ET_REL object emission ---
 
 ; 1 if path ends in the two-character suffix ".o".
@@ -1359,7 +1326,7 @@ main: () -> i32 {
     out_path: u8[128] = []
     src_pp: u8* = &src_path[0]
     out_pp: u8* = &out_path[0]
-    if split_arg(arg, src_pp, out_pp) == 0 {
+    if text.split_two(arg, src_pp, out_pp) == false {
         console_writeln("as: usage: as <src> <out>".ptr)
         return 1
     }
@@ -1418,16 +1385,12 @@ main: () -> i32 {
 
     ; Append NOP padding so a speculative fetch past the final ecall stays valid
     ; (a zero word would trap to M-mode and halt). OS spec 10.3; PAD matches the label gap.
-    pad: u64 = 0
-    while pad < 8 {
+    for pad in 0..8 {
         emit_word(0x13 as u32)
-        pad = pad + 1
     }
     ; The data section follows the text and its pad in the flat payload.
-    di: u64 = 0
-    while di < data_len {
+    for di in 0..data_len {
         push_byte(data[di])
-        di = di + 1
     }
 
     ; Minimal static ELF64: 64-byte header + one 56-byte PT_LOAD in the first page,
@@ -1464,11 +1427,9 @@ main: () -> i32 {
     wr_le(112, 4096, 8)        ; p_align
 
     ; out[120..HDR] stay zero; the payload follows at the page boundary.
-    i: u64 = 0
-    while i < code_len {
-        d: u8* = out +(HDR as u64) + i
+    for i in 0..code_len {
+        d: u8* = out + (HDR as u64) + i
         @d = code[i]
-        i = i + 1
     }
     total: u64 = (HDR as u64) + code_len
 
