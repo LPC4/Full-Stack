@@ -1944,6 +1944,12 @@ impl<'a> Parser<'a> {
     // A match pattern: `_`, a bare binding (lowercase), or `Variant(b0, b1)` /
     // bare `Variant` (capitalized). `_` discards a payload slot.
     fn parse_pattern(&mut self) -> Result<Pattern, ParserError> {
+        // Integer/char literals (optionally negated) match a scalar scrutinee by
+        // value; everything else is an identifier-led variant or binding pattern.
+        if let Some(lit) = self.try_parse_literal_pattern()? {
+            return Ok(Pattern::Literal(lit));
+        }
+
         let name = self.expect_ident()?;
         if name == "_" {
             return Ok(Pattern::Wildcard);
@@ -1982,6 +1988,31 @@ impl<'a> Parser<'a> {
             variant: name,
             bindings,
         })
+    }
+
+    // Parse a leading int/char literal pattern (optional `-`), else None so the
+    // caller falls through to identifier-led patterns. Char reuses ascii-byte form.
+    fn try_parse_literal_pattern(&mut self) -> Result<Option<Literal>, ParserError> {
+        match self.peek() {
+            Some(Token::Integer(_)) => Ok(Some(Literal::Integer(self.expect_integer()?))),
+            Some(Token::HexInteger(_)) => Ok(Some(Literal::HexInteger(self.expect_hex_integer()?))),
+            Some(Token::Char(value)) => {
+                let v = *value as i64;
+                self.advance();
+                Ok(Some(Literal::Integer(v)))
+            }
+            Some(Token::Minus) => {
+                self.advance();
+                match self.peek() {
+                    Some(Token::Integer(_)) => Ok(Some(Literal::Integer(-self.expect_integer()?))),
+                    Some(Token::HexInteger(_)) => {
+                        Ok(Some(Literal::HexInteger(-self.expect_hex_integer()?)))
+                    }
+                    _ => Err(self.error("expected integer literal after `-` in match pattern")),
+                }
+            }
+            _ => Ok(None),
+        }
     }
 
     fn parse_struct_literal_fields(&mut self) -> Result<Vec<FieldInit>, ParserError> {
@@ -2245,8 +2276,8 @@ impl<'a> Parser<'a> {
 mod tests {
     use super::Parser;
     use crate::ast::{
-        AssignTarget, DeclNode, Expression, ForIter, Pattern, PrimaryExpr, ReturnType, Statement,
-        Type,
+        AssignTarget, DeclNode, Expression, ForIter, Literal, Pattern, PrimaryExpr, ReturnType,
+        Statement, Type,
     };
     use crate::lexer::Lexer;
     use crate::token::Token;
@@ -3063,6 +3094,34 @@ mod tests {
         assert!(arms[0].value.is_some());
         assert!(arms[0].body.statements.is_empty());
         assert!(arms[1].value.is_some());
+    }
+
+    #[test]
+    fn parses_literal_match_patterns() {
+        // Block-body arms avoid the newline-insensitive value-arm ambiguity with a
+        // following `-N` pattern (a bare value arm would read `2` then `- 3`).
+        let src = "match c {\n10 -> {\nx = 1\n}\n'A' -> {\nx = 2\n}\n-3 -> {\nx = 4\n}\n_ -> {\nx = 0\n}\n}";
+        let mut parser = Parser::new(tokens_of(src));
+        let Statement::Expression(Expression::Match { arms, .. }) =
+            parser.parse_statement().unwrap()
+        else {
+            panic!("expected match expression");
+        };
+        assert_eq!(arms.len(), 4);
+        assert!(matches!(
+            arms[0].pattern,
+            Pattern::Literal(Literal::Integer(10))
+        ));
+        // A char literal lowers to its ascii byte (`'A'` == 65).
+        assert!(matches!(
+            arms[1].pattern,
+            Pattern::Literal(Literal::Integer(65))
+        ));
+        assert!(matches!(
+            arms[2].pattern,
+            Pattern::Literal(Literal::Integer(-3))
+        ));
+        assert!(matches!(arms[3].pattern, Pattern::Wildcard));
     }
 
     #[test]

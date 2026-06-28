@@ -1217,6 +1217,162 @@ main: () -> i32 {
     );
 }
 
+// --- Literal (scalar) match ---
+
+#[test]
+fn match_integer_literal_selects_arm() {
+    // A non-enum integer scrutinee dispatches on literal value equality.
+    assert_exit(
+        r#"
+main: () -> i32 {
+    n: i32 = 2
+    x: i32 = match n {
+        1 -> 10
+        2 -> 20
+        _ -> 99
+    }
+    return x
+}
+"#,
+        20,
+    );
+}
+
+#[test]
+fn match_integer_literal_falls_to_catch_all() {
+    assert_exit(
+        r#"
+main: () -> i32 {
+    n: i32 = 7
+    match n {
+        1 -> {
+            return 1
+        }
+        2 -> {
+            return 2
+        }
+        _ -> {
+            return 42
+        }
+    }
+    return -1
+}
+"#,
+        42,
+    );
+}
+
+#[test]
+fn match_char_literal_dispatch() {
+    // Char literals compare as their ascii byte; 'b' takes the second arm.
+    assert_exit(
+        r#"
+main: () -> i32 {
+    c: i32 = 'b'
+    x: i32 = match c {
+        'a' -> 1
+        'b' -> 2
+        _ -> 0
+    }
+    return x
+}
+"#,
+        2,
+    );
+}
+
+#[test]
+fn match_literal_binding_catch_all() {
+    // A binding catch-all sees the scrutinee value, here passed straight through.
+    assert_exit(
+        r#"
+main: () -> i32 {
+    n: i32 = 41
+    x: i32 = match n {
+        0 -> 0
+        other -> other + 1
+    }
+    return x
+}
+"#,
+        42,
+    );
+}
+
+#[test]
+fn match_negative_literal_pattern() {
+    // A leading `-N` literal pattern matches a negative scrutinee value.
+    assert_exit(
+        r#"
+main: () -> i32 {
+    n: i32 = 0 - 5
+    x: i32 = match n {
+        -5 -> 1
+        _ -> 0
+    }
+    return x
+}
+"#,
+        1,
+    );
+}
+
+#[test]
+fn match_integer_const_patterns() {
+    // Named integer consts fold to literal patterns in a scalar match.
+    assert_exit(
+        r#"
+const TK_PLUS = 1
+const TK_MINUS = 2
+
+main: () -> i32 {
+    op: i32 = 2
+    x: i32 = match op {
+        TK_PLUS -> 10
+        TK_MINUS -> 20
+        _ -> 0
+    }
+    return x
+}
+"#,
+        20,
+    );
+}
+
+#[test]
+fn match_unknown_const_pattern_is_rejected() {
+    // A bare uppercase name that is neither a const nor an enum variant fails.
+    assert_compile_fails(
+        r#"
+main: () -> i32 {
+    op: i32 = 1
+    x: i32 = match op {
+        NOT_A_CONST -> 10
+        _ -> 0
+    }
+    return x
+}
+"#,
+    );
+}
+
+#[test]
+fn match_scalar_without_catch_all_is_rejected() {
+    // A scalar match cannot enumerate its domain, so a catch-all is required.
+    assert_compile_fails(
+        r#"
+main: () -> i32 {
+    n: i32 = 1
+    x: i32 = match n {
+        1 -> 10
+        2 -> 20
+    }
+    return x
+}
+"#,
+    );
+}
+
 // --- Generic enums (Option / Result prelude) ---
 
 #[test]

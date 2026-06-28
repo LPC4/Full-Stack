@@ -972,8 +972,8 @@ impl SemanticAnalyzer {
     fn check_match(&mut self, scrutinee: &Expression, arms: &[MatchArm]) -> Result<String, ()> {
         let enum_name = self.infer_expression_type(scrutinee)?;
         let Some(all_variants) = self.enum_variant_names.get(&enum_name).cloned() else {
-            self.error(format!("`match` scrutinee has non-enum type `{enum_name}`"));
-            return Err(());
+            // Non-enum scrutinee: only a scalar literal `match` is allowed.
+            return self.check_scalar_match(&enum_name, arms);
         };
 
         // A `-> expr` value arm makes the match value-producing; either every arm
@@ -1013,6 +1013,10 @@ impl SemanticAnalyzer {
                 Pattern::Variant {
                     variant, bindings, ..
                 } => self.check_variant_pattern(&enum_name, variant, bindings, &mut covered),
+                Pattern::Literal(_) => {
+                    self.error("literal pattern in a `match` on an enum value".to_owned());
+                    Err(())
+                }
             };
             let body_result = arm_ok.and_then(|()| self.check_block(&arm.body));
             // Infer the arm value while its payload bindings are still in scope.
@@ -1050,6 +1054,111 @@ impl SemanticAnalyzer {
             }
         }
         Ok(result_ty.unwrap_or_else(|| "void".to_owned()))
+    }
+
+    // Type-check a scalar `match`: integer scrutinee, integer/char literal arms
+    // plus a required catch-all (the domain cannot be enumerated).
+    fn check_scalar_match(&mut self, scrutinee_ty: &str, arms: &[MatchArm]) -> Result<String, ()> {
+        if !Self::is_integer_type(&Self::primitive_to_ir(scrutinee_ty)) {
+            self.error(format!(
+                "`match` scrutinee has non-enum type `{scrutinee_ty}`"
+            ));
+            return Err(());
+        }
+
+        let value_arms = arms.iter().filter(|a| a.value.is_some()).count();
+        if value_arms != 0 && value_arms != arms.len() {
+            self.error(
+                "all `match` arms must produce a value or none may; mix not allowed".to_owned(),
+            );
+            return Err(());
+        }
+        let mut result_ty: Option<String> = None;
+
+        let mut has_catch_all = false;
+        for arm in arms {
+            if has_catch_all {
+                self.error("unreachable match arm after a catch-all pattern".to_owned());
+                return Err(());
+            }
+            self.symbols.enter_scope();
+            let arm_ok = match &arm.pattern {
+                Pattern::Wildcard => {
+                    has_catch_all = true;
+                    Ok(())
+                }
+                Pattern::Binding(name) => {
+                    has_catch_all = true;
+                    self.symbols.insert(
+                        name.clone(),
+                        Self::primitive_to_ir(scrutinee_ty),
+                        crate::ir::IrValue::Null,
+                    );
+                    Ok(())
+                }
+                Pattern::Literal(lit) => self.check_literal_pattern(lit),
+                Pattern::Variant {
+                    variant, bindings, ..
+                } if bindings.is_empty() => {
+                    if self.is_integer_const(variant) {
+                        Ok(())
+                    } else {
+                        self.error(format!(
+                            "`{variant}` is not an integer constant usable as a literal pattern"
+                        ));
+                        Err(())
+                    }
+                }
+                Pattern::Variant { .. } => {
+                    self.error("enum variant pattern in a literal `match`".to_owned());
+                    Err(())
+                }
+            };
+            let body_result = arm_ok.and_then(|()| self.check_block(&arm.body));
+            let arm_value_ty = body_result.and_then(|()| match &arm.value {
+                Some(value) => self.infer_expression_type(value).map(Some),
+                None => Ok(None),
+            });
+            self.symbols.exit_scope();
+            if let Some(arm_ty) = arm_value_ty? {
+                match &result_ty {
+                    None => result_ty = Some(arm_ty),
+                    Some(existing) if *existing != arm_ty => {
+                        self.error(format!(
+                            "`match` arms produce different types: `{existing}` and `{arm_ty}`"
+                        ));
+                        return Err(());
+                    }
+                    Some(_) => {}
+                }
+            }
+        }
+
+        if !has_catch_all {
+            self.error("non-exhaustive scalar `match`: add a `_` or binding catch-all".to_owned());
+            return Err(());
+        }
+        Ok(result_ty.unwrap_or_else(|| "void".to_owned()))
+    }
+
+    // True when `name` is a declared integer constant (usable as a scalar literal
+    // pattern). The compiler's const value table is the authoritative check.
+    fn is_integer_const(&self, name: &str) -> bool {
+        self.type_mapping
+            .get(name)
+            .map(|ty| Self::is_integer_type(&Self::primitive_to_ir(ty)))
+            .unwrap_or(false)
+    }
+
+    // A literal `match` pattern must fold to an integer (char and bool included).
+    fn check_literal_pattern(&mut self, lit: &Literal) -> Result<(), ()> {
+        match lit {
+            Literal::Integer(_) | Literal::HexInteger(_) | Literal::Boolean(_) => Ok(()),
+            _ => {
+                self.error("`match` literal pattern must be an integer or char".to_owned());
+                Err(())
+            }
+        }
     }
 
     // Validate one `Variant(bindings)` arm and bind its payload slots as locals.

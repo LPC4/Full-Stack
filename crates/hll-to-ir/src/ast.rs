@@ -205,11 +205,11 @@ pub struct MatchArm {
     pub value: Option<Expression>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Pattern {
-    // `_` -- matches anything, binds nothing.
+    // `_` matches anything and binds nothing.
     Wildcard,
-    // A bare lowercase name -- catch-all that binds the scrutinee.
+    // A bare lowercase name; catch-all that binds the scrutinee.
     Binding(String),
     // `Variant(b0, b1)` or `Enum::Variant(...)`; `bindings` names each payload
     // slot (`_` discards). An empty `bindings` is a unit-variant pattern.
@@ -218,6 +218,8 @@ pub enum Pattern {
         variant: String,
         bindings: Vec<String>,
     },
+    // An integer or char literal; matches a scalar scrutinee by value equality.
+    Literal(Literal),
 }
 
 #[derive(Debug, Clone, PartialEq)]

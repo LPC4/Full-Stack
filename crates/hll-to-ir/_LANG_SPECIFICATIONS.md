@@ -478,6 +478,27 @@ binding) provided. A `match` may produce a value when every arm is a `-> expr` v
 types agree; it is usable as a binding initializer, assignment right-hand side, or return
 value.
 
+A `match` on an integer scrutinee instead dispatches on scalar value equality. Arms are
+integer or char literals (`'A'` reads as its ascii byte; a leading `-` forms a negative
+literal) or a bare name that resolves to an integer constant, plus a binding or `_` catch-all
+that sees the scrutinee value. Such a match cannot enumerate its domain, so a catch-all is
+required. A const pattern must be the constant's capitalized form (it parses as a bare unit
+name); a lowercase name is always read as a binding catch-all.
+
+```hll
+classify: (c: i32) -> i32 {
+    return match c {
+        '\n' -> 10
+        '\t' -> 9
+        _    -> c
+    }
+}
+```
+
+A leading `-N` literal pattern is only unambiguous in block-body arms or as the first arm,
+since bare `-> expr` value arms parse newline-insensitively (a value arm followed by `-N`
+reads as subtraction).
+
 The prelude provides `Option<T>` (`Some(T)` / `None`) and `Result<T, E>` (`Ok(T)` /
 `Err(E)`) unless a user declaration shadows the name. Postfix `?` propagates failure with a
 visible early return:
@@ -605,7 +626,8 @@ asm_block      = "asm" "{" { asm_line } "}";
 expression     = match_expr | binary_expr | cast_expr | unary_expr | postfix_expr;
 match_expr     = "match" expression "{" arm { arm } "}";
 arm            = pattern "->" ( block | expression );
-pattern        = "_" | identifier | identifier "(" pattern { "," pattern } ")";
+pattern        = "_" | identifier | identifier "(" pattern { "," pattern } ")"
+               | [ "-" ] ( integer | char );
 cast_expr      = expression "as" type;
 unary_expr     = ( "@" | "&" | "-" | "!" ) expression;
 postfix_expr   = primary_expr { "." identifier | "[" index_or_range "]"

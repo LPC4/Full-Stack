@@ -2,7 +2,7 @@ use super::{
     ENUM_PAYLOAD_BASE, EnumLayout, EvalMode, HighLevelCompiler, IntWidth, IrInstruction, IrProgram,
     IrRegister, IrTerminator, IrType, IrTypeAlias, IrValue, LoweredValue, VariantInfo,
 };
-use crate::ast::{Expression, MatchArm, Pattern, Type, Variant};
+use crate::ast::{Expression, Literal, MatchArm, Pattern, Type, Variant};
 use crate::conv::usize_to_i64;
 use crate::ir::IrCmpOp;
 
@@ -416,6 +416,11 @@ impl HighLevelCompiler {
         arms: &[MatchArm],
         result_slot: Option<IrRegister>,
     ) -> Option<IrType> {
+        // Literal or integer-const arms drive a scalar value match; otherwise the
+        // scrutinee is an enum matched on its tag.
+        if arms.iter().any(|a| self.is_scalar_pattern(&a.pattern)) {
+            return self.lower_match_scalar(ir_program, scrutinee, arms, result_slot);
+        }
         let Some(enum_ptr) = self.enum_scrutinee_ptr(scrutinee) else {
             self.context
                 .error("`match` scrutinee must be an enum value".to_owned());
@@ -502,6 +507,13 @@ impl HighLevelCompiler {
 
                     self.start_new_block(else_label.0.clone());
                 }
+                Pattern::Literal(_) => {
+                    // A literal arm on an enum scrutinee; scalar dispatch handles
+                    // pure-literal matches, so this is a type error.
+                    self.context
+                        .error("literal pattern in a `match` on an enum value".to_owned());
+                    return None;
+                }
             }
         }
 
@@ -516,6 +528,168 @@ impl HighLevelCompiler {
         self.start_new_block(merge_label.0.clone());
         self.context.restore_env(pre_env);
         store_ty
+    }
+
+    // Lower a `match` whose arms are integer/char literals. The scrutinee is
+    // evaluated once to a value and each literal arm compares against it.
+    fn lower_match_scalar(
+        &mut self,
+        ir_program: &mut IrProgram,
+        scrutinee: &Expression,
+        arms: &[MatchArm],
+        result_slot: Option<IrRegister>,
+    ) -> Option<IrType> {
+        let value = self.lower_expr(scrutinee, EvalMode::Value)?;
+        let cmp_ty = match self.resolve_named_type(&value.ty) {
+            IrType::Integer(w) => IrType::Integer(w),
+            other => {
+                self.context.error(format!(
+                    "literal `match` patterns require an integer scrutinee, found {other:?}"
+                ));
+                return None;
+            }
+        };
+        let mut store_ty: Option<IrType> = None;
+        let merge_label = self.new_label();
+        let pre_env = self.context.snapshot_env();
+
+        let mut saw_catch_all = false;
+        for arm in arms {
+            match &arm.pattern {
+                Pattern::Wildcard | Pattern::Binding(_) => {
+                    self.context.restore_env(pre_env.clone());
+                    self.context.symbols.enter_scope();
+                    if let Pattern::Binding(name) = &arm.pattern {
+                        self.bind_scalar_value(name, &value.value, &cmp_ty);
+                    }
+                    self.lower_block(ir_program, &arm.body);
+                    self.store_arm_value(&arm.value, &result_slot, &mut store_ty);
+                    self.set_terminator(IrTerminator::Jump(merge_label.clone()));
+                    self.context.symbols.exit_scope();
+                    saw_catch_all = true;
+                    break;
+                }
+                Pattern::Literal(_) | Pattern::Variant { .. } => {
+                    let rhs = self.scalar_pattern_value(&arm.pattern)?;
+                    let cond = self.new_temp();
+                    self.push_instruction(IrInstruction::Cmp {
+                        dest: cond.clone(),
+                        op: IrCmpOp::Eq,
+                        ty: cmp_ty.clone(),
+                        lhs: value.value.clone(),
+                        rhs,
+                    });
+                    let then_label = self.new_label();
+                    let else_label = self.new_label();
+                    self.set_terminator(IrTerminator::Branch {
+                        cond: IrValue::Register(cond),
+                        then_label: then_label.clone(),
+                        else_label: else_label.clone(),
+                    });
+
+                    self.start_new_block(then_label.0.clone());
+                    self.context.restore_env(pre_env.clone());
+                    self.context.symbols.enter_scope();
+                    self.lower_block(ir_program, &arm.body);
+                    self.store_arm_value(&arm.value, &result_slot, &mut store_ty);
+                    self.set_terminator(IrTerminator::Jump(merge_label.clone()));
+                    self.context.symbols.exit_scope();
+
+                    self.start_new_block(else_label.0.clone());
+                }
+            }
+        }
+
+        if !saw_catch_all {
+            // A scalar match cannot be exhaustive; semantic analysis requires a
+            // catch-all, so this fall-through only guards a residual path.
+            self.set_terminator(IrTerminator::Trap {
+                code: MATCH_TRAP_CODE,
+            });
+        }
+
+        self.start_new_block(merge_label.0.clone());
+        self.context.restore_env(pre_env);
+        store_ty
+    }
+
+    // Bind a scalar catch-all name to a fresh slot holding the scrutinee value,
+    // following the normal pointer-to-slot local convention.
+    fn bind_scalar_value(&mut self, name: &str, value: &IrValue, ty: &IrType) {
+        let slot = self.new_temp();
+        self.push_instruction(IrInstruction::Alloc {
+            dest: slot.clone(),
+            ty: ty.clone(),
+            count: None,
+        });
+        self.push_instruction(IrInstruction::Store {
+            ty: ty.clone(),
+            value: value.clone(),
+            ptr: slot.clone(),
+            offset: None,
+        });
+        self.context.symbols.insert(
+            name.to_owned(),
+            IrType::Pointer(Box::new(ty.clone())),
+            IrValue::Register(slot),
+        );
+    }
+
+    // True for arm patterns that match a scalar by value: a literal, or a bare
+    // name that is an integer const rather than an enum variant.
+    fn is_scalar_pattern(&self, pattern: &Pattern) -> bool {
+        match pattern {
+            Pattern::Literal(_) => true,
+            Pattern::Variant {
+                variant, bindings, ..
+            } => {
+                bindings.is_empty()
+                    && !self.enum_variants.contains_key(variant)
+                    && self.compile_time_consts.contains_key(variant)
+            }
+            _ => false,
+        }
+    }
+
+    // Resolve a non-catch-all scalar arm pattern to its compared integer value,
+    // folding a named integer const when the pattern is a bare name.
+    fn scalar_pattern_value(&mut self, pattern: &Pattern) -> Option<IrValue> {
+        match pattern {
+            Pattern::Literal(lit) => Self::literal_match_value(lit).or_else(|| {
+                self.context
+                    .error("`match` literal pattern must be an integer or char".to_owned());
+                None
+            }),
+            Pattern::Variant {
+                variant, bindings, ..
+            } if bindings.is_empty() => {
+                let Some(lit) = self.compile_time_consts.get(variant).cloned() else {
+                    self.context
+                        .error(format!("`{variant}` is not an integer constant"));
+                    return None;
+                };
+                Self::literal_match_value(&lit).or_else(|| {
+                    self.context.error(format!(
+                        "const `{variant}` is not an integer literal pattern"
+                    ));
+                    None
+                })
+            }
+            _ => {
+                self.context
+                    .error("enum variant pattern in a literal `match`".to_owned());
+                None
+            }
+        }
+    }
+
+    // Fold an integer/char/bool literal pattern to its compared integer value.
+    fn literal_match_value(lit: &Literal) -> Option<IrValue> {
+        match lit {
+            Literal::Integer(v) | Literal::HexInteger(v) => Some(IrValue::Integer(*v)),
+            Literal::Boolean(b) => Some(IrValue::Integer(i64::from(*b))),
+            _ => None,
+        }
     }
 
     // Lower an arm's `-> expr` value (if any) and store it into the result slot,

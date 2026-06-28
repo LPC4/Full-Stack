@@ -435,57 +435,44 @@ find_local: (name: u8*) -> i64 {
 
 ; --- Expression parsing (precedence climbing over the HLL-0 operator set) ---
 is_mulop: (k: i64) -> i64 {
-    if k == TK_STAR {
-        return 1
+    return match k {
+        TK_STAR  -> 1
+        TK_SLASH -> 1
+        TK_PCT   -> 1
+        _        -> 0
     }
-    if k == TK_SLASH {
-        return 1
-    }
-    if k == TK_PCT {
-        return 1
-    }
-    return 0
 }
 
 is_addop: (k: i64) -> i64 {
-    if k == TK_PLUS {
-        return 1
+    return match k {
+        TK_PLUS  -> 1
+        TK_MINUS -> 1
+        _        -> 0
     }
-    if k == TK_MINUS {
-        return 1
-    }
-    return 0
 }
 
 is_relop: (k: i64) -> i64 {
-    if k == TK_LT {
-        return 1
+    return match k {
+        TK_LT -> 1
+        TK_LE -> 1
+        TK_GT -> 1
+        TK_GE -> 1
+        _     -> 0
     }
-    if k == TK_LE {
-        return 1
-    }
-    if k == TK_GT {
-        return 1
-    }
-    if k == TK_GE {
-        return 1
-    }
-    return 0
 }
 
 is_eqop: (k: i64) -> i64 {
-    if k == TK_EQ {
-        return 1
+    return match k {
+        TK_EQ -> 1
+        TK_NE -> 1
+        _     -> 0
     }
-    if k == TK_NE {
-        return 1
-    }
-    return 0
 }
 
 parse_primary: () -> i64 {
     k: i64 = cur_kind()
-    if k == TK_INT {
+    match k {
+    TK_INT -> {
         v: i64 = cur_val()
         adv()
         n: i64 = mk(ND_INT)
@@ -493,13 +480,13 @@ parse_primary: () -> i64 {
         nd.a = v
         return n
     }
-    if k == TK_LPAREN {
+    TK_LPAREN -> {
         adv()
         e: i64 = parse_expr()
         expect(TK_RPAREN, "expected )".ptr)
         return e
     }
-    if k == TK_IDENT {
+    TK_IDENT -> {
         nm: u8[24] = []
         text.copy_name16(&nm[0], cur_txt())
         adv()
@@ -537,6 +524,8 @@ parse_primary: () -> i64 {
         nd: Node* = &nodes[n]
         nd.a = slot
         return n
+    }
+    _ -> {}
     }
     perr("expected expression".ptr)
     return mk(ND_INT)

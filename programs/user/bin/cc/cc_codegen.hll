@@ -45,49 +45,19 @@ external nodes: Node*
 external fns: Fn*
 
 gen_binop: (op: i64) {
-    if op == TK_PLUS {
-        emit_str("  add a0, t0, a0\n  addiw a0, a0, 0\n".ptr)
-        return
-    }
-    if op == TK_MINUS {
-        emit_str("  sub a0, t0, a0\n  addiw a0, a0, 0\n".ptr)
-        return
-    }
-    if op == TK_STAR {
-        emit_str("  mul a0, t0, a0\n  addiw a0, a0, 0\n".ptr)
-        return
-    }
-    if op == TK_SLASH {
-        emit_str("  div a0, t0, a0\n  addiw a0, a0, 0\n".ptr)
-        return
-    }
-    if op == TK_PCT {
-        emit_str("  rem a0, t0, a0\n  addiw a0, a0, 0\n".ptr)
-        return
-    }
-    if op == TK_LT {
-        emit_str("  slt a0, t0, a0\n".ptr)
-        return
-    }
-    if op == TK_LE {
-        emit_str("  slt a0, a0, t0\n  xori a0, a0, 1\n".ptr)
-        return
-    }
-    if op == TK_GT {
-        emit_str("  slt a0, a0, t0\n".ptr)
-        return
-    }
-    if op == TK_GE {
-        emit_str("  slt a0, t0, a0\n  xori a0, a0, 1\n".ptr)
-        return
-    }
-    if op == TK_EQ {
-        emit_str("  sub a0, t0, a0\n  sltiu a0, a0, 1\n".ptr)
-        return
-    }
-    if op == TK_NE {
-        emit_str("  sub a0, t0, a0\n  sltu a0, zero, a0\n".ptr)
-        return
+    match op {
+        TK_PLUS  -> { emit_str("  add a0, t0, a0\n  addiw a0, a0, 0\n".ptr) }
+        TK_MINUS -> { emit_str("  sub a0, t0, a0\n  addiw a0, a0, 0\n".ptr) }
+        TK_STAR  -> { emit_str("  mul a0, t0, a0\n  addiw a0, a0, 0\n".ptr) }
+        TK_SLASH -> { emit_str("  div a0, t0, a0\n  addiw a0, a0, 0\n".ptr) }
+        TK_PCT   -> { emit_str("  rem a0, t0, a0\n  addiw a0, a0, 0\n".ptr) }
+        TK_LT    -> { emit_str("  slt a0, t0, a0\n".ptr) }
+        TK_LE    -> { emit_str("  slt a0, a0, t0\n  xori a0, a0, 1\n".ptr) }
+        TK_GT    -> { emit_str("  slt a0, a0, t0\n".ptr) }
+        TK_GE    -> { emit_str("  slt a0, t0, a0\n  xori a0, a0, 1\n".ptr) }
+        TK_EQ    -> { emit_str("  sub a0, t0, a0\n  sltiu a0, a0, 1\n".ptr) }
+        TK_NE    -> { emit_str("  sub a0, t0, a0\n  sltu a0, zero, a0\n".ptr) }
+        _        -> {}
     }
 }
 
@@ -116,29 +86,28 @@ gen_call: (n: i64) {
 gen_expr: (n: i64) {
     nd: Node* = &nodes[n]
     k: i64 = nd.kind
-    if k == ND_INT {
-        emit_str("  li a0, ".ptr)
-        emit_int(nd.a)
-        emit_str("\n".ptr)
-        return
-    }
-    if k == ND_VAR {
-        emit_str("  ld a0, ".ptr)
-        emit_int(nd.a * 8)
-        emit_str("(fp)\n".ptr)
-        return
-    }
-    if k == ND_BINOP {
-        gen_expr(nd.b)
-        emit_str("  addi sp, sp, -16\n  sd a0, 0(sp)\n".ptr)
-        gen_expr(nd.c)
-        emit_str("  ld t0, 0(sp)\n  addi sp, sp, 16\n".ptr)
-        gen_binop(nd.a)
-        return
-    }
-    if k == ND_CALL {
-        gen_call(n)
-        return
+    match k {
+        ND_INT -> {
+            emit_str("  li a0, ".ptr)
+            emit_int(nd.a)
+            emit_str("\n".ptr)
+        }
+        ND_VAR -> {
+            emit_str("  ld a0, ".ptr)
+            emit_int(nd.a * 8)
+            emit_str("(fp)\n".ptr)
+        }
+        ND_BINOP -> {
+            gen_expr(nd.b)
+            emit_str("  addi sp, sp, -16\n  sd a0, 0(sp)\n".ptr)
+            gen_expr(nd.c)
+            emit_str("  ld t0, 0(sp)\n  addi sp, sp, 16\n".ptr)
+            gen_binop(nd.a)
+        }
+        ND_CALL -> {
+            gen_call(n)
+        }
+        _ -> {}
     }
 }
 
@@ -154,63 +123,60 @@ gen_block: (head: i64) {
 gen_stmt: (n: i64) {
     nd: Node* = &nodes[n]
     k: i64 = nd.kind
-    if k == ND_DECL {
-        gen_expr(nd.b)
-        emit_str("  sd a0, ".ptr)
-        emit_int(nd.a * 8)
-        emit_str("(fp)\n".ptr)
-        return
-    }
-    if k == ND_ASSIGN {
-        gen_expr(nd.b)
-        emit_str("  sd a0, ".ptr)
-        emit_int(nd.a * 8)
-        emit_str("(fp)\n".ptr)
-        return
-    }
-    if k == ND_RETURN {
-        gen_expr(nd.a)
-        emit_str("  j Lret_".ptr)
-        emit_int(cur_fn)
-        emit_str("\n".ptr)
-        return
-    }
-    if k == ND_EXPR {
-        gen_expr(nd.a)
-        return
-    }
-    if k == ND_IF {
-        gen_expr(nd.a)
-        lend: i64 = nlabel
-        nlabel = nlabel + 1
-        emit_str("  beq a0, zero, L".ptr)
-        emit_int(lend)
-        emit_str("\n".ptr)
-        gen_block(nd.b)
-        emit_str("L".ptr)
-        emit_int(lend)
-        emit_str(":\n".ptr)
-        return
-    }
-    if k == ND_WHILE {
-        ltop: i64 = nlabel
-        nlabel = nlabel + 1
-        lend: i64 = nlabel
-        nlabel = nlabel + 1
-        emit_str("L".ptr)
-        emit_int(ltop)
-        emit_str(":\n".ptr)
-        gen_expr(nd.a)
-        emit_str("  beq a0, zero, L".ptr)
-        emit_int(lend)
-        emit_str("\n".ptr)
-        gen_block(nd.b)
-        emit_str("  j L".ptr)
-        emit_int(ltop)
-        emit_str("\nL".ptr)
-        emit_int(lend)
-        emit_str(":\n".ptr)
-        return
+    match k {
+        ND_DECL -> {
+            gen_expr(nd.b)
+            emit_str("  sd a0, ".ptr)
+            emit_int(nd.a * 8)
+            emit_str("(fp)\n".ptr)
+        }
+        ND_ASSIGN -> {
+            gen_expr(nd.b)
+            emit_str("  sd a0, ".ptr)
+            emit_int(nd.a * 8)
+            emit_str("(fp)\n".ptr)
+        }
+        ND_RETURN -> {
+            gen_expr(nd.a)
+            emit_str("  j Lret_".ptr)
+            emit_int(cur_fn)
+            emit_str("\n".ptr)
+        }
+        ND_EXPR -> {
+            gen_expr(nd.a)
+        }
+        ND_IF -> {
+            gen_expr(nd.a)
+            lend: i64 = nlabel
+            nlabel = nlabel + 1
+            emit_str("  beq a0, zero, L".ptr)
+            emit_int(lend)
+            emit_str("\n".ptr)
+            gen_block(nd.b)
+            emit_str("L".ptr)
+            emit_int(lend)
+            emit_str(":\n".ptr)
+        }
+        ND_WHILE -> {
+            ltop: i64 = nlabel
+            nlabel = nlabel + 1
+            lend: i64 = nlabel
+            nlabel = nlabel + 1
+            emit_str("L".ptr)
+            emit_int(ltop)
+            emit_str(":\n".ptr)
+            gen_expr(nd.a)
+            emit_str("  beq a0, zero, L".ptr)
+            emit_int(lend)
+            emit_str("\n".ptr)
+            gen_block(nd.b)
+            emit_str("  j L".ptr)
+            emit_int(ltop)
+            emit_str("\nL".ptr)
+            emit_int(lend)
+            emit_str(":\n".ptr)
+        }
+        _ -> {}
     }
 }
 

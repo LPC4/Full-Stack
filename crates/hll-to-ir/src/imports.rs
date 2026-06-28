@@ -982,7 +982,7 @@ fn pattern_bindings(pattern: &crate::ast::Pattern) -> HashSet<String> {
         Pattern::Variant { bindings, .. } => {
             bindings.iter().filter(|b| *b != "_").cloned().collect()
         }
-        Pattern::Wildcard => HashSet::new(),
+        Pattern::Wildcard | Pattern::Literal(_) => HashSet::new(),
     }
 }
 

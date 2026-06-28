@@ -48,28 +48,29 @@ ed_read_line: (buf: u8*) {
         if c < 0 {
             sc_yield()
         } else {
-            if c == '\n' {
-                console_putchar('\n')
-                done = 1
-            } else {
-                if c == '\r' {
+            match c {
+                '\n' -> {
                     console_putchar('\n')
                     done = 1
-                } else {
-                    if c == '\b' {
-                        if n > 0 {
-                            n = n - 1
-                            console_putchar('\b')
-                            console_putchar(' ')
-                            console_putchar('\b')
-                        }
-                    } else {
-                        if n < 255 {
-                            d: u8* = buf + n
-                            @d = c as u8
-                            n = n + 1
-                            console_putchar(c as i32)
-                        }
+                }
+                '\r' -> {
+                    console_putchar('\n')
+                    done = 1
+                }
+                '\b' -> {
+                    if n > 0 {
+                        n = n - 1
+                        console_putchar('\b')
+                        console_putchar(' ')
+                        console_putchar('\b')
+                    }
+                }
+                _ -> {
+                    if n < 255 {
+                        d: u8* = buf + n
+                        @d = c as u8
+                        n = n + 1
+                        console_putchar(c as i32)
                     }
                 }
             }
@@ -491,52 +492,23 @@ main: () -> i32 {
                 ed_goto(line_p)
                 continue
             }
-            if c == 'g' {
-                ed_goto(line_p + 1)
-            } else {
-            if c == 'p' {
-                ed_print()
-            } else {
-                if c == 'a' {
-                    ed_append()
-                } else {
-                    if c == 'i' {
-                        ed_insert()
-                    } else {
-                        if c == 'd' {
-                            ed_delete(line_p + 1)
-                        } else {
-                            if c == 'c' {
-                                nlines = 0
-                                cur = 0
-                                console_writeln("edit: cleared".ptr)
-                            } else {
-                                if c == 'r' {
-                                    ed_replace(line_p + 1)
-                                } else {
-                                    if c == 's' {
-                                        ed_subst(line_p + 1)
-                                    } else {
-                                        if c == 'w' {
-                                            ed_write(path)
-                                        } else {
-                                            if c == 'q' {
-                                                sc_exit(0)
-                                            } else {
-                                                if c == 'h' {
-                                                    ed_help()
-                                                } else {
-                                                    console_writeln("edit: unknown command (h for help)".ptr)
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+            match c {
+                'g' -> { ed_goto(line_p + 1) }
+                'p' -> { ed_print() }
+                'a' -> { ed_append() }
+                'i' -> { ed_insert() }
+                'd' -> { ed_delete(line_p + 1) }
+                'c' -> {
+                    nlines = 0
+                    cur = 0
+                    console_writeln("edit: cleared".ptr)
                 }
-            }
+                'r' -> { ed_replace(line_p + 1) }
+                's' -> { ed_subst(line_p + 1) }
+                'w' -> { ed_write(path) }
+                'q' -> { sc_exit(0) }
+                'h' -> { ed_help() }
+                _   -> { console_writeln("edit: unknown command (h for help)".ptr) }
             }
         }
     }
