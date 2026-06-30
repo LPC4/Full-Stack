@@ -199,84 +199,37 @@ scan_punct: (i: u64) -> u64 {
             return i + 2
         }
     }
-    if c == '(' {
-        push_tok(TK_LPAREN, 0)
-        return i + 1
+    ; Single-character punctuation dispatches on the scalar byte value.
+    match c {
+        '(' -> { push_tok(TK_LPAREN, 0) }
+        ')' -> { push_tok(TK_RPAREN, 0) }
+        '{' -> { push_tok(TK_LBRACE, 0) }
+        '}' -> { push_tok(TK_RBRACE, 0) }
+        ',' -> { push_tok(TK_COMMA, 0) }
+        ':' -> { push_tok(TK_COLON, 0) }
+        '=' -> { push_tok(TK_ASSIGN, 0) }
+        '+' -> { push_tok(TK_PLUS, 0) }
+        '-' -> { push_tok(TK_MINUS, 0) }
+        '*' -> { push_tok(TK_STAR, 0) }
+        '/' -> { push_tok(TK_SLASH, 0) }
+        '%' -> { push_tok(TK_PCT, 0) }
+        '<' -> { push_tok(TK_LT, 0) }
+        '>' -> { push_tok(TK_GT, 0) }
+        _   -> { perr("bad character".ptr) }
     }
-    if c == ')' {
-        push_tok(TK_RPAREN, 0)
-        return i + 1
-    }
-    if c == '{' {
-        push_tok(TK_LBRACE, 0)
-        return i + 1
-    }
-    if c == '}' {
-        push_tok(TK_RBRACE, 0)
-        return i + 1
-    }
-    if c == ',' {
-        push_tok(TK_COMMA, 0)
-        return i + 1
-    }
-    if c == ':' {
-        push_tok(TK_COLON, 0)
-        return i + 1
-    }
-    if c == '=' {
-        push_tok(TK_ASSIGN, 0)
-        return i + 1
-    }
-    if c == '+' {
-        push_tok(TK_PLUS, 0)
-        return i + 1
-    }
-    if c == '-' {
-        push_tok(TK_MINUS, 0)
-        return i + 1
-    }
-    if c == '*' {
-        push_tok(TK_STAR, 0)
-        return i + 1
-    }
-    if c == '/' {
-        push_tok(TK_SLASH, 0)
-        return i + 1
-    }
-    if c == '%' {
-        push_tok(TK_PCT, 0)
-        return i + 1
-    }
-    if c == '<' {
-        push_tok(TK_LT, 0)
-        return i + 1
-    }
-    if c == '>' {
-        push_tok(TK_GT, 0)
-        return i + 1
-    }
-    perr("bad character".ptr)
     return i + 1
 }
 
 ; Map a backslash escape character to its byte value (e.g. 'n' -> newline).
 char_escape: (e: u8) -> i64 {
-    if e == 'n' {
-        return 10
+    return match e {
+        'n' -> 10
+        't' -> 9
+        'r' -> 13
+        'b' -> 8
+        '0' -> 0
+        _   -> e as i64
     }
-    if e == 't' {
-        return 9
-    }
-    if e == 'r' {
-        return 13
-    }
-    if e == 'b' {
-        return 8
-    }
-    if e == '0' {
-        return 0
-    }
-    return e as i64
 }
 
 ; Split the source into the global token table. Comments run from ';' to EOL.

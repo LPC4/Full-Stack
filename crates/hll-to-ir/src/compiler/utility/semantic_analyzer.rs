@@ -1522,10 +1522,13 @@ impl SemanticAnalyzer {
         let mut parts = Vec::new();
         let mut depth = 0i32;
         let mut start = 0usize;
+        let mut prev = ' ';
 
         for (idx, ch) in inner.char_indices() {
             match ch {
                 '{' | '(' | '[' | '<' => depth += 1,
+                // A `>` in a `->` return arrow is not a closing bracket.
+                '>' if prev == '-' => {}
                 '}' | ')' | ']' | '>' => depth = depth.saturating_sub(1),
                 ',' if depth == 0 => {
                     parts.push(inner[start..idx].trim().to_owned());
@@ -1533,6 +1536,7 @@ impl SemanticAnalyzer {
                 }
                 _ => {}
             }
+            prev = ch;
         }
         parts.push(inner[start..].trim().to_owned());
 
@@ -1782,9 +1786,13 @@ impl SemanticAnalyzer {
         let rest = ty_str.strip_prefix("fn(")?;
         let mut depth = 0i32;
         let mut close = None;
+        let mut prev = ' ';
         for (idx, ch) in rest.char_indices() {
             match ch {
                 '(' | '{' | '[' | '<' => depth += 1,
+                // A `>` in a `->` return arrow (e.g. a nested fn-pointer param) is
+                // not a closing bracket.
+                '>' if prev == '-' => {}
                 ')' if depth == 0 => {
                     close = Some(idx);
                     break;
@@ -1792,6 +1800,7 @@ impl SemanticAnalyzer {
                 ')' | '}' | ']' | '>' => depth = depth.saturating_sub(1),
                 _ => {}
             }
+            prev = ch;
         }
         let close = close?;
         let params_src = &rest[..close];
@@ -1808,9 +1817,12 @@ impl SemanticAnalyzer {
         if !params_src.trim().is_empty() {
             let mut depth = 0i32;
             let mut start = 0usize;
+            let mut prev = ' ';
             for (idx, ch) in params_src.char_indices() {
                 match ch {
                     '{' | '(' | '[' | '<' => depth += 1,
+                    // A `>` in a `->` arrow is not a closing bracket.
+                    '>' if prev == '-' => {}
                     '}' | ')' | ']' | '>' => depth = depth.saturating_sub(1),
                     ',' if depth == 0 => {
                         params.push(Self::parse_type_string(params_src[start..idx].trim()));
@@ -1818,6 +1830,7 @@ impl SemanticAnalyzer {
                     }
                     _ => {}
                 }
+                prev = ch;
             }
             params.push(Self::parse_type_string(params_src[start..].trim()));
         }

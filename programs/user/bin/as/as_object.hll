@@ -201,12 +201,11 @@ export write_object: () -> u64 {
         r: Reloc* = &as_state.relocs[ri]
         rn: u8* = r as u8*
         eoff: u64 = rela_off + (ri as u64) * 24
-        rtype: u64 = 19
-        if r.kind == 1 {
-            rtype = 17
-        }
-        if r.kind == 2 {
-            rtype = 23
+        ; Map the local reloc kind to its ELF R_RISCV type (0 CALL_PLT, 1 JAL, 2 La).
+        rtype: u64 = match r.kind {
+            1 -> 17
+            2 -> 23
+            _ -> 19
         }
         sidx: i64 = sym_index(rn)
         if sidx < 0 {

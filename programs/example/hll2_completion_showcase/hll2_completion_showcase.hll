@@ -32,6 +32,44 @@ struct Calculator {
     transform: UnaryOp,
 }
 
+; --- Manual vtable idiom ---
+; Dynamic dispatch without interfaces: a vtable of function pointers plus an
+; object pairing a data pointer with its vtable pointer. No hidden `self`.
+struct Shape {
+    width: i32,
+    height: i32,
+}
+
+type ShapeMethod = fn(Shape*) -> i32
+
+struct ShapeVTable {
+    area: ShapeMethod,
+    perimeter: ShapeMethod,
+}
+
+struct ShapeObj {
+    data: Shape*,
+    vtable: ShapeVTable*,
+}
+
+rect_area: (s: Shape*) -> i32 {
+    return s.width * s.height
+}
+
+rect_perimeter: (s: Shape*) -> i32 {
+    return 2 * (s.width + s.height)
+}
+
+; Dynamic dispatch: load the vtable through the object pointer, then call the
+; selected method with the object's own data. This is `o.vtable.area(o.data)`.
+shape_area: (o: ShapeObj*) -> i32 {
+    return o.vtable.area(o.data)
+}
+
+shape_perimeter: (o: ShapeObj*) -> i32 {
+    return o.vtable.perimeter(o.data)
+}
+
 apply_binary: (op: BinaryOp, a: i32, b: i32) -> i32 {
     return op(a, b)
 }
@@ -96,9 +134,14 @@ main: () -> i32 {
     if mathlib.triple(14) != 42 { return 12 }
     if mathlib.inc(mathlib.BIAS) != 41 { return 13 }
 
-    ; Next HLL2 sections will become real code as they are implemented:
-    ; - explicit vtable structs
-    ; - static method sugar
+    ; Manual vtable: dispatch through an object's data + vtable pointers.
+    box: Shape = Shape { .width = 6, .height = 7 }
+    rect_vt: ShapeVTable = ShapeVTable { .area = rect_area, .perimeter = rect_perimeter }
+    obj: ShapeObj = ShapeObj { .data = &box, .vtable = &rect_vt }
+    if shape_area(&obj) != 42 { return 14 }
+    if shape_perimeter(&obj) != 26 { return 15 }
+
+    ; Next HLL2 section will become real code when it lands: static method sugar.
 
     console.println("ok")
     return 0

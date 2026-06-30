@@ -1207,4 +1207,27 @@ main: () -> i32 {
                 .any(|error| { error.message.contains("expects 1 type arguments, got 2") })
         );
     }
+
+    // Regression: a vtable method taking a pointer to a multi-field struct must
+    // round-trip through the structural type string despite the `->` arrow.
+    #[test]
+    fn manual_vtable_dispatches_through_second_method_field() {
+        compile_hll(
+            r#"
+struct Shape { width: i32, height: i32 }
+type ShapeMethod = fn(Shape*) -> i32
+struct ShapeVTable { area: ShapeMethod, perimeter: ShapeMethod }
+struct ShapeObj { data: Shape*, vtable: ShapeVTable* }
+
+rect_area: (s: Shape*) -> i32 { return s.width * s.height }
+rect_perimeter: (s: Shape*) -> i32 { return 2 * (s.width + s.height) }
+
+shape_area: (o: ShapeObj*) -> i32 { return o.vtable.area(o.data) }
+shape_perimeter: (o: ShapeObj*) -> i32 { return o.vtable.perimeter(o.data) }
+
+main: () -> i32 { return 0 }
+"#,
+        )
+        .expect("vtable with a second method field should compile");
+    }
 }

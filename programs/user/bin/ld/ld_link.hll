@@ -41,24 +41,27 @@ patch: (site: i64, delta: i64, rtype: u64) {
     pcrel_split(delta)
     hi_field: u32 = ((psplit_hi as u32) & 0xFFFFF) << 12
     lo_field: u32 = ((psplit_lo as u32) & 0xFFF) << 20
-    if rtype == 17 {
-        ; JAL: rebuild the 20-bit immediate, keep rd/opcode (low 12 bits).
-        u: u32 = delta as u32
-        i20: u32 = (u >> 20) & 1
-        i10_1: u32 = (u >> 1) & 0x3FF
-        i11: u32 = (u >> 11) & 1
-        i19_12: u32 = (u >> 12) & 0xFF
-        imm_bits: u32 = (i20 << 31) | (i10_1 << 21) | (i11 << 20) | (i19_12 << 12)
-        w: u32 = rdw_text(site)
-        wrw_text(site, (w & 0xFFF) | imm_bits)
-        return
+    match rtype {
+        17 -> {
+            ; JAL: rebuild the 20-bit immediate, keep rd/opcode (low 12 bits).
+            u: u32 = delta as u32
+            i20: u32 = (u >> 20) & 1
+            i10_1: u32 = (u >> 1) & 0x3FF
+            i11: u32 = (u >> 11) & 1
+            i19_12: u32 = (u >> 12) & 0xFF
+            imm_bits: u32 = (i20 << 31) | (i10_1 << 21) | (i11 << 20) | (i19_12 << 12)
+            w: u32 = rdw_text(site)
+            wrw_text(site, (w & 0xFFF) | imm_bits)
+        }
+        _ -> {
+            ; CALL_PLT (auipc+jalr) and La/PCREL_HI20 (auipc+addi): patch the auipc
+            ; hi20 and the second instruction's imm[11:0] in bits 31:20.
+            au: u32 = rdw_text(site)
+            wrw_text(site, (au & 0xFFF) | hi_field)
+            lo: u32 = rdw_text(site + 4)
+            wrw_text(site + 4, (lo & 0xFFFFF) | lo_field)
+        }
     }
-    ; CALL_PLT (auipc+jalr) and La/PCREL_HI20 (auipc+addi): patch the auipc hi20
-    ; and the second instruction's imm[11:0] in bits 31:20.
-    au: u32 = rdw_text(site)
-    wrw_text(site, (au & 0xFFF) | hi_field)
-    lo: u32 = rdw_text(site + 4)
-    wrw_text(site + 4, (lo & 0xFFFFF) | lo_field)
 }
 
 ; Apply every relocation in every module's .rela.text.
