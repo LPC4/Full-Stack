@@ -1,30 +1,21 @@
-; ed-style line editor, launched by the shell's `edit <file>`.
-; Commands and rationale: OS spec ch.10.2 (type `h` for the in-editor help).
+; ed-style line editor, launched by `edit <file>`.
 console := import("console")
 sys := import("sys")
 cstr := import("cstr")
-
-; Shared byte/text helpers (substring search, char classes).
 text := import("text")
 
-; Page the kernel maps with this program's argument string (the file path).
 const ARG_BASE = 0x7FF00000
-; Line buffer geometry: up to MAXLINES lines of up to LINEW-1 chars each.
 const MAXLINES = 200
 const LINEW = 128
 
-; Line storage (MAXLINES * LINEW, null-terminated lines) and a scratch buffer
-; used for loading and saving the file. Heap-allocated once at startup (see main).
+; --- Buffer state ---
 lines: u8* = null
 scratch: u8* = null
 nlines: i64 = 0
-; Current line, 1-based; 0 when the buffer is empty.
 cur: i64 = 0
 
 ; --- Line input ---
 
-; Read a line from the UART into buf (max 255 chars), echoing as it is typed.
-; Yields while idle. Strips the terminating newline.
 ed_read_line: (buf: u8*) {
     n: u64 = 0
     done: i64 = 0
@@ -67,12 +58,10 @@ ed_read_line: (buf: u8*) {
 
 ; --- Line buffer model ---
 
-; Pointer to 0-based line index i.
 lptr: (i: i64) -> u8* {
     return lines + (i as u64) * 128
 }
 
-; Copy a null-terminated string into 0-based line i, truncating to LINEW-1.
 set_line: (i: i64, src: u8*) {
     dst: u8* = lptr(i)
     k: u64 = 0
@@ -88,7 +77,6 @@ set_line: (i: i64, src: u8*) {
     @t = 0 as u8
 }
 
-; Copy 0-based line src over 0-based line dst.
 copy_line: (dst: i64, src: i64) {
     dp: u8* = lptr(dst)
     sp: u8* = lptr(src)
@@ -98,7 +86,6 @@ copy_line: (dst: i64, src: i64) {
     }
 }
 
-; Insert `src` as a new line at 0-based position pos, shifting later lines down.
 insert_at: (pos: i64, src: u8*) {
     if nlines >= MAXLINES {
         console.writeln("edit: buffer full".ptr)
@@ -113,7 +100,6 @@ insert_at: (pos: i64, src: u8*) {
     nlines = nlines + 1
 }
 
-; Delete the line at 0-based position pos, shifting later lines up.
 delete_at: (pos: i64) {
     if pos < 0 {
         return
@@ -129,7 +115,6 @@ delete_at: (pos: i64) {
     nlines = nlines - 1
 }
 
-; Clamp the current line into range after an edit.
 fix_cur: () {
     if nlines == 0 {
         cur = 0
@@ -163,7 +148,6 @@ ed_load: (path: u8*) {
     }
     sys.close(fd)
 
-    ; Split the raw bytes into lines on '\n'.
     line: u8[256] = []
     lp: u8* = &line[0]
     j: u64 = 0
@@ -186,7 +170,6 @@ ed_load: (path: u8*) {
             }
         }
     }
-    ; A final unterminated line still counts.
     if j > 0 {
         t: u8* = lp + j
         @t = 0 as u8
@@ -198,7 +181,6 @@ ed_load: (path: u8*) {
 }
 
 ed_write: (path: u8*) {
-    ; Join the lines back into scratch with a '\n' after each.
     bp: u8* = scratch
     total: u64 = 0
     for i in 0..nlines {
@@ -256,8 +238,6 @@ ed_print: () {
     }
 }
 
-; Read lines until a lone "." and insert them starting at 0-based pos. Returns
-; the 0-based index just past the last inserted line.
 read_block_into: (pos: i64) -> i64 {
     console.writeln("(enter lines, end with '.')".ptr)
     line: u8[256] = []
@@ -293,7 +273,6 @@ ed_insert: () {
     fix_cur()
 }
 
-; Parse a non-negative decimal at p, skipping leading spaces. -1 if none.
 parse_num: (p: u8*) -> i64 {
     i: u64 = 0
     while @(p + i) == ' ' {
@@ -333,7 +312,6 @@ ed_delete: (arg: u8*) {
     fix_cur()
 }
 
-; Replace the current line with the text after the command character.
 ed_replace: (arg: u8*) {
     if cur < 1 {
         console.writeln("edit: no current line".ptr)
@@ -346,8 +324,6 @@ ed_replace: (arg: u8*) {
     set_line(cur - 1, arg + i)
 }
 
-; Substitute the first occurrence of old with new on the current line:
-;   s<delim>old<delim>new<delim>   e.g.  s/foo/bar/
 ed_subst: (arg: u8*) {
     if cur < 1 {
         console.writeln("edit: no current line".ptr)
@@ -405,7 +381,6 @@ ed_subst: (arg: u8*) {
         console.writeln("edit: not found".ptr)
         return
     }
-    ; Build prefix + replacement + suffix into a scratch line.
     tmp: u8[256] = []
     tp: u8* = &tmp[0]
     out: u64 = 0
@@ -435,7 +410,6 @@ ed_subst: (arg: u8*) {
     set_line(cur - 1, tp)
 }
 
-; Go to the line number parsed from `arg` (clamped), then print the buffer.
 ed_goto: (arg: u8*) {
     n: i64 = parse_num(arg)
     if n >= 1 {
@@ -470,9 +444,7 @@ main: () -> i32 {
         console.write("edit> ".ptr)
         ed_read_line(line_p)
         c: u8 = @line_p
-        if c == 0 {
-            ; blank line: do nothing
-        } else {
+        if c != 0 {
             if text.is_digit(c) {
                 ed_goto(line_p)
                 continue

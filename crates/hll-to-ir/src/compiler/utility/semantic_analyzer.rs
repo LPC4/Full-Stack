@@ -649,6 +649,47 @@ impl SemanticAnalyzer {
                     Ok(format!("{}[{}]", element_ty, elements.len()))
                 }
                 PrimaryExpr::CallExpr { callee, arguments } => {
+                    // Method-call sugar: `recv.method(args)` resolves to the free
+                    // function `Type_method`, unless `method` is a data field.
+                    if let Expression::Primary(PrimaryExpr::FieldAccess { expr, field }) =
+                        callee.as_ref()
+                    {
+                        let recv_ty = self.infer_expression_type(expr)?;
+                        let base = recv_ty.trim_start_matches('*').to_owned();
+                        let method = format!("{base}_{field}");
+                        if !self.type_has_field(&base, field)
+                            && let Some(return_ty) = self.function_signatures.get(&method).cloned()
+                        {
+                            let params = self
+                                .function_parameters
+                                .get(&method)
+                                .cloned()
+                                .unwrap_or_default();
+                            let expected = params.len().saturating_sub(1);
+                            if arguments.len() != expected {
+                                self.error(format!(
+                                    "method `{field}` on `{base}` expects {expected} argument(s), got {}",
+                                    arguments.len()
+                                ));
+                                return Err(());
+                            }
+                            for (index, arg) in arguments.iter().enumerate() {
+                                let expected_ty = &params[index + 1];
+                                let actual_name = self.infer_expression_type(arg)?;
+                                let actual = self.resolve_type_string(&actual_name);
+                                if actual != self.resolve_named_ir_type(expected_ty) {
+                                    self.error(format!(
+                                        "argument {} to method `{field}` expects `{}`, found `{}`",
+                                        index + 1,
+                                        self.context.get_type_name(expected_ty),
+                                        self.context.get_type_name(&actual)
+                                    ));
+                                    return Err(());
+                                }
+                            }
+                            return Ok(return_ty);
+                        }
+                    }
                     let callee_ty = self.infer_expression_type(callee)?;
                     let resolved = self.resolve_type_string(&callee_ty);
                     let IrType::FunctionPointer {
@@ -1554,6 +1595,16 @@ impl SemanticAnalyzer {
         }
 
         Ok(fields)
+    }
+
+    /// True when `base_type`, after peeling pointers, is a struct holding `field`.
+    /// Used to give data fields precedence over same-named methods.
+    fn type_has_field(&self, base_type: &str, field: &str) -> bool {
+        let mut resolved = self.resolve_type_string(base_type);
+        while let IrType::Pointer(inner) = resolved {
+            resolved = *inner;
+        }
+        matches!(resolved, IrType::Aggregate(fields) if fields.iter().any(|(n, _)| n == field))
     }
 
     fn infer_field_access_type(&mut self, base_type: &str, field: &str) -> Result<String, ()> {

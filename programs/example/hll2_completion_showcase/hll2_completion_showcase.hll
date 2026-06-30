@@ -70,6 +70,17 @@ shape_perimeter: (o: ShapeObj*) -> i32 {
     return o.vtable.perimeter(o.data)
 }
 
+; Static method sugar: `impl Type { ... }` declares pointer-receiver methods.
+; `r.area()` is sugar for the free function `Shape_area(&r)`, static dispatch.
+impl Shape {
+    area: (self: Shape*) -> i32 {
+        return self.width * self.height
+    }
+    scaled_area: (self: Shape*, k: i32) -> i32 {
+        return self.area() * k
+    }
+}
+
 apply_binary: (op: BinaryOp, a: i32, b: i32) -> i32 {
     return op(a, b)
 }
@@ -141,7 +152,9 @@ main: () -> i32 {
     if shape_area(&obj) != 42 { return 14 }
     if shape_perimeter(&obj) != 26 { return 15 }
 
-    ; Next HLL2 section will become real code when it lands: static method sugar.
+    ; Static method sugar: call methods on a value with `recv.method(args)`.
+    if box.area() != 42 { return 16 }
+    if box.scaled_area(3) != 126 { return 17 }
 
     console.println("ok")
     return 0

@@ -265,7 +265,39 @@ as a direct call (or enum constructor, cast, or generic instantiation); only a n
 becomes an indirect call. There is no implicit receiver: any state a function field needs is
 passed explicitly, usually as another field holding a pointer.
 
-### 6.2 Generics
+### 6.2 Methods (`impl` blocks)
+
+Methods are static sugar over ordinary functions; there is no dynamic dispatch, vtable, or
+hidden receiver. An `impl Type { ... }` block groups functions that take a pointer receiver
+named `self`:
+
+```hll
+struct Rect { width: i32, height: i32 }
+
+impl Rect {
+    area: (self: Rect*) -> i32 { return self.width * self.height }
+    scaled: (self: Rect*, k: i32) -> i32 { return self.area() * k }
+}
+
+main: () -> i32 {
+    r: Rect = Rect { .width = 6, .height = 7 }
+    return r.scaled(2) - r.area() - 42   ; 84 - 42 - 42 == 0
+}
+```
+
+- Each method desugars to a free function named `Type_method`. `impl Rect { area: ... }`
+  defines `Rect_area`, so methods share the function namespace and must not collide with an
+  existing free function of the same mangled name.
+- The receiver must be the first parameter, named `self`, of pointer type `Type*`.
+- A call `recv.method(args)` is sugar for `Type_method(self, args)`. The receiver supplies
+  `self`: a value receiver is addressed automatically (`r.area()` passes `&r`), and a pointer
+  receiver is passed through. A method may call another through `self` (`self.area()`).
+- A struct data field shadows a method of the same name: if `recv.name` names a function
+  pointer field, `recv.name(args)` is the indirect field call (6.1), not a method call.
+- Dispatch is fully static. For runtime polymorphism, build an explicit vtable struct of
+  function pointers (6.1).
+
+### 6.3 Generics
 
 Type parameters on functions and structs are monomorphized: the compiler emits one concrete
 copy per distinct type argument set, name-mangled deterministically, with no boxing and no
@@ -299,7 +331,7 @@ only as an `external` signature, not its body, so an importer cannot monomorphiz
 generic at the use site. Until interfaces carry generic bodies, a generic must live in the
 module that instantiates it.
 
-### 6.3 Modules, `import`, and `export`
+### 6.4 Modules, `import`, and `export`
 
 Each source file is one module. Modules compile separately to their own object and compose
 only by object linking; build paths never concatenate HLL source text to form a translation

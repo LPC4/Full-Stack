@@ -1,10 +1,9 @@
-; HLL-0 code generator for `cc`, split out of cc.hll. Walks the shared AST tables
-; (defined in cc.hll) via externals and emits naive stack-machine assembly into asmout.
+; HLL-0 code generator for cc.hll.
 
 cc_state := import("./cc.hll")
 cstr := import("cstr")
 
-; Token kinds used by gen_binop (compile-time; mirror cc.hll).
+; Mirrors cc.hll token and AST node kinds.
 const TK_PLUS = 11
 const TK_MINUS = 12
 const TK_STAR = 13
@@ -17,7 +16,6 @@ const TK_GE = 19
 const TK_EQ = 20
 const TK_NE = 21
 
-; AST node kinds (compile-time; mirror cc.hll).
 const ND_INT = 1
 const ND_VAR = 2
 const ND_BINOP = 3
@@ -28,9 +26,6 @@ const ND_IF = 7
 const ND_WHILE = 8
 const ND_RETURN = 9
 const ND_EXPR = 10
-
-; Shared AST tables defined in cc.hll. Their layouts (Node/Fn) come from the shared
-; cc_layout.hll header, so they cannot drift between units.
 
 gen_binop: (op: i64) {
     match op {
@@ -53,12 +48,10 @@ gen_call: (n: i64) {
     nd: Node* = &cc_state.nodes[n]
     start: i64 = nd.b
     cnt: i64 = nd.c
-    ; Evaluate args left to right, pushing each result.
     for j in 0..cnt {
         gen_expr(cc_state.call_args[start + j])
         cc_state.emit_str("  addi sp, sp, -16\n  sd a0, 0(sp)\n".ptr)
     }
-    ; Pop into a0..a(cnt-1); the last pushed (top of stack) is the highest arg reg.
     k: i64 = cnt - 1
     while k >= 0 {
         cc_state.emit_str("  ld a".ptr)
@@ -168,12 +161,10 @@ gen_stmt: (n: i64) {
     }
 }
 
-; Emit one function. main becomes `_start` and exits (a7=93); others `ret`.
 gen_function: (fi: i64, is_main: i64) {
     cc_state.cur_fn = fi
     f: Fn* = &cc_state.fns[fi]
     nloc: i64 = f.nlocals
-    ; Frame: nloc 8-byte slots + saved ra/fp (16 bytes), rounded up to 16.
     fixed: i64 = ((nloc * 8 + 16 + 15) / 16) * 16
     if is_main == 1 {
         cc_state.emit_str("_start:\n".ptr)
@@ -188,7 +179,6 @@ gen_function: (fi: i64, is_main: i64) {
     cc_state.emit_str("(sp)\n  sd fp, ".ptr)
     cc_state.emit_int(fixed - 16)
     cc_state.emit_str("(sp)\n  addi fp, sp, 0\n".ptr)
-    ; Spill incoming args a0..a(np-1) into their local slots.
     np: i64 = f.nparams
     for k in 0..np {
         cc_state.emit_str("  sd a".ptr)
@@ -198,7 +188,6 @@ gen_function: (fi: i64, is_main: i64) {
         cc_state.emit_str("(fp)\n".ptr)
     }
     gen_block(f.body)
-    ; Epilogue: discard temporaries, restore ra/fp, return or exit.
     cc_state.emit_str("Lret_".ptr)
     cc_state.emit_int(fi)
     cc_state.emit_str(":\n  addi sp, fp, 0\n  ld ra, ".ptr)

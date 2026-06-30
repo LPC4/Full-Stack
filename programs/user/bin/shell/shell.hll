@@ -1,18 +1,12 @@
-; Interactive shell, pid 1. See OS spec ch.10.1.
-; Hosted `sys` and `cstr` modules provide syscall wrappers and C-string helpers.
+; Interactive shell, pid 1.
 console := import("console")
 sys := import("sys")
 cstr := import("cstr")
 text := import("text")
-
-; File-management builtins. They share `sh_join_path` (defined here) through
-; link-time symbols.
 fileops := import("./shell_fileops.hll")
 
 ; --- Path helpers ---
 
-; Build an absolute path from `cwd` and `arg` into out.
-; An arg starting with '/' is absolute; otherwise it is joined onto cwd.
 export sh_join_path: (cwd: u8*, arg: u8*, out: u8*) {
     if @arg == '/' {
         cstr.copy(out, arg)
@@ -20,7 +14,6 @@ export sh_join_path: (cwd: u8*, arg: u8*, out: u8*) {
     }
     cstr.copy(out, cwd)
     l: u64 = cstr.len(out)
-    ; Ensure a single separator between cwd and arg.
     if l == 0 {
         slash: u8* = out + l
         @slash = '/' as u8
@@ -32,7 +25,6 @@ export sh_join_path: (cwd: u8*, arg: u8*, out: u8*) {
             l = l + 1
         }
     }
-    ; Append arg after the separator.
     j: u64 = 0
     while 1 == 1 {
         c: u8 = @(arg + j)
@@ -45,7 +37,6 @@ export sh_join_path: (cwd: u8*, arg: u8*, out: u8*) {
     }
 }
 
-; Remove the last path component from cwd in place, keeping at least root "/".
 sh_path_pop: (cwd: u8*) {
     l: u64 = cstr.len(cwd)
     if l <= 1 {
@@ -60,14 +51,12 @@ sh_path_pop: (cwd: u8*) {
             return
         }
     }
-    ; No separator beyond the leading one: collapse to root.
     t: u8* = cwd + 1
     @t = 0 as u8
 }
 
 ; --- Line input ---
 
-; Read a line from the UART into buf (max 255 chars), echoing as typed.
 sh_read_line: (buf: u8*) {
     n: u64 = 0
     done: i64 = 0
@@ -108,14 +97,11 @@ sh_read_line: (buf: u8*) {
     @term = 0 as u8
 }
 
-; --- Builtin output sink and input source ---
-; Builtins route I/O through these fds for redirection. sh_sink_fd: 0 = console,
-; else an output file fd. sh_src_fd: 0 = none, else a file `cat` reads with no args.
+; --- Builtin I/O ---
 
 sh_sink_fd: i64 = 0
 sh_src_fd: i64 = 0
 
-; Write a null-terminated string to the current sink.
 sh_out: (s: u8*) {
     if sh_sink_fd == 0 {
         console.write(s)
@@ -125,7 +111,6 @@ sh_out: (s: u8*) {
     sys.write(sh_sink_fd, s, n)
 }
 
-; Write n raw bytes to the current sink (used by cat).
 sh_outn: (buf: u8*, n: u64) {
     if sh_sink_fd == 0 {
         for i in 0..n {
@@ -136,7 +121,6 @@ sh_outn: (buf: u8*, n: u64) {
     sys.write(sh_sink_fd, buf, n)
 }
 
-; Write a single byte to the current sink.
 sh_outch: (c: i32) {
     if sh_sink_fd == 0 {
         console.putchar(c)
@@ -148,13 +132,11 @@ sh_outch: (c: i32) {
     sys.write(sh_sink_fd, bp, 1)
 }
 
-; Write a string followed by a newline to the current sink.
 sh_outln: (s: u8*) {
     sh_out(s)
     sh_outch('\n')
 }
 
-; Close the sink file (if open) and go back to writing to the console.
 sh_sink_close: () {
     if sh_sink_fd != 0 {
         sys.close(sh_sink_fd)
@@ -162,7 +144,6 @@ sh_sink_close: () {
     }
 }
 
-; Close the input source (if open).
 sh_src_close: () {
     if sh_src_fd != 0 {
         sys.close(sh_src_fd)
@@ -172,8 +153,6 @@ sh_src_close: () {
 
 ; --- Commands ---
 
-; List a directory. No argument lists cwd; a file path just prints its name.
-; Names starting with '.' are hidden (Unix convention; keeps pipe temps unseen).
 cmd_ls: (cwd: u8*, arg: u8*) {
     target: u8[256] = []
     target_p: u8* = &target[0]
@@ -201,7 +180,7 @@ cmd_ls: (cwd: u8*, arg: u8*) {
         if t < 0 {
             done = 1
         } else {
-            if @name_p != '.' {  ; skip dotfiles
+            if @name_p != '.' {
                 sh_out(name_p)
                 if t == 2 {
                     sh_outch('/')
@@ -213,12 +192,10 @@ cmd_ls: (cwd: u8*, arg: u8*) {
     }
 }
 
-; Print the current working directory.
 cmd_pwd: (cwd: u8*) {
     sh_outln(cwd)
 }
 
-; Print the argument text and a newline.
 cmd_echo: (arg: u8*) {
     sh_out(arg)
     sh_outch('\n')
@@ -257,8 +234,6 @@ cmd_cd: (cwd: u8*, arg: u8*) {
     cstr.copy(cwd, target_p)
 }
 
-; Return 1 if `path` is a kernel-loadable executable: a static ELF (0x7F 'E' 'L'
-; 'F'). Lets `run` reject a non-executable up front instead of failing in sys_exec.
 sh_is_exec: (path: u8*) -> i64 {
     fd: i64 = sys.open(path, 0)
     if fd < 0 {
@@ -271,7 +246,6 @@ sh_is_exec: (path: u8*) -> i64 {
     if n != 4 {
         return 0
     }
-    ; ELF magic: 0x7F 'E' 'L' 'F'.
     if @(magic_p + 0) == 0x7F {
         if @(magic_p + 1) == 'E' {
             if @(magic_p + 2) == 'L' {
@@ -284,7 +258,6 @@ sh_is_exec: (path: u8*) -> i64 {
     return 0
 }
 
-; Print a signed decimal integer to the current sink (console unless redirected).
 sh_print_dec: (v: i64) {
     if v < 0 {
         sh_outch('-')
@@ -311,10 +284,8 @@ sh_print_dec: (v: i64) {
     }
 }
 
-; Exit status of the last foreground child, for `&&` chaining (run_line). -2 is Ctrl-C.
 last_exit: i64 = 0
 
-; Wait on a foreground child, then report status. -2 means Ctrl-C. See OS spec ch.7.2.
 sh_wait_foreground: (pid: i64) {
     code: i64 = sys.waitpid(pid)
     last_exit = code
@@ -328,14 +299,11 @@ sh_wait_foreground: (pid: i64) {
     console.writeln("]".ptr)
 }
 
-; --- Background job table ---
-; Job id = slot index + 1; 0 marks a free slot. Index with job_pids[i] for a
-; bounds-checked, element-scaled place (lang spec 4.2, 5.1).
+; --- Jobs ---
 
 const MAX_JOBS = 8
 job_pids: i64[8] = []
 
-; Record a backgrounded pid in the first free slot; returns the job id or -1.
 jobs_add: (pid: i64) -> i64 {
     for i in 0..MAX_JOBS {
         slot: i64* = &job_pids[i]
@@ -347,7 +315,6 @@ jobs_add: (pid: i64) -> i64 {
     return -1 as i64
 }
 
-; Reap finished background jobs and free their slots. Called at the prompt.
 jobs_reap: () {
     for i in 0..MAX_JOBS {
         slot: i64* = &job_pids[i]
@@ -366,7 +333,6 @@ jobs_reap: () {
     }
 }
 
-; Parse a non-negative decimal from the front of s (0 if no leading digit).
 sh_parse_int: (s: u8*) -> i64 {
     n: i64 = 0
     i: u64 = 0
@@ -381,7 +347,6 @@ sh_parse_int: (s: u8*) -> i64 {
     return n
 }
 
-; List the background jobs and their status (running / done-not-yet-reaped).
 cmd_jobs: () {
     any: i64 = 0
     for i in 0..MAX_JOBS {
@@ -405,7 +370,6 @@ cmd_jobs: () {
     }
 }
 
-; Foreground a background job by 1-based id: remove it and wait on it.
 cmd_fg: (arg: u8*) {
     if @arg == 0 {
         console.writeln("fg: usage: fg <job>".ptr)
@@ -430,18 +394,15 @@ cmd_fg: (arg: u8*) {
     sh_wait_foreground(pid)
 }
 
-; SIGKILL signal number (the only signal the kernel honours).
 const SIGKILL = 9
 
-; Kill a process: `kill <pid>` targets a pid directly, `kill %<job>` maps a job id
-; through the job table. The slot is left for jobs_reap to clear on the next prompt.
 cmd_kill: (arg: u8*) {
     if @arg == 0 {
         console.writeln("kill: usage: kill <pid> | kill %<job>".ptr)
         return
     }
     pid: i64 = 0
-    if @arg == '%' {  ; job id like %1
+    if @arg == '%' {
         jid: i64 = sh_parse_int(arg + 1)
         if jid < 1 {
             console.writeln("kill: no such job".ptr)
@@ -471,8 +432,6 @@ cmd_kill: (arg: u8*) {
     }
 }
 
-; Try `<dir>/<name>` and `<dir>/<name>.elf`; if either is an ELF, fill out and
-; return 1. Used by the PATH search so a bare program name resolves to a file.
 sh_try_dir: (dir: u8*, name: u8*, out: u8*) -> i64 {
     sh_join_path(dir, name, out)
     if sh_is_exec(out) == 1 {
@@ -486,11 +445,7 @@ sh_try_dir: (dir: u8*, name: u8*, out: u8*) -> i64 {
     return 0
 }
 
-; Resolve a program name to an absolute ELF path in out. A name with '/' is a path;
-; otherwise PATH-search cwd, /bin, /home/demo. Returns 1 if an ELF was found, else 0.
 sh_resolve_program: (cwd: u8*, name: u8*, out: u8*) -> i64 {
-    ; Strip a leading "./" so a relative `./prog` joins cleanly onto cwd (the FS
-    ; path resolver does not collapse a "." component).
     if @name == '.' {
         if @(name + 1) == '/' {
             name = name + 2
@@ -529,8 +484,6 @@ sh_resolve_program: (cwd: u8*, name: u8*, out: u8*) -> i64 {
     return 0
 }
 
-; Exec a resolved ELF path with optional stdout/stdin redirection; on '&'
-; register a background job, else wait. out_p/in_p are absolute paths or null.
 sh_launch_redir: (target_p: u8*, name: u8*, bg: i64, out_p: u8*, in_p: u8*, out_append: u64) {
     pid: i64 = sys.exec_redir(target_p, 0 as u8*, out_p, in_p, out_append)
     if pid < 0 {
@@ -550,10 +503,7 @@ sh_launch_redir: (target_p: u8*, name: u8*, bg: i64, out_p: u8*, in_p: u8*, out_
     sh_wait_foreground(pid)
 }
 
-; Bare-name execution: resolve the first token via PATH and run it. Trailing `&`
-; backgrounds; `> >> <` redirect stdio. Drives `run <file>` and typed names. OS spec 7.7.
 cmd_exec: (cwd: u8*, line: u8*) {
-    ; Detect a trailing '&' (after any spaces) -> background.
     bg: i64 = 0
     l: u64 = cstr.len(line)
     while l > 0 {
@@ -575,8 +525,6 @@ cmd_exec: (cwd: u8*, line: u8*) {
         }
     }
 
-    ; Walk whitespace-delimited tokens, recognising > >> < and joining each
-    ; redirect target to an absolute path immediately (keeps the frame small).
     name: u8[256] = []
     name_p: u8* = &name[0]
     @name_p = 0 as u8
@@ -589,7 +537,7 @@ cmd_exec: (cwd: u8*, line: u8*) {
     have_out: i64 = 0
     have_in: i64 = 0
     out_append: i64 = 0
-    redir: i64 = 0  ; 0 none, 1 out-trunc, 2 out-append, 3 in
+    redir: i64 = 0
     i: u64 = 0
     while i < l {
         while i < l {
@@ -671,7 +619,6 @@ cmd_exec: (cwd: u8*, line: u8*) {
     sh_launch_redir(target_p, name_p, bg, out_arg, in_arg, out_append as u64)
 }
 
-; `run <file>` is kept as a hidden alias for bare-name execution (muscle memory).
 cmd_run: (cwd: u8*, arg: u8*) {
     if @arg == 0 {
         console.writeln("run: missing file name".ptr)
@@ -680,7 +627,6 @@ cmd_run: (cwd: u8*, arg: u8*) {
     cmd_exec(cwd, arg)
 }
 
-; Copy an open fd from the start to EOF into the current sink.
 sh_cat_fd: (fd: i64) {
     buf: u8[128] = []
     buf_p: u8* = &buf[0]
@@ -695,7 +641,6 @@ sh_cat_fd: (fd: i64) {
     }
 }
 
-; Print one file's contents to the current sink.
 sh_cat_one: (cwd: u8*, name: u8*) {
     target: u8[256] = []
     target_p: u8* = &target[0]
@@ -710,8 +655,6 @@ sh_cat_one: (cwd: u8*, name: u8*) {
     sys.close(fd)
 }
 
-; Print one or more files: "cat a b c". With no file given, copy the stdin source
-; (a piped stage or `cat < file`) instead. Output goes through the sink.
 cmd_cat: (cwd: u8*, arg: u8*) {
     if @arg == 0 {
         if sh_src_fd != 0 {
@@ -749,7 +692,6 @@ cmd_cat: (cwd: u8*, arg: u8*) {
     }
 }
 
-; Launch the line editor on a file, passing the absolute path as its argument.
 cmd_edit: (cwd: u8*, arg: u8*) {
     if @arg == 0 {
         console.writeln("edit: missing file name".ptr)
@@ -766,10 +708,7 @@ cmd_edit: (cwd: u8*, arg: u8*) {
     sh_wait_foreground(pid)
 }
 
-; Launch a two-operand toolchain command "<tool> <in> <out>": resolves both to
-; absolute paths and execs `elf_p` with them space-separated. Shared by `as`/`cc`.
 sh_run_tool2: (cwd: u8*, arg: u8*, elf_p: u8*, usage: u8*) {
-    ; Find the space separating the two operands.
     sp: u64 = 0
     while @(arg + sp) != 0 {
         if @(arg + sp) == ' ' {
@@ -781,7 +720,6 @@ sh_run_tool2: (cwd: u8*, arg: u8*, elf_p: u8*, usage: u8*) {
         console.writeln(usage)
         return
     }
-    ; Copy the source operand out before walking past it.
     src: u8[128] = []
     src_p: u8* = &src[0]
     end: u64 = sp
@@ -794,7 +732,6 @@ sh_run_tool2: (cwd: u8*, arg: u8*, elf_p: u8*, usage: u8*) {
     }
     st: u8* = src_p + end
     @st = 0 as u8
-    ; Skip the separating space(s) to reach the destination operand.
     while @(arg + sp) == ' ' {
         sp = sp + 1
     }
@@ -802,8 +739,6 @@ sh_run_tool2: (cwd: u8*, arg: u8*, elf_p: u8*, usage: u8*) {
         console.writeln(usage)
         return
     }
-    ; Copy the destination operand, stopping at the first trailing space so a stray
-    ; space in the command line does not become part of the output filename.
     dst: u8[128] = []
     dst_p: u8* = &dst[0]
     j: u64 = 0
@@ -821,7 +756,6 @@ sh_run_tool2: (cwd: u8*, arg: u8*, elf_p: u8*, usage: u8*) {
     }
     dt: u8* = dst_p + j
     @dt = 0 as u8
-    ; Build absolute paths and pack "abs_src abs_out" into one argument buffer.
     src_abs: u8[256] = []
     src_abs_p: u8* = &src_abs[0]
     sh_join_path(cwd, src_p, src_abs_p)
@@ -844,19 +778,14 @@ sh_run_tool2: (cwd: u8*, arg: u8*, elf_p: u8*, usage: u8*) {
     sh_wait_foreground(pid)
 }
 
-; Assemble: "as <src> <out>" -> /bin/as.elf.
 cmd_as: (cwd: u8*, arg: u8*) {
     sh_run_tool2(cwd, arg, "/bin/as.elf".ptr, "as: usage: as <src> <out>".ptr)
 }
 
-; Compile HLL-0: "cc <src.hll> <out.s>" -> /bin/cc.elf.
 cmd_cc: (cwd: u8*, arg: u8*) {
     sh_run_tool2(cwd, arg, "/bin/cc.elf".ptr, "cc: usage: cc <src.hll> <out.s>".ptr)
 }
 
-; Link: "ld <obj>... <out>" -> /bin/ld.elf. Each whitespace token is resolved to an
-; absolute path and the lot is repacked space-separated for the linker (inputs
-; first, output last). Unlike as/cc this takes a variable number of operands.
 cmd_ld: (cwd: u8*, arg: u8*) {
     packed: u8[512] = []
     packed_p: u8* = &packed[0]
@@ -870,7 +799,6 @@ cmd_ld: (cwd: u8*, arg: u8*) {
         if @(arg + i) == 0 {
             break
         }
-        ; Copy one token out, then absolute-join it.
         tok: u8[256] = []
         tok_p: u8* = &tok[0]
         k: u64 = 0
@@ -912,7 +840,6 @@ cmd_ld: (cwd: u8*, arg: u8*) {
     sh_wait_foreground(pid)
 }
 
-; Copy the first whitespace-delimited token of `line` into out (max 31 chars).
 sh_first_word: (line: u8*, out: u8*) {
     i: u64 = 0
     while @(line + i) == ' ' {
@@ -934,8 +861,6 @@ sh_first_word: (line: u8*, out: u8*) {
     @t = 0 as u8
 }
 
-; Return a pointer to the argument text of `line`, past the first token and the
-; spaces around it. Points at the terminator when there is no argument.
 sh_skip_word: (line: u8*) -> u8* {
     i: u64 = 0
     while @(line + i) == ' ' {
@@ -953,7 +878,6 @@ sh_skip_word: (line: u8*) -> u8* {
     return line + i
 }
 
-; Print the command reference through the sink (so `help > file` works too).
 cmd_help: () {
     sh_outln("Type a program name to run it. PATH is . then /bin then /home/demo.".ptr)
     sh_outln("files     ls [dir]   cat <file>...   echo <text>   pwd".ptr)
@@ -965,8 +889,6 @@ cmd_help: () {
     sh_outln("control   Ctrl-C stops a foreground program.   exit  quits.".ptr)
 }
 
-; 1 if `name` is a builtin that writes through the sink, so it can be redirected
-; or used as a pipe source. Else 0.
 sh_is_out_builtin: (name: u8*) -> i64 {
     if cstr.eq(name, "ls".ptr) == 1 {
         return 1
@@ -989,7 +911,6 @@ sh_is_out_builtin: (name: u8*) -> i64 {
     return 0
 }
 
-; Run the named builtin on its args. Output goes through whatever sink is set.
 sh_dispatch_out_builtin: (cwd: u8*, cmd: u8*, args: u8*) {
     if cstr.eq(cmd, "ls".ptr) == 1 {
         cmd_ls(cwd, args)
@@ -1014,13 +935,10 @@ sh_dispatch_out_builtin: (cwd: u8*, cmd: u8*, args: u8*) {
     cmd_help()
 }
 
-; --- Pipelines (a | b | c) ---
-; Sequential: each stage runs to completion into a temp file the next reads as
-; stdin (no kernel pipe object). Reuses the redirection path. See OS spec 7.7.
+; --- Pipelines ---
 
 const MAX_PIPE_STAGES = 4
 
-; Absolute path of the idx-th connecting temp file (idx 0..2).
 sh_pipe_temp: (idx: u64) -> u8* {
     if idx == 0 {
         return "/.pipe0".ptr
@@ -1031,7 +949,6 @@ sh_pipe_temp: (idx: u64) -> u8* {
     return "/.pipe2".ptr
 }
 
-; 1 if the line contains a pipe operator `|`, else 0.
 sh_has_pipe: (line: u8*) -> i64 {
     i: u64 = 0
     while @(line + i) != 0 {
@@ -1043,8 +960,6 @@ sh_has_pipe: (line: u8*) -> i64 {
     return 0
 }
 
-; Run one pipeline stage and wait. def_in/def_out are the pipe temp files for
-; stdin/stdout (null = inherit); a `< > >>` on the stage itself takes priority.
 sh_run_stage: (cwd: u8*, line: u8*, def_in: u8*, def_out: u8*) {
     clean: u8[256] = []
     clean_p: u8* = &clean[0]
@@ -1057,7 +972,7 @@ sh_run_stage: (cwd: u8*, line: u8*, def_in: u8*, def_out: u8*) {
     have_out: i64 = 0
     have_in: i64 = 0
     append: i64 = 0
-    mode: i64 = 0   ; 0 normal, 1 `>` target, 2 `>>` target, 3 `<` target
+    mode: i64 = 0
     cn: u64 = 0
     l: u64 = cstr.len(line)
     i: u64 = 0
@@ -1143,7 +1058,6 @@ sh_run_stage: (cwd: u8*, line: u8*, def_in: u8*, def_out: u8*) {
     }
     args: u8* = sh_skip_word(clean_p)
 
-    ; Effective stdio targets: an explicit redirect on the stage wins, else the pipe.
     eff_out: u8* = def_out
     eff_app: u64 = 0
     if have_out == 1 {
@@ -1155,8 +1069,6 @@ sh_run_stage: (cwd: u8*, line: u8*, def_in: u8*, def_out: u8*) {
         eff_in = in_abs_p
     }
 
-    ; A builtin runs in the shell, writing through the sink. Only `cat` reads the
-    ; input source; the others ignore it.
     if sh_is_out_builtin(name_p) == 1 {
         if eff_out != null {
             fd: i64 = sys.open(eff_out, 2)
@@ -1184,7 +1096,6 @@ sh_run_stage: (cwd: u8*, line: u8*, def_in: u8*, def_out: u8*) {
         return
     }
 
-    ; External program: exec with stdio wired, then wait without printing [exit N].
     target: u8[256] = []
     target_p: u8* = &target[0]
     if sh_resolve_program(cwd, name_p, target_p) == 0 {
@@ -1201,10 +1112,7 @@ sh_run_stage: (cwd: u8*, line: u8*, def_in: u8*, def_out: u8*) {
     sys.waitpid(pid)
 }
 
-; Run a pipeline of up to MAX_PIPE_STAGES stages left to right via temp files. `<`
-; on the first and `>`/`>>` on the last work; a trailing `&` is dropped (foreground).
 cmd_pipe: (cwd: u8*, line: u8*) {
-    ; Trim trailing spaces and a trailing '&'.
     l: u64 = cstr.len(line)
     while l > 0 {
         if @(line + (l - 1)) != ' ' {
@@ -1218,7 +1126,6 @@ cmd_pipe: (cwd: u8*, line: u8*) {
         }
     }
 
-    ; Record the [start, end) byte range of each stage between the '|' separators.
     starts: u64[4] = []
     ends: u64[4] = []
     count: u64 = 0
@@ -1250,7 +1157,6 @@ cmd_pipe: (cwd: u8*, line: u8*) {
         return
     }
 
-    ; Run each stage, wiring stdin from the previous temp and stdout to the next.
     stage: u8[256] = []
     stage_p: u8* = &stage[0]
     for s in 0..count {
@@ -1278,7 +1184,6 @@ cmd_pipe: (cwd: u8*, line: u8*) {
         sh_run_stage(cwd, stage_p, def_in, def_out)
     }
 
-    ; Remove the connecting temp files.
     t: u64 = 0
     while t + 1 < count {
         sys.unlink(sh_pipe_temp(t))
@@ -1286,13 +1191,10 @@ cmd_pipe: (cwd: u8*, line: u8*) {
     }
 }
 
-; Run a line as an `&&` chain: each segment runs only if the previous exited 0.
-; Splits on top-level `&&`; a lone trailing `&` still means background. The exit
-; status of the last foreground child is tracked in last_exit.
+; Runs each `&&` segment only if the previous segment exited 0.
 run_line: (cwd: u8*, line: u8*) {
     l: u64 = cstr.len(line)
 
-    ; Record the [start, end) byte range of each `&&`-separated segment.
     starts: u64[8] = []
     ends: u64[8] = []
     count: u64 = 0
@@ -1327,7 +1229,6 @@ run_line: (cwd: u8*, line: u8*) {
         count = count + 1
     }
 
-    ; No separator: run the line directly (avoids the segment copy).
     if count < 2 {
         handle_command(cwd, line)
         return
@@ -1384,7 +1285,6 @@ handle_command: (cwd: u8*, line: u8*) {
         return
     }
 
-    ; Builtins with no redirectable output: run on the raw argument text.
     if cstr.eq(cmd_p, "exit".ptr) == 1 {
         sys.exit(0)
         return
@@ -1442,7 +1342,6 @@ handle_command: (cwd: u8*, line: u8*) {
         return
     }
 
-    ; Builtins whose output can be redirected with `>` / `>>`.
     if cstr.eq(cmd_p, "ls".ptr) == 1 {
         sh_run_stage(cwd, line, 0 as u8*, 0 as u8*)
         return
@@ -1468,7 +1367,6 @@ handle_command: (cwd: u8*, line: u8*) {
         return
     }
 
-    ; Not a builtin: treat the line as a program name (bare-name execution).
     cmd_exec(cwd, line)
 }
 

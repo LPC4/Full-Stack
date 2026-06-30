@@ -1,10 +1,4 @@
-
-; Shared AST record layouts, prepended to every `cc` translation unit so cc.hll and
-; cc_codegen.hll agree on one definition. HLL types are file-scoped.
-
-; AST node: 16-byte name (CALL target) first so a node pointer doubles as a char ptr;
-; then kind, operands a/b/c, and the next-statement link (-1 = end).
+; Shared cc AST record layouts.
 struct Node { name: u8[16], kind: i64, a: i64, b: i64, c: i64, next: i64 }
 
-; Function table entry; 16-byte name first so a slot pointer doubles as it.
 struct Fn { name: u8[16], nparams: i64, nlocals: i64, body: i64 }

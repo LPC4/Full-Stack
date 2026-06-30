@@ -1,14 +1,10 @@
-; In-VM HLL-0 compiler: `cc <src.hll> <out.s>` -> naive stack-machine RISC-V for
-; `/bin/as`. HLL-0 subset and codegen model: lang spec Appendix D, OS spec 10.4.
+; In-VM HLL-0 compiler: `cc <src.hll> <out.s>`.
 console := import("console")
 sys := import("sys")
 cstr := import("cstr")
 text := import("text")
-
-; Code generator. Walks the shared AST tables (defined here) and fills asmout.
 codegen := import("./cc_codegen.hll")
 
-; Page the kernel maps with this program's argument string (matches USER_ARG_BASE).
 const ARG_BASE = 0x7FF00000
 
 ; Token kinds.
@@ -47,45 +43,32 @@ const ND_WHILE = 8
 const ND_RETURN = 9
 const ND_EXPR = 10
 
-; --- Source and token stream ---
-; The big tables are heap-allocated once at startup (see main); formerly fixed .bss.
+; --- Compiler state ---
 src: u8* = null
 src_len: u64 = 0
 
-; One token: 16-byte lexeme (IDENT), then kind and integer value (INT). The lexeme
-; is the first field so a slot pointer doubles as its char pointer.
 struct Token { text: u8[16], kind: i64, val: i64 }
 toks: Token* = null
 ntok: i64 = 0
 
-; --- AST: array of nodes, statements linked via the `next` field (-1 = end) ---
-; Node / Fn record layouts come from the shared cc_layout.hll header.
 export nodes: Node* = null
 nnode: i64 = 0
-
-; Call argument expression nodes, referenced by ND_CALL via (start, count).
 export call_args: i64* = null
 ncallarg: i64 = 0
-
 export fns: Fn* = null
 export nfn: i64 = 0
 
-; Locals of the function currently being parsed (params first, then declarations).
 loc_name: u8* = null
 loc_count: i64 = 0
 
-; Parser cursor and the assembled output text.
 pos: i64 = 0
 asmout: u8* = null
 asmlen: u64 = 0
 
-; Set once on any error so main aborts with a non-zero exit. Other globals used by
-; codegen: the function being emitted and a monotonic label counter.
 err_flag: i64 = 0
 export cur_fn: i64 = 0
 export nlabel: i64 = 0
 
-; Report an error once and remember the failure.
 export perr: (msg: u8*) {
     if err_flag == 0 {
         console.write("cc: ".ptr)
@@ -110,7 +93,6 @@ export emit_str: (s: u8*) {
     }
 }
 
-; Append a signed decimal integer.
 export emit_int: (v: i64) {
     if v < 0 {
         emit_ch('-' as u8)
@@ -145,7 +127,6 @@ push_tok: (kind: i64, val: i64) {
     }
 }
 
-; Copy src[start, start+len) into token idx's lexeme slot.
 set_tok_txt: (idx: i64, start: u64, len: u64) {
     d: u8* = (&toks[idx]) as u8*
     for k in 0..len {
@@ -162,7 +143,6 @@ set_tok_txt: (idx: i64, start: u64, len: u64) {
     @z = 0 as u8
 }
 
-; Scan a 1- or 2-char operator/punctuation at i; push it and return the next index.
 scan_punct: (i: u64) -> u64 {
     c: u8 = src[i]
     d: u8 = 0 as u8
@@ -199,7 +179,6 @@ scan_punct: (i: u64) -> u64 {
             return i + 2
         }
     }
-    ; Single-character punctuation dispatches on the scalar byte value.
     match c {
         '(' -> { push_tok(TK_LPAREN, 0) }
         ')' -> { push_tok(TK_RPAREN, 0) }
@@ -220,7 +199,6 @@ scan_punct: (i: u64) -> u64 {
     return i + 1
 }
 
-; Map a backslash escape character to its byte value (e.g. 'n' -> newline).
 char_escape: (e: u8) -> i64 {
     return match e {
         'n' -> 10
@@ -232,7 +210,6 @@ char_escape: (e: u8) -> i64 {
     }
 }
 
-; Split the source into the global token table. Comments run from ';' to EOL.
 tokenize: () {
     ntok = 0
     i: u64 = 0
@@ -342,7 +319,7 @@ expect: (k: i64, msg: u8*) {
     }
 }
 
-; --- AST construction ---
+; --- AST ---
 mk: (kind: i64) -> i64 {
     id: i64 = nnode
     nd: Node* = &nodes[id]
@@ -359,7 +336,7 @@ set_name: (node: i64, s: u8*) {
     text.copy_name16((&nodes[node]) as u8*, s)
 }
 
-; --- Local symbol table (one function at a time) ---
+; --- Locals ---
 add_local: (name: u8*) -> i64 {
     slot: i64 = loc_count
     text.copy_name16(loc_name + (slot as u64) * 16, name)
@@ -377,7 +354,7 @@ find_local: (name: u8*) -> i64 {
     return -1
 }
 
-; --- Expression parsing (precedence climbing over the HLL-0 operator set) ---
+; --- Expressions ---
 is_mulop: (k: i64) -> i64 {
     return match k {
         TK_STAR  -> 1
@@ -539,7 +516,7 @@ parse_expr: () -> i64 {
     return n
 }
 
-; --- Statement / block / function parsing ---
+; --- Statements and functions ---
 parse_stmt: () -> i64 {
     k: i64 = cur_kind()
     if k == TK_IDENT {
@@ -576,7 +553,6 @@ parse_stmt: () -> i64 {
             nd.b = body
             return n
         }
-        ; Declaration `name: i32 = expr` or assignment `name = expr`.
         k1: i64 = nxt_kind()
         if k1 == TK_COLON {
             nm: u8[24] = []
@@ -611,7 +587,6 @@ parse_stmt: () -> i64 {
             return n
         }
     }
-    ; Bare expression statement (e.g. a call).
     e: i64 = parse_expr()
     n: i64 = mk(ND_EXPR)
     nd: Node* = &nodes[n]
@@ -619,7 +594,6 @@ parse_stmt: () -> i64 {
     return n
 }
 
-; Parse statements up to '}' into a linked list; return the head node (-1 empty).
 parse_block: () -> i64 {
     head: i64 = -1
     tail: i64 = -1
@@ -646,7 +620,6 @@ parse_block: () -> i64 {
     return head
 }
 
-; Parse one `name: (params) -> type { body }` definition.
 parse_function: () {
     if cur_kind() != TK_IDENT {
         perr("expected function name".ptr)
@@ -704,7 +677,6 @@ parse_program: () {
 }
 
 main: () -> i32 {
-    ; Allocate the compiler's working tables on the heap (formerly fixed .bss).
     src = new(u8, 8192)
     toks = new(Token, 2048)
     nodes = new(Node, 1024)

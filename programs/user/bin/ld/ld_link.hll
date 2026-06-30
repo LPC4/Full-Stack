@@ -1,5 +1,4 @@
-; Relocation patching and executable emission for the in-VM linker, split ld_state.out of
-; ld.hll. Reads the merged sections and symbol table ld.hll builds, via externals.
+; Relocation patching and executable emission for ld.hll.
 ld_state := import("./ld.hll")
 sys := import("sys")
 
@@ -7,7 +6,7 @@ const USER_CODE_BASE = 0x40000000
 const HDR = 4096
 const PAD = 32
 
-; --- Relocation patching (mirrors object_linker.rs) ---
+; --- Relocations ---
 
 psplit_hi: i64 = 0
 psplit_lo: i64 = 0
@@ -35,15 +34,12 @@ wrw_text: (off: i64, w: u32) {
     @d3 = (w >> 24) as u8
 }
 
-; Patch the instruction(s) at merged-text offset `site` for relocation `rtype`
-; resolving to PC-relative `delta` (target_abs - site_abs).
 patch: (site: i64, delta: i64, rtype: u64) {
     pcrel_split(delta)
     hi_field: u32 = ((psplit_hi as u32) & 0xFFFFF) << 12
     lo_field: u32 = ((psplit_lo as u32) & 0xFFF) << 20
     match rtype {
         17 -> {
-            ; JAL: rebuild the 20-bit immediate, keep rd/opcode (low 12 bits).
             u: u32 = delta as u32
             i20: u32 = (u >> 20) & 1
             i10_1: u32 = (u >> 1) & 0x3FF
@@ -54,8 +50,6 @@ patch: (site: i64, delta: i64, rtype: u64) {
             wrw_text(site, (w & 0xFFF) | imm_bits)
         }
         _ -> {
-            ; CALL_PLT (auipc+jalr) and La/PCREL_HI20 (auipc+addi): patch the auipc
-            ; hi20 and the second instruction's imm[11:0] in bits 31:20.
             au: u32 = rdw_text(site)
             wrw_text(site, (au & 0xFFF) | hi_field)
             lo: u32 = rdw_text(site + 4)
@@ -64,7 +58,6 @@ patch: (site: i64, delta: i64, rtype: u64) {
     }
 }
 
-; Apply every relocation in every module's .rela.text.
 export apply_relocs: () {
     for m in 0..ld_state.nmod {
         mb: i64 = ld_state.mod_base[m]

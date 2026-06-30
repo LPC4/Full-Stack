@@ -73,7 +73,11 @@ impl<'a> Parser<'a> {
 
         self.consume_terminators();
         while !self.is_eof() {
-            if self.is_declaration_start() {
+            if matches!(self.peek(), Some(Token::Impl)) {
+                // `impl Type { ... }` desugars in place to flat `Type_method`
+                // functions, so no later stage needs to know about methods.
+                declarations.extend(self.parse_impl_block()?);
+            } else if self.is_declaration_start() {
                 declarations.push(self.parse_declaration()?);
             } else {
                 statements.push(self.parse_statement()?);
@@ -477,6 +481,62 @@ impl<'a> Parser<'a> {
             is_extern,
             is_import_interface,
         })
+    }
+
+    /// Parse `impl Type { method: (self: Type*, ...) -> R { ... } }`; each method
+    /// desugars to a free function `Type_method` (static dispatch, explicit self).
+    fn parse_impl_block(&mut self) -> Result<Vec<Declaration>, ParserError> {
+        self.advance(); // `impl`
+        let type_name = self.expect_ident()?;
+        self.expect_lbrace()?;
+        self.consume_terminators();
+
+        let mut methods = Vec::new();
+        while !self.check_rbrace() {
+            let DeclNode::Function {
+                name,
+                generics,
+                params,
+                return_type,
+                body,
+                ..
+            } = self.parse_function_decl(false, false)?
+            else {
+                unreachable!("parse_function_decl always returns a Function");
+            };
+
+            let Some(receiver) = params.first() else {
+                return Err(self.error("impl method must take `self` as its first parameter"));
+            };
+            if receiver.name != "self" {
+                return Err(self.error("impl method's first parameter must be named `self`"));
+            }
+            // v1 uses a pointer receiver, matching the manual-vtable idiom.
+            let receiver_ok = matches!(
+                &receiver.ty,
+                Type::Pointer(inner) if matches!(inner.as_ref(), Type::Named { name, .. } if name == &type_name)
+            );
+            if !receiver_ok {
+                return Err(self.error(&format!("impl method `self` must be `{type_name}*`")));
+            }
+
+            methods.push(Declaration {
+                decl: DeclNode::Function {
+                    name: format!("{type_name}_{name}"),
+                    generics,
+                    params,
+                    return_type,
+                    body,
+                    is_extern: false,
+                    is_import_interface: false,
+                },
+                exported: false,
+            });
+            self.consume_terminators();
+        }
+
+        self.expect_rbrace()?;
+        Ok(methods)
     }
 
     fn parse_param_list(&mut self) -> Result<Vec<Parameter>, ParserError> {

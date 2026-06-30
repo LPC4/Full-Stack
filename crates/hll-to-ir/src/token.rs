@@ -135,6 +135,7 @@ pub enum Token<'a> {
     Const,
     Type,
     Struct,
+    Impl,
     As,
     Import,
     Export,

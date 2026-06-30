@@ -1,81 +1,50 @@
-; In-VM RV64I assembler: `as <src> <out>` two-pass assembles a static ELF64 (one
-; PT_LOAD at USER_CODE_BASE) for sys_exec. Subset/directives/encodings: OS spec 10.3.
+; In-VM RV64I assembler: `as <src> <out>`.
 
 console := import("console")
 sys := import("sys")
 cstr := import("cstr")
-
-; ET_REL object serializer. It reads the shared assembler state
-; (out/code/data/labels/relocs) through link-time symbols.
 object := import("./as_object.hll")
-; Shared byte/text helpers (char classes, arg splitting).
 text := import("text")
 
-; Page the kernel maps with this program's argument string. Matches USER_ARG_BASE.
 const ARG_BASE = 0x7FF00000
-; Virtual base the kernel maps user code at; the ELF links e_entry/p_vaddr here.
 const USER_CODE_BASE = 0x40000000
-; ELF header region size; the page-aligned PT_LOAD payload (flat binary) starts here.
 const HDR = 4096
-; Bytes of NOP padding between the text and data regions (the M-mode halt quirk).
 const PAD = 32
 
-; Source text, assembled code, and the ELF output image. The big buffers are
-; heap-allocated once at startup (see main / as_object's lazy init).
+; --- Assembly state ---
 src: u8* = null
 src_len: u64 = 0
 export code: u8* = null
 export code_len: u64 = 0
-; Data section bytes, appended after the text + NOP pad in the final image.
 export data: u8* = null
 export data_len: u64 = 0
-; Current section: 0 = text, 1 = data. Switched by .text/.data directives.
 cur_sec: i64 = 0
-; Final text size after pass 1; data labels resolve to text_total + PAD + offset.
 text_total: i64 = 0
-; Output image: ELF header + program header in the first page, payload from HDR on.
-; Also reused as the ET_REL object image in object mode (text/data/relocs/symtab).
 export out: u8* = null
 
-; Label / Reloc record layouts come from the shared as_layout.hll header.
-
-; Label table; resolve_labels() rewrites data addresses to absolute positions.
 export labels: Label* = null
 export lbl_count: i64 = 0
-
-; Token table for one line: up to 6 tokens, 24 bytes each (one lexeme per slot).
 tokbuf: u8* = null
 ntok: i64 = 0
-
-; Set once on any assembly error so main can abort with a non-zero exit.
 err_flag: i64 = 0
 
-; --- Object (ET_REL) mode ---
-; 1 when the output path ends in ".o": emit a relocatable object for ld.hll
-; instead of a runnable ET_EXEC. In object mode call/jal to an undefined symbol
-; and every la become relocations rather than locally-resolved or errors.
+; --- Object mode ---
 obj_mode: i64 = 0
-
-; Names exported via `.globl`, packed 16 bytes each (symtab STB_GLOBAL bind).
 glbl_names: u8* = null
 glbl_count: i64 = 0
-
 export relocs: Reloc* = null
 export nreloc: i64 = 0
 
-; Pointer to token i in the line token table.
 tok_at: (i: i64) -> u8* {
     return tokbuf + (i as u64) * 24
 }
 
-; Report an assembly error with a one-line message and remember the failure.
 export fail: (msg: u8*) {
     console.write("as: ".ptr)
     console.writeln(msg)
     err_flag = 1
 }
 
-; 1 if c is a token separator (space, tab, comma).
 is_sep: (c: u8) -> i64 {
     return match c {
         ' '  -> 1
@@ -85,7 +54,6 @@ is_sep: (c: u8) -> i64 {
     }
 }
 
-; Truncate the line at the first comment character (';' or '#').
 strip_comment: (line: u8*) {
     i: u64 = 0
     while @(line + i) != 0 {
@@ -104,7 +72,6 @@ strip_comment: (line: u8*) {
     }
 }
 
-; Split `line` into the global token table, returning the token count.
 tokenize: (line: u8*) {
     n: i64 = 0
     i: u64 = 0
@@ -142,7 +109,6 @@ tokenize: (line: u8*) {
     ntok = n
 }
 
-; 1 if token `p` ends with ':' (a label definition).
 ends_colon: (p: u8*) -> i64 {
     l: u64 = cstr.len(p)
     if l == 0 {
@@ -154,7 +120,6 @@ ends_colon: (p: u8*) -> i64 {
     return 0
 }
 
-; Strip a trailing ':' from a label token in place.
 drop_colon: (p: u8*) {
     l: u64 = cstr.len(p)
     if l > 0 {
@@ -165,7 +130,6 @@ drop_colon: (p: u8*) {
 
 ; --- Register and immediate parsing ---
 
-; Parse an unsigned decimal starting at p (used for x<N> register numbers).
 parse_uint: (p: u8*) -> i64 {
     v: i64 = 0
     i: u64 = 0
@@ -183,7 +147,6 @@ parse_uint: (p: u8*) -> i64 {
     return v
 }
 
-; Map a register token to its number 0..31, or -1 on error (sets err_flag).
 reg_num: (p: u8*) -> i64 {
     if cstr.eq(p, "zero".ptr) == 1 {
         return 0
@@ -284,7 +247,6 @@ reg_num: (p: u8*) -> i64 {
     if cstr.eq(p, "t6".ptr) == 1 {
         return 31
     }
-    ; Raw x<N> form.
     if @p == 'x' {
         n: i64 = parse_uint(p + 1)
         if n >= 0 {
@@ -297,7 +259,6 @@ reg_num: (p: u8*) -> i64 {
     return -1
 }
 
-; Parse a signed immediate: optional '-', then decimal or 0x hex.
 parse_imm: (p: u8*) -> i64 {
     i: u64 = 0
     neg: i64 = 0
@@ -306,7 +267,6 @@ parse_imm: (p: u8*) -> i64 {
         i = i + 1
     }
     v: i64 = 0
-    ; Hex form 0x...
     if @(p + i) == '0' {
         if @(p + i + 1) == 'x' {
             i = i + 2
@@ -340,7 +300,6 @@ parse_imm: (p: u8*) -> i64 {
             return v
         }
     }
-    ; Decimal.
     while @(p + i) != 0 {
         c: u8 = @(p + i)
         if c < '0' {
@@ -358,14 +317,11 @@ parse_imm: (p: u8*) -> i64 {
     return v
 }
 
-; Last memory operand parsed by parse_mem: `offset(reg)` split into its parts.
 mem_imm: i64 = 0
 mem_reg: i64 = 0
 
-; Parse a `offset(reg)` operand into mem_imm and mem_reg (e.g. `-8(sp)`).
 parse_mem: (p: u8*) {
     mem_imm = parse_imm(p)
-    ; Advance to the opening parenthesis.
     i: u64 = 0
     while @(p + i) != 0 {
         if @(p + i) == '(' {
@@ -379,7 +335,6 @@ parse_mem: (p: u8*) {
         return
     }
     i = i + 1
-    ; Copy the register name (up to the closing parenthesis) and resolve it.
     rbuf: u8[8] = []
     rp: u8* = &rbuf[0]
     k: u64 = 0
@@ -402,8 +357,6 @@ parse_mem: (p: u8*) {
 
 ; --- Label table ---
 
-; Record a label at section-local offset `off` in section `sec` (0 text, 1 data).
-; resolve_labels() rewrites data offsets to absolute payload positions after pass 1.
 add_label: (name: u8*, off: i64, sec: i64) {
     if lbl_count >= 64 {
         fail("too many labels".ptr)
@@ -431,8 +384,6 @@ add_label: (name: u8*, off: i64, sec: i64) {
     lbl_count = lbl_count + 1
 }
 
-; After pass 1, turn data-section label offsets into absolute payload positions
-; (data follows the text and its NOP pad). Text labels are already absolute.
 resolve_labels: () {
     i: i64 = 0
     while i < lbl_count {
@@ -444,7 +395,6 @@ resolve_labels: () {
     }
 }
 
-; Resolve a label name to its byte address, or -1 if undefined (sets err_flag).
 find_label: (name: u8*) -> i64 {
     i: i64 = 0
     while i < lbl_count {
@@ -459,7 +409,6 @@ find_label: (name: u8*) -> i64 {
     return -1
 }
 
-; 1 if `name` is a locally-defined label (no error on miss, unlike find_label).
 export label_defined: (name: u8*) -> i64 {
     i: i64 = 0
     while i < lbl_count {
@@ -473,7 +422,6 @@ export label_defined: (name: u8*) -> i64 {
     return 0
 }
 
-; Record a `.globl name` export (deduplicated).
 add_globl: (name: u8*) {
     if is_globl(name) == 1 {
         return
@@ -498,7 +446,6 @@ add_globl: (name: u8*) {
     glbl_count = glbl_count + 1
 }
 
-; 1 if `name` was exported via `.globl`.
 export is_globl: (name: u8*) -> i64 {
     i: i64 = 0
     while i < glbl_count {
@@ -511,7 +458,6 @@ export is_globl: (name: u8*) -> i64 {
     return 0
 }
 
-; Record a relocation at .text byte offset `off` against `name` (kind as above).
 add_reloc: (name: u8*, off: i64, kind: i64) {
     if nreloc >= 256 {
         fail("too many relocations".ptr)
@@ -552,12 +498,10 @@ emit_word: (w: u32) {
     push_byte((w >> 24) as u8)
 }
 
-; Write an `n`-byte little-endian value into the output image at byte offset `off`.
-; Used to lay down the ELF header and program header fields.
 export wr_le: (off: u64, val: u64, n: u64) {
     k: u64 = 0
     while k < n {
-        d: u8* = out +off + k
+        d: u8* = out + off + k
         @d = (val >> (k * 8)) as u8
         k = k + 1
     }
@@ -601,12 +545,10 @@ enc_s: (rs1: i64, rs2: i64, imm: i64, funct3: i64) -> u32 {
          | ((funct3 as u32) << 12) | (i4_0 << 7) | (0x23 as u32)
 }
 
-; U-type (lui/auipc): the operand is the 20-bit value placed in bits 31:12.
 enc_u: (rd: i64, imm: i64, opcode: i64) -> u32 {
     return (((imm as u32) & 0xFFFFF) << 12) | ((rd as u32) << 7) | (opcode as u32)
 }
 
-; Number of bytes an `li rd, imm` expands to (addi, or lui+addi for wide).
 li_size: (imm: i64) -> i64 {
     if imm >= -2048 {
         if imm <= 2047 {
@@ -616,7 +558,6 @@ li_size: (imm: i64) -> i64 {
     return 8
 }
 
-; Emit `li rd, imm`. Single addi for 12-bit signed; lui+addi for 0..0x7FFFFFFF.
 emit_li: (rd: i64, imm: i64) {
     if imm >= -2048 {
         if imm <= 2047 {
@@ -628,7 +569,6 @@ emit_li: (rd: i64, imm: i64) {
         fail("li: negative immediate too wide".ptr)
         return
     }
-    ; lui carries a 20-bit field, so the split must fit hi in [0, 0xFFFFF].
     hi: i64 = (imm + 2048) / 4096
     if hi > 1048575 {
         fail("li: immediate too wide".ptr)
@@ -655,8 +595,7 @@ emit_data_word: (w: u32) {
     push_data_byte((w >> 24) as u8)
 }
 
-; PC-relative split for auipc+addi / auipc+jalr pairs (la, call). The hi field is
-; left signed; enc_u/enc_i mask it. Both halves reference the auipc's pc.
+; PC-relative split for auipc+addi / auipc+jalr pairs.
 pcrel_hi: i64 = 0
 pcrel_lo: i64 = 0
 split_pcrel: (delta: i64) {
@@ -668,8 +607,6 @@ split_pcrel: (delta: i64) {
     pcrel_hi = (delta - lo) >> 12
 }
 
-; Emit/size a quoted string from a .ascii/.asciz line (`zt` adds a NUL). Strings
-; cannot contain ';' or '#' (the line is comment-stripped first). Returns length.
 data_string: (pass: i64, line_p: u8*, zt: i64) -> i64 {
     i: u64 = 0
     while @(line_p + i) != 0 {
@@ -717,8 +654,6 @@ data_string: (pass: i64, line_p: u8*, zt: i64) -> i64 {
     return n
 }
 
-; Handle a directive line. Section directives switch cur_sec and return 0; data
-; directives emit (pass 2) and return the byte count they add to the data section.
 handle_directive: (pass: i64, base: i64, line_p: u8*) -> i64 {
     d: u8* = tok_at(base)
     if cstr.eq(d, ".text".ptr) == 1 {
@@ -785,8 +720,6 @@ handle_directive: (pass: i64, base: i64, line_p: u8*) -> i64 {
     return 0
 }
 
-; Assemble one tokenized instruction at token `base`; pass 1 sizes only, pass 2
-; encodes. `pc` is the current byte address (for branch offsets). Returns the size.
 encode_instr: (pass: i64, base: i64, pc: i64) -> i64 {
     m: u8* = tok_at(base)
     o0: u8* = tok_at(base + 1)
@@ -824,8 +757,6 @@ encode_instr: (pass: i64, base: i64, pc: i64) -> i64 {
         }
         return 4
     }
-    ; addiw is the 32-bit word add-immediate (opcode 0x1B); the host backend
-    ; normalizes every i32 result through it, so the HLL-0 subset needs it.
     if cstr.eq(m, "addiw".ptr) == 1 {
         if pass == 2 {
             emit_word(enc_i(reg_num(o0), reg_num(o1), parse_imm(o2), 0, 0x1B))
@@ -862,8 +793,7 @@ encode_instr: (pass: i64, base: i64, pc: i64) -> i64 {
         }
         return 4
     }
-    ; --- M-extension: 64-bit multiply / divide (opcode 0x33, funct7 = 0x01) ---
-    ; Needed for HLL `* / %`; mirrors asm-to-binary rv64m encodings.
+    ; --- M-extension ---
     if cstr.eq(m, "mul".ptr) == 1 {
         if pass == 2 {
             emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 0, 1))
@@ -965,7 +895,6 @@ encode_instr: (pass: i64, base: i64, pc: i64) -> i64 {
         }
         return 4
     }
-    ; call/la expand to auipc + jalr/addi against the current pc (8 bytes).
     if cstr.eq(m, "call".ptr) == 1 {
         if pass == 2 {
             if obj_mode == 1 {
@@ -983,8 +912,7 @@ encode_instr: (pass: i64, base: i64, pc: i64) -> i64 {
         }
         return 8
     }
-    ; la always relocates in object mode (section merging shifts cross-section
-    ; distances); the local pcrel is still prefilled and overwritten by ld.
+    ; Object-mode la always relocates because section merging shifts distances.
     if cstr.eq(m, "la".ptr) == 1 {
         if pass == 2 {
             rd: i64 = reg_num(o0)
@@ -1199,8 +1127,6 @@ encode_instr: (pass: i64, base: i64, pc: i64) -> i64 {
     return 0
 }
 
-; One assembly pass over the source. Pass 1 records label addresses; pass 2
-; encodes instructions into `code`.
 assemble: (pass: i64) {
     i: u64 = 0
     tpc: i64 = 0
@@ -1209,7 +1135,6 @@ assemble: (pass: i64) {
     line: u8[256] = []
     line_p: u8* = &line[0]
     while i < src_len {
-        ; Extract one line (without the newline) into line_p.
         j: u64 = 0
         while i < src_len {
             c: u8 = src[i]
@@ -1230,9 +1155,7 @@ assemble: (pass: i64) {
 
         strip_comment(line_p)
         tokenize(line_p)
-        if ntok == 0 {
-            ; blank or comment-only line
-        } else {
+        if ntok != 0 {
             base: i64 = 0
             first: u8* = tok_at(0)
             if ends_colon(first) == 1 {
@@ -1249,7 +1172,6 @@ assemble: (pass: i64) {
             if base < ntok {
                 d0: u8* = tok_at(base)
                 if @d0 == '.' {
-                    ; Directive (leading '.'); may switch section or emit data.
                     sz: i64 = handle_directive(pass, base, line_p)
                     if cur_sec == 1 {
                         dpc = dpc + sz
@@ -1266,9 +1188,8 @@ assemble: (pass: i64) {
     }
 }
 
-; --- ET_REL object emission ---
+; --- Output ---
 
-; 1 if path ends in the two-character suffix ".o".
 ends_dot_o: (path: u8*) -> i64 {
     l: u64 = cstr.len(path)
     if l < 2 {
@@ -1283,7 +1204,6 @@ ends_dot_o: (path: u8*) -> i64 {
 }
 
 main: () -> i32 {
-    ; Allocate the assembler's working buffers on the heap (formerly fixed .bss).
     src = new(u8, 8192)
     code = new(u8, 8192)
     data = new(u8, 8192)
@@ -1330,8 +1250,6 @@ main: () -> i32 {
     glbl_count = 0
     nreloc = 0
     assemble(1)
-    ; In object mode keep section-relative label addresses (the linker relocates);
-    ; the exe path remaps data labels into the flat payload.
     if obj_mode == 0 {
         resolve_labels()
     }
@@ -1342,7 +1260,6 @@ main: () -> i32 {
         return 1
     }
 
-    ; Object output: emit a relocatable ELF for ld.hll, then write and return.
     if obj_mode == 1 {
         ototal: u64 = object.write_object()
         oofd: i64 = sys.open(out_pp, 2)
@@ -1351,7 +1268,7 @@ main: () -> i32 {
             console.writeln(out_pp)
             return 1
         }
-        sys.write(oofd, out,ototal)
+        sys.write(oofd, out, ototal)
         sys.ftruncate(oofd, ototal)
         sys.close(oofd)
         console.write("as: wrote ".ptr)
@@ -1359,20 +1276,15 @@ main: () -> i32 {
         return 0
     }
 
-    ; Append NOP padding so a speculative fetch past the final ecall stays valid
-    ; (a zero word would trap to M-mode and halt). OS spec 10.3; PAD matches the label gap.
+    ; Keep speculative fetch past a final ecall on valid NOPs.
     for pad in 0..8 {
         emit_word(0x13 as u32)
     }
-    ; The data section follows the text and its pad in the flat payload.
     for di in 0..data_len {
         push_byte(data[di])
     }
 
-    ; Minimal static ELF64: 64-byte header + one 56-byte PT_LOAD in the first page,
-    ; payload at HDR. sys_exec reads e_entry + the PT_LOAD and maps it at p_vaddr.
     base: u64 = USER_CODE_BASE as u64
-    ; e_ident: 0x7F 'E' 'L' 'F', ELFCLASS64, ELFDATA2LSB, EV_CURRENT; rest zero.
     out[0] = 0x7F as u8
     out[1] = 69 as u8   ; 'E'
     out[2] = 76 as u8   ; 'L'
@@ -1392,7 +1304,6 @@ main: () -> i32 {
     wr_le(56, 1, 2)            ; e_phnum (one PT_LOAD)
     ; e_shentsize/e_shnum/e_shstrndx (58/60/62) stay 0.
 
-    ; One PT_LOAD covering the whole payload, mapped R|W|X at the load base.
     wr_le(64, 1, 4)            ; p_type = PT_LOAD
     wr_le(68, 7, 4)            ; p_flags = R|W|X
     wr_le(72, HDR as u64, 8)   ; p_offset (payload at the page boundary)
@@ -1402,7 +1313,6 @@ main: () -> i32 {
     wr_le(104, code_len, 8)    ; p_memsz (no separate BSS; .zero is in the payload)
     wr_le(112, 4096, 8)        ; p_align
 
-    ; out[120..HDR] stay zero; the payload follows at the page boundary.
     for i in 0..code_len {
         d: u8* = out + (HDR as u64) + i
         @d = code[i]
@@ -1415,7 +1325,7 @@ main: () -> i32 {
         console.writeln(out_pp)
         return 1
     }
-    sys.write(ofd, out,total)
+    sys.write(ofd, out, total)
     sys.ftruncate(ofd, total)
     sys.close(ofd)
 

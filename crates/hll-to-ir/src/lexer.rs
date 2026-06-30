@@ -196,6 +196,7 @@ impl<'a> Lexer<'a> {
         match text {
             "type" => Token::Type,
             "struct" => Token::Struct,
+            "impl" => Token::Impl,
             "const" => Token::Const,
             "external" => Token::External,
             "if" => Token::If,

@@ -1,10 +1,8 @@
-; File-management builtins (touch/mkdir/rm/rmdir/mv) split out of shell.hll and linked
-; with it; each resolves its operand to an absolute path via shell_state.sh_join_path.
+; File-management builtins for shell.hll.
 shell_state := import("./shell.hll")
 console := import("console")
 sys := import("sys")
 
-; Create an empty file (open with the create flag, then close).
 export cmd_touch: (cwd: u8*, arg: u8*) {
     if @arg == 0 {
         console.writeln("touch: missing file name".ptr)
@@ -22,7 +20,6 @@ export cmd_touch: (cwd: u8*, arg: u8*) {
     sys.close(fd)
 }
 
-; Create a directory.
 export cmd_mkdir: (cwd: u8*, arg: u8*) {
     if @arg == 0 {
         console.writeln("mkdir: missing directory name".ptr)
@@ -37,7 +34,6 @@ export cmd_mkdir: (cwd: u8*, arg: u8*) {
     }
 }
 
-; Remove a regular file.
 export cmd_rm: (cwd: u8*, arg: u8*) {
     if @arg == 0 {
         console.writeln("rm: missing file name".ptr)
@@ -52,7 +48,6 @@ export cmd_rm: (cwd: u8*, arg: u8*) {
     }
 }
 
-; Remove an empty directory.
 export cmd_rmdir: (cwd: u8*, arg: u8*) {
     if @arg == 0 {
         console.writeln("rmdir: missing directory name".ptr)
@@ -67,9 +62,7 @@ export cmd_rmdir: (cwd: u8*, arg: u8*) {
     }
 }
 
-; Move/rename: "mv <old> <new>". Splits arg on the first run of spaces.
 export cmd_mv: (cwd: u8*, arg: u8*) {
-    ; Find the space separating the two operands.
     sp: u64 = 0
     while @(arg + sp) != 0 {
         if @(arg + sp) == ' ' {
@@ -81,7 +74,6 @@ export cmd_mv: (cwd: u8*, arg: u8*) {
         console.writeln("mv: usage: mv <old> <new>".ptr)
         return
     }
-    ; Copy the first operand out before we walk past it.
     src: u8[128] = []
     src_p: u8* = &src[0]
     end: u64 = sp
@@ -94,7 +86,6 @@ export cmd_mv: (cwd: u8*, arg: u8*) {
     }
     st: u8* = src_p + end
     @st = 0 as u8
-    ; Skip the separating space(s) to reach the destination operand.
     while @(arg + sp) == ' ' {
         sp = sp + 1
     }

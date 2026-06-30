@@ -282,6 +282,28 @@ impl HighLevelCompiler {
                 if mode == EvalMode::Address {
                     return None;
                 }
+                // A `recv.name(args)` callee is either a method (free fn `Type_name`)
+                // or an indirect call through a fn-pointer field; a field wins.
+                if let Expression::Primary(PrimaryExpr::FieldAccess { expr, field }) =
+                    callee.as_ref()
+                {
+                    let recv_addr = self.lower_expr(expr, EvalMode::Address)?;
+                    if !self.receiver_has_field(&recv_addr.ty, field)
+                        && let Some(type_name) = Self::receiver_struct_name(&recv_addr.ty)
+                    {
+                        let method = format!("{type_name}_{field}");
+                        if self.function_param_types.contains_key(&method) {
+                            return self.lower_method_call(&method, recv_addr, arguments);
+                        }
+                    }
+                    let field_val =
+                        self.lower_field_access_mode(&recv_addr, field, EvalMode::Value)?;
+                    return self.lower_call_through_value(
+                        field_val,
+                        arguments,
+                        &format!("field `{field}`"),
+                    );
+                }
                 let callee_val = self.lower_expr(callee, EvalMode::Value)?;
                 self.lower_call_through_value(callee_val, arguments, "callee expression")
             }
@@ -534,6 +556,101 @@ impl HighLevelCompiler {
         Some(LoweredValue {
             value: dest.map(IrValue::Register).unwrap_or(IrValue::Null),
             ty: *return_type,
+            is_unsigned: false,
+        })
+    }
+
+    /// True when the receiver type, after peeling pointers, is a struct holding `field`.
+    fn receiver_has_field(&self, ty: &IrType, field: &str) -> bool {
+        let mut resolved = self.resolve_named_type(ty);
+        while let IrType::Pointer(inner) = resolved {
+            resolved = self.resolve_named_type(&inner);
+        }
+        matches!(resolved, IrType::Aggregate(fields) if fields.iter().any(|(n, _)| n == field))
+    }
+
+    /// The named struct type of a receiver address, peeling pointer levels.
+    fn receiver_struct_name(ty: &IrType) -> Option<String> {
+        match ty {
+            IrType::Named(name) => Some(name.clone()),
+            IrType::Pointer(inner) => Self::receiver_struct_name(inner),
+            _ => None,
+        }
+    }
+
+    /// Lower `recv.method(args)` as a direct call `method(self, args)`. `recv_addr`
+    /// is the receiver address, reduced to a single `Type*` for the `self` argument.
+    fn lower_method_call(
+        &mut self,
+        method: &str,
+        recv_addr: LoweredValue,
+        arguments: &[Expression],
+    ) -> Option<LoweredValue> {
+        let param_types = self
+            .function_param_types
+            .get(method)
+            .cloned()
+            .unwrap_or_default();
+        let expected = param_types.len().saturating_sub(1);
+        if arguments.len() != expected {
+            self.context.diagnostics.error(format!(
+                "method `{method}` expects {expected} argument(s), got {}",
+                arguments.len()
+            ));
+            return None;
+        }
+
+        // Reduce the receiver address down to one pointer level over the struct.
+        let mut ptr_ty = recv_addr.ty;
+        let mut self_val = recv_addr.value;
+        while let IrType::Pointer(inner) = ptr_ty.clone() {
+            if !matches!(self.resolve_named_type(&inner), IrType::Pointer(_)) {
+                break;
+            }
+            let IrValue::Register(reg) = self_val else {
+                return None;
+            };
+            let dest = self.new_temp();
+            self.push_instruction(IrInstruction::Load {
+                dest: dest.clone(),
+                ty: (*inner).clone(),
+                ptr: reg,
+                offset: None,
+            });
+            ptr_ty = *inner;
+            self_val = IrValue::Register(dest);
+        }
+
+        let mut arg_values = vec![self_val];
+        for (index, arg) in arguments.iter().enumerate() {
+            let Some(lowered) = self.lower_value_for_type(arg, &param_types[index + 1]) else {
+                self.context.diagnostics.error(format!(
+                    "failed to lower argument {} for method `{method}`",
+                    index + 1
+                ));
+                return None;
+            };
+            arg_values.push(lowered.value);
+        }
+
+        let return_ty = self
+            .function_return_types
+            .get(method)
+            .cloned()
+            .unwrap_or(IrType::Void);
+        let dest = if return_ty == IrType::Void {
+            None
+        } else {
+            Some(self.new_temp())
+        };
+        self.push_instruction(IrInstruction::Call {
+            dest: dest.clone(),
+            function: method.to_owned(),
+            args: arg_values,
+        });
+        Some(LoweredValue {
+            value: dest.map(IrValue::Register).unwrap_or(IrValue::Null),
+            ty: return_ty,
             is_unsigned: false,
         })
     }

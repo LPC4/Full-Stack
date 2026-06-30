@@ -118,7 +118,17 @@ impl HllCompiler {
         // Mangle this unit's own definitions when it is built as one module of a link closure,
         // so two modules can define the same private name without colliding at link.
         if let Some(prefix) = &self.config.module_mangle_prefix {
-            crate::imports::mangle_module(&mut ast, prefix, &mangle_exempt());
+            // Desugared `impl` methods (first parameter `self`) keep stable names so
+            // `recv.method()` resolves by convention after mangling.
+            let mut exempt = mangle_exempt();
+            for decl in &ast.declarations {
+                if let DeclNode::Function { name, params, .. } = &decl.decl
+                    && params.first().is_some_and(|p| p.name == "self")
+                {
+                    exempt.insert(name.clone());
+                }
+            }
+            crate::imports::mangle_module(&mut ast, prefix, &exempt);
         }
 
         ast = monomorphize_program(&ast)
@@ -1229,5 +1239,38 @@ main: () -> i32 { return 0 }
 "#,
         )
         .expect("vtable with a second method field should compile");
+    }
+}
+
+#[cfg(test)]
+mod impl_methods {
+    use crate::{CompileConfig, HllCompiler, TargetMode};
+
+    // `impl Type { m: (self: Type*, ...) }` desugars to `Type_m`; `recv.m(args)`
+    // dispatches statically, including a method calling another method via `self`.
+    #[test]
+    fn impl_method_call_compiles() {
+        let src = r#"
+struct Rect { width: i32, height: i32 }
+impl Rect {
+    area: (self: Rect*) -> i32 { return self.width * self.height }
+    scale: (self: Rect*, k: i32) -> i32 { return self.area() * k }
+}
+main: () -> i32 {
+    r: Rect = Rect { .width = 6, .height = 7 }
+    if r.area() != 42 { return 1 }
+    if r.scale(2) != 84 { return 2 }
+    return 0
+}
+"#;
+        let r = HllCompiler::new(CompileConfig {
+            target: TargetMode::Hosted,
+            strict: true,
+            ..CompileConfig::default()
+        })
+        .compile(src);
+        if let Err(e) = r {
+            panic!("compile failed: {e:?}");
+        }
     }
 }

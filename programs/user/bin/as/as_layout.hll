@@ -1,10 +1,5 @@
-
-; Shared record layouts for the assembler, prepended to every `as` translation unit
-; so as.hll and as_object.hll agree on one definition. HLL types are file-scoped.
-
-; A label definition: 16-byte name, byte address, and owning section (0 text, 1 data).
+; Shared assembler record layouts.
 struct Label { name: u8[16], addr: i64, sec: i64 }
 
-; One relocation: 16-byte target symbol name, byte offset in .text, and kind
-; (0 = CALL_PLT auipc+jalr, 1 = JAL, 2 = LA/PCREL_HI20 auipc+addi).
+; kind: 0 = CALL_PLT, 1 = JAL, 2 = LA/PCREL_HI20.
 struct Reloc { sym: u8[16], off: i64, kind: i64 }
