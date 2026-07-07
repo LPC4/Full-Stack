@@ -1,23 +1,12 @@
-#![expect(
-    clippy::collapsible_if,
-    clippy::default_constructed_unit_structs,
-    clippy::derivable_impls,
-    clippy::let_underscore_must_use,
-    clippy::let_underscore_untyped,
-    clippy::manual_div_ceil,
-    clippy::manual_let_else,
-    clippy::match_wildcard_for_single_variants,
-    clippy::ref_patterns,
-    clippy::too_many_lines,
-    clippy::type_complexity,
-    clippy::unwrap_used,
-    reason = "legacy GUI event handlers and controlled UI state access"
-)]
 #![warn(rust_2018_idioms)]
+#![expect(
+    clippy::too_many_lines,
+    reason = "IDE shell panels are long by nature; lint cleanup proceeds incrementally"
+)]
 #![windows_subsystem = "windows"]
 
 mod app;
-mod machine_window;
+mod ui;
 
 // When compiling natively:
 #[cfg(not(target_arch = "wasm32"))]

@@ -2,11 +2,8 @@ use asm_to_binary::assembler::link_layout::LinkLayout;
 use asm_to_binary::assembler::{Assembler, AssemblerError};
 use asm_to_binary::rv_instruction::RvInstruction;
 use asm_to_binary::{AssembledOutput, LinkerError, ObjectLinker};
-pub use hll_to_ir::TargetMode;
-use hll_to_ir::{
-    CompileConfig, Diagnostic, DiagnosticLevel, HllCompiler, IrProgram, IrType, OptOptions,
-    optimize_ir,
-};
+use hll_to_ir::{CompileConfig, HllCompiler, IrProgram, IrType, OptOptions, optimize_ir};
+pub use hll_to_ir::{Diagnostic, DiagnosticLevel, TargetMode};
 use ir_to_asm::compiler::compiler_rv64::CompilerRv64;
 use std::cell::RefCell;
 use std::collections::hash_map::DefaultHasher;
@@ -325,6 +322,13 @@ impl CompilationPipeline {
         self.current_source_path = path.map(Into::into);
     }
 
+    /// File name attributed to the pc-to-source line table for this unit.
+    fn config_source_file(&self) -> Option<String> {
+        self.current_source_path
+            .as_ref()
+            .map(|p| p.to_string_lossy().into_owned())
+    }
+
     /// Set the resolver mapping `import("name")` to that module's source (default: the
     /// `PROGRAMS`-backed lookup). Pass `None` to disable import resolution entirely.
     pub fn set_module_resolver(&mut self, resolver: Option<ModuleResolver>) {
@@ -458,8 +462,14 @@ impl CompilationPipeline {
             std::collections::HashMap::new();
         // Module-import aliases are namespace handles, not symbol definitions, so they do not
         // conflict with a same-named export (e.g. `klog := import("klog")` where klog exports klog).
-        let mut local_names = hll_to_ir::imports::collect_declaration_names(source)
-            .map_err(|msg| vec![Diagnostic::new(DiagnosticLevel::Error, msg)])?;
+
+        // An unparseable root skips resolution; the compiler reports it with a span.
+        let Ok(mut local_names) = hll_to_ir::imports::collect_declaration_names(source) else {
+            return Ok(ResolvedModules {
+                prelude: None,
+                aliases: std::collections::HashMap::new(),
+            });
+        };
         for (alias, _) in hll_to_ir::imports::collect_module_imports(source)
             .map_err(|msg| vec![Diagnostic::new(DiagnosticLevel::Error, msg)])?
         {
@@ -711,6 +721,7 @@ impl CompilationPipeline {
                 .mangle_modules
                 .then(|| self.current_module_prefix.clone())
                 .flatten(),
+            source_file: self.config_source_file(),
         });
 
         let mut out = compiler
@@ -799,6 +810,7 @@ impl CompilationPipeline {
                 .mangle_modules
                 .then(|| self.current_module_prefix.clone())
                 .flatten(),
+            source_file: self.config_source_file(),
         });
 
         let mut out = match compiler.compile(source) {
@@ -2194,8 +2206,10 @@ main: () -> i32 { return add() }
     // An unknown import name is a compile error naming the missing module.
     #[test]
     fn unresolved_import_is_an_error() {
-        let pipeline = CompilationPipeline::new();
-        let importer = "import \"does_not_exist\"\nmain: () -> i32 { return 0 }\n";
+        let mut pipeline = CompilationPipeline::new();
+        pipeline.set_write_artifacts(false);
+        pipeline.set_module_resolver(Some(Box::new(|_name: &str| None)));
+        let importer = "x := import(\"does_not_exist\")\nmain: () -> i32 { return 0 }\n";
         let error = pipeline
             .compile(importer)
             .expect_err("unknown import must fail");

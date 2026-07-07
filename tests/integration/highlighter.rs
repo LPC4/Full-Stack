@@ -1,4 +1,4 @@
-use full_stack::view::highlight_assembly;
+use full_stack::highlight::highlight_assembly;
 
 fn style() -> egui::Style {
     egui::Style::default()

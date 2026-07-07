@@ -18,6 +18,7 @@ pub mod reg {
     pub const SCR: u64 = 7; // Scratch
 }
 
+#[derive(Clone)]
 pub struct Uart {
     ier: u8,
     iir: u8,

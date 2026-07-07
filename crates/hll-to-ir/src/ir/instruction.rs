@@ -6,6 +6,12 @@ use std::fmt;
 #[derive(Debug, Clone, PartialEq)]
 pub enum IrInstruction {
     Comment(String),
+    /// Source-location marker for the pc-to-source line table. Emits no code;
+    /// the backend turns it into a text-invisible assembler marker.
+    SourceLine {
+        file: String,
+        line: u32,
+    },
     Alloc {
         dest: IrRegister,
         ty: IrType,
@@ -108,6 +114,7 @@ impl fmt::Display for IrInstruction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Comment(message) => write!(f, "; {message}"),
+            Self::SourceLine { file, line } => write!(f, "; .loc {file}:{line}"),
             Self::Alloc { dest, ty, count } => {
                 write!(f, "{dest} = stack_alloc {ty}")?;
                 if let Some(count) = count {

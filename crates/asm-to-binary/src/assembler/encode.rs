@@ -2,12 +2,23 @@
 /// See `_RISCV_SPECIFICATIONS.md` for pseudo-instruction expansion rules.
 use super::AssemblerError;
 use super::layout::Layout;
-use super::output::{AssembledOutput, RelocationKind, RelocationRecord};
+use super::output::{AssembledOutput, LineEntry, RelocationKind, RelocationRecord};
 use super::section::{SectionData, SectionKind};
 use super::token::{AsmToken, BranchKind};
 use crate::real::RealInstruction;
 use crate::riscv::rv64i::{Addi, Auipc, Beq, Bge, Bgeu, Blt, Bltu, Bne, Jal as JalInst, Jalr};
 use crate::traits::Instruction as _;
+
+/// Record a pc-to-source entry for the instruction about to be emitted at `addr`.
+fn record_line(out: &mut AssembledOutput, addr: u64, loc: Option<(u32, u32)>) {
+    if let Some((file_id, line)) = loc {
+        out.line_table.push(LineEntry {
+            addr,
+            file_id,
+            line,
+        });
+    }
+}
 
 /// Encode all tokens into an `AssembledOutput` using the layout symbol table.
 pub fn encode(tokens: &[AsmToken], layout: &Layout) -> Result<AssembledOutput, AssemblerError> {
@@ -41,9 +52,15 @@ pub fn encode(tokens: &[AsmToken], layout: &Layout) -> Result<AssembledOutput, A
 
     let mut current_kind = SectionKind::Text;
     let mut current_addr: u64 = section_bases.get(&current_kind).copied().unwrap_or(0);
+    // Source location attributed to the instructions that follow, until reset.
+    let mut current_loc: Option<(u32, u32)> = None;
 
     for token in tokens {
         match token {
+            AsmToken::Loc { file, line } => {
+                let file_id = out.intern_file(file);
+                current_loc = Some((file_id, *line));
+            }
             AsmToken::Section(kind) => {
                 current_kind = kind.clone();
                 let base = section_bases.get(kind).copied().unwrap_or(0);
@@ -68,6 +85,7 @@ pub fn encode(tokens: &[AsmToken], layout: &Layout) -> Result<AssembledOutput, A
                 }
             }
             AsmToken::Real(inst) => {
+                record_line(&mut out, current_addr, current_loc);
                 push_u32(
                     sections
                         .entry(current_kind.clone())
@@ -82,6 +100,7 @@ pub fn encode(tokens: &[AsmToken], layout: &Layout) -> Result<AssembledOutput, A
                 rs2,
                 target,
             } => {
+                record_line(&mut out, current_addr, current_loc);
                 let word = encode_branch(kind, *rs1, *rs2, target, current_addr, &layout.symbols)?;
                 push_u32(
                     sections
@@ -92,6 +111,7 @@ pub fn encode(tokens: &[AsmToken], layout: &Layout) -> Result<AssembledOutput, A
                 );
             }
             AsmToken::Jal { rd, target } => {
+                record_line(&mut out, current_addr, current_loc);
                 let sec = sections
                     .entry(current_kind.clone())
                     .or_insert_with(|| SectionData::new(current_kind.clone()));
@@ -111,6 +131,7 @@ pub fn encode(tokens: &[AsmToken], layout: &Layout) -> Result<AssembledOutput, A
                 }
             }
             AsmToken::Call { symbol } => {
+                record_line(&mut out, current_addr, current_loc);
                 let sec = sections
                     .entry(current_kind.clone())
                     .or_insert_with(|| SectionData::new(current_kind.clone()));
@@ -126,6 +147,7 @@ pub fn encode(tokens: &[AsmToken], layout: &Layout) -> Result<AssembledOutput, A
                 current_addr += 8;
             }
             AsmToken::Tail { symbol } => {
+                record_line(&mut out, current_addr, current_loc);
                 let sec = sections
                     .entry(current_kind.clone())
                     .or_insert_with(|| SectionData::new(current_kind.clone()));
@@ -141,6 +163,7 @@ pub fn encode(tokens: &[AsmToken], layout: &Layout) -> Result<AssembledOutput, A
                 current_addr += 8;
             }
             AsmToken::La { rd, symbol } => {
+                record_line(&mut out, current_addr, current_loc);
                 let sec = sections
                     .entry(current_kind.clone())
                     .or_insert_with(|| SectionData::new(current_kind.clone()));

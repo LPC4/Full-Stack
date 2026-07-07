@@ -5,6 +5,8 @@ pub struct Span {
     pub line: u32,
     /// 1-based column (byte offset within the line).
     pub col: u32,
+    /// Byte length of the spanned token; 0 means "point, do not underline".
+    pub len: u32,
     /// The full source line (without the trailing newline).
     pub source_line: String,
 }
@@ -18,6 +20,19 @@ impl Span {
     /// Format as `"line N | source text"`.
     pub fn display(&self) -> String {
         format!("line {} | {}", self.line, self.source_line)
+    }
+
+    /// Number of caret columns to draw under the token: the character count of
+    /// the spanned bytes on its line, at least 1.
+    pub fn caret_width(&self) -> usize {
+        if self.len == 0 {
+            return 1;
+        }
+        let start = (self.col as usize).saturating_sub(1);
+        let end = start + self.len as usize;
+        self.source_line
+            .get(start..end)
+            .map_or(1, |slice| slice.chars().count().max(1))
     }
 }
 

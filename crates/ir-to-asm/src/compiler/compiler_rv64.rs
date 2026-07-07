@@ -85,6 +85,12 @@ impl CompilerRv64 {
             let tokens = peephole::optimize(&self.emitter.finish_tokens());
             let text = tokens
                 .iter()
+                .filter(|t| {
+                    !matches!(
+                        t,
+                        asm_to_binary::rv_instruction::RvInstruction::SourceLoc { .. }
+                    )
+                })
                 .map(|t| t.to_string())
                 .collect::<Vec<_>>()
                 .join("\n");
@@ -239,6 +245,7 @@ impl CompilerRv64 {
         };
         match inst {
             Comment(s) => self.emitter.emit_comment(s),
+            IrInstruction::SourceLine { file, line } => self.emitter.emit_source_loc(file, *line),
             Alloc { .. } | Phi { .. } => {}
             InlineAsm { lines } => {
                 for line in lines {
@@ -1780,6 +1787,32 @@ mod tests {
         IntWidth, IrBlock, IrCastMode, IrFunction, IrInstruction, IrProgram, IrRegister,
         IrTerminator, IrType, IrValue,
     };
+
+    #[test]
+    fn source_line_marker_flows_to_line_table() {
+        use asm_to_binary::Assembler;
+
+        let mut entry = IrBlock::new("entry");
+        entry.push_instruction(IrInstruction::SourceLine {
+            file: "prog.hll".to_owned(),
+            line: 7,
+        });
+        entry.set_terminator(IrTerminator::Return(Some(IrValue::Integer(0))));
+        let mut func = IrFunction::new("main", IrType::Integer(IntWidth::I32));
+        func.push_block(entry);
+        let mut program = IrProgram::new("m");
+        program.push_function(func);
+
+        let (_text, tokens) = CompilerRv64::new().compile_with_tokens(&program);
+        let out = Assembler::assemble(&tokens).expect("assemble");
+
+        // The marker attributes the return sequence to prog.hll:7.
+        assert!(out.line_table_len() >= 1, "expected line-table entries");
+        assert!(out.addr_for_source("prog.hll", 7).is_some());
+        for e in out.line_table_iter() {
+            assert_eq!(out.source_for_addr(e.addr), Some(("prog.hll", 7)));
+        }
+    }
 
     // A zero-extending cast from a narrow unsigned integer must clear the high
     // bits the sign-extending load (lb/lh/lw) left behind -- it cannot be a bare

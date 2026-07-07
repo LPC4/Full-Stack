@@ -96,8 +96,8 @@ pub fn optimize(tokens: &[RvInstruction]) -> Vec<RvInstruction> {
     for tok in tokens {
         let RvInstruction::Real(real) = tok else {
             match tok {
-                // Comments carry no code, so they never disturb tracking.
-                RvInstruction::Comment(_) => {}
+                // Comments and line markers carry no code, so they never disturb tracking.
+                RvInstruction::Comment(_) | RvInstruction::SourceLoc { .. } => {}
                 // Labels, directives, and pseudo-instructions end the run.
                 _ => state.clear(),
             }

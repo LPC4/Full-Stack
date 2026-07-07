@@ -110,9 +110,12 @@ pub enum ReturnType {
     Single(Type),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Block {
     pub statements: Vec<Statement>,
+    // 1-based source line per statement (parallel to `statements`), captured at
+    // parse time. Consumed by the marker-weave pass; empty on synthesized blocks.
+    pub stmt_lines: Vec<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -4,6 +4,7 @@
 use crate::error::VmError;
 use crate::memory::MemoryAccess;
 
+#[derive(Clone)]
 pub struct Clint {
     pub mtime: u64,
     mtimecmp: u64,

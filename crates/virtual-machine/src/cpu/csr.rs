@@ -59,6 +59,7 @@ const S_IRQ_MASK: u64 = (1u64 << 9) | (1u64 << 5) | (1u64 << 1);
 // MTIP(7) and MEIP(11) are hardware-only; MSIP(3), STIP(5), SEIP(9), SSIP(1) are writable.
 const MIP_W_MASK: u64 = (1u64 << 1) | (1u64 << 3) | (1u64 << 5) | (1u64 << 9);
 
+#[derive(Clone)]
 pub struct CsrFile {
     // Machine-mode CSRs
     pub mstatus: u64,

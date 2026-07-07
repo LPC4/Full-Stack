@@ -133,6 +133,70 @@ mod tests {
         assert_eq!(Directive::parse(".space 16"), Some(Directive::Space(16)));
     }
 
+    // ---- source line table ----
+
+    fn nop() -> RvInstruction {
+        RvInstruction::Real(RealInstruction::Addi(Addi::new(0, 0, 0)))
+    }
+
+    fn loc(file: &str, line: u32) -> RvInstruction {
+        RvInstruction::SourceLoc {
+            file: file.to_owned(),
+            line,
+        }
+    }
+
+    #[test]
+    fn line_table_maps_addresses_to_source_both_ways() {
+        // One leading unattributed instruction at 0x0, then two lines of code.
+        let tokens = vec![
+            RvInstruction::Label("_start".to_owned()),
+            nop(),            // @0: before any marker
+            loc("a.hll", 10), // line 10 covers @4, @8
+            nop(),            // @4
+            nop(),            // @8
+            loc("a.hll", 11), // line 11 covers @12
+            nop(),            // @12
+        ];
+        let out = Assembler::assemble(&tokens).expect("assemble");
+
+        assert_eq!(out.line_table_len(), 3, "one entry per attributed instr");
+
+        // pc -> line: nearest entry at or below the address.
+        assert_eq!(
+            out.source_for_addr(0),
+            None,
+            "leading instr is unattributed"
+        );
+        assert_eq!(out.source_for_addr(4), Some(("a.hll", 10)));
+        assert_eq!(
+            out.source_for_addr(6),
+            Some(("a.hll", 10)),
+            "mid-instruction"
+        );
+        assert_eq!(out.source_for_addr(8), Some(("a.hll", 10)));
+        assert_eq!(out.source_for_addr(12), Some(("a.hll", 11)));
+        assert_eq!(
+            out.source_for_addr(1000),
+            Some(("a.hll", 11)),
+            "past the end"
+        );
+
+        // line -> pc: lowest address attributed to the line.
+        assert_eq!(out.addr_for_source("a.hll", 10), Some(4));
+        assert_eq!(out.addr_for_source("a.hll", 11), Some(12));
+        assert_eq!(out.addr_for_source("a.hll", 99), None);
+        assert_eq!(out.addr_for_source("other.hll", 10), None);
+    }
+
+    #[test]
+    fn line_markers_emit_no_bytes() {
+        let with_markers = Assembler::assemble(&[loc("a.hll", 1), nop(), loc("a.hll", 2), nop()])
+            .expect("assemble");
+        let without = Assembler::assemble(&[nop(), nop()]).expect("assemble");
+        assert_eq!(with_markers.text_bytes(), without.text_bytes());
+    }
+
     #[test]
     fn directive_parse_unknown_is_not_none() {
         let d = Directive::parse(".some_future_directive");

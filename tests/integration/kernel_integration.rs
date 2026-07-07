@@ -914,7 +914,7 @@ fn kernel_shell_and_chains_on_success() {
 }
 
 // A failing first command (a non-zero exit) short-circuits the `&&` chain: the
-// second command must not run. Guards the exit-code gating in run_line. PLAN 4.2.
+// second command must not run. Guards the exit-code gating in run_line.
 #[test]
 fn kernel_shell_and_stops_on_failure() {
     let (outcome, uart) = run_tool_session(
@@ -3394,7 +3394,7 @@ main: () -> i32 {
 // boot the shell is pid 1, the running process, parented by the kernel (0).
 #[test]
 fn os_inspector_sees_shell_as_pid1() {
-    use full_stack::view::debug::os_view::{self, OsSymbols, Role};
+    use full_stack::inspect::os_view::{self, OsSymbols, Role};
 
     let kernel = cached_kernel();
     let shell = compile_hosted_program("shell");
@@ -3429,7 +3429,7 @@ fn os_inspector_sees_shell_as_pid1() {
 // the canonical base, so the walk must yield at least one mapped word.
 #[test]
 fn os_inspector_walks_pid1_stack() {
-    use full_stack::view::debug::os_view::{self, OsSymbols, Role};
+    use full_stack::inspect::os_view::{self, OsSymbols, Role};
 
     let kernel = cached_kernel();
     let shell = compile_hosted_program("shell");
@@ -3468,7 +3468,7 @@ fn os_inspector_walks_pid1_stack() {
 // After boot the shell has polled input (readchar), so the ring holds its calls.
 #[test]
 fn os_inspector_traces_shell_syscalls() {
-    use full_stack::view::debug::os_view::{self, OsSymbols};
+    use full_stack::inspect::os_view::{self, OsSymbols};
 
     let kernel = cached_kernel();
     let shell = compile_hosted_program("shell");
@@ -3503,7 +3503,7 @@ fn os_inspector_traces_shell_syscalls() {
 // on-disk offsets, the tree reader, and the file-preview round-trip.
 #[test]
 fn fs_inspector_reads_tree_and_preview() {
-    use full_stack::view::debug::fs_view::{self, FsSymbols};
+    use full_stack::inspect::fs_view::{self, FsSymbols};
 
     let kernel = cached_kernel();
     let shell = compile_hosted_program("shell");

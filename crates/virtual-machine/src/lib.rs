@@ -4,7 +4,6 @@
     clippy::let_underscore_must_use,
     clippy::let_underscore_untyped,
     clippy::manual_let_else,
-    clippy::manual_ok_err,
     clippy::map_err_ignore,
     clippy::match_same_arms,
     clippy::missing_assert_message,
@@ -37,4 +36,4 @@ pub mod memory;
 pub mod rom;
 pub mod virtual_machine;
 
-pub use virtual_machine::{RunResult, VirtualMachine};
+pub use virtual_machine::{RunResult, VirtualMachine, VmSnapshot};

@@ -68,6 +68,7 @@ impl TargetMode {
 // Re-export public surface: HllCompiler, IR types, and diagnostics.
 pub use compiler::{Diagnostic, DiagnosticLevel, OptOptions, optimize as optimize_ir};
 pub use hll_compiler::{CompileConfig, HllCompiler, HllOutput};
+pub use token::Span;
 
 // Re-export IR types so downstream crates (ir-to-asm, visualizer) can import them
 // from hll_to_ir:: directly.

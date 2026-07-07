@@ -201,6 +201,7 @@ impl HighLevelCompiler {
                 self.current_blocks.clear();
                 self.current_block = None;
                 self.defers.clear();
+                self.reset_source_line();
 
                 let return_ty = self.lower_return_type(return_type.as_ref());
                 self.current_return_ty = Some(return_ty.clone());

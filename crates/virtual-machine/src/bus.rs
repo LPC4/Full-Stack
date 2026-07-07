@@ -5,11 +5,23 @@ use crate::devices::{
 };
 use crate::error::VmError;
 use crate::memory::{
-    MemoryAccess, PeekByteRaw as _,
+    MemoryAccess, PeekByteRaw as _, RamImage as _,
     cache::{Cache, CacheParams},
     ram::Ram,
     rom::Rom,
 };
+
+/// Snapshot of the bus MMIO device state, cloned for time-travel snapshots. RAM
+/// is captured separately as a bulk image; ROM is static and needs no snapshot.
+#[derive(Clone)]
+pub struct DeviceState {
+    uart: Uart,
+    clint: Clint,
+    plic: Plic,
+    framebuffer: Framebuffer,
+    keyboard: Keyboard,
+    syscon_exit: Option<i64>,
+}
 
 pub const ROM_BASE: u64 = 0x0000_0000;
 pub const ROM_SIZE: u64 = 256 * 1024 * 1024; // 256 MiB
@@ -107,6 +119,40 @@ impl SystemBus {
             keyboard,
             syscon_exit: None,
         }
+    }
+
+    /// Capture the architectural RAM image (RAM overlaid with dirty cache lines).
+    pub fn ram_image(&self) -> Vec<u8> {
+        let mut buf = vec![0u8; self.l1_cache.ram_len()];
+        self.l1_cache.write_image_into(&mut buf);
+        buf
+    }
+
+    /// Replace RAM with `bytes` and drop every cached line cold (no writeback).
+    pub fn load_ram_image(&mut self, bytes: &[u8]) {
+        self.l1_cache.load_image(bytes);
+    }
+
+    /// Clone the MMIO device state for a snapshot.
+    pub fn device_state(&self) -> DeviceState {
+        DeviceState {
+            uart: self.uart.clone(),
+            clint: self.clint.clone(),
+            plic: self.plic.clone(),
+            framebuffer: self.framebuffer.clone(),
+            keyboard: self.keyboard.clone(),
+            syscon_exit: self.syscon_exit,
+        }
+    }
+
+    /// Restore MMIO device state from a snapshot.
+    pub fn restore_device_state(&mut self, state: &DeviceState) {
+        self.uart = state.uart.clone();
+        self.clint = state.clint.clone();
+        self.plic = state.plic.clone();
+        self.framebuffer = state.framebuffer.clone();
+        self.keyboard = state.keyboard.clone();
+        self.syscon_exit = state.syscon_exit;
     }
 
     /// Route memory accesses through L1 cache for RAM, direct for MMIO.

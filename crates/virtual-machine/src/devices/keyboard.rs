@@ -25,6 +25,7 @@ pub const KBD_PRESSED_BIT: u32 = 1 << 16;
 const KBD_QUEUE_CAP: usize = 256;
 
 /// A bounded FIFO of key events shared between the host GUI and the guest.
+#[derive(Clone)]
 pub struct Keyboard {
     queue: std::collections::VecDeque<u32>,
 }

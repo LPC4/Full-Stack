@@ -24,6 +24,7 @@ pub struct BuildManifest {
     pub string_prefix: Option<String>,
     pub link_layout: Option<LinkLayout>,
     pub module_resolver: Option<BuildModuleResolver>,
+    pub artifact_root: Option<PathBuf>,
     pub extra_objects: Vec<BuildObject>,
     pub abi_exports: Vec<String>,
     pub run_semantic_analysis: bool,
@@ -46,6 +47,7 @@ impl BuildManifest {
             string_prefix: Some("_u_".to_owned()),
             link_layout: None,
             module_resolver: None,
+            artifact_root: None,
             extra_objects: Vec::new(),
             abi_exports: vec!["main".to_owned()],
             run_semantic_analysis: false,
@@ -68,6 +70,7 @@ impl BuildManifest {
             string_prefix: Some("__kern_str_".to_owned()),
             link_layout: None,
             module_resolver: None,
+            artifact_root: None,
             extra_objects: Vec::new(),
             abi_exports: Vec::new(),
             run_semantic_analysis: true,
@@ -148,6 +151,10 @@ impl BuildManifest {
         }
         if let Some(exports) = values.list("abi_exports").map_err(manifest_error)? {
             manifest.abi_exports = exports;
+        }
+        if let Some(out) = values.string("out") {
+            manifest.artifact_root = Some(resolve_manifest_path(base_dir, &out));
+            manifest.write_artifacts = true;
         }
 
         Ok(manifest)
@@ -400,13 +407,16 @@ impl BuildExecutor {
         }
     }
 
-    fn pipeline_for(manifest: &BuildManifest) -> CompilationPipeline {
+    pub fn pipeline_for(manifest: &BuildManifest) -> CompilationPipeline {
         let mut pipeline = CompilationPipeline::new();
         pipeline.set_target_mode(manifest.target);
         pipeline.set_entry_point(manifest.entry.clone());
         pipeline.set_link_layout(manifest.link_layout.clone());
         pipeline.set_run_semantic_analysis(manifest.run_semantic_analysis);
         pipeline.set_write_artifacts(manifest.write_artifacts);
+        if let Some(root) = &manifest.artifact_root {
+            pipeline.set_artifact_root(root.clone());
+        }
         pipeline.set_type_prelude(hll_to_ir::stdlib::get_stdlib_type_prelude());
         if let Some(prefix) = &manifest.string_prefix {
             pipeline.set_string_prefix(Some(prefix.clone()));
@@ -595,6 +605,36 @@ export value: () -> i32 {
                 mangle_symbols: false
             }
         ));
+    }
+
+    #[test]
+    fn file_manifest_out_enables_artifacts_relative_to_manifest() {
+        let root = std::env::temp_dir().join(format!(
+            "full_stack_manifest_out_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock before unix epoch")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).expect("create temp manifest dir");
+        let build_path = root.join("main.build");
+        let source_path = root.join("main.hll");
+        std::fs::write(&source_path, "main: () -> i32 { return 0 }").expect("write source");
+        std::fs::write(
+            &build_path,
+            "name = \"main\"\nroot = \"main.hll\"\nout=artifacts\n",
+        )
+        .expect("write manifest");
+
+        let manifest = BuildManifest::from_file(&build_path).expect("parse manifest");
+        assert!(manifest.write_artifacts);
+        assert_eq!(
+            manifest.artifact_root.as_deref(),
+            Some(root.join("artifacts").as_path())
+        );
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     // The split `ld` tool imports `./ld_link.hll`; building through its `.build` manifest must

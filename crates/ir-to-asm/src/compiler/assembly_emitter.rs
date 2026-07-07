@@ -133,6 +133,15 @@ impl AssemblyEmitter {
         self.tokens.push(RvInstruction::Comment(text.to_owned()));
     }
 
+    /// Emit a source-location marker into the token stream only; it produces no
+    /// assembly text, so `.s` output and the self-hosted assembler are unaffected.
+    pub fn emit_source_loc(&mut self, file: &str, line: u32) {
+        self.tokens.push(RvInstruction::SourceLoc {
+            file: file.to_owned(),
+            line,
+        });
+    }
+
     // --- Register allocation helpers ---
     pub fn alloc_temp_reg(&mut self) -> Reg {
         let temps = [T0, T1, T2, T3, T4, T5, T6];

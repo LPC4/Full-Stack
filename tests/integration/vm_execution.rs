@@ -1065,7 +1065,7 @@ fn qemu_05_functions_and_io() {
 fn examples_exit_zero_in_vm() {
     // Derive the launchable set from the catalog so this gate never drifts from
     // what the application actually offers (see program_catalog.rs).
-    use full_stack::view::{ProgramCatalog, ProgramKind};
+    use full_stack::program_catalog::{ProgramCatalog, ProgramKind};
     let catalog = ProgramCatalog::default();
     let examples = catalog.get_programs_by_kind(ProgramKind::Example);
     assert!(!examples.is_empty(), "catalog exposes no example programs");

@@ -73,6 +73,11 @@ pub enum AsmToken {
 
     // ---- meta ----
     Comment,
+    /// Source-location marker for the pc-to-source line table; emits no bytes.
+    Loc {
+        file: String,
+        line: u32,
+    },
 }
 
 impl AsmToken {
@@ -88,7 +93,11 @@ impl AsmToken {
             Self::DataAsciz(s) => Some(s.len() + 1),
             Self::Space(n) => Some(*n as usize),
             Self::Align(_) | Self::Balign(_) => None,
-            Self::Section(_) | Self::Label(_) | Self::Globl(_) | Self::Comment => Some(0),
+            Self::Section(_)
+            | Self::Label(_)
+            | Self::Globl(_)
+            | Self::Comment
+            | Self::Loc { .. } => Some(0),
         }
     }
 }

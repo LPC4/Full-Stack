@@ -15,6 +15,15 @@ pub trait PeekByteRaw {
     fn peek_byte_raw(&self, addr: u64) -> Option<u8>;
 }
 
+/// Bulk architectural-RAM capture/restore for time-travel snapshots: the image
+/// is RAM overlaid with dirty cache lines (deeper first); load drops lines cold.
+pub trait RamImage {
+    fn ram_len(&self) -> usize;
+    fn ram_base(&self) -> u64;
+    fn write_image_into(&self, buf: &mut [u8]);
+    fn load_image(&mut self, bytes: &[u8]);
+}
+
 /// Every component in the memory hierarchy must implement this.
 pub trait MemoryAccess {
     fn read_byte(&mut self, addr: u64) -> Result<u8, VmError>;

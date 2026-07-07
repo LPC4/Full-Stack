@@ -203,15 +203,26 @@ impl<'a> Parser<'a> {
     pub fn parse_block(&mut self) -> Result<Block, ParserError> {
         self.expect_lbrace()?;
         let mut statements = Vec::new();
+        let mut stmt_lines = Vec::new();
 
         self.consume_terminators();
         while !self.check_rbrace() {
+            let line = self.current_line();
             statements.push(self.parse_statement()?);
+            stmt_lines.push(line);
             self.consume_terminators();
         }
 
         self.expect_rbrace()?;
-        Ok(Block { statements })
+        Ok(Block {
+            statements,
+            stmt_lines,
+        })
+    }
+
+    /// 1-based source line of the current token (0 if unavailable, e.g. tests).
+    fn current_line(&self) -> u32 {
+        self.spans.get(self.pos).map(|s| s.line).unwrap_or(0)
     }
 
     pub fn parse_statement(&mut self) -> Result<Statement, ParserError> {
@@ -1978,6 +1989,7 @@ impl<'a> Parser<'a> {
                 (
                     Block {
                         statements: Vec::new(),
+                        stmt_lines: Vec::new(),
                     },
                     Some(self.parse_expression()?),
                 )

@@ -19,6 +19,48 @@ impl HighLevelCompiler {
         }
     }
 
+    /// Emit a pc-to-source marker for `line`, skipping unknown lines (0) and
+    /// consecutive duplicates. Reset per function via [`Self::reset_source_line`].
+    pub(super) fn emit_source_line(&mut self, line: u32) {
+        // Shift past the prelude; statements inside it map to 0 and are dropped.
+        let line = line.saturating_sub(self.source_line_offset);
+        if line == 0 {
+            return;
+        }
+        // Always refresh the diagnostic location, even when the marker is a
+        // duplicate, so an error on this line points at it.
+        self.set_pending_span(line);
+        if self.last_source_line == Some(line) {
+            return;
+        }
+        self.last_source_line = Some(line);
+        let file = self.source_file.clone();
+        self.push_instruction(IrInstruction::SourceLine { file, line });
+    }
+
+    /// Point later `context.error`/`warn` calls at 1-based user `line`, spanning
+    /// its non-whitespace text so the offending statement is underlined.
+    pub(super) fn set_pending_span(&mut self, line: u32) {
+        let source_line = self
+            .source_lines
+            .get(line as usize - 1)
+            .cloned()
+            .unwrap_or_default();
+        let lead = source_line.len() - source_line.trim_start().len();
+        let span = crate::token::Span {
+            line,
+            col: (lead + 1) as u32,
+            len: source_line.trim().len() as u32,
+            source_line,
+        };
+        self.context.pending_span = Some(span);
+    }
+
+    /// Forget the last emitted line so the next statement re-emits its marker.
+    pub(super) fn reset_source_line(&mut self) {
+        self.last_source_line = None;
+    }
+
     pub(super) fn set_terminator(&mut self, term: IrTerminator) {
         if let Some(b) = self.current_block.as_mut()
             && b.terminator.is_none()

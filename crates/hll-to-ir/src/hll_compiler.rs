@@ -23,6 +23,8 @@ pub struct CompileConfig {
     /// When set, this unit's own top-level fn/global definitions (and internal references) are
     /// mangled to `prefix__name`. Set by the closure build; `None` leaves names flat.
     pub module_mangle_prefix: Option<String>,
+    /// Source file name attributed to the pc-to-source line table. `None` leaves it empty.
+    pub source_file: Option<String>,
 }
 
 impl Default for CompileConfig {
@@ -35,6 +37,7 @@ impl Default for CompileConfig {
             source_prelude: None,
             module_aliases: std::collections::HashMap::new(),
             module_mangle_prefix: None,
+            source_file: None,
         }
     }
 }
@@ -43,6 +46,18 @@ impl Default for CompileConfig {
 /// from outside the module graph (the runtime `_start`, the C-style `main`).
 fn mangle_exempt() -> std::collections::HashSet<String> {
     ["_start", "main"].into_iter().map(str::to_owned).collect()
+}
+
+/// A parse error as a spanned diagnostic, with the span shifted back past the
+/// prelude so it points into the user's file. Prelude-internal errors stay text.
+fn parser_diagnostic(err: crate::parser::ParserError, prelude_lines: u32) -> Diagnostic {
+    if err.span.line > prelude_lines {
+        let mut span = err.span;
+        span.line -= prelude_lines;
+        Diagnostic::new(DiagnosticLevel::Error, err.message).with_span(span)
+    } else {
+        Diagnostic::new(DiagnosticLevel::Error, err.to_string())
+    }
 }
 
 pub struct HllOutput {
@@ -63,18 +78,19 @@ impl HllCompiler {
         Self { config }
     }
 
-    /// `source` with the effective prelude prepended: an explicit `source_prelude`,
-    /// else the shared kernel `layout.hll` in kernel mode, else unchanged.
-    fn with_source_prelude(&self, source: &str) -> String {
+    /// `source` with the effective prelude prepended (explicit, else kernel layout),
+    /// plus the line count the prelude added so spans can be corrected back.
+    fn with_source_prelude(&self, source: &str) -> (String, u32) {
         let prelude: &str = match &self.config.source_prelude {
             Some(p) => p.as_str(),
             None if self.config.target == TargetMode::Kernel => os_runtime::kernel::LAYOUT,
             None => "",
         };
         if prelude.is_empty() {
-            source.to_owned()
+            (source.to_owned(), 0)
         } else {
-            format!("{prelude}\n{source}")
+            let added = prelude.bytes().filter(|&b| b == b'\n').count() as u32 + 1;
+            (format!("{prelude}\n{source}"), added)
         }
     }
 
@@ -85,7 +101,8 @@ impl HllCompiler {
     pub fn compile(&self, source: &str) -> Result<HllOutput, Vec<Diagnostic>> {
         // Prepend the shared definitions header (kernel layout, or an explicit prelude)
         // so separately-compiled TUs share one HLL definition of their common consts.
-        let prepended = self.with_source_prelude(source);
+        let (prepended, prelude_lines) = self.with_source_prelude(source);
+        let user_source = source;
         let source = prepended.as_str();
 
         // Phase 1: Lex
@@ -108,7 +125,7 @@ impl HllCompiler {
         // Phase 2: Parse
         let mut ast = Parser::new_with_spans(token_spans)
             .parse_program()
-            .map_err(|e| vec![Diagnostic::new(DiagnosticLevel::Error, e.to_string())])?;
+            .map_err(|e| vec![parser_diagnostic(e, prelude_lines)])?;
 
         // Resolve `alias.member` qualified access to flat export references before any
         // later stage sees the AST (see `imports::rewrite_qualified_access`).
@@ -140,6 +157,7 @@ impl HllCompiler {
         if self.config.strict {
             let mut analyzer = SemanticAnalyzer::new();
             analyzer.seed_types(&self.config.type_prelude);
+            analyzer.set_source_context(user_source, prelude_lines);
             if analyzer.analyze_program(&ast).is_err()
                 || analyzer
                     .diagnostics()
@@ -160,6 +178,9 @@ impl HllCompiler {
         let prefix = self.config.string_prefix.as_deref().unwrap_or("str_");
         let mut compiler = HighLevelCompiler::with_string_prefix(prefix);
         compiler.set_type_prelude(self.config.type_prelude.clone());
+        compiler.set_source_file(self.config.source_file.as_deref().unwrap_or(""));
+        compiler.set_source_line_offset(prelude_lines);
+        compiler.set_source_lines(user_source);
         let ir = compiler
             .compile_program(&ast)
             .map_err(|e| vec![Diagnostic::new(DiagnosticLevel::Error, format!("{e:?}"))])?;
@@ -724,6 +745,135 @@ mod tests {
                 &ir_text
             }
         );
+    }
+
+    #[test]
+    fn source_line_markers_thread_from_hll_to_ir() {
+        // Each body statement is on its own line; markers should carry those lines
+        // (1-based, prelude-free) tagged with the configured source file.
+        let source = "add: () -> i32 {\n    x: i32 = 1\n    y: i32 = 2\n    return x + y\n}\n";
+        let out = HllCompiler::new(CompileConfig {
+            target: TargetMode::Hosted,
+            strict: true,
+            source_file: Some("prog.hll".to_owned()),
+            ..CompileConfig::default()
+        })
+        .compile(source)
+        .expect("compile add()");
+
+        let marks: Vec<(String, u32)> = out
+            .ir
+            .functions
+            .iter()
+            .flat_map(|f| f.blocks.iter())
+            .flat_map(|b| b.instructions.iter())
+            .filter_map(|inst| match inst {
+                crate::ir::IrInstruction::SourceLine { file, line } => Some((file.clone(), *line)),
+                _ => None,
+            })
+            .collect();
+
+        assert!(
+            marks.contains(&("prog.hll".to_owned(), 2)),
+            "x := 1 -> line 2: {marks:?}"
+        );
+        assert!(
+            marks.contains(&("prog.hll".to_owned(), 3)),
+            "y := 2 -> line 3: {marks:?}"
+        );
+        assert!(
+            marks.contains(&("prog.hll".to_owned(), 4)),
+            "return -> line 4: {marks:?}"
+        );
+    }
+
+    #[test]
+    fn lowering_diagnostics_carry_a_source_span() {
+        // A duplicate struct-literal field is caught during IR lowering; the
+        // diagnostic should point at the statement line and quote its text.
+        let source = "\
+struct Point { x: i32, y: i32 }
+main: () -> i32 {
+    value := Point { .x = 1, .x = 2 }
+    return 0
+}
+";
+        // strict:false so the IR-lowering check reports it, exercising the
+        // lowering span path rather than the semantic analyzer's.
+        let compiler = HllCompiler::new(CompileConfig {
+            target: TargetMode::Hosted,
+            strict: false,
+            source_file: Some("prog.hll".to_owned()),
+            ..CompileConfig::default()
+        });
+        let errors = match compiler.compile(source) {
+            Ok(_) => panic!("duplicate field must fail"),
+            Err(errors) => errors,
+        };
+        let diag = errors
+            .iter()
+            .find(|d| d.message.contains("duplicate field `x`"))
+            .expect("duplicate-field diagnostic");
+        let span = diag.span.as_ref().expect("diagnostic carries a span");
+        assert_eq!(span.line, 3);
+        assert!(span.source_line.contains("Point { .x = 1, .x = 2 }"));
+        let rendered = diag.render("prog.hll");
+        assert!(rendered.contains("\n3 |"), "no source line row: {rendered}");
+        assert!(rendered.contains('^'), "no caret row: {rendered}");
+    }
+
+    #[test]
+    fn dead_statement_warning_carries_a_source_span() {
+        // A statement after a terminator is a lowering warning; it should point
+        // at the dead statement's line, not the previous one.
+        let source = "\
+main: () -> i32 {
+    return 0
+    value := 1
+    return value
+}
+";
+        let compiler = HllCompiler::new(CompileConfig {
+            target: TargetMode::Hosted,
+            strict: false,
+            source_file: Some("prog.hll".to_owned()),
+            ..CompileConfig::default()
+        });
+        let out = compiler
+            .compile(source)
+            .expect("dead code is a warning, not an error");
+        let diag = out
+            .diagnostics
+            .iter()
+            .find(|d| d.message.contains("after terminator"))
+            .expect("dead-statement warning");
+        let span = diag.span.as_ref().expect("warning carries a span");
+        assert_eq!(span.line, 3);
+        assert!(span.source_line.contains("value := 1"));
+    }
+
+    #[test]
+    fn semantic_diagnostics_carry_a_source_span() {
+        // A duplicate binding is a semantic-analyzer error (strict mode); it now
+        // points at the offending statement line, not just the message.
+        let source = "\
+main: () -> i32 {
+    value := 1
+    value := 2
+    return value
+}
+";
+        let errors = match compile_hll(source) {
+            Ok(_) => panic!("duplicate binding must fail"),
+            Err(errors) => errors,
+        };
+        let diag = errors
+            .iter()
+            .find(|d| d.message.contains("duplicate"))
+            .expect("duplicate-binding diagnostic");
+        let span = diag.span.as_ref().expect("diagnostic carries a span");
+        assert_eq!(span.line, 3);
+        assert!(span.source_line.contains("value := 2"));
     }
 
     #[test]

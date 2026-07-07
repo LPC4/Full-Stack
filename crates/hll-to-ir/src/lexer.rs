@@ -8,6 +8,11 @@ pub struct Lexer<'a> {
     pos: usize,
     line: u32,
     line_start: usize,
+    // The last token's start, captured after whitespace so spans point at the
+    // token itself, not the run of spaces before it.
+    tok_start: usize,
+    tok_line: u32,
+    tok_line_start: usize,
 }
 
 impl<'a> Lexer<'a> {
@@ -18,6 +23,9 @@ impl<'a> Lexer<'a> {
             pos: 0,
             line: 1,
             line_start: 0,
+            tok_start: 0,
+            tok_line: 1,
+            tok_line_start: 0,
         }
     }
 
@@ -27,10 +35,12 @@ impl<'a> Lexer<'a> {
         let lines: Vec<&str> = input.lines().collect();
         let mut out = Vec::new();
         loop {
-            let span_start_pos = lexer.pos;
-            let span_line = lexer.line;
-            let span_col = (span_start_pos - lexer.line_start + 1) as u32;
             let tok = lexer.next_token();
+            // Spans read from the recorded token start (post-whitespace) and the
+            // current position, which sits just past the token just produced.
+            let span_line = lexer.tok_line;
+            let span_col = (lexer.tok_start - lexer.tok_line_start + 1) as u32;
+            let span_len = (lexer.pos - lexer.tok_start) as u32;
             let source_line = lines
                 .get((span_line as usize).saturating_sub(1))
                 .unwrap_or(&"")
@@ -38,6 +48,7 @@ impl<'a> Lexer<'a> {
             let span = Span {
                 line: span_line,
                 col: span_col,
+                len: span_len,
                 source_line,
             };
             let is_eof = matches!(tok, Token::Eof);
@@ -53,6 +64,11 @@ impl<'a> Lexer<'a> {
         self.skip_whitespace_except_newline();
 
         let start = self.pos;
+        // Record the real token start so `tokenize` reads col/len from here even
+        // across the comment recursion below (which re-enters `next_token`).
+        self.tok_start = start;
+        self.tok_line = self.line;
+        self.tok_line_start = self.line_start;
         let c = match self.chars.next() {
             Some(c) => {
                 let len = c.len_utf8();
@@ -402,6 +418,20 @@ impl<'a> Lexer<'a> {
 mod tests {
     use super::Lexer;
     use crate::token::Token;
+
+    #[test]
+    fn spans_point_at_the_token_with_its_width() {
+        // Leading indentation must not bleed into the token's col; each span's
+        // len is the token's byte length.
+        let spans = Lexer::tokenize("  return bogus\n");
+        let (tok, ret) = &spans[0];
+        assert_eq!(*tok, Token::Return);
+        assert_eq!((ret.line, ret.col, ret.len), (1, 3, 6));
+        let (tok, ident) = &spans[1];
+        assert_eq!(*tok, Token::Ident("bogus"));
+        assert_eq!((ident.line, ident.col, ident.len), (1, 10, 5));
+        assert_eq!(ident.source_line, "  return bogus");
+    }
 
     #[test]
     fn test_basic_declaration() {

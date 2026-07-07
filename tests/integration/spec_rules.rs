@@ -317,7 +317,7 @@ main: () -> i32 {
 fn all_launch_examples_compile() {
     // The catalog is the single source of truth for launchable examples; iterate
     // it so a newly added example is covered without editing this test.
-    use full_stack::view::{ProgramCatalog, ProgramKind};
+    use full_stack::program_catalog::{ProgramCatalog, ProgramKind};
     let catalog = ProgramCatalog::default();
     let examples = catalog.get_programs_by_kind(ProgramKind::Example);
     assert!(!examples.is_empty(), "catalog exposes no example programs");
@@ -341,7 +341,7 @@ fn all_launch_examples_compile() {
 // each needle below is a representative token some example must demonstrate.
 #[test]
 fn examples_cover_core_features() {
-    use full_stack::view::{ProgramCatalog, ProgramKind};
+    use full_stack::program_catalog::{ProgramCatalog, ProgramKind};
     let catalog = ProgramCatalog::default();
     let combined = catalog
         .get_programs_by_kind(ProgramKind::Example)

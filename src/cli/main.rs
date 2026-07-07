@@ -207,11 +207,10 @@ fn cmd_link(args: &Args) -> Result<ExitCode, CliError> {
     }
 
     if args.inputs.len() == 1 && has_extension(&args.inputs[0], "build") {
-        let mut manifest = BuildManifest::from_file(&args.inputs[0]).map_err(|e| match e {
+        let manifest = BuildManifest::from_file(&args.inputs[0]).map_err(|e| match e {
             full_stack::build::BuildError::Compile(err) => CliError::Compile(err.to_string()),
             other => CliError::Assemble(other.to_string()),
         })?;
-        manifest.write_artifacts = true;
         let target = manifest.target;
         let entry = manifest.entry.clone();
         let layout = manifest.link_layout.clone();
@@ -289,7 +288,7 @@ fn cmd_hll_to_ir(args: &Args) -> Result<ExitCode, CliError> {
     write_or_print(args.output.as_deref(), &ir_text)?;
 
     for diag in &result.diagnostics {
-        eprintln!("warning: {}", diag.format_full());
+        eprintln!("{}", diag.render(input));
     }
 
     Ok(ExitCode::SUCCESS)

@@ -1,1466 +1,2126 @@
-mod catalog;
-mod panels;
-mod settings;
+//! The IDE shell: an instrument panel laid out around the Stack Spine. State lives
+//! in the `full_stack` backend; deep panels (run, machine, inspectors) wire in next.
 
-use crate::machine_window::MachineWindow;
+mod activity_rail;
+mod chrome;
+mod debug_view;
+mod diagnostics;
+mod editor;
+mod editor_tabs;
+mod elf_view;
+mod explorer;
+mod find;
+mod inspect_panel;
+mod machine_dock;
+mod metrics;
+mod quick_open;
+mod search;
+mod settings;
+mod status_bar;
+mod terminal;
+mod tool_window;
+mod top_bar;
+
+use crate::ui::{Layer, spine, theme};
 use asm_to_binary::AssembledOutput;
-use asm_to_binary::assembler::link_layout::LinkLayout;
-use egui::Color32;
-use egui_dock::{DockState, NodeIndex};
+use eframe::egui;
 use full_stack::build::{
-    BuildExecutor, BuildManifest, BuildModuleResolver, BuildSource, ImportClosurePolicy,
-    StdlibPolicy,
+    BuildError, BuildExecutor, BuildManifest, BuildObject, BuildSource, StdlibPolicy,
 };
 use full_stack::compilation_pipeline::{
-    AsmOutput, BinaryOutput, CompilationPipeline, FsEntry, IrOutput, ModuleResolver,
-    PipelineResult, TargetMode, assembled_to_elf_file, build_fs_image, bundled_module_source,
+    BinaryOutput, CompilationPipeline, PipelineResult, TargetMode,
 };
-use full_stack::target_mode::infer_target_mode_for_source;
-use full_stack::view::debug::DebugSession;
-use full_stack::view::ide::vm_execution_view::VmExecutionResult;
-use full_stack::view::{
-    AssemblyView, AstView, BgPreset, CacheView, CfgView, CompilationState, CompilerView,
-    CpuStateView, DisassemblyView, ExecutionView, FramebufferView, IoView, IrView, MemoryView,
-    PipelineView, ProgramCatalog, ProgramFile, SourceView, StackView, TokensView, UiTheme,
-    VmExecutionView, apply_ui_theme,
-};
-use hll_to_ir::stdlib::get_stdlib_type_prelude;
-use std::collections::HashMap;
-use std::fmt;
-use std::rc::Rc;
-use virtual_machine::cpu::StepOutcome;
-use virtual_machine::virtual_machine::VirtualMachine;
+use full_stack::runconfig::{BuildRef, RunConfig, RunKind};
+use full_stack::session::{LiveMachine, MachineState, SessionEngine, VmExecutionResult};
+#[cfg(not(target_arch = "wasm32"))]
+use full_stack::workspace::NativeFs;
+use full_stack::workspace::{IdeWorkspace, VPath};
+#[cfg(not(target_arch = "wasm32"))]
+use std::path::Path;
+use terminal::{ConsoleStream, TerminalKind, TerminalState};
 
-// --- Enums ---
+const BUILD_GLOW_SECS: f64 = 0.85;
+/// Per-frame step budget when a run config does not specify one.
+#[cfg(not(target_arch = "wasm32"))]
+const DEMO_WORKSPACE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src/demo_folder");
 
-#[derive(Default, Clone, PartialEq, Eq)]
-enum AppMode {
-    #[default]
-    Ide,
-    Debug,
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Tool {
+    Files,
+    Search,
+    Run,
+    Inspect,
 }
 
-#[derive(Default, Clone, Copy, PartialEq, Eq)]
-enum CatalogExportKind {
-    #[default]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum SourceKind {
+    Build,
     Hll,
+    Ir,
     Asm,
     Elf,
-    Bin,
+    Other,
 }
 
-impl CatalogExportKind {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Hll => ".hll",
-            Self::Asm => ".s",
-            Self::Elf => ".elf",
-            Self::Bin => ".bin",
-        }
-    }
-
-    fn hint(self) -> &'static str {
-        match self {
-            Self::Hll => "Path to .hll file",
-            Self::Asm => "Path to .s file",
-            Self::Elf => "Path to .elf file",
-            Self::Bin => "Path to flat binary (.bin)",
-        }
-    }
+const HLL_LAYERS: &[Layer] = &[Layer::Hll, Layer::Ir, Layer::Asm, Layer::Elf, Layer::Vm];
+#[derive(Clone, PartialEq)]
+struct BuildTarget {
+    manifest_path: VPath,
+    root_path: VPath,
 }
 
-// --- Settings ---
-
-#[derive(serde::Deserialize, serde::Serialize, Clone, Copy, PartialEq, Eq, Default, Debug)]
-enum AccentPreset {
-    #[default]
-    Blue,
-    Purple,
-    Teal,
-    Green,
-    Rose,
-    Amber,
+struct ShellLayout {
+    tool_window_width: f32,
+    tool_window_drag_start: Option<f32>,
 }
 
-impl AccentPreset {
-    const ALL: &'static [Self] = &[
-        Self::Blue,
-        Self::Purple,
-        Self::Teal,
-        Self::Green,
-        Self::Rose,
-        Self::Amber,
-    ];
-
-    fn colors(self) -> (Color32, Color32) {
-        match self {
-            Self::Blue => (
-                Color32::from_rgb(80, 120, 220),
-                Color32::from_rgb(126, 104, 240),
-            ),
-            Self::Purple => (
-                Color32::from_rgb(140, 90, 220),
-                Color32::from_rgb(170, 120, 240),
-            ),
-            Self::Teal => (
-                Color32::from_rgb(40, 180, 160),
-                Color32::from_rgb(70, 210, 190),
-            ),
-            Self::Green => (
-                Color32::from_rgb(50, 185, 90),
-                Color32::from_rgb(80, 215, 130),
-            ),
-            Self::Rose => (
-                Color32::from_rgb(215, 75, 110),
-                Color32::from_rgb(235, 105, 145),
-            ),
-            Self::Amber => (
-                Color32::from_rgb(215, 158, 40),
-                Color32::from_rgb(235, 185, 70),
-            ),
-        }
-    }
-
-    fn label(self) -> &'static str {
-        match self {
-            Self::Blue => "Blue",
-            Self::Purple => "Purple",
-            Self::Teal => "Teal",
-            Self::Green => "Green",
-            Self::Rose => "Rose",
-            Self::Amber => "Amber",
-        }
-    }
-
-    fn theme(self) -> UiTheme {
-        let (accent, accent_alt) = self.colors();
-        UiTheme::dark().with_accent(accent, accent_alt)
-    }
-}
-
-#[derive(serde::Deserialize, serde::Serialize, Clone, Copy, PartialEq, Eq, Default, Debug)]
-enum FontScale {
-    Small,
-    #[default]
-    Medium,
-    Large,
-    Larger,
-}
-
-impl FontScale {
-    fn zoom(self) -> f32 {
-        match self {
-            Self::Small => 0.85,
-            Self::Medium => 1.0,
-            Self::Large => 1.2,
-            Self::Larger => 1.5,
-        }
-    }
-
-    fn label(self) -> &'static str {
-        match self {
-            Self::Small => "S",
-            Self::Medium => "M",
-            Self::Large => "L",
-            Self::Larger => "XL",
-        }
-    }
-}
-
-#[derive(serde::Deserialize, serde::Serialize, Clone, PartialEq, Debug)]
-#[serde(default)]
-struct AppSettings {
-    accent: AccentPreset,
-    bg: BgPreset,
-    font_scale: FontScale,
-    max_vm_steps: u64,
-}
-
-impl Default for AppSettings {
+impl Default for ShellLayout {
     fn default() -> Self {
         Self {
-            accent: AccentPreset::default(),
-            bg: BgPreset::default(),
-            font_scale: FontScale::default(),
-            max_vm_steps: 5_000_000,
+            tool_window_width: metrics::TOOL_WINDOW_DEFAULT,
+            tool_window_drag_start: None,
         }
     }
 }
 
-// --- View wrapper (gives every tab a unique identity) ---
-
-struct ViewWrapper {
-    id: u64,
-    view: Box<dyn CompilerView>,
+pub(super) struct StageCache {
+    path: String,
+    source: String,
+    result: PipelineResult,
 }
 
-impl Clone for ViewWrapper {
-    fn clone(&self) -> Self {
-        Self {
-            id: self.id,
-            view: self.view.clone_box(),
-        }
-    }
+/// Artifacts from the last successful launch; Restart boots them again when
+/// the config and its source fingerprint are unchanged.
+struct LaunchCache {
+    config: RunConfig,
+    fingerprint: u64,
+    launch: CachedLaunch,
 }
 
-impl ViewWrapper {
-    fn new(view: Box<dyn CompilerView>, counter: &mut u64) -> Self {
-        let id = *counter;
-        *counter += 1;
-        Self { id, view }
-    }
+enum CachedLaunch {
+    Hosted(Box<full_stack::session::BuildOutcome>),
+    Kernel(Box<full_stack::session::KernelBootOutcome>),
 }
 
-impl PartialEq for ViewWrapper {
-    fn eq(&self, other: &Self) -> bool {
-        self.id == other.id
-    }
-}
-
-impl fmt::Display for ViewWrapper {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.view.title())
-    }
-}
-
-// --- Application state ---
-
-#[derive(serde::Deserialize, serde::Serialize)]
-#[serde(default)]
 pub struct FullStackApp {
-    catalog: ProgramCatalog,
-    #[serde(skip)]
-    dock: DockState<ViewWrapper>,
-    #[serde(skip)]
-    debug_dock: DockState<ViewWrapper>,
-    #[serde(skip)]
-    compilation_state: CompilationState,
-    #[serde(skip)]
-    pipeline: CompilationPipeline,
-    #[serde(skip)]
-    rename_id: Option<String>,
-    #[serde(skip)]
-    rename_buffer: String,
-    #[serde(skip)]
-    import_disk_path: String,
-    #[serde(skip)]
-    export_disk_path: String,
-    #[serde(skip)]
-    export_kind: CatalogExportKind,
-    #[serde(skip)]
-    show_import_controls: bool,
-    #[serde(skip)]
-    show_export_controls: bool,
-    #[serde(skip)]
-    catalog_message: Option<String>,
-    #[serde(skip)]
-    pending_new_view: Option<ViewWrapper>,
-    #[serde(skip)]
-    next_view_id: u64,
-    #[serde(skip)]
-    mode: AppMode,
-    #[serde(skip)]
-    step_n_input: String,
-    #[serde(skip)]
-    stdlib_asm: String,
-    #[serde(skip)]
-    stdlib_objects: Vec<(String, AssembledOutput)>,
-    #[serde(skip)]
-    target_mode: TargetMode,
-    #[serde(skip)]
-    entry_point: String,
-    #[serde(skip)]
-    load_base_input: String,
-    #[serde(skip)]
-    machine_window: MachineWindow,
-    #[serde(skip)]
-    selected_inject_program_id: String,
-    #[serde(skip)]
-    kernel_binary: Option<AssembledOutput>,
-    // Compiled hosted user programs (shell, tools, demos), keyed by the
-    // generated userspace catalog name. Replaces the per-tool ensure_* fields.
-    #[serde(skip)]
-    user_binaries: HashMap<&'static str, AssembledOutput>,
-    #[serde(skip)]
-    vm_output_view_id: u64,
-    settings: AppSettings,
-    #[serde(skip)]
-    show_settings: bool,
-    #[serde(skip)]
-    user_set_target_mode: bool,
-    #[serde(skip)]
-    last_compile_program_id: String,
-}
-
-impl Default for FullStackApp {
-    fn default() -> Self {
-        let catalog = ProgramCatalog::default();
-        let mut app = Self {
-            catalog,
-            dock: DockState::new(vec![]),
-            debug_dock: DockState::new(vec![]),
-            compilation_state: CompilationState::default(),
-            pipeline: CompilationPipeline::new(),
-            rename_id: None,
-            rename_buffer: String::new(),
-            import_disk_path: String::new(),
-            export_disk_path: String::new(),
-            export_kind: CatalogExportKind::default(),
-            show_import_controls: false,
-            show_export_controls: false,
-            catalog_message: None,
-            pending_new_view: None,
-            next_view_id: 0,
-            mode: AppMode::Ide,
-            step_n_input: "1".to_owned(),
-            stdlib_asm: String::new(),
-            stdlib_objects: Vec::new(),
-            target_mode: TargetMode::Hosted,
-            entry_point: "kmain".to_owned(),
-            load_base_input: format!("{:#010x}", LinkLayout::freestanding_kernel().load_base),
-            machine_window: MachineWindow::default(),
-            selected_inject_program_id: String::new(),
-            kernel_binary: None,
-            user_binaries: HashMap::new(),
-            vm_output_view_id: 0,
-            settings: AppSettings::default(),
-            show_settings: false,
-            user_set_target_mode: false,
-            last_compile_program_id: String::new(),
-        };
-        app.reset_layout();
-        app.reset_debug_layout();
-        app
-    }
+    pub(super) workspace: IdeWorkspace,
+    pub(super) tool: Tool,
+    pub(super) layer: Layer,
+    layout: ShellLayout,
+    pub(super) stage_cache: Option<StageCache>,
+    /// Per-target-mode stdlib object cache, so the live preview links against the
+    /// stdlib matching the active program's target instead of always hosted.
+    stdlib_objects: Vec<(TargetMode, Vec<(String, AssembledOutput)>)>,
+    pub(super) status_message: Option<String>,
+    build_glow_start: Option<f64>,
+    build_lit_until: Option<Layer>,
+    /// Which target `build_lit_until` belongs to, so the lit spine survives
+    /// switching tabs and only reads stale for a different program.
+    built_target: Option<BuildTarget>,
+    active_build_target: Option<BuildTarget>,
+    pub(super) selected_config: usize,
+    /// Discovered `.build` manifests with the time they were scanned.
+    manifest_cache: Option<(f64, Vec<VPath>)>,
+    /// The resident VM session; present from Run until the next config change.
+    pub(super) live: Option<LiveMachine>,
+    launch_cache: Option<LaunchCache>,
+    /// Dock input buffer for adding a `symbol+offset` breakpoint.
+    pub(super) breakpoint_entry: String,
+    /// Run-panel input buffers for adding a host->guest mount to a config.
+    pub(super) mount_host_entry: String,
+    pub(super) mount_guest_entry: String,
+    /// A click-to-jump target (path, 1-based line) the editor scrolls to.
+    pub(super) pending_jump: Option<(VPath, usize)>,
+    pub(super) vm_result: Option<VmExecutionResult>,
+    pub(super) machine_texture: Option<egui::TextureHandle>,
+    pub(super) machine_texture_fill_count: Option<u64>,
+    pub(super) terminal_open: bool,
+    terminal: TerminalState,
+    pub(super) find: find::FindState,
+    pub(super) quick_open: Option<quick_open::QuickOpenState>,
+    pub(super) explorer: explorer::ExplorerState,
+    pub(super) search: search::SearchState,
+    /// Dirty document waiting for close confirmation when that setting is on.
+    pub(super) pending_close: Option<VPath>,
+    /// 1-based cursor line/column of the active editor, for the status bar.
+    pub(super) cursor_pos: Option<(usize, usize)>,
+    /// Last paused pc the editor auto-followed to source, so stepping reveals
+    /// the new line but a manual scroll away is not fought every frame.
+    last_followed_pc: Option<u64>,
+    /// Which surface the machine (L4) rung shows for a live session.
+    pub(super) machine_view: debug_view::MachineView,
+    pub(super) memory_view: debug_view::MemoryViewState,
+    /// Whether the current/last live session was launched as a debug session.
+    current_launch_debug: bool,
+    /// Instruction count for the dock's "step n" control.
+    pub(super) step_count: u64,
+    step_unit: machine_dock::StepUnit,
+    /// Dock time-travel scrubber position (frame index into the session history).
+    pub(super) time_scrub: usize,
+    pub(super) inspect_tab: inspect_panel::InspectTab,
+    pub(super) inspect_cache: Option<inspect_panel::InspectCache>,
+    pub(super) inspect_pid: Option<u64>,
+    pub(super) inspect_inode: Option<u64>,
+    /// Throttled cache line-occupancy grid; recomputed only while the Caches
+    /// tab is visible, since `get_cache_snapshots` clones every line.
+    pub(super) cache_grid: Option<inspect_panel::CacheGrid>,
+    /// User-level settings, persisted through eframe storage.
+    pub(super) settings: settings::AppSettings,
+    /// Whether the full-page settings view is showing over the editor.
+    pub(super) settings_open: bool,
 }
 
 impl FullStackApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        apply_ui_theme(&cc.egui_ctx);
-        let mut app: Self = cc
+        theme::apply(&cc.egui_ctx);
+        let settings: settings::AppSettings = cc
             .storage
-            .and_then(|storage| eframe::get_value(storage, eframe::APP_KEY))
+            .and_then(|storage| eframe::get_value(storage, settings::APP_KEY))
             .unwrap_or_default();
-        app.catalog.ensure_consistency();
-        app.reset_layout();
-        app.apply_settings(&cc.egui_ctx);
-        if let Err(e) = app.init_stdlib_cache() {
-            app.compilation_state.set_error(e);
-            app.compilation_state.just_compiled = false;
+        settings.apply(&cc.egui_ctx);
+        let mut app = Self {
+            workspace: open_startup_workspace(&settings),
+            tool: Tool::Files,
+            layer: Layer::Hll,
+            layout: ShellLayout::default(),
+            stage_cache: None,
+            stdlib_objects: Vec::new(),
+            status_message: None,
+            build_glow_start: None,
+            build_lit_until: None,
+            built_target: None,
+            active_build_target: None,
+            selected_config: 0,
+            manifest_cache: None,
+            live: None,
+            launch_cache: None,
+            breakpoint_entry: String::new(),
+            mount_host_entry: String::new(),
+            mount_guest_entry: String::new(),
+            pending_jump: None,
+            vm_result: None,
+            machine_texture: None,
+            machine_texture_fill_count: None,
+            terminal_open: false,
+            terminal: TerminalState::default(),
+            find: find::FindState::default(),
+            quick_open: None,
+            explorer: explorer::ExplorerState::default(),
+            search: search::SearchState::default(),
+            pending_close: None,
+            cursor_pos: None,
+            last_followed_pc: None,
+            machine_view: debug_view::MachineView::Console,
+            memory_view: debug_view::MemoryViewState::default(),
+            current_launch_debug: false,
+            step_count: 100,
+            step_unit: machine_dock::StepUnit::Line,
+            time_scrub: 0,
+            inspect_tab: inspect_panel::InspectTab::Cpu,
+            inspect_cache: None,
+            inspect_pid: None,
+            inspect_inode: None,
+            cache_grid: None,
+            settings,
+            settings_open: false,
+        };
+        if !app.workspace.run_configs().configs.is_empty() {
+            app.select_config(0);
         }
-        app.compile();
         app
     }
 
-    fn init_stdlib_cache(&mut self) -> Result<(), String> {
-        let mode = self.pipeline.target_mode();
-        self.stdlib_objects.clear();
-        self.stdlib_asm.clear();
-
-        // Compile each stdlib HLL independently (no concatenation): one object per
-        // module to link with user programs, plus its IR for the disassembly view.
-        let modules = hll_to_ir::stdlib::get_stdlib_modules_for_mode(mode);
-        let mut std_pipeline = CompilationPipeline::new();
-        std_pipeline.set_target_mode(mode);
-        std_pipeline.set_module_resolver(Some(self.catalog_module_resolver()));
-        std_pipeline.set_write_artifacts(false);
-        std_pipeline.set_type_prelude(get_stdlib_type_prelude());
-        if mode == TargetMode::Kernel {
-            std_pipeline.set_string_prefix(Some("__kern_str_".to_owned()));
-        }
-
-        let mut objects = Vec::with_capacity(modules.len());
-        for (name, source) in &modules {
-            std_pipeline.set_artifact_stem(Some((*name).to_owned()));
-            let compiled = match std_pipeline.compile(source) {
-                Ok(c) => c,
-                Err(e) => {
-                    self.stdlib_asm.clear();
-                    return Err(format!("stdlib module `{name}` compile failed: {e:?}"));
-                }
-            };
-            let (_, tokens) = std_pipeline.compile_ir_to_assembly_with_tokens(&compiled.ir_program);
-            self.stdlib_asm.push_str(&compiled.ir_program.to_string());
-            self.stdlib_asm.push('\n');
-            match std_pipeline.assemble_named(name, &tokens) {
-                Ok(obj) => objects.push(((*name).to_owned(), obj)),
-                Err(e) => {
-                    self.stdlib_asm.clear();
-                    return Err(format!(
-                        "stdlib module `{name}` assemble failed: {}",
-                        e.message
-                    ));
-                }
-            }
-        }
-        self.stdlib_objects = objects;
-        Ok(())
-    }
-
-    fn view<T: CompilerView + Default + 'static>(&mut self) -> ViewWrapper {
-        ViewWrapper::new(Box::new(T::default()), &mut self.next_view_id)
-    }
-
-    fn reset_layout(&mut self) {
-        let views = vec![
-            self.view::<SourceView>(),      // 0
-            self.view::<TokensView>(),      // 1
-            self.view::<AstView>(),         // 2
-            self.view::<IrView>(),          // 3
-            self.view::<AssemblyView>(),    // 4
-            self.view::<CfgView>(),         // 5
-            self.view::<StackView>(),       // 6
-            self.view::<ExecutionView>(),   // 7
-            self.view::<VmExecutionView>(), // 8
-        ];
-
-        self.vm_output_view_id = views[8].id;
-
-        let mut dock = DockState::new(vec![views[0].clone()]);
-        let surface = dock.main_surface_mut();
-        let [_left, right] = surface.split_right(
-            NodeIndex::root(),
-            0.5,
-            vec![views[3].clone(), views[1].clone(), views[2].clone()],
-        );
-        surface.split_below(
-            right,
-            0.5,
-            vec![
-                views[8].clone(), // VM Output - first so it's the default visible tab
-                views[4].clone(), // Assembly
-                views[5].clone(), // CFG
-                views[6].clone(), // Stack
-                views[7].clone(), // Execution (QEMU)
-            ],
-        );
-        self.dock = dock;
-    }
-
-    fn focus_vm_output_tab(&mut self) {
-        let needle = ViewWrapper {
-            id: self.vm_output_view_id,
-            view: Box::new(VmExecutionView::default()),
-        };
-        if let Some(tab_path) = self.dock.find_tab(&needle) {
-            let _ = self.dock.set_active_tab(tab_path);
-        }
-    }
-
-    fn reset_debug_layout(&mut self) {
-        let cpu = self.view::<CpuStateView>();
-        let pipeline = self.view::<PipelineView>();
-        let cache = self.view::<CacheView>();
-        let disasm = self.view::<DisassemblyView>();
-        let fb = self.view::<FramebufferView>();
-        let mem = self.view::<MemoryView>();
-        let io = self.view::<IoView>();
-
-        let mut dock = DockState::new(vec![disasm, cpu]);
-        let surface = dock.main_surface_mut();
-
-        let [left, _right] =
-            surface.split_right(NodeIndex::root(), 0.4, vec![mem, pipeline, cache]);
-
-        surface.split_below(left, 0.5, vec![fb]);
-        surface.push_to_focused_leaf(io);
-
-        self.debug_dock = dock;
-    }
-
-    fn set_target_mode(&mut self, mode: TargetMode) {
-        if self.target_mode == mode {
-            return;
-        }
-        self.target_mode = mode;
-        self.pipeline.set_target_mode(mode);
-        match mode {
-            TargetMode::Hosted => {
-                self.pipeline.set_entry_point(None);
-                self.pipeline.set_link_layout(Some(LinkLayout::hosted()));
-            }
-            TargetMode::Kernel => {
-                self.pipeline
-                    .set_entry_point(Some("_kernel_start".to_owned()));
-                let layout = LinkLayout::freestanding_kernel();
-                self.load_base_input = format!("{:#010x}", layout.load_base);
-                self.pipeline.set_link_layout(Some(layout));
-            }
-            TargetMode::Freestanding => {
-                self.pipeline.set_entry_point(Some("_start".to_owned()));
-                let kernel_default = LinkLayout::freestanding_kernel();
-                if self.load_base_input.is_empty()
-                    || parse_hex_or_dec(&self.load_base_input)
-                        == Some(LinkLayout::hosted().load_base)
-                {
-                    self.load_base_input = format!("{:#010x}", kernel_default.load_base);
-                }
-                self.pipeline.set_link_layout(Some(kernel_default));
-            }
-        }
-        if let Err(e) = self.init_stdlib_cache() {
-            self.compilation_state.set_error(e);
-            self.compilation_state.just_compiled = false;
-            return;
-        }
-        self.compile();
-    }
-
-    fn enter_debug_mode(&mut self) {
-        if let Some(assembled) = self.compilation_state.assembled() {
-            let assembled = assembled.clone();
-            let session = if self.target_mode == TargetMode::Kernel {
-                DebugSession::new_kernel(&assembled)
-            } else {
-                let entry = self.compilation_state.entry_symbol.clone();
-                let base = self.compilation_state.load_base;
-                DebugSession::new(&assembled, base, &entry)
-            };
-            self.compilation_state.debug_session = Some(session);
-            self.compilation_state.disasm_follow_pc = true;
-            self.reset_debug_layout();
-            self.mode = AppMode::Debug;
-        }
-    }
-
-    fn exit_debug_mode(&mut self) {
-        self.compilation_state.debug_session = None;
-        self.mode = AppMode::Ide;
-    }
-
-    fn compile_kernel_with_modules(&mut self) {
-        // Reuse cached per-module stdlib objects; rebuild if the cache is empty.
-        if self.stdlib_objects.is_empty() {
-            if let Err(e) = self.init_stdlib_cache() {
-                self.compilation_state.set_error(e);
-                self.compilation_state.just_compiled = false;
-                return;
-            }
-        }
-        if self.stdlib_objects.is_empty() {
-            self.compilation_state
-                .set_error("kernel stdlib cache produced no module objects".to_owned());
-            self.compilation_state.just_compiled = false;
-            return;
-        }
-
-        // Get the kernel source. Selecting a kernel fragment builds the whole
-        // kernel (its parent), not the fragment alone -- otherwise the fragment's
-        // globals collide with the stdlib objects at link.
-        let Some(build) = self.resolve_build_program() else {
-            self.compilation_state
-                .set_error("no program selected".to_owned());
-            self.compilation_state.just_compiled = false;
-            return;
-        };
-        let user_source = build.source.clone();
-        let manifest = self.manifest_for_program(&build, TargetMode::Kernel);
-        let final_assembled = match BuildExecutor::build(&manifest) {
-            Ok(artifacts) => artifacts.linked,
-            Err(e) => {
-                self.compilation_state
-                    .set_error(format!("kernel manifest build error: {e}"));
-                self.compilation_state.just_compiled = false;
-                return;
-            }
-        };
-
-        // Prepend ROM firmware assembly so the disassembly view can follow the PC through boot.
-        self.compilation_state.linked_asm_text =
-            format!("{}{}", os_runtime::ROM_SOURCE, self.stdlib_asm);
-
-        // Compile user source again for IR/ASM display; module objects are already built above.
-        let (user_ir_display, user_asm_display) = match self.pipeline.compile(&user_source) {
-            Ok(compile_result) => {
-                let ir_display = compile_result.ir_program.to_string();
-                let asm_display = self
-                    .pipeline
-                    .compile_ir_to_assembly(&compile_result.ir_program);
-                (Some(ir_display), Some(asm_display))
-            }
-            Err(_) => (None, None),
-        };
-
-        let binary_out = BinaryOutput {
-            assembled: final_assembled,
-        };
-        self.compilation_state.pipeline = Some(PipelineResult {
-            diagnostics: vec![],
-            lex: None,
-            parse: None,
-            ir: user_ir_display.map(|display| IrOutput { display }),
-            asm: user_asm_display.map(|display| AsmOutput {
-                tokens: vec![],
-                display,
-            }),
-            binary: Some(binary_out),
-            assembler_error: None,
-            exec: None,
-        });
-
-        self.compilation_state.clear_error();
-        self.compilation_state.just_compiled = true;
-        // Cache the kernel binary so it survives target-mode switches.
-        // Userspace programs use this cached kernel for "Run in Kernel".
-        self.kernel_binary = self.compilation_state.assembled().cloned();
-    }
-
-    /// The program a build should target: the parent if a fragment (helper module /
-    /// kernel module) is selected, otherwise the selected program itself. A
-    /// fragment only links as part of its parent, so every build path resolves
-    /// through here.
-    fn resolve_build_program(&self) -> Option<ProgramFile> {
-        let current = self.catalog.current_program()?;
-        if current.is_stdlib() {
-            return Some(current.clone());
-        }
-        let build_id = current
-            .parent_id
-            .clone()
-            .unwrap_or_else(|| current.id.clone());
-        self.catalog
-            .all_programs()
-            .iter()
-            .find(|p| p.id == build_id)
-            .cloned()
-    }
-
-    fn catalog_module_resolver(&self) -> ModuleResolver {
-        let mut sources: HashMap<String, String> = HashMap::new();
-        for program in self.catalog.all_programs() {
-            let key = match program.id.as_str() {
-                "os-kernel-entry" => Some("entry"),
-                "os-kernel-checks" => Some("checks"),
-                "os-kernel-utilities" => Some("utilities"),
-                "os-kernel-trap-entry" => Some("trap_entry"),
-                "os-kernel-trap-handler" => Some("trap_handler"),
-                "os-kernel-pmm" => Some("pmm"),
-                "os-kernel-vmm" => Some("vmm"),
-                "os-kernel-process" => Some("process"),
-                "os-kernel-syscall" => Some("syscall"),
-                "os-kernel-scheduler" => Some("scheduler"),
-                "os-kernel-fs" => Some("fs"),
-                "os-my-kernel" => Some("my_kernel"),
-                _ => None,
-            };
-            if let Some(key) = key {
-                sources.insert(key.to_owned(), program.source.clone());
-            }
-        }
-        Box::new(move |name: &str| {
-            sources
-                .get(name)
-                .cloned()
-                .or_else(|| bundled_module_source(name).map(str::to_owned))
-        })
-    }
-
-    fn catalog_build_resolver(&self) -> BuildModuleResolver {
-        let resolver = self.catalog_module_resolver();
-        Rc::new(move |name: &str| resolver(name))
-    }
-
-    fn manifest_for_program(&self, program: &ProgramFile, target: TargetMode) -> BuildManifest {
-        let mut manifest = program
-            .build_path
-            .as_ref()
-            .and_then(|path| BuildManifest::from_file(path).ok())
-            .unwrap_or_else(|| match target {
-                TargetMode::Kernel => {
-                    BuildManifest::kernel(program.id.clone(), program.source.clone())
-                }
-                TargetMode::Hosted | TargetMode::Freestanding => {
-                    BuildManifest::hosted(program.id.clone(), program.source.clone())
-                }
-            });
-        manifest.target = target;
-        let root_name = manifest.name.clone();
-        manifest.root = match &program.source_path {
-            Some(path) => BuildSource::inline_with_path(root_name, &program.source, path),
-            None => BuildSource::inline(root_name, &program.source),
-        };
-        manifest.entry = match target {
-            TargetMode::Hosted => None,
-            TargetMode::Kernel => Some("_kernel_start".to_owned()),
-            TargetMode::Freestanding => Some(self.pipeline.effective_entry_point().to_owned()),
-        };
-        manifest.link_layout = Some(self.pipeline.effective_link_layout());
-        manifest.source_prelude = (!program.layout.is_empty()).then(|| program.layout.clone());
-        manifest.module_resolver = Some(self.catalog_build_resolver());
-        manifest.stdlib = match target {
-            TargetMode::Hosted => StdlibPolicy::Explicit(TargetMode::Hosted),
-            TargetMode::Freestanding => StdlibPolicy::Explicit(TargetMode::Freestanding),
-            TargetMode::Kernel => StdlibPolicy::Explicit(TargetMode::Kernel),
-        };
-        if manifest.abi_exports.is_empty() {
-            manifest.abi_exports = match target {
-                TargetMode::Hosted => vec!["main".to_owned()],
-                TargetMode::Freestanding => vec![self.pipeline.effective_entry_point().to_owned()],
-                TargetMode::Kernel => vec!["kmain".to_owned()],
-            };
-        }
-        manifest.string_prefix = match target {
-            TargetMode::Kernel => Some("__kern_str_".to_owned()),
-            _ => Some("_u_".to_owned()),
-        };
-        manifest.run_semantic_analysis = target == TargetMode::Kernel;
-        if target == TargetMode::Kernel {
-            manifest.import_closure = ImportClosurePolicy::Enabled {
-                mangle_symbols: false,
-            };
-        }
-        manifest
-    }
-
-    fn compile(&mut self) {
-        // Selecting a fragment builds its parent so it links cleanly and the
-        // fragment's edits are folded in via the aux/module link path below.
-        let Some(build) = self.resolve_build_program() else {
-            return;
-        };
-
-        let user_source = build.source.clone();
-        let is_stdlib = build.is_stdlib() || build.standalone;
-        let is_os_program = build.is_os() && !build.standalone;
-
-        // Reset user-set target mode when the selected program changes.
-        let current_id = self.catalog.selected_program_id.clone();
-        if self.last_compile_program_id != current_id {
-            self.user_set_target_mode = false;
-            self.last_compile_program_id = current_id;
-        }
-
-        // Only auto-infer target mode if the user has not manually changed it.
-        if !self.user_set_target_mode {
-            let desired_mode = if is_os_program {
-                TargetMode::Kernel
-            } else {
-                infer_target_mode_for_source(&user_source, is_stdlib, self.target_mode)
-            };
-            if desired_mode != self.target_mode {
-                self.set_target_mode(desired_mode);
-                return;
-            }
-        }
-
-        self.pipeline.set_target_mode(self.target_mode);
-        self.pipeline.set_type_prelude(get_stdlib_type_prelude());
-        self.pipeline
-            .set_module_resolver(Some(self.catalog_module_resolver()));
-        let artifact_stem = {
-            let name = build.name.trim();
-            if name.is_empty() {
-                build.id.clone()
-            } else {
-                name.to_owned()
-            }
-        };
-        self.pipeline.set_artifact_stem(Some(artifact_stem));
-        self.pipeline
-            .set_current_source_path(build.source_path.clone());
-        match self.target_mode {
-            TargetMode::Hosted => {
-                self.pipeline.set_entry_point(None);
-                self.pipeline.set_link_layout(Some(LinkLayout::hosted()));
-            }
-            TargetMode::Kernel => {
-                self.pipeline
-                    .set_entry_point(Some("_kernel_start".to_owned()));
-                self.pipeline
-                    .set_link_layout(Some(LinkLayout::freestanding_kernel()));
-            }
-            TargetMode::Freestanding => {
-                self.pipeline.set_entry_point(Some("_start".to_owned()));
-                let load_base = parse_hex_or_dec(&self.load_base_input)
-                    .unwrap_or_else(|| LinkLayout::freestanding_kernel().load_base);
-                let mut layout = LinkLayout::freestanding_kernel();
-                layout.load_base = load_base;
-                self.pipeline.set_link_layout(Some(layout));
-            }
-        }
-
-        self.compilation_state.entry_symbol = self.pipeline.effective_entry_point().to_owned();
-        self.compilation_state.load_base = self.pipeline.effective_load_base();
-
-        // Kernel OS programs use multi-module compilation.
-        if is_os_program && self.target_mode == TargetMode::Kernel {
-            self.compile_kernel_with_modules();
-            return;
-        }
-
-        // Stdlib objects (compiled per-module, no concatenation) link with the
-        // user program; an stdlib build links nothing extra.
-        let stdlib_objects: Vec<(&str, &AssembledOutput)> = if is_stdlib {
-            Vec::new()
+    fn build_glow_t(&mut self, now: f64) -> Option<f32> {
+        let start = self.build_glow_start?;
+        let t = ((now - start) / BUILD_GLOW_SECS) as f32;
+        if t >= 1.0 {
+            self.build_glow_start = None;
+            None
         } else {
-            self.stdlib_objects
-                .iter()
-                .map(|(n, o)| (n.as_str(), o))
-                .collect()
-        };
-        // Split tools (cc/as) share record layouts via a header prepended before compile.
-        let layout = self.catalog.layout_of(&build.id).to_owned();
-        self.pipeline.set_source_prelude(layout.clone());
-        let mut result = self.pipeline.run_full(&user_source, &stdlib_objects);
+            Some(t)
+        }
+    }
 
-        if !is_stdlib && !result.has_errors() {
-            let manifest = self.manifest_for_program(&build, self.target_mode);
-            match BuildExecutor::build(&manifest) {
-                Ok(artifacts) => {
-                    result.binary = Some(BinaryOutput {
-                        assembled: artifacts.linked,
-                    });
-                    result.assembler_error = None;
+    fn active_path(&self) -> Option<VPath> {
+        self.workspace
+            .active_document()
+            .map(|doc| doc.path().clone())
+    }
+
+    /// Open (or focus) a document and resync the layer, stage cache, and spine.
+    pub(super) fn open_path(&mut self, path: VPath) {
+        if self.workspace.open_document(path).is_ok() {
+            self.document_focus_changed();
+        }
+    }
+
+    /// Focus an already-open document (a tab click).
+    pub(super) fn activate_path(&mut self, path: &VPath) {
+        self.workspace.activate_document(path);
+        self.document_focus_changed();
+    }
+
+    /// Close a tab; unsaved edits are discarded (the tab's dot warns beforehand).
+    pub(super) fn close_path(&mut self, path: &VPath) {
+        if self.settings.confirm_discard_on_close
+            && self
+                .workspace
+                .document(path)
+                .is_some_and(|doc| doc.is_dirty())
+        {
+            self.pending_close = Some(path.clone());
+            self.status_message = Some(format!("{path} has unsaved edits"));
+            return;
+        }
+        self.close_path_confirmed(path);
+    }
+
+    pub(super) fn close_path_confirmed(&mut self, path: &VPath) {
+        let discarded = self
+            .workspace
+            .document(path)
+            .is_some_and(|doc| doc.is_dirty());
+        self.workspace.close_document(path);
+        if self.pending_close.as_ref() == Some(path) {
+            self.pending_close = None;
+        }
+        if discarded {
+            self.status_message = Some(format!("closed {path} \u{00B7} unsaved edits discarded"));
+        }
+        self.document_focus_changed();
+    }
+
+    pub(super) fn close_active_path(&mut self) {
+        if let Some(path) = self.active_path() {
+            self.close_path(&path);
+        }
+    }
+
+    fn block_open_folder_for_dirty_documents(&mut self) -> bool {
+        if self.workspace.dirty_documents().next().is_none() {
+            return false;
+        }
+        self.status_message =
+            Some("save or close unsaved files before opening a folder".to_owned());
+        true
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn open_native_workspace_folder(&mut self, path: &Path) {
+        if self.block_open_folder_for_dirty_documents() {
+            return;
+        }
+        let native_fs = match NativeFs::open(path) {
+            Ok(fs) => fs,
+            Err(err) => {
+                self.status_message = Some(format!("open folder failed: {err}"));
+                return;
+            }
+        };
+        let root_label = native_fs.root().display().to_string();
+        match IdeWorkspace::new(Box::new(native_fs)) {
+            Ok(workspace) => {
+                // Remember this folder so "reopen last workspace" can restore it.
+                self.settings.last_workspace = Some(root_label.clone());
+                self.replace_workspace(workspace, &root_label);
+            }
+            Err(err) => {
+                self.status_message = Some(format!("open folder failed: {err}"));
+            }
+        }
+    }
+
+    fn replace_workspace(&mut self, workspace: IdeWorkspace, label: &str) {
+        self.workspace = workspace;
+        self.live = None;
+        self.launch_cache = None;
+        self.pending_jump = None;
+        self.vm_result = None;
+        self.machine_texture = None;
+        self.machine_texture_fill_count = None;
+        self.stage_cache = None;
+        self.active_build_target = None;
+        self.manifest_cache = None;
+        self.quick_open = None;
+        self.find = find::FindState::default();
+        self.explorer = explorer::ExplorerState::default();
+        self.search = search::SearchState::default();
+        self.pending_close = None;
+        self.cursor_pos = None;
+        self.current_launch_debug = false;
+        self.memory_view = debug_view::MemoryViewState::default();
+        self.inspect_tab = inspect_panel::InspectTab::Cpu;
+        self.reset_machine_views();
+        self.mark_build_stale();
+        self.selected_config = 0;
+        self.reset_layer_for_active_file();
+        if !self.workspace.run_configs().configs.is_empty() {
+            self.select_config(0);
+        }
+        self.status_message = Some(format!("opened {label}"));
+    }
+
+    pub(super) fn document_focus_changed(&mut self) {
+        self.reset_layer_for_active_file();
+        // Switching tabs must not dim the lit spine; only edits and builds may.
+        self.stage_cache = None;
+    }
+
+    pub(super) fn active_source_kind(&self) -> SourceKind {
+        self.active_path()
+            .map(|path| Self::source_kind_for_path(path.as_str()))
+            .unwrap_or(SourceKind::Other)
+    }
+
+    pub(super) fn source_kind_for_path(path: &str) -> SourceKind {
+        if path.ends_with(".build") {
+            SourceKind::Build
+        } else if path.ends_with(".hll") {
+            SourceKind::Hll
+        } else if path.ends_with(".ir") {
+            SourceKind::Ir
+        } else if path.ends_with(".s") {
+            SourceKind::Asm
+        } else if path.ends_with(".elf") || path.ends_with(".o") {
+            SourceKind::Elf
+        } else {
+            SourceKind::Other
+        }
+    }
+
+    fn visible_layers(&self) -> Option<&'static [Layer]> {
+        let active = self.active_path()?;
+        // Any source file that resolves to a build target rides that target's
+        // spine, so modules keep the pipeline (and the L4 rung) in reach.
+        self.active_build_target.as_ref()?;
+        match Self::source_kind_for_path(active.as_str()) {
+            SourceKind::Hll | SourceKind::Build => Some(HLL_LAYERS),
+            _ => None,
+        }
+    }
+
+    pub(super) fn source_layer_for_kind(kind: SourceKind) -> Layer {
+        match kind {
+            SourceKind::Build | SourceKind::Hll | SourceKind::Other => Layer::Hll,
+            SourceKind::Ir => Layer::Ir,
+            SourceKind::Asm => Layer::Asm,
+            SourceKind::Elf => Layer::Elf,
+        }
+    }
+
+    pub(super) fn reset_layer_for_active_file(&mut self) {
+        self.layer = Self::source_layer_for_kind(self.active_source_kind());
+    }
+
+    fn ensure_layer_visible(&mut self) {
+        let Some(layers) = self.visible_layers() else {
+            return;
+        };
+        if !layers.contains(&self.layer)
+            && let Some(first) = layers.first()
+        {
+            self.layer = *first;
+        }
+    }
+
+    fn spine_panel(&mut self, ui: &mut egui::Ui, build_glow_t: Option<f32>) {
+        let Some(layers) = self.visible_layers() else {
+            return;
+        };
+        if let Some(layer) = spine::show(
+            ui,
+            layers,
+            self.layer,
+            build_glow_t,
+            self.lit_layer_for_active_target(),
+            layers.first().copied(),
+        ) {
+            self.layer = layer;
+        }
+    }
+
+    fn body(&mut self, ui: &mut egui::Ui, build_glow_t: Option<f32>) {
+        self.refresh_build_target();
+        self.ensure_layer_visible();
+        let rect = ui.available_rect_before_wrap();
+        ui.expand_to_include_rect(rect);
+
+        let show_spine = !self.settings_open && self.visible_layers().is_some();
+        let spine_width = if show_spine { spine::width() } else { 0.0 };
+        let max_width = metrics::TOOL_WINDOW_MAX
+            .min((rect.width() - spine_width - metrics::EDITOR_MIN).max(0.0));
+        let max_width = max_width.max(metrics::TOOL_WINDOW_MIN.min(rect.width()));
+        self.layout.tool_window_width = self
+            .layout
+            .tool_window_width
+            .clamp(metrics::TOOL_WINDOW_MIN.min(max_width), max_width);
+
+        let tool_rect = egui::Rect::from_min_size(
+            rect.left_top(),
+            egui::vec2(self.layout.tool_window_width, rect.height()),
+        );
+        let spine_rect = egui::Rect::from_min_size(
+            egui::pos2(tool_rect.right(), rect.top()),
+            egui::vec2(spine_width, rect.height()),
+        );
+        let editor_rect = egui::Rect::from_min_max(
+            egui::pos2(spine_rect.right(), rect.top()),
+            rect.right_bottom(),
+        );
+
+        ui.scope_builder(
+            egui::UiBuilder::new()
+                .id_salt("tool_window")
+                .max_rect(tool_rect),
+            |ui| {
+                self.tool_window(ui);
+            },
+        );
+        if show_spine {
+            ui.scope_builder(
+                egui::UiBuilder::new()
+                    .id_salt("stack_spine")
+                    .max_rect(spine_rect),
+                |ui| {
+                    self.spine_panel(ui, build_glow_t);
+                },
+            );
+        }
+        ui.scope_builder(
+            egui::UiBuilder::new()
+                .id_salt("editor")
+                .max_rect(editor_rect),
+            |ui| {
+                self.editor(ui);
+            },
+        );
+
+        // Dividers span the working area (under the top bar to the status bar); the
+        // zero-margin central frame lets them meet egui's panel separators cleanly.
+        let sep_top = rect.top();
+        self.resize_tool_window(ui, tool_rect, max_width, sep_top);
+        if show_spine {
+            draw_separator(ui, spine_rect.right(), sep_top, spine_rect.bottom(), false);
+        }
+    }
+
+    fn resize_tool_window(
+        &mut self,
+        ui: &egui::Ui,
+        rect: egui::Rect,
+        max_width: f32,
+        sep_top: f32,
+    ) {
+        let edge_x = rect.right();
+        let hit_rect = egui::Rect::from_min_max(
+            egui::pos2(edge_x - metrics::RESIZE_HIT_RADIUS, rect.top()),
+            egui::pos2(edge_x + metrics::RESIZE_HIT_RADIUS, rect.bottom()),
+        );
+        let response = ui.interact(
+            hit_rect,
+            ui.id().with("tool_window_resize"),
+            egui::Sense::drag(),
+        );
+
+        if response.hovered() || response.dragged() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+        }
+        if response.drag_started() {
+            self.layout.tool_window_drag_start = Some(self.layout.tool_window_width);
+        }
+        if response.dragged() {
+            let start = self
+                .layout
+                .tool_window_drag_start
+                .unwrap_or(self.layout.tool_window_width);
+            let delta = response.total_drag_delta().unwrap_or_default().x;
+            self.layout.tool_window_width =
+                (start + delta).clamp(metrics::TOOL_WINDOW_MIN.min(max_width), max_width);
+            ui.ctx().request_repaint();
+        }
+        if response.drag_stopped() {
+            self.layout.tool_window_drag_start = None;
+        }
+
+        draw_separator(
+            ui,
+            edge_x,
+            sep_top,
+            rect.bottom(),
+            response.hovered() || response.dragged(),
+        );
+    }
+
+    pub(super) fn build_active_document(&mut self, now: f64) {
+        let config = self.selected_config().cloned();
+        let has_config = config.is_some();
+        let target_name = self
+            .selected_config()
+            .map(|config| config.name.clone())
+            .unwrap_or_else(|| {
+                self.active_path()
+                    .map(|path| path.to_string())
+                    .unwrap_or_else(|| "active document".to_owned())
+            });
+        self.terminal
+            .start("Build", format!("fsc build {target_name}"));
+        self.terminal_open = self.settings.open_terminal_on_run;
+
+        self.refresh_build_target();
+        if self.visible_layers().is_some() {
+            self.refresh_stage_cache();
+        } else {
+            self.stage_cache = None;
+        }
+        let produced_layer = if self.visible_layers().is_some() {
+            self.stage_cache.as_ref().map(|cache| {
+                let result = &cache.result;
+                if result.binary.is_some() {
+                    Layer::Elf
+                } else if result.asm.is_some() {
+                    Layer::Asm
+                } else if result.ir.is_some() {
+                    Layer::Ir
+                } else {
+                    Layer::Hll
+                }
+            })
+        } else {
+            None
+        };
+        let preview_failed = self
+            .stage_cache
+            .as_ref()
+            .is_some_and(|cache| cache.result.has_errors() || cache.result.has_assembler_error());
+
+        let mut failed = preview_failed;
+        if let Some(config) = config {
+            let out_dir = self.workspace.fs().host_out_dir();
+            match SessionEngine::new(self.workspace.fs())
+                .with_artifact_root(out_dir)
+                .build_config(&config)
+            {
+                Ok(outcome) => {
+                    failed = false;
+                    self.status_message = Some("built".to_owned());
+                    self.report_linked_build(&outcome);
                 }
                 Err(err) => {
-                    result.binary = None;
-                    result.assembler_error = Some(format!("manifest build error: {err}"));
+                    failed = true;
+                    self.status_message = Some("build failed".to_owned());
+                    self.terminal.push(ConsoleStream::Error, err.to_string());
                 }
             }
-        }
-        // The pipeline is reused across compiles; clear the per-program prelude.
-        self.pipeline.set_source_prelude("");
-        self.pipeline.set_current_source_path(None::<String>);
-
-        if result.has_errors() {
-            self.compilation_state
-                .set_error(result.format_diagnostics());
-            self.compilation_state.pipeline = Some(result);
-            self.compilation_state.linked_asm_text = String::new();
-            self.compilation_state.just_compiled = false;
-        } else if !is_stdlib && let Some(ref asm_err) = result.assembler_error.clone() {
-            self.compilation_state.set_error(format!("- {asm_err}"));
-            self.compilation_state.linked_asm_text = result
-                .asm
-                .as_ref()
-                .map(|a| format!("{}\n{}", self.stdlib_asm, a.display))
-                .unwrap_or_default();
-            self.compilation_state.pipeline = Some(result);
-            self.compilation_state.just_compiled = false;
+        } else if preview_failed {
+            self.status_message = Some("build failed".to_owned());
+        } else if let Some(cache) = &self.stage_cache {
+            self.status_message = Some("built".to_owned());
+            self.terminal.push(
+                ConsoleStream::Success,
+                build_summary(&cache.result, produced_layer),
+            );
         } else {
-            self.compilation_state.linked_asm_text = if is_stdlib {
-                result
-                    .asm
-                    .as_ref()
-                    .map(|a| a.display.clone())
-                    .unwrap_or_default()
-            } else {
-                result
-                    .asm
-                    .as_ref()
-                    .map(|a| format!("{}\n{}", self.stdlib_asm, a.display))
-                    .unwrap_or_default()
+            self.status_message = Some("build skipped".to_owned());
+            self.terminal.push(
+                ConsoleStream::Warning,
+                "No build manifest was found for the active document.",
+            );
+        }
+        if !has_config || failed {
+            self.push_build_diagnostics(failed);
+        }
+        self.build_glow_start = Some(now);
+        self.record_build_lit(produced_layer);
+    }
+
+    /// Diagnostics land in Output one line each; spanned lines click-to-jump
+    /// (open the build root at that line). Notes follow as dim lines.
+    fn push_build_diagnostics(&mut self, failed: bool) {
+        use full_stack::compilation_pipeline::DiagnosticLevel;
+        let Some(cache) = &self.stage_cache else {
+            return;
+        };
+        let root = self
+            .active_build_target
+            .as_ref()
+            .map(|target| target.root_path.as_str().to_owned());
+        for diag in &cache.result.diagnostics {
+            let (tag, stream) = match diag.level {
+                DiagnosticLevel::Error => ("error", ConsoleStream::Error),
+                DiagnosticLevel::Warning => ("warning", ConsoleStream::Warning),
             };
-            self.compilation_state.pipeline = Some(result);
-            self.compilation_state.clear_error();
-            self.compilation_state.just_compiled = true;
+            match (&diag.span, &root) {
+                (Some(span), Some(root)) => self.terminal.push_linked(
+                    stream,
+                    format!(
+                        "{tag}: {} \u{00B7} {root}:{}:{}",
+                        diag.message, span.line, span.col
+                    ),
+                    root.clone(),
+                    span.line as usize,
+                ),
+                (Some(span), None) => self.terminal.push(
+                    stream,
+                    format!("{tag}: {} \u{00B7} {}", diag.message, span.location()),
+                ),
+                (None, _) => self
+                    .terminal
+                    .push(stream, format!("{tag}: {}", diag.message)),
+            }
+            if let Some(note) = &diag.note {
+                self.terminal
+                    .push(ConsoleStream::Info, format!("note: {note}"));
+            }
+        }
+        if let Some(err) = &cache.result.assembler_error {
+            self.terminal.push(ConsoleStream::Error, err.clone());
+        }
+        if failed && cache.result.diagnostics.is_empty() && cache.result.assembler_error.is_none() {
+            self.terminal.push(
+                ConsoleStream::Error,
+                "Build failed without a diagnostic payload.",
+            );
         }
     }
 
-    /// Compile the program with the given id as Hosted and store the result in
-    /// `compilation_state.last_hosted_binary` on success.
-    fn compile_and_store_hosted(&mut self, program_id: &str) -> Result<(), String> {
-        // A fragment runs only as part of its parent program; build the parent.
-        let program = self
-            .catalog
-            .all_programs()
-            .iter()
-            .find(|p| p.id == program_id)
-            .ok_or_else(|| format!("program id not found: {program_id}"))?;
-        let build_id = program
-            .parent_id
-            .clone()
-            .unwrap_or_else(|| program_id.to_owned());
-        let program = match self
-            .catalog
-            .all_programs()
-            .iter()
-            .find(|p| p.id == build_id)
+    /// Open `path` and scroll it to `line` (1-based); used by Output links.
+    pub(super) fn jump_to_source(&mut self, path: &str, line: usize) {
+        let Ok(vpath) = VPath::parse(path) else {
+            return;
+        };
+        // Only reopen when the file is not already active, so the stage cache
+        // (and with it the editor's diagnostic markers) survives the jump.
+        if self.active_path().as_ref() != Some(&vpath) {
+            self.open_path(vpath.clone());
+            if self.active_path().as_ref() != Some(&vpath) {
+                return;
+            }
+        }
+        self.pending_jump = Some((vpath, line));
+    }
+
+    pub(super) fn mark_build_stale(&mut self) {
+        self.build_lit_until = None;
+        self.built_target = None;
+        self.build_glow_start = None;
+    }
+
+    /// Light the spine through `layer` for the target currently in focus.
+    fn record_build_lit(&mut self, layer: Option<Layer>) {
+        self.build_lit_until = layer;
+        self.built_target = self.active_build_target.clone();
+    }
+
+    /// The lit layer, only while the active file still belongs to the program
+    /// that was built; a different program's spine must not read as built.
+    fn lit_layer_for_active_target(&self) -> Option<Layer> {
+        (self.built_target.is_some() && self.built_target == self.active_build_target)
+            .then_some(self.build_lit_until)
+            .flatten()
+    }
+
+    pub(super) fn save_active_document(&mut self) {
+        match self.workspace.save_active_document() {
+            Ok(()) => {
+                self.check_after_save("saved");
+            }
+            Err(err) => {
+                self.status_message = Some(format!("save failed: {err:?}"));
+            }
+        }
+    }
+
+    pub(super) fn save_all_documents(&mut self) {
+        match self.workspace.save_all() {
+            Ok(()) => {
+                self.check_after_save("saved all");
+            }
+            Err(err) => {
+                self.status_message = Some(format!("save all failed: {err:?}"));
+            }
+        }
+    }
+
+    /// Check-on-save: re-run the stage cache for the active build target so
+    /// editor markers and the status chip reflect the file that was just saved.
+    fn check_after_save(&mut self, verb: &str) {
+        self.stage_cache = None;
+        if !self.settings.check_on_save {
+            self.status_message = Some(verb.to_owned());
+            return;
+        }
+        self.refresh_build_target();
+        self.refresh_stage_cache();
+        let (errors, warnings) = self
+            .stage_cache
+            .as_ref()
+            .map(|cache| diagnostics::count_levels(&cache.result.diagnostics))
+            .unwrap_or((0, 0));
+        self.status_message = Some(match (errors, warnings) {
+            (0, 0) => verb.to_owned(),
+            (0, w) => format!("{verb} \u{00B7} {w} warning(s)"),
+            (e, 0) => format!("{verb} \u{00B7} {e} error(s)"),
+            (e, w) => format!("{verb} \u{00B7} {e} error(s), {w} warning(s)"),
+        });
+    }
+
+    pub(super) fn refresh_stage_cache(&mut self) {
+        let Some(target) = self.active_build_target.clone() else {
+            self.stage_cache = None;
+            return;
+        };
+        let Ok(manifest) = self.workspace.load_manifest(&target.manifest_path) else {
+            self.stage_cache = None;
+            return;
+        };
+        let (path, source) = match &manifest.root {
+            BuildSource::Inline {
+                source,
+                source_path,
+                ..
+            } => (
+                source_path
+                    .as_ref()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_else(|| target.root_path.as_str().to_owned()),
+                source.clone(),
+            ),
+            BuildSource::Path { path, .. } => {
+                let path_text = path.display().to_string();
+                let Ok(bytes) = self.workspace.fs().read_file(&target.root_path) else {
+                    self.stage_cache = None;
+                    return;
+                };
+                let Ok(source) = String::from_utf8(bytes) else {
+                    self.stage_cache = None;
+                    return;
+                };
+                (path_text, source)
+            }
+        };
+        if self
+            .stage_cache
+            .as_ref()
+            .is_some_and(|cache| cache.path == path && cache.source == source)
         {
-            Some(p) => p,
-            None => return Err(format!("program id not found: {build_id}")),
+            return;
+        }
+
+        // Display stages (tokens/AST/IR/ASM) from the root unit; the authoritative
+        // binary/link comes from the full manifest build below.
+        let mut pipeline = BuildExecutor::pipeline_for(&manifest);
+        pipeline.set_write_artifacts(false);
+        pipeline.set_current_source_path(Some(path.clone()));
+        let mut result = pipeline.run_full(&source, &[]);
+        result.binary = None;
+        result.assembler_error = None;
+
+        if !result.has_errors() {
+            match self.build_preview_binary(&manifest, &path, &source) {
+                Ok(binary) => result.binary = Some(binary),
+                Err(err) => result.assembler_error = Some(err),
+            }
+        }
+        self.stage_cache = Some(StageCache {
+            path,
+            source,
+            result,
+        });
+    }
+
+    /// Link the active program as Build/Run would, reusing the cached per-mode stdlib
+    /// and the live root buffer so the preview link matches reality.
+    fn build_preview_binary(
+        &mut self,
+        manifest: &BuildManifest,
+        path: &str,
+        source: &str,
+    ) -> Result<BinaryOutput, String> {
+        let stdlib_mode = match manifest.stdlib {
+            StdlibPolicy::None => None,
+            StdlibPolicy::ForTarget => Some(manifest.target),
+            StdlibPolicy::Explicit(mode) => Some(mode),
         };
 
-        let manifest = self.manifest_for_program(program, TargetMode::Hosted);
-        let artifacts = BuildExecutor::build(&manifest)
-            .map_err(|e| format!("{build_id} manifest build error: {e}"))?;
-        self.compilation_state.last_hosted_binary = Some(artifacts.linked);
-        Ok(())
-    }
-
-    /// Compile the default kernel (kernel stdlib + `my_kernel`) into `kernel_binary`,
-    /// caching it. Independent of the catalog selection and target mode, so a
-    /// userspace program can boot the kernel without disturbing the editor state.
-    fn ensure_kernel_binary(&mut self) -> Result<(), String> {
-        if self.kernel_binary.is_some() {
-            return Ok(());
-        }
-
-        let manifest = BuildManifest::from_file(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("crates/os-runtime/kernel/kernel.build"),
-        )
-        .map_err(|e| format!("kernel build file error: {e}"))?;
-        let artifacts = BuildExecutor::build(&manifest)
-            .map_err(|e| format!("kernel manifest build error: {e}"))?;
-        self.kernel_binary = Some(artifacts.linked);
-        Ok(())
-    }
-
-    /// Compile a bundled user program by its generated userspace catalog name.
-    /// as a hosted binary, caching the result so repeated boots reuse it. One
-    /// method for every tool/demo -- they differ only in source + cache key.
-    fn ensure_user_binary(&mut self, name: &'static str) -> Result<(), String> {
-        if self.user_binaries.contains_key(name) {
-            return Ok(());
-        }
-        let prog = full_stack::userspace::program(name)
-            .ok_or_else(|| format!("unknown user program: {name}"))?;
-
-        let manifest = BuildManifest::from_user_program(prog);
-        let artifacts = BuildExecutor::build(&manifest)
-            .map_err(|e| format!("{name} manifest build error: {e}"))?;
-        self.user_binaries.insert(name, artifacts.linked);
-        Ok(())
-    }
-
-    /// Build the filesystem image the shell boots with: a `/home` directory and,
-    /// if a program is selected for injection, that program stored there as a
-    /// runnable executable file. A short readme is always present so `ls` has
-    /// something to show.
-    fn build_boot_fs_image(&self) -> Vec<u8> {
-        let mut entries = boot_fs_static_entries();
-
-        // Install every compiled tool/demo at its catalog install path. The ELF
-        // byte buffers must outlive `entries` (which borrows them), so own them
-        // here and push the FsEntry references afterward.
-        let elf_holders: Vec<(&'static str, Vec<u8>)> = full_stack::userspace::PROGRAMS
-            .iter()
-            .filter_map(|prog| {
-                let path = prog.install_path?;
-                let asm = self.user_binaries.get(prog.name)?;
-                Some((path, assembled_to_elf_file(asm)))
-            })
-            .collect();
-        for (path, data) in &elf_holders {
-            entries.push(FsEntry::File { path, data });
-        }
-
-        // If a program is selected, write it into /home as an executable file.
-        let exec_holder;
-        let path_holder;
-        if let Some(asm) = self.compilation_state.last_hosted_binary.as_ref() {
-            let name = self
-                .catalog
-                .all_programs()
-                .iter()
-                .find(|p| p.id == self.selected_inject_program_id)
-                .map(|p| sanitize_program_filename(&p.name))
-                .unwrap_or_else(|| "program".to_owned());
-            path_holder = format!("/home/{name}.elf");
-            exec_holder = assembled_to_elf_file(asm);
-            entries.push(FsEntry::File {
-                path: &path_holder,
-                data: &exec_holder,
-            });
-        }
-
-        build_fs_image(&entries)
-    }
-
-    fn save_state(&self, storage: &mut dyn eframe::Storage) {
-        eframe::set_value(storage, eframe::APP_KEY, self);
-    }
-}
-
-// --- eframe::App ---
-
-impl eframe::App for FullStackApp {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        if let Some(view) = self.pending_new_view.take() {
-            match self.mode {
-                AppMode::Ide => self.dock.main_surface_mut().push_to_focused_leaf(view),
-                AppMode::Debug => self
-                    .debug_dock
-                    .main_surface_mut()
-                    .push_to_focused_leaf(view),
-            }
-        }
-
-        match self.mode {
-            AppMode::Ide => {
-                egui::Panel::left("left_panel")
-                    .resizable(true)
-                    .default_size(220.0)
-                    .show_inside(ui, |ui| self.catalog_ui(ui));
-
-                egui::Panel::top("top_panel")
-                    .resizable(false)
-                    .exact_size(40.0)
-                    .show_inside(ui, |ui| self.ide_top_bar(ui));
-
-                egui::CentralPanel::default().show_inside(ui, |ui| {
-                    egui_dock::DockArea::new(&mut self.dock)
-                        .show_add_buttons(false)
-                        .show_close_buttons(true)
-                        .show_inside(
-                            ui,
-                            &mut DockTabViewer {
-                                state: &mut self.compilation_state,
-                                catalog: &mut self.catalog,
-                            },
-                        );
-                });
-            }
-            AppMode::Debug => {
-                egui::Panel::top("debug_top_panel")
-                    .resizable(false)
-                    .exact_size(40.0)
-                    .show_inside(ui, |ui| self.debug_top_bar(ui));
-
-                egui::CentralPanel::default().show_inside(ui, |ui| {
-                    egui_dock::DockArea::new(&mut self.debug_dock)
-                        .show_add_buttons(false)
-                        .show_close_buttons(true)
-                        .show_inside(
-                            ui,
-                            &mut DockTabViewer {
-                                state: &mut self.compilation_state,
-                                catalog: &mut self.catalog,
-                            },
-                        );
-                });
-            }
-        }
-
-        let has_kernel = self.target_mode == TargetMode::Kernel
-            && self.compilation_state.assembled().is_some()
-            && self.compilation_state.error_summary.is_none();
-        let mut mw_open = self.machine_window.open;
-        // Open centered at half the viewport; bound by the screen so a wide boot
-        // log scrolls inside the window instead of stretching it to the edge.
-        let screen = ui.ctx().content_rect();
-        let default_w = (screen.width() * 0.5).clamp(480.0, 1100.0);
-        let default_h = (screen.height() * 0.5).clamp(320.0, 800.0);
-        let default_pos = egui::pos2(
-            screen.center().x - default_w / 2.0,
-            screen.center().y - default_h / 2.0,
+        let mut manifest = manifest.clone();
+        // Build from the live editor buffer, not the on-disk file.
+        manifest.root = BuildSource::inline_with_path(
+            manifest.name.clone(),
+            source.to_owned(),
+            std::path::PathBuf::from(path),
         );
-        egui::Window::new("Machine")
-            // Fresh id so any previously persisted (poisoned screen-tall) size is
-            // discarded; the window then opens at the centered half-screen default.
-            .id(egui::Id::new("machine_window_v2"))
-            .open(&mut mw_open)
-            .default_pos(default_pos)
-            .default_size([default_w, default_h])
-            .min_size([480.0, 320.0])
-            .max_size([screen.width(), screen.height()])
-            .resizable(true)
-            .show(ui.ctx(), |ui| {
-                // Booting drops into an interactive shell (ls / cd / cat / exit).
-                // The selected program, if any, is placed in /home as a runnable
-                // file you can launch by typing its name (bare-name execution).
-                ui.horizontal(|ui| {
-                    ui.label("Program in /home:");
-                    // Program selector: list Example, Custom, and Userspace programs
-                    // (all hosted -- they install into /home and run under the shell).
-                    use full_stack::view::ProgramKind;
-                    let programs: Vec<_> = self
-                        .catalog
-                        .all_programs()
-                        .iter()
-                        .filter(|p| {
-                            p.kind == ProgramKind::Example
-                                || p.kind == ProgramKind::Custom
-                                || p.kind == ProgramKind::User
-                        })
-                        .cloned()
-                        .collect();
+        manifest.write_artifacts = false;
+        // Inject the cached stdlib objects instead of recompiling them each keystroke.
+        manifest.stdlib = StdlibPolicy::None;
+        if let Some(mode) = stdlib_mode {
+            let stdlib = self
+                .stdlib_objects_for(mode)
+                .ok_or_else(|| "stdlib build failed".to_owned())?
+                .to_vec();
+            manifest.extra_objects = stdlib
+                .into_iter()
+                .map(|(name, assembled)| BuildObject { name, assembled })
+                .collect();
+        }
 
-                    let mut selected_label = "None".to_owned();
-                    if !self.selected_inject_program_id.is_empty() {
-                        if let Some(p) = programs
-                            .iter()
-                            .find(|p| p.id == self.selected_inject_program_id)
-                        {
-                            selected_label = p.name.clone();
-                        }
-                    }
+        match BuildExecutor::build(&manifest) {
+            Ok(artifacts) => Ok(BinaryOutput {
+                assembled: artifacts.linked,
+            }),
+            Err(BuildError::Link(err)) => Err(format!("linker error: {}", err.message)),
+            Err(err) => Err(err.to_string()),
+        }
+    }
 
-                    egui::ComboBox::from_id_salt("inject_program_list")
-                        .selected_text(selected_label.clone())
-                        .show_ui(ui, |ui| {
-                            if ui
-                                .selectable_label(
-                                    self.selected_inject_program_id.is_empty(),
-                                    "None",
-                                )
-                                .clicked()
-                            {
-                                self.selected_inject_program_id.clear();
-                            }
-                            for p in &programs {
-                                let is_selected = self.selected_inject_program_id == p.id;
-                                if ui.selectable_label(is_selected, &p.name).clicked() {
-                                    self.selected_inject_program_id = p.id.clone();
-                                    // Compile the selected program into last_hosted_binary.
-                                    match self.compile_and_store_hosted(&p.id) {
-                                        Ok(()) => {
-                                            // Enable the injection flag on the machine window.
-                                            self.machine_window.selected_user_inject = true;
-                                        }
-                                        Err(e) => {
-                                            self.compilation_state
-                                                .set_error(format!("hosted compile failed: {e}"));
-                                        }
-                                    }
-                                }
-                            }
-                        });
+    pub(super) fn refresh_build_target(&mut self) {
+        let Some(active_path) = self.active_path() else {
+            self.active_build_target = None;
+            return;
+        };
+        self.active_build_target = self.find_build_target_for(&active_path);
+    }
 
-                    if self.selected_inject_program_id.is_empty() {
-                        ui.colored_label(full_stack::view::ui_theme().text_dim, "(none selected)");
-                    } else if let Some(ref asm) = self.compilation_state.last_hosted_binary {
-                        let size = asm.to_flat_binary().len();
-                        ui.label(format!("size: {size} bytes"));
-                    }
-                });
+    fn find_build_target_for(&self, path: &VPath) -> Option<BuildTarget> {
+        let manifest_path = if path.as_str().ends_with(".build") {
+            path.clone()
+        } else {
+            self.find_nearest_build_manifest(path)?
+        };
+        self.build_target_from_manifest(manifest_path)
+    }
 
-                self.machine_window.ui(ui, has_kernel);
-            });
-        self.machine_window.open = mw_open;
+    fn build_target_from_manifest(&self, manifest_path: VPath) -> Option<BuildTarget> {
+        let manifest = self.workspace.load_manifest(&manifest_path).ok()?;
+        let root_path = match manifest.root {
+            BuildSource::Inline {
+                source_path: Some(path),
+                ..
+            }
+            | BuildSource::Path { path, .. } => VPath::parse(&path.display().to_string()).ok()?,
+            BuildSource::Inline { .. } => return None,
+        };
+        Some(BuildTarget {
+            manifest_path,
+            root_path,
+        })
+    }
 
-        if self.machine_window.boot_requested {
-            self.machine_window.boot_requested = false;
-            // When autorun is requested, use the cached kernel binary instead
-            // of the currently-selected userspace program's assembled output.
-            let kernel = if self.machine_window.autorun_requested {
-                self.kernel_binary.clone()
-            } else {
-                self.compilation_state.assembled().cloned()
+    // --- Run configs ---
+
+    pub(super) fn configs(&self) -> &[RunConfig] {
+        &self.workspace.run_configs().configs
+    }
+
+    /// Write the run-config store back to `.fullstack/run.toml`.
+    pub(super) fn persist_run_configs(&mut self) {
+        if let Err(err) = self.workspace.save_run_configs() {
+            self.status_message = Some(format!("saving run configs failed: {err}"));
+        }
+    }
+
+    /// Workspace `.build` manifests for the config editor, cached briefly so
+    /// the Run panel does not rescan the tree every frame.
+    pub(super) fn discovered_manifests(&mut self, now: f64) -> Vec<VPath> {
+        const MANIFEST_CACHE_SECS: f64 = 2.0;
+        if let Some((at, manifests)) = &self.manifest_cache
+            && now - at < MANIFEST_CACHE_SECS
+        {
+            return manifests.clone();
+        }
+        let manifests = full_stack::runconfig::discover_build_manifests(self.workspace.fs())
+            .unwrap_or_default();
+        self.manifest_cache = Some((now, manifests.clone()));
+        manifests
+    }
+
+    pub(super) fn selected_config(&self) -> Option<&RunConfig> {
+        self.configs().get(self.selected_config)
+    }
+
+    /// Resolve the root source file a config compiles, if it can be located.
+    fn config_root(&self, config: &RunConfig) -> Option<VPath> {
+        match &config.build {
+            BuildRef::Manifest(path) => self
+                .build_target_from_manifest(path.clone())
+                .map(|target| target.root_path),
+            BuildRef::SourceWithDefaults { root, .. } => Some(root.clone()),
+        }
+    }
+
+    /// Make `idx` the active config and open its root, so the spine and stage views
+    /// reflect what Build/Run will act on.
+    pub(super) fn select_config(&mut self, idx: usize) {
+        let Some(config) = self.configs().get(idx).cloned() else {
+            return;
+        };
+        self.selected_config = idx;
+        self.mount_host_entry.clear();
+        self.mount_guest_entry.clear();
+        self.live = None;
+        self.launch_cache = None;
+        self.vm_result = None;
+        self.machine_texture = None;
+        self.machine_texture_fill_count = None;
+        self.reset_machine_views();
+        if let Some(root) = self.config_root(&config)
+            && self.workspace.open_document(root).is_ok()
+        {
+            self.reset_layer_for_active_file();
+        }
+        self.stage_cache = None;
+        self.mark_build_stale();
+    }
+
+    /// Open the selected config's root, then build it (lighting the spine to the
+    /// furthest stage produced).
+    /// Flush unsaved edits before a build/run when the setting is on, so the
+    /// compiled image matches what the editor shows.
+    fn save_dirty_before_run(&mut self) {
+        if self.settings.save_all_before_run && self.workspace.dirty_documents().next().is_some() {
+            self.workspace.save_all().ok();
+        }
+    }
+
+    pub(super) fn build_selected_config(&mut self, now: f64) {
+        self.save_dirty_before_run();
+        if let Some(config) = self.selected_config().cloned()
+            && let Some(root) = self.config_root(&config)
+            && self.workspace.open_document(root).is_ok()
+        {
+            self.reset_layer_for_active_file();
+        }
+        self.build_active_document(now);
+    }
+
+    /// Build and run the selected config; a `debug = true` config starts paused.
+    pub(super) fn run_selected_config(&mut self, now: f64) {
+        let debug = self
+            .selected_config()
+            .is_some_and(|config| config.debug.enabled);
+        self.launch_selected_config(now, debug);
+    }
+
+    /// Build the selected config and start it paused at the entry point with
+    /// the disassembly view focused, regardless of the config's debug flag.
+    pub(super) fn debug_selected_config(&mut self, now: f64) {
+        self.launch_selected_config(now, true);
+    }
+
+    /// Restart the selected config using the current session's launch mode.
+    /// Reuses the last build when the sources are unchanged.
+    pub(super) fn restart_selected_config(&mut self, now: f64) {
+        let debug = if self.live.is_some() {
+            self.current_launch_debug
+        } else {
+            self.selected_config()
+                .is_some_and(|config| config.debug.enabled)
+        };
+        self.launch_selected_config_inner(now, debug, true);
+    }
+
+    /// Build the selected config, then boot its ELF as a live VM session.
+    fn launch_selected_config(&mut self, now: f64, debug: bool) {
+        self.launch_selected_config_inner(now, debug, false);
+    }
+
+    fn launch_selected_config_inner(&mut self, now: f64, debug: bool, allow_reuse: bool) {
+        self.save_dirty_before_run();
+        let verb = if debug { "debug" } else { "run" };
+        let Some(config) = self.selected_config().cloned() else {
+            self.status_message = Some("no run config selected".to_owned());
+            self.terminal.start("Run", format!("fsc {verb}"));
+            self.terminal
+                .push(ConsoleStream::Error, "No run configuration is selected.");
+            self.terminal_open = self.settings.open_terminal_on_run;
+            return;
+        };
+        self.terminal
+            .start("Run", format!("fsc {verb} {}", config.name));
+        self.terminal_open = self.settings.open_terminal_on_run;
+
+        if let Some(root) = self.config_root(&config)
+            && self.workspace.open_document(root).is_ok()
+        {
+            self.reset_layer_for_active_file();
+        }
+        self.refresh_build_target();
+        self.refresh_stage_cache();
+
+        self.live = None;
+        self.vm_result = None;
+        self.machine_texture = None;
+        self.machine_texture_fill_count = None;
+        self.reset_machine_views();
+        if allow_reuse
+            && self.settings.restart_reuses_build
+            && self.try_relaunch_cached(&config, now, debug)
+        {
+            return;
+        }
+        self.terminal
+            .push(ConsoleStream::Info, "Building run target.");
+        let out_dir = self.workspace.fs().host_out_dir();
+        let engine = SessionEngine::new(self.workspace.fs()).with_artifact_root(out_dir);
+        match config.kind {
+            RunKind::Hosted => match engine.build_config(&config) {
+                Ok(build) => {
+                    self.report_linked_build(&build);
+                    self.start_hosted_live_session(&config, &build.artifacts, now, debug);
+                    self.store_launch_cache(&config, CachedLaunch::Hosted(Box::new(build)));
+                }
+                Err(err) => {
+                    self.status_message = Some("run failed".to_owned());
+                    self.terminal.push(ConsoleStream::Error, err.to_string());
+                }
+            },
+            RunKind::KernelBoot => match engine.boot_kernel_config(&config) {
+                Ok(boot) => {
+                    self.report_linked_build(&boot.build);
+                    self.terminal.push(
+                        ConsoleStream::Success,
+                        format!(
+                            "Built boot FS: {} entries, {} byte image.",
+                            boot.fs_entries.len(),
+                            boot.fs_image.len()
+                        ),
+                    );
+                    self.start_kernel_live_session(
+                        &config,
+                        &boot.build.artifacts,
+                        &boot.init,
+                        &boot.fs_image,
+                        now,
+                        debug,
+                    );
+                    self.store_launch_cache(&config, CachedLaunch::Kernel(Box::new(boot)));
+                }
+                Err(err) => {
+                    self.status_message = Some("run failed".to_owned());
+                    self.terminal.push(ConsoleStream::Error, err.to_string());
+                }
+            },
+            RunKind::Freestanding => {
+                let msg = "run kind Freestanding is not wired yet".to_owned();
+                self.status_message = Some(msg.clone());
+                self.vm_result = None;
+                self.terminal.push(ConsoleStream::Error, msg);
+            }
+        }
+    }
+
+    /// Reboot from the last launch's artifacts when the config and its source
+    /// fingerprint are unchanged. True when the session started from the cache.
+    fn try_relaunch_cached(&mut self, config: &RunConfig, now: f64, debug: bool) -> bool {
+        let Some(cache) = self.launch_cache.take() else {
+            return false;
+        };
+        let fingerprint =
+            full_stack::session::config_source_fingerprint(self.workspace.fs(), config);
+        if cache.config != *config || cache.fingerprint != fingerprint {
+            return false;
+        }
+        self.terminal.push(
+            ConsoleStream::Info,
+            "Sources unchanged; restarting from the last build.",
+        );
+        match &cache.launch {
+            CachedLaunch::Hosted(build) => {
+                self.start_hosted_live_session(config, &build.artifacts, now, debug);
+            }
+            CachedLaunch::Kernel(boot) => {
+                self.start_kernel_live_session(
+                    config,
+                    &boot.build.artifacts,
+                    &boot.init,
+                    &boot.fs_image,
+                    now,
+                    debug,
+                );
+            }
+        }
+        self.launch_cache = Some(cache);
+        true
+    }
+
+    fn store_launch_cache(&mut self, config: &RunConfig, launch: CachedLaunch) {
+        let fingerprint =
+            full_stack::session::config_source_fingerprint(self.workspace.fs(), config);
+        self.launch_cache = Some(LaunchCache {
+            config: config.clone(),
+            fingerprint,
+            launch,
+        });
+    }
+
+    fn report_linked_build(&mut self, build: &full_stack::session::BuildOutcome) {
+        self.terminal.push(
+            ConsoleStream::Success,
+            format!(
+                "Linked {} unit(s), target {:?}.",
+                build.artifacts.units.len(),
+                build.target
+            ),
+        );
+        if let Some(dir) = &build.artifact_dir {
+            self.terminal.push(
+                ConsoleStream::Info,
+                format!("Wrote .ir/.s/.elf artifacts to {}", dir.display()),
+            );
+        }
+    }
+
+    /// Boot the built program as a resident session and focus the machine console.
+    fn start_hosted_live_session(
+        &mut self,
+        config: &RunConfig,
+        artifacts: &full_stack::build::BuildArtifacts,
+        now: f64,
+        debug: bool,
+    ) {
+        match LiveMachine::new_hosted(artifacts) {
+            Ok(mut live) => {
+                if !config.run.autorun.is_empty() {
+                    live.push_uart_line(&config.run.autorun);
+                }
+                self.live = Some(live);
+                self.apply_persisted_breakpoints(config);
+                self.activate_machine_terminal_for_run();
+                self.machine_view = self.default_machine_view();
+                self.layer = Self::source_layer_for_kind(self.active_source_kind());
+                self.build_glow_start = Some(now);
+                self.record_build_lit(Some(Layer::Vm));
+                self.current_launch_debug = debug;
+                self.status_message = Some(format!("running {}", config.name));
+                if debug {
+                    self.enter_debug_pause(&config.name);
+                }
+            }
+            Err(err) => {
+                self.status_message = Some("run failed".to_owned());
+                self.terminal.push(ConsoleStream::Error, err);
+            }
+        }
+    }
+
+    fn start_kernel_live_session(
+        &mut self,
+        config: &RunConfig,
+        artifacts: &full_stack::build::BuildArtifacts,
+        init: &AssembledOutput,
+        fs_image: &[u8],
+        now: f64,
+        debug: bool,
+    ) {
+        match LiveMachine::new_kernel(artifacts, Some(init), Some(fs_image), &config.run.autorun) {
+            Ok(live) => {
+                self.live = Some(live);
+                self.apply_persisted_breakpoints(config);
+                self.activate_machine_terminal_for_run();
+                self.machine_view = self.default_machine_view();
+                self.layer = Layer::Vm;
+                self.build_glow_start = Some(now);
+                self.record_build_lit(Some(Layer::Vm));
+                self.current_launch_debug = debug;
+                self.status_message = Some(format!("booting {}", config.name));
+                if debug {
+                    self.enter_debug_pause(&config.name);
+                }
+            }
+            Err(err) => {
+                self.status_message = Some("kernel boot failed".to_owned());
+                self.terminal.push(ConsoleStream::Error, err);
+            }
+        }
+    }
+
+    /// Debug launch: hold the fresh session at its entry point and focus the
+    /// disassembly so the first step is visible.
+    fn enter_debug_pause(&mut self, name: &str) {
+        if let Some(live) = &mut self.live {
+            live.pause();
+        }
+        self.machine_view = debug_view::MachineView::Disasm;
+        self.layer = Layer::Vm;
+        self.status_message = Some(format!("{name} paused at entry"));
+        self.terminal.push(
+            ConsoleStream::Info,
+            "Paused at entry. Step over (F10), step in (F11), or resume (F5).",
+        );
+    }
+
+    fn activate_machine_terminal_for_run(&mut self) {
+        if self.settings.focus_machine_console_on_run {
+            self.terminal.set_active_machine();
+        }
+    }
+
+    /// Per-frame drive of the resident session; on exit/fault/stop it produces
+    /// the post-mortem `vm_result` the dock, Inspect, and terminal already read.
+    fn drive_live_machine(&mut self, ctx: &egui::Context) {
+        let budget_steps = self
+            .selected_config()
+            .map(|config| config.run.max_steps_per_frame)
+            .unwrap_or(self.settings.default_steps_per_frame)
+            .max(1);
+        let wall_budget =
+            std::time::Duration::from_millis(self.settings.frame_budget_ms.clamp(1, 32));
+        let Some(live) = &mut self.live else {
+            return;
+        };
+        if live.state == MachineState::Running {
+            live.drive(budget_steps, wall_budget);
+            ctx.request_repaint();
+        }
+        if !live.state.is_alive() && self.vm_result.is_none() {
+            self.vm_result = Some(live.result());
+            let (stream, summary) = match &live.state {
+                MachineState::Exited(0) => (
+                    ConsoleStream::Success,
+                    format!("exit 0; {} VM step(s).", live.steps),
+                ),
+                MachineState::Exited(code) => (
+                    ConsoleStream::Warning,
+                    format!("exit {code}; {} VM step(s).", live.steps),
+                ),
+                MachineState::Stopped => (
+                    ConsoleStream::Info,
+                    format!("stopped; {} VM step(s).", live.steps),
+                ),
+                MachineState::Faulted(msg) => {
+                    let at = live
+                        .source_for_pc(live.registers().pc)
+                        .map(|(file, line)| format!(" ({file}:{line})"))
+                        .unwrap_or_default();
+                    (ConsoleStream::Error, format!("fault: {msg}{at}"))
+                }
+                MachineState::Running | MachineState::Paused => unreachable!("checked above"),
             };
-            if let Some(assembled) = kernel {
-                // Boot the interactive shell as pid 1, with a filesystem image
-                // that holds any selected program as a runnable file.
-                match self.ensure_user_binary("shell") {
-                    Ok(()) => {
-                        // Best-effort: compile every auto-installed tool/demo so
-                        // the shell can exec it. A failure on any one should not
-                        // stop the shell from booting.
-                        for prog in full_stack::userspace::PROGRAMS
-                            .iter()
-                            .filter(|p| p.is_compiled() && p.install_path.is_some())
-                        {
-                            if let Err(e) = self.ensure_user_binary(prog.name) {
-                                self.compilation_state
-                                    .set_error(format!("{} compile failed: {e}", prog.name));
-                            }
-                        }
-                        let fs_image = self.build_boot_fs_image();
-                        let shell = self.user_binaries.get("shell").cloned();
-                        // The shell idles waiting for keystrokes; give it a large
-                        // step budget so the session does not time out between
-                        // inputs (it ends when the user types `exit`).
-                        let max_steps = self.settings.max_vm_steps.max(1).saturating_mul(1000);
+            self.status_message = Some(summary.clone());
+            self.terminal.push(stream, summary);
+        }
+    }
 
-                        // Build the autorun command if Boot & Run was requested.
-                        let autorun = if self.machine_window.autorun_requested
-                            && !self.selected_inject_program_id.is_empty()
-                        {
-                            let name = self
-                                .catalog
-                                .all_programs()
-                                .iter()
-                                .find(|p| p.id == self.selected_inject_program_id)
-                                .map(|p| sanitize_program_filename(&p.name))
-                                .unwrap_or_else(|| "program".to_owned());
-                            Some(format!("run /home/{name}.elf"))
-                        } else {
-                            None
-                        };
+    /// Dock transport: stop the session, keeping its final state inspectable.
+    pub(super) fn stop_live_machine(&mut self) {
+        if let Some(live) = &mut self.live {
+            live.stop();
+        }
+    }
 
-                        self.machine_window.start_boot(
-                            &assembled,
-                            shell.as_ref(),
-                            Some(&fs_image),
-                            max_steps,
-                            autorun.as_deref(),
-                        );
-                    }
-                    Err(e) => {
-                        self.compilation_state
-                            .set_error(format!("shell compile failed: {e}"));
-                    }
+    /// F10: single-step the live machine using the dock's step unit. Instruction
+    /// stepping steps over calls; use F11 / Shift+F11 to step in / out.
+    pub(super) fn step_selected_live_machine(&mut self) {
+        let Some(live) = &mut self.live else {
+            return;
+        };
+        match self.step_unit {
+            machine_dock::StepUnit::Line => live.step_line(),
+            machine_dock::StepUnit::Instruction => live.step_over(),
+            machine_dock::StepUnit::Cycle => live.step_cycle(),
+        }
+    }
+
+    pub(super) fn persist_live_breakpoints(&mut self) {
+        if !self.settings.persist_breakpoints {
+            return;
+        }
+        let Some(live) = &self.live else {
+            return;
+        };
+        let mut specs = live
+            .breakpoints
+            .iter()
+            .filter_map(|addr| live.breakpoint_spec_for_addr(*addr))
+            .collect::<Vec<_>>();
+        specs.sort();
+        specs.dedup();
+        let Some(config) = self
+            .workspace
+            .run_configs_mut()
+            .configs
+            .get_mut(self.selected_config)
+        else {
+            return;
+        };
+        if config.debug.breakpoints != specs {
+            config.debug.breakpoints = specs;
+            self.persist_run_configs();
+        }
+    }
+
+    fn apply_persisted_breakpoints(&mut self, config: &RunConfig) {
+        let Some(live) = &mut self.live else {
+            return;
+        };
+        for spec in &config.debug.breakpoints {
+            match live.resolve_breakpoint(spec) {
+                Ok(addr) => {
+                    live.breakpoints.insert(addr);
+                }
+                Err(err) => {
+                    self.terminal.push(
+                        ConsoleStream::Warning,
+                        format!("Breakpoint `{spec}` was not restored: {err}."),
+                    );
                 }
             }
         }
-
-        let mut show_settings = self.show_settings;
-        egui::Window::new("Settings")
-            .open(&mut show_settings)
-            .resizable(false)
-            .default_width(280.0)
-            .default_pos(egui::pos2(ui.ctx().content_rect().right() - 300.0, 54.0))
-            .show(ui.ctx(), |ui| {
-                self.settings_window_ui(ui);
-            });
-        self.show_settings = show_settings;
     }
 
+    /// Diagnostic markers for the active editor, valid only while the buffer
+    /// matches the compiled source (edits clear the stage cache, so no drift).
+    pub(super) fn active_diagnostic_marks(&self, text: &str) -> Vec<diagnostics::DiagMark> {
+        let (Some(cache), Some(target), Some(active)) = (
+            &self.stage_cache,
+            &self.active_build_target,
+            self.active_path(),
+        ) else {
+            return Vec::new();
+        };
+        if active != target.root_path || cache.source != text {
+            return Vec::new();
+        }
+        diagnostics::marks_for_source(&cache.result.diagnostics, &cache.source)
+    }
+
+    /// Clear per-session debug/inspect state when the session goes away.
+    fn reset_machine_views(&mut self) {
+        self.machine_view = debug_view::MachineView::Console;
+        self.inspect_cache = None;
+        self.inspect_pid = None;
+        self.inspect_inode = None;
+        self.cache_grid = None;
+        self.last_followed_pc = None;
+    }
+
+    /// When paused at a new pc with a source line, open that file and scroll the
+    /// editor to the line, so stepping/breakpoints reveal the code being run.
+    fn follow_debug_source(&mut self) {
+        let Some(live) = &self.live else {
+            return;
+        };
+        if live.state != MachineState::Paused {
+            return;
+        }
+        let pc = live.registers().pc;
+        if self.last_followed_pc == Some(pc) {
+            return;
+        }
+        self.last_followed_pc = Some(pc);
+        let Some((file, line)) = live
+            .source_for_pc(pc)
+            .map(|(file, line)| (file.to_owned(), line as usize))
+        else {
+            return;
+        };
+        let Ok(vpath) = VPath::parse(&file) else {
+            return;
+        };
+        if self.active_path().as_ref() != Some(&vpath) {
+            self.open_path(vpath.clone());
+        }
+        // Line stepping is a source-level activity: surface the paused line in
+        // the editor. Instruction/cycle stepping stays on the disasm rung.
+        if self.step_unit == machine_dock::StepUnit::Line {
+            self.layer = Layer::Hll;
+        }
+        self.pending_jump = Some((vpath, line));
+    }
+
+    fn default_machine_view(&self) -> debug_view::MachineView {
+        if self.config_has_screen() {
+            debug_view::MachineView::Screen
+        } else {
+            debug_view::MachineView::Console
+        }
+    }
+
+    /// True when the selected config presents a framebuffer screen.
+    pub(super) fn config_has_screen(&self) -> bool {
+        use full_stack::runconfig::PresentMode;
+        self.selected_config().is_some_and(|config| {
+            matches!(
+                config.run.present,
+                PresentMode::Framebuffer | PresentMode::Both
+            )
+        })
+    }
+
+    fn find_nearest_build_manifest(&self, path: &VPath) -> Option<VPath> {
+        let mut dir = path.parent()?;
+        loop {
+            let entries = self.workspace.fs().read_dir(&dir).ok()?;
+            let mut builds = entries
+                .into_iter()
+                .filter(|entry| entry.name.ends_with(".build"))
+                .map(|entry| entry.path)
+                .collect::<Vec<_>>();
+            builds.sort();
+            if let Some(build) = builds.into_iter().next() {
+                return Some(build);
+            }
+            dir = dir.parent()?;
+        }
+    }
+
+    fn stdlib_objects_for(&mut self, mode: TargetMode) -> Option<&[(String, AssembledOutput)]> {
+        if !self.stdlib_objects.iter().any(|(m, _)| *m == mode) {
+            match CompilationPipeline::compile_stdlib_objects(mode) {
+                Ok(objects) => self.stdlib_objects.push((mode, objects)),
+                Err(err) => {
+                    self.status_message = Some(format!("stdlib build failed: {err}"));
+                    return None;
+                }
+            }
+        }
+        self.stdlib_objects
+            .iter()
+            .find(|(m, _)| *m == mode)
+            .map(|(_, objects)| objects.as_slice())
+    }
+}
+
+impl FullStackApp {
+    /// Global keyboard shortcuts: save/build/run, debug transport, and the
+    /// find/search/quick-open surfaces. Runs once per frame before layout.
+    fn handle_shortcuts(&mut self, ui: &egui::Ui, now: f64) {
+        if self.guest_input_active() && ui.input(|i| i.modifiers.command || i.modifiers.ctrl) {
+            return;
+        }
+        if ui.input(|i| i.modifiers.command && i.modifiers.shift && i.key_pressed(egui::Key::S)) {
+            self.save_all_documents();
+        } else if ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::S)) {
+            self.save_active_document();
+        }
+        if ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::B)) {
+            self.build_selected_config(now);
+        }
+        if ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::R)) {
+            self.run_selected_config(now);
+        }
+        // Debug transport: F5 resume-or-run (shift: debug), F6 pause, F10 uses
+        // the dock's step selectors. F11 enters calls; Shift+F11 steps out.
+        if ui.input(|i| i.key_pressed(egui::Key::F5)) {
+            let shift = ui.input(|i| i.modifiers.shift);
+            match &mut self.live {
+                Some(live) if live.state == MachineState::Paused => live.resume(),
+                Some(live) if live.state.is_alive() => {}
+                _ if shift => self.debug_selected_config(now),
+                _ => self.run_selected_config(now),
+            }
+        }
+        if ui.input(|i| i.key_pressed(egui::Key::F6))
+            && let Some(live) = &mut self.live
+        {
+            live.pause();
+        }
+        if ui.input(|i| i.key_pressed(egui::Key::F10)) && self.live.is_some() {
+            self.step_selected_live_machine();
+        }
+        if ui.input(|i| i.key_pressed(egui::Key::F11))
+            && let Some(live) = &mut self.live
+        {
+            if ui.input(|i| i.modifiers.shift) {
+                live.step_out();
+            } else {
+                live.step_in();
+            }
+        }
+        if ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::J)) {
+            self.terminal_open = !self.terminal_open;
+        }
+        if ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::W)) {
+            self.close_active_path();
+        }
+        if ui.input(|i| i.modifiers.command && i.modifiers.shift && i.key_pressed(egui::Key::F)) {
+            self.tool = Tool::Search;
+            self.search.request_focus();
+        } else if ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::F)) {
+            self.find.request_open();
+        }
+        if ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::P)) {
+            self.quick_open = Some(quick_open::QuickOpenState::default());
+        }
+        if ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::Comma)) {
+            self.settings_open = !self.settings_open;
+        }
+        if self.settings_open && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.settings_open = false;
+        }
+    }
+
+    fn guest_input_active(&self) -> bool {
+        let alive = self.live.as_ref().is_some_and(|live| live.state.is_alive());
+        alive
+            && ((self.terminal_open && self.terminal.active == TerminalKind::Machine)
+                || (self.layer == Layer::Vm
+                    && self.machine_view == debug_view::MachineView::Screen))
+    }
+}
+
+fn build_summary(result: &PipelineResult, produced_layer: Option<Layer>) -> String {
+    let stage = produced_layer
+        .map(|layer| format!("{} {}", layer.tag(), layer.name()))
+        .unwrap_or_else(|| "no stage".to_owned());
+    let sections = result
+        .binary
+        .as_ref()
+        .map(|binary| binary.assembled.sections_iter().count())
+        .unwrap_or(0);
+    if sections > 0 {
+        format!("Build completed through {stage}; linked {sections} section(s).")
+    } else {
+        format!("Build completed through {stage}.")
+    }
+}
+
+impl eframe::App for FullStackApp {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        self.save_state(storage);
+        eframe::set_value(storage, settings::APP_KEY, &self.settings);
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let now = ui.input(|i| i.time);
+        self.drive_live_machine(ui.ctx());
+        self.follow_debug_source();
+        self.refresh_inspect_cache(now);
+        self.refresh_cache_grid(now);
+        self.handle_shortcuts(ui, now);
+        let build_glow_t = self.build_glow_t(now);
+        if build_glow_t.is_some() {
+            ui.ctx().request_repaint();
+        }
+
+        // Each band fills to its own edges (zero horizontal margin); egui's built-in
+        // panel separators draw every boundary once, so no divider is doubled.
+        let chrome_band = egui::Frame::new()
+            .fill(theme::CHROME)
+            .inner_margin(egui::Margin::symmetric(metrics::PANEL_INSET_X as i8, 0));
+        let bezel_band = egui::Frame::new().fill(theme::BEZEL);
+        let well_band = egui::Frame::new().fill(theme::WELL);
+        let canvas_band = egui::Frame::new().fill(theme::CANVAS);
+        let terminal_band = egui::Frame::new().fill(theme::TERMINAL);
+
+        egui::Panel::bottom("status_bar")
+            .resizable(false)
+            .exact_size(metrics::STATUS_BAR_HEIGHT)
+            .frame(chrome_band)
+            .show_inside(ui, |ui| self.status_bar(ui));
+
+        egui::Panel::top("top_bar")
+            .resizable(false)
+            .exact_size(metrics::TOP_BAR_HEIGHT)
+            .frame(chrome_band)
+            .show_inside(ui, |ui| self.top_bar(ui, now));
+
+        egui::Panel::left("activity_rail")
+            .resizable(false)
+            .exact_size(metrics::ACTIVITY_RAIL_WIDTH)
+            .frame(bezel_band)
+            .show_inside(ui, |ui| self.activity_rail(ui));
+
+        egui::Panel::right("machine_dock")
+            .resizable(true)
+            .default_size(metrics::MACHINE_DOCK_DEFAULT)
+            .size_range(metrics::MACHINE_DOCK_MIN..=metrics::MACHINE_DOCK_MAX)
+            .frame(well_band)
+            .show_inside(ui, |ui| self.machine_dock(ui));
+
+        if self.terminal_open {
+            let terminal_max = ui.available_height().max(metrics::TERMINAL_MIN_HEIGHT);
+            egui::Panel::bottom("terminal")
+                .resizable(true)
+                .default_size(metrics::TERMINAL_DEFAULT_HEIGHT)
+                .size_range(metrics::TERMINAL_MIN_HEIGHT..=terminal_max)
+                .frame(terminal_band)
+                .show_inside(ui, |ui| self.terminal_panel(ui, now));
+        }
+
+        egui::CentralPanel::default()
+            .frame(canvas_band)
+            .show_inside(ui, |ui| self.body(ui, build_glow_t));
+
+        self.quick_open_overlay(ui.ctx());
+        self.explorer_confirm_overlay(ui.ctx());
     }
 }
 
-// --- DockTabViewer ---
-
-struct DockTabViewer<'a> {
-    state: &'a mut CompilationState,
-    catalog: &'a mut ProgramCatalog,
+/// Shared foreground layer so chrome hairlines and column separators paint above
+/// panel fills without being clipped to a single panel.
+fn separator_painter(ui: &egui::Ui) -> egui::Painter {
+    ui.ctx().layer_painter(egui::LayerId::new(
+        egui::Order::Foreground,
+        egui::Id::new("shell_separators"),
+    ))
 }
 
-impl egui_dock::TabViewer for DockTabViewer<'_> {
-    type Tab = ViewWrapper;
-
-    fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {
-        tab.view.title().into()
-    }
-
-    fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
-        let ctx = ui.ctx().clone();
-        tab.view.ui(ui, &ctx, self.state, self.catalog);
-    }
-
-    fn allowed_in_windows(&self, _tab: &mut Self::Tab) -> bool {
-        false
-    }
+fn draw_separator(ui: &egui::Ui, x: f32, top: f32, bottom: f32, active: bool) {
+    let color = if active {
+        theme::ELECTRIC
+    } else {
+        theme::HAIRLINE
+    };
+    let painter = separator_painter(ui);
+    painter.line_segment(
+        [egui::pos2(x, top), egui::pos2(x, bottom)],
+        egui::Stroke::new(1.0, color),
+    );
 }
 
-#[cfg(test)]
+fn open_default_workspace() -> IdeWorkspace {
+    IdeWorkspace::sample()
+        .ok()
+        .or_else(open_native_demo_workspace)
+        .unwrap_or_default()
+}
+
+/// The workspace to open on startup: the last folder when reopen is enabled and
+/// it still exists (native only), otherwise the bundled sample workspace.
+fn open_startup_workspace(settings: &settings::AppSettings) -> IdeWorkspace {
+    if let Some(workspace) = reopen_last_workspace(settings) {
+        return workspace;
+    }
+    open_default_workspace()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn reopen_last_workspace(settings: &settings::AppSettings) -> Option<IdeWorkspace> {
+    if !settings.reopen_last_workspace {
+        return None;
+    }
+    let path = settings.last_workspace.as_ref()?;
+    IdeWorkspace::new(Box::new(NativeFs::open(path).ok()?)).ok()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn reopen_last_workspace(_settings: &settings::AppSettings) -> Option<IdeWorkspace> {
+    None
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn open_native_demo_workspace() -> Option<IdeWorkspace> {
+    let root = std::path::PathBuf::from(DEMO_WORKSPACE_DIR);
+    std::fs::create_dir_all(&root).ok()?;
+    IdeWorkspace::new(Box::new(NativeFs::open(root).ok()?)).ok()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn open_native_demo_workspace() -> Option<IdeWorkspace> {
+    None
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
+    use full_stack::workspace::MemoryFs;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    // A hosted preview must resolve `_start`->`main`, and a kernel preview must link
+    // against the kernel stdlib (`_kernel_start`/`kmain`) with no phantom undefined `main`.
+    #[test]
+    fn preview_links_hosted_and_kernel_without_phantom_main() {
+        let mut app = test_app(IdeWorkspace::new(Box::new(MemoryFs::new())).expect("workspace"));
+
+        let hosted = BuildManifest::hosted("prev_hosted", "main: () -> i32 { return 0 }");
+        let hosted_bin = app
+            .build_preview_binary(&hosted, "prev_hosted.hll", "main: () -> i32 { return 0 }")
+            .expect("hosted preview links");
+        assert!(hosted_bin.assembled.has_symbol("main"));
+
+        let kernel_build =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/os-runtime/kernel/kernel.build");
+        let manifest = BuildManifest::from_file(&kernel_build).expect("kernel manifest");
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("crates/os-runtime/kernel/core/my_kernel.hll");
+        let source = fs::read_to_string(&root).expect("read kernel root");
+        let kernel_bin = app
+            .build_preview_binary(&manifest, &root.display().to_string(), &source)
+            .expect("kernel preview links without phantom main");
+        assert!(kernel_bin.assembled.has_symbol("kmain"));
+    }
 
     #[test]
-    fn gui_kernel_manifest_preserves_kernel_build_metadata() {
-        let mut app = FullStackApp::default();
-        app.pipeline.set_target_mode(TargetMode::Kernel);
-        app.pipeline
-            .set_entry_point(Some("_kernel_start".to_owned()));
-        app.pipeline
-            .set_link_layout(Some(LinkLayout::freestanding_kernel()));
+    fn open_native_workspace_replaces_tree_configs_and_transient_state() {
+        let root = temp_root("open_workspace_replaces");
+        write_native_workspace(&root);
+        let mut app = test_app(IdeWorkspace::new(Box::new(MemoryFs::new())).expect("workspace"));
+        app.vm_result = Some(VmExecutionResult {
+            uart_output: "old".to_owned(),
+            exit_code: Some(0),
+            steps: 1,
+            max_steps_reached: false,
+            registers: None,
+        });
+        app.machine_texture_fill_count = Some(7);
+        app.manifest_cache = Some((1.0, vec![VPath::parse("old.build").expect("path")]));
+        app.quick_open = Some(quick_open::QuickOpenState::default());
+        app.find.request_open();
+        app.current_launch_debug = true;
+        app.selected_config = 12;
 
-        let program = app
-            .catalog
-            .all_programs()
-            .iter()
-            .find(|program| program.id == "os-my-kernel")
-            .expect("kernel catalog entry")
-            .clone();
-        let manifest = app.manifest_for_program(&program, TargetMode::Kernel);
-        let plan = BuildExecutor::plan(&manifest);
+        app.open_native_workspace_folder(&root);
 
-        assert_eq!(plan.root, "my_kernel");
-        assert_eq!(plan.entry.as_deref(), Some("_kernel_start"));
-        assert_eq!(plan.abi_exports, vec!["kmain".to_owned()]);
+        assert_eq!(app.configs().len(), 1);
+        assert_eq!(app.selected_config, 0);
+        assert_eq!(
+            app.active_path().expect("active root").as_str(),
+            "programs/demo/main.hll"
+        );
+        assert!(
+            app.workspace
+                .tree()
+                .flatten()
+                .iter()
+                .any(|entry| entry.path.as_str() == "programs/demo/demo.build")
+        );
+        assert!(app.vm_result.is_none());
+        assert!(app.machine_texture.is_none());
+        assert!(app.machine_texture_fill_count.is_none());
+        assert!(app.manifest_cache.is_none());
+        assert!(app.quick_open.is_none());
+        assert!(!app.find.open);
+        assert!(!app.current_launch_debug);
+        assert!(matches!(app.machine_view, debug_view::MachineView::Console));
+        assert!(app.status_message.expect("status").starts_with("opened "));
 
-        let artifacts = BuildExecutor::build(&manifest).expect("gui kernel manifest build");
-        assert!(artifacts.linked.has_symbol("_kernel_start"));
-        assert!(artifacts.linked.has_symbol("kmain"));
+        fs::remove_dir_all(root).expect("cleanup");
     }
-}
 
-// --- Helpers ---
+    #[test]
+    fn reopen_last_workspace_restores_the_folder_only_when_enabled() {
+        let root = temp_root("reopen_last");
+        write_native_workspace(&root);
+        let mut app = test_app(IdeWorkspace::new(Box::new(MemoryFs::new())).expect("workspace"));
 
-fn parse_hex_or_dec(s: &str) -> Option<u64> {
-    let s = s.trim();
-    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
-        u64::from_str_radix(hex, 16).ok()
-    } else {
-        s.parse::<u64>().ok()
+        // Opening a folder records it as the last workspace. The stored path is
+        // the canonicalized root, so match on the unique temp-folder name.
+        app.open_native_workspace_folder(&root);
+        let label = app.settings.last_workspace.clone().expect("last recorded");
+        let dir_name = root.file_name().expect("dir name").to_string_lossy();
+        assert!(label.contains(dir_name.as_ref()), "stored path was {label}");
+
+        // Off (the default): startup falls back to the bundled sample workspace.
+        let mut settings = settings::AppSettings {
+            last_workspace: Some(label.clone()),
+            ..settings::AppSettings::default()
+        };
+        assert!(reopen_last_workspace(&settings).is_none());
+
+        // On with a live path: startup reopens that folder's configs.
+        settings.reopen_last_workspace = true;
+        let reopened = reopen_last_workspace(&settings).expect("reopened");
+        assert_eq!(reopened.run_configs().configs.len(), 1);
+
+        // On but the path is gone: fall back rather than fail startup.
+        fs::remove_dir_all(&root).expect("cleanup");
+        assert!(reopen_last_workspace(&settings).is_none());
     }
-}
 
-/// Turn a program display name into a lowercase, filesystem-safe stem.
-/// Non-alphanumeric characters become underscores; empty results fall back
-/// to "program".
-fn sanitize_program_filename(name: &str) -> String {
-    let mapped: String = name
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() {
-                c.to_ascii_lowercase()
-            } else {
-                '_'
+    #[test]
+    fn open_native_workspace_blocks_when_documents_are_dirty() {
+        let root = temp_root("open_workspace_dirty");
+        write_native_workspace(&root);
+        let mut fs = MemoryFs::new();
+        let old_path = VPath::parse("old/main.hll").expect("path");
+        fs.write_text(&old_path, "old").expect("write old");
+        let mut app = test_app(IdeWorkspace::new(Box::new(fs)).expect("workspace"));
+        app.workspace
+            .open_document(old_path.clone())
+            .expect("open old");
+        app.workspace.set_active_text("dirty").expect("edit old");
+
+        app.open_native_workspace_folder(&root);
+
+        assert_eq!(
+            app.status_message.as_deref(),
+            Some("save or close unsaved files before opening a folder")
+        );
+        assert_eq!(
+            app.active_path().expect("active old").as_str(),
+            old_path.as_str()
+        );
+        assert_eq!(app.workspace.dirty_documents().count(), 1);
+        assert!(app.configs().is_empty());
+
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn dirty_close_confirmation_blocks_discard_until_confirmed() {
+        let mut fs = MemoryFs::new();
+        let path = VPath::parse("main.hll").expect("path");
+        fs.write_text(&path, "main: () -> i32 { return 0 }")
+            .expect("write source");
+        let mut app = test_app(IdeWorkspace::new(Box::new(fs)).expect("workspace"));
+        app.workspace
+            .open_document(path.clone())
+            .expect("open source");
+        app.workspace
+            .set_active_text("main: () -> i32 { return 1 }")
+            .expect("edit source");
+        app.settings.confirm_discard_on_close = true;
+
+        app.close_path(&path);
+
+        assert_eq!(app.pending_close.as_ref(), Some(&path));
+        assert!(app.workspace.document(&path).is_some());
+
+        app.close_path_confirmed(&path);
+
+        assert!(app.pending_close.is_none());
+        assert!(app.workspace.document(&path).is_none());
+    }
+
+    #[test]
+    fn open_terminal_on_run_setting_can_keep_terminal_closed() {
+        let root = temp_root("terminal_closed");
+        write_native_workspace(&root);
+        let mut app = test_app(IdeWorkspace::new(Box::new(MemoryFs::new())).expect("workspace"));
+        app.open_native_workspace_folder(&root);
+        app.settings.open_terminal_on_run = false;
+
+        app.run_selected_config(1.0);
+
+        assert!(!app.terminal_open);
+        assert!(app.live.is_some(), "run still starts a machine session");
+
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn restart_reuses_the_last_build_until_sources_change() {
+        let root = temp_root("restart_reuse");
+        write_native_workspace(&root);
+        let mut app = test_app(IdeWorkspace::new(Box::new(MemoryFs::new())).expect("workspace"));
+        app.open_native_workspace_folder(&root);
+
+        app.run_selected_config(1.0);
+        assert!(app.launch_cache.is_some(), "first run fills the cache");
+        assert_eq!(drive_app_to_exit(&mut app), 0);
+
+        app.restart_selected_config(2.0);
+        let output = app.terminal.output_text();
+        assert!(
+            output.contains("Sources unchanged; restarting from the last build."),
+            "restart reused the build: {output}"
+        );
+        assert!(!output.contains("Building run target."));
+        assert_eq!(drive_app_to_exit(&mut app), 0, "cached artifacts still run");
+
+        fs::write(
+            root.join("programs/demo/main.hll"),
+            "main: () -> i32 { return 9 }",
+        )
+        .expect("edit source");
+        app.restart_selected_config(3.0);
+        let output = app.terminal.output_text();
+        assert!(
+            output.contains("Building run target."),
+            "source edit forces a rebuild: {output}"
+        );
+        assert_eq!(drive_app_to_exit(&mut app), 9, "rebuild picked up the edit");
+
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn restart_reuse_setting_off_forces_rebuild() {
+        let root = temp_root("restart_reuse_off");
+        write_native_workspace(&root);
+        let mut app = test_app(IdeWorkspace::new(Box::new(MemoryFs::new())).expect("workspace"));
+        app.open_native_workspace_folder(&root);
+
+        app.run_selected_config(1.0);
+        assert!(app.launch_cache.is_some());
+        assert_eq!(drive_app_to_exit(&mut app), 0);
+
+        app.settings.restart_reuses_build = false;
+        app.restart_selected_config(2.0);
+
+        let output = app.terminal.output_text();
+        assert!(
+            output.contains("Building run target."),
+            "restart should rebuild when reuse is disabled: {output}"
+        );
+        assert!(
+            !output.contains("Sources unchanged; restarting from the last build."),
+            "reuse message should not appear when disabled: {output}"
+        );
+
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn persist_breakpoints_setting_off_leaves_run_config_unchanged() {
+        let root = temp_root("persist_breakpoints_off");
+        write_native_workspace(&root);
+        let mut app = test_app(IdeWorkspace::new(Box::new(MemoryFs::new())).expect("workspace"));
+        app.open_native_workspace_folder(&root);
+        app.settings.persist_breakpoints = false;
+
+        app.debug_selected_config(1.0);
+        let live = app.live.as_mut().expect("live session");
+        let main = live.resolve_breakpoint("main").expect("main symbol");
+        live.breakpoints.insert(main);
+        app.persist_live_breakpoints();
+
+        assert!(
+            app.selected_config()
+                .expect("selected config")
+                .debug
+                .breakpoints
+                .is_empty()
+        );
+
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn build_failure_marks_the_editor_and_links_output() {
+        let root = temp_root("diag_markers");
+        write_native_workspace(&root);
+        fs::write(
+            root.join("programs/demo/main.hll"),
+            "main: () -> i32 {\n    return )\n}\n",
+        )
+        .expect("break source");
+        let mut app = test_app(IdeWorkspace::new(Box::new(MemoryFs::new())).expect("workspace"));
+        app.open_native_workspace_folder(&root);
+
+        app.build_selected_config(1.0);
+        assert_eq!(app.status_message.as_deref(), Some("build failed"));
+        let text = app
+            .workspace
+            .active_document()
+            .expect("active doc")
+            .text()
+            .to_owned();
+        let marks = app.active_diagnostic_marks(&text);
+        assert!(!marks.is_empty(), "parse error produced editor marks");
+        assert!(marks[0].error);
+        assert_eq!(marks[0].line, 2, "span points at the broken line");
+        let output = app.terminal.output_text();
+        assert!(
+            output.contains("programs/demo/main.hll:2:"),
+            "output line carries the location: {output}"
+        );
+
+        // An Output link click routes through jump_to_source without reopening
+        // the already-active file (the stage cache and marks must survive).
+        app.jump_to_source("programs/demo/main.hll", 2);
+        assert_eq!(
+            app.pending_jump
+                .as_ref()
+                .map(|(path, line)| (path.as_str(), *line)),
+            Some(("programs/demo/main.hll", 2))
+        );
+        assert!(!app.active_diagnostic_marks(&text).is_empty());
+
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    fn drive_app_to_exit(app: &mut FullStackApp) -> i32 {
+        let live = app.live.as_mut().expect("live session");
+        for _ in 0..1_000 {
+            match live.state {
+                MachineState::Exited(code) => return code,
+                MachineState::Running => {
+                    live.drive(10_000, std::time::Duration::from_secs(5));
+                }
+                _ => break,
             }
-        })
-        .collect();
-    let trimmed = mapped.trim_matches('_');
-    if trimmed.is_empty() {
-        "program".to_owned()
-    } else {
-        trimmed.to_owned()
+        }
+        panic!("session did not exit: {:?}", live.state);
     }
-}
 
-/// The always-present part of the boot filesystem image: the Unix-shaped
-/// directory tree (`/bin`, `/home`, `/home/demo`, `/home/src`), a readme, and the
-/// example assembly sources. Compiled binaries (editor, demos, assembler) are
-/// appended by [`FullStackApp::build_boot_fs_image`] when available.
-fn boot_fs_static_entries() -> Vec<FsEntry<'static>> {
-    // Bare-name execution finds demos on PATH; the readme points at the layout.
-    let readme: &[u8] = b"Full-Stack OS. Type 'help' for the full command list.\n\
-\n\
-  ls [dir]      list a directory       cat <file>...  print files\n\
-  echo <text>   print text             pwd            show cwd\n\
-  cd <dir>      change directory       edit <file>    edit a file\n\
-\n\
-Run a program by typing its name (PATH is . then /bin then /home/demo):\n\
-  cube          spinning wireframe     mandelbrot     fractal\n\
-  life          game of life\n\
-Add '&' to run in the background; jobs / fg <job> / kill <pid> manage jobs.\n\
-\n\
-Send output to a file:  echo hi > note.txt   cat a b >> log.txt\n\
-Pipe programs:          cat a | filter      (up to 4 stages)\n\
-Assemble:  as /home/src/array.s /home/array.elf  then run it with  array\n\
-Compile + link (one step per line; no && yet):\n\
-  cc hello.hll hello.s    as hello.s hello.o    as stdlib.s stdlib.o\n\
-  ld stdlib.o hello.o hello    hello   (prints HLL0, exits 36)\n\
-Examples in /home/src: hello.hll array.s stdlib.s\n";
-
-    let mut entries = vec![
-        FsEntry::Dir { path: "/bin" },
-        FsEntry::Dir { path: "/home" },
-        FsEntry::Dir { path: "/home/demo" },
-        FsEntry::Dir { path: "/home/src" },
-        FsEntry::File {
-            path: "/readme.txt",
-            data: readme,
-        },
-    ];
-
-    // Example sources (/home/src) are installed verbatim from the user catalog so
-    // the toolchain can be tried out of the box. Sources are 'static.
-    use full_stack::userspace::UserProgramKind;
-    for prog in full_stack::userspace::PROGRAMS {
-        if prog.kind == UserProgramKind::Example
-            && let Some(path) = prog.install_path
-        {
-            entries.push(FsEntry::File {
-                path,
-                data: prog.source.as_bytes(),
-            });
+    fn test_app(workspace: IdeWorkspace) -> FullStackApp {
+        FullStackApp {
+            workspace,
+            tool: Tool::Files,
+            layer: Layer::Hll,
+            layout: ShellLayout::default(),
+            stage_cache: None,
+            stdlib_objects: Vec::new(),
+            status_message: None,
+            build_glow_start: Some(1.0),
+            build_lit_until: Some(Layer::Vm),
+            built_target: None,
+            active_build_target: None,
+            selected_config: 0,
+            manifest_cache: None,
+            live: None,
+            launch_cache: None,
+            breakpoint_entry: String::new(),
+            mount_host_entry: String::new(),
+            mount_guest_entry: String::new(),
+            pending_jump: None,
+            vm_result: None,
+            machine_texture: None,
+            machine_texture_fill_count: None,
+            terminal_open: false,
+            terminal: TerminalState::default(),
+            find: find::FindState::default(),
+            quick_open: None,
+            explorer: explorer::ExplorerState::default(),
+            search: search::SearchState::default(),
+            pending_close: None,
+            cursor_pos: Some((1, 1)),
+            last_followed_pc: None,
+            machine_view: debug_view::MachineView::Disasm,
+            memory_view: debug_view::MemoryViewState::default(),
+            current_launch_debug: false,
+            step_count: 100,
+            step_unit: machine_dock::StepUnit::Instruction,
+            time_scrub: 0,
+            inspect_tab: inspect_panel::InspectTab::Trace,
+            inspect_cache: None,
+            inspect_pid: Some(1),
+            inspect_inode: Some(2),
+            cache_grid: None,
+            settings: settings::AppSettings::default(),
+            settings_open: false,
         }
     }
 
-    entries
-}
-
-fn run_in_vm(
-    assembled: &AssembledOutput,
-    entry_symbol: &str,
-    load_base: u64,
-    max_steps: u64,
-) -> VmExecutionResult {
-    let elf = assembled.to_elf_with_entry(load_base, entry_symbol);
-    let mut vm = match VirtualMachine::from_elf(&elf) {
-        Ok(vm) => vm,
-        Err(err) => {
-            return VmExecutionResult {
-                uart_output: format!("ELF load failed: {err}"),
-                exit_code: None,
-                steps: 0,
-                max_steps_reached: false,
-            };
-        }
-    };
-    let result = vm.run(max_steps);
-
-    VmExecutionResult {
-        uart_output: result.uart_output,
-        exit_code: match result.outcome {
-            StepOutcome::Halted(code) => Some(code as i32),
-            _ => None,
-        },
-        steps: result.steps,
-        max_steps_reached: matches!(result.outcome, StepOutcome::Continue),
-    }
-}
-
-#[cfg(test)]
-mod boot_fs_tests {
-    use super::*;
-
-    // The boot image is laid out Unix-style -- tools in /bin, demos in
-    // /home/demo, example sources in /home/src -- not all dumped in /bin or /home.
-    #[test]
-    fn boot_fs_static_layout_is_unix_shaped() {
-        let entries = boot_fs_static_entries();
-
-        let dirs: Vec<&str> = entries
-            .iter()
-            .filter_map(|e| match e {
-                FsEntry::Dir { path } => Some(*path),
-                FsEntry::File { .. } => None,
-            })
-            .collect();
-        let files: Vec<&str> = entries
-            .iter()
-            .filter_map(|e| match e {
-                FsEntry::File { path, .. } => Some(*path),
-                FsEntry::Dir { .. } => None,
-            })
-            .collect();
-
-        for dir in ["/bin", "/home", "/home/demo", "/home/src"] {
-            assert!(
-                dirs.contains(&dir),
-                "missing directory {dir}; dirs={dirs:?}"
-            );
-        }
-        // Example sources live under /home/src, not loose in /home.
-        assert!(
-            files.contains(&"/home/src/array.s"),
-            "array.s not under /home/src; files={files:?}"
-        );
-        assert!(
-            files.contains(&"/home/src/hello.hll"),
-            "hello.hll not under /home/src; files={files:?}"
-        );
-        assert!(
-            !files.contains(&"/home/array.s"),
-            "array.s still loose in /home; files={files:?}"
-        );
-        assert!(
-            files.contains(&"/readme.txt"),
-            "readme missing; files={files:?}"
-        );
+    fn write_native_workspace(root: &Path) {
+        fs::create_dir_all(root.join(".fullstack")).expect("create config dir");
+        fs::create_dir_all(root.join("programs/demo")).expect("create program dir");
+        fs::write(
+            root.join(".fullstack/run.toml"),
+            "\
+[[config]]
+name = \"Temp Demo\"
+type = \"hosted\"
+build = \"programs/demo/demo.build\"
+present = \"terminal\"
+max_steps_per_frame = 200000
+debug = false
+",
+        )
+        .expect("write run config");
+        fs::write(
+            root.join("programs/demo/demo.build"),
+            "\
+name = \"temp_demo\"
+target = \"hosted\"
+root = \"main.hll\"
+stdlib = \"hosted\"
+",
+        )
+        .expect("write manifest");
+        fs::write(
+            root.join("programs/demo/main.hll"),
+            "main: () -> i32 { return 0 }",
+        )
+        .expect("write source");
     }
 
-    #[test]
-    fn stdlib_fragment_builds_itself_not_parent() {
-        let mut app = FullStackApp::default();
-        app.catalog.select_program("stdlib-runtime");
-
-        let build = app
-            .resolve_build_program()
-            .expect("selected stdlib fragment should resolve");
-
-        assert_eq!(build.id, "stdlib-runtime");
-        assert_eq!(build.parent_id.as_deref(), Some("stdlib"));
-    }
-
-    #[test]
-    fn stdlib_catalog_entries_compile_without_concatenating_modules() {
-        let mut app = FullStackApp::default();
-
-        for id in ["stdlib", "stdlib-memory_allocator"] {
-            app.catalog.select_program(id);
-            app.compile();
-            assert!(
-                app.compilation_state.error_summary.is_none(),
-                "{id} produced an error: {:?}",
-                app.compilation_state.error
-            );
-        }
+    fn temp_root(name: &str) -> std::path::PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        std::env::temp_dir().join(format!("full_stack_{name}_{nanos}"))
     }
 }

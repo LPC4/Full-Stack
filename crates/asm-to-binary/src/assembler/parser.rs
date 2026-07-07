@@ -67,6 +67,10 @@ pub fn parse(tokens: &[RvInstruction]) -> Vec<AsmToken> {
             },
             RvInstruction::Label(name) => out.push(AsmToken::Label(name.clone())),
             RvInstruction::Comment(_) => out.push(AsmToken::Comment),
+            RvInstruction::SourceLoc { file, line } => out.push(AsmToken::Loc {
+                file: file.clone(),
+                line: *line,
+            }),
             RvInstruction::Directive(raw) => {
                 parse_directive_or_instruction(raw, &mut out);
             }

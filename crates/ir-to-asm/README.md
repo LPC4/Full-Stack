@@ -38,7 +38,7 @@ consumes, so stage 3 and stage 4 hand off without re-parsing text.
 
 ## Register allocation and stack slots
 
-`register_allocator` (PLAN 1.1) keeps hot scalar values in registers instead of
+`register_allocator` keeps hot scalar values in registers instead of
 memory. It reuses `slot_coloring`'s interference analysis and greedily colors
 the highest-use-count integer/pointer values onto the callee-saved registers
 s2-s11 (s0 is the frame pointer, s1 the sret pointer); values that do not fit

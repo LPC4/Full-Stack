@@ -1,4 +1,4 @@
-use crate::assembler::output::{AssembledOutput, RelocationKind};
+use crate::assembler::output::{AssembledOutput, LineEntry, RelocationKind};
 use crate::assembler::section::{SectionData, SectionKind};
 use std::collections::HashMap;
 
@@ -271,6 +271,47 @@ impl ObjectLinker {
             }
         }
 
+        // Merge per-module pc-to-source tables: addresses ride the same
+        // module->output mapping as symbols, file ids into one shared table.
+        let mut merged_file_table: Vec<String> = Vec::new();
+        let mut merged_line_table: Vec<LineEntry> = Vec::new();
+        for (mi, (_module_name, module)) in modules.iter().enumerate() {
+            if module.line_table.is_empty() {
+                continue;
+            }
+            let mod_sec_map = build_module_section_map(module);
+            let mut file_remap: Vec<u32> = Vec::with_capacity(module.file_table.len());
+            for name in &module.file_table {
+                let id = if let Some(pos) = merged_file_table.iter().position(|f| f == name) {
+                    pos as u32
+                } else {
+                    merged_file_table.push(name.clone());
+                    (merged_file_table.len() - 1) as u32
+                };
+                file_remap.push(id);
+            }
+            for entry in &module.line_table {
+                let Some((sec_name, sec_start)) =
+                    find_symbol_section_name_via_map(&mod_sec_map, entry.addr)
+                else {
+                    continue;
+                };
+                let Some(&abs_base) = contrib_base.get(&(sec_name.to_owned(), mi)) else {
+                    continue;
+                };
+                let file_id = file_remap
+                    .get(entry.file_id as usize)
+                    .copied()
+                    .unwrap_or(entry.file_id);
+                merged_line_table.push(LineEntry {
+                    addr: abs_base + (entry.addr - sec_start),
+                    file_id,
+                    line: entry.line,
+                });
+            }
+        }
+        merged_line_table.sort_by_key(|e| e.addr);
+
         // Assemble the final output
         let sections: Vec<SectionData> = merged_secs
             .into_iter()
@@ -287,6 +328,8 @@ impl ObjectLinker {
             symbol_table: output_symbols,
             global_symbols: global_names,
             relocations: Vec::new(),
+            line_table: merged_line_table,
+            file_table: merged_file_table,
         })
     }
 }
@@ -498,4 +541,56 @@ fn patch_la(
 
     write_u32_at(section_bytes, site, auipc_patched)?;
     write_u32_at(section_bytes, site + 4, addi_patched)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::assembler::Assembler;
+    use crate::real::RealInstruction;
+    use crate::riscv::rv64i::Addi;
+    use crate::rv_instruction::RvInstruction;
+
+    fn nop() -> RvInstruction {
+        RvInstruction::Real(RealInstruction::Addi(Addi::new(0, 0, 0)))
+    }
+
+    fn loc(file: &str, line: u32) -> RvInstruction {
+        RvInstruction::SourceLoc {
+            file: file.to_owned(),
+            line,
+        }
+    }
+
+    // Two objects, each with its own source file: the second module's line
+    // entries shift by the first's text size and its file id is remapped.
+    #[test]
+    fn link_merges_and_shifts_line_tables() {
+        let a = Assembler::assemble(&[
+            RvInstruction::Directive(".globl a_start".to_owned()),
+            RvInstruction::Label("a_start".to_owned()),
+            loc("a.hll", 1),
+            nop(), // @0
+            nop(), // @4
+        ])
+        .expect("assemble a");
+        let b = Assembler::assemble(&[
+            RvInstruction::Directive(".globl b_start".to_owned()),
+            RvInstruction::Label("b_start".to_owned()),
+            loc("b.hll", 2),
+            nop(), // @0 in b, @8 after linking
+            nop(), // @4 in b, @12 after linking
+        ])
+        .expect("assemble b");
+
+        let linked = ObjectLinker::link(&[("a", &a), ("b", &b)]).expect("link");
+
+        assert_eq!(linked.line_table_len(), 4, "one entry per attributed nop");
+        assert_eq!(linked.source_for_addr(0), Some(("a.hll", 1)));
+        assert_eq!(linked.source_for_addr(4), Some(("a.hll", 1)));
+        assert_eq!(linked.source_for_addr(8), Some(("b.hll", 2)));
+        assert_eq!(linked.source_for_addr(12), Some(("b.hll", 2)));
+        assert_eq!(linked.addr_for_source("a.hll", 1), Some(0));
+        assert_eq!(linked.addr_for_source("b.hll", 2), Some(8));
+    }
 }

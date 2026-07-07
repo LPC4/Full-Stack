@@ -28,6 +28,15 @@ pub struct RelocationRecord {
     pub addend: i64,
 }
 
+/// One pc-to-source table entry: a text-relative code address and the source
+/// location that produced it. `file_id` indexes [`AssembledOutput::file_name`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LineEntry {
+    pub addr: u64,
+    pub file_id: u32,
+    pub line: u32,
+}
+
 /// The final output produced by the assembler: byte blobs per section, symbol table, relocations.
 #[derive(Debug, Default, Clone)]
 pub struct AssembledOutput {
@@ -35,6 +44,9 @@ pub struct AssembledOutput {
     pub(crate) symbol_table: HashMap<String, u64>,
     pub(crate) global_symbols: Vec<String>,
     pub(crate) relocations: Vec<RelocationRecord>,
+    // pc-to-source line table (ascending by addr) and the file names it indexes.
+    pub(crate) line_table: Vec<LineEntry>,
+    pub(crate) file_table: Vec<String>,
 }
 
 impl AssembledOutput {
@@ -144,6 +156,54 @@ impl AssembledOutput {
     /// Number of relocation records.
     pub fn relocation_count(&self) -> usize {
         self.relocations.len()
+    }
+
+    // ---- Source line table ----
+
+    /// Intern `file` into the file table, returning its stable id.
+    pub(crate) fn intern_file(&mut self, file: &str) -> u32 {
+        if let Some(pos) = self.file_table.iter().position(|f| f == file) {
+            return pos as u32;
+        }
+        self.file_table.push(file.to_owned());
+        (self.file_table.len() - 1) as u32
+    }
+
+    /// File name for a `file_id`, if present.
+    pub fn file_name(&self, file_id: u32) -> Option<&str> {
+        self.file_table.get(file_id as usize).map(String::as_str)
+    }
+
+    /// Number of pc-to-source entries.
+    pub fn line_table_len(&self) -> usize {
+        self.line_table.len()
+    }
+
+    /// Iterate the pc-to-source table entries (ascending by address).
+    pub fn line_table_iter(&self) -> impl Iterator<Item = LineEntry> + '_ {
+        self.line_table.iter().copied()
+    }
+
+    /// Source location of the instruction covering `addr`: the entry with the
+    /// greatest address not exceeding `addr`. Returns `(file name, 1-based line)`.
+    pub fn source_for_addr(&self, addr: u64) -> Option<(&str, u32)> {
+        let idx = match self.line_table.binary_search_by(|e| e.addr.cmp(&addr)) {
+            Ok(i) => i,
+            Err(0) => return None,
+            Err(i) => i - 1,
+        };
+        let entry = self.line_table[idx];
+        self.file_name(entry.file_id).map(|f| (f, entry.line))
+    }
+
+    /// Lowest code address attributed to `line` in `file`, if any.
+    pub fn addr_for_source(&self, file: &str, line: u32) -> Option<u64> {
+        let file_id = self.file_table.iter().position(|f| f == file)? as u32;
+        self.line_table
+            .iter()
+            .filter(|e| e.file_id == file_id && e.line == line)
+            .map(|e| e.addr)
+            .min()
     }
 }
 

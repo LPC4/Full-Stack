@@ -11,13 +11,24 @@ fn rewrite_continue_with_step(stmts: &[Statement], step: &Statement) -> Vec<Stat
     stmts.iter().map(|s| rewrite_stmt(s, step)).collect()
 }
 
+/// Parallel line table for a desugared loop body: `lead` synthetic statements
+/// (line 0, no marker), the body's carried lines, then `trail` synthetic ones.
+fn loop_body_lines(lead: usize, body: &Block, trail: usize) -> Vec<u32> {
+    let mut lines = vec![0u32; lead];
+    lines.extend_from_slice(&body.stmt_lines);
+    lines.resize(lines.len() + trail, 0);
+    lines
+}
+
 fn rewrite_stmt(stmt: &Statement, step: &Statement) -> Statement {
     match stmt {
         Statement::Continue => Statement::Block(Block {
             statements: vec![step.clone(), Statement::Continue],
+            stmt_lines: Vec::new(),
         }),
         Statement::Block(block) => Statement::Block(Block {
             statements: rewrite_continue_with_step(&block.statements, step),
+            stmt_lines: block.stmt_lines.clone(),
         }),
         Statement::If {
             cond,
@@ -27,6 +38,7 @@ fn rewrite_stmt(stmt: &Statement, step: &Statement) -> Statement {
             cond: cond.clone(),
             then_block: Block {
                 statements: rewrite_continue_with_step(&then_block.statements, step),
+                stmt_lines: then_block.stmt_lines.clone(),
             },
             else_branch: else_branch
                 .as_ref()
@@ -39,14 +51,24 @@ fn rewrite_stmt(stmt: &Statement, step: &Statement) -> Statement {
 
 impl HighLevelCompiler {
     pub(super) fn lower_block(&mut self, ir_program: &mut IrProgram, block: &Block) {
-        for statement in &block.statements {
+        for (index, statement) in block.statements.iter().enumerate() {
             if let Some(b) = &self.current_block
                 && b.terminator.is_some()
             {
+                // Point the warning at the dead statement without emitting a
+                // marker for it (it is never lowered).
+                if let Some(&line) = block.stmt_lines.get(index) {
+                    let user_line = line.saturating_sub(self.source_line_offset);
+                    if user_line != 0 {
+                        self.set_pending_span(user_line);
+                    }
+                }
                 self.context
-                    .diagnostics
                     .warn("statement appears after terminator - ignored");
                 break;
+            }
+            if let Some(&line) = block.stmt_lines.get(index) {
+                self.emit_source_line(line);
             }
             self.lower_statement(ir_program, statement);
         }
@@ -631,11 +653,13 @@ impl HighLevelCompiler {
             cond,
             body: Block {
                 statements: body_stmts,
+                stmt_lines: loop_body_lines(0, body, 1),
             },
         };
 
         let desugared = Block {
             statements: vec![decl_var, decl_end, while_stmt],
+            stmt_lines: Vec::new(),
         };
         self.lower_block(ir_program, &desugared);
     }
@@ -715,11 +739,13 @@ impl HighLevelCompiler {
             cond,
             body: Block {
                 statements: body_stmts,
+                stmt_lines: loop_body_lines(1, body, 1),
             },
         };
 
         let desugared = Block {
             statements: vec![decl_ptr, decl_idx, while_stmt],
+            stmt_lines: Vec::new(),
         };
         self.lower_block(ir_program, &desugared);
     }
@@ -817,6 +843,7 @@ impl HighLevelCompiler {
             cond,
             body: Block {
                 statements: body_stmts,
+                stmt_lines: loop_body_lines(1, body, 1),
             },
         };
 
@@ -825,7 +852,10 @@ impl HighLevelCompiler {
         statements.push(decl_len);
         statements.push(decl_idx);
         statements.push(while_stmt);
-        let desugared = Block { statements };
+        let desugared = Block {
+            statements,
+            stmt_lines: Vec::new(),
+        };
         self.lower_block(ir_program, &desugared);
     }
 

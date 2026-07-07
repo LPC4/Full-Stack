@@ -21,6 +21,7 @@ pub enum StepOutcome {
 }
 
 /// The CPU: owns a 5-stage pipeline and exposes a single tick interface.
+#[derive(Clone)]
 pub struct Cpu {
     pipeline: Pipeline,
 }
@@ -92,8 +93,8 @@ impl Cpu {
         self.pipeline.peek_csrs()
     }
 
-    pub fn debug_translate(&self, vaddr: u64) -> Option<u64> {
-        self.pipeline.debug_translate(vaddr)
+    pub fn peek_priv_mode(&self) -> PrivilegeMode {
+        self.pipeline.peek_priv_mode()
     }
 
     pub fn predictor_stats(&self) -> &predictor::PredictorStats {

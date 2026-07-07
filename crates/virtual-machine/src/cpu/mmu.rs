@@ -37,6 +37,7 @@ struct TlbEntry {
 /// Direct-mapped cache of Sv39 leaf mappings. Caches only the mapping, not the
 /// permission decision (re-checked per access); keyed by satp, flushed on
 /// sfence.vma. See the VM spec section 2.1.7.
+#[derive(Clone)]
 pub struct Tlb {
     satp: u64,
     entries: [TlbEntry; TLB_ENTRIES],

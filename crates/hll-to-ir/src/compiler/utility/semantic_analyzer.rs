@@ -5,6 +5,7 @@ use crate::ast::{
 use crate::compiler::{Diagnostic, utility};
 use crate::ir::IrType;
 use crate::monomorphize::substitute_type;
+use crate::token::Span;
 use std::collections::{HashMap, HashSet};
 use utility::diagnostics::Diagnostics;
 use utility::symbol_table::SymbolTable;
@@ -30,6 +31,12 @@ pub struct SemanticAnalyzer {
     enum_variants: HashMap<String, EnumVariantSig>,
     enum_variant_names: HashMap<String, Vec<String>>,
     current_function: Option<String>,
+    // Span of the statement being checked, attached to errors so they point at a
+    // source line. Set per statement in `check_block`.
+    pending_span: Option<Span>,
+    // User source (prelude-free) and the prelude line offset, for spans.
+    source_lines: Vec<String>,
+    line_offset: u32,
 }
 
 impl SemanticAnalyzer {
@@ -45,11 +52,43 @@ impl SemanticAnalyzer {
             enum_variants: HashMap::new(),
             enum_variant_names: HashMap::new(),
             current_function: None,
+            pending_span: None,
+            source_lines: Vec::new(),
+            line_offset: 0,
         }
     }
 
     pub fn seed_types(&mut self, types: &[(String, IrType)]) {
         self.context.register_types(types);
+    }
+
+    /// The user source (prelude-free) and the prelude line offset, so errors can
+    /// quote the offending line and report a prelude-free line number.
+    pub fn set_source_context(&mut self, source: &str, prelude_lines: u32) {
+        self.source_lines = source.lines().map(str::to_owned).collect();
+        self.line_offset = prelude_lines;
+    }
+
+    /// Point later `error` calls at 1-based `line` (in prepended coordinates),
+    /// spanning its non-whitespace text; a prelude or unknown line clears it.
+    fn set_pending_span(&mut self, line: u32) {
+        let line = line.saturating_sub(self.line_offset);
+        if line == 0 {
+            self.pending_span = None;
+            return;
+        }
+        let source_line = self
+            .source_lines
+            .get(line as usize - 1)
+            .cloned()
+            .unwrap_or_default();
+        let lead = source_line.len() - source_line.trim_start().len();
+        self.pending_span = Some(Span {
+            line,
+            col: (lead + 1) as u32,
+            len: source_line.trim().len() as u32,
+            source_line,
+        });
     }
 
     fn error(&mut self, message: impl Into<String>) {
@@ -58,7 +97,10 @@ impl SemanticAnalyzer {
             Some(fn_name) => format!("in function '{fn_name}': {msg}"),
             None => msg,
         };
-        self.diagnostics.error(full);
+        match self.pending_span.clone() {
+            Some(span) => self.diagnostics.error_at(span, full),
+            None => self.diagnostics.error(full),
+        }
     }
 
     pub fn analyze_program(&mut self, program: &Program) -> Result<(), ()> {
@@ -199,6 +241,7 @@ impl SemanticAnalyzer {
                 name, params, body, ..
             } => {
                 self.current_function = Some(name.clone());
+                self.pending_span = None;
                 self.symbols.enter_scope();
 
                 // Register parameters
@@ -234,7 +277,10 @@ impl SemanticAnalyzer {
     }
 
     fn check_block(&mut self, block: &Block) -> Result<(), ()> {
-        for stmt in &block.statements {
+        for (index, stmt) in block.statements.iter().enumerate() {
+            if let Some(&line) = block.stmt_lines.get(index) {
+                self.set_pending_span(line);
+            }
             self.check_statement(stmt)?;
         }
         Ok(())

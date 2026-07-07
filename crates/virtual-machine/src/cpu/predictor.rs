@@ -8,6 +8,7 @@ use std::collections::HashMap;
 
 const PHT_SIZE: usize = 256;
 
+#[derive(Clone)]
 pub struct BranchPredictor {
     /// 2-bit saturating counters: 0-1 = predict not-taken, 2-3 = predict taken.
     pht: [u8; PHT_SIZE],

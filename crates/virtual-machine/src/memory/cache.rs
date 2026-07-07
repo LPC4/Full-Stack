@@ -3,7 +3,7 @@
 //! Multi-byte accesses count one stat per unique cache block, not one per byte.
 
 use crate::error::VmError;
-use crate::memory::{MemoryAccess, PeekByteRaw};
+use crate::memory::{MemoryAccess, PeekByteRaw, RamImage};
 
 pub struct CacheParams {
     pub size: usize,
@@ -395,6 +395,74 @@ impl<Next: MemoryAccess + PeekByteRaw> PeekByteRaw for Cache<Next> {
     }
 }
 
+impl<Next: MemoryAccess + RamImage> RamImage for Cache<Next> {
+    fn ram_len(&self) -> usize {
+        self.next.ram_len()
+    }
+    fn ram_base(&self) -> u64 {
+        self.next.ram_base()
+    }
+    fn write_image_into(&self, buf: &mut [u8]) {
+        // Deeper (older) levels first, then overlay this level's dirty lines so
+        // nearer (newer) data wins.
+        self.next.write_image_into(buf);
+        let base = self.next.ram_base();
+        for (set_idx, set) in self.sets.iter().enumerate() {
+            for line in &set.ways {
+                if line.valid && line.dirty {
+                    let addr = self.line_base_address(line.tag, set_idx as u64);
+                    let off = addr.wrapping_sub(base) as usize;
+                    if addr >= base && off + line.data.len() <= buf.len() {
+                        buf[off..off + line.data.len()].copy_from_slice(&line.data);
+                    }
+                }
+            }
+        }
+    }
+    fn load_image(&mut self, bytes: &[u8]) {
+        self.next.load_image(bytes);
+        for set in &mut self.sets {
+            for line in &mut set.ways {
+                line.valid = false;
+                line.dirty = false;
+                line.tag = 0;
+                line.lru_age = 0;
+            }
+        }
+    }
+}
+
+impl<Next: MemoryAccess> Cache<Next> {
+    pub fn snapshot(&self) -> CacheSnapshot {
+        let sets = self
+            .sets
+            .iter()
+            .map(|s| {
+                s.ways
+                    .iter()
+                    .map(|w| CacheLineSnapshot {
+                        valid: w.valid,
+                        dirty: w.dirty,
+                        tag: w.tag,
+                    })
+                    .collect()
+            })
+            .collect();
+
+        CacheSnapshot {
+            params: CacheParamsSnapshot {
+                size: self.params.size,
+                block_size: self.params.block_size,
+                associativity: self.params.associativity,
+                write_back: self.params.write_back,
+                read_only: self.params.read_only,
+            },
+            sets,
+            stats: self.stats.clone(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -463,35 +531,50 @@ mod tests {
         );
         assert_eq!(c.peek_next().peek_byte_raw(base + 7), Some(0xDE));
     }
-}
 
-impl<Next: MemoryAccess> Cache<Next> {
-    pub fn snapshot(&self) -> CacheSnapshot {
-        let sets = self
-            .sets
-            .iter()
-            .map(|s| {
-                s.ways
-                    .iter()
-                    .map(|w| CacheLineSnapshot {
-                        valid: w.valid,
-                        dirty: w.dirty,
-                        tag: w.tag,
-                    })
-                    .collect()
-            })
-            .collect();
+    // The RAM image overlays dirty (write-back) cache lines that RAM has not seen.
+    #[test]
+    fn ram_image_overlays_dirty_write_back_lines() {
+        let ram = Ram::new(0x8000_0000, 64 * 1024);
+        let params = CacheParams {
+            size: 1024,
+            block_size: 64,
+            associativity: 2,
+            write_back: true,
+            read_only: false,
+        };
+        let mut c = Cache::new(params, ram);
+        let base = 0x8000_0000;
+        // This write stays dirty in the cache; the underlying RAM is still zero.
+        c.write_doubleword(base + 8, 0x0102_0304_0506_0708).unwrap();
+        assert_eq!(c.peek_next().peek_byte_raw(base + 8), Some(0));
 
-        CacheSnapshot {
-            params: CacheParamsSnapshot {
-                size: self.params.size,
-                block_size: self.params.block_size,
-                associativity: self.params.associativity,
-                write_back: self.params.write_back,
-                read_only: self.params.read_only,
-            },
-            sets,
-            stats: self.stats.clone(),
-        }
+        let mut img = vec![0u8; c.ram_len()];
+        c.write_image_into(&mut img);
+        assert_eq!(&img[8..16], &[8, 7, 6, 5, 4, 3, 2, 1]);
+    }
+
+    // Loading an image replaces RAM and drops cache lines cold (no writeback).
+    #[test]
+    fn load_image_replaces_ram_and_invalidates() {
+        let ram = Ram::new(0x8000_0000, 4096);
+        let params = CacheParams {
+            size: 1024,
+            block_size: 64,
+            associativity: 2,
+            write_back: true,
+            read_only: false,
+        };
+        let mut c = Cache::new(params, ram);
+        let base = 0x8000_0000;
+        c.write_byte(base, 0xEE).unwrap(); // dirty line that must NOT survive
+
+        let mut img = vec![0u8; c.ram_len()];
+        img[0] = 0x11;
+        img[100] = 0x22;
+        c.load_image(&img);
+        // Dirty line dropped, restored RAM authoritative on the next read.
+        assert_eq!(c.read_byte(base).unwrap(), 0x11);
+        assert_eq!(c.read_byte(base + 100).unwrap(), 0x22);
     }
 }

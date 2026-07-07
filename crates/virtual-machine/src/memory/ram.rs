@@ -2,7 +2,7 @@
 //! (`0x8000_0000` .. `0xFFFF_FFFF`) by default.
 
 use crate::error::VmError;
-use crate::memory::{MemoryAccess, PeekByteRaw};
+use crate::memory::{MemoryAccess, PeekByteRaw, RamImage};
 
 pub struct Ram {
     data: Vec<u8>,
@@ -40,6 +40,21 @@ impl Ram {
     /// Peek at a byte without mutation (for debugging).
     pub fn peek_byte(&self, addr: u64) -> Option<u8> {
         self.index(addr).map(|idx| self.data[idx])
+    }
+}
+
+impl RamImage for Ram {
+    fn ram_len(&self) -> usize {
+        self.data.len()
+    }
+    fn ram_base(&self) -> u64 {
+        self.base
+    }
+    fn write_image_into(&self, buf: &mut [u8]) {
+        buf.copy_from_slice(&self.data);
+    }
+    fn load_image(&mut self, bytes: &[u8]) {
+        self.data.copy_from_slice(bytes);
     }
 }
 

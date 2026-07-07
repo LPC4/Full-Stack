@@ -81,7 +81,13 @@ fn parse_scalar(value: &str) -> Result<String, ManifestError> {
     if value.starts_with('[') || matches!(value, "true" | "false") {
         return Ok(value.to_owned());
     }
-    parse_quoted(value)
+    if value.starts_with('"') || value.ends_with('"') {
+        return parse_quoted(value);
+    }
+    if value.is_empty() {
+        return Err(ManifestError("expected value, got empty string".to_owned()));
+    }
+    Ok(value.to_owned())
 }
 
 fn parse_quoted(value: &str) -> Result<String, ManifestError> {
@@ -157,5 +163,11 @@ modules = ["as_object.hll", "as_layout.hll"]
             manifest.string("desc").as_deref(),
             Some(r#"a "quoted" path\here"#)
         );
+    }
+
+    #[test]
+    fn accepts_unquoted_path_values() {
+        let manifest = parse("out=target/full-stack\n").expect("parse");
+        assert_eq!(manifest.string("out").as_deref(), Some("target/full-stack"));
     }
 }

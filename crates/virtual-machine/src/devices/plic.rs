@@ -7,6 +7,7 @@ use crate::memory::MemoryAccess;
 const MAX_SOURCES: usize = 32;
 const MAX_CONTEXTS: usize = 1;
 
+#[derive(Clone)]
 pub struct Plic {
     priority: [u32; MAX_SOURCES],
     pending: [u32; MAX_SOURCES.div_ceil(32)],

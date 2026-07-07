@@ -100,6 +100,14 @@ pub struct HighLevelCompiler {
     enum_variants: std::collections::HashMap<String, VariantInfo>,
     // Monotonic id for naming `match` arm binding temporaries uniquely.
     match_id: usize,
+    // Source file name attributed to emitted line markers (pc-to-source table).
+    source_file: String,
+    // Lines added by the source prelude; subtracted so markers index the user file.
+    source_line_offset: u32,
+    // Last line emitted as a marker, to skip redundant consecutive markers.
+    last_source_line: Option<u32>,
+    // User source split into lines (prelude-free), for diagnostic spans.
+    source_lines: Vec<String>,
 }
 
 impl HighLevelCompiler {
@@ -133,11 +141,32 @@ impl HighLevelCompiler {
             enum_layouts: std::collections::HashMap::new(),
             enum_variants: std::collections::HashMap::new(),
             match_id: 0,
+            source_file: String::new(),
+            source_line_offset: 0,
+            last_source_line: None,
+            source_lines: Vec::new(),
         }
     }
 
     pub fn set_type_prelude(&mut self, types: Vec<(String, IrType)>) {
         self.prelude_types = types;
+    }
+
+    /// Name attributed to pc-to-source line markers emitted while lowering.
+    pub fn set_source_file(&mut self, file: &str) {
+        self.source_file = file.to_owned();
+    }
+
+    /// Lines added by the source prelude, subtracted from marker line numbers so
+    /// they index into the user's file (prelude statements are dropped).
+    pub fn set_source_line_offset(&mut self, lines: u32) {
+        self.source_line_offset = lines;
+    }
+
+    /// The user source (prelude-free), so lowering diagnostics can quote the
+    /// offending line. Line N of `source` backs a diagnostic on line N.
+    pub fn set_source_lines(&mut self, source: &str) {
+        self.source_lines = source.lines().map(str::to_owned).collect();
     }
 }
 

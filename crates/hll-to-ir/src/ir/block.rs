@@ -32,6 +32,10 @@ impl fmt::Display for IrBlock {
         writeln!(f, "{}:", self.label)?;
 
         for instruction in &self.instructions {
+            // Line markers are metadata, not IR text; keep them out of goldens.
+            if matches!(instruction, IrInstruction::SourceLine { .. }) {
+                continue;
+            }
             writeln!(f, "\t{instruction}")?;
         }
 

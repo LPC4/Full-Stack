@@ -21,6 +21,9 @@ pub enum RvInstruction {
     Comment(String),
     /// An assembler directive, e.g. `.text`, `.globl main`, `.word 42`.
     Directive(String),
+    /// A source-location marker for the pc-to-source line table. Emits no code
+    /// and no assembly text; the encoder attributes following instructions to it.
+    SourceLoc { file: String, line: u32 },
 }
 
 impl RvInstruction {
@@ -28,7 +31,9 @@ impl RvInstruction {
         match self {
             Self::Real(r) => vec![r.encode()],
             Self::Pseudo(p) => p.expand().iter().map(|r| r.encode()).collect(),
-            _ => vec![],
+            Self::Label(_) | Self::Comment(_) | Self::Directive(_) | Self::SourceLoc { .. } => {
+                vec![]
+            }
         }
     }
 
@@ -46,6 +51,8 @@ impl fmt::Display for RvInstruction {
             Self::Label(l) => write!(f, "{l}:"),
             Self::Comment(c) => write!(f, "; {c}"),
             Self::Directive(d) => write!(f, "{d}"),
+            // No textual form: line markers never appear in emitted assembly.
+            Self::SourceLoc { .. } => Ok(()),
         }
     }
 }

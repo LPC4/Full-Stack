@@ -19,6 +19,7 @@ pub const FB_DBMODE_REG: usize = 8;
 pub const FB_TOTAL_BYTES: usize = FB_BYTES + FB_CTRL_BYTES;
 
 /// A flat pixel buffer the guest draws into; the GUI reads it back for display.
+#[derive(Clone)]
 pub struct Framebuffer {
     // Buffer the GUI displays.
     front: Vec<u8>,

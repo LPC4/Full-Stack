@@ -162,6 +162,7 @@ fn compiled_stdlib() -> &'static [(String, AssembledOutput)] {
                     source_prelude: Some(source_prelude),
                     module_aliases,
                     module_mangle_prefix: None,
+                    source_file: Some(format!("{name}.hll")),
                 });
                 let out = compiler.compile(src).unwrap_or_else(|diags| {
                     panic!("kernel stdlib `{name}` compile failed: {diags:?}")
@@ -188,6 +189,7 @@ fn run_kernel_hll(user_src: &str) -> (String, Option<i64>) {
         source_prelude: Some(source_prelude),
         module_aliases,
         module_mangle_prefix: None,
+        source_file: Some("user.hll".to_owned()),
     });
     let user_out = user_compiler
         .compile(user_src)
