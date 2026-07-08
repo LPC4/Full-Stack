@@ -121,6 +121,10 @@ pub struct FullStackApp {
     pub(super) selected_config: usize,
     /// Discovered `.build` manifests with the time they were scanned.
     manifest_cache: Option<(f64, Vec<VPath>)>,
+    /// Check-on-idle: dirty-buffer fingerprint last seen and when it changed.
+    idle_seen: Option<(u64, f64)>,
+    /// The fingerprint the idle checker last compiled, so it runs once per edit.
+    idle_checked: u64,
     /// The resident VM session; present from Run until the next config change.
     pub(super) live: Option<LiveMachine>,
     launch_cache: Option<LaunchCache>,
@@ -192,6 +196,8 @@ impl FullStackApp {
             active_build_target: None,
             selected_config: 0,
             manifest_cache: None,
+            idle_seen: None,
+            idle_checked: 0,
             live: None,
             launch_cache: None,
             breakpoint_entry: String::new(),
@@ -764,6 +770,49 @@ impl FullStackApp {
         });
     }
 
+    /// Check-on-idle: once the active buffer has sat unchanged past the idle
+    /// delay, re-run the stage cache so markers track unsaved edits.
+    fn poll_idle_check(&mut self, ctx: &egui::Context, now: f64) {
+        const IDLE_CHECK_DELAY_SECS: f64 = 1.0;
+        if !self.settings.check_on_idle {
+            return;
+        }
+        let Some(doc) = self.workspace.active_document() else {
+            return;
+        };
+        // Clean buffers match disk; the save path already checked them.
+        if !doc.is_dirty() {
+            return;
+        }
+        let fingerprint = {
+            use std::hash::{Hash as _, Hasher as _};
+            let mut hasher = std::hash::DefaultHasher::new();
+            doc.text().hash(&mut hasher);
+            hasher.finish()
+        };
+        match self.idle_seen {
+            Some((seen, changed_at)) if seen == fingerprint => {
+                if self.idle_checked == fingerprint {
+                    return;
+                }
+                if now - changed_at >= IDLE_CHECK_DELAY_SECS {
+                    self.idle_checked = fingerprint;
+                    self.stage_cache = None;
+                    self.refresh_build_target();
+                    self.refresh_stage_cache();
+                } else {
+                    // No input events arrive while the user pauses; keep a
+                    // frame queued so the delayed check actually fires.
+                    ctx.request_repaint_after(std::time::Duration::from_millis(250));
+                }
+            }
+            _ => {
+                self.idle_seen = Some((fingerprint, now));
+                ctx.request_repaint_after(std::time::Duration::from_millis(250));
+            }
+        }
+    }
+
     pub(super) fn refresh_stage_cache(&mut self) {
         let Some(target) = self.active_build_target.clone() else {
             self.stage_cache = None;
@@ -773,7 +822,7 @@ impl FullStackApp {
             self.stage_cache = None;
             return;
         };
-        let (path, source) = match &manifest.root {
+        let (path, mut source) = match &manifest.root {
             BuildSource::Inline {
                 source,
                 source_path,
@@ -798,6 +847,10 @@ impl FullStackApp {
                 (path_text, source)
             }
         };
+        // Prefer the open buffer so check-on-idle sees unsaved edits.
+        if let Some(doc) = self.workspace.document(&target.root_path) {
+            source = doc.text().to_owned();
+        }
         if self
             .stage_cache
             .as_ref()
@@ -1585,6 +1638,7 @@ impl eframe::App for FullStackApp {
         self.follow_debug_source();
         self.refresh_inspect_cache(now);
         self.refresh_cache_grid(now);
+        self.poll_idle_check(ui.ctx(), now);
         self.handle_shortcuts(ui, now);
         let build_glow_t = self.build_glow_t(now);
         if build_glow_t.is_some() {
@@ -1977,6 +2031,34 @@ mod tests {
     }
 
     #[test]
+    fn idle_check_compiles_the_dirty_buffer_without_saving() {
+        let root = temp_root("idle_check");
+        write_native_workspace(&root);
+        let mut app = test_app(IdeWorkspace::new(Box::new(MemoryFs::new())).expect("workspace"));
+        app.open_native_workspace_folder(&root);
+        app.workspace
+            .open_document(VPath::parse("programs/demo/main.hll").expect("path"))
+            .expect("open");
+        app.workspace
+            .set_active_text("main: () -> i32 {\n    return )\n}\n")
+            .expect("edit");
+
+        let ctx = egui::Context::default();
+        app.poll_idle_check(&ctx, 0.0);
+        assert!(app.stage_cache.is_none(), "debounce holds until idle");
+        app.poll_idle_check(&ctx, 2.0);
+        let cache = app.stage_cache.as_ref().expect("idle check ran");
+        assert!(cache.result.has_errors(), "unsaved parse error detected");
+
+        // The same edit is not rechecked; a new edit re-arms the debounce.
+        app.stage_cache = None;
+        app.poll_idle_check(&ctx, 4.0);
+        assert!(app.stage_cache.is_none(), "unchanged buffer not rechecked");
+
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
     fn build_failure_marks_the_editor_and_links_output() {
         let root = temp_root("diag_markers");
         write_native_workspace(&root);
@@ -2049,6 +2131,8 @@ mod tests {
             active_build_target: None,
             selected_config: 0,
             manifest_cache: None,
+            idle_seen: None,
+            idle_checked: 0,
             live: None,
             launch_cache: None,
             breakpoint_entry: String::new(),

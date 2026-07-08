@@ -106,16 +106,23 @@ impl RamLog {
     }
 }
 
+/// Ceiling on adaptive interval growth, as a multiple of the base interval.
+const MAX_INTERVAL_GROWTH: u64 = 64;
+
 /// A ring of captured architectural snapshots for scrubbing through execution;
-/// RAM in a delta-compressed [`RamLog`], CPU/device state alongside.
+/// RAM and framebuffer planes each in a delta-compressed [`RamLog`].
 pub struct TimeMachine {
     ram: RamLog,
+    fb: RamLog,
     lights: Vec<VmSnapshot>,
     retired: Vec<u64>,
     /// Retired-instruction count at the last capture (throttles cadence).
     last_retired: Option<u64>,
-    /// Minimum retired instructions between captures.
+    /// Minimum retired instructions between captures; grows as frames evict.
     interval: u64,
+    base_interval: u64,
+    /// Evictions since the interval last grew.
+    evicted_since_growth: usize,
     /// Cap on retained frames; the oldest is evicted past this.
     max_frames: usize,
     enabled: bool,
@@ -125,10 +132,13 @@ impl TimeMachine {
     pub fn new(interval: u64, keyframe_stride: usize, max_frames: usize) -> Self {
         Self {
             ram: RamLog::new(keyframe_stride),
+            fb: RamLog::new(keyframe_stride),
             lights: Vec::new(),
             retired: Vec::new(),
             last_retired: None,
             interval: interval.max(1),
+            base_interval: interval.max(1),
+            evicted_since_growth: 0,
             max_frames: max_frames.max(2),
             enabled: false,
         }
@@ -147,9 +157,12 @@ impl TimeMachine {
 
     pub fn clear(&mut self) {
         self.ram.clear();
+        self.fb.clear();
         self.lights.clear();
         self.retired.clear();
         self.last_retired = None;
+        self.interval = self.base_interval;
+        self.evicted_since_growth = 0;
     }
 
     pub fn len(&self) -> usize {
@@ -173,23 +186,37 @@ impl TimeMachine {
                 .is_none_or(|last| retired.saturating_sub(last) >= self.interval)
     }
 
-    /// Store `snap` (its RAM delta-compressed) as the newest frame.
+    /// Store `snap` (its RAM and framebuffer delta-compressed) as the newest frame.
     pub fn capture(&mut self, snap: &VmSnapshot, retired: u64) {
         self.ram.push(snap.ram());
-        self.lights.push(snap.without_ram());
+        self.fb.push(&snap.fb_image());
+        self.lights.push(snap.without_bulk());
         self.retired.push(retired);
         self.last_retired = Some(retired);
         while self.lights.len() > self.max_frames {
             self.ram.evict_front();
+            self.fb.evict_front();
             self.lights.remove(0);
             self.retired.remove(0);
+            self.grow_interval_on_eviction();
+        }
+    }
+
+    /// Once evictions have replaced half the ring, double the capture interval
+    /// (capped) so long runs keep a wider, sparser history window.
+    fn grow_interval_on_eviction(&mut self) {
+        self.evicted_since_growth += 1;
+        if self.evicted_since_growth >= self.max_frames / 2 {
+            self.evicted_since_growth = 0;
+            self.interval = (self.interval * 2).min(self.base_interval * MAX_INTERVAL_GROWTH);
         }
     }
 
     /// Rebuild a restorable snapshot for frame `i`, or None if out of range.
     pub fn snapshot_at(&self, i: usize) -> Option<VmSnapshot> {
         let ram = self.ram.reconstruct(i)?;
-        Some(self.lights.get(i)?.with_ram(ram))
+        let fb = self.fb.reconstruct(i)?;
+        Some(self.lights.get(i)?.with_bulk(ram, &fb))
     }
 }
 
@@ -272,6 +299,25 @@ mod tests {
         // Frame index 0 now corresponds to original frame 2.
         assert_eq!(log.reconstruct(0).as_ref(), Some(&frames[2]));
         assert_eq!(log.reconstruct(3).as_ref(), Some(&frames[5]));
+    }
+
+    #[test]
+    fn interval_doubles_per_half_ring_of_evictions_and_caps() {
+        let mut tm = TimeMachine::new(100, 8, 8);
+        assert_eq!(tm.interval, 100);
+        // Half the ring (4 evictions) doubles the interval once.
+        for _ in 0..4 {
+            tm.grow_interval_on_eviction();
+        }
+        assert_eq!(tm.interval, 200);
+        // Growth is capped at MAX_INTERVAL_GROWTH times the base.
+        for _ in 0..1000 {
+            tm.grow_interval_on_eviction();
+        }
+        assert_eq!(tm.interval, 100 * MAX_INTERVAL_GROWTH);
+        // Clearing resets the cadence to the base interval.
+        tm.clear();
+        assert_eq!(tm.interval, 100);
     }
 
     #[test]

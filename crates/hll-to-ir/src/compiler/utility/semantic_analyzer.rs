@@ -91,15 +91,36 @@ impl SemanticAnalyzer {
         });
     }
 
-    fn error(&mut self, message: impl Into<String>) {
+    fn scoped(&self, message: impl Into<String>) -> String {
         let msg = message.into();
-        let full = match &self.current_function {
+        match &self.current_function {
             Some(fn_name) => format!("in function '{fn_name}': {msg}"),
             None => msg,
-        };
+        }
+    }
+
+    fn error(&mut self, message: impl Into<String>) {
+        let full = self.scoped(message);
         match self.pending_span.clone() {
             Some(span) => self.diagnostics.error_at(span, full),
             None => self.diagnostics.error(full),
+        }
+    }
+
+    /// Error with the caret narrowed to `token` within the pending statement span.
+    fn error_at_token(&mut self, token: &str, message: impl Into<String>) {
+        let full = self.scoped(message);
+        match self.pending_span.as_ref().map(|s| s.narrowed_to(token)) {
+            Some(span) => self.diagnostics.error_at(span, full),
+            None => self.diagnostics.error(full),
+        }
+    }
+
+    fn warn(&mut self, message: impl Into<String>) {
+        let full = self.scoped(message);
+        match self.pending_span.clone() {
+            Some(span) => self.diagnostics.warn_at(span, full),
+            None => self.diagnostics.warn(full),
         }
     }
 
@@ -318,7 +339,10 @@ impl SemanticAnalyzer {
             Statement::Return(None) | Statement::Break | Statement::Continue => Ok(()),
             Statement::VariableDecl { name, ty, init } => {
                 if self.symbols.contains_in_current_scope(name) {
-                    self.error(format!("duplicate binding `{name}` in the same scope"));
+                    self.error_at_token(
+                        name,
+                        format!("duplicate binding `{name}` in the same scope"),
+                    );
                     return Err(());
                 }
                 let ir_ty = self.ast_type_to_ir_type(ty);
@@ -405,8 +429,7 @@ impl SemanticAnalyzer {
             } => {
                 let cond_ty = self.infer_expression_type(cond)?;
                 if cond_ty != "i1" && cond_ty != "bool" {
-                    self.diagnostics
-                        .error(format!("If condition must be bool, found {cond_ty}"));
+                    self.error(format!("If condition must be bool, found {cond_ty}"));
                     return Err(());
                 }
 
@@ -424,8 +447,7 @@ impl SemanticAnalyzer {
             Statement::While { cond, body } => {
                 let cond_ty = self.infer_expression_type(cond)?;
                 if cond_ty != "i1" && cond_ty != "bool" {
-                    self.diagnostics
-                        .error(format!("While condition must be bool, found {cond_ty}"));
+                    self.error(format!("While condition must be bool, found {cond_ty}"));
                     return Err(());
                 }
 
@@ -535,8 +557,7 @@ impl SemanticAnalyzer {
                     } else if let Some(ty_name) = self.type_mapping.get(name) {
                         Ok(ty_name.clone())
                     } else {
-                        self.diagnostics
-                            .error(format!("Undefined identifier: {name}"));
+                        self.error_at_token(name, format!("Undefined identifier: {name}"));
                         Err(())
                     }
                 }
@@ -630,7 +651,7 @@ impl SemanticAnalyzer {
                             return_type,
                         } = resolved
                         else {
-                            self.error(format!("`{name}` is not callable"));
+                            self.error_at_token(name, format!("`{name}` is not callable"));
                             return Err(());
                         };
                         if arguments.len() != params.len() {
@@ -665,7 +686,7 @@ impl SemanticAnalyzer {
                 }
                 PrimaryExpr::ArrayLiteral(elements) => {
                     if elements.is_empty() {
-                        self.diagnostics.error(
+                        self.error(
                             "an empty array literal `[]` needs a known array type; annotate \
                                  the binding or destination (for example `buf: u8[16] = []`)"
                                 .to_owned(),
@@ -847,8 +868,7 @@ impl SemanticAnalyzer {
                 match self.context.check_binary_op(op, &lhs_type, &rhs_type) {
                     Ok(result_type) => Ok(result_type),
                     Err(err) => {
-                        self.diagnostics
-                            .error(format!("Type error in binary operation: {err}"));
+                        self.error(format!("Type error in binary operation: {err}"));
                         Err(())
                     }
                 }
@@ -866,8 +886,7 @@ impl SemanticAnalyzer {
                 match self.context.check_unary_op(op, &inner_type) {
                     Ok(result_type) => Ok(result_type),
                     Err(err) => {
-                        self.diagnostics
-                            .error(format!("Type error in unary operation: {err}"));
+                        self.error(format!("Type error in unary operation: {err}"));
                         Err(())
                     }
                 }
@@ -1345,20 +1364,20 @@ impl SemanticAnalyzer {
         let mut seen = HashSet::new();
         for field in fields {
             if !seen.insert(field.name.clone()) {
-                self.error(format!(
-                    "duplicate field `{}` in `{name}` literal",
-                    field.name
-                ));
+                self.error_at_token(
+                    &field.name,
+                    format!("duplicate field `{}` in `{name}` literal", field.name),
+                );
                 return Err(());
             }
             let Some((_, expected_ty)) = declared_fields
                 .iter()
                 .find(|(field_name, _)| field_name == &field.name)
             else {
-                self.error(format!(
-                    "unknown field `{}` in `{name}` literal",
-                    field.name
-                ));
+                self.error_at_token(
+                    &field.name,
+                    format!("unknown field `{}` in `{name}` literal", field.name),
+                );
                 return Err(());
             };
             let actual_name = self.infer_expression_type(&field.expr)?;
@@ -1664,8 +1683,10 @@ impl SemanticAnalyzer {
                 "len" => Ok("i64".to_owned()),
                 "ptr" => Ok(format!("*{elem}")),
                 _ => {
-                    self.diagnostics
-                        .error(format!("unknown field `{field}` for slice `{base_type}`"));
+                    self.error_at_token(
+                        field,
+                        format!("unknown field `{field}` for slice `{base_type}`"),
+                    );
                     Err(())
                 }
             };
@@ -1679,14 +1700,12 @@ impl SemanticAnalyzer {
                 if let IrType::Aggregate(fields) = *inner {
                     (fields, true)
                 } else {
-                    self.diagnostics
-                        .error(format!("field access on non-aggregate type `{base_type}`"));
+                    self.error(format!("field access on non-aggregate type `{base_type}`"));
                     return Err(());
                 }
             }
             _ => {
-                self.diagnostics
-                    .error(format!("field access on non-aggregate type `{base_type}`"));
+                self.error(format!("field access on non-aggregate type `{base_type}`"));
                 return Err(());
             }
         };
@@ -1695,8 +1714,10 @@ impl SemanticAnalyzer {
             let field_type_name = self.context.get_type_name(field_ty);
             Ok(field_type_name)
         } else {
-            self.diagnostics
-                .error(format!("unknown field `{field}` for type `{base_type}`"));
+            self.error_at_token(
+                field,
+                format!("unknown field `{field}` for type `{base_type}`"),
+            );
             Err(())
         }
     }
@@ -1704,7 +1725,7 @@ impl SemanticAnalyzer {
     fn infer_index_element_type(&mut self, base_type: &str) -> Result<String, ()> {
         // Allow unknown types to propagate only if they're genuinely unresolved
         if base_type == "unknown" || base_type == "*unknown" {
-            self.diagnostics.warn(format!(
+            self.warn(format!(
                 "indexing operation on unresolved type `{base_type}`; ensure type is resolved before codegen"
             ));
             return Ok("*unknown".to_owned());
@@ -1730,7 +1751,7 @@ impl SemanticAnalyzer {
                 let inner_name = self.context.get_type_name(inner);
                 // Check if the pointed-to type is itself indexable
                 if inner_name == "unknown" || inner_name == "*unknown" {
-                    self.diagnostics.warn(format!(
+                    self.warn(format!(
                         "indexing through pointer to unresolved type `{inner_name}`"
                     ));
                     return Ok("*unknown".to_owned());
@@ -1742,7 +1763,7 @@ impl SemanticAnalyzer {
                 Ok(element_name)
             }
             IrType::Named(name) if name == "unknown" => {
-                self.diagnostics.warn(format!(
+                self.warn(format!(
                     "indexing operation on unresolved named type `{name}`"
                 ));
                 Ok("*unknown".to_owned())
@@ -1819,8 +1840,7 @@ impl SemanticAnalyzer {
                 Ok(())
             }
             AssignTarget::StructDestructure(_) => {
-                self.diagnostics
-                    .error("Nested struct destructuring not supported".to_owned());
+                self.error("Nested struct destructuring not supported".to_owned());
                 Err(())
             }
         }

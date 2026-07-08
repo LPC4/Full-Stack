@@ -56,6 +56,32 @@ impl VmSnapshot {
             ram,
         }
     }
+
+    /// Framebuffer pixel planes at capture time (bulk, delta-compressed by the session).
+    pub fn fb_image(&self) -> Vec<u8> {
+        self.devices.fb_image()
+    }
+
+    /// This snapshot with both bulk images dropped (RAM and framebuffer planes).
+    pub fn without_bulk(&self) -> Self {
+        Self {
+            cpu: self.cpu.clone(),
+            devices: self.devices.without_fb(),
+            ram: Vec::new(),
+        }
+    }
+
+    /// This snapshot with both bulk images reattached, ready for
+    /// [`VirtualMachine::restore`].
+    pub fn with_bulk(&self, ram: Vec<u8>, fb: &[u8]) -> Self {
+        let mut devices = self.devices.clone();
+        devices.load_fb_image(fb);
+        Self {
+            cpu: self.cpu.clone(),
+            devices,
+            ram,
+        }
+    }
 }
 
 // --- Constructors ---
@@ -539,5 +565,25 @@ mod tests {
         vm.write_ram(addr, &[0x22]).unwrap();
         vm.restore(&rebuilt);
         assert_eq!(vm.peek_bytes_raw(addr, 1), vec![0x11]);
+    }
+
+    // The session also strips the framebuffer planes (without_bulk) and
+    // reattaches them (with_bulk); a restore must revert pixel writes.
+    #[test]
+    fn without_bulk_then_with_bulk_restores_framebuffer() {
+        let addr = RAM_BASE + 0x100;
+        let mut vm = vm_with_ram_byte(addr, 0x11);
+        vm.bus.write_word(crate::bus::FB_BASE, 0xAABB_CCDD).unwrap();
+        let snap = vm.snapshot();
+        let fb = snap.fb_image();
+        let light = snap.without_bulk();
+        assert!(light.ram().is_empty());
+        assert!(light.fb_image().is_empty());
+
+        vm.bus.write_word(crate::bus::FB_BASE, 0x1122_3344).unwrap();
+        vm.write_ram(addr, &[0x22]).unwrap();
+        vm.restore(&light.with_bulk(snap.ram().to_vec(), &fb));
+        assert_eq!(vm.peek_bytes_raw(addr, 1), vec![0x11]);
+        assert_eq!(&vm.peek_framebuffer()[..4], &[0xDD, 0xCC, 0xBB, 0xAA]);
     }
 }

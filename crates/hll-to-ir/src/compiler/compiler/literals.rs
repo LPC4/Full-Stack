@@ -85,7 +85,7 @@ impl HighLevelCompiler {
 
     pub(super) fn lower_array_literal(&mut self, elements: &[Expression]) -> Option<LoweredValue> {
         if elements.is_empty() {
-            self.context.diagnostics.error(
+            self.context.error(
                 "an empty array literal `[]` needs a known array type; annotate the \
                      binding or destination (for example `buf: u8[16] = []`)"
                     .to_owned(),
@@ -425,7 +425,7 @@ impl HighLevelCompiler {
         let ptr_reg = match &addr.value {
             IrValue::Register(r) => r.clone(),
             other => {
-                self.context.diagnostics.error(format!(
+                self.context.error(format!(
                     "destructuring source must be a register pointer, got {other:?}"
                 ));
                 return None;

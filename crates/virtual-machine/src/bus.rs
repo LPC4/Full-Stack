@@ -23,6 +23,25 @@ pub struct DeviceState {
     syscon_exit: Option<i64>,
 }
 
+impl DeviceState {
+    /// Framebuffer pixel planes as one image; the bulk term of a device snapshot.
+    pub fn fb_image(&self) -> Vec<u8> {
+        self.framebuffer.plane_image()
+    }
+
+    /// This state with the framebuffer pixel planes dropped.
+    pub fn without_fb(&self) -> Self {
+        let mut state = self.clone();
+        state.framebuffer.strip_planes();
+        state
+    }
+
+    /// Reattach framebuffer pixel planes captured by [`fb_image`](Self::fb_image).
+    pub fn load_fb_image(&mut self, bytes: &[u8]) {
+        self.framebuffer.load_plane_image(bytes);
+    }
+}
+
 pub const ROM_BASE: u64 = 0x0000_0000;
 pub const ROM_SIZE: u64 = 256 * 1024 * 1024; // 256 MiB
 pub const ROM_END: u64 = ROM_BASE + ROM_SIZE - 1;

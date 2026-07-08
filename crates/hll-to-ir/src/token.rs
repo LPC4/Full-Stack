@@ -22,6 +22,23 @@ impl Span {
         format!("line {} | {}", self.line, self.source_line)
     }
 
+    /// This span narrowed to the first occurrence of `token` on its line, for
+    /// a token-precise caret; unchanged when the token is not on the line.
+    pub fn narrowed_to(&self, token: &str) -> Self {
+        if token.is_empty() {
+            return self.clone();
+        }
+        match self.source_line.find(token) {
+            Some(idx) => Self {
+                line: self.line,
+                col: idx as u32 + 1,
+                len: token.len() as u32,
+                source_line: self.source_line.clone(),
+            },
+            None => self.clone(),
+        }
+    }
+
     /// Number of caret columns to draw under the token: the character count of
     /// the spanned bytes on its line, at least 1.
     pub fn caret_width(&self) -> usize {
@@ -154,4 +171,32 @@ pub enum Token<'a> {
     As,
     Import,
     Export,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn stmt_span() -> Span {
+        Span {
+            line: 3,
+            col: 5,
+            len: 12,
+            source_line: "    x := bogus".to_owned(),
+        }
+    }
+
+    #[test]
+    fn narrowed_to_points_at_the_token() {
+        let narrowed = stmt_span().narrowed_to("bogus");
+        assert_eq!(narrowed.col, 10);
+        assert_eq!(narrowed.len, 5);
+        assert_eq!(narrowed.line, 3);
+    }
+
+    #[test]
+    fn narrowed_to_keeps_the_span_when_token_is_absent_or_empty() {
+        assert_eq!(stmt_span().narrowed_to("missing"), stmt_span());
+        assert_eq!(stmt_span().narrowed_to(""), stmt_span());
+    }
 }

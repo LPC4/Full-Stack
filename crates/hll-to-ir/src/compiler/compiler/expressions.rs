@@ -151,7 +151,6 @@ impl HighLevelCompiler {
                 if name == "free" {
                     if arguments.len() != 1 {
                         self.context
-                            .diagnostics
                             .error("free() expects exactly one argument".to_owned());
                         return None;
                     }
@@ -163,7 +162,6 @@ impl HighLevelCompiler {
                         IrValue::Null => {}
                         _ => {
                             self.context
-                                .diagnostics
                                 .error("free() argument must be a pointer value".to_owned());
                             return None;
                         }
@@ -186,7 +184,6 @@ impl HighLevelCompiler {
                         arg_values.push(lowered.value);
                     } else {
                         self.context
-                            .diagnostics
                             .error(format!("failed to lower argument for call to {name}"));
                         return None;
                     }
@@ -462,8 +459,7 @@ impl HighLevelCompiler {
             }
         } else {
             self.context
-                .diagnostics
-                .error(format!("unknown identifier `{name}`"));
+                .error_at_token(name, format!("unknown identifier `{name}`"));
             None
         }
     }
@@ -511,14 +507,12 @@ impl HighLevelCompiler {
             return_type,
         } = self.resolve_named_type(&callee.ty)
         else {
-            self.context
-                .diagnostics
-                .error(format!("{desc} is not callable"));
+            self.context.error(format!("{desc} is not callable"));
             return None;
         };
 
         if arguments.len() != params.len() {
-            self.context.diagnostics.error(format!(
+            self.context.error(format!(
                 "function pointer {desc} expects {} argument(s), got {}",
                 params.len(),
                 arguments.len()
@@ -529,7 +523,7 @@ impl HighLevelCompiler {
         let mut arg_values = Vec::new();
         for (index, (arg, expected)) in arguments.iter().zip(params.iter()).enumerate() {
             let Some(lowered) = self.lower_value_for_type(arg, expected) else {
-                self.context.diagnostics.error(format!(
+                self.context.error(format!(
                     "failed to lower argument {} for indirect call {desc}",
                     index + 1
                 ));
@@ -593,10 +587,13 @@ impl HighLevelCompiler {
             .unwrap_or_default();
         let expected = param_types.len().saturating_sub(1);
         if arguments.len() != expected {
-            self.context.diagnostics.error(format!(
-                "method `{method}` expects {expected} argument(s), got {}",
-                arguments.len()
-            ));
+            self.context.error_at_token(
+                method,
+                format!(
+                    "method `{method}` expects {expected} argument(s), got {}",
+                    arguments.len()
+                ),
+            );
             return None;
         }
 
@@ -624,7 +621,7 @@ impl HighLevelCompiler {
         let mut arg_values = vec![self_val];
         for (index, arg) in arguments.iter().enumerate() {
             let Some(lowered) = self.lower_value_for_type(arg, &param_types[index + 1]) else {
-                self.context.diagnostics.error(format!(
+                self.context.error(format!(
                     "failed to lower argument {} for method `{method}`",
                     index + 1
                 ));
@@ -1189,7 +1186,6 @@ impl HighLevelCompiler {
                             r
                         } else {
                             self.context
-                                .diagnostics
                                 .error("cannot dereference non-register value".to_owned());
                             return None;
                         };
@@ -1320,7 +1316,6 @@ impl HighLevelCompiler {
                 (reg.clone(), *inner.clone())
             } else {
                 self.context
-                    .diagnostics
                     .error("assignment target did not resolve to a register address".to_owned());
                 return None;
             };

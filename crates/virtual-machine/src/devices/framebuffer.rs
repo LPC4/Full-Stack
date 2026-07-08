@@ -57,6 +57,30 @@ impl Framebuffer {
         self.fill_count
     }
 
+    /// Both pixel planes (front then back) as one image; the bulk term of a
+    /// device snapshot, delta-compressed by the session like RAM.
+    pub fn plane_image(&self) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(self.front.len() + self.back.len());
+        buf.extend_from_slice(&self.front);
+        buf.extend_from_slice(&self.back);
+        buf
+    }
+
+    /// Replace both pixel planes from a [`plane_image`](Self::plane_image) buffer.
+    pub fn load_plane_image(&mut self, bytes: &[u8]) {
+        let split = bytes.len() / 2;
+        self.front.clear();
+        self.front.extend_from_slice(&bytes[..split]);
+        self.back.clear();
+        self.back.extend_from_slice(&bytes[split..]);
+    }
+
+    /// Drop the pixel planes (control state stays), shrinking a stored snapshot.
+    pub fn strip_planes(&mut self) {
+        self.front = Vec::new();
+        self.back = Vec::new();
+    }
+
     // The buffer the guest currently draws into and reads from.
     fn draw_buffer(&mut self) -> &mut Vec<u8> {
         if self.double_buffered {

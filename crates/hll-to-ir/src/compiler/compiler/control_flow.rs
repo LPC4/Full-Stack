@@ -192,7 +192,6 @@ impl HighLevelCompiler {
                     Ok(ty) => ty,
                     Err(e) => {
                         self.context
-                            .diagnostics
                             .error(format!("failed to lower type for variable `{name}`: {e:?}"));
                         return;
                     }
@@ -313,18 +312,14 @@ impl HighLevelCompiler {
                 if let Some((_, break_label)) = self.loop_labels.last() {
                     self.set_terminator(IrTerminator::Jump(break_label.clone()));
                 } else {
-                    self.context
-                        .diagnostics
-                        .error("break outside of loop".to_owned());
+                    self.context.error("break outside of loop".to_owned());
                 }
             }
             Statement::Continue => {
                 if let Some((continue_label, _)) = self.loop_labels.last() {
                     self.set_terminator(IrTerminator::Jump(continue_label.clone()));
                 } else {
-                    self.context
-                        .diagnostics
-                        .error("continue outside of loop".to_owned());
+                    self.context.error("continue outside of loop".to_owned());
                 }
             }
             Statement::AsmBlock { lines } => {

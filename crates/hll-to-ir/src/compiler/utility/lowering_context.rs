@@ -76,6 +76,15 @@ impl LoweringContext {
         }
     }
 
+    /// Emit an error with the caret narrowed to `token` within the pending span.
+    pub fn error_at_token(&mut self, token: &str, message: impl Into<String>) {
+        let full = self.scoped(message);
+        match self.pending_span.as_ref().map(|s| s.narrowed_to(token)) {
+            Some(span) => self.diagnostics.error_at(span, full),
+            None => self.diagnostics.error(full),
+        }
+    }
+
     /// Emit a diagnostic warning at the pending statement span when one is set.
     pub fn warn(&mut self, message: impl Into<String>) {
         let full = self.scoped(message);

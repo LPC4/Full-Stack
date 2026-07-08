@@ -185,9 +185,9 @@ impl HighLevelCompiler {
 
         let mut semantic_analyzer = SemanticAnalyzer::new();
         if semantic_analyzer.analyze_program(program).is_err() {
-            // Collect semantic errors and emit them as diagnostics
+            // Collect semantic diagnostics whole, keeping their spans and levels
             for diagnostic in semantic_analyzer.diagnostics() {
-                self.context.diagnostics.error(diagnostic.message.clone());
+                self.context.diagnostics.push(diagnostic.clone());
             }
             log::warn!(
                 "Semantic analysis found errors, continuing with compilation for diagnostics"

@@ -61,6 +61,7 @@ pub(crate) struct AppSettings {
     pub(crate) current_line_highlight: bool,
     // Editor
     pub(crate) check_on_save: bool,
+    pub(crate) check_on_idle: bool,
     pub(crate) save_all_before_run: bool,
     pub(crate) confirm_discard_on_close: bool,
     // Terminal
@@ -83,6 +84,7 @@ impl Default for AppSettings {
             editor_font_size: DEFAULT_MONO_SIZE,
             current_line_highlight: true,
             check_on_save: true,
+            check_on_idle: true,
             save_all_before_run: true,
             confirm_discard_on_close: false,
             open_terminal_on_run: true,
@@ -148,6 +150,7 @@ impl FullStackApp {
 
                         if section_title(ui, "Editor") {
                             s.check_on_save = defaults.check_on_save;
+                            s.check_on_idle = defaults.check_on_idle;
                             s.save_all_before_run = defaults.save_all_before_run;
                         }
                         toggle_row(
@@ -155,6 +158,12 @@ impl FullStackApp {
                             "Check on save",
                             "Recompile and show diagnostics each time you save.",
                             &mut s.check_on_save,
+                        );
+                        toggle_row(
+                            ui,
+                            "Check while typing",
+                            "Recompile after a pause in typing, before you save.",
+                            &mut s.check_on_idle,
                         );
                         toggle_row(
                             ui,
@@ -411,6 +420,7 @@ mod tests {
         assert_eq!(s.editor_font_size, DEFAULT_MONO_SIZE);
         assert!(s.current_line_highlight);
         assert!(s.check_on_save);
+        assert!(s.check_on_idle);
         assert!(s.save_all_before_run);
         assert!(!s.confirm_discard_on_close);
         assert!(s.open_terminal_on_run);

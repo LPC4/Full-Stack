@@ -877,6 +877,31 @@ main: () -> i32 {
     }
 
     #[test]
+    fn semantic_errors_narrow_the_caret_to_the_offending_token() {
+        let source = "\
+main: () -> i32 {
+    return bogus
+}
+";
+        let errors = match compile_hll(source) {
+            Ok(_) => panic!("undefined identifier must fail"),
+            Err(errors) => errors,
+        };
+        let diag = errors
+            .iter()
+            .find(|d| d.message.contains("Undefined identifier: bogus"))
+            .expect("undefined-identifier diagnostic");
+        let span = diag.span.as_ref().expect("diagnostic carries a span");
+        assert_eq!(span.line, 2);
+        let start = span.col as usize - 1;
+        assert_eq!(
+            &span.source_line[start..start + span.len as usize],
+            "bogus",
+            "caret narrowed to the identifier, not the whole statement"
+        );
+    }
+
+    #[test]
     fn test2_hll_compiles_to_ir_with_pointers_and_structs() {
         let path = fixture_root().join("parser/02_structs_and_pointers.hll");
         let source = fs::read_to_string(&path)
