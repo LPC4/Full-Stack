@@ -81,8 +81,8 @@ fn generate_userspace(manifest_dir: &Path, out_dir: &Path) {
     fs::write(out_dir.join("userspace.rs"), code).expect("failed to write userspace.rs");
 }
 
-/// Walk `programs/` and record every `.hll` keyed by its forward-slash, repo-relative path.
-/// These back WASM-safe relative-import resolution where the filesystem is unavailable.
+/// Walk `programs/` and record embeddable sources keyed by repo-relative path: every `.hll`,
+/// plus `.build`/`.s` under user+example for demo-workspace materialization; skips the copy.
 fn collect_source_files(dir: &Path, manifest_dir: &Path, out: &mut Vec<SourceFile>) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
@@ -90,15 +90,26 @@ fn collect_source_files(dir: &Path, manifest_dir: &Path, out: &mut Vec<SourceFil
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
+            if path.file_name().and_then(|name| name.to_str()) == Some("demo_workspace") {
+                continue;
+            }
             collect_source_files(&path, manifest_dir, out);
             continue;
         }
-        if path.extension().and_then(|ext| ext.to_str()) != Some("hll") {
+        let rel = path.strip_prefix(manifest_dir).expect("source under crate");
+        let key = rel.to_string_lossy().replace('\\', "/");
+        let ext = path.extension().and_then(|ext| ext.to_str());
+        let embed = match ext {
+            Some("hll") => true,
+            Some("build" | "s") => {
+                key.starts_with("programs/user/") || key.starts_with("programs/example/")
+            }
+            _ => false,
+        };
+        if !embed {
             continue;
         }
         println!("cargo:rerun-if-changed={}", path.display());
-        let rel = path.strip_prefix(manifest_dir).expect("source under crate");
-        let key = rel.to_string_lossy().replace('\\', "/");
         out.push(SourceFile { key, path });
     }
 }

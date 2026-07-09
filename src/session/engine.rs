@@ -159,9 +159,9 @@ impl<'a> SessionEngine<'a> {
     }
 
     fn manifest_for_config(&self, config: &RunConfig) -> Result<BuildManifest, SessionEngineError> {
-        match &config.build {
+        let mut manifest = match &config.build {
             BuildRef::Manifest(path) => {
-                load_build_manifest(self.fs, path).map_err(SessionEngineError::Manifest)
+                load_build_manifest(self.fs, path).map_err(SessionEngineError::Manifest)?
             }
             BuildRef::SourceWithDefaults { root, target } => {
                 let source = read_text(self.fs, root)?;
@@ -178,7 +178,54 @@ impl<'a> SessionEngine<'a> {
                 };
                 manifest.target = *target;
                 manifest.root = BuildSource::inline_with_path(name, source, root.as_str());
-                Ok(manifest)
+                manifest
+            }
+        };
+        if manifest.module_resolver.is_none() {
+            manifest.module_resolver = workspace_module_resolver(self.fs);
+        }
+        Ok(manifest)
+    }
+}
+
+/// Bare `import("name")` prefers the workspace copy of a kernel module, so demo
+/// workspace edits feed kernel builds; other names fall back to bundled sources.
+fn workspace_module_resolver(fs: &dyn WorkspaceFs) -> Option<crate::build::BuildModuleResolver> {
+    let root = VPath::parse("crates/os-runtime/kernel").ok()?;
+    let mut modules = std::collections::HashMap::new();
+    collect_workspace_modules(fs, &root, &mut modules);
+    if modules.is_empty() {
+        return None;
+    }
+    Some(std::rc::Rc::new(move |name: &str| {
+        modules
+            .get(name)
+            .cloned()
+            .or_else(|| crate::compilation_pipeline::bundled_module_source(name).map(str::to_owned))
+    }))
+}
+
+/// Collect workspace kernel `.hll` sources keyed by file stem (the bare import name).
+fn collect_workspace_modules(
+    fs: &dyn WorkspaceFs,
+    dir: &VPath,
+    out: &mut std::collections::HashMap<String, String>,
+) {
+    let Ok(entries) = fs.read_dir(dir) else {
+        return;
+    };
+    for entry in entries {
+        match entry.meta.kind {
+            EntryKind::Dir => collect_workspace_modules(fs, &entry.path, out),
+            EntryKind::File => {
+                let Some(stem) = entry.name.strip_suffix(".hll") else {
+                    continue;
+                };
+                if let Ok(bytes) = fs.read_file(&entry.path)
+                    && let Ok(source) = String::from_utf8(bytes)
+                {
+                    out.insert(stem.to_owned(), source);
+                }
             }
         }
     }
@@ -392,6 +439,22 @@ mod tests {
     use std::time::Duration;
 
     #[test]
+    fn workspace_kernel_modules_shadow_bundled_sources() {
+        let mut fs = MemoryFs::new();
+        fs.write_text(
+            &VPath::parse("crates/os-runtime/kernel/mm/pmm.hll").expect("path"),
+            "; workspace copy",
+        )
+        .expect("write module");
+
+        let resolver = super::workspace_module_resolver(&fs).expect("resolver");
+        assert_eq!(resolver("pmm").as_deref(), Some("; workspace copy"));
+        // Names without a workspace copy still resolve from the bundled sources.
+        assert!(resolver("scheduler").is_some());
+        assert!(resolver("no_such_module").is_none());
+    }
+
+    #[test]
     fn builds_hosted_run_config_from_workspace_manifest() {
         let mut fs = MemoryFs::new();
         fs.write_text(
@@ -553,7 +616,7 @@ mod tests {
         assert!(
             entries
                 .iter()
-                .any(|entry| entry.path() == "/home/demo/bin/shell/shell.hll"),
+                .any(|entry| entry.path() == "/home/demo/hello/user_hello.hll"),
             "workspace mounts are copied into the boot FS"
         );
     }

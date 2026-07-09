@@ -674,11 +674,14 @@ impl CompilationPipeline {
         if let Some(parent) = path.parent()
             && let Err(err) = fs::create_dir_all(parent)
         {
-            log::warn!("failed to create artifact directory `{parent:?}`: {err}");
+            log::warn!(
+                "failed to create artifact directory `{}`: {err}",
+                parent.display()
+            );
             return;
         }
         if let Err(err) = fs::write(&path, content) {
-            log::warn!("failed to write artifact `{path:?}`: {err}");
+            log::warn!("failed to write artifact `{}`: {err}", path.display());
         }
     }
 
@@ -694,13 +697,22 @@ impl CompilationPipeline {
         if let Some(parent) = path.parent()
             && let Err(err) = fs::create_dir_all(parent)
         {
-            log::warn!("failed to create artifact directory `{parent:?}`: {err}");
+            log::warn!(
+                "failed to create artifact directory `{}`: {err}",
+                parent.display()
+            );
             return;
         }
         if let Err(err) = fs::write(&path, bytes) {
-            log::warn!("failed to write artifact `{path:?}`: {err}");
+            log::warn!("failed to write artifact `{}`: {err}", path.display());
         }
     }
+
+    #[cfg(target_arch = "wasm32")]
+    fn write_text_artifact(&self, _subdir: &str, _stem: &str, _extension: &str, _content: &str) {}
+
+    #[cfg(target_arch = "wasm32")]
+    fn write_bytes_artifact(&self, _subdir: &str, _stem: &str, _extension: &str, _bytes: &[u8]) {}
 
     /// Source -> tokens -> AST -> IR, with mode-specific validation.
     #[track_caller]
@@ -763,7 +775,6 @@ impl CompilationPipeline {
             .clone()
             .unwrap_or_else(|| self.default_artifact_stem(Location::caller(), "ir", source));
         *self.last_artifact_stem.borrow_mut() = Some(sanitize_artifact_component(&stem));
-        #[cfg(not(target_arch = "wasm32"))]
         self.write_text_artifact("ir", &stem, ".ir", &out.ir.to_string());
 
         log::info!("Compilation complete");
@@ -869,7 +880,6 @@ impl CompilationPipeline {
                 self.default_artifact_stem(Location::caller(), "ir", &ir_display)
             });
         *self.last_artifact_stem.borrow_mut() = Some(sanitize_artifact_component(&ir_stem));
-        #[cfg(not(target_arch = "wasm32"))]
         self.write_text_artifact("ir", &ir_stem, ".ir", &ir_display);
 
         let ir = Some(IrOutput {
@@ -956,7 +966,6 @@ impl CompilationPipeline {
             *self.last_artifact_stem.borrow_mut() = Some(stem.clone());
             stem
         };
-        #[cfg(not(target_arch = "wasm32"))]
         self.write_text_artifact("asm", &stem, ".s", &asm);
         (asm, tokens)
     }
@@ -986,7 +995,6 @@ impl CompilationPipeline {
         }
         let stem = sanitize_artifact_component(stem);
         *self.last_artifact_stem.borrow_mut() = Some(stem.clone());
-        #[cfg(not(target_arch = "wasm32"))]
         self.write_bytes_artifact(
             "obj",
             &stem,
@@ -1031,7 +1039,6 @@ impl CompilationPipeline {
         out.mark_entry_global(self.effective_entry_point());
         let stem = sanitize_artifact_component(stem);
         *self.last_artifact_stem.borrow_mut() = Some(stem.clone());
-        #[cfg(not(target_arch = "wasm32"))]
         self.write_bytes_artifact(
             "elf",
             &format!("total_{stem}"),
@@ -1784,9 +1791,8 @@ mod fs_image_tests {
         panic!("const {name} not found in fs.hll");
     }
 
-    // The host image builder and the running kernel must agree on the on-disk
-    // layout byte for byte. fs.hll is the source of truth; this guards the copy
-    // in fs_layout from drifting.
+    // Host image builder and kernel must agree on the on-disk layout byte for
+    // byte; fs.hll is the source of truth, this guards fs_layout from drifting.
     #[test]
     fn fs_layout_matches_fs_hll() {
         let path = concat!(

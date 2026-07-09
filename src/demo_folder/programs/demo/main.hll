@@ -1,6 +1,0 @@
-console := import("console")
-
-main: () -> i32 {
-    console.println("Hello from the native demo workspace")
-    return 0
-}

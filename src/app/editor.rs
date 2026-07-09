@@ -787,6 +787,7 @@ fn code_view(
                         out.edited = Some(buf.clone());
                     }
                 }
+                hover_diagnostic_spans(ui, &output, &buf, marks);
                 // Stash the paused line's row band to paint under next frame's text.
                 let dbg_band = debug
                     .current_line
@@ -802,6 +803,38 @@ fn code_view(
             });
         });
     out
+}
+
+/// Hover tooltips on the underlined spans themselves, not just the gutter bar.
+fn hover_diagnostic_spans(
+    ui: &egui::Ui,
+    output: &egui::text_edit::TextEditOutput,
+    buf: &str,
+    marks: &[DiagMark],
+) {
+    for (i, mark) in marks.iter().enumerate() {
+        let Some((start, end)) = mark.range else {
+            continue;
+        };
+        // The live buffer may be newer than the marks; skip stale ranges.
+        if end > buf.len() || !buf.is_char_boundary(start) || !buf.is_char_boundary(end) {
+            continue;
+        }
+        let from = buf[..start].chars().count();
+        let to = from + buf[start..end].chars().count();
+        let head = output.galley.pos_from_cursor(CCursor::new(from));
+        let tail = output.galley.pos_from_cursor(CCursor::new(to));
+        let rect = egui::Rect::from_min_max(
+            output.galley_pos + head.min.to_vec2(),
+            output.galley_pos + tail.max.to_vec2(),
+        );
+        ui.interact(rect, ui.id().with(("diag_span", i)), Sense::hover())
+            .on_hover_text(theme::mono(
+                mark.message.clone(),
+                metrics::STATUS_TEXT_SIZE,
+                theme::TEXT,
+            ));
+    }
 }
 
 /// Paint the paused source line as a filled band with an electric left bar,
@@ -864,6 +897,12 @@ fn gutter(
         nums.push_str(&format!("{i:>digits$}"));
     }
     let galley = ui.fonts_mut(|f| f.layout_no_wrap(nums, font.clone(), theme::TEXT_FAINT));
+    // Rows are pixel-snapped, so their pitch can differ from the font's nominal
+    // row height; measure it or gutter marks drift below the code lines.
+    let pitch = match galley.rows.get(1) {
+        Some(row) => row.pos.y - galley.rows[0].pos.y,
+        None => row_height,
+    };
     let width = galley.size().x + metrics::CODE_PAD_X + metrics::GUTTER_GAP;
     let (rect, _) = ui.allocate_exact_size(vec2(width, galley.size().y), Sense::hover());
     ui.painter().galley(
@@ -874,14 +913,14 @@ fn gutter(
 
     let dot_x = rect.left() + 6.0;
     let line_of = |y: f32| -> Option<usize> {
-        let row = (y - rect.top()) / row_height;
+        let row = (y - rect.top()) / pitch;
         if row < 0.0 {
             return None;
         }
         let line = row.floor() as usize + 1;
         (line <= line_count).then_some(line)
     };
-    let dot_y = |line: usize| rect.top() + (line as f32 - 0.5) * row_height;
+    let dot_y = |line: usize| rect.top() + (line as f32 - 0.5) * pitch;
     for &line in breakpoints {
         if line >= 1 && line <= line_count {
             ui.painter()
@@ -909,11 +948,10 @@ fn gutter(
         if mark.line == 0 || mark.line > line_count {
             continue;
         }
-        let top = rect.top() + (mark.line - 1) as f32 * row_height;
-        let bar =
-            egui::Rect::from_min_size(pos2(rect.left(), top + 1.0), vec2(3.0, row_height - 2.0));
+        let top = rect.top() + (mark.line - 1) as f32 * pitch;
+        let bar = egui::Rect::from_min_size(pos2(rect.left(), top + 1.0), vec2(3.0, pitch - 2.0));
         ui.painter().rect_filled(bar, 0.0, mark.color());
-        let hover = egui::Rect::from_min_size(pos2(rect.left(), top), vec2(width, row_height));
+        let hover = egui::Rect::from_min_size(pos2(rect.left(), top), vec2(width, pitch));
         ui.interact(hover, ui.id().with(("diag_mark", i)), Sense::hover())
             .on_hover_text(theme::mono(
                 mark.message.clone(),
@@ -956,12 +994,18 @@ fn apply_match_backgrounds(job: &mut LayoutJob, ranges: &[(usize, usize)], curre
     });
 }
 
-/// Underline diagnostic spans in their level color (DANGER/WARNING).
+/// Underline diagnostic spans in their level color (DANGER/WARNING) and wash
+/// their background so the offending text reads at a glance.
 fn apply_diagnostic_underlines(job: &mut LayoutJob, spans: &[(usize, usize, egui::Color32)]) {
     let ranges = valid_ranges(&job.text, spans.iter().map(|&(start, end, _)| (start, end)));
     let colors: Vec<egui::Color32> = spans.iter().map(|&(_, _, color)| color).collect();
     restyle_ranges(job, &ranges, |idx, format| {
         format.underline = egui::Stroke::new(1.0, colors[idx]);
+        format.background = if colors[idx] == theme::DANGER {
+            theme::DANGER_WASH
+        } else {
+            theme::WARNING_WASH
+        };
     });
 }
 

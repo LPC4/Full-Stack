@@ -1,3 +1,5 @@
+// Integration tests drive the native pipeline and VM; never built for wasm.
+#![cfg(not(target_arch = "wasm32"))]
 #![expect(
     clippy::cast_possible_wrap,
     clippy::cloned_instead_of_copied,

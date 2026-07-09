@@ -1,6 +1,0 @@
-name = "demo"
-target = "hosted"
-root = "main.hll"
-stdlib = "hosted"
-import_closure = true
-mangle_symbols = true

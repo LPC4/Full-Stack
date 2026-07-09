@@ -18,7 +18,14 @@ fn main() {
     collect_sources(&manifest_dir.join("stdlib"), &manifest_dir, &mut sources);
     sources.sort_by(|a, b| a.key.cmp(&b.key));
 
-    let code = render_sources(&sources);
+    let mut tree = Vec::new();
+    for dir in ["boot", "kernel", "stdlib"] {
+        collect_tree(&manifest_dir.join(dir), &manifest_dir, &mut tree);
+    }
+    tree.sort_by(|a, b| a.key.cmp(&b.key));
+
+    let mut code = render_sources(&sources);
+    code.push_str(&render_tree(&tree));
     fs::write(out_dir.join("sources.rs"), code).expect("write sources.rs");
 }
 
@@ -80,6 +87,45 @@ fn source_key(rel: &Path) -> String {
     } else {
         stem.to_owned()
     }
+}
+
+/// Collect every source file (`.hll`, `.s`, `.build`) keyed by its crate-relative
+/// forward-slash path, for materializing real demo workspaces.
+fn collect_tree(dir: &Path, manifest_dir: &Path, out: &mut Vec<Source>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_tree(&path, manifest_dir, out);
+            continue;
+        }
+        let ext = path.extension().and_then(|ext| ext.to_str());
+        if !matches!(ext, Some("hll" | "s" | "build")) {
+            continue;
+        }
+        let rel = path.strip_prefix(manifest_dir).expect("source under crate");
+        let key = rel.to_string_lossy().replace('\\', "/");
+        out.push(Source { key, path });
+    }
+}
+
+fn render_tree(tree: &[Source]) -> String {
+    let mut out = String::new();
+    out.push_str("\n/// Every boot/kernel/stdlib source file keyed by crate-relative path.\n");
+    out.push_str("pub static SOURCE_TREE: &[(&str, &str)] = &[\n");
+    for source in tree {
+        writeln!(
+            out,
+            "    (\"{}\", include_str!(\"{}\")),",
+            escape(&source.key),
+            source.path.to_string_lossy().replace('\\', "/")
+        )
+        .expect("write");
+    }
+    out.push_str("];\n");
+    out
 }
 
 fn render_sources(sources: &[Source]) -> String {

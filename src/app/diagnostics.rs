@@ -64,6 +64,17 @@ pub(crate) fn count_levels(diagnostics: &[Diagnostic]) -> (usize, usize) {
     (errors, diagnostics.len() - errors)
 }
 
+/// "1 error" / "3 errors": a count with its correctly pluralized noun.
+pub(crate) fn tally(count: u64, noun: &str) -> String {
+    if count == 1 {
+        format!("1 {noun}")
+    } else if noun.ends_with("ch") {
+        format!("{count} {noun}es")
+    } else {
+        format!("{count} {noun}s")
+    }
+}
+
 /// Byte offset of the start of 1-based `line`, clamped to the text end.
 pub(crate) fn byte_offset_of_line(text: &str, line: usize) -> usize {
     let starts = line_start_offsets(text);
@@ -214,5 +225,8 @@ mod tests {
             Diagnostic::new(DiagnosticLevel::Warning, "w2"),
         ];
         assert_eq!(count_levels(&diags), (1, 2));
+        assert_eq!(tally(1, "error"), "1 error");
+        assert_eq!(tally(2, "warning"), "2 warnings");
+        assert_eq!(tally(0, "error"), "0 errors");
     }
 }

@@ -205,9 +205,9 @@ impl FullStackApp {
                 };
                 (
                     format!(
-                        "{} match(es) in {} file(s){cap}",
-                        results.total,
-                        results.files.len()
+                        "{} in {}{cap}",
+                        super::diagnostics::tally(results.total as u64, "match"),
+                        super::diagnostics::tally(results.files.len() as u64, "file")
                     ),
                     theme::TEXT_DIM,
                 )

@@ -109,9 +109,16 @@ impl FullStackApp {
             return;
         }
         let text = match (errors, warnings) {
-            (0, w) => format!("\u{25B2} {w} warning(s)"),
-            (e, 0) => format!("\u{25B2} {e} error(s)"),
-            (e, w) => format!("\u{25B2} {e} error(s) \u{00B7} {w} warning(s)"),
+            (0, w) => format!(
+                "\u{25B2} {}",
+                super::diagnostics::tally(w as u64, "warning")
+            ),
+            (e, 0) => format!("\u{25B2} {}", super::diagnostics::tally(e as u64, "error")),
+            (e, w) => format!(
+                "\u{25B2} {} \u{00B7} {}",
+                super::diagnostics::tally(e as u64, "error"),
+                super::diagnostics::tally(w as u64, "warning")
+            ),
         };
         let color = if errors > 0 {
             theme::DANGER

@@ -93,13 +93,10 @@ impl Args {
 // --- Entry point ---
 
 fn main() -> ExitCode {
-    match run_cli() {
-        Ok(code) => code,
-        Err(err) => {
-            eprintln!("fsc: {err}");
-            ExitCode::FAILURE
-        }
-    }
+    run_cli().unwrap_or_else(|err| {
+        eprintln!("fsc: {err}");
+        ExitCode::FAILURE
+    })
 }
 
 fn run_cli() -> Result<ExitCode, CliError> {

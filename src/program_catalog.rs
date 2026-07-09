@@ -373,9 +373,8 @@ fn built_in_programs() -> Vec<ProgramFile> {
         programs.push(module);
     }
 
-    // Userspace programs (read-only) derive from the generated userspace
-    // catalog: the hosted tools and demos the shell boots. Compile in Hosted
-    // target mode; the shell boots them as pid 1 or via bare-name execution.
+    // Read-only userspace programs from the generated catalog: hosted tools and
+    // demos the shell boots as pid 1 or via bare-name execution.
     for prog in crate::userspace::PROGRAMS
         .iter()
         .filter(|p| p.is_compiled())

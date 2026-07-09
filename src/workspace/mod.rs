@@ -9,7 +9,7 @@ pub mod path;
 pub mod state;
 pub mod tree;
 
-pub use bundle::sample_workspace;
+pub use bundle::{populate_demo_workspace, sample_workspace};
 pub use document::{Diagnostic, DiagnosticSeverity, Document};
 pub use fs::{DirEntry, EntryKind, Meta, WorkspaceFs};
 pub use manifest::{WorkspaceManifestDiagnostic, load_build_manifest};

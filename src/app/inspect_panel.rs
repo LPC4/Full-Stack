@@ -371,7 +371,10 @@ impl FullStackApp {
             ));
             if bytes.len() > FS_PREVIEW_CAP {
                 ui.label(theme::mono(
-                    format!("... {} more byte(s)", bytes.len() - FS_PREVIEW_CAP),
+                    format!(
+                        "... {} more",
+                        super::diagnostics::tally((bytes.len() - FS_PREVIEW_CAP) as u64, "byte")
+                    ),
                     metrics::STATUS_TEXT_SIZE,
                     theme::TEXT_FAINT,
                 ));

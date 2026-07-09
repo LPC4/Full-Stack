@@ -165,10 +165,8 @@ pub fn capture(vm: &VirtualMachine, sym: &OsSymbols) -> Vec<ProcessInfo> {
         procs.push(read_pcb(waiter, Role::Waiting));
     }
 
-    // The running process's saved trap frame only updates when it traps, so the
-    // stack view would look frozen between syscalls. Prefer the live register
-    // file (x2/x8) for it, falling back to the saved frame when the CPU is in a
-    // kernel trap (live sp on the kernel stack, outside the user window).
+    // The saved trap frame only updates on traps, freezing the stack view between
+    // syscalls; prefer live x2/x8, fall back to the frame during kernel traps.
     if let Some(running) = procs.first_mut()
         && running.role == Role::Running
     {

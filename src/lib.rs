@@ -3,7 +3,6 @@
     clippy::string_add,
     clippy::too_many_arguments,
     clippy::too_many_lines,
-    clippy::unnecessary_debug_formatting,
     clippy::unused_self,
     clippy::use_self,
     reason = "compiler pipeline structure remains covered while lint cleanup proceeds incrementally"

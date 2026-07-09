@@ -1,7 +1,0 @@
-[[config]]
-name = "Run demo"
-type = "hosted"
-build = "programs/demo/demo.build"
-present = "terminal"
-max_steps_per_frame = 200000
-debug = true

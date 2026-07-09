@@ -11,6 +11,8 @@ pub(super) enum ConsoleStream {
     Stdout,
     Warning,
     Error,
+    /// Continuation lines of a multi-line block (diagnostic frames); no prefix.
+    Detail,
 }
 
 pub(super) struct ConsoleLine {
@@ -115,7 +117,7 @@ impl TerminalState {
     }
 
     /// Output-tab text joined for test assertions.
-    #[cfg(test)]
+    #[cfg(all(test, not(target_arch = "wasm32")))]
     pub(super) fn output_text(&self) -> String {
         self.output_lines
             .iter()
@@ -521,6 +523,7 @@ fn stream_style(stream: ConsoleStream) -> (&'static str, egui::Color32) {
         ConsoleStream::Stdout => (">", theme::TEXT),
         ConsoleStream::Warning => ("!", theme::WARNING),
         ConsoleStream::Error => ("x", theme::DANGER),
+        ConsoleStream::Detail => (" ", theme::TEXT_DIM),
     }
 }
 
@@ -809,7 +812,10 @@ clear             clear the shell";
                     if total > MAX {
                         self.terminal.shell_echo(
                             ConsoleStream::Info,
-                            format!("... {} more line(s)", total - MAX),
+                            format!(
+                                "... {} more",
+                                super::diagnostics::tally((total - MAX) as u64, "line")
+                            ),
                         );
                     }
                 }

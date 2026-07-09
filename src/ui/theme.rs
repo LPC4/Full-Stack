@@ -42,6 +42,10 @@ pub const CURRENT_LINE: Color32 = Color32::from_rgba_premultiplied(0x14, 0x18, 0
 pub const FIND_MATCH: Color32 = Color32::from_rgba_premultiplied(0x0E, 0x28, 0x33, 0x38);
 /// Warm wash behind the current find match, so stepping through reads clearly.
 pub const FIND_MATCH_CURRENT: Color32 = Color32::from_rgba_premultiplied(0x57, 0x3C, 0x20, 0x5C);
+/// Translucent danger wash behind an errored source span in the editor.
+pub const DANGER_WASH: Color32 = Color32::from_rgba_premultiplied(0x29, 0x14, 0x11, 0x30);
+/// Translucent amber wash behind a warned source span in the editor.
+pub const WARNING_WASH: Color32 = Color32::from_rgba_premultiplied(0x29, 0x20, 0x11, 0x30);
 
 /// Apply the instrument theme: fonts, dark base, hairline strokes, sharp corners,
 /// tight spacing. Call once after the egui context exists.

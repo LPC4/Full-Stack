@@ -31,7 +31,9 @@ use full_stack::compilation_pipeline::{
     BinaryOutput, CompilationPipeline, PipelineResult, TargetMode,
 };
 use full_stack::runconfig::{BuildRef, RunConfig, RunKind};
-use full_stack::session::{LiveMachine, MachineState, SessionEngine, VmExecutionResult};
+use full_stack::session::{
+    LiveMachine, MachineState, SessionEngine, SessionEngineError, VmExecutionResult,
+};
 #[cfg(not(target_arch = "wasm32"))]
 use full_stack::workspace::NativeFs;
 use full_stack::workspace::{IdeWorkspace, VPath};
@@ -42,7 +44,7 @@ use terminal::{ConsoleStream, TerminalKind, TerminalState};
 const BUILD_GLOW_SECS: f64 = 0.85;
 /// Per-frame step budget when a run config does not specify one.
 #[cfg(not(target_arch = "wasm32"))]
-const DEMO_WORKSPACE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src/demo_folder");
+const DEMO_WORKSPACE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/programs/demo_workspace");
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Tool {
@@ -302,6 +304,7 @@ impl FullStackApp {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn block_open_folder_for_dirty_documents(&mut self) -> bool {
         if self.workspace.dirty_documents().next().is_none() {
             return false;
@@ -336,6 +339,7 @@ impl FullStackApp {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn replace_workspace(&mut self, workspace: IdeWorkspace, label: &str) {
         self.workspace = workspace;
         self.live = None;
@@ -614,7 +618,13 @@ impl FullStackApp {
                 Err(err) => {
                     failed = true;
                     self.status_message = Some("build failed".to_owned());
-                    self.terminal.push(ConsoleStream::Error, err.to_string());
+                    // Compile failures the preview already diagnosed render as
+                    // caret blocks below; the stringified error would repeat them.
+                    if !(matches!(err, SessionEngineError::Build(BuildError::Compile(_)))
+                        && preview_failed)
+                    {
+                        self.terminal.push(ConsoleStream::Error, err.to_string());
+                    }
                 }
             }
         } else if preview_failed {
@@ -639,8 +649,8 @@ impl FullStackApp {
         self.record_build_lit(produced_layer);
     }
 
-    /// Diagnostics land in Output one line each; spanned lines click-to-jump
-    /// (open the build root at that line). Notes follow as dim lines.
+    /// Diagnostics land in Output as the rendered CLI block (location, source
+    /// line, caret, note); the message and location lines click-to-jump.
     fn push_build_diagnostics(&mut self, failed: bool) {
         use full_stack::compilation_pipeline::DiagnosticLevel;
         let Some(cache) = &self.stage_cache else {
@@ -651,31 +661,31 @@ impl FullStackApp {
             .as_ref()
             .map(|target| target.root_path.as_str().to_owned());
         for diag in &cache.result.diagnostics {
-            let (tag, stream) = match diag.level {
-                DiagnosticLevel::Error => ("error", ConsoleStream::Error),
-                DiagnosticLevel::Warning => ("warning", ConsoleStream::Warning),
+            let stream = match diag.level {
+                DiagnosticLevel::Error => ConsoleStream::Error,
+                DiagnosticLevel::Warning => ConsoleStream::Warning,
             };
-            match (&diag.span, &root) {
-                (Some(span), Some(root)) => self.terminal.push_linked(
-                    stream,
-                    format!(
-                        "{tag}: {} \u{00B7} {root}:{}:{}",
-                        diag.message, span.line, span.col
-                    ),
-                    root.clone(),
-                    span.line as usize,
-                ),
-                (Some(span), None) => self.terminal.push(
-                    stream,
-                    format!("{tag}: {} \u{00B7} {}", diag.message, span.location()),
-                ),
-                (None, _) => self
-                    .terminal
-                    .push(stream, format!("{tag}: {}", diag.message)),
-            }
-            if let Some(note) = &diag.note {
-                self.terminal
-                    .push(ConsoleStream::Info, format!("note: {note}"));
+            let block = match &root {
+                Some(root) => diag.render(root),
+                None => diag.format_full(),
+            };
+            let link = match (&diag.span, &root) {
+                (Some(span), Some(root)) => Some((root.clone(), span.line as usize)),
+                _ => None,
+            };
+            for (i, line) in block.lines().enumerate() {
+                let stream = if i == 0 {
+                    stream
+                } else {
+                    ConsoleStream::Detail
+                };
+                match &link {
+                    Some((path, target)) if i == 0 || line.trim_start().starts_with("-->") => {
+                        self.terminal
+                            .push_linked(stream, line, path.clone(), *target);
+                    }
+                    _ => self.terminal.push(stream, line),
+                }
             }
         }
         if let Some(err) = &cache.result.assembler_error {
@@ -764,9 +774,16 @@ impl FullStackApp {
             .unwrap_or((0, 0));
         self.status_message = Some(match (errors, warnings) {
             (0, 0) => verb.to_owned(),
-            (0, w) => format!("{verb} \u{00B7} {w} warning(s)"),
-            (e, 0) => format!("{verb} \u{00B7} {e} error(s)"),
-            (e, w) => format!("{verb} \u{00B7} {e} error(s), {w} warning(s)"),
+            (0, w) => format!(
+                "{verb} \u{00B7} {}",
+                diagnostics::tally(w as u64, "warning")
+            ),
+            (e, 0) => format!("{verb} \u{00B7} {}", diagnostics::tally(e as u64, "error")),
+            (e, w) => format!(
+                "{verb} \u{00B7} {}, {}",
+                diagnostics::tally(e as u64, "error"),
+                diagnostics::tally(w as u64, "warning")
+            ),
         });
     }
 
@@ -1209,8 +1226,8 @@ impl FullStackApp {
         self.terminal.push(
             ConsoleStream::Success,
             format!(
-                "Linked {} unit(s), target {:?}.",
-                build.artifacts.units.len(),
+                "Linked {}, target {:?}.",
+                diagnostics::tally(build.artifacts.units.len() as u64, "unit"),
                 build.target
             ),
         );
@@ -1329,15 +1346,18 @@ impl FullStackApp {
             let (stream, summary) = match &live.state {
                 MachineState::Exited(0) => (
                     ConsoleStream::Success,
-                    format!("exit 0; {} VM step(s).", live.steps),
+                    format!("exit 0; {}.", diagnostics::tally(live.steps, "VM step")),
                 ),
                 MachineState::Exited(code) => (
                     ConsoleStream::Warning,
-                    format!("exit {code}; {} VM step(s).", live.steps),
+                    format!(
+                        "exit {code}; {}.",
+                        diagnostics::tally(live.steps, "VM step")
+                    ),
                 ),
                 MachineState::Stopped => (
                     ConsoleStream::Info,
-                    format!("stopped; {} VM step(s).", live.steps),
+                    format!("stopped; {}.", diagnostics::tally(live.steps, "VM step")),
                 ),
                 MachineState::Faulted(msg) => {
                     let at = live
@@ -1621,7 +1641,10 @@ fn build_summary(result: &PipelineResult, produced_layer: Option<Layer>) -> Stri
         .map(|binary| binary.assembled.sections_iter().count())
         .unwrap_or(0);
     if sections > 0 {
-        format!("Build completed through {stage}; linked {sections} section(s).")
+        format!(
+            "Build completed through {stage}; linked {}.",
+            diagnostics::tally(sections as u64, "section")
+        )
     } else {
         format!("Build completed through {stage}.")
     }
@@ -1721,10 +1744,11 @@ fn draw_separator(ui: &egui::Ui, x: f32, top: f32, bottom: f32, active: bool) {
     );
 }
 
+/// Native prefers the real on-disk demo workspace; the browser opens the same
+/// tree as an in-memory sample.
 fn open_default_workspace() -> IdeWorkspace {
-    IdeWorkspace::sample()
-        .ok()
-        .or_else(open_native_demo_workspace)
+    open_native_demo_workspace()
+        .or_else(|| IdeWorkspace::sample().ok())
         .unwrap_or_default()
 }
 
@@ -1751,11 +1775,15 @@ fn reopen_last_workspace(_settings: &settings::AppSettings) -> Option<IdeWorkspa
     None
 }
 
+/// Open `programs/demo_workspace` as a real folder, materializing any missing
+/// bundled sources and run configs first.
 #[cfg(not(target_arch = "wasm32"))]
 fn open_native_demo_workspace() -> Option<IdeWorkspace> {
     let root = std::path::PathBuf::from(DEMO_WORKSPACE_DIR);
     std::fs::create_dir_all(&root).ok()?;
-    IdeWorkspace::new(Box::new(NativeFs::open(root).ok()?)).ok()
+    let mut fs = NativeFs::open(root).ok()?;
+    full_stack::workspace::populate_demo_workspace(&mut fs).ok()?;
+    IdeWorkspace::new(Box::new(fs)).ok()
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -2086,6 +2114,14 @@ mod tests {
         assert!(
             output.contains("programs/demo/main.hll:2:"),
             "output line carries the location: {output}"
+        );
+        assert!(
+            output.contains("return )") && output.contains('^'),
+            "output shows the rendered block with source line and caret: {output}"
+        );
+        assert!(
+            !output.contains("Freestanding errors:"),
+            "the stringified compile error does not repeat the block: {output}"
         );
 
         // An Output link click routes through jump_to_source without reopening

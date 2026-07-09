@@ -65,13 +65,16 @@ fn module_member_aliases(
     exports: &HashSet<String>,
 ) -> HashMap<String, String> {
     let mut aliases = HashMap::new();
+    // Sort for deterministic alias resolution (the export set is unordered).
+    let mut sorted_exports: Vec<&String> = exports.iter().collect();
+    sorted_exports.sort();
     for prefix in [alias, key] {
         let prefix = prefix.trim_end_matches(".hll");
         if prefix.is_empty() {
             continue;
         }
         let prefix = format!("{prefix}_");
-        for export in exports {
+        for export in &sorted_exports {
             let Some(short) = export.strip_prefix(&prefix) else {
                 continue;
             };
@@ -79,17 +82,17 @@ fn module_member_aliases(
                 continue;
             }
             match aliases.get(short) {
-                Some(existing) if existing != export => {
+                Some(existing) if existing != *export => {
                     aliases.remove(short);
                 }
                 Some(_) => {}
                 None => {
-                    aliases.insert(short.to_owned(), export.clone());
+                    aliases.insert(short.to_owned(), (*export).clone());
                 }
             }
         }
     }
-    for export in exports {
+    for export in &sorted_exports {
         if let Some(short) = export.strip_prefix('k')
             && short
                 .chars()
@@ -98,7 +101,7 @@ fn module_member_aliases(
         {
             aliases
                 .entry(short.to_owned())
-                .or_insert_with(|| export.clone());
+                .or_insert_with(|| (*export).clone());
         }
     }
     aliases
@@ -121,7 +124,7 @@ fn kernel_snippet_abi_exports() -> Vec<String> {
         return inner
             .split(',')
             .map(str::trim)
-            .filter_map(|item| item.strip_prefix('"').and_then(|v| v.strip_suffix('"')))
+            .filter_map(|item| item.strip_prefix('"')?.strip_suffix('"'))
             .map(str::to_owned)
             .collect();
     }
@@ -215,7 +218,7 @@ fn run_kernel_hll(user_src: &str) -> (String, Option<i64>) {
     let run = vm.run(10_000_000);
     let exit = match run.outcome {
         StepOutcome::Halted(code) => Some(code),
-        _ => None,
+        StepOutcome::Continue => None,
     };
     (run.uart_output, exit)
 }
@@ -630,8 +633,9 @@ external kshutdown: (code: i64)
 
 #[test]
 fn malloc_returns_non_null_for_small_allocation() {
-    let src = MALLOC_PRELUDE.to_owned()
-        + r#"
+    let src = [
+        MALLOC_PRELUDE,
+        r#"
 kmain: () {
     p: u8* = malloc(8)
     if p == null {
@@ -640,15 +644,18 @@ kmain: () {
     }
     kshutdown(0)
 }
-"#;
+"#,
+    ]
+    .concat();
     let (_, exit) = run_kernel_hll(&src);
     assert_eq!(exit, Some(0), "malloc(8) must return a non-null pointer");
 }
 
 #[test]
 fn malloc_zero_size_returns_non_null() {
-    let src = MALLOC_PRELUDE.to_owned()
-        + r#"
+    let src = [
+        MALLOC_PRELUDE,
+        r#"
 kmain: () {
     p: u8* = malloc(0)
     if p == null {
@@ -657,7 +664,9 @@ kmain: () {
     }
     kshutdown(0)
 }
-"#;
+"#,
+    ]
+    .concat();
     let (_, exit) = run_kernel_hll(&src);
     assert_eq!(
         exit,
@@ -668,8 +677,9 @@ kmain: () {
 
 #[test]
 fn malloc_write_read_roundtrip() {
-    let src = MALLOC_PRELUDE.to_owned()
-        + r#"
+    let src = [
+        MALLOC_PRELUDE,
+        r#"
 kmain: () {
     p: i64* = malloc(8) as i64*
     if p == null {
@@ -683,7 +693,9 @@ kmain: () {
     }
     kshutdown(0)
 }
-"#;
+"#,
+    ]
+    .concat();
     let (_, exit) = run_kernel_hll(&src);
     assert_eq!(
         exit,
@@ -694,8 +706,9 @@ kmain: () {
 
 #[test]
 fn malloc_multiple_allocations_are_distinct() {
-    let src = MALLOC_PRELUDE.to_owned()
-        + r#"
+    let src = [
+        MALLOC_PRELUDE,
+        r#"
 kmain: () {
     a: u8* = malloc(8)
     b: u8* = malloc(8)
@@ -726,7 +739,9 @@ kmain: () {
     }
     kshutdown(0)
 }
-"#;
+"#,
+    ]
+    .concat();
     let (_, exit) = run_kernel_hll(&src);
     assert_eq!(
         exit,
@@ -737,8 +752,9 @@ kmain: () {
 
 #[test]
 fn free_marks_block_reusable_on_next_same_size_malloc() {
-    let src = MALLOC_PRELUDE.to_owned()
-        + r#"
+    let src = [
+        MALLOC_PRELUDE,
+        r#"
 kmain: () {
     p: u8* = malloc(64)
     if p == null {
@@ -757,7 +773,9 @@ kmain: () {
     }
     kshutdown(0)
 }
-"#;
+"#,
+    ]
+    .concat();
     let (_, exit) = run_kernel_hll(&src);
     assert_eq!(
         exit,
@@ -768,13 +786,16 @@ kmain: () {
 
 #[test]
 fn free_null_is_a_noop() {
-    let src = MALLOC_PRELUDE.to_owned()
-        + r#"
+    let src = [
+        MALLOC_PRELUDE,
+        r#"
 kmain: () {
     free(null)
     kshutdown(0)
 }
-"#;
+"#,
+    ]
+    .concat();
     let (_, exit) = run_kernel_hll(&src);
     assert_eq!(
         exit,
@@ -785,8 +806,9 @@ kmain: () {
 
 #[test]
 fn malloc_large_allocation_succeeds() {
-    let src = MALLOC_PRELUDE.to_owned()
-        + r#"
+    let src = [
+        MALLOC_PRELUDE,
+        r#"
 kmain: () {
     p: u8* = malloc(1024)
     if p == null {
@@ -795,7 +817,9 @@ kmain: () {
     }
     kshutdown(0)
 }
-"#;
+"#,
+    ]
+    .concat();
     let (_, exit) = run_kernel_hll(&src);
     assert_eq!(
         exit,
@@ -806,8 +830,9 @@ kmain: () {
 
 #[test]
 fn malloc_exhaustion_returns_null() {
-    let src = MALLOC_PRELUDE.to_owned()
-        + r#"
+    let src = [
+        MALLOC_PRELUDE,
+        r#"
 kmain: () {
     got_null: u64 = 0
     i: u64 = 0
@@ -824,7 +849,9 @@ kmain: () {
     }
     kshutdown(0)
 }
-"#;
+"#,
+    ]
+    .concat();
     let (_, exit) = run_kernel_hll(&src);
     assert_eq!(
         exit,
@@ -834,21 +861,14 @@ kmain: () {
 }
 
 // --- console / UART output unit tests ---
-//
-// These guard against a VA/PA mismatch bug where console_putchar used ecall with a
-// stack-allocated byte buffer.  When called from an S-mode syscall handler with sp
-// pointing at the user virtual stack (0x7FFFxxxx), M-mode read that virtual address
-// as a physical address and wrote garbage to UART.
-// The fix writes directly to the NS16550A UART MMIO address (0x10000000),
-// which is identity-mapped and accessible from S-mode without an ecall.
+
+// Guard a VA/PA mismatch: console_putchar via ecall with a stack buffer let M-mode
+// read the user-virtual sp as physical; the fix writes the UART MMIO directly.
 
 #[test]
 fn freestanding_console_contains_no_ecall() {
-    // The freestanding console must use direct MMIO writes, never ecall.
-    // An ecall here causes M-mode to treat the caller's sp as a physical
-    // address, which breaks when sp is in non-identity-mapped user VA space.
-    // Strip HLL comment lines (starting with ';') before checking so that
-    // prose mentioning "ecall" in comments does not trigger a false positive.
+    // Direct MMIO only: an ecall makes M-mode treat the caller's sp as physical.
+    // HLL ';' comment lines are stripped so prose "ecall" mentions do not trip it.
     let non_comment: String = os_runtime::stdlib::FREESTANDING_CONSOLE
         .lines()
         .filter(|l| !l.trim_start().starts_with(';'))
@@ -918,9 +938,8 @@ kmain: () {
 
 #[test]
 fn console_print_int_produces_correct_decimal_digits() {
-    // This specifically guards the digit-printing path: before the fix,
-    // console_putchar stored the digit on a (possibly user-virtual) stack slot,
-    // passed that address to M-mode via ecall, and M-mode read garbage.
+    // Guards the digit path: the old code handed a (possibly user-virtual)
+    // stack slot address to M-mode via ecall, and M-mode read garbage.
     let src = r#"
 external console_print_int: (n: i64)
 external kshutdown: (code: i64)
@@ -934,7 +953,7 @@ kmain: () {
     let (uart, exit) = run_kernel_hll(src);
     assert_eq!(exit, Some(0), "kernel must exit cleanly; uart={uart:?}");
     assert!(
-        uart.contains("0"),
+        uart.contains('0'),
         "console_print_int(0) must output '0'; uart={uart:?}"
     );
     assert!(
