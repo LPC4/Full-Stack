@@ -1,23 +1,17 @@
 //! ROM firmware: M-mode trap handler and syscall implementations.
 //!
 //! At VM startup, `generate_rom_image()` assembles `os_runtime::ROM_SOURCE`
-//! (the M-mode boot stub + trap handler from `crates/os-runtime/boot/rom.s`) and
-//! loads the resulting bytes into the ROM region (base `0x0000_0000`).
+//! and loads the resulting bytes into the ROM region.
 
 use asm_to_binary::assembler::Assembler;
 use asm_to_binary::rv_instruction::RvInstruction;
 
-/// ROM base address.  `_start` (kernel boot stub) lives here.
+/// ROM base address. `_start` lives here.
 pub const ROM_BASE: u64 = 0x0000_0000;
 
 /// Physical address of the M-mode trap handler (`_m_trap`).
-///
-/// `mtvec` is initialised to this address by `Pipeline::new` so that both
-/// hosted programs and the kernel's SBI ecalls reach the right handler.
-/// `_start` re-writes the same value before `mret` into S-mode.
 pub const M_TRAP_ADDR: u64 = ROM_BASE + 0x100;
 
-/// Physical address of the trap handler entry point (kept for compatibility).
 pub const TRAP_HANDLER_ENTRY: u64 = M_TRAP_ADDR;
 
 /// Syscall numbers (Linux RISC-V ABI + our custom extensions).
@@ -48,10 +42,8 @@ fn parse_asm_text(src: &str) -> Vec<RvInstruction> {
 
 /// Assemble the ROM firmware and return the raw bytes.
 ///
-/// The returned `Vec<u8>` starts at physical address `ROM_BASE` (`0x0000_0000`).
-///
 /// # Panics
-/// Panics if the assembler rejects the ROM source (bug in `crates/os-runtime/boot/rom.s`).
+/// Panics if the assembler rejects `os_runtime::ROM_SOURCE`.
 pub fn generate_rom_image() -> Vec<u8> {
     let tokens = parse_asm_text(os_runtime::ROM_SOURCE);
     let output = Assembler::assemble(&tokens)

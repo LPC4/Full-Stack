@@ -73,7 +73,7 @@ path resolution rooted at inode 0.
 
 ## Syscalls
 
-U-mode processes trap in via `ecall` (number in `a7`, args in `a0`-`a2`, result back in `a0`).
+U-mode processes trap in via `ecall` (number in `a7`, args in `a0`-`a3`, result back in `a0`).
 Standard numbers follow the Linux RISC-V ABI; the 100-range numbers are project-specific to
 support the interactive shell.
 

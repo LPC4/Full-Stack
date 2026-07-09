@@ -18,6 +18,52 @@ const LEVELS: usize = 3;
 // Direct-mapped TLB size; covers the framebuffer (76 pages) plus code/stack.
 const TLB_ENTRIES: usize = 256;
 
+#[derive(Clone, Copy)]
+pub struct TranslationContext {
+    pub satp: u64,
+    pub priv_mode: PrivilegeMode,
+    pub mstatus: u64,
+    pub pmpcfg0: u64,
+    pub pmpaddr0: u64,
+}
+
+impl TranslationContext {
+    pub const fn without_pmp(satp: u64, priv_mode: PrivilegeMode, mstatus: u64) -> Self {
+        Self {
+            satp,
+            priv_mode,
+            mstatus,
+            pmpcfg0: 0,
+            pmpaddr0: 0,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum AccessKind {
+    Load,
+    Store,
+    Execute,
+}
+
+impl AccessKind {
+    const fn is_write(self) -> bool {
+        matches!(self, Self::Store)
+    }
+
+    const fn is_execute(self) -> bool {
+        matches!(self, Self::Execute)
+    }
+
+    const fn fault(self, vaddr: u64) -> VmError {
+        match self {
+            Self::Load => VmError::LoadAccessFault(vaddr),
+            Self::Store => VmError::StoreAccessFault(vaddr),
+            Self::Execute => VmError::InstructionAccessFault(vaddr),
+        }
+    }
+}
+
 #[inline]
 pub(crate) fn is_sv39_canonical(vaddr: u64) -> bool {
     let upper_bits = vaddr >> 39;
@@ -98,32 +144,28 @@ impl Tlb {
 
 // Check a leaf PTE and build the physical address (permission/privilege/superpage/
 // PMP). Shared by the walk and a TLB hit; touches no memory and no A/D bits.
-#[expect(clippy::too_many_arguments)]
 pub(crate) fn finalize_leaf(
     pte: u64,
     vaddr: u64,
     level: usize,
-    priv_mode: PrivilegeMode,
-    sum: u64,
-    mxr: u64,
-    is_write: bool,
-    is_execute: bool,
-    pmpcfg0: u64,
-    pmpaddr0: u64,
+    ctx: TranslationContext,
+    access: AccessKind,
 ) -> Result<u64, VmError> {
+    let sum = (ctx.mstatus >> 18) & 1;
+    let mxr = (ctx.mstatus >> 19) & 1;
     let r = (pte >> 1) & 1;
     let w = (pte >> 2) & 1;
     let x = (pte >> 3) & 1;
     let u_bit = (pte >> 4) & 1;
 
     // Permission checks.
-    if is_execute && x == 0 {
+    if access.is_execute() && x == 0 {
         return Err(VmError::InstructionAccessFault(vaddr));
     }
-    if is_write && w == 0 {
+    if access.is_write() && w == 0 {
         return Err(VmError::StoreAccessFault(vaddr));
     }
-    if !is_write && !is_execute && r == 0 {
+    if matches!(access, AccessKind::Load) && r == 0 {
         // MXR=1: executable pages are also readable.
         if mxr == 0 || x == 0 {
             return Err(VmError::LoadAccessFault(vaddr));
@@ -131,7 +173,7 @@ pub(crate) fn finalize_leaf(
     }
 
     // U-bit / SUM privilege checks.
-    match priv_mode {
+    match ctx.priv_mode {
         PrivilegeMode::User => {
             if u_bit == 0 {
                 return Err(VmError::PageFault(vaddr));
@@ -162,19 +204,19 @@ pub(crate) fn finalize_leaf(
     let phys_addr = ((page_ppn >> lower_ppn_bits) << offset_bits) | super_offset;
 
     // PMP enforcement (simple single-entry TOR-like semantics).
-    if pmpcfg0 != 0 {
-        let allow_r = (pmpcfg0 & 0x1) != 0;
-        let allow_w = (pmpcfg0 & 0x2) != 0;
-        let allow_x = (pmpcfg0 & 0x4) != 0;
-        let pmp_match = pmpaddr0 == u64::MAX || phys_addr <= pmpaddr0;
+    if ctx.pmpcfg0 != 0 {
+        let allow_r = (ctx.pmpcfg0 & 0x1) != 0;
+        let allow_w = (ctx.pmpcfg0 & 0x2) != 0;
+        let allow_x = (ctx.pmpcfg0 & 0x4) != 0;
+        let pmp_match = ctx.pmpaddr0 == u64::MAX || phys_addr <= ctx.pmpaddr0;
         if pmp_match {
-            if is_execute && !allow_x {
+            if access.is_execute() && !allow_x {
                 return Err(VmError::InstructionAccessFault(vaddr));
             }
-            if is_write && !allow_w {
+            if access.is_write() && !allow_w {
                 return Err(VmError::StoreAccessFault(vaddr));
             }
-            if !is_write && !is_execute && !allow_r {
+            if matches!(access, AccessKind::Load) && !allow_r {
                 return Err(VmError::LoadAccessFault(vaddr));
             }
         } else {
@@ -188,60 +230,40 @@ pub(crate) fn finalize_leaf(
 /// Translate a virtual address to a physical address using Sv39 page tables.
 ///
 /// `mstatus` is needed for the SUM (bit 18) and MXR (bit 19) bits.
-#[expect(clippy::too_many_arguments)]
 pub fn translate_with_pmp(
     vaddr: u64,
-    satp: u64,
-    priv_mode: PrivilegeMode,
-    mstatus: u64,
     bus: &mut impl MemoryAccess,
-    is_write: bool,
-    is_execute: bool,
-    pmpcfg0: u64,
-    pmpaddr0: u64,
+    ctx: TranslationContext,
+    access: AccessKind,
     tlb: &mut Tlb,
 ) -> Result<u64, VmError> {
-    let mode = (satp >> 60) & 0xF;
-    let ppn = satp & 0x0FFF_FFFF_FFFF; // Mask to 44 bits
+    let mode = (ctx.satp >> 60) & 0xF;
+    let ppn = ctx.satp & 0x0FFF_FFFF_FFFF; // Mask to 44 bits
 
-    // Bare mode handling: for MODE=0 we still treat vaddr as a physical
-    // address but must enforce PMP checks for non-Machine modes. For M-mode
-    // we bypass translation and PMP enforcement entirely.
-    if priv_mode == PrivilegeMode::Machine {
+    // M-mode bypasses address translation and PMP checks in this VM model.
+    if ctx.priv_mode == PrivilegeMode::Machine {
         return Ok(vaddr);
     }
 
     if mode == 0 {
-        // Identity mapping: vaddr is the physical address. Enforce PMP below
-        // (fall through to PMP checks and return physical address when allowed).
         let phys_addr = vaddr;
-        // PMP enforcement for non-Machine modes
-        if pmpcfg0 != 0 {
-            let allow_r = (pmpcfg0 & 0x1) != 0;
-            let allow_w = (pmpcfg0 & 0x2) != 0;
-            let allow_x = (pmpcfg0 & 0x4) != 0;
-            // simple TOR-like semantics: pmpaddr0 == u64::MAX means match all
-            let pmp_match = pmpaddr0 == u64::MAX || phys_addr <= pmpaddr0;
+        if ctx.pmpcfg0 != 0 {
+            let allow_r = (ctx.pmpcfg0 & 0x1) != 0;
+            let allow_w = (ctx.pmpcfg0 & 0x2) != 0;
+            let allow_x = (ctx.pmpcfg0 & 0x4) != 0;
+            let pmp_match = ctx.pmpaddr0 == u64::MAX || phys_addr <= ctx.pmpaddr0;
             if pmp_match {
-                if is_execute && !allow_x {
+                if access.is_execute() && !allow_x {
                     return Err(VmError::InstructionAccessFault(vaddr));
                 }
-                if is_write && !allow_w {
+                if access.is_write() && !allow_w {
                     return Err(VmError::StoreAccessFault(vaddr));
                 }
-                if !is_write && !is_execute && !allow_r {
+                if matches!(access, AccessKind::Load) && !allow_r {
                     return Err(VmError::LoadAccessFault(vaddr));
                 }
             } else {
-                // PMP non-match: report the access fault matching the access type,
-                // not always an instruction fault.
-                return Err(if is_execute {
-                    VmError::InstructionAccessFault(vaddr)
-                } else if is_write {
-                    VmError::StoreAccessFault(vaddr)
-                } else {
-                    VmError::LoadAccessFault(vaddr)
-                });
+                return Err(access.fault(vaddr));
             }
         }
         return Ok(phys_addr);
@@ -257,19 +279,14 @@ pub fn translate_with_pmp(
         return Err(VmError::PageFault(vaddr));
     }
 
-    let sum = (mstatus >> 18) & 1; // Supervisor User Memory access bit
-    let mxr = (mstatus >> 19) & 1; // Make eXecutable Readable bit
-
     // TLB fast path. A write to a page with a clean cached D bit re-walks so the
     // PTE's D bit gets set in memory.
-    tlb.sync_satp(satp);
+    tlb.sync_satp(ctx.satp);
     let vpn_page = vaddr >> 12;
     if let Some((pte, level)) = tlb.lookup(vpn_page) {
-        let needs_dirty = is_write && ((pte >> 7) & 1) == 0;
+        let needs_dirty = access.is_write() && ((pte >> 7) & 1) == 0;
         if !needs_dirty {
-            return finalize_leaf(
-                pte, vaddr, level, priv_mode, sum, mxr, is_write, is_execute, pmpcfg0, pmpaddr0,
-            );
+            return finalize_leaf(pte, vaddr, level, ctx, access);
         }
     }
 
@@ -302,13 +319,11 @@ pub fn translate_with_pmp(
             // ---- Leaf PTE ----
 
             // Permission/privilege/superpage/PMP checks and phys construction.
-            let phys_addr = finalize_leaf(
-                pte, vaddr, level, priv_mode, sum, mxr, is_write, is_execute, pmpcfg0, pmpaddr0,
-            )?;
+            let phys_addr = finalize_leaf(pte, vaddr, level, ctx, access)?;
 
             // Maintain A/D bits (set A on any access, D on writes).
             let mut new_pte = pte | (1u64 << 6); // A bit
-            if is_write {
+            if access.is_write() {
                 new_pte |= 1u64 << 7; // D bit
             }
             if new_pte != pte {
@@ -345,9 +360,15 @@ pub fn translate(
     is_execute: bool,
 ) -> Result<u64, VmError> {
     let mut tlb = Tlb::new();
-    translate_with_pmp(
-        vaddr, satp, priv_mode, mstatus, bus, is_write, is_execute, 0, 0, &mut tlb,
-    )
+    let ctx = TranslationContext::without_pmp(satp, priv_mode, mstatus);
+    let access = if is_execute {
+        AccessKind::Execute
+    } else if is_write {
+        AccessKind::Store
+    } else {
+        AccessKind::Load
+    };
+    translate_with_pmp(vaddr, bus, ctx, access, &mut tlb)
 }
 
 #[cfg(test)]
@@ -358,28 +379,22 @@ mod tests {
     #[test]
     fn pmp_allows_supervisor_fetch_when_configured() {
         let mut bus = SystemBus::new(vec![]);
-        // Write a NOP instruction at RAM_BASE
         let instr: u32 = 0x0000_0013; // addi x0,x0,0
         let _ = bus.write_word(crate::bus::RAM_BASE, instr);
 
-        // No SATP (bare mode) and Supervisor priv mode
-        let satp = 0u64;
-        let priv_mode = crate::cpu::registers::PrivilegeMode::Supervisor;
-        let mstatus = 0u64;
-
-        // Configure PMP to allow R/W/X for entire physical space
-        let pmpcfg0 = 0x7u64; // R/W/X bits in our simplified model
-        let pmpaddr0 = u64::MAX; // match all
+        let ctx = TranslationContext {
+            satp: 0,
+            priv_mode: crate::cpu::registers::PrivilegeMode::Supervisor,
+            mstatus: 0,
+            pmpcfg0: 0x7,
+            pmpaddr0: u64::MAX,
+        };
 
         let mut tlb = Tlb::new();
         let fetched = crate::cpu::pipeline::fetch::fetch_with_pmp(
             &mut bus,
             crate::bus::RAM_BASE,
-            satp,
-            priv_mode,
-            mstatus,
-            pmpcfg0,
-            pmpaddr0,
+            ctx,
             &mut tlb,
         )
         .expect("fetch should succeed");
@@ -393,23 +408,19 @@ mod tests {
         let instr: u32 = 0x0000_0013; // addi x0,x0,0
         let _ = bus.write_word(crate::bus::RAM_BASE, instr);
 
-        let satp = 0u64;
-        let priv_mode = crate::cpu::registers::PrivilegeMode::Supervisor;
-        let mstatus = 0u64;
-
-        // Configure PMP to allow R/W but not X
-        let pmpcfg0 = 0x3u64; // R/W
-        let pmpaddr0 = u64::MAX;
+        let ctx = TranslationContext {
+            satp: 0,
+            priv_mode: crate::cpu::registers::PrivilegeMode::Supervisor,
+            mstatus: 0,
+            pmpcfg0: 0x3,
+            pmpaddr0: u64::MAX,
+        };
 
         let mut tlb = Tlb::new();
         let res = crate::cpu::pipeline::fetch::fetch_with_pmp(
             &mut bus,
             crate::bus::RAM_BASE,
-            satp,
-            priv_mode,
-            mstatus,
-            pmpcfg0,
-            pmpaddr0,
+            ctx,
             &mut tlb,
         );
 

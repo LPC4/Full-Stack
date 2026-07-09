@@ -17,6 +17,7 @@ use crate::cpu::hazard_unit::{
     compute_forwarding, insn_is_atomic, insn_is_fp_dest, insn_is_load, insn_rd, insn_rs1, insn_rs2,
     load_use_hazard,
 };
+use crate::cpu::mmu;
 use crate::cpu::pipeline::execute::ExecResult;
 use crate::cpu::pipeline::memory::MemResult;
 use crate::cpu::pipeline::registers::{EXMEMReg, IDEXReg, IFIDReg, MEMWBReg};
@@ -368,17 +369,15 @@ impl Pipeline {
 
     fn stage_if(&mut self, bus: &mut SystemBus) -> Result<Option<IFIDReg>, VmError> {
         let pc = self.fetch_pc;
+        let translate = mmu::TranslationContext {
+            satp: self.csrs.satp,
+            priv_mode: self.regs.priv_mode,
+            mstatus: self.csrs.mstatus,
+            pmpcfg0: self.csrs.pmpcfg0,
+            pmpaddr0: self.csrs.pmpaddr0,
+        };
 
-        let raw = match fetch::fetch_with_pmp(
-            bus,
-            pc,
-            self.csrs.satp,
-            self.regs.priv_mode,
-            self.csrs.mstatus,
-            self.csrs.pmpcfg0,
-            self.csrs.pmpaddr0,
-            &mut self.tlb,
-        ) {
+        let raw = match fetch::fetch_with_pmp(bus, pc, translate, &mut self.tlb) {
             Ok(r) => r,
             Err(e) => {
                 self.flush_and_trap(e, pc);
@@ -554,16 +553,19 @@ impl Pipeline {
             Some(r) => r,
             None => return Ok(None),
         };
+        let translate = mmu::TranslationContext {
+            satp: self.csrs.satp,
+            priv_mode: self.regs.priv_mode,
+            mstatus: self.csrs.mstatus,
+            pmpcfg0: self.csrs.pmpcfg0,
+            pmpaddr0: self.csrs.pmpaddr0,
+        };
 
         let mem_result = match memory::memory_stage_with_pmp(
             ex_mem.exec_result.clone(),
             bus,
             &mut self.reservation,
-            self.csrs.satp,
-            self.regs.priv_mode,
-            self.csrs.mstatus,
-            self.csrs.pmpcfg0,
-            self.csrs.pmpaddr0,
+            translate,
             &mut self.tlb,
         ) {
             Ok(r) => r,

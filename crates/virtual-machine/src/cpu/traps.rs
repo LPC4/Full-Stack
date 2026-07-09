@@ -12,35 +12,21 @@ use crate::error::VmError;
 
 // --- mcause constants ---
 
-/// Instruction access fault
 pub const CAUSE_INSN_ACCESS_FAULT: u64 = 1;
-/// Illegal instruction
 pub const CAUSE_ILLEGAL_INSN: u64 = 2;
-/// Breakpoint (EBREAK)
 pub const CAUSE_EBREAK: u64 = 3;
-/// Load access fault
 pub const CAUSE_LOAD_ACCESS_FAULT: u64 = 5;
-/// Store/AMO access fault
 pub const CAUSE_STORE_ACCESS_FAULT: u64 = 7;
-/// Environment call from U-mode
 pub const CAUSE_ECALL_U: u64 = 8;
-/// Environment call from S-mode
 pub const CAUSE_ECALL_S: u64 = 9;
-/// Environment call from M-mode
 pub const CAUSE_ECALL_M: u64 = 11;
-/// Instruction page fault
 pub const CAUSE_PAGE_FAULT_INST: u64 = 12;
-/// Load page fault
 pub const CAUSE_PAGE_FAULT_LOAD: u64 = 13;
-/// Store/AMO page fault
 pub const CAUSE_PAGE_FAULT_STORE: u64 = 15;
 
 // Interrupt causes have bit 63 set.
-/// Machine software interrupt
 pub const CAUSE_M_SOFTWARE_IRQ: u64 = (1u64 << 63) | 3;
-/// Machine timer interrupt
 pub const CAUSE_M_TIMER_IRQ: u64 = (1u64 << 63) | 7;
-/// Machine external interrupt
 pub const CAUSE_M_EXTERNAL_IRQ: u64 = (1u64 << 63) | 11;
 
 // --- Trap entry ---
@@ -57,8 +43,6 @@ pub fn take_trap(regs: &mut Registers, csrs: &mut CsrFile, cause: u64, tval: u64
     let is_interrupt = (cause & (1u64 << 63)) != 0;
     let cause_idx = cause & !(1u64 << 63);
 
-    // Determine whether to delegate to S-mode.
-    // M-mode traps always stay in M-mode.
     let delegate = match current_priv {
         PrivilegeMode::User | PrivilegeMode::Supervisor => {
             if is_interrupt {
@@ -71,7 +55,6 @@ pub fn take_trap(regs: &mut Registers, csrs: &mut CsrFile, cause: u64, tval: u64
     };
 
     if delegate {
-        // Deliver to S-mode.
         csrs.sepc = pc & !0x3u64;
         csrs.scause = cause;
         csrs.stval = tval;
@@ -84,10 +67,8 @@ pub fn take_trap(regs: &mut Registers, csrs: &mut CsrFile, cause: u64, tval: u64
         let spp: u64 = u64::from(current_priv != PrivilegeMode::User);
         csrs.mstatus = (csrs.mstatus & !(1u64 << 8)) | (spp << 8); // SPP = current_priv
 
-        // Switch to Supervisor for the trapped context.
         regs.priv_mode = PrivilegeMode::Supervisor;
 
-        // Jump to stvec (direct or vectored).
         let stvec = csrs.stvec;
         let base = stvec & !0x3u64;
         if (stvec & 0x3) == 1 && is_interrupt {
@@ -96,7 +77,6 @@ pub fn take_trap(regs: &mut Registers, csrs: &mut CsrFile, cause: u64, tval: u64
             base
         }
     } else {
-        // Deliver to M-mode.
         csrs.mepc = pc & !0x3u64;
         csrs.mcause = cause;
         csrs.mtval = tval;
@@ -109,7 +89,6 @@ pub fn take_trap(regs: &mut Registers, csrs: &mut CsrFile, cause: u64, tval: u64
 
         regs.priv_mode = PrivilegeMode::Machine;
 
-        // Jump to mtvec (direct or vectored).
         let mtvec = csrs.mtvec;
         let base = mtvec & !0x3u64;
         if (mtvec & 0x3) == 1 && is_interrupt {
@@ -211,7 +190,6 @@ mod tests {
         let mut regs = Registers::new();
         let mut csrs = CsrFile::new();
 
-        // Simulate that MPP was Supervisor (1) in mstatus and MEPC set
         csrs.mstatus = 1u64 << 11; // MPP = 1 (Supervisor)
         csrs.mepc = 0x1000;
 
@@ -220,7 +198,6 @@ mod tests {
 
         assert_eq!(new_pc, 0x1000);
         assert_eq!(regs.priv_mode, PrivilegeMode::Supervisor);
-        // MPP should be cleared to 0 (User)
         assert_eq!((csrs.mstatus >> 11) & 0x3, 0);
     }
 
@@ -229,7 +206,6 @@ mod tests {
         let mut regs = Registers::new();
         let mut csrs = CsrFile::new();
 
-        // Put the CPU in Supervisor mode and set SPP=Machine (1)
         regs.priv_mode = PrivilegeMode::Supervisor;
         csrs.mstatus = 1u64 << 8; // SPP = 1 (Supervisor)
         csrs.sepc = 0x2000;
@@ -238,9 +214,7 @@ mod tests {
         assert!(r.is_ok());
         let new_pc = r.unwrap();
         assert_eq!(new_pc, 0x2000);
-        // After SRET, privilege should be restored from SPP
         assert_eq!(regs.priv_mode, PrivilegeMode::Supervisor);
-        // SPP should be cleared to 0
         assert_eq!((csrs.mstatus >> 8) & 1, 0);
     }
 
@@ -249,16 +223,13 @@ mod tests {
         let mut regs = Registers::new();
         let mut csrs = CsrFile::new();
 
-        // Set CPU to Supervisor and enable delegation for timer (code 7)
         regs.priv_mode = PrivilegeMode::Supervisor;
         csrs.mideleg = 1u64 << 7; // delegate MTI to S-mode
         csrs.stvec = 0x3000; // S-mode trap vector
 
-        // Take a machine-visible timer interrupt cause (bit63|7)
         let cause = (1u64 << 63) | 7;
         let new_pc = take_trap(&mut regs, &mut csrs, cause, 0x0, 0x4000);
 
-        // Should be delivered to S-mode and jump to stvec base
         assert_eq!(regs.priv_mode, PrivilegeMode::Supervisor);
         assert_eq!(new_pc, 0x3000);
         assert_eq!(csrs.sepc, 0x4000);

@@ -63,20 +63,13 @@ pub enum MemResult {
 
 // --- Public entry point ---
 
-#[expect(clippy::too_many_arguments)]
 pub fn memory_stage_with_pmp(
     result: ExecResult,
     bus: &mut SystemBus,
     reservation: &mut Option<u64>,
-    satp: u64,
-    priv_mode: PrivilegeMode,
-    mstatus: u64,
-    pmpcfg0: u64,
-    pmpaddr0: u64,
+    ctx: mmu::TranslationContext,
     tlb: &mut mmu::Tlb,
 ) -> Result<MemResult, VmError> {
-    // Note: extended signature accepts PMP CSRs; a backward-compatible
-    // wrapper `memory_stage` is provided below for existing tests.
     match result {
         // Pass-through variants
         ExecResult::WriteInt { rd, val, next_pc } => Ok(MemResult::WriteInt { rd, val, next_pc }),
@@ -137,9 +130,7 @@ pub fn memory_stage_with_pmp(
             funct3,
             next_pc,
         } => {
-            let phys_addr = mmu::translate_with_pmp(
-                addr, satp, priv_mode, mstatus, bus, false, false, pmpcfg0, pmpaddr0, tlb,
-            )?;
+            let phys_addr = mmu::translate_with_pmp(addr, bus, ctx, mmu::AccessKind::Load, tlb)?;
             let val = load_int(bus, phys_addr, funct3)?;
             Ok(MemResult::WriteInt { rd, val, next_pc })
         }
@@ -151,9 +142,7 @@ pub fn memory_stage_with_pmp(
             funct3,
             next_pc,
         } => {
-            let phys_addr = mmu::translate_with_pmp(
-                addr, satp, priv_mode, mstatus, bus, true, false, pmpcfg0, pmpaddr0, tlb,
-            )?;
+            let phys_addr = mmu::translate_with_pmp(addr, bus, ctx, mmu::AccessKind::Store, tlb)?;
             store_int(bus, phys_addr, val, funct3)?;
             Ok(MemResult::Jump { next_pc })
         }
@@ -165,9 +154,7 @@ pub fn memory_stage_with_pmp(
             funct3,
             next_pc,
         } => {
-            let phys_addr = mmu::translate_with_pmp(
-                addr, satp, priv_mode, mstatus, bus, false, false, pmpcfg0, pmpaddr0, tlb,
-            )?;
+            let phys_addr = mmu::translate_with_pmp(addr, bus, ctx, mmu::AccessKind::Load, tlb)?;
             let bits = load_fp(bus, phys_addr, funct3)?;
             Ok(MemResult::WriteFp { rd, bits, next_pc })
         }
@@ -179,9 +166,7 @@ pub fn memory_stage_with_pmp(
             funct3,
             next_pc,
         } => {
-            let phys_addr = mmu::translate_with_pmp(
-                addr, satp, priv_mode, mstatus, bus, true, false, pmpcfg0, pmpaddr0, tlb,
-            )?;
+            let phys_addr = mmu::translate_with_pmp(addr, bus, ctx, mmu::AccessKind::Store, tlb)?;
             store_fp(bus, phys_addr, bits, funct3)?;
             Ok(MemResult::Jump { next_pc })
         }
@@ -197,9 +182,7 @@ pub fn memory_stage_with_pmp(
             val,
             next_pc,
         } => {
-            let phys_addr = mmu::translate_with_pmp(
-                addr, satp, priv_mode, mstatus, bus, true, false, pmpcfg0, pmpaddr0, tlb,
-            )?;
+            let phys_addr = mmu::translate_with_pmp(addr, bus, ctx, mmu::AccessKind::Store, tlb)?;
             let result_val = handle_atomic(bus, reservation, funct5, funct3, rd, phys_addr, val)?;
             Ok(MemResult::WriteInt {
                 rd,
@@ -221,17 +204,8 @@ pub fn memory_stage(
     mstatus: u64,
 ) -> Result<MemResult, VmError> {
     let mut tlb = mmu::Tlb::new();
-    memory_stage_with_pmp(
-        result,
-        bus,
-        reservation,
-        satp,
-        priv_mode,
-        mstatus,
-        0,
-        0,
-        &mut tlb,
-    )
+    let ctx = mmu::TranslationContext::without_pmp(satp, priv_mode, mstatus);
+    memory_stage_with_pmp(result, bus, reservation, ctx, &mut tlb)
 }
 
 // --- Integer load ---

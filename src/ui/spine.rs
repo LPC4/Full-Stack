@@ -14,7 +14,6 @@ const TICK_HALF: f32 = 3.0;
 
 /// Draw the spine; returns the rung the user clicked this frame, if any.
 /// `pulse_t` is the 0..1 progress of the build sweep, or `None` when idle.
-#[expect(clippy::too_many_lines, reason = "single cohesive spine paint routine")]
 pub fn show(
     ui: &mut egui::Ui,
     layers: &[Layer],
@@ -62,99 +61,20 @@ pub fn show(
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
 
-    // Ruler graduations continue below the last rung so the rail still reads
-    // as a full-height instrument whatever the column height is.
-    let tail_top = center(n - 1).y + NODE_R + 20.0;
-    let mut tick_y = tail_top;
-    while tick_y < rect.bottom() - 10.0 {
-        painter.line_segment(
-            [
-                Pos2::new(x - TICK_HALF, tick_y),
-                Pos2::new(x + TICK_HALF, tick_y),
-            ],
-            Stroke::new(1.0, theme::HAIRLINE_SOFT),
-        );
-        tick_y += TICK_PITCH;
-    }
-
-    // Connectors first, so nodes sit on top.
-    for i in 0..n - 1 {
-        let build = build_strength(layers, pulse_t, i + 1, build_lit_until);
-        let col = if build > 0.0 {
-            dim(layers[i + 1].color(), 0.42 + build * 0.30)
-        } else {
-            dim(layers[i + 1].color(), 0.34)
-        };
-        painter.line_segment([center(i), center(i + 1)], Stroke::new(1.25, col));
-    }
-
-    // Every rung is labeled (tag above, name below); active and built states stay restrained.
-    for (i, layer) in layers.iter().enumerate() {
-        let c = center(i);
-        let is_active = *layer == active;
-        let is_enabled = stage_enabled(layers, i, build_lit_until, always_enabled_until);
-        let is_hover = hovered == Some(i) && !is_active && is_enabled;
-        let build = build_strength(layers, pulse_t, i, build_lit_until);
-        let col = layer.color();
-
-        if is_active {
-            painter.circle_filled(c, NODE_R + 1.0, dim(col, 0.82));
-            painter.circle_stroke(c, NODE_R + 3.0, Stroke::new(1.0, dim(col, 0.65)));
-        } else if build > 0.0 {
-            painter.circle_filled(c, NODE_R + 0.5, dim(col, 0.44 + build * 0.36));
-            painter.circle_stroke(
-                c,
-                NODE_R + 2.0,
-                Stroke::new(1.0, dim(col, 0.36 + build * 0.34)),
-            );
-        } else if is_hover {
-            painter.circle_filled(c, NODE_R + 0.5, dim(col, 0.56));
-            painter.circle_stroke(c, NODE_R + 2.5, Stroke::new(1.0, dim(col, 0.72)));
-        } else if !is_enabled {
-            painter.circle_filled(c, NODE_R - 0.5, dim(col, 0.3));
-            painter.circle_stroke(c, NODE_R, Stroke::new(1.0, theme::HAIRLINE));
-        } else {
-            painter.circle_filled(c, NODE_R, dim(col, 0.48));
-            painter.circle_stroke(c, NODE_R + 1.0, Stroke::new(1.0, dim(col, 0.5)));
-        }
-
-        let tag_col = if is_active {
-            col
-        } else if build > 0.0 {
-            dim(col, 0.56 + build * 0.24)
-        } else if is_hover {
-            dim(col, 0.76)
-        } else if !is_enabled {
-            theme::TEXT_FAINT
-        } else {
-            dim(col, 0.52)
-        };
-        let name_col = if is_active {
-            dim(col, 0.9)
-        } else if build > 0.0 {
-            dim(col, 0.44 + build * 0.20)
-        } else if is_hover {
-            dim(col, 0.62)
-        } else if !is_enabled {
-            dim(theme::TEXT_FAINT, 0.75)
-        } else {
-            theme::TEXT_DIM
-        };
-        painter.text(
-            c + vec2(0.0, -NODE_R - 9.0),
-            Align2::CENTER_CENTER,
-            layer.tag(),
-            FontId::monospace(9.0),
-            tag_col,
-        );
-        painter.text(
-            c + vec2(0.0, NODE_R + 9.0),
-            Align2::CENTER_CENTER,
-            layer.name(),
-            FontId::monospace(8.5),
-            name_col,
-        );
-    }
+    draw_tail_ticks(&painter, x, center(n - 1).y, rect.bottom());
+    draw_connectors(&painter, layers, pulse_t, build_lit_until, &center);
+    draw_rungs(
+        &painter,
+        layers,
+        RungPaintState {
+            active,
+            hovered,
+            pulse_t,
+            build_lit_until,
+            always_enabled_until,
+        },
+        &center,
+    );
 
     if response.clicked()
         && let Some(pos) = response.interact_pointer_pos()
@@ -165,6 +85,154 @@ pub fn show(
         }
     }
     None
+}
+
+fn draw_tail_ticks(painter: &egui::Painter, x: f32, last_rung_y: f32, bottom: f32) {
+    // Ruler graduations continue below the last rung so the rail still reads
+    // as a full-height instrument whatever the column height is.
+    let mut tick_y = last_rung_y + NODE_R + 20.0;
+    while tick_y < bottom - 10.0 {
+        painter.line_segment(
+            [
+                Pos2::new(x - TICK_HALF, tick_y),
+                Pos2::new(x + TICK_HALF, tick_y),
+            ],
+            Stroke::new(1.0, theme::HAIRLINE_SOFT),
+        );
+        tick_y += TICK_PITCH;
+    }
+}
+
+fn draw_connectors(
+    painter: &egui::Painter,
+    layers: &[Layer],
+    pulse_t: Option<f32>,
+    build_lit_until: Option<Layer>,
+    center: &impl Fn(usize) -> Pos2,
+) {
+    for i in 0..layers.len() - 1 {
+        let build = build_strength(layers, pulse_t, i + 1, build_lit_until);
+        let col = if build > 0.0 {
+            dim(layers[i + 1].color(), 0.42 + build * 0.30)
+        } else {
+            dim(layers[i + 1].color(), 0.34)
+        };
+        painter.line_segment([center(i), center(i + 1)], Stroke::new(1.25, col));
+    }
+}
+
+#[derive(Clone, Copy)]
+struct RungPaintState {
+    active: Layer,
+    hovered: Option<usize>,
+    pulse_t: Option<f32>,
+    build_lit_until: Option<Layer>,
+    always_enabled_until: Option<Layer>,
+}
+
+fn draw_rungs(
+    painter: &egui::Painter,
+    layers: &[Layer],
+    state: RungPaintState,
+    center: &impl Fn(usize) -> Pos2,
+) {
+    for (i, layer) in layers.iter().enumerate() {
+        let c = center(i);
+        let is_active = *layer == state.active;
+        let is_enabled =
+            stage_enabled(layers, i, state.build_lit_until, state.always_enabled_until);
+        let is_hover = state.hovered == Some(i) && !is_active && is_enabled;
+        let build = build_strength(layers, state.pulse_t, i, state.build_lit_until);
+        draw_rung_node(
+            painter,
+            c,
+            layer.color(),
+            is_active,
+            is_enabled,
+            is_hover,
+            build,
+        );
+        draw_rung_label(painter, c, layer, is_active, is_enabled, is_hover, build);
+    }
+}
+
+fn draw_rung_node(
+    painter: &egui::Painter,
+    c: Pos2,
+    col: Color32,
+    is_active: bool,
+    is_enabled: bool,
+    is_hover: bool,
+    build: f32,
+) {
+    if is_active {
+        painter.circle_filled(c, NODE_R + 1.0, dim(col, 0.82));
+        painter.circle_stroke(c, NODE_R + 3.0, Stroke::new(1.0, dim(col, 0.65)));
+    } else if build > 0.0 {
+        painter.circle_filled(c, NODE_R + 0.5, dim(col, 0.44 + build * 0.36));
+        painter.circle_stroke(
+            c,
+            NODE_R + 2.0,
+            Stroke::new(1.0, dim(col, 0.36 + build * 0.34)),
+        );
+    } else if is_hover {
+        painter.circle_filled(c, NODE_R + 0.5, dim(col, 0.56));
+        painter.circle_stroke(c, NODE_R + 2.5, Stroke::new(1.0, dim(col, 0.72)));
+    } else if !is_enabled {
+        painter.circle_filled(c, NODE_R - 0.5, dim(col, 0.3));
+        painter.circle_stroke(c, NODE_R, Stroke::new(1.0, theme::HAIRLINE));
+    } else {
+        painter.circle_filled(c, NODE_R, dim(col, 0.48));
+        painter.circle_stroke(c, NODE_R + 1.0, Stroke::new(1.0, dim(col, 0.5)));
+    }
+}
+
+fn draw_rung_label(
+    painter: &egui::Painter,
+    c: Pos2,
+    layer: &Layer,
+    is_active: bool,
+    is_enabled: bool,
+    is_hover: bool,
+    build: f32,
+) {
+    let col = layer.color();
+    let tag_col = if is_active {
+        col
+    } else if build > 0.0 {
+        dim(col, 0.56 + build * 0.24)
+    } else if is_hover {
+        dim(col, 0.76)
+    } else if !is_enabled {
+        theme::TEXT_FAINT
+    } else {
+        dim(col, 0.52)
+    };
+    let name_col = if is_active {
+        dim(col, 0.9)
+    } else if build > 0.0 {
+        dim(col, 0.44 + build * 0.20)
+    } else if is_hover {
+        dim(col, 0.62)
+    } else if !is_enabled {
+        dim(theme::TEXT_FAINT, 0.75)
+    } else {
+        theme::TEXT_DIM
+    };
+    painter.text(
+        c + vec2(0.0, -NODE_R - 9.0),
+        Align2::CENTER_CENTER,
+        layer.tag(),
+        FontId::monospace(9.0),
+        tag_col,
+    );
+    painter.text(
+        c + vec2(0.0, NODE_R + 9.0),
+        Align2::CENTER_CENTER,
+        layer.name(),
+        FontId::monospace(8.5),
+        name_col,
+    );
 }
 
 fn stage_enabled(

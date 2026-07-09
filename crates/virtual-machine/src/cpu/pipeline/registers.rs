@@ -7,7 +7,6 @@ use crate::cpu::decoder::DecodedInsn;
 use crate::cpu::pipeline::execute::ExecResult;
 use crate::cpu::pipeline::memory::MemResult;
 
-/// IF -> ID: result of the Fetch stage.
 #[derive(Clone, Debug)]
 pub struct IFIDReg {
     pub pc: u64,
@@ -16,38 +15,31 @@ pub struct IFIDReg {
     /// bits[19:15] and bits[24:20] -- valid for all standard formats.
     pub rs1: usize,
     pub rs2: usize,
-    /// Branch predictor's decision for this fetch.
     pub predicted_taken: bool,
     pub predicted_target: u64,
 }
 
-/// ID -> EX: result of the Decode stage.
 #[derive(Clone, Debug)]
 pub struct IDEXReg {
     pub pc: u64,
     pub insn: DecodedInsn,
     pub mnemonic: &'static str,
-    // Integer source values read from the register file at decode time.
     pub rs1: usize,
     pub rs2: usize,
     pub rs1_val: u64,
     pub rs2_val: u64,
-    // FP source values (for FP instructions).
     pub frs1: usize,
     pub frs2: usize,
     pub frs1_val: u64,
     pub frs2_val: u64,
-    // Destination register info.
     pub rd: usize,
     pub is_fp_dest: bool,
     pub is_load: bool,
     pub is_fp_load: bool,
-    // Propagated prediction.
     pub predicted_taken: bool,
     pub predicted_target: u64,
 }
 
-/// EX -> MEM: result of the Execute stage.
 #[derive(Clone, Debug)]
 pub struct EXMEMReg {
     pub pc: u64,
@@ -59,14 +51,12 @@ pub struct EXMEMReg {
     /// Value available for EX/MEM -> EX forwarding (undefined for loads).
     pub fwd_val: u64,
     pub is_load: bool,
-    // Branch resolution.
     pub actual_next_pc: u64,
     pub actual_taken: bool,
     pub predicted_taken: bool,
     pub predicted_target: u64,
 }
 
-/// MEM -> WB: result of the Memory stage.
 #[derive(Clone, Debug)]
 pub struct MEMWBReg {
     pub pc: u64,

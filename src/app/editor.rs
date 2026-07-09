@@ -130,15 +130,17 @@ impl FullStackApp {
         let source_debug = self.source_debug_for(&name);
         let output = code_view(
             ui,
-            ("source", name.as_str()),
-            &text,
-            highlighter,
-            !read_only,
-            self.settings.current_line_highlight,
-            find.as_ref(),
-            &marks,
-            jump,
-            &source_debug,
+            CodeViewConfig {
+                id_salt: ("source", name.as_str()),
+                text: &text,
+                highlighter,
+                interactive: !read_only,
+                show_current_line: self.settings.current_line_highlight,
+                find: find.as_ref(),
+                marks: &marks,
+                jump_to: jump,
+                debug: &source_debug,
+            },
         );
         if let Some(edited) = output.edited {
             self.workspace.set_active_text(edited).ok();
@@ -663,15 +665,17 @@ fn read_only_code(
 ) {
     code_view(
         ui,
-        ("stage", id_salt),
-        text,
-        highlighter,
-        false,
-        false,
-        None,
-        &[],
-        None,
-        &SourceDebug::default(),
+        CodeViewConfig {
+            id_salt: ("stage", id_salt),
+            text,
+            highlighter,
+            interactive: false,
+            show_current_line: false,
+            find: None,
+            marks: &[],
+            jump_to: None,
+            debug: &SourceDebug::default(),
+        },
     );
 }
 
@@ -685,21 +689,35 @@ struct CodeViewOutput {
     bp_toggle: Option<usize>,
 }
 
-/// The code surface: gutter + frameless editor filling the column. Finds wash
-/// behind the text, diagnostics mark gutter + underline, jumps scroll into view.
-#[expect(clippy::too_many_arguments, reason = "one call site per surface")]
-fn code_view(
-    ui: &mut egui::Ui,
-    id_salt: impl std::hash::Hash + Clone,
-    text: &str,
+struct CodeViewConfig<'a, Id> {
+    id_salt: Id,
+    text: &'a str,
     highlighter: Option<Highlighter>,
     interactive: bool,
     show_current_line: bool,
-    find: Option<&FindHighlight>,
-    marks: &[DiagMark],
+    find: Option<&'a FindHighlight>,
+    marks: &'a [DiagMark],
     jump_to: Option<usize>,
-    debug: &SourceDebug,
-) -> CodeViewOutput {
+    debug: &'a SourceDebug,
+}
+
+/// The code surface: gutter + frameless editor filling the column. Finds wash
+/// behind the text, diagnostics mark gutter + underline, jumps scroll into view.
+fn code_view<Id>(ui: &mut egui::Ui, config: CodeViewConfig<'_, Id>) -> CodeViewOutput
+where
+    Id: std::hash::Hash + Clone,
+{
+    let CodeViewConfig {
+        id_salt,
+        text,
+        highlighter,
+        interactive,
+        show_current_line,
+        find,
+        marks,
+        jump_to,
+        debug,
+    } = config;
     let font = TextStyle::Monospace.resolve(ui.style());
     let row_height = ui.fonts_mut(|f| f.row_height(&font));
     let rows = (ui.available_height() / row_height).floor().max(1.0) as usize;

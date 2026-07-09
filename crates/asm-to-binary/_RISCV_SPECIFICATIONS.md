@@ -580,6 +580,32 @@ relocation set, listed for reference and for interoperability with external link
     addi   a0, a0, %pcrel_lo(.Lpcrel_hi0)   # references the auipc label
 ```
 
+### 9.4 Link Layouts and Injected Symbols
+
+`LinkLayout` controls the virtual address where the linker places the image and whether it injects
+kernel layout symbols after assembly. Hosted userspace uses `0x0001_0000` (`ELF_LOAD_BASE`);
+OpenSBI-style bare-metal kernels use `0x8020_0000`; direct bare-metal images may use
+`0x8000_0000`.
+
+When `emit_layout_symbols` is enabled, the linker injects these absolute symbols:
+
+| Symbol | Value |
+|--------|-------|
+| `__text_start` | Start of `.text` |
+| `__text_end` | End of `.text` |
+| `__rodata_start` | Start of `.rodata` |
+| `__rodata_end` | End of `.rodata` |
+| `__data_start` | Start of `.data` |
+| `__data_end` | End of `.data` |
+| `__bss_start` | Start of `.bss` |
+| `__bss_end` | End of `.bss` |
+| `__heap_start` | First byte after BSS, aligned to 16 bytes |
+| `__heap_end` | `__heap_start + heap_size`; omitted when `heap_size == 0` |
+| `__stack_top` | Initial stack pointer from the layout |
+
+Kernel startup code uses these symbols to zero BSS, set the stack pointer, and initialise the heap
+allocator without hard-coding section addresses.
+
 
 ## 10. Validation & Alignment Rules
 

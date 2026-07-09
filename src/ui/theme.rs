@@ -3,48 +3,27 @@
 
 use egui::{Color32, FontId, Mesh, Rect, RichText, Stroke, epaint::Vertex};
 
-// --- Elevation ladder ---
-// One iron-blue hue stepped from bezel to chrome; tool windows sit below the
-// editor so the code reads as the lit plane.
-/// Deepest bezel: activity rail and outer window edge.
 pub const BEZEL: Color32 = Color32::from_rgb(0x09, 0x0B, 0x0F);
-/// Tool-window well: explorer and machine dock, one step under the editor.
 pub const WELL: Color32 = Color32::from_rgb(0x0D, 0x10, 0x15);
-/// Foot of the explorer gradient, a hair below [`WELL`].
 pub const WELL_FLOOR: Color32 = Color32::from_rgb(0x0A, 0x0D, 0x12);
-/// Editor / code surface: the focal content plane.
 pub const CANVAS: Color32 = Color32::from_rgb(0x12, 0x16, 0x1C);
-/// Console backing plate: darker than the editor, tuned for long-running logs.
 pub const TERMINAL: Color32 = Color32::from_rgb(0x07, 0x0A, 0x0E);
-/// Chrome bands: top bar, status bar, panel headers.
 pub const CHROME: Color32 = Color32::from_rgb(0x17, 0x1B, 0x24);
-/// Raised fill: buttons and selected rows.
 pub const SURFACE: Color32 = Color32::from_rgb(0x1E, 0x24, 0x30);
-/// Hover / active fill.
 pub const SURFACE_ALT: Color32 = Color32::from_rgb(0x26, 0x2D, 0x3B);
-/// Structural dividers between columns and chrome bands.
 pub const HAIRLINE: Color32 = Color32::from_rgb(0x2C, 0x33, 0x40);
-/// Interior dividers inside a single panel.
 pub const HAIRLINE_SOFT: Color32 = Color32::from_rgb(0x1B, 0x20, 0x29);
 
 pub const TEXT: Color32 = Color32::from_rgb(0xD7, 0xDC, 0xE4);
 pub const TEXT_DIM: Color32 = Color32::from_rgb(0x79, 0x82, 0x8F);
 pub const TEXT_FAINT: Color32 = Color32::from_rgb(0x4C, 0x55, 0x63);
-/// The L4/metal end of the depth spectrum, reused as the interaction accent.
 pub const ELECTRIC: Color32 = Color32::from_rgb(0x3F, 0xB6, 0xE6);
-/// Warm terracotta alert for failures; the one non-blue signal color.
 pub const DANGER: Color32 = Color32::from_rgb(0xD9, 0x6A, 0x5A);
-/// Amber warning tone for non-fatal compiler and runtime messages.
 pub const WARNING: Color32 = Color32::from_rgb(0xD9, 0xAA, 0x5A);
-/// Translucent current-line wash, painted behind the focused editor row.
 pub const CURRENT_LINE: Color32 = Color32::from_rgba_premultiplied(0x14, 0x18, 0x22, 0x7A);
-/// Translucent electric wash behind every find match.
 pub const FIND_MATCH: Color32 = Color32::from_rgba_premultiplied(0x0E, 0x28, 0x33, 0x38);
-/// Warm wash behind the current find match, so stepping through reads clearly.
 pub const FIND_MATCH_CURRENT: Color32 = Color32::from_rgba_premultiplied(0x57, 0x3C, 0x20, 0x5C);
-/// Translucent danger wash behind an errored source span in the editor.
 pub const DANGER_WASH: Color32 = Color32::from_rgba_premultiplied(0x29, 0x14, 0x11, 0x30);
-/// Translucent amber wash behind a warned source span in the editor.
 pub const WARNING_WASH: Color32 = Color32::from_rgba_premultiplied(0x29, 0x20, 0x11, 0x30);
 
 /// Apply the instrument theme: fonts, dark base, hairline strokes, sharp corners,

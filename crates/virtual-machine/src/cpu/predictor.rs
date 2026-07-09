@@ -12,7 +12,6 @@ const PHT_SIZE: usize = 256;
 pub struct BranchPredictor {
     /// 2-bit saturating counters: 0-1 = predict not-taken, 2-3 = predict taken.
     pht: [u8; PHT_SIZE],
-    /// Maps branch PC -> last seen target address.
     btb: HashMap<u64, u64>,
     pub stats: PredictorStats,
 }
@@ -43,8 +42,6 @@ impl BranchPredictor {
         ((pc >> 2) as usize) & (PHT_SIZE - 1)
     }
 
-    /// Predict whether the branch at `pc` will be taken and what its target will be.
-    /// Returns `(predicted_taken, predicted_target)`.
     pub fn predict(&self, pc: u64) -> (bool, u64) {
         let taken = self.pht[Self::pht_idx(pc)] >= 2;
         let target = self.btb.get(&pc).copied().unwrap_or(pc.wrapping_add(4));
@@ -56,7 +53,6 @@ impl BranchPredictor {
     pub fn update(&mut self, pc: u64, was_taken: bool, actual_target: u64, predicted_taken: bool) {
         let idx = Self::pht_idx(pc);
 
-        // Update saturating counter
         if was_taken {
             if self.pht[idx] < 3 {
                 self.pht[idx] += 1;
@@ -66,7 +62,6 @@ impl BranchPredictor {
             self.pht[idx] -= 1;
         }
 
-        // Accumulate stats
         self.stats.total += 1;
         if was_taken == predicted_taken {
             self.stats.correct += 1;

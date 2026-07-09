@@ -12,8 +12,6 @@ use std::collections::HashMap;
 
 /// Linker configuration.
 pub struct LinkerConfig {
-    /// Where the first section (.text) is loaded in the target address space.
-    /// Defaults to `RAM_BASE` (0x8000_0000).
     pub text_base: u64,
 }
 
@@ -25,19 +23,13 @@ impl Default for LinkerConfig {
     }
 }
 
-/// The output of the linker: a flat image with relocated metadata.
+/// Flat linked image with relocated metadata.
 pub struct LinkedProgram {
-    /// Flat byte image to be loaded at `load_addr`.
     pub bytes: Vec<u8>,
-    /// Physical address where `bytes[0]` should be placed.
     pub load_addr: u64,
-    /// Absolute entry point (PC to start execution at).
     pub entry_point: u64,
-    /// All symbols with their final absolute addresses.
     pub symbols: HashMap<String, u64>,
-    /// First address available for the heap allocator.
     pub heap_base: u64,
-    /// Total size of the loaded image in bytes.
     pub image_size: u64,
 }
 

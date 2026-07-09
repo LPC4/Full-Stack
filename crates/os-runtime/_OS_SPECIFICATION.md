@@ -71,14 +71,12 @@ collected in Appendix A.
 
 ### 2.1 Image format and linker layout
 
-The kernel image is laid out from `0x8000_0000` as `.text`, `.rodata`, `.data`,
-then `.bss` (zeroed by the loader using `__bss_start`/`__bss_end`), followed by a
-64 KiB stack to `__stack_top` and the heap. Both an ELF (single `PT_LOAD`,
-`p_vaddr == p_paddr == 0x8000_0000`, `RWX`, 4 KiB aligned) and a flat binary
-(`.text+.rodata+.data` concatenation, BSS zero-filled by the loader) are produced
-from the same linker script; the VM loads either at `0x8000_0000` and jumps to
-`_start`. Exported symbols: `_start`, `__bss_start`, `__bss_end`, `__stack_top`,
-`__heap_start`, `__image_size`.
+The kernel image is laid out as `.text`, `.rodata`, `.data`, then `.bss` (zeroed
+using `__bss_start`/`__bss_end`), followed by the heap and the configured stack
+top. Hosted images load at `0x0001_0000`; OpenSBI-style freestanding/kernel
+images use `0x8020_0000`, inside RAM starting at `0x8000_0000`. The linker
+injects section, heap, and stack symbols described in
+`crates/asm-to-binary/_RISCV_SPECIFICATIONS.md` section 9.4.
 
 ### 2.2 M-mode ROM startup (`startup.s`, offset `0x000`)
 

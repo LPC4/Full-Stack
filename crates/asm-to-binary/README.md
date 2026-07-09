@@ -38,6 +38,7 @@ let elf: Vec<u8> = linked.to_elf(0x8000_0000);
 `AssembledOutput` holds the section data, a `SymbolTable` of global/local labels, and a
 list of `RelocationRecord`s. `RvInstruction` is defined here and re-exported so
 `ir-to-asm` and this crate share a single instruction definition.
+Kernel layout-symbol injection is specified in `_RISCV_SPECIFICATIONS.md` section 9.4.
 
 ## Instruction model
 

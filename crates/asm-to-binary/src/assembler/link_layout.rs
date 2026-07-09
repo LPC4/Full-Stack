@@ -1,39 +1,18 @@
 /// Controls how the linker places the image in virtual memory and what
 /// auxiliary symbols to inject into the assembled output.
+/// See `_RISCV_SPECIFICATIONS.md` section 9.4 for the symbol contract.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LinkLayout {
     /// Virtual base address where the image is loaded.
-    /// - Hosted userspace: `0x0001_0000` (`ELF_LOAD_BASE`).
-    /// - Bare-metal RISC-V after SBI handoff: `0x8020_0000`.
-    /// - Bare-metal without SBI: `0x8000_0000`.
     pub load_base: u64,
 
-    /// If `true`, inject these boundary symbols into the output after assembly:
-    ///
-    /// | Symbol          | Value                                    |
-    /// |-----------------|------------------------------------------|
-    /// | `__text_start`  | start of `.text`                         |
-    /// | `__text_end`    | end of `.text`                           |
-    /// | `__rodata_start`| start of `.rodata`                       |
-    /// | `__rodata_end`  | end of `.rodata`                         |
-    /// | `__data_start`  | start of `.data`                         |
-    /// | `__data_end`    | end of `.data`                           |
-    /// | `__bss_start`   | start of `.bss`                          |
-    /// | `__bss_end`     | end of `.bss`                            |
-    /// | `__heap_start`  | first byte after BSS (16-byte aligned)   |
-    /// | `__heap_end`    | `__heap_start + heap_size`               |
-    /// | `__stack_top`   | `stack_top` field                        |
-    ///
-    /// Kernel startup code can read these symbols to zero BSS, set the stack
-    /// pointer, and initialise the heap allocator - without hard-coding addresses.
+    /// Inject section, heap, and stack boundary symbols for kernel startup.
     pub emit_layout_symbols: bool,
 
-    /// Virtual address of the initial stack pointer (`__stack_top`).
-    /// Must be set when `emit_layout_symbols` is `true`.
+    /// Virtual address emitted as `__stack_top`.
     pub stack_top: u64,
 
-    /// Heap size in bytes placed immediately after `__bss_end` (aligned to 16).
-    /// Set to 0 to omit `__heap_end`.
+    /// Heap bytes placed after `__bss_end`; zero omits `__heap_end`.
     pub heap_size: u64,
 }
 

@@ -104,17 +104,15 @@ impl FullStackApp {
                     edit_row(ui, 0, edit);
                 }
                 let tree = self.workspace.tree();
+                let mut tree_ctx = TreeNodeContext {
+                    active: active.as_ref(),
+                    dirty: &dirty,
+                    can_edit,
+                    edit: &mut edit,
+                    actions: &mut actions,
+                };
                 for entry in &tree.root {
-                    tree_node(
-                        ui,
-                        entry,
-                        0,
-                        active.as_ref(),
-                        &dirty,
-                        can_edit,
-                        &mut edit,
-                        &mut actions,
-                    );
+                    tree_node(ui, entry, 0, &mut tree_ctx);
                 }
                 // The empty well below the tree offers root-level creation.
                 let leftover = ui.available_height().max(metrics::ROW_HEIGHT * 2.0);
@@ -290,17 +288,15 @@ impl FullStackApp {
     }
 }
 
-#[expect(clippy::too_many_arguments, reason = "one recursive tree walk")]
-fn tree_node(
-    ui: &mut egui::Ui,
-    entry: &TreeEntry,
-    depth: usize,
-    active: Option<&VPath>,
-    dirty: &[VPath],
+struct TreeNodeContext<'a> {
+    active: Option<&'a VPath>,
+    dirty: &'a [VPath],
     can_edit: bool,
-    edit: &mut Option<EditState>,
-    actions: &mut Vec<ExplorerAction>,
-) {
+    edit: &'a mut Option<EditState>,
+    actions: &'a mut Vec<ExplorerAction>,
+}
+
+fn tree_node(ui: &mut egui::Ui, entry: &TreeEntry, depth: usize, ctx: &mut TreeNodeContext<'_>) {
     match entry.kind {
         EntryKind::Dir => {
             let id = ui.make_persistent_id(("explorer_dir", entry.path.as_str()));
@@ -311,11 +307,11 @@ fn tree_node(
             );
             // A pending "new" edit inside this directory forces it open so the
             // naming row is visible where the entry will appear.
-            if edit.as_ref().is_some_and(|e| e.creates_in(&entry.path)) {
+            if ctx.edit.as_ref().is_some_and(|e| e.creates_in(&entry.path)) {
                 state.set_open(true);
             }
             let openness = state.openness(ui.ctx());
-            if let Some(edit) = edit.as_mut().filter(|e| e.renames(&entry.path)) {
+            if let Some(edit) = ctx.edit.as_mut().filter(|e| e.renames(&entry.path)) {
                 edit_row(ui, depth, edit);
             } else {
                 let resp = row(
@@ -329,52 +325,58 @@ fn tree_node(
                 if resp.clicked() {
                     state.toggle(ui);
                 }
-                if can_edit {
+                if ctx.can_edit {
                     resp.context_menu(|ui| {
                         if menu_item(ui, "new file").clicked() {
-                            actions.push(ExplorerAction::StartNewFile(entry.path.clone()));
+                            ctx.actions
+                                .push(ExplorerAction::StartNewFile(entry.path.clone()));
                         }
                         if menu_item(ui, "new folder").clicked() {
-                            actions.push(ExplorerAction::StartNewDir(entry.path.clone()));
+                            ctx.actions
+                                .push(ExplorerAction::StartNewDir(entry.path.clone()));
                         }
                         ui.separator();
                         if menu_item(ui, "rename").clicked() {
-                            actions.push(ExplorerAction::StartRename(entry.path.clone()));
+                            ctx.actions
+                                .push(ExplorerAction::StartRename(entry.path.clone()));
                         }
                         if menu_item_danger(ui, "delete").clicked() {
-                            actions.push(ExplorerAction::AskDelete(entry.path.clone()));
+                            ctx.actions
+                                .push(ExplorerAction::AskDelete(entry.path.clone()));
                         }
                     });
                 }
             }
             state.store(ui.ctx());
             if state.is_open() {
-                if let Some(edit) = edit.as_mut().filter(|e| e.creates_in(&entry.path)) {
+                if let Some(edit) = ctx.edit.as_mut().filter(|e| e.creates_in(&entry.path)) {
                     edit_row(ui, depth + 1, edit);
                 }
                 for child in &entry.children {
-                    tree_node(ui, child, depth + 1, active, dirty, can_edit, edit, actions);
+                    tree_node(ui, child, depth + 1, ctx);
                 }
             }
         }
         EntryKind::File => {
-            if let Some(edit) = edit.as_mut().filter(|e| e.renames(&entry.path)) {
+            if let Some(edit) = ctx.edit.as_mut().filter(|e| e.renames(&entry.path)) {
                 edit_row(ui, depth, edit);
                 return;
             }
-            let is_active = active == Some(&entry.path);
-            let is_dirty = dirty.contains(&entry.path);
+            let is_active = ctx.active == Some(&entry.path);
+            let is_dirty = ctx.dirty.contains(&entry.path);
             let resp = row(ui, depth, &entry.name, RowKind::File, is_active, is_dirty);
             if resp.clicked() {
-                actions.push(ExplorerAction::Open(entry.path.clone()));
+                ctx.actions.push(ExplorerAction::Open(entry.path.clone()));
             }
-            if can_edit {
+            if ctx.can_edit {
                 resp.context_menu(|ui| {
                     if menu_item(ui, "rename").clicked() {
-                        actions.push(ExplorerAction::StartRename(entry.path.clone()));
+                        ctx.actions
+                            .push(ExplorerAction::StartRename(entry.path.clone()));
                     }
                     if menu_item_danger(ui, "delete").clicked() {
-                        actions.push(ExplorerAction::AskDelete(entry.path.clone()));
+                        ctx.actions
+                            .push(ExplorerAction::AskDelete(entry.path.clone()));
                     }
                 });
             }
