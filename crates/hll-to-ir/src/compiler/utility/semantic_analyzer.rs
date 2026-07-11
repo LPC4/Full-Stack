@@ -286,7 +286,8 @@ impl SemanticAnalyzer {
             | DeclNode::Type { .. }
             | DeclNode::Struct { .. }
             | DeclNode::Const { .. }
-            | DeclNode::Enum { .. } => Ok(()),
+            | DeclNode::Enum { .. }
+            | DeclNode::Interface { .. } => Ok(()),
             DeclNode::Variable { name, ty, .. } => {
                 let ir_ty = self.ast_type_to_ir_type(ty);
                 self.symbols

@@ -3,10 +3,51 @@
 use crate::highlight::theme::SyntaxPalette;
 use egui::text::LayoutJob;
 
+// Keep in sync with the lexer's keyword table (crates/hll-to-ir/src/lexer.rs).
 const HLL_KEYWORDS: &[&str] = &[
-    "type", "const", "if", "else", "while", "return", "defer", "new", "free", "and", "or", "true",
-    "false", "null", "main", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64",
-    "bool", "asm", "external",
+    "type",
+    "struct",
+    "impl",
+    "interface",
+    "const",
+    "external",
+    "if",
+    "else",
+    "while",
+    "for",
+    "in",
+    "enum",
+    "match",
+    "break",
+    "continue",
+    "return",
+    "defer",
+    "new",
+    "free",
+    "asm",
+    "and",
+    "or",
+    "not",
+    "true",
+    "false",
+    "null",
+    "fn",
+    "as",
+    "import",
+    "export",
+    "main",
+    "i8",
+    "i16",
+    "i32",
+    "i64",
+    "u8",
+    "u16",
+    "u32",
+    "u64",
+    "f32",
+    "f64",
+    "bool",
+    "Self",
 ];
 
 fn find_comment_start_outside_string(line: &str) -> Option<usize> {
@@ -455,4 +496,57 @@ pub fn highlight_code(theme: &egui::Style, code: &str) -> LayoutJob {
         }
     }
     job
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Guards the keyword list against going stale as the language grows.
+    #[test]
+    fn hll2_era_keywords_are_highlighted() {
+        let style = egui::Style::default();
+        let palette = SyntaxPalette::dark();
+        let hll2 = [
+            "interface",
+            "impl",
+            "struct",
+            "enum",
+            "match",
+            "for",
+            "in",
+            "fn",
+            "as",
+            "import",
+            "export",
+            "break",
+            "continue",
+            "not",
+            "Self",
+        ];
+        for keyword in hll2 {
+            let job = highlight_code(&style, keyword);
+            assert!(
+                job.sections
+                    .iter()
+                    .any(|s| s.format.color == palette.keyword),
+                "keyword `{keyword}` not highlighted"
+            );
+        }
+    }
+
+    #[test]
+    fn plain_identifiers_are_not_highlighted() {
+        let style = egui::Style::default();
+        let palette = SyntaxPalette::dark();
+        for word in ["interfaces", "formatter", "matcher", "implement"] {
+            let job = highlight_code(&style, word);
+            assert!(
+                job.sections
+                    .iter()
+                    .all(|s| s.format.color != palette.keyword),
+                "identifier `{word}` wrongly highlighted as a keyword"
+            );
+        }
+    }
 }

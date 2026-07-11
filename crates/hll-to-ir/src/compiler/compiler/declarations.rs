@@ -28,7 +28,9 @@ impl HighLevelCompiler {
     ) -> Result<(), CompilerError> {
         log::debug!("lowering declaration: {:?}", declaration.decl);
         match &declaration.decl {
-            DeclNode::ModuleImport { .. } => Ok(()),
+            // Interfaces are consumed by bound checking during monomorphization
+            // and never lowered.
+            DeclNode::ModuleImport { .. } | DeclNode::Interface { .. } => Ok(()),
             // Concrete enums are registered in a pre-pass (see compile_program);
             // generic enums are specialized into concrete declarations first.
             DeclNode::Enum { name, generics, .. } => {

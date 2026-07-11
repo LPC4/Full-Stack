@@ -1373,6 +1373,82 @@ main: () -> i32 {
     );
 }
 
+// --- Methods (`impl` blocks) and interfaces (spec 6.2 / 6.5) ---
+
+#[test]
+fn impl_method_static_dispatch_executes() {
+    // `r.area()` and a method calling another method through `self` both
+    // dispatch statically and run to the right values.
+    assert_exit(
+        r#"
+struct Rect { width: i32, height: i32 }
+impl Rect {
+    area: (self: Rect*) -> i32 { return self.width * self.height }
+    scaled_area: (self: Rect*, k: i32) -> i32 { return self.area() * k }
+}
+main: () -> i32 {
+    r: Rect = Rect { .width = 6, .height = 7 }
+    if r.area() != 42 { return 1 }
+    if r.scaled_area(3) != 126 { return 2 }
+    p: Rect* = &r
+    if p.area() != 42 { return 3 }
+    return 0
+}
+"#,
+        0,
+    );
+}
+
+#[test]
+fn generic_bound_method_call_executes() {
+    // A bounded generic specializes per concrete type; `v.describe()` resolves
+    // to each type's own method after substitution.
+    assert_exit(
+        r#"
+interface Describable {
+    describe: (self: Self*) -> i32
+}
+struct Circle { radius: i32 }
+struct Square { side: i32 }
+impl Circle {
+    describe: (self: Circle*) -> i32 { return 3 * self.radius * self.radius }
+}
+impl Square {
+    describe: (self: Square*) -> i32 { return self.side * self.side }
+}
+describe_twice: <T: Describable>(v: T*) -> i32 {
+    return v.describe() + v.describe()
+}
+main: () -> i32 {
+    c: Circle = Circle { .radius = 3 }
+    s: Square = Square { .side = 4 }
+    if describe_twice<Circle>(&c) != 54 { return 1 }
+    if describe_twice<Square>(&s) != 32 { return 2 }
+    return 0
+}
+"#,
+        0,
+    );
+}
+
+#[test]
+fn generic_bound_violation_is_rejected() {
+    // Instantiating a bounded generic at a type without the method fails.
+    assert_compile_fails(
+        r#"
+interface Describable {
+    describe: (self: Self*) -> i32
+}
+struct Plain { value: i32 }
+describe_once: <T: Describable>(v: T*) -> i32 { return v.describe() }
+main: () -> i32 {
+    p: Plain = Plain { .value = 1 }
+    return describe_once<Plain>(&p)
+}
+"#,
+    );
+}
+
 // --- Generic enums (Option / Result prelude) ---
 
 #[test]

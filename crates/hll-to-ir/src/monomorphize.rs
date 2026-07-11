@@ -1,6 +1,6 @@
 use crate::ast::{
-    AssignTarget, Block, DeclNode, Declaration, Expression, FieldInit, ForIter, MatchArm, Pattern,
-    PrimaryExpr, Program, ReturnType, Statement, Type, Variant,
+    AssignTarget, Block, DeclNode, Declaration, Expression, FieldInit, ForIter, InterfaceMethod,
+    MatchArm, Pattern, PrimaryExpr, Program, ReturnType, Statement, Type, Variant,
 };
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -26,14 +26,62 @@ pub(crate) fn monomorphize_program(program: &Program) -> Result<Program, String>
         })
         .collect::<HashMap<_, _>>();
 
+    // Interface contracts and the concrete function pool for generic-bound checks.
+    let interfaces = source
+        .declarations
+        .iter()
+        .filter_map(|declaration| match &declaration.decl {
+            DeclNode::Interface { name, methods } => Some((name.clone(), methods.clone())),
+            _ => None,
+        })
+        .collect::<HashMap<_, _>>();
+    let concrete_signatures = source
+        .declarations
+        .iter()
+        .filter_map(|declaration| match &declaration.decl {
+            DeclNode::Function {
+                name,
+                generics,
+                params,
+                return_type,
+                ..
+            } if generics.is_empty() => {
+                let params = params.iter().map(|p| p.ty.clone()).collect::<Vec<_>>();
+                let ret = return_type
+                    .as_ref()
+                    .map(|ReturnType::Single(ty)| ty.clone());
+                Some((name.clone(), (params, ret)))
+            }
+            _ => None,
+        })
+        .collect::<HashMap<_, _>>();
+
+    // A bound naming a missing interface is an error even if the generic is
+    // never instantiated; catch the typo at its declaration.
+    for declaration in &source.declarations {
+        if let DeclNode::Function { name, bounds, .. } = &declaration.decl {
+            for (param, interface_name) in bounds {
+                if !interfaces.contains_key(interface_name) {
+                    return Err(format!(
+                        "generic function `{name}`: bound `{param}: {interface_name}` \
+                         names an unknown interface"
+                    ));
+                }
+            }
+        }
+    }
+
     let mut queue = VecDeque::new();
     let mut queued = HashSet::new();
     let mut declarations = Vec::new();
     for declaration in &source.declarations {
+        // Interfaces exist only for bound checking; drop them here so no later
+        // stage has to know about them.
         if matches!(
             &declaration.decl,
             DeclNode::Function { generics, .. } if !generics.is_empty()
-        ) {
+        ) || matches!(&declaration.decl, DeclNode::Interface { .. })
+        {
             continue;
         }
         let mut declaration = declaration.clone();
@@ -72,7 +120,10 @@ pub(crate) fn monomorphize_program(program: &Program) -> Result<Program, String>
         let definition = definitions
             .get(&name)
             .ok_or_else(|| format!("unknown generic function `{name}`"))?;
-        let DeclNode::Function { generics, .. } = &definition.decl else {
+        let DeclNode::Function {
+            generics, bounds, ..
+        } = &definition.decl
+        else {
             unreachable!();
         };
         if generics.len() != type_args.len() {
@@ -88,6 +139,13 @@ pub(crate) fn monomorphize_program(program: &Program) -> Result<Program, String>
             .cloned()
             .zip(type_args.iter().cloned())
             .collect::<Substitutions>();
+        check_generic_bounds(
+            &name,
+            bounds,
+            &substitutions,
+            &interfaces,
+            &concrete_signatures,
+        )?;
         let mut specialized = definition.clone();
         specialize_function(&mut specialized, &name, &type_args, &substitutions);
         rewrite_declaration_calls(
@@ -613,6 +671,76 @@ fn infer_expression_type(
     }
 }
 
+// A bound `<T: Writer>` holds when the substituted type provides every interface
+// method as `{Type}_{method}` with `Self` = that type (see spec 6.5).
+fn check_generic_bounds(
+    function: &str,
+    bounds: &[(String, String)],
+    substitutions: &Substitutions,
+    interfaces: &HashMap<String, Vec<InterfaceMethod>>,
+    concrete_signatures: &HashMap<String, (Vec<Type>, Option<Type>)>,
+) -> Result<(), String> {
+    for (param, interface_name) in bounds {
+        let methods = interfaces.get(interface_name).ok_or_else(|| {
+            format!(
+                "generic function `{function}`: bound `{param}: {interface_name}` \
+                 names an unknown interface"
+            )
+        })?;
+        let Some(concrete) = substitutions.get(param) else {
+            continue;
+        };
+        let Type::Named {
+            name: type_name,
+            args,
+        } = concrete
+        else {
+            return Err(format!(
+                "generic function `{function}`: `{}` cannot satisfy the bound \
+                 `{param}: {interface_name}`; only named struct types have methods",
+                type_mangle(concrete)
+            ));
+        };
+        if !args.is_empty() {
+            return Err(format!(
+                "generic function `{function}`: bound `{param}: {interface_name}` \
+                 does not support generic type instantiations yet"
+            ));
+        }
+
+        let self_substitution = Substitutions::from([("Self".to_owned(), concrete.clone())]);
+        for method in methods {
+            let implementation = format!("{type_name}_{}", method.name);
+            let Some((found_params, found_return)) = concrete_signatures.get(&implementation)
+            else {
+                return Err(format!(
+                    "type `{type_name}` does not implement interface `{interface_name}`: \
+                     missing method `{}` (expected a function `{implementation}`)",
+                    method.name
+                ));
+            };
+            let expected_params = method
+                .params
+                .iter()
+                .map(|p| substitute_type(&p.ty, &self_substitution))
+                .collect::<Vec<_>>();
+            let expected_return = method
+                .return_type
+                .as_ref()
+                .map(|ReturnType::Single(ty)| substitute_type(ty, &self_substitution));
+            if found_params != &expected_params || found_return != &expected_return {
+                return Err(format!(
+                    "type `{type_name}` does not implement interface `{interface_name}`: \
+                     method `{}` has a mismatched signature (check `{implementation}` \
+                     against the interface with `Self` = `{type_name}`)",
+                    method.name
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn specialize_function(
     declaration: &mut Declaration,
     base_name: &str,
@@ -622,6 +750,7 @@ fn specialize_function(
     let DeclNode::Function {
         name,
         generics,
+        bounds,
         params,
         return_type,
         body,
@@ -632,6 +761,7 @@ fn specialize_function(
     };
     *name = specialized_name(base_name, type_args);
     generics.clear();
+    bounds.clear();
     for param in params {
         param.ty = substitute_type(&param.ty, substitutions);
     }

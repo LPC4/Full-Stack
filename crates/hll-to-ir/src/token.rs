@@ -168,6 +168,7 @@ pub enum Token<'a> {
     Type,
     Struct,
     Impl,
+    Interface,
     As,
     Import,
     Export,

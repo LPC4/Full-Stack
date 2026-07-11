@@ -456,7 +456,7 @@ fn built_in_programs() -> Vec<ProgramFile> {
             "example-hll2-completion-showcase",
             "hll2_completion_showcase",
             "hll2_completion_showcase.hll",
-            "Living HLL2 feature showcase, starting with function pointer aliases, values, calls, and arrays.",
+            "Living HLL2 feature showcase: function pointers, manual vtables, impl methods, interfaces with generic bounds, and literal match patterns.",
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
                 "/programs/example/hll2_completion_showcase/hll2_completion_showcase.hll"

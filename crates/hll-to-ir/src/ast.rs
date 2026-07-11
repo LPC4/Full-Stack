@@ -54,6 +54,9 @@ pub enum DeclNode {
     Function {
         name: String,
         generics: Vec<String>,
+        // `(param, interface)` pairs from `<T: Writer>`; checked when the generic
+        // is specialized. Empty for unbounded generics and plain functions.
+        bounds: Vec<(String, String)>,
         params: Vec<Parameter>,
         return_type: Option<ReturnType>,
         body: Option<Block>,
@@ -89,6 +92,21 @@ pub enum DeclNode {
         alias: String,
         path: String,
     },
+    // `interface Name { method: (self: Self*, ...) -> R }`: a compile-time set of
+    // required method signatures. Consumed by generic-bound checking; never lowered.
+    Interface {
+        name: String,
+        methods: Vec<InterfaceMethod>,
+    },
+}
+
+// One required method in an `interface`. Parameter types use `Self` as a
+// placeholder for the implementing type (`self: Self*` is the receiver).
+#[derive(Debug, Clone, PartialEq)]
+pub struct InterfaceMethod {
+    pub name: String,
+    pub params: Vec<Parameter>,
+    pub return_type: Option<ReturnType>,
 }
 
 // One arm of an `enum`. An empty `payload` is a unit variant (`None`); a

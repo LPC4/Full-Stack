@@ -133,6 +133,7 @@ fn decl_name(decl: &DeclNode) -> Option<&str> {
         | DeclNode::Struct { name, .. }
         | DeclNode::Enum { name, .. }
         | DeclNode::Const { name, .. }
+        | DeclNode::Interface { name, .. }
         | DeclNode::ModuleImport { alias: name, .. } => Some(name),
     }
 }
@@ -366,7 +367,7 @@ pub fn rewrite_qualified_access(
                     }
                 }
             }
-            DeclNode::ModuleImport { .. } => {}
+            DeclNode::ModuleImport { .. } | DeclNode::Interface { .. } => {}
         }
     }
     for stmt in &mut program.statements {
@@ -1086,7 +1087,11 @@ fn render_export(decl: &DeclNode, prefix: &str) -> Result<Option<String>, String
                 render_type(ty)?
             )
         }
-        DeclNode::InferredVariable { .. } | DeclNode::ModuleImport { .. } => return Ok(None),
+        // Interfaces are compile-time bound contracts with no link symbol; importers
+        // that need one must declare it locally (cross-module interfaces are future work).
+        DeclNode::InferredVariable { .. }
+        | DeclNode::ModuleImport { .. }
+        | DeclNode::Interface { .. } => return Ok(None),
     };
     Ok(Some(rendered))
 }

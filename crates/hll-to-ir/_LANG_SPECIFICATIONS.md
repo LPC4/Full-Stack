@@ -321,10 +321,11 @@ main: () -> i32 {
 
 Type arguments may be explicit (`max<i32>(...)`) or inferred from structurally deducible
 literal, local, pointer, array, slice, and named-type arguments; an unconstrained argument
-must be given explicitly. The V2 core has no interface system, so generics are unconstrained:
-a specialization that uses an operation the concrete type does not support fails at the
-specialized site with an ordinary type error. A recursive specialization that does not
-converge is diagnosed rather than allowed to hang.
+must be given explicitly. Function type parameters may carry an interface bound
+(`<T: Measurable>`, see 6.5); an unbounded parameter is unconstrained, and a specialization
+that uses an operation the concrete type does not support fails at the specialized site with
+an ordinary type error. A recursive specialization that does not converge is diagnosed
+rather than allowed to hang.
 
 Generics do not cross a module boundary yet. A module interface carries an exported function
 only as an `external` signature, not its body, so an importer cannot monomorphize an imported
@@ -474,6 +475,49 @@ userspace tool builds (`aux_sources` retired for bundled manifests); (3) `export
 enforcement at the object level (`.globl` only for exports), now implemented for host HLL builds.
 `external` remains for ABI/syscall declarations and explicit cross-object symbols.
 
+### 6.5 Interfaces and generic bounds
+
+An `interface` declares required method signatures; a bound on a generic function's type
+parameter (`<T: Measurable>`) requires the concrete type substituted for `T` to provide
+those methods. Everything is resolved at compile time: dispatch stays static, and no vtable
+or fat pointer is generated.
+
+```hll
+interface Measurable {
+    area: (self: Self*) -> i32
+}
+
+struct Rect { width: i32, height: i32 }
+
+impl Rect {
+    area: (self: Rect*) -> i32 { return self.width * self.height }
+}
+
+double_area: <T: Measurable>(v: T*) -> i32 {
+    return v.area() + v.area()
+}
+
+main: () -> i32 {
+    r: Rect = Rect { .width = 6, .height = 7 }
+    return double_area<Rect>(&r) - 84   ; 0
+}
+```
+
+- An interface body lists method signatures only (no bodies). `Self` is a placeholder for
+  the implementing type; each method's first parameter must be `self: Self*`.
+- A bound is written `param: Interface` inside a function's type-parameter list. Bounds are
+  only supported on functions; `struct`/`enum`/`type` parameters remain unconstrained.
+- A type `X` satisfies a bound when, for every interface method `m`, a concrete function
+  `X_m` exists whose signature equals the interface signature with `Self` = `X`. Desugared
+  `impl` methods (6.2) and hand-written free functions both qualify.
+- Only plain named struct types can satisfy a bound; primitives and generic type
+  instantiations are rejected. Bounds are checked when the generic is specialized; a bound
+  naming an unknown interface is an error even if the generic is never instantiated.
+- Interfaces are compile-time contracts with no link symbol. They are not exported across
+  module boundaries; a module that needs one declares it locally (like generics, 6.3).
+- Runtime polymorphism still uses explicit vtable structs of function pointers (6.1);
+  `dyn Interface` fat pointers remain reserved (12).
+
 ## 7. Control flow, enums, and resource management
 
 ### 7.1 Control flow
@@ -614,7 +658,11 @@ newline     = "\n" | "\r\n";
 ```ebnf
 program        = { declaration };
 declaration    = binding_decl | function_decl | struct_decl | enum_decl | type_decl
-               | const_decl | import_decl | export_decl | external_decl;
+               | const_decl | import_decl | export_decl | external_decl
+               | impl_decl | interface_decl;
+impl_decl      = "impl" identifier "{" { function_decl } "}";
+interface_decl = "interface" identifier "{" { method_sig } "}";
+method_sig     = identifier ":" "(" param_list ")" [ "->" type ];
 import_decl    = module_import | "import" string;
 module_import  = identifier ":=" "import" "(" string ")"
                | "const" identifier "=" "import" "(" string ")";
@@ -630,7 +678,8 @@ variant        = identifier [ "(" type { "," type } ")" ];
 type_decl      = "type" identifier "=" type;
 const_decl     = "const" identifier "=" expression;
 field_decl     = identifier ":" type;
-type_params    = "<" identifier { "," identifier } ">";
+type_params    = "<" type_param { "," type_param } ">";
+type_param     = identifier [ ":" identifier ];   (* bound: functions only, see 6.5 *)
 type           = primitive_type | identifier [ type_args ] | struct_def | function_pointer_type
                | array_type | slice_type | pointer_type;
 type_args      = "<" type { "," type } ">";
@@ -769,11 +818,12 @@ The following are reserved or planned for a later language revision (V2.1). The 
 not accept incomplete forms of them today; they are documented here only so the normative
 sections above are not mistaken for the full long-term design.
 
-- **Classes, interfaces, and `dyn`.** First-class `class`/`interface` declarations with
-  methods, a `self` receiver, static dispatch by default, and opt-in `dyn` fat-pointer
-  polymorphism. `struct` remains the plain-data type; `type` remains alias-only.
-- **Generic bounds.** Interface-constrained type parameters (`<T: Shape>`), checked at the
-  instantiation site, once interfaces exist. The V2 core has only unconstrained generics.
+- **Classes and `dyn`.** First-class `class` declarations and opt-in `dyn Interface`
+  fat-pointer polymorphism over the shipped interfaces (6.5). `struct` remains the
+  plain-data type; `type` remains alias-only. Static `interface` + bounds and `impl`
+  methods are implemented (6.2, 6.5); only the runtime-dispatch half is future work.
+- **Bounds beyond functions.** Interface bounds on `struct`/`enum`/`type` parameters,
+  multiple bounds per parameter, and bounds satisfied by generic type instantiations.
 - **Name-only destructuring.** `{ quo, rem } := expr` binding by field name without repeating
   types. The implemented form is the typed pattern in 5.4.
 - **String interpolation.** `"hi {name}"` lowering to a visible format over literal chunks.

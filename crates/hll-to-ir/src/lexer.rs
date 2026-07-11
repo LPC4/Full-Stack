@@ -213,6 +213,7 @@ impl<'a> Lexer<'a> {
             "type" => Token::Type,
             "struct" => Token::Struct,
             "impl" => Token::Impl,
+            "interface" => Token::Interface,
             "const" => Token::Const,
             "external" => Token::External,
             "if" => Token::If,

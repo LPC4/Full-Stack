@@ -80,6 +80,50 @@ impl Shape {
     }
 }
 
+; --- Interfaces and generic bounds ---
+; An interface lists required methods (`Self` = implementing type); a bound
+; `<T: Measurable>` is checked when the generic specializes (spec 6.5).
+interface Measurable {
+    area: (self: Self*) -> i32
+}
+
+struct Disc {
+    radius: i32,
+}
+
+impl Disc {
+    area: (self: Disc*) -> i32 {
+        return 3 * self.radius * self.radius
+    }
+}
+
+; Static dispatch: each instantiation resolves `v.area()` to that type's method.
+double_area: <T: Measurable>(v: T*) -> i32 {
+    return v.area() + v.area()
+}
+
+; --- Literal match patterns ---
+; A scalar `match` dispatches on integer/char equality; const names fold to
+; literals, and a `_` or binding catch-all is required.
+const OP_ADD = 1
+const OP_MUL = 2
+
+eval_op: (op: i32, a: i32, b: i32) -> i32 {
+    return match op {
+        OP_ADD -> a + b
+        OP_MUL -> a * b
+        _ -> -1
+    }
+}
+
+classify_char: (c: i32) -> i32 {
+    return match c {
+        '+' -> OP_ADD
+        '*' -> OP_MUL
+        other -> other
+    }
+}
+
 apply_binary: (op: BinaryOp, a: i32, b: i32) -> i32 {
     return op(a, b)
 }
@@ -154,6 +198,18 @@ main: () -> i32 {
     ; Static method sugar: call methods on a value with `recv.method(args)`.
     if box.area() != 42 { return 16 }
     if box.scaled_area(3) != 126 { return 17 }
+
+    ; Interfaces: the same bounded generic runs at two concrete types.
+    disc: Disc = Disc { .radius = 3 }
+    if double_area<Shape>(&box) != 84 { return 18 }
+    if double_area<Disc>(&disc) != 54 { return 19 }
+
+    ; Literal match: consts and chars dispatch on scalar equality.
+    if eval_op(OP_ADD, 40, 2) != 42 { return 20 }
+    if eval_op(OP_MUL, 6, 7) != 42 { return 21 }
+    if eval_op(99, 1, 1) != -1 { return 22 }
+    if classify_char('*') != OP_MUL { return 23 }
+    if classify_char('x') != 'x' { return 24 }
 
     console.println("ok")
     return 0

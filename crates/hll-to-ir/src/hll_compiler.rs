@@ -1449,3 +1449,174 @@ main: () -> i32 {
         }
     }
 }
+
+#[cfg(test)]
+mod interfaces {
+    use crate::{CompileConfig, Diagnostic, HllCompiler, HllOutput, TargetMode};
+
+    fn compile(source: &str) -> Result<HllOutput, Vec<Diagnostic>> {
+        HllCompiler::new(CompileConfig {
+            target: TargetMode::Hosted,
+            strict: true,
+            ..CompileConfig::default()
+        })
+        .compile(source)
+    }
+
+    fn expect_error_containing(source: &str, needle: &str) {
+        let errors = match compile(source) {
+            Ok(_) => panic!("expected a compile error mentioning {needle:?}"),
+            Err(errors) => errors,
+        };
+        assert!(
+            errors.iter().any(|e| e.message.contains(needle)),
+            "no error mentions {needle:?}: {errors:?}"
+        );
+    }
+
+    // A bound satisfied by an `impl` block: the generic specializes and the
+    // method call on the bounded parameter resolves statically.
+    #[test]
+    fn bound_satisfied_by_impl_method_compiles() {
+        compile(
+            r#"
+interface HasArea {
+    area: (self: Self*) -> i32
+}
+struct Rect { width: i32, height: i32 }
+impl Rect {
+    area: (self: Rect*) -> i32 { return self.width * self.height }
+}
+largest_area: <T: HasArea>(a: T*, b: T*) -> i32 {
+    x := a.area()
+    y := b.area()
+    if x > y { return x }
+    return y
+}
+main: () -> i32 {
+    r1: Rect = Rect { .width = 6, .height = 7 }
+    r2: Rect = Rect { .width = 5, .height = 5 }
+    return largest_area<Rect>(&r1, &r2)
+}
+"#,
+        )
+        .expect("a satisfied bound should compile");
+    }
+
+    // A hand-written free function `Type_method` satisfies a bound the same way
+    // a desugared `impl` method does.
+    #[test]
+    fn bound_satisfied_by_free_function_compiles() {
+        compile(
+            r#"
+interface Sized2 {
+    size: (self: Self*) -> i32
+}
+struct Blob { bytes: i32 }
+Blob_size: (self: Blob*) -> i32 { return self.bytes }
+measure: <T: Sized2>(v: T*) -> i32 { return v.size() }
+main: () -> i32 {
+    b: Blob = Blob { .bytes = 42 }
+    return measure<Blob>(&b)
+}
+"#,
+        )
+        .expect("a free-function implementation should satisfy the bound");
+    }
+
+    #[test]
+    fn missing_method_fails_bound() {
+        expect_error_containing(
+            r#"
+interface HasArea {
+    area: (self: Self*) -> i32
+}
+struct Point { x: i32, y: i32 }
+largest: <T: HasArea>(a: T*) -> i32 { return a.area() }
+main: () -> i32 {
+    p: Point = Point { .x = 1, .y = 2 }
+    return largest<Point>(&p)
+}
+"#,
+            "does not implement interface `HasArea`",
+        );
+    }
+
+    #[test]
+    fn mismatched_signature_fails_bound() {
+        expect_error_containing(
+            r#"
+interface HasArea {
+    area: (self: Self*) -> i32
+}
+struct Rect { width: i32, height: i32 }
+impl Rect {
+    area: (self: Rect*, scale: i32) -> i32 { return self.width * self.height * scale }
+}
+largest: <T: HasArea>(a: T*) -> i32 { return 0 }
+main: () -> i32 {
+    r: Rect = Rect { .width = 1, .height = 2 }
+    return largest<Rect>(&r)
+}
+"#,
+            "mismatched signature",
+        );
+    }
+
+    // The typo is caught at the declaration even when nothing instantiates it.
+    #[test]
+    fn unknown_interface_in_bound_fails_eagerly() {
+        expect_error_containing(
+            r#"
+struct Rect { width: i32 }
+largest: <T: NoSuchInterface>(a: T*) -> i32 { return 0 }
+main: () -> i32 { return 0 }
+"#,
+            "unknown interface",
+        );
+    }
+
+    #[test]
+    fn primitive_type_cannot_satisfy_bound() {
+        expect_error_containing(
+            r#"
+interface HasArea {
+    area: (self: Self*) -> i32
+}
+first: <T: HasArea>(a: T*) -> i32 { return 0 }
+main: () -> i32 {
+    n: i32 = 1
+    return first<i32>(&n)
+}
+"#,
+            "only named struct types have methods",
+        );
+    }
+
+    #[test]
+    fn bound_on_struct_generic_is_rejected() {
+        expect_error_containing(
+            r#"
+interface HasArea {
+    area: (self: Self*) -> i32
+}
+struct Wrapper<T: HasArea> { inner: T }
+main: () -> i32 { return 0 }
+"#,
+            "only supported on functions",
+        );
+    }
+
+    #[test]
+    fn interface_method_requires_self_pointer_receiver() {
+        expect_error_containing(
+            r#"
+interface Broken {
+    area: (v: i32) -> i32
+}
+main: () -> i32 { return 0 }
+"#,
+            "must be `self: Self*`",
+        );
+    }
+}

@@ -1,10 +1,14 @@
 use super::ast::{
     AssignTarget, BinaryOp, Block, DeclNode, Declaration, Expression, FieldDecl, FieldInit,
-    ForIter, Literal, MatchArm, Parameter, Pattern, PrimaryExpr, Program, ReturnType, Statement,
-    StructDestructureField, Type, UnaryOp, Variant,
+    ForIter, InterfaceMethod, Literal, MatchArm, Parameter, Pattern, PrimaryExpr, Program,
+    ReturnType, Statement, StructDestructureField, Type, UnaryOp, Variant,
 };
 
 use super::token::{CompoundOp, Span, Token};
+
+// Parsed `<...>` type parameters: the parameter names plus any `(param, interface)`
+// bound pairs (bounds are only legal on functions; see parse_generic_params).
+type GenericParams = (Vec<String>, Vec<(String, String)>);
 
 // The parsed contents of a `[...]` subscript: a plain index or a range slice.
 enum Subscript {
@@ -137,6 +141,10 @@ impl<'a> Parser<'a> {
             Some(Token::Enum) => {
                 self.advance();
                 self.parse_enum_decl()?
+            }
+            Some(Token::Interface) => {
+                self.advance();
+                self.parse_interface_decl()?
             }
             Some(Token::External) => {
                 let is_import_interface = self
@@ -462,7 +470,7 @@ impl<'a> Parser<'a> {
         let name = self.expect_ident()?;
         self.expect_colon()?;
 
-        let generics = self.parse_generic_params()?;
+        let (generics, bounds) = self.parse_generic_params_with_bounds()?;
 
         let params = self.parse_param_list()?;
 
@@ -486,12 +494,55 @@ impl<'a> Parser<'a> {
         Ok(DeclNode::Function {
             name,
             generics,
+            bounds,
             params,
             return_type,
             body,
             is_extern,
             is_import_interface,
         })
+    }
+
+    /// Parse `interface Name { method: (self: Self*, ...) -> R ... }`: required
+    /// method signatures only, with `Self` standing for the implementing type.
+    fn parse_interface_decl(&mut self) -> Result<DeclNode, ParserError> {
+        let name = self.expect_ident()?;
+        self.expect_lbrace()?;
+        self.consume_terminators();
+
+        let mut methods = Vec::new();
+        while !self.check_rbrace() {
+            let method_name = self.expect_ident()?;
+            self.expect_colon()?;
+            let params = self.parse_param_list()?;
+            let return_type = if self.match_arrow() {
+                Some(self.parse_return_type()?)
+            } else {
+                None
+            };
+
+            let receiver_ok = params.first().is_some_and(|receiver| {
+                receiver.name == "self"
+                    && matches!(
+                        &receiver.ty,
+                        Type::Pointer(inner)
+                            if matches!(inner.as_ref(), Type::Named { name, .. } if name == "Self")
+                    )
+            });
+            if !receiver_ok {
+                return Err(self.error("interface method's first parameter must be `self: Self*`"));
+            }
+
+            methods.push(InterfaceMethod {
+                name: method_name,
+                params,
+                return_type,
+            });
+            self.consume_terminators();
+        }
+
+        self.expect_rbrace()?;
+        Ok(DeclNode::Interface { name, methods })
     }
 
     /// Parse `impl Type { method: (self: Type*, ...) -> R { ... } }`; each method
@@ -535,6 +586,7 @@ impl<'a> Parser<'a> {
                 decl: DeclNode::Function {
                     name: format!("{type_name}_{name}"),
                     generics,
+                    bounds: Vec::new(),
                     params,
                     return_type,
                     body,
@@ -1379,18 +1431,36 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_generic_params(&mut self) -> Result<Vec<String>, ParserError> {
+        let (params, bounds) = self.parse_generic_params_with_bounds()?;
+        if let Some((param, interface)) = bounds.first() {
+            return Err(self.error(&format!(
+                "generic bounds (`{param}: {interface}`) are only supported on functions"
+            )));
+        }
+        Ok(params)
+    }
+
+    // `<T, U: Writer>`: each parameter may carry one interface bound. Bounds are
+    // returned as `(param, interface)` pairs and checked at specialization time.
+    fn parse_generic_params_with_bounds(&mut self) -> Result<GenericParams, ParserError> {
         if !self.match_lt() {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), Vec::new()));
         }
 
         let mut params = Vec::new();
+        let mut bounds = Vec::new();
 
         // Check for closing bracket
         let should_close = self.check_gt_or_shr();
 
         if !should_close {
             loop {
-                params.push(self.expect_ident()?);
+                let param = self.expect_ident()?;
+                if matches!(self.peek(), Some(Token::Colon)) {
+                    self.advance();
+                    bounds.push((param.clone(), self.expect_ident()?));
+                }
+                params.push(param);
                 if self.match_comma() {
                     if self.check_gt_or_shr() {
                         break;
@@ -1414,7 +1484,7 @@ impl<'a> Parser<'a> {
             return Err(self.error("expected `>` to close generic parameters"));
         }
 
-        Ok(params)
+        Ok((params, bounds))
     }
 
     fn parse_argument_list_after_open_paren(&mut self) -> Result<Vec<Expression>, ParserError> {
@@ -1724,6 +1794,7 @@ impl<'a> Parser<'a> {
                 | Token::Type
                 | Token::Struct
                 | Token::Enum
+                | Token::Interface
                 | Token::External
                 | Token::Export,
             ) => true,
