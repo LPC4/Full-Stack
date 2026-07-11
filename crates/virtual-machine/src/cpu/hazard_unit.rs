@@ -1,10 +1,5 @@
-//! Hazard detection and data forwarding for the 5-stage pipeline.
-//!
-//! Two kinds of hazards are handled:
-//! - **Load-use**: a load in ID/EX whose result is needed by the instruction
-//!   being decoded -- insert one stall bubble.
-//! - **RAW**: a register written in EX/MEM or MEM/WB is read in EX -- resolved
-//!   through forwarding (no stall).
+//! Hazard handling for the 5-stage pipeline: a load-use hazard stalls one
+//! bubble; RAW hazards resolve by forwarding from EX/MEM and MEM/WB.
 
 use crate::cpu::decoder::DecodedInsn;
 use crate::cpu::pipeline::registers::{EXMEMReg, IDEXReg, MEMWBReg};
@@ -48,10 +43,8 @@ pub fn insn_rs1(insn: &DecodedInsn) -> usize {
         | DecodedInsn::FOp { rs1, .. }
         | DecodedInsn::FMac { rs1, .. }
         | DecodedInsn::Atomic { rs1, .. } => *rs1,
-        // CSR register instructions (funct3 1-3) use rs1_uimm as a register number.
-        // Immediate variants (funct3 5-7) use rs1_uimm as a literal - forwarding writes
-        // to that "register" temporarily but execute ignores it, and save/restore prevents
-        // permanent corruption, so it is safe to return rs1_uimm unconditionally.
+        // CSR immediate variants (funct3 5-7) carry a literal here; execute ignores the
+        // bogus forward and save/restore undoes it, so returning unconditionally is safe.
         DecodedInsn::Csr { rs1_uimm, .. } => *rs1_uimm,
         _ => 0,
     }
@@ -82,13 +75,8 @@ pub fn insn_is_atomic(insn: &DecodedInsn) -> bool {
     matches!(insn, DecodedInsn::Atomic { .. })
 }
 
-/// True when the destination of a decoded instruction is an FP register.
-///
-/// Not every OP-FP instruction writes the FP file: FP-to-int conversions
-/// (`fcvt.w/wu/l/lu.*`, funct5 0b11000), comparisons (`fle/flt/feq`, 0b10100),
-/// and `fmv.x.*`/`fclass` (0b11100) write an integer register. Treating those as
-/// FP-dest would route their result through FP forwarding and starve an adjacent
-/// integer consumer, which then reads a stale value.
+/// True when the destination is an FP register. FP-to-int converts, compares, and
+/// `fmv.x`/`fclass` (funct5 below) write integer rd; FP-forwarding those starves the consumer.
 pub fn insn_is_fp_dest(insn: &DecodedInsn) -> bool {
     match insn {
         DecodedInsn::FLoad { .. } | DecodedInsn::FMac { .. } => true,
@@ -121,13 +109,8 @@ pub struct ForwardedValues {
     pub frs2: u64,
 }
 
-/// Compute the actual rs1/rs2/frs1/frs2 values for the EX stage, applying
-/// forwarding from EX/MEM and MEM/WB registers where appropriate.
-///
-/// Priority: EX/MEM forwarding overrides MEM/WB forwarding (the most recent
-/// producer wins).  EX/MEM forwarding is suppressed for load results (whose
-/// data is not available until the MEM stage completes); the stall unit ensures
-/// no load-use hazard reaches this point for single-cycle latency.
+/// The rs1/rs2/frs1/frs2 values for EX with forwarding applied: EX/MEM (newest producer)
+/// beats MEM/WB, and load results skip EX/MEM since their data only exists after MEM.
 pub fn compute_forwarding(
     ex_mem: Option<&EXMEMReg>,
     mem_wb: Option<&MEMWBReg>,
@@ -138,9 +121,8 @@ pub fn compute_forwarding(
     let mut frs1 = id_ex.frs1_val;
     let mut frs2 = id_ex.frs2_val;
 
-    // MEM/WB -> EX (lower priority). The rd != 0 guard applies only to integer
-    // destinations: x0 is hardwired zero, but f0 is a real FP register, so FP
-    // results to f0 must still be forwarded.
+    // MEM/WB -> EX (lower priority). Only integer dests skip rd == 0: x0 is
+    // hardwired zero, but f0 is a real register whose results must forward.
     if let Some(mw) = mem_wb {
         if !mw.is_fp_dest {
             if mw.rd != 0 {

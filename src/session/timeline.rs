@@ -87,6 +87,21 @@ impl RamLog {
         Some(buf)
     }
 
+    /// Drop every frame after `i` and rebase the delta chain on frame `i`, so
+    /// the next push diffs against the surviving newest frame, not a dropped one.
+    fn truncate_after(&mut self, i: usize) {
+        if i + 1 >= self.frames.len() {
+            return;
+        }
+        self.frames.truncate(i + 1);
+        self.prev = self.reconstruct(i).unwrap_or_default();
+        let mut key = self.frames.len() - 1;
+        while key > 0 && !matches!(self.frames[key], RamStore::Keyframe { .. }) {
+            key -= 1;
+        }
+        self.since_keyframe = self.frames.len() - 1 - key;
+    }
+
     /// Drop the oldest frame, first promoting the new front to a keyframe so no
     /// surviving delta is orphaned from its base.
     fn evict_front(&mut self) {
@@ -125,6 +140,9 @@ pub struct TimeMachine {
     evicted_since_growth: usize,
     /// Cap on retained frames; the oldest is evicted past this.
     max_frames: usize,
+    /// Frame the machine was last restored to; frames after it are stale
+    /// "future" history and are dropped by the next capture.
+    pending_truncate: Option<usize>,
     enabled: bool,
 }
 
@@ -140,6 +158,7 @@ impl TimeMachine {
             base_interval: interval.max(1),
             evicted_since_growth: 0,
             max_frames: max_frames.max(2),
+            pending_truncate: None,
             enabled: false,
         }
     }
@@ -163,6 +182,7 @@ impl TimeMachine {
         self.last_retired = None;
         self.interval = self.base_interval;
         self.evicted_since_growth = 0;
+        self.pending_truncate = None;
     }
 
     pub fn len(&self) -> usize {
@@ -186,8 +206,24 @@ impl TimeMachine {
                 .is_none_or(|last| retired.saturating_sub(last) >= self.interval)
     }
 
+    /// Rebase history on restored frame `i`: the throttle restarts from its retired
+    /// count and the divergent frames after it drop at the next capture, not before.
+    pub fn rewind_to(&mut self, i: usize) {
+        if i >= self.lights.len() {
+            return;
+        }
+        self.last_retired = self.retired.get(i).copied();
+        self.pending_truncate = Some(i);
+    }
+
     /// Store `snap` (its RAM and framebuffer delta-compressed) as the newest frame.
     pub fn capture(&mut self, snap: &VmSnapshot, retired: u64) {
+        if let Some(i) = self.pending_truncate.take() {
+            self.ram.truncate_after(i);
+            self.fb.truncate_after(i);
+            self.lights.truncate(i + 1);
+            self.retired.truncate(i + 1);
+        }
         self.ram.push(snap.ram());
         self.fb.push(&snap.fb_image());
         self.lights.push(snap.without_bulk());
@@ -299,6 +335,24 @@ mod tests {
         // Frame index 0 now corresponds to original frame 2.
         assert_eq!(log.reconstruct(0).as_ref(), Some(&frames[2]));
         assert_eq!(log.reconstruct(3).as_ref(), Some(&frames[5]));
+    }
+
+    #[test]
+    fn ramlog_truncate_after_rebases_the_delta_chain() {
+        let mut log = RamLog::new(4);
+        let len = PAGE * 2;
+        let frames: Vec<Vec<u8>> = (0..5).map(|i| buf(len, &[(0, i as u8 + 1)])).collect();
+        for f in &frames {
+            log.push(f);
+        }
+        log.truncate_after(1);
+        assert_eq!(log.len(), 2);
+        assert_eq!(log.reconstruct(1).as_ref(), Some(&frames[1]));
+        // A new frame must delta against surviving frame 1, not dropped frame 4.
+        let divergent = buf(len, &[(0, 9), (PAGE, 7)]);
+        log.push(&divergent);
+        assert_eq!(log.reconstruct(2).as_ref(), Some(&divergent));
+        assert_eq!(log.reconstruct(1).as_ref(), Some(&frames[1]));
     }
 
     #[test]

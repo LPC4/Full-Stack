@@ -178,6 +178,11 @@ impl CompilerRv64 {
         }
 
         self.emitter.start_function(&func.name, func.exported);
+        // Attribute the prologue to the function's first source line, so a
+        // pause at the symbol itself still maps back to source.
+        if let Some((file, line)) = first_source_line(func) {
+            self.emitter.emit_source_loc(file, line);
+        }
         ctx.emit_prologue(&mut self.emitter);
 
         if needs_sret {
@@ -1764,6 +1769,17 @@ impl CompilerRv64 {
         let size = self.type_size(ty);
         size <= 16 && size > 0
     }
+}
+
+/// The first source marker in `func`, used to attribute the prologue.
+fn first_source_line(func: &hll_to_ir::IrFunction) -> Option<(&str, u32)> {
+    func.blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .find_map(|inst| match inst {
+            IrInstruction::SourceLine { file, line } => Some((file.as_str(), *line)),
+            _ => None,
+        })
 }
 
 fn reg_for_arg(i: usize) -> Reg {

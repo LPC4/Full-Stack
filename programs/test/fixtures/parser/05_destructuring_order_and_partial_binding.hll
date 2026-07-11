@@ -1,3 +1,4 @@
+; Test: Destructuring Order and Partial Binding
 struct Pair {
     first: i32,
     second: i32

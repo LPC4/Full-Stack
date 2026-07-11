@@ -1,0 +1,65 @@
+; Fixed-buffer heap for freestanding/kernel builds: 64 KB .bss arena with a bump
+; pointer and a free-list. The hosted variant grows the break via brk instead.
+
+heap_buffer: u8[65536] = []
+heap_bump: u64 = 0
+heap_list: HeapBlock* = null
+
+; Bump-allocates n bytes, rounded up to 8-byte alignment. Returns null on overflow.
+export heap_raw_alloc: (n: u64) -> u8* {
+    aligned: u64 = ((n + 7) / 8) * 8
+    new_bump: u64 = heap_bump + aligned
+    if new_bump > 65536 {
+        return null
+    }
+    ptr: u8* = &heap_buffer[heap_bump]
+    heap_bump = new_bump
+    return ptr
+}
+
+export malloc: (size: u64) -> u8* {
+    requested: u64 = size
+    if requested == 0 {
+        requested = 1
+    }
+
+    current: HeapBlock* = heap_list
+    while current != null {
+        if current.is_free != 0 and current.size >= requested {
+            current.is_free = 0
+            return current.ptr
+        }
+        current = current.next
+    }
+
+    block: HeapBlock* = heap_raw_alloc(32) as HeapBlock*
+    if block == null {
+        return null
+    }
+    payload: u8* = heap_raw_alloc(requested)
+    if payload == null {
+        return null
+    }
+    @block = {
+        .next    = heap_list,
+        .ptr     = payload,
+        .size    = requested,
+        .is_free = 0,
+    }
+    heap_list = block
+    return payload
+}
+
+export free: (ptr: u8*) {
+    if ptr == null {
+        return
+    }
+    current: HeapBlock* = heap_list
+    while current != null {
+        if current.ptr == ptr {
+            current.is_free = 1
+            return
+        }
+        current = current.next
+    }
+}

@@ -196,6 +196,9 @@ impl LiveMachine {
             return false;
         };
         self.vm.restore(&snap);
+        // Rebase the capture throttle on the restored (rewound) retired counter;
+        // otherwise no frame is due again until execution re-passes the old count.
+        self.timeline.rewind_to(index);
         if self.state.is_alive() {
             self.state = MachineState::Paused;
         }
@@ -275,9 +278,19 @@ impl LiveMachine {
         self.step_instructions(1);
     }
 
-    /// Step whole source lines: retire instructions until the pc lands on a
-    /// different source line. Without a line table this is one instruction.
+    /// Step to a different source line in this frame or a caller; calls are
+    /// stepped over, not into. Without a line table this is one instruction.
     pub fn step_line(&mut self) {
+        self.step_line_impl(true);
+    }
+
+    /// Step to a different source line, entering calls: a call line pauses on
+    /// the callee's first line. Without a line table this is one instruction.
+    pub fn step_line_in(&mut self) {
+        self.step_line_impl(false);
+    }
+
+    fn step_line_impl(&mut self, over_calls: bool) {
         if !self.state.is_alive() {
             return;
         }
@@ -287,10 +300,14 @@ impl LiveMachine {
         }
         let origin = self
             .source_for_pc(self.registers().pc)
+            .filter(|(file, _)| !file.is_empty())
             .map(|(file, line)| (file.to_owned(), line));
         self.prev_step_regs = Some(self.registers());
         let mut cycles = 0;
         let mut retired = self.vm.insns_retired();
+        // While set, we are inside a call: run until the pc returns here so
+        // line checks never observe callee lines (notably the stdlib's).
+        let mut skip_until = over_calls.then(|| self.step_over_target()).flatten();
         while cycles < SOURCE_LINE_STEP_CYCLE_CAP {
             if !self.step_once() {
                 break;
@@ -302,17 +319,30 @@ impl LiveMachine {
                 continue;
             }
             retired = now_retired;
+            // A user breakpoint inside a skipped call still stops the step.
+            if self.breakpoint_hit() {
+                self.temp_breakpoint = None;
+                break;
+            }
+            if let Some(return_pc) = skip_until
+                && self.registers().pc != return_pc
+            {
+                continue;
+            }
             let here = self
                 .source_for_pc(self.registers().pc)
+                .filter(|(file, _)| !file.is_empty())
                 .map(|(file, line)| (file.to_owned(), line));
             if here.is_some() && here != origin {
                 break;
             }
+            skip_until = over_calls.then(|| self.step_over_target()).flatten();
         }
         if self.state.is_alive() {
             self.state = MachineState::Paused;
         }
         self.drain_uart();
+        self.capture_now();
     }
 
     /// Execute until `count` instructions retire, then pause. Pipeline fill,
@@ -346,6 +376,9 @@ impl LiveMachine {
         if self.state == MachineState::Running {
             self.state = MachineState::Paused;
             self.temp_breakpoint = None;
+            // Interval captures can be tens of thousands of instructions stale;
+            // give the scrubber a tick exactly where the user paused.
+            self.capture_now();
         }
     }
 
@@ -1075,6 +1108,135 @@ mod tests {
             .map(|(_, line)| line)
             .expect("landed pc has a source line");
         assert_ne!(landed, origin, "stepped onto a different source line");
+    }
+
+    #[test]
+    fn step_line_captures_a_time_travel_frame() {
+        let artifacts =
+            build_artifacts("main: () -> i32 {\n    a := 1\n    b := 2\n    return a + b\n}");
+        let main_pc = LiveMachine::runtime_address(
+            artifacts
+                .linked
+                .symbol_address("main")
+                .expect("main symbol"),
+        );
+        let mut live = LiveMachine::new_hosted(&artifacts).expect("boot");
+        live.timeline.set_enabled(true);
+        live.pause();
+        live.run_to(main_pc);
+        drive_to_completion(&mut live);
+        assert_eq!(live.state, MachineState::Paused);
+
+        let before = live.timeline.len();
+        live.step_line();
+        assert_eq!(
+            live.timeline.len(),
+            before + 1,
+            "step_line left a scrubber tick where it paused"
+        );
+        assert_eq!(
+            live.timeline.retired_at(live.timeline.len() - 1),
+            Some(live.vm.insns_retired()),
+        );
+    }
+
+    #[test]
+    fn restore_timepoint_rebases_history_and_keeps_capturing() {
+        let artifacts =
+            build_artifacts("main: () -> i32 {\n    a := 1\n    b := 2\n    return a + b\n}");
+        let main_pc = LiveMachine::runtime_address(
+            artifacts
+                .linked
+                .symbol_address("main")
+                .expect("main symbol"),
+        );
+        let mut live = LiveMachine::new_hosted(&artifacts).expect("boot");
+        live.timeline.set_enabled(true);
+        live.pause();
+        live.run_to(main_pc);
+        drive_to_completion(&mut live);
+        for _ in 0..3 {
+            live.step_instruction();
+        }
+        let frames = live.timeline.len();
+        assert!(frames >= 4, "expected a frame per pause, got {frames}");
+
+        assert!(live.restore_timepoint(1));
+        assert_eq!(
+            live.vm.insns_retired(),
+            live.timeline.retired_at(1).expect("frame 1 retired count")
+        );
+        // Scrubbing alone drops nothing; the stale future goes on the next capture.
+        assert_eq!(live.timeline.len(), frames);
+        live.step_instruction();
+        assert_eq!(
+            live.timeline.len(),
+            3,
+            "truncated to frame 1 plus the new frame"
+        );
+        assert_eq!(
+            live.timeline.retired_at(2),
+            Some(live.vm.insns_retired()),
+            "capture resumed from the rewound retired counter"
+        );
+    }
+
+    #[test]
+    fn step_line_steps_over_calls_without_pausing_in_the_callee() {
+        let artifacts = build_artifacts(
+            "add: (a: i32, b: i32) -> i32 {\n    c := a + b\n    return c\n}\n\nmain: () -> i32 {\n    x := add(1, 2)\n    y := x + 4\n    return x + y\n}",
+        );
+        let main_pc = LiveMachine::runtime_address(
+            artifacts
+                .linked
+                .symbol_address("main")
+                .expect("main symbol"),
+        );
+        let mut live = LiveMachine::new_hosted(&artifacts).expect("boot");
+        live.pause();
+        live.run_to(main_pc);
+        drive_to_completion(&mut live);
+        assert_eq!(live.state, MachineState::Paused);
+
+        let origin = live
+            .source_for_pc(live.registers().pc)
+            .map(|(_, line)| line)
+            .expect("main pc has a source line");
+        assert!(origin >= 6, "paused in main (line {origin}), not add");
+        live.step_line();
+        assert!(live.state.is_alive(), "step_line paused, not ran away");
+        let landed = live
+            .source_for_pc(live.registers().pc)
+            .map(|(_, line)| line)
+            .expect("landed pc has a source line");
+        assert_ne!(landed, origin, "stepped onto a different source line");
+        assert!(landed >= 6, "landed in main (line {landed}), not in add");
+    }
+
+    #[test]
+    fn step_line_in_pauses_on_the_callees_first_line() {
+        let artifacts = build_artifacts(
+            "add: (a: i32, b: i32) -> i32 {\n    c := a + b\n    return c\n}\n\nmain: () -> i32 {\n    x := add(1, 2)\n    y := x + 4\n    return x + y\n}",
+        );
+        let main_pc = LiveMachine::runtime_address(
+            artifacts
+                .linked
+                .symbol_address("main")
+                .expect("main symbol"),
+        );
+        let mut live = LiveMachine::new_hosted(&artifacts).expect("boot");
+        live.pause();
+        live.run_to(main_pc);
+        drive_to_completion(&mut live);
+        assert_eq!(live.state, MachineState::Paused);
+
+        live.step_line_in();
+        assert!(live.state.is_alive(), "step_line_in paused, not ran away");
+        let landed = live
+            .source_for_pc(live.registers().pc)
+            .map(|(_, line)| line)
+            .expect("landed pc has a source line");
+        assert!(landed <= 4, "landed inside add (line {landed}), not main");
     }
 
     #[test]

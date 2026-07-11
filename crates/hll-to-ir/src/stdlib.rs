@@ -34,6 +34,24 @@ pub fn get_stdlib_modules_for_mode(mode: TargetMode) -> Vec<(&'static str, &'sta
         .collect()
 }
 
+/// Repo-relative source path of stdlib module `name` in `mode`, for the
+/// pc-to-source line table. `None` when the module or its path is unknown.
+pub fn stdlib_module_source_path(mode: TargetMode, name: &str) -> Option<&'static str> {
+    let manifest = build_manifest::parse(STDLIB_BUILD).ok()?;
+    let key = match mode {
+        TargetMode::Hosted => "hosted",
+        TargetMode::Freestanding => "freestanding",
+        TargetMode::Kernel => "kernel",
+    };
+    let entries = manifest.list(key).ok()??;
+    entries.into_iter().find_map(|entry| {
+        let (module_name, source_key) = parse_module_entry(&entry);
+        (module_name == name)
+            .then(|| os_runtime::module_path(source_key))
+            .flatten()
+    })
+}
+
 fn parse_module_entry(entry: &str) -> (String, &str) {
     match entry.split_once('=') {
         Some((name, source_key)) => (name.to_owned(), source_key),

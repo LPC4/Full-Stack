@@ -184,8 +184,8 @@ impl AssembledOutput {
         self.line_table.iter().copied()
     }
 
-    /// Source location of the instruction covering `addr`: the entry with the
-    /// greatest address not exceeding `addr`. Returns `(file name, 1-based line)`.
+    /// Source location covering `addr` as `(file, 1-based line)`: the greatest
+    /// entry not exceeding `addr`; line-0 module-end sentinels read as none.
     pub fn source_for_addr(&self, addr: u64) -> Option<(&str, u32)> {
         let idx = match self.line_table.binary_search_by(|e| e.addr.cmp(&addr)) {
             Ok(i) => i,
@@ -193,7 +193,12 @@ impl AssembledOutput {
             Err(i) => i - 1,
         };
         let entry = self.line_table[idx];
-        self.file_name(entry.file_id).map(|f| (f, entry.line))
+        if entry.line == 0 {
+            return None;
+        }
+        self.file_name(entry.file_id)
+            .filter(|f| !f.is_empty())
+            .map(|f| (f, entry.line))
     }
 
     /// Lowest code address attributed to `line` in `file`, if any.

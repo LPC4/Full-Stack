@@ -1,12 +1,5 @@
-; Comprehensive struct and destructuring test.
-;
-; Covers: inline-struct literals, named structs, struct pass-by-value,
-;         struct return by value (small-struct RISC-V ABI path),
-;         full and partial destructuring, order-independent field binding,
-;         struct mutation through pointer parameters.
-;
-; Returns 0 on full success. Each failure branch returns a unique
-; non-zero error code that names the failing assertion.
+; Struct and destructuring test: literals, pass/return by value (small-struct ABI),
+; full/partial/order-independent destructuring, mutation via pointer. 0 on success.
 
 struct Vec2 { x: i32, y: i32 }
 struct DivResult { quotient: i32, remainder: i32 }

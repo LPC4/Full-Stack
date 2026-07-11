@@ -11,33 +11,35 @@ process     := import("process")
 scheduler   := import("scheduler")
 fs          := import("fs")
 
-const SYSCALL_EXIT     = 93
-const SYSCALL_WRITE    = 64
-const SYSCALL_YIELD    = 2
-const SYSCALL_OPEN     = 56
-const SYSCALL_CLOSE    = 57
-const SYSCALL_READ     = 63
-const SYSCALL_RENAME   = 82
-const SYSCALL_MKDIR    = 83
-const SYSCALL_FTRUNCATE = 46   ; shrink a file to an exact length
-const SYSCALL_LSEEK    = 62    ; reposition a file fd; whence 0=SET 1=CUR 2=END
+const SYSCALL_EXIT      = 93
+const SYSCALL_WRITE     = 64
+const SYSCALL_YIELD     = 2
+const SYSCALL_OPEN      = 56
+const SYSCALL_CLOSE     = 57
+const SYSCALL_READ      = 63
+const SYSCALL_RENAME    = 82
+const SYSCALL_MKDIR     = 83
+const SYSCALL_FTRUNCATE = 46
+const SYSCALL_LSEEK     = 62
+
 ; Project-specific syscalls for the interactive shell.
-const SYSCALL_READCHAR = 100   ; read one byte from the UART (-1 if none)
-const SYSCALL_READDIR  = 101   ; list directory entry by index
-const SYSCALL_STAT     = 102   ; inode type at a path (-1 if missing)
-const SYSCALL_EXEC     = 103   ; load and run an executable file from the FS
-const SYSCALL_PIDALIVE = 104   ; 1 if a launched pid is still runnable
-const SYSCALL_UNLINK   = 105   ; remove a regular file
-const SYSCALL_RMDIR    = 106   ; remove an empty directory
-const SYSCALL_MAPFB    = 107   ; map the framebuffer into the caller; returns its base VA
-const SYSCALL_POLLKEY  = 108   ; pop the next key event (-1 if none)
-const SYSCALL_EXEC_REDIR = 110 ; exec with stdout/stdin redirected to FS files (7.7)
+const SYSCALL_READCHAR   = 100
+const SYSCALL_READDIR    = 101
+const SYSCALL_STAT       = 102
+const SYSCALL_EXEC       = 103
+const SYSCALL_PIDALIVE   = 104
+const SYSCALL_UNLINK     = 105
+const SYSCALL_RMDIR      = 106
+const SYSCALL_MAPFB      = 107
+const SYSCALL_POLLKEY    = 108
+const SYSCALL_EXEC_REDIR = 110
+
 ; Process-tree syscalls (Linux/RISC-V numbers).
-const SYSCALL_FORK     = 220   ; clone the current process; returns child pid / 0
-const SYSCALL_WAIT     = 260   ; reap any exited child; returns its exit code / -1
-const SYSCALL_WAITPID  = 261   ; reap a specific child by pid; -2 on Ctrl-C, -1 if not ours
-const SYSCALL_KILL     = 129   ; send a signal to a pid; only SIGKILL is honoured
-const SYSCALL_BRK      = 214   ; set/query the caller's program break (Linux brk)
+const SYSCALL_FORK    = 220
+const SYSCALL_WAIT    = 260
+const SYSCALL_WAITPID = 261
+const SYSCALL_KILL    = 129
+const SYSCALL_BRK     = 214
 
 ; Signal numbers. Only SIGKILL is implemented (uncatchable teardown). See OS spec ch.7.6.
 const SIGKILL = 9
@@ -45,7 +47,7 @@ const SIGKILL = 9
 const SYSACT_CONTINUE      = 0
 const SYSACT_SCHEDULE      = 1
 const SYSACT_EXIT_SCHEDULE = 2
-const SYSACT_BLOCK         = 3   ; sleep the caller (e.g. waiting on input)
+const SYSACT_BLOCK         = 3
 
 ; Trap-frame slots (TF_*), PCB indices (PCB_IDX_*), and Sv39 page-flag bits (VMM_*)
 ; come from the shared kernel layout (layout.hll).
@@ -55,7 +57,7 @@ const UART_IER_ADDR = 0x10000001
 
 ; Ctrl-C byte, and the -2 sentinel wait returns on a foreground teardown.
 const INPUT_INTR_CHAR = 3
-const WAIT_INTERRUPTED = 0xFFFFFFFFFFFFFFFE  ; -2 as u64
+const WAIT_INTERRUPTED = 0xFFFFFFFFFFFFFFFE
 
 ; Canonical user code base (every process has its own root). See OS spec ch.4.3.
 const USER_CODE_BASE = 0x40000000
@@ -71,13 +73,14 @@ const USER_ARG_BASE  = 0x7FF00000
 const USER_ARG_FLAGS = VMM_R + VMM_W + VMM_U
 const USER_ARG_MAX   = 4095
 
-; Framebuffer device: 75 pixel pages + 1 control page. See OS spec ch.7.5.
-const FB_PHYS_BASE = 0x10020000
-const FB_PAGE_COUNT = 76
-const FB_USER_BASE = 0x50000000
-const FB_MAP_FLAGS = VMM_R + VMM_W + VMM_U
-const FB_PIXEL_BYTES = 307200   ; 320*240*4; the control page follows the pixels
-const FB_DBMODE_REG = 8         ; control-register offset: 0 = single, 1 = double
+; Framebuffer device: 75 pixel pages (320x240x4 bytes) then 1 control page whose
+; DBMODE register (offset 8) selects single (0) or double (1) buffering. Spec 7.5.
+const FB_PHYS_BASE   = 0x10020000
+const FB_PAGE_COUNT  = 76
+const FB_USER_BASE   = 0x50000000
+const FB_MAP_FLAGS   = VMM_R + VMM_W + VMM_U
+const FB_PIXEL_BYTES = 307200
+const FB_DBMODE_REG  = 8
 
 ; One-byte input pushback: a byte peeked by the Ctrl-C check but not consumed,
 ; delivered ahead of the device by the next readchar. See OS spec ch.6.5.
@@ -593,10 +596,8 @@ export sys_map_fb_impl: (frame: u64*) -> u64 {
     return SYSACT_CONTINUE
 }
 
-; brk(addr): set the caller's program break to `addr` (Linux semantics). addr == 0
-; queries the current break. Growing maps new R|W|U pages into the caller's own
-; root; the break starts at USER_HEAP_BASE. Returns the resulting break (unchanged
-; on OOM, so the caller can detect failure). See OS spec ch.7.8.
+; brk(addr): Linux semantics; grows the caller's heap from USER_HEAP_BASE. Returns
+; the resulting break (unchanged on OOM so callers see failure). See OS spec ch.7.8.
 export sys_brk_impl: (frame: u64*) -> u64 {
     cur: u64* = scheduler.current()
     if cur == null {
@@ -621,9 +622,8 @@ export sys_brk_impl: (frame: u64*) -> u64 {
     map_from: u64 = ((brk + 4095) / 4096) * 4096
     map_to:   u64 = ((addr + 4095) / 4096) * 4096
 
-    ; Refuse a request that would grow into the arg page / user stack above. Without
-    ; this, a runaway alloc maps over USER_ARG_BASE and corrupts the process. Leave the
-    ; break unchanged so the caller sees the failure (same contract as OOM).
+    ; Refuse growth into the arg page / user stack above (a runaway alloc would map
+    ; over USER_ARG_BASE); leave the break unchanged so the caller sees the failure.
     if map_to > USER_ARG_BASE {
         frame[TF_A0] = brk
         return SYSACT_CONTINUE

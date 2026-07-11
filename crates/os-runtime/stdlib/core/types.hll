@@ -1,3 +1,5 @@
+; Shared stdlib types: string header and heap free-list block.
+
 struct Str {
     data: u8*,
     length: u64,

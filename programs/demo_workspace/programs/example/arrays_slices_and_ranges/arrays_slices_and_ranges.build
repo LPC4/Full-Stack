@@ -1,0 +1,7 @@
+name = "arrays_slices_and_ranges"
+target = "hosted"
+root = "arrays_slices_and_ranges.hll"
+entry = "_start"
+stdlib = "hosted"
+import_closure = true
+mangle_symbols = true

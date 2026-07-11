@@ -28,6 +28,8 @@ const XREG_NAMES: [&str; 32] = [
 pub(crate) enum MachineView {
     Console,
     Screen,
+    /// Read-only source view that follows the pc across files.
+    Code,
     Disasm,
     Memory,
 }

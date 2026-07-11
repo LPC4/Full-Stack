@@ -1,10 +1,8 @@
-console := import("console")
-sys := import("sys")
 ; Spinning wireframe cube: map_fb, then per frame rotate, project, clear, draw.
 ; RGBA8888 pixels, double-buffered, WASD via poll_key. See OS spec ch.10.4.
 
-; Map the framebuffer (syscall 107); returns its base VA (0 on failure).
-; Pop the next keyboard event (syscall 108); packed event or -1 when none.
+console := import("console")
+sys := import("sys")
 
 ; Camera distance pushed onto z so the projected z stays positive.
 DIST: f64 = 4.0

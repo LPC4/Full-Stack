@@ -1,15 +1,5 @@
-; Comprehensive control-flow test.
-;
-; Covers: if/else chains, while loops, break, continue, nested loops,
-;         compile-time const, boolean short-circuit ordering.
-;
-; Returns 100 on full success, composed of five sub-results:
-;   category  =  3   (x=15 falls in the 10..20 bucket)
-;   sum       = 55   (1+2+...+10)
-;   break_val =  7   (loop exited when counter reached 7)
-;   evens     = 10   (even numbers in [1..20])
-;   inner_sum = 25   (5x5 nested-loop counter)
-;   total: 3+55+7+10+25 = 100
+; Control-flow test: if/else chains, while/break/continue, nested loops, consts,
+; short-circuit ordering. Returns 100 on success (sub-results 3+55+7+10+25).
 
 const BUCKET_LO = 10
 const BUCKET_HI = 20

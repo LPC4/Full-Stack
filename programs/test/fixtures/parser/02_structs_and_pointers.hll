@@ -1,3 +1,4 @@
+; Test: Structs and Pointers
 struct Node {
     val: i32,
     next: Node*

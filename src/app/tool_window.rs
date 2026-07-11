@@ -437,7 +437,7 @@ pub(super) fn kind_tag(kind: RunKind) -> &'static str {
     }
 }
 
-fn present_tag(mode: PresentMode) -> &'static str {
+pub(super) fn present_tag(mode: PresentMode) -> &'static str {
     match mode {
         PresentMode::Terminal => "terminal",
         PresentMode::Framebuffer => "framebuffer",

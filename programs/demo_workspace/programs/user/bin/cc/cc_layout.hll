@@ -1,0 +1,4 @@
+; Shared cc AST record layouts.
+struct Node { name: u8[16], kind: i64, a: i64, b: i64, c: i64, next: i64 }
+
+struct Fn { name: u8[16], nparams: i64, nlocals: i64, body: i64 }

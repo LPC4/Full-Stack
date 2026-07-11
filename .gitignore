@@ -15,8 +15,5 @@ target_wasm
 # Compiler artifact output directory
 out/
 
-# Demo workspace materialized from bundled sources at startup
-programs/demo_workspace/
-
 .run
 plugin

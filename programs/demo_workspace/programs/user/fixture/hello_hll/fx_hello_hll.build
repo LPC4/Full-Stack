@@ -1,0 +1,5 @@
+name = "fx_hello_hll"
+title = "hello.hll (fixture)"
+description = "HLL-0 reference source for `cc`."
+kind = "fixture"
+root = "hello.hll"

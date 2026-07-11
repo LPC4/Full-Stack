@@ -1,3 +1,5 @@
+; Minimal U-mode demo: print a greeting, then yield forever.
+
 console := import("console")
 
 main: () -> i32 {

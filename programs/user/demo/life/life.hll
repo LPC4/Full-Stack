@@ -1,10 +1,8 @@
-console := import("console")
-sys := import("sys")
 ; Conway's Game of Life: a 40x30 toroidal grid rendered to the framebuffer.
 ; B3/S23 rules, double-buffered, with P/R/space keyboard control. See OS spec ch.10.5.
 
-; Map the framebuffer (syscall 107); returns its base VA (0 on failure).
-; Pop the next keyboard event (syscall 108); packed event or -1 when none.
+console := import("console")
+sys := import("sys")
 
 ; Grid dimensions and the pixel size of each cell. GW*CELL = 320, GH*CELL = 240.
 const GW = 40

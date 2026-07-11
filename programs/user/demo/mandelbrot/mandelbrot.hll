@@ -1,9 +1,8 @@
-console := import("console")
-sys := import("sys")
 ; Framebuffer demo: map_fb, render the Mandelbrot set (square pixels), exit.
 ; See OS spec ch.10.4.
 
-; Map the framebuffer (syscall 107); returns its base VA (0 on failure).
+console := import("console")
+sys := import("sys")
 
 ; Framebuffer base virtual address (filled in by sys.map_fb).
 _fb_base: u64 = 0

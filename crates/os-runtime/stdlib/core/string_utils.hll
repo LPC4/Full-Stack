@@ -1,3 +1,5 @@
+; Slice-based string helpers (len/equals/copy/concat) over heap-allocated u8[].
+
 memory_allocator := import("memory_allocator")
 
 export string_len: (text: u8[]) -> u64 {

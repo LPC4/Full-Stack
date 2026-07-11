@@ -1,0 +1,302 @@
+; Spinning wireframe cube: map_fb, then per frame rotate, project, clear, draw.
+; RGBA8888 pixels, double-buffered, WASD via poll_key. See OS spec ch.10.4.
+
+console := import("console")
+sys := import("sys")
+
+; Camera distance pushed onto z so the projected z stays positive.
+DIST: f64 = 4.0
+; Screen-space scale factor for the perspective divide.
+SCALE: f64 = 150.0
+; Screen centre, as f64 for the projection expression.
+CX: f64 = 160.0
+CY: f64 = 120.0
+
+; Minsky rotation step per frame for each axis (small-angle approximation).
+STEP_Y: f64 = 0.03125
+STEP_X: f64 = 0.02083333333
+
+; Extra rotation applied per frame while a WASD key is held (player control).
+WASD_STEP: f64 = 0.05
+
+; Held state for the WASD keys (1 while down). A/D spin about Y, W/S tilt about X.
+hold_w: i64 = 0
+hold_a: i64 = 0
+hold_s: i64 = 0
+hold_d: i64 = 0
+
+; Framebuffer base virtual address (filled in by sys.map_fb).
+_fb_base: u64 = 0
+
+; Cube model-space vertex coordinates (f64), one entry per corner.
+vx: f64[8] = []
+vy: f64[8] = []
+vz: f64[8] = []
+
+; Projected screen coordinates (integer pixels) for each vertex.
+sxv: i64[8] = []
+syv: i64[8] = []
+
+; Edge endpoints: edge i connects vertex ea[i] to vertex eb[i].
+ea: i64[12] = []
+eb: i64[12] = []
+
+; Minsky-circle rotation state for two axes. (cos, sin) pairs that
+; advance by a fixed small angle each frame; different steps tumble the cube.
+cay: f64 = 1.0
+say: f64 = 0.0
+cax: f64 = 1.0
+sax: f64 = 0.0
+
+; Plot one pixel if it lies inside the 320x240 frame.
+plot: (x: i64, y: i64, color: u32) {
+    if x < 0 {
+        return
+    }
+    if x >= 320 {
+        return
+    }
+    if y < 0 {
+        return
+    }
+    if y >= 240 {
+        return
+    }
+    off: u64 = ((y as u64) * 320 + (x as u64)) * 4
+    p: u32* = (_fb_base + off) as u32*
+    @p = color
+}
+
+; Integer Bresenham line between two screen points.
+draw_line: (x0: i64, y0: i64, x1: i64, y1: i64, color: u32) {
+    dx: i64 = x1 - x0
+    if dx < 0 {
+        dx = 0 - dx
+    }
+    dy: i64 = y1 - y0
+    if dy < 0 {
+        dy = 0 - dy
+    }
+    sx: i64 = -1
+    if x0 < x1 {
+        sx = 1
+    }
+    sy: i64 = -1
+    if y0 < y1 {
+        sy = 1
+    }
+    err: i64 = dx - dy
+    while 1 == 1 {
+        plot(x0, y0, color)
+        if x0 == x1 {
+            if y0 == y1 {
+                return
+            }
+        }
+        e2: i64 = err + err
+        if e2 > (0 - dy) {
+            err = err - dy
+            x0 = x0 + sx
+        }
+        if e2 < dx {
+            err = err + dx
+            y0 = y0 + sy
+        }
+    }
+}
+
+; Place the 8 cube corners at (+/-1, +/-1, +/-1), signs from index bits.
+init_cube: () {
+    i: i64 = 0
+    while i < 8 {
+        if (i & 1) == 0 {
+            vx[i] = -1.0
+        } else {
+            vx[i] = 1.0
+        }
+        if (i & 2) == 0 {
+            vy[i] = -1.0
+        } else {
+            vy[i] = 1.0
+        }
+        if (i & 4) == 0 {
+            vz[i] = -1.0
+        } else {
+            vz[i] = 1.0
+        }
+        i = i + 1
+    }
+}
+
+; The 12 edges connect corners that differ in exactly one axis bit.
+init_edges: () {
+    ea[0] = 0
+    eb[0] = 1
+    ea[1] = 0
+    eb[1] = 2
+    ea[2] = 0
+    eb[2] = 4
+    ea[3] = 1
+    eb[3] = 3
+    ea[4] = 1
+    eb[4] = 5
+    ea[5] = 2
+    eb[5] = 3
+    ea[6] = 2
+    eb[6] = 6
+    ea[7] = 3
+    eb[7] = 7
+    ea[8] = 4
+    eb[8] = 5
+    ea[9] = 4
+    eb[9] = 6
+    ea[10] = 5
+    eb[10] = 7
+    ea[11] = 6
+    eb[11] = 7
+}
+
+; Advance both rotation angles one step (Minsky recurrence, drift-stable).
+advance_angles: () {
+    say = say + cay * STEP_Y
+    cay = cay - say * STEP_Y
+    sax = sax + cax * STEP_X
+    cax = cax - sax * STEP_X
+}
+
+; Drain all pending keyboard events and update the WASD held state. The GUI sends
+; letters as their uppercase ASCII scancode with bit 16 set on a press.
+poll_input: () {
+    while 1 == 1 {
+        ev: i64 = sys.poll_key()
+        if ev < 0 {
+            return
+        }
+        sc: u64 = (ev as u64) & 0xFFFF
+        down: i64 = 0
+        if ((ev as u64) & 0x10000) != 0 {
+            down = 1
+        }
+        if sc == 'W' {
+            hold_w = down
+        }
+        if sc == 'A' {
+            hold_a = down
+        }
+        if sc == 'S' {
+            hold_s = down
+        }
+        if sc == 'D' {
+            hold_d = down
+        }
+    }
+}
+
+; Apply one WASD rotation step per held key (Minsky recurrence, both directions).
+apply_wasd: () {
+    if hold_d != 0 {
+        say = say + cay * WASD_STEP
+        cay = cay - say * WASD_STEP
+    }
+    if hold_a != 0 {
+        say = say - cay * WASD_STEP
+        cay = cay + say * WASD_STEP
+    }
+    if hold_s != 0 {
+        sax = sax + cax * WASD_STEP
+        cax = cax - sax * WASD_STEP
+    }
+    if hold_w != 0 {
+        sax = sax - cax * WASD_STEP
+        cax = cax + sax * WASD_STEP
+    }
+}
+
+; Rotate every vertex (Y then X), perspective-project, and store screen coords.
+project_all: () {
+    i: i64 = 0
+    while i < 8 {
+        x: f64 = vx[i]
+        y: f64 = vy[i]
+        z: f64 = vz[i]
+
+        ; Rotate about Y.
+        x1: f64 = x * cay + z * say
+        z1: f64 = z * cay - x * say
+        y1: f64 = y
+
+        ; Rotate about X.
+        y2: f64 = y1 * cax - z1 * sax
+        z2: f64 = z1 * cax + y1 * sax
+        x2: f64 = x1
+
+        ; Perspective divide. zc stays positive because DIST > max |z2|.
+        zc: f64 = z2 + DIST
+        sxv[i] = (CX + (x2 * SCALE) / zc) as i64
+        syv[i] = (CY - (y2 * SCALE) / zc) as i64
+
+        i = i + 1
+    }
+}
+
+; Pixel-buffer byte size; the control registers sit immediately after it.
+const FB_BYTES = 307200
+; Control-register offsets relative to (_fb_base + FB_BYTES).
+const FB_FILL = 0
+const FB_PRESENT = 4
+const FB_DBMODE = 8
+
+; Enable double buffering so the GUI only ever shows complete frames (no flicker).
+enable_double_buffer: () {
+    reg: u32* = (_fb_base + FB_BYTES + FB_DBMODE) as u32*
+    @reg = 1 as u32
+}
+
+; Clear the back buffer to opaque black via one write to FILL (device memsets it).
+fb_clear: () {
+    fill: u32* = (_fb_base + FB_BYTES + FB_FILL) as u32*
+    @fill = 0xFF000000 as u32
+}
+
+; Publish the finished back buffer to the visible front buffer.
+fb_present: () {
+    reg: u32* = (_fb_base + FB_BYTES + FB_PRESENT) as u32*
+    @reg = 1 as u32
+}
+
+; Draw all 12 edges in one colour.
+draw_cube: () {
+    col: u32 = 0xFF33FF66 as u32
+    i: i64 = 0
+    while i < 12 {
+        a: i64 = ea[i]
+        b: i64 = eb[i]
+        draw_line(sxv[a], syv[a], sxv[b], syv[b], col)
+        i = i + 1
+    }
+}
+
+main: () -> i32 {
+    base: u64 = sys.map_fb()
+    if base == 0 {
+        console.writeln("cube: map_fb failed".ptr)
+        return 1
+    }
+    _fb_base = base
+
+    init_cube()
+    init_edges()
+    enable_double_buffer()
+    console.writeln("cube: rendering (WASD to rotate)".ptr)
+
+    while 1 == 1 {
+        poll_input()
+        advance_angles()
+        apply_wasd()
+        project_all()
+        fb_clear()
+        draw_cube()
+        fb_present()
+    }
+    return 0
+}

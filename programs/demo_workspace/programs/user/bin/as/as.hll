@@ -1,0 +1,1335 @@
+; In-VM RV64I assembler: `as <src> <out>`.
+
+console := import("console")
+sys := import("sys")
+cstr := import("cstr")
+object := import("./as_object.hll")
+text := import("text")
+
+const ARG_BASE = 0x7FF00000
+const USER_CODE_BASE = 0x40000000
+const HDR = 4096
+const PAD = 32
+
+; --- Assembly state ---
+src: u8* = null
+src_len: u64 = 0
+export code: u8* = null
+export code_len: u64 = 0
+export data: u8* = null
+export data_len: u64 = 0
+cur_sec: i64 = 0
+text_total: i64 = 0
+export out: u8* = null
+
+export labels: Label* = null
+export lbl_count: i64 = 0
+tokbuf: u8* = null
+ntok: i64 = 0
+err_flag: i64 = 0
+
+; --- Object mode ---
+obj_mode: i64 = 0
+glbl_names: u8* = null
+glbl_count: i64 = 0
+export relocs: Reloc* = null
+export nreloc: i64 = 0
+
+tok_at: (i: i64) -> u8* {
+    return tokbuf + (i as u64) * 24
+}
+
+export fail: (msg: u8*) {
+    console.write("as: ".ptr)
+    console.writeln(msg)
+    err_flag = 1
+}
+
+is_sep: (c: u8) -> i64 {
+    return match c {
+        ' '  -> 1
+        '\t' -> 1
+        ','  -> 1
+        _    -> 0
+    }
+}
+
+strip_comment: (line: u8*) {
+    i: u64 = 0
+    while @(line + i) != 0 {
+        c: u8 = @(line + i)
+        if c == ';' {
+            t: u8* = line + i
+            @t = 0 as u8
+            return
+        }
+        if c == '#' {
+            t: u8* = line + i
+            @t = 0 as u8
+            return
+        }
+        i = i + 1
+    }
+}
+
+tokenize: (line: u8*) {
+    n: i64 = 0
+    i: u64 = 0
+    while 1 == 1 {
+        while is_sep(@(line + i)) == 1 {
+            i = i + 1
+        }
+        if @(line + i) == 0 {
+            break
+        }
+        if n >= 6 {
+            break
+        }
+        dst: u8* = tok_at(n)
+        k: u64 = 0
+        while 1 == 1 {
+            c: u8 = @(line + i)
+            if c == 0 {
+                break
+            }
+            if is_sep(c) == 1 {
+                break
+            }
+            if k < 23 {
+                d: u8* = dst + k
+                @d = c
+                k = k + 1
+            }
+            i = i + 1
+        }
+        term: u8* = dst + k
+        @term = 0 as u8
+        n = n + 1
+    }
+    ntok = n
+}
+
+ends_colon: (p: u8*) -> i64 {
+    l: u64 = cstr.len(p)
+    if l == 0 {
+        return 0
+    }
+    if @(p + (l - 1)) == ':' {
+        return 1
+    }
+    return 0
+}
+
+drop_colon: (p: u8*) {
+    l: u64 = cstr.len(p)
+    if l > 0 {
+        t: u8* = p + (l - 1)
+        @t = 0 as u8
+    }
+}
+
+; --- Register and immediate parsing ---
+
+parse_uint: (p: u8*) -> i64 {
+    v: i64 = 0
+    i: u64 = 0
+    while @(p + i) != 0 {
+        c: u8 = @(p + i)
+        if c < '0' {
+            return v
+        }
+        if c > '9' {
+            return v
+        }
+        v = v * 10 + (c as i64 - '0')
+        i = i + 1
+    }
+    return v
+}
+
+reg_num: (p: u8*) -> i64 {
+    if cstr.eq(p, "zero".ptr) == 1 {
+        return 0
+    }
+    if cstr.eq(p, "ra".ptr) == 1 {
+        return 1
+    }
+    if cstr.eq(p, "sp".ptr) == 1 {
+        return 2
+    }
+    if cstr.eq(p, "gp".ptr) == 1 {
+        return 3
+    }
+    if cstr.eq(p, "tp".ptr) == 1 {
+        return 4
+    }
+    if cstr.eq(p, "t0".ptr) == 1 {
+        return 5
+    }
+    if cstr.eq(p, "t1".ptr) == 1 {
+        return 6
+    }
+    if cstr.eq(p, "t2".ptr) == 1 {
+        return 7
+    }
+    if cstr.eq(p, "fp".ptr) == 1 {
+        return 8
+    }
+    if cstr.eq(p, "s0".ptr) == 1 {
+        return 8
+    }
+    if cstr.eq(p, "s1".ptr) == 1 {
+        return 9
+    }
+    if cstr.eq(p, "a0".ptr) == 1 {
+        return 10
+    }
+    if cstr.eq(p, "a1".ptr) == 1 {
+        return 11
+    }
+    if cstr.eq(p, "a2".ptr) == 1 {
+        return 12
+    }
+    if cstr.eq(p, "a3".ptr) == 1 {
+        return 13
+    }
+    if cstr.eq(p, "a4".ptr) == 1 {
+        return 14
+    }
+    if cstr.eq(p, "a5".ptr) == 1 {
+        return 15
+    }
+    if cstr.eq(p, "a6".ptr) == 1 {
+        return 16
+    }
+    if cstr.eq(p, "a7".ptr) == 1 {
+        return 17
+    }
+    if cstr.eq(p, "s2".ptr) == 1 {
+        return 18
+    }
+    if cstr.eq(p, "s3".ptr) == 1 {
+        return 19
+    }
+    if cstr.eq(p, "s4".ptr) == 1 {
+        return 20
+    }
+    if cstr.eq(p, "s5".ptr) == 1 {
+        return 21
+    }
+    if cstr.eq(p, "s6".ptr) == 1 {
+        return 22
+    }
+    if cstr.eq(p, "s7".ptr) == 1 {
+        return 23
+    }
+    if cstr.eq(p, "s8".ptr) == 1 {
+        return 24
+    }
+    if cstr.eq(p, "s9".ptr) == 1 {
+        return 25
+    }
+    if cstr.eq(p, "s10".ptr) == 1 {
+        return 26
+    }
+    if cstr.eq(p, "s11".ptr) == 1 {
+        return 27
+    }
+    if cstr.eq(p, "t3".ptr) == 1 {
+        return 28
+    }
+    if cstr.eq(p, "t4".ptr) == 1 {
+        return 29
+    }
+    if cstr.eq(p, "t5".ptr) == 1 {
+        return 30
+    }
+    if cstr.eq(p, "t6".ptr) == 1 {
+        return 31
+    }
+    if @p == 'x' {
+        n: i64 = parse_uint(p + 1)
+        if n >= 0 {
+            if n <= 31 {
+                return n
+            }
+        }
+    }
+    fail("bad register".ptr)
+    return -1
+}
+
+parse_imm: (p: u8*) -> i64 {
+    i: u64 = 0
+    neg: i64 = 0
+    if @(p + i) == '-' {
+        neg = 1
+        i = i + 1
+    }
+    v: i64 = 0
+    if @(p + i) == '0' {
+        if @(p + i + 1) == 'x' {
+            i = i + 2
+            while @(p + i) != 0 {
+                c: u8 = @(p + i)
+                d: i64 = -1
+                if c >= '0' {
+                    if c <= '9' {
+                        d = c as i64 - '0'
+                    }
+                }
+                if c >= 'a' {
+                    if c <= 'f' {
+                        d = c as i64 - 87
+                    }
+                }
+                if c >= 'A' {
+                    if c <= 'F' {
+                        d = c as i64 - 55
+                    }
+                }
+                if d < 0 {
+                    break
+                }
+                v = v * 16 + d
+                i = i + 1
+            }
+            if neg == 1 {
+                return 0 - v
+            }
+            return v
+        }
+    }
+    while @(p + i) != 0 {
+        c: u8 = @(p + i)
+        if c < '0' {
+            break
+        }
+        if c > '9' {
+            break
+        }
+        v = v * 10 + (c as i64 - '0')
+        i = i + 1
+    }
+    if neg == 1 {
+        return 0 - v
+    }
+    return v
+}
+
+mem_imm: i64 = 0
+mem_reg: i64 = 0
+
+parse_mem: (p: u8*) {
+    mem_imm = parse_imm(p)
+    i: u64 = 0
+    while @(p + i) != 0 {
+        if @(p + i) == '(' {
+            break
+        }
+        i = i + 1
+    }
+    if @(p + i) != '(' {
+        fail("bad memory operand".ptr)
+        mem_reg = 0
+        return
+    }
+    i = i + 1
+    rbuf: u8[8] = []
+    rp: u8* = &rbuf[0]
+    k: u64 = 0
+    while @(p + i) != 0 {
+        c: u8 = @(p + i)
+        if c == ')' {
+            break
+        }
+        if k < 7 {
+            d: u8* = rp + k
+            @d = c
+            k = k + 1
+        }
+        i = i + 1
+    }
+    t: u8* = rp + k
+    @t = 0 as u8
+    mem_reg = reg_num(rp)
+}
+
+; --- Label table ---
+
+add_label: (name: u8*, off: i64, sec: i64) {
+    if lbl_count >= 64 {
+        fail("too many labels".ptr)
+        return
+    }
+    lab: Label* = &labels[lbl_count]
+    dst: u8* = lab as u8*
+    i: u64 = 0
+    while 1 == 1 {
+        c: u8 = @(name + i)
+        if i >= 15 {
+            break
+        }
+        d: u8* = dst + i
+        @d = c
+        if c == 0 {
+            break
+        }
+        i = i + 1
+    }
+    t: u8* = dst + i
+    @t = 0 as u8
+    lab.addr = off
+    lab.sec = sec
+    lbl_count = lbl_count + 1
+}
+
+resolve_labels: () {
+    i: i64 = 0
+    while i < lbl_count {
+        lab: Label* = &labels[i]
+        if lab.sec == 1 {
+            lab.addr = text_total + PAD + lab.addr
+        }
+        i = i + 1
+    }
+}
+
+find_label: (name: u8*) -> i64 {
+    i: i64 = 0
+    while i < lbl_count {
+        lab: Label* = &labels[i]
+        cand: u8* = lab as u8*
+        if cstr.eq(cand, name) == 1 {
+            return lab.addr
+        }
+        i = i + 1
+    }
+    fail("undefined label".ptr)
+    return -1
+}
+
+export label_defined: (name: u8*) -> i64 {
+    i: i64 = 0
+    while i < lbl_count {
+        lab: Label* = &labels[i]
+        cand: u8* = lab as u8*
+        if cstr.eq(cand, name) == 1 {
+            return 1
+        }
+        i = i + 1
+    }
+    return 0
+}
+
+add_globl: (name: u8*) {
+    if is_globl(name) == 1 {
+        return
+    }
+    if glbl_count >= 32 {
+        return
+    }
+    dst: u8* = glbl_names + (glbl_count as u64) * 16
+    i: u64 = 0
+    while i < 15 {
+        c: u8 = @(name + i)
+        e: u8* = dst + i
+        @e = c
+        if c == 0 {
+            glbl_count = glbl_count + 1
+            return
+        }
+        i = i + 1
+    }
+    z: u8* = dst + 15
+    @z = 0 as u8
+    glbl_count = glbl_count + 1
+}
+
+export is_globl: (name: u8*) -> i64 {
+    i: i64 = 0
+    while i < glbl_count {
+        cand: u8* = glbl_names + (i as u64) * 16
+        if cstr.eq(cand, name) == 1 {
+            return 1
+        }
+        i = i + 1
+    }
+    return 0
+}
+
+add_reloc: (name: u8*, off: i64, kind: i64) {
+    if nreloc >= 256 {
+        fail("too many relocations".ptr)
+        return
+    }
+    r: Reloc* = &relocs[nreloc]
+    dst: u8* = r as u8*
+    i: u64 = 0
+    while i < 15 {
+        c: u8 = @(name + i)
+        e: u8* = dst + i
+        @e = c
+        if c == 0 {
+            break
+        }
+        i = i + 1
+    }
+    t: u8* = dst + i
+    @t = 0 as u8
+    r.off = off
+    r.kind = kind
+    nreloc = nreloc + 1
+}
+
+; --- Encoding ---
+
+push_byte: (b: u8) {
+    if code_len < 8192 {
+        code[code_len] = b
+        code_len = code_len + 1
+    }
+}
+
+emit_word: (w: u32) {
+    push_byte(w as u8)
+    push_byte((w >> 8) as u8)
+    push_byte((w >> 16) as u8)
+    push_byte((w >> 24) as u8)
+}
+
+export wr_le: (off: u64, val: u64, n: u64) {
+    k: u64 = 0
+    while k < n {
+        d: u8* = out + off + k
+        @d = (val >> (k * 8)) as u8
+        k = k + 1
+    }
+}
+
+enc_r: (rd: i64, rs1: i64, rs2: i64, funct3: i64, funct7: i64) -> u32 {
+    return ((funct7 as u32) << 25) | ((rs2 as u32) << 20) | ((rs1 as u32) << 15)
+         | ((funct3 as u32) << 12) | ((rd as u32) << 7) | (0x33 as u32)
+}
+
+enc_i: (rd: i64, rs1: i64, imm: i64, funct3: i64, opcode: i64) -> u32 {
+    return (((imm as u32) & 0xFFF) << 20) | ((rs1 as u32) << 15)
+         | ((funct3 as u32) << 12) | ((rd as u32) << 7) | (opcode as u32)
+}
+
+enc_b: (rs1: i64, rs2: i64, imm: i64, funct3: i64) -> u32 {
+    u: u32 = imm as u32
+    i12: u32 = (u >> 12) & 1
+    i11: u32 = (u >> 11) & 1
+    i10_5: u32 = (u >> 5) & 0x3F
+    i4_1: u32 = (u >> 1) & 0xF
+    return (i12 << 31) | (i10_5 << 25) | ((rs2 as u32) << 20) | ((rs1 as u32) << 15)
+         | ((funct3 as u32) << 12) | (i4_1 << 8) | (i11 << 7) | (0x63 as u32)
+}
+
+enc_j: (rd: i64, imm: i64) -> u32 {
+    u: u32 = imm as u32
+    i20: u32 = (u >> 20) & 1
+    i10_1: u32 = (u >> 1) & 0x3FF
+    i11: u32 = (u >> 11) & 1
+    i19_12: u32 = (u >> 12) & 0xFF
+    return (i20 << 31) | (i10_1 << 21) | (i11 << 20) | (i19_12 << 12)
+         | ((rd as u32) << 7) | (0x6F as u32)
+}
+
+enc_s: (rs1: i64, rs2: i64, imm: i64, funct3: i64) -> u32 {
+    u: u32 = imm as u32
+    i11_5: u32 = (u >> 5) & 0x7F
+    i4_0: u32 = u & 0x1F
+    return (i11_5 << 25) | ((rs2 as u32) << 20) | ((rs1 as u32) << 15)
+         | ((funct3 as u32) << 12) | (i4_0 << 7) | (0x23 as u32)
+}
+
+enc_u: (rd: i64, imm: i64, opcode: i64) -> u32 {
+    return (((imm as u32) & 0xFFFFF) << 12) | ((rd as u32) << 7) | (opcode as u32)
+}
+
+li_size: (imm: i64) -> i64 {
+    if imm >= -2048 {
+        if imm <= 2047 {
+            return 4
+        }
+    }
+    return 8
+}
+
+emit_li: (rd: i64, imm: i64) {
+    if imm >= -2048 {
+        if imm <= 2047 {
+            emit_word(enc_i(rd, 0, imm, 0, 0x13))
+            return
+        }
+    }
+    if imm < 0 {
+        fail("li: negative immediate too wide".ptr)
+        return
+    }
+    hi: i64 = (imm + 2048) / 4096
+    if hi > 1048575 {
+        fail("li: immediate too wide".ptr)
+        return
+    }
+    lo: i64 = imm - hi * 4096
+    emit_word(((hi as u32) & 0xFFFFF) << 12 | ((rd as u32) << 7) | (0x37 as u32))
+    emit_word(enc_i(rd, rd, lo, 0, 0x13))
+}
+
+; --- Data section emission ---
+
+push_data_byte: (b: u8) {
+    if data_len < 8192 {
+        data[data_len] = b
+        data_len = data_len + 1
+    }
+}
+
+emit_data_word: (w: u32) {
+    push_data_byte(w as u8)
+    push_data_byte((w >> 8) as u8)
+    push_data_byte((w >> 16) as u8)
+    push_data_byte((w >> 24) as u8)
+}
+
+; PC-relative split for auipc+addi / auipc+jalr pairs.
+pcrel_hi: i64 = 0
+pcrel_lo: i64 = 0
+split_pcrel: (delta: i64) {
+    lo: i64 = delta & 0xFFF
+    if lo >= 2048 {
+        lo = lo - 4096
+    }
+    pcrel_lo = lo
+    pcrel_hi = (delta - lo) >> 12
+}
+
+data_string: (pass: i64, line_p: u8*, zt: i64) -> i64 {
+    i: u64 = 0
+    while @(line_p + i) != 0 {
+        if @(line_p + i) == '"' {
+            break
+        }
+        i = i + 1
+    }
+    if @(line_p + i) != '"' {
+        fail("string: missing quote".ptr)
+        return 0
+    }
+    i = i + 1
+    n: i64 = 0
+    while @(line_p + i) != 0 {
+        c: u8 = @(line_p + i)
+        if c == '"' {
+            break
+        }
+        if c == '\\' {
+            i = i + 1
+            e: u8 = @(line_p + i)
+            c = match e {
+                'n'  -> '\n' as u8
+                't'  -> '\t' as u8
+                'r'  -> '\r' as u8
+                '0'  -> 0 as u8
+                '\\' -> '\\' as u8
+                '"'  -> '"' as u8
+                _    -> e
+            }
+        }
+        if pass == 2 {
+            push_data_byte(c)
+        }
+        n = n + 1
+        i = i + 1
+    }
+    if zt == 1 {
+        if pass == 2 {
+            push_data_byte(0 as u8)
+        }
+        n = n + 1
+    }
+    return n
+}
+
+handle_directive: (pass: i64, base: i64, line_p: u8*) -> i64 {
+    d: u8* = tok_at(base)
+    if cstr.eq(d, ".text".ptr) == 1 {
+        cur_sec = 0
+        return 0
+    }
+    if cstr.eq(d, ".data".ptr) == 1 {
+        cur_sec = 1
+        return 0
+    }
+    if cstr.eq(d, ".rodata".ptr) == 1 {
+        cur_sec = 1
+        return 0
+    }
+    if cstr.eq(d, ".bss".ptr) == 1 {
+        cur_sec = 1
+        return 0
+    }
+    if cstr.eq(d, ".section".ptr) == 1 {
+        a: u8* = tok_at(base + 1)
+        if cstr.eq(a, ".text".ptr) == 1 {
+            cur_sec = 0
+        } else {
+            cur_sec = 1
+        }
+        return 0
+    }
+    if cstr.eq(d, ".globl".ptr) == 1 {
+        if pass == 1 {
+            add_globl(tok_at(base + 1))
+        }
+        return 0
+    }
+    if cstr.eq(d, ".byte".ptr) == 1 {
+        if pass == 2 {
+            push_data_byte(parse_imm(tok_at(base + 1)) as u8)
+        }
+        return 1
+    }
+    if cstr.eq(d, ".word".ptr) == 1 {
+        if pass == 2 {
+            emit_data_word(parse_imm(tok_at(base + 1)) as u32)
+        }
+        return 4
+    }
+    if cstr.eq(d, ".zero".ptr) == 1 {
+        n: i64 = parse_imm(tok_at(base + 1))
+        if pass == 2 {
+            k: i64 = 0
+            while k < n {
+                push_data_byte(0 as u8)
+                k = k + 1
+            }
+        }
+        return n
+    }
+    if cstr.eq(d, ".asciz".ptr) == 1 {
+        return data_string(pass, line_p, 1)
+    }
+    if cstr.eq(d, ".ascii".ptr) == 1 {
+        return data_string(pass, line_p, 0)
+    }
+    fail("unknown directive".ptr)
+    return 0
+}
+
+encode_instr: (pass: i64, base: i64, pc: i64) -> i64 {
+    m: u8* = tok_at(base)
+    o0: u8* = tok_at(base + 1)
+    o1: u8* = tok_at(base + 2)
+    o2: u8* = tok_at(base + 3)
+
+    if cstr.eq(m, "ecall".ptr) == 1 {
+        if pass == 2 {
+            emit_word(0x73 as u32)
+        }
+        return 4
+    }
+    if cstr.eq(m, "ret".ptr) == 1 {
+        if pass == 2 {
+            emit_word(enc_i(0, 1, 0, 0, 0x67))
+        }
+        return 4
+    }
+    if cstr.eq(m, "li".ptr) == 1 {
+        imm: i64 = parse_imm(o1)
+        if pass == 2 {
+            emit_li(reg_num(o0), imm)
+        }
+        return li_size(imm)
+    }
+    if cstr.eq(m, "mv".ptr) == 1 {
+        if pass == 2 {
+            emit_word(enc_i(reg_num(o0), reg_num(o1), 0, 0, 0x13))
+        }
+        return 4
+    }
+    if cstr.eq(m, "addi".ptr) == 1 {
+        if pass == 2 {
+            emit_word(enc_i(reg_num(o0), reg_num(o1), parse_imm(o2), 0, 0x13))
+        }
+        return 4
+    }
+    if cstr.eq(m, "addiw".ptr) == 1 {
+        if pass == 2 {
+            emit_word(enc_i(reg_num(o0), reg_num(o1), parse_imm(o2), 0, 0x1B))
+        }
+        return 4
+    }
+    if cstr.eq(m, "add".ptr) == 1 {
+        if pass == 2 {
+            emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 0, 0))
+        }
+        return 4
+    }
+    if cstr.eq(m, "sub".ptr) == 1 {
+        if pass == 2 {
+            emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 0, 0x20))
+        }
+        return 4
+    }
+    if cstr.eq(m, "and".ptr) == 1 {
+        if pass == 2 {
+            emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 7, 0))
+        }
+        return 4
+    }
+    if cstr.eq(m, "or".ptr) == 1 {
+        if pass == 2 {
+            emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 6, 0))
+        }
+        return 4
+    }
+    if cstr.eq(m, "xor".ptr) == 1 {
+        if pass == 2 {
+            emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 4, 0))
+        }
+        return 4
+    }
+    ; --- M-extension ---
+    if cstr.eq(m, "mul".ptr) == 1 {
+        if pass == 2 {
+            emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 0, 1))
+        }
+        return 4
+    }
+    if cstr.eq(m, "div".ptr) == 1 {
+        if pass == 2 {
+            emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 4, 1))
+        }
+        return 4
+    }
+    if cstr.eq(m, "divu".ptr) == 1 {
+        if pass == 2 {
+            emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 5, 1))
+        }
+        return 4
+    }
+    if cstr.eq(m, "rem".ptr) == 1 {
+        if pass == 2 {
+            emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 6, 1))
+        }
+        return 4
+    }
+    if cstr.eq(m, "remu".ptr) == 1 {
+        if pass == 2 {
+            emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 7, 1))
+        }
+        return 4
+    }
+    if cstr.eq(m, "j".ptr) == 1 {
+        if pass == 2 {
+            target: i64 = find_label(o0)
+            emit_word(enc_j(0, target - pc))
+        }
+        return 4
+    }
+    if cstr.eq(m, "beq".ptr) == 1 {
+        if pass == 2 {
+            target: i64 = find_label(o2)
+            emit_word(enc_b(reg_num(o0), reg_num(o1), target - pc, 0))
+        }
+        return 4
+    }
+    if cstr.eq(m, "bne".ptr) == 1 {
+        if pass == 2 {
+            target: i64 = find_label(o2)
+            emit_word(enc_b(reg_num(o0), reg_num(o1), target - pc, 1))
+        }
+        return 4
+    }
+    if cstr.eq(m, "blt".ptr) == 1 {
+        if pass == 2 {
+            target: i64 = find_label(o2)
+            emit_word(enc_b(reg_num(o0), reg_num(o1), target - pc, 4))
+        }
+        return 4
+    }
+    if cstr.eq(m, "bge".ptr) == 1 {
+        if pass == 2 {
+            target: i64 = find_label(o2)
+            emit_word(enc_b(reg_num(o0), reg_num(o1), target - pc, 5))
+        }
+        return 4
+    }
+    if cstr.eq(m, "bltu".ptr) == 1 {
+        if pass == 2 {
+            target: i64 = find_label(o2)
+            emit_word(enc_b(reg_num(o0), reg_num(o1), target - pc, 6))
+        }
+        return 4
+    }
+    if cstr.eq(m, "bgeu".ptr) == 1 {
+        if pass == 2 {
+            target: i64 = find_label(o2)
+            emit_word(enc_b(reg_num(o0), reg_num(o1), target - pc, 7))
+        }
+        return 4
+    }
+
+    ; --- Jumps and PC-relative address materialization ---
+    if cstr.eq(m, "jal".ptr) == 1 {
+        if pass == 2 {
+            if obj_mode == 1 {
+                if label_defined(o1) == 0 {
+                    add_reloc(o1, pc, 1)
+                    emit_word(enc_j(reg_num(o0), 0))
+                    return 4
+                }
+            }
+            target: i64 = find_label(o1)
+            emit_word(enc_j(reg_num(o0), target - pc))
+        }
+        return 4
+    }
+    if cstr.eq(m, "jalr".ptr) == 1 {
+        if pass == 2 {
+            emit_word(enc_i(reg_num(o0), reg_num(o1), parse_imm(o2), 0, 0x67))
+        }
+        return 4
+    }
+    if cstr.eq(m, "call".ptr) == 1 {
+        if pass == 2 {
+            if obj_mode == 1 {
+                if label_defined(o0) == 0 {
+                    add_reloc(o0, pc, 0)
+                    emit_word(enc_u(1, 0, 0x17))
+                    emit_word(enc_i(1, 1, 0, 0, 0x67))
+                    return 8
+                }
+            }
+            target: i64 = find_label(o0)
+            split_pcrel(target - pc)
+            emit_word(enc_u(1, pcrel_hi, 0x17))
+            emit_word(enc_i(1, 1, pcrel_lo, 0, 0x67))
+        }
+        return 8
+    }
+    ; Object-mode la always relocates because section merging shifts distances.
+    if cstr.eq(m, "la".ptr) == 1 {
+        if pass == 2 {
+            rd: i64 = reg_num(o0)
+            if obj_mode == 1 {
+                add_reloc(o1, pc, 2)
+                hi: i64 = 0
+                lo: i64 = 0
+                if label_defined(o1) == 1 {
+                    split_pcrel(find_label(o1) - pc)
+                    hi = pcrel_hi
+                    lo = pcrel_lo
+                }
+                emit_word(enc_u(rd, hi, 0x17))
+                emit_word(enc_i(rd, rd, lo, 0, 0x13))
+                return 8
+            }
+            target: i64 = find_label(o1)
+            split_pcrel(target - pc)
+            emit_word(enc_u(rd, pcrel_hi, 0x17))
+            emit_word(enc_i(rd, rd, pcrel_lo, 0, 0x13))
+        }
+        return 8
+    }
+
+    ; --- Register-register (R-type) ---
+    if cstr.eq(m, "sll".ptr) == 1 {
+        if pass == 2 {
+            emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 1, 0))
+        }
+        return 4
+    }
+    if cstr.eq(m, "srl".ptr) == 1 {
+        if pass == 2 {
+            emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 5, 0))
+        }
+        return 4
+    }
+    if cstr.eq(m, "sra".ptr) == 1 {
+        if pass == 2 {
+            emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 5, 0x20))
+        }
+        return 4
+    }
+    if cstr.eq(m, "slt".ptr) == 1 {
+        if pass == 2 {
+            emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 2, 0))
+        }
+        return 4
+    }
+    if cstr.eq(m, "sltu".ptr) == 1 {
+        if pass == 2 {
+            emit_word(enc_r(reg_num(o0), reg_num(o1), reg_num(o2), 3, 0))
+        }
+        return 4
+    }
+
+    ; --- Register-immediate (I-type, opcode 0x13) ---
+    if cstr.eq(m, "andi".ptr) == 1 {
+        if pass == 2 {
+            emit_word(enc_i(reg_num(o0), reg_num(o1), parse_imm(o2), 7, 0x13))
+        }
+        return 4
+    }
+    if cstr.eq(m, "ori".ptr) == 1 {
+        if pass == 2 {
+            emit_word(enc_i(reg_num(o0), reg_num(o1), parse_imm(o2), 6, 0x13))
+        }
+        return 4
+    }
+    if cstr.eq(m, "xori".ptr) == 1 {
+        if pass == 2 {
+            emit_word(enc_i(reg_num(o0), reg_num(o1), parse_imm(o2), 4, 0x13))
+        }
+        return 4
+    }
+    if cstr.eq(m, "slti".ptr) == 1 {
+        if pass == 2 {
+            emit_word(enc_i(reg_num(o0), reg_num(o1), parse_imm(o2), 2, 0x13))
+        }
+        return 4
+    }
+    if cstr.eq(m, "sltiu".ptr) == 1 {
+        if pass == 2 {
+            emit_word(enc_i(reg_num(o0), reg_num(o1), parse_imm(o2), 3, 0x13))
+        }
+        return 4
+    }
+
+    ; --- Shift-immediate (shamt in the low bits; srai sets funct7=0x20) ---
+    if cstr.eq(m, "slli".ptr) == 1 {
+        if pass == 2 {
+            emit_word(enc_i(reg_num(o0), reg_num(o1), parse_imm(o2), 1, 0x13))
+        }
+        return 4
+    }
+    if cstr.eq(m, "srli".ptr) == 1 {
+        if pass == 2 {
+            emit_word(enc_i(reg_num(o0), reg_num(o1), parse_imm(o2), 5, 0x13))
+        }
+        return 4
+    }
+    if cstr.eq(m, "srai".ptr) == 1 {
+        if pass == 2 {
+            emit_word(enc_i(reg_num(o0), reg_num(o1), parse_imm(o2) | 0x400, 5, 0x13))
+        }
+        return 4
+    }
+
+    ; --- Loads (rd, offset(rs1); opcode 0x03) ---
+    if cstr.eq(m, "ld".ptr) == 1 {
+        if pass == 2 {
+            parse_mem(o1)
+            emit_word(enc_i(reg_num(o0), mem_reg, mem_imm, 3, 0x03))
+        }
+        return 4
+    }
+    if cstr.eq(m, "lw".ptr) == 1 {
+        if pass == 2 {
+            parse_mem(o1)
+            emit_word(enc_i(reg_num(o0), mem_reg, mem_imm, 2, 0x03))
+        }
+        return 4
+    }
+    if cstr.eq(m, "lwu".ptr) == 1 {
+        if pass == 2 {
+            parse_mem(o1)
+            emit_word(enc_i(reg_num(o0), mem_reg, mem_imm, 6, 0x03))
+        }
+        return 4
+    }
+    if cstr.eq(m, "lh".ptr) == 1 {
+        if pass == 2 {
+            parse_mem(o1)
+            emit_word(enc_i(reg_num(o0), mem_reg, mem_imm, 1, 0x03))
+        }
+        return 4
+    }
+    if cstr.eq(m, "lhu".ptr) == 1 {
+        if pass == 2 {
+            parse_mem(o1)
+            emit_word(enc_i(reg_num(o0), mem_reg, mem_imm, 5, 0x03))
+        }
+        return 4
+    }
+    if cstr.eq(m, "lb".ptr) == 1 {
+        if pass == 2 {
+            parse_mem(o1)
+            emit_word(enc_i(reg_num(o0), mem_reg, mem_imm, 0, 0x03))
+        }
+        return 4
+    }
+    if cstr.eq(m, "lbu".ptr) == 1 {
+        if pass == 2 {
+            parse_mem(o1)
+            emit_word(enc_i(reg_num(o0), mem_reg, mem_imm, 4, 0x03))
+        }
+        return 4
+    }
+
+    ; --- Stores (rs2, offset(rs1); opcode 0x23) ---
+    if cstr.eq(m, "sd".ptr) == 1 {
+        if pass == 2 {
+            parse_mem(o1)
+            emit_word(enc_s(mem_reg, reg_num(o0), mem_imm, 3))
+        }
+        return 4
+    }
+    if cstr.eq(m, "sw".ptr) == 1 {
+        if pass == 2 {
+            parse_mem(o1)
+            emit_word(enc_s(mem_reg, reg_num(o0), mem_imm, 2))
+        }
+        return 4
+    }
+    if cstr.eq(m, "sh".ptr) == 1 {
+        if pass == 2 {
+            parse_mem(o1)
+            emit_word(enc_s(mem_reg, reg_num(o0), mem_imm, 1))
+        }
+        return 4
+    }
+    if cstr.eq(m, "sb".ptr) == 1 {
+        if pass == 2 {
+            parse_mem(o1)
+            emit_word(enc_s(mem_reg, reg_num(o0), mem_imm, 0))
+        }
+        return 4
+    }
+
+    ; --- Upper-immediate (rd, imm20) ---
+    if cstr.eq(m, "lui".ptr) == 1 {
+        if pass == 2 {
+            emit_word(enc_u(reg_num(o0), parse_imm(o1), 0x37))
+        }
+        return 4
+    }
+    if cstr.eq(m, "auipc".ptr) == 1 {
+        if pass == 2 {
+            emit_word(enc_u(reg_num(o0), parse_imm(o1), 0x17))
+        }
+        return 4
+    }
+
+    if cstr.eq(m, "nop".ptr) == 1 {
+        if pass == 2 {
+            emit_word(enc_i(0, 0, 0, 0, 0x13))
+        }
+        return 4
+    }
+
+    fail("unknown instruction".ptr)
+    return 0
+}
+
+assemble: (pass: i64) {
+    i: u64 = 0
+    tpc: i64 = 0
+    dpc: i64 = 0
+    cur_sec = 0
+    line: u8[256] = []
+    line_p: u8* = &line[0]
+    while i < src_len {
+        j: u64 = 0
+        while i < src_len {
+            c: u8 = src[i]
+            i = i + 1
+            if c == '\n' {
+                break
+            }
+            if c != '\r' {
+                if j < 255 {
+                    d: u8* = line_p + j
+                    @d = c
+                    j = j + 1
+                }
+            }
+        }
+        term: u8* = line_p + j
+        @term = 0 as u8
+
+        strip_comment(line_p)
+        tokenize(line_p)
+        if ntok != 0 {
+            base: i64 = 0
+            first: u8* = tok_at(0)
+            if ends_colon(first) == 1 {
+                drop_colon(first)
+                if pass == 1 {
+                    if cur_sec == 0 {
+                        add_label(first, tpc, 0)
+                    } else {
+                        add_label(first, dpc, 1)
+                    }
+                }
+                base = 1
+            }
+            if base < ntok {
+                d0: u8* = tok_at(base)
+                if @d0 == '.' {
+                    sz: i64 = handle_directive(pass, base, line_p)
+                    if cur_sec == 1 {
+                        dpc = dpc + sz
+                    }
+                } else {
+                    size: i64 = encode_instr(pass, base, tpc)
+                    tpc = tpc + size
+                }
+            }
+        }
+    }
+    if pass == 1 {
+        text_total = tpc
+    }
+}
+
+; --- Output ---
+
+ends_dot_o: (path: u8*) -> i64 {
+    l: u64 = cstr.len(path)
+    if l < 2 {
+        return 0
+    }
+    if @(path + (l - 2)) == '.' {
+        if @(path + (l - 1)) == 'o' {
+            return 1
+        }
+    }
+    return 0
+}
+
+main: () -> i32 {
+    src = new(u8, 8192)
+    code = new(u8, 8192)
+    data = new(u8, 8192)
+    out = new(u8, 32768)
+    labels = new(Label, 64)
+    tokbuf = new(u8, 144)
+    glbl_names = new(u8, 512)
+    relocs = new(Reloc, 256)
+    if src == null or code == null or data == null or out == null or labels == null or tokbuf == null or glbl_names == null or relocs == null {
+        console.writeln("as: out of memory".ptr)
+        return 1
+    }
+
+    arg: u8* = ARG_BASE as u8*
+    src_path: u8[128] = []
+    out_path: u8[128] = []
+    src_pp: u8* = &src_path[0]
+    out_pp: u8* = &out_path[0]
+    if text.split_two(arg, src_pp, out_pp) == false {
+        console.writeln("as: usage: as <src> <out>".ptr)
+        return 1
+    }
+
+    fd: i64 = sys.open(src_pp, 0)
+    if fd < 0 {
+        console.write("as: cannot open ".ptr)
+        console.writeln(src_pp)
+        return 1
+    }
+    n: i64 = sys.read(fd, src, 0, 8191)
+    sys.close(fd)
+    if n <= 0 {
+        console.writeln("as: empty source".ptr)
+        return 1
+    }
+    src_len = n as u64
+    src[src_len] = 0 as u8
+
+    obj_mode = ends_dot_o(out_pp)
+    lbl_count = 0
+    code_len = 0
+    data_len = 0
+    err_flag = 0
+    glbl_count = 0
+    nreloc = 0
+    assemble(1)
+    if obj_mode == 0 {
+        resolve_labels()
+    }
+    code_len = 0
+    data_len = 0
+    assemble(2)
+    if err_flag != 0 {
+        return 1
+    }
+
+    if obj_mode == 1 {
+        ototal: u64 = object.write_object()
+        oofd: i64 = sys.open(out_pp, 2)
+        if oofd < 0 {
+            console.write("as: cannot create ".ptr)
+            console.writeln(out_pp)
+            return 1
+        }
+        sys.write(oofd, out, ototal)
+        sys.ftruncate(oofd, ototal)
+        sys.close(oofd)
+        console.write("as: wrote ".ptr)
+        console.writeln(out_pp)
+        return 0
+    }
+
+    ; Keep speculative fetch past a final ecall on valid NOPs.
+    for pad in 0..8 {
+        emit_word(0x13 as u32)
+    }
+    for di in 0..data_len {
+        push_byte(data[di])
+    }
+
+    base: u64 = USER_CODE_BASE as u64
+    out[0] = 0x7F as u8
+    out[1] = 69 as u8   ; 'E'
+    out[2] = 76 as u8   ; 'L'
+    out[3] = 70 as u8   ; 'F'
+    out[4] = 2 as u8    ; ELFCLASS64
+    out[5] = 1 as u8    ; ELFDATA2LSB (little-endian)
+    out[6] = 1 as u8    ; EV_CURRENT
+    wr_le(16, 2, 2)              ; e_type = ET_EXEC
+    wr_le(18, 243, 2)            ; e_machine = EM_RISCV
+    wr_le(20, 1, 4)              ; e_version = EV_CURRENT
+    wr_le(24, base, 8)           ; e_entry (text starts at the payload base)
+    wr_le(32, 64, 8)            ; e_phoff (program header follows the ELF header)
+    ; e_shoff (40) stays 0: no section headers.
+    wr_le(48, 5, 4)             ; e_flags (RVC | double-float ABI; informational)
+    wr_le(52, 64, 2)            ; e_ehsize
+    wr_le(54, 56, 2)            ; e_phentsize
+    wr_le(56, 1, 2)            ; e_phnum (one PT_LOAD)
+    ; e_shentsize/e_shnum/e_shstrndx (58/60/62) stay 0.
+
+    wr_le(64, 1, 4)            ; p_type = PT_LOAD
+    wr_le(68, 7, 4)            ; p_flags = R|W|X
+    wr_le(72, HDR as u64, 8)   ; p_offset (payload at the page boundary)
+    wr_le(80, base, 8)         ; p_vaddr
+    wr_le(88, base, 8)         ; p_paddr
+    wr_le(96, code_len, 8)     ; p_filesz
+    wr_le(104, code_len, 8)    ; p_memsz (no separate BSS; .zero is in the payload)
+    wr_le(112, 4096, 8)        ; p_align
+
+    for i in 0..code_len {
+        d: u8* = out + (HDR as u64) + i
+        @d = code[i]
+    }
+    total: u64 = (HDR as u64) + code_len
+
+    ofd: i64 = sys.open(out_pp, 2)
+    if ofd < 0 {
+        console.write("as: cannot create ".ptr)
+        console.writeln(out_pp)
+        return 1
+    }
+    sys.write(ofd, out, total)
+    sys.ftruncate(ofd, total)
+    sys.close(ofd)
+
+    console.write("as: wrote ".ptr)
+    console.writeln(out_pp)
+    return 0
+}

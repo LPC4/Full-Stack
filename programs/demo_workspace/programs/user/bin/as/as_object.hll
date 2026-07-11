@@ -1,0 +1,222 @@
+; ET_REL object writer for as.hll.
+as_state := import("./as.hll")
+cstr := import("cstr")
+text := import("text")
+
+; Object symbol table: null, locals, globals, then undefined externals.
+sym_pool: u8* = null
+sym_val: i64* = null
+sym_shndx: i64* = null
+sym_name_off: i64* = null
+nsym: i64 = 0
+first_global: i64 = 0
+
+out_str: (off: u64, src: u8*) -> u64 {
+    i: u64 = 0
+    while @(src + i) != 0 {
+        d: u8* = as_state.out + off + i
+        @d = @(src + i)
+        i = i + 1
+    }
+    return i
+}
+
+out_bytes: (off: u64, src: u8*, n: u64) {
+    for i in 0..n {
+        d: u8* = as_state.out + off + i
+        @d = @(src + i)
+    }
+}
+
+push_sym: (name: u8*, value: i64, shndx: i64) {
+    if nsym >= 128 {
+        as_state.fail("too many symbols".ptr)
+        return
+    }
+    dst: u8* = sym_pool + (nsym as u64) * 16
+    text.copy_name16(dst, name)
+    sym_val[nsym] = value
+    sym_shndx[nsym] = shndx
+    nsym = nsym + 1
+}
+
+sym_index: (name: u8*) -> i64 {
+    for i in 1..nsym {
+        cand: u8* = sym_pool + (i as u64) * 16
+        if cstr.eq(cand, name) == 1 {
+            return i
+        }
+    }
+    return -1
+}
+
+build_symbols: () {
+    nsym = 0
+    push_sym("".ptr, 0, 0)
+    for i in 0..as_state.lbl_count {
+        lab: Label* = &as_state.labels[i]
+        nm: u8* = lab as u8*
+        if as_state.is_globl(nm) == 0 {
+            shndx: i64 = 1
+            if lab.sec == 1 {
+                shndx = 2
+            }
+            push_sym(nm, lab.addr, shndx)
+        }
+    }
+    first_global = nsym
+    for i in 0..as_state.lbl_count {
+        lab: Label* = &as_state.labels[i]
+        nm: u8* = lab as u8*
+        if as_state.is_globl(nm) == 1 {
+            shndx: i64 = 1
+            if lab.sec == 1 {
+                shndx = 2
+            }
+            push_sym(nm, lab.addr, shndx)
+        }
+    }
+    for i in 0..as_state.nreloc {
+        r: Reloc* = &as_state.relocs[i]
+        rn: u8* = r as u8*
+        if as_state.label_defined(rn) == 0 {
+            if sym_index(rn) < 0 {
+                push_sym(rn, 0, 0)
+            }
+        }
+    }
+}
+
+wr_sym: (off: u64, name_off: u64, bind: u64, shndx: u64, value: u64) {
+    as_state.wr_le(off, name_off, 4)
+    as_state.wr_le(off + 4, bind * 16, 1)
+    as_state.wr_le(off + 5, 0, 1)
+    as_state.wr_le(off + 6, shndx, 2)
+    as_state.wr_le(off + 8, value, 8)
+    as_state.wr_le(off + 16, 0, 8)
+}
+
+wr_shdr: (off: u64, name: u64, sht: u64, flags: u64, soff: u64, size: u64, link: u64, info: u64, entsize: u64) {
+    as_state.wr_le(off, name, 4)
+    as_state.wr_le(off + 4, sht, 4)
+    as_state.wr_le(off + 8, flags, 8)
+    as_state.wr_le(off + 16, 0, 8)
+    as_state.wr_le(off + 24, soff, 8)
+    as_state.wr_le(off + 32, size, 8)
+    as_state.wr_le(off + 40, link, 4)
+    as_state.wr_le(off + 44, info, 4)
+    as_state.wr_le(off + 48, 4, 8)
+    as_state.wr_le(off + 56, entsize, 8)
+}
+
+; Layout: ehdr, .text, .data, .rela.text, .symtab, .strtab, .shstrtab, shdrs.
+export write_object: () -> u64 {
+    if sym_pool == null {
+        sym_pool = new(u8, 2048)
+        sym_val = new(i64, 128)
+        sym_shndx = new(i64, 128)
+        sym_name_off = new(i64, 128)
+    }
+
+    build_symbols()
+
+    text_off: u64 = 64
+    data_off: u64 = text_off + as_state.code_len
+    rela_off: u64 = (data_off + as_state.data_len + 7) / 8 * 8
+    rela_len: u64 = (as_state.nreloc as u64) * 24
+    symtab_off: u64 = (rela_off + rela_len + 7) / 8 * 8
+    symtab_len: u64 = (nsym as u64) * 24
+
+    strtab_off: u64 = symtab_off + symtab_len
+    cursor: u64 = 1
+    for si in 1..nsym {
+        sym_name_off[si] = cursor as i64
+        nm: u8* = sym_pool + (si as u64) * 16
+        cursor = cursor + cstr.len(nm) + 1
+    }
+    strtab_len: u64 = cursor
+
+    shstr_off: u64 = strtab_off + strtab_len
+    out_str(shstr_off + 1, ".text".ptr)
+    out_str(shstr_off + 7, ".data".ptr)
+    out_str(shstr_off + 13, ".rela.text".ptr)
+    out_str(shstr_off + 24, ".symtab".ptr)
+    out_str(shstr_off + 32, ".strtab".ptr)
+    out_str(shstr_off + 40, ".shstrtab".ptr)
+    shstr_len: u64 = 50
+    shoff: u64 = (shstr_off + shstr_len + 7) / 8 * 8
+
+    ; --- ELF header ---
+    as_state.out[0] = 0x7F as u8
+    as_state.out[1] = 69 as u8
+    as_state.out[2] = 76 as u8
+    as_state.out[3] = 70 as u8
+    as_state.out[4] = 2 as u8
+    as_state.out[5] = 1 as u8
+    as_state.out[6] = 1 as u8
+    as_state.wr_le(16, 1, 2)            ; e_type = ET_REL
+    as_state.wr_le(18, 243, 2)          ; e_machine = EM_RISCV
+    as_state.wr_le(20, 1, 4)            ; e_version
+    as_state.wr_le(40, shoff, 8)        ; e_shoff
+    as_state.wr_le(48, 5, 4)            ; e_flags
+    as_state.wr_le(52, 64, 2)           ; e_ehsize
+    as_state.wr_le(58, 64, 2)           ; e_shentsize
+    as_state.wr_le(60, 7, 2)            ; e_shnum
+    as_state.wr_le(62, 6, 2)            ; e_shstrndx (.shstrtab)
+
+    ; --- Sections ---
+    out_bytes(text_off, as_state.code, as_state.code_len)
+    out_bytes(data_off, as_state.data, as_state.data_len)
+
+    for ri in 0..as_state.nreloc {
+        r: Reloc* = &as_state.relocs[ri]
+        rn: u8* = r as u8*
+        eoff: u64 = rela_off + (ri as u64) * 24
+        rtype: u64 = match r.kind {
+            1 -> 17
+            2 -> 23
+            _ -> 19
+        }
+        sidx: i64 = sym_index(rn)
+        if sidx < 0 {
+            sidx = 0
+        }
+        info: u64 = (sidx as u64) * 4294967296 + rtype
+        roff: i64 = r.off
+        as_state.wr_le(eoff, roff as u64, 8)
+        as_state.wr_le(eoff + 8, info, 8)
+        as_state.wr_le(eoff + 16, 0, 8)
+    }
+
+    for si in 0..nsym {
+        eoff: u64 = symtab_off + (si as u64) * 24
+        bind: u64 = 0
+        if si >= first_global {
+            bind = 1
+        }
+        noff: u64 = 0
+        if si > 0 {
+            no: i64 = sym_name_off[si]
+            noff = no as u64
+        }
+        shx: i64 = sym_shndx[si]
+        val: i64 = sym_val[si]
+        wr_sym(eoff, noff, bind, shx as u64, val as u64)
+    }
+
+    for si in 1..nsym {
+        nm: u8* = sym_pool + (si as u64) * 16
+        no: i64 = sym_name_off[si]
+        out_str(strtab_off + (no as u64), nm)
+    }
+
+    ; --- Section headers ---
+    wr_shdr(shoff + 64, 1, 1, 6, text_off, as_state.code_len, 0, 0, 0)        ; .text PROGBITS A|X
+    wr_shdr(shoff + 128, 7, 1, 3, data_off, as_state.data_len, 0, 0, 0)       ; .data PROGBITS A|W
+    wr_shdr(shoff + 192, 13, 4, 0, rela_off, rela_len, 4, 1, 24)     ; .rela.text -> symtab/.text
+    wr_shdr(shoff + 256, 24, 2, 0, symtab_off, symtab_len, 5, first_global as u64, 24) ; .symtab
+    wr_shdr(shoff + 320, 32, 3, 0, strtab_off, strtab_len, 0, 0, 0)  ; .strtab
+    wr_shdr(shoff + 384, 40, 3, 0, shstr_off, shstr_len, 0, 0, 0)    ; .shstrtab
+
+    return shoff + 448
+}

@@ -1,0 +1,8 @@
+name = "life"
+title = "Game of Life Demo"
+description = "Conway's Game of Life on the framebuffer (P pause, R reseed, space step)."
+kind = "demo"
+install_path = "/home/demo/life.elf"
+target = "hosted"
+stdlib = "hosted"
+root = "life.hll"

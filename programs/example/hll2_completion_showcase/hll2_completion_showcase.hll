@@ -1,6 +1,5 @@
-; HLL2 completion showcase. This file is meant to grow as the remaining HLL2
-; features land: function pointer fields, callable expressions, manual vtables,
-; methods-as-sugar, and later interfaces.
+; HLL2 completion showcase; grows as HLL2 features land: function pointer fields,
+; callable expressions, manual vtables, methods-as-sugar, and later interfaces.
 
 console := import("console")
 

@@ -1,0 +1,92 @@
+[[config]]
+name = "Boot kernel + shell"
+type = "kernel"
+build = "crates/os-runtime/kernel/kernel.build"
+present = "both"
+max_steps_per_frame = 200000
+debug = false
+
+[[config.fs.mount]]
+host = "programs/user/demo"
+guest = "/home/demo"
+
+[[config]]
+name = "Core Basics"
+type = "hosted"
+build = "programs/example/core_basics/core_basics.build"
+present = "terminal"
+max_steps_per_frame = 200000
+debug = false
+
+[[config]]
+name = "Operators"
+type = "hosted"
+build = "programs/example/operators/operators.build"
+present = "terminal"
+max_steps_per_frame = 200000
+debug = false
+
+[[config]]
+name = "Pointers And Places"
+type = "hosted"
+build = "programs/example/pointers_and_places/pointers_and_places.build"
+present = "terminal"
+max_steps_per_frame = 200000
+debug = false
+
+[[config]]
+name = "Arrays Slices And Ranges"
+type = "hosted"
+build = "programs/example/arrays_slices_and_ranges/arrays_slices_and_ranges.build"
+present = "terminal"
+max_steps_per_frame = 200000
+debug = false
+
+[[config]]
+name = "Structs And Binding"
+type = "hosted"
+build = "programs/example/structs_and_binding/structs_and_binding.build"
+present = "terminal"
+max_steps_per_frame = 200000
+debug = false
+
+[[config]]
+name = "Generics"
+type = "hosted"
+build = "programs/example/generics/generics.build"
+present = "terminal"
+max_steps_per_frame = 200000
+debug = false
+
+[[config]]
+name = "Hll2 Completion Showcase"
+type = "hosted"
+build = "programs/example/hll2_completion_showcase/hll2_completion_showcase.build"
+present = "terminal"
+max_steps_per_frame = 200000
+debug = false
+
+[[config]]
+name = "Enums Match And Result"
+type = "hosted"
+build = "programs/example/enums_match_and_result/enums_match_and_result.build"
+present = "terminal"
+max_steps_per_frame = 200000
+debug = false
+
+[[config]]
+name = "Strings And Iteration"
+type = "hosted"
+build = "programs/example/strings_and_iteration/strings_and_iteration.build"
+present = "terminal"
+max_steps_per_frame = 200000
+debug = false
+
+[[config]]
+name = "Compile Time Math"
+type = "hosted"
+build = "programs/example/compile_time_math/compile_time_math.build"
+present = "terminal"
+max_steps_per_frame = 200000
+debug = false
+

@@ -1,0 +1,7 @@
+name = "compile_time_math"
+target = "hosted"
+root = "compile_time_math.hll"
+entry = "_start"
+stdlib = "hosted"
+import_closure = true
+mangle_symbols = true

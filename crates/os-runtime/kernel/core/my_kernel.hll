@@ -12,9 +12,10 @@ process     := import("process")
 scheduler   := import("scheduler")
 fs          := import("fs")
 
-; Physical addresses where the test harness places user binary metadata.
+; Physical addresses where the test harness places user binary metadata;
+; the meta page holds [0]=entry_va (u64), [8]=size_bytes (u64).
 const USER_BINARY_PA = 0x87F00000
-const USER_META_PA   = 0x87EFF000   ; [0]=entry_va (u64), [8]=size_bytes (u64)
+const USER_META_PA   = 0x87EFF000
 const USER_CODE_VA   = 0x40000000
 ; VMM_R/W/X/U page-flag bits come from the shared kernel layout (layout.hll).
 

@@ -2,7 +2,7 @@
 //! tab drops onto the editor canvas under an accent bar in its layer color.
 
 use super::{FullStackApp, metrics};
-use crate::ui::theme;
+use crate::ui::{Layer, theme};
 use eframe::egui;
 use egui::{Align2, FontId, Sense, pos2, vec2};
 use full_stack::workspace::VPath;
@@ -10,13 +10,15 @@ use full_stack::workspace::VPath;
 enum TabAction {
     Activate(VPath),
     Close(VPath),
+    FocusMachine,
+    CloseMachine,
 }
 
 impl FullStackApp {
     /// Draw the strip and apply any tab switch/close it produced. Returns false
     /// when nothing is open (the editor shows its empty hint instead).
     pub(super) fn editor_tabs(&mut self, ui: &mut egui::Ui) -> bool {
-        if self.workspace.open_paths().is_empty() {
+        if self.workspace.open_paths().is_empty() && self.live.is_none() {
             return false;
         }
 
@@ -49,10 +51,25 @@ impl FullStackApp {
                     .show(ui, |ui| {
                         ui.spacing_mut().item_spacing.x = 0.0;
                         ui.horizontal(|ui| {
+                            let machine_focused = self.machine_tab_focused();
+                            if let Some(live) = &self.live {
+                                let label = self
+                                    .machine_tab_label
+                                    .as_deref()
+                                    .unwrap_or("machine")
+                                    .to_owned();
+                                let (_, state_color) =
+                                    super::machine_dock::state_style(&live.state);
+                                if let Some(act) =
+                                    machine_tab(ui, &label, machine_focused, state_color)
+                                {
+                                    action = Some(act);
+                                }
+                            }
                             let active = self.active_path();
                             let open: Vec<VPath> = self.workspace.open_paths().to_vec();
                             for path in open {
-                                let is_active = active.as_ref() == Some(&path);
+                                let is_active = !machine_focused && active.as_ref() == Some(&path);
                                 let dirty = self
                                     .workspace
                                     .document(&path)
@@ -69,6 +86,8 @@ impl FullStackApp {
         match action {
             Some(TabAction::Activate(path)) => self.activate_path(&path),
             Some(TabAction::Close(path)) => self.close_path(&path),
+            Some(TabAction::FocusMachine) => self.focus_machine_tab(),
+            Some(TabAction::CloseMachine) => self.close_machine_tab(),
             None => {}
         }
         self.close_confirmation(ui);
@@ -152,6 +171,86 @@ impl FullStackApp {
                     });
                 });
             });
+    }
+}
+
+/// The [debug] tab: pinned first while a machine session exists. Carries the
+/// L4 accent, a session-state dot, and a close glyph that ends the session.
+fn machine_tab(
+    ui: &mut egui::Ui,
+    label: &str,
+    active: bool,
+    state_color: egui::Color32,
+) -> Option<TabAction> {
+    let name = format!("[debug] {label}");
+    let font = FontId::monospace(metrics::LABEL_TEXT_SIZE);
+    let text_color = if active { theme::TEXT } else { theme::TEXT_DIM };
+    let galley = ui.fonts_mut(|f| f.layout_no_wrap(name, font, text_color));
+
+    let glyph_slot = metrics::LABEL_TEXT_SIZE;
+    let tab_width =
+        metrics::TAB_PAD_X * 2.0 + galley.size().x + metrics::TAB_GLYPH_GAP + glyph_slot;
+    let (rect, resp) =
+        ui.allocate_exact_size(vec2(tab_width, metrics::TAB_STRIP_HEIGHT), Sense::click());
+    let painter = ui.painter_at(rect);
+
+    if active {
+        painter.rect_filled(rect, 0.0, theme::CANVAS);
+        let accent = egui::Rect::from_min_max(
+            rect.left_top(),
+            pos2(rect.right(), rect.top() + metrics::TAB_ACCENT_HEIGHT),
+        );
+        painter.rect_filled(accent, 0.0, Layer::Vm.color());
+    } else if resp.hovered() {
+        painter.rect_filled(rect, 0.0, theme::SURFACE_ALT);
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    painter.line_segment(
+        [rect.right_top(), pos2(rect.right(), rect.bottom() - 1.0)],
+        egui::Stroke::new(1.0, theme::HAIRLINE_SOFT),
+    );
+    painter.galley(
+        pos2(
+            rect.left() + metrics::TAB_PAD_X,
+            rect.center().y - galley.size().y / 2.0,
+        ),
+        galley,
+        text_color,
+    );
+
+    // Glyph slot: close control when the pointer is near, else the state dot.
+    let glyph_center = pos2(
+        rect.right() - metrics::TAB_PAD_X - glyph_slot / 2.0 + 2.0,
+        rect.center().y,
+    );
+    let glyph_rect = egui::Rect::from_center_size(glyph_center, vec2(glyph_slot, glyph_slot));
+    let close_resp = ui.interact(glyph_rect, resp.id.with("close"), Sense::click());
+    if close_resp.hovered() {
+        painter.rect_filled(glyph_rect, 0.0, theme::SURFACE);
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    if resp.hovered() || close_resp.hovered() {
+        painter.text(
+            glyph_center,
+            Align2::CENTER_CENTER,
+            "\u{00D7}",
+            FontId::monospace(metrics::LABEL_TEXT_SIZE),
+            if close_resp.hovered() {
+                theme::TEXT
+            } else {
+                theme::TEXT_DIM
+            },
+        );
+    } else {
+        painter.circle_filled(glyph_center, 2.5, state_color);
+    }
+
+    if close_resp.clicked() || resp.middle_clicked() {
+        Some(TabAction::CloseMachine)
+    } else if resp.clicked() {
+        Some(TabAction::FocusMachine)
+    } else {
+        None
     }
 }
 

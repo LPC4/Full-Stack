@@ -13,6 +13,8 @@ enum Transport {
     StepIn,
     StepOut,
     StepLine,
+    /// Line step that enters calls, pausing on the callee's first line.
+    StepLineIn,
     StepN(u64),
     Stop,
     Restart,
@@ -60,14 +62,32 @@ impl FullStackApp {
         let on_vm_layer = self.layer == Layer::Vm;
         let has_screen = self.config_has_screen();
         let process_count = self
-            .inspect_cache
+            .inspector
+            .cache
             .as_ref()
-            .map(super::inspect_panel::InspectCache::process_count)
+            .map(super::inspector::InspectCache::process_count)
             .unwrap_or(0);
         if let Some(live) = &self.live {
             chrome::indented(ui, |ui| {
                 if let Some(act) = state_section(ui, live, process_count) {
                     action = Some(act);
+                }
+                stat_row(
+                    ui,
+                    "tab",
+                    format!(
+                        "[debug] {}",
+                        self.machine_tab_label.as_deref().unwrap_or("machine")
+                    ),
+                    theme::TEXT_DIM,
+                );
+                if !on_vm_layer {
+                    ui.add_space(metrics::SECTION_GAP);
+                    if chrome::action_row(ui, &[("focus [debug] tab", ActionTone::Primary)])
+                        == Some(0)
+                    {
+                        action = Some(Transport::ShowView(machine_view));
+                    }
                 }
                 chrome::section_eyebrow(ui, "registers");
                 let regs = live.registers();
@@ -114,12 +134,11 @@ impl FullStackApp {
             Transport::Restart => self.restart_selected_config(now),
             Transport::ShowDisasm => {
                 self.machine_view = super::debug_view::MachineView::Disasm;
-                self.layer = Layer::Vm;
+                self.focus_machine_tab();
             }
             Transport::ShowView(view) => {
                 self.machine_view = view;
-                self.layer = Layer::Vm;
-                self.settings_open = false;
+                self.focus_machine_tab();
             }
             Transport::AddBreakpoint(spec) => {
                 if let Some(live) = &mut self.live {
@@ -150,9 +169,8 @@ impl FullStackApp {
                     self.time_scrub = index;
                 }
                 // Refresh machine-derived views against the restored state.
-                self.inspect_cache = None;
-                self.cache_grid = None;
-                self.last_followed_pc = None;
+                self.inspector.cache = None;
+                self.inspector.cache_grid = None;
             }
             other => {
                 let step_unit = self.step_unit;
@@ -166,6 +184,7 @@ impl FullStackApp {
                     Transport::StepIn => live.step_in(),
                     Transport::StepOut => live.step_out(),
                     Transport::StepLine => live.step_line(),
+                    Transport::StepLineIn => live.step_line_in(),
                     Transport::StepN(count) => match step_unit {
                         StepUnit::Line => {
                             for _ in 0..count {
@@ -327,8 +346,8 @@ fn transport_section(
     action
 }
 
-/// The paused-state stepping group: a unit selector, single-step buttons (step
-/// over/in/out for instructions, one tick for cycles), and a bulk step-N row.
+/// The paused-state stepping group: a unit selector, step over/in/out buttons
+/// (lines and instructions; one tick for cycles), and a bulk step-N row.
 fn stepping_section(
     ui: &mut egui::Ui,
     step_unit: &mut StepUnit,
@@ -344,9 +363,20 @@ fn stepping_section(
     ui.add_space(metrics::SECTION_GAP);
     match step_unit {
         StepUnit::Line => {
-            if chrome::action_row(ui, &[("next line", ActionTone::Normal)]) == Some(0) {
-                action = Some(Transport::StepLine);
-            }
+            let clicked = chrome::action_row(
+                ui,
+                &[
+                    ("over", ActionTone::Normal),
+                    ("in", ActionTone::Normal),
+                    ("out", ActionTone::Normal),
+                ],
+            );
+            action = match clicked {
+                Some(0) => Some(Transport::StepLine),
+                Some(1) => Some(Transport::StepLineIn),
+                Some(2) => Some(Transport::StepOut),
+                _ => None,
+            };
         }
         StepUnit::Instruction => {
             let clicked = chrome::action_row(
@@ -554,6 +584,7 @@ fn view_row(
     if has_screen {
         views.push(("screen", MachineView::Screen));
     }
+    views.push(("code", MachineView::Code));
     views.push(("disasm", MachineView::Disasm));
     views.push(("memory", MachineView::Memory));
     let labels: Vec<&str> = views.iter().map(|(label, _)| *label).collect();

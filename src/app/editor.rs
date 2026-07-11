@@ -22,8 +22,8 @@ struct SourceDebug {
 }
 
 impl FullStackApp {
-    /// Map the live session's pc and breakpoints back onto `file`'s source lines
-    /// so the editor can mark the paused line and gutter breakpoints.
+    /// Map the live session's breakpoints onto `file`'s gutter lines. The pc
+    /// is only surfaced by the machine Code view; editor tabs never mark it.
     fn source_debug_for(&self, file: &str) -> SourceDebug {
         let Some(live) = &self.live else {
             return SourceDebug::default();
@@ -31,11 +31,6 @@ impl FullStackApp {
         if !live.has_line_table() {
             return SourceDebug::default();
         }
-        let current_line = (live.state == MachineState::Paused)
-            .then(|| live.source_for_pc(live.registers().pc))
-            .flatten()
-            .filter(|(pc_file, _)| *pc_file == file)
-            .map(|(_, line)| line as usize);
         let mut breakpoints: Vec<usize> = live
             .breakpoints
             .iter()
@@ -46,7 +41,7 @@ impl FullStackApp {
         breakpoints.sort_unstable();
         breakpoints.dedup();
         SourceDebug {
-            current_line,
+            current_line: None,
             breakpoints,
         }
     }
@@ -77,19 +72,19 @@ impl FullStackApp {
             chrome::centered_hint(ui, "Open a file from the Explorer to begin.");
             return;
         }
-        // Binary documents (.elf/.o) get the decoded ELF viewer instead of text.
         self.cursor_pos = None;
+        // The machine surface is its own [debug] tab: when it is focused the
+        // canvas shows the debugger, independent of the open documents.
+        if self.layer == Layer::Vm {
+            self.vm_view(ui);
+            return;
+        }
+        // Binary documents (.elf/.o) get the decoded ELF viewer instead of text.
         if let Some(doc) = self.workspace.active_document()
             && doc.is_binary()
         {
             let name = doc.path().to_string();
             super::elf_view::show(ui, &name, doc.bytes().unwrap_or_default());
-            return;
-        }
-        // The machine (L4) view is file-independent, so the dock's view switch
-        // reaches the debugger no matter which tab is active.
-        if self.layer == Layer::Vm {
-            self.vm_view(ui);
             return;
         }
         let active = self.workspace.active_document().map(|doc| {
@@ -123,10 +118,13 @@ impl FullStackApp {
             SourceKind::Build | SourceKind::Elf | SourceKind::Other => None,
         };
         let marks = self.active_diagnostic_marks(&text);
+        // Held (not taken) until the scroll lands, so a jump into a freshly
+        // opened tab survives the scroll area's first clamped frame.
         let jump = self
             .pending_jump
-            .take_if(|(path, _)| path.as_str() == name)
-            .map(|(_, line)| super::diagnostics::byte_offset_of_line(&text, line));
+            .as_ref()
+            .filter(|(path, _)| path.as_str() == name)
+            .map(|(_, line)| super::diagnostics::byte_offset_of_line(&text, *line));
         let source_debug = self.source_debug_for(&name);
         let output = code_view(
             ui,
@@ -149,6 +147,9 @@ impl FullStackApp {
         }
         if let Some(line) = output.bp_toggle {
             self.toggle_source_breakpoint(&name, line);
+        }
+        if jump.is_some() && output.jump_landed {
+            self.pending_jump = None;
         }
         self.cursor_pos = output.cursor;
     }
@@ -266,6 +267,7 @@ impl FullStackApp {
                     "This config presents no framebuffer.\nSet present to `framebuffer` or `both` in the Run panel.",
                 );
             }
+            self.machine_view_tab(ui, MachineView::Code, "code");
             self.machine_view_tab(ui, MachineView::Disasm, "disasm");
             self.machine_view_tab(ui, MachineView::Memory, "memory");
         });
@@ -273,6 +275,7 @@ impl FullStackApp {
         match self.machine_view {
             MachineView::Console => self.vm_console_summary(ui),
             MachineView::Screen => self.framebuffer_view(ui),
+            MachineView::Code => self.show_code_follow(ui),
             MachineView::Disasm => self.show_disasm(ui),
             MachineView::Memory => self.show_memory(ui),
         }
@@ -287,6 +290,125 @@ impl FullStackApp {
         if chrome::view_tab(ui, label, self.machine_view == view).clicked() {
             self.machine_view = view;
         }
+    }
+
+    /// The machine Code view: a read-only source pane that follows the pc
+    /// across files, holding the last known location over gaps in line info.
+    fn show_code_follow(&mut self, ui: &mut egui::Ui) {
+        let Some(live) = self.live.as_ref() else {
+            chrome::centered_hint(ui, "No machine session. Press Run to start one.");
+            return;
+        };
+        if !live.has_line_table() {
+            chrome::centered_hint(ui, "This image carries no source line table.");
+            return;
+        }
+        let paused = live.state == MachineState::Paused;
+        let here = live
+            .source_for_pc(live.registers().pc)
+            .map(|(file, line)| (file.to_owned(), line));
+        if here.is_some() {
+            self.code_follow = here.clone();
+        }
+        let Some((file, line)) = self.code_follow.clone() else {
+            chrome::centered_hint(ui, "No source location yet. Step or pause the machine.");
+            return;
+        };
+
+        ui.add_space(metrics::PANEL_HEADER_PAD_Y);
+        ui.horizontal(|ui| {
+            ui.add_space(metrics::PANEL_INSET_X);
+            ui.label(theme::label("code"));
+            ui.label(theme::mono(
+                format!("{file}:{line}"),
+                metrics::STATUS_TEXT_SIZE,
+                theme::TEXT_DIM,
+            ));
+            if here.is_none() {
+                ui.label(theme::mono(
+                    "pc outside source \u{00B7} showing last line",
+                    metrics::STATUS_TEXT_SIZE,
+                    theme::TEXT_FAINT,
+                ));
+            } else if !paused {
+                ui.label(theme::mono(
+                    "pause to step",
+                    metrics::STATUS_TEXT_SIZE,
+                    theme::TEXT_FAINT,
+                ));
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add_space(metrics::PANEL_INSET_X);
+                ui.label(theme::mono(
+                    "read-only \u{00B7} click gutter: breakpoint",
+                    metrics::STATUS_TEXT_SIZE,
+                    theme::TEXT_FAINT,
+                ));
+            });
+        });
+        ui.add_space(metrics::PANEL_HEADER_PAD_Y);
+        chrome::hairline(ui);
+
+        let Some(text) = self.debug_source_text(&file) else {
+            chrome::centered_hint(ui, &format!("Source for {file} is not available."));
+            return;
+        };
+        let mut debug = self.source_debug_for(&file);
+        debug.current_line = Some(line as usize);
+        // Scroll only while the followed location is off-screen, latching once
+        // it lands so a manual scroll through the file is not fought.
+        let moved = self.code_follow_scrolled.as_ref() != Some(&(file.clone(), line));
+        let jump = moved.then(|| super::diagnostics::byte_offset_of_line(&text, line as usize));
+        let highlighter = match Self::source_kind_for_path(&file) {
+            SourceKind::Hll => Some(full_stack::highlight::highlight_code as Highlighter),
+            SourceKind::Ir => Some(full_stack::highlight::highlight_ir as Highlighter),
+            SourceKind::Asm => Some(full_stack::highlight::highlight_assembly as Highlighter),
+            SourceKind::Build | SourceKind::Elf | SourceKind::Other => None,
+        };
+        let output = code_view(
+            ui,
+            CodeViewConfig {
+                id_salt: ("code_follow", file.clone()),
+                text: &text,
+                highlighter,
+                interactive: false,
+                show_current_line: false,
+                find: None,
+                marks: &[],
+                jump_to: jump,
+                debug: &debug,
+            },
+        );
+        if let Some(bp_line) = output.bp_toggle {
+            self.toggle_source_breakpoint(&file, bp_line);
+        }
+        if moved && output.jump_landed {
+            self.code_follow_scrolled = Some((file, line));
+        }
+    }
+
+    /// Full text of a line-table `file`: the open buffer, then the workspace
+    /// copy, then bundled program and kernel/stdlib sources.
+    fn debug_source_text(&self, file: &str) -> Option<String> {
+        if let Ok(path) = full_stack::workspace::VPath::parse(file) {
+            match self.workspace.document(&path) {
+                Some(doc) if !doc.is_binary() => return Some(doc.text().to_owned()),
+                _ => {}
+            }
+            if let Ok(bytes) = self.workspace.fs().read_file(&path)
+                && let Ok(text) = String::from_utf8(bytes)
+            {
+                return Some(text);
+            }
+        }
+        if let Some(source) = full_stack::userspace::source_by_path(file) {
+            return Some(source.to_owned());
+        }
+        let rel = file.strip_prefix("crates/os-runtime/")?;
+        os_runtime::SOURCE_TREE
+            .iter()
+            .find(|(path, _)| *path == rel)
+            .map(|(_, source)| (*source).to_owned())
     }
 
     fn vm_console_summary(&mut self, ui: &mut egui::Ui) {
@@ -687,6 +809,9 @@ struct CodeViewOutput {
     cursor: Option<(usize, usize)>,
     /// 1-based gutter line the user clicked to toggle a breakpoint, if any.
     bp_toggle: Option<usize>,
+    /// True once a requested `jump_to` target sits inside the viewport, so
+    /// callers can keep re-jumping until the scroll actually lands.
+    jump_landed: bool,
 }
 
 struct CodeViewConfig<'a, Id> {
@@ -777,7 +902,13 @@ where
                             output.galley_pos.y + row.max.y,
                         ),
                     );
-                    ui.scroll_to_rect(target.expand2(vec2(40.0, 80.0)), None);
+                    // Landed only once the row is inside the visible viewport;
+                    // a fresh scroll area can clamp the first jump to the top.
+                    let clip = ui.clip_rect();
+                    out.jump_landed = target.min.y >= clip.top() && target.max.y <= clip.bottom();
+                    if !out.jump_landed {
+                        ui.scroll_to_rect(target.expand2(vec2(40.0, 80.0)), None);
+                    }
                 }
                 if interactive {
                     let band = output.cursor_range.map(|range| {

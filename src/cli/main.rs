@@ -1,6 +1,7 @@
 //! `fsc` -- Full Stack CLI
 //!
 //! Subcommands:
+//!   build      Compile an HLL source or `.build` manifest into artifacts.
 //!   link       Compile and link multiple HLL source files into an ELF.
 //!   hll-to-ir  Compile an HLL source file and print the IR.
 //!   hll-to-asm Compile an HLL source file and print the RISC-V assembly.
@@ -25,11 +26,15 @@ use asm_to_binary::AssembledOutput;
 use asm_to_binary::rv_instruction::RvInstruction;
 use full_stack::build::{BuildExecutor, BuildManifest, BuildSource, ImportClosurePolicy};
 use full_stack::compilation_pipeline::{CompilationPipeline, TargetMode};
+use full_stack::runconfig::{BuildRef, RunConfig, RunKind, run_config_from_manifest};
+use full_stack::session::{BuildOutcome, LiveMachine, MachineState, SessionEngine};
+use full_stack::workspace::{NativeFs, VPath, WorkspaceFs as _};
 use hll_to_ir::stdlib::{get_stdlib_modules_for_mode, get_stdlib_type_prelude};
 use std::fmt;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::time::Duration;
 use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 
 // --- Error type ---
@@ -67,6 +72,7 @@ impl From<std::io::Error> for CliError {
 
 #[derive(Debug)]
 enum Subcommand {
+    Build,
     Link,
     HllToIr,
     HllToAsm,
@@ -102,6 +108,7 @@ fn main() -> ExitCode {
 fn run_cli() -> Result<ExitCode, CliError> {
     let args = parse_args()?;
     match args.subcmd {
+        Subcommand::Build => cmd_build(&args),
         Subcommand::Link => cmd_link(&args),
         Subcommand::HllToIr => cmd_hll_to_ir(&args),
         Subcommand::HllToAsm => cmd_hll_to_asm(&args),
@@ -121,6 +128,7 @@ fn parse_args() -> Result<Args, CliError> {
 
     let subcmd = match iter.next().map(|s| s.as_str()) {
         Some("link") => Subcommand::Link,
+        Some("build") => Subcommand::Build,
         Some("hll-to-ir") => Subcommand::HllToIr,
         Some("hll-to-asm") => Subcommand::HllToAsm,
         Some("run") => Subcommand::Run,
@@ -188,10 +196,27 @@ fn parse_mode(s: &str) -> Result<TargetMode, CliError> {
     match s {
         "hosted" => Ok(TargetMode::Hosted),
         "freestanding" => Ok(TargetMode::Freestanding),
+        "kernel" => Ok(TargetMode::Kernel),
         other => Err(CliError::Usage(format!(
-            "unknown mode `{other}`; expected `hosted` or `freestanding`"
+            "unknown mode `{other}`; expected `hosted`, `freestanding`, or `kernel`"
         ))),
     }
+}
+
+// --- build ---
+
+fn cmd_build(args: &Args) -> Result<ExitCode, CliError> {
+    let input = require_single_input(args)?;
+    let (fs, config) = config_for_cli_input(input, args.mode)?;
+    let engine = SessionEngine::new(&fs).with_artifact_root(fs.host_out_dir());
+    let outcome = engine.build_config(&config).map_err(map_session_error)?;
+
+    if let Some(output_path) = args.output.as_deref() {
+        fs::write(output_path, linked_elf_bytes(&outcome))?;
+        eprintln!("fsc: wrote linked ELF to `{output_path}`");
+    }
+    print_build_summary(&outcome);
+    Ok(ExitCode::SUCCESS)
 }
 
 // --- link ---
@@ -204,24 +229,10 @@ fn cmd_link(args: &Args) -> Result<ExitCode, CliError> {
     }
 
     if args.inputs.len() == 1 && has_extension(&args.inputs[0], "build") {
-        let manifest = BuildManifest::from_file(&args.inputs[0]).map_err(|e| match e {
-            full_stack::build::BuildError::Compile(err) => CliError::Compile(err.to_string()),
-            other => CliError::Assemble(other.to_string()),
-        })?;
-        let target = manifest.target;
-        let entry = manifest.entry.clone();
-        let layout = manifest.link_layout.clone();
-        let artifacts = BuildExecutor::build(&manifest).map_err(|e| match e {
-            full_stack::build::BuildError::Compile(err) => CliError::Compile(err.to_string()),
-            other => CliError::Assemble(other.to_string()),
-        })?;
-        let mut pipeline = make_pipeline(target, "_u_");
-        pipeline.set_entry_point(entry);
-        pipeline.set_link_layout(layout);
-        let elf_bytes = artifacts.linked.to_elf_with_entry(
-            pipeline.effective_load_base(),
-            pipeline.effective_entry_point(),
-        );
+        let (fs, config) = config_for_cli_input(&args.inputs[0], args.mode)?;
+        let engine = SessionEngine::new(&fs).with_artifact_root(fs.host_out_dir());
+        let outcome = engine.build_config(&config).map_err(map_session_error)?;
+        let elf_bytes = linked_elf_bytes(&outcome);
         let output_path = args.output.as_deref().unwrap_or("out.elf");
         fs::write(output_path, &elf_bytes)?;
         eprintln!("fsc: wrote linked ELF to `{output_path}`");
@@ -339,10 +350,8 @@ fn cmd_run(args: &Args) -> Result<ExitCode, CliError> {
              instructions not in the built-in parser may be silently skipped"
         );
         assemble_from_s_file(input, args.mode)?
-    } else if has_extension(input, "build") {
-        assemble_from_manifest_file(input)?
     } else {
-        assemble_from_hll_file(input, args.mode)?
+        return run_cli_config(input, args.mode, args.max_steps);
     };
 
     let mut vm = VirtualMachine::new(&assembled);
@@ -361,23 +370,155 @@ fn cmd_run(args: &Args) -> Result<ExitCode, CliError> {
 
 // --- Compilation helpers ---
 
-/// Compile an HLL source file with the stdlib and return assembled output.
-fn assemble_from_hll_file(path: &str, mode: TargetMode) -> Result<AssembledOutput, CliError> {
-    let src = fs::read_to_string(path)?;
-    compile_and_link(&src, mode, &source_stem(path, "module"), Some(path))
+fn run_cli_config(input: &str, mode: TargetMode, max_steps: u64) -> Result<ExitCode, CliError> {
+    let (fs, config) = config_for_cli_input(input, mode)?;
+    let engine = SessionEngine::new(&fs).with_artifact_root(fs.host_out_dir());
+    match config.kind {
+        RunKind::Hosted => {
+            let outcome = engine
+                .run_hosted_config(&config, max_steps)
+                .map_err(map_session_error)?;
+            print!("{}", outcome.vm.uart_output);
+            if outcome.vm.max_steps_reached {
+                return Err(CliError::Timeout(max_steps));
+            }
+            let code = outcome.vm.exit_code.unwrap_or(1);
+            eprintln!("fsc: program exited with code {code}");
+            Ok(ExitCode::from((code & 0xFF) as u8))
+        }
+        RunKind::KernelBoot => run_kernel_config(&engine, &config, max_steps),
+        RunKind::Freestanding => {
+            let outcome = engine.build_config(&config).map_err(map_session_error)?;
+            let mut vm = VirtualMachine::new(&outcome.artifacts.linked);
+            let result = vm.run(max_steps);
+            print!("{}", result.uart_output);
+            match result.outcome {
+                StepOutcome::Halted(code) => {
+                    eprintln!("fsc: program exited with code {code}");
+                    Ok(ExitCode::from((code & 0xFF) as u8))
+                }
+                StepOutcome::Continue => Err(CliError::Timeout(max_steps)),
+            }
+        }
+    }
 }
 
-fn assemble_from_manifest_file(path: &str) -> Result<AssembledOutput, CliError> {
-    let manifest = BuildManifest::from_file(path).map_err(|e| match e {
-        full_stack::build::BuildError::Compile(err) => CliError::Compile(err.to_string()),
+fn run_kernel_config(
+    engine: &SessionEngine<'_>,
+    config: &RunConfig,
+    max_steps: u64,
+) -> Result<ExitCode, CliError> {
+    let boot = engine
+        .boot_kernel_config(config)
+        .map_err(map_session_error)?;
+    eprintln!(
+        "fsc: built boot FS: {} entries, {} byte image",
+        boot.fs_entries.len(),
+        boot.fs_image.len()
+    );
+    let mut live = LiveMachine::new_kernel(
+        &boot.build.artifacts,
+        Some(&boot.init),
+        Some(&boot.fs_image),
+        &config.run.autorun,
+    )
+    .map_err(CliError::Assemble)?;
+
+    while live.steps < max_steps && matches!(live.state, MachineState::Running) {
+        let remaining = max_steps - live.steps;
+        live.drive(
+            remaining.min(config.run.max_steps_per_frame.max(1)),
+            Duration::from_secs(1),
+        );
+    }
+
+    print!("{}", live.uart_log);
+    match live.state {
+        MachineState::Exited(code) => {
+            eprintln!("fsc: kernel exited with code {code}");
+            Ok(ExitCode::from((code & 0xFF) as u8))
+        }
+        MachineState::Faulted(msg) => Err(CliError::Assemble(format!("kernel faulted: {msg}"))),
+        MachineState::Stopped | MachineState::Paused => Ok(ExitCode::SUCCESS),
+        MachineState::Running => Err(CliError::Timeout(max_steps)),
+    }
+}
+
+fn config_for_cli_input(input: &str, mode: TargetMode) -> Result<(NativeFs, RunConfig), CliError> {
+    let (fs, path) = cli_workspace_for_input(input)?;
+    let config = if has_extension(input, "build") {
+        run_config_from_manifest(&fs, path).map_err(CliError::Io)?
+    } else {
+        let kind = match mode {
+            TargetMode::Hosted => RunKind::Hosted,
+            TargetMode::Freestanding => RunKind::Freestanding,
+            TargetMode::Kernel => RunKind::KernelBoot,
+        };
+        let mut config = RunConfig::hosted(source_stem(input, "program"), VPath::root());
+        config.kind = kind;
+        config.build = BuildRef::SourceWithDefaults {
+            root: path,
+            target: mode,
+        };
+        config
+    };
+    Ok((fs, config))
+}
+
+fn cli_workspace_for_input(input: &str) -> Result<(NativeFs, VPath), CliError> {
+    let cwd = std::env::current_dir()?;
+    let path = Path::new(input);
+    let (root, relative) = if path.is_absolute() {
+        let canonical = path.canonicalize()?;
+        let cwd = cwd.canonicalize()?;
+        if let Ok(relative) = canonical.strip_prefix(&cwd) {
+            (cwd, relative.to_path_buf())
+        } else {
+            let parent = canonical.parent().ok_or_else(|| {
+                CliError::Usage(format!("`{input}` has no parent workspace directory"))
+            })?;
+            let file_name = canonical.file_name().ok_or_else(|| {
+                CliError::Usage(format!("`{input}` does not name a regular input file"))
+            })?;
+            (parent.to_path_buf(), PathBuf::from(file_name))
+        }
+    } else {
+        (cwd, PathBuf::from(input))
+    };
+    let text = relative.to_string_lossy().replace('\\', "/");
+    let vpath = VPath::parse(&text)
+        .map_err(|err| CliError::Usage(format!("invalid workspace path: {err}")))?;
+    Ok((NativeFs::open(root)?, vpath))
+}
+
+fn map_session_error(err: full_stack::session::SessionEngineError) -> CliError {
+    match err {
+        full_stack::session::SessionEngineError::Build(full_stack::build::BuildError::Compile(
+            err,
+        )) => CliError::Compile(err.to_string()),
+        full_stack::session::SessionEngineError::Build(err) => CliError::Assemble(err.to_string()),
+        full_stack::session::SessionEngineError::Io(err) => CliError::Io(err),
         other => CliError::Assemble(other.to_string()),
-    })?;
-    BuildExecutor::build(&manifest)
-        .map(|artifacts| artifacts.linked)
-        .map_err(|e| match e {
-            full_stack::build::BuildError::Compile(err) => CliError::Compile(err.to_string()),
-            other => CliError::Assemble(other.to_string()),
-        })
+    }
+}
+
+fn linked_elf_bytes(outcome: &BuildOutcome) -> Vec<u8> {
+    outcome
+        .artifacts
+        .linked
+        .to_elf_with_entry(outcome.link_layout.load_base, &outcome.entry)
+}
+
+fn print_build_summary(outcome: &BuildOutcome) {
+    eprintln!(
+        "fsc: built `{}` for {:?} ({} units)",
+        outcome.manifest_name,
+        outcome.target,
+        outcome.artifacts.units.len()
+    );
+    if let Some(dir) = &outcome.artifact_dir {
+        eprintln!("fsc: wrote artifacts under `{}`", dir.display());
+    }
 }
 
 /// Parse a `.s` text file as assembly tokens, link with stdlib, and assemble.
@@ -401,32 +542,6 @@ fn assemble_from_s_file(path: &str, mode: TargetMode) -> Result<AssembledOutput,
     pipeline
         .link_assembled_objects_named(&source_stem(path, "module"), &modules)
         .map_err(|e| CliError::Assemble(e.to_string()))
-}
-
-/// Compile HLL source -> IR -> tokens, then link with stdlib and assemble.
-fn compile_and_link(
-    src: &str,
-    mode: TargetMode,
-    stem: &str,
-    source_path: Option<&str>,
-) -> Result<AssembledOutput, CliError> {
-    let mut manifest = BuildManifest::hosted(stem.to_owned(), src);
-    manifest.target = mode;
-    manifest.root = match source_path {
-        Some(path) => BuildSource::inline_with_path(stem, src, path),
-        None => BuildSource::inline(stem, src),
-    };
-    if mode == TargetMode::Kernel {
-        manifest.import_closure = ImportClosurePolicy::Enabled {
-            mangle_symbols: false,
-        };
-    }
-    BuildExecutor::build(&manifest)
-        .map(|artifacts| artifacts.linked)
-        .map_err(|e| match e {
-            full_stack::build::BuildError::Compile(err) => CliError::Compile(err.to_string()),
-            other => CliError::Assemble(other.to_string()),
-        })
 }
 
 /// Compile each stdlib module independently and return (name, object) pairs.
@@ -531,6 +646,7 @@ fn print_help() {
          \n\
          SUBCOMMANDS\n\
          \n\
+             build       <input>       Build an HLL source or .build manifest\n\
              link        <file.hll>...     Compile and link multiple HLL sources into an ELF\n\
              hll-to-ir  <input.hll>   Compile HLL source to IR (printed to stdout)\n\
              hll-to-asm <input.hll>   Compile HLL source to RISC-V assembly\n\
@@ -541,13 +657,17 @@ fn print_help() {
          \n\
              -o, --output <path>          Write output to <path> instead of stdout\n\
          \n\
-             -m, --mode   hosted|freestanding\n\
+             -m, --mode   hosted|freestanding|kernel\n\
                                            Target mode (default: hosted)\n\
          \n\
                  --emit-o                 For `hll-to-asm`, emit a relocatable `.o` file\n\
                  --max-steps <n>          VM step limit for `run` (default: 50000000)\n\
          \n\
          EXAMPLES\n\
+         \n\
+             fsc build      program.hll\n\
+             fsc build      program.build -o program.elf\n\
+             fsc build      crates/os-runtime/kernel/kernel.build\n\
          \n\
              fsc hll-to-ir  program.hll\n\
              fsc hll-to-ir  program.hll -o program.ir\n\
@@ -562,6 +682,7 @@ fn print_help() {
              fsc run        program.hll\n\
              fsc run        program.hll --max-steps 1000000\n\
              fsc run        program.hll --mode freestanding\n\
+             fsc run        crates/os-runtime/kernel/kernel.build --max-steps 50000000\n\
              fsc run        program.s\n\
          \n\
          LINK\n\

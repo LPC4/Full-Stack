@@ -1,0 +1,11 @@
+name = "cc"
+title = "Compiler"
+description = "In-VM HLL-0 compiler launched by the shell's `cc` command."
+kind = "tool"
+install_path = "/bin/cc.elf"
+target = "hosted"
+stdlib = "hosted"
+root = "cc.hll"
+source_prelude = "cc_layout.hll"
+import_closure = true
+mangle_symbols = false

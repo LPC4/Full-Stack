@@ -299,6 +299,21 @@ fn render_userspace(programs: &[Program]) -> String {
     }
     out.push_str("];\n\n");
 
+    out.push_str("/// Registry name to repo-relative source path, for pc-to-source attribution.\n");
+    out.push_str("pub static MODULE_PATHS: &[(&str, &str)] = &[\n");
+    for program in programs {
+        if let Some(rel) = repo_relative(&program.source) {
+            writeln!(
+                out,
+                "    (\"{}\", \"{}\"),",
+                escape(&program.name),
+                escape(&rel)
+            )
+            .expect("write");
+        }
+    }
+    out.push_str("];\n\n");
+
     out.push_str(
         "/// Look up a program by its stable `name` key.\n\
          pub fn program(name: &str) -> Option<&'static UserProgram> {\n\
@@ -307,9 +322,20 @@ fn render_userspace(programs: &[Program]) -> String {
          /// Look up a generated program source by flat registry name.\n\
          pub fn module_source(name: &str) -> Option<&'static str> {\n\
              program(name).map(|program| program.source)\n\
+         }\n\n\
+         /// Repo-relative source path for a bundled program's root module.\n\
+         pub fn module_path(name: &str) -> Option<&'static str> {\n\
+             MODULE_PATHS.iter().find(|(key, _)| *key == name).map(|(_, path)| *path)\n\
          }\n",
     );
     out
+}
+
+/// Strip an absolute source path down to its repo-relative `programs/...` tail.
+fn repo_relative(source: &str) -> Option<String> {
+    source
+        .rfind("programs/")
+        .map(|idx| source[idx..].to_owned())
 }
 
 fn source_const_name(name: &str) -> String {

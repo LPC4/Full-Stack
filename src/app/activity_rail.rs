@@ -10,7 +10,7 @@ impl FullStackApp {
             (Tool::Files, "Explorer"),
             (Tool::Search, "Search in workspace"),
             (Tool::Run, "Run configurations"),
-            (Tool::Inspect, "CPU inspector"),
+            (Tool::Inspect, "Inspect runtime and artifacts"),
         ] {
             if rail_button(ui, tool, hint, self.tool == tool).clicked() {
                 self.tool = tool;

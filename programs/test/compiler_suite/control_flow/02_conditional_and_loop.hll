@@ -1,3 +1,4 @@
+; Conditionals inside a counting loop.
 control_suite: (param: i32) -> i32 {
     sum: i32 = 0
 

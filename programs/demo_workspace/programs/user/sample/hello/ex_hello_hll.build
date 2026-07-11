@@ -1,0 +1,6 @@
+name = "ex_hello_hll"
+title = "hello.hll"
+description = "HLL-0 sample for `cc`, linked against stdlib.s by `ld`."
+kind = "example"
+install_path = "/home/src/hello.hll"
+root = "hello.hll"

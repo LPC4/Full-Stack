@@ -1,3 +1,6 @@
+; Fixed-buffer heap for freestanding/kernel builds: 64 KB .bss arena with a bump
+; pointer and a free-list. The hosted variant grows the break via brk instead.
+
 heap_buffer: u8[65536] = []
 heap_bump: u64 = 0
 heap_list: HeapBlock* = null

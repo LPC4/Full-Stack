@@ -1,0 +1,6 @@
+name = "ex_stdlib"
+title = "stdlib.s"
+description = "Tiny user-space stdlib (putc/puts/exit) linked into cc programs by `ld`."
+kind = "example"
+install_path = "/home/src/stdlib.s"
+root = "stdlib.s"

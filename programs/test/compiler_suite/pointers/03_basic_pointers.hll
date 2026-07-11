@@ -1,3 +1,4 @@
+; Basic pointers: new/free, address-of, deref reads and writes.
 pointers: (val: i32) -> i32 {
     ptr: i32* = new(i32)
     @ptr = val

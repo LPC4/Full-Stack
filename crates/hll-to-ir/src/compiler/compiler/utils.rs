@@ -34,6 +34,11 @@ impl HighLevelCompiler {
             return;
         }
         self.last_source_line = Some(line);
+        // Without a file name the entry could never map back to a source view,
+        // and it would shadow real entries below it in the linked table.
+        if self.source_file.is_empty() {
+            return;
+        }
         let file = self.source_file.clone();
         self.push_instruction(IrInstruction::SourceLine { file, line });
     }

@@ -58,7 +58,8 @@ fn collect_sources(dir: &Path, manifest_dir: &Path, out: &mut Vec<Source>) {
         }
         let rel = path.strip_prefix(manifest_dir).expect("source under crate");
         let key = source_key(rel);
-        out.push(Source { key, path });
+        let rel = rel.to_string_lossy().replace('\\', "/");
+        out.push(Source { key, rel, path });
     }
 }
 
@@ -107,7 +108,8 @@ fn collect_tree(dir: &Path, manifest_dir: &Path, out: &mut Vec<Source>) {
         }
         let rel = path.strip_prefix(manifest_dir).expect("source under crate");
         let key = rel.to_string_lossy().replace('\\', "/");
-        out.push(Source { key, path });
+        let rel = key.clone();
+        out.push(Source { key, rel, path });
     }
 }
 
@@ -142,10 +144,26 @@ fn render_sources(sources: &[Source]) -> String {
         .expect("write");
     }
     out.push_str("];\n\n");
+    out.push_str("/// Registry key to repo-relative source path, for pc-to-source attribution.\n");
+    out.push_str("pub static SOURCE_PATHS: &[(&str, &str)] = &[\n");
+    for source in sources {
+        writeln!(
+            out,
+            "    (\"{}\", \"crates/os-runtime/{}\"),",
+            escape(&source.key),
+            escape(&source.rel)
+        )
+        .expect("write");
+    }
+    out.push_str("];\n\n");
     out.push_str(
         "/// Look up a bundled kernel or stdlib module by its stable registry key.\n\
          pub fn module_source(name: &str) -> Option<&'static str> {\n\
              SOURCES.iter().find(|(key, _)| *key == name).map(|(_, source)| *source)\n\
+         }\n\n\
+         /// Repo-relative source path for a bundled module key.\n\
+         pub fn module_path(name: &str) -> Option<&'static str> {\n\
+             SOURCE_PATHS.iter().find(|(key, _)| *key == name).map(|(_, path)| *path)\n\
          }\n",
     );
     out
@@ -157,5 +175,7 @@ fn escape(value: &str) -> String {
 
 struct Source {
     key: String,
+    /// Crate-relative forward-slash path (for attribution tables).
+    rel: String,
     path: PathBuf,
 }

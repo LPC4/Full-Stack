@@ -1,3 +1,4 @@
+; Basic integer arithmetic: precedence, division, modulo, unary negation.
 main: () -> i32 {
     a: i32 = 10
     b: i32 = 20

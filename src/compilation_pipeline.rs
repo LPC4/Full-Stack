@@ -449,9 +449,20 @@ impl CompilationPipeline {
             .map(|source| ResolvedModuleSource {
                 key: key.to_owned(),
                 source,
-                source_path: None,
+                // A registry module keeps its repo-relative path so its compiled
+                // line table (and the debugger) can point at the real file.
+                source_path: self.registry_module_path(key).map(PathBuf::from),
                 is_stdlib: self.is_stdlib_module_for_target(key),
             }))
+    }
+
+    /// Repo-relative source path for a registry module key, when known.
+    fn registry_module_path(&self, key: &str) -> Option<&'static str> {
+        if self.is_stdlib_module_for_target(key) {
+            hll_to_ir::stdlib::stdlib_module_source_path(self.target_mode, key)
+        } else {
+            bundled_module_path(key)
+        }
     }
 
     /// Resolve `source`'s module imports. Each `alias := import("path")` adds its exported
@@ -1266,8 +1277,14 @@ impl CompilationPipeline {
             pipeline.set_string_prefix(Some("__kern_str_".to_owned()));
         }
         let modules = hll_to_ir::stdlib::get_stdlib_modules_for_mode(mode);
-        let module_refs: Vec<(&str, &str)> = modules.iter().map(|(n, s)| (*n, *s)).collect();
-        let mut objects = pipeline.compile_modules(&module_refs)?;
+        let mut objects = Vec::with_capacity(modules.len());
+        for (module_name, source) in &modules {
+            // Attribute each module to its real source file so stdlib code the
+            // debugger steps through maps back to workspace lines.
+            let path = hll_to_ir::stdlib::stdlib_module_source_path(mode, module_name);
+            pipeline.set_current_source_path(path);
+            objects.extend(pipeline.compile_modules(&[(*module_name, *source)])?);
+        }
         for object in &mut objects {
             mark_all_defined_symbols_global(object);
         }
@@ -1288,6 +1305,7 @@ impl CompilationPipeline {
         pipeline.set_type_prelude(hll_to_ir::stdlib::get_stdlib_type_prelude());
         pipeline.set_string_prefix(Some("__kern_str_".to_owned()));
         pipeline.set_module_mangling(false);
+        pipeline.set_current_source_path(bundled_module_path("my_kernel"));
         pipeline.compile_program_closure("my_kernel", os_runtime::kernel::MY_KERNEL)
     }
 }
@@ -1295,6 +1313,11 @@ impl CompilationPipeline {
 /// Bundled HLL modules addressable by `import("name")` in host builds.
 pub fn bundled_module_source(name: &str) -> Option<&'static str> {
     os_runtime::module_source(name).or_else(|| crate::userspace::module_source(name))
+}
+
+/// Repo-relative source path of a bundled module, mirroring `bundled_module_source`.
+pub fn bundled_module_path(name: &str) -> Option<&'static str> {
+    os_runtime::module_path(name).or_else(|| crate::userspace::module_path(name))
 }
 
 fn module_member_aliases(
@@ -2079,6 +2102,45 @@ main: () -> i32 {
         assert_eq!(objects.len(), 2, "expected imported module plus main");
 
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    // Stdlib objects attribute lines to real repo files, so the debugger can
+    // show stdlib source while stepping through it.
+    #[test]
+    fn stdlib_objects_attribute_lines_to_real_files() {
+        let objects = CompilationPipeline::compile_stdlib_objects(TargetMode::Hosted)
+            .expect("stdlib objects");
+        let mut entries = 0usize;
+        for (module, object) in &objects {
+            for entry in object.line_table_iter() {
+                entries += 1;
+                let file = object.file_name(entry.file_id).unwrap_or("");
+                assert!(
+                    file.starts_with("crates/os-runtime/"),
+                    "{module}: line entry attributed to `{file}`"
+                );
+            }
+        }
+        assert!(entries > 0, "stdlib should carry line info");
+    }
+
+    // Kernel modules resolved by bare `import("name")` land in the line table
+    // under their real `crates/os-runtime/kernel/...` paths.
+    #[test]
+    fn kernel_module_objects_attribute_lines_to_kernel_files() {
+        let objects = CompilationPipeline::compile_kernel_module_objects().expect("kernel objects");
+        let mut entries = 0usize;
+        for (module, object) in &objects {
+            for entry in object.line_table_iter() {
+                entries += 1;
+                let file = object.file_name(entry.file_id).unwrap_or("");
+                assert!(
+                    file.starts_with("crates/os-runtime/kernel/"),
+                    "{module}: line entry attributed to `{file}`"
+                );
+            }
+        }
+        assert!(entries > 0, "kernel modules should carry line info");
     }
 
     #[test]

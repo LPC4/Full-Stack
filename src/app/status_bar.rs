@@ -4,21 +4,6 @@ use eframe::egui;
 
 impl FullStackApp {
     pub(super) fn status_bar(&mut self, ui: &mut egui::Ui) {
-        // The dot mirrors the machine state; the label names the selected config.
-        let dot_color = match &self.live {
-            Some(live) => super::machine_dock::state_style(&live.state).1,
-            None => theme::TEXT_FAINT,
-        };
-        let config_label = self
-            .selected_config()
-            .map(|config| {
-                format!(
-                    "{} \u{00B7} {}",
-                    super::tool_window::kind_tag(config.kind),
-                    config.name
-                )
-            })
-            .unwrap_or_else(|| "no run config".to_owned());
         let (errors, warnings) = self
             .stage_cache
             .as_ref()
@@ -26,24 +11,8 @@ impl FullStackApp {
             .unwrap_or((0, 0));
         ui.horizontal_centered(|ui| {
             ui.add_space(metrics::PANEL_TOP_PADDING);
-            ui.label(theme::mono("\u{25CF}", metrics::STATUS_DOT_SIZE, dot_color));
-            ui.label(theme::label(&config_label));
-            ui.label(theme::mono(
-                "\u{00B7}",
-                metrics::STATUS_TEXT_SIZE,
-                theme::TEXT_FAINT,
-            ));
-            ui.label(theme::label(&format!(
-                "{} {}",
-                self.layer.tag(),
-                self.layer.name()
-            )));
+            // Left side carries only transient feedback (faults, action results).
             if let Some(message) = &self.status_message {
-                ui.label(theme::mono(
-                    "\u{00B7}",
-                    metrics::STATUS_TEXT_SIZE,
-                    theme::TEXT_FAINT,
-                ));
                 ui.label(theme::label(message));
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

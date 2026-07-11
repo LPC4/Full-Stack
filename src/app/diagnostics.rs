@@ -70,6 +70,8 @@ pub(crate) fn tally(count: u64, noun: &str) -> String {
         format!("1 {noun}")
     } else if noun.ends_with("ch") {
         format!("{count} {noun}es")
+    } else if let Some(stem) = noun.strip_suffix('y') {
+        format!("{count} {stem}ies")
     } else {
         format!("{count} {noun}s")
     }
@@ -228,5 +230,6 @@ mod tests {
         assert_eq!(tally(1, "error"), "1 error");
         assert_eq!(tally(2, "warning"), "2 warnings");
         assert_eq!(tally(0, "error"), "0 errors");
+        assert_eq!(tally(2, "entry"), "2 entries");
     }
 }

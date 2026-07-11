@@ -1,0 +1,160 @@
+; HLL2 completion showcase; grows as HLL2 features land: function pointer fields,
+; callable expressions, manual vtables, methods-as-sugar, and later interfaces.
+
+console := import("console")
+
+mathlib := import("./modules/mathlib.hll")
+
+type BinaryOp = fn(i32, i32) -> i32
+type UnaryOp = fn(i32) -> i32
+
+add: (a: i32, b: i32) -> i32 {
+    return a + b
+}
+
+mul: (a: i32, b: i32) -> i32 {
+    return a * b
+}
+
+square: (value: i32) -> i32 {
+    return value * value
+}
+
+negate: (value: i32) -> i32 {
+    return 0 - value
+}
+
+; A struct whose fields are function pointers: dependency injection and
+; vtable-like records without classes. Each field is just data.
+struct Calculator {
+    combine: BinaryOp,
+    transform: UnaryOp,
+}
+
+; --- Manual vtable idiom ---
+; Dynamic dispatch without interfaces: a vtable of function pointers plus an
+; object pairing a data pointer with its vtable pointer. No hidden `self`.
+struct Shape {
+    width: i32,
+    height: i32,
+}
+
+type ShapeMethod = fn(Shape*) -> i32
+
+struct ShapeVTable {
+    area: ShapeMethod,
+    perimeter: ShapeMethod,
+}
+
+struct ShapeObj {
+    data: Shape*,
+    vtable: ShapeVTable*,
+}
+
+rect_area: (s: Shape*) -> i32 {
+    return s.width * s.height
+}
+
+rect_perimeter: (s: Shape*) -> i32 {
+    return 2 * (s.width + s.height)
+}
+
+; Dynamic dispatch: load the vtable through the object pointer, then call the
+; selected method with the object's own data. This is `o.vtable.area(o.data)`.
+shape_area: (o: ShapeObj*) -> i32 {
+    return o.vtable.area(o.data)
+}
+
+shape_perimeter: (o: ShapeObj*) -> i32 {
+    return o.vtable.perimeter(o.data)
+}
+
+; Static method sugar: `impl Type { ... }` declares pointer-receiver methods.
+; `r.area()` is sugar for the free function `Shape_area(&r)`, static dispatch.
+impl Shape {
+    area: (self: Shape*) -> i32 {
+        return self.width * self.height
+    }
+    scaled_area: (self: Shape*, k: i32) -> i32 {
+        return self.area() * k
+    }
+}
+
+apply_binary: (op: BinaryOp, a: i32, b: i32) -> i32 {
+    return op(a, b)
+}
+
+; Callable expressions: the callee is a struct field, not a bare name.
+run_calculator: (calc: Calculator, a: i32, b: i32) -> i32 {
+    combined := calc.combine(a, b)
+    return calc.transform(combined)
+}
+
+apply_unary: (op: UnaryOp, value: i32) -> i32 {
+    return op(value)
+}
+
+choose_binary: (multiply: bool) -> BinaryOp {
+    if multiply {
+        return mul
+    }
+    return add
+}
+
+main: () -> i32 {
+    console.println("-- hll2 completion showcase --")
+
+    op: BinaryOp = add
+    sum := op(20, 22)
+    console.print_int(sum)
+    if sum != 42 { return 1 }
+
+    product := apply_binary(mul, 6, 7)
+    console.print_int(product)
+    if product != 42 { return 2 }
+
+    chosen := choose_binary(false)
+    if chosen(39, 3) != 42 { return 3 }
+
+    chosen = choose_binary(true)
+    if chosen(7, 6) != 42 { return 4 }
+
+    unary: UnaryOp = square
+    if apply_unary(unary, 6) != 36 { return 5 }
+    unary = negate
+    if unary(9) != -9 { return 6 }
+
+    ops: BinaryOp[2] = [add, mul]
+    selected: BinaryOp = ops[0]
+    if selected(10, 32) != 42 { return 7 }
+    selected = ops[1]
+    if selected(6, 7) != 42 { return 8 }
+
+    ; Struct fields containing function pointers, called as expressions.
+    calc: Calculator = Calculator { .combine = add, .transform = square }
+    if run_calculator(calc, 4, 2) != 36 { return 9 }
+    calc.combine = mul
+    calc.transform = negate
+    if run_calculator(calc, 7, 6) != -42 { return 10 }
+
+    ; The callee can also be an indexed function-pointer element.
+    if ops[0](40, 2) != 42 { return 11 }
+
+    ; Qualified access to an imported module: exported const and functions.
+    if mathlib.triple(14) != 42 { return 12 }
+    if mathlib.inc(mathlib.BIAS) != 41 { return 13 }
+
+    ; Manual vtable: dispatch through an object's data + vtable pointers.
+    box: Shape = Shape { .width = 6, .height = 7 }
+    rect_vt: ShapeVTable = ShapeVTable { .area = rect_area, .perimeter = rect_perimeter }
+    obj: ShapeObj = ShapeObj { .data = &box, .vtable = &rect_vt }
+    if shape_area(&obj) != 42 { return 14 }
+    if shape_perimeter(&obj) != 26 { return 15 }
+
+    ; Static method sugar: call methods on a value with `recv.method(args)`.
+    if box.area() != 42 { return 16 }
+    if box.scaled_area(3) != 126 { return 17 }
+
+    console.println("ok")
+    return 0
+}

@@ -1,0 +1,13 @@
+; Entry: calls main then halts the VM by writing the exit code to SYSCON (0x10010000).
+
+external main: () -> i32
+_start: () {
+    code: i32 = main()
+    asm {
+        li   t0, 268447744  ; SYSCON 0x10010000
+        sd   a0, 0(t0)
+    .Lhalt:
+        wfi
+        j    .Lhalt
+    }
+}

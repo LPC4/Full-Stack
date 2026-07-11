@@ -80,13 +80,14 @@ export const PCB_OFF_HEAP_BRK      = 376
 export const PCB_SIZE              = 384
 
 ; --- PCB field indices (u64 array view) ---
-; Leading scalar fields, the embedded trap frame at [5..40], then trailing fields.
+; Leading scalars (LINK = next PCB in the ready / zombie list), the embedded trap
+; frame at [5..40], then trailing fields.
 export const PCB_IDX_PID           = 0
 export const PCB_IDX_STATE         = 1
-export const PCB_IDX_LINK          = 2    ; next PCB in the ready / zombie list
+export const PCB_IDX_LINK          = 2
 export const PCB_IDX_USER_STACK_PA = 3
 export const PCB_IDX_ENTRY_PC      = 4
-export const PCB_IDX_TRAP_FRAME    = 5    ; base of the embedded trap frame (x0..sstatus)
+export const PCB_IDX_TRAP_FRAME    = 5
 export const PCB_IDX_PAGE_ROOT     = 41
 export const PCB_IDX_PARENT_PID    = 42
 export const PCB_IDX_EXIT_CODE     = 43
@@ -103,7 +104,7 @@ export const PCB_IDX_HEAP_BRK      = 47
 ; --- Trap-frame word slots (36 u64: x0..x31, sepc, scause, stval, sstatus) ---
 ; Relative to PCB_IDX_TRAP_FRAME inside a PCB, or absolute in a bare frame: u64*.
 ; Syscall args arrive in a0-a4/a7; the result is written back to a0. See OS spec ch.5.1.
-export const TF_SP       = 2     ; x2 (stack pointer)
+export const TF_SP       = 2
 export const TF_A0       = 10
 export const TF_A1       = 11
 export const TF_A2       = 12
@@ -114,7 +115,7 @@ export const TF_SEPC     = 32
 export const TF_SCAUSE   = 33
 export const TF_STVAL    = 34
 export const TF_SSTATUS  = 35
-export const TF_BYTES    = 288   ; 36 u64; size of a saved trap frame for context memcpy
+export const TF_BYTES    = 288
 
 ; --- Sv39 PTE permission bits (VMM_V added internally by vmm_map). See vmm.hll ---
 export const VMM_V = 1

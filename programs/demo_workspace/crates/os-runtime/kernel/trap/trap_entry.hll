@@ -1,0 +1,165 @@
+; S-mode trap entry: switches to a dedicated kernel stack, saves all GPRs + CSRs
+; to a 288-byte frame, calls trap_handler(frame), restores, and sret.
+
+; The HLL trap dispatcher, reached from the save/restore asm via `call trap_handler`. Imported
+; (under a distinct alias) so the build closure compiles it and prepends its link interface.
+trap_handler_dep := import("trap_handler")
+
+; Per-hart kernel trap stack (16 KiB).
+; sscratch points just past the top (aligned down to 16 bytes).
+kernel_trap_stack: u64[2048] = []
+
+; stvec points directly at stvec_entry, bypassing the HLL function prologue.
+export _s_trap_host: () {
+    asm {
+        stvec_entry:
+
+        ; Switch to the kernel trap stack. sscratch holds its top; after the
+        ; swap, sp = kernel stack top and sscratch = the trap-time sp.
+        csrrw sp, sscratch, sp
+
+        ; Allocate the 288-byte trap frame.
+        addi sp, sp, -288
+
+        ; Save the two scratch registers we need up front (x5=t0, x6=t1).
+        sd   t0, 40(sp)
+        sd   t1, 48(sp)
+
+        ; Store the trap-time sp (held in sscratch) into the frame's x2 slot,
+        ; then restore sscratch to the kernel stack top for the next trap.
+        csrr t0, sscratch
+        sd   t0, 16(sp)
+        addi t0, sp, 288
+        csrw sscratch, t0
+
+        ; SUM: S-mode must read user-VA pages during syscall handling.
+        csrr t0, sstatus
+        li   t1, 0x40000        ; SUM = bit 18
+        or   t0, t0, t1
+        csrw sstatus, t0
+
+        ; Save the remaining GPRs (x0 is hard-wired zero; x2/x5/x6 already done).
+        sd   x1,   8(sp)
+        sd   x3,   24(sp)
+        sd   x4,   32(sp)
+        sd   x7,   56(sp)
+        sd   x8,   64(sp)
+        sd   x9,   72(sp)
+        sd   x10,  80(sp)
+        sd   x11,  88(sp)
+        sd   x12,  96(sp)
+        sd   x13,  104(sp)
+        sd   x14,  112(sp)
+        sd   x15,  120(sp)
+        sd   x16,  128(sp)
+        sd   x17,  136(sp)
+        sd   x18,  144(sp)
+        sd   x19,  152(sp)
+        sd   x20,  160(sp)
+        sd   x21,  168(sp)
+        sd   x22,  176(sp)
+        sd   x23,  184(sp)
+        sd   x24,  192(sp)
+        sd   x25,  200(sp)
+        sd   x26,  208(sp)
+        sd   x27,  216(sp)
+        sd   x28,  224(sp)
+        sd   x29,  232(sp)
+        sd   x30,  240(sp)
+        sd   x31,  248(sp)
+
+        ; Save S-mode CSRs at offsets 256-280.
+        csrr t0, sepc
+        sd   t0, 256(sp)
+        csrr t0, scause
+        sd   t0, 264(sp)
+        csrr t0, stval
+        sd   t0, 272(sp)
+        csrr t0, sstatus
+        sd   t0, 280(sp)
+
+        mv   a0, sp
+        call trap_handler
+
+        ; Restore S-mode CSRs.
+        ld   t0, 256(sp)
+        csrw sepc, t0
+        ld   t0, 280(sp)
+        csrw sstatus, t0
+
+        ; Restore GPRs (x2/sp last so the frame stays valid until the end).
+        ld   x1,   8(sp)
+        ld   x3,   24(sp)
+        ld   x4,   32(sp)
+        ld   x5,   40(sp)
+        ld   x6,   48(sp)
+        ld   x7,   56(sp)
+        ld   x8,   64(sp)
+        ld   x9,   72(sp)
+        ld   x10,  80(sp)
+        ld   x11,  88(sp)
+        ld   x12,  96(sp)
+        ld   x13,  104(sp)
+        ld   x14,  112(sp)
+        ld   x15,  120(sp)
+        ld   x16,  128(sp)
+        ld   x17,  136(sp)
+        ld   x18,  144(sp)
+        ld   x19,  152(sp)
+        ld   x20,  160(sp)
+        ld   x21,  168(sp)
+        ld   x22,  176(sp)
+        ld   x23,  184(sp)
+        ld   x24,  192(sp)
+        ld   x25,  200(sp)
+        ld   x26,  208(sp)
+        ld   x27,  216(sp)
+        ld   x28,  224(sp)
+        ld   x29,  232(sp)
+        ld   x30,  240(sp)
+        ld   x31,  248(sp)
+        ld   x2,   16(sp)
+
+        sret
+    }
+}
+
+; Initialize sscratch (kernel trap-stack top) and stvec, then enable interrupts.
+; sscratch MUST be set before SIE is enabled so the first trap can switch stacks.
+export trap_init: () {
+    asm {
+        ; sscratch = top of kernel_trap_stack, aligned down to 16 bytes.
+        la   t0, kernel_trap_stack
+        li   t1, 16384
+        add  t0, t0, t1
+        andi t0, t0, -16
+        csrw sscratch, t0
+
+        ; Direct mode: bit[1:0]=00.
+        la   t0, stvec_entry
+        csrw stvec, t0
+
+        ; sie: set STIE (bit 5 = 32) and SEIE (bit 9 = 512) -> 544
+        csrr t0, sie
+        ori  t0, t0, 544
+        csrw sie, t0
+
+        ; sstatus: set UIE (bit 0) and SIE (bit 1)
+        csrr t0, sstatus
+        ori  t0, t0, 3          ; UIE=1, SIE=1
+        csrw sstatus, t0
+    }
+}
+
+; Read sscratch into *out.
+export sscratch_get_to: (out: u64*) {
+    asm {
+        csrr t0, sscratch
+        sd   t0, 0(a0)
+    }
+}
+
+; Write sscratch CSR.
+export sscratch_set: (val: u64) {
+    asm { csrw sscratch, a0 }
+}

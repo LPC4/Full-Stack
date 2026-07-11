@@ -1,3 +1,5 @@
+; Central trap dispatch: interrupts (timer/external) and U-mode ecalls. See OS spec ch.5/6.
+
 layout      := import("layout")
 runtime     := import("runtime")
 klog        := import("klog")

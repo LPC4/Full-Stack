@@ -1,3 +1,4 @@
+; Chained dereference through a pointer-to-pointer (@@pp).
 chained_deref_assign: (val: i32) -> i32 {
     ptr: i32* = new(i32)
     pp: i32** = &ptr

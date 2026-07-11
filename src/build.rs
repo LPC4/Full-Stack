@@ -544,6 +544,21 @@ export value: () -> i32 {
             artifacts.linked.has_symbol("helper__value"),
             "linked output should contain imported helper export"
         );
+        // The root unit's lines attribute to its own file name (line 5 is the
+        // `return` statement), and no entry carries an unusable empty file.
+        assert!(
+            artifacts
+                .linked
+                .addr_for_source("manifest_modules.hll", 5)
+                .is_some(),
+            "root file lines should be in the linked table"
+        );
+        for entry in artifacts.linked.line_table_iter() {
+            if entry.line > 0 {
+                let file = artifacts.linked.file_name(entry.file_id).unwrap_or("");
+                assert!(!file.is_empty(), "line {} has an empty file", entry.line);
+            }
+        }
     }
 
     #[test]

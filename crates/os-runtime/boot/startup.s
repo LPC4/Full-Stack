@@ -7,8 +7,6 @@
 # M-mode boot stub at offset 0x000
 _start:
     # PMP: single entry, full address space, RWX (pmpaddr0=-1, pmpcfg0=0x1F).
-
-
     li t0, -1
     csrw pmpaddr0, t0
     li t0, 31

@@ -1,3 +1,6 @@
+; Kernel boot/status logging: tagged lines ([  OK  ]/[ WARN ]/[FAILED]) and
+; labelled int/hex values over the console.
+
 console := import("console")
 
 export klog: (msg: u8*) {

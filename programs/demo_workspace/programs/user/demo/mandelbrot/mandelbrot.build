@@ -1,0 +1,8 @@
+name = "mandelbrot"
+title = "Mandelbrot Demo"
+description = "Framebuffer Mandelbrot renderer."
+kind = "demo"
+install_path = "/home/demo/mandelbrot.elf"
+target = "hosted"
+stdlib = "hosted"
+root = "mandelbrot.hll"

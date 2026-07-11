@@ -309,8 +309,24 @@ impl ObjectLinker {
                     line: entry.line,
                 });
             }
+            // Close the module's text attribution with a line-0 sentinel, so a
+            // following module without its own table cannot inherit its lines.
+            let text_name = SectionKind::Text.name().to_owned();
+            if let Some(&abs_base) = contrib_base.get(&(text_name, mi)) {
+                let text_len = module.section_bytes(&SectionKind::Text).len() as u64;
+                if text_len > 0 {
+                    let file_id = sentinel_file_id(&mut merged_file_table);
+                    merged_line_table.push(LineEntry {
+                        addr: abs_base + text_len,
+                        file_id,
+                        line: 0,
+                    });
+                }
+            }
         }
-        merged_line_table.sort_by_key(|e| e.addr);
+        // Real entries win over sentinels that land on the same address.
+        merged_line_table.sort_by_key(|e| (e.addr, e.line == 0));
+        merged_line_table.dedup_by_key(|e| e.addr);
 
         // Assemble the final output
         let sections: Vec<SectionData> = merged_secs
@@ -335,6 +351,15 @@ impl ObjectLinker {
 }
 
 // --- Helpers ---
+
+/// Id of the empty "no source" file name used by module-end line sentinels.
+fn sentinel_file_id(file_table: &mut Vec<String>) -> u32 {
+    if let Some(pos) = file_table.iter().position(|f| f.is_empty()) {
+        return pos as u32;
+    }
+    file_table.push(String::new());
+    (file_table.len() - 1) as u32
+}
 
 /// Collect all distinct section kinds present across all modules, in canonical
 /// ELF load order: Text, `RoData`, Data, Custom(k), Bss.
@@ -585,12 +610,43 @@ mod tests {
 
         let linked = ObjectLinker::link(&[("a", &a), ("b", &b)]).expect("link");
 
-        assert_eq!(linked.line_table_len(), 4, "one entry per attributed nop");
+        // Two attributed nops per module plus b's end sentinel; a's sentinel
+        // lands on b's first real entry and dedupes away.
+        assert_eq!(linked.line_table_len(), 5);
         assert_eq!(linked.source_for_addr(0), Some(("a.hll", 1)));
         assert_eq!(linked.source_for_addr(4), Some(("a.hll", 1)));
         assert_eq!(linked.source_for_addr(8), Some(("b.hll", 2)));
         assert_eq!(linked.source_for_addr(12), Some(("b.hll", 2)));
         assert_eq!(linked.addr_for_source("a.hll", 1), Some(0));
         assert_eq!(linked.addr_for_source("b.hll", 2), Some(8));
+        // Past b's text the sentinel clears attribution instead of letting
+        // b.hll bleed over whatever links next.
+        assert_eq!(linked.source_for_addr(16), None);
+    }
+
+    // A module without any line table must not inherit lines from the module
+    // linked before it.
+    #[test]
+    fn link_sentinels_stop_attribution_bleed() {
+        let a = Assembler::assemble(&[
+            RvInstruction::Directive(".globl a_start".to_owned()),
+            RvInstruction::Label("a_start".to_owned()),
+            loc("a.hll", 3),
+            nop(), // @0
+        ])
+        .expect("assemble a");
+        let glue = Assembler::assemble(&[
+            RvInstruction::Directive(".globl glue_start".to_owned()),
+            RvInstruction::Label("glue_start".to_owned()),
+            nop(), // @4 after linking, no source attribution
+            nop(), // @8 after linking
+        ])
+        .expect("assemble glue");
+
+        let linked = ObjectLinker::link(&[("a", &a), ("glue", &glue)]).expect("link");
+
+        assert_eq!(linked.source_for_addr(0), Some(("a.hll", 3)));
+        assert_eq!(linked.source_for_addr(4), None, "glue has no source");
+        assert_eq!(linked.source_for_addr(8), None, "glue has no source");
     }
 }

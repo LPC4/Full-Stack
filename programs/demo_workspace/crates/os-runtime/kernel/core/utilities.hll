@@ -1,0 +1,68 @@
+; Kernel platform helpers: shutdown, timer, and interrupt controller.
+
+memory_allocator    := import("memory_allocator")
+runtime             := import("runtime")
+
+; Panics on OOM instead of returning null.
+export kmalloc: (size: u64) -> u8* {
+    ptr: u8* = memory_allocator.malloc(size)
+    if ptr == null {
+        runtime.panic("kmalloc: out of memory".ptr)
+    }
+    return ptr
+}
+
+; Write exit code to SYSCON (0x10010000) to halt the VM or QEMU.
+; Falls back to a WFI loop if the SYSCON write doesn't halt (real hardware).
+export kshutdown: (code: i64) {
+    asm {
+        li   t0, 268500992
+        sd   a0, 0(t0)
+    }
+    ; Fallback for real hardware without SYSCON: WFI forever.
+    asm {
+    .Lkshutdown_halt:
+        wfi
+        j    .Lkshutdown_halt
+    }
+}
+
+; Read MTIME counter from CLINT (0x0200BFF8).
+export timer_get: () -> u64 {
+    result: u64 = 0
+    asm {
+        li   t0, 33603576
+        ld   a0, 0(t0)
+    }
+    return result
+}
+
+; Schedule next timer interrupt at MTIME + interval (MTIMECMP hart 0).
+export timer_set: (interval: u64) {
+    asm {
+        li   t0, 33603576
+        ld   t1, 0(t0)
+        add  t1, t1, a0
+        li   t0, 33570816
+        sd   t1, 0(t0)
+    }
+}
+
+; PLIC minimal init: source 10 (UART RX), priority 1, S-mode hart 0 context, threshold 0.
+export plic_init: () {
+    asm {
+        ; priority[10] at 0x0C000000 + 9*4
+        li   t0, 201326628
+        li   t1, 1
+        sw   t1, 0(t0)
+
+        ; enable bitmap for S-context 1 at 0x0C002000; source10 = bit 9 = 512
+        li   t0, 201334784
+        li   t1, 512
+        sw   t1, 0(t0)
+
+        ; threshold for context 1 at 0x0C200000 = 0 (allow all)
+        li   t0, 203423744
+        sw   x0, 0(t0)
+    }
+}

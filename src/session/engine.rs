@@ -1,11 +1,14 @@
 use crate::build::{BuildArtifacts, BuildExecutor, BuildManifest, BuildSource};
-use crate::compilation_pipeline::{FsEntry, TargetMode, assembled_to_elf_file, build_fs_image};
+use crate::compilation_pipeline::{
+    CompilationPipeline, FsEntry, TargetMode, assembled_to_elf_file, build_fs_image,
+};
 use crate::runconfig::{BuildRef, RunConfig};
 use crate::userspace::{self, UserProgram};
 use crate::workspace::{
     EntryKind, VPath, WorkspaceFs, WorkspaceManifestDiagnostic, load_build_manifest,
 };
 use asm_to_binary::AssembledOutput;
+use asm_to_binary::assembler::link_layout::LinkLayout;
 use std::collections::BTreeSet;
 use std::hash::{Hash as _, Hasher};
 use std::io;
@@ -42,11 +45,14 @@ impl std::fmt::Display for SessionEngineError {
     }
 }
 
+#[derive(Clone)]
 pub struct BuildOutcome {
     pub config_name: String,
     pub manifest_name: String,
     pub target: TargetMode,
     pub root: String,
+    pub entry: String,
+    pub link_layout: LinkLayout,
     pub artifacts: BuildArtifacts,
     /// Directory the `.ir`/`.s`/`.elf` artifacts were written to, when enabled.
     pub artifact_dir: Option<PathBuf>,
@@ -88,12 +94,23 @@ impl<'a> SessionEngine<'a> {
         let mut manifest = self.manifest_for_config(config)?;
         let artifact_dir = self.apply_artifact_root(&mut manifest);
         let plan = BuildExecutor::plan(&manifest);
+        let pipeline =
+            CompilationPipeline::from_config(crate::compilation_pipeline::PipelineConfig {
+                target_mode: manifest.target,
+                entry_point: manifest.entry.clone(),
+                link_layout: manifest.link_layout.clone(),
+                ..Default::default()
+            });
+        let entry = pipeline.effective_entry_point().to_owned();
+        let link_layout = pipeline.effective_link_layout();
         let artifacts = BuildExecutor::build(&manifest).map_err(SessionEngineError::Build)?;
         Ok(BuildOutcome {
             config_name: config.name.clone(),
             manifest_name: plan.name,
             target: plan.target,
             root: plan.root,
+            entry,
+            link_layout,
             artifacts,
             artifact_dir,
         })

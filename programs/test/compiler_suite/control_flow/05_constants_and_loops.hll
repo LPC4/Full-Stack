@@ -1,3 +1,4 @@
+; Compile-time constants driving loop bounds and branches.
 const A = 10
 const B = 20
 

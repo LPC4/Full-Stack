@@ -1,3 +1,6 @@
+//! Loads and saves `.fullstack/run.toml` as a hand-parsed TOML subset (flat keys,
+//! `[[config]]` / `[[config.fs.mount]]` arrays) so the app needs no toml dependency.
+
 use crate::compilation_pipeline::TargetMode;
 use crate::runconfig::config::{
     BuildRef, DebugSpec, FsImageSpec, FsMount, PresentMode, RunConfig, RunKind, RunSpec,
@@ -9,11 +12,13 @@ use std::io;
 
 const RUN_CONFIG_PATH: &str = ".fullstack/run.toml";
 
+/// The workspace's run-configuration list, in file order.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RunConfigStore {
     pub configs: Vec<RunConfig>,
 }
 
+/// A parse failure with the 1-based `run.toml` line it was detected on.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RunConfigParseError {
     pub line: usize,
@@ -29,6 +34,7 @@ impl fmt::Display for RunConfigParseError {
 impl std::error::Error for RunConfigParseError {}
 
 impl RunConfigStore {
+    /// Read and parse `.fullstack/run.toml`; parse errors surface as `InvalidData`.
     pub fn load(fs: &dyn WorkspaceFs) -> io::Result<Self> {
         let bytes = fs.read_file(&VPath::parse(RUN_CONFIG_PATH).map_err(invalid_path)?)?;
         let text = String::from_utf8(bytes).map_err(|err| {
@@ -40,6 +46,7 @@ impl RunConfigStore {
         Self::parse(&text).map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
     }
 
+    /// Serialize back to `.fullstack/run.toml`, creating the directory on first save.
     pub fn save(&self, fs: &mut dyn WorkspaceFs) -> io::Result<()> {
         fs.create_dir(&VPath::parse(".fullstack").map_err(invalid_path)?)?;
         fs.write_file(
@@ -48,6 +55,8 @@ impl RunConfigStore {
         )
     }
 
+    /// Single-pass line parser: keys accumulate into the open `[[config]]` (or its
+    /// open mount table) as raw strings, then `into_config` does the typing.
     pub fn parse(text: &str) -> Result<Self, RunConfigParseError> {
         let mut sections = Vec::new();
         let mut current: Option<RawConfig> = None;
@@ -55,6 +64,8 @@ impl RunConfigStore {
 
         for (idx, line) in text.lines().enumerate() {
             let line_no = idx + 1;
+            // Naive comment strip: a '#' inside a quoted value is cut too. Accepted;
+            // no key written by to_toml carries one.
             let line = line
                 .split_once('#')
                 .map(|(body, _)| body)
@@ -86,6 +97,7 @@ impl RunConfigStore {
                     if let Some(mount) = current_mount.as_mut() {
                         mount.insert(key, value);
                     } else if let Some(raw) = current.as_mut() {
+                        // `breakpoint` repeats to form a list; every other key is last-wins.
                         if key == "breakpoint" {
                             raw.breakpoints.push(value);
                         } else {
@@ -114,6 +126,8 @@ impl RunConfigStore {
         Ok(Self { configs })
     }
 
+    /// Render the exact subset `parse` reads back; the pair must round-trip so the
+    /// GUI can persist every edit without disturbing configs it did not touch.
     pub fn to_toml(&self) -> String {
         let mut out = String::new();
         for config in &self.configs {
@@ -155,6 +169,7 @@ impl RunConfigStore {
     }
 }
 
+/// One `[[config]]` section as raw strings; `first_line` anchors error reports.
 #[derive(Default)]
 struct RawConfig {
     values: BTreeMap<String, String>,
@@ -164,6 +179,8 @@ struct RawConfig {
 }
 
 impl RawConfig {
+    /// Type the raw strings. Only `name` and a `build`/`root` ref are required;
+    /// the rest default (type hosted, present both, 200k steps, debug off).
     fn into_config(self) -> Result<RunConfig, RunConfigParseError> {
         let name = required(&self.values, "name", self.first_line)?;
         let kind = parse_kind(
@@ -263,6 +280,8 @@ fn parse_key_value(line: &str, line_no: usize) -> Result<(String, String), RunCo
     Ok((key.trim().to_owned(), parse_value(value.trim(), line_no)?))
 }
 
+/// Values stay strings: quoted text is unescaped, bools/numbers pass through
+/// verbatim for `into_config` to interpret, anything else is rejected here.
 fn parse_value(value: &str, line_no: usize) -> Result<String, RunConfigParseError> {
     if let Some(stripped) = value.strip_prefix('"').and_then(|v| v.strip_suffix('"')) {
         Ok(stripped.replace("\\\"", "\"").replace("\\\\", "\\"))

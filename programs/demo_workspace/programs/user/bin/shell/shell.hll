@@ -1,0 +1,1393 @@
+; Interactive shell, pid 1.
+console := import("console")
+sys := import("sys")
+cstr := import("cstr")
+text := import("text")
+fileops := import("./shell_fileops.hll")
+
+; --- Path helpers ---
+
+export sh_join_path: (cwd: u8*, arg: u8*, out: u8*) {
+    if @arg == '/' {
+        cstr.copy(out, arg)
+        return
+    }
+    cstr.copy(out, cwd)
+    l: u64 = cstr.len(out)
+    if l == 0 {
+        slash: u8* = out + l
+        @slash = '/' as u8
+        l = l + 1
+    } else {
+        if @(out + (l - 1)) != '/' {
+            slash: u8* = out + l
+            @slash = '/' as u8
+            l = l + 1
+        }
+    }
+    j: u64 = 0
+    while 1 == 1 {
+        c: u8 = @(arg + j)
+        d: u8* = out + l + j
+        @d = c
+        if c == 0 {
+            return
+        }
+        j = j + 1
+    }
+}
+
+sh_path_pop: (cwd: u8*) {
+    l: u64 = cstr.len(cwd)
+    if l <= 1 {
+        return
+    }
+    i: u64 = l
+    while i > 1 {
+        i = i - 1
+        if @(cwd + i) == '/' {
+            t: u8* = cwd + i
+            @t = 0 as u8
+            return
+        }
+    }
+    t: u8* = cwd + 1
+    @t = 0 as u8
+}
+
+; --- Line input ---
+
+sh_read_line: (buf: u8*) {
+    n: u64 = 0
+    done: i64 = 0
+    while done == 0 {
+        c: i64 = sys.readchar()
+        if c < 0 {
+            sys.yield()
+        } else {
+            match c {
+                '\n' -> {
+                    console.putchar('\n')
+                    done = 1
+                }
+                '\r' -> {
+                    console.putchar('\n')
+                    done = 1
+                }
+                '\b' -> {
+                    if n > 0 {
+                        n = n - 1
+                        console.putchar('\b')
+                        console.putchar(' ')
+                        console.putchar('\b')
+                    }
+                }
+                _ -> {
+                    if n < 255 {
+                        d: u8* = buf + n
+                        @d = c as u8
+                        n = n + 1
+                        console.putchar(c as i32)
+                    }
+                }
+            }
+        }
+    }
+    term: u8* = buf + n
+    @term = 0 as u8
+}
+
+; --- Builtin I/O ---
+
+sh_sink_fd: i64 = 0
+sh_src_fd: i64 = 0
+
+sh_out: (s: u8*) {
+    if sh_sink_fd == 0 {
+        console.write(s)
+        return
+    }
+    n: u64 = cstr.len(s)
+    sys.write(sh_sink_fd, s, n)
+}
+
+sh_outn: (buf: u8*, n: u64) {
+    if sh_sink_fd == 0 {
+        for i in 0..n {
+            console.putchar((@(buf + i)) as i32)
+        }
+        return
+    }
+    sys.write(sh_sink_fd, buf, n)
+}
+
+sh_outch: (c: i32) {
+    if sh_sink_fd == 0 {
+        console.putchar(c)
+        return
+    }
+    b: u8[1] = []
+    bp: u8* = &b[0]
+    @bp = c as u8
+    sys.write(sh_sink_fd, bp, 1)
+}
+
+sh_outln: (s: u8*) {
+    sh_out(s)
+    sh_outch('\n')
+}
+
+sh_sink_close: () {
+    if sh_sink_fd != 0 {
+        sys.close(sh_sink_fd)
+        sh_sink_fd = 0
+    }
+}
+
+sh_src_close: () {
+    if sh_src_fd != 0 {
+        sys.close(sh_src_fd)
+        sh_src_fd = 0
+    }
+}
+
+; --- Commands ---
+
+cmd_ls: (cwd: u8*, arg: u8*) {
+    target: u8[256] = []
+    target_p: u8* = &target[0]
+    if @arg == 0 {
+        cstr.copy(target_p, cwd)
+    } else {
+        sh_join_path(cwd, arg, target_p)
+    }
+    ty: i64 = sys.stat(target_p)
+    if ty < 0 {
+        console.write("ls: no such path: ".ptr)
+        console.writeln(arg)
+        return
+    }
+    if ty == 1 {
+        sh_outln(arg)
+        return
+    }
+    name: u8[64] = []
+    name_p: u8* = &name[0]
+    i: u64 = 0
+    done: i64 = 0
+    while done == 0 {
+        t: i64 = sys.readdir(target_p, i, name_p)
+        if t < 0 {
+            done = 1
+        } else {
+            if @name_p != '.' {
+                sh_out(name_p)
+                if t == 2 {
+                    sh_outch('/')
+                }
+                sh_outch('\n')
+            }
+            i = i + 1
+        }
+    }
+}
+
+cmd_pwd: (cwd: u8*) {
+    sh_outln(cwd)
+}
+
+cmd_echo: (arg: u8*) {
+    sh_out(arg)
+    sh_outch('\n')
+}
+
+cmd_cd: (cwd: u8*, arg: u8*) {
+    if @arg == 0 {
+        return
+    }
+    if cstr.eq(arg, "/".ptr) == 1 {
+        t: u8* = cwd + 1
+        @t = 0 as u8
+        return
+    }
+    if cstr.eq(arg, ".".ptr) == 1 {
+        return
+    }
+    if cstr.eq(arg, "..".ptr) == 1 {
+        sh_path_pop(cwd)
+        return
+    }
+    target: u8[256] = []
+    target_p: u8* = &target[0]
+    sh_join_path(cwd, arg, target_p)
+    ty: i64 = sys.stat(target_p)
+    if ty < 0 {
+        console.write("cd: no such directory: ".ptr)
+        console.writeln(arg)
+        return
+    }
+    if ty != 2 {
+        console.write("cd: not a directory: ".ptr)
+        console.writeln(arg)
+        return
+    }
+    cstr.copy(cwd, target_p)
+}
+
+sh_is_exec: (path: u8*) -> i64 {
+    fd: i64 = sys.open(path, 0)
+    if fd < 0 {
+        return -1 as i64
+    }
+    magic: u8[4] = []
+    magic_p: u8* = &magic[0]
+    n: i64 = sys.read(fd, magic_p, 0, 4)
+    sys.close(fd)
+    if n != 4 {
+        return 0
+    }
+    if @(magic_p + 0) == 0x7F {
+        if @(magic_p + 1) == 'E' {
+            if @(magic_p + 2) == 'L' {
+                if @(magic_p + 3) == 'F' {
+                    return 1
+                }
+            }
+        }
+    }
+    return 0
+}
+
+sh_print_dec: (v: i64) {
+    if v < 0 {
+        sh_outch('-')
+        v = 0 - v
+    }
+    if v == 0 {
+        sh_outch('0')
+        return
+    }
+    digits: u8[24] = []
+    digits_p: u8* = &digits[0]
+    n: u64 = 0
+    uv: u64 = v as u64
+    while uv > 0 {
+        d: u64 = uv % 10
+        dp: u8* = digits_p + n
+        @dp = ('0' + d) as u8
+        n = n + 1
+        uv = uv / 10
+    }
+    while n > 0 {
+        n = n - 1
+        sh_outch((@(digits_p + n)) as i32)
+    }
+}
+
+last_exit: i64 = 0
+
+sh_wait_foreground: (pid: i64) {
+    code: i64 = sys.waitpid(pid)
+    last_exit = code
+    two: i64 = 2
+    if code + two == 0 {
+        console.writeln("^C".ptr)
+        return
+    }
+    console.write("[exit ".ptr)
+    sh_print_dec(code)
+    console.writeln("]".ptr)
+}
+
+; --- Jobs ---
+
+const MAX_JOBS = 8
+job_pids: i64[8] = []
+
+jobs_add: (pid: i64) -> i64 {
+    for i in 0..MAX_JOBS {
+        slot: i64* = &job_pids[i]
+        if @slot == 0 {
+            @slot = pid
+            return (i + 1) as i64
+        }
+    }
+    return -1 as i64
+}
+
+jobs_reap: () {
+    for i in 0..MAX_JOBS {
+        slot: i64* = &job_pids[i]
+        pid: i64 = @slot
+        if pid != 0 {
+            if sys.pidalive(pid as u64) == 0 {
+                sys.waitpid(pid)
+                console.write("[".ptr)
+                sh_print_dec((i + 1) as i64)
+                console.write("] done   pid ".ptr)
+                sh_print_dec(pid)
+                console.putchar('\n')
+                @slot = 0
+            }
+        }
+    }
+}
+
+sh_parse_int: (s: u8*) -> i64 {
+    n: i64 = 0
+    i: u64 = 0
+    while @(s + i) != 0 {
+        c: u8 = @(s + i)
+        if text.is_digit(c) == false {
+            return n
+        }
+        n = n * 10 + (c - 48) as i64
+        i = i + 1
+    }
+    return n
+}
+
+cmd_jobs: () {
+    any: i64 = 0
+    for i in 0..MAX_JOBS {
+        slot: i64* = &job_pids[i]
+        pid: i64 = @slot
+        if pid != 0 {
+            any = 1
+            sh_out("[".ptr)
+            sh_print_dec((i + 1) as i64)
+            sh_out("] pid ".ptr)
+            sh_print_dec(pid)
+            if sys.pidalive(pid as u64) == 1 {
+                sh_outln("   running".ptr)
+            } else {
+                sh_outln("   done".ptr)
+            }
+        }
+    }
+    if any == 0 {
+        sh_outln("no background jobs".ptr)
+    }
+}
+
+cmd_fg: (arg: u8*) {
+    if @arg == 0 {
+        console.writeln("fg: usage: fg <job>".ptr)
+        return
+    }
+    jid: i64 = sh_parse_int(arg)
+    if jid < 1 {
+        console.writeln("fg: no such job".ptr)
+        return
+    }
+    if jid > MAX_JOBS {
+        console.writeln("fg: no such job".ptr)
+        return
+    }
+    slot: i64* = &job_pids[(jid - 1) as u64]
+    pid: i64 = @slot
+    if pid == 0 {
+        console.writeln("fg: no such job".ptr)
+        return
+    }
+    @slot = 0
+    sh_wait_foreground(pid)
+}
+
+const SIGKILL = 9
+
+cmd_kill: (arg: u8*) {
+    if @arg == 0 {
+        console.writeln("kill: usage: kill <pid> | kill %<job>".ptr)
+        return
+    }
+    pid: i64 = 0
+    if @arg == '%' {
+        jid: i64 = sh_parse_int(arg + 1)
+        if jid < 1 {
+            console.writeln("kill: no such job".ptr)
+            return
+        }
+        if jid > MAX_JOBS {
+            console.writeln("kill: no such job".ptr)
+            return
+        }
+        slot: i64* = &job_pids[(jid - 1) as u64]
+        pid = @slot
+        if pid == 0 {
+            console.writeln("kill: no such job".ptr)
+            return
+        }
+    } else {
+        pid = sh_parse_int(arg)
+    }
+    if pid < 2 {
+        console.writeln("kill: invalid pid".ptr)
+        return
+    }
+    if sys.kill(pid, SIGKILL) < 0 {
+        console.write("kill: no such process: ".ptr)
+        sh_print_dec(pid)
+        console.putchar('\n')
+    }
+}
+
+sh_try_dir: (dir: u8*, name: u8*, out: u8*) -> i64 {
+    sh_join_path(dir, name, out)
+    if sh_is_exec(out) == 1 {
+        return 1
+    }
+    l: u64 = cstr.len(out)
+    cstr.copy(out + l, ".elf".ptr)
+    if sh_is_exec(out) == 1 {
+        return 1
+    }
+    return 0
+}
+
+sh_resolve_program: (cwd: u8*, name: u8*, out: u8*) -> i64 {
+    if @name == '.' {
+        if @(name + 1) == '/' {
+            name = name + 2
+        }
+    }
+    has_slash: i64 = 0
+    i: u64 = 0
+    while @(name + i) != 0 {
+        if @(name + i) == '/' {
+            has_slash = 1
+            break
+        }
+        i = i + 1
+    }
+    if has_slash == 1 {
+        sh_join_path(cwd, name, out)
+        if sh_is_exec(out) == 1 {
+            return 1
+        }
+        l: u64 = cstr.len(out)
+        cstr.copy(out + l, ".elf".ptr)
+        if sh_is_exec(out) == 1 {
+            return 1
+        }
+        return 0
+    }
+    if sh_try_dir(cwd, name, out) == 1 {
+        return 1
+    }
+    if sh_try_dir("/bin".ptr, name, out) == 1 {
+        return 1
+    }
+    if sh_try_dir("/home/demo".ptr, name, out) == 1 {
+        return 1
+    }
+    return 0
+}
+
+sh_launch_redir: (target_p: u8*, name: u8*, bg: i64, out_p: u8*, in_p: u8*, out_append: u64) {
+    pid: i64 = sys.exec_redir(target_p, 0 as u8*, out_p, in_p, out_append)
+    if pid < 0 {
+        console.write("cannot exec: ".ptr)
+        console.writeln(name)
+        return
+    }
+    if bg == 1 {
+        jid: i64 = jobs_add(pid)
+        console.write("[".ptr)
+        sh_print_dec(jid)
+        console.write("] pid ".ptr)
+        sh_print_dec(pid)
+        console.putchar('\n')
+        return
+    }
+    sh_wait_foreground(pid)
+}
+
+cmd_exec: (cwd: u8*, line: u8*) {
+    bg: i64 = 0
+    l: u64 = cstr.len(line)
+    while l > 0 {
+        if @(line + (l - 1)) != ' ' {
+            break
+        }
+        l = l - 1
+    }
+    if l > 0 {
+        if @(line + (l - 1)) == '&' {
+            bg = 1
+            l = l - 1
+            while l > 0 {
+                if @(line + (l - 1)) != ' ' {
+                    break
+                }
+                l = l - 1
+            }
+        }
+    }
+
+    name: u8[256] = []
+    name_p: u8* = &name[0]
+    @name_p = 0 as u8
+    out_abs: u8[256] = []
+    out_abs_p: u8* = &out_abs[0]
+    in_abs: u8[256] = []
+    in_abs_p: u8* = &in_abs[0]
+    tok: u8[256] = []
+    tok_p: u8* = &tok[0]
+    have_out: i64 = 0
+    have_in: i64 = 0
+    out_append: i64 = 0
+    redir: i64 = 0
+    i: u64 = 0
+    while i < l {
+        while i < l {
+            if @(line + i) != ' ' {
+                break
+            }
+            i = i + 1
+        }
+        if i >= l {
+            break
+        }
+        tn: u64 = 0
+        while i < l {
+            c: u8 = @(line + i)
+            if c == ' ' {
+                break
+            }
+            if tn < 255 {
+                d: u8* = tok_p + tn
+                @d = c
+                tn = tn + 1
+            }
+            i = i + 1
+        }
+        tt: u8* = tok_p + tn
+        @tt = 0 as u8
+
+        if cstr.eq(tok_p, ">".ptr) == 1 {
+            redir = 1
+        } else {
+            if cstr.eq(tok_p, ">>".ptr) == 1 {
+                redir = 2
+            } else {
+                if cstr.eq(tok_p, "<".ptr) == 1 {
+                    redir = 3
+                } else {
+                    if redir == 3 {
+                        sh_join_path(cwd, tok_p, in_abs_p)
+                        have_in = 1
+                        redir = 0
+                    } else {
+                        if redir != 0 {
+                            sh_join_path(cwd, tok_p, out_abs_p)
+                            have_out = 1
+                            if redir == 2 {
+                                out_append = 1
+                            }
+                            redir = 0
+                        } else {
+                            if @name_p == 0 {
+                                cstr.copy(name_p, tok_p)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if @name_p == 0 {
+        return
+    }
+    target: u8[256] = []
+    target_p: u8* = &target[0]
+    if sh_resolve_program(cwd, name_p, target_p) == 0 {
+        console.write("unknown command: ".ptr)
+        console.writeln(name_p)
+        return
+    }
+
+    out_arg: u8* = 0 as u8*
+    if have_out == 1 {
+        out_arg = out_abs_p
+    }
+    in_arg: u8* = 0 as u8*
+    if have_in == 1 {
+        in_arg = in_abs_p
+    }
+    sh_launch_redir(target_p, name_p, bg, out_arg, in_arg, out_append as u64)
+}
+
+cmd_run: (cwd: u8*, arg: u8*) {
+    if @arg == 0 {
+        console.writeln("run: missing file name".ptr)
+        return
+    }
+    cmd_exec(cwd, arg)
+}
+
+sh_cat_fd: (fd: i64) {
+    buf: u8[128] = []
+    buf_p: u8* = &buf[0]
+    off: u64 = 0
+    while 1 == 1 {
+        n: i64 = sys.read(fd, buf_p, off, 128)
+        if n <= 0 {
+            break
+        }
+        sh_outn(buf_p, n as u64)
+        off = off + n as u64
+    }
+}
+
+sh_cat_one: (cwd: u8*, name: u8*) {
+    target: u8[256] = []
+    target_p: u8* = &target[0]
+    sh_join_path(cwd, name, target_p)
+    fd: i64 = sys.open(target_p, 0)
+    if fd < 0 {
+        console.write("cat: no such file: ".ptr)
+        console.writeln(name)
+        return
+    }
+    sh_cat_fd(fd)
+    sys.close(fd)
+}
+
+cmd_cat: (cwd: u8*, arg: u8*) {
+    if @arg == 0 {
+        if sh_src_fd != 0 {
+            sh_cat_fd(sh_src_fd)
+            return
+        }
+        console.writeln("cat: missing file name".ptr)
+        return
+    }
+    fname: u8[128] = []
+    fname_p: u8* = &fname[0]
+    i: u64 = 0
+    while @(arg + i) != 0 {
+        while @(arg + i) == ' ' {
+            i = i + 1
+        }
+        if @(arg + i) == 0 {
+            break
+        }
+        n: u64 = 0
+        while @(arg + i) != 0 {
+            if @(arg + i) == ' ' {
+                break
+            }
+            if n < 127 {
+                d: u8* = fname_p + n
+                @d = @(arg + i)
+                n = n + 1
+            }
+            i = i + 1
+        }
+        ft: u8* = fname_p + n
+        @ft = 0 as u8
+        sh_cat_one(cwd, fname_p)
+    }
+}
+
+cmd_edit: (cwd: u8*, arg: u8*) {
+    if @arg == 0 {
+        console.writeln("edit: missing file name".ptr)
+        return
+    }
+    target: u8[256] = []
+    target_p: u8* = &target[0]
+    sh_join_path(cwd, arg, target_p)
+    pid: i64 = sys.exec_arg("/bin/edit.elf".ptr, target_p)
+    if pid < 0 {
+        console.writeln("edit: cannot launch /bin/edit.elf".ptr)
+        return
+    }
+    sh_wait_foreground(pid)
+}
+
+sh_run_tool2: (cwd: u8*, arg: u8*, elf_p: u8*, usage: u8*) {
+    sp: u64 = 0
+    while @(arg + sp) != 0 {
+        if @(arg + sp) == ' ' {
+            break
+        }
+        sp = sp + 1
+    }
+    if @(arg + sp) == 0 {
+        console.writeln(usage)
+        return
+    }
+    src: u8[128] = []
+    src_p: u8* = &src[0]
+    end: u64 = sp
+    if end > 127 {
+        end = 127
+    }
+    for i in 0..end {
+        d: u8* = src_p + i
+        @d = @(arg + i)
+    }
+    st: u8* = src_p + end
+    @st = 0 as u8
+    while @(arg + sp) == ' ' {
+        sp = sp + 1
+    }
+    if @(arg + sp) == 0 {
+        console.writeln(usage)
+        return
+    }
+    dst: u8[128] = []
+    dst_p: u8* = &dst[0]
+    j: u64 = 0
+    while @(arg + sp) != 0 {
+        if @(arg + sp) == ' ' {
+            break
+        }
+        if j >= 127 {
+            break
+        }
+        e: u8* = dst_p + j
+        @e = @(arg + sp)
+        sp = sp + 1
+        j = j + 1
+    }
+    dt: u8* = dst_p + j
+    @dt = 0 as u8
+    src_abs: u8[256] = []
+    src_abs_p: u8* = &src_abs[0]
+    sh_join_path(cwd, src_p, src_abs_p)
+    out_abs: u8[256] = []
+    out_abs_p: u8* = &out_abs[0]
+    sh_join_path(cwd, dst_p, out_abs_p)
+    packed: u8[256] = []
+    packed_p: u8* = &packed[0]
+    cstr.copy(packed_p, src_abs_p)
+    pl: u64 = cstr.len(packed_p)
+    sep: u8* = packed_p + pl
+    @sep = ' ' as u8
+    cstr.copy(packed_p + pl + 1, out_abs_p)
+    pid: i64 = sys.exec_arg(elf_p, packed_p)
+    if pid < 0 {
+        console.write("cannot launch ".ptr)
+        console.writeln(elf_p)
+        return
+    }
+    sh_wait_foreground(pid)
+}
+
+cmd_as: (cwd: u8*, arg: u8*) {
+    sh_run_tool2(cwd, arg, "/bin/as.elf".ptr, "as: usage: as <src> <out>".ptr)
+}
+
+cmd_cc: (cwd: u8*, arg: u8*) {
+    sh_run_tool2(cwd, arg, "/bin/cc.elf".ptr, "cc: usage: cc <src.hll> <out.s>".ptr)
+}
+
+cmd_ld: (cwd: u8*, arg: u8*) {
+    packed: u8[512] = []
+    packed_p: u8* = &packed[0]
+    plen: u64 = 0
+    i: u64 = 0
+    ntok: i64 = 0
+    while @(arg + i) != 0 {
+        while @(arg + i) == ' ' {
+            i = i + 1
+        }
+        if @(arg + i) == 0 {
+            break
+        }
+        tok: u8[256] = []
+        tok_p: u8* = &tok[0]
+        k: u64 = 0
+        while @(arg + i) != 0 {
+            if @(arg + i) == ' ' {
+                break
+            }
+            if k < 255 {
+                d: u8* = tok_p + k
+                @d = @(arg + i)
+                k = k + 1
+            }
+            i = i + 1
+        }
+        tt: u8* = tok_p + k
+        @tt = 0 as u8
+        abs: u8[256] = []
+        abs_p: u8* = &abs[0]
+        sh_join_path(cwd, tok_p, abs_p)
+        if ntok > 0 {
+            sep: u8* = packed_p + plen
+            @sep = ' ' as u8
+            plen = plen + 1
+        }
+        al: u64 = cstr.len(abs_p)
+        cstr.copy(packed_p + plen, abs_p)
+        plen = plen + al
+        ntok = ntok + 1
+    }
+    if ntok < 2 {
+        console.writeln("ld: usage: ld <obj>... <out>".ptr)
+        return
+    }
+    pid: i64 = sys.exec_arg("/bin/ld.elf".ptr, packed_p)
+    if pid < 0 {
+        console.writeln("cannot launch /bin/ld.elf".ptr)
+        return
+    }
+    sh_wait_foreground(pid)
+}
+
+sh_first_word: (line: u8*, out: u8*) {
+    i: u64 = 0
+    while @(line + i) == ' ' {
+        i = i + 1
+    }
+    n: u64 = 0
+    while @(line + i) != 0 {
+        if @(line + i) == ' ' {
+            break
+        }
+        if n < 31 {
+            d: u8* = out + n
+            @d = @(line + i)
+            n = n + 1
+        }
+        i = i + 1
+    }
+    t: u8* = out + n
+    @t = 0 as u8
+}
+
+sh_skip_word: (line: u8*) -> u8* {
+    i: u64 = 0
+    while @(line + i) == ' ' {
+        i = i + 1
+    }
+    while @(line + i) != 0 {
+        if @(line + i) == ' ' {
+            break
+        }
+        i = i + 1
+    }
+    while @(line + i) == ' ' {
+        i = i + 1
+    }
+    return line + i
+}
+
+cmd_help: () {
+    sh_outln("Type a program name to run it. PATH is . then /bin then /home/demo.".ptr)
+    sh_outln("files     ls [dir]   cat <file>...   echo <text>   pwd".ptr)
+    sh_outln("          touch <f>   mkdir <d>   rm <f>   rmdir <d>   mv <old> <new>".ptr)
+    sh_outln("tools     edit <file>   cc <src.hll> <out.s>   as <src> <out>".ptr)
+    sh_outln("jobs      <prog> &   jobs   fg <job>   kill <pid>   kill %<job>".ptr)
+    sh_outln("redirect  <cmd> > file   <cmd> >> file   <prog> < file".ptr)
+    sh_outln("pipe      <cmd> | <cmd>   e.g. echo hi | cat   (up to 4 stages)".ptr)
+    sh_outln("control   Ctrl-C stops a foreground program.   exit  quits.".ptr)
+}
+
+sh_is_out_builtin: (name: u8*) -> i64 {
+    if cstr.eq(name, "ls".ptr) == 1 {
+        return 1
+    }
+    if cstr.eq(name, "cat".ptr) == 1 {
+        return 1
+    }
+    if cstr.eq(name, "echo".ptr) == 1 {
+        return 1
+    }
+    if cstr.eq(name, "pwd".ptr) == 1 {
+        return 1
+    }
+    if cstr.eq(name, "jobs".ptr) == 1 {
+        return 1
+    }
+    if cstr.eq(name, "help".ptr) == 1 {
+        return 1
+    }
+    return 0
+}
+
+sh_dispatch_out_builtin: (cwd: u8*, cmd: u8*, args: u8*) {
+    if cstr.eq(cmd, "ls".ptr) == 1 {
+        cmd_ls(cwd, args)
+        return
+    }
+    if cstr.eq(cmd, "cat".ptr) == 1 {
+        cmd_cat(cwd, args)
+        return
+    }
+    if cstr.eq(cmd, "echo".ptr) == 1 {
+        cmd_echo(args)
+        return
+    }
+    if cstr.eq(cmd, "pwd".ptr) == 1 {
+        cmd_pwd(cwd)
+        return
+    }
+    if cstr.eq(cmd, "jobs".ptr) == 1 {
+        cmd_jobs()
+        return
+    }
+    cmd_help()
+}
+
+; --- Pipelines ---
+
+const MAX_PIPE_STAGES = 4
+
+sh_pipe_temp: (idx: u64) -> u8* {
+    if idx == 0 {
+        return "/.pipe0".ptr
+    }
+    if idx == 1 {
+        return "/.pipe1".ptr
+    }
+    return "/.pipe2".ptr
+}
+
+sh_has_pipe: (line: u8*) -> i64 {
+    i: u64 = 0
+    while @(line + i) != 0 {
+        if @(line + i) == '|' {
+            return 1
+        }
+        i = i + 1
+    }
+    return 0
+}
+
+sh_run_stage: (cwd: u8*, line: u8*, def_in: u8*, def_out: u8*) {
+    clean: u8[256] = []
+    clean_p: u8* = &clean[0]
+    out_abs: u8[256] = []
+    out_abs_p: u8* = &out_abs[0]
+    in_abs: u8[256] = []
+    in_abs_p: u8* = &in_abs[0]
+    tok: u8[256] = []
+    tok_p: u8* = &tok[0]
+    have_out: i64 = 0
+    have_in: i64 = 0
+    append: i64 = 0
+    mode: i64 = 0
+    cn: u64 = 0
+    l: u64 = cstr.len(line)
+    i: u64 = 0
+    while i < l {
+        while i < l {
+            if @(line + i) != ' ' {
+                break
+            }
+            i = i + 1
+        }
+        if i >= l {
+            break
+        }
+        tn: u64 = 0
+        while i < l {
+            c: u8 = @(line + i)
+            if c == ' ' {
+                break
+            }
+            if tn < 255 {
+                d: u8* = tok_p + tn
+                @d = c
+                tn = tn + 1
+            }
+            i = i + 1
+        }
+        tt: u8* = tok_p + tn
+        @tt = 0 as u8
+
+        if cstr.eq(tok_p, ">".ptr) == 1 {
+            mode = 1
+        } else {
+            if cstr.eq(tok_p, ">>".ptr) == 1 {
+                mode = 2
+            } else {
+                if cstr.eq(tok_p, "<".ptr) == 1 {
+                    mode = 3
+                } else {
+                    if mode == 1 {
+                        sh_join_path(cwd, tok_p, out_abs_p)
+                        have_out = 1
+                        append = 0
+                        mode = 0
+                    } else {
+                        if mode == 2 {
+                            sh_join_path(cwd, tok_p, out_abs_p)
+                            have_out = 1
+                            append = 1
+                            mode = 0
+                        } else {
+                            if mode == 3 {
+                                sh_join_path(cwd, tok_p, in_abs_p)
+                                have_in = 1
+                                mode = 0
+                            } else {
+                                if cn > 0 {
+                                    s: u8* = clean_p + cn
+                                    @s = ' ' as u8
+                                    cn = cn + 1
+                                }
+                                j: u64 = 0
+                                while @(tok_p + j) != 0 {
+                                    d: u8* = clean_p + cn
+                                    @d = @(tok_p + j)
+                                    cn = cn + 1
+                                    j = j + 1
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    ct: u8* = clean_p + cn
+    @ct = 0 as u8
+
+    name: u8[64] = []
+    name_p: u8* = &name[0]
+    sh_first_word(clean_p, name_p)
+    if @name_p == 0 {
+        return
+    }
+    args: u8* = sh_skip_word(clean_p)
+
+    eff_out: u8* = def_out
+    eff_app: u64 = 0
+    if have_out == 1 {
+        eff_out = out_abs_p
+        eff_app = append as u64
+    }
+    eff_in: u8* = def_in
+    if have_in == 1 {
+        eff_in = in_abs_p
+    }
+
+    if sh_is_out_builtin(name_p) == 1 {
+        if eff_out != null {
+            fd: i64 = sys.open(eff_out, 2)
+            if fd < 0 {
+                console.write("cannot open: ".ptr)
+                console.writeln(eff_out)
+                return
+            }
+            if eff_app == 1 {
+                sys.lseek(fd, 0, 2)
+            } else {
+                sys.ftruncate(fd, 0)
+            }
+            sh_sink_fd = fd
+        }
+        if eff_in != null {
+            sfd: i64 = sys.open(eff_in, 0)
+            if sfd >= 0 {
+                sh_src_fd = sfd
+            }
+        }
+        sh_dispatch_out_builtin(cwd, name_p, args)
+        sh_src_close()
+        sh_sink_close()
+        return
+    }
+
+    target: u8[256] = []
+    target_p: u8* = &target[0]
+    if sh_resolve_program(cwd, name_p, target_p) == 0 {
+        console.write("unknown command: ".ptr)
+        console.writeln(name_p)
+        return
+    }
+    pid: i64 = sys.exec_redir(target_p, 0 as u8*, eff_out, eff_in, eff_app)
+    if pid < 0 {
+        console.write("cannot exec: ".ptr)
+        console.writeln(name_p)
+        return
+    }
+    sys.waitpid(pid)
+}
+
+cmd_pipe: (cwd: u8*, line: u8*) {
+    l: u64 = cstr.len(line)
+    while l > 0 {
+        if @(line + (l - 1)) != ' ' {
+            break
+        }
+        l = l - 1
+    }
+    if l > 0 {
+        if @(line + (l - 1)) == '&' {
+            l = l - 1
+        }
+    }
+
+    starts: u64[4] = []
+    ends: u64[4] = []
+    count: u64 = 0
+    seg: u64 = 0
+    i: u64 = 0
+    while i <= l {
+        cut: i64 = 0
+        if i == l {
+            cut = 1
+        } else {
+            if @(line + i) == '|' {
+                cut = 1
+            }
+        }
+        if cut == 1 {
+            if count < MAX_PIPE_STAGES {
+                sp: u64* = &starts[count]
+                @sp = seg
+                ep: u64* = &ends[count]
+                @ep = i
+                count = count + 1
+            }
+            seg = i + 1
+        }
+        i = i + 1
+    }
+    if count < 2 {
+        cmd_exec(cwd, line)
+        return
+    }
+
+    stage: u8[256] = []
+    stage_p: u8* = &stage[0]
+    for s in 0..count {
+        sp: u64* = &starts[s]
+        st: u64 = @sp
+        ep: u64* = &ends[s]
+        en: u64 = @ep
+        k: u64 = 0
+        for j in st..en {
+            d: u8* = stage_p + k
+            @d = @(line + j)
+            k = k + 1
+        }
+        term: u8* = stage_p + k
+        @term = 0 as u8
+
+        def_in: u8* = 0 as u8*
+        if s > 0 {
+            def_in = sh_pipe_temp(s - 1)
+        }
+        def_out: u8* = 0 as u8*
+        if s + 1 < count {
+            def_out = sh_pipe_temp(s)
+        }
+        sh_run_stage(cwd, stage_p, def_in, def_out)
+    }
+
+    t: u64 = 0
+    while t + 1 < count {
+        sys.unlink(sh_pipe_temp(t))
+        t = t + 1
+    }
+}
+
+; Runs each `&&` segment only if the previous segment exited 0.
+run_line: (cwd: u8*, line: u8*) {
+    l: u64 = cstr.len(line)
+
+    starts: u64[8] = []
+    ends: u64[8] = []
+    count: u64 = 0
+    seg: u64 = 0
+    i: u64 = 0
+    while i < l {
+        is_sep: i64 = 0
+        if @(line + i) == '&' {
+            if @(line + (i + 1)) == '&' {
+                is_sep = 1
+            }
+        }
+        if is_sep == 1 {
+            if count < 8 {
+                sp: u64* = &starts[count]
+                @sp = seg
+                ep: u64* = &ends[count]
+                @ep = i
+                count = count + 1
+            }
+            seg = i + 2
+            i = i + 2
+        } else {
+            i = i + 1
+        }
+    }
+    if count < 8 {
+        sp: u64* = &starts[count]
+        @sp = seg
+        ep: u64* = &ends[count]
+        @ep = l
+        count = count + 1
+    }
+
+    if count < 2 {
+        handle_command(cwd, line)
+        return
+    }
+
+    part: u8[256] = []
+    part_p: u8* = &part[0]
+    for s in 0..count {
+        sp: u64* = &starts[s]
+        st: u64 = @sp
+        ep: u64* = &ends[s]
+        en: u64 = @ep
+        while st < en {
+            if @(line + st) != ' ' {
+                break
+            }
+            st = st + 1
+        }
+        while en > st {
+            if @(line + (en - 1)) != ' ' {
+                break
+            }
+            en = en - 1
+        }
+        k: u64 = 0
+        for j in st..en {
+            d: u8* = part_p + k
+            @d = @(line + j)
+            k = k + 1
+        }
+        term: u8* = part_p + k
+        @term = 0 as u8
+
+        last_exit = 0
+        handle_command(cwd, part_p)
+        if last_exit != 0 {
+            return
+        }
+    }
+}
+
+handle_command: (cwd: u8*, line: u8*) {
+    if @line == 0 {
+        return
+    }
+    if sh_has_pipe(line) == 1 {
+        cmd_pipe(cwd, line)
+        return
+    }
+    cmd: u8[32] = []
+    cmd_p: u8* = &cmd[0]
+    sh_first_word(line, cmd_p)
+    if @cmd_p == 0 {
+        return
+    }
+
+    if cstr.eq(cmd_p, "exit".ptr) == 1 {
+        sys.exit(0)
+        return
+    }
+    if cstr.eq(cmd_p, "cd".ptr) == 1 {
+        cmd_cd(cwd, sh_skip_word(line))
+        return
+    }
+    if cstr.eq(cmd_p, "fg".ptr) == 1 {
+        cmd_fg(sh_skip_word(line))
+        return
+    }
+    if cstr.eq(cmd_p, "kill".ptr) == 1 {
+        cmd_kill(sh_skip_word(line))
+        return
+    }
+    if cstr.eq(cmd_p, "edit".ptr) == 1 {
+        cmd_edit(cwd, sh_skip_word(line))
+        return
+    }
+    if cstr.eq(cmd_p, "touch".ptr) == 1 {
+        fileops.cmd_touch(cwd, sh_skip_word(line))
+        return
+    }
+    if cstr.eq(cmd_p, "mkdir".ptr) == 1 {
+        fileops.cmd_mkdir(cwd, sh_skip_word(line))
+        return
+    }
+    if cstr.eq(cmd_p, "rmdir".ptr) == 1 {
+        fileops.cmd_rmdir(cwd, sh_skip_word(line))
+        return
+    }
+    if cstr.eq(cmd_p, "rm".ptr) == 1 {
+        fileops.cmd_rm(cwd, sh_skip_word(line))
+        return
+    }
+    if cstr.eq(cmd_p, "mv".ptr) == 1 {
+        fileops.cmd_mv(cwd, sh_skip_word(line))
+        return
+    }
+    if cstr.eq(cmd_p, "as".ptr) == 1 {
+        cmd_as(cwd, sh_skip_word(line))
+        return
+    }
+    if cstr.eq(cmd_p, "cc".ptr) == 1 {
+        cmd_cc(cwd, sh_skip_word(line))
+        return
+    }
+    if cstr.eq(cmd_p, "ld".ptr) == 1 {
+        cmd_ld(cwd, sh_skip_word(line))
+        return
+    }
+    if cstr.eq(cmd_p, "run".ptr) == 1 {
+        cmd_run(cwd, sh_skip_word(line))
+        return
+    }
+
+    if cstr.eq(cmd_p, "ls".ptr) == 1 {
+        sh_run_stage(cwd, line, 0 as u8*, 0 as u8*)
+        return
+    }
+    if cstr.eq(cmd_p, "cat".ptr) == 1 {
+        sh_run_stage(cwd, line, 0 as u8*, 0 as u8*)
+        return
+    }
+    if cstr.eq(cmd_p, "echo".ptr) == 1 {
+        sh_run_stage(cwd, line, 0 as u8*, 0 as u8*)
+        return
+    }
+    if cstr.eq(cmd_p, "pwd".ptr) == 1 {
+        sh_run_stage(cwd, line, 0 as u8*, 0 as u8*)
+        return
+    }
+    if cstr.eq(cmd_p, "jobs".ptr) == 1 {
+        sh_run_stage(cwd, line, 0 as u8*, 0 as u8*)
+        return
+    }
+    if cstr.eq(cmd_p, "help".ptr) == 1 {
+        sh_run_stage(cwd, line, 0 as u8*, 0 as u8*)
+        return
+    }
+
+    cmd_exec(cwd, line)
+}
+
+main: () -> i32 {
+    cwd: u8[256] = []
+    cwd_p: u8* = &cwd[0]
+    @cwd_p = '/' as u8
+    second: u8* = cwd_p + 1
+    @second = 0 as u8
+
+    line: u8[256] = []
+    line_p: u8* = &line[0]
+
+    console.writeln("HLL shell ready. type 'help' for commands.".ptr)
+
+    while 1 == 1 {
+        jobs_reap()
+        console.write(cwd_p)
+        console.write("$ ".ptr)
+        sh_read_line(line_p)
+        run_line(cwd_p, line_p)
+    }
+    return 0
+}

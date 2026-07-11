@@ -1,3 +1,5 @@
+; Byte-wise memory primitives (memset/memcpy/memmove/memcmp), plus snake_case aliases.
+
 export memset: (dst: u8*, value: u8, n: u64) -> u8* {
     for i in 0..n {
         dst[i] = value

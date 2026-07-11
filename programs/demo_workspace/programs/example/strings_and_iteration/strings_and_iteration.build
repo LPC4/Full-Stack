@@ -1,0 +1,7 @@
+name = "strings_and_iteration"
+target = "hosted"
+root = "strings_and_iteration.hll"
+entry = "_start"
+stdlib = "hosted"
+import_closure = true
+mangle_symbols = true

@@ -1,8 +1,5 @@
-; HLL-0 program for the in-VM `cc` (prints "HLL0\nY", exits 36). It calls putc but
-; does not define it: putc is resolved at link time against the separately
-; assembled stdlib.s, not a built-in intrinsic. Build it in-VM with:
-;   cc hello.hll hello.s && as hello.s hello.o && as stdlib.s stdlib.o
-;   ld stdlib.o hello.o hello && hello
+; HLL-0 program for the in-VM `cc` (prints "HLL0\nY", exits 36). putc resolves at
+; link time: cc hello.hll hello.s, as it plus stdlib.s, then ld stdlib.o hello.o hello.
 
 sum_to: (n: i32) -> i32 {
     total: i32 = 0
