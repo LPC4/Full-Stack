@@ -1280,6 +1280,16 @@ impl<'a> Parser<'a> {
                 Ok(Type::Primitive("bool".into()))
             }
             Some(Token::Fn) => self.parse_function_pointer_type(),
+            Some(Token::Dyn) => {
+                // `dyn I` is carried as the marker name "dyn I" until the dyn
+                // lowering pass rewrites it to the synthesized `I__dyn` struct.
+                self.advance();
+                let interface = self.expect_ident()?;
+                Ok(Type::Named {
+                    name: format!("dyn {interface}"),
+                    args: Vec::new(),
+                })
+            }
             Some(Token::Ident(_)) => {
                 let mut name = self.expect_ident()?;
                 if self.match_dot() {
@@ -1440,7 +1450,7 @@ impl<'a> Parser<'a> {
         Ok(params)
     }
 
-    // `<T, U: Writer>`: each parameter may carry one interface bound. Bounds are
+    // `<T, U: Writer + Debug>`: each parameter may carry interface bounds. Bounds are
     // returned as `(param, interface)` pairs and checked at specialization time.
     fn parse_generic_params_with_bounds(&mut self) -> Result<GenericParams, ParserError> {
         if !self.match_lt() {
@@ -1458,7 +1468,12 @@ impl<'a> Parser<'a> {
                 let param = self.expect_ident()?;
                 if matches!(self.peek(), Some(Token::Colon)) {
                     self.advance();
-                    bounds.push((param.clone(), self.expect_ident()?));
+                    loop {
+                        bounds.push((param.clone(), self.expect_ident()?));
+                        if !self.match_plus() {
+                            break;
+                        }
+                    }
                 }
                 params.push(param);
                 if self.match_comma() {

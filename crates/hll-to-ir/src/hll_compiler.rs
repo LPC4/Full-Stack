@@ -1620,3 +1620,120 @@ main: () -> i32 { return 0 }
         );
     }
 }
+
+#[cfg(test)]
+mod dyn_interfaces {
+    use crate::{CompileConfig, Diagnostic, HllCompiler, HllOutput, TargetMode};
+
+    fn compile(source: &str) -> Result<HllOutput, Vec<Diagnostic>> {
+        HllCompiler::new(CompileConfig {
+            target: TargetMode::Hosted,
+            strict: true,
+            ..CompileConfig::default()
+        })
+        .compile(source)
+    }
+
+    fn expect_error_containing(source: &str, needle: &str) {
+        let errors = match compile(source) {
+            Ok(_) => panic!("expected a compile error mentioning {needle:?}"),
+            Err(errors) => errors,
+        };
+        assert!(
+            errors.iter().any(|e| e.message.contains(needle)),
+            "no error mentions {needle:?}: {errors:?}"
+        );
+    }
+
+    // `dyn I` works as a local, array element, and pointer parameter; the
+    // conversion packs, and method calls dispatch through the wide pointer.
+    #[test]
+    fn dyn_pack_and_dispatch_compile() {
+        compile(
+            r#"
+interface Measurable {
+    area: (self: Self*) -> i32
+}
+struct Rect { width: i32, height: i32 }
+impl Rect {
+    area: (self: Rect*) -> i32 { return self.width * self.height }
+}
+total: (shapes: dyn Measurable*, count: i32) -> i32 {
+    sum := 0
+    for i in 0..count {
+        sum += shapes[i].area()
+    }
+    return sum
+}
+main: () -> i32 {
+    r: Rect = Rect { .width = 6, .height = 7 }
+    d: dyn Measurable = (&r) as dyn Measurable
+    if d.area() != 42 { return 1 }
+    arr: dyn Measurable[2] = [(&r) as dyn Measurable, (&r) as dyn Measurable]
+    return total(&arr[0], 2) - 84
+}
+"#,
+        )
+        .expect("dyn pack and dispatch should compile");
+    }
+
+    #[test]
+    fn dyn_conversion_requires_pointer_operand() {
+        expect_error_containing(
+            r#"
+interface Measurable {
+    area: (self: Self*) -> i32
+}
+struct Rect { width: i32 }
+impl Rect {
+    area: (self: Rect*) -> i32 { return self.width }
+}
+main: () -> i32 {
+    r: Rect = Rect { .width = 1 }
+    d: dyn Measurable = r as dyn Measurable
+    return 0
+}
+"#,
+            "requires a pointer operand",
+        );
+    }
+
+    #[test]
+    fn dyn_conversion_checks_implementation() {
+        expect_error_containing(
+            r#"
+interface Measurable {
+    area: (self: Self*) -> i32
+}
+struct Plain { value: i32 }
+main: () -> i32 {
+    p: Plain = Plain { .value = 1 }
+    d: dyn Measurable = (&p) as dyn Measurable
+    return 0
+}
+"#,
+            "does not implement interface `Measurable`",
+        );
+    }
+
+    #[test]
+    fn dyn_rejects_self_outside_receiver() {
+        expect_error_containing(
+            r#"
+interface Cloneable {
+    duplicate: (self: Self*) -> Self*
+}
+struct Rect { width: i32 }
+impl Rect {
+    duplicate: (self: Rect*) -> Rect* { return self }
+}
+main: () -> i32 {
+    r: Rect = Rect { .width = 1 }
+    d: dyn Cloneable = (&r) as dyn Cloneable
+    return 0
+}
+"#,
+            "mentions `Self` outside the receiver",
+        );
+    }
+}

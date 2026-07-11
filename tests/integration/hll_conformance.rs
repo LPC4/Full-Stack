@@ -1432,6 +1432,66 @@ main: () -> i32 {
 }
 
 #[test]
+fn dyn_interface_heterogeneous_dispatch_executes() {
+    // Two concrete types behind one `dyn Measurable` array: each element
+    // dispatches to its own method through the packed thunk at runtime.
+    assert_exit(
+        r#"
+interface Measurable {
+    area: (self: Self*) -> i32
+    scaled: (self: Self*, k: i32) -> i32
+}
+struct Rect { width: i32, height: i32 }
+struct Disc { radius: i32 }
+impl Rect {
+    area: (self: Rect*) -> i32 { return self.width * self.height }
+    scaled: (self: Rect*, k: i32) -> i32 { return self.area() * k }
+}
+impl Disc {
+    area: (self: Disc*) -> i32 { return 3 * self.radius * self.radius }
+    scaled: (self: Disc*, k: i32) -> i32 { return self.area() * k }
+}
+sum_areas: (shapes: dyn Measurable*, count: i32) -> i32 {
+    sum := 0
+    for i in 0..count {
+        sum += shapes[i].area()
+    }
+    return sum
+}
+pick: (shapes: dyn Measurable*, index: i32) -> dyn Measurable {
+    return shapes[index]
+}
+main: () -> i32 {
+    r: Rect = Rect { .width = 6, .height = 7 }
+    d: Disc = Disc { .radius = 3 }
+
+    m: dyn Measurable = (&r) as dyn Measurable
+    if m.area() != 42 { return 1 }
+    if m.scaled(2) != 84 { return 2 }
+
+    m = (&d) as dyn Measurable
+    if m.area() != 27 { return 3 }
+    if m.scaled(3) != 81 { return 4 }
+
+    shapes: dyn Measurable[2] = [(&r) as dyn Measurable, (&d) as dyn Measurable]
+    if sum_areas(&shapes[0], 2) != 69 { return 5 }
+
+    ; The local needs its declared type: an inferred `:=` from a call keeps only
+    ; the structural type, and method calls resolve by name (all impl types).
+    picked: dyn Measurable = pick(&shapes[0], 1)
+    if picked.area() != 27 { return 6 }
+
+    ; Mutating through the erased pointer is visible to later dispatch.
+    r.width = 10
+    if shapes[0].area() != 70 { return 7 }
+    return 0
+}
+"#,
+        0,
+    );
+}
+
+#[test]
 fn generic_bound_violation_is_rejected() {
     // Instantiating a bounded generic at a type without the method fails.
     assert_compile_fails(
@@ -2282,5 +2342,128 @@ main: () -> i32 {
     return n
 }
 "#,
+    );
+}
+
+#[test]
+fn multiple_generic_bounds_are_all_enforced() {
+    assert_exit(
+        r#"
+interface Named {
+    name_code: (self: Self*) -> i32
+}
+interface Measured {
+    measure: (self: Self*) -> i32
+}
+struct Box { value: i32 }
+impl Box {
+    name_code: (self: Box*) -> i32 { return 2 }
+    measure: (self: Box*) -> i32 { return self.value }
+}
+summarize: <T: Named + Measured>(v: T*) -> i32 {
+    return v.name_code() * 10 + v.measure()
+}
+main: () -> i32 {
+    b: Box = Box { .value = 22 }
+    return summarize<Box>(&b)
+}
+"#,
+        42,
+    );
+}
+
+#[test]
+fn missing_second_generic_bound_is_rejected() {
+    assert_compile_fails(
+        r#"
+interface First { first: (self: Self*) -> i32 }
+interface Second { second: (self: Self*) -> i32 }
+struct Partial { value: i32 }
+impl Partial {
+    first: (self: Partial*) -> i32 { return self.value }
+}
+use_both: <T: First + Second>(v: T*) -> i32 {
+    return v.first()
+}
+main: () -> i32 {
+    p: Partial = Partial { .value = 42 }
+    return use_both<Partial>(&p)
+}
+"#,
+    );
+}
+
+#[test]
+fn generic_type_instantiation_can_satisfy_bound() {
+    assert_exit(
+        r#"
+interface Measured {
+    measure: (self: Self*) -> i32
+}
+struct Box<T> { value: T }
+
+; A concrete generic instantiation implements the usual `Type_method` function.
+Box_measure: (self: Box<i32>*) -> i32 { return self.value }
+
+read_measure: <T: Measured>(value: T*) -> i32 {
+    return 42
+}
+main: () -> i32 {
+    boxed: Box<i32> = { .value = 42 }
+    return read_measure<Box<i32>>(&boxed)
+}
+"#,
+        42,
+    );
+}
+
+#[test]
+fn generic_type_bound_checks_concrete_arguments() {
+    assert_compile_fails(
+        r#"
+interface Measured { measure: (self: Self*) -> i32 }
+struct Box<T> { value: T }
+Box_measure: (self: Box<i32>*) -> i32 { return self.value }
+read_measure: <T: Measured>(value: T*) -> i32 { return value.measure() }
+main: () -> i32 {
+    boxed: Box<i64> = { .value = 42 }
+    return read_measure<Box<i64>>(&boxed)
+}
+"#,
+    );
+}
+
+#[test]
+fn plain_three_i64_field_struct_return() {
+    assert_exit(
+        r#"
+struct Triple { a: i64, b: i64, c: i64 }
+make: () -> Triple {
+    return Triple { .a = 10, .b = 12, .c = 20 }
+}
+main: () -> i32 {
+    t: Triple = make()
+    return (t.a + t.b + t.c) as i32
+}
+"#,
+        42,
+    );
+}
+
+#[test]
+fn plain_struct_return_from_indexed_pointer() {
+    assert_exit(
+        r#"
+struct Triple { a: i64, b: i64, c: i64 }
+pick: (items: Triple*, index: i32) -> Triple {
+    return items[index]
+}
+main: () -> i32 {
+    arr: Triple[2] = [Triple { .a = 1, .b = 2, .c = 3 }, Triple { .a = 10, .b = 12, .c = 20 }]
+    t: Triple = pick(&arr[0], 1)
+    return (t.a + t.b + t.c) as i32
+}
+"#,
+        42,
     );
 }

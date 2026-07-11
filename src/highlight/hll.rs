@@ -2,6 +2,7 @@
 
 use crate::highlight::theme::SyntaxPalette;
 use egui::text::LayoutJob;
+use std::collections::HashSet;
 
 // Keep in sync with the lexer's keyword table (crates/hll-to-ir/src/lexer.rs).
 const HLL_KEYWORDS: &[&str] = &[
@@ -9,6 +10,7 @@ const HLL_KEYWORDS: &[&str] = &[
     "struct",
     "impl",
     "interface",
+    "dyn",
     "const",
     "external",
     "if",
@@ -79,7 +81,12 @@ fn find_comment_start_outside_string(line: &str) -> Option<usize> {
     comment_start
 }
 
-fn append_hll_code_part(job: &mut LayoutJob, theme: &egui::Style, code_part: &str) {
+fn append_hll_code_part(
+    job: &mut LayoutJob,
+    theme: &egui::Style,
+    code_part: &str,
+    type_names: &HashSet<String>,
+) {
     let palette = SyntaxPalette::dark();
     let font_id = egui::TextStyle::Monospace.resolve(theme);
     let mut start = 0;
@@ -124,6 +131,8 @@ fn append_hll_code_part(job: &mut LayoutJob, theme: &egui::Style, code_part: &st
             let word = &code_part[start..end];
             let color = if HLL_KEYWORDS.contains(&word) {
                 palette.keyword
+            } else if type_names.contains(word) {
+                palette.identifier
             } else {
                 theme.visuals.text_color()
             };
@@ -208,6 +217,90 @@ fn append_hll_code_part(job: &mut LayoutJob, theme: &egui::Style, code_part: &st
         );
         start = end;
     }
+}
+
+// Collect nominal declarations and generic parameters before rendering. This keeps
+// highlighting contextual: `T` is a type, while an unrelated capitalized value is not.
+fn collect_type_names(code: &str) -> HashSet<String> {
+    let mut tokens = Vec::new();
+    for line in code.lines() {
+        let code = find_comment_start_outside_string(line).map_or(line, |at| &line[..at]);
+        let bytes = code.as_bytes();
+        let mut index = 0;
+        while index < bytes.len() {
+            if bytes[index] == b'"' || bytes[index] == b'\'' {
+                let quote = bytes[index];
+                index += 1;
+                while index < bytes.len() {
+                    if bytes[index] == b'\\' && index + 1 < bytes.len() {
+                        index += 2;
+                    } else if bytes[index] == quote {
+                        index += 1;
+                        break;
+                    } else {
+                        index += 1;
+                    }
+                }
+            } else if bytes[index].is_ascii_alphabetic() || bytes[index] == b'_' {
+                let start = index;
+                index += 1;
+                while index < bytes.len()
+                    && (bytes[index].is_ascii_alphanumeric() || bytes[index] == b'_')
+                {
+                    index += 1;
+                }
+                tokens.push(code[start..index].to_owned());
+            } else if !bytes[index].is_ascii_whitespace() {
+                tokens.push((bytes[index] as char).to_string());
+                index += 1;
+            } else {
+                index += 1;
+            }
+        }
+    }
+
+    let mut names = ["Option", "Result", "Str"]
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<HashSet<_>>();
+    for (index, token) in tokens.iter().enumerate() {
+        if matches!(
+            token.as_str(),
+            "struct" | "enum" | "interface" | "type" | "impl" | "dyn"
+        ) && let Some(name) = tokens.get(index + 1)
+        {
+            names.insert(name.clone());
+        }
+    }
+
+    for index in 0..tokens.len() {
+        if tokens[index] != "<" {
+            continue;
+        }
+        let starts_params =
+            index > 0 && (tokens[index - 1] == ":" || names.contains(&tokens[index - 1]));
+        if !starts_params {
+            continue;
+        }
+        let mut cursor = index + 1;
+        let mut expect_param = true;
+        while cursor < tokens.len() && tokens[cursor] != ">" {
+            let token = &tokens[cursor];
+            if expect_param
+                && token
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphabetic())
+            {
+                names.insert(token.clone());
+                expect_param = false;
+            } else if token == "," {
+                expect_param = true;
+            }
+            cursor += 1;
+        }
+    }
+    names
 }
 
 fn is_register_word(word: &str) -> bool {
@@ -389,6 +482,7 @@ pub fn highlight_code(theme: &egui::Style, code: &str) -> LayoutJob {
     let palette = SyntaxPalette::dark();
     let mut job = LayoutJob::default();
     let font_id = egui::TextStyle::Monospace.resolve(theme);
+    let type_names = collect_type_names(code);
     let mut in_inline_asm_block = false;
 
     for segment in code.split_inclusive('\n') {
@@ -420,13 +514,13 @@ pub fn highlight_code(theme: &egui::Style, code: &str) -> LayoutJob {
                         ..Default::default()
                     },
                 );
-                append_hll_code_part(&mut job, theme, &code_part[close_idx + 1..]);
+                append_hll_code_part(&mut job, theme, &code_part[close_idx + 1..], &type_names);
                 in_inline_asm_block = false;
             } else {
                 append_inline_asm_code_part(&mut job, theme, code_part);
             }
         } else if let Some((asm_idx, open_idx)) = find_inline_asm_open(code_part) {
-            append_hll_code_part(&mut job, theme, &code_part[..asm_idx]);
+            append_hll_code_part(&mut job, theme, &code_part[..asm_idx], &type_names);
             job.append(
                 "asm",
                 0.0,
@@ -437,7 +531,12 @@ pub fn highlight_code(theme: &egui::Style, code: &str) -> LayoutJob {
                 },
             );
             if open_idx > asm_idx + 3 {
-                append_hll_code_part(&mut job, theme, &code_part[asm_idx + 3..open_idx]);
+                append_hll_code_part(
+                    &mut job,
+                    theme,
+                    &code_part[asm_idx + 3..open_idx],
+                    &type_names,
+                );
             }
             job.append(
                 "{",
@@ -461,13 +560,13 @@ pub fn highlight_code(theme: &egui::Style, code: &str) -> LayoutJob {
                         ..Default::default()
                     },
                 );
-                append_hll_code_part(&mut job, theme, &after_open[close_rel + 1..]);
+                append_hll_code_part(&mut job, theme, &after_open[close_rel + 1..], &type_names);
             } else {
                 append_inline_asm_code_part(&mut job, theme, after_open);
                 in_inline_asm_block = true;
             }
         } else {
-            append_hll_code_part(&mut job, theme, code_part);
+            append_hll_code_part(&mut job, theme, code_part, &type_names);
         }
 
         // ---------- append the comment part (if any) ----------
@@ -509,6 +608,7 @@ mod tests {
         let palette = SyntaxPalette::dark();
         let hll2 = [
             "interface",
+            "dyn",
             "impl",
             "struct",
             "enum",
@@ -548,5 +648,33 @@ mod tests {
                 "identifier `{word}` wrongly highlighted as a keyword"
             );
         }
+    }
+
+    fn word_color(job: &LayoutJob, word: &str) -> Option<egui::Color32> {
+        job.sections.iter().find_map(|section| {
+            (&job.text[section.byte_range.clone()] == word).then_some(section.format.color)
+        })
+    }
+
+    #[test]
+    fn declared_and_generic_types_use_the_identifier_color() {
+        let style = egui::Style::default();
+        let palette = SyntaxPalette::dark();
+        let source = r#"
+interface Measured { measure: (self: Self*) -> i32 }
+struct Box<T> { value: T }
+read: <U: Measured>(value: Box<U>*, erased: dyn Measured) -> U { return value.value }
+const OP_ADD = 1
+"#;
+        let job = highlight_code(&style, source);
+
+        for ty in ["Measured", "Box", "T", "U"] {
+            assert_eq!(
+                word_color(&job, ty),
+                Some(palette.identifier),
+                "type `{ty}`"
+            );
+        }
+        assert_ne!(word_color(&job, "OP_ADD"), Some(palette.identifier));
     }
 }

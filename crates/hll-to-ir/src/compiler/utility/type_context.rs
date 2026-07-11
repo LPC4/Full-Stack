@@ -71,6 +71,18 @@ impl TypeContext {
         self.named_types.get(name)
     }
 
+    /// Reverse lookup: the registered name of a structurally resolved aggregate.
+    /// Used when a receiver's named type was already lowered to its field list.
+    pub fn name_of_aggregate(&self, ty: &IrType) -> Option<&str> {
+        if !matches!(ty, IrType::Aggregate(_)) {
+            return None;
+        }
+        self.named_types
+            .iter()
+            .find(|(_, registered)| *registered == ty)
+            .map(|(name, _)| name.as_str())
+    }
+
     /// Type check a binary operation and return the result type or error
     pub fn check_binary_op(
         &self,

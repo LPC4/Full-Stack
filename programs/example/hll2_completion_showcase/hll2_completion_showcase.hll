@@ -87,6 +87,10 @@ interface Measurable {
     area: (self: Self*) -> i32
 }
 
+interface Scalable {
+    scaled_area: (self: Self*, k: i32) -> i32
+}
+
 struct Disc {
     radius: i32,
 }
@@ -95,11 +99,30 @@ impl Disc {
     area: (self: Disc*) -> i32 {
         return 3 * self.radius * self.radius
     }
+    scaled_area: (self: Disc*, k: i32) -> i32 {
+        return self.area() * k
+    }
 }
 
 ; Static dispatch: each instantiation resolves `v.area()` to that type's method.
 double_area: <T: Measurable>(v: T*) -> i32 {
     return v.area() + v.area()
+}
+
+; Multiple bounds are joined with `+` and are all checked at specialization.
+scaled_area: <T: Measurable + Scalable>(v: T*, k: i32) -> i32 {
+    return v.scaled_area(k)
+}
+
+; --- dyn: runtime polymorphism over an interface ---
+; `dyn Measurable` is a wide pointer packing the object with its methods;
+; `(&x) as dyn Measurable` converts explicitly, and calls dispatch at runtime.
+sum_areas: (shapes: dyn Measurable*, count: i32) -> i32 {
+    sum := 0
+    for i in 0..count {
+        sum += shapes[i].area()
+    }
+    return sum
 }
 
 ; --- Literal match patterns ---
@@ -203,6 +226,12 @@ main: () -> i32 {
     disc: Disc = Disc { .radius = 3 }
     if double_area<Shape>(&box) != 84 { return 18 }
     if double_area<Disc>(&disc) != 54 { return 19 }
+    if scaled_area<Disc>(&disc, 2) != 54 { return 27 }
+
+    ; dyn: one heterogeneous array, each element dispatching to its own type.
+    mixed: dyn Measurable[2] = [(&box) as dyn Measurable, (&disc) as dyn Measurable]
+    if mixed[1].area() != 27 { return 25 }
+    if sum_areas(&mixed[0], 2) != 69 { return 26 }
 
     ; Literal match: consts and chars dispatch on scalar equality.
     if eval_op(OP_ADD, 40, 2) != 42 { return 20 }

@@ -162,12 +162,14 @@ pub(crate) fn monomorphize_program(program: &Program) -> Result<Program, String>
         declarations,
         statements,
     };
+    // Runs on the fully concrete program so conversion sites see final types.
+    crate::dyn_interface::lower_dyn_interfaces(&mut program, &interfaces)?;
     specialize_generic_enums(&mut program)?;
     Ok(program)
 }
 
 #[derive(Clone)]
-struct GenericSignature {
+pub(crate) struct GenericSignature {
     params: Vec<String>,
     arguments: Vec<Type>,
     return_type: Option<Type>,
@@ -580,7 +582,7 @@ fn unify_generic_type(
     }
 }
 
-fn infer_expression_type(
+pub(crate) fn infer_expression_type(
     expression: &Expression,
     environment: &HashMap<String, Type>,
     generic_signatures: &HashMap<String, GenericSignature>,
@@ -671,8 +673,8 @@ fn infer_expression_type(
     }
 }
 
-// A bound `<T: Writer>` holds when the substituted type provides every interface
-// method as `{Type}_{method}` with `Self` = that type (see spec 6.5).
+// Each bound in `<T: Writer + Debug>` holds when the substituted type provides
+// every interface method as `{Type}_{method}` with `Self` = that type (see spec 6.5).
 fn check_generic_bounds(
     function: &str,
     bounds: &[(String, String)],
@@ -690,52 +692,71 @@ fn check_generic_bounds(
         let Some(concrete) = substitutions.get(param) else {
             continue;
         };
-        let Type::Named {
-            name: type_name,
-            args,
-        } = concrete
-        else {
+        let Type::Named { .. } = concrete else {
             return Err(format!(
                 "generic function `{function}`: `{}` cannot satisfy the bound \
                  `{param}: {interface_name}`; only named struct types have methods",
                 type_mangle(concrete)
             ));
         };
-        if !args.is_empty() {
-            return Err(format!(
-                "generic function `{function}`: bound `{param}: {interface_name}` \
-                 does not support generic type instantiations yet"
-            ));
-        }
+        check_type_implements(concrete, interface_name, methods, concrete_signatures)?;
+    }
+    Ok(())
+}
 
-        let self_substitution = Substitutions::from([("Self".to_owned(), concrete.clone())]);
-        for method in methods {
-            let implementation = format!("{type_name}_{}", method.name);
-            let Some((found_params, found_return)) = concrete_signatures.get(&implementation)
-            else {
-                return Err(format!(
-                    "type `{type_name}` does not implement interface `{interface_name}`: \
-                     missing method `{}` (expected a function `{implementation}`)",
-                    method.name
-                ));
-            };
-            let expected_params = method
-                .params
-                .iter()
-                .map(|p| substitute_type(&p.ty, &self_substitution))
-                .collect::<Vec<_>>();
-            let expected_return = method
-                .return_type
-                .as_ref()
-                .map(|ReturnType::Single(ty)| substitute_type(ty, &self_substitution));
-            if found_params != &expected_params || found_return != &expected_return {
-                return Err(format!(
-                    "type `{type_name}` does not implement interface `{interface_name}`: \
-                     method `{}` has a mismatched signature (check `{implementation}` \
-                     against the interface with `Self` = `{type_name}`)",
-                    method.name
-                ));
-            }
+// Shared by bound checking and `dyn` conversion: `type_name` implements the
+// interface when every method exists as `{type}_{method}` with `Self` = type.
+pub(crate) fn check_type_implements(
+    concrete: &Type,
+    interface_name: &str,
+    methods: &[InterfaceMethod],
+    concrete_signatures: &HashMap<String, (Vec<Type>, Option<Type>)>,
+) -> Result<(), String> {
+    let Type::Named {
+        name: type_name,
+        args,
+    } = concrete
+    else {
+        return Err(format!(
+            "type `{}` cannot implement interface `{interface_name}`; expected a named type",
+            type_mangle(concrete)
+        ));
+    };
+    let concrete_name = if args.is_empty() {
+        type_name.clone()
+    } else {
+        format!(
+            "{}<{}>",
+            type_name,
+            args.iter().map(type_mangle).collect::<Vec<_>>().join(", ")
+        )
+    };
+    let self_substitution = Substitutions::from([("Self".to_owned(), concrete.clone())]);
+    for method in methods {
+        let implementation = format!("{type_name}_{}", method.name);
+        let Some((found_params, found_return)) = concrete_signatures.get(&implementation) else {
+            return Err(format!(
+                "type `{concrete_name}` does not implement interface `{interface_name}`: \
+                 missing method `{}` (expected a function `{implementation}`)",
+                method.name
+            ));
+        };
+        let expected_params = method
+            .params
+            .iter()
+            .map(|p| substitute_type(&p.ty, &self_substitution))
+            .collect::<Vec<_>>();
+        let expected_return = method
+            .return_type
+            .as_ref()
+            .map(|ReturnType::Single(ty)| substitute_type(ty, &self_substitution));
+        if found_params != &expected_params || found_return != &expected_return {
+            return Err(format!(
+                "type `{concrete_name}` does not implement interface `{interface_name}`: \
+                 method `{}` has a mismatched signature (check `{implementation}` \
+                 against the interface with `Self` = `{type_name}`)",
+                method.name
+            ));
         }
     }
     Ok(())
@@ -998,13 +1019,13 @@ fn rewrite_target_calls(
     Ok(())
 }
 
-fn substitute_block_types(block: &mut Block, substitutions: &Substitutions) {
+pub(crate) fn substitute_block_types(block: &mut Block, substitutions: &Substitutions) {
     for statement in &mut block.statements {
         substitute_statement_types(statement, substitutions);
     }
 }
 
-fn substitute_statement_types(statement: &mut Statement, substitutions: &Substitutions) {
+pub(crate) fn substitute_statement_types(statement: &mut Statement, substitutions: &Substitutions) {
     match statement {
         Statement::Expression(expr) | Statement::Defer(expr) => {
             substitute_expression_types(expr, substitutions);
@@ -1054,7 +1075,10 @@ fn substitute_statement_types(statement: &mut Statement, substitutions: &Substit
     }
 }
 
-fn substitute_expression_types(expression: &mut Expression, substitutions: &Substitutions) {
+pub(crate) fn substitute_expression_types(
+    expression: &mut Expression,
+    substitutions: &Substitutions,
+) {
     match expression {
         Expression::Assignment { target, rvalue } => {
             substitute_target_types(target, substitutions);

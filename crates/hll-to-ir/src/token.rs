@@ -169,6 +169,7 @@ pub enum Token<'a> {
     Struct,
     Impl,
     Interface,
+    Dyn,
     As,
     Import,
     Export,

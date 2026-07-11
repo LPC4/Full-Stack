@@ -1369,7 +1369,11 @@ impl CompilerRv64 {
                 let IrValue::Register(reg) = val else {
                     panic!("Aggregate return must be a register")
                 };
-                let src_addr = if ctx.is_stack_address(reg) {
+                // An aggregate VALUE register (e.g. a `Load` result) stores its
+                // bytes in its own slot; only pointer-typed registers dereference.
+                let value_in_own_slot =
+                    ctx.is_stack_address(reg) || !matches!(raw_val_type, IrType::Pointer(_));
+                let src_addr = if value_in_own_slot {
                     let slot = ctx.slot_for_reg(reg).expect("reg slot");
                     let addr_tmp = self.emitter.alloc_temp_reg();
                     self.emitter.emit_add_imm(addr_tmp, SP, slot as i64);

@@ -214,6 +214,7 @@ impl<'a> Lexer<'a> {
             "struct" => Token::Struct,
             "impl" => Token::Impl,
             "interface" => Token::Interface,
+            "dyn" => Token::Dyn,
             "const" => Token::Const,
             "external" => Token::External,
             "if" => Token::If,

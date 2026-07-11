@@ -286,7 +286,7 @@ impl HighLevelCompiler {
                 {
                     let recv_addr = self.lower_expr(expr, EvalMode::Address)?;
                     if !self.receiver_has_field(&recv_addr.ty, field)
-                        && let Some(type_name) = Self::receiver_struct_name(&recv_addr.ty)
+                        && let Some(type_name) = self.receiver_struct_name(&recv_addr.ty)
                     {
                         let method = format!("{type_name}_{field}");
                         if self.function_param_types.contains_key(&method) {
@@ -563,11 +563,13 @@ impl HighLevelCompiler {
         matches!(resolved, IrType::Aggregate(fields) if fields.iter().any(|(n, _)| n == field))
     }
 
-    /// The named struct type of a receiver address, peeling pointer levels.
-    fn receiver_struct_name(ty: &IrType) -> Option<String> {
+    /// The named struct type of a receiver address, peeling pointer levels. A
+    /// receiver already resolved to its field list is matched back to its name.
+    fn receiver_struct_name(&self, ty: &IrType) -> Option<String> {
         match ty {
             IrType::Named(name) => Some(name.clone()),
-            IrType::Pointer(inner) => Self::receiver_struct_name(inner),
+            IrType::Pointer(inner) => self.receiver_struct_name(inner),
+            IrType::Aggregate(_) => self.context.types.name_of_aggregate(ty).map(str::to_owned),
             _ => None,
         }
     }

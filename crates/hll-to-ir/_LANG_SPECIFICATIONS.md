@@ -505,18 +505,46 @@ main: () -> i32 {
 
 - An interface body lists method signatures only (no bodies). `Self` is a placeholder for
   the implementing type; each method's first parameter must be `self: Self*`.
-- A bound is written `param: Interface` inside a function's type-parameter list. Bounds are
-  only supported on functions; `struct`/`enum`/`type` parameters remain unconstrained.
+- Bounds are written `param: Interface` inside a function's type-parameter list. Multiple bounds
+  on one parameter use `+`, as in `<T: Readable + Writable>`, and all must be satisfied. Bounds
+  are only supported on functions; `struct`/`enum`/`type` parameters remain unconstrained.
 - A type `X` satisfies a bound when, for every interface method `m`, a concrete function
   `X_m` exists whose signature equals the interface signature with `Self` = `X`. Desugared
   `impl` methods (6.2) and hand-written free functions both qualify.
-- Only plain named struct types can satisfy a bound; primitives and generic type
-  instantiations are rejected. Bounds are checked when the generic is specialized; a bound
-  naming an unknown interface is an error even if the generic is never instantiated.
+- Named struct types, including concrete generic instantiations, can satisfy a bound; primitives
+  are rejected. For `Box<i32>`, the implementation function keeps the base convention
+  `Box_method`, but its `Self` positions must be exactly `Box<i32>`. Bounds are checked when the
+  generic is specialized; an unknown interface is an error even if the generic is never used.
 - Interfaces are compile-time contracts with no link symbol. They are not exported across
   module boundaries; a module that needs one declares it locally (like generics, 6.3).
-- Runtime polymorphism still uses explicit vtable structs of function pointers (6.1);
-  `dyn Interface` fat pointers remain reserved (12).
+- Runtime polymorphism is opt-in through `dyn Interface` (6.6) or an explicit manual vtable
+  struct (6.1).
+
+### 6.6 Dynamic interface values
+
+`dyn Interface` is an explicitly constructed, copyable wide value. It stores an erased `u8*`
+object pointer and one function pointer for each interface method. Converting a concrete pointer
+uses the postfix cast `ptr as dyn Interface`; no implicit conversion or allocation occurs.
+
+```hll
+interface Measurable {
+    area: (self: Self*) -> i32
+}
+
+r: Rect = Rect { .width = 6, .height = 7 }
+m: dyn Measurable = (&r) as dyn Measurable
+result: i32 = m.area()                 ; indirect call, result is 42
+```
+
+- The cast operand must be a pointer to a plain named struct that satisfies the interface by the
+  same `Type_method` signature rule as a generic bound (6.5).
+- A dynamic method call passes the stored object pointer to the stored function pointer. Other
+  arguments and the return value retain their declared interface types.
+- `Self` is supported only in the required `self: Self*` receiver. A method mentioning `Self` in
+  another parameter or its return type makes that interface ineligible for `dyn` use.
+- Dynamic values may be copied, assigned, stored in aggregates, passed by pointer, and returned by
+  value. The referenced object must remain alive; the dynamic value does not own or free it.
+- Generic concrete types and cross-module interfaces are not supported for dynamic conversion.
 
 ## 7. Control flow, enums, and resource management
 
@@ -679,9 +707,10 @@ type_decl      = "type" identifier "=" type;
 const_decl     = "const" identifier "=" expression;
 field_decl     = identifier ":" type;
 type_params    = "<" type_param { "," type_param } ">";
-type_param     = identifier [ ":" identifier ];   (* bound: functions only, see 6.5 *)
-type           = primitive_type | identifier [ type_args ] | struct_def | function_pointer_type
-               | array_type | slice_type | pointer_type;
+type_param     = identifier [ ":" identifier { "+" identifier } ]; (* functions only, 6.5 *)
+type           = primitive_type | identifier [ type_args ] | dyn_type | struct_def
+               | function_pointer_type | array_type | slice_type | pointer_type;
+dyn_type       = "dyn" identifier;
 type_args      = "<" type { "," type } ">";
 struct_def     = "{" [ field_decl { "," field_decl } [ "," ] ] "}";
 function_pointer_type = "fn" "(" [ type { "," type } ] ")" [ "->" type ];
@@ -818,12 +847,10 @@ The following are reserved or planned for a later language revision (V2.1). The 
 not accept incomplete forms of them today; they are documented here only so the normative
 sections above are not mistaken for the full long-term design.
 
-- **Classes and `dyn`.** First-class `class` declarations and opt-in `dyn Interface`
-  fat-pointer polymorphism over the shipped interfaces (6.5). `struct` remains the
-  plain-data type; `type` remains alias-only. Static `interface` + bounds and `impl`
-  methods are implemented (6.2, 6.5); only the runtime-dispatch half is future work.
-- **Bounds beyond functions.** Interface bounds on `struct`/`enum`/`type` parameters,
-  multiple bounds per parameter, and bounds satisfied by generic type instantiations.
+- **Classes.** First-class `class` declarations remain future work. `struct` remains the
+  plain-data type; `type` remains alias-only; opt-in runtime dispatch is provided by
+  `dyn Interface` (6.6).
+- **Bounds beyond functions.** Interface bounds on `struct`/`enum`/`type` parameters.
 - **Name-only destructuring.** `{ quo, rem } := expr` binding by field name without repeating
   types. The implemented form is the typed pattern in 5.4.
 - **String interpolation.** `"hi {name}"` lowering to a visible format over literal chunks.

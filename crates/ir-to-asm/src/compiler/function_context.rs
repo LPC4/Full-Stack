@@ -391,7 +391,7 @@ impl FunctionContext {
                         "Move parameter '{}' from register a{} to allocated register",
                         param.register, abi_index
                     ));
-                    backend.emit_move_typed(phys, arg_reg(index), &ty);
+                    backend.emit_move_typed(phys, arg_reg(abi_index), &ty);
                 } else {
                     let offset = ((abi_index - 8) * 8) as i32;
                     backend.emit_comment(&format!(
