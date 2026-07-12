@@ -1,14 +1,14 @@
 use super::ast::{
-    AssignTarget, BinaryOp, Block, DeclNode, Declaration, Expression, FieldDecl, FieldInit,
-    ForIter, InterfaceMethod, Literal, MatchArm, Parameter, Pattern, PrimaryExpr, Program,
-    ReturnType, Statement, StructDestructureField, Type, UnaryOp, Variant,
+    AssignTarget, BinaryOp, BindingField, Block, DeclNode, Declaration, Expression, FieldDecl,
+    FieldInit, ForIter, InterfaceMethod, Literal, MatchArm, Parameter, Path, Pattern, PrimaryExpr,
+    Program, ReturnType, Statement, StructDestructureField, Type, UnaryOp, Variant,
 };
 
 use super::token::{CompoundOp, Span, Token};
 
 // Parsed `<...>` type parameters: the parameter names plus any `(param, interface)`
 // bound pairs (bounds are only legal on functions; see parse_generic_params).
-type GenericParams = (Vec<String>, Vec<(String, String)>);
+type GenericParams = (Vec<String>, Vec<(String, Path)>);
 
 // The parsed contents of a `[...]` subscript: a plain index or a range slice.
 enum Subscript {
@@ -43,6 +43,8 @@ pub struct Parser<'a> {
     pub pos: usize,
     pub pending_gt_from_shr: bool, // Track if we have a virtual `>` waiting from a split `>>`
     type_names: std::collections::HashSet<String>,
+    synthesized_declarations: Vec<Declaration>,
+    next_lambda_id: usize,
 }
 
 impl<'a> Parser<'a> {
@@ -57,6 +59,8 @@ impl<'a> Parser<'a> {
             pos: 0,
             pending_gt_from_shr: false,
             type_names: std::collections::HashSet::new(),
+            synthesized_declarations: Vec::new(),
+            next_lambda_id: 0,
         }
     }
 
@@ -68,6 +72,8 @@ impl<'a> Parser<'a> {
             pos: 0,
             pending_gt_from_shr: false,
             type_names: std::collections::HashSet::new(),
+            synthesized_declarations: Vec::new(),
+            next_lambda_id: 0,
         }
     }
 
@@ -94,6 +100,7 @@ impl<'a> Parser<'a> {
             self.consume_terminators();
         }
 
+        declarations.append(&mut self.synthesized_declarations);
         Ok(Program {
             declarations,
             statements,
@@ -262,6 +269,12 @@ impl<'a> Parser<'a> {
                 Ok(Statement::Continue)
             }
             Some(Token::LBrace) => {
+                if self.brace_followed_by_colon_equal() {
+                    let fields = self.parse_binding_pattern()?;
+                    self.expect_colon_equal()?;
+                    let init = self.parse_expression()?;
+                    return Ok(Statement::DestructureBinding { fields, init });
+                }
                 let mut trial = self.clone();
                 if let Ok(target) = trial.parse_struct_destructure_target()
                     && trial.match_assign()
@@ -557,16 +570,35 @@ impl<'a> Parser<'a> {
         Ok(DeclNode::Interface { name, methods })
     }
 
-    /// Parse an impl block; receiver methods and associated functions both
-    /// desugar to flat `Type_name` functions.
+    /// Parse an impl block; function members desugar to flat `Type_name`
+    /// functions, `const`/`type` members become one `AssociatedItems` node.
     fn parse_impl_block(&mut self, exported: bool) -> Result<Vec<Declaration>, ParserError> {
         self.advance(); // `impl`
         let type_name = self.expect_ident()?;
+        let (owner_generics, owner_bounds) = self.parse_generic_params_with_bounds()?;
         self.expect_lbrace()?;
         self.consume_terminators();
 
         let mut methods = Vec::new();
+        let mut consts = Vec::new();
+        let mut aliases = Vec::new();
         while !self.check_rbrace() {
+            if matches!(self.peek(), Some(Token::Const)) {
+                self.advance();
+                let name = self.expect_ident()?;
+                self.expect_assign()?;
+                consts.push((name, self.parse_expression()?));
+                self.consume_terminators();
+                continue;
+            }
+            if matches!(self.peek(), Some(Token::Type)) {
+                self.advance();
+                let name = self.expect_ident()?;
+                self.expect_assign()?;
+                aliases.push((name, self.parse_type()?));
+                self.consume_terminators();
+                continue;
+            }
             let DeclNode::Function {
                 name,
                 generics,
@@ -583,10 +615,10 @@ impl<'a> Parser<'a> {
             if let Some(receiver) = params.first().filter(|param| param.name == "self") {
                 let receiver_ok = matches!(
                     &receiver.ty,
-                    Type::Named { name, .. } if name == &type_name
+                    Type::Named { name, .. } if **name == *type_name
                 ) || matches!(
                     &receiver.ty,
-                    Type::Pointer(inner) if matches!(inner.as_ref(), Type::Named { name, .. } if name == &type_name)
+                    Type::Pointer(inner) if matches!(inner.as_ref(), Type::Named { name, .. } if **name == *type_name)
                 );
                 if !receiver_ok {
                     return Err(self.error(&format!(
@@ -595,11 +627,25 @@ impl<'a> Parser<'a> {
                 }
             }
 
+            // Owner generics apply to every function member; explicit member
+            // generics follow them.
+            let mut merged_generics = owner_generics.clone();
+            for generic in generics {
+                if merged_generics.contains(&generic) {
+                    return Err(self.error(&format!(
+                        "method generic `{generic}` shadows an impl owner generic"
+                    )));
+                }
+                merged_generics.push(generic);
+            }
+            let mut merged_bounds = owner_bounds.clone();
+            merged_bounds.extend(bounds);
+
             methods.push(Declaration {
                 decl: DeclNode::Function {
                     name: format!("{type_name}_{name}"),
-                    generics,
-                    bounds,
+                    generics: merged_generics,
+                    bounds: merged_bounds,
                     params,
                     return_type,
                     body,
@@ -612,6 +658,22 @@ impl<'a> Parser<'a> {
         }
 
         self.expect_rbrace()?;
+        if !consts.is_empty() || !aliases.is_empty() {
+            if exported {
+                return Err(self.error(
+                    "associated constants and type aliases cannot be exported; keep the impl private",
+                ));
+            }
+            methods.push(Declaration {
+                decl: DeclNode::AssociatedItems {
+                    owner: type_name,
+                    generics: owner_generics,
+                    consts,
+                    aliases,
+                },
+                exported: false,
+            });
+        }
         Ok(methods)
     }
 
@@ -1139,6 +1201,25 @@ impl<'a> Parser<'a> {
                 continue;
             }
 
+            if matches!(&expr, Expression::Primary(PrimaryExpr::Identifier(_)))
+                && let Some((owner_args, member)) = self.try_parse_associated_member()
+            {
+                let Expression::Primary(PrimaryExpr::Identifier(owner)) = expr else {
+                    unreachable!();
+                };
+                if matches!(self.peek(), Some(Token::LParen)) {
+                    return Err(
+                        self.error("type arguments on associated function calls are not supported")
+                    );
+                }
+                expr = Expression::Primary(PrimaryExpr::AssociatedConst {
+                    owner,
+                    owner_args,
+                    member,
+                });
+                continue;
+            }
+
             let type_arguments = self.try_parse_call_type_arguments();
 
             if type_arguments.is_some() || self.match_lparen() {
@@ -1248,6 +1329,41 @@ impl<'a> Parser<'a> {
         }
     }
 
+    // `Owner<args>.MEMBER`: an associated-constant projection in expression
+    // position. Backtracks (like call type arguments) when the shape mismatches.
+    fn try_parse_associated_member(&mut self) -> Option<(Vec<Type>, String)> {
+        if self.peek() != Some(&Token::Lt) {
+            return None;
+        }
+
+        let saved_pos = self.pos;
+        let saved_pending_gt = self.pending_gt_from_shr;
+        self.advance();
+        let parsed = (|| -> Result<(Vec<Type>, String), ParserError> {
+            let mut args = Vec::new();
+            loop {
+                args.push(self.parse_type()?);
+                if self.match_comma() {
+                    continue;
+                }
+                break;
+            }
+            self.expect_generic_close()?;
+            if !self.match_dot() {
+                return Err(self.error("expected `.` after associated owner arguments"));
+            }
+            Ok((args, self.expect_ident()?))
+        })();
+
+        if let Ok(result) = parsed {
+            Some(result)
+        } else {
+            self.pos = saved_pos;
+            self.pending_gt_from_shr = saved_pending_gt;
+            None
+        }
+    }
+
     fn expect_generic_close(&mut self) -> Result<(), ParserError> {
         if self.pending_gt_from_shr {
             self.pending_gt_from_shr = false;
@@ -1314,30 +1430,19 @@ impl<'a> Parser<'a> {
                 "legacy function-pointer syntax is not supported; write `(T, U) -> R` instead of `fn(T, U) -> R`",
             )),
             Some(Token::Dyn) => {
-                // `dyn* I` is carried as a marker until the dyn
+                // `dyn I` is carried as a marker until the dyn
                 // lowering pass rewrites it to the synthesized `I__dyn` struct.
                 self.advance();
-                if !self.match_star() {
-                    return Err(self.error(
-                        "dynamic interface references require a pointer marker; write 'dyn* Interface'",
-                    ));
-                }
-                let mut interface = self.expect_ident()?;
+                let mut segments = vec![self.expect_ident()?];
                 while self.match_dot() {
-                    interface.push('.');
-                    interface.push_str(&self.expect_ident()?);
+                    segments.push(self.expect_ident()?);
                 }
-                Ok(Type::Named {
-                    name: format!("dyn* {interface}"),
-                    args: Vec::new(),
-                })
+                Ok(Type::DynamicReference(Path::from_segments(segments)))
             }
             Some(Token::Ident(_)) => {
-                let mut name = self.expect_ident()?;
-                if self.match_dot() {
-                    let member = self.expect_ident()?;
-                    name.push('.');
-                    name.push_str(&member);
+                let mut segments = vec![self.expect_ident()?];
+                while self.match_dot() {
+                    segments.push(self.expect_ident()?);
                 }
                 let args = if self.match_lt() {
                     let mut args = Vec::new();
@@ -1388,7 +1493,21 @@ impl<'a> Parser<'a> {
                     Vec::new()
                 };
 
-                Ok(Type::Named { name, args })
+                // `Matrix<i32>.Row` projects an associated type alias; the
+                // zero-argument form `Config.Row` stays a two-segment path.
+                if !args.is_empty() && self.match_dot() {
+                    let member = self.expect_ident()?;
+                    return Ok(Type::Associated {
+                        owner: segments.join("."),
+                        owner_args: args,
+                        member,
+                    });
+                }
+
+                Ok(Type::Named {
+                    name: Path::from_segments(segments),
+                    args,
+                })
             }
             Some(Token::LBrace) => self.parse_struct_type(),
             Some(Token::LParen) => self.parse_function_pointer_type(),
@@ -1494,11 +1613,11 @@ impl<'a> Parser<'a> {
                     self.advance();
                     let mut seen = std::collections::HashSet::new();
                     loop {
-                        let mut interface = self.expect_ident()?;
+                        let mut segments = vec![self.expect_ident()?];
                         while self.match_dot() {
-                            interface.push('.');
-                            interface.push_str(&self.expect_ident()?);
+                            segments.push(self.expect_ident()?);
                         }
+                        let interface = Path::from_segments(segments);
                         if !seen.insert(interface.clone()) {
                             return Err(
                                 self.error(&format!("duplicate bound `{param}: {interface}`"))
@@ -1592,6 +1711,61 @@ impl<'a> Parser<'a> {
 
         self.expect_rbrace()?;
         Ok(AssignTarget::StructDestructure(fields))
+    }
+
+    fn parse_binding_pattern(&mut self) -> Result<Vec<BindingField>, ParserError> {
+        self.expect_lbrace()?;
+        if self.check_rbrace() {
+            return Err(self.error("empty binding patterns are not allowed"));
+        }
+
+        let mut fields = Vec::new();
+        let mut sources = std::collections::HashSet::new();
+        let mut bindings = std::collections::HashSet::new();
+        loop {
+            let source = self.expect_ident()?;
+            let binding = if self.match_assign() {
+                self.expect_ident()?
+            } else {
+                source.clone()
+            };
+            if !sources.insert(source.clone()) {
+                return Err(self.error(&format!(
+                    "duplicate source field `{source}` in binding pattern"
+                )));
+            }
+            if !bindings.insert(binding.clone()) {
+                return Err(
+                    self.error(&format!("duplicate binding `{binding}` in binding pattern"))
+                );
+            }
+            fields.push(BindingField { source, binding });
+            if !self.match_comma() {
+                break;
+            }
+            if self.check_rbrace() {
+                break;
+            }
+        }
+        self.expect_rbrace()?;
+        Ok(fields)
+    }
+
+    fn brace_followed_by_colon_equal(&self) -> bool {
+        let mut depth = 0usize;
+        for index in self.pos..self.tokens.len() {
+            match self.tokens[index] {
+                Token::LBrace => depth += 1,
+                Token::RBrace => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        return self.tokens.get(index + 1) == Some(&Token::ColonEqual);
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
     }
 
     fn parse_struct_destructure_field(&mut self) -> Result<StructDestructureField, ParserError> {
@@ -1931,6 +2105,11 @@ impl<'a> Parser<'a> {
 
     fn parse_primary(&mut self) -> Result<Expression, ParserError> {
         let expr = match self.peek() {
+            Some(Token::Fn) => {
+                return Err(self.error(
+                    "lambda expressions omit `fn`; write `(name: Type) -> Return { ... }`",
+                ));
+            }
             Some(Token::Integer(_)) => Expression::Primary(PrimaryExpr::Literal(Literal::Integer(
                 self.expect_integer()?,
             ))),
@@ -2022,10 +2201,16 @@ impl<'a> Parser<'a> {
                 Expression::Primary(PrimaryExpr::Identifier("bool".to_owned()))
             }
             Some(Token::LParen) => {
-                self.advance();
-                let expr = self.parse_expression()?;
-                self.expect_rparen()?;
-                Expression::Primary(PrimaryExpr::Grouped(Box::new(expr)))
+                let mut trial = self.clone();
+                if let Ok(lambda) = trial.parse_lambda_expression() {
+                    *self = trial;
+                    lambda
+                } else {
+                    self.advance();
+                    let expr = self.parse_expression()?;
+                    self.expect_rparen()?;
+                    Expression::Primary(PrimaryExpr::Grouped(Box::new(expr)))
+                }
             }
             Some(Token::LBracket) => {
                 self.advance();
@@ -2088,6 +2273,35 @@ impl<'a> Parser<'a> {
             None => return Err(self.error("unexpected end of input")),
         };
         Ok(expr)
+    }
+
+    fn parse_lambda_expression(&mut self) -> Result<Expression, ParserError> {
+        let params = self.parse_param_list()?;
+        let return_type = if self.match_arrow() {
+            Some(self.parse_return_type()?)
+        } else {
+            None
+        };
+        if !self.check_lbrace() {
+            return Err(self.error("expected lambda body block"));
+        }
+        let body = self.parse_block()?;
+        let name = format!("__hll_lambda_{}", self.next_lambda_id);
+        self.next_lambda_id += 1;
+        self.synthesized_declarations.push(Declaration {
+            exported: false,
+            decl: DeclNode::Function {
+                name: name.clone(),
+                generics: Vec::new(),
+                bounds: Vec::new(),
+                params,
+                return_type,
+                body: Some(body),
+                is_extern: false,
+                is_import_interface: false,
+            },
+        });
+        Ok(Expression::Primary(PrimaryExpr::Identifier(name)))
     }
 
     fn parse_match_expression(&mut self) -> Result<Expression, ParserError> {
@@ -2469,8 +2683,8 @@ impl<'a> Parser<'a> {
 mod tests {
     use super::Parser;
     use crate::ast::{
-        AssignTarget, DeclNode, Expression, ForIter, Literal, Pattern, PrimaryExpr, ReturnType,
-        Statement, Type,
+        AssignTarget, DeclNode, Expression, ForIter, Literal, Path, Pattern, PrimaryExpr,
+        ReturnType, Statement, Type,
     };
     use crate::lexer::Lexer;
     use crate::token::Token;
@@ -2983,6 +3197,39 @@ mod tests {
     }
 
     #[test]
+    fn parses_name_only_destructuring_binding() {
+        let mut parser = Parser::new(tokens_of("{ quo, remainder = rem } := pair"));
+        let statement = parser
+            .parse_statement()
+            .expect("binding pattern should parse");
+        let Statement::DestructureBinding { fields, .. } = statement else {
+            panic!("expected destructuring binding");
+        };
+        assert_eq!(
+            fields,
+            vec![
+                crate::ast::BindingField {
+                    source: "quo".into(),
+                    binding: "quo".into()
+                },
+                crate::ast::BindingField {
+                    source: "remainder".into(),
+                    binding: "rem".into()
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_destructuring_bindings() {
+        let mut parser = Parser::new(tokens_of("{ left = value, right = value } := pair"));
+        let error = parser
+            .parse_statement()
+            .expect_err("duplicate binding must fail");
+        assert!(error.message.contains("duplicate binding `value`"));
+    }
+
+    #[test]
     fn parses_as_cast_operator() {
         use crate::token::Token;
         let tokens = vec![Token::Ident("x"), Token::As, Token::I32, Token::Eof];
@@ -3129,7 +3376,7 @@ mod tests {
     fn parses_slice_and_array_type_suffixes() {
         // `i32[]` is a slice; `i32[3]` is a fixed array.
         let i32_ty = || Type::Named {
-            name: "i32".to_string(),
+            name: "i32".into(),
             args: vec![],
         };
 
@@ -3175,23 +3422,99 @@ mod tests {
     }
 
     #[test]
-    fn parses_dynamic_reference_and_rejects_missing_marker() {
-        let mut parser = Parser::new(tokens_of("dyn* geometry.Measurable*"));
+    fn parses_dynamic_reference_as_a_wide_value() {
+        let mut parser = Parser::new(tokens_of("dyn geometry.Measurable*"));
         assert_eq!(
             parser.parse_type().unwrap(),
-            Type::Pointer(Box::new(Type::Named {
-                name: "dyn* geometry.Measurable".to_owned(),
-                args: Vec::new(),
-            }))
+            Type::Pointer(Box::new(Type::DynamicReference(
+                crate::ast::Path::from_segments(vec![
+                    "geometry".to_owned(),
+                    "Measurable".to_owned(),
+                ]),
+            )))
         );
 
-        let mut legacy = Parser::new(tokens_of("dyn Measurable"));
-        let error = legacy.parse_type().expect_err("legacy spelling must fail");
-        assert!(
-            error
-                .to_string()
-                .contains("dynamic interface references require a pointer marker")
+        let mut parser = Parser::new(tokens_of("dyn Measurable"));
+        assert_eq!(
+            parser.parse_type().unwrap(),
+            Type::DynamicReference(crate::ast::Path::single("Measurable"))
         );
+    }
+
+    #[test]
+    fn parses_associated_items_and_generic_owner_methods() {
+        let src = r#"
+struct Matrix<T> { cell: T }
+impl Matrix<T> {
+    const LANES = 4
+    type Row = T[4]
+    scale: <U>(self: Matrix*, factor: U) -> i32 { return 0 }
+}
+"#;
+        let mut parser = Parser::new(tokens_of(src));
+        let program = parser.parse_program().unwrap();
+        let DeclNode::Function { name, generics, .. } = &program.declarations[1].decl else {
+            panic!("expected desugared method");
+        };
+        assert_eq!(name, "Matrix_scale");
+        // Owner generics precede the member's own generics.
+        assert_eq!(generics, &["T", "U"]);
+        let DeclNode::AssociatedItems {
+            owner,
+            generics,
+            consts,
+            aliases,
+        } = &program.declarations[2].decl
+        else {
+            panic!("expected associated items");
+        };
+        assert_eq!(owner, "Matrix");
+        assert_eq!(generics, &["T"]);
+        assert_eq!(consts.len(), 1);
+        assert_eq!(consts[0].0, "LANES");
+        assert_eq!(aliases.len(), 1);
+        assert_eq!(aliases[0].0, "Row");
+    }
+
+    #[test]
+    fn parses_associated_projections_in_type_and_expression_position() {
+        let mut parser = Parser::new(tokens_of("Matrix<i32>.Row*"));
+        let ty = parser.parse_type().expect("projection type should parse");
+        let Type::Pointer(inner) = ty else {
+            panic!("expected pointer suffix to apply");
+        };
+        let Type::Associated { owner, member, .. } = *inner else {
+            panic!("expected associated type");
+        };
+        assert_eq!(owner, "Matrix");
+        assert_eq!(member, "Row");
+
+        let mut parser = Parser::new(tokens_of("return Matrix<i32>.LANES"));
+        let statement = parser.parse_statement().expect("projection should parse");
+        let Statement::Return(Some(Expression::Primary(PrimaryExpr::AssociatedConst {
+            owner,
+            member,
+            ..
+        }))) = statement
+        else {
+            panic!("expected associated constant expression");
+        };
+        assert_eq!(owner, "Matrix");
+        assert_eq!(member, "LANES");
+    }
+
+    #[test]
+    fn parses_arbitrarily_deep_compile_time_paths() {
+        let mut parser = Parser::new(tokens_of("alpha.beta.Container<gamma.delta.Item>"));
+        let Type::Named { name, args } = parser.parse_type().expect("qualified type should parse")
+        else {
+            panic!("expected named type");
+        };
+        assert_eq!(name.segments, ["alpha", "beta", "Container"]);
+        let Type::Named { name: argument, .. } = &args[0] else {
+            panic!("expected named generic argument");
+        };
+        assert_eq!(argument.segments, ["gamma", "delta", "Item"]);
     }
 
     #[test]
@@ -3275,7 +3598,7 @@ type Callback<T: Second> = (T*) -> i32
 "#;
         let mut parser = Parser::new(tokens_of(src));
         let program = parser.parse_program().unwrap();
-        let expected = vec![("T".to_owned(), "First".to_owned())];
+        let expected = vec![("T".to_owned(), Path::single("First"))];
         match &program.declarations[0].decl {
             DeclNode::Struct {
                 generics, bounds, ..
@@ -3284,8 +3607,8 @@ type Callback<T: Second> = (T*) -> i32
                 assert_eq!(
                     bounds,
                     &[
-                        ("T".to_owned(), "First".to_owned()),
-                        ("T".to_owned(), "Second".to_owned())
+                        ("T".to_owned(), Path::single("First")),
+                        ("T".to_owned(), Path::single("Second"))
                     ]
                 );
             }
@@ -3297,7 +3620,7 @@ type Callback<T: Second> = (T*) -> i32
         }
         match &program.declarations[2].decl {
             DeclNode::Type { bounds, .. } => {
-                assert_eq!(bounds, &[("T".to_owned(), "Second".to_owned())]);
+                assert_eq!(bounds, &[("T".to_owned(), Path::single("Second"))]);
             }
             other => panic!("expected alias, got {other:?}"),
         }
@@ -3337,7 +3660,10 @@ type Callback<T: Second> = (T*) -> i32
         };
         assert_eq!(
             bounds,
-            &[("T".to_owned(), "geometry.Measurable".to_owned())]
+            &[(
+                "T".to_owned(),
+                Path::from_segments(vec!["geometry".to_owned(), "Measurable".to_owned()])
+            )]
         );
     }
 

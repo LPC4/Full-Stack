@@ -4,6 +4,74 @@ pub struct Program {
     pub statements: Vec<Statement>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Path {
+    pub segments: Vec<String>,
+    canonical: String,
+}
+
+impl Path {
+    pub fn single(name: impl Into<String>) -> Self {
+        Self::from_segments(vec![name.into()])
+    }
+
+    pub fn from_segments(segments: Vec<String>) -> Self {
+        let canonical = segments.join(".");
+        Self {
+            segments,
+            canonical,
+        }
+    }
+
+    pub fn as_string(&self) -> String {
+        self.canonical.clone()
+    }
+}
+
+impl std::ops::Deref for Path {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        &self.canonical
+    }
+}
+
+impl std::borrow::Borrow<str> for Path {
+    fn borrow(&self) -> &str {
+        &self.canonical
+    }
+}
+
+impl PartialEq<str> for Path {
+    fn eq(&self, other: &str) -> bool {
+        self.canonical == other
+    }
+}
+
+impl PartialEq<&str> for Path {
+    fn eq(&self, other: &&str) -> bool {
+        self.canonical == *other
+    }
+}
+
+impl From<String> for Path {
+    fn from(value: String) -> Self {
+        Self::from_segments(value.split('.').map(str::to_owned).collect())
+    }
+}
+
+impl From<&str> for Path {
+    fn from(value: &str) -> Self {
+        value.to_owned().into()
+    }
+}
+
+impl std::fmt::Display for Path {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.as_string())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
     Primitive(String),
@@ -16,9 +84,17 @@ pub enum Type {
         return_type: Option<Box<Self>>,
     },
     Struct(Vec<FieldDecl>),
+    DynamicReference(Path),
     Named {
-        name: String,
+        name: Path,
         args: Vec<Self>,
+    },
+    // `Matrix<i32>.Row`: an associated type alias projected from an impl owner.
+    // Resolved to its concrete aliased type before semantic analysis.
+    Associated {
+        owner: String,
+        owner_args: Vec<Self>,
+        member: String,
     },
 }
 
@@ -56,7 +132,7 @@ pub enum DeclNode {
         generics: Vec<String>,
         // `(param, interface)` pairs from `<T: Writer>`; checked when the generic
         // is specialized. Empty for unbounded generics and plain functions.
-        bounds: Vec<(String, String)>,
+        bounds: Vec<(String, Path)>,
         params: Vec<Parameter>,
         return_type: Option<ReturnType>,
         body: Option<Block>,
@@ -68,13 +144,13 @@ pub enum DeclNode {
     Type {
         name: String,
         generics: Vec<String>,
-        bounds: Vec<(String, String)>,
+        bounds: Vec<(String, Path)>,
         ty: Type,
     },
     Struct {
         name: String,
         generics: Vec<String>,
-        bounds: Vec<(String, String)>,
+        bounds: Vec<(String, Path)>,
         fields: Vec<FieldDecl>,
     },
     // A tagged union. Lowers to `{ tag: i32, payload }` where `payload` is
@@ -82,7 +158,7 @@ pub enum DeclNode {
     Enum {
         name: String,
         generics: Vec<String>,
-        bounds: Vec<(String, String)>,
+        bounds: Vec<(String, Path)>,
         variants: Vec<Variant>,
     },
     Const {
@@ -100,6 +176,14 @@ pub enum DeclNode {
     Interface {
         name: String,
         methods: Vec<InterfaceMethod>,
+    },
+    // `impl Owner<T> { const LANES = 4  type Row = T[4] }`: compile-time members
+    // projected as `Owner<args>.Member`. Function members desugar separately.
+    AssociatedItems {
+        owner: String,
+        generics: Vec<String>,
+        consts: Vec<(String, Expression)>,
+        aliases: Vec<(String, Type)>,
     },
 }
 
@@ -173,6 +257,16 @@ pub enum Statement {
         name: String,
         init: Expression,
     },
+    DestructureBinding {
+        fields: Vec<BindingField>,
+        init: Expression,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BindingField {
+    pub source: String,
+    pub binding: String,
 }
 
 // The iterable in a `for` loop.
@@ -341,6 +435,13 @@ pub enum PrimaryExpr {
     },
     AsmReg {
         reg: String,
+    },
+    // `Matrix<i32>.LANES`: an associated constant projected from an impl owner.
+    // Folded to its literal value before semantic analysis.
+    AssociatedConst {
+        owner: String,
+        owner_args: Vec<Type>,
+        member: String,
     },
 }
 

@@ -1075,12 +1075,9 @@ impl FullStackApp {
         self.build_active_document(now);
     }
 
-    /// Build and run the selected config; a `debug = true` config starts paused.
+    /// Build and run the selected config without debugger intervention.
     pub(super) fn run_selected_config(&mut self, now: f64) {
-        let debug = self
-            .selected_config()
-            .is_some_and(|config| config.debug.enabled);
-        self.launch_selected_config(now, debug);
+        self.launch_selected_config(now, false);
     }
 
     /// Build the selected config and start it paused at the entry point with
@@ -1095,8 +1092,7 @@ impl FullStackApp {
         let debug = if self.live.is_some() {
             self.current_launch_debug
         } else {
-            self.selected_config()
-                .is_some_and(|config| config.debug.enabled)
+            false
         };
         self.launch_selected_config_inner(now, debug, true);
     }
@@ -1277,7 +1273,9 @@ impl FullStackApp {
                 }
                 self.live = Some(live);
                 self.machine_tab_label = Some(tab_label);
-                self.apply_persisted_breakpoints(config);
+                if debug {
+                    self.apply_persisted_breakpoints(config);
+                }
                 self.activate_machine_terminal_for_run();
                 self.machine_view = self.default_machine_view();
                 self.layer = Self::source_layer_for_kind(self.active_source_kind());
@@ -1309,10 +1307,11 @@ impl FullStackApp {
             Ok(live) => {
                 self.live = Some(live);
                 self.machine_tab_label = Some(tab_label);
-                self.apply_persisted_breakpoints(config);
+                if debug {
+                    self.apply_persisted_breakpoints(config);
+                }
                 self.activate_machine_terminal_for_run();
                 self.machine_view = self.default_machine_view();
-                self.focus_machine_tab();
                 self.build_glow_start = Some(now);
                 self.record_build_lit(Some(Layer::Vm));
                 self.current_launch_debug = debug;
@@ -1721,12 +1720,14 @@ impl eframe::App for FullStackApp {
             .frame(bezel_band)
             .show_inside(ui, |ui| self.activity_rail(ui));
 
-        egui::Panel::right("machine_dock")
-            .resizable(true)
-            .default_size(metrics::MACHINE_DOCK_DEFAULT)
-            .size_range(metrics::MACHINE_DOCK_MIN..=metrics::MACHINE_DOCK_MAX)
-            .frame(well_band)
-            .show_inside(ui, |ui| self.machine_dock(ui));
+        if self.current_launch_debug && self.live.is_some() {
+            egui::Panel::right("machine_dock")
+                .resizable(true)
+                .default_size(metrics::MACHINE_DOCK_DEFAULT)
+                .size_range(metrics::MACHINE_DOCK_MIN..=metrics::MACHINE_DOCK_MAX)
+                .frame(well_band)
+                .show_inside(ui, |ui| self.machine_dock(ui));
+        }
 
         if self.terminal_open {
             let terminal_max = ui.available_height().max(metrics::TERMINAL_MIN_HEIGHT);
@@ -1991,6 +1992,28 @@ mod tests {
 
         assert!(!app.terminal_open);
         assert!(app.live.is_some(), "run still starts a machine session");
+
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn run_ignores_debug_defaults_and_persisted_breakpoints() {
+        let root = temp_root("run_without_debugger");
+        write_native_workspace(&root);
+        let mut app = test_app(IdeWorkspace::new(Box::new(MemoryFs::new())).expect("workspace"));
+        app.open_native_workspace_folder(&root);
+        let config = &mut app.workspace.run_configs_mut().configs[0];
+        config.debug.enabled = true;
+        config.debug.breakpoints.push("main".to_owned());
+
+        app.run_selected_config(1.0);
+
+        let live = app.live.as_ref().expect("run starts a session");
+        assert_eq!(live.state, MachineState::Running);
+        assert!(live.breakpoints.is_empty());
+        assert!(!app.current_launch_debug);
+        assert!(!app.machine_tab_focused());
+        assert!(matches!(app.terminal.active, TerminalKind::Machine));
 
         fs::remove_dir_all(root).expect("cleanup");
     }

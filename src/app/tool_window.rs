@@ -271,14 +271,6 @@ fn config_fields(
                 .speed(1_000),
         );
     });
-    ui.checkbox(
-        &mut config.debug.enabled,
-        theme::mono(
-            "debug: start paused",
-            metrics::STATUS_TEXT_SIZE,
-            theme::TEXT,
-        ),
-    );
 }
 
 /// Editable host->guest mounts: a removable row each, plus an add row.

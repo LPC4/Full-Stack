@@ -40,13 +40,17 @@ fn direct_imports(source: &str) -> (String, HashMap<String, hll_to_ir::imports::
         let module =
             bundled_module_source(&key).unwrap_or_else(|| panic!("missing bundled module `{key}`"));
         let exports = hll_to_ir::imports::collect_exports(module).expect("collect exports");
+        let declared =
+            hll_to_ir::imports::collect_declaration_names(module).expect("collect declarations");
         aliases.insert(
             alias.clone(),
             hll_to_ir::imports::ModuleAlias {
                 prefix: String::new(),
                 exports: exports.clone(),
                 mangled: HashSet::new(),
+                namespaced: HashSet::new(),
                 member_aliases: module_member_aliases(&alias, &key, &exports),
+                declared,
             },
         );
     }

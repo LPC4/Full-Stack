@@ -370,7 +370,7 @@ fn examples_cover_core_features() {
         ("Result", "Result carrier"),
         ("?", "try propagation"),
         ("<i32>", "generic specialization"),
-        ("fn(i32", "function pointer type"),
+        ("(i32, i32) -> i32", "function pointer type"),
         ("'A'", "character literal"),
     ];
 

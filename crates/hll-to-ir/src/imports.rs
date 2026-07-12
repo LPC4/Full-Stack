@@ -19,6 +19,9 @@ pub struct ModuleAlias {
     pub mangled: HashSet<String>,
     pub namespaced: HashSet<String>,
     pub member_aliases: HashMap<String, String>,
+    // All top-level declaration names, exported or not, so a failed member
+    // lookup can distinguish a private member from a missing one.
+    pub declared: HashSet<String>,
 }
 
 /// `prefix__name`, or `name` verbatim when `prefix` is empty (no mangling).
@@ -149,6 +152,8 @@ fn decl_name(decl: &DeclNode) -> Option<&str> {
         | DeclNode::Const { name, .. }
         | DeclNode::Interface { name, .. }
         | DeclNode::ModuleImport { alias: name, .. } => Some(name),
+        // Associated items live in their owner's namespace, not the module's.
+        DeclNode::AssociatedItems { .. } => None,
     }
 }
 
@@ -179,7 +184,7 @@ pub fn collect_bare_references(source: &str) -> Result<HashSet<String>, String> 
     Ok(refs)
 }
 
-fn collect_block_refs(block: &Block, refs: &mut HashSet<String>) {
+pub(crate) fn collect_block_refs(block: &Block, refs: &mut HashSet<String>) {
     for stmt in &block.statements {
         collect_stmt_refs(stmt, refs);
     }
@@ -220,7 +225,8 @@ fn collect_stmt_refs(stmt: &Statement, refs: &mut HashSet<String>) {
                 collect_expr_refs(init, refs);
             }
         }
-        Statement::InferredVariableDecl { init, .. } => collect_expr_refs(init, refs),
+        Statement::InferredVariableDecl { init, .. }
+        | Statement::DestructureBinding { init, .. } => collect_expr_refs(init, refs),
         // Inline asm is the qualified-access escape hatch: it names link symbols literally and
         // is not modelled as identifier nodes, so it never contributes a bare reference here.
         Statement::Return(None)
@@ -261,6 +267,8 @@ fn collect_primary_refs(primary: &PrimaryExpr, refs: &mut HashSet<String>) {
         PrimaryExpr::Identifier(name) => {
             refs.insert(name.clone());
         }
+        // The owner names a type, not a link symbol; no bare reference here.
+        PrimaryExpr::AssociatedConst { .. } => {}
         PrimaryExpr::FunctionCall {
             name, arguments, ..
         } => {
@@ -392,6 +400,18 @@ pub fn rewrite_qualified_access(
                     }
                 }
             }
+            DeclNode::AssociatedItems {
+                consts,
+                aliases: type_aliases,
+                ..
+            } => {
+                for (_, init) in consts {
+                    rewrite_expr(init, aliases)?;
+                }
+                for (_, ty) in type_aliases {
+                    rewrite_type(ty, aliases)?;
+                }
+            }
             DeclNode::ModuleImport { .. } | DeclNode::Interface { .. } => {}
         }
     }
@@ -402,14 +422,15 @@ pub fn rewrite_qualified_access(
 }
 
 fn rewrite_bounds(
-    bounds: &mut [(String, String)],
+    bounds: &mut [(String, crate::ast::Path)],
     aliases: &HashMap<String, ModuleAlias>,
 ) -> Result<(), String> {
     for (_, interface) in bounds {
-        if let Some((base, member)) = interface.split_once('.')
-            && aliases.contains_key(base)
-        {
-            *interface = resolve_member(aliases, base, member)?;
+        if interface.segments.len() >= 2 && aliases.contains_key(&interface.segments[0]) {
+            let resolved = resolve_member(aliases, &interface.segments[0], &interface.segments[1])?;
+            let mut segments = vec![resolved];
+            segments.extend(interface.segments.iter().skip(2).cloned());
+            *interface = crate::ast::Path::from_segments(segments);
         }
     }
     Ok(())
@@ -433,13 +454,34 @@ fn rewrite_type(ty: &mut Type, aliases: &HashMap<String, ModuleAlias>) -> Result
             }
         }
         Type::Struct(fields) => rewrite_fields(fields, aliases)?,
+        Type::DynamicReference(path) => {
+            if path.segments.len() >= 2 && aliases.contains_key(&path.segments[0]) {
+                let resolved = resolve_member(aliases, &path.segments[0], &path.segments[1])?;
+                let mut segments = vec![resolved];
+                segments.extend(path.segments.iter().skip(2).cloned());
+                *path = crate::ast::Path::from_segments(segments);
+            }
+        }
         Type::Named { name, args } => {
-            if let Some((base, field)) = name.split_once('.')
-                && aliases.contains_key(base)
-            {
-                *name = resolve_member(aliases, base, field)?;
+            if name.segments.len() >= 2 && aliases.contains_key(&name.segments[0]) {
+                let resolved = resolve_member(aliases, &name.segments[0], &name.segments[1])?;
+                let mut segments = vec![resolved];
+                segments.extend(name.segments.iter().skip(2).cloned());
+                *name = crate::ast::Path::from_segments(segments);
             }
             for arg in args {
+                rewrite_type(arg, aliases)?;
+            }
+        }
+        Type::Associated {
+            owner, owner_args, ..
+        } => {
+            if let Some((base, member)) = owner.split_once('.')
+                && aliases.contains_key(base)
+            {
+                *owner = resolve_member(aliases, base, member)?;
+            }
+            for arg in owner_args {
                 rewrite_type(arg, aliases)?;
             }
         }
@@ -490,6 +532,10 @@ fn resolve_member(
                 } else {
                     Ok(export.to_owned())
                 }
+            } else if alias.declared.contains(export) {
+                Err(format!(
+                    "member `{field}` of module `{base}` is private; add `export` to its declaration"
+                ))
             } else {
                 Err(format!("module `{base}` has no exported member `{field}`"))
             }
@@ -598,6 +644,18 @@ fn rewrite_primary_children(
             }
             for arg in arguments {
                 rewrite_expr(arg, aliases)?;
+            }
+        }
+        PrimaryExpr::AssociatedConst {
+            owner, owner_args, ..
+        } => {
+            if let Some((base, member)) = owner.split_once('.')
+                && aliases.contains_key(base)
+            {
+                *owner = resolve_member(aliases, base, member)?;
+            }
+            for ty in owner_args {
+                rewrite_type(ty, aliases)?;
             }
         }
         PrimaryExpr::New { ty, args } => {
@@ -726,7 +784,8 @@ fn rewrite_stmt(
                 rewrite_expr(init, aliases)?;
             }
         }
-        Statement::InferredVariableDecl { init, .. } => rewrite_expr(init, aliases)?,
+        Statement::InferredVariableDecl { init, .. }
+        | Statement::DestructureBinding { init, .. } => rewrite_expr(init, aliases)?,
         Statement::Return(None)
         | Statement::AsmBlock { .. }
         | Statement::Break
@@ -907,6 +966,12 @@ impl Mangler<'_> {
                 self.expr(init);
                 self.bind(name);
             }
+            Statement::DestructureBinding { fields, init } => {
+                self.expr(init);
+                for field in fields {
+                    self.bind(&field.binding);
+                }
+            }
             Statement::Return(None)
             | Statement::AsmBlock { .. }
             | Statement::Break
@@ -944,6 +1009,8 @@ impl Mangler<'_> {
     fn primary(&mut self, primary: &mut PrimaryExpr) {
         match primary {
             PrimaryExpr::Identifier(name) => self.mangle_ref(name),
+            // Owner and arguments are type names, never link symbols.
+            PrimaryExpr::AssociatedConst { .. } => {}
             PrimaryExpr::FunctionCall {
                 name, arguments, ..
             } => {
@@ -1052,7 +1119,7 @@ pub fn extract_interface_prefixed(source: &str, prefix: &str) -> Result<String, 
         }
         let bounds = declaration_bounds(&decl.decl);
         if let Some((_, private)) = bounds.iter().find(|(_, interface)| {
-            !interface.contains('.') && !exported_interfaces.contains(interface.as_str())
+            interface.segments.len() == 1 && !exported_interfaces.contains(&**interface)
         }) {
             return Err(format!(
                 "exported declaration exposes private interface `{private}` in its bounds"
@@ -1168,12 +1235,15 @@ fn render_export(decl: &DeclNode, prefix: &str) -> Result<Option<String>, String
                 methods.join(", ")
             )
         }
-        DeclNode::InferredVariable { .. } | DeclNode::ModuleImport { .. } => return Ok(None),
+        // Associated items cannot be exported; the parser enforces it.
+        DeclNode::InferredVariable { .. }
+        | DeclNode::ModuleImport { .. }
+        | DeclNode::AssociatedItems { .. } => return Ok(None),
     };
     Ok(Some(rendered))
 }
 
-fn declaration_bounds(decl: &DeclNode) -> &[(String, String)] {
+fn declaration_bounds(decl: &DeclNode) -> &[(String, crate::ast::Path)] {
     match decl {
         DeclNode::Function { bounds, .. }
         | DeclNode::Type { bounds, .. }
@@ -1183,7 +1253,11 @@ fn declaration_bounds(decl: &DeclNode) -> &[(String, String)] {
     }
 }
 
-fn render_generics(generics: &[String], bounds: &[(String, String)], prefix: &str) -> String {
+fn render_generics(
+    generics: &[String],
+    bounds: &[(String, crate::ast::Path)],
+    prefix: &str,
+) -> String {
     if generics.is_empty() {
         String::new()
     } else {
@@ -1273,7 +1347,7 @@ fn render_type(ty: &Type) -> Result<String, String> {
         }
         Type::Named { name, args } => {
             if args.is_empty() {
-                name.clone()
+                name.to_string()
             } else {
                 let args = args
                     .iter()
@@ -1283,6 +1357,12 @@ fn render_type(ty: &Type) -> Result<String, String> {
             }
         }
         Type::Struct(fields) => format!("{{ {} }}", render_fields(fields)?),
+        Type::DynamicReference(path) => format!("dyn {path}"),
+        // Importers cannot see the owner's private items, so a projection has
+        // no meaning in an exported signature.
+        Type::Associated { .. } => {
+            return Err("associated type aliases cannot appear in exported signatures".to_owned());
+        }
     })
 }
 
@@ -1383,6 +1463,7 @@ mod tests {
                         mangled: exports.clone(),
                         namespaced: HashSet::new(),
                         member_aliases: HashMap::new(),
+                        declared: exports.clone(),
                         exports,
                     },
                 )
@@ -1475,6 +1556,7 @@ main: () {
                 mangled: HashSet::new(),
                 namespaced: HashSet::new(),
                 member_aliases: HashMap::from([("ok".to_owned(), "klog_ok".to_owned())]),
+                declared: HashSet::from(["klog_ok".to_owned()]),
             },
         );
         rewrite_qualified_access(&mut program, &map).unwrap();

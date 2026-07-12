@@ -3,7 +3,7 @@ use super::{
     IrInstruction, IrMathOp, IrRegister, IrType, IrUnaryOp, IrValue, Literal, LoweredValue,
     UnaryOp,
 };
-use crate::ast::StructDestructureField;
+use crate::ast::{BindingField, StructDestructureField};
 use log::warn;
 
 /// Widening rank for integer widths, used to promote mixed-width binary
@@ -414,6 +414,86 @@ impl HighLevelCompiler {
             ty: input.ty,
             is_unsigned: input.is_unsigned,
         })
+    }
+
+    pub(super) fn lower_binding_pattern(&mut self, fields: &[BindingField], source: LoweredValue) {
+        let source_ty = self.resolve_named_type(&source.ty);
+        let IrType::Aggregate(aggregate_fields) = source_ty else {
+            self.context.error(format!(
+                "binding pattern source must be a known struct, found `{}`",
+                source.ty
+            ));
+            return;
+        };
+
+        let mut requested = Vec::with_capacity(fields.len());
+        let mut offset = 0i64;
+        let mut offsets = std::collections::HashMap::new();
+        for (name, ty) in &aggregate_fields {
+            offset = Self::align_to(offset, self.type_alignment_in_bytes(ty) as i64);
+            offsets.insert(name.as_str(), (offset, ty.clone()));
+            offset += self.type_size_in_bytes(ty) as i64;
+        }
+        for field in fields {
+            let Some((offset, ty)) = offsets.get(field.source.as_str()) else {
+                self.context.error(format!(
+                    "field `{}` not found in destructuring source",
+                    field.source
+                ));
+                return;
+            };
+            if self
+                .context
+                .symbols
+                .contains_in_current_scope(&field.binding)
+            {
+                self.context.error(format!(
+                    "binding `{}` already exists in the current scope",
+                    field.binding
+                ));
+                return;
+            }
+            requested.push((field.binding.clone(), *offset, ty.clone()));
+        }
+
+        let source_ptr = self.new_temp();
+        self.push_instruction(IrInstruction::Alloc {
+            dest: source_ptr.clone(),
+            ty: source.ty.clone(),
+            count: None,
+        });
+        self.push_instruction(IrInstruction::Store {
+            ty: source.ty,
+            value: source.value,
+            ptr: source_ptr.clone(),
+            offset: None,
+        });
+        for (binding, field_offset, field_ty) in requested {
+            let loaded = self.new_temp();
+            self.push_instruction(IrInstruction::Load {
+                dest: loaded.clone(),
+                ty: field_ty.clone(),
+                ptr: source_ptr.clone(),
+                offset: Some(field_offset),
+            });
+            let slot = IrRegister::Named(binding.clone());
+            self.push_instruction(IrInstruction::Alloc {
+                dest: slot.clone(),
+                ty: field_ty.clone(),
+                count: None,
+            });
+            self.push_instruction(IrInstruction::Store {
+                ty: field_ty.clone(),
+                value: IrValue::Register(loaded),
+                ptr: slot.clone(),
+                offset: None,
+            });
+            self.context.symbols.insert(
+                binding,
+                IrType::Pointer(Box::new(field_ty)),
+                IrValue::Register(slot),
+            );
+        }
     }
 
     pub(super) fn lower_struct_destructuring_from_addr(

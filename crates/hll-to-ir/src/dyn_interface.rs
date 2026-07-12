@@ -1,5 +1,5 @@
-// AST-only lowering of `dyn* I` (spec 6.6): types become the synthesized wide
-// reference `I__dyn`; `expr as dyn* I` packs the erased data pointer with thunks.
+// AST-only lowering of `dyn I` (spec 6.6): types become the synthesized wide
+// reference `I__dyn`; `expr as dyn I` packs the erased data pointer with thunks.
 
 use crate::ast::{
     Block, DeclNode, Declaration, Expression, FieldDecl, FieldInit, ForIter, InterfaceMethod,
@@ -20,9 +20,9 @@ pub(crate) fn lower_dyn_interfaces(
         .keys()
         .map(|name| {
             (
-                format!("dyn* {name}"),
+                format!("dyn {name}"),
                 Type::Named {
-                    name: dyn_struct_name(name),
+                    name: dyn_struct_name(name).into(),
                     args: Vec::new(),
                 },
             )
@@ -122,7 +122,7 @@ fn u8_pointer() -> Type {
 
 fn named(name: &str) -> Type {
     Type::Named {
-        name: name.to_owned(),
+        name: name.into(),
         args: Vec::new(),
     }
 }
@@ -188,6 +188,8 @@ fn type_mentions_self(ty: &Type) -> bool {
                     .is_some_and(|ty| type_mentions_self(ty))
         }
         Type::Struct(fields) => fields.iter().any(|field| type_mentions_self(&field.ty)),
+        Type::Associated { owner_args, .. } => owner_args.iter().any(type_mentions_self),
+        Type::DynamicReference(_) => false,
         Type::Primitive(_) => false,
     }
 }
@@ -218,7 +220,7 @@ fn validate_dyn_compatible(interface: &str, methods: &[InterfaceMethod]) -> Resu
 
 // --- Synthesized declarations ---
 
-// struct I__dyn { __data: u8*, __fn_m: fn(u8*, ...) -> R, ... }
+// struct I__dyn { __data: u8*, __fn_m: (u8*, ...) -> R, ... }
 fn dyn_struct_declaration(interface: &str, methods: &[InterfaceMethod]) -> Declaration {
     let mut fields = vec![FieldDecl {
         name: data_field(),
@@ -419,6 +421,12 @@ fn mark_dyn_names(
     used: &mut BTreeSet<String>,
 ) {
     match ty {
+        Type::DynamicReference(interface) => {
+            let name = interface.as_string();
+            if interfaces.contains_key(&name) {
+                used.insert(name);
+            }
+        }
         Type::Named { name, args } => {
             if let Some(interface) = name.strip_suffix("__dyn")
                 && interfaces.contains_key(interface)
@@ -446,6 +454,11 @@ fn mark_dyn_names(
         Type::Struct(fields) => {
             for field in fields {
                 mark_dyn_names(&field.ty, interfaces, used);
+            }
+        }
+        Type::Associated { owner_args, .. } => {
+            for arg in owner_args {
+                mark_dyn_names(arg, interfaces, used);
             }
         }
         Type::Primitive(_) => {}
@@ -492,7 +505,9 @@ fn substitute_declaration_types(declaration: &mut Declaration, substitutions: &S
                 }
             }
         }
-        DeclNode::ModuleImport { .. } | DeclNode::Interface { .. } => {}
+        DeclNode::ModuleImport { .. }
+        | DeclNode::Interface { .. }
+        | DeclNode::AssociatedItems { .. } => {}
     }
 }
 
@@ -572,6 +587,9 @@ fn rewrite_statement(
             if let Some(ty) = infer_type(init, environment, context) {
                 environment.insert(name.clone(), ty);
             }
+        }
+        Statement::DestructureBinding { init, .. } => {
+            rewrite_expression(init, environment, context)?;
         }
         Statement::Return(None)
         | Statement::AsmBlock { .. }
@@ -661,7 +679,10 @@ fn rewrite_expression(
                     rewrite_expression(arg, environment, context)?;
                 }
             }
-            PrimaryExpr::Identifier(_) | PrimaryExpr::Literal(_) | PrimaryExpr::AsmReg { .. } => {}
+            PrimaryExpr::Identifier(_)
+            | PrimaryExpr::Literal(_)
+            | PrimaryExpr::AsmReg { .. }
+            | PrimaryExpr::AssociatedConst { .. } => {}
         },
     }
     Ok(())
@@ -701,17 +722,15 @@ fn infer_type(
 
 // The interface behind a rewritten `dyn` cast target, if the cast is one.
 fn dyn_cast_interface(target_ty: &Type, context: &DynContext<'_>) -> Option<String> {
-    let Type::Named { name, args } = target_ty else {
-        return None;
+    let interface = match target_ty {
+        Type::DynamicReference(path) => path.as_string(),
+        Type::Named { name, args } if args.is_empty() => name.strip_suffix("__dyn")?.to_owned(),
+        _ => return None,
     };
-    if !args.is_empty() {
-        return None;
-    }
-    let interface = name.strip_suffix("__dyn")?;
     context
         .interfaces
-        .contains_key(interface)
-        .then(|| interface.to_owned())
+        .contains_key(&interface)
+        .then_some(interface)
 }
 
 // `expr as dyn I` becomes `I__dyn { .__data = expr as u8*, .__fn_m = thunk, ... }`.
@@ -752,7 +771,7 @@ fn pack_conversion(
     context.used_interfaces.insert(interface.to_owned());
     context
         .used_pairs
-        .insert((interface.to_owned(), type_name.clone()));
+        .insert((interface.to_owned(), type_name.to_string()));
 
     let mut fields = vec![FieldInit {
         name: data_field(),

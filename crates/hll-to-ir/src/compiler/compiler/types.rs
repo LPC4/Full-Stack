@@ -38,19 +38,25 @@ impl HighLevelCompiler {
                     .map(|f| (f.name.clone(), self.lower_type(&f.ty)))
                     .collect(),
             ),
+            Type::DynamicReference(interface) => {
+                IrType::Named(format!("{}__dyn", interface.as_string().replace('.', "__")))
+            }
             Type::Named { name, args } => {
                 if !args.is_empty() {
                     let lowered_args: Vec<IrType> =
                         args.iter().map(|a| self.lower_type(a)).collect();
-                    if self.generic_type_defs.contains_key(name) {
+                    if self.generic_type_defs.contains_key(&**name) {
                         let specialized_name = self.create_specialized_name(name, &lowered_args);
                         return IrType::Named(specialized_name);
                     } else {
                         return IrType::Named(self.create_specialized_name(name, &lowered_args));
                     }
                 }
-                IrType::Named(name.clone())
+                IrType::Named(name.to_string())
             }
+            // Projections are folded before lowering; a leak surfaces as an
+            // unknown named type downstream.
+            Type::Associated { owner, member, .. } => IrType::Named(format!("{owner}.{member}")),
         }
     }
 
@@ -105,6 +111,10 @@ impl HighLevelCompiler {
                     })
                     .collect::<Result<Vec<_>, _>>()?,
             )),
+            Type::DynamicReference(interface) => Ok(IrType::Named(format!(
+                "{}__dyn",
+                interface.as_string().replace('.', "__")
+            ))),
             Type::Named { name, args } => {
                 if !args.is_empty() {
                     // Lower all type arguments first
@@ -114,7 +124,7 @@ impl HighLevelCompiler {
                         .collect::<Result<Vec<_>, _>>()?;
 
                     // Check if this is a known generic type
-                    if self.generic_type_defs.contains_key(name.as_str()) {
+                    if self.generic_type_defs.contains_key(&**name) {
                         // Specialize the generic type
                         let specialized_name =
                             self.specialize_generic_type(ir_program, name, &lowered_args)?;
@@ -125,9 +135,12 @@ impl HighLevelCompiler {
                         Ok(IrType::Named(mangled))
                     }
                 } else {
-                    Ok(IrType::Named(name.clone()))
+                    Ok(IrType::Named(name.to_string()))
                 }
             }
+            Type::Associated { owner, member, .. } => Err(CompilerError::UnsupportedDeclaration(
+                format!("unresolved associated type `{owner}.{member}`"),
+            )),
         }
     }
 
@@ -160,13 +173,15 @@ impl HighLevelCompiler {
             | Type::Array(_, _)
             | Type::Slice(_)
             | Type::Function { .. }
-            | Type::Struct(_) => {
+            | Type::Struct(_)
+            | Type::DynamicReference(_)
+            | Type::Associated { .. } => {
                 // Recursively substitute in nested types
                 self.substitute_in_type(ty, params, args)
             }
             Type::Named { name, args: _args } => {
                 // Check if this is a generic parameter
-                if let Some(idx) = params.iter().position(|p| p == name) {
+                if let Some(idx) = params.iter().position(|p| p == &**name) {
                     if idx < args.len() {
                         // Replace with the concrete type argument
                         // Convert IrType back to Type for substitution
@@ -217,12 +232,25 @@ impl HighLevelCompiler {
                     })
                     .collect(),
             ),
+            Type::DynamicReference(_) => ty.clone(),
+            Type::Associated {
+                owner,
+                owner_args,
+                member,
+            } => Type::Associated {
+                owner: owner.clone(),
+                owner_args: owner_args
+                    .iter()
+                    .map(|arg| self.substitute_generic_type(arg, params, args))
+                    .collect(),
+                member: member.clone(),
+            },
             Type::Named {
                 name,
                 args: type_args,
             } => {
                 // Check if this name is a generic parameter
-                if let Some(idx) = params.iter().position(|p| p == name)
+                if let Some(idx) = params.iter().position(|p| p == &**name)
                     && idx < args.len()
                 {
                     return self.ir_type_to_type(&args[idx]);
@@ -291,7 +319,7 @@ impl HighLevelCompiler {
                 )
             }
             IrType::Named(name) => Type::Named {
-                name: name.clone(),
+                name: name.clone().into(),
                 args: Vec::new(),
             },
             IrType::Void => Type::Primitive("void".to_owned()),

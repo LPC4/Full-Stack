@@ -291,7 +291,8 @@ impl SemanticAnalyzer {
             | DeclNode::Struct { .. }
             | DeclNode::Const { .. }
             | DeclNode::Enum { .. }
-            | DeclNode::Interface { .. } => Ok(()),
+            | DeclNode::Interface { .. }
+            | DeclNode::AssociatedItems { .. } => Ok(()),
             DeclNode::Variable { name, ty, .. } => {
                 let ir_ty = self.ast_type_to_ir_type(ty);
                 self.symbols
@@ -421,6 +422,40 @@ impl SemanticAnalyzer {
             Statement::InferredVariableDecl { name, init } => {
                 self.check_inferred_binding(name, init)
             }
+            Statement::DestructureBinding { fields, init } => {
+                let inferred = self.infer_expression_type(init)?;
+                let source_ty = self.resolve_named_ir_type(&self.resolve_type_string(&inferred));
+                let IrType::Aggregate(source_fields) = source_ty else {
+                    self.error(format!(
+                        "binding pattern source must be a known struct, found `{inferred}`"
+                    ));
+                    return Err(());
+                };
+                let mut pending = Vec::with_capacity(fields.len());
+                for field in fields {
+                    if self.symbols.contains_in_current_scope(&field.binding) {
+                        self.error(format!(
+                            "binding `{}` already exists in the current scope",
+                            field.binding
+                        ));
+                        return Err(());
+                    }
+                    let Some((_, ty)) =
+                        source_fields.iter().find(|(name, _)| name == &field.source)
+                    else {
+                        self.error(format!(
+                            "field `{}` not found in destructuring source `{inferred}`",
+                            field.source
+                        ));
+                        return Err(());
+                    };
+                    pending.push((field.binding.clone(), ty.clone()));
+                }
+                for (name, ty) in pending {
+                    self.symbols.insert(name, ty, crate::ir::IrValue::Null);
+                }
+                Ok(())
+            }
             Statement::Block(block) => {
                 self.symbols.enter_scope();
                 self.check_block(block)?;
@@ -546,6 +581,10 @@ impl SemanticAnalyzer {
     fn infer_expression_type(&mut self, expr: &Expression) -> Result<String, ()> {
         match expr {
             Expression::Primary(primary) => match primary {
+                PrimaryExpr::AssociatedConst { owner, member, .. } => {
+                    self.error(format!("unresolved associated constant `{owner}.{member}`"));
+                    Err(())
+                }
                 PrimaryExpr::Identifier(name) => {
                     if let Some(info) = self.symbols.lookup(name) {
                         Ok(self.context.get_type_name(&info.ty))
@@ -727,7 +766,9 @@ impl SemanticAnalyzer {
                         callee.as_ref()
                     {
                         let recv_ty = self.infer_expression_type(expr)?;
-                        let base = recv_ty.trim_start_matches('*').to_owned();
+                        let base = self
+                            .method_receiver_name(&recv_ty)
+                            .unwrap_or_else(|| recv_ty.trim_start_matches('*').to_owned());
                         let local_method = format!("{base}_{field}");
                         let imported_suffix = format!("__{local_method}");
                         let method = if self.function_signatures.contains_key(&local_method) {
@@ -1143,7 +1184,7 @@ impl SemanticAnalyzer {
                 Pattern::Binding(name) => {
                     has_catch_all = true;
                     let ir_ty = self.ast_type_to_ir_type(&Type::Named {
-                        name: enum_name.clone(),
+                        name: enum_name.clone().into(),
                         args: Vec::new(),
                     });
                     self.symbols
@@ -1589,10 +1630,10 @@ impl SemanticAnalyzer {
             }
             Type::Named { name, args } => {
                 if args.is_empty() {
-                    IrType::Named(name.clone())
-                } else if let Some((params, definition)) = self.generic_type_defs.get(name) {
+                    IrType::Named(name.to_string())
+                } else if let Some((params, definition)) = self.generic_type_defs.get(&**name) {
                     if params.len() != args.len() {
-                        return IrType::Named(name.clone());
+                        return IrType::Named(name.to_string());
                     }
                     let specialized_name = format!(
                         "{name}<{}>",
@@ -1630,6 +1671,12 @@ impl SemanticAnalyzer {
                     IrType::Named(format!("{name}<{args}>"))
                 }
             }
+            Type::DynamicReference(interface) => {
+                IrType::Named(format!("{}__dyn", interface.as_string().replace('.', "__")))
+            }
+            // Projections resolve before analysis; a leak reads as an unknown
+            // named type and fails downstream with its spelling intact.
+            Type::Associated { owner, member, .. } => IrType::Named(format!("{owner}.{member}")),
         }
     }
 
@@ -1704,6 +1751,21 @@ impl SemanticAnalyzer {
             resolved = *inner;
         }
         matches!(resolved, IrType::Aggregate(fields) if fields.iter().any(|(n, _)| n == field))
+    }
+
+    fn method_receiver_name(&self, ty: &str) -> Option<String> {
+        let mut resolved = self.resolve_type_string(ty);
+        while let IrType::Pointer(inner) = resolved {
+            resolved = *inner;
+        }
+        match resolved {
+            IrType::Named(name) => Some(name),
+            aggregate @ IrType::Aggregate(_) => self
+                .context
+                .name_of_aggregate(&aggregate)
+                .map(str::to_owned),
+            _ => None,
+        }
     }
 
     fn infer_field_access_type(&mut self, base_type: &str, field: &str) -> Result<String, ()> {

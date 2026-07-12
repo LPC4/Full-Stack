@@ -30,6 +30,7 @@
     )
 )]
 
+pub(crate) mod associated;
 pub(crate) mod ast;
 pub(crate) mod compiler;
 pub(crate) mod conv;
@@ -37,6 +38,7 @@ pub(crate) mod dyn_interface;
 pub mod hll_compiler;
 pub mod imports;
 pub mod ir;
+pub(crate) mod lambda;
 pub(crate) mod lexer;
 pub(crate) mod monomorphize;
 pub(crate) mod parser;

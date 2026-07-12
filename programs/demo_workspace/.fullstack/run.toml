@@ -65,7 +65,6 @@ build = "programs/example/hll2_completion_showcase/hll2_completion_showcase.buil
 present = "terminal"
 max_steps_per_frame = 200000
 debug = false
-breakpoint = "main"
 
 [[config]]
 name = "Enums Match And Result"

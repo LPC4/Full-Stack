@@ -132,6 +132,18 @@ impl HllCompiler {
         crate::imports::rewrite_qualified_access(&mut ast, &self.config.module_aliases)
             .map_err(|message| vec![Diagnostic::new(DiagnosticLevel::Error, message)])?;
 
+        // Lambdas are already hoisted to synthesized functions; reject references
+        // to enclosing locals here, where the capture wording is still possible.
+        crate::lambda::check_lambda_captures(&ast)
+            .map_err(|message| vec![Diagnostic::new(DiagnosticLevel::Error, message)])?;
+
+        // Associated consts/aliases: fold `Owner<args>.Member` projections in
+        // concrete code; monomorphize resolves generic bodies after substitution.
+        let associated_catalog = crate::associated::collect(&mut ast)
+            .map_err(|message| vec![Diagnostic::new(DiagnosticLevel::Error, message)])?;
+        crate::associated::resolve_program(&mut ast, &associated_catalog, true)
+            .map_err(|message| vec![Diagnostic::new(DiagnosticLevel::Error, message)])?;
+
         // Mangle this unit's own definitions when it is built as one module of a link closure,
         // so two modules can define the same private name without colliding at link.
         if let Some(prefix) = &self.config.module_mangle_prefix {
@@ -149,7 +161,7 @@ impl HllCompiler {
             crate::imports::mangle_module(&mut ast, prefix, &exempt);
         }
 
-        ast = monomorphize_program(&ast)
+        ast = monomorphize_program(&ast, &associated_catalog)
             .map_err(|message| vec![Diagnostic::new(DiagnosticLevel::Error, message)])?;
 
         let ast_display = format!("{ast:#?}");
@@ -1372,6 +1384,154 @@ main: () -> i32 {
     }
 
     #[test]
+    fn lowers_name_only_destructuring_binding() {
+        let output = compile_hll(
+            r#"
+struct Pair { quo: i32, rem: i32 }
+
+make_pair: () -> Pair {
+    return Pair { .quo = 3, .rem = 1 }
+}
+
+main: () -> i32 {
+    { quo, rem = remainder } := make_pair()
+    return quo + remainder - 4
+}
+"#,
+        )
+        .expect("name-only destructuring should compile");
+        let ir = output.ir.to_string();
+        assert!(
+            ir.contains("$quo = stack_alloc i32"),
+            "missing shorthand binding: {ir}"
+        );
+        assert!(
+            ir.contains("$remainder = stack_alloc i32"),
+            "missing renamed binding: {ir}"
+        );
+    }
+
+    #[test]
+    fn lowers_non_capturing_lambda_to_private_function() {
+        let output = compile_hll(
+            r#"
+apply: (callback: (i32) -> i32, value: i32) -> i32 {
+    return callback(value)
+}
+
+main: () -> i32 {
+    callback: (i32) -> i32 = (value: i32) -> i32 { return value + 1 }
+    return apply(callback, 41) - 42
+}
+"#,
+        )
+        .expect("non-capturing lambda should compile");
+        let ir = output.ir.to_string();
+        assert!(
+            ir.contains("define i32 __hll_lambda_0(i32 $value)"),
+            "missing lambda: {ir}"
+        );
+        assert!(
+            ir.contains("function_addr __hll_lambda_0"),
+            "missing lambda coercion: {ir}"
+        );
+    }
+
+    #[test]
+    fn rejects_lambda_capture() {
+        let errors = match compile_hll(
+            r#"
+main: () -> i32 {
+    captured: i32 = 41
+    callback: (i32) -> i32 = (value: i32) -> i32 { return value + captured }
+    return callback(1)
+}
+"#,
+        ) {
+            Ok(_) => panic!("capturing lambda must be rejected"),
+            Err(errors) => errors,
+        };
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.message.contains("captured")),
+            "missing capture diagnostic: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn lambda_in_generic_function_survives_specialization() {
+        let output = compile_hll(
+            r#"
+shift: <T>(value: T) -> T {
+    adjust: (i32) -> i32 = (v: i32) -> i32 { return v + 1 }
+    unused: i32 = adjust(41)
+    return value
+}
+
+main: () -> i32 {
+    a: i32 = shift<i32>(1)
+    b: i64 = shift<i64>(2 as i64)
+    return a + (b as i32)
+}
+"#,
+        )
+        .expect("lambda inside a generic function should compile at every instantiation");
+        let ir = output.ir.to_string();
+        assert!(
+            ir.contains("define i32 __hll_lambda_0(i32 $v)"),
+            "missing lambda: {ir}"
+        );
+        // Both specializations reference the one synthesized function.
+        assert_eq!(
+            ir.matches("define i32 __hll_lambda_0").count(),
+            1,
+            "lambda must be defined exactly once: {ir}"
+        );
+    }
+
+    #[test]
+    fn rejects_lambda_recursion_through_its_binding() {
+        let errors = match compile_hll(
+            r#"
+main: () -> i32 {
+    f: (i32) -> i32 = (v: i32) -> i32 { return f(v) }
+    return f(1)
+}
+"#,
+        ) {
+            Ok(_) => panic!("lambda recursion through its binding must be rejected"),
+            Err(errors) => errors,
+        };
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.message.contains("captures `f`")),
+            "missing recursion diagnostic: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_legacy_fn_lambda_spelling() {
+        let errors = match compile_hll(
+            r#"
+main: () -> i32 {
+    callback: (i32) -> i32 = fn(value: i32) -> i32 { return value }
+    return callback(0)
+}
+"#,
+        ) {
+            Ok(_) => panic!("legacy fn lambda syntax must be rejected"),
+            Err(errors) => errors,
+        };
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.message.contains("lambda expressions omit `fn`"))
+        );
+    }
+
+    #[test]
     fn rejects_wrong_generic_function_arity() {
         let errors = match compile_hll(
             r#"
@@ -1709,6 +1869,134 @@ type Right<T: First> = Left<T>
     }
 
     #[test]
+    fn associated_const_and_alias_resolve_in_concrete_code() {
+        let output = compile(
+            r#"
+struct Config { value: i32 }
+impl Config {
+    const MAX = 40
+    const TOTAL = MAX + 2
+    type Pair = i32[2]
+}
+main: () -> i32 {
+    buf: Config.Pair = [Config.MAX, Config.TOTAL]
+    return buf[1]
+}
+"#,
+        )
+        .expect("associated projections should compile");
+        let ir = output.ir.to_string();
+        // Projections inline the initializer; `MAX` appears as its literal and
+        // `TOTAL` as `(40) + 2` folded or explicit.
+        assert!(ir.contains("40"), "const not inlined: {ir}");
+        assert!(
+            ir.contains("stack_alloc i32[2]"),
+            "alias not substituted: {ir}"
+        );
+    }
+
+    #[test]
+    fn generic_owner_projections_substitute_owner_arguments() {
+        let output = compile(
+            r#"
+struct Matrix<T> { cell: T }
+impl Matrix<T> {
+    const LANES = 4
+    type Row = T[4]
+}
+main: () -> i32 {
+    row: Matrix<i32>.Row = [1, 2, 3, 38]
+    return row[3] + Matrix<i32>.LANES
+}
+"#,
+        )
+        .expect("generic owner projections should compile");
+        let ir = output.ir.to_string();
+        assert!(
+            ir.contains("stack_alloc i32[4]"),
+            "alias not substituted: {ir}"
+        );
+    }
+
+    #[test]
+    fn associated_const_resolves_inside_generic_functions() {
+        compile(
+            r#"
+struct Matrix<T> { cell: T }
+impl Matrix<T> { const LANES = 4 }
+lanes_of: <T>(unused: T) -> i32 { return Matrix<T>.LANES }
+main: () -> i32 { return lanes_of<i32>(0) }
+"#,
+        )
+        .expect("projection with a generic owner argument should fold after specialization");
+    }
+
+    #[test]
+    fn associated_item_misuse_is_diagnosed() {
+        for (source, expected) in [
+            (
+                r#"
+struct Config { value: i32 }
+impl Config { const MAX = 8 }
+main: () -> i32 {
+    buf: Config.MAX = [0]
+    return 0
+}
+"#,
+                "is an associated constant, not a type",
+            ),
+            (
+                r#"
+struct Config { value: i32 }
+impl Config { type Pair = i32[2] }
+main: () -> i32 { return Config.Pair }
+"#,
+                "is an associated type, not a constant",
+            ),
+            (
+                r#"
+struct Config { value: i32 }
+impl Config { const NAME = "text" }
+main: () -> i32 { return Config.NAME }
+"#,
+                "compile-time scalar expression",
+            ),
+            (
+                r#"
+struct Config { value: i32 }
+impl Config {
+    const A = B
+    const B = A
+}
+main: () -> i32 { return Config.A }
+"#,
+                "defined in terms of itself",
+            ),
+            (
+                r#"
+struct Config { value: i32 }
+impl Config {
+    const MAX = 1
+    const MAX = 2
+}
+main: () -> i32 { return Config.MAX }
+"#,
+                "duplicate associated item `Config.MAX`",
+            ),
+            (
+                r#"
+struct Config { value: i32 }
+export impl Config { const MAX = 8 }
+main: () -> i32 { return Config.MAX }
+"#,
+                "cannot be exported",
+            ),
+        ] {
+            expect_error_containing(source, expected);
+        }
+    }
+
+    #[test]
     fn nested_bounded_declarations_wait_for_concrete_arguments() {
         compile(
             r#"
@@ -1795,7 +2083,7 @@ struct Rect { width: i32, height: i32 }
 impl Rect {
     area: (self: Rect*) -> i32 { return self.width * self.height }
 }
-total: (shapes: dyn* Measurable*, count: i32) -> i32 {
+total: (shapes: dyn Measurable*, count: i32) -> i32 {
     sum := 0
     for i in 0..count {
         sum += shapes[i].area()
@@ -1804,9 +2092,9 @@ total: (shapes: dyn* Measurable*, count: i32) -> i32 {
 }
 main: () -> i32 {
     r: Rect = Rect { .width = 6, .height = 7 }
-    d: dyn* Measurable = (&r) as dyn* Measurable
+    d: dyn Measurable = (&r) as dyn Measurable
     if d.area() != 42 { return 1 }
-    arr: dyn* Measurable[2] = [(&r) as dyn* Measurable, (&r) as dyn* Measurable]
+    arr: dyn Measurable[2] = [(&r) as dyn Measurable, (&r) as dyn Measurable]
     return total(&arr[0], 2) - 84
 }
 "#,
@@ -1827,7 +2115,7 @@ impl Rect {
 }
 main: () -> i32 {
     r: Rect = Rect { .width = 1 }
-    d: dyn* Measurable = r as dyn* Measurable
+    d: dyn Measurable = r as dyn Measurable
     return 0
 }
 "#,
@@ -1845,7 +2133,7 @@ interface Measurable {
 struct Plain { value: i32 }
 main: () -> i32 {
     p: Plain = Plain { .value = 1 }
-    d: dyn* Measurable = (&p) as dyn* Measurable
+    d: dyn Measurable = (&p) as dyn Measurable
     return 0
 }
 "#,
@@ -1866,7 +2154,7 @@ impl Rect {
 }
 main: () -> i32 {
     r: Rect = Rect { .width = 1 }
-    d: dyn* Cloneable = (&r) as dyn* Cloneable
+    d: dyn Cloneable = (&r) as dyn Cloneable
     return 0
 }
 "#,

@@ -562,6 +562,13 @@ impl CompilationPipeline {
                         })?,
                 );
                 let member_aliases = module_member_aliases(&alias, &resolved.key, &exports);
+                let declared = hll_to_ir::imports::collect_declaration_names(&resolved.source)
+                    .map_err(|msg| {
+                        vec![Diagnostic::new(
+                            DiagnosticLevel::Error,
+                            format!("failed to read declarations of \"{path}\": {msg}"),
+                        )]
+                    })?;
                 aliases.insert(
                     alias,
                     hll_to_ir::imports::ModuleAlias {
@@ -570,6 +577,7 @@ impl CompilationPipeline {
                         exports,
                         mangled,
                         namespaced,
+                        declared,
                     },
                 );
             }
@@ -2040,6 +2048,101 @@ main: () -> i32 {
             errors.to_string().contains("does not implement interface"),
             "unexpected diagnostics: {errors:?}"
         );
+    }
+
+    #[test]
+    fn private_member_diagnostic_distinguishes_private_from_missing() {
+        let provider = r#"
+export helper: () -> i32 { return 7 }
+secret: () -> i32 { return 99 }
+"#;
+        let mut pipeline = CompilationPipeline::new();
+        pipeline.set_write_artifacts(false);
+        pipeline.set_module_resolver(Some(Box::new(move |name: &str| {
+            (name == "provider").then(|| provider.to_owned())
+        })));
+
+        let private_caller = r#"
+provider := import("provider")
+main: () -> i32 { return provider.secret() }
+"#;
+        let errors = pipeline
+            .compile(private_caller)
+            .expect_err("private member access must fail");
+        assert!(
+            errors
+                .to_string()
+                .contains("member `secret` of module `provider` is private"),
+            "unexpected diagnostics: {errors:?}"
+        );
+
+        let missing_caller = r#"
+provider := import("provider")
+main: () -> i32 { return provider.absent() }
+"#;
+        let errors = pipeline
+            .compile(missing_caller)
+            .expect_err("missing member access must fail");
+        assert!(
+            errors
+                .to_string()
+                .contains("module `provider` has no exported member `absent`"),
+            "unexpected diagnostics: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn lambda_synthesized_functions_stay_module_private() {
+        let provider = r#"
+export bump: (value: i32) -> i32 {
+    adjust: (i32) -> i32 = (v: i32) -> i32 { return v + 1 }
+    return adjust(value)
+}
+"#;
+        let mut pipeline = CompilationPipeline::new();
+        pipeline.set_write_artifacts(false);
+        pipeline.set_module_resolver(Some(Box::new(move |name: &str| {
+            (name == "provider").then(|| provider.to_owned())
+        })));
+
+        // The importer synthesizes its own __hll_lambda_0; the provider's must
+        // neither leak into the interface nor collide at link.
+        let importer = r#"
+provider := import("provider")
+main: () -> i32 {
+    shrink: (i32) -> i32 = (v: i32) -> i32 { return v - 1 }
+    return shrink(provider.bump(42))
+}
+"#;
+        pipeline
+            .compile_program_closure("main", importer)
+            .expect("module-private lambdas must not collide across modules");
+    }
+
+    #[test]
+    fn transitive_re_export_resolves_through_middle_module() {
+        let base = r#"
+export add: (a: i32, b: i32) -> i32 { return a + b }
+"#;
+        let middle = r#"
+base := import("base")
+export external add: (a: i32, b: i32) -> i32
+"#;
+        let mut pipeline = CompilationPipeline::new();
+        pipeline.set_write_artifacts(false);
+        pipeline.set_module_resolver(Some(Box::new(move |name: &str| match name {
+            "base" => Some(base.to_owned()),
+            "middle" => Some(middle.to_owned()),
+            _ => None,
+        })));
+
+        let importer = r#"
+middle := import("middle")
+main: () -> i32 { return middle.add(20, 22) }
+"#;
+        pipeline
+            .compile_program_closure("main", importer)
+            .expect("re-exported member should resolve through the middle module");
     }
 
     #[test]

@@ -235,6 +235,18 @@ main: () -> i32 {
 }
 ```
 
+Name-only destructuring uses `:=` and introduces inferred bindings, while typed destructuring
+with `=` assigns existing places. Shorthand names select and bind the same field; `source = name`
+renames a binding:
+
+```hll
+{ quotient, remainder = rem } := divide(17, 5)
+```
+
+The source must have a known struct type and is evaluated exactly once. The compiler validates
+all selected fields and same-scope name collisions before introducing any binding. Empty
+patterns, duplicate source fields, duplicate resulting names, and nested patterns are rejected.
+
 ## 6. Functions, generics, and modules
 
 ### 6.1 Functions
@@ -265,6 +277,13 @@ the callee to a function pointer value and then call indirectly. A bare-name cal
 as a direct call (or enum constructor, cast, or generic instantiation); only a non-name callee
 becomes an indirect call. There is no implicit receiver: any state a function field needs is
 passed explicitly, usually as another field holding a pointer.
+
+An explicitly typed non-capturing lambda uses `(name: Type, ...) -> Return { ... }` in
+expression position. The compiler synthesizes a private function and coerces its address to the
+ordinary function-pointer type; no environment object or allocation is created. Omitting `->`
+declares a void lambda. Referring to a local outside the lambda parameters is rejected as a
+capture. Capturing closures are not part of HLL. The earlier `fn(name: Type)` lambda spelling is
+rejected; `fn` is not part of either function-pointer type or lambda syntax.
 
 ### 6.2 Methods (`impl` blocks)
 
@@ -309,6 +328,32 @@ main: () -> i32 {
 - An exported type may expose members with `export impl Type { ... }`. Each member is exported as
   its desugared `Type_member` link symbol; an importing module can call receiver methods normally
   on a value of `alias.Type`. Private impl blocks remain local to their source module.
+
+An impl block may also declare a generic owner pattern and compile-time members:
+
+```hll
+impl Matrix<T> {
+    const LANES = 4
+    type Row = T[4]
+    fill: (self: Matrix<T>*, value: T) { ... }
+}
+```
+
+- `impl Owner<T>` prepends the owner's generic parameters (and bounds) to every function member;
+  a member's own generics follow them and must not shadow an owner parameter. Every impl block
+  for one owner must declare the same generic parameter list.
+- `const NAME = expr` and `type Name = Type` members are projected in source as
+  `Owner<args>.Member` (or `Owner.Member` for non-generic owners) and resolve entirely at compile
+  time: owner arguments substitute into the member, aliases expand to their concrete type, and
+  constants inline their initializer. `Matrix<i32>.Row` is `i32[4]`.
+- An associated constant initializer must be a compile-time scalar expression: numeric, boolean,
+  and char literals, arithmetic and bitwise operators, primitive casts, sibling constants of the
+  same owner, and other associated constants. Strings, calls, and runtime values are rejected, as
+  are self-referential definitions.
+- Duplicate member names per owner (including a const/type collision) are rejected. Associated
+  constants and type aliases cannot be exported and cannot appear in exported signatures; keep
+  the impl block private. Array lengths in type position remain integer literals, so a projection
+  cannot be used as an array size.
 
 ### 6.3 Generics
 
@@ -380,7 +425,8 @@ top-level name; the target's exports do not enter the importer's bare namespace.
 `export` marks a declaration a field of the module value; an unexported declaration is module
 private and is not a field. Exportable forms are `type`, `const`, binding (global), `struct`,
 `enum`, and function declarations. Naming a missing or private member (`math.private_helper`)
-is a compile error that names the target module and the absent export.
+is a compile error at the member segment: a declared-but-unexported member is reported as
+private (suggesting `export`), while an undeclared member is reported as a missing export.
 
 #### Qualified access
 
@@ -533,14 +579,15 @@ main: () -> i32 {
   header to importers, and qualified bounds use the module path (`<T: geometry.Measurable>`).
   Extracted interface names are module-prefixed internally, so equal short names from different
   modules remain distinct. An exported declaration cannot expose a private interface in a bound.
-- Runtime polymorphism is opt-in through `dyn* Interface` (6.6) or an explicit manual vtable
+- Runtime polymorphism is opt-in through `dyn Interface` (6.6) or an explicit manual vtable
   struct (6.1).
 
 ### 6.6 Dynamic interface values
 
-`dyn* Interface` is an explicitly constructed, copyable non-owning wide reference. It stores an erased `u8*`
-object pointer and one function pointer for each interface method. Converting a concrete pointer
-uses the postfix cast `ptr as dyn* Interface`; no implicit conversion or allocation occurs.
+`dyn Interface` is an explicitly constructed, copyable non-owning wide pointer. It stores an
+erased `u8*` object pointer and one function pointer for each interface method. Converting a
+concrete pointer uses the postfix cast `ptr as dyn Interface`; no implicit conversion or
+allocation occurs.
 
 ```hll
 interface Measurable {
@@ -548,7 +595,7 @@ interface Measurable {
 }
 
 r: Rect = Rect { .width = 6, .height = 7 }
-m: dyn* Measurable = (&r) as dyn* Measurable
+m: dyn Measurable = (&r) as dyn Measurable
 result: i32 = m.area()                 ; indirect call, result is 42
 ```
 
@@ -560,11 +607,10 @@ result: i32 = m.area()                 ; indirect call, result is 42
   another parameter or its return type makes that interface ineligible for `dyn` use.
 - Dynamic values may be copied, assigned, stored in aggregates, passed by pointer, and returned by
   value. The referenced object must remain alive; the dynamic value does not own or free it.
-- The `*` is part of the atomic dynamic-reference type rather than an extra indirection. A suffix
-  pointer, as in `dyn* Measurable*`, points to a slot holding the wide reference. Dynamic
-  references have no implicit null value; equality is not defined.
-- Omitting the marker is rejected with `dynamic interface references require a pointer marker;
-  write 'dyn* Interface'`.
+- `dyn Interface` is the wide-pointer value itself. An ordinary suffix pointer, as in
+  `dyn Measurable*`, points to a slot holding that value. Arrays use the unsurprising
+  `dyn Measurable[N]` spelling. Dynamic values have no implicit null value; equality is not
+  defined.
 - Generic concrete types and cross-module interfaces are not supported for dynamic conversion.
 
 ## 7. Control flow, enums, and resource management

@@ -47,6 +47,13 @@ impl HighLevelCompiler {
 
     fn lower_primary(&mut self, primary: &PrimaryExpr, mode: EvalMode) -> Option<LoweredValue> {
         match primary {
+            // Folded to literals before lowering; reaching one means the owner
+            // was never resolved (e.g. an unknown owner type).
+            PrimaryExpr::AssociatedConst { owner, member, .. } => {
+                self.context
+                    .error(format!("unresolved associated constant `{owner}.{member}`"));
+                None
+            }
             PrimaryExpr::Identifier(name) => {
                 // A bare name matching a unit enum variant constructs that variant.
                 if mode == EvalMode::Value

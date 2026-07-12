@@ -292,6 +292,14 @@ impl HighLevelCompiler {
                     IrValue::Register(ptr_reg),
                 );
             }
+            Statement::DestructureBinding { fields, init } => {
+                let Some(lowered) = self.lower_expression(init) else {
+                    self.context
+                        .error("failed to lower destructuring source".to_owned());
+                    return;
+                };
+                self.lower_binding_pattern(fields, lowered);
+            }
             Statement::Block(block) => {
                 self.lower_block(ir_program, block);
             }

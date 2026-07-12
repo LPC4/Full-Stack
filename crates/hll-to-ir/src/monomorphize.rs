@@ -8,7 +8,7 @@ pub(crate) type Substitutions = HashMap<String, Type>;
 struct DeclarationBoundTemplate {
     kind: &'static str,
     generics: Vec<String>,
-    bounds: Vec<(String, String)>,
+    bounds: Vec<(String, crate::ast::Path)>,
     alias_target: Option<Type>,
 }
 
@@ -19,7 +19,10 @@ type DeclarationBoundTemplates = HashMap<String, DeclarationBoundTemplate>;
 const SPECIALIZATION_LIMIT: usize = 2048;
 
 // Concrete declarations keep generic types out of semantic analysis and IR.
-pub(crate) fn monomorphize_program(program: &Program) -> Result<Program, String> {
+pub(crate) fn monomorphize_program(
+    program: &Program,
+    associated: &crate::associated::AssociatedCatalog,
+) -> Result<Program, String> {
     let mut source = program.clone();
     infer_implicit_type_arguments(&mut source)?;
 
@@ -100,7 +103,7 @@ pub(crate) fn monomorphize_program(program: &Program) -> Result<Program, String>
                     "generic {kind} `{name}`: bound `{param}: {interface_name}` names an undeclared parameter"
                 ));
             }
-            if !interfaces.contains_key(interface_name) {
+            if !interfaces.contains_key(&**interface_name) {
                 return Err(format!(
                     "generic {kind} `{name}`: bound `{param}: {interface_name}` \
                      names an unknown interface"
@@ -188,6 +191,11 @@ pub(crate) fn monomorphize_program(program: &Program) -> Result<Program, String>
         )?;
         let mut specialized = definition.clone();
         specialize_function(&mut specialized, &name, &type_args, &substitutions);
+        // Substitution can make `Owner<T>.Member` concrete; fold it before call
+        // rewriting so extracted type arguments and mangled names agree.
+        if !associated.is_empty() {
+            crate::associated::resolve_declaration(&mut specialized, associated)?;
+        }
         rewrite_declaration_calls(
             &mut specialized,
             &substitutions,
@@ -303,7 +311,7 @@ fn validate_declaration_bound_instantiations(
                     check_type(arg, generic_scope, templates, interfaces, signatures)?;
                 }
                 if !type_contains_generic(ty, generic_scope)
-                    && let Some(template) = templates.get(name)
+                    && let Some(template) = templates.get(&**name)
                 {
                     if template.generics.len() != args.len() {
                         return Err(format!(
@@ -333,6 +341,14 @@ fn validate_declaration_bound_instantiations(
                     }
                 }
             }
+            // Unresolved projections carry generic owner arguments; the alias
+            // target is checked once specialization makes them concrete.
+            Type::Associated { owner_args, .. } => {
+                for arg in owner_args {
+                    check_type(arg, generic_scope, templates, interfaces, signatures)?;
+                }
+            }
+            Type::DynamicReference(_) => {}
             Type::Primitive(_) => {}
         }
         Ok(())
@@ -341,11 +357,14 @@ fn validate_declaration_bound_instantiations(
     fn type_contains_generic(ty: &Type, generic_scope: &HashSet<String>) -> bool {
         match ty {
             Type::Named { name, args } => {
-                generic_scope.contains(name)
+                generic_scope.contains(&**name)
                     || args
                         .iter()
                         .any(|arg| type_contains_generic(arg, generic_scope))
             }
+            Type::Associated { owner_args, .. } => owner_args
+                .iter()
+                .any(|arg| type_contains_generic(arg, generic_scope)),
             Type::Pointer(inner) | Type::Array(_, inner) | Type::Slice(inner) => {
                 type_contains_generic(inner, generic_scope)
             }
@@ -363,6 +382,7 @@ fn validate_declaration_bound_instantiations(
             Type::Struct(fields) => fields
                 .iter()
                 .any(|field| type_contains_generic(&field.ty, generic_scope)),
+            Type::DynamicReference(_) => false,
             Type::Primitive(_) => false,
         }
     }
@@ -463,6 +483,11 @@ fn validate_declaration_bound_instantiations(
                         check_expr(arg)?;
                     }
                 }
+                PrimaryExpr::AssociatedConst { owner_args, .. } => {
+                    for ty in owner_args {
+                        check_type(ty, generic_scope, templates, interfaces, signatures)?;
+                    }
+                }
                 PrimaryExpr::Identifier(_)
                 | PrimaryExpr::Literal(_)
                 | PrimaryExpr::AsmReg { .. } => {}
@@ -489,6 +514,7 @@ fn validate_declaration_bound_instantiations(
                 }
             }
             Statement::InferredVariableDecl { init, .. }
+            | Statement::DestructureBinding { init, .. }
             | Statement::Expression(init)
             | Statement::Defer(init)
             | Statement::Return(Some(init)) => check_expr(init)?,
@@ -630,10 +656,10 @@ fn validate_alias_cycles(templates: &DeclarationBoundTemplates) -> Result<(), St
         match ty {
             Type::Named { name, args } => {
                 if templates
-                    .get(name)
+                    .get(&**name)
                     .is_some_and(|item| item.alias_target.is_some())
                 {
-                    out.push(name.clone());
+                    out.push(name.to_string());
                 }
                 for arg in args {
                     dependencies(arg, templates, out);
@@ -658,6 +684,12 @@ fn validate_alias_cycles(templates: &DeclarationBoundTemplates) -> Result<(), St
                     dependencies(&field.ty, templates, out);
                 }
             }
+            Type::Associated { owner_args, .. } => {
+                for arg in owner_args {
+                    dependencies(arg, templates, out);
+                }
+            }
+            Type::DynamicReference(_) => {}
             Type::Primitive(_) => {}
         }
     }
@@ -702,13 +734,13 @@ fn validate_alias_cycles(templates: &DeclarationBoundTemplates) -> Result<(), St
 fn check_bounds_for_owner(
     kind: &str,
     owner: &str,
-    bounds: &[(String, String)],
+    bounds: &[(String, crate::ast::Path)],
     substitutions: &Substitutions,
     interfaces: &HashMap<String, Vec<InterfaceMethod>>,
     concrete_signatures: &HashMap<String, (Vec<Type>, Option<Type>)>,
 ) -> Result<(), String> {
     for (param, interface_name) in bounds {
-        let methods = &interfaces[interface_name];
+        let methods = &interfaces[&**interface_name];
         if let Some(concrete) = substitutions.get(param) {
             check_type_implements(concrete, interface_name, methods, concrete_signatures)
                 .map_err(|error| format!("generic {kind} `{owner}`: {error}"))?;
@@ -927,6 +959,9 @@ fn infer_statement_calls(
                 environment.insert(name.clone(), ty);
             }
         }
+        Statement::DestructureBinding { init, .. } => {
+            infer_expression_calls(init, environment, generic_signatures, function_returns)?;
+        }
         Statement::Return(None)
         | Statement::AsmBlock { .. }
         | Statement::Break
@@ -1071,7 +1106,10 @@ fn infer_expression_calls(
                     infer_expression_calls(arg, environment, generic_signatures, function_returns)?;
                 }
             }
-            PrimaryExpr::Identifier(_) | PrimaryExpr::Literal(_) | PrimaryExpr::AsmReg { .. } => {}
+            PrimaryExpr::Identifier(_)
+            | PrimaryExpr::Literal(_)
+            | PrimaryExpr::AsmReg { .. }
+            | PrimaryExpr::AssociatedConst { .. } => {}
             PrimaryExpr::Grouped(_) => unreachable!(),
         },
     }
@@ -1086,9 +1124,9 @@ fn unify_generic_type(
 ) -> Result<(), String> {
     if let Type::Named { name, args } = parameter
         && args.is_empty()
-        && generic_params.contains(name)
+        && generic_params.iter().any(|param| param == &**name)
     {
-        if let Some(previous) = inferred.get(name) {
+        if let Some(previous) = inferred.get(&**name) {
             if previous != actual {
                 return Err(format!(
                     "conflicting inferred types for `{name}`: `{}` and `{}`",
@@ -1097,7 +1135,7 @@ fn unify_generic_type(
                 ));
             }
         } else {
-            inferred.insert(name.clone(), actual.clone());
+            inferred.insert(name.to_string(), actual.clone());
         }
         return Ok(());
     }
@@ -1181,7 +1219,7 @@ pub(crate) fn infer_expression_type(
             Some(Type::Array(elements.len(), Box::new(element)))
         }
         Expression::Primary(PrimaryExpr::NamedStructLiteral { name, .. }) => Some(Type::Named {
-            name: name.clone(),
+            name: name.clone().into(),
             args: Vec::new(),
         }),
         Expression::Primary(PrimaryExpr::ArrayIndex { expr, .. }) => {
@@ -1217,7 +1255,8 @@ pub(crate) fn infer_expression_type(
             | PrimaryExpr::FieldAccess { .. }
             | PrimaryExpr::Slice { .. }
             | PrimaryExpr::CallExpr { .. }
-            | PrimaryExpr::AsmReg { .. },
+            | PrimaryExpr::AsmReg { .. }
+            | PrimaryExpr::AssociatedConst { .. },
         ) => None,
     }
 }
@@ -1226,13 +1265,13 @@ pub(crate) fn infer_expression_type(
 // every interface method as `{Type}_{method}` with `Self` = that type (see spec 6.5).
 fn check_generic_bounds(
     function: &str,
-    bounds: &[(String, String)],
+    bounds: &[(String, crate::ast::Path)],
     substitutions: &Substitutions,
     interfaces: &HashMap<String, Vec<InterfaceMethod>>,
     concrete_signatures: &HashMap<String, (Vec<Type>, Option<Type>)>,
 ) -> Result<(), String> {
     for (param, interface_name) in bounds {
-        let methods = interfaces.get(interface_name).ok_or_else(|| {
+        let methods = interfaces.get(&**interface_name).ok_or_else(|| {
             format!(
                 "generic function `{function}`: bound `{param}: {interface_name}` \
                  names an unknown interface"
@@ -1272,7 +1311,7 @@ pub(crate) fn check_type_implements(
         ));
     };
     let concrete_name = if args.is_empty() {
-        type_name.clone()
+        type_name.to_string()
     } else {
         format!(
             "{}<{}>",
@@ -1440,7 +1479,8 @@ fn rewrite_statement_calls(
         Statement::VariableDecl {
             init: Some(init), ..
         }
-        | Statement::InferredVariableDecl { init, .. } => {
+        | Statement::InferredVariableDecl { init, .. }
+        | Statement::DestructureBinding { init, .. } => {
             rewrite_expression_calls(init, substitutions, definitions, queue, queued)?;
         }
         Statement::Return(None)
@@ -1552,7 +1592,11 @@ fn rewrite_expression_calls(
                     rewrite_expression_calls(arg, substitutions, definitions, queue, queued)?;
                 }
             }
-            PrimaryExpr::Identifier(_) | PrimaryExpr::Literal(_) | PrimaryExpr::AsmReg { .. } => {}
+            // Projections are folded before call rewriting; nothing to visit.
+            PrimaryExpr::Identifier(_)
+            | PrimaryExpr::Literal(_)
+            | PrimaryExpr::AsmReg { .. }
+            | PrimaryExpr::AssociatedConst { .. } => {}
             PrimaryExpr::Grouped(_) => unreachable!(),
         },
     }
@@ -1626,6 +1670,9 @@ pub(crate) fn substitute_statement_types(statement: &mut Statement, substitution
             }
         }
         Statement::InferredVariableDecl { init, .. } => {
+            substitute_expression_types(init, substitutions);
+        }
+        Statement::DestructureBinding { init, .. } => {
             substitute_expression_types(init, substitutions);
         }
         Statement::Return(None)
@@ -1722,6 +1769,11 @@ pub(crate) fn substitute_expression_types(
                     substitute_expression_types(arg, substitutions);
                 }
             }
+            PrimaryExpr::AssociatedConst { owner_args, .. } => {
+                for ty in owner_args {
+                    *ty = substitute_type(ty, substitutions);
+                }
+            }
             PrimaryExpr::Identifier(_) | PrimaryExpr::Literal(_) | PrimaryExpr::AsmReg { .. } => {}
             PrimaryExpr::Grouped(_) => unreachable!(),
         },
@@ -1751,7 +1803,7 @@ fn substitute_target_types(target: &mut AssignTarget, substitutions: &Substituti
 pub(crate) fn substitute_type(ty: &Type, substitutions: &Substitutions) -> Type {
     match ty {
         Type::Named { name, args } if args.is_empty() => substitutions
-            .get(name)
+            .get(&**name)
             .cloned()
             .unwrap_or_else(|| ty.clone()),
         Type::Named { name, args } => Type::Named {
@@ -1760,6 +1812,18 @@ pub(crate) fn substitute_type(ty: &Type, substitutions: &Substitutions) -> Type 
                 .iter()
                 .map(|arg| substitute_type(arg, substitutions))
                 .collect(),
+        },
+        Type::Associated {
+            owner,
+            owner_args,
+            member,
+        } => Type::Associated {
+            owner: owner.clone(),
+            owner_args: owner_args
+                .iter()
+                .map(|arg| substitute_type(arg, substitutions))
+                .collect(),
+            member: member.clone(),
         },
         Type::Pointer(inner) => Type::Pointer(Box::new(substitute_type(inner, substitutions))),
         Type::Array(len, inner) => {
@@ -1788,6 +1852,7 @@ pub(crate) fn substitute_type(ty: &Type, substitutions: &Substitutions) -> Type 
                 })
                 .collect(),
         ),
+        Type::DynamicReference(_) => ty.clone(),
         Type::Primitive(_) => ty.clone(),
     }
 }
@@ -1819,11 +1884,26 @@ fn type_mangle(ty: &Type) -> String {
             format!("fn_{params}_ret_{ret}")
         }
         Type::Struct(_) => "struct".to_owned(),
-        Type::Named { name, args } if args.is_empty() => name.clone(),
+        Type::Named { name, args } if args.is_empty() => name.to_string(),
+        Type::DynamicReference(interface) => format!("dyn_{}", interface.as_string()),
         Type::Named { name, args } => format!(
             "{}_{}",
             name,
             args.iter().map(type_mangle).collect::<Vec<_>>().join("_")
+        ),
+        // Projections resolve before any mangling; keep a stable spelling for
+        // the diagnostics that print unresolved types.
+        Type::Associated {
+            owner,
+            owner_args,
+            member,
+        } => format!(
+            "{owner}_{}_{member}",
+            owner_args
+                .iter()
+                .map(type_mangle)
+                .collect::<Vec<_>>()
+                .join("_")
         ),
     }
 }
@@ -2003,14 +2083,20 @@ impl EnumSpecializer {
                 for arg in args.iter_mut() {
                     self.rewrite_type(arg);
                 }
-                if !args.is_empty() && self.templates.contains_key(name) {
+                if !args.is_empty() && self.templates.contains_key(&**name) {
                     let mangled = self.queue(name, args);
                     *ty = Type::Named {
-                        name: mangled,
+                        name: mangled.into(),
                         args: Vec::new(),
                     };
                 }
             }
+            Type::Associated { owner_args, .. } => {
+                for arg in owner_args {
+                    self.rewrite_type(arg);
+                }
+            }
+            Type::DynamicReference(_) => {}
             Type::Primitive(_) => {}
         }
     }
@@ -2150,7 +2236,8 @@ impl EnumSpecializer {
                     self.rewrite_expr_types(init);
                 }
             }
-            Statement::InferredVariableDecl { init, .. } => self.rewrite_expr_types(init),
+            Statement::InferredVariableDecl { init, .. }
+            | Statement::DestructureBinding { init, .. } => self.rewrite_expr_types(init),
             Statement::Return(None)
             | Statement::AsmBlock { .. }
             | Statement::Break
@@ -2234,6 +2321,11 @@ impl EnumSpecializer {
                     self.rewrite_type(ty);
                     for arg in args {
                         self.rewrite_expr_types(arg);
+                    }
+                }
+                PrimaryExpr::AssociatedConst { owner_args, .. } => {
+                    for ty in owner_args {
+                        self.rewrite_type(ty);
                     }
                 }
                 PrimaryExpr::Identifier(_)
@@ -2349,6 +2441,9 @@ impl EnumSpecializer {
                     env.insert(name.clone(), ty);
                 }
             }
+            Statement::DestructureBinding { init, .. } => {
+                self.rewrite_expr_uses(init, None, env);
+            }
             Statement::Return(None)
             | Statement::AsmBlock { .. }
             | Statement::Break
@@ -2443,7 +2538,9 @@ impl EnumSpecializer {
                         self.rewrite_expr_uses(arg, None, env);
                     }
                 }
-                PrimaryExpr::Literal(_) | PrimaryExpr::AsmReg { .. } => {}
+                PrimaryExpr::Literal(_)
+                | PrimaryExpr::AsmReg { .. }
+                | PrimaryExpr::AssociatedConst { .. } => {}
             },
         }
     }
@@ -2609,7 +2706,7 @@ impl EnumSpecializer {
 
 fn named(name: &str) -> Type {
     Type::Named {
-        name: name.to_owned(),
+        name: name.to_owned().into(),
         args: Vec::new(),
     }
 }
@@ -2617,7 +2714,7 @@ fn named(name: &str) -> Type {
 // A concrete enum type's mangled name, or None if `expected` is not a plain Named.
 fn expected_enum_name(expected: Option<&Type>) -> Option<String> {
     match expected? {
-        Type::Named { name, args } if args.is_empty() => Some(name.clone()),
+        Type::Named { name, args } if args.is_empty() => Some(name.to_string()),
         _ => None,
     }
 }
@@ -2653,7 +2750,7 @@ main: () -> i32 {
     return f<i32>(0)
 }
 ";
-        let err = monomorphize_program(&program_of(src)).unwrap_err();
+        let err = monomorphize_program(&program_of(src), &Default::default()).unwrap_err();
         assert!(
             err.contains("did not terminate"),
             "expected a non-termination diagnostic, got: {err}"
@@ -2671,6 +2768,6 @@ main: () -> i32 {
     return id<i32>(42)
 }
 ";
-        assert!(monomorphize_program(&program_of(src)).is_ok());
+        assert!(monomorphize_program(&program_of(src), &Default::default()).is_ok());
     }
 }

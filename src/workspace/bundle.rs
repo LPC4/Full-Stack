@@ -14,7 +14,8 @@ pub fn sample_workspace() -> io::Result<MemoryFs> {
 }
 
 /// Write the demo workspace tree into `fs`: kernel + modules, boot `.s`, stdlib,
-/// user tools, examples, and a run.toml. Existing files are left alone.
+/// user tools, examples, and a run.toml. Canonical examples are refreshed while
+/// edits to the other materialized sources are preserved.
 pub fn populate_demo_workspace(fs: &mut dyn WorkspaceFs) -> io::Result<()> {
     write_missing(fs, "README.md", SAMPLE_README)?;
     write_missing(
@@ -26,12 +27,13 @@ pub fn populate_demo_workspace(fs: &mut dyn WorkspaceFs) -> io::Result<()> {
     let mut current = Vec::new();
     for (path, source) in os_runtime::SOURCE_TREE {
         let path = format!("crates/os-runtime/{path}");
-        sync_bundled_file(fs, &path, source, previous.get(&path).copied())?;
+        sync_bundled_file(fs, &path, source, previous.get(&path).copied(), false)?;
         current.push((path, content_hash(source.as_bytes())));
     }
     for (path, source) in crate::userspace::SOURCE_FILES {
         if path.starts_with("programs/user/") || path.starts_with("programs/example/") {
-            sync_bundled_file(fs, path, source, previous.get(*path).copied())?;
+            let refresh = path.starts_with("programs/example/");
+            sync_bundled_file(fs, path, source, previous.get(*path).copied(), refresh)?;
             current.push(((*path).to_owned(), content_hash(source.as_bytes())));
         }
     }
@@ -95,14 +97,16 @@ fn sync_bundled_file(
     path: &str,
     source: &str,
     previous_hash: Option<u64>,
+    always_refresh: bool,
 ) -> io::Result<()> {
     let path = VPath::parse(path).map_err(invalid_path)?;
     let existing = fs.read_file(&path).ok();
-    let may_replace = match (&existing, previous_hash) {
-        (None, _) => true,
-        (Some(bytes), Some(hash)) => content_hash(bytes) == hash,
-        (Some(_), None) => false,
-    };
+    let may_replace = always_refresh
+        || match (&existing, previous_hash) {
+            (None, _) => true,
+            (Some(bytes), Some(hash)) => content_hash(bytes) == hash,
+            (Some(_), None) => false,
+        };
     if !may_replace || existing.as_deref() == Some(source.as_bytes()) {
         return Ok(());
     }
@@ -218,7 +222,7 @@ mod tests {
             .expect("showcase source"),
         )
         .expect("utf-8 showcase");
-        assert!(showcase.contains("dyn* Measurable"));
+        assert!(showcase.contains("dyn Measurable"));
     }
 
     #[test]
@@ -236,16 +240,30 @@ mod tests {
         let mut fs = MemoryFs::new();
         let path = "programs/example/sample/sample.hll";
 
-        sync_bundled_file(&mut fs, path, "old", None).expect("initial materialization");
-        sync_bundled_file(&mut fs, path, "new", Some(content_hash(b"old")))
+        sync_bundled_file(&mut fs, path, "old", None, false).expect("initial materialization");
+        sync_bundled_file(&mut fs, path, "new", Some(content_hash(b"old")), false)
             .expect("refresh untouched file");
         let vpath = VPath::parse(path).expect("path");
         assert_eq!(fs.read_file(&vpath).expect("read"), b"new");
 
         fs.write_text(&vpath, "; local edit").expect("edit");
-        sync_bundled_file(&mut fs, path, "newer", Some(content_hash(b"new")))
+        sync_bundled_file(&mut fs, path, "newer", Some(content_hash(b"new")), false)
             .expect("preserve edited file");
         assert_eq!(fs.read_file(&vpath).expect("read"), b"; local edit");
+    }
+
+    #[test]
+    fn bundled_examples_refresh_even_after_workspace_edits() {
+        let mut fs = MemoryFs::new();
+        let path = "programs/example/sample/sample.hll";
+        let vpath = VPath::parse(path).expect("path");
+
+        sync_bundled_file(&mut fs, path, "old", None, true).expect("materialize");
+        fs.write_text(&vpath, "; stale edit").expect("edit");
+        sync_bundled_file(&mut fs, path, "new", Some(content_hash(b"old")), true)
+            .expect("refresh canonical example");
+
+        assert_eq!(fs.read_file(&vpath).expect("read"), b"new");
     }
 
     #[cfg(not(target_arch = "wasm32"))]

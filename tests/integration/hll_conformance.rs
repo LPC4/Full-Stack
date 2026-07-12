@@ -1451,39 +1451,67 @@ impl Disc {
     area: (self: Disc*) -> i32 { return 3 * self.radius * self.radius }
     scaled: (self: Disc*, k: i32) -> i32 { return self.area() * k }
 }
-sum_areas: (shapes: dyn* Measurable*, count: i32) -> i32 {
+sum_areas: (shapes: dyn Measurable*, count: i32) -> i32 {
     sum := 0
     for i in 0..count {
         sum += shapes[i].area()
     }
     return sum
 }
-pick: (shapes: dyn* Measurable*, index: i32) -> dyn* Measurable {
+pick: (shapes: dyn Measurable*, index: i32) -> dyn Measurable {
     return shapes[index]
 }
 main: () -> i32 {
     r: Rect = Rect { .width = 6, .height = 7 }
     d: Disc = Disc { .radius = 3 }
 
-    m: dyn* Measurable = (&r) as dyn* Measurable
+    m: dyn Measurable = (&r) as dyn Measurable
     if m.area() != 42 { return 1 }
     if m.scaled(2) != 84 { return 2 }
 
-    m = (&d) as dyn* Measurable
+    m = (&d) as dyn Measurable
     if m.area() != 27 { return 3 }
     if m.scaled(3) != 81 { return 4 }
 
-    shapes: dyn* Measurable[2] = [(&r) as dyn* Measurable, (&d) as dyn* Measurable]
+    shapes: dyn Measurable[2] = [(&r) as dyn Measurable, (&d) as dyn Measurable]
     if sum_areas(&shapes[0], 2) != 69 { return 5 }
 
     ; The local needs its declared type: an inferred `:=` from a call keeps only
     ; the structural type, and method calls resolve by name (all impl types).
-    picked: dyn* Measurable = pick(&shapes[0], 1)
+    picked: dyn Measurable = pick(&shapes[0], 1)
     if picked.area() != 27 { return 6 }
 
     ; Mutating through the erased pointer is visible to later dispatch.
     r.width = 10
     if shapes[0].area() != 70 { return 7 }
+    return 0
+}
+"#,
+        0,
+    );
+}
+
+#[test]
+fn associated_consts_and_aliases_execute() {
+    assert_exit(
+        r#"
+struct Matrix<T> { cell: T }
+impl Matrix<T> {
+    const LANES = 4
+    const TOTAL = LANES * 10
+    type Row = T[4]
+}
+struct Config { value: i32 }
+impl Config { type Pair = i32[2] }
+
+lanes_of: <T>(unused: T) -> i32 { return Matrix<T>.LANES }
+
+main: () -> i32 {
+    row: Matrix<i32>.Row = [1, 2, 3, 4]
+    pair: Config.Pair = [10, 20]
+    ; 4 + 40 + 4 (specialized generic) + 4 (element) + 20 = 72
+    total: i32 = Matrix<i32>.LANES + Matrix<i64>.TOTAL + lanes_of<i32>(0) + row[3] + pair[1]
+    if total != 72 { return 1 }
     return 0
 }
 "#,
