@@ -1088,7 +1088,7 @@ fn examples_exit_zero_in_vm() {
 fn struct_function_pointer_field_call() {
     let (_, outcome, _) = run_hll(
         r#"
-type BinaryOp = fn(i32, i32) -> i32
+type BinaryOp = (i32, i32) -> i32
 add: (a: i32, b: i32) -> i32 { return a + b }
 mul: (a: i32, b: i32) -> i32 { return a * b }
 struct Ops { combine: BinaryOp }
@@ -1112,7 +1112,7 @@ main: () -> i32 {
 fn indexed_function_pointer_call() {
     let (_, outcome, _) = run_hll(
         r#"
-type BinaryOp = fn(i32, i32) -> i32
+type BinaryOp = (i32, i32) -> i32
 add: (a: i32, b: i32) -> i32 { return a + b }
 mul: (a: i32, b: i32) -> i32 { return a * b }
 main: () -> i32 {

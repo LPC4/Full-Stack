@@ -135,11 +135,12 @@ impl HllCompiler {
         // Mangle this unit's own definitions when it is built as one module of a link closure,
         // so two modules can define the same private name without colliding at link.
         if let Some(prefix) = &self.config.module_mangle_prefix {
-            // Desugared `impl` methods (first parameter `self`) keep stable names so
-            // `recv.method()` resolves by convention after mangling.
+            // Local impl methods keep stable names. Exported methods are link symbols and
+            // receive the module prefix; receiver-call resolution recognizes that suffix.
             let mut exempt = mangle_exempt();
             for decl in &ast.declarations {
-                if let DeclNode::Function { name, params, .. } = &decl.decl
+                if !decl.exported
+                    && let DeclNode::Function { name, params, .. } = &decl.decl
                     && params.first().is_some_and(|p| p.name == "self")
                 {
                     exempt.insert(name.clone());
@@ -1349,7 +1350,7 @@ main: () -> i32 {
     fn lowers_function_pointer_assignment_and_call() {
         let output = compile_hll(
             r#"
-type BinaryOp = fn(i32, i32) -> i32
+type BinaryOp = (i32, i32) -> i32
 
 add: (a: i32, b: i32) -> i32 {
     return a + b
@@ -1400,7 +1401,7 @@ main: () -> i32 {
         compile_hll(
             r#"
 struct Shape { width: i32, height: i32 }
-type ShapeMethod = fn(Shape*) -> i32
+type ShapeMethod = (Shape*) -> i32
 struct ShapeVTable { area: ShapeMethod, perimeter: ShapeMethod }
 struct ShapeObj { data: Shape*, vtable: ShapeVTable* }
 
@@ -1447,6 +1448,35 @@ main: () -> i32 {
         if let Err(e) = r {
             panic!("compile failed: {e:?}");
         }
+    }
+
+    #[test]
+    fn callable_field_and_method_collision_is_ambiguous() {
+        let source = r#"
+struct Service { run: (i32) -> i32 }
+impl Service { run: (self: Service*, value: i32) -> i32 { return value } }
+identity: (value: i32) -> i32 { return value }
+main: () -> i32 {
+    service: Service = Service { .run = identity }
+    return service.run(1)
+}
+"#;
+        let result = HllCompiler::new(CompileConfig {
+            target: TargetMode::Hosted,
+            strict: true,
+            ..CompileConfig::default()
+        })
+        .compile(source);
+        let errors = match result {
+            Ok(_) => panic!("ambiguous member call must be rejected"),
+            Err(errors) => errors,
+        };
+        assert!(
+            errors.iter().any(|error| error
+                .message
+                .contains("ambiguous member call `Service.run`")),
+            "unexpected diagnostics: {errors:?}"
+        );
     }
 }
 
@@ -1594,16 +1624,123 @@ main: () -> i32 {
     }
 
     #[test]
-    fn bound_on_struct_generic_is_rejected() {
+    fn bound_on_struct_generic_is_checked_at_instantiation() {
         expect_error_containing(
             r#"
 interface HasArea {
     area: (self: Self*) -> i32
 }
 struct Wrapper<T: HasArea> { inner: T }
+struct Point { x: i32 }
+main: () -> i32 {
+    wrapped: Wrapper<Point> = Wrapper<Point> { .inner = Point { .x = 1 } }
+    return wrapped.inner.x
+}
+"#,
+            "does not implement interface `HasArea`",
+        );
+    }
+
+    #[test]
+    fn bounds_on_struct_enum_and_alias_accept_conforming_types() {
+        compile(
+            r#"
+interface HasArea { area: (self: Self*) -> i32 }
+struct Rect { width: i32, height: i32 }
+impl Rect { area: (self: Rect*) -> i32 { return self.width * self.height } }
+struct Holder<T: HasArea> { value: T }
+enum Maybe<T: HasArea> { Value(T), Missing }
+type Pointer<T: HasArea> = T*
+use_all: (holder: Holder<Rect>, maybe: Maybe<Rect>, pointer: Pointer<Rect>) -> i32 {
+    return 0
+}
 main: () -> i32 { return 0 }
 "#,
-            "only supported on functions",
+        )
+        .expect("all declaration kinds should accept a conforming argument");
+    }
+
+    #[test]
+    fn enum_and_alias_bounds_reject_nonconforming_types() {
+        for source in [
+            r#"
+interface HasArea { area: (self: Self*) -> i32 }
+struct Point { x: i32 }
+enum Maybe<T: HasArea> { Value(T), Missing }
+consume: (value: Maybe<Point>) -> i32 { return 0 }
+"#,
+            r#"
+interface HasArea { area: (self: Self*) -> i32 }
+struct Point { x: i32 }
+type Pointer<T: HasArea> = T*
+consume: (value: Pointer<Point>) -> i32 { return 0 }
+"#,
+        ] {
+            expect_error_containing(source, "does not implement interface `HasArea`");
+        }
+    }
+
+    #[test]
+    fn alias_expansion_checks_nested_declaration_bounds() {
+        expect_error_containing(
+            r#"
+interface First { first: (self: Self*) -> i32 }
+interface Second { second: (self: Self*) -> i32 }
+struct Partial { value: i32 }
+impl Partial { first: (self: Partial*) -> i32 { return self.value } }
+struct Inner<T: Second> { value: T }
+type Alias<T: First> = Inner<T>
+consume: (value: Alias<Partial>) -> i32 { return 0 }
+"#,
+            "does not implement interface `Second`",
+        );
+    }
+
+    #[test]
+    fn alias_cycles_are_reported_separately_from_bounds() {
+        expect_error_containing(
+            r#"
+interface First { first: (self: Self*) -> i32 }
+type Left<T: First> = Right<T>
+type Right<T: First> = Left<T>
+"#,
+            "type alias cycle",
+        );
+    }
+
+    #[test]
+    fn nested_bounded_declarations_wait_for_concrete_arguments() {
+        compile(
+            r#"
+interface HasArea { area: (self: Self*) -> i32 }
+struct Rect { width: i32, height: i32 }
+impl Rect { area: (self: Rect*) -> i32 { return self.width * self.height } }
+struct Inner<T: HasArea> { value: T }
+struct Outer<T: HasArea> { inner: Inner<T> }
+main: () -> i32 {
+    value: Outer<Rect> = { .inner = { .value = Rect { .width = 6, .height = 7 } } }
+    return 0
+}
+"#,
+        )
+        .expect("unresolved parameters in nested declarations must not be checked eagerly");
+    }
+
+    #[test]
+    fn aggregate_bound_checks_types_introduced_by_generic_specialization() {
+        expect_error_containing(
+            r#"
+interface HasArea { area: (self: Self*) -> i32 }
+struct Point { x: i32 }
+struct Holder<T: HasArea> { value: T }
+consume: <T>(value: Holder<T>*) -> i32 { return 0 }
+main: () -> i32 {
+    point: Point = Point { .x = 1 }
+    holder: Holder<Point> = Holder<Point> { .value = point }
+    return consume<Point>(&holder)
+}
+"#,
+            "does not implement interface `HasArea`",
         );
     }
 
@@ -1658,7 +1795,7 @@ struct Rect { width: i32, height: i32 }
 impl Rect {
     area: (self: Rect*) -> i32 { return self.width * self.height }
 }
-total: (shapes: dyn Measurable*, count: i32) -> i32 {
+total: (shapes: dyn* Measurable*, count: i32) -> i32 {
     sum := 0
     for i in 0..count {
         sum += shapes[i].area()
@@ -1667,9 +1804,9 @@ total: (shapes: dyn Measurable*, count: i32) -> i32 {
 }
 main: () -> i32 {
     r: Rect = Rect { .width = 6, .height = 7 }
-    d: dyn Measurable = (&r) as dyn Measurable
+    d: dyn* Measurable = (&r) as dyn* Measurable
     if d.area() != 42 { return 1 }
-    arr: dyn Measurable[2] = [(&r) as dyn Measurable, (&r) as dyn Measurable]
+    arr: dyn* Measurable[2] = [(&r) as dyn* Measurable, (&r) as dyn* Measurable]
     return total(&arr[0], 2) - 84
 }
 "#,
@@ -1690,7 +1827,7 @@ impl Rect {
 }
 main: () -> i32 {
     r: Rect = Rect { .width = 1 }
-    d: dyn Measurable = r as dyn Measurable
+    d: dyn* Measurable = r as dyn* Measurable
     return 0
 }
 "#,
@@ -1708,7 +1845,7 @@ interface Measurable {
 struct Plain { value: i32 }
 main: () -> i32 {
     p: Plain = Plain { .value = 1 }
-    d: dyn Measurable = (&p) as dyn Measurable
+    d: dyn* Measurable = (&p) as dyn* Measurable
     return 0
 }
 "#,
@@ -1729,7 +1866,7 @@ impl Rect {
 }
 main: () -> i32 {
     r: Rect = Rect { .width = 1 }
-    d: dyn Cloneable = (&r) as dyn Cloneable
+    d: dyn* Cloneable = (&r) as dyn* Cloneable
     return 0
 }
 "#,

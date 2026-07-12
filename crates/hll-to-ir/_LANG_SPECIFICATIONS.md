@@ -251,8 +251,9 @@ log_line: (s: u8[]) { println(s) }              ; void -- omit -> entirely
   changing source semantics.
 - Multiple results are returned as an anonymous struct (5.4).
 
-Function pointer values use `fn(T, U) -> R` for a value-returning callable address and
-`fn(T, U)` for a void callable address. A bare function name in value position coerces to a
+Function pointer values use `(T, U) -> R` for a value-returning callable address and
+`(T, U)` for a void callable address. Named parameters are reserved for function declarations.
+The legacy `fn(T, U) -> R` type spelling is rejected. A bare function name in value position coerces to a
 matching function pointer type, and calling a binding of function pointer type uses the same
 `callee(args)` syntax as a direct call. Function pointers are raw code addresses; they do not
 carry closure environments.
@@ -267,35 +268,47 @@ passed explicitly, usually as another field holding a pointer.
 
 ### 6.2 Methods (`impl` blocks)
 
-Methods are static sugar over ordinary functions; there is no dynamic dispatch, vtable, or
-hidden receiver. An `impl Type { ... }` block groups functions that take a pointer receiver
-named `self`:
+Impl members are static sugar over ordinary functions; there is no hidden receiver. An
+`impl Type { ... }` block may contain receiver methods and associated functions:
 
 ```hll
 struct Rect { width: i32, height: i32 }
 
 impl Rect {
+    make: (width: i32, height: i32) -> Rect {
+        return Rect { .width = width, .height = height }
+    }
     area: (self: Rect*) -> i32 { return self.width * self.height }
+    width_value: (self: Rect) -> i32 { return self.width }
     scaled: (self: Rect*, k: i32) -> i32 { return self.area() * k }
 }
 
 main: () -> i32 {
-    r: Rect = Rect { .width = 6, .height = 7 }
+    r: Rect = Rect.make(6, 7)
     return r.scaled(2) - r.area() - 42   ; 84 - 42 - 42 == 0
 }
 ```
 
-- Each method desugars to a free function named `Type_method`. `impl Rect { area: ... }`
+- Each impl member desugars to a free function named `Type_member`. `impl Rect { area: ... }`
   defines `Rect_area`, so methods share the function namespace and must not collide with an
   existing free function of the same mangled name.
-- The receiver must be the first parameter, named `self`, of pointer type `Type*`.
+- A receiver method's first parameter is named `self` and has type `Type*` or `Type`. A pointer
+  receiver operates on the caller's object; a by-value receiver gets a copy, so mutations to
+  `self` do not change the caller.
+- A member without a leading `self` is an associated function. `Type.function(args)` calls it
+  without a receiver; `Rect.make(6, 7)` above is `Rect_make(6, 7)`.
 - A call `recv.method(args)` is sugar for `Type_method(self, args)`. The receiver supplies
-  `self`: a value receiver is addressed automatically (`r.area()` passes `&r`), and a pointer
-  receiver is passed through. A method may call another through `self` (`self.area()`).
-- A struct data field shadows a method of the same name: if `recv.name` names a function
-  pointer field, `recv.name(args)` is the indirect field call (6.1), not a method call.
+  `self`: for a `Type*` parameter a value is addressed automatically and a pointer passes through;
+  for a `Type` parameter either form loads and passes a copy. A method may call another through
+  `self` (`self.area()`).
+- If a callable struct field and a statically resolved method share a member name,
+  `recv.name(args)` is ambiguous and rejected with both candidates in the diagnostic. Merely
+  declaring the collision is allowed; non-call field access is unchanged.
 - Dispatch is fully static. For runtime polymorphism, build an explicit vtable struct of
   function pointers (6.1).
+- An exported type may expose members with `export impl Type { ... }`. Each member is exported as
+  its desugared `Type_member` link symbol; an importing module can call receiver methods normally
+  on a value of `alias.Type`. Private impl blocks remain local to their source module.
 
 ### 6.3 Generics
 
@@ -477,10 +490,10 @@ enforcement at the object level (`.globl` only for exports), now implemented for
 
 ### 6.5 Interfaces and generic bounds
 
-An `interface` declares required method signatures; a bound on a generic function's type
-parameter (`<T: Measurable>`) requires the concrete type substituted for `T` to provide
-those methods. Everything is resolved at compile time: dispatch stays static, and no vtable
-or fat pointer is generated.
+An `interface` declares required method signatures. A bound on a generic function, struct,
+enum, or type-alias parameter (`<T: Measurable>`) requires the concrete type substituted for
+`T` to provide those methods. Everything is resolved at compile time: dispatch stays static,
+and no vtable or fat pointer is generated.
 
 ```hll
 interface Measurable {
@@ -505,26 +518,29 @@ main: () -> i32 {
 
 - An interface body lists method signatures only (no bodies). `Self` is a placeholder for
   the implementing type; each method's first parameter must be `self: Self*`.
-- Bounds are written `param: Interface` inside a function's type-parameter list. Multiple bounds
-  on one parameter use `+`, as in `<T: Readable + Writable>`, and all must be satisfied. Bounds
-  are only supported on functions; `struct`/`enum`/`type` parameters remain unconstrained.
+- Bounds are written `param: Interface` inside any generic declaration's type-parameter list.
+  Multiple bounds on one parameter use `+`, as in `<T: Readable + Writable>`, and all must be
+  satisfied. Duplicate parameters and duplicate bounds are rejected.
 - A type `X` satisfies a bound when, for every interface method `m`, a concrete function
   `X_m` exists whose signature equals the interface signature with `Self` = `X`. Desugared
   `impl` methods (6.2) and hand-written free functions both qualify.
 - Named struct types, including concrete generic instantiations, can satisfy a bound; primitives
   are rejected. For `Box<i32>`, the implementation function keeps the base convention
   `Box_method`, but its `Self` positions must be exactly `Box<i32>`. Bounds are checked when the
-  generic is specialized; an unknown interface is an error even if the generic is never used.
-- Interfaces are compile-time contracts with no link symbol. They are not exported across
-  module boundaries; a module that needs one declares it locally (like generics, 6.3).
-- Runtime polymorphism is opt-in through `dyn Interface` (6.6) or an explicit manual vtable
+  generic is specialized or the generic aggregate/alias is instantiated. Nested type arguments
+  are checked inside-out. An unknown interface is an error even if the declaration is never used.
+- Interfaces are compile-time contracts with no link symbol. `export interface Name` exposes the
+  header to importers, and qualified bounds use the module path (`<T: geometry.Measurable>`).
+  Extracted interface names are module-prefixed internally, so equal short names from different
+  modules remain distinct. An exported declaration cannot expose a private interface in a bound.
+- Runtime polymorphism is opt-in through `dyn* Interface` (6.6) or an explicit manual vtable
   struct (6.1).
 
 ### 6.6 Dynamic interface values
 
-`dyn Interface` is an explicitly constructed, copyable wide value. It stores an erased `u8*`
+`dyn* Interface` is an explicitly constructed, copyable non-owning wide reference. It stores an erased `u8*`
 object pointer and one function pointer for each interface method. Converting a concrete pointer
-uses the postfix cast `ptr as dyn Interface`; no implicit conversion or allocation occurs.
+uses the postfix cast `ptr as dyn* Interface`; no implicit conversion or allocation occurs.
 
 ```hll
 interface Measurable {
@@ -532,7 +548,7 @@ interface Measurable {
 }
 
 r: Rect = Rect { .width = 6, .height = 7 }
-m: dyn Measurable = (&r) as dyn Measurable
+m: dyn* Measurable = (&r) as dyn* Measurable
 result: i32 = m.area()                 ; indirect call, result is 42
 ```
 
@@ -544,6 +560,11 @@ result: i32 = m.area()                 ; indirect call, result is 42
   another parameter or its return type makes that interface ineligible for `dyn` use.
 - Dynamic values may be copied, assigned, stored in aggregates, passed by pointer, and returned by
   value. The referenced object must remain alive; the dynamic value does not own or free it.
+- The `*` is part of the atomic dynamic-reference type rather than an extra indirection. A suffix
+  pointer, as in `dyn* Measurable*`, points to a slot holding the wide reference. Dynamic
+  references have no implicit null value; equality is not defined.
+- Omitting the marker is rejected with `dynamic interface references require a pointer marker;
+  write 'dyn* Interface'`.
 - Generic concrete types and cross-module interfaces are not supported for dynamic conversion.
 
 ## 7. Control flow, enums, and resource management
@@ -703,11 +724,12 @@ struct_decl    = "struct" identifier [ type_params ] "{" [ field_decl { "," fiel
                  [ "," ] ] "}";
 enum_decl      = "enum" identifier [ type_params ] "{" variant { "," variant } "}";
 variant        = identifier [ "(" type { "," type } ")" ];
-type_decl      = "type" identifier "=" type;
+type_decl      = "type" identifier [ type_params ] "=" type;
 const_decl     = "const" identifier "=" expression;
 field_decl     = identifier ":" type;
 type_params    = "<" type_param { "," type_param } ">";
-type_param     = identifier [ ":" identifier { "+" identifier } ]; (* functions only, 6.5 *)
+type_param     = identifier [ ":" qualified_name { "+" qualified_name } ];
+qualified_name = identifier { "." identifier };
 type           = primitive_type | identifier [ type_args ] | dyn_type | struct_def
                | function_pointer_type | array_type | slice_type | pointer_type;
 dyn_type       = "dyn" identifier;

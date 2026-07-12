@@ -215,7 +215,9 @@ impl HighLevelCompiler {
         // unresolved here and incorrectly contribute zero bytes to the layout.
         for declaration in &program.declarations {
             match &declaration.decl {
-                DeclNode::Type { name, ty, generics } if generics.is_empty() => {
+                DeclNode::Type {
+                    name, ty, generics, ..
+                } if generics.is_empty() => {
                     let lowered = self.lower_type(ty);
                     self.context.types.register_type(name.clone(), lowered);
                 }
@@ -223,6 +225,7 @@ impl HighLevelCompiler {
                     name,
                     generics,
                     fields,
+                    ..
                 } if generics.is_empty() => {
                     let lowered = self.lower_type(&crate::ast::Type::Struct(fields.clone()));
                     self.context.types.register_type(name.clone(), lowered);
@@ -238,6 +241,7 @@ impl HighLevelCompiler {
                 name,
                 generics,
                 variants,
+                ..
             } = &declaration.decl
                 && generics.is_empty()
             {

@@ -80,7 +80,12 @@ impl<'a> Parser<'a> {
             if matches!(self.peek(), Some(Token::Impl)) {
                 // `impl Type { ... }` desugars in place to flat `Type_method`
                 // functions, so no later stage needs to know about methods.
-                declarations.extend(self.parse_impl_block()?);
+                declarations.extend(self.parse_impl_block(false)?);
+            } else if matches!(self.peek(), Some(Token::Export))
+                && matches!(self.peek_n(1), Some(Token::Impl))
+            {
+                self.advance();
+                declarations.extend(self.parse_impl_block(true)?);
             } else if self.is_declaration_start() {
                 declarations.push(self.parse_declaration()?);
             } else {
@@ -124,7 +129,7 @@ impl<'a> Parser<'a> {
             Some(Token::Type) => {
                 self.advance();
                 let name = self.expect_ident()?;
-                let generics = self.parse_generic_params()?;
+                let (generics, bounds) = self.parse_generic_params_with_bounds()?;
                 self.expect_assign()?;
                 let ty = self.parse_type()?;
                 if matches!(ty, Type::Struct(_)) {
@@ -132,7 +137,12 @@ impl<'a> Parser<'a> {
                         "record declarations use `struct Name { ... }`; `type` is only for aliases",
                     ));
                 }
-                DeclNode::Type { name, generics, ty }
+                DeclNode::Type {
+                    name,
+                    generics,
+                    bounds,
+                    ty,
+                }
             }
             Some(Token::Struct) => {
                 self.advance();
@@ -383,7 +393,7 @@ impl<'a> Parser<'a> {
 
     fn parse_struct_decl(&mut self) -> Result<DeclNode, ParserError> {
         let name = self.expect_ident()?;
-        let generics = self.parse_generic_params()?;
+        let (generics, bounds) = self.parse_generic_params_with_bounds()?;
         self.expect_lbrace()?;
         let mut fields = Vec::new();
         self.consume_terminators();
@@ -411,13 +421,14 @@ impl<'a> Parser<'a> {
         Ok(DeclNode::Struct {
             name,
             generics,
+            bounds,
             fields,
         })
     }
 
     fn parse_enum_decl(&mut self) -> Result<DeclNode, ParserError> {
         let name = self.expect_ident()?;
-        let generics = self.parse_generic_params()?;
+        let (generics, bounds) = self.parse_generic_params_with_bounds()?;
         self.expect_lbrace()?;
         let mut variants = Vec::new();
         self.consume_terminators();
@@ -458,6 +469,7 @@ impl<'a> Parser<'a> {
         Ok(DeclNode::Enum {
             name,
             generics,
+            bounds,
             variants,
         })
     }
@@ -545,9 +557,9 @@ impl<'a> Parser<'a> {
         Ok(DeclNode::Interface { name, methods })
     }
 
-    /// Parse `impl Type { method: (self: Type*, ...) -> R { ... } }`; each method
-    /// desugars to a free function `Type_method` (static dispatch, explicit self).
-    fn parse_impl_block(&mut self) -> Result<Vec<Declaration>, ParserError> {
+    /// Parse an impl block; receiver methods and associated functions both
+    /// desugar to flat `Type_name` functions.
+    fn parse_impl_block(&mut self, exported: bool) -> Result<Vec<Declaration>, ParserError> {
         self.advance(); // `impl`
         let type_name = self.expect_ident()?;
         self.expect_lbrace()?;
@@ -558,6 +570,7 @@ impl<'a> Parser<'a> {
             let DeclNode::Function {
                 name,
                 generics,
+                bounds,
                 params,
                 return_type,
                 body,
@@ -567,33 +580,33 @@ impl<'a> Parser<'a> {
                 unreachable!("parse_function_decl always returns a Function");
             };
 
-            let Some(receiver) = params.first() else {
-                return Err(self.error("impl method must take `self` as its first parameter"));
-            };
-            if receiver.name != "self" {
-                return Err(self.error("impl method's first parameter must be named `self`"));
-            }
-            // v1 uses a pointer receiver, matching the manual-vtable idiom.
-            let receiver_ok = matches!(
-                &receiver.ty,
-                Type::Pointer(inner) if matches!(inner.as_ref(), Type::Named { name, .. } if name == &type_name)
-            );
-            if !receiver_ok {
-                return Err(self.error(&format!("impl method `self` must be `{type_name}*`")));
+            if let Some(receiver) = params.first().filter(|param| param.name == "self") {
+                let receiver_ok = matches!(
+                    &receiver.ty,
+                    Type::Named { name, .. } if name == &type_name
+                ) || matches!(
+                    &receiver.ty,
+                    Type::Pointer(inner) if matches!(inner.as_ref(), Type::Named { name, .. } if name == &type_name)
+                );
+                if !receiver_ok {
+                    return Err(self.error(&format!(
+                        "impl method `self` must be `{type_name}` or `{type_name}*`"
+                    )));
+                }
             }
 
             methods.push(Declaration {
                 decl: DeclNode::Function {
                     name: format!("{type_name}_{name}"),
                     generics,
-                    bounds: Vec::new(),
+                    bounds,
                     params,
                     return_type,
                     body,
                     is_extern: false,
                     is_import_interface: false,
                 },
-                exported: false,
+                exported,
             });
             self.consume_terminators();
         }
@@ -1133,6 +1146,24 @@ impl<'a> Parser<'a> {
                 // indirect call through a function-pointer value.
                 let name = match expr {
                     Expression::Primary(PrimaryExpr::Identifier(name)) => name,
+                    Expression::Primary(PrimaryExpr::FieldAccess { expr: base, field }) if matches!(base.as_ref(), Expression::Primary(PrimaryExpr::Identifier(name)) if self.type_names.contains(name)) =>
+                    {
+                        if type_arguments.is_some() {
+                            return Err(self.error(
+                                "type arguments on associated function calls are not supported",
+                            ));
+                        }
+                        let Expression::Primary(PrimaryExpr::Identifier(type_name)) = *base else {
+                            unreachable!();
+                        };
+                        let arguments = self.parse_argument_list_after_open_paren()?;
+                        expr = Expression::Primary(PrimaryExpr::FunctionCall {
+                            name: format!("{type_name}_{field}"),
+                            type_arguments: Vec::new(),
+                            arguments,
+                        });
+                        continue;
+                    }
                     callee => {
                         if type_arguments.is_some() {
                             return Err(
@@ -1279,14 +1310,25 @@ impl<'a> Parser<'a> {
                 self.advance();
                 Ok(Type::Primitive("bool".into()))
             }
-            Some(Token::Fn) => self.parse_function_pointer_type(),
+            Some(Token::Fn) => Err(self.error(
+                "legacy function-pointer syntax is not supported; write `(T, U) -> R` instead of `fn(T, U) -> R`",
+            )),
             Some(Token::Dyn) => {
-                // `dyn I` is carried as the marker name "dyn I" until the dyn
+                // `dyn* I` is carried as a marker until the dyn
                 // lowering pass rewrites it to the synthesized `I__dyn` struct.
                 self.advance();
-                let interface = self.expect_ident()?;
+                if !self.match_star() {
+                    return Err(self.error(
+                        "dynamic interface references require a pointer marker; write 'dyn* Interface'",
+                    ));
+                }
+                let mut interface = self.expect_ident()?;
+                while self.match_dot() {
+                    interface.push('.');
+                    interface.push_str(&self.expect_ident()?);
+                }
                 Ok(Type::Named {
-                    name: format!("dyn {interface}"),
+                    name: format!("dyn* {interface}"),
                     args: Vec::new(),
                 })
             }
@@ -1349,14 +1391,13 @@ impl<'a> Parser<'a> {
                 Ok(Type::Named { name, args })
             }
             Some(Token::LBrace) => self.parse_struct_type(),
-            Some(Token::LParen) => self.parse_parenthesized_type(),
+            Some(Token::LParen) => self.parse_function_pointer_type(),
             Some(tok) => Err(self.error_with_token("expected type", tok)),
             None => Err(self.error("unexpected end of input while parsing type")),
         }
     }
 
     fn parse_function_pointer_type(&mut self) -> Result<Type, ParserError> {
-        self.advance();
         self.expect_lparen()?;
         let mut params = Vec::new();
         self.consume_terminators();
@@ -1380,7 +1421,7 @@ impl<'a> Parser<'a> {
             if matches!(self.peek(), Some(Token::LParen))
                 && matches!(self.peek_n(1), Some(Token::RParen))
             {
-                return Err(self.error("void function pointer types omit `->`; use `fn(...)`"));
+                return Err(self.error("void function pointer types omit `->`; use `(...)`"));
             }
             Some(Box::new(self.parse_type()?))
         } else {
@@ -1430,26 +1471,6 @@ impl<'a> Parser<'a> {
         Ok(Type::Struct(fields))
     }
 
-    fn parse_parenthesized_type(&mut self) -> Result<Type, ParserError> {
-        self.expect_lparen()?;
-        if self.match_rparen() {
-            return Ok(Type::Primitive("void".to_owned()));
-        }
-
-        Err(self
-            .error("parenthesized types are not supported; use inline struct types with `{ ... }`"))
-    }
-
-    fn parse_generic_params(&mut self) -> Result<Vec<String>, ParserError> {
-        let (params, bounds) = self.parse_generic_params_with_bounds()?;
-        if let Some((param, interface)) = bounds.first() {
-            return Err(self.error(&format!(
-                "generic bounds (`{param}: {interface}`) are only supported on functions"
-            )));
-        }
-        Ok(params)
-    }
-
     // `<T, U: Writer + Debug>`: each parameter may carry interface bounds. Bounds are
     // returned as `(param, interface)` pairs and checked at specialization time.
     fn parse_generic_params_with_bounds(&mut self) -> Result<GenericParams, ParserError> {
@@ -1466,10 +1487,24 @@ impl<'a> Parser<'a> {
         if !should_close {
             loop {
                 let param = self.expect_ident()?;
+                if params.contains(&param) {
+                    return Err(self.error(&format!("duplicate generic parameter `{param}`")));
+                }
                 if matches!(self.peek(), Some(Token::Colon)) {
                     self.advance();
+                    let mut seen = std::collections::HashSet::new();
                     loop {
-                        bounds.push((param.clone(), self.expect_ident()?));
+                        let mut interface = self.expect_ident()?;
+                        while self.match_dot() {
+                            interface.push('.');
+                            interface.push_str(&self.expect_ident()?);
+                        }
+                        if !seen.insert(interface.clone()) {
+                            return Err(
+                                self.error(&format!("duplicate bound `{param}: {interface}`"))
+                            );
+                        }
+                        bounds.push((param.clone(), interface));
                         if !self.match_plus() {
                             break;
                         }
@@ -3077,7 +3112,9 @@ mod tests {
         let program = parser.parse_program().unwrap();
 
         match &program.declarations[0].decl {
-            DeclNode::Type { name, generics, ty } => {
+            DeclNode::Type {
+                name, generics, ty, ..
+            } => {
                 assert_eq!(name, "Vector");
                 assert_eq!(generics, &vec!["T".to_string()]);
                 assert!(
@@ -3114,7 +3151,6 @@ mod tests {
     #[test]
     fn parses_function_pointer_type() {
         let mut parser = Parser::new(vec![
-            Token::Fn,
             Token::LParen,
             Token::I32,
             Token::Comma,
@@ -3135,6 +3171,26 @@ mod tests {
                 ],
                 return_type: Some(Box::new(Type::Primitive("i32".to_owned()))),
             }
+        );
+    }
+
+    #[test]
+    fn parses_dynamic_reference_and_rejects_missing_marker() {
+        let mut parser = Parser::new(tokens_of("dyn* geometry.Measurable*"));
+        assert_eq!(
+            parser.parse_type().unwrap(),
+            Type::Pointer(Box::new(Type::Named {
+                name: "dyn* geometry.Measurable".to_owned(),
+                args: Vec::new(),
+            }))
+        );
+
+        let mut legacy = Parser::new(tokens_of("dyn Measurable"));
+        let error = legacy.parse_type().expect_err("legacy spelling must fail");
+        assert!(
+            error
+                .to_string()
+                .contains("dynamic interface references require a pointer marker")
         );
     }
 
@@ -3176,6 +3232,7 @@ mod tests {
                 name,
                 generics,
                 variants,
+                ..
             } => {
                 assert_eq!(name, "Shape");
                 assert!(generics.is_empty());
@@ -3199,6 +3256,7 @@ mod tests {
                 name,
                 generics,
                 variants,
+                ..
             } => {
                 assert_eq!(name, "Option");
                 assert_eq!(generics, &vec!["T".to_string()]);
@@ -3206,6 +3264,81 @@ mod tests {
             }
             other => panic!("expected enum, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn parses_bounds_on_all_generic_declaration_kinds() {
+        let src = r#"
+struct Pair<T: First + Second, U> { first: T, second: U }
+enum Maybe<T: First> { Value(T), Missing }
+type Callback<T: Second> = (T*) -> i32
+"#;
+        let mut parser = Parser::new(tokens_of(src));
+        let program = parser.parse_program().unwrap();
+        let expected = vec![("T".to_owned(), "First".to_owned())];
+        match &program.declarations[0].decl {
+            DeclNode::Struct {
+                generics, bounds, ..
+            } => {
+                assert_eq!(generics, &["T", "U"]);
+                assert_eq!(
+                    bounds,
+                    &[
+                        ("T".to_owned(), "First".to_owned()),
+                        ("T".to_owned(), "Second".to_owned())
+                    ]
+                );
+            }
+            other => panic!("expected struct, got {other:?}"),
+        }
+        match &program.declarations[1].decl {
+            DeclNode::Enum { bounds, .. } => assert_eq!(bounds, &expected),
+            other => panic!("expected enum, got {other:?}"),
+        }
+        match &program.declarations[2].decl {
+            DeclNode::Type { bounds, .. } => {
+                assert_eq!(bounds, &[("T".to_owned(), "Second".to_owned())]);
+            }
+            other => panic!("expected alias, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_duplicate_generic_parameters_and_bounds() {
+        for (source, expected) in [
+            (
+                "struct Pair<T, T> { value: T }",
+                "duplicate generic parameter `T`",
+            ),
+            (
+                "enum Maybe<T: First + First> { Missing }",
+                "duplicate bound `T: First`",
+            ),
+        ] {
+            let mut parser = Parser::new(tokens_of(source));
+            let error = parser
+                .parse_program()
+                .expect_err("declaration must be rejected");
+            assert!(
+                error.to_string().contains(expected),
+                "unexpected error: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn parses_qualified_interface_bounds() {
+        let mut parser = Parser::new(tokens_of(
+            "struct Holder<T: geometry.Measurable> { value: T }",
+        ));
+        let program = parser.parse_program().unwrap();
+        let DeclNode::Struct { bounds, .. } = &program.declarations[0].decl else {
+            panic!("expected struct");
+        };
+        assert_eq!(
+            bounds,
+            &[("T".to_owned(), "geometry.Measurable".to_owned())]
+        );
     }
 
     #[test]

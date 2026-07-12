@@ -5,8 +5,8 @@ console := import("console")
 
 mathlib := import("./modules/mathlib.hll")
 
-type BinaryOp = fn(i32, i32) -> i32
-type UnaryOp = fn(i32) -> i32
+type BinaryOp = (i32, i32) -> i32
+type UnaryOp = (i32) -> i32
 
 add: (a: i32, b: i32) -> i32 {
     return a + b
@@ -39,7 +39,7 @@ struct Shape {
     height: i32,
 }
 
-type ShapeMethod = fn(Shape*) -> i32
+type ShapeMethod = (Shape*) -> i32
 
 struct ShapeVTable {
     area: ShapeMethod,
@@ -72,11 +72,17 @@ shape_perimeter: (o: ShapeObj*) -> i32 {
 ; Static method sugar: `impl Type { ... }` declares pointer-receiver methods.
 ; `r.area()` is sugar for the free function `Shape_area(&r)`, static dispatch.
 impl Shape {
+    make: (width: i32, height: i32) -> Shape {
+        return Shape { .width = width, .height = height }
+    }
     area: (self: Shape*) -> i32 {
         return self.width * self.height
     }
     scaled_area: (self: Shape*, k: i32) -> i32 {
         return self.area() * k
+    }
+    perimeter_value: (self: Shape) -> i32 {
+        return 2 * (self.width + self.height)
     }
 }
 
@@ -117,7 +123,7 @@ scaled_area: <T: Measurable + Scalable>(v: T*, k: i32) -> i32 {
 ; --- dyn: runtime polymorphism over an interface ---
 ; `dyn Measurable` is a wide pointer packing the object with its methods;
 ; `(&x) as dyn Measurable` converts explicitly, and calls dispatch at runtime.
-sum_areas: (shapes: dyn Measurable*, count: i32) -> i32 {
+sum_areas: (shapes: dyn* Measurable*, count: i32) -> i32 {
     sum := 0
     for i in 0..count {
         sum += shapes[i].area()
@@ -210,9 +216,11 @@ main: () -> i32 {
     ; Qualified access to an imported module: exported const and functions.
     if mathlib.triple(14) != 42 { return 12 }
     if mathlib.inc(mathlib.BIAS) != 41 { return 13 }
+    offset: mathlib.Offset = { .value = 2 }
+    if offset.apply(40) != 42 { return 29 }
 
     ; Manual vtable: dispatch through an object's data + vtable pointers.
-    box: Shape = Shape { .width = 6, .height = 7 }
+    box: Shape = Shape.make(6, 7)
     rect_vt: ShapeVTable = ShapeVTable { .area = rect_area, .perimeter = rect_perimeter }
     obj: ShapeObj = ShapeObj { .data = &box, .vtable = &rect_vt }
     if shape_area(&obj) != 42 { return 14 }
@@ -221,6 +229,7 @@ main: () -> i32 {
     ; Static method sugar: call methods on a value with `recv.method(args)`.
     if box.area() != 42 { return 16 }
     if box.scaled_area(3) != 126 { return 17 }
+    if box.perimeter_value() != 26 { return 28 }
 
     ; Interfaces: the same bounded generic runs at two concrete types.
     disc: Disc = Disc { .radius = 3 }
@@ -229,7 +238,7 @@ main: () -> i32 {
     if scaled_area<Disc>(&disc, 2) != 54 { return 27 }
 
     ; dyn: one heterogeneous array, each element dispatching to its own type.
-    mixed: dyn Measurable[2] = [(&box) as dyn Measurable, (&disc) as dyn Measurable]
+    mixed: dyn* Measurable[2] = [(&box) as dyn* Measurable, (&disc) as dyn* Measurable]
     if mixed[1].area() != 27 { return 25 }
     if sum_areas(&mixed[0], 2) != 69 { return 26 }
 

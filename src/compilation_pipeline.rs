@@ -516,6 +516,13 @@ impl CompilationPipeline {
                             format!("failed to read exports of \"{path}\": {msg}"),
                         )]
                     })?;
+                let namespaced = hll_to_ir::imports::collect_exported_interfaces(&resolved.source)
+                    .map_err(|msg| {
+                        vec![Diagnostic::new(
+                            DiagnosticLevel::Error,
+                            format!("failed to read interfaces of \"{path}\": {msg}"),
+                        )]
+                    })?;
                 // Only modules the closure itself compiles are mangled. Stdlib modules are
                 // precompiled flat and skipped by the closure, so importing one resolves flat.
                 let mangle_this = self.mangle_modules && !resolved.is_stdlib;
@@ -562,6 +569,7 @@ impl CompilationPipeline {
                         member_aliases,
                         exports,
                         mangled,
+                        namespaced,
                     },
                 );
             }
@@ -1910,6 +1918,7 @@ private_helper: () -> i32 { return 99 }
 
         let mut pipeline = CompilationPipeline::new();
         pipeline.set_write_artifacts(false);
+        pipeline.set_module_mangling(true);
         pipeline.set_module_resolver(Some(Box::new(move |name: &str| {
             (name == "provider").then(|| provider.to_owned())
         })));
@@ -1939,6 +1948,136 @@ main: () -> i32 {
         assert!(ir.contains("helper"), "exported fn not referenced: {ir}");
         // The private helper is not part of the interface and must not leak in.
         assert!(!ir.contains("private_helper"), "private decl leaked: {ir}");
+    }
+
+    #[test]
+    fn imported_exported_impl_resolves_method_call() {
+        let provider = r#"
+export struct Rect { width: i32, height: i32 }
+export impl Rect {
+    area: (self: Rect*) -> i32 { return self.width * self.height }
+}
+"#;
+        let mut pipeline = CompilationPipeline::new();
+        pipeline.set_write_artifacts(false);
+        pipeline.set_module_resolver(Some(Box::new(move |name: &str| {
+            (name == "geometry").then(|| provider.to_owned())
+        })));
+
+        let importer = r#"
+geometry := import("geometry")
+main: () -> i32 {
+    rect: geometry.Rect = { .width = 6, .height = 7 }
+    return rect.area()
+}
+"#;
+        let result = pipeline
+            .compile(importer)
+            .expect("exported impl should resolve in importer");
+        let ir = result.ir_program.to_string();
+        assert!(
+            ir.contains("Rect_area"),
+            "missing imported method call: {ir}"
+        );
+    }
+
+    #[test]
+    fn imported_interface_can_bound_a_local_generic() {
+        let provider = r#"
+export interface Measurable {
+    area: (self: Self*) -> i32
+}
+export struct Rect { width: i32, height: i32 }
+export impl Rect {
+    area: (self: Rect*) -> i32 { return self.width * self.height }
+}
+"#;
+        let mut pipeline = CompilationPipeline::new();
+        pipeline.set_write_artifacts(false);
+        pipeline.set_module_resolver(Some(Box::new(move |name: &str| {
+            (name == "geometry").then(|| provider.to_owned())
+        })));
+
+        let importer = r#"
+geometry := import("geometry")
+measure: <T: geometry.Measurable>(value: T*) -> i32 { return value.area() }
+main: () -> i32 {
+    rect: geometry.Rect = { .width = 6, .height = 7 }
+    return measure<geometry.Rect>(&rect)
+}
+"#;
+        pipeline
+            .compile_program_closure("main", importer)
+            .expect("qualified imported interface bound should compile");
+    }
+
+    #[test]
+    fn imported_bounded_struct_preserves_its_interface_contract() {
+        let provider = r#"
+export interface Measurable {
+    area: (self: Self*) -> i32
+}
+export struct Holder<T: Measurable> { value: T }
+"#;
+        let mut pipeline = CompilationPipeline::new();
+        pipeline.set_write_artifacts(false);
+        pipeline.set_module_resolver(Some(Box::new(move |name: &str| {
+            (name == "geometry").then(|| provider.to_owned())
+        })));
+
+        let importer = r#"
+geometry := import("geometry")
+struct Point { x: i32 }
+main: () -> i32 {
+    holder: geometry.Holder<Point> = { .value = Point { .x = 1 } }
+    return holder.value.x
+}
+"#;
+        let errors = pipeline
+            .compile(importer)
+            .expect_err("imported aggregate bound must reject a nonconforming type");
+        assert!(
+            errors.to_string().contains("does not implement interface"),
+            "unexpected diagnostics: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn same_named_interfaces_from_two_modules_remain_distinct() {
+        let first = r#"
+export interface Capability { first: (self: Self*) -> i32 }
+"#;
+        let second = r#"
+export interface Capability { second: (self: Self*) -> i32 }
+"#;
+        let mut pipeline = CompilationPipeline::new();
+        pipeline.set_write_artifacts(false);
+        pipeline.set_module_mangling(true);
+        pipeline.set_module_resolver(Some(Box::new(move |name: &str| match name {
+            "first" => Some(first.to_owned()),
+            "second" => Some(second.to_owned()),
+            _ => None,
+        })));
+
+        let importer = r#"
+first := import("first")
+second := import("second")
+struct Both { value: i32 }
+impl Both {
+    first: (self: Both*) -> i32 { return self.value }
+    second: (self: Both*) -> i32 { return self.value }
+}
+use_both: <T: first.Capability + second.Capability>(value: T*) -> i32 {
+    return value.first() + value.second()
+}
+main: () -> i32 {
+    value: Both = Both { .value = 21 }
+    return use_both<Both>(&value)
+}
+"#;
+        pipeline
+            .compile_program_closure("main", importer)
+            .expect("same-named imported interfaces should not collide");
     }
 
     #[test]

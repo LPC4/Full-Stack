@@ -289,7 +289,16 @@ impl HighLevelCompiler {
                         && let Some(type_name) = self.receiver_struct_name(&recv_addr.ty)
                     {
                         let method = format!("{type_name}_{field}");
-                        if self.function_param_types.contains_key(&method) {
+                        let imported_suffix = format!("__{method}");
+                        let resolved_method = if self.function_param_types.contains_key(&method) {
+                            Some(method)
+                        } else {
+                            self.function_param_types
+                                .keys()
+                                .find(|name| name.ends_with(&imported_suffix))
+                                .cloned()
+                        };
+                        if let Some(method) = resolved_method {
                             return self.lower_method_call(&method, recv_addr, arguments);
                         }
                     }
@@ -617,6 +626,21 @@ impl HighLevelCompiler {
                 offset: None,
             });
             ptr_ty = *inner;
+            self_val = IrValue::Register(dest);
+        }
+
+        let self_param = param_types.first()?;
+        if !matches!(self_param, IrType::Pointer(_)) {
+            let IrValue::Register(ptr) = self_val else {
+                return None;
+            };
+            let dest = self.new_temp();
+            self.push_instruction(IrInstruction::Load {
+                dest: dest.clone(),
+                ty: self_param.clone(),
+                ptr,
+                offset: None,
+            });
             self_val = IrValue::Register(dest);
         }
 

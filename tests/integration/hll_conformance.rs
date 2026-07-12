@@ -1451,34 +1451,34 @@ impl Disc {
     area: (self: Disc*) -> i32 { return 3 * self.radius * self.radius }
     scaled: (self: Disc*, k: i32) -> i32 { return self.area() * k }
 }
-sum_areas: (shapes: dyn Measurable*, count: i32) -> i32 {
+sum_areas: (shapes: dyn* Measurable*, count: i32) -> i32 {
     sum := 0
     for i in 0..count {
         sum += shapes[i].area()
     }
     return sum
 }
-pick: (shapes: dyn Measurable*, index: i32) -> dyn Measurable {
+pick: (shapes: dyn* Measurable*, index: i32) -> dyn* Measurable {
     return shapes[index]
 }
 main: () -> i32 {
     r: Rect = Rect { .width = 6, .height = 7 }
     d: Disc = Disc { .radius = 3 }
 
-    m: dyn Measurable = (&r) as dyn Measurable
+    m: dyn* Measurable = (&r) as dyn* Measurable
     if m.area() != 42 { return 1 }
     if m.scaled(2) != 84 { return 2 }
 
-    m = (&d) as dyn Measurable
+    m = (&d) as dyn* Measurable
     if m.area() != 27 { return 3 }
     if m.scaled(3) != 81 { return 4 }
 
-    shapes: dyn Measurable[2] = [(&r) as dyn Measurable, (&d) as dyn Measurable]
+    shapes: dyn* Measurable[2] = [(&r) as dyn* Measurable, (&d) as dyn* Measurable]
     if sum_areas(&shapes[0], 2) != 69 { return 5 }
 
     ; The local needs its declared type: an inferred `:=` from a call keeps only
     ; the structural type, and method calls resolve by name (all impl types).
-    picked: dyn Measurable = pick(&shapes[0], 1)
+    picked: dyn* Measurable = pick(&shapes[0], 1)
     if picked.area() != 27 { return 6 }
 
     ; Mutating through the erased pointer is visible to later dispatch.
@@ -2342,6 +2342,50 @@ main: () -> i32 {
     return n
 }
 "#,
+    );
+}
+
+#[test]
+fn impl_associated_function_executes() {
+    assert_exit(
+        r#"
+struct Rect { width: i32, height: i32 }
+impl Rect {
+    make: (width: i32, height: i32) -> Rect {
+        return Rect { .width = width, .height = height }
+    }
+    area: (self: Rect*) -> i32 { return self.width * self.height }
+}
+main: () -> i32 {
+    r: Rect = Rect.make(6, 7)
+    return r.area()
+}
+"#,
+        42,
+    );
+}
+
+#[test]
+fn impl_by_value_receiver_is_a_copy() {
+    assert_exit(
+        r#"
+struct Counter { value: i32 }
+impl Counter {
+    take_and_increment: (self: Counter) -> i32 {
+        self.value += 1
+        return self.value
+    }
+}
+main: () -> i32 {
+    counter: Counter = Counter { .value = 41 }
+    if counter.take_and_increment() != 42 { return 1 }
+    if counter.value != 41 { return 2 }
+    pointer: Counter* = &counter
+    if pointer.take_and_increment() != 42 { return 3 }
+    return 0
+}
+"#,
+        0,
     );
 }
 

@@ -384,9 +384,9 @@ impl TypeContext {
                     .collect::<Vec<_>>()
                     .join(", ");
                 if matches!(return_type.as_ref(), IrType::Void) {
-                    format!("fn({params})")
+                    format!("({params})")
                 } else {
-                    format!("fn({params}) -> {}", self.get_type_name(return_type))
+                    format!("({params}) -> {}", self.get_type_name(return_type))
                 }
             }
             IrType::Array { element, len } => {

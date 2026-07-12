@@ -152,7 +152,9 @@ impl SemanticAnalyzer {
 
     fn register_declaration(&mut self, decl: &Declaration) {
         match &decl.decl {
-            DeclNode::Type { name, generics, ty } => {
+            DeclNode::Type {
+                name, generics, ty, ..
+            } => {
                 if !generics.is_empty() {
                     self.generic_type_defs
                         .insert(name.clone(), (generics.clone(), ty.clone()));
@@ -165,6 +167,7 @@ impl SemanticAnalyzer {
                 name,
                 generics,
                 fields,
+                ..
             } => {
                 let ty = Type::Struct(fields.clone());
                 if !generics.is_empty() {
@@ -179,6 +182,7 @@ impl SemanticAnalyzer {
                 name,
                 generics,
                 variants,
+                ..
             } => {
                 // Register the enum name as an aggregate so `s: EnumName` resolves;
                 // the tag is enough for type identity (payload layout is the lowerer's).
@@ -724,8 +728,37 @@ impl SemanticAnalyzer {
                     {
                         let recv_ty = self.infer_expression_type(expr)?;
                         let base = recv_ty.trim_start_matches('*').to_owned();
-                        let method = format!("{base}_{field}");
-                        if !self.type_has_field(&base, field)
+                        let local_method = format!("{base}_{field}");
+                        let imported_suffix = format!("__{local_method}");
+                        let method = if self.function_signatures.contains_key(&local_method) {
+                            Some(local_method)
+                        } else {
+                            self.function_signatures
+                                .keys()
+                                .find(|name| name.ends_with(&imported_suffix))
+                                .cloned()
+                        };
+                        let has_field = self.type_has_field(&base, field);
+                        if has_field && let Some(method) = method.as_ref() {
+                            let field_ty = self.infer_field_access_type(&base, field)?;
+                            let method_params = self
+                                .function_parameters
+                                .get(method)
+                                .cloned()
+                                .unwrap_or_default();
+                            let method_return = self
+                                .function_signatures
+                                .get(method)
+                                .cloned()
+                                .unwrap_or_else(|| "void".to_owned());
+                            self.error(format!(
+                                "ambiguous member call `{base}.{field}`: callable field `{field}: {field_ty}` and method `{method}({} argument(s)) -> {method_return}` both apply; rename one declaration",
+                                method_params.len().saturating_sub(1)
+                            ));
+                            return Err(());
+                        }
+                        if !has_field
+                            && let Some(method) = method
                             && let Some(return_ty) = self.function_signatures.get(&method).cloned()
                         {
                             let params = self
@@ -1850,7 +1883,7 @@ impl SemanticAnalyzer {
     /// Parse a type string back into an `IrType`
     fn parse_type_string(ty_str: &str) -> IrType {
         let trimmed = ty_str.trim();
-        if trimmed.starts_with("fn(")
+        if (trimmed.starts_with('(') || trimmed.starts_with("fn("))
             && let Some(fn_ty) = Self::parse_function_type_string(trimmed)
         {
             return fn_ty;
@@ -1901,7 +1934,9 @@ impl SemanticAnalyzer {
     }
 
     fn parse_function_type_string(ty_str: &str) -> Option<IrType> {
-        let rest = ty_str.strip_prefix("fn(")?;
+        let rest = ty_str
+            .strip_prefix('(')
+            .or_else(|| ty_str.strip_prefix("fn("))?;
         let mut depth = 0i32;
         let mut close = None;
         let mut prev = ' ';

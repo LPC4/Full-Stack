@@ -218,7 +218,7 @@ mod tests {
             .expect("showcase source"),
         )
         .expect("utf-8 showcase");
-        assert!(showcase.contains("dyn Measurable"));
+        assert!(showcase.contains("dyn* Measurable"));
     }
 
     #[test]

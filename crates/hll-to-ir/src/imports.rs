@@ -17,6 +17,7 @@ pub struct ModuleAlias {
     pub prefix: String,
     pub exports: HashSet<String>,
     pub mangled: HashSet<String>,
+    pub namespaced: HashSet<String>,
     pub member_aliases: HashMap<String, String>,
 }
 
@@ -89,6 +90,19 @@ pub fn collect_exported_link_symbols(source: &str) -> Result<HashSet<String>, St
                 is_extern: false,
                 ..
             } => Some(name.clone()),
+            _ => None,
+        })
+        .collect())
+}
+
+pub fn collect_exported_interfaces(source: &str) -> Result<HashSet<String>, String> {
+    let program = parse_module(source)?;
+    Ok(program
+        .declarations
+        .iter()
+        .filter(|decl| decl.exported)
+        .filter_map(|decl| match &decl.decl {
+            DeclNode::Interface { name, .. } => Some(name.clone()),
             _ => None,
         })
         .collect())
@@ -334,11 +348,13 @@ pub fn rewrite_qualified_access(
     for decl in &mut program.declarations {
         match &mut decl.decl {
             DeclNode::Function {
+                bounds,
                 params,
                 return_type,
                 body,
                 ..
             } => {
+                rewrite_bounds(bounds, aliases)?;
                 for param in params {
                     rewrite_type(&mut param.ty, aliases)?;
                 }
@@ -358,9 +374,18 @@ pub fn rewrite_qualified_access(
             DeclNode::InferredVariable { init, .. } | DeclNode::Const { init, .. } => {
                 rewrite_expr(init, aliases)?;
             }
-            DeclNode::Type { ty, .. } => rewrite_type(ty, aliases)?,
-            DeclNode::Struct { fields, .. } => rewrite_fields(fields, aliases)?,
-            DeclNode::Enum { variants, .. } => {
+            DeclNode::Type { bounds, ty, .. } => {
+                rewrite_bounds(bounds, aliases)?;
+                rewrite_type(ty, aliases)?;
+            }
+            DeclNode::Struct { bounds, fields, .. } => {
+                rewrite_bounds(bounds, aliases)?;
+                rewrite_fields(fields, aliases)?;
+            }
+            DeclNode::Enum {
+                bounds, variants, ..
+            } => {
+                rewrite_bounds(bounds, aliases)?;
                 for variant in variants {
                     for payload in &mut variant.payload {
                         rewrite_type(payload, aliases)?;
@@ -372,6 +397,20 @@ pub fn rewrite_qualified_access(
     }
     for stmt in &mut program.statements {
         rewrite_stmt(stmt, aliases)?;
+    }
+    Ok(())
+}
+
+fn rewrite_bounds(
+    bounds: &mut [(String, String)],
+    aliases: &HashMap<String, ModuleAlias>,
+) -> Result<(), String> {
+    for (_, interface) in bounds {
+        if let Some((base, member)) = interface.split_once('.')
+            && aliases.contains_key(base)
+        {
+            *interface = resolve_member(aliases, base, member)?;
+        }
     }
     Ok(())
 }
@@ -446,7 +485,7 @@ fn resolve_member(
                 .map(String::as_str)
                 .unwrap_or(field);
             if alias.exports.contains(export) {
-                if alias.mangled.contains(export) {
+                if alias.mangled.contains(export) || alias.namespaced.contains(export) {
                     Ok(mangled_name(&alias.prefix, export))
                 } else {
                     Ok(export.to_owned())
@@ -997,10 +1036,27 @@ pub fn extract_interface(source: &str) -> Result<String, String> {
 /// importer's mangled references resolve to the target module's mangled definitions.
 pub fn extract_interface_prefixed(source: &str, prefix: &str) -> Result<String, String> {
     let program = parse_module(source)?;
+    let exported_interfaces = program
+        .declarations
+        .iter()
+        .filter(|decl| decl.exported)
+        .filter_map(|decl| match &decl.decl {
+            DeclNode::Interface { name, .. } => Some(name.as_str()),
+            _ => None,
+        })
+        .collect::<HashSet<_>>();
     let mut out = String::new();
     for decl in &program.declarations {
         if !decl.exported {
             continue;
+        }
+        let bounds = declaration_bounds(&decl.decl);
+        if let Some((_, private)) = bounds.iter().find(|(_, interface)| {
+            !interface.contains('.') && !exported_interfaces.contains(interface.as_str())
+        }) {
+            return Err(format!(
+                "exported declaration exposes private interface `{private}` in its bounds"
+            ));
         }
         if let Some(rendered) = render_export(&decl.decl, prefix)? {
             out.push_str(&rendered);
@@ -1014,35 +1070,42 @@ pub fn extract_interface_prefixed(source: &str, prefix: &str) -> Result<String, 
 /// nothing an importer can use (e.g. a generic function, which cannot be `external`).
 fn render_export(decl: &DeclNode, prefix: &str) -> Result<Option<String>, String> {
     let rendered = match decl {
-        DeclNode::Type { name, generics, ty } => {
+        DeclNode::Type {
+            name,
+            generics,
+            bounds,
+            ty,
+        } => {
             format!(
                 "type {}{} = {}",
                 name,
-                render_generics(generics),
+                render_generics(generics, bounds, prefix),
                 render_type(ty)?
             )
         }
         DeclNode::Struct {
             name,
             generics,
+            bounds,
             fields,
         } => {
             format!(
                 "struct {}{} {{ {} }}",
                 name,
-                render_generics(generics),
+                render_generics(generics, bounds, prefix),
                 render_fields(fields)?
             )
         }
         DeclNode::Enum {
             name,
             generics,
+            bounds,
             variants,
         } => {
             format!(
                 "enum {}{} {{ {} }}",
                 name,
-                render_generics(generics),
+                render_generics(generics, bounds, prefix),
                 render_variants(variants)?
             )
         }
@@ -1087,20 +1150,59 @@ fn render_export(decl: &DeclNode, prefix: &str) -> Result<Option<String>, String
                 render_type(ty)?
             )
         }
-        // Interfaces are compile-time bound contracts with no link symbol; importers
-        // that need one must declare it locally (cross-module interfaces are future work).
-        DeclNode::InferredVariable { .. }
-        | DeclNode::ModuleImport { .. }
-        | DeclNode::Interface { .. } => return Ok(None),
+        DeclNode::Interface { name, methods } => {
+            let methods = methods
+                .iter()
+                .map(|method| {
+                    Ok(format!(
+                        "{}: ({}){}",
+                        method.name,
+                        render_params(&method.params)?,
+                        render_return(method.return_type.as_ref())?
+                    ))
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            format!(
+                "interface {} {{ {} }}",
+                mangled_name(prefix, name),
+                methods.join(", ")
+            )
+        }
+        DeclNode::InferredVariable { .. } | DeclNode::ModuleImport { .. } => return Ok(None),
     };
     Ok(Some(rendered))
 }
 
-fn render_generics(generics: &[String]) -> String {
+fn declaration_bounds(decl: &DeclNode) -> &[(String, String)] {
+    match decl {
+        DeclNode::Function { bounds, .. }
+        | DeclNode::Type { bounds, .. }
+        | DeclNode::Struct { bounds, .. }
+        | DeclNode::Enum { bounds, .. } => bounds,
+        _ => &[],
+    }
+}
+
+fn render_generics(generics: &[String], bounds: &[(String, String)], prefix: &str) -> String {
     if generics.is_empty() {
         String::new()
     } else {
-        format!("<{}>", generics.join(", "))
+        let rendered = generics
+            .iter()
+            .map(|generic| {
+                let interfaces = bounds
+                    .iter()
+                    .filter(|(param, _)| param == generic)
+                    .map(|(_, interface)| mangled_name(prefix, interface))
+                    .collect::<Vec<_>>();
+                if interfaces.is_empty() {
+                    generic.clone()
+                } else {
+                    format!("{generic}: {}", interfaces.join(" + "))
+                }
+            })
+            .collect::<Vec<_>>();
+        format!("<{}>", rendered.join(", "))
     }
 }
 
@@ -1164,9 +1266,9 @@ fn render_type(ty: &Type) -> Result<String, String> {
                 .collect::<Result<Vec<_>, _>>()?
                 .join(", ");
             if let Some(return_type) = return_type {
-                format!("fn({params}) -> {}", render_type(return_type)?)
+                format!("({params}) -> {}", render_type(return_type)?)
             } else {
-                format!("fn({params})")
+                format!("({params})")
             }
         }
         Type::Named { name, args } => {
@@ -1279,6 +1381,7 @@ mod tests {
                     ModuleAlias {
                         prefix: prefix.to_owned(),
                         mangled: exports.clone(),
+                        namespaced: HashSet::new(),
                         member_aliases: HashMap::new(),
                         exports,
                     },
@@ -1370,6 +1473,7 @@ main: () {
                 prefix: String::new(),
                 exports: HashSet::from(["klog_ok".to_owned()]),
                 mangled: HashSet::new(),
+                namespaced: HashSet::new(),
                 member_aliases: HashMap::from([("ok".to_owned(), "klog_ok".to_owned())]),
             },
         );
@@ -1551,6 +1655,35 @@ export count: i64 = 0
         assert!(interface.contains("external as__count: i64"));
         assert!(interface.contains("const TF_BYTES = 288"));
         assert!(interface.contains("struct Reloc {"));
+    }
+
+    #[test]
+    fn exported_interfaces_and_bounded_declarations_share_the_internal_prefix() {
+        let source = r#"
+export interface Measurable { area: (self: Self*) -> i32 }
+export struct Holder<T: Measurable> { value: T }
+"#;
+        let interface = extract_interface_prefixed(source, "geometry").unwrap();
+        assert!(
+            interface.contains("interface geometry__Measurable"),
+            "{interface}"
+        );
+        assert!(
+            interface.contains("struct Holder<T: geometry__Measurable>"),
+            "{interface}"
+        );
+        parse_module(&interface).expect("extracted interface must parse again");
+    }
+
+    #[test]
+    fn exported_bound_cannot_leak_a_private_interface() {
+        let source = r#"
+interface Private { inspect: (self: Self*) -> i32 }
+export struct Holder<T: Private> { value: T }
+"#;
+        let error = extract_interface_prefixed(source, "provider")
+            .expect_err("private interface leakage must be rejected");
+        assert!(error.contains("private interface `Private`"), "{error}");
     }
 
     #[test]

@@ -41,7 +41,9 @@ impl HighLevelCompiler {
                 }
                 Ok(())
             }
-            DeclNode::Type { name, ty, generics } => {
+            DeclNode::Type {
+                name, ty, generics, ..
+            } => {
                 if !generics.is_empty() {
                     // This is a generic type definition, store it for later specialization
                     self.generic_type_defs.insert(
@@ -101,6 +103,7 @@ impl HighLevelCompiler {
                 name,
                 generics,
                 fields,
+                ..
             } => {
                 let ty = Type::Struct(fields.clone());
                 if generics.is_empty() {

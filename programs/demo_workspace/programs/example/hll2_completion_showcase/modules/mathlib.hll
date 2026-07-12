@@ -13,6 +13,16 @@ export inc: (n: i32) -> i32 {
     return n + 1
 }
 
+export struct Offset {
+    value: i32,
+}
+
+export impl Offset {
+    apply: (self: Offset*, n: i32) -> i32 {
+        return n + self.value
+    }
+}
+
 private_seed: () -> i32 {
     return 7
 }

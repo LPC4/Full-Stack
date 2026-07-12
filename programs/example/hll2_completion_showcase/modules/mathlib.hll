@@ -1,8 +1,5 @@
 ; Example library module imported by the HLL2 showcase via `import("./modules/mathlib.hll")`.
 ; Exports are reached as `mathlib.add` / `mathlib.BIAS`; `private_seed` stays invisible.
-
-; Exports use names distinct from the importer's own, since exports currently share the
-; flat object symbol namespace (per-module mangling is a later module-system step).
 export const BIAS = 40
 
 export triple: (n: i32) -> i32 {
@@ -11,6 +8,25 @@ export triple: (n: i32) -> i32 {
 
 export inc: (n: i32) -> i32 {
     return n + 1
+}
+
+export struct Offset {
+    value: i32,
+}
+
+export interface Applicable {
+    apply: (self: Self*, n: i32) -> i32
+}
+
+; Exported generic declarations retain their public interface bounds.
+export struct BoundOffset<T: Applicable> {
+    item: T,
+}
+
+export impl Offset {
+    apply: (self: Offset*, n: i32) -> i32 {
+        return n + self.value
+    }
 }
 
 private_seed: () -> i32 {

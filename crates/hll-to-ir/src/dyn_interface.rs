@@ -1,5 +1,5 @@
-// AST-only lowering of `dyn I` (spec 6.6): types become the synthesized wide
-// pointer `I__dyn`; `expr as dyn I` packs the erased data pointer with thunks.
+// AST-only lowering of `dyn* I` (spec 6.6): types become the synthesized wide
+// reference `I__dyn`; `expr as dyn* I` packs the erased data pointer with thunks.
 
 use crate::ast::{
     Block, DeclNode, Declaration, Expression, FieldDecl, FieldInit, ForIter, InterfaceMethod,
@@ -20,7 +20,7 @@ pub(crate) fn lower_dyn_interfaces(
         .keys()
         .map(|name| {
             (
-                format!("dyn {name}"),
+                format!("dyn* {name}"),
                 Type::Named {
                     name: dyn_struct_name(name),
                     args: Vec::new(),
@@ -244,6 +244,7 @@ fn dyn_struct_declaration(interface: &str, methods: &[InterfaceMethod]) -> Decla
         decl: DeclNode::Struct {
             name: dyn_struct_name(interface),
             generics: Vec::new(),
+            bounds: Vec::new(),
             fields,
         },
         exported: false,

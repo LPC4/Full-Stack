@@ -68,11 +68,13 @@ pub enum DeclNode {
     Type {
         name: String,
         generics: Vec<String>,
+        bounds: Vec<(String, String)>,
         ty: Type,
     },
     Struct {
         name: String,
         generics: Vec<String>,
+        bounds: Vec<(String, String)>,
         fields: Vec<FieldDecl>,
     },
     // A tagged union. Lowers to `{ tag: i32, payload }` where `payload` is
@@ -80,6 +82,7 @@ pub enum DeclNode {
     Enum {
         name: String,
         generics: Vec<String>,
+        bounds: Vec<(String, String)>,
         variants: Vec<Variant>,
     },
     Const {

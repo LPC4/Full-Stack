@@ -5,6 +5,14 @@ use crate::ast::{
 use std::collections::{HashMap, HashSet, VecDeque};
 
 pub(crate) type Substitutions = HashMap<String, Type>;
+struct DeclarationBoundTemplate {
+    kind: &'static str,
+    generics: Vec<String>,
+    bounds: Vec<(String, String)>,
+    alias_target: Option<Type>,
+}
+
+type DeclarationBoundTemplates = HashMap<String, DeclarationBoundTemplate>;
 
 // Upper bound on distinct function specializations; exceeding it means a generic
 // recurses at an unbounded type sequence. Real programs stay far below this.
@@ -59,17 +67,49 @@ pub(crate) fn monomorphize_program(program: &Program) -> Result<Program, String>
     // A bound naming a missing interface is an error even if the generic is
     // never instantiated; catch the typo at its declaration.
     for declaration in &source.declarations {
-        if let DeclNode::Function { name, bounds, .. } = &declaration.decl {
-            for (param, interface_name) in bounds {
-                if !interfaces.contains_key(interface_name) {
-                    return Err(format!(
-                        "generic function `{name}`: bound `{param}: {interface_name}` \
-                         names an unknown interface"
-                    ));
-                }
+        let (kind, name, generics, bounds) = match &declaration.decl {
+            DeclNode::Function {
+                name,
+                generics,
+                bounds,
+                ..
+            } => ("function", name, generics, bounds),
+            DeclNode::Struct {
+                name,
+                generics,
+                bounds,
+                ..
+            } => ("struct", name, generics, bounds),
+            DeclNode::Enum {
+                name,
+                generics,
+                bounds,
+                ..
+            } => ("enum", name, generics, bounds),
+            DeclNode::Type {
+                name,
+                generics,
+                bounds,
+                ..
+            } => ("type alias", name, generics, bounds),
+            _ => continue,
+        };
+        for (param, interface_name) in bounds {
+            if !generics.contains(param) {
+                return Err(format!(
+                    "generic {kind} `{name}`: bound `{param}: {interface_name}` names an undeclared parameter"
+                ));
+            }
+            if !interfaces.contains_key(interface_name) {
+                return Err(format!(
+                    "generic {kind} `{name}`: bound `{param}: {interface_name}` \
+                     names an unknown interface"
+                ));
             }
         }
     }
+
+    validate_declaration_bound_instantiations(&source, &source, &interfaces, &concrete_signatures)?;
 
     let mut queue = VecDeque::new();
     let mut queued = HashSet::new();
@@ -162,10 +202,519 @@ pub(crate) fn monomorphize_program(program: &Program) -> Result<Program, String>
         declarations,
         statements,
     };
+    validate_declaration_bound_instantiations(
+        &source,
+        &program,
+        &interfaces,
+        &concrete_signatures,
+    )?;
     // Runs on the fully concrete program so conversion sites see final types.
     crate::dyn_interface::lower_dyn_interfaces(&mut program, &interfaces)?;
     specialize_generic_enums(&mut program)?;
     Ok(program)
+}
+
+fn validate_declaration_bound_instantiations(
+    template_program: &Program,
+    usage_program: &Program,
+    interfaces: &HashMap<String, Vec<InterfaceMethod>>,
+    concrete_signatures: &HashMap<String, (Vec<Type>, Option<Type>)>,
+) -> Result<(), String> {
+    let templates = template_program
+        .declarations
+        .iter()
+        .filter_map(|decl| match &decl.decl {
+            DeclNode::Struct {
+                name,
+                generics,
+                bounds,
+                ..
+            } => Some((
+                name.clone(),
+                DeclarationBoundTemplate {
+                    kind: "struct",
+                    generics: generics.clone(),
+                    bounds: bounds.clone(),
+                    alias_target: None,
+                },
+            )),
+            DeclNode::Enum {
+                name,
+                generics,
+                bounds,
+                ..
+            } => Some((
+                name.clone(),
+                DeclarationBoundTemplate {
+                    kind: "enum",
+                    generics: generics.clone(),
+                    bounds: bounds.clone(),
+                    alias_target: None,
+                },
+            )),
+            DeclNode::Type {
+                name,
+                generics,
+                bounds,
+                ty,
+            } => Some((
+                name.clone(),
+                DeclarationBoundTemplate {
+                    kind: "type alias",
+                    generics: generics.clone(),
+                    bounds: bounds.clone(),
+                    alias_target: Some(ty.clone()),
+                },
+            )),
+            _ => None,
+        })
+        .collect::<HashMap<_, _>>();
+    validate_alias_cycles(&templates)?;
+
+    fn check_type(
+        ty: &Type,
+        generic_scope: &HashSet<String>,
+        templates: &DeclarationBoundTemplates,
+        interfaces: &HashMap<String, Vec<InterfaceMethod>>,
+        signatures: &HashMap<String, (Vec<Type>, Option<Type>)>,
+    ) -> Result<(), String> {
+        match ty {
+            Type::Pointer(inner) | Type::Array(_, inner) | Type::Slice(inner) => {
+                check_type(inner, generic_scope, templates, interfaces, signatures)?;
+            }
+            Type::Function {
+                params,
+                return_type,
+            } => {
+                for param in params {
+                    check_type(param, generic_scope, templates, interfaces, signatures)?;
+                }
+                if let Some(ret) = return_type {
+                    check_type(ret, generic_scope, templates, interfaces, signatures)?;
+                }
+            }
+            Type::Struct(fields) => {
+                for field in fields {
+                    check_type(&field.ty, generic_scope, templates, interfaces, signatures)?;
+                }
+            }
+            Type::Named { name, args } => {
+                for arg in args {
+                    check_type(arg, generic_scope, templates, interfaces, signatures)?;
+                }
+                if !type_contains_generic(ty, generic_scope)
+                    && let Some(template) = templates.get(name)
+                {
+                    if template.generics.len() != args.len() {
+                        return Err(format!(
+                            "generic {} `{name}` expects {} type arguments, got {}",
+                            template.kind,
+                            template.generics.len(),
+                            args.len()
+                        ));
+                    }
+                    let substitutions = template
+                        .generics
+                        .iter()
+                        .cloned()
+                        .zip(args.iter().cloned())
+                        .collect();
+                    check_bounds_for_owner(
+                        template.kind,
+                        name,
+                        &template.bounds,
+                        &substitutions,
+                        interfaces,
+                        signatures,
+                    )?;
+                    if let Some(target) = &template.alias_target {
+                        let expanded = substitute_type(target, &substitutions);
+                        check_type(&expanded, generic_scope, templates, interfaces, signatures)?;
+                    }
+                }
+            }
+            Type::Primitive(_) => {}
+        }
+        Ok(())
+    }
+
+    fn type_contains_generic(ty: &Type, generic_scope: &HashSet<String>) -> bool {
+        match ty {
+            Type::Named { name, args } => {
+                generic_scope.contains(name)
+                    || args
+                        .iter()
+                        .any(|arg| type_contains_generic(arg, generic_scope))
+            }
+            Type::Pointer(inner) | Type::Array(_, inner) | Type::Slice(inner) => {
+                type_contains_generic(inner, generic_scope)
+            }
+            Type::Function {
+                params,
+                return_type,
+            } => {
+                params
+                    .iter()
+                    .any(|param| type_contains_generic(param, generic_scope))
+                    || return_type
+                        .as_deref()
+                        .is_some_and(|ret| type_contains_generic(ret, generic_scope))
+            }
+            Type::Struct(fields) => fields
+                .iter()
+                .any(|field| type_contains_generic(&field.ty, generic_scope)),
+            Type::Primitive(_) => false,
+        }
+    }
+
+    fn check_expression(
+        expression: &Expression,
+        generic_scope: &HashSet<String>,
+        templates: &DeclarationBoundTemplates,
+        interfaces: &HashMap<String, Vec<InterfaceMethod>>,
+        signatures: &HashMap<String, (Vec<Type>, Option<Type>)>,
+    ) -> Result<(), String> {
+        let check_expr =
+            |expr| check_expression(expr, generic_scope, templates, interfaces, signatures);
+        match expression {
+            Expression::Assignment { rvalue, .. } | Expression::Unary { expr: rvalue, .. } => {
+                check_expr(rvalue)?;
+            }
+            Expression::Binary { left, right, .. } => {
+                check_expr(left)?;
+                check_expr(right)?;
+            }
+            Expression::Cast { target_ty, expr } => {
+                check_type(target_ty, generic_scope, templates, interfaces, signatures)?;
+                check_expr(expr)?;
+            }
+            Expression::Match { scrutinee, arms } => {
+                check_expr(scrutinee)?;
+                for arm in arms {
+                    for statement in &arm.body.statements {
+                        check_statement(
+                            statement,
+                            generic_scope,
+                            templates,
+                            interfaces,
+                            signatures,
+                        )?;
+                    }
+                    if let Some(value) = &arm.value {
+                        check_expr(value)?;
+                    }
+                }
+            }
+            Expression::Try(expr) => check_expr(expr)?,
+            Expression::Primary(primary) => match primary {
+                PrimaryExpr::Grouped(expr) | PrimaryExpr::FieldAccess { expr, .. } => {
+                    check_expr(expr)?;
+                }
+                PrimaryExpr::ArrayIndex { expr, index } => {
+                    check_expr(expr)?;
+                    check_expr(index)?;
+                }
+                PrimaryExpr::Slice {
+                    expr, start, end, ..
+                } => {
+                    check_expr(expr)?;
+                    if let Some(start) = start {
+                        check_expr(start)?;
+                    }
+                    if let Some(end) = end {
+                        check_expr(end)?;
+                    }
+                }
+                PrimaryExpr::FunctionCall {
+                    type_arguments,
+                    arguments,
+                    ..
+                } => {
+                    for ty in type_arguments {
+                        check_type(ty, generic_scope, templates, interfaces, signatures)?;
+                    }
+                    for argument in arguments {
+                        check_expr(argument)?;
+                    }
+                }
+                PrimaryExpr::CallExpr { callee, arguments } => {
+                    check_expr(callee)?;
+                    for argument in arguments {
+                        check_expr(argument)?;
+                    }
+                }
+                PrimaryExpr::ArrayLiteral(values) => {
+                    for value in values {
+                        check_expr(value)?;
+                    }
+                }
+                PrimaryExpr::StructLiteral(fields)
+                | PrimaryExpr::NamedStructLiteral { fields, .. } => {
+                    for field in fields {
+                        if let Some(ty) = &field.ty {
+                            check_type(ty, generic_scope, templates, interfaces, signatures)?;
+                        }
+                        check_expr(&field.expr)?;
+                    }
+                }
+                PrimaryExpr::New { ty, args } => {
+                    check_type(ty, generic_scope, templates, interfaces, signatures)?;
+                    for arg in args {
+                        check_expr(arg)?;
+                    }
+                }
+                PrimaryExpr::Identifier(_)
+                | PrimaryExpr::Literal(_)
+                | PrimaryExpr::AsmReg { .. } => {}
+            },
+        }
+        Ok(())
+    }
+
+    fn check_statement(
+        statement: &Statement,
+        generic_scope: &HashSet<String>,
+        templates: &DeclarationBoundTemplates,
+        interfaces: &HashMap<String, Vec<InterfaceMethod>>,
+        signatures: &HashMap<String, (Vec<Type>, Option<Type>)>,
+    ) -> Result<(), String> {
+        let check = |ty| check_type(ty, generic_scope, templates, interfaces, signatures);
+        let check_expr =
+            |expr| check_expression(expr, generic_scope, templates, interfaces, signatures);
+        match statement {
+            Statement::VariableDecl { ty, init, .. } => {
+                check(ty)?;
+                if let Some(init) = init {
+                    check_expr(init)?;
+                }
+            }
+            Statement::InferredVariableDecl { init, .. }
+            | Statement::Expression(init)
+            | Statement::Defer(init)
+            | Statement::Return(Some(init)) => check_expr(init)?,
+            Statement::Block(block) => {
+                for stmt in &block.statements {
+                    check_statement(stmt, generic_scope, templates, interfaces, signatures)?;
+                }
+            }
+            Statement::If {
+                cond,
+                then_block,
+                else_branch,
+                ..
+            } => {
+                check_expr(cond)?;
+                for stmt in &then_block.statements {
+                    check_statement(stmt, generic_scope, templates, interfaces, signatures)?;
+                }
+                if let Some(branch) = else_branch {
+                    check_statement(branch, generic_scope, templates, interfaces, signatures)?;
+                }
+            }
+            Statement::While { cond, body } => {
+                check_expr(cond)?;
+                for stmt in &body.statements {
+                    check_statement(stmt, generic_scope, templates, interfaces, signatures)?;
+                }
+            }
+            Statement::For { iter, body, .. } => {
+                match iter {
+                    ForIter::Range { start, end, .. } => {
+                        check_expr(start)?;
+                        check_expr(end)?;
+                    }
+                    ForIter::Each(expr) => check_expr(expr)?,
+                }
+                for stmt in &body.statements {
+                    check_statement(stmt, generic_scope, templates, interfaces, signatures)?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    for declaration in &usage_program.declarations {
+        match &declaration.decl {
+            DeclNode::Function {
+                generics,
+                params,
+                return_type,
+                body,
+                ..
+            } => {
+                let generic_scope = generics.iter().cloned().collect();
+                for param in params {
+                    check_type(
+                        &param.ty,
+                        &generic_scope,
+                        &templates,
+                        interfaces,
+                        concrete_signatures,
+                    )?;
+                }
+                if let Some(ReturnType::Single(ty)) = return_type {
+                    check_type(
+                        ty,
+                        &generic_scope,
+                        &templates,
+                        interfaces,
+                        concrete_signatures,
+                    )?;
+                }
+                if let Some(body) = body {
+                    for stmt in &body.statements {
+                        check_statement(
+                            stmt,
+                            &generic_scope,
+                            &templates,
+                            interfaces,
+                            concrete_signatures,
+                        )?;
+                    }
+                }
+            }
+            DeclNode::Variable { ty, init, .. } => {
+                let scope = HashSet::new();
+                check_type(ty, &scope, &templates, interfaces, concrete_signatures)?;
+                if let Some(init) = init {
+                    check_expression(init, &scope, &templates, interfaces, concrete_signatures)?;
+                }
+            }
+            DeclNode::Type { generics, ty, .. } => {
+                let scope = generics.iter().cloned().collect();
+                check_type(ty, &scope, &templates, interfaces, concrete_signatures)?;
+            }
+            DeclNode::Struct {
+                generics, fields, ..
+            } => {
+                let scope = generics.iter().cloned().collect();
+                for field in fields {
+                    check_type(
+                        &field.ty,
+                        &scope,
+                        &templates,
+                        interfaces,
+                        concrete_signatures,
+                    )?;
+                }
+            }
+            DeclNode::Enum {
+                generics, variants, ..
+            } => {
+                let scope = generics.iter().cloned().collect();
+                for variant in variants {
+                    for ty in &variant.payload {
+                        check_type(ty, &scope, &templates, interfaces, concrete_signatures)?;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let scope = HashSet::new();
+    for statement in &usage_program.statements {
+        check_statement(
+            statement,
+            &scope,
+            &templates,
+            interfaces,
+            concrete_signatures,
+        )?;
+    }
+    Ok(())
+}
+
+fn validate_alias_cycles(templates: &DeclarationBoundTemplates) -> Result<(), String> {
+    fn dependencies(ty: &Type, templates: &DeclarationBoundTemplates, out: &mut Vec<String>) {
+        match ty {
+            Type::Named { name, args } => {
+                if templates
+                    .get(name)
+                    .is_some_and(|item| item.alias_target.is_some())
+                {
+                    out.push(name.clone());
+                }
+                for arg in args {
+                    dependencies(arg, templates, out);
+                }
+            }
+            Type::Pointer(inner) | Type::Array(_, inner) | Type::Slice(inner) => {
+                dependencies(inner, templates, out);
+            }
+            Type::Function {
+                params,
+                return_type,
+            } => {
+                for param in params {
+                    dependencies(param, templates, out);
+                }
+                if let Some(ret) = return_type {
+                    dependencies(ret, templates, out);
+                }
+            }
+            Type::Struct(fields) => {
+                for field in fields {
+                    dependencies(&field.ty, templates, out);
+                }
+            }
+            Type::Primitive(_) => {}
+        }
+    }
+
+    fn visit(
+        name: &str,
+        templates: &DeclarationBoundTemplates,
+        visiting: &mut HashSet<String>,
+        visited: &mut HashSet<String>,
+    ) -> Result<(), String> {
+        if visited.contains(name) {
+            return Ok(());
+        }
+        if !visiting.insert(name.to_owned()) {
+            return Err(format!("generic type alias cycle involving `{name}`"));
+        }
+        let mut found = Vec::new();
+        if let Some(target) = templates
+            .get(name)
+            .and_then(|item| item.alias_target.as_ref())
+        {
+            dependencies(target, templates, &mut found);
+        }
+        for dependency in found {
+            visit(&dependency, templates, visiting, visited)?;
+        }
+        visiting.remove(name);
+        visited.insert(name.to_owned());
+        Ok(())
+    }
+
+    let mut visiting = HashSet::new();
+    let mut visited = HashSet::new();
+    for (name, template) in templates {
+        if template.alias_target.is_some() {
+            visit(name, templates, &mut visiting, &mut visited)?;
+        }
+    }
+    Ok(())
+}
+
+fn check_bounds_for_owner(
+    kind: &str,
+    owner: &str,
+    bounds: &[(String, String)],
+    substitutions: &Substitutions,
+    interfaces: &HashMap<String, Vec<InterfaceMethod>>,
+    concrete_signatures: &HashMap<String, (Vec<Type>, Option<Type>)>,
+) -> Result<(), String> {
+    for (param, interface_name) in bounds {
+        let methods = &interfaces[interface_name];
+        if let Some(concrete) = substitutions.get(param) {
+            check_type_implements(concrete, interface_name, methods, concrete_signatures)
+                .map_err(|error| format!("generic {kind} `{owner}`: {error}"))?;
+        }
+    }
+    Ok(())
 }
 
 #[derive(Clone)]
@@ -734,13 +1283,24 @@ pub(crate) fn check_type_implements(
     let self_substitution = Substitutions::from([("Self".to_owned(), concrete.clone())]);
     for method in methods {
         let implementation = format!("{type_name}_{}", method.name);
-        let Some((found_params, found_return)) = concrete_signatures.get(&implementation) else {
+        let imported_suffix = format!("__{implementation}");
+        let mut candidates = concrete_signatures
+            .iter()
+            .filter(|(name, _)| *name == &implementation || name.ends_with(&imported_suffix));
+        let Some((resolved_name, (found_params, found_return))) = candidates.next() else {
             return Err(format!(
                 "type `{concrete_name}` does not implement interface `{interface_name}`: \
                  missing method `{}` (expected a function `{implementation}`)",
                 method.name
             ));
         };
+        if candidates.next().is_some() {
+            return Err(format!(
+                "type `{concrete_name}` has ambiguous implementations for interface \
+                 `{interface_name}` method `{}`; qualify the concrete type's module",
+                method.name
+            ));
+        }
         let expected_params = method
             .params
             .iter()
@@ -753,7 +1313,7 @@ pub(crate) fn check_type_implements(
         if found_params != &expected_params || found_return != &expected_return {
             return Err(format!(
                 "type `{concrete_name}` does not implement interface `{interface_name}`: \
-                 method `{}` has a mismatched signature (check `{implementation}` \
+                 method `{}` has a mismatched signature (check `{resolved_name}` \
                  against the interface with `Self` = `{type_name}`)",
                 method.name
             ));
@@ -1323,6 +1883,7 @@ impl EnumSpecializer {
                 name,
                 generics,
                 variants,
+                ..
             } = &declaration.decl
             {
                 defined.insert(name.clone());
@@ -2036,6 +2597,7 @@ impl EnumSpecializer {
                 decl: DeclNode::Enum {
                     name: mangled,
                     generics: Vec::new(),
+                    bounds: Vec::new(),
                     variants,
                 },
                 exported: false,
