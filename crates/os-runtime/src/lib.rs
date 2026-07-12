@@ -24,9 +24,14 @@ pub mod stdlib {
         "/stdlib/core/memory_allocator.hll"
     ));
 
-    pub const MEMORY_ALLOCATOR_HOSTED: &str = include_str!(concat!(
+    pub const HEAP_SOURCE: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/stdlib/hosted/memory_allocator.hll"
+        "/stdlib/core/heap_source.hll"
+    ));
+
+    pub const HEAP_SOURCE_HOSTED: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/stdlib/hosted/heap_source.hll"
     ));
 
     pub const STRING_UTILS: &str = include_str!(concat!(

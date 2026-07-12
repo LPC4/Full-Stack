@@ -97,6 +97,7 @@ mod tests {
             names,
             [
                 "types",
+                "heap_source",
                 "memory_allocator",
                 "string",
                 "mem",
@@ -107,14 +108,14 @@ mod tests {
             ]
         );
 
-        let allocator = modules
+        let source = modules
             .iter()
-            .find(|(name, _)| *name == "memory_allocator")
-            .expect("hosted allocator")
+            .find(|(name, _)| *name == "heap_source")
+            .expect("hosted heap source")
             .1;
         assert!(
-            allocator.contains("heap_brk"),
-            "hosted allocator should be backed by brk"
+            source.contains("heap_brk"),
+            "hosted heap source should be backed by brk"
         );
     }
 
@@ -126,6 +127,7 @@ mod tests {
             names,
             [
                 "types",
+                "heap_source",
                 "memory_allocator",
                 "string",
                 "mem",

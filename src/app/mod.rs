@@ -64,7 +64,20 @@ pub(super) enum SourceKind {
     Other,
 }
 
-const HLL_LAYERS: &[Layer] = &[Layer::Hll, Layer::Ir, Layer::Asm, Layer::Elf, Layer::Vm];
+const HLL_LAYERS: &[Layer] = &[Layer::Hll, Layer::Ir, Layer::Asm, Layer::Elf];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MainSurface {
+    Document,
+    Runtime,
+    Debugger,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LaunchMode {
+    Run,
+    Debug,
+}
 #[derive(Clone, PartialEq)]
 struct BuildTarget {
     manifest_path: VPath,
@@ -150,10 +163,13 @@ pub struct FullStackApp {
     pub(super) pending_close: Option<VPath>,
     /// 1-based cursor line/column of the active editor, for the status bar.
     pub(super) cursor_pos: Option<(usize, usize)>,
-    /// Which surface the machine (L4) rung shows for a live session.
-    pub(super) machine_view: debug_view::MachineView,
-    /// Basename of the running config's root source, naming the [debug] tab.
-    pub(super) machine_tab_label: Option<String>,
+    main_surface: MainSurface,
+    pub(super) runtime_view: debug_view::RuntimeView,
+    pub(super) debug_view: debug_view::DebugView,
+    runtime_open: bool,
+    debugger_open: bool,
+    /// Basename of the running config's root source, naming session tabs.
+    pub(super) session_tab_label: Option<String>,
     pub(super) memory_view: debug_view::MemoryViewState,
     /// Last known source location of the machine Code view (sticky across
     /// stretches of pc with no line info, so a line stays highlighted).
@@ -162,7 +178,7 @@ pub struct FullStackApp {
     /// does not fight a manual scroll every frame.
     pub(super) code_follow_scrolled: Option<(String, u32)>,
     /// Whether the current/last live session was launched as a debug session.
-    current_launch_debug: bool,
+    launch_mode: LaunchMode,
     /// Instruction count for the dock's "step n" control.
     pub(super) step_count: u64,
     step_unit: machine_dock::StepUnit,
@@ -220,12 +236,16 @@ impl FullStackApp {
             search: search::SearchState::default(),
             pending_close: None,
             cursor_pos: None,
-            machine_view: debug_view::MachineView::Console,
-            machine_tab_label: None,
+            main_surface: MainSurface::Document,
+            runtime_view: debug_view::RuntimeView::Console,
+            debug_view: debug_view::DebugView::Disasm,
+            runtime_open: false,
+            debugger_open: false,
+            session_tab_label: None,
             memory_view: debug_view::MemoryViewState::default(),
             code_follow: None,
             code_follow_scrolled: None,
-            current_launch_debug: false,
+            launch_mode: LaunchMode::Run,
             step_count: 100,
             step_unit: machine_dock::StepUnit::Line,
             time_scrub: 0,
@@ -359,7 +379,7 @@ impl FullStackApp {
         self.search = search::SearchState::default();
         self.pending_close = None;
         self.cursor_pos = None;
-        self.current_launch_debug = false;
+        self.launch_mode = LaunchMode::Run;
         self.memory_view = debug_view::MemoryViewState::default();
         self.inspector = inspector::InspectorState::default();
         self.last_build = None;
@@ -374,6 +394,7 @@ impl FullStackApp {
     }
 
     pub(super) fn document_focus_changed(&mut self) {
+        self.main_surface = MainSurface::Document;
         self.reset_layer_for_active_file();
         // Switching tabs must not dim the lit spine; only edits and builds may.
         self.stage_cache = None;
@@ -404,7 +425,7 @@ impl FullStackApp {
     fn visible_layers(&self) -> Option<&'static [Layer]> {
         let active = self.active_path()?;
         // Any source file that resolves to a build target rides that target's
-        // spine, so modules keep the pipeline (and the L4 rung) in reach.
+        // spine, so modules keep the complete compilation pipeline in reach.
         self.active_build_target.as_ref()?;
         match Self::source_kind_for_path(active.as_str()) {
             SourceKind::Hll | SourceKind::Build => Some(HLL_LAYERS),
@@ -1011,9 +1032,9 @@ impl FullStackApp {
         self.configs().get(self.selected_config)
     }
 
-    /// The [debug] tab's name: the config's root source basename, falling
+    /// Session tab name: the config's root source basename, falling
     /// back to the config name when the root cannot be resolved.
-    fn machine_tab_label_for(&self, config: &RunConfig) -> String {
+    fn session_tab_label_for(&self, config: &RunConfig) -> String {
         self.config_root(config)
             .and_then(|root| root.as_str().rsplit('/').next().map(str::to_owned))
             .unwrap_or_else(|| config.name.clone())
@@ -1090,7 +1111,7 @@ impl FullStackApp {
     /// Reuses the last build when the sources are unchanged.
     pub(super) fn restart_selected_config(&mut self, now: f64) {
         let debug = if self.live.is_some() {
-            self.current_launch_debug
+            self.launch_mode == LaunchMode::Debug
         } else {
             false
         };
@@ -1265,23 +1286,27 @@ impl FullStackApp {
         now: f64,
         debug: bool,
     ) {
-        let tab_label = self.machine_tab_label_for(config);
+        let tab_label = self.session_tab_label_for(config);
         match LiveMachine::new_hosted(artifacts) {
             Ok(mut live) => {
                 if !config.run.autorun.is_empty() {
                     live.push_uart_line(&config.run.autorun);
                 }
                 self.live = Some(live);
-                self.machine_tab_label = Some(tab_label);
+                self.session_tab_label = Some(tab_label);
                 if debug {
                     self.apply_persisted_breakpoints(config);
                 }
                 self.activate_machine_terminal_for_run();
-                self.machine_view = self.default_machine_view();
+                self.open_session_surfaces(debug);
                 self.layer = Self::source_layer_for_kind(self.active_source_kind());
                 self.build_glow_start = Some(now);
-                self.record_build_lit(Some(Layer::Vm));
-                self.current_launch_debug = debug;
+                self.record_build_lit(Some(Layer::Elf));
+                self.launch_mode = if debug {
+                    LaunchMode::Debug
+                } else {
+                    LaunchMode::Run
+                };
                 if debug {
                     self.enter_debug_pause();
                 }
@@ -1302,19 +1327,23 @@ impl FullStackApp {
         now: f64,
         debug: bool,
     ) {
-        let tab_label = self.machine_tab_label_for(config);
+        let tab_label = self.session_tab_label_for(config);
         match LiveMachine::new_kernel(artifacts, Some(init), Some(fs_image), &config.run.autorun) {
             Ok(live) => {
                 self.live = Some(live);
-                self.machine_tab_label = Some(tab_label);
+                self.session_tab_label = Some(tab_label);
                 if debug {
                     self.apply_persisted_breakpoints(config);
                 }
                 self.activate_machine_terminal_for_run();
-                self.machine_view = self.default_machine_view();
+                self.open_session_surfaces(debug);
                 self.build_glow_start = Some(now);
-                self.record_build_lit(Some(Layer::Vm));
-                self.current_launch_debug = debug;
+                self.record_build_lit(Some(Layer::Elf));
+                self.launch_mode = if debug {
+                    LaunchMode::Debug
+                } else {
+                    LaunchMode::Run
+                };
                 if debug {
                     self.enter_debug_pause();
                 }
@@ -1334,12 +1363,12 @@ impl FullStackApp {
         }
         // Source-mapped sessions land on the pc-following Code view; images
         // without a line table fall back to the disassembly.
-        self.machine_view = if self.live.as_ref().is_some_and(LiveMachine::has_line_table) {
-            debug_view::MachineView::Code
+        self.debug_view = if self.live.as_ref().is_some_and(LiveMachine::has_line_table) {
+            debug_view::DebugView::Code
         } else {
-            debug_view::MachineView::Disasm
+            debug_view::DebugView::Disasm
         };
-        self.focus_machine_tab();
+        self.focus_debugger();
         self.terminal.push(
             ConsoleStream::Info,
             "Paused at entry. Step over (F10), step in (F11), or resume (F5).",
@@ -1373,7 +1402,7 @@ impl FullStackApp {
     }
 
     /// Record the final result and terminal summary once the session stops
-    /// being alive; shared by the frame driver and the [debug] tab close.
+    /// being alive; shared by the frame driver and explicit session controls.
     fn latch_live_result(&mut self) {
         let Some(live) = &self.live else {
             return;
@@ -1418,24 +1447,65 @@ impl FullStackApp {
         }
     }
 
-    /// The [debug] tab is focused when the machine surface owns the canvas.
-    pub(super) fn machine_tab_focused(&self) -> bool {
-        self.live.is_some() && self.layer == Layer::Vm
+    pub(super) fn runtime_focused(&self) -> bool {
+        self.live.is_some() && self.main_surface == MainSurface::Runtime
     }
 
-    /// Bring the machine surface to the canvas (the [debug] tab, or the bare
-    /// L4 rung when no session exists).
-    pub(super) fn focus_machine_tab(&mut self) {
-        self.layer = Layer::Vm;
+    pub(super) fn debugger_focused(&self) -> bool {
+        self.live.is_some() && self.main_surface == MainSurface::Debugger
+    }
+
+    pub(super) fn focus_runtime(&mut self) {
+        self.runtime_open = true;
+        self.main_surface = MainSurface::Runtime;
         self.settings_open = false;
     }
 
-    /// Close the [debug] tab: end the session and return to the active file.
-    pub(super) fn close_machine_tab(&mut self) {
-        self.stop_live_machine();
-        self.latch_live_result();
-        self.live = None;
-        self.reset_machine_views();
+    pub(super) fn focus_debugger(&mut self) {
+        if self.launch_mode != LaunchMode::Debug {
+            return;
+        }
+        self.debugger_open = true;
+        self.main_surface = MainSurface::Debugger;
+        self.settings_open = false;
+    }
+
+    pub(super) fn close_runtime_surface(&mut self) {
+        self.runtime_open = false;
+        self.main_surface = if self.debugger_open {
+            MainSurface::Debugger
+        } else {
+            MainSurface::Document
+        };
+    }
+
+    pub(super) fn close_debugger_surface(&mut self) {
+        self.debugger_open = false;
+        self.main_surface = if self.runtime_open {
+            MainSurface::Runtime
+        } else {
+            MainSurface::Document
+        };
+        if self.main_surface == MainSurface::Document {
+            self.reset_layer_for_active_file();
+        }
+    }
+
+    fn open_session_surfaces(&mut self, debug: bool) {
+        self.runtime_open = true;
+        self.debugger_open = debug;
+        self.runtime_view = self.default_runtime_view();
+        self.main_surface = if debug {
+            MainSurface::Debugger
+        } else {
+            MainSurface::Runtime
+        };
+    }
+
+    fn dismiss_session_surfaces(&mut self) {
+        self.runtime_open = false;
+        self.debugger_open = false;
+        self.main_surface = MainSurface::Document;
         self.reset_layer_for_active_file();
     }
 
@@ -1517,17 +1587,19 @@ impl FullStackApp {
 
     /// Clear per-session debug/inspect state when the session goes away.
     fn reset_machine_views(&mut self) {
-        self.machine_view = debug_view::MachineView::Console;
+        self.runtime_view = debug_view::RuntimeView::Console;
+        self.debug_view = debug_view::DebugView::Disasm;
+        self.dismiss_session_surfaces();
         self.inspector.clear_session();
         self.code_follow = None;
         self.code_follow_scrolled = None;
     }
 
-    fn default_machine_view(&self) -> debug_view::MachineView {
+    fn default_runtime_view(&self) -> debug_view::RuntimeView {
         if self.config_has_screen() {
-            debug_view::MachineView::Screen
+            debug_view::RuntimeView::Screen
         } else {
-            debug_view::MachineView::Console
+            debug_view::RuntimeView::Console
         }
     }
 
@@ -1628,7 +1700,11 @@ impl FullStackApp {
             self.terminal_open = !self.terminal_open;
         }
         if ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::W)) {
-            self.close_active_path();
+            match self.main_surface {
+                MainSurface::Runtime => self.close_runtime_surface(),
+                MainSurface::Debugger => self.close_debugger_surface(),
+                MainSurface::Document => self.close_active_path(),
+            }
         }
         if ui.input(|i| i.modifiers.command && i.modifiers.shift && i.key_pressed(egui::Key::F)) {
             self.tool = Tool::Search;
@@ -1651,8 +1727,8 @@ impl FullStackApp {
         let alive = self.live.as_ref().is_some_and(|live| live.state.is_alive());
         alive
             && ((self.terminal_open && self.terminal.active == TerminalKind::Machine)
-                || (self.layer == Layer::Vm
-                    && self.machine_view == debug_view::MachineView::Screen))
+                || (self.main_surface == MainSurface::Runtime
+                    && self.runtime_view == debug_view::RuntimeView::Screen))
     }
 }
 
@@ -1720,7 +1796,7 @@ impl eframe::App for FullStackApp {
             .frame(bezel_band)
             .show_inside(ui, |ui| self.activity_rail(ui));
 
-        if self.current_launch_debug && self.live.is_some() {
+        if self.launch_mode == LaunchMode::Debug && self.live.is_some() {
             egui::Panel::right("machine_dock")
                 .resizable(true)
                 .default_size(metrics::MACHINE_DOCK_DEFAULT)
@@ -1864,7 +1940,7 @@ mod tests {
         app.manifest_cache = Some((1.0, vec![VPath::parse("old.build").expect("path")]));
         app.quick_open = Some(quick_open::QuickOpenState::default());
         app.find.request_open();
-        app.current_launch_debug = true;
+        app.launch_mode = LaunchMode::Debug;
         app.selected_config = 12;
 
         app.open_native_workspace_folder(&root);
@@ -1888,8 +1964,8 @@ mod tests {
         assert!(app.manifest_cache.is_none());
         assert!(app.quick_open.is_none());
         assert!(!app.find.open);
-        assert!(!app.current_launch_debug);
-        assert!(matches!(app.machine_view, debug_view::MachineView::Console));
+        assert_eq!(app.launch_mode, LaunchMode::Run);
+        assert!(matches!(app.runtime_view, debug_view::RuntimeView::Console));
         assert!(app.status_message.expect("status").starts_with("opened "));
 
         fs::remove_dir_all(root).expect("cleanup");
@@ -2011,8 +2087,10 @@ mod tests {
         let live = app.live.as_ref().expect("run starts a session");
         assert_eq!(live.state, MachineState::Running);
         assert!(live.breakpoints.is_empty());
-        assert!(!app.current_launch_debug);
-        assert!(!app.machine_tab_focused());
+        assert_eq!(app.launch_mode, LaunchMode::Run);
+        assert!(app.runtime_focused());
+        assert!(!app.debugger_open);
+        assert_eq!(app.runtime_view, debug_view::RuntimeView::Console);
         assert!(matches!(app.terminal.active, TerminalKind::Machine));
 
         fs::remove_dir_all(root).expect("cleanup");
@@ -2054,8 +2132,7 @@ mod tests {
         fs::remove_dir_all(root).expect("cleanup");
     }
 
-    // [debug] tab lifecycle: launch focuses it, file tabs unfocus it without
-    // ending the session, closing it ends the session and restores the file.
+    // Debug owns a separate surface. Closing it leaves the runtime session alive.
     #[test]
     fn debug_tab_focuses_switches_and_closes() {
         let root = temp_root("debug_tab_lifecycle");
@@ -2065,20 +2142,66 @@ mod tests {
 
         app.debug_selected_config(1.0);
         assert!(app.live.is_some(), "debug launch starts a session");
-        assert!(app.machine_tab_focused());
-        assert_eq!(app.machine_tab_label.as_deref(), Some("main.hll"));
+        assert!(app.debugger_focused());
+        assert!(app.runtime_open);
+        assert!(app.debugger_open);
+        assert_eq!(app.session_tab_label.as_deref(), Some("main.hll"));
 
         app.document_focus_changed();
-        assert!(!app.machine_tab_focused(), "file tab takes the canvas back");
+        assert!(!app.debugger_focused(), "file tab takes the canvas back");
         assert!(app.live.is_some(), "switching tabs keeps the session");
 
-        app.focus_machine_tab();
-        assert!(app.machine_tab_focused());
+        app.focus_debugger();
+        assert!(app.debugger_focused());
 
-        app.close_machine_tab();
-        assert!(app.live.is_none(), "closing the tab ends the session");
-        assert!(app.vm_result.is_some(), "the final result is latched");
-        assert!(app.layer != Layer::Vm, "the canvas returns to the file");
+        app.close_debugger_surface();
+        assert!(app.live.is_some(), "closing the debugger keeps the session");
+        assert!(
+            app.runtime_focused(),
+            "the runtime surface takes the canvas"
+        );
+        assert!(!app.debugger_open);
+
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn runtime_surface_can_hide_and_reopen_without_stopping() {
+        let root = temp_root("runtime_surface_lifecycle");
+        write_native_workspace(&root);
+        let mut app = test_app(IdeWorkspace::new(Box::new(MemoryFs::new())).expect("workspace"));
+        app.open_native_workspace_folder(&root);
+
+        app.run_selected_config(1.0);
+        assert!(app.runtime_focused());
+        app.close_runtime_surface();
+        assert!(app.live.is_some());
+        assert!(!app.runtime_open);
+        assert_eq!(app.main_surface, MainSurface::Document);
+
+        app.focus_runtime();
+        assert!(app.runtime_focused());
+        assert!(app.runtime_open);
+
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn framebuffer_run_focuses_the_runtime_screen_without_a_debugger() {
+        use full_stack::runconfig::PresentMode;
+
+        let root = temp_root("framebuffer_run_surface");
+        write_native_workspace(&root);
+        let mut app = test_app(IdeWorkspace::new(Box::new(MemoryFs::new())).expect("workspace"));
+        app.open_native_workspace_folder(&root);
+        app.workspace.run_configs_mut().configs[0].run.present = PresentMode::Framebuffer;
+
+        app.run_selected_config(1.0);
+
+        assert!(app.runtime_focused());
+        assert_eq!(app.runtime_view, debug_view::RuntimeView::Screen);
+        assert!(!app.debugger_open);
+        assert_eq!(app.launch_mode, LaunchMode::Run);
 
         fs::remove_dir_all(root).expect("cleanup");
     }
@@ -2263,7 +2386,7 @@ mod tests {
             stdlib_objects: Vec::new(),
             status_message: None,
             build_glow_start: Some(1.0),
-            build_lit_until: Some(Layer::Vm),
+            build_lit_until: Some(Layer::Elf),
             built_target: None,
             active_build_target: None,
             selected_config: 0,
@@ -2287,12 +2410,16 @@ mod tests {
             search: search::SearchState::default(),
             pending_close: None,
             cursor_pos: Some((1, 1)),
-            machine_view: debug_view::MachineView::Disasm,
-            machine_tab_label: None,
+            main_surface: MainSurface::Document,
+            runtime_view: debug_view::RuntimeView::Console,
+            debug_view: debug_view::DebugView::Disasm,
+            runtime_open: false,
+            debugger_open: false,
+            session_tab_label: None,
             memory_view: debug_view::MemoryViewState::default(),
             code_follow: None,
             code_follow_scrolled: None,
-            current_launch_debug: false,
+            launch_mode: LaunchMode::Run,
             step_count: 100,
             step_unit: machine_dock::StepUnit::Instruction,
             time_scrub: 0,

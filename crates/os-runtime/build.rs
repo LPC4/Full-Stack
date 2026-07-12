@@ -77,8 +77,8 @@ fn source_key(rel: &Path) -> String {
         "console_hosted".to_owned()
     } else if components == ["stdlib", "hosted", "cstr.hll"] {
         "cstr_hosted".to_owned()
-    } else if components == ["stdlib", "hosted", "memory_allocator.hll"] {
-        "memory_allocator_hosted".to_owned()
+    } else if components == ["stdlib", "hosted", "heap_source.hll"] {
+        "heap_source_hosted".to_owned()
     } else if components == ["stdlib", "hosted", "runtime.hll"] {
         "runtime_hosted".to_owned()
     } else if components == ["stdlib", "hosted", "sys.hll"] {

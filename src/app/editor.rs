@@ -73,11 +73,16 @@ impl FullStackApp {
             return;
         }
         self.cursor_pos = None;
-        // The machine surface is its own [debug] tab: when it is focused the
-        // canvas shows the debugger, independent of the open documents.
-        if self.layer == Layer::Vm {
-            self.vm_view(ui);
-            return;
+        match self.main_surface {
+            super::MainSurface::Runtime => {
+                self.runtime_surface(ui);
+                return;
+            }
+            super::MainSurface::Debugger => {
+                self.debugger_surface(ui);
+                return;
+            }
+            super::MainSurface::Document => {}
         }
         // Binary documents (.elf/.o) get the decoded ELF viewer instead of text.
         if let Some(doc) = self.workspace.active_document()
@@ -163,7 +168,6 @@ impl FullStackApp {
                 let text = match self.layer {
                     Layer::Asm => "IR to assembly is not wired for standalone .ir files yet.",
                     Layer::Elf => "Linking is not wired for standalone .ir files yet.",
-                    Layer::Vm => "VM execution is not wired for standalone .ir files yet.",
                     Layer::Hll | Layer::Ir => "",
                 };
                 read_only_code(ui, self.layer.tag(), text, None);
@@ -172,16 +176,11 @@ impl FullStackApp {
             SourceKind::Asm => {
                 let text = match self.layer {
                     Layer::Elf => "Assembly/linking is not wired for standalone .s files yet.",
-                    Layer::Vm => "VM execution is not wired for standalone .s files yet.",
                     Layer::Hll | Layer::Ir | Layer::Asm => "",
                 };
                 read_only_code(ui, self.layer.tag(), text, None);
                 return;
             }
-        }
-        if self.layer == Layer::Vm {
-            self.vm_view(ui);
-            return;
         }
         self.refresh_stage_cache();
 
@@ -233,33 +232,28 @@ impl FullStackApp {
                 }
                 return;
             }
-            Layer::Vm => {
-                self.vm_view(ui);
-                return;
-            }
         };
         read_only_code(ui, self.layer.tag(), text, highlighter);
     }
 
-    /// The L4 view: for a live session, a tabbed machine surface (console,
-    /// screen, disassembly, memory); otherwise the post-mortem summary.
-    fn vm_view(&mut self, ui: &mut egui::Ui) {
-        use super::debug_view::MachineView;
+    /// Program I/O, independent of whether the session was launched under a debugger.
+    fn runtime_surface(&mut self, ui: &mut egui::Ui) {
+        use super::debug_view::RuntimeView;
         if self.live.is_none() {
             self.vm_console_summary(ui);
             return;
         }
         let has_screen = self.config_has_screen();
-        if self.machine_view == MachineView::Screen && !has_screen {
-            self.machine_view = MachineView::Console;
+        if self.runtime_view == RuntimeView::Screen && !has_screen {
+            self.runtime_view = RuntimeView::Console;
         }
         ui.add_space(metrics::PANEL_HEADER_PAD_Y);
         ui.horizontal(|ui| {
             ui.add_space(metrics::PANEL_INSET_X);
             ui.spacing_mut().item_spacing.x = 2.0;
-            self.machine_view_tab(ui, MachineView::Console, "console");
+            self.runtime_view_tab(ui, RuntimeView::Console, "console");
             if has_screen {
-                self.machine_view_tab(ui, MachineView::Screen, "screen");
+                self.runtime_view_tab(ui, RuntimeView::Screen, "screen");
             } else {
                 chrome::view_tab_disabled(
                     ui,
@@ -267,28 +261,47 @@ impl FullStackApp {
                     "This config presents no framebuffer.\nSet present to `framebuffer` or `both` in the Run panel.",
                 );
             }
-            self.machine_view_tab(ui, MachineView::Code, "code");
-            self.machine_view_tab(ui, MachineView::Disasm, "disasm");
-            self.machine_view_tab(ui, MachineView::Memory, "memory");
         });
         chrome::hairline(ui);
-        match self.machine_view {
-            MachineView::Console => self.vm_console_summary(ui),
-            MachineView::Screen => self.framebuffer_view(ui),
-            MachineView::Code => self.show_code_follow(ui),
-            MachineView::Disasm => self.show_disasm(ui),
-            MachineView::Memory => self.show_memory(ui),
+        match self.runtime_view {
+            RuntimeView::Console => self.vm_console_summary(ui),
+            RuntimeView::Screen => self.framebuffer_view(ui),
         }
     }
 
-    fn machine_view_tab(
+    fn runtime_view_tab(
         &mut self,
         ui: &mut egui::Ui,
-        view: super::debug_view::MachineView,
+        view: super::debug_view::RuntimeView,
         label: &str,
     ) {
-        if chrome::view_tab(ui, label, self.machine_view == view).clicked() {
-            self.machine_view = view;
+        if chrome::view_tab(ui, label, self.runtime_view == view).clicked() {
+            self.runtime_view = view;
+        }
+    }
+
+    /// Debugger tooling. Runtime console and framebuffer deliberately live elsewhere.
+    fn debugger_surface(&mut self, ui: &mut egui::Ui) {
+        use super::debug_view::DebugView;
+        ui.add_space(metrics::PANEL_HEADER_PAD_Y);
+        ui.horizontal(|ui| {
+            ui.add_space(metrics::PANEL_INSET_X);
+            ui.spacing_mut().item_spacing.x = 2.0;
+            for (view, label) in [
+                (DebugView::Code, "code"),
+                (DebugView::Disasm, "disasm"),
+                (DebugView::Memory, "memory"),
+            ] {
+                if chrome::view_tab(ui, label, self.debug_view == view).clicked() {
+                    self.debug_view = view;
+                }
+            }
+        });
+        chrome::hairline(ui);
+        match self.debug_view {
+            DebugView::Code => self.show_code_follow(ui),
+            DebugView::Disasm => self.show_disasm(ui),
+            DebugView::Memory => self.show_memory(ui),
         }
     }
 
@@ -438,7 +451,7 @@ impl FullStackApp {
                     None => "stopped".to_owned(),
                 };
                 let color = match vm.exit_code {
-                    Some(0) => Layer::Vm.color(),
+                    Some(0) => theme::ELECTRIC,
                     Some(_) => theme::TEXT,
                     None => theme::TEXT_DIM,
                 };

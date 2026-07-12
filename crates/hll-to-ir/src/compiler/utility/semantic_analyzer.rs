@@ -231,9 +231,14 @@ impl SemanticAnalyzer {
                 // Store the return type for function calls
                 let return_ty_str = match return_type {
                     Some(rt) => match rt {
+                        // Preserve named identity here. Resolving an enum to its
+                        // aggregate representation loses the key used to validate
+                        // constructors and match patterns at call sites.
+                        ReturnType::Single(Type::Named { name, args }) if args.is_empty() => {
+                            name.to_string()
+                        }
                         ReturnType::Single(ty) => {
-                            let ir_ty = self.ast_type_to_ir_type(ty);
-                            self.context.get_type_name(&ir_ty)
+                            self.context.get_type_name(&self.ast_type_to_ir_type(ty))
                         }
                     },
                     None => "void".to_owned(),
@@ -397,9 +402,17 @@ impl SemanticAnalyzer {
                         &init_ty,
                     );
 
-                    if resolved_decl_ty != resolved_init_ty
+                    // `null` (typed `*unknown`) initializes any pointer.
+                    let is_null_pointer_init = init_ty == "*unknown"
+                        && matches!(
+                            resolved_decl_ty,
+                            IrType::Pointer(_) | IrType::FunctionPointer { .. }
+                        );
+
+                    if !self.types_equivalent(&resolved_decl_ty, &resolved_init_ty)
                         && !is_literal_widening_allowed
                         && !is_array_to_slice
+                        && !is_null_pointer_init
                     {
                         self.error(format!(
                             "Type mismatch in variable initialization '{}': declared as {}, but expression yields {} (inferred_str: {}, resolved_decl: {:?}, resolved_init: {:?}, is_widening_allowed: {})",
@@ -564,7 +577,11 @@ impl SemanticAnalyzer {
         // Infer before registering the name: `x := x` must not resolve to the
         // binding currently being declared.
         let inferred = self.infer_expression_type(init)?;
-        let ir_ty = self.resolve_type_string(&inferred);
+        let ir_ty = if self.enum_variant_names.contains_key(&inferred) {
+            IrType::Named(inferred.clone())
+        } else {
+            self.resolve_type_string(&inferred)
+        };
         if matches!(ir_ty, IrType::Void) || inferred == "unknown" || inferred == "*unknown" {
             self.error(format!(
                 "cannot infer a concrete type for binding `{name}` from `{inferred}`"
@@ -632,8 +649,26 @@ impl SemanticAnalyzer {
                     Ok("i64".to_owned())
                 }
                 PrimaryExpr::FunctionCall {
-                    name, arguments, ..
+                    name,
+                    type_arguments,
+                    arguments,
                 } => {
+                    if matches!(name.as_str(), "size_of" | "align_of") {
+                        if type_arguments.len() != 1 {
+                            self.error(format!(
+                                "{name}<T>() expects exactly one type argument, got {}",
+                                type_arguments.len()
+                            ));
+                            return Err(());
+                        }
+                        if !arguments.is_empty() {
+                            self.error(format!(
+                                "{name}<T>() is compile-time reflection and accepts no value arguments"
+                            ));
+                            return Err(());
+                        }
+                        return Ok("u64".to_owned());
+                    }
                     // A call whose name is an enum variant constructs that variant.
                     if let Some(sig) = self.enum_variants.get(name).cloned() {
                         if arguments.len() != sig.payloads.len() {
@@ -1397,7 +1432,16 @@ impl SemanticAnalyzer {
     fn stack_address_root_name(&self, expr: &Expression) -> Option<String> {
         match expr {
             Expression::Primary(PrimaryExpr::Identifier(name)) => {
-                self.symbols.lookup(name).map(|_| name.clone())
+                // A pointer or slice root addresses its pointee, not the
+                // local itself (e.g. `&self.ptr[i]` through a `self: T*`).
+                let info = self.symbols.lookup(name)?;
+                if matches!(
+                    self.resolve_named_ir_type(&info.ty),
+                    IrType::Pointer(_) | IrType::Slice(_)
+                ) {
+                    return None;
+                }
+                Some(name.clone())
             }
             Expression::Primary(PrimaryExpr::Grouped(inner)) => self.stack_address_root_name(inner),
             Expression::Primary(
@@ -1518,16 +1562,31 @@ impl SemanticAnalyzer {
                 ));
                 return Err(());
             };
+            let expected_ty = self.resolve_named_ir_type(expected_ty);
+            // A nested bare literal adopts the field's struct type contextually.
+            if let Expression::Primary(PrimaryExpr::StructLiteral(nested)) = &field.expr
+                && matches!(expected_ty, IrType::Aggregate(_))
+            {
+                self.check_contextual_struct_literal(nested, &expected_ty)?;
+                continue;
+            }
             let actual_name = self.infer_expression_type(&field.expr)?;
             let actual_ty = self.resolve_type_string(&actual_name);
-            let expected_ty = self.resolve_named_ir_type(expected_ty);
             let compatible_literal = (Self::is_integer_type(&expected_ty)
                 && Self::is_integer_type(&actual_ty)
                 && Self::is_const_int_expr(&field.expr))
                 || (Self::is_float_type(&expected_ty)
                     && Self::is_float_type(&actual_ty)
                     && Self::is_float_literal_expr(&field.expr));
-            if actual_ty != expected_ty && !compatible_literal {
+            let is_null_pointer = actual_name == "*unknown"
+                && matches!(
+                    expected_ty,
+                    IrType::Pointer(_) | IrType::FunctionPointer { .. }
+                );
+            if !self.types_equivalent(&actual_ty, &expected_ty)
+                && !compatible_literal
+                && !is_null_pointer
+            {
                 self.error(format!(
                     "field `{}` expects `{}`, found `{actual_name}`",
                     field.name,
@@ -2118,6 +2177,87 @@ impl SemanticAnalyzer {
 
     fn resolve_type_string(&self, ty_str: &str) -> IrType {
         self.resolve_named_ir_type(&Self::parse_type_string(ty_str))
+    }
+
+    /// Structural equality that sees through `Named` references; plain `==`
+    /// miscompares self-referential structs resolved to different depths.
+    fn types_equivalent(&self, a: &IrType, b: &IrType) -> bool {
+        self.types_equivalent_inner(a, b, &mut HashSet::new())
+    }
+
+    fn types_equivalent_inner(
+        &self,
+        a: &IrType,
+        b: &IrType,
+        assumed: &mut HashSet<(String, String)>,
+    ) -> bool {
+        match (a, b) {
+            (IrType::Named(x), IrType::Named(y)) if x == y => true,
+            (IrType::Named(_), _) | (_, IrType::Named(_)) => {
+                let key = (self.context.get_type_name(a), self.context.get_type_name(b));
+                if !assumed.insert(key) {
+                    return true;
+                }
+                let ra = self.resolve_named_one_step(a);
+                let rb = self.resolve_named_one_step(b);
+                if &ra == a && &rb == b {
+                    return a == b;
+                }
+                self.types_equivalent_inner(&ra, &rb, assumed)
+            }
+            (IrType::Pointer(x), IrType::Pointer(y)) => self.types_equivalent_inner(x, y, assumed),
+            (IrType::Slice(x), IrType::Slice(y)) => self.types_equivalent_inner(x, y, assumed),
+            (
+                IrType::Array {
+                    len: la,
+                    element: ea,
+                },
+                IrType::Array {
+                    len: lb,
+                    element: eb,
+                },
+            ) => la == lb && self.types_equivalent_inner(ea, eb, assumed),
+            (IrType::Aggregate(fa), IrType::Aggregate(fb)) => {
+                fa.len() == fb.len()
+                    && fa.iter().zip(fb.iter()).all(|((na, ta), (nb, tb))| {
+                        na == nb && self.types_equivalent_inner(ta, tb, assumed)
+                    })
+            }
+            (
+                IrType::FunctionPointer {
+                    params: pa,
+                    return_type: ra,
+                },
+                IrType::FunctionPointer {
+                    params: pb,
+                    return_type: rb,
+                },
+            ) => {
+                pa.len() == pb.len()
+                    && pa
+                        .iter()
+                        .zip(pb.iter())
+                        .all(|(x, y)| self.types_equivalent_inner(x, y, assumed))
+                    && self.types_equivalent_inner(ra, rb, assumed)
+            }
+            _ => a == b,
+        }
+    }
+
+    /// Resolve exactly one `Named` indirection (with the generic-base fallback
+    /// `resolve_named_ir_type` uses); non-named types come back unchanged.
+    fn resolve_named_one_step(&self, ty: &IrType) -> IrType {
+        let IrType::Named(name) = ty else {
+            return ty.clone();
+        };
+        self.context
+            .resolve(name)
+            .cloned()
+            .or_else(|| {
+                let (base, _) = name.split_once('<')?;
+                self.context.resolve(base).cloned()
+            })
+            .unwrap_or_else(|| ty.clone())
     }
 
     /// Check if a cast from source to target type is valid

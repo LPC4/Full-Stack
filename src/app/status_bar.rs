@@ -33,6 +33,49 @@ impl FullStackApp {
                     self.terminal_open = !self.terminal_open;
                 }
 
+                if self.live.is_some() {
+                    let runtime_color = if self.runtime_focused() {
+                        theme::ELECTRIC
+                    } else {
+                        theme::TEXT_DIM
+                    };
+                    if ui
+                        .add(
+                            egui::Button::new(theme::mono(
+                                "[run]",
+                                metrics::STATUS_TEXT_SIZE,
+                                runtime_color,
+                            ))
+                            .frame(false),
+                        )
+                        .on_hover_text("Show runtime console/framebuffer")
+                        .clicked()
+                    {
+                        self.focus_runtime();
+                    }
+                    if self.launch_mode == super::LaunchMode::Debug {
+                        let debug_color = if self.debugger_focused() {
+                            theme::ELECTRIC
+                        } else {
+                            theme::TEXT_DIM
+                        };
+                        if ui
+                            .add(
+                                egui::Button::new(theme::mono(
+                                    "[debug]",
+                                    metrics::STATUS_TEXT_SIZE,
+                                    debug_color,
+                                ))
+                                .frame(false),
+                            )
+                            .on_hover_text("Show debugger")
+                            .clicked()
+                        {
+                            self.focus_debugger();
+                        }
+                    }
+                }
+
                 if let Some((line, col)) = self.cursor_pos {
                     ui.label(theme::mono(
                         format!("{line}:{col}"),

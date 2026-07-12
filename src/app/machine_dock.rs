@@ -1,5 +1,5 @@
 use super::{FullStackApp, chrome, metrics};
-use crate::ui::{Layer, theme};
+use crate::ui::theme;
 use chrome::ActionTone;
 use eframe::egui;
 use full_stack::session::MachineState;
@@ -18,10 +18,10 @@ enum Transport {
     StepN(u64),
     Stop,
     Restart,
-    /// Jump the machine rung to the disassembly view (fault triage).
+    /// Jump the debugger to the disassembly view (fault triage).
     ShowDisasm,
-    /// Open a machine surface (console/screen/disasm/memory) on the L4 rung.
-    ShowView(super::debug_view::MachineView),
+    /// Open a debugger surface.
+    ShowView(super::debug_view::DebugView),
     /// A `symbol` or `symbol+0x10` spec typed into the dock input.
     AddBreakpoint(String),
     RemoveBreakpoint(u64),
@@ -57,10 +57,9 @@ impl FullStackApp {
         let mut step_count = self.step_count;
         let mut bp_entry = std::mem::take(&mut self.breakpoint_entry);
         let mut time_scrub = self.time_scrub;
-        let restart_debug = self.current_launch_debug;
-        let machine_view = self.machine_view;
-        let on_vm_layer = self.layer == Layer::Vm;
-        let has_screen = self.config_has_screen();
+        let restart_debug = self.launch_mode == super::LaunchMode::Debug;
+        let debug_view = self.debug_view;
+        let debugger_focused = self.debugger_focused();
         let process_count = self
             .inspector
             .cache
@@ -77,16 +76,16 @@ impl FullStackApp {
                     "tab",
                     format!(
                         "[debug] {}",
-                        self.machine_tab_label.as_deref().unwrap_or("machine")
+                        self.session_tab_label.as_deref().unwrap_or("machine")
                     ),
                     theme::TEXT_DIM,
                 );
-                if !on_vm_layer {
+                if !debugger_focused {
                     ui.add_space(metrics::SECTION_GAP);
                     if chrome::action_row(ui, &[("focus [debug] tab", ActionTone::Primary)])
                         == Some(0)
                     {
-                        action = Some(Transport::ShowView(machine_view));
+                        action = Some(Transport::ShowView(debug_view));
                     }
                 }
                 chrome::section_eyebrow(ui, "registers");
@@ -106,7 +105,7 @@ impl FullStackApp {
                     action = Some(transport);
                 }
                 chrome::section_eyebrow(ui, "view");
-                if let Some(view) = view_row(ui, machine_view, on_vm_layer, has_screen) {
+                if let Some(view) = view_row(ui, debug_view, debugger_focused) {
                     action = Some(Transport::ShowView(view));
                 }
                 if let Some(bp_action) = breakpoints_section(ui, live, &mut bp_entry) {
@@ -133,12 +132,12 @@ impl FullStackApp {
             Transport::Stop => self.stop_live_machine(),
             Transport::Restart => self.restart_selected_config(now),
             Transport::ShowDisasm => {
-                self.machine_view = super::debug_view::MachineView::Disasm;
-                self.focus_machine_tab();
+                self.debug_view = super::debug_view::DebugView::Disasm;
+                self.focus_debugger();
             }
             Transport::ShowView(view) => {
-                self.machine_view = view;
-                self.focus_machine_tab();
+                self.debug_view = view;
+                self.focus_debugger();
             }
             Transport::AddBreakpoint(spec) => {
                 if let Some(live) = &mut self.live {
@@ -571,25 +570,21 @@ fn time_travel_section(
     action
 }
 
-/// The machine-surface switch: mirrors the L4 view tabs so the debugger is
-/// reachable from the dock no matter which file is active.
+/// Debugger view switch, reachable from the dock no matter which file is active.
 fn view_row(
     ui: &mut egui::Ui,
-    current: super::debug_view::MachineView,
-    on_vm_layer: bool,
-    has_screen: bool,
-) -> Option<super::debug_view::MachineView> {
-    use super::debug_view::MachineView;
-    let mut views: Vec<(&str, MachineView)> = vec![("console", MachineView::Console)];
-    if has_screen {
-        views.push(("screen", MachineView::Screen));
-    }
-    views.push(("code", MachineView::Code));
-    views.push(("disasm", MachineView::Disasm));
-    views.push(("memory", MachineView::Memory));
+    current: super::debug_view::DebugView,
+    debugger_focused: bool,
+) -> Option<super::debug_view::DebugView> {
+    use super::debug_view::DebugView;
+    let views = [
+        ("code", DebugView::Code),
+        ("disasm", DebugView::Disasm),
+        ("memory", DebugView::Memory),
+    ];
     let labels: Vec<&str> = views.iter().map(|(label, _)| *label).collect();
-    // Off the machine rung nothing reads selected, so any click jumps there.
-    let selected = if on_vm_layer {
+    // Outside the debugger nothing reads selected, so any click focuses it.
+    let selected = if debugger_focused {
         views
             .iter()
             .position(|(_, view)| *view == current)
@@ -670,7 +665,7 @@ pub(super) fn state_style(state: &MachineState) -> (String, egui::Color32) {
     match state {
         MachineState::Running => ("running".to_owned(), theme::ELECTRIC),
         MachineState::Paused => ("paused".to_owned(), theme::WARNING),
-        MachineState::Exited(0) => ("exit 0".to_owned(), Layer::Vm.color()),
+        MachineState::Exited(0) => ("exit 0".to_owned(), theme::ELECTRIC),
         MachineState::Exited(code) => (format!("exit {code}"), theme::TEXT),
         MachineState::Stopped => ("stopped".to_owned(), theme::TEXT_DIM),
         MachineState::Faulted(_) => ("faulted".to_owned(), theme::DANGER),

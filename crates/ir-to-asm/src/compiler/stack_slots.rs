@@ -53,12 +53,12 @@ pub fn assign_stack_slots(
                 ..
             } = inst
                 && matches!(
-                    ty,
+                    ctx.resolve_type(ty),
                     IrType::Array { .. } | IrType::Aggregate(_) | IrType::Slice(_)
                 )
                 && let Some(entry) = vregs.iter_mut().find(|(r, _)| r == reg)
                 && !matches!(
-                    entry.1,
+                    ctx.resolve_type(&entry.1),
                     IrType::Array { .. } | IrType::Aggregate(_) | IrType::Slice(_)
                 )
             {

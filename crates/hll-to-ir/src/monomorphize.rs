@@ -1549,7 +1549,9 @@ fn rewrite_expression_calls(
                     }
                     *name = concrete_name;
                     type_arguments.clear();
-                } else if !concrete_args.is_empty() {
+                } else if !concrete_args.is_empty()
+                    && !matches!(name.as_str(), "size_of" | "align_of")
+                {
                     return Err(format!("function `{name}` is not generic"));
                 }
             }

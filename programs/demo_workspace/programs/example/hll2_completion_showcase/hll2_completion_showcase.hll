@@ -2,6 +2,7 @@
 ; vtables, impl members, associated items, interfaces, bounds, and modules.
 
 console := import("console")
+memory_allocator := import("memory_allocator")
 
 mathlib := import("./modules/mathlib.hll")
 
@@ -200,6 +201,40 @@ choose_binary: (multiply: bool) -> BinaryOp {
     return add
 }
 
+; --- Explicit heap allocation and owned containers ---
+; The allocator is fallible, alignment is explicit, and ownership ends at
+; deallocate/deinit. Containers use the same ABI without hiding disposal.
+showcase_heap: () -> i32 {
+    bytes: u8* = null
+    allocated := memory_allocator.allocate(8, 16)
+    match allocated {
+        Ok(ptr) -> { bytes = ptr }
+        Err(error) -> { return 42 }
+    }
+    if (bytes as u64) % 16 != 0 { return 43 }
+    bytes[0] = 21
+
+    resized := memory_allocator.reallocate(bytes, 8, 32, 16)
+    match resized {
+        Ok(ptr) -> { bytes = ptr }
+        Err(error) -> { return 44 }
+    }
+    if bytes[0] != 21 { return 45 }
+    memory_allocator.deallocate(bytes, 32, 16)
+
+    values: Vec<i32> = { .ptr = null, .len = 0, .capacity = 0 }
+    Vec_init<i32>(&values)
+    pushed := Vec_push<i32>(&values, 42)
+    match pushed {
+        Ok(len) -> {}
+        Err(error) -> { return 46 }
+    }
+    slot: i32* = Vec_get<i32>(&values, 0)
+    if slot == null or @slot != 42 { return 47 }
+    Vec_deinit<i32>(&values)
+    return 0
+}
+
 main: () -> i32 {
     ; --- Function pointers, callable expressions, and non-capturing lambdas ---
     op: BinaryOp = add
@@ -293,6 +328,14 @@ main: () -> i32 {
     if eval_op(99, 1, 1) != -1 { return 22 }
     if classify_char('*') != OP_MUL { return 23 }
     if classify_char('x') != 'x' { return 24 }
+
+    ; --- Compile-time layout reflection ---
+    if size_of<Shape>() != 8 { return 39 }
+    if align_of<Shape>() != 4 { return 40 }
+    if size_of<Measured<Shape>>() != 8 { return 41 }
+
+    heap_status := showcase_heap()
+    if heap_status != 0 { return heap_status }
 
     console.println("HLL2 showcase: all checks passed")
     return 0

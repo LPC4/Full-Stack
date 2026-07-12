@@ -1,5 +1,5 @@
 //! VM-backed panes: the register file, the pipeline feed, the cache grid, and
-//! compact bridges to the machine rung's memory and disassembly views.
+//! compact bridges to the debugger's memory and disassembly views.
 
 use super::widgets::{cache_bytes, capture_due, percent, rate_str, section_label, stat_row};
 use super::{FullStackApp, InspectorPane};
@@ -274,7 +274,7 @@ impl FullStackApp {
         });
     }
 
-    /// Bridge pane: a summary plus a jump to the machine rung's memory view,
+    /// Bridge pane: a summary plus a jump to the debugger's memory view,
     /// which needs more width than the left tool window offers.
     pub(super) fn memory_pane(&mut self, ui: &mut egui::Ui) {
         let Some(live) = &self.live else {
@@ -290,10 +290,10 @@ impl FullStackApp {
             None => "sp \u{2192} unmapped".to_owned(),
         };
         stat_row(ui, "mmu", &translation);
-        self.machine_rung_bridge(ui, "open memory view", debug_view::MachineView::Memory);
+        self.debugger_bridge(ui, "open memory view", debug_view::DebugView::Memory);
     }
 
-    /// Bridge pane: pc context plus a jump to the machine rung's disassembly.
+    /// Bridge pane: pc context plus a jump to the debugger's disassembly.
     pub(super) fn disassembly_pane(&mut self, ui: &mut egui::Ui) {
         let Some(live) = &self.live else {
             chrome::centered_hint(ui, "No machine session.");
@@ -313,22 +313,17 @@ impl FullStackApp {
         if let Some((file, line)) = live.source_for_pc(regs.pc) {
             stat_row(ui, "source", &format!("{file}:{line}"));
         }
-        self.machine_rung_bridge(ui, "open disassembly", debug_view::MachineView::Disasm);
+        self.debugger_bridge(ui, "open disassembly", debug_view::DebugView::Disasm);
     }
 
     /// The shared footer of the bridge panes: why the view lives on the machine
     /// rung, and the button that focuses it there.
-    fn machine_rung_bridge(
-        &mut self,
-        ui: &mut egui::Ui,
-        label: &str,
-        view: debug_view::MachineView,
-    ) {
+    fn debugger_bridge(&mut self, ui: &mut egui::Ui, label: &str, view: debug_view::DebugView) {
         ui.add_space(metrics::SECTION_GAP);
         chrome::indented(ui, |ui| {
             if chrome::action_row(ui, &[(label, chrome::ActionTone::Primary)]).is_some() {
-                self.machine_view = view;
-                self.focus_machine_tab();
+                self.debug_view = view;
+                self.focus_debugger();
             }
         });
     }

@@ -761,6 +761,22 @@ mod tests {
     }
 
     #[test]
+    fn struct_field_of_specialized_generic_struct_lowers() {
+        // A non-generic struct holding a specialized generic struct must
+        // lower field access through the nested specialization.
+        let source = r#"
+struct Vec<T> { ptr: T*, len: u64, capacity: u64 }
+struct Holder { bytes: Vec<u8> }
+len_of: (h: Holder*) -> u64 { return h.bytes.len }
+main: () -> i32 {
+    h: Holder = { .bytes = { .ptr = null, .len = 3, .capacity = 0 } }
+    return len_of(&h) as i32
+}
+"#;
+        compile_hll(source).expect("nested specialized struct field compiles");
+    }
+
+    #[test]
     fn source_line_markers_thread_from_hll_to_ir() {
         // Each body statement is on its own line; markers should carry those lines
         // (1-based, prelude-free) tagged with the configured source file.
@@ -2159,6 +2175,56 @@ main: () -> i32 {
 }
 "#,
             "mentions `Self` outside the receiver",
+        );
+    }
+
+    #[test]
+    fn compile_time_layout_reflection_uses_lowering_layout() {
+        let output = compile(
+            r#"
+struct Padded { byte: u8, word: u64 }
+main: () -> u64 {
+    return size_of<u8>() + align_of<u8>()
+        + size_of<u64*>() + align_of<u64*>()
+        + size_of<u16[3]>() + align_of<u16[3]>()
+        + size_of<u8[]>() + align_of<u8[]>()
+        + size_of<Padded>() + align_of<Padded>()
+}
+"#,
+        )
+        .expect("layout reflection should compile");
+
+        let ir = output.ir.to_string();
+        for expected in ["1", "2", "6", "8", "16"] {
+            assert!(
+                ir.contains(expected),
+                "missing folded layout value {expected}: {ir}"
+            );
+        }
+        assert!(!ir.contains("call size_of"));
+        assert!(!ir.contains("call align_of"));
+    }
+
+    #[test]
+    fn layout_reflection_substitutes_generic_type_arguments() {
+        compile(
+            r#"
+layout: <T>() -> u64 { return size_of<T>() + align_of<T>() }
+main: () -> u64 { return layout<u32>() - 8 }
+"#,
+        )
+        .expect("generic layout reflection should compile");
+    }
+
+    #[test]
+    fn layout_reflection_rejects_invalid_invocations() {
+        expect_error_containing(
+            "main: () -> u64 { return size_of() }",
+            "expects exactly one type argument",
+        );
+        expect_error_containing(
+            "main: () -> u64 { return align_of<u64>(1) }",
+            "accepts no value arguments",
         );
     }
 }

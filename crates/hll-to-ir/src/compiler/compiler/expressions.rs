@@ -137,7 +137,9 @@ impl HighLevelCompiler {
                 })
             }
             PrimaryExpr::FunctionCall {
-                name, arguments, ..
+                name,
+                type_arguments,
+                arguments,
             } => {
                 // Function call results are rvalues with no addressable storage.
                 if mode == EvalMode::Address {
@@ -146,6 +148,34 @@ impl HighLevelCompiler {
                 // A call whose name is an enum variant constructs that variant.
                 if self.enum_variants.contains_key(name) {
                     return self.lower_enum_construct(name, arguments);
+                }
+                if matches!(name.as_str(), "size_of" | "align_of") {
+                    if !arguments.is_empty() {
+                        self.context.error(format!(
+                            "{name}<T>() is compile-time reflection and accepts no value arguments"
+                        ));
+                        return None;
+                    }
+                    let [ty] = type_arguments.as_slice() else {
+                        self.context.error(format!(
+                            "{name}<T>() expects exactly one type argument, got {}",
+                            type_arguments.len()
+                        ));
+                        return None;
+                    };
+                    let lowered_ty = self.lower_type(ty);
+                    let Some((size, alignment)) = self.reflected_layout(&lowered_ty) else {
+                        self.context.error(format!(
+                            "{name}<T>() requires a resolved, sized type; `{lowered_ty}` is not sized"
+                        ));
+                        return None;
+                    };
+                    let value = if name == "size_of" { size } else { alignment };
+                    return Some(LoweredValue {
+                        value: IrValue::Integer(value as i64),
+                        ty: IrType::Integer(IntWidth::I64),
+                        is_unsigned: true,
+                    });
                 }
                 // A function-pointer binding calls indirectly; any other bare
                 // name stays a direct call so extern functions link as before.

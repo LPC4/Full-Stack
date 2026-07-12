@@ -186,6 +186,16 @@ impl HighLevelCompiler {
         }
     }
 
+    pub(super) fn reflected_layout(&self, ty: &IrType) -> Option<(usize, usize)> {
+        match &self.resolve_named_type(ty) {
+            IrType::Void | IrType::Named(_) => None,
+            resolved => Some((
+                self.type_size_in_bytes(resolved),
+                self.type_alignment_in_bytes(resolved),
+            )),
+        }
+    }
+
     pub(super) fn type_alignment_in_bytes(&self, ty: &IrType) -> usize {
         match &self.resolve_named_type(ty) {
             IrType::Void => 1,

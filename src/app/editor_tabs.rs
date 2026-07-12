@@ -2,7 +2,7 @@
 //! tab drops onto the editor canvas under an accent bar in its layer color.
 
 use super::{FullStackApp, metrics};
-use crate::ui::{Layer, theme};
+use crate::ui::theme;
 use eframe::egui;
 use egui::{Align2, FontId, Sense, pos2, vec2};
 use full_stack::workspace::VPath;
@@ -10,8 +10,10 @@ use full_stack::workspace::VPath;
 enum TabAction {
     Activate(VPath),
     Close(VPath),
-    FocusMachine,
-    CloseMachine,
+    FocusRuntime,
+    CloseRuntime,
+    FocusDebugger,
+    CloseDebugger,
 }
 
 impl FullStackApp {
@@ -51,17 +53,38 @@ impl FullStackApp {
                     .show(ui, |ui| {
                         ui.spacing_mut().item_spacing.x = 0.0;
                         ui.horizontal(|ui| {
-                            let machine_focused = self.machine_tab_focused();
+                            let session_focused = self.main_surface != super::MainSurface::Document;
                             if let Some(live) = &self.live {
                                 let label = self
-                                    .machine_tab_label
+                                    .session_tab_label
                                     .as_deref()
                                     .unwrap_or("machine")
                                     .to_owned();
                                 let (_, state_color) =
                                     super::machine_dock::state_style(&live.state);
-                                if let Some(act) =
-                                    machine_tab(ui, &label, machine_focused, state_color)
+                                if self.runtime_open
+                                    && let Some(act) = session_tab(
+                                        ui,
+                                        "run",
+                                        &label,
+                                        self.main_surface == super::MainSurface::Runtime,
+                                        state_color,
+                                        TabAction::FocusRuntime,
+                                        TabAction::CloseRuntime,
+                                    )
+                                {
+                                    action = Some(act);
+                                }
+                                if self.debugger_open
+                                    && let Some(act) = session_tab(
+                                        ui,
+                                        "debug",
+                                        &label,
+                                        self.main_surface == super::MainSurface::Debugger,
+                                        state_color,
+                                        TabAction::FocusDebugger,
+                                        TabAction::CloseDebugger,
+                                    )
                                 {
                                     action = Some(act);
                                 }
@@ -69,7 +92,7 @@ impl FullStackApp {
                             let active = self.active_path();
                             let open: Vec<VPath> = self.workspace.open_paths().to_vec();
                             for path in open {
-                                let is_active = !machine_focused && active.as_ref() == Some(&path);
+                                let is_active = !session_focused && active.as_ref() == Some(&path);
                                 let dirty = self
                                     .workspace
                                     .document(&path)
@@ -86,8 +109,10 @@ impl FullStackApp {
         match action {
             Some(TabAction::Activate(path)) => self.activate_path(&path),
             Some(TabAction::Close(path)) => self.close_path(&path),
-            Some(TabAction::FocusMachine) => self.focus_machine_tab(),
-            Some(TabAction::CloseMachine) => self.close_machine_tab(),
+            Some(TabAction::FocusRuntime) => self.focus_runtime(),
+            Some(TabAction::CloseRuntime) => self.close_runtime_surface(),
+            Some(TabAction::FocusDebugger) => self.focus_debugger(),
+            Some(TabAction::CloseDebugger) => self.close_debugger_surface(),
             None => {}
         }
         self.close_confirmation(ui);
@@ -97,13 +122,16 @@ impl FullStackApp {
     /// Right edge of the strip: rung tag in its spectrum color, plus a read-only
     /// badge when the focused document rejects edits. Returns the reserved width.
     fn tab_trailing(&self, ui: &egui::Ui, painter: &egui::Painter, rect: egui::Rect) -> f32 {
-        let tag = format!("{} {}", self.layer.tag(), self.layer.name());
-        let tag_galley = ui.fonts_mut(|f| {
-            f.layout_no_wrap(
-                tag,
-                FontId::monospace(metrics::STATUS_TEXT_SIZE),
+        let (tag, color) = match self.main_surface {
+            super::MainSurface::Document => (
+                format!("{} {}", self.layer.tag(), self.layer.name()),
                 self.layer.color(),
-            )
+            ),
+            super::MainSurface::Runtime => ("RUN".to_owned(), theme::ELECTRIC),
+            super::MainSurface::Debugger => ("DEBUG".to_owned(), theme::ELECTRIC),
+        };
+        let tag_galley = ui.fonts_mut(|f| {
+            f.layout_no_wrap(tag, FontId::monospace(metrics::STATUS_TEXT_SIZE), color)
         });
         let mut used = tag_galley.size().x + metrics::PANEL_INSET_X * 2.0;
         painter.galley(
@@ -112,13 +140,14 @@ impl FullStackApp {
                 rect.center().y - tag_galley.size().y / 2.0,
             ),
             tag_galley,
-            self.layer.color(),
+            color,
         );
 
-        let read_only = self
-            .workspace
-            .active_document()
-            .is_some_and(|doc| doc.is_read_only());
+        let read_only = self.main_surface == super::MainSurface::Document
+            && self
+                .workspace
+                .active_document()
+                .is_some_and(|doc| doc.is_read_only());
         if read_only {
             let badge = ui.fonts_mut(|f| {
                 f.layout_no_wrap(
@@ -174,15 +203,17 @@ impl FullStackApp {
     }
 }
 
-/// The [debug] tab: pinned first while a machine session exists. Carries the
-/// L4 accent, a session-state dot, and a close glyph that ends the session.
-fn machine_tab(
+/// A session surface tab. Closing hides the view; Stop owns session termination.
+fn session_tab(
     ui: &mut egui::Ui,
+    kind: &str,
     label: &str,
     active: bool,
     state_color: egui::Color32,
+    focus: TabAction,
+    close: TabAction,
 ) -> Option<TabAction> {
-    let name = format!("[debug] {label}");
+    let name = format!("[{kind}] {label}");
     let font = FontId::monospace(metrics::LABEL_TEXT_SIZE);
     let text_color = if active { theme::TEXT } else { theme::TEXT_DIM };
     let galley = ui.fonts_mut(|f| f.layout_no_wrap(name, font, text_color));
@@ -200,7 +231,7 @@ fn machine_tab(
             rect.left_top(),
             pos2(rect.right(), rect.top() + metrics::TAB_ACCENT_HEIGHT),
         );
-        painter.rect_filled(accent, 0.0, Layer::Vm.color());
+        painter.rect_filled(accent, 0.0, theme::ELECTRIC);
     } else if resp.hovered() {
         painter.rect_filled(rect, 0.0, theme::SURFACE_ALT);
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
@@ -246,9 +277,9 @@ fn machine_tab(
     }
 
     if close_resp.clicked() || resp.middle_clicked() {
-        Some(TabAction::CloseMachine)
+        Some(close)
     } else if resp.clicked() {
-        Some(TabAction::FocusMachine)
+        Some(focus)
     } else {
         None
     }

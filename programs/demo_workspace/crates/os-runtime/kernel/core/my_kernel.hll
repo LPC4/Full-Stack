@@ -1,6 +1,7 @@
 ; Kernel initialization and boot orchestration.
 
 layout      := import("layout")
+heap_source := import("heap_source")
 klog        := import("klog")
 utilities   := import("utilities")
 mem         := import("mem")
@@ -100,6 +101,9 @@ boot_memory_diagnostics: () {
 }
 
 boot_heap: () {
+    ; Hand the stdlib allocator the kernel heap region carved out of RAM;
+    ; before this only the 64 KiB bootstrap buffer backs allocations.
+    heap_source.heap_set_region(KHEAP_BASE, KHEAP_END)
     probe: u8* = utilities.malloc(64)
     mem.memset(probe, 0, 64)
     klog.ok("heap ready".ptr)

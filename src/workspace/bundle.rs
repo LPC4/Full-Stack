@@ -13,8 +13,7 @@ pub fn sample_workspace() -> io::Result<MemoryFs> {
     Ok(fs)
 }
 
-/// Write the demo workspace tree into `fs`: kernel + modules, boot `.s`, stdlib,
-/// user tools, examples, and a run.toml. Canonical examples are refreshed while
+/// Write the demo workspace tree into `fs`: canonical examples are refreshed,
 /// edits to the other materialized sources are preserved.
 pub fn populate_demo_workspace(fs: &mut dyn WorkspaceFs) -> io::Result<()> {
     write_missing(fs, "README.md", SAMPLE_README)?;

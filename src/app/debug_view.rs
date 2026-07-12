@@ -1,4 +1,4 @@
-//! Instruction-level debug views on the machine rung: a disassembly window
+//! Instruction-level debugger views: a disassembly window
 //! around the live pc and a hex memory view with a VA/PA toggle.
 
 use super::{FullStackApp, chrome, metrics};
@@ -23,11 +23,16 @@ const XREG_NAMES: [&str; 32] = [
     "t5", "t6",
 ];
 
-/// Which surface the machine (L4) rung is showing.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum MachineView {
+/// Runtime presentation exposed by every live session.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RuntimeView {
     Console,
     Screen,
+}
+
+/// Debugger-only views exposed by a debug launch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DebugView {
     /// Read-only source view that follows the pc across files.
     Code,
     Disasm,

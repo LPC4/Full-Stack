@@ -109,7 +109,9 @@ impl HighLevelCompiler {
             } => {
                 let ty = Type::Struct(fields.clone());
                 if generics.is_empty() {
-                    let lowered = self.lower_type(&ty);
+                    // Program-aware lowering registers specializations named by
+                    // generic field types (e.g. a `Vec<u8>` member).
+                    let lowered = self.lower_type_with_program(ir_program, &ty)?;
                     self.context
                         .types
                         .register_type(name.clone(), lowered.clone());

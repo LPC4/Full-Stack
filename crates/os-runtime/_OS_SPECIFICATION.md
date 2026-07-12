@@ -115,8 +115,8 @@ boot_traps      trap_init: install stvec, enable STIE + SEIE
 boot_timer      arm CLINT timer via timer_set(1_000_000)
 boot_plic       enable the UART RX IRQ on PLIC S-mode context 1
 diagnostics     memory_self_test, pmm_ops_test (checks.hll)
-boot_heap       smoke-test kmalloc
-pmm.boot        pmm_init(0x8010_0000, 0x87F0_0000) + alloc/free probe
+boot_heap       heap_set_region(KHEAP_BASE, KHEAP_END) + smoke-test kmalloc
+pmm.boot        pmm_init(PMM_BASE, PMM_END) + alloc/free probe
 vmm.boot        vmm_init, stamp kernel maps, vmm_enable (write satp, sfence)
 process/sched   process.init, scheduler.init
 spawn_user      copy + map the pid-1 binary, process.create, scheduler.add
@@ -131,9 +131,11 @@ are declared there with `abi_exports`; they are not implicit compiler globals.
 ### 3.3 Physical memory the kernel programs
 
 RAM is `0x8000_0000` + 128 MiB. The kernel image and its 64 KiB stack sit at the
-bottom; `pmm` owns `0x8010_0000 .. 0x87F0_0000`; the injected pid-1 binary, its
-metadata, and the filesystem image sit in the top of RAM (Appendix A, and 5.x /
-8.4 for the exact pages).
+bottom; `pmm` owns `0x8010_0000 .. 0x8700_0000`; the kernel heap region handed to
+the stdlib allocator at boot is `0x8700_0000 .. 0x87B0_0000` (layout.hll
+`KHEAP_BASE`/`KHEAP_END`); the injected pid-1 binary, its metadata, and the
+filesystem image sit in the top of RAM (Appendix A, and 5.x / 8.4 for the exact
+pages).
 
 
 ## 4. Memory management (`vmm.hll`, `pmm.hll`, allocator)
@@ -148,10 +150,14 @@ page that is still mapped: pages are only reused after an explicit `pmm_free`.
 
 ### 4.2 Kernel heap (`kmalloc` / `malloc`)
 
-`kmalloc` (`utilities.hll`) wraps the stdlib `malloc` and panics on OOM. `malloc`
-(`stdlib/core/memory_allocator.hll`) is a bump-plus-free-list allocator over a
-static `heap_buffer: u8[65536]` living in kernel BSS -- distinct from `pmm` memory
-and from user pages, so heap allocations never alias process address spaces.
+`kmalloc` (`utilities.hll`) wraps the stdlib `malloc` and panics on OOM. The
+allocator (`stdlib/core/memory_allocator.hll`) is bump-plus-free-list over the
+raw source in `stdlib/core/heap_source.hll`: a 64 KiB bootstrap `heap_buffer` in
+kernel BSS, plus the `KHEAP_BASE .. KHEAP_END` region `boot_heap` registers via
+`heap_set_region` -- distinct from `pmm` memory and from user pages, so heap
+allocations never alias process address spaces. The module also exports the
+aligned, fallible `allocate`/`reallocate`/`deallocate` ABI and the `Vec` /
+`OwnedString` / `Arena` / `Pool` containers (see the language spec 11.4-11.5).
 
 ### 4.3 Sv39 paging and per-process roots
 
@@ -512,15 +518,16 @@ the result to its request. `fork` copies the break onto the child (the heap page
 themselves are duplicated by the per-process address-space copy, 4.3); `exec`
 starts from a fresh zeroed PCB, so a new image gets an empty heap.
 
-The hosted userspace allocator (`stdlib/hosted/memory_allocator.hll`) is a bump
+The hosted userspace raw source (`stdlib/hosted/heap_source.hll`) is a bump
 allocator over the break: it queries the initial break with `brk(0)` and raises it
 with `brk(page_up(new_top))` whenever an allocation would cross the current
 ceiling, returning null only when `brk` fails to grow. This replaces the old fixed
 64 KB `.bss` buffer, so `malloc`/`new` can now grow past 64 KB. The kernel and
-freestanding builds keep the fixed-buffer allocator (`stdlib/core`), since they
-have no syscalls. The bare-VM hosted path (no kernel) services the same `brk` in
-the M-mode firmware (`boot/trap.s`) against a flat break pointer at
-`RAM_BASE + 32 MiB - 8`; the real-`qemu` path uses Linux's own `brk`.
+freestanding builds bump the bootstrap buffer plus any registered heap region
+(`stdlib/core/heap_source.hll`), since they have no syscalls. The bare-VM hosted
+path (no kernel) services the same `brk` in the M-mode firmware (`boot/trap.s`)
+against a flat break pointer at `RAM_BASE + 32 MiB - 8`; the real-`qemu` path uses
+Linux's own `brk`.
 
 
 ## 8. Filesystem (`fs.hll`)
@@ -712,7 +719,8 @@ against via `ld`; both are installed under `/home/src`.
 | `0x1002_0000` | Framebuffer device (76 pages; control page after pixels) |
 | `0x1007_0000` | Keyboard event device |
 | `0x8000_0000` | RAM (128 MiB): kernel image + 64 KiB stack at base |
-| `0x8010_0000 .. 0x87F0_0000` | PMM page pool |
+| `0x8010_0000 .. 0x8700_0000` | PMM page pool |
+| `0x8700_0000 .. 0x87B0_0000` | Kernel heap region (stdlib allocator) |
 | `0x87C0_0000` | Filesystem image |
 | `0x87BF_F000` | FS metadata (PA, size) |
 | `0x87EF_F000` | User metadata (entry VA, size) |

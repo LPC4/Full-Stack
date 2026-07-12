@@ -29,6 +29,8 @@ pub struct CompilerRv64 {
     data: DataSection,
     type_aliases: HashMap<String, IrType>,
     function_return_types: HashMap<String, IrType>,
+    functions_with_sret_param: std::collections::HashSet<String>,
+    current_return_type: IrType,
     peephole: bool,
     regalloc: bool,
     omit_frame_pointer: bool,
@@ -48,6 +50,8 @@ impl CompilerRv64 {
             data: DataSection::new(),
             type_aliases: HashMap::new(),
             function_return_types: HashMap::new(),
+            functions_with_sret_param: std::collections::HashSet::new(),
+            current_return_type: IrType::Void,
             peephole: false,
             regalloc: false,
             omit_frame_pointer: false,
@@ -105,6 +109,7 @@ impl CompilerRv64 {
         self.data.reset();
         self.type_aliases.clear();
         self.function_return_types.clear();
+        self.functions_with_sret_param.clear();
         self.heap_alloc_counter = 0;
 
         for s in &program.global_strings {
@@ -128,6 +133,13 @@ impl CompilerRv64 {
         for func in &program.functions {
             self.function_return_types
                 .insert(func.name.clone(), func.return_type.clone());
+            // The front end rewrites large aggregate returns to void plus a
+            // hidden `__sret` pointer param; same-module callers must honor it.
+            if func.params.first().is_some_and(
+                |p| matches!(&p.register, hll_to_ir::IrRegister::Named(n) if n == "__sret"),
+            ) {
+                self.functions_with_sret_param.insert(func.name.clone());
+            }
         }
 
         for func in &program.functions {
@@ -140,6 +152,7 @@ impl CompilerRv64 {
 
     fn compile_function(&mut self, func: &hll_to_ir::IrFunction) {
         let return_type = self.resolve_ir_type(&func.return_type);
+        self.current_return_type = return_type.clone();
         let is_aggregate = matches!(
             return_type,
             IrType::Aggregate(_) | IrType::Array { .. } | IrType::Slice(_)
@@ -859,7 +872,11 @@ impl CompilerRv64 {
             resolved_ret_ty,
             IrType::Aggregate(_) | IrType::Array { .. } | IrType::Slice(_)
         );
-        let needs_sret = is_agg_return && !self.can_return_in_registers(&resolved_ret_ty);
+        // A same-module callee rewritten by the front end returns void but
+        // still expects the hidden result pointer as its first argument.
+        let callee_takes_sret_param = self.functions_with_sret_param.contains(function);
+        let needs_sret = (is_agg_return && !self.can_return_in_registers(&resolved_ret_ty))
+            || callee_takes_sret_param;
 
         self.emitter
             .emit_comment(&format!("--- Function Call: {function} ---"));
@@ -1019,7 +1036,10 @@ impl CompilerRv64 {
                     }
                 }
             }
-        } else if !is_agg_return && let Some(dest) = dest {
+        } else if !is_agg_return
+            && !needs_sret
+            && let Some(dest) = dest
+        {
             let resolved_return_ty = self.resolve_ir_type(&func_return_type);
             self.store_int_result_from(dest, A0, &resolved_return_ty, ctx);
         }
@@ -1354,64 +1374,67 @@ impl CompilerRv64 {
     fn lower_return(&mut self, val: Option<&IrValue>, needs_sret: bool, ctx: &mut FunctionContext) {
         if let Some(val) = val {
             let raw_val_type = self.resolve_value_type(val, ctx);
-            let resolved_val = match (&raw_val_type, val) {
-                (IrType::Pointer(inner), IrValue::Register(reg)) if ctx.is_stack_address(reg) => {
-                    self.resolve_ir_type(inner)
-                }
-                _ => raw_val_type.clone(),
-            };
+            // The declared return type decides the aggregate paths; the value
+            // register may hold the bytes or only a pointer to them.
             let is_agg_return = matches!(
-                resolved_val,
+                self.current_return_type,
                 IrType::Aggregate(_) | IrType::Array { .. } | IrType::Slice(_)
             );
+            let resolved_val = if is_agg_return {
+                self.current_return_type.clone()
+            } else {
+                self.resolve_ir_type(&raw_val_type)
+            };
 
-            if needs_sret && is_agg_return {
+            if is_agg_return {
                 let IrValue::Register(reg) = val else {
                     panic!("Aggregate return must be a register")
                 };
                 // An aggregate VALUE register (e.g. a `Load` result) stores its
                 // bytes in its own slot; only pointer-typed registers dereference.
-                let value_in_own_slot =
-                    ctx.is_stack_address(reg) || !matches!(raw_val_type, IrType::Pointer(_));
-                let src_addr = if value_in_own_slot {
+                let value_in_own_slot = ctx.is_stack_address(reg)
+                    || !matches!(self.resolve_ir_type(&raw_val_type), IrType::Pointer(_));
+                let (src_base, src_off) = if value_in_own_slot {
                     let slot = ctx.slot_for_reg(reg).expect("reg slot");
-                    let addr_tmp = self.emitter.alloc_temp_reg();
-                    self.emitter.emit_add_imm(addr_tmp, SP, slot as i64);
-                    addr_tmp
+                    (SP, slot as i32)
                 } else {
-                    self.load_pointer_operand_to_temp(reg, ctx)
+                    (self.load_pointer_operand_to_temp(reg, ctx), 0)
                 };
-                let sret_ptr = 9; // s1
-                let size = self.type_size(&resolved_val);
-                self.emitter
-                    .copy_bytes_from_addr_to_addr(sret_ptr, 0, src_addr, 0, size);
-            } else if is_agg_return {
-                let IrValue::Register(reg) = val else {
-                    panic!("Small aggregate return must be a register")
-                };
-                let slot = ctx.slot_for_reg(reg).expect("reg slot");
-                {
+                if needs_sret {
+                    let src_addr = if value_in_own_slot {
+                        let addr_tmp = self.emitter.alloc_temp_reg();
+                        self.emitter
+                            .emit_add_imm(addr_tmp, src_base, src_off as i64);
+                        addr_tmp
+                    } else {
+                        src_base
+                    };
+                    let sret_ptr = 9; // s1
+                    let size = self.type_size(&resolved_val);
+                    self.emitter
+                        .copy_bytes_from_addr_to_addr(sret_ptr, 0, src_addr, 0, size);
+                } else {
                     let total_size = self.type_size(&resolved_val);
                     let chunk0 = total_size.min(8);
                     if chunk0 == 8 {
-                        self.emitter.emit_ld(A0, SP, slot as i32);
+                        self.emitter.emit_ld(A0, src_base, src_off);
                     } else if chunk0 >= 4 {
-                        self.emitter.emit_lw(A0, SP, slot as i32);
+                        self.emitter.emit_lw(A0, src_base, src_off);
                     } else if chunk0 >= 2 {
-                        self.emitter.emit_lh(A0, SP, slot as i32);
+                        self.emitter.emit_lh(A0, src_base, src_off);
                     } else if chunk0 >= 1 {
-                        self.emitter.emit_lb(A0, SP, slot as i32);
+                        self.emitter.emit_lb(A0, src_base, src_off);
                     }
                     if total_size > 8 {
                         let remaining = total_size - 8;
                         if remaining >= 8 {
-                            self.emitter.emit_ld(A1, SP, (slot + 8) as i32);
+                            self.emitter.emit_ld(A1, src_base, src_off + 8);
                         } else if remaining >= 4 {
-                            self.emitter.emit_lw(A1, SP, (slot + 8) as i32);
+                            self.emitter.emit_lw(A1, src_base, src_off + 8);
                         } else if remaining >= 2 {
-                            self.emitter.emit_lh(A1, SP, (slot + 8) as i32);
+                            self.emitter.emit_lh(A1, src_base, src_off + 8);
                         } else {
-                            self.emitter.emit_lb(A1, SP, (slot + 8) as i32);
+                            self.emitter.emit_lb(A1, src_base, src_off + 8);
                         }
                     }
                 }

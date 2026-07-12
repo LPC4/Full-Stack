@@ -109,7 +109,19 @@ array_ptr: i32* = new(i32, 10)   ; N contiguous elements; N may be a runtime exp
   heap allocations are zero-initialized. Every allocation needs a matching `free()` or
   `defer free()`; there is no garbage collection.
 
-### 3.4 Strings and character literals
+### 3.4 Compile-time layout reflection
+
+`size_of<T>()` and `align_of<T>()` produce `u64` compile-time constants using the same RV64
+layout calculation as aggregate lowering and typed pointer arithmetic. They accept exactly one
+type argument and no value arguments. Primitive, pointer, function-pointer, fixed-array, slice,
+anonymous-struct, named aggregate, dynamic-interface, and specialized generic aggregate types
+are sized. An unresolved type is rejected rather than assigned a placeholder layout.
+
+Aggregate fields are aligned individually and the final size is rounded up to the aggregate's
+maximum field alignment. A slice and a dynamic-interface value are each a two-word wide value.
+There is no runtime reflection metadata or emitted call for either intrinsic.
+
+### 3.5 Strings and character literals
 
 A string literal `"text"` is a `u8[]` slice (see 5.3): a `{ ptr: u8*, len: u64 }` fat
 pointer over read-only bytes. Its `.ptr` and `.len` fields, indexing, iteration, and range
@@ -909,6 +921,60 @@ linking against existing `Str`-typed entry points.
 `Option<T>` and `Result<T, E>` (7.2) are the standard carriers for absence and failure. Prefer
 them with `match` and `?` over ad-hoc `{ value, error }` records or `null` sentinels.
 
+### 11.4 Allocator ABI
+
+The `memory_allocator` module exports an aligned, fallible allocation ABI shared by every
+target. The raw byte source behind it is target-specific (`stdlib/*/heap_source.hll`):
+hosted userspace grows the program break via `brk`; freestanding and kernel builds bump a
+64 KiB bootstrap buffer plus an optional larger region a kernel registers at boot with
+`heap_set_region(start, end)`.
+
+```hll
+enum AllocError { OutOfMemory, InvalidAlignment, SizeOverflow }
+
+allocate:   (size: u64, align: u64) -> Result<u8*, AllocError>
+reallocate: (ptr: u8*, old_size: u64, new_size: u64, align: u64) -> Result<u8*, AllocError>
+deallocate: (ptr: u8*, size: u64, align: u64)
+```
+
+- Alignment must be a nonzero power of two; anything else returns `InvalidAlignment` before
+  the allocator runs. Checked size arithmetic returns `SizeOverflow` the same way.
+- `allocate(0, align)` succeeds with an aligned, non-null dangling pointer that reserves no
+  storage and must never be dereferenced; deallocating a zero-sized allocation is a no-op.
+- `reallocate` preserves the first `min(old_size, new_size)` bytes. On failure the old
+  allocation and pointer stay valid and unchanged. Reallocating to zero releases the old
+  allocation and returns the dangling pointer.
+- Failure is reported only through `Result`; success never returns null.
+- `malloc(size) -> u8*` and `free(ptr)` remain as compatibility wrappers (8-byte alignment,
+  null on failure).
+- `checked_mul`, `checked_add`, and `array_bytes(count, element_size)` are the shared
+  checked layout helpers; `array_bytes` treats zero-sized elements as occupying no storage.
+
+There is no allocator interface or per-container allocator parameter; hosted-versus-kernel
+selection happens when the standard library is linked.
+
+### 11.5 Containers
+
+`Vec<T>`, `OwnedString`, `Arena`, and `Pool<T>` are ordinary structs in `memory_allocator`
+built on the global ABI. They follow the raw-pointer model: copying a container copies its
+fields and aliases the same allocation; the programmer deinitializes it exactly once and
+must not use stale aliases. All operations are failure-atomic: container state changes only
+after a successful allocation. Growth policy (e.g. capacity doubling) is non-contractual.
+
+- `Vec<T> { ptr, len, capacity }` counts elements, not bytes: `init`, `reserve`, `push`,
+  `pop(out)`, `get(index) -> T*` (null when out of range), `clear`, `deinit`. For zero-sized
+  `T`, `push` grows `len` without allocating and element storage is never dereferenced.
+- `OwnedString` wraps a `Vec<u8>` and keeps valid UTF-8 after every public operation:
+  `init`, `from_slice`, `append`, `as_slice -> u8[]`, `length`, `clear`, `deinit`. Invalid
+  bytes are rejected with `StringError.InvalidUtf8`; allocation failures pass through as
+  `StringError.Alloc(AllocError)`. `utf8_valid(data, len)` is the exported validator.
+- `Arena` bump-allocates from chunks (`alloc(size, align)`); individual frees are
+  impossible. `reset` keeps the chunks for reuse and invalidates every returned pointer;
+  `deinit` releases everything.
+- `Pool<T>` hands out fixed-layout slots that never move: `alloc() -> Result<T*, _>`,
+  `release(ptr) -> bool`, `deinit`. `release` returns false for a pointer from another
+  pool, a misaligned or interior pointer, and a double release.
+
 ## 12. Roadmap (non-normative)
 
 The following are reserved or planned for a later language revision (V2.1). The compiler does
@@ -922,8 +988,9 @@ sections above are not mistaken for the full long-term design.
 - **Name-only destructuring.** `{ quo, rem } := expr` binding by field name without repeating
   types. The implemented form is the typed pattern in 5.4.
 - **String interpolation.** `"hi {name}"` lowering to a visible format over literal chunks.
-- **Allocators and richer runtime.** Arena/pool allocators, escape-analysis stack promotion,
-  SIMD lane generation, and debug-symbol generation.
+- **Richer runtime.** Escape-analysis stack promotion, SIMD lane generation, and
+  debug-symbol generation. (The allocator ABI and arena/pool containers shipped; see 11.4
+  and 11.5.)
 
 ## Appendix A: HLL-0 (the self-hosting subset)
 

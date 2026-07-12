@@ -1,5 +1,5 @@
 use super::{FullStackApp, chrome, metrics};
-use crate::ui::{Layer, theme};
+use crate::ui::theme;
 use eframe::egui;
 use full_stack::session::VmExecutionResult;
 
@@ -215,7 +215,7 @@ impl FullStackApp {
         }
     }
 
-    /// The live console (terminal Machine tab + L4 rung): the transcript is the
+    /// The live console (terminal Machine tab + runtime surface): the transcript is the
     /// input surface; a focus ring shows when keystrokes go to the guest UART.
     pub(super) fn machine_terminal(
         &mut self,
@@ -505,10 +505,10 @@ fn console_line(ui: &mut egui::Ui, line: &ConsoleLine) -> Option<(String, usize)
     jump
 }
 
-/// A short colored run-state chip, matching the L4 view and the machine dock.
+/// A short colored run-state chip, matching the runtime view and machine dock.
 fn status_chip(vm: &VmExecutionResult) -> (String, egui::Color32) {
     match vm.exit_code {
-        Some(0) => ("exit 0".to_owned(), Layer::Vm.color()),
+        Some(0) => ("exit 0".to_owned(), theme::ELECTRIC),
         Some(code) => (format!("exit {code}"), theme::TEXT),
         None if vm.max_steps_reached => ("timed out".to_owned(), theme::TEXT_DIM),
         None => ("stopped".to_owned(), theme::TEXT_DIM),
@@ -519,7 +519,7 @@ fn stream_style(stream: ConsoleStream) -> (&'static str, egui::Color32) {
     match stream {
         ConsoleStream::Command => ("$", theme::ELECTRIC),
         ConsoleStream::Info => ("i", theme::TEXT_DIM),
-        ConsoleStream::Success => ("ok", Layer::Vm.color()),
+        ConsoleStream::Success => ("ok", theme::ELECTRIC),
         ConsoleStream::Stdout => (">", theme::TEXT),
         ConsoleStream::Warning => ("!", theme::WARNING),
         ConsoleStream::Error => ("x", theme::DANGER),

@@ -4,8 +4,9 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::{
-    AssignTarget, BinaryOp, Block, DeclNode, Expression, FieldDecl, ForIter, Literal, Parameter,
-    PrimaryExpr, Program, ReturnType, Statement, StructDestructureField, Type, UnaryOp, Variant,
+    AssignTarget, BinaryOp, BindingField, Block, DeclNode, Expression, FieldDecl, FieldInit,
+    ForIter, Literal, MatchArm, Parameter, Pattern, PrimaryExpr, Program, ReturnType, Statement,
+    StructDestructureField, Type, UnaryOp, Variant,
 };
 use crate::lexer::Lexer;
 use crate::parser::Parser;
@@ -1182,21 +1183,32 @@ fn render_export(decl: &DeclNode, prefix: &str) -> Result<Option<String>, String
         DeclNode::Function {
             name,
             generics,
+            bounds,
             params,
             return_type,
+            body,
             ..
         } => {
-            // A generic function has no single object symbol to link against, so it
-            // cannot be exported as an `external`; the importer must define it locally.
             if !generics.is_empty() {
-                return Ok(None);
+                let body = body.as_ref().ok_or_else(|| {
+                    format!("exported generic function `{name}` must have a body")
+                })?;
+                format!(
+                    "{}: {}({}){} {}",
+                    mangled_name(prefix, name),
+                    render_generics(generics, bounds, prefix),
+                    render_params(params)?,
+                    render_return(return_type.as_ref())?,
+                    render_block(body, 0)?,
+                )
+            } else {
+                format!(
+                    "external {}: ({}){} ; @import-interface",
+                    mangled_name(prefix, name),
+                    render_params(params)?,
+                    render_return(return_type.as_ref())?
+                )
             }
-            format!(
-                "external {}: ({}){} ; @import-interface",
-                mangled_name(prefix, name),
-                render_params(params)?,
-                render_return(return_type.as_ref())?
-            )
         }
         // An exported global becomes an `external` reference; an inferred global has no
         // written type, so it cannot be expressed as a header and is skipped.
@@ -1324,6 +1336,105 @@ fn render_return(ret: Option<&ReturnType>) -> Result<String, String> {
     }
 }
 
+fn render_block(block: &Block, depth: usize) -> Result<String, String> {
+    let indent = "    ".repeat(depth);
+    let child_indent = "    ".repeat(depth + 1);
+    let mut out = String::from("{\n");
+    for statement in &block.statements {
+        out.push_str(&child_indent);
+        out.push_str(&render_statement(statement, depth + 1)?);
+        out.push('\n');
+    }
+    out.push_str(&indent);
+    out.push('}');
+    Ok(out)
+}
+
+fn render_statement(statement: &Statement, depth: usize) -> Result<String, String> {
+    Ok(match statement {
+        Statement::Expression(expr) => render_expr(expr)?,
+        Statement::Block(block) => render_block(block, depth)?,
+        Statement::If {
+            cond,
+            then_block,
+            else_branch,
+        } => {
+            let mut rendered = format!(
+                "if {} {}",
+                render_expr(cond)?,
+                render_block(then_block, depth)?
+            );
+            if let Some(else_branch) = else_branch {
+                rendered.push_str(" else ");
+                rendered.push_str(&render_statement(else_branch, depth)?);
+            }
+            rendered
+        }
+        Statement::While { cond, body } => {
+            format!(
+                "while {} {}",
+                render_expr(cond)?,
+                render_block(body, depth)?
+            )
+        }
+        Statement::For { var, iter, body } => {
+            let iter = match iter {
+                ForIter::Range {
+                    start,
+                    end,
+                    inclusive,
+                } => format!(
+                    "{}{}{}",
+                    render_expr(start)?,
+                    if *inclusive { "..=" } else { ".." },
+                    render_expr(end)?
+                ),
+                ForIter::Each(expr) => render_expr(expr)?,
+            };
+            format!("for {var} in {iter} {}", render_block(body, depth)?)
+        }
+        Statement::Return(value) => match value {
+            Some(value) => format!("return {}", render_expr(value)?),
+            None => "return".to_owned(),
+        },
+        Statement::Defer(expr) => format!("defer {}", render_expr(expr)?),
+        Statement::AsmBlock { lines } => format!("asm {{\n{}\n}}", lines.join("\n")),
+        Statement::Break => "break".to_owned(),
+        Statement::Continue => "continue".to_owned(),
+        Statement::VariableDecl { name, ty, init } => {
+            format!(
+                "{name}: {} = {}",
+                render_type(ty)?,
+                render_expr(init.as_ref().ok_or_else(|| {
+                    format!("generic body binding `{name}` has no initializer")
+                })?)?
+            )
+        }
+        Statement::InferredVariableDecl { name, init } => {
+            format!("{name} := {}", render_expr(init)?)
+        }
+        Statement::DestructureBinding { fields, init } => format!(
+            "{{ {} }} := {}",
+            render_binding_fields(fields),
+            render_expr(init)?
+        ),
+    })
+}
+
+fn render_binding_fields(fields: &[BindingField]) -> String {
+    fields
+        .iter()
+        .map(|field| {
+            if field.source == field.binding {
+                field.source.clone()
+            } else {
+                format!("{} = {}", field.source, field.binding)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 fn render_type(ty: &Type) -> Result<String, String> {
     Ok(match ty {
         Type::Primitive(name) => name.clone(),
@@ -1366,8 +1477,7 @@ fn render_type(ty: &Type) -> Result<String, String> {
     })
 }
 
-/// Render the constrained expression forms used in exported `const` and field inits.
-/// Anything outside this subset is an extraction error, not a silently wrong header.
+/// Render expressions used by exported constants and generic function bodies.
 fn render_expr(expr: &Expression) -> Result<String, String> {
     Ok(match expr {
         Expression::Binary { op, left, right } => {
@@ -1383,9 +1493,15 @@ fn render_expr(expr: &Expression) -> Result<String, String> {
             format!("{} as {}", render_expr(expr)?, render_type(target_ty)?)
         }
         Expression::Primary(primary) => render_primary(primary)?,
-        Expression::Assignment { .. } | Expression::Match { .. } | Expression::Try(_) => {
-            return Err("unsupported expression in exported interface".to_owned());
+        Expression::Assignment { target, rvalue } => {
+            format!(
+                "{} = {}",
+                render_assign_target(target)?,
+                render_expr(rvalue)?
+            )
         }
+        Expression::Match { scrutinee, arms } => render_match(scrutinee, arms)?,
+        Expression::Try(inner) => format!("{}?", render_expr(inner)?),
     })
 }
 
@@ -1394,8 +1510,192 @@ fn render_primary(primary: &PrimaryExpr) -> Result<String, String> {
         PrimaryExpr::Identifier(name) => name.clone(),
         PrimaryExpr::Literal(lit) => render_literal(lit),
         PrimaryExpr::Grouped(inner) => format!("({})", render_expr(inner)?),
-        _ => return Err("unsupported expression in exported interface".to_owned()),
+        PrimaryExpr::FunctionCall {
+            name,
+            type_arguments,
+            arguments,
+        } => {
+            let types = if type_arguments.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "<{}>",
+                    type_arguments
+                        .iter()
+                        .map(render_type)
+                        .collect::<Result<Vec<_>, _>>()?
+                        .join(", ")
+                )
+            };
+            format!("{name}{types}({})", render_arguments(arguments)?)
+        }
+        PrimaryExpr::CallExpr { callee, arguments } => {
+            format!("{}({})", render_expr(callee)?, render_arguments(arguments)?)
+        }
+        PrimaryExpr::ArrayLiteral(values) => {
+            format!("[{}]", render_arguments(values)?)
+        }
+        PrimaryExpr::StructLiteral(fields) => render_struct_fields(None, fields)?,
+        PrimaryExpr::NamedStructLiteral { name, fields } => {
+            render_struct_fields(Some(name), fields)?
+        }
+        PrimaryExpr::FieldAccess { expr, field } => {
+            format!("{}.{}", render_expr(expr)?, field)
+        }
+        PrimaryExpr::ArrayIndex { expr, index } => {
+            format!("{}[{}]", render_expr(expr)?, render_expr(index)?)
+        }
+        PrimaryExpr::Slice {
+            expr,
+            start,
+            end,
+            inclusive,
+        } => format!(
+            "{}[{}{}{}]",
+            render_expr(expr)?,
+            start
+                .as_deref()
+                .map(render_expr)
+                .transpose()?
+                .unwrap_or_default(),
+            if *inclusive { "..=" } else { ".." },
+            end.as_deref()
+                .map(render_expr)
+                .transpose()?
+                .unwrap_or_default()
+        ),
+        PrimaryExpr::New { ty, args } => {
+            let mut values = vec![render_type(ty)?];
+            values.extend(
+                args.iter()
+                    .map(render_expr)
+                    .collect::<Result<Vec<_>, _>>()?,
+            );
+            format!("new({})", values.join(", "))
+        }
+        PrimaryExpr::AsmReg { reg } => format!("asm_reg({reg:?})"),
+        PrimaryExpr::AssociatedConst {
+            owner,
+            owner_args,
+            member,
+        } => {
+            let args = if owner_args.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "<{}>",
+                    owner_args
+                        .iter()
+                        .map(render_type)
+                        .collect::<Result<Vec<_>, _>>()?
+                        .join(", ")
+                )
+            };
+            format!("{owner}{args}.{member}")
+        }
     })
+}
+
+fn render_arguments(arguments: &[Expression]) -> Result<String, String> {
+    Ok(arguments
+        .iter()
+        .map(render_expr)
+        .collect::<Result<Vec<_>, _>>()?
+        .join(", "))
+}
+
+fn render_struct_fields(name: Option<&str>, fields: &[FieldInit]) -> Result<String, String> {
+    let fields = fields
+        .iter()
+        .map(|field| {
+            let annotation = field
+                .ty
+                .as_ref()
+                .map(render_type)
+                .transpose()?
+                .map(|ty| format!(": {ty}"))
+                .unwrap_or_default();
+            Ok(format!(
+                ".{}{} = {}",
+                field.name,
+                annotation,
+                render_expr(&field.expr)?
+            ))
+        })
+        .collect::<Result<Vec<_>, String>>()?
+        .join(", ");
+    Ok(match name {
+        Some(name) => format!("{name} {{ {fields} }}"),
+        None => format!("{{ {fields} }}"),
+    })
+}
+
+fn render_assign_target(target: &AssignTarget) -> Result<String, String> {
+    Ok(match target {
+        AssignTarget::Identifier(name) => name.clone(),
+        AssignTarget::Dereference(inner) => format!("@{}", render_assign_target(inner)?),
+        AssignTarget::FieldAccess { expr, field } => {
+            format!("{}.{}", render_assign_target(expr)?, field)
+        }
+        AssignTarget::ArrayIndex { expr, index } => {
+            format!("{}[{}]", render_assign_target(expr)?, render_expr(index)?)
+        }
+        AssignTarget::StructDestructure(fields) => {
+            let fields = fields
+                .iter()
+                .map(render_destructure_field)
+                .collect::<Result<Vec<_>, _>>()?;
+            format!("{{ {} }}", fields.join(", "))
+        }
+    })
+}
+
+fn render_destructure_field(field: &StructDestructureField) -> Result<String, String> {
+    match (&field.name, &field.ty) {
+        (None, _) => Ok("_".to_owned()),
+        (Some(name), None) => Ok(name.clone()),
+        (Some(name), Some(ty)) => Ok(format!("{name}: {}", render_type(ty)?)),
+    }
+}
+
+fn render_match(scrutinee: &Expression, arms: &[MatchArm]) -> Result<String, String> {
+    let mut out = format!("match {} {{\n", render_expr(scrutinee)?);
+    for arm in arms {
+        out.push_str("    ");
+        out.push_str(&render_pattern(&arm.pattern));
+        out.push_str(" -> ");
+        if let Some(value) = &arm.value {
+            out.push_str(&render_expr(value)?);
+        } else {
+            out.push_str(&render_block(&arm.body, 1)?);
+        }
+        out.push('\n');
+    }
+    out.push('}');
+    Ok(out)
+}
+
+fn render_pattern(pattern: &Pattern) -> String {
+    match pattern {
+        Pattern::Wildcard => "_".to_owned(),
+        Pattern::Binding(name) => name.clone(),
+        Pattern::Variant {
+            enum_name,
+            variant,
+            bindings,
+        } => {
+            let owner = enum_name
+                .as_ref()
+                .map(|name| format!("{name}::"))
+                .unwrap_or_default();
+            if bindings.is_empty() {
+                format!("{owner}{variant}")
+            } else {
+                format!("{owner}{variant}({})", bindings.join(", "))
+            }
+        }
+        Pattern::Literal(literal) => render_literal(literal),
+    }
 }
 
 fn render_literal(lit: &Literal) -> String {
@@ -1815,11 +2115,30 @@ export resize: (n: u64, items: Reloc[]) -> Reloc* { return null }
     }
 
     #[test]
-    fn skips_generic_function_export() {
+    fn exports_generic_function_body_for_importer_specialization() {
         let source = r#"
 export identity: <T>(value: T) -> T { return value }
 "#;
-        assert_eq!(extract_interface(source).unwrap(), "");
+        let interface = extract_interface(source).unwrap();
+        assert_eq!(
+            interface,
+            "identity: <T>(value: T) -> T {\n    return value\n}\n"
+        );
+        parse_module(&interface).expect("generic interface should parse");
+    }
+
+    #[test]
+    fn prefixed_generic_interface_specializes_in_importer() {
+        let source = "export identity: <T>(value: T) -> T { return value }";
+        let interface = extract_interface_prefixed(source, "math").unwrap();
+        let importer =
+            format!("{interface}\nmain: () -> i32 {{ return math__identity<i32>(42) - 42 }}");
+        crate::HllCompiler::new(crate::CompileConfig {
+            strict: true,
+            ..crate::CompileConfig::default()
+        })
+        .compile(&importer)
+        .expect("importer should specialize exported generic body");
     }
 
     #[test]

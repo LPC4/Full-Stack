@@ -117,6 +117,14 @@ export const TF_STVAL    = 34
 export const TF_SSTATUS  = 35
 export const TF_BYTES    = 288
 
+; --- Physical memory carve-up ---
+; PMM page pool sits above the kernel image; the kernel heap region is handed
+; to the stdlib allocator at boot and ends below the FS metadata page.
+export const PMM_BASE   = 0x80100000
+export const PMM_END    = 0x87000000
+export const KHEAP_BASE = 0x87000000
+export const KHEAP_END  = 0x87B00000
+
 ; --- Sv39 PTE permission bits (VMM_V added internally by vmm_map). See vmm.hll ---
 export const VMM_V = 1
 export const VMM_R = 2

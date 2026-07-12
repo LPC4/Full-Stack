@@ -234,6 +234,81 @@ main: () -> i32 {
     assert_eq!(exit, Some(0));
 }
 
+#[test]
+fn hosted_fallible_allocator_aligns_and_preserves_reallocated_bytes() {
+    let (_, exit) = run_hll(
+        r#"
+memory_allocator := import("memory_allocator")
+
+main: () -> i32 {
+    ptr: u8* = 0 as u8*
+    first := memory_allocator.allocate(5, 64)
+    match first {
+        Ok(value) -> { ptr = value }
+        Err(error) -> { return 1 }
+    }
+    if (ptr as u64) % 64 != 0 { return 2 }
+    ptr[0] = 17
+    ptr[4] = 93
+
+    grown: u8* = 0 as u8*
+    resized := memory_allocator.reallocate(ptr, 5, 19, 64)
+    match resized {
+        Ok(value) -> { grown = value }
+        Err(error) -> { return 3 }
+    }
+    if (grown as u64) % 64 != 0 { return 4 }
+    if grown[0] != 17 or grown[4] != 93 { return 5 }
+
+    failed := memory_allocator.reallocate(grown, 19, 1099511627776, 64)
+    match failed {
+        Ok(value) -> { return 9 }
+        Err(error) -> {}
+    }
+    if grown[0] != 17 or grown[4] != 93 { return 10 }
+    memory_allocator.deallocate(grown, 19, 64)
+
+    zero: u8* = 0 as u8*
+    empty := memory_allocator.allocate(0, 128)
+    match empty {
+        Ok(value) -> { zero = value }
+        Err(error) -> { return 11 }
+    }
+    if zero == null or (zero as u64) % 128 != 0 { return 12 }
+    memory_allocator.deallocate(zero, 0, 128)
+
+    invalid := memory_allocator.allocate(8, 3)
+    match invalid {
+        Ok(value) -> { return 6 }
+        Err(error) -> {
+            match error {
+                InvalidAlignment -> {}
+                OutOfMemory -> { return 7 }
+                SizeOverflow -> { return 8 }
+            }
+        }
+    }
+
+    max: u64 = 0
+    max -= 1
+    overflow := memory_allocator.allocate(max, 8)
+    match overflow {
+        Ok(value) -> { return 13 }
+        Err(error) -> {
+            match error {
+                SizeOverflow -> {}
+                InvalidAlignment -> { return 14 }
+                OutOfMemory -> { return 15 }
+            }
+        }
+    }
+    return 0
+}
+"#,
+    );
+    assert_eq!(exit, Some(0));
+}
+
 // --- mem.hll ---
 
 #[test]
@@ -431,6 +506,480 @@ main: () -> i32 {
     assert_eq!(exit, Some(0));
 }
 
+#[test]
+fn hosted_vec_grows_and_preserves_elements() {
+    let (_, exit) = run_hll(
+        r#"
+memory_allocator := import("memory_allocator")
+
+main: () -> i32 {
+    v: Vec<i64> = { .ptr = null, .len = 0, .capacity = 0 }
+    Vec_init<i64>(&v)
+    if v.len != 0 or v.capacity != 0 { return 1 }
+
+    i: i64 = 0
+    while i < 100 {
+        pushed := Vec_push<i64>(&v, i * 3)
+        match pushed {
+            Ok(len) -> {}
+            Err(error) -> { return 2 }
+        }
+        i += 1
+    }
+    if v.len != 100 { return 3 }
+    if v.capacity < 100 { return 4 }
+
+    i = 0
+    while i < 100 {
+        slot: i64* = Vec_get<i64>(&v, i as u64)
+        if slot == null { return 5 }
+        if @slot != i * 3 { return 6 }
+        i += 1
+    }
+    if Vec_get<i64>(&v, 100) != null { return 7 }
+
+    out: i64 = 0
+    if Vec_pop<i64>(&v, &out) == false { return 8 }
+    if out != 99 * 3 { return 9 }
+    if v.len != 99 { return 10 }
+
+    Vec_clear<i64>(&v)
+    if v.len != 0 { return 11 }
+    if Vec_pop<i64>(&v, &out) == true { return 12 }
+
+    Vec_deinit<i64>(&v)
+    if v.len != 0 or v.capacity != 0 { return 13 }
+    return 0
+}
+"#,
+    );
+    assert_eq!(exit, Some(0));
+}
+
+#[test]
+fn hosted_vec_copy_aliases_allocation() {
+    let (_, exit) = run_hll(
+        r#"
+memory_allocator := import("memory_allocator")
+
+main: () -> i32 {
+    v: Vec<i64> = { .ptr = null, .len = 0, .capacity = 0 }
+    Vec_init<i64>(&v)
+    pushed := Vec_push<i64>(&v, 41)
+    match pushed {
+        Ok(len) -> {}
+        Err(error) -> { return 1 }
+    }
+
+    ; Copying the container copies its fields; both alias one allocation.
+    alias: Vec<i64> = v
+    slot: i64* = Vec_get<i64>(&alias, 0)
+    @slot = 42
+    original: i64* = Vec_get<i64>(&v, 0)
+    if @original != 42 { return 2 }
+
+    Vec_deinit<i64>(&v)
+    return 0
+}
+"#,
+    );
+    assert_eq!(exit, Some(0));
+}
+
+// Regression: returning another function's >16-byte enum result used to take
+// the scalar return path and drop the sret copy (Named alias left unresolved).
+#[test]
+fn hosted_sret_enum_result_forwarding() {
+    let (_, exit) = run_hll(
+        r#"
+memory_allocator := import("memory_allocator")
+
+enum ProbeError {
+    Wrapped(AllocError)
+    BadBytes
+}
+
+struct Thing { x: u64 }
+
+impl Thing {
+    inner: (self: Thing*, data: u8[]) -> Result<u64, ProbeError> {
+        return Ok(data.len)
+    }
+    outer: (self: Thing*, data: u8[]) -> Result<u64, ProbeError> {
+        if utf8_valid(&data[0], data.len) == false {
+            return Err(BadBytes)
+        }
+        return Thing_inner(self, data)
+    }
+}
+
+main: () -> i32 {
+    t: Thing = { .x = 0 }
+    result := Thing_outer(&t, "hi")
+    match result {
+        Ok(len) -> { return (100 + len) as i32 }
+        Err(error) -> { return 99 }
+    }
+    return 98
+}
+"#,
+    );
+    assert_eq!(exit, Some(102));
+}
+
+#[test]
+fn hosted_owned_string_validates_utf8() {
+    let (_, exit) = run_hll(
+        r#"
+memory_allocator := import("memory_allocator")
+
+main: () -> i32 {
+    s: OwnedString = { .bytes = { .ptr = null, .len = 0, .capacity = 0 } }
+    OwnedString_init(&s)
+
+    seeded := OwnedString_from_slice(&s, "hi")
+    match seeded {
+        Ok(len) -> { if len != 2 { return 1 } }
+        Err(error) -> { return 2 }
+    }
+    appended := OwnedString_append(&s, " there")
+    match appended {
+        Ok(len) -> { if len != 8 { return 3 } }
+        Err(error) -> { return 4 }
+    }
+
+    view: u8[] = OwnedString_as_slice(&s)
+    if view.len != 8 { return 5 }
+    if view[0] != 104 or view[7] != 101 { return 6 }
+
+    ; A lone continuation byte is rejected and the buffer stays unchanged.
+    bad: u8[2] = [255, 65]
+    rejected := OwnedString_append(&s, bad[0..2])
+    match rejected {
+        Ok(len) -> { return 7 }
+        Err(error) -> {
+            match error {
+                InvalidUtf8 -> {}
+                Alloc(inner) -> { return 8 }
+            }
+        }
+    }
+    if OwnedString_length(&s) != 8 { return 9 }
+
+    OwnedString_clear(&s)
+    if OwnedString_length(&s) != 0 { return 10 }
+    OwnedString_deinit(&s)
+    return 0
+}
+"#,
+    );
+    assert_eq!(exit, Some(0));
+}
+
+#[test]
+fn hosted_arena_bumps_resets_and_reuses() {
+    let (_, exit) = run_hll(
+        r#"
+memory_allocator := import("memory_allocator")
+
+main: () -> i32 {
+    a: Arena = { .head = null }
+    Arena_init(&a)
+
+    first: u8* = null
+    first_result := Arena_alloc(&a, 24, 8)
+    match first_result {
+        Ok(value) -> { first = value }
+        Err(error) -> { return 1 }
+    }
+    if (first as u64) % 8 != 0 { return 2 }
+    first[0] = 7
+
+    second: u8* = null
+    second_result := Arena_alloc(&a, 40, 64)
+    match second_result {
+        Ok(value) -> { second = value }
+        Err(error) -> { return 3 }
+    }
+    if (second as u64) % 64 != 0 { return 4 }
+    if second == first { return 5 }
+
+    ; Larger than the default chunk: gets its own chunk.
+    big_result := Arena_alloc(&a, 8192, 8)
+    match big_result {
+        Ok(value) -> {}
+        Err(error) -> { return 6 }
+    }
+
+    bad := Arena_alloc(&a, 8, 3)
+    match bad {
+        Ok(value) -> { return 7 }
+        Err(error) -> {
+            match error {
+                InvalidAlignment -> {}
+                OutOfMemory -> { return 8 }
+                SizeOverflow -> { return 9 }
+            }
+        }
+    }
+
+    ; Reset keeps the chunks: the next allocation reuses their storage.
+    Arena_reset(&a)
+    reused: u8* = null
+    reused_result := Arena_alloc(&a, 24, 8)
+    match reused_result {
+        Ok(value) -> { reused = value }
+        Err(error) -> { return 10 }
+    }
+    if reused == null { return 11 }
+
+    Arena_deinit(&a)
+    if a.head != null { return 12 }
+    return 0
+}
+"#,
+    );
+    assert_eq!(exit, Some(0));
+}
+
+#[test]
+fn hosted_pool_allocates_releases_and_rejects_invalid() {
+    let (_, exit) = run_hll(
+        r#"
+memory_allocator := import("memory_allocator")
+
+main: () -> i32 {
+    p: Pool<i64> = { .chunks = null }
+    Pool_init<i64>(&p)
+
+    a: i64* = null
+    a_result := Pool_alloc<i64>(&p)
+    match a_result {
+        Ok(value) -> { a = value }
+        Err(error) -> { return 1 }
+    }
+    b: i64* = null
+    b_result := Pool_alloc<i64>(&p)
+    match b_result {
+        Ok(value) -> { b = value }
+        Err(error) -> { return 2 }
+    }
+    if a == b { return 3 }
+    @a = 11
+    @b = 22
+    if @a != 11 or @b != 22 { return 4 }
+
+    ; Release then reallocate: the freed slot is reused.
+    if Pool_release<i64>(&p, a) == false { return 5 }
+    if Pool_release<i64>(&p, a) == true { return 6 }
+    c: i64* = null
+    c_result := Pool_alloc<i64>(&p)
+    match c_result {
+        Ok(value) -> { c = value }
+        Err(error) -> { return 7 }
+    }
+    if c != a { return 8 }
+
+    ; Interior pointer and foreign pointer are rejected.
+    interior: i64* = ((b as u64) + 4) as i64*
+    if Pool_release<i64>(&p, interior) == true { return 9 }
+    stack_value: i64 = 5
+    if Pool_release<i64>(&p, &stack_value) == true { return 10 }
+
+    ; Fill past one chunk (64 slots) to force growth.
+    i: i64 = 0
+    while i < 70 {
+        grown := Pool_alloc<i64>(&p)
+        match grown {
+            Ok(value) -> {}
+            Err(error) -> { return 11 }
+        }
+        i += 1
+    }
+
+    Pool_deinit<i64>(&p)
+    if p.chunks != null { return 12 }
+    return 0
+}
+"#,
+    );
+    assert_eq!(exit, Some(0));
+}
+
+// The fallible allocator ABI must behave identically in kernel mode, where the
+// raw source is the bootstrap buffer plus the boot-registered heap region.
+#[test]
+fn kernel_fallible_allocator_matches_hosted_behavior() {
+    let (uart, exit) = run_kernel_hll(
+        r#"
+memory_allocator := import("memory_allocator")
+external heap_set_region: (start: u64, end: u64)
+external kshutdown: (code: i64)
+
+fail: (code: i64) {
+    kshutdown(code)
+}
+
+kmain: () {
+    heap_set_region(KHEAP_BASE, KHEAP_END)
+
+    ptr: u8* = 0 as u8*
+    first := memory_allocator.allocate(5, 64)
+    match first {
+        Ok(value) -> { ptr = value }
+        Err(error) -> { fail(1) }
+    }
+    if (ptr as u64) % 64 != 0 { fail(2) }
+    ptr[0] = 17
+    ptr[4] = 93
+
+    grown: u8* = 0 as u8*
+    resized := memory_allocator.reallocate(ptr, 5, 19, 64)
+    match resized {
+        Ok(value) -> { grown = value }
+        Err(error) -> { fail(3) }
+    }
+    if (grown as u64) % 64 != 0 { fail(4) }
+    if grown[0] != 17 or grown[4] != 93 { fail(5) }
+
+    failed := memory_allocator.reallocate(grown, 19, 1099511627776, 64)
+    match failed {
+        Ok(value) -> { fail(9) }
+        Err(error) -> {}
+    }
+    if grown[0] != 17 or grown[4] != 93 { fail(10) }
+    memory_allocator.deallocate(grown, 19, 64)
+
+    zero: u8* = 0 as u8*
+    empty := memory_allocator.allocate(0, 128)
+    match empty {
+        Ok(value) -> { zero = value }
+        Err(error) -> { fail(11) }
+    }
+    if zero == null or (zero as u64) % 128 != 0 { fail(12) }
+    memory_allocator.deallocate(zero, 0, 128)
+
+    invalid := memory_allocator.allocate(8, 3)
+    match invalid {
+        Ok(value) -> { fail(6) }
+        Err(error) -> {
+            match error {
+                InvalidAlignment -> {}
+                OutOfMemory -> { fail(7) }
+                SizeOverflow -> { fail(8) }
+            }
+        }
+    }
+
+    max: u64 = 0
+    max -= 1
+    overflow := memory_allocator.allocate(max, 8)
+    match overflow {
+        Ok(value) -> { fail(13) }
+        Err(error) -> {
+            match error {
+                SizeOverflow -> {}
+                InvalidAlignment -> { fail(14) }
+                OutOfMemory -> { fail(15) }
+            }
+        }
+    }
+
+    ; Larger than the 64 KiB bootstrap buffer: needs the registered region.
+    big: u8* = 0 as u8*
+    large := memory_allocator.allocate(1048576, 8)
+    match large {
+        Ok(value) -> { big = value }
+        Err(error) -> { fail(16) }
+    }
+    big[0] = 1
+    big[1048575] = 2
+    if big[0] != 1 or big[1048575] != 2 { fail(17) }
+    memory_allocator.deallocate(big, 1048576, 8)
+
+    kshutdown(0)
+}
+"#,
+    );
+    assert_eq!(uart, "");
+    assert_eq!(exit, Some(0));
+}
+
+// Containers sit on the same global ABI in kernel mode; smoke each one there.
+#[test]
+fn kernel_containers_share_the_global_abi() {
+    let (_, exit) = run_kernel_hll(
+        r#"
+memory_allocator := import("memory_allocator")
+external heap_set_region: (start: u64, end: u64)
+external kshutdown: (code: i64)
+
+fail: (code: i64) {
+    kshutdown(code)
+}
+
+kmain: () {
+    heap_set_region(KHEAP_BASE, KHEAP_END)
+
+    v: Vec<i64> = { .ptr = null, .len = 0, .capacity = 0 }
+    Vec_init<i64>(&v)
+    i: i64 = 0
+    while i < 100 {
+        pushed := Vec_push<i64>(&v, i * 3)
+        match pushed {
+            Ok(len) -> {}
+            Err(error) -> { fail(1) }
+        }
+        i += 1
+    }
+    slot: i64* = Vec_get<i64>(&v, 99)
+    if slot == null { fail(2) }
+    if @slot != 297 { fail(3) }
+    Vec_deinit<i64>(&v)
+
+    s: OwnedString = { .bytes = { .ptr = null, .len = 0, .capacity = 0 } }
+    OwnedString_init(&s)
+    seeded := OwnedString_from_slice(&s, "kernel")
+    match seeded {
+        Ok(len) -> { if len != 6 { fail(4) } }
+        Err(error) -> { fail(5) }
+    }
+    view: u8[] = OwnedString_as_slice(&s)
+    if view.len != 6 or view[0] != 107 { fail(6) }
+    OwnedString_deinit(&s)
+
+    a: Arena = { .head = null }
+    Arena_init(&a)
+    block_result := Arena_alloc(&a, 4096, 64)
+    block: u8* = null
+    match block_result {
+        Ok(value) -> { block = value }
+        Err(error) -> { fail(7) }
+    }
+    if (block as u64) % 64 != 0 { fail(8) }
+    block[0] = 9
+    Arena_deinit(&a)
+
+    p: Pool<i64> = { .chunks = null }
+    Pool_init<i64>(&p)
+    first_result := Pool_alloc<i64>(&p)
+    first: i64* = null
+    match first_result {
+        Ok(value) -> { first = value }
+        Err(error) -> { fail(9) }
+    }
+    @first = 5
+    if Pool_release<i64>(&p, first) == false { fail(10) }
+    if Pool_release<i64>(&p, first) == true { fail(11) }
+    Pool_deinit<i64>(&p)
+
+    kshutdown(0)
+}
+"#,
+    );
+    assert_eq!(exit, Some(0));
+}
+
 // --- Kernel boot ---
 
 // Compile user code linked against the kernel stdlib.
@@ -438,7 +987,8 @@ main: () -> i32 {
 // never clash with user-code labels (which use "str_").
 fn run_kernel_hll(user_src: &str) -> (String, Option<i64>) {
     let snippet_manifest = BuildManifest::from_file(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/kernel_snippet.build"),
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/kernel_snippet.build"),
     )
     .expect("kernel snippet build file parse");
     let stdlib_objs = CompilationPipeline::compile_stdlib_objects(TargetMode::Kernel)

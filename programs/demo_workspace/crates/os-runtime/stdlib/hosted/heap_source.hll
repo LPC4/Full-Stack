@@ -1,10 +1,9 @@
-; Growable userspace heap (U-mode only): grows the program break via the brk
-; syscall (214), unlike the fixed 64 KB kernel allocator. See OS spec 7.8.
+; Hosted raw memory source (U-mode only): grows the program break via the brk
+; syscall (214). The shared allocator in core/memory_allocator.hll sits on top.
 
 ; Next free byte and the current break (mapped ceiling). 0 = uninitialised.
 heap_cur: u64 = 0
 heap_top: u64 = 0
-heap_list: HeapBlock* = null
 
 ; brk argument/return scratch (inline asm cannot reach locals).
 _brk_a0:  u64 = 0
@@ -25,17 +24,26 @@ export heap_brk: (addr: u64) -> u64 {
     return _brk_ret
 }
 
+; No-op: the hosted source always grows via brk. Present so both heap_source
+; variants expose the same interface (the kernel registers its heap region here).
+export heap_set_region: (start: u64, end: u64) {
+}
+
 ; Bump-allocates n bytes, rounded up to 8-byte alignment, raising the break via
 ; brk (to a page boundary) when the bump pointer would cross it. Null on OOM.
 export heap_raw_alloc: (n: u64) -> u8* {
+    if n + 7 < n { return null }
     aligned: u64 = ((n + 7) / 8) * 8
+    if aligned < n { return null }
     if heap_cur == 0 {
         base: u64 = heap_brk(0)
         heap_cur = base
         heap_top = base
     }
     new_cur: u64 = heap_cur + aligned
+    if new_cur < heap_cur { return null }
     if new_cur > heap_top {
+        if new_cur + 4095 < new_cur { return null }
         new_top: u64 = ((new_cur + 4095) / 4096) * 4096
         got: u64 = heap_brk(new_top)
         if got < new_top {
@@ -46,51 +54,4 @@ export heap_raw_alloc: (n: u64) -> u8* {
     ptr: u8* = heap_cur as u8*
     heap_cur = new_cur
     return ptr
-}
-
-export malloc: (size: u64) -> u8* {
-    requested: u64 = size
-    if requested == 0 {
-        requested = 1
-    }
-
-    current: HeapBlock* = heap_list
-    while current != null {
-        if current.is_free != 0 and current.size >= requested {
-            current.is_free = 0
-            return current.ptr
-        }
-        current = current.next
-    }
-
-    block: HeapBlock* = heap_raw_alloc(32) as HeapBlock*
-    if block == null {
-        return null
-    }
-    payload: u8* = heap_raw_alloc(requested)
-    if payload == null {
-        return null
-    }
-    @block = {
-        .next    = heap_list,
-        .ptr     = payload,
-        .size    = requested,
-        .is_free = 0,
-    }
-    heap_list = block
-    return payload
-}
-
-export free: (ptr: u8*) {
-    if ptr == null {
-        return
-    }
-    current: HeapBlock* = heap_list
-    while current != null {
-        if current.ptr == ptr {
-            current.is_free = 1
-            return
-        }
-        current = current.next
-    }
 }
