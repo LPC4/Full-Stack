@@ -467,7 +467,7 @@ fn console_body(
 }
 
 /// One console line; linked lines render as click targets and return the jump.
-fn console_line(ui: &mut egui::Ui, line: &ConsoleLine) -> Option<(String, usize)> {
+pub(super) fn console_line(ui: &mut egui::Ui, line: &ConsoleLine) -> Option<(String, usize)> {
     let (prefix, color) = stream_style(line.stream);
     let mut jump = None;
     ui.horizontal(|ui| {
@@ -489,6 +489,9 @@ fn console_line(ui: &mut egui::Ui, line: &ConsoleLine) -> Option<(String, usize)
                 .extend()
                 .sense(egui::Sense::click()),
         );
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::Link, true, line.text.clone())
+        });
         if response.hovered() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
             let underline =
@@ -503,6 +506,13 @@ fn console_line(ui: &mut egui::Ui, line: &ConsoleLine) -> Option<(String, usize)
         }
     });
     jump
+}
+
+#[cfg(test)]
+pub(super) fn linked_test_line(text: &str, path: &str, line: usize) -> ConsoleLine {
+    let mut console_line = ConsoleLine::new(ConsoleStream::Error, text);
+    console_line.link = Some((path.to_owned(), line));
+    console_line
 }
 
 /// A short colored run-state chip, matching the runtime view and machine dock.

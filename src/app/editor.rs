@@ -1074,14 +1074,6 @@ fn gutter(
     );
 
     let dot_x = rect.left() + 6.0;
-    let line_of = |y: f32| -> Option<usize> {
-        let row = (y - rect.top()) / pitch;
-        if row < 0.0 {
-            return None;
-        }
-        let line = row.floor() as usize + 1;
-        (line <= line_count).then_some(line)
-    };
     let dot_y = |line: usize| rect.top() + (line as f32 - 0.5) * pitch;
     for &line in breakpoints {
         if line >= 1 && line <= line_count {
@@ -1089,22 +1081,34 @@ fn gutter(
                 .circle_filled(pos2(dot_x, dot_y(line)), 3.0, theme::DANGER);
         }
     }
-    let resp = ui.interact(rect, ui.id().with("gutter_bp"), Sense::click());
-    if let Some(line) = resp.hover_pos().and_then(|p| line_of(p.y)) {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-        if !breakpoints.contains(&line) {
-            ui.painter().circle_stroke(
-                pos2(dot_x, dot_y(line)),
-                3.0,
-                egui::Stroke::new(1.0, theme::TEXT_FAINT),
-            );
+    let mut toggled = None;
+    for line in 1..=line_count {
+        let line_rect = egui::Rect::from_min_size(
+            pos2(rect.left(), rect.top() + (line - 1) as f32 * pitch),
+            vec2(rect.width(), pitch),
+        );
+        let resp = ui.interact(line_rect, ui.id().with(("gutter_bp", line)), Sense::click());
+        resp.widget_info(|| {
+            egui::WidgetInfo::labeled(
+                egui::WidgetType::Button,
+                true,
+                format!("toggle breakpoint line {line}"),
+            )
+        });
+        if resp.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            if !breakpoints.contains(&line) {
+                ui.painter().circle_stroke(
+                    pos2(dot_x, dot_y(line)),
+                    3.0,
+                    egui::Stroke::new(1.0, theme::TEXT_FAINT),
+                );
+            }
+        }
+        if resp.clicked() {
+            toggled = Some(line);
         }
     }
-    let toggled = if resp.clicked() {
-        resp.interact_pointer_pos().and_then(|p| line_of(p.y))
-    } else {
-        None
-    };
 
     for (i, mark) in marks.iter().enumerate() {
         if mark.line == 0 || mark.line > line_count {

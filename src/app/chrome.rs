@@ -156,6 +156,7 @@ pub(super) fn action_row(ui: &mut egui::Ui, actions: &[(&str, ActionTone)]) -> O
         );
         let id = ui.id().with(("action_row", i, *label));
         let resp = ui.interact(rect, id, Sense::click());
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, *label));
         let painter = ui.painter_at(rect);
         painter.rect_filled(
             rect,

@@ -216,13 +216,14 @@ fn session_tab(
     let name = format!("[{kind}] {label}");
     let font = FontId::monospace(metrics::LABEL_TEXT_SIZE);
     let text_color = if active { theme::TEXT } else { theme::TEXT_DIM };
-    let galley = ui.fonts_mut(|f| f.layout_no_wrap(name, font, text_color));
+    let galley = ui.fonts_mut(|f| f.layout_no_wrap(name.clone(), font, text_color));
 
     let glyph_slot = metrics::LABEL_TEXT_SIZE;
     let tab_width =
         metrics::TAB_PAD_X * 2.0 + galley.size().x + metrics::TAB_GLYPH_GAP + glyph_slot;
     let (rect, resp) =
         ui.allocate_exact_size(vec2(tab_width, metrics::TAB_STRIP_HEIGHT), Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, name.clone()));
     let painter = ui.painter_at(rect);
 
     if active {
@@ -256,6 +257,13 @@ fn session_tab(
     );
     let glyph_rect = egui::Rect::from_center_size(glyph_center, vec2(glyph_slot, glyph_slot));
     let close_resp = ui.interact(glyph_rect, resp.id.with("close"), Sense::click());
+    close_resp.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::WidgetType::Button,
+            true,
+            format!("close [{kind}] {label}"),
+        )
+    });
     if close_resp.hovered() {
         painter.rect_filled(glyph_rect, 0.0, theme::SURFACE);
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
@@ -296,7 +304,7 @@ fn tab(ui: &mut egui::Ui, path: &VPath, active: bool, dirty: bool) -> Option<Tab
         .to_owned();
     let font = FontId::monospace(metrics::LABEL_TEXT_SIZE);
     let text_color = if active { theme::TEXT } else { theme::TEXT_DIM };
-    let galley = ui.fonts_mut(|f| f.layout_no_wrap(name, font, text_color));
+    let galley = ui.fonts_mut(|f| f.layout_no_wrap(name.clone(), font, text_color));
 
     // Reserve a fixed glyph slot so the tab does not resize when the close
     // control appears on hover.
@@ -305,6 +313,7 @@ fn tab(ui: &mut egui::Ui, path: &VPath, active: bool, dirty: bool) -> Option<Tab
         metrics::TAB_PAD_X * 2.0 + galley.size().x + metrics::TAB_GLYPH_GAP + glyph_slot;
     let (rect, resp) =
         ui.allocate_exact_size(vec2(tab_width, metrics::TAB_STRIP_HEIGHT), Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, name.clone()));
     let painter = ui.painter_at(rect);
 
     let layer =
@@ -341,6 +350,9 @@ fn tab(ui: &mut egui::Ui, path: &VPath, active: bool, dirty: bool) -> Option<Tab
     );
     let glyph_rect = egui::Rect::from_center_size(glyph_center, vec2(glyph_slot, glyph_slot));
     let close_resp = ui.interact(glyph_rect, resp.id.with("close"), Sense::click());
+    close_resp.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("close {name}"))
+    });
     let show_close = resp.hovered() || close_resp.hovered() || (active && !dirty);
     if close_resp.hovered() {
         painter.rect_filled(glyph_rect, 0.0, theme::SURFACE);

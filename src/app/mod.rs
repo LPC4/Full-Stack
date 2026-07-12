@@ -203,8 +203,12 @@ impl FullStackApp {
             .and_then(|storage| eframe::get_value(storage, settings::APP_KEY))
             .unwrap_or_default();
         settings.apply(&cc.egui_ctx);
+        Self::with_workspace(open_startup_workspace(&settings), settings)
+    }
+
+    fn with_workspace(workspace: IdeWorkspace, settings: settings::AppSettings) -> Self {
         let mut app = Self {
-            workspace: open_startup_workspace(&settings),
+            workspace,
             tool: Tool::Files,
             layer: Layer::Hll,
             layout: ShellLayout::default(),
@@ -1896,6 +1900,7 @@ fn open_native_demo_workspace() -> Option<IdeWorkspace> {
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
+    use egui_kittest::{Harness, kittest::Queryable as _};
     use full_stack::workspace::MemoryFs;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -2207,6 +2212,118 @@ mod tests {
     }
 
     #[test]
+    fn kittest_debug_tabs_focus_close_and_keep_the_session() {
+        let root = temp_root("kittest_debug_tabs");
+        write_native_workspace(&root);
+        let app_root = root.clone();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1400.0, 900.0))
+            .build_eframe(move |cc| {
+                theme::apply(&cc.egui_ctx);
+                let mut app =
+                    test_app(IdeWorkspace::new(Box::new(MemoryFs::new())).expect("workspace"));
+                app.open_native_workspace_folder(&app_root);
+                app.debug_selected_config(1.0);
+                app
+            });
+
+        assert!(harness.state().debugger_focused());
+        harness
+            .get_by_role_and_label(egui::accesskit::Role::Button, "[run] main.hll")
+            .click();
+        harness.step();
+        assert!(harness.state().runtime_focused());
+
+        harness
+            .get_by_role_and_label(egui::accesskit::Role::Button, "[debug] main.hll")
+            .click();
+        harness.step();
+        assert!(harness.state().debugger_focused());
+
+        harness.get_by_label("close [debug] main.hll").click();
+        harness.step();
+        assert!(harness.state().live.is_some());
+        assert!(!harness.state().debugger_open);
+        assert!(harness.state().runtime_focused());
+
+        drop(harness);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn kittest_debug_dock_steps_and_source_gutter_toggles_breakpoint() {
+        let root = temp_root("kittest_debug_controls");
+        write_native_workspace(&root);
+        let app_root = root.clone();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1400.0, 900.0))
+            .build_eframe(move |cc| {
+                theme::apply(&cc.egui_ctx);
+                let mut app =
+                    test_app(IdeWorkspace::new(Box::new(MemoryFs::new())).expect("workspace"));
+                app.open_native_workspace_folder(&app_root);
+                app.debug_selected_config(1.0);
+                app
+            });
+
+        let before = harness.state().live.as_ref().expect("session").steps;
+        harness.get_by_label("over").click();
+        harness.step();
+        assert!(harness.state().live.as_ref().expect("session").steps > before);
+
+        let before = harness
+            .state()
+            .live
+            .as_ref()
+            .expect("session")
+            .breakpoints
+            .len();
+        harness
+            .get_by_label("toggle breakpoint line 6")
+            .click_accesskit();
+        harness.step();
+        assert_eq!(
+            harness
+                .state()
+                .live
+                .as_ref()
+                .expect("session")
+                .breakpoints
+                .len(),
+            before + 1
+        );
+
+        drop(harness);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn kittest_output_link_jumps_to_the_diagnostic_source() {
+        let line = terminal::linked_test_line(
+            "  --> programs/demo/main.hll:2:12",
+            "programs/demo/main.hll",
+            2,
+        );
+        let mut harness = Harness::new_ui_state(
+            move |ui, jump| {
+                if let Some(clicked) = terminal::console_line(ui, &line) {
+                    *jump = Some(clicked);
+                }
+            },
+            None,
+        );
+        harness.get_by_role(egui::accesskit::Role::Link).click();
+        harness.run();
+        assert_eq!(
+            harness
+                .state()
+                .as_ref()
+                .map(|(path, line)| (path.as_str(), *line)),
+            Some(("programs/demo/main.hll", 2))
+        );
+    }
+
+    #[test]
     fn restart_reuse_setting_off_forces_rebuild() {
         let root = temp_root("restart_reuse_off");
         write_native_workspace(&root);
@@ -2377,62 +2494,18 @@ mod tests {
     }
 
     fn test_app(workspace: IdeWorkspace) -> FullStackApp {
-        FullStackApp {
-            workspace,
-            tool: Tool::Files,
-            layer: Layer::Hll,
-            layout: ShellLayout::default(),
-            stage_cache: None,
-            stdlib_objects: Vec::new(),
-            status_message: None,
-            build_glow_start: Some(1.0),
-            build_lit_until: Some(Layer::Elf),
-            built_target: None,
-            active_build_target: None,
-            selected_config: 0,
-            manifest_cache: None,
-            idle_seen: None,
-            idle_checked: 0,
-            live: None,
-            launch_cache: None,
-            breakpoint_entry: String::new(),
-            mount_host_entry: String::new(),
-            mount_guest_entry: String::new(),
-            pending_jump: None,
-            vm_result: None,
-            machine_texture: None,
-            machine_texture_fill_count: None,
-            terminal_open: false,
-            terminal: TerminalState::default(),
-            find: find::FindState::default(),
-            quick_open: None,
-            explorer: explorer::ExplorerState::default(),
-            search: search::SearchState::default(),
-            pending_close: None,
-            cursor_pos: Some((1, 1)),
-            main_surface: MainSurface::Document,
-            runtime_view: debug_view::RuntimeView::Console,
-            debug_view: debug_view::DebugView::Disasm,
-            runtime_open: false,
-            debugger_open: false,
-            session_tab_label: None,
-            memory_view: debug_view::MemoryViewState::default(),
-            code_follow: None,
-            code_follow_scrolled: None,
-            launch_mode: LaunchMode::Run,
-            step_count: 100,
-            step_unit: machine_dock::StepUnit::Instruction,
-            time_scrub: 0,
-            inspector: inspector::InspectorState {
-                pane: inspector::InspectorPane::Trace,
-                pid: Some(1),
-                inode: Some(2),
-                ..Default::default()
-            },
-            last_build: None,
-            settings: settings::AppSettings::default(),
-            settings_open: false,
-        }
+        let mut app = FullStackApp::with_workspace(workspace, settings::AppSettings::default());
+        app.build_glow_start = Some(1.0);
+        app.build_lit_until = Some(Layer::Elf);
+        app.cursor_pos = Some((1, 1));
+        app.step_unit = machine_dock::StepUnit::Instruction;
+        app.inspector = inspector::InspectorState {
+            pane: inspector::InspectorPane::Trace,
+            pid: Some(1),
+            inode: Some(2),
+            ..Default::default()
+        };
+        app
     }
 
     fn write_native_workspace(root: &Path) {

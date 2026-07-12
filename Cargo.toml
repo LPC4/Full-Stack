@@ -41,6 +41,7 @@ log             = "0.4.27"
 web-time        = "1.1.0"
 
 [dev-dependencies]
+egui_kittest   = { version = "0.34.0", features = ["eframe"] }
 serde_json      = "1.0"
 os_runtime      = { path = "crates/os-runtime" }
 hll_to_ir       = { path = "crates/hll-to-ir" }
