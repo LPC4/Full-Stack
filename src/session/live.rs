@@ -432,6 +432,11 @@ impl LiveMachine {
         self.vm.framebuffer_fill_count()
     }
 
+    /// Visible-pixel change counter; the GUI re-uploads its texture when it moves.
+    pub fn framebuffer_version(&self) -> u64 {
+        self.vm.framebuffer_content_version()
+    }
+
     /// Runtime pc for an image-relative symbol offset (`AssembledOutput`
     /// symbol addresses); the VM maps program images at `RAM_BASE`.
     pub fn runtime_address(image_offset: u64) -> u64 {

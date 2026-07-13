@@ -1,6 +1,8 @@
 use super::{FullStackApp, metrics};
 use crate::ui::theme;
+use crate::ui::theme::icons;
 use eframe::egui;
+use full_stack::session::MachineState;
 
 const TOP_BAR_CONTROL_HEIGHT: f32 = 24.0;
 
@@ -9,7 +11,7 @@ impl FullStackApp {
         ui.horizontal_centered(|ui| {
             #[cfg(not(target_arch = "wasm32"))]
             {
-                if action_button(ui, "open folder")
+                if action_button(ui, "open folder", theme::TEXT)
                     .on_hover_text("Open a local workspace folder")
                     .clicked()
                     && !self.block_open_folder_for_dirty_documents()
@@ -21,27 +23,73 @@ impl FullStackApp {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.spacing_mut().interact_size.y = TOP_BAR_CONTROL_HEIGHT;
                 ui.add_space(metrics::SECTION_GAP);
-                if action_button(ui, "\u{25B6} run")
-                    .on_hover_text("Run (Ctrl+R / F5)")
-                    .clicked()
-                {
-                    self.run_selected_config(now);
-                }
-                if action_button(ui, "\u{25CE} debug")
-                    .on_hover_text("Run paused at entry (Shift+F5)")
-                    .clicked()
-                {
-                    self.debug_selected_config(now);
-                }
-                if action_button(ui, "\u{2699} build")
-                    .on_hover_text("Build (Ctrl+B)")
-                    .clicked()
-                {
-                    self.build_selected_config(now);
+                if self.live.as_ref().is_some_and(|live| live.state.is_alive()) {
+                    self.session_transport(ui, now);
+                } else {
+                    self.launch_controls(ui, now);
                 }
                 self.config_selector(ui);
             });
         });
+    }
+
+    /// Idle chrome: launch verbs for the selected config.
+    fn launch_controls(&mut self, ui: &mut egui::Ui, now: f64) {
+        if action_button(ui, &format!("{} run", icons::RUN), theme::TEXT)
+            .on_hover_text("Run (Ctrl+R / F5)")
+            .clicked()
+        {
+            self.run_selected_config(now);
+        }
+        if action_button(ui, &format!("{} debug", icons::DEBUG), theme::TEXT)
+            .on_hover_text("Run paused at entry (Shift+F5)")
+            .clicked()
+        {
+            self.debug_selected_config(now);
+        }
+        if action_button(ui, &format!("{} build", icons::BUILD), theme::TEXT)
+            .on_hover_text("Build (Ctrl+B)")
+            .clicked()
+        {
+            self.build_selected_config(now);
+        }
+    }
+
+    /// A session is alive: the launch verbs give way to the transport, so the
+    /// machine is always stoppable no matter which panel has focus.
+    fn session_transport(&mut self, ui: &mut egui::Ui, now: f64) {
+        if action_button(ui, &format!("{} stop", icons::STOP), theme::DANGER)
+            .on_hover_text("Stop the session (Shift+F5)")
+            .clicked()
+        {
+            self.stop_live_machine();
+        }
+        if action_button(ui, &format!("{} restart", icons::RESTART), theme::TEXT)
+            .on_hover_text("Restart (Ctrl+F5); reuses the build when sources are unchanged")
+            .clicked()
+        {
+            self.restart_selected_config(now);
+        }
+        let paused = self
+            .live
+            .as_ref()
+            .is_some_and(|live| live.state == MachineState::Paused);
+        let (icon, verb, hint) = if paused {
+            (icons::RUN, "resume", "Resume (F5)")
+        } else {
+            (icons::PAUSE, "pause", "Pause (F6)")
+        };
+        if action_button(ui, &format!("{icon} {verb}"), theme::ELECTRIC)
+            .on_hover_text(hint)
+            .clicked()
+            && let Some(live) = &mut self.live
+        {
+            if paused {
+                live.resume();
+            } else {
+                live.pause();
+            }
+        }
     }
 
     /// The run-config dropdown: choose which program Build/Run act on.
@@ -82,9 +130,9 @@ impl FullStackApp {
     }
 }
 
-fn action_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
+fn action_button(ui: &mut egui::Ui, text: &str, color: egui::Color32) -> egui::Response {
     ui.add(
-        egui::Button::new(theme::mono(text, metrics::STATUS_TEXT_SIZE, theme::TEXT))
+        egui::Button::new(theme::mono(text, metrics::STATUS_TEXT_SIZE, color))
             .min_size(egui::vec2(0.0, TOP_BAR_CONTROL_HEIGHT)),
     )
 }

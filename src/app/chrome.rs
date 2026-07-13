@@ -229,22 +229,3 @@ pub(super) fn view_tab(ui: &mut egui::Ui, label: &str, active: bool) -> egui::Re
     }
     resp
 }
-
-/// A `view_tab` that cannot be selected right now; dim, with a reason on hover.
-pub(super) fn view_tab_disabled(ui: &mut egui::Ui, label: &str, reason: &str) {
-    let font = FontId::monospace(metrics::STATUS_TEXT_SIZE);
-    let galley = ui.fonts_mut(|f| f.layout_no_wrap(label.to_owned(), font.clone(), theme::TEXT));
-    let size = vec2(
-        galley.size().x + 2.0 * metrics::TAB_PAD_X,
-        metrics::VIEW_TAB_HEIGHT,
-    );
-    let (rect, resp) = ui.allocate_exact_size(size, Sense::hover());
-    ui.painter_at(rect).text(
-        rect.center(),
-        Align2::CENTER_CENTER,
-        label,
-        font,
-        theme::HAIRLINE,
-    );
-    resp.on_hover_text(reason);
-}

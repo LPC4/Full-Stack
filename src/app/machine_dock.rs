@@ -57,6 +57,7 @@ impl FullStackApp {
         let mut step_count = self.step_count;
         let mut bp_entry = std::mem::take(&mut self.breakpoint_entry);
         let mut time_scrub = self.time_scrub;
+        let mut regs_all = self.dock_regs_all;
         let restart_debug = self.launch_mode == super::LaunchMode::Debug;
         let debug_view = self.debug_view;
         let debugger_focused = self.debugger_focused();
@@ -88,12 +89,7 @@ impl FullStackApp {
                         action = Some(Transport::ShowView(debug_view));
                     }
                 }
-                chrome::section_eyebrow(ui, "registers");
-                let regs = live.registers();
-                stat_row(ui, "pc", format!("{:016x}", regs.pc), theme::TEXT_DIM);
-                stat_row(ui, "sp", format!("{:016x}", regs.x[2]), theme::TEXT_DIM);
-                stat_row(ui, "ra", format!("{:016x}", regs.x[1]), theme::TEXT_DIM);
-                stat_row(ui, "a0", format!("{:016x}", regs.x[10]), theme::TEXT_DIM);
+                registers_section(ui, live, &mut regs_all);
                 chrome::section_eyebrow(ui, "session");
                 if let Some(transport) = transport_section(
                     ui,
@@ -120,6 +116,7 @@ impl FullStackApp {
         self.step_count = step_count;
         self.breakpoint_entry = bp_entry;
         self.time_scrub = time_scrub;
+        self.dock_regs_all = regs_all;
         if let Some(action) = action {
             self.apply_transport(action, now);
         }
@@ -281,6 +278,52 @@ fn state_section(
         );
     }
     action
+}
+
+/// The register file: key registers by default, the full x0-x31 grid on demand.
+/// Values that changed across the last step light up, so stepping reads at a glance.
+fn registers_section(
+    ui: &mut egui::Ui,
+    live: &full_stack::session::LiveMachine,
+    show_all: &mut bool,
+) {
+    use full_stack::session::RegisterSnapshot;
+    section_with_control(ui, "registers", |ui| {
+        if let Some(next) = chrome::segmented(ui, &["key", "all"], usize::from(*show_all)) {
+            *show_all = next == 1;
+        }
+    });
+    let regs = live.registers();
+    let prev = live.prev_step_registers();
+    let color_for = |changed: bool| {
+        if changed {
+            theme::ELECTRIC
+        } else {
+            theme::TEXT_DIM
+        }
+    };
+    let pc_changed = prev.is_some_and(|p| p.pc != regs.pc);
+    stat_row(ui, "pc", format!("{:016x}", regs.pc), color_for(pc_changed));
+    if let Some((name, offset)) = live.symbol_near(regs.pc) {
+        let tag = if offset == 0 {
+            name.to_owned()
+        } else {
+            format!("{name}+{offset:#x}")
+        };
+        stat_row(ui, "at", tag, theme::TEXT_FAINT);
+    }
+    const KEY_REGS: [usize; 8] = [1, 2, 8, 10, 11, 12, 13, 14];
+    let all: Vec<usize> = (1..32).collect();
+    let indices: &[usize] = if *show_all { &all } else { &KEY_REGS };
+    for &i in indices {
+        let changed = prev.is_some_and(|p| p.x[i] != regs.x[i]);
+        stat_row(
+            ui,
+            RegisterSnapshot::ABI_NAMES[i],
+            format!("{:016x}", regs.x[i]),
+            color_for(changed),
+        );
+    }
 }
 
 /// Session lifecycle controls for the current state, plus the paused stepping

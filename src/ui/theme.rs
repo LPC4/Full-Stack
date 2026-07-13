@@ -114,7 +114,25 @@ fn install_fonts(ctx: &egui::Context) {
         .entry(FontFamily::Monospace)
         .or_default()
         .insert(0, "plex_mono".to_owned());
+    // Phosphor Light is the icon face. add_to_fonts wires only Proportional; add
+    // Monospace too, since instrument labels (theme::mono) render there.
+    egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Light);
+    fonts
+        .families
+        .entry(FontFamily::Monospace)
+        .or_default()
+        .push("phosphor".to_owned());
     ctx.set_fonts(fonts);
+}
+
+/// The icon vocabulary, one glyph per verb so every surface draws the same one.
+pub mod icons {
+    pub use egui_phosphor::light::{
+        ARROW_ARC_RIGHT as STEP_OVER, ARROW_CLOCKWISE as RESTART, ARROW_LINE_DOWN as STEP_IN,
+        ARROW_LINE_UP as STEP_OUT, BUG as DEBUG, CPU as INSPECT, FOLDER_SIMPLE as FILES,
+        GEAR_SIX as SETTINGS, HAMMER as BUILD, MAGNIFYING_GLASS as SEARCH, PAUSE, PLAY as RUN,
+        STOP, TERMINAL_WINDOW as TERMINAL,
+    };
 }
 
 /// A tracked, uppercase instrument label (panel eyebrows, status, rung names).

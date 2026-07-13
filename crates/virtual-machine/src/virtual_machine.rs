@@ -334,6 +334,11 @@ impl VirtualMachine {
         self.bus.framebuffer_fill_count()
     }
 
+    /// Visible-pixel change counter; the GUI re-uploads its texture when it moves.
+    pub fn framebuffer_content_version(&self) -> u64 {
+        self.bus.framebuffer_content_version()
+    }
+
     /// Push a key event from the host GUI into the keyboard MMIO device.
     pub fn keyboard_push(&mut self, scancode: u16, pressed: bool) {
         self.bus.keyboard_push(scancode, pressed);

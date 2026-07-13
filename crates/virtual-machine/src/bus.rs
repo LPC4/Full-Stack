@@ -319,6 +319,11 @@ impl SystemBus {
         self.framebuffer.fill_count()
     }
 
+    /// Visible-pixel change counter; moves on any draw, so the GUI re-uploads.
+    pub fn framebuffer_content_version(&self) -> u64 {
+        self.framebuffer.content_version()
+    }
+
     /// Push a key event from the host GUI into the keyboard device.
     pub fn keyboard_push(&mut self, scancode: u16, pressed: bool) {
         self.keyboard.push_event(scancode, pressed);

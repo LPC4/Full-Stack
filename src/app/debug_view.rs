@@ -23,13 +23,6 @@ const XREG_NAMES: [&str; 32] = [
     "t5", "t6",
 ];
 
-/// Runtime presentation exposed by every live session.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum RuntimeView {
-    Console,
-    Screen,
-}
-
 /// Debugger-only views exposed by a debug launch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DebugView {

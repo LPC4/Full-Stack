@@ -69,7 +69,6 @@ const HLL_LAYERS: &[Layer] = &[Layer::Hll, Layer::Ir, Layer::Asm, Layer::Elf];
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum MainSurface {
     Document,
-    Runtime,
     Debugger,
 }
 
@@ -164,9 +163,7 @@ pub struct FullStackApp {
     /// 1-based cursor line/column of the active editor, for the status bar.
     pub(super) cursor_pos: Option<(usize, usize)>,
     main_surface: MainSurface,
-    pub(super) runtime_view: debug_view::RuntimeView,
     pub(super) debug_view: debug_view::DebugView,
-    runtime_open: bool,
     debugger_open: bool,
     /// Basename of the running config's root source, naming session tabs.
     pub(super) session_tab_label: Option<String>,
@@ -182,6 +179,8 @@ pub struct FullStackApp {
     /// Instruction count for the dock's "step n" control.
     pub(super) step_count: u64,
     step_unit: machine_dock::StepUnit,
+    /// Dock registers view: key registers only, or the full x0-x31 file.
+    pub(super) dock_regs_all: bool,
     /// Dock time-travel scrubber position (frame index into the session history).
     pub(super) time_scrub: usize,
     /// The Inspect tool window's pane selection and captured probe state.
@@ -241,9 +240,7 @@ impl FullStackApp {
             pending_close: None,
             cursor_pos: None,
             main_surface: MainSurface::Document,
-            runtime_view: debug_view::RuntimeView::Console,
             debug_view: debug_view::DebugView::Disasm,
-            runtime_open: false,
             debugger_open: false,
             session_tab_label: None,
             memory_view: debug_view::MemoryViewState::default(),
@@ -252,6 +249,7 @@ impl FullStackApp {
             launch_mode: LaunchMode::Run,
             step_count: 100,
             step_unit: machine_dock::StepUnit::Line,
+            dock_regs_all: false,
             time_scrub: 0,
             inspector: inspector::InspectorState::default(),
             last_build: None,
@@ -1451,18 +1449,15 @@ impl FullStackApp {
         }
     }
 
-    pub(super) fn runtime_focused(&self) -> bool {
-        self.live.is_some() && self.main_surface == MainSurface::Runtime
-    }
-
     pub(super) fn debugger_focused(&self) -> bool {
         self.live.is_some() && self.main_surface == MainSurface::Debugger
     }
 
-    pub(super) fn focus_runtime(&mut self) {
-        self.runtime_open = true;
-        self.main_surface = MainSurface::Runtime;
-        self.settings_open = false;
+    /// Bring the live console forward: the bottom terminal's Machine tab. The
+    /// program's output lives there; graphics live in the framebuffer window.
+    pub(super) fn show_machine_console(&mut self) {
+        self.terminal_open = true;
+        self.terminal.set_active_machine();
     }
 
     pub(super) fn focus_debugger(&mut self) {
@@ -1474,40 +1469,22 @@ impl FullStackApp {
         self.settings_open = false;
     }
 
-    pub(super) fn close_runtime_surface(&mut self) {
-        self.runtime_open = false;
-        self.main_surface = if self.debugger_open {
-            MainSurface::Debugger
-        } else {
-            MainSurface::Document
-        };
-    }
-
     pub(super) fn close_debugger_surface(&mut self) {
         self.debugger_open = false;
-        self.main_surface = if self.runtime_open {
-            MainSurface::Runtime
-        } else {
-            MainSurface::Document
-        };
-        if self.main_surface == MainSurface::Document {
-            self.reset_layer_for_active_file();
-        }
+        self.main_surface = MainSurface::Document;
+        self.reset_layer_for_active_file();
     }
 
     fn open_session_surfaces(&mut self, debug: bool) {
-        self.runtime_open = true;
         self.debugger_open = debug;
-        self.runtime_view = self.default_runtime_view();
         self.main_surface = if debug {
             MainSurface::Debugger
         } else {
-            MainSurface::Runtime
+            MainSurface::Document
         };
     }
 
     fn dismiss_session_surfaces(&mut self) {
-        self.runtime_open = false;
         self.debugger_open = false;
         self.main_surface = MainSurface::Document;
         self.reset_layer_for_active_file();
@@ -1591,20 +1568,11 @@ impl FullStackApp {
 
     /// Clear per-session debug/inspect state when the session goes away.
     fn reset_machine_views(&mut self) {
-        self.runtime_view = debug_view::RuntimeView::Console;
         self.debug_view = debug_view::DebugView::Disasm;
         self.dismiss_session_surfaces();
         self.inspector.clear_session();
         self.code_follow = None;
         self.code_follow_scrolled = None;
-    }
-
-    fn default_runtime_view(&self) -> debug_view::RuntimeView {
-        if self.config_has_screen() {
-            debug_view::RuntimeView::Screen
-        } else {
-            debug_view::RuntimeView::Console
-        }
     }
 
     /// True when the selected config presents a framebuffer screen.
@@ -1670,16 +1638,32 @@ impl FullStackApp {
         if ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::R)) {
             self.run_selected_config(now);
         }
-        // Debug transport: F5 resume-or-run (shift: debug), F6 pause, F10 uses
-        // the dock's step selectors. F11 enters calls; Shift+F11 steps out.
+        // Debug transport: F5 resume-or-run (shift: debug when idle, stop when
+        // live; ctrl: restart), F6 pause, F10 steps per the dock unit.
         if ui.input(|i| i.key_pressed(egui::Key::F5)) {
-            let shift = ui.input(|i| i.modifiers.shift);
-            match &mut self.live {
-                Some(live) if live.state == MachineState::Paused => live.resume(),
-                Some(live) if live.state.is_alive() => {}
-                _ if shift => self.debug_selected_config(now),
-                _ => self.run_selected_config(now),
+            let (shift, ctrl) = ui.input(|i| (i.modifiers.shift, i.modifiers.command));
+            let alive = self.live.as_ref().is_some_and(|live| live.state.is_alive());
+            if alive && shift {
+                self.stop_live_machine();
+            } else if alive && ctrl {
+                self.restart_selected_config(now);
+            } else if alive {
+                if let Some(live) = &mut self.live
+                    && live.state == MachineState::Paused
+                {
+                    live.resume();
+                }
+            } else if shift {
+                self.debug_selected_config(now);
+            } else {
+                self.run_selected_config(now);
             }
+        }
+        // F9: toggle a breakpoint on the editor's caret line.
+        if ui.input(|i| i.key_pressed(egui::Key::F9))
+            && let (Some((line, _)), Some(path)) = (self.cursor_pos, self.active_path())
+        {
+            self.toggle_source_breakpoint(path.as_str(), line);
         }
         if ui.input(|i| i.key_pressed(egui::Key::F6))
             && let Some(live) = &mut self.live
@@ -1705,7 +1689,6 @@ impl FullStackApp {
         }
         if ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::W)) {
             match self.main_surface {
-                MainSurface::Runtime => self.close_runtime_surface(),
                 MainSurface::Debugger => self.close_debugger_surface(),
                 MainSurface::Document => self.close_active_path(),
             }
@@ -1729,10 +1712,7 @@ impl FullStackApp {
 
     fn guest_input_active(&self) -> bool {
         let alive = self.live.as_ref().is_some_and(|live| live.state.is_alive());
-        alive
-            && ((self.terminal_open && self.terminal.active == TerminalKind::Machine)
-                || (self.main_surface == MainSurface::Runtime
-                    && self.runtime_view == debug_view::RuntimeView::Screen))
+        alive && self.terminal_open && self.terminal.active == TerminalKind::Machine
     }
 }
 
@@ -1825,6 +1805,7 @@ impl eframe::App for FullStackApp {
 
         self.quick_open_overlay(ui.ctx());
         self.explorer_confirm_overlay(ui.ctx());
+        self.framebuffer_window(ui.ctx());
     }
 }
 
@@ -1970,7 +1951,6 @@ mod tests {
         assert!(app.quick_open.is_none());
         assert!(!app.find.open);
         assert_eq!(app.launch_mode, LaunchMode::Run);
-        assert!(matches!(app.runtime_view, debug_view::RuntimeView::Console));
         assert!(app.status_message.expect("status").starts_with("opened "));
 
         fs::remove_dir_all(root).expect("cleanup");
@@ -2093,9 +2073,10 @@ mod tests {
         assert_eq!(live.state, MachineState::Running);
         assert!(live.breakpoints.is_empty());
         assert_eq!(app.launch_mode, LaunchMode::Run);
-        assert!(app.runtime_focused());
+        // No run surface: the canvas keeps the document and the console lands in
+        // the bottom terminal's Machine tab.
+        assert_eq!(app.main_surface, MainSurface::Document);
         assert!(!app.debugger_open);
-        assert_eq!(app.runtime_view, debug_view::RuntimeView::Console);
         assert!(matches!(app.terminal.active, TerminalKind::Machine));
 
         fs::remove_dir_all(root).expect("cleanup");
@@ -2137,7 +2118,8 @@ mod tests {
         fs::remove_dir_all(root).expect("cleanup");
     }
 
-    // Debug owns a separate surface. Closing it leaves the runtime session alive.
+    // Debug owns a separate surface. Closing it drops back to the document while
+    // the session stays alive.
     #[test]
     fn debug_tab_focuses_switches_and_closes() {
         let root = temp_root("debug_tab_lifecycle");
@@ -2148,7 +2130,6 @@ mod tests {
         app.debug_selected_config(1.0);
         assert!(app.live.is_some(), "debug launch starts a session");
         assert!(app.debugger_focused());
-        assert!(app.runtime_open);
         assert!(app.debugger_open);
         assert_eq!(app.session_tab_label.as_deref(), Some("main.hll"));
 
@@ -2161,9 +2142,10 @@ mod tests {
 
         app.close_debugger_surface();
         assert!(app.live.is_some(), "closing the debugger keeps the session");
-        assert!(
-            app.runtime_focused(),
-            "the runtime surface takes the canvas"
+        assert_eq!(
+            app.main_surface,
+            MainSurface::Document,
+            "the document takes the canvas back"
         );
         assert!(!app.debugger_open);
 
@@ -2171,28 +2153,26 @@ mod tests {
     }
 
     #[test]
-    fn runtime_surface_can_hide_and_reopen_without_stopping() {
-        let root = temp_root("runtime_surface_lifecycle");
+    fn run_brings_the_machine_console_forward_without_a_surface() {
+        let root = temp_root("run_machine_console");
         write_native_workspace(&root);
         let mut app = test_app(IdeWorkspace::new(Box::new(MemoryFs::new())).expect("workspace"));
         app.open_native_workspace_folder(&root);
 
         app.run_selected_config(1.0);
-        assert!(app.runtime_focused());
-        app.close_runtime_surface();
         assert!(app.live.is_some());
-        assert!(!app.runtime_open);
         assert_eq!(app.main_surface, MainSurface::Document);
+        assert!(matches!(app.terminal.active, TerminalKind::Machine));
 
-        app.focus_runtime();
-        assert!(app.runtime_focused());
-        assert!(app.runtime_open);
+        app.show_machine_console();
+        assert!(app.terminal_open);
+        assert!(matches!(app.terminal.active, TerminalKind::Machine));
 
         fs::remove_dir_all(root).expect("cleanup");
     }
 
     #[test]
-    fn framebuffer_run_focuses_the_runtime_screen_without_a_debugger() {
+    fn framebuffer_run_keeps_console_in_app_and_graphics_in_its_window() {
         use full_stack::runconfig::PresentMode;
 
         let root = temp_root("framebuffer_run_surface");
@@ -2203,8 +2183,11 @@ mod tests {
 
         app.run_selected_config(1.0);
 
-        assert!(app.runtime_focused());
-        assert_eq!(app.runtime_view, debug_view::RuntimeView::Screen);
+        // Graphics present in the framebuffer window; the in-app canvas stays on
+        // the document and the console lands in the terminal.
+        assert_eq!(app.main_surface, MainSurface::Document);
+        assert!(app.config_has_screen());
+        assert!(matches!(app.terminal.active, TerminalKind::Machine));
         assert!(!app.debugger_open);
         assert_eq!(app.launch_mode, LaunchMode::Run);
 
@@ -2228,11 +2211,13 @@ mod tests {
             });
 
         assert!(harness.state().debugger_focused());
+
+        // A file tab takes the canvas back; the debug tab returns focus to it.
         harness
-            .get_by_role_and_label(egui::accesskit::Role::Button, "[run] main.hll")
+            .get_by_role_and_label(egui::accesskit::Role::Button, "main.hll")
             .click();
         harness.step();
-        assert!(harness.state().runtime_focused());
+        assert!(!harness.state().debugger_focused());
 
         harness
             .get_by_role_and_label(egui::accesskit::Role::Button, "[debug] main.hll")
@@ -2244,7 +2229,7 @@ mod tests {
         harness.step();
         assert!(harness.state().live.is_some());
         assert!(!harness.state().debugger_open);
-        assert!(harness.state().runtime_focused());
+        assert_eq!(harness.state().main_surface, MainSurface::Document);
 
         drop(harness);
         fs::remove_dir_all(root).expect("cleanup");

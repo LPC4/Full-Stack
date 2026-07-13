@@ -48,7 +48,7 @@ impl FullStackApp {
 
     /// Toggle a source breakpoint on `line` of `file`; the line must carry code
     /// (map to a pc) or the click is reported as a no-op in the status bar.
-    fn toggle_source_breakpoint(&mut self, file: &str, line: usize) {
+    pub(super) fn toggle_source_breakpoint(&mut self, file: &str, line: usize) {
         let Some(live) = &mut self.live else {
             return;
         };
@@ -74,10 +74,6 @@ impl FullStackApp {
         }
         self.cursor_pos = None;
         match self.main_surface {
-            super::MainSurface::Runtime => {
-                self.runtime_surface(ui);
-                return;
-            }
             super::MainSurface::Debugger => {
                 self.debugger_surface(ui);
                 return;
@@ -236,53 +232,10 @@ impl FullStackApp {
         read_only_code(ui, self.layer.tag(), text, highlighter);
     }
 
-    /// Program I/O, independent of whether the session was launched under a debugger.
-    fn runtime_surface(&mut self, ui: &mut egui::Ui) {
-        use super::debug_view::RuntimeView;
-        if self.live.is_none() {
-            self.vm_console_summary(ui);
-            return;
-        }
-        let has_screen = self.config_has_screen();
-        if self.runtime_view == RuntimeView::Screen && !has_screen {
-            self.runtime_view = RuntimeView::Console;
-        }
-        ui.add_space(metrics::PANEL_HEADER_PAD_Y);
-        ui.horizontal(|ui| {
-            ui.add_space(metrics::PANEL_INSET_X);
-            ui.spacing_mut().item_spacing.x = 2.0;
-            self.runtime_view_tab(ui, RuntimeView::Console, "console");
-            if has_screen {
-                self.runtime_view_tab(ui, RuntimeView::Screen, "screen");
-            } else {
-                chrome::view_tab_disabled(
-                    ui,
-                    "screen",
-                    "This config presents no framebuffer.\nSet present to `framebuffer` or `both` in the Run panel.",
-                );
-            }
-        });
-        chrome::hairline(ui);
-        match self.runtime_view {
-            RuntimeView::Console => self.vm_console_summary(ui),
-            RuntimeView::Screen => self.framebuffer_view(ui),
-        }
-    }
-
-    fn runtime_view_tab(
-        &mut self,
-        ui: &mut egui::Ui,
-        view: super::debug_view::RuntimeView,
-        label: &str,
-    ) {
-        if chrome::view_tab(ui, label, self.runtime_view == view).clicked() {
-            self.runtime_view = view;
-        }
-    }
-
     /// Debugger tooling. Runtime console and framebuffer deliberately live elsewhere.
     fn debugger_surface(&mut self, ui: &mut egui::Ui) {
         use super::debug_view::DebugView;
+        self.debug_transport_bar(ui);
         ui.add_space(metrics::PANEL_HEADER_PAD_Y);
         ui.horizontal(|ui| {
             ui.add_space(metrics::PANEL_INSET_X);
@@ -302,6 +255,80 @@ impl FullStackApp {
             DebugView::Code => self.show_code_follow(ui),
             DebugView::Disasm => self.show_disasm(ui),
             DebugView::Memory => self.show_memory(ui),
+        }
+    }
+
+    /// The debugger's own transport: a compact icon toolbar beside the code, so
+    /// the eyes stay on the source while stepping. Mirrors F5/F6/F10/F11 keys.
+    fn debug_transport_bar(&mut self, ui: &mut egui::Ui) {
+        use crate::ui::theme::icons;
+        let Some(live) = self.live.as_ref() else {
+            return;
+        };
+        let paused = live.state == MachineState::Paused;
+        let alive = live.state.is_alive();
+        let now = ui.input(|i| i.time);
+        ui.add_space(metrics::PANEL_HEADER_PAD_Y);
+        let mut act: Option<DebugAction> = None;
+        ui.horizontal(|ui| {
+            ui.add_space(metrics::PANEL_INSET_X);
+            ui.spacing_mut().item_spacing.x = 4.0;
+            if alive {
+                let (glyph, tip) = if paused {
+                    (icons::RUN, "Resume (F5)")
+                } else {
+                    (icons::PAUSE, "Pause (F6)")
+                };
+                if icon_button(ui, glyph, tip, true, false).clicked() {
+                    act = Some(DebugAction::PauseResume);
+                }
+            }
+            let dim = !paused;
+            if icon_button(ui, icons::STEP_OVER, "Step over (F10)", false, dim).clicked() && paused
+            {
+                act = Some(DebugAction::StepOver);
+            }
+            if icon_button(ui, icons::STEP_IN, "Step into (F11)", false, dim).clicked() && paused {
+                act = Some(DebugAction::StepIn);
+            }
+            if icon_button(ui, icons::STEP_OUT, "Step out (Shift+F11)", false, dim).clicked()
+                && paused
+            {
+                act = Some(DebugAction::StepOut);
+            }
+            ui.add_space(metrics::SECTION_GAP);
+            if icon_button(ui, icons::RESTART, "Restart (Ctrl+F5)", false, false).clicked() {
+                act = Some(DebugAction::Restart);
+            }
+            if icon_button(ui, icons::STOP, "Stop (Shift+F5)", false, !alive).clicked() && alive {
+                act = Some(DebugAction::Stop);
+            }
+        });
+        ui.add_space(metrics::PANEL_HEADER_PAD_Y);
+        match act {
+            Some(DebugAction::PauseResume) => {
+                if let Some(live) = &mut self.live {
+                    if live.state == MachineState::Paused {
+                        live.resume();
+                    } else {
+                        live.pause();
+                    }
+                }
+            }
+            Some(DebugAction::StepOver) => self.step_selected_live_machine(),
+            Some(DebugAction::StepIn) => {
+                if let Some(live) = &mut self.live {
+                    live.step_line_in();
+                }
+            }
+            Some(DebugAction::StepOut) => {
+                if let Some(live) = &mut self.live {
+                    live.step_out();
+                }
+            }
+            Some(DebugAction::Restart) => self.restart_selected_config(now),
+            Some(DebugAction::Stop) => self.stop_live_machine(),
+            None => {}
         }
     }
 
@@ -424,98 +451,69 @@ impl FullStackApp {
             .map(|(_, source)| (*source).to_owned())
     }
 
-    fn vm_console_summary(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(metrics::PANEL_HEADER_PAD_Y);
-        match (&self.live, &self.vm_result) {
-            (Some(live), _) => {
-                let (state, color) = super::machine_dock::state_style(&live.state);
-                let steps = live.steps;
-                let sps = live.steps_per_sec;
-                ui.horizontal(|ui| {
-                    ui.add_space(metrics::PANEL_INSET_X);
-                    ui.label(theme::mono(state, metrics::STATUS_TEXT_SIZE, color));
-                    ui.label(theme::label(&format!("{steps} steps")));
-                    if sps > 0.0 {
-                        ui.label(theme::mono(
-                            format!("{sps:.0} steps/s"),
-                            metrics::STATUS_TEXT_SIZE,
-                            theme::TEXT_FAINT,
-                        ));
-                    }
-                });
-            }
-            (None, Some(vm)) => {
-                let status = match vm.exit_code {
-                    Some(code) => format!("halted \u{00B7} exit {code}"),
-                    None if vm.max_steps_reached => "step budget exhausted".to_owned(),
-                    None => "stopped".to_owned(),
-                };
-                let color = match vm.exit_code {
-                    Some(0) => theme::ELECTRIC,
-                    Some(_) => theme::TEXT,
-                    None => theme::TEXT_DIM,
-                };
-                let steps = vm.steps;
-                ui.horizontal(|ui| {
-                    ui.add_space(metrics::PANEL_INSET_X);
-                    ui.label(theme::mono(status, metrics::STATUS_TEXT_SIZE, color));
-                    ui.label(theme::label(&format!("{steps} steps")));
-                });
-            }
-            (None, None) => {
-                chrome::centered_hint(ui, "Press Run to execute in the VM.");
-                return;
-            }
+    /// A graphical session gets its own window; native opens a real OS window,
+    /// the browser draws a draggable in-app one. Closing ends the session.
+    pub(super) fn framebuffer_window(&mut self, ctx: &egui::Context) {
+        let show = self.live.as_ref().is_some_and(|live| live.state.is_alive())
+            && self.config_has_screen();
+        if !show {
+            return;
         }
-        ui.add_space(metrics::PANEL_HEADER_PAD_Y);
-        chrome::hairline(ui);
-        self.machine_terminal(ui, "vm_live", false);
+        let title = format!(
+            "{} \u{00B7} screen",
+            self.session_tab_label.as_deref().unwrap_or("machine")
+        );
+
+        #[cfg(not(target_arch = "wasm32"))]
+        let close_requested = {
+            let mut closed = false;
+            let viewport_id = egui::ViewportId::from_hash_of("machine_framebuffer_window");
+            let builder = egui::ViewportBuilder::default()
+                .with_title(&title)
+                .with_inner_size([FB_WIDTH as f32 * 2.0, FB_HEIGHT as f32 * 2.0])
+                .with_min_inner_size([FB_WIDTH as f32, FB_HEIGHT as f32]);
+            ctx.show_viewport_immediate(viewport_id, builder, |ui, _class| {
+                self.framebuffer_window_body(ui);
+                if ui.ctx().input(|i| i.viewport().close_requested()) {
+                    closed = true;
+                }
+            });
+            closed
+        };
+        // The browser has no OS windows: draw a draggable in-app one instead. Its
+        // title-bar close (open -> false) ends the session, like the real window.
+        #[cfg(target_arch = "wasm32")]
+        let close_requested = {
+            let mut open = true;
+            egui::Window::new(title)
+                .id(egui::Id::new("machine_framebuffer_window"))
+                .default_size([FB_WIDTH as f32 * 1.5, FB_HEIGHT as f32 * 1.5])
+                .min_size([FB_WIDTH as f32, FB_HEIGHT as f32])
+                .open(&mut open)
+                .frame(egui::Frame::new().fill(theme::TERMINAL))
+                .show(ctx, |ui| self.framebuffer_window_body(ui));
+            !open
+        };
+
+        if close_requested {
+            self.stop_live_machine();
+        }
     }
 
-    fn framebuffer_view(&mut self, ui: &mut egui::Ui) {
+    /// Fill the framebuffer window: the guest image scaled to fit, integer
+    /// nearest, with the window's keyboard routed straight to the guest.
+    fn framebuffer_window_body(&mut self, ui: &mut egui::Ui) {
         let Some(live) = self.live.as_ref() else {
-            self.vm_console_summary(ui);
             return;
         };
-        let fill_count = live.framebuffer_fill_count();
+        // Key the texture on the content version, not FILL: demos that draw
+        // pixels directly (mandelbrot) never touch FILL but must still refresh.
+        let version = live.framebuffer_version();
         let pixels = live.framebuffer().to_vec();
-        let steps = live.steps;
-        let sps = live.steps_per_sec;
-        let state = live.state.clone();
-
-        self.upload_framebuffer(ui.ctx(), fill_count, &pixels);
+        self.upload_framebuffer(ui.ctx(), version, &pixels);
         let Some(texture) = self.machine_texture.as_ref() else {
-            chrome::centered_hint(ui, "Framebuffer texture is not ready.");
             return;
         };
-
-        ui.add_space(metrics::PANEL_HEADER_PAD_Y);
-        ui.horizontal(|ui| {
-            ui.add_space(metrics::PANEL_INSET_X);
-            let (state_label, color) = super::machine_dock::state_style(&state);
-            ui.label(theme::mono(state_label, metrics::STATUS_TEXT_SIZE, color));
-            ui.label(theme::label("320x240"));
-            ui.label(theme::mono(
-                format!("fill {fill_count}"),
-                metrics::STATUS_TEXT_SIZE,
-                theme::TEXT_FAINT,
-            ));
-            ui.label(theme::mono(
-                format!("{steps} steps"),
-                metrics::STATUS_TEXT_SIZE,
-                theme::TEXT_DIM,
-            ));
-            if sps > 0.0 && state == MachineState::Running {
-                ui.label(theme::mono(
-                    format!("{sps:.0} steps/s"),
-                    metrics::STATUS_TEXT_SIZE,
-                    theme::TEXT_FAINT,
-                ));
-            }
-        });
-        ui.add_space(metrics::PANEL_HEADER_PAD_Y);
-        chrome::hairline(ui);
-
         let rect = ui.available_rect_before_wrap();
         if !rect.is_positive() {
             return;
@@ -528,37 +526,13 @@ impl FullStackApp {
             size.y = size.x / aspect;
         }
         let image_rect = egui::Rect::from_center_size(rect.center(), size.floor());
-        let id = ui.make_persistent_id("machine_framebuffer_input");
-        let response = ui.interact(rect, id, egui::Sense::click());
-        if response.clicked() {
-            response.request_focus();
-        }
-        if response.has_focus() {
-            ui.memory_mut(|mem| {
-                mem.set_focus_lock_filter(
-                    id,
-                    egui::EventFilter {
-                        tab: true,
-                        horizontal_arrows: true,
-                        vertical_arrows: true,
-                        escape: false,
-                    },
-                );
-            });
-        }
         ui.painter().rect_filled(rect, 0.0, theme::TERMINAL);
-        ui.painter().rect_stroke(
-            image_rect,
-            egui::CornerRadius::ZERO,
-            egui::Stroke::new(1.0, theme::HAIRLINE),
-            egui::StrokeKind::Inside,
-        );
         ui.put(
             image_rect,
             egui::Image::new((texture.id(), image_rect.size()))
                 .texture_options(egui::TextureOptions::NEAREST),
         );
-        if fill_count == 0 {
+        if version == 0 {
             ui.painter().text(
                 image_rect.center(),
                 egui::Align2::CENTER_CENTER,
@@ -566,26 +540,16 @@ impl FullStackApp {
                 egui::FontId::monospace(metrics::STATUS_TEXT_SIZE),
                 theme::TEXT_FAINT,
             );
-        } else if !response.has_focus() {
-            ui.painter().text(
-                image_rect.center_bottom() - egui::vec2(0.0, 10.0),
-                egui::Align2::CENTER_BOTTOM,
-                "click the screen to send it your keys",
-                egui::FontId::monospace(metrics::STATUS_TEXT_SIZE),
-                theme::TEXT_FAINT,
-            );
         }
-        if response.hovered() {
-            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-        }
-        if response.has_focus() {
-            self.route_framebuffer_keys(ui);
-        }
-        ui.advance_cursor_after_rect(rect);
+        self.route_framebuffer_keys(ui);
+        // The VM is driven from the root viewport; keep it repainting even while
+        // this window holds OS focus, or the guest would freeze here.
+        ui.ctx().request_repaint_of(egui::ViewportId::ROOT);
+        ui.ctx().request_repaint();
     }
 
-    fn upload_framebuffer(&mut self, ctx: &egui::Context, fill_count: u64, pixels: &[u8]) {
-        if self.machine_texture.is_some() && self.machine_texture_fill_count == Some(fill_count) {
+    fn upload_framebuffer(&mut self, ctx: &egui::Context, key: u64, pixels: &[u8]) {
+        if self.machine_texture.is_some() && self.machine_texture_fill_count == Some(key) {
             return;
         }
         let image = egui::ColorImage::from_rgba_unmultiplied([FB_WIDTH, FB_HEIGHT], pixels);
@@ -599,7 +563,7 @@ impl FullStackApp {
                 ));
             }
         }
-        self.machine_texture_fill_count = Some(fill_count);
+        self.machine_texture_fill_count = Some(key);
     }
 
     fn route_framebuffer_keys(&mut self, ui: &egui::Ui) {
@@ -649,6 +613,58 @@ impl FullStackApp {
                 _ => {}
             }
         }
+    }
+}
+
+/// A transport verb requested from the debugger's icon toolbar this frame.
+#[derive(Clone, Copy)]
+enum DebugAction {
+    PauseResume,
+    StepOver,
+    StepIn,
+    StepOut,
+    Restart,
+    Stop,
+}
+
+/// A square icon-glyph button for the debug transport. `primary` tints the glyph
+/// electric; `dim` renders it inert (a control that cannot act in this state).
+fn icon_button(
+    ui: &mut egui::Ui,
+    glyph: &str,
+    tip: &str,
+    primary: bool,
+    dim: bool,
+) -> egui::Response {
+    let size = egui::vec2(26.0, 22.0);
+    let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
+    let hovered = resp.hovered() && !dim;
+    let color = if dim {
+        theme::TEXT_FAINT
+    } else if primary {
+        theme::ELECTRIC
+    } else if hovered {
+        theme::TEXT
+    } else {
+        theme::TEXT_DIM
+    };
+    let painter = ui.painter_at(rect);
+    if hovered {
+        painter.rect_filled(rect, 0.0, theme::SURFACE);
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    painter.text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        glyph,
+        egui::FontId::proportional(15.0),
+        color,
+    );
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, !dim, tip));
+    if dim {
+        resp.on_hover_text(format!("{tip} \u{00B7} pause to use"))
+    } else {
+        resp.on_hover_text(tip)
     }
 }
 

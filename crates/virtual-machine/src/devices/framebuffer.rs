@@ -29,6 +29,9 @@ pub struct Framebuffer {
     double_buffered: bool,
     // FILL clears performed; a per-frame counter for benchmarking.
     fill_count: u64,
+    // Bumps on any change to displayed pixels (direct writes, fill, present) so
+    // the GUI knows to re-upload even when a demo never touches FILL.
+    version: u64,
 }
 
 impl Default for Framebuffer {
@@ -44,6 +47,7 @@ impl Framebuffer {
             back: vec![0u8; FB_BYTES],
             double_buffered: false,
             fill_count: 0,
+            version: 0,
         }
     }
 
@@ -55,6 +59,12 @@ impl Framebuffer {
     /// Total FILL-register clears since boot.
     pub fn fill_count(&self) -> u64 {
         self.fill_count
+    }
+
+    /// Monotonic counter of visible-pixel changes; the GUI re-uploads its texture
+    /// whenever this moves, so demos that draw directly (no FILL) still refresh.
+    pub fn content_version(&self) -> u64 {
+        self.version
     }
 
     /// Both pixel planes (front then back) as one image; the bulk term of a
@@ -97,12 +107,16 @@ impl Framebuffer {
             px.copy_from_slice(&bytes);
         }
         self.fill_count += 1;
+        if !self.double_buffered {
+            self.version += 1;
+        }
     }
 
     // Publish the back buffer to the front (no-op when single-buffered).
     fn present(&mut self) {
         if self.double_buffered {
             self.front.copy_from_slice(&self.back);
+            self.version += 1;
         }
     }
 }
@@ -124,7 +138,11 @@ impl MemoryAccess for Framebuffer {
     fn write_byte(&mut self, addr: u64, data: u8) -> Result<(), VmError> {
         let a = addr as usize;
         if a < FB_BYTES {
+            let single = !self.double_buffered;
             self.draw_buffer()[a] = data;
+            if single {
+                self.version += 1;
+            }
             Ok(())
         } else if a < FB_TOTAL_BYTES {
             // Control registers only act on word writes; ignore byte dribbles.
@@ -144,7 +162,11 @@ impl MemoryAccess for Framebuffer {
             self.double_buffered = data != 0;
         } else if a + FB_BPP <= FB_BYTES {
             // Pixel word: write the 4 little-endian bytes to the draw buffer.
+            let single = !self.double_buffered;
             self.draw_buffer()[a..a + FB_BPP].copy_from_slice(&data.to_le_bytes());
+            if single {
+                self.version += 1;
+            }
         } else if a >= FB_BYTES && a < FB_TOTAL_BYTES {
             // Other control offsets: no-op.
         } else {

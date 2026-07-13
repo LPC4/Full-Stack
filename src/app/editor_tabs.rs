@@ -10,8 +10,6 @@ use full_stack::workspace::VPath;
 enum TabAction {
     Activate(VPath),
     Close(VPath),
-    FocusRuntime,
-    CloseRuntime,
     FocusDebugger,
     CloseDebugger,
 }
@@ -62,19 +60,6 @@ impl FullStackApp {
                                     .to_owned();
                                 let (_, state_color) =
                                     super::machine_dock::state_style(&live.state);
-                                if self.runtime_open
-                                    && let Some(act) = session_tab(
-                                        ui,
-                                        "run",
-                                        &label,
-                                        self.main_surface == super::MainSurface::Runtime,
-                                        state_color,
-                                        TabAction::FocusRuntime,
-                                        TabAction::CloseRuntime,
-                                    )
-                                {
-                                    action = Some(act);
-                                }
                                 if self.debugger_open
                                     && let Some(act) = session_tab(
                                         ui,
@@ -109,8 +94,6 @@ impl FullStackApp {
         match action {
             Some(TabAction::Activate(path)) => self.activate_path(&path),
             Some(TabAction::Close(path)) => self.close_path(&path),
-            Some(TabAction::FocusRuntime) => self.focus_runtime(),
-            Some(TabAction::CloseRuntime) => self.close_runtime_surface(),
             Some(TabAction::FocusDebugger) => self.focus_debugger(),
             Some(TabAction::CloseDebugger) => self.close_debugger_surface(),
             None => {}
@@ -127,7 +110,6 @@ impl FullStackApp {
                 format!("{} {}", self.layer.tag(), self.layer.name()),
                 self.layer.color(),
             ),
-            super::MainSurface::Runtime => ("RUN".to_owned(), theme::ELECTRIC),
             super::MainSurface::Debugger => ("DEBUG".to_owned(), theme::ELECTRIC),
         };
         let tag_galley = ui.fonts_mut(|f| {

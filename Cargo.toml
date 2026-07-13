@@ -39,6 +39,7 @@ log             = "0.4.27"
 # Monotonic clock that works on wasm (performance.now()) as well as native; std's
 # Instant has no wall clock on wasm32, which would hang the VM step-budget loop.
 web-time        = "1.1.0"
+egui-phosphor = { version = "0.12.0", default-features = false, features = ["light"] }
 
 [dev-dependencies]
 egui_kittest   = { version = "0.34.0", features = ["eframe"] }
