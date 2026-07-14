@@ -76,6 +76,49 @@ pub const RAM_SIZE_DEFAULT: usize = 128 * 1024 * 1024; // 128 MiB
 pub const ELF_LOAD_BASE: u64 = 0x0001_0000;
 pub const HEAP_PTR_ADDR: u64 = RAM_BASE + 32 * 1024 * 1024 - 8; // 0x81FF_FFF8
 
+/// Blocking data-access latency in simulated cycles for each cache outcome.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MemoryLatencyConfig {
+    pub enabled: bool,
+    pub l1_hit: u32,
+    pub l2_hit: u32,
+    pub l3_hit: u32,
+    pub dram: u32,
+    pub uncached: u32,
+}
+
+impl MemoryLatencyConfig {
+    /// Preserve the historical model where every access completes in one cycle.
+    pub const fn disabled() -> Self {
+        Self {
+            enabled: false,
+            l1_hit: 1,
+            l2_hit: 1,
+            l3_hit: 1,
+            dram: 1,
+            uncached: 1,
+        }
+    }
+
+    /// A teaching-oriented blocking hierarchy, not a specific physical CPU.
+    pub const fn realistic() -> Self {
+        Self {
+            enabled: true,
+            l1_hit: 4,
+            l2_hit: 12,
+            l3_hit: 40,
+            dram: 200,
+            uncached: 20,
+        }
+    }
+}
+
+impl Default for MemoryLatencyConfig {
+    fn default() -> Self {
+        Self::disabled()
+    }
+}
+
 pub struct SystemBus {
     rom: Rom,
     l1_cache: Cache<Cache<Cache<Ram>>>, // L1 -> L2 -> L3 -> RAM
@@ -85,6 +128,12 @@ pub struct SystemBus {
     framebuffer: Framebuffer,
     keyboard: Keyboard,
     syscon_exit: Option<i64>,
+    memory_latency: MemoryLatencyConfig,
+    access_latency_cycles: u32,
+}
+
+fn cache_misses(stats: &crate::memory::cache::CacheStats) -> u64 {
+    stats.read_misses.saturating_add(stats.write_misses)
 }
 
 impl SystemBus {
@@ -137,7 +186,68 @@ impl SystemBus {
             framebuffer,
             keyboard,
             syscon_exit: None,
+            memory_latency: MemoryLatencyConfig::disabled(),
+            access_latency_cycles: 0,
         }
+    }
+
+    pub fn set_memory_latency_config(&mut self, config: MemoryLatencyConfig) {
+        self.memory_latency = config;
+        self.access_latency_cycles = 0;
+    }
+
+    pub fn memory_latency_config(&self) -> MemoryLatencyConfig {
+        self.memory_latency
+    }
+
+    /// Start one pipeline access window. Page-table and final data accesses accumulate.
+    pub fn begin_timed_access(&mut self) {
+        self.access_latency_cycles = 0;
+    }
+
+    pub fn timed_access_cycles(&self) -> u32 {
+        self.access_latency_cycles.max(1)
+    }
+
+    fn record_access_latency(
+        &mut self,
+        addr: u64,
+        before: Option<(
+            crate::memory::cache::CacheStats,
+            crate::memory::cache::CacheStats,
+            crate::memory::cache::CacheStats,
+        )>,
+    ) {
+        let cycles = if !self.memory_latency.enabled {
+            1
+        } else if addr < RAM_BASE {
+            self.memory_latency.uncached
+        } else if let Some((l1_before, l2_before, l3_before)) = before {
+            let (l1_after, l2_after, l3_after) = self.get_cache_stats();
+            if cache_misses(&l3_after) > cache_misses(&l3_before) {
+                self.memory_latency.dram
+            } else if cache_misses(&l2_after) > cache_misses(&l2_before) {
+                self.memory_latency.l3_hit
+            } else if cache_misses(&l1_after) > cache_misses(&l1_before) {
+                self.memory_latency.l2_hit
+            } else {
+                self.memory_latency.l1_hit
+            }
+        } else {
+            1
+        };
+        self.access_latency_cycles = self.access_latency_cycles.saturating_add(cycles.max(1));
+    }
+
+    fn stats_before_access(
+        &self,
+        addr: u64,
+    ) -> Option<(
+        crate::memory::cache::CacheStats,
+        crate::memory::cache::CacheStats,
+        crate::memory::cache::CacheStats,
+    )> {
+        (self.memory_latency.enabled && addr >= RAM_BASE).then(|| self.get_cache_stats())
     }
 
     /// Capture the architectural RAM image (RAM overlaid with dirty cache lines).
@@ -349,26 +459,46 @@ impl SystemBus {
 impl MemoryAccess for SystemBus {
     #[inline]
     fn read_byte(&mut self, addr: u64) -> Result<u8, VmError> {
-        let (dev, local) = self.route(addr).ok_or(VmError::BusError(addr))?;
-        dev.read_byte(local)
+        let before = self.stats_before_access(addr);
+        let result = {
+            let (dev, local) = self.route(addr).ok_or(VmError::BusError(addr))?;
+            dev.read_byte(local)
+        };
+        self.record_access_latency(addr, before);
+        result
     }
 
     #[inline]
     fn read_halfword(&mut self, addr: u64) -> Result<u16, VmError> {
-        let (dev, local) = self.route(addr).ok_or(VmError::BusError(addr))?;
-        dev.read_halfword(local)
+        let before = self.stats_before_access(addr);
+        let result = {
+            let (dev, local) = self.route(addr).ok_or(VmError::BusError(addr))?;
+            dev.read_halfword(local)
+        };
+        self.record_access_latency(addr, before);
+        result
     }
 
     #[inline]
     fn read_word(&mut self, addr: u64) -> Result<u32, VmError> {
-        let (dev, local) = self.route(addr).ok_or(VmError::BusError(addr))?;
-        dev.read_word(local)
+        let before = self.stats_before_access(addr);
+        let result = {
+            let (dev, local) = self.route(addr).ok_or(VmError::BusError(addr))?;
+            dev.read_word(local)
+        };
+        self.record_access_latency(addr, before);
+        result
     }
 
     #[inline]
     fn read_doubleword(&mut self, addr: u64) -> Result<u64, VmError> {
-        let (dev, local) = self.route(addr).ok_or(VmError::BusError(addr))?;
-        dev.read_doubleword(local)
+        let before = self.stats_before_access(addr);
+        let result = {
+            let (dev, local) = self.route(addr).ok_or(VmError::BusError(addr))?;
+            dev.read_doubleword(local)
+        };
+        self.record_access_latency(addr, before);
+        result
     }
 
     #[inline]
@@ -379,8 +509,13 @@ impl MemoryAccess for SystemBus {
             }
             return Ok(());
         }
-        let (dev, local) = self.route(addr).ok_or(VmError::BusError(addr))?;
-        dev.write_byte(local, data)
+        let before = self.stats_before_access(addr);
+        let result = {
+            let (dev, local) = self.route(addr).ok_or(VmError::BusError(addr))?;
+            dev.write_byte(local, data)
+        };
+        self.record_access_latency(addr, before);
+        result
     }
 
     #[inline]
@@ -391,8 +526,13 @@ impl MemoryAccess for SystemBus {
             }
             return Ok(());
         }
-        let (dev, local) = self.route(addr).ok_or(VmError::BusError(addr))?;
-        dev.write_halfword(local, data)
+        let before = self.stats_before_access(addr);
+        let result = {
+            let (dev, local) = self.route(addr).ok_or(VmError::BusError(addr))?;
+            dev.write_halfword(local, data)
+        };
+        self.record_access_latency(addr, before);
+        result
     }
 
     #[inline]
@@ -403,8 +543,13 @@ impl MemoryAccess for SystemBus {
             }
             return Ok(());
         }
-        let (dev, local) = self.route(addr).ok_or(VmError::BusError(addr))?;
-        dev.write_word(local, data)
+        let before = self.stats_before_access(addr);
+        let result = {
+            let (dev, local) = self.route(addr).ok_or(VmError::BusError(addr))?;
+            dev.write_word(local, data)
+        };
+        self.record_access_latency(addr, before);
+        result
     }
 
     #[inline]
@@ -413,8 +558,13 @@ impl MemoryAccess for SystemBus {
             self.syscon_exit = Some(data as i64);
             return Ok(());
         }
-        let (dev, local) = self.route(addr).ok_or(VmError::BusError(addr))?;
-        dev.write_doubleword(local, data)
+        let before = self.stats_before_access(addr);
+        let result = {
+            let (dev, local) = self.route(addr).ok_or(VmError::BusError(addr))?;
+            dev.write_doubleword(local, data)
+        };
+        self.record_access_latency(addr, before);
+        result
     }
 }
 
@@ -438,5 +588,27 @@ mod tests {
         let px = bus.peek_framebuffer();
         assert_eq!(&px[0..4], &[0x11, 0x22, 0x33, 0xFF]);
         assert_eq!(px[(p - FB_BASE) as usize], 0xAB);
+    }
+
+    #[test]
+    fn timed_access_classifies_cold_dram_then_l1_hit() {
+        let mut bus = SystemBus::new(vec![0u8; 64]);
+        bus.set_memory_latency_config(MemoryLatencyConfig::realistic());
+
+        bus.begin_timed_access();
+        let _ = bus.read_word(RAM_BASE).unwrap();
+        assert_eq!(bus.timed_access_cycles(), 200);
+
+        bus.begin_timed_access();
+        let _ = bus.read_word(RAM_BASE).unwrap();
+        assert_eq!(bus.timed_access_cycles(), 4);
+    }
+
+    #[test]
+    fn disabled_timing_preserves_single_cycle_accesses() {
+        let mut bus = SystemBus::new(vec![0u8; 64]);
+        bus.begin_timed_access();
+        let _ = bus.read_word(RAM_BASE).unwrap();
+        assert_eq!(bus.timed_access_cycles(), 1);
     }
 }

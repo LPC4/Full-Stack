@@ -4,7 +4,7 @@
 //! the Pipeline, and asserts on both the computed results and the pipeline
 //! performance counters (stall cycles, flush cycles, retired instructions).
 
-use virtual_machine::bus::{RAM_BASE, SystemBus};
+use virtual_machine::bus::{MemoryLatencyConfig, RAM_BASE, SystemBus};
 use virtual_machine::cpu::pipeline::{Pipeline, TickOutcome};
 use virtual_machine::memory::MemoryAccess;
 use virtual_machine::rom::generate_rom_image;
@@ -213,6 +213,47 @@ fn pipeline_load_use_stall() {
         cpu.stats.stall_cycles >= 1,
         "load-use hazard must insert at least 1 stall"
     );
+}
+
+#[test]
+fn blocking_memory_latency_preserves_store_load_behavior() {
+    let mut bus = SystemBus::new(generate_rom_image());
+    bus.set_memory_latency_config(MemoryLatencyConfig::realistic());
+    let prog = [
+        addi(1, 0, 99),
+        sw(2, 1, -4),
+        lw(3, 2, -4),
+        add(4, 3, 3),
+        addi(17, 0, 93),
+        addi(10, 0, 0),
+        ecall(),
+    ];
+    let mut cpu = load_program(&mut bus, RAM_BASE, &prog);
+
+    let outcome = run_n(&mut cpu, &mut bus, 2_000);
+    assert!(matches!(outcome, TickOutcome::Halted(0)));
+    assert_eq!(cpu.peek_reg(3), 99);
+    assert_eq!(cpu.peek_reg(4), 198);
+    assert!(cpu.stats.memory_stall_cycles > 0);
+}
+
+#[test]
+fn blocked_younger_instruction_refreshes_wb_operand() {
+    let mut bus = SystemBus::new(generate_rom_image());
+    bus.set_memory_latency_config(MemoryLatencyConfig::realistic());
+    let prog = [
+        addi(1, 0, 21),
+        sw(2, 0, -4),
+        add(4, 1, 1),
+        addi(17, 0, 93),
+        addi(10, 0, 0),
+        ecall(),
+    ];
+    let mut cpu = load_program(&mut bus, RAM_BASE, &prog);
+
+    let outcome = run_n(&mut cpu, &mut bus, 2_000);
+    assert!(matches!(outcome, TickOutcome::Halted(0)));
+    assert_eq!(cpu.peek_reg(4), 42);
 }
 
 // --- Test 4: Branch not taken - no flush ---

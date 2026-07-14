@@ -86,6 +86,8 @@ pub fn load_build_manifest(
         manifest.artifact_root = Some(out_path.as_str().into());
         manifest.write_artifacts = true;
     }
+    manifest.latency =
+        crate::build::parse_memory_latency_config(&values).map_err(|err| vec![diagnostic(err)])?;
 
     Ok(manifest)
 }
@@ -177,6 +179,7 @@ mod tests {
             &VPath::parse("programs/demo/demo.build").expect("path"),
         )
         .expect("manifest");
+        assert!(manifest.latency.is_none());
         assert_eq!(BuildExecutor::plan(&manifest).root, "demo");
         match manifest.root {
             BuildSource::Inline { source_path, .. } => {
@@ -204,6 +207,54 @@ mod tests {
             Err(diagnostics) => diagnostics,
         };
         assert!(diagnostics[0].message.contains("missing.hll"));
+    }
+
+    #[test]
+    fn latency_preset_and_overrides_parse() {
+        let mut fs = MemoryFs::new();
+        fs.write_text(
+            &VPath::parse("demo.build").expect("path"),
+            "root = \"demo.hll\"\nlatency = \"realistic\"\nlatency_dram = 300\n",
+        )
+        .expect("write manifest");
+        fs.write_text(
+            &VPath::parse("demo.hll").expect("path"),
+            "main: () -> i32 { return 0 }",
+        )
+        .expect("write source");
+
+        let manifest =
+            load_build_manifest(&fs, &VPath::parse("demo.build").expect("path")).expect("manifest");
+        let latency = manifest.latency.expect("latency enabled");
+        assert!(latency.enabled);
+        assert_eq!(latency.dram, 300);
+        // Untouched levels keep the realistic preset.
+        assert_eq!(
+            latency.l1_hit,
+            virtual_machine::bus::MemoryLatencyConfig::realistic().l1_hit
+        );
+    }
+
+    #[test]
+    fn latency_override_conflicts_with_off() {
+        let mut fs = MemoryFs::new();
+        fs.write_text(
+            &VPath::parse("demo.build").expect("path"),
+            "root = \"demo.hll\"\nlatency = \"off\"\nlatency_dram = 300\n",
+        )
+        .expect("write manifest");
+        fs.write_text(
+            &VPath::parse("demo.hll").expect("path"),
+            "main: () -> i32 { return 0 }",
+        )
+        .expect("write source");
+
+        let diagnostics = match load_build_manifest(&fs, &VPath::parse("demo.build").expect("path"))
+        {
+            Ok(_) => panic!("conflicting latency keys should fail"),
+            Err(diagnostics) => diagnostics,
+        };
+        assert!(diagnostics[0].message.contains("latency_dram"));
     }
 
     #[test]

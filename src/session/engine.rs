@@ -54,7 +54,7 @@ pub struct BuildOutcome {
     pub entry: String,
     pub link_layout: LinkLayout,
     pub artifacts: BuildArtifacts,
-    /// Directory the `.ir`/`.s`/`.elf` artifacts were written to, when enabled.
+    pub latency: Option<virtual_machine::bus::MemoryLatencyConfig>,
     pub artifact_dir: Option<PathBuf>,
 }
 
@@ -94,6 +94,7 @@ impl<'a> SessionEngine<'a> {
         let mut manifest = self.manifest_for_config(config)?;
         let artifact_dir = self.apply_artifact_root(&mut manifest);
         let plan = BuildExecutor::plan(&manifest);
+        let latency = manifest.latency;
         let pipeline =
             CompilationPipeline::from_config(crate::compilation_pipeline::PipelineConfig {
                 target_mode: manifest.target,
@@ -112,6 +113,7 @@ impl<'a> SessionEngine<'a> {
             entry,
             link_layout,
             artifacts,
+            latency,
             artifact_dir,
         })
     }
@@ -134,7 +136,7 @@ impl<'a> SessionEngine<'a> {
         max_steps: u64,
     ) -> Result<HostedRunOutcome, SessionEngineError> {
         let build = self.build_config(config)?;
-        let result = run_hosted_artifact(&build.artifacts, max_steps.max(1));
+        let result = run_hosted_artifact(&build.artifacts, build.latency, max_steps.max(1));
         Ok(HostedRunOutcome { build, vm: result })
     }
 
@@ -400,6 +402,7 @@ fn join_guest_path(parent: &str, name: &str) -> String {
 
 fn run_hosted_artifact(
     artifacts: &BuildArtifacts,
+    memory_latency: Option<virtual_machine::bus::MemoryLatencyConfig>,
     max_steps: u64,
 ) -> crate::session::vm::VmExecutionResult {
     use asm_to_binary::assembler::link_layout::LinkLayout;
@@ -421,6 +424,9 @@ fn run_hosted_artifact(
             };
         }
     };
+    if let Some(config) = memory_latency {
+        vm.set_memory_latency_config(config);
+    }
     let result = vm.run(max_steps);
     let mut x = [0u64; 32];
     for (r, slot) in x.iter_mut().enumerate() {

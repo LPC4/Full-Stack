@@ -17,3 +17,12 @@ out/
 
 .run
 plugin
+
+# Python benchmark tooling caches
+__pycache__/
+*.py[cod]
+
+# Benchmark suite
+benches/
+src/bin/benchmark-runner.rs
+.github/workflows/benchmarks.yml

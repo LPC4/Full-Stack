@@ -57,6 +57,7 @@ impl FullStackApp {
         let mut step_count = self.step_count;
         let mut bp_entry = std::mem::take(&mut self.breakpoint_entry);
         let mut time_scrub = self.time_scrub;
+        let mut time_follow = self.time_follow_now;
         let mut regs_all = self.dock_regs_all;
         let restart_debug = self.launch_mode == super::LaunchMode::Debug;
         let debug_view = self.debug_view;
@@ -107,7 +108,9 @@ impl FullStackApp {
                 if let Some(bp_action) = breakpoints_section(ui, live, &mut bp_entry) {
                     action = Some(bp_action);
                 }
-                if let Some(tt_action) = time_travel_section(ui, live, &mut time_scrub) {
+                if let Some(tt_action) =
+                    time_travel_section(ui, live, &mut time_scrub, &mut time_follow)
+                {
                     action = Some(tt_action);
                 }
             });
@@ -116,6 +119,7 @@ impl FullStackApp {
         self.step_count = step_count;
         self.breakpoint_entry = bp_entry;
         self.time_scrub = time_scrub;
+        self.time_follow_now = time_follow;
         self.dock_regs_all = regs_all;
         if let Some(action) = action {
             self.apply_transport(action, now);
@@ -156,6 +160,7 @@ impl FullStackApp {
                     live.timeline.set_enabled(on);
                     if !on {
                         self.time_scrub = 0;
+                        self.time_follow_now = true;
                     }
                 }
             }
@@ -566,6 +571,7 @@ fn time_travel_section(
     ui: &mut egui::Ui,
     live: &full_stack::session::LiveMachine,
     scrub: &mut usize,
+    follow: &mut bool,
 ) -> Option<Transport> {
     let mut action = None;
     let enabled = live.timeline.enabled();
@@ -587,6 +593,11 @@ fn time_travel_section(
         return action;
     }
     let last = count - 1;
+    // While following, the scrubber tracks the newest frame as history grows;
+    // this is display-only (the machine is already at "now", no restore).
+    if *follow {
+        *scrub = last;
+    }
     *scrub = (*scrub).min(last);
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         // Right to left: the now verb hugs the edge, the scrubber fills.
@@ -596,10 +607,13 @@ fn time_travel_section(
             .add(egui::Slider::new(scrub, 0..=last).show_value(false))
             .changed()
         {
+            // Dragging back detaches; dragging to the end re-arms the follow.
+            *follow = *scrub == last;
             action = Some(Transport::ScrubTo(*scrub));
         }
         if now_button.clicked() {
             *scrub = last;
+            *follow = true;
             action = Some(Transport::ScrubTo(last));
         }
     });

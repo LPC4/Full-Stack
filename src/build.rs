@@ -5,6 +5,7 @@ use std::fmt;
 use std::fs;
 use std::path::PathBuf;
 use std::rc::Rc;
+use virtual_machine::bus::MemoryLatencyConfig;
 
 pub type BuildModuleResolver = Rc<dyn Fn(&str) -> Option<String> + 'static>;
 
@@ -27,6 +28,7 @@ pub struct BuildManifest {
     pub artifact_root: Option<PathBuf>,
     pub extra_objects: Vec<BuildObject>,
     pub abi_exports: Vec<String>,
+    pub latency: Option<MemoryLatencyConfig>,
     pub run_semantic_analysis: bool,
     pub write_artifacts: bool,
 }
@@ -50,6 +52,7 @@ impl BuildManifest {
             artifact_root: None,
             extra_objects: Vec::new(),
             abi_exports: vec!["main".to_owned()],
+            latency: None,
             run_semantic_analysis: false,
             write_artifacts: false,
         }
@@ -73,6 +76,7 @@ impl BuildManifest {
             artifact_root: None,
             extra_objects: Vec::new(),
             abi_exports: Vec::new(),
+            latency: None,
             run_semantic_analysis: true,
             write_artifacts: false,
         }
@@ -156,6 +160,7 @@ impl BuildManifest {
             manifest.artifact_root = Some(resolve_manifest_path(base_dir, &out));
             manifest.write_artifacts = true;
         }
+        manifest.latency = parse_memory_latency_config(&values).map_err(BuildError::Manifest)?;
 
         Ok(manifest)
     }
@@ -436,6 +441,57 @@ fn manifest_error(err: build_manifest::ManifestError) -> BuildError {
     BuildError::Manifest(err.0)
 }
 
+pub(crate) fn parse_memory_latency_config(
+    values: &build_manifest::Manifest,
+) -> Result<Option<MemoryLatencyConfig>, String> {
+    const OVERRIDES: [&str; 5] = [
+        "latency_l1",
+        "latency_l2",
+        "latency_l3",
+        "latency_dram",
+        "latency_uncached",
+    ];
+
+    let preset = values.get("latency");
+    let first_override = OVERRIDES
+        .iter()
+        .find(|key| values.get(key).is_some())
+        .copied();
+    match (preset, first_override) {
+        (None | Some("off"), None) => return Ok(None),
+        (None, Some(key)) => {
+            return Err(format!("`{key}` requires `latency = \"realistic\"`"));
+        }
+        (Some("off"), Some(key)) => {
+            return Err(format!("`{key}` conflicts with `latency = \"off\"`"));
+        }
+        (Some("realistic"), _) => {}
+        (Some(other), _) => return Err(format!("unknown latency preset `{other}`")),
+    }
+
+    let mut config = MemoryLatencyConfig::realistic();
+    for key in OVERRIDES {
+        let Some(raw) = values.get(key) else {
+            continue;
+        };
+        let cycles = raw
+            .parse::<u32>()
+            .map_err(|err| format!("`{key}` must be a positive integer: {err}"))?;
+        if cycles == 0 {
+            return Err(format!("`{key}` must be at least 1"));
+        }
+        match key {
+            "latency_l1" => config.l1_hit = cycles,
+            "latency_l2" => config.l2_hit = cycles,
+            "latency_l3" => config.l3_hit = cycles,
+            "latency_dram" => config.dram = cycles,
+            "latency_uncached" => config.uncached = cycles,
+            _ => unreachable!("override key list is exhaustive"),
+        }
+    }
+    Ok(Some(config))
+}
+
 fn parse_target_mode(value: &str) -> Result<TargetMode, BuildError> {
     match value {
         "hosted" => Ok(TargetMode::Hosted),
@@ -476,8 +532,17 @@ struct LoadedSource {
 
 #[cfg(test)]
 mod tests {
-    use super::{BuildExecutor, BuildManifest, BuildSource, ImportClosurePolicy, StdlibPolicy};
+    use super::{
+        BuildExecutor, BuildManifest, BuildSource, ImportClosurePolicy, StdlibPolicy,
+        parse_memory_latency_config,
+    };
     use crate::compilation_pipeline::TargetMode;
+
+    #[test]
+    fn manifest_latency_defaults_to_none() {
+        let values = build_manifest::parse("root = \"main.hll\"\n").expect("manifest");
+        assert_eq!(parse_memory_latency_config(&values).expect("latency"), None);
+    }
 
     #[test]
     fn manifest_builds_single_hosted_program() {

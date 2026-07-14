@@ -183,6 +183,9 @@ pub struct FullStackApp {
     pub(super) dock_regs_all: bool,
     /// Dock time-travel scrubber position (frame index into the session history).
     pub(super) time_scrub: usize,
+    /// Keep the scrubber pinned to the newest frame as history grows, until the
+    /// user drags back; re-armed by reaching the end or clicking "now".
+    pub(super) time_follow_now: bool,
     /// The Inspect tool window's pane selection and captured probe state.
     pub(super) inspector: inspector::InspectorState,
     /// The last successful config build, retained so the inspector's Artifacts
@@ -251,6 +254,7 @@ impl FullStackApp {
             step_unit: machine_dock::StepUnit::Line,
             dock_regs_all: false,
             time_scrub: 0,
+            time_follow_now: true,
             inspector: inspector::InspectorState::default(),
             last_build: None,
             settings,
@@ -471,6 +475,11 @@ impl FullStackApp {
             self.lit_layer_for_active_target(),
             layers.first().copied(),
         ) {
+            // The spine always speaks to the document stack; a click from the
+            // debugger surface returns to the source tab at the chosen stage.
+            if self.main_surface == MainSurface::Debugger {
+                self.main_surface = MainSurface::Document;
+            }
             self.layer = layer;
         }
     }
@@ -1174,7 +1183,7 @@ impl FullStackApp {
             RunKind::Hosted => match engine.build_config(&config) {
                 Ok(build) => {
                     self.report_linked_build(&build);
-                    self.start_hosted_live_session(&config, &build.artifacts, now, debug);
+                    self.start_hosted_live_session(&config, &build, now, debug);
                     self.store_launch_cache(&config, CachedLaunch::Hosted(Box::new(build)));
                 }
                 Err(err) => {
@@ -1195,7 +1204,7 @@ impl FullStackApp {
                     );
                     self.start_kernel_live_session(
                         &config,
-                        &boot.build.artifacts,
+                        &boot.build,
                         &boot.init,
                         &boot.fs_image,
                         now,
@@ -1234,12 +1243,12 @@ impl FullStackApp {
         );
         match &cache.launch {
             CachedLaunch::Hosted(build) => {
-                self.start_hosted_live_session(config, &build.artifacts, now, debug);
+                self.start_hosted_live_session(config, build, now, debug);
             }
             CachedLaunch::Kernel(boot) => {
                 self.start_kernel_live_session(
                     config,
-                    &boot.build.artifacts,
+                    &boot.build,
                     &boot.init,
                     &boot.fs_image,
                     now,
@@ -1284,13 +1293,16 @@ impl FullStackApp {
     fn start_hosted_live_session(
         &mut self,
         config: &RunConfig,
-        artifacts: &full_stack::build::BuildArtifacts,
+        build: &full_stack::session::BuildOutcome,
         now: f64,
         debug: bool,
     ) {
         let tab_label = self.session_tab_label_for(config);
-        match LiveMachine::new_hosted(artifacts) {
+        match LiveMachine::new_hosted(&build.artifacts) {
             Ok(mut live) => {
+                if let Some(config) = build.latency {
+                    live.set_memory_latency_config(config);
+                }
                 if !config.run.autorun.is_empty() {
                     live.push_uart_line(&config.run.autorun);
                 }
@@ -1323,15 +1335,23 @@ impl FullStackApp {
     fn start_kernel_live_session(
         &mut self,
         config: &RunConfig,
-        artifacts: &full_stack::build::BuildArtifacts,
+        build: &full_stack::session::BuildOutcome,
         init: &AssembledOutput,
         fs_image: &[u8],
         now: f64,
         debug: bool,
     ) {
         let tab_label = self.session_tab_label_for(config);
-        match LiveMachine::new_kernel(artifacts, Some(init), Some(fs_image), &config.run.autorun) {
-            Ok(live) => {
+        match LiveMachine::new_kernel(
+            &build.artifacts,
+            Some(init),
+            Some(fs_image),
+            &config.run.autorun,
+        ) {
+            Ok(mut live) => {
+                if let Some(config) = build.latency {
+                    live.set_memory_latency_config(config);
+                }
                 self.live = Some(live);
                 self.session_tab_label = Some(tab_label);
                 if debug {
@@ -1438,7 +1458,11 @@ impl FullStackApp {
             }
             MachineState::Running | MachineState::Paused => unreachable!("checked above"),
         };
-        self.status_message = Some(summary.clone());
+        // The run summary belongs in the terminal; only faults warrant a
+        // persistent status-bar note, so a clean exit does not clutter it.
+        if matches!(live.state, MachineState::Faulted(_)) {
+            self.status_message = Some(summary.clone());
+        }
         self.terminal.push(stream, summary);
     }
 
@@ -1476,6 +1500,9 @@ impl FullStackApp {
     }
 
     fn open_session_surfaces(&mut self, debug: bool) {
+        // A fresh session starts pinned to "now" so the scrubber tracks the end.
+        self.time_scrub = 0;
+        self.time_follow_now = true;
         self.debugger_open = debug;
         self.main_surface = if debug {
             MainSurface::Debugger

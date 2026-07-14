@@ -42,6 +42,7 @@ pub struct PipelineStats {
     pub cycles: u64,
     pub insns_retired: u64,
     pub stall_cycles: u64,
+    pub memory_stall_cycles: u64,
     pub flush_cycles: u64,
     pub branches_seen: u64,
     pub branches_mispredicted: u64,
@@ -55,7 +56,7 @@ pub type StageEntry = Option<(u64, &'static str)>;
 pub struct CpuPipelineFeed {
     /// `stages[0]` = IF ... `stages[4]` = WB.  `None` means bubble/empty.
     pub stages: [StageEntry; 5],
-    /// IF stage was held (load-use stall).
+    /// Younger stages were held by a load-use or memory-latency stall.
     pub stalled: bool,
     /// IF/ID were squashed (branch mispredict).
     pub flushed: bool,
@@ -75,6 +76,8 @@ pub struct Pipeline {
     id_ex: Option<IDEXReg>,
     ex_mem: Option<EXMEMReg>,
     mem_wb: Option<MEMWBReg>,
+    pending_mem_wb: Option<MEMWBReg>,
+    memory_wait_cycles: u32,
 
     /// Flag to prevent speculative fetch when MRET/SRET is in flight.
     /// Set in ID stage when MRET/SRET is decoded, cleared after WB flushes.
@@ -106,6 +109,8 @@ impl Pipeline {
             id_ex: None,
             ex_mem: None,
             mem_wb: None,
+            pending_mem_wb: None,
+            memory_wait_cycles: 0,
             mret_in_flight: false,
             predictor: BranchPredictor::new(),
             tlb: crate::cpu::mmu::Tlb::new(),
@@ -134,6 +139,8 @@ impl Pipeline {
         self.id_ex = None;
         self.ex_mem = None;
         self.mem_wb = None;
+        self.pending_mem_wb = None;
+        self.memory_wait_cycles = 0;
         self.tlb.flush();
     }
 
@@ -272,6 +279,30 @@ impl Pipeline {
             TickOutcome::Continue => {}
         }
 
+        if self.memory_wait_cycles > 0 {
+            self.memory_wait_cycles -= 1;
+            self.if_id = old_if_id;
+            self.id_ex = old_id_ex;
+            self.ex_mem = old_ex_mem;
+            if self.memory_wait_cycles == 0 {
+                self.mem_wb = self.pending_mem_wb.take();
+            }
+            self.stats.stall_cycles += 1;
+            self.stats.memory_stall_cycles += 1;
+            self.last_cycle = CpuPipelineFeed {
+                stages: [
+                    snap_id_entry,
+                    snap_id_entry,
+                    snap_ex_entry,
+                    snap_mem_entry,
+                    snap_wb_entry,
+                ],
+                stalled: true,
+                flushed: false,
+            };
+            return Ok(TickOutcome::Continue);
+        }
+
         // ---- Interrupt check (precise: after WB retires, before MEM executes) ----
         // In-flight instructions (old_ex_mem, old_id_ex, old_if_id) are squashed if
         // an interrupt fires; their pipeline registers are already taken out of self.
@@ -293,7 +324,35 @@ impl Pipeline {
         }
 
         // ---- MEM stage ------------------------------------------------------
+        bus.begin_timed_access();
         let new_mem_wb = self.stage_mem(old_ex_mem.as_ref(), bus)?;
+        let memory_penalty = bus.timed_access_cycles().saturating_sub(1);
+        if new_mem_wb.is_some() && memory_penalty > 0 {
+            self.pending_mem_wb = new_mem_wb;
+            self.memory_wait_cycles = memory_penalty;
+            self.if_id = old_if_id;
+            self.id_ex = old_id_ex.map(|mut entry| {
+                // WB already ran this cycle. A blocked younger instruction loses
+                // that cycle's forwarding source, so refresh its captured operands.
+                entry.rs1_val = self.regs.read_x(entry.rs1);
+                entry.rs2_val = self.regs.read_x(entry.rs2);
+                entry.frs1_val = self.regs.read_f_bits(entry.frs1);
+                entry.frs2_val = self.regs.read_f_bits(entry.frs2);
+                entry
+            });
+            self.last_cycle = CpuPipelineFeed {
+                stages: [
+                    snap_id_entry,
+                    snap_id_entry,
+                    snap_ex_entry,
+                    snap_mem_entry,
+                    snap_wb_entry,
+                ],
+                stalled: true,
+                flushed: false,
+            };
+            return Ok(TickOutcome::Continue);
+        }
 
         // ---- EX stage -------------------------------------------------------
         let (new_ex_mem, flush, redirect_pc) =
@@ -687,6 +746,8 @@ impl Pipeline {
         self.id_ex = None;
         self.ex_mem = None;
         self.mem_wb = None;
+        self.pending_mem_wb = None;
+        self.memory_wait_cycles = 0;
     }
 
     fn flush_and_trap(&mut self, e: VmError, pc: u64) {

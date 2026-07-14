@@ -897,6 +897,30 @@ enum VmError {
 - Used for timer interrupts (compare with `mtimecmp`)
 - Monotonically increasing, never wraps (u64 is sufficient)
 
+### 9.4 Toggleable Data-Memory Latency
+
+The VM has two blocking data-access timing modes selected through `MemoryLatencyConfig`:
+
+| Mode | L1 hit | L2 hit | L3 hit | DRAM | Uncached/MMIO |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Disabled (default) | 1 | 1 | 1 | 1 | 1 |
+| Realistic teaching preset | 4 | 12 | 40 | 200 | 20 |
+
+The preset is illustrative rather than a claim about one physical CPU. A load, store, atomic, or
+page-table walk resolves synchronously, then holds the instruction behind the MEM stage for the
+remaining configured cycles. Younger stages do not advance during that blocking interval. Serial
+page-table and final data accesses accumulate their latency. Cache classification uses the deepest
+level whose miss counter changed during each access.
+
+`PipelineStats::memory_stall_cycles` counts only these added wait cycles.
+`PipelineStats::stall_cycles` includes both memory waits and ordinary load-use stalls. Disabling the
+model preserves the historical cycle behavior. Instruction-fetch latency, non-blocking caches,
+memory-level parallelism, prefetching, bandwidth limits, and contention are not modeled.
+
+Build manifests leave the model disabled when `latency` is absent or set to `"off"`. Setting
+`latency = "realistic"` enables the preset. The optional `latency_l1`, `latency_l2`, `latency_l3`,
+`latency_dram`, and `latency_uncached` positive-integer keys override individual preset values.
+
 
 ## 10. Initialization & Reset
 

@@ -131,6 +131,11 @@ impl LiveMachine {
         })
     }
 
+    /// Apply an explicitly requested timing model to this session.
+    pub fn set_memory_latency_config(&mut self, config: virtual_machine::bus::MemoryLatencyConfig) {
+        self.vm.set_memory_latency_config(config);
+    }
+
     /// Step while `Running` until a budget is spent, a breakpoint is hit, the
     /// program exits, or a fault occurs. Returns the steps executed this slice.
     pub fn drive(&mut self, max_steps: u64, budget: Duration) -> u64 {

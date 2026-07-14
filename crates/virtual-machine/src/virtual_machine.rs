@@ -1,7 +1,8 @@
 //! Top-level virtual machine: ties together the CPU and memory bus.
 
 use crate::bus::{
-    DeviceState, ELF_LOAD_BASE, HEAP_PTR_ADDR, RAM_BASE, RAM_SIZE_DEFAULT, SystemBus,
+    DeviceState, ELF_LOAD_BASE, HEAP_PTR_ADDR, MemoryLatencyConfig, RAM_BASE, RAM_SIZE_DEFAULT,
+    SystemBus,
 };
 use crate::cpu::Cpu;
 pub use crate::cpu::StepOutcome;
@@ -168,6 +169,15 @@ impl VirtualMachine {
 // --- Step / run ---
 
 impl VirtualMachine {
+    /// Configure blocking data-cache and DRAM latency. Disabled by default.
+    pub fn set_memory_latency_config(&mut self, config: MemoryLatencyConfig) {
+        self.bus.set_memory_latency_config(config);
+    }
+
+    pub fn memory_latency_config(&self) -> MemoryLatencyConfig {
+        self.bus.memory_latency_config()
+    }
+
     pub fn step(&mut self) -> Result<StepOutcome, VmError> {
         match self.cpu.tick(&mut self.bus)? {
             TickOutcome::Continue | TickOutcome::EcallSquash => {
