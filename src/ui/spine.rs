@@ -12,16 +12,26 @@ const RUNG_PITCH: f32 = 118.0;
 const TICK_PITCH: f32 = 12.0;
 const TICK_HALF: f32 = 3.0;
 
+/// What the spine renders this frame; `pulse_t` is the 0..1 progress of the
+/// build sweep (`None` when idle).
+#[derive(Clone, Copy)]
+pub struct SpineProps<'a> {
+    pub layers: &'a [Layer],
+    pub active: Layer,
+    pub pulse_t: Option<f32>,
+    pub build_lit_until: Option<Layer>,
+    pub always_enabled_until: Option<Layer>,
+}
+
 /// Draw the spine; returns the rung the user clicked this frame, if any.
-/// `pulse_t` is the 0..1 progress of the build sweep, or `None` when idle.
-pub fn show(
-    ui: &mut egui::Ui,
-    layers: &[Layer],
-    active: Layer,
-    pulse_t: Option<f32>,
-    build_lit_until: Option<Layer>,
-    always_enabled_until: Option<Layer>,
-) -> Option<Layer> {
+pub fn show(ui: &mut egui::Ui, props: SpineProps<'_>) -> Option<Layer> {
+    let SpineProps {
+        layers,
+        active,
+        pulse_t,
+        build_lit_until,
+        always_enabled_until,
+    } = props;
     // Fill the whole strip and center the rail in it, so panel margins never leave a
     // mismatched band behind the rail.
     let size = ui.available_size();
@@ -166,8 +176,10 @@ fn draw_rung_node(
     build: f32,
 ) {
     if is_active {
-        painter.circle_filled(c, NODE_R + 1.0, dim(col, 0.82));
-        painter.circle_stroke(c, NODE_R + 3.0, Stroke::new(1.0, dim(col, 0.65)));
+        // A soft halo behind the active node keeps the current stage loudest.
+        painter.circle_filled(c, NODE_R + 6.0, dim(col, 0.14));
+        painter.circle_filled(c, NODE_R + 1.5, dim(col, 0.88));
+        painter.circle_stroke(c, NODE_R + 3.5, Stroke::new(1.0, dim(col, 0.65)));
     } else if build > 0.0 {
         painter.circle_filled(c, NODE_R + 0.5, dim(col, 0.44 + build * 0.36));
         painter.circle_stroke(
@@ -196,41 +208,24 @@ fn draw_rung_label(
     is_hover: bool,
     build: f32,
 ) {
+    // One label per rung: the stage name under the node in its spectrum color.
     let col = layer.color();
-    let tag_col = if is_active {
+    let name_col = if is_active {
         col
     } else if build > 0.0 {
-        dim(col, 0.56 + build * 0.24)
+        dim(col, 0.52 + build * 0.24)
     } else if is_hover {
         dim(col, 0.76)
     } else if !is_enabled {
-        theme::TEXT_FAINT
+        dim(theme::TEXT_FAINT, 0.8)
     } else {
-        dim(col, 0.52)
-    };
-    let name_col = if is_active {
-        dim(col, 0.9)
-    } else if build > 0.0 {
-        dim(col, 0.44 + build * 0.20)
-    } else if is_hover {
-        dim(col, 0.62)
-    } else if !is_enabled {
-        dim(theme::TEXT_FAINT, 0.75)
-    } else {
-        theme::TEXT_DIM
+        dim(col, 0.5)
     };
     painter.text(
-        c + vec2(0.0, -NODE_R - 9.0),
-        Align2::CENTER_CENTER,
-        layer.tag(),
-        FontId::monospace(9.0),
-        tag_col,
-    );
-    painter.text(
-        c + vec2(0.0, NODE_R + 9.0),
+        c + vec2(0.0, NODE_R + 11.0),
         Align2::CENTER_CENTER,
         layer.name(),
-        FontId::monospace(8.5),
+        FontId::monospace(if is_active { 10.5 } else { 9.5 }),
         name_col,
     );
 }

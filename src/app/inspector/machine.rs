@@ -1,9 +1,9 @@
-//! VM-backed panes: the register file, the pipeline feed, the cache grid, and
-//! compact bridges to the debugger's memory and disassembly views.
+//! VM-backed panes: the call stack, the register file, the pipeline feed, and
+//! the cache grid. Memory and disassembly live on the debugger surface.
 
 use super::widgets::{cache_bytes, capture_due, percent, rate_str, section_label, stat_row};
 use super::{FullStackApp, InspectorPane};
-use crate::app::{chrome, debug_view, metrics};
+use crate::app::{chrome, metrics};
 use crate::ui::theme;
 use eframe::egui;
 use egui::{Align2, FontId, Sense, pos2, vec2};
@@ -119,12 +119,24 @@ impl FullStackApp {
             return;
         };
 
+        let at = self.live.as_ref().and_then(|live| {
+            live.symbol_near(regs.pc).map(|(name, offset)| {
+                if offset == 0 {
+                    name.to_owned()
+                } else {
+                    format!("{name}+{offset:#x}")
+                }
+            })
+        });
         egui::ScrollArea::vertical()
             .id_salt("inspect_scroll")
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
                 let pc_changed = prev.as_ref().is_some_and(|p| p.pc != regs.pc);
                 register_row(ui, "pc", regs.pc, true, pc_changed);
+                if let Some(at) = &at {
+                    stat_row(ui, "at", at);
+                }
                 ui.add_space(metrics::SECTION_GAP);
                 chrome::hairline(ui);
                 ui.add_space(metrics::SECTION_GAP);
@@ -274,59 +286,99 @@ impl FullStackApp {
         });
     }
 
-    /// Bridge pane: a summary plus a jump to the debugger's memory view,
-    /// which needs more width than the left tool window offers.
-    pub(super) fn memory_pane(&mut self, ui: &mut egui::Ui) {
+    /// Best-effort call stack while paused: one row per frame, newest first.
+    /// Rows with a known source location jump the editor there on click.
+    pub(super) fn call_stack_pane(&mut self, ui: &mut egui::Ui) {
         let Some(live) = &self.live else {
             chrome::centered_hint(ui, "No machine session.");
             return;
         };
-        let regs = live.registers();
-        ui.spacing_mut().item_spacing.y = 0.0;
-        stat_row(ui, "pc", &format!("{:016x}", regs.pc));
-        stat_row(ui, "sp", &format!("{:016x}", regs.x[2]));
-        let translation = match live.translate(regs.x[2]) {
-            Some(pa) => format!("sp \u{2192} pa {pa:#x}"),
-            None => "sp \u{2192} unmapped".to_owned(),
-        };
-        stat_row(ui, "mmu", &translation);
-        self.debugger_bridge(ui, "open memory view", debug_view::DebugView::Memory);
-    }
-
-    /// Bridge pane: pc context plus a jump to the debugger's disassembly.
-    pub(super) fn disassembly_pane(&mut self, ui: &mut egui::Ui) {
-        let Some(live) = &self.live else {
-            chrome::centered_hint(ui, "No machine session.");
+        if live.state != MachineState::Paused {
+            chrome::centered_hint(ui, "Pause (F6) to capture the call stack.");
             return;
-        };
-        let regs = live.registers();
-        ui.spacing_mut().item_spacing.y = 0.0;
-        stat_row(ui, "pc", &format!("{:016x}", regs.pc));
-        if let Some((name, offset)) = live.symbol_near(regs.pc) {
-            let tag = if offset == 0 {
-                name.to_owned()
-            } else {
-                format!("{name}+{offset:#x}")
-            };
-            stat_row(ui, "symbol", &tag);
         }
-        if let Some((file, line)) = live.source_for_pc(regs.pc) {
-            stat_row(ui, "source", &format!("{file}:{line}"));
+        let frames = live.call_stack(STACK_FRAMES_MAX);
+        let mut jump = None;
+        egui::ScrollArea::vertical()
+            .id_salt("call_stack_scroll")
+            .show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                for (i, &pc) in frames.iter().enumerate() {
+                    // Return addresses point after the call; probe the call site.
+                    let probe = if i == 0 { pc } else { pc.saturating_sub(4) };
+                    let symbol = live
+                        .symbol_near(probe)
+                        .map(|(name, _)| frame_symbol(name).to_owned())
+                        .unwrap_or_else(|| format!("{pc:#x}"));
+                    let loc = live
+                        .source_for_pc(probe)
+                        .map(|(file, line)| (file.to_owned(), line));
+                    if frame_row(ui, i, &symbol, loc.as_ref())
+                        && let Some((file, line)) = loc
+                    {
+                        jump = Some((file, line));
+                    }
+                }
+            });
+        if let Some((file, line)) = jump {
+            self.jump_to_source(&file, line as usize);
         }
-        self.debugger_bridge(ui, "open disassembly", debug_view::DebugView::Disasm);
     }
+}
 
-    /// The shared footer of the bridge panes: why the view lives on the machine
-    /// rung, and the button that focuses it there.
-    fn debugger_bridge(&mut self, ui: &mut egui::Ui, label: &str, view: debug_view::DebugView) {
-        ui.add_space(metrics::SECTION_GAP);
-        chrome::indented(ui, |ui| {
-            if chrome::action_row(ui, &[(label, chrome::ActionTone::Primary)]).is_some() {
-                self.debug_view = view;
-                self.focus_debugger();
-            }
-        });
+/// Frames shown in the call-stack pane.
+const STACK_FRAMES_MAX: usize = 12;
+
+/// Function name for a frame label: block labels (`__label_N`, `__entry`)
+/// collapse to the owning function.
+pub(crate) fn frame_symbol(name: &str) -> &str {
+    let name = name.split("__label_").next().unwrap_or(name);
+    name.strip_suffix("__entry").unwrap_or(name)
+}
+
+/// One stack frame: function left, `file:line` right. True on click.
+fn frame_row(ui: &mut egui::Ui, index: usize, symbol: &str, loc: Option<&(String, u32)>) -> bool {
+    let (rect, resp) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), metrics::ROW_HEIGHT),
+        egui::Sense::click(),
+    );
+    let painter = ui.painter_at(rect);
+    let clickable = loc.is_some();
+    if resp.hovered() && clickable {
+        painter.rect_filled(rect, 0.0, theme::SURFACE_ALT);
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
+    let font = egui::FontId::monospace(metrics::STATUS_TEXT_SIZE);
+    let color = if index == 0 {
+        theme::TEXT
+    } else {
+        theme::TEXT_DIM
+    };
+    painter.text(
+        pos2(rect.left() + metrics::PANEL_INSET_X, rect.center().y),
+        Align2::LEFT_CENTER,
+        symbol,
+        font.clone(),
+        color,
+    );
+    if let Some((file, line)) = loc {
+        let name = file.rsplit('/').next().unwrap_or(file);
+        painter.text(
+            pos2(rect.right() - metrics::PANEL_INSET_X, rect.center().y),
+            Align2::RIGHT_CENTER,
+            format!("{name}:{line}"),
+            font,
+            theme::TEXT_FAINT,
+        );
+    }
+    resp.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::WidgetType::Button,
+            clickable,
+            format!("frame {index} {symbol}"),
+        )
+    });
+    resp.clicked() && clickable
 }
 
 /// One register row: ABI name (left) and 64-bit hex value (right). `live` picks a

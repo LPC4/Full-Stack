@@ -46,7 +46,7 @@ const BUILD_GLOW_SECS: f64 = 0.85;
 #[cfg(not(target_arch = "wasm32"))]
 const DEMO_WORKSPACE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/programs/demo_workspace");
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Tool {
     Files,
     Search,
@@ -149,6 +149,8 @@ pub struct FullStackApp {
     pub(super) mount_guest_entry: String,
     /// A click-to-jump target (path, 1-based line) the editor scrolls to.
     pub(super) pending_jump: Option<(VPath, usize)>,
+    /// Function name the next IR/ASM stage view scrolls to (spine stage sync).
+    pub(super) stage_locate: Option<String>,
     pub(super) vm_result: Option<VmExecutionResult>,
     pub(super) machine_texture: Option<egui::TextureHandle>,
     pub(super) machine_texture_fill_count: Option<u64>,
@@ -179,8 +181,6 @@ pub struct FullStackApp {
     /// Instruction count for the dock's "step n" control.
     pub(super) step_count: u64,
     step_unit: machine_dock::StepUnit,
-    /// Dock registers view: key registers only, or the full x0-x31 file.
-    pub(super) dock_regs_all: bool,
     /// Dock time-travel scrubber position (frame index into the session history).
     pub(super) time_scrub: usize,
     /// Keep the scrubber pinned to the newest frame as history grows, until the
@@ -231,6 +231,7 @@ impl FullStackApp {
             mount_host_entry: String::new(),
             mount_guest_entry: String::new(),
             pending_jump: None,
+            stage_locate: None,
             vm_result: None,
             machine_texture: None,
             machine_texture_fill_count: None,
@@ -252,7 +253,6 @@ impl FullStackApp {
             launch_mode: LaunchMode::Run,
             step_count: 100,
             step_unit: machine_dock::StepUnit::Line,
-            dock_regs_all: false,
             time_scrub: 0,
             time_follow_now: true,
             inspector: inspector::InspectorState::default(),
@@ -373,6 +373,7 @@ impl FullStackApp {
         self.live = None;
         self.launch_cache = None;
         self.pending_jump = None;
+        self.stage_locate = None;
         self.vm_result = None;
         self.machine_texture = None;
         self.machine_texture_fill_count = None;
@@ -404,6 +405,7 @@ impl FullStackApp {
         self.reset_layer_for_active_file();
         // Switching tabs must not dim the lit spine; only edits and builds may.
         self.stage_cache = None;
+        self.stage_locate = None;
     }
 
     pub(super) fn active_source_kind(&self) -> SourceKind {
@@ -469,16 +471,23 @@ impl FullStackApp {
         };
         if let Some(layer) = spine::show(
             ui,
-            layers,
-            self.layer,
-            build_glow_t,
-            self.lit_layer_for_active_target(),
-            layers.first().copied(),
+            spine::SpineProps {
+                layers,
+                active: self.layer,
+                pulse_t: build_glow_t,
+                build_lit_until: self.lit_layer_for_active_target(),
+                always_enabled_until: layers.first().copied(),
+            },
         ) {
             // The spine always speaks to the document stack; a click from the
             // debugger surface returns to the source tab at the chosen stage.
             if self.main_surface == MainSurface::Debugger {
                 self.main_surface = MainSurface::Document;
+            }
+            // Landing on IR/ASM scrolls the stage view to the function under
+            // the editor caret, so the lowering you meant is in view.
+            if matches!(layer, Layer::Ir | Layer::Asm) && layer != self.layer {
+                self.stage_locate = self.caret_function_name();
             }
             self.layer = layer;
         }
@@ -1477,13 +1486,6 @@ impl FullStackApp {
         self.live.is_some() && self.main_surface == MainSurface::Debugger
     }
 
-    /// Bring the live console forward: the bottom terminal's Machine tab. The
-    /// program's output lives there; graphics live in the framebuffer window.
-    pub(super) fn show_machine_console(&mut self) {
-        self.terminal_open = true;
-        self.terminal.set_active_machine();
-    }
-
     pub(super) fn focus_debugger(&mut self) {
         if self.launch_mode != LaunchMode::Debug {
             return;
@@ -1509,6 +1511,11 @@ impl FullStackApp {
         } else {
             MainSurface::Document
         };
+        // Debugging reads on the left: bring the inspector's session data up.
+        if debug {
+            self.tool = Tool::Inspect;
+            self.inspector.pane = inspector::InspectorPane::CallStack;
+        }
     }
 
     fn dismiss_session_surfaces(&mut self) {
@@ -1745,7 +1752,7 @@ impl FullStackApp {
 
 fn build_summary(result: &PipelineResult, produced_layer: Option<Layer>) -> String {
     let stage = produced_layer
-        .map(|layer| format!("{} {}", layer.tag(), layer.name()))
+        .map(|layer| layer.name().to_owned())
         .unwrap_or_else(|| "no stage".to_owned());
     let sections = result
         .binary
@@ -2191,10 +2198,6 @@ mod tests {
         assert_eq!(app.main_surface, MainSurface::Document);
         assert!(matches!(app.terminal.active, TerminalKind::Machine));
 
-        app.show_machine_console();
-        assert!(app.terminal_open);
-        assert!(matches!(app.terminal.active, TerminalKind::Machine));
-
         fs::remove_dir_all(root).expect("cleanup");
     }
 
@@ -2279,7 +2282,7 @@ mod tests {
             });
 
         let before = harness.state().live.as_ref().expect("session").steps;
-        harness.get_by_label("over").click();
+        harness.get_by_label("Step over (F10)").click();
         harness.step();
         assert!(harness.state().live.as_ref().expect("session").steps > before);
 
@@ -2304,6 +2307,45 @@ mod tests {
                 .len(),
             before + 1
         );
+
+        drop(harness);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    // Debug launch lands the left tool on Inspect > Call Stack, where the
+    // paused entry frame renders as a clickable row.
+    #[test]
+    fn kittest_inspector_call_stack_lists_the_paused_frame() {
+        let root = temp_root("kittest_call_stack");
+        write_native_workspace(&root);
+        let app_root = root.clone();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1400.0, 900.0))
+            .build_eframe(move |cc| {
+                theme::apply(&cc.egui_ctx);
+                let mut app =
+                    test_app(IdeWorkspace::new(Box::new(MemoryFs::new())).expect("workspace"));
+                app.open_native_workspace_folder(&app_root);
+                app.debug_selected_config(1.0);
+                app
+            });
+
+        assert_eq!(harness.state().tool, Tool::Inspect);
+        assert_eq!(
+            harness.state().inspector.pane,
+            inspector::InspectorPane::CallStack
+        );
+        let expected = {
+            let live = harness.state().live.as_ref().expect("session");
+            let pc = live.registers().pc;
+            let name = live
+                .symbol_near(pc)
+                .map(|(name, _)| name.to_owned())
+                .expect("symbol at the entry pc");
+            format!("frame 0 {}", inspector::frame_symbol(&name))
+        };
+        harness.step();
+        harness.get_by_label(expected.as_str());
 
         drop(harness);
         fs::remove_dir_all(root).expect("cleanup");

@@ -23,8 +23,13 @@ impl FullStackApp {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.spacing_mut().interact_size.y = TOP_BAR_CONTROL_HEIGHT;
                 ui.add_space(metrics::SECTION_GAP);
-                if self.live.as_ref().is_some_and(|live| live.state.is_alive()) {
-                    self.session_transport(ui, now);
+                let alive = self.live.as_ref().is_some_and(|live| live.state.is_alive());
+                if alive {
+                    // The focused debug surface carries its own transport bar;
+                    // showing the verbs here too would double them.
+                    if !self.debugger_focused() {
+                        self.session_transport(ui, now);
+                    }
                 } else {
                     self.launch_controls(ui, now);
                 }

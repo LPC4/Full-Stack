@@ -28,6 +28,8 @@ pub(super) enum TerminalKind {
     Shell,
     /// The live machine console: UART transcript plus an input line.
     Machine,
+    /// Current diagnostics for the active build target, click-to-jump.
+    Problems,
 }
 
 pub(super) struct TerminalState {
@@ -116,6 +118,11 @@ impl TerminalState {
         self.refocus_machine = true;
     }
 
+    /// Focus the Problems tab (the single diagnostics list).
+    pub(super) fn set_active_problems(&mut self) {
+        self.active = TerminalKind::Problems;
+    }
+
     /// Output-tab text joined for test assertions.
     #[cfg(all(test, not(target_arch = "wasm32")))]
     pub(super) fn output_text(&self) -> String {
@@ -137,12 +144,13 @@ impl TerminalState {
             TerminalKind::Output => &self.output_title,
             TerminalKind::Shell => "Shell",
             TerminalKind::Machine => "Machine",
+            TerminalKind::Problems => "Problems",
         }
     }
 
     fn active_lines(&self) -> &[ConsoleLine] {
         match self.active {
-            TerminalKind::Output => &self.output_lines,
+            TerminalKind::Output | TerminalKind::Problems => &self.output_lines,
             TerminalKind::Shell | TerminalKind::Machine => &self.shell_lines,
         }
     }
@@ -204,6 +212,12 @@ impl FullStackApp {
         chrome::hairline(ui);
         if self.terminal.active == TerminalKind::Machine {
             self.machine_terminal(ui, "machine", true);
+            return;
+        }
+        if self.terminal.active == TerminalKind::Problems {
+            if let Some((path, line)) = self.problems_body(ui) {
+                self.jump_to_source(&path, line);
+            }
             return;
         }
         let (command, jump) = console_body(ui, &mut self.terminal);
@@ -345,10 +359,9 @@ impl FullStackApp {
         }
     }
 
-    /// Header band: TERMINAL eyebrow, tab switches, the config it ran, a run-status
-    /// chip, and a close control on the trailing edge.
+    /// Header band: tab switches, a run-status chip, and a close control on the
+    /// trailing edge. The program name lives in the tab strip, nowhere else.
     fn terminal_header(&mut self, ui: &mut egui::Ui) {
-        let config_name = self.selected_config().map(|c| c.name.clone());
         let status = if self.terminal.has_error() {
             Some(("failed".to_owned(), theme::DANGER))
         } else {
@@ -373,6 +386,12 @@ impl FullStackApp {
                 TerminalKind::Machine,
                 "machine",
             );
+            terminal_mode_button(
+                ui,
+                &mut self.terminal.active,
+                TerminalKind::Problems,
+                "problems",
+            );
             ui.spacing_mut().item_spacing.x = 8.0;
             if self.terminal.active == TerminalKind::Machine
                 && let Some(live) = &self.live
@@ -382,13 +401,6 @@ impl FullStackApp {
                     metrics::STATUS_TEXT_SIZE,
                     theme::TEXT_FAINT,
                 ));
-                if let Some(name) = &config_name {
-                    ui.label(theme::mono(
-                        name.clone(),
-                        metrics::STATUS_TEXT_SIZE,
-                        theme::TEXT_DIM,
-                    ));
-                }
                 let (label, color) = super::machine_dock::state_style(&live.state);
                 ui.label(theme::mono(label, metrics::STATUS_TEXT_SIZE, color));
             }
@@ -399,16 +411,38 @@ impl FullStackApp {
                     theme::TEXT_FAINT,
                 ));
                 ui.label(theme::label(self.terminal.title()));
-                if let Some(name) = &config_name {
-                    ui.label(theme::mono(
-                        name.clone(),
-                        metrics::STATUS_TEXT_SIZE,
-                        theme::TEXT_DIM,
-                    ));
-                }
                 if let Some((text, color)) = status {
                     ui.label(theme::mono(text, metrics::STATUS_TEXT_SIZE, color));
                 }
+            }
+            if self.terminal.active == TerminalKind::Problems {
+                ui.label(theme::mono(
+                    "\u{00B7}",
+                    metrics::STATUS_TEXT_SIZE,
+                    theme::TEXT_FAINT,
+                ));
+                let (errors, warnings) = self
+                    .stage_cache
+                    .as_ref()
+                    .map(|cache| super::diagnostics::count_levels(&cache.result.diagnostics))
+                    .unwrap_or((0, 0));
+                let (text, color) = match (errors, warnings) {
+                    (0, 0) => ("no problems".to_owned(), theme::TEXT_FAINT),
+                    (e, 0) => (super::diagnostics::tally(e as u64, "error"), theme::DANGER),
+                    (0, w) => (
+                        super::diagnostics::tally(w as u64, "warning"),
+                        theme::WARNING,
+                    ),
+                    (e, w) => (
+                        format!(
+                            "{} \u{00B7} {}",
+                            super::diagnostics::tally(e as u64, "error"),
+                            super::diagnostics::tally(w as u64, "warning")
+                        ),
+                        theme::DANGER,
+                    ),
+                };
+                ui.label(theme::mono(text, metrics::STATUS_TEXT_SIZE, color));
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(metrics::PANEL_INSET_X);
@@ -420,6 +454,79 @@ impl FullStackApp {
         if close {
             self.terminal_open = false;
         }
+    }
+
+    /// The Problems tab: one row per current diagnostic for the active build
+    /// target, message and location on the line, click to jump.
+    fn problems_body(&self, ui: &mut egui::Ui) -> Option<(String, usize)> {
+        use full_stack::compilation_pipeline::DiagnosticLevel;
+        let rect = ui.available_rect_before_wrap();
+        if !rect.is_positive() {
+            return None;
+        }
+        ui.painter().rect_filled(rect, 0.0, theme::TERMINAL);
+        let content_rect =
+            rect.shrink2(egui::vec2(metrics::TERMINAL_PAD_X, metrics::TERMINAL_PAD_Y));
+        let root = self
+            .active_build_target
+            .as_ref()
+            .map(|target| target.root_path.as_str().to_owned());
+        let diags: &[_] = self
+            .stage_cache
+            .as_ref()
+            .map(|cache| cache.result.diagnostics.as_slice())
+            .unwrap_or(&[]);
+        let mut jump = None;
+        ui.scope_builder(
+            egui::UiBuilder::new()
+                .id_salt("problems_body")
+                .max_rect(content_rect),
+            |ui| {
+                ui.set_clip_rect(content_rect);
+                egui::ScrollArea::vertical()
+                    .id_salt("problems_scroll")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing.y = 1.0;
+                        ui.set_min_width(content_rect.width());
+                        if diags.is_empty() {
+                            ui.label(theme::mono(
+                                "No problems in the active build target.",
+                                metrics::STATUS_TEXT_SIZE,
+                                theme::TEXT_FAINT,
+                            ));
+                        }
+                        for diag in diags {
+                            let stream = match diag.level {
+                                DiagnosticLevel::Error => ConsoleStream::Error,
+                                DiagnosticLevel::Warning => ConsoleStream::Warning,
+                            };
+                            let link = match (&diag.span, &root) {
+                                (Some(span), Some(root)) => {
+                                    Some((root.clone(), span.line as usize))
+                                }
+                                _ => None,
+                            };
+                            let text = match (&diag.span, &root) {
+                                (Some(span), Some(root)) => format!(
+                                    "{root}:{}:{}  {}",
+                                    span.line,
+                                    span.col.max(1),
+                                    diag.message
+                                ),
+                                _ => diag.message.clone(),
+                            };
+                            let mut line = ConsoleLine::new(stream, text);
+                            line.link = link;
+                            if let Some(target) = console_line(ui, &line) {
+                                jump = Some(target);
+                            }
+                        }
+                    });
+            },
+        );
+        ui.advance_cursor_after_rect(rect);
+        jump
     }
 }
 

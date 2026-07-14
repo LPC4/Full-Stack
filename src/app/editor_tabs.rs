@@ -32,8 +32,8 @@ impl FullStackApp {
             egui::Stroke::new(1.0, theme::HAIRLINE),
         );
 
-        // Trailing zone: the current rung tag (and read-only badge) stay fixed on
-        // the right even when the tabs overflow.
+        // Trailing zone: the read-only badge stays fixed on the right even when
+        // the tabs overflow. The active layer reads off the spine, not here.
         let trailing_width = self.tab_trailing(ui, &painter, rect);
         let tabs_rect =
             egui::Rect::from_min_max(rect.min, pos2(rect.right() - trailing_width, rect.bottom()));
@@ -102,52 +102,33 @@ impl FullStackApp {
         true
     }
 
-    /// Right edge of the strip: rung tag in its spectrum color, plus a read-only
-    /// badge when the focused document rejects edits. Returns the reserved width.
+    /// Right edge of the strip: a read-only badge when the focused document
+    /// rejects edits. Returns the reserved width.
     fn tab_trailing(&self, ui: &egui::Ui, painter: &egui::Painter, rect: egui::Rect) -> f32 {
-        let (tag, color) = match self.main_surface {
-            super::MainSurface::Document => (
-                format!("{} {}", self.layer.tag(), self.layer.name()),
-                self.layer.color(),
-            ),
-            super::MainSurface::Debugger => ("DEBUG".to_owned(), theme::ELECTRIC),
-        };
-        let tag_galley = ui.fonts_mut(|f| {
-            f.layout_no_wrap(tag, FontId::monospace(metrics::STATUS_TEXT_SIZE), color)
-        });
-        let mut used = tag_galley.size().x + metrics::PANEL_INSET_X * 2.0;
-        painter.galley(
-            pos2(
-                rect.right() - metrics::PANEL_INSET_X - tag_galley.size().x,
-                rect.center().y - tag_galley.size().y / 2.0,
-            ),
-            tag_galley,
-            color,
-        );
-
         let read_only = self.main_surface == super::MainSurface::Document
             && self
                 .workspace
                 .active_document()
                 .is_some_and(|doc| doc.is_read_only());
-        if read_only {
-            let badge = ui.fonts_mut(|f| {
-                f.layout_no_wrap(
-                    "read only".to_owned(),
-                    FontId::monospace(metrics::STATUS_TEXT_SIZE),
-                    theme::TEXT_FAINT,
-                )
-            });
-            used += badge.size().x + metrics::PANEL_INSET_X;
-            painter.galley(
-                pos2(
-                    rect.right() - used + metrics::PANEL_INSET_X,
-                    rect.center().y - badge.size().y / 2.0,
-                ),
-                badge,
-                theme::TEXT_FAINT,
-            );
+        if !read_only {
+            return metrics::PANEL_INSET_X;
         }
+        let badge = ui.fonts_mut(|f| {
+            f.layout_no_wrap(
+                "read only".to_owned(),
+                FontId::monospace(metrics::STATUS_TEXT_SIZE),
+                theme::TEXT_FAINT,
+            )
+        });
+        let used = badge.size().x + metrics::PANEL_INSET_X * 2.0;
+        painter.galley(
+            pos2(
+                rect.right() - metrics::PANEL_INSET_X - badge.size().x,
+                rect.center().y - badge.size().y / 2.0,
+            ),
+            badge,
+            theme::TEXT_FAINT,
+        );
         used
     }
 

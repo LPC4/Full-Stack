@@ -62,6 +62,17 @@ impl FullStackApp {
         self.persist_live_breakpoints();
     }
 
+    /// The function whose definition encloses the editor caret, when the active
+    /// document is HLL source; drives the spine's IR/ASM stage sync.
+    pub(super) fn caret_function_name(&self) -> Option<String> {
+        if self.active_source_kind() != SourceKind::Hll {
+            return None;
+        }
+        let (line, _) = self.cursor_pos?;
+        let doc = self.workspace.active_document()?;
+        enclosing_function(doc.text(), line)
+    }
+
     pub(super) fn editor(&mut self, ui: &mut egui::Ui) {
         if self.settings_open {
             self.settings_page(ui);
@@ -166,7 +177,7 @@ impl FullStackApp {
                     Layer::Elf => "Linking is not wired for standalone .ir files yet.",
                     Layer::Hll | Layer::Ir => "",
                 };
-                read_only_code(ui, self.layer.tag(), text, None);
+                read_only_code(ui, self.layer.name(), text, None, None);
                 return;
             }
             SourceKind::Asm => {
@@ -174,7 +185,7 @@ impl FullStackApp {
                     Layer::Elf => "Assembly/linking is not wired for standalone .s files yet.",
                     Layer::Hll | Layer::Ir | Layer::Asm => "",
                 };
-                read_only_code(ui, self.layer.tag(), text, None);
+                read_only_code(ui, self.layer.name(), text, None, None);
                 return;
             }
         }
@@ -186,7 +197,13 @@ impl FullStackApp {
         };
 
         if cache.result.has_errors() {
-            read_only_code(ui, "diagnostics", &cache.result.format_diagnostics(), None);
+            read_only_code(
+                ui,
+                "diagnostics",
+                &cache.result.format_diagnostics(),
+                None,
+                None,
+            );
             return;
         }
 
@@ -224,12 +241,21 @@ impl FullStackApp {
                         .assembler_error
                         .clone()
                         .unwrap_or_else(|| "No linked binary was produced.".to_owned());
-                    read_only_code(ui, "elf", &text, None);
+                    read_only_code(ui, "elf", &text, None, None);
                 }
                 return;
             }
         };
-        read_only_code(ui, self.layer.tag(), text, highlighter);
+        // Stage sync: a spine click carries the caret's enclosing function, so
+        // the IR/ASM view opens scrolled to that function's lowering.
+        let jump = self
+            .stage_locate
+            .as_deref()
+            .and_then(|name| locate_in_stage(text, self.layer, name));
+        let output = read_only_code(ui, self.layer.name(), text, highlighter, jump);
+        if self.stage_locate.is_some() && (jump.is_none() || output.jump_landed) {
+            self.stage_locate = None;
+        }
     }
 
     /// Debugger tooling. Runtime console and framebuffer deliberately live elsewhere.
@@ -760,6 +786,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn enclosing_function_finds_the_header_above_the_caret() {
+        let src = "PI: i32 = 3\n\
+                   main: () -> i32 {\n    return helper(1)\n}\n\
+                   helper<T>: (x: T) -> T {\n    return x\n}\n";
+        assert_eq!(enclosing_function(src, 3).as_deref(), Some("main"));
+        assert_eq!(enclosing_function(src, 6).as_deref(), Some("helper"));
+        assert_eq!(enclosing_function(src, 1), None, "consts are not functions");
+        assert_eq!(enclosing_function("", 5), None);
+    }
+
+    #[test]
+    fn locate_in_stage_finds_ir_defines_and_asm_labels() {
+        let ir = "define i32 main() {\nentry:\n}\n\ndefine i64 helper(i64 $x) {\n";
+        assert_eq!(locate_in_stage(ir, Layer::Ir, "main"), Some(0));
+        let helper = locate_in_stage(ir, Layer::Ir, "helper").expect("helper found");
+        assert!(ir[helper..].starts_with("define i64 helper"));
+        assert_eq!(locate_in_stage(ir, Layer::Ir, "absent"), None);
+
+        let asm = ".globl main\nmain:\n    addi sp, sp, -16\nhelper:\n    ret\n";
+        let main = locate_in_stage(asm, Layer::Asm, "main").expect("label found");
+        assert!(asm[main..].starts_with("main:"));
+        assert_eq!(locate_in_stage(asm, Layer::Asm, "elper"), None);
+    }
+
+    #[test]
     fn framebuffer_key_mapping_matches_vm_contract() {
         assert_eq!(printable_scancode('A'), Some(0x41));
         assert_eq!(special_scancode(egui::Key::ArrowUp), Some(0x80));
@@ -813,7 +864,8 @@ fn read_only_code(
     id_salt: &'static str,
     text: &str,
     highlighter: Option<Highlighter>,
-) {
+    jump_to: Option<usize>,
+) -> CodeViewOutput {
     code_view(
         ui,
         CodeViewConfig {
@@ -824,10 +876,59 @@ fn read_only_code(
             show_current_line: false,
             find: None,
             marks: &[],
-            jump_to: None,
+            jump_to,
             debug: &SourceDebug::default(),
         },
-    );
+    )
+}
+
+/// The nearest function definition at or above `line` (1-based) in HLL source.
+fn enclosing_function(text: &str, line: usize) -> Option<String> {
+    text.lines()
+        .take(line.max(1))
+        .filter_map(fn_def_name)
+        .last()
+        .map(str::to_owned)
+}
+
+/// The name in an HLL function header: an unindented `name: (` or
+/// `name<..>: (`, which excludes struct/const/impl declarations.
+fn fn_def_name(line: &str) -> Option<&str> {
+    let name_end = line.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))?;
+    if name_end == 0 || line.starts_with(|c: char| c.is_ascii_digit()) {
+        return None;
+    }
+    let name = &line[..name_end];
+    let mut rest = line[name_end..].trim_start();
+    if let Some(generics) = rest.strip_prefix('<') {
+        rest = generics[generics.find('>')?..][1..].trim_start();
+    }
+    rest.strip_prefix(':')
+        .is_some_and(|sig| sig.trim_start().starts_with('('))
+        .then_some(name)
+}
+
+/// Byte offset of `name`'s definition line in a stage view: the
+/// `define .. name(..)` header in IR, the `name:` label in assembly.
+fn locate_in_stage(text: &str, layer: Layer, name: &str) -> Option<usize> {
+    let mut offset = 0usize;
+    for line in text.split_inclusive('\n') {
+        let hit = match layer {
+            Layer::Ir => {
+                let t = line.trim_start();
+                t.starts_with("define ") && t.contains(&format!(" {name}("))
+            }
+            Layer::Asm => line
+                .strip_prefix(name)
+                .is_some_and(|rest| rest.trim_end() == ":"),
+            Layer::Hll | Layer::Elf => false,
+        };
+        if hit {
+            return Some(offset);
+        }
+        offset += line.len();
+    }
+    None
 }
 
 /// What one frame of the code surface produced: edits and the caret position.

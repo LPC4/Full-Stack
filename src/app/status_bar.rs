@@ -37,8 +37,6 @@ impl FullStackApp {
                     self.terminal_open = !self.terminal_open;
                 }
 
-                self.session_chip(ui);
-
                 if let Some((line, col)) = self.cursor_pos {
                     ui.label(theme::mono(
                         format!("{line}:{col}"),
@@ -78,53 +76,7 @@ impl FullStackApp {
         });
     }
 
-    /// The live-session chip: state, program name, and a click target that
-    /// brings the session surface back no matter what is focused.
-    fn session_chip(&mut self, ui: &mut egui::Ui) {
-        let Some(live) = &self.live else {
-            return;
-        };
-        let (state, base_color) = super::machine_dock::state_style(&live.state);
-        let label = self.session_tab_label.as_deref().unwrap_or("machine");
-        let icon = match &live.state {
-            full_stack::session::MachineState::Running => theme::icons::RUN,
-            full_stack::session::MachineState::Paused => theme::icons::PAUSE,
-            _ => theme::icons::STOP,
-        };
-        // Brighten while the debugger holds the canvas; dim otherwise.
-        let color = if self.debugger_focused() {
-            base_color
-        } else {
-            theme::TEXT_DIM
-        };
-        let chip = ui.add(
-            egui::Button::new(theme::mono(
-                format!("{icon} {state} \u{00B7} {label}"),
-                metrics::STATUS_TEXT_SIZE,
-                color,
-            ))
-            .frame(false),
-        );
-        if chip.hovered() {
-            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-        }
-        if chip
-            .on_hover_text(theme::mono(
-                "show the session",
-                metrics::STATUS_TEXT_SIZE,
-                theme::TEXT,
-            ))
-            .clicked()
-        {
-            if self.launch_mode == super::LaunchMode::Debug {
-                self.focus_debugger();
-            } else {
-                self.show_machine_console();
-            }
-        }
-    }
-
-    /// Diagnostic tallies for the active build target; click opens Output.
+    /// Diagnostic tallies for the active build target; click opens Problems.
     fn diagnostics_chip(&mut self, ui: &mut egui::Ui, errors: usize, warnings: usize) {
         if errors + warnings == 0 {
             return;
@@ -154,14 +106,14 @@ impl FullStackApp {
         }
         if chip
             .on_hover_text(theme::mono(
-                "show build output",
+                "show problems",
                 metrics::STATUS_TEXT_SIZE,
                 theme::TEXT,
             ))
             .clicked()
         {
             self.terminal_open = true;
-            self.terminal.set_active_output();
+            self.terminal.set_active_problems();
         }
     }
 }

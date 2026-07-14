@@ -4,23 +4,15 @@ use chrome::ActionTone;
 use eframe::egui;
 use full_stack::session::MachineState;
 
-/// A transport action requested from the dock controls this frame.
+/// A debugger-dock action requested this frame. Lifecycle and single-step verbs
+/// live on the debug surface's transport bar; the dock owns everything else.
 #[derive(Clone)]
 enum Transport {
-    Pause,
-    Resume,
-    StepOver,
-    StepIn,
-    StepOut,
-    StepLine,
-    /// Line step that enters calls, pausing on the callee's first line.
-    StepLineIn,
+    /// Bulk step by the selected unit.
     StepN(u64),
-    Stop,
-    Restart,
     /// Jump the debugger to the disassembly view (fault triage).
     ShowDisasm,
-    /// Open a debugger surface.
+    /// Focus the debugger surface on a view.
     ShowView(super::debug_view::DebugView),
     /// A `symbol` or `symbol+0x10` spec typed into the dock input.
     AddBreakpoint(String),
@@ -40,48 +32,23 @@ pub(super) enum StepUnit {
 }
 
 impl FullStackApp {
+    /// The right dock: debugger controls only. Inspection data (call stack,
+    /// registers, machine probes) lives in the left Inspect tool.
     pub(super) fn machine_dock(&mut self, ui: &mut egui::Ui) {
-        chrome::panel_header(ui, "Machine");
-        if self.live.is_some() {
-            self.live_dock(ui);
-        } else {
-            self.idle_dock(ui);
-        }
-    }
-
-    /// The resident session: state, counters, key registers, and the transport.
-    fn live_dock(&mut self, ui: &mut egui::Ui) {
-        let now = ui.input(|i| i.time);
+        chrome::panel_header(ui, "Debugger");
         let mut action = None;
         let mut step_unit = self.step_unit;
         let mut step_count = self.step_count;
         let mut bp_entry = std::mem::take(&mut self.breakpoint_entry);
         let mut time_scrub = self.time_scrub;
         let mut time_follow = self.time_follow_now;
-        let mut regs_all = self.dock_regs_all;
-        let restart_debug = self.launch_mode == super::LaunchMode::Debug;
         let debug_view = self.debug_view;
         let debugger_focused = self.debugger_focused();
-        let process_count = self
-            .inspector
-            .cache
-            .as_ref()
-            .map(super::inspector::InspectCache::process_count)
-            .unwrap_or(0);
         if let Some(live) = &self.live {
             chrome::indented(ui, |ui| {
-                if let Some(act) = state_section(ui, live, process_count) {
+                if let Some(act) = state_section(ui, live) {
                     action = Some(act);
                 }
-                stat_row(
-                    ui,
-                    "tab",
-                    format!(
-                        "[debug] {}",
-                        self.session_tab_label.as_deref().unwrap_or("machine")
-                    ),
-                    theme::TEXT_DIM,
-                );
                 if !debugger_focused {
                     ui.add_space(metrics::SECTION_GAP);
                     if chrome::action_row(ui, &[("focus [debug] tab", ActionTone::Primary)])
@@ -90,20 +57,10 @@ impl FullStackApp {
                         action = Some(Transport::ShowView(debug_view));
                     }
                 }
-                registers_section(ui, live, &mut regs_all);
-                chrome::section_eyebrow(ui, "session");
-                if let Some(transport) = transport_section(
-                    ui,
-                    &live.state,
-                    restart_debug,
-                    &mut step_unit,
-                    &mut step_count,
-                ) {
-                    action = Some(transport);
-                }
-                chrome::section_eyebrow(ui, "view");
-                if let Some(view) = view_row(ui, debug_view, debugger_focused) {
-                    action = Some(Transport::ShowView(view));
+                if live.state == MachineState::Paused
+                    && let Some(step) = step_section(ui, &mut step_unit, &mut step_count)
+                {
+                    action = Some(step);
                 }
                 if let Some(bp_action) = breakpoints_section(ui, live, &mut bp_entry) {
                     action = Some(bp_action);
@@ -120,18 +77,15 @@ impl FullStackApp {
         self.breakpoint_entry = bp_entry;
         self.time_scrub = time_scrub;
         self.time_follow_now = time_follow;
-        self.dock_regs_all = regs_all;
         if let Some(action) = action {
-            self.apply_transport(action, now);
+            self.apply_transport(action);
         }
     }
 
     /// Apply a dock control to the session after the render borrow ends.
-    fn apply_transport(&mut self, action: Transport, now: f64) {
+    fn apply_transport(&mut self, action: Transport) {
         let mut persist_breakpoints = false;
         match action {
-            Transport::Stop => self.stop_live_machine(),
-            Transport::Restart => self.restart_selected_config(now),
             Transport::ShowDisasm => {
                 self.debug_view = super::debug_view::DebugView::Disasm;
                 self.focus_debugger();
@@ -173,20 +127,10 @@ impl FullStackApp {
                 self.inspector.cache = None;
                 self.inspector.cache_grid = None;
             }
-            other => {
+            Transport::StepN(count) => {
                 let step_unit = self.step_unit;
-                let Some(live) = &mut self.live else {
-                    return;
-                };
-                match other {
-                    Transport::Pause => live.pause(),
-                    Transport::Resume => live.resume(),
-                    Transport::StepOver => live.step_over(),
-                    Transport::StepIn => live.step_in(),
-                    Transport::StepOut => live.step_out(),
-                    Transport::StepLine => live.step_line(),
-                    Transport::StepLineIn => live.step_line_in(),
-                    Transport::StepN(count) => match step_unit {
+                if let Some(live) = &mut self.live {
+                    match step_unit {
                         StepUnit::Line => {
                             for _ in 0..count {
                                 live.step_line();
@@ -194,16 +138,19 @@ impl FullStackApp {
                         }
                         StepUnit::Instruction => live.step_instructions(count),
                         StepUnit::Cycle => live.step_cycles(count),
-                    },
-                    Transport::RemoveBreakpoint(addr) => {
-                        live.breakpoints.remove(&addr);
-                        persist_breakpoints = true;
                     }
-                    Transport::ClearBreakpoints => {
-                        live.breakpoints.clear();
-                        persist_breakpoints = true;
-                    }
-                    _ => {}
+                }
+            }
+            Transport::RemoveBreakpoint(addr) => {
+                if let Some(live) = &mut self.live {
+                    live.breakpoints.remove(&addr);
+                    persist_breakpoints = true;
+                }
+            }
+            Transport::ClearBreakpoints => {
+                if let Some(live) = &mut self.live {
+                    live.breakpoints.clear();
+                    persist_breakpoints = true;
                 }
             }
         }
@@ -211,37 +158,10 @@ impl FullStackApp {
             self.persist_live_breakpoints();
         }
     }
-
-    /// No session yet: show the selected config and how to start one.
-    fn idle_dock(&self, ui: &mut egui::Ui) {
-        chrome::indented(ui, |ui| {
-            state_line(ui, "idle", theme::TEXT_FAINT);
-            if let Some(config) = self.selected_config() {
-                chrome::section_eyebrow(ui, "config");
-                stat_row(ui, "name", config.name.clone(), theme::TEXT_DIM);
-                stat_row(
-                    ui,
-                    "kind",
-                    super::tool_window::kind_tag(config.kind).to_owned(),
-                    theme::TEXT_FAINT,
-                );
-            }
-            ui.add_space(metrics::DOCK_SECTION_GAP);
-            ui.label(theme::mono(
-                "Run (Ctrl+R) to execute\nin the VM.",
-                metrics::STATUS_TEXT_SIZE,
-                theme::TEXT_FAINT,
-            ));
-        });
-    }
 }
 
-/// The state dot + label, counters, and (on fault) the fault details.
-fn state_section(
-    ui: &mut egui::Ui,
-    live: &full_stack::session::LiveMachine,
-    process_count: usize,
-) -> Option<Transport> {
+/// The state dot + label, and (on fault) the fault details.
+fn state_section(ui: &mut egui::Ui, live: &full_stack::session::LiveMachine) -> Option<Transport> {
     let mut action = None;
     let (label, color) = state_style(&live.state);
     state_line(ui, &label, color);
@@ -264,138 +184,12 @@ fn state_section(
             action = Some(Transport::ShowDisasm);
         }
     }
-    ui.add_space(metrics::SECTION_GAP);
-    stat_row(ui, "steps", live.steps.to_string(), theme::TEXT_DIM);
-    if live.state == MachineState::Running && live.steps_per_sec > 0.0 {
-        stat_row(
-            ui,
-            "rate",
-            format!("{}/s", human_rate(live.steps_per_sec)),
-            theme::TEXT_FAINT,
-        );
-    }
-    if process_count > 0 {
-        stat_row(
-            ui,
-            "processes",
-            process_count.to_string(),
-            theme::TEXT_FAINT,
-        );
-    }
     action
 }
 
-/// The register file: key registers by default, the full x0-x31 grid on demand.
-/// Values that changed across the last step light up, so stepping reads at a glance.
-fn registers_section(
-    ui: &mut egui::Ui,
-    live: &full_stack::session::LiveMachine,
-    show_all: &mut bool,
-) {
-    use full_stack::session::RegisterSnapshot;
-    section_with_control(ui, "registers", |ui| {
-        if let Some(next) = chrome::segmented(ui, &["key", "all"], usize::from(*show_all)) {
-            *show_all = next == 1;
-        }
-    });
-    let regs = live.registers();
-    let prev = live.prev_step_registers();
-    let color_for = |changed: bool| {
-        if changed {
-            theme::ELECTRIC
-        } else {
-            theme::TEXT_DIM
-        }
-    };
-    let pc_changed = prev.is_some_and(|p| p.pc != regs.pc);
-    stat_row(ui, "pc", format!("{:016x}", regs.pc), color_for(pc_changed));
-    if let Some((name, offset)) = live.symbol_near(regs.pc) {
-        let tag = if offset == 0 {
-            name.to_owned()
-        } else {
-            format!("{name}+{offset:#x}")
-        };
-        stat_row(ui, "at", tag, theme::TEXT_FAINT);
-    }
-    const KEY_REGS: [usize; 8] = [1, 2, 8, 10, 11, 12, 13, 14];
-    let all: Vec<usize> = (1..32).collect();
-    let indices: &[usize] = if *show_all { &all } else { &KEY_REGS };
-    for &i in indices {
-        let changed = prev.is_some_and(|p| p.x[i] != regs.x[i]);
-        stat_row(
-            ui,
-            RegisterSnapshot::ABI_NAMES[i],
-            format!("{:016x}", regs.x[i]),
-            color_for(changed),
-        );
-    }
-}
-
-/// Session lifecycle controls for the current state, plus the paused stepping
-/// group. One equal-width row; the state-advancing verb reads as primary.
-fn transport_section(
-    ui: &mut egui::Ui,
-    state: &MachineState,
-    restart_debug: bool,
-    step_unit: &mut StepUnit,
-    step_count: &mut u64,
-) -> Option<Transport> {
-    let mut action = None;
-    let restart_label = if restart_debug {
-        "restart debug"
-    } else {
-        "restart"
-    };
-    match state {
-        MachineState::Running => {
-            let clicked = chrome::action_row(
-                ui,
-                &[
-                    ("pause", ActionTone::Primary),
-                    (restart_label, ActionTone::Normal),
-                    ("stop", ActionTone::Danger),
-                ],
-            );
-            action = match clicked {
-                Some(0) => Some(Transport::Pause),
-                Some(1) => Some(Transport::Restart),
-                Some(2) => Some(Transport::Stop),
-                _ => None,
-            };
-        }
-        MachineState::Paused => {
-            let clicked = chrome::action_row(
-                ui,
-                &[
-                    ("resume", ActionTone::Primary),
-                    (restart_label, ActionTone::Normal),
-                    ("stop", ActionTone::Danger),
-                ],
-            );
-            action = match clicked {
-                Some(0) => Some(Transport::Resume),
-                Some(1) => Some(Transport::Restart),
-                Some(2) => Some(Transport::Stop),
-                _ => None,
-            };
-        }
-        MachineState::Exited(_) | MachineState::Stopped | MachineState::Faulted(_) => {
-            if chrome::action_row(ui, &[(restart_label, ActionTone::Primary)]) == Some(0) {
-                action = Some(Transport::Restart);
-            }
-        }
-    }
-    if *state == MachineState::Paused
-        && let Some(step) = stepping_section(ui, step_unit, step_count)
-    {
-        action = Some(step);
-    }
-    action
-}
-
-/// The paused-state stepping group: a unit selector, step over/in/out buttons
-/// (lines and instructions; one tick for cycles), and a bulk step-N row.
-fn stepping_section(
+/// The paused-state stepping group: a unit selector and a bulk step-N row.
+/// Single steps (over/in/out) live on the debug surface's transport bar.
+fn step_section(
     ui: &mut egui::Ui,
     step_unit: &mut StepUnit,
     step_count: &mut u64,
@@ -406,46 +200,6 @@ fn stepping_section(
     let selected = UNITS.iter().position(|u| u == step_unit).unwrap_or(0);
     if let Some(next) = chrome::segmented(ui, &["line", "instr", "cycle"], selected) {
         *step_unit = UNITS[next];
-    }
-    ui.add_space(metrics::SECTION_GAP);
-    match step_unit {
-        StepUnit::Line => {
-            let clicked = chrome::action_row(
-                ui,
-                &[
-                    ("over", ActionTone::Normal),
-                    ("in", ActionTone::Normal),
-                    ("out", ActionTone::Normal),
-                ],
-            );
-            action = match clicked {
-                Some(0) => Some(Transport::StepLine),
-                Some(1) => Some(Transport::StepLineIn),
-                Some(2) => Some(Transport::StepOut),
-                _ => None,
-            };
-        }
-        StepUnit::Instruction => {
-            let clicked = chrome::action_row(
-                ui,
-                &[
-                    ("over", ActionTone::Normal),
-                    ("in", ActionTone::Normal),
-                    ("out", ActionTone::Normal),
-                ],
-            );
-            action = match clicked {
-                Some(0) => Some(Transport::StepOver),
-                Some(1) => Some(Transport::StepIn),
-                Some(2) => Some(Transport::StepOut),
-                _ => None,
-            };
-        }
-        StepUnit::Cycle => {
-            if chrome::action_row(ui, &[("tick", ActionTone::Normal)]) == Some(0) {
-                action = Some(Transport::StepN(1));
-            }
-        }
     }
     let unit = match step_unit {
         StepUnit::Line => "lines",
@@ -627,31 +381,6 @@ fn time_travel_section(
     action
 }
 
-/// Debugger view switch, reachable from the dock no matter which file is active.
-fn view_row(
-    ui: &mut egui::Ui,
-    current: super::debug_view::DebugView,
-    debugger_focused: bool,
-) -> Option<super::debug_view::DebugView> {
-    use super::debug_view::DebugView;
-    let views = [
-        ("code", DebugView::Code),
-        ("disasm", DebugView::Disasm),
-        ("memory", DebugView::Memory),
-    ];
-    let labels: Vec<&str> = views.iter().map(|(label, _)| *label).collect();
-    // Outside the debugger nothing reads selected, so any click focuses it.
-    let selected = if debugger_focused {
-        views
-            .iter()
-            .position(|(_, view)| *view == current)
-            .unwrap_or(views.len())
-    } else {
-        views.len()
-    };
-    chrome::segmented(ui, &labels, selected).map(|i| views[i].1)
-}
-
 /// A section eyebrow whose divider row carries a right-aligned control.
 fn section_with_control(ui: &mut egui::Ui, title: &str, control: impl FnOnce(&mut egui::Ui)) {
     ui.add_space(metrics::DOCK_SECTION_GAP);
@@ -726,16 +455,5 @@ pub(super) fn state_style(state: &MachineState) -> (String, egui::Color32) {
         MachineState::Exited(code) => (format!("exit {code}"), theme::TEXT),
         MachineState::Stopped => ("stopped".to_owned(), theme::TEXT_DIM),
         MachineState::Faulted(_) => ("faulted".to_owned(), theme::DANGER),
-    }
-}
-
-/// Steps/second with a compact k/M suffix.
-fn human_rate(rate: f64) -> String {
-    if rate >= 1_000_000.0 {
-        format!("{:.1}M", rate / 1_000_000.0)
-    } else if rate >= 1_000.0 {
-        format!("{:.0}k", rate / 1_000.0)
-    } else {
-        format!("{rate:.0}")
     }
 }

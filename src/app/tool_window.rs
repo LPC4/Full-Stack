@@ -315,30 +315,26 @@ fn mount_editor(
     });
 }
 
-/// Persisted breakpoints for the config, with a clear-all control.
+/// Persisted breakpoint count only; editing lives in the Debugger dock.
 fn breakpoints_editor(ui: &mut egui::Ui, config: &mut full_stack::runconfig::RunConfig) {
     if config.debug.breakpoints.is_empty() {
         return;
     }
     ui.add_space(metrics::SECTION_GAP);
-    let mut clear = false;
     ui.horizontal(|ui| {
         ui.label(theme::label("breakpoints"));
-        if editor_button(ui, "clear all") {
-            clear = true;
-        }
-    });
-    if clear {
-        config.debug.breakpoints.clear();
-        return;
-    }
-    for breakpoint in &config.debug.breakpoints {
         ui.label(theme::mono(
-            breakpoint,
+            format!(
+                "{} \u{00B7} managed in the Debugger",
+                config.debug.breakpoints.len()
+            ),
             metrics::STATUS_TEXT_SIZE,
             theme::TEXT_DIM,
         ));
-    }
+        if editor_button(ui, "clear all") {
+            config.debug.breakpoints.clear();
+        }
+    });
 }
 
 /// The duplicate-name warning and live validation for the selected config.

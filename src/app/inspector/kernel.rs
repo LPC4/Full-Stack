@@ -22,13 +22,6 @@ pub(crate) struct InspectCache {
     trace: Vec<os_view::TraceEntry>,
 }
 
-impl InspectCache {
-    /// Live process count, shown in the machine dock for kernel runs.
-    pub(crate) fn process_count(&self) -> usize {
-        self.processes.len()
-    }
-}
-
 impl FullStackApp {
     /// Re-run the kernel probes when the machine has stepped since the last
     /// capture: immediately while paused, throttled while running.

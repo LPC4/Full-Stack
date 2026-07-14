@@ -9,6 +9,8 @@ mod widgets;
 
 pub(crate) use kernel::InspectCache;
 pub(crate) use machine::CacheGrid;
+#[cfg(test)]
+pub(crate) use machine::frame_symbol;
 
 use super::{FullStackApp, chrome, metrics};
 use crate::ui::theme;
@@ -19,13 +21,11 @@ use full_stack::compilation_pipeline::TargetMode;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum InspectorPane {
     Overview,
-    Diagnostics,
     Artifacts,
     Symbols,
+    CallStack,
     Cpu,
     Pipeline,
-    Memory,
-    Disassembly,
     Caches,
     Processes,
     GuestFs,
@@ -36,13 +36,11 @@ impl InspectorPane {
     fn label(self) -> &'static str {
         match self {
             Self::Overview => "Overview",
-            Self::Diagnostics => "Diagnostics",
             Self::Artifacts => "Artifacts",
             Self::Symbols => "Symbols",
+            Self::CallStack => "Call Stack",
             Self::Cpu => "CPU",
             Self::Pipeline => "Pipeline",
-            Self::Memory => "Memory",
-            Self::Disassembly => "Disassembly",
             Self::Caches => "Caches",
             Self::Processes => "Processes",
             Self::GuestFs => "Guest FS",
@@ -51,18 +49,16 @@ impl InspectorPane {
     }
 }
 
-/// Selector groups, rendered as separate sections. The `general` group carries
-/// no eyebrow; it is the panel's own top level.
+/// Selector groups, rendered as separate sections; the top group carries no
+/// eyebrow. Memory/disasm live on the debug surface; Problems owns diagnostics.
 const PANE_GROUPS: &[(&str, &[InspectorPane])] = &[
-    ("", &[InspectorPane::Overview, InspectorPane::Diagnostics]),
-    ("build", &[InspectorPane::Artifacts, InspectorPane::Symbols]),
+    ("", &[InspectorPane::Overview]),
     (
-        "machine",
+        "session",
         &[
+            InspectorPane::CallStack,
             InspectorPane::Cpu,
             InspectorPane::Pipeline,
-            InspectorPane::Memory,
-            InspectorPane::Disassembly,
             InspectorPane::Caches,
         ],
     ),
@@ -74,6 +70,7 @@ const PANE_GROUPS: &[(&str, &[InspectorPane])] = &[
             InspectorPane::Trace,
         ],
     ),
+    ("build", &[InspectorPane::Artifacts, InspectorPane::Symbols]),
 ];
 
 /// All inspector-owned app state, grouped so the shell only carries one field.
@@ -131,14 +128,11 @@ pub(super) struct Capabilities {
 impl Capabilities {
     fn allows(self, pane: InspectorPane) -> bool {
         match pane {
-            InspectorPane::Overview | InspectorPane::Diagnostics => true,
+            InspectorPane::Overview => true,
             InspectorPane::Artifacts => self.build,
             InspectorPane::Symbols => self.build || self.live,
             InspectorPane::Cpu => self.registers,
-            InspectorPane::Pipeline
-            | InspectorPane::Memory
-            | InspectorPane::Disassembly
-            | InspectorPane::Caches => self.live,
+            InspectorPane::CallStack | InspectorPane::Pipeline | InspectorPane::Caches => self.live,
             InspectorPane::Processes | InspectorPane::Trace => self.kernel,
             InspectorPane::GuestFs => self.guest_fs,
         }
@@ -185,13 +179,11 @@ impl FullStackApp {
 
         match self.inspector.pane {
             InspectorPane::Overview => self.overview_pane(ui, caps),
-            InspectorPane::Diagnostics => self.diagnostics_pane(ui),
             InspectorPane::Artifacts => self.artifacts_pane(ui),
             InspectorPane::Symbols => self.symbols_pane(ui),
+            InspectorPane::CallStack => self.call_stack_pane(ui),
             InspectorPane::Cpu => self.cpu_pane(ui),
             InspectorPane::Pipeline => self.pipeline_pane(ui),
-            InspectorPane::Memory => self.memory_pane(ui),
-            InspectorPane::Disassembly => self.disassembly_pane(ui),
             InspectorPane::Caches => self.caches_pane(ui),
             InspectorPane::Processes => self.processes_pane(ui),
             InspectorPane::GuestFs => self.guest_fs_pane(ui),
@@ -275,10 +267,7 @@ mod tests {
 
     #[test]
     fn universal_panes_survive_an_empty_workspace() {
-        assert_eq!(
-            visible(NOTHING),
-            vec![InspectorPane::Overview, InspectorPane::Diagnostics]
-        );
+        assert_eq!(visible(NOTHING), vec![InspectorPane::Overview]);
     }
 
     #[test]
@@ -304,10 +293,9 @@ mod tests {
         };
         let panes = visible(caps);
         for pane in [
+            InspectorPane::CallStack,
             InspectorPane::Cpu,
             InspectorPane::Pipeline,
-            InspectorPane::Memory,
-            InspectorPane::Disassembly,
             InspectorPane::Caches,
         ] {
             assert!(panes.contains(&pane), "{pane:?} should be visible");
@@ -346,6 +334,6 @@ mod tests {
         let panes = visible(caps);
         assert!(panes.contains(&InspectorPane::Cpu));
         assert!(!panes.contains(&InspectorPane::Pipeline));
-        assert!(!panes.contains(&InspectorPane::Memory));
+        assert!(!panes.contains(&InspectorPane::CallStack));
     }
 }

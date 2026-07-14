@@ -134,7 +134,6 @@ pub(super) fn segmented(ui: &mut egui::Ui, options: &[&str], selected: usize) ->
 pub(super) enum ActionTone {
     Primary,
     Normal,
-    Danger,
 }
 
 /// A row of equal-width framed buttons spanning the available width. Returns
@@ -170,7 +169,6 @@ pub(super) fn action_row(ui: &mut egui::Ui, actions: &[(&str, ActionTone)]) -> O
         let (border, text) = match tone {
             ActionTone::Primary => (theme::ELECTRIC, theme::ELECTRIC),
             ActionTone::Normal => (theme::HAIRLINE, theme::TEXT),
-            ActionTone::Danger => (theme::HAIRLINE, theme::DANGER),
         };
         painter.rect_stroke(
             rect,

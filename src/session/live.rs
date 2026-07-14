@@ -542,6 +542,51 @@ impl LiveMachine {
             .map(Self::runtime_address)
     }
 
+    /// Best-effort call stack: the live pc, then return addresses found via ra
+    /// and a bounded stack scan (there is no fp chain to walk).
+    pub fn call_stack(&self, max_frames: usize) -> Vec<u64> {
+        const STACK_SCAN_BYTES: usize = 4096;
+        let regs = self.registers();
+        let mut frames = vec![regs.pc];
+        let ra = regs.x[1];
+        if frames.len() < max_frames && ra != regs.pc && self.is_return_address(ra) {
+            frames.push(ra);
+        }
+        let sp = regs.x[2];
+        if sp == 0 {
+            return frames;
+        }
+        for chunk in self.read_virtual(sp, STACK_SCAN_BYTES).chunks_exact(8) {
+            if frames.len() >= max_frames {
+                break;
+            }
+            let word = u64::from_le_bytes(chunk.try_into().expect("8-byte chunk"));
+            if frames.last() != Some(&word) && self.is_return_address(word) {
+                frames.push(word);
+            }
+        }
+        frames
+    }
+
+    /// True when `addr` plausibly returned from a call: aligned, near a known
+    /// symbol, and preceded by a jal/jalr that linked ra.
+    fn is_return_address(&self, addr: u64) -> bool {
+        const MAX_SYMBOL_OFFSET: u64 = 0x10_0000;
+        if addr < 8 || !addr.is_multiple_of(4) {
+            return false;
+        }
+        if !matches!(self.symbol_near(addr), Some((_, off)) if off < MAX_SYMBOL_OFFSET) {
+            return false;
+        }
+        let bytes = self.read_virtual(addr - 4, 4);
+        matches!(
+            read_word(&bytes, 0).map(decoder::decode),
+            Some(Ok(
+                DecodedInsn::Jal { rd: 1, .. } | DecodedInsn::Jalr { rd: 1, .. }
+            ))
+        )
+    }
+
     pub fn os_symbols(&self) -> Option<&OsSymbols> {
         self.os_sym.as_ref()
     }
@@ -871,6 +916,45 @@ mod tests {
         live.resume();
         drive_to_completion(&mut live);
         assert_eq!(live.state, MachineState::Exited(7));
+    }
+
+    #[test]
+    fn call_stack_reports_pc_and_the_calling_frames() {
+        let artifacts = build_artifacts(
+            "inner: () -> i32 { return 5 }\n\
+             outer: () -> i32 { return inner() + 1 }\n\
+             main: () -> i32 { return outer() }",
+        );
+        let inner_pc = LiveMachine::runtime_address(
+            artifacts
+                .linked
+                .symbol_address("demo__inner")
+                .expect("inner symbol"),
+        );
+        let mut live = LiveMachine::new_hosted(&artifacts).expect("boot");
+        live.breakpoints.insert(inner_pc);
+        for _ in 0..1_000 {
+            if live.state != MachineState::Running {
+                break;
+            }
+            live.drive(1_000, LONG_BUDGET);
+        }
+        assert_eq!(live.state, MachineState::Paused);
+
+        let frames = live.call_stack(8);
+        assert_eq!(frames[0], inner_pc);
+        let names: Vec<&str> = frames
+            .iter()
+            .filter_map(|&pc| live.symbol_near(pc).map(|(name, _)| name))
+            .collect();
+        assert!(
+            names.iter().any(|n| n.starts_with("demo__outer")),
+            "outer missing from {names:?}"
+        );
+        assert!(
+            names.iter().any(|n| n.starts_with("main")),
+            "main missing from {names:?}"
+        );
     }
 
     #[test]

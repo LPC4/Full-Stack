@@ -16,16 +16,6 @@ pub enum Layer {
 }
 
 impl Layer {
-    /// Short rung tag shown on the spine.
-    pub fn tag(self) -> &'static str {
-        match self {
-            Self::Hll => "L0",
-            Self::Ir => "L1",
-            Self::Asm => "L2",
-            Self::Elf => "L3",
-        }
-    }
-
     pub fn name(self) -> &'static str {
         match self {
             Self::Hll => "HLL",
