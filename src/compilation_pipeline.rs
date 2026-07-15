@@ -1489,8 +1489,9 @@ pub mod fs_layout {
     pub const DIRENTS_PER_BLOCK: usize = BLOCK_SIZE / DIRENT_SIZE;
     /// Direct block pointers per inode (`FS_INODE_BLOCKS`).
     pub const MAX_DIRECT_BLOCKS: usize = 44;
-    /// Largest data-block count the layout supports (`FS_MAX_BLOCKS`).
-    pub const MAX_DATA_BLOCKS: usize = 255;
+    /// Largest data-block count a built image may use; host-side bound from
+    /// the boot RAM window (see `_OS_SPECIFICATION.md` 8.4), not a format cap.
+    pub const MAX_DATA_BLOCKS: usize = 640;
 
     // Inode field offsets (FS_IN_*).
     pub const IN_TYPE: usize = 0;

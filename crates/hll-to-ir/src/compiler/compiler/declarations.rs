@@ -190,6 +190,22 @@ impl HighLevelCompiler {
                             "extern function `{final_name}` - definition omitted (linker must provide it)"
                         ));
                     }
+                    // Non-scalar returns need the aggregate/float ABI at call
+                    // sites; carry those signatures in the emitted IR.
+                    let return_ty = self.lower_return_type(return_type.as_ref());
+                    let resolved = self.resolve_named_type(&return_ty);
+                    if matches!(
+                        resolved,
+                        IrType::Aggregate(_)
+                            | IrType::Array { .. }
+                            | IrType::Slice(_)
+                            | IrType::Float(_)
+                    ) {
+                        ir_program.push_extern_fn(crate::ir::program::IrExternFn {
+                            name: final_name.clone(),
+                            return_type: return_ty,
+                        });
+                    }
                     return Ok(());
                 }
 

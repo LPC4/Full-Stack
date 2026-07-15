@@ -430,6 +430,14 @@ fn validate_declaration_bound_instantiations(
                 PrimaryExpr::Grouped(expr) | PrimaryExpr::FieldAccess { expr, .. } => {
                     check_expr(expr)?;
                 }
+                PrimaryExpr::FormatInto { dest, segments, .. } => {
+                    check_expr(dest)?;
+                    for segment in segments {
+                        if let crate::ast::FormatSegment::Hole(expr) = segment {
+                            check_expr(expr)?;
+                        }
+                    }
+                }
                 PrimaryExpr::ArrayIndex { expr, index } => {
                     check_expr(expr)?;
                     check_expr(index)?;
@@ -1081,6 +1089,19 @@ fn infer_expression_calls(
             PrimaryExpr::FieldAccess { expr, .. } => {
                 infer_expression_calls(expr, environment, generic_signatures, function_returns)?;
             }
+            PrimaryExpr::FormatInto { dest, segments, .. } => {
+                infer_expression_calls(dest, environment, generic_signatures, function_returns)?;
+                for segment in segments {
+                    if let crate::ast::FormatSegment::Hole(expr) = segment {
+                        infer_expression_calls(
+                            expr,
+                            environment,
+                            generic_signatures,
+                            function_returns,
+                        )?;
+                    }
+                }
+            }
             PrimaryExpr::ArrayIndex { expr, index } => {
                 infer_expression_calls(expr, environment, generic_signatures, function_returns)?;
                 infer_expression_calls(index, environment, generic_signatures, function_returns)?;
@@ -1256,7 +1277,8 @@ pub(crate) fn infer_expression_type(
             | PrimaryExpr::Slice { .. }
             | PrimaryExpr::CallExpr { .. }
             | PrimaryExpr::AsmReg { .. }
-            | PrimaryExpr::AssociatedConst { .. },
+            | PrimaryExpr::AssociatedConst { .. }
+            | PrimaryExpr::FormatInto { .. },
         ) => None,
     }
 }
@@ -1574,6 +1596,14 @@ fn rewrite_expression_calls(
             PrimaryExpr::FieldAccess { expr, .. } => {
                 rewrite_expression_calls(expr, substitutions, definitions, queue, queued)?;
             }
+            PrimaryExpr::FormatInto { dest, segments, .. } => {
+                rewrite_expression_calls(dest, substitutions, definitions, queue, queued)?;
+                for segment in segments {
+                    if let crate::ast::FormatSegment::Hole(expr) = segment {
+                        rewrite_expression_calls(expr, substitutions, definitions, queue, queued)?;
+                    }
+                }
+            }
             PrimaryExpr::ArrayIndex { expr, index } => {
                 rewrite_expression_calls(expr, substitutions, definitions, queue, queued)?;
                 rewrite_expression_calls(index, substitutions, definitions, queue, queued)?;
@@ -1749,6 +1779,14 @@ pub(crate) fn substitute_expression_types(
             }
             PrimaryExpr::FieldAccess { expr, .. } => {
                 substitute_expression_types(expr, substitutions);
+            }
+            PrimaryExpr::FormatInto { dest, segments, .. } => {
+                substitute_expression_types(dest, substitutions);
+                for segment in segments {
+                    if let crate::ast::FormatSegment::Hole(expr) = segment {
+                        substitute_expression_types(expr, substitutions);
+                    }
+                }
             }
             PrimaryExpr::ArrayIndex { expr, index } => {
                 substitute_expression_types(expr, substitutions);
@@ -2304,6 +2342,14 @@ impl EnumSpecializer {
                         self.rewrite_expr_types(&mut field.expr);
                     }
                 }
+                PrimaryExpr::FormatInto { dest, segments, .. } => {
+                    self.rewrite_expr_types(dest);
+                    for segment in segments {
+                        if let crate::ast::FormatSegment::Hole(expr) = segment {
+                            self.rewrite_expr_types(expr);
+                        }
+                    }
+                }
                 PrimaryExpr::ArrayIndex { expr, index } => {
                     self.rewrite_expr_types(expr);
                     self.rewrite_expr_types(index);
@@ -2520,6 +2566,14 @@ impl EnumSpecializer {
                         self.rewrite_expr_uses(&mut field.expr, None, env);
                     }
                 }
+                PrimaryExpr::FormatInto { dest, segments, .. } => {
+                    self.rewrite_expr_uses(dest, None, env);
+                    for segment in segments {
+                        if let crate::ast::FormatSegment::Hole(expr) = segment {
+                            self.rewrite_expr_uses(expr, None, env);
+                        }
+                    }
+                }
                 PrimaryExpr::ArrayIndex { expr, index } => {
                     self.rewrite_expr_uses(expr, None, env);
                     self.rewrite_expr_uses(index, None, env);
@@ -2644,6 +2698,22 @@ impl EnumSpecializer {
                     _ => None,
                 }
             }
+            // format_into always yields Result<u64, FormatError>; name it in
+            // mangled form since this pass runs after type rewriting.
+            Expression::Primary(PrimaryExpr::FormatInto { .. }) => Some(Type::Named {
+                name: mangle_enum(
+                    "Result",
+                    &[
+                        Type::Primitive("u64".to_owned()),
+                        Type::Named {
+                            name: "FormatError".into(),
+                            args: Vec::new(),
+                        },
+                    ],
+                )
+                .into(),
+                args: Vec::new(),
+            }),
             _ => None,
         }
     }

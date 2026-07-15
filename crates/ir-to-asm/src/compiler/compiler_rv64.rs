@@ -24,6 +24,21 @@ const A0: Reg = 10;
 const A1: Reg = 11;
 const FA0: Reg = 10;
 
+// One phi node prepared for edge-copy lowering, plus its staging slot.
+struct PhiCopy {
+    dest: hll_to_ir::IrRegister,
+    incoming: Vec<(IrValue, hll_to_ir::IrLabel)>,
+    scratch_slot: usize,
+}
+
+// The phi context a terminator needs: which block it ends and, per target
+// label, the phis that block owns.
+struct PhiEdges<'a> {
+    function: &'a str,
+    pred: &'a hll_to_ir::IrLabel,
+    phis: &'a HashMap<String, Vec<PhiCopy>>,
+}
+
 pub struct CompilerRv64 {
     emitter: AssemblyEmitter,
     data: DataSection,
@@ -130,6 +145,11 @@ impl CompilerRv64 {
                 .insert(alias.name.clone(), alias.ty.clone());
             self.data.add_type_alias(alias);
         }
+        // Cross-module signatures first; local definitions overwrite on collision.
+        for ext in &program.extern_fns {
+            self.function_return_types
+                .insert(ext.name.clone(), ext.return_type.clone());
+        }
         for func in &program.functions {
             self.function_return_types
                 .insert(func.name.clone(), func.return_type.clone());
@@ -168,6 +188,25 @@ impl CompilerRv64 {
             self.regalloc,
             needs_sret,
         );
+
+        // Phi nodes lower to edge copies (see _IR_SPECIFICATIONS.md 4.3); the
+        // per-phi scratch slot gives the copies parallel-assignment semantics.
+        let mut block_phis: std::collections::HashMap<String, Vec<PhiCopy>> =
+            std::collections::HashMap::new();
+        for block in &func.blocks {
+            for inst in &block.instructions {
+                if let IrInstruction::Phi { dest, incoming, .. } = inst {
+                    block_phis
+                        .entry(block.label.0.clone())
+                        .or_default()
+                        .push(PhiCopy {
+                            dest: dest.clone(),
+                            incoming: incoming.clone(),
+                            scratch_slot: ctx.frame.alloc_slot(8, 8),
+                        });
+                }
+            }
+        }
 
         let sret_slot = if needs_sret {
             ctx.save_reg(9); // s1 holds the sret pointer.
@@ -249,11 +288,105 @@ impl CompilerRv64 {
                 self.lower_instruction(inst, &mut ctx);
             }
             if let Some(term) = &block.terminator {
-                self.lower_terminator(term, &mut ctx, needs_sret, is_aggregate);
+                let edges = PhiEdges {
+                    function: &func.name,
+                    pred: &block.label,
+                    phis: &block_phis,
+                };
+                self.lower_terminator(term, &mut ctx, needs_sret, is_aggregate, &edges);
             }
         }
 
         self.emitter.end_function();
+    }
+
+    /// Emit the copies realizing `target`'s phis on the edge from `edges.pred`:
+    /// all sources stage to scratch slots before any destination is written.
+    fn emit_phi_edge_copies(
+        &mut self,
+        edges: &PhiEdges<'_>,
+        target: &hll_to_ir::IrLabel,
+        ctx: &mut FunctionContext,
+    ) {
+        let Some(phis) = edges.phis.get(target.0.as_str()) else {
+            return;
+        };
+        self.emitter
+            .emit_comment(&format!("phi copies for edge {} -> {}", edges.pred, target));
+        for phi in phis {
+            self.emitter.reset_temp_counter();
+            let Some((value, _)) = phi
+                .incoming
+                .iter()
+                .find(|(_, label)| label.0 == edges.pred.0)
+            else {
+                continue;
+            };
+            let bits = self.load_phi_value_bits(value, ctx);
+            self.emitter.emit_sd(SP, bits, phi.scratch_slot as i32);
+        }
+        for phi in phis {
+            if !phi
+                .incoming
+                .iter()
+                .any(|(_, label)| label.0 == edges.pred.0)
+            {
+                continue;
+            }
+            self.emitter.reset_temp_counter();
+            let tmp = self.emitter.alloc_temp_reg();
+            self.emitter.emit_ld(tmp, SP, phi.scratch_slot as i32);
+            let dest_slot = ctx.slot_for_reg(&phi.dest).expect("phi dest slot");
+            self.emitter.emit_sd(SP, tmp, dest_slot as i32);
+        }
+    }
+
+    /// Load a phi incoming value's raw 8-byte pattern into an integer temp.
+    /// Float sources stay bit-copies; sd/ld through a GP register is exact.
+    fn load_phi_value_bits(&mut self, value: &IrValue, ctx: &mut FunctionContext) -> Reg {
+        match value {
+            IrValue::Register(reg) => {
+                if ctx.is_stack_address(reg) {
+                    let slot = ctx.slot_for_reg(reg).expect("phi source slot");
+                    let tmp = self.emitter.alloc_temp_reg();
+                    self.emitter.emit_add_imm(tmp, SP, slot as i64);
+                    tmp
+                } else if let Some(phys) = ctx.phys_reg_for(reg) {
+                    phys
+                } else {
+                    let slot = ctx.slot_for_reg(reg).expect("phi source slot");
+                    let tmp = self.emitter.alloc_temp_reg();
+                    self.emitter.emit_ld(tmp, SP, slot as i32);
+                    tmp
+                }
+            }
+            IrValue::Integer(v) => {
+                let tmp = self.emitter.alloc_temp_reg();
+                self.emitter.emit_li(tmp, *v);
+                tmp
+            }
+            IrValue::Bool(b) => {
+                let tmp = self.emitter.alloc_temp_reg();
+                self.emitter.emit_li(tmp, i64::from(*b));
+                tmp
+            }
+            IrValue::Float(f) => {
+                let tmp = self.emitter.alloc_temp_reg();
+                self.emitter.emit_li(tmp, f.to_bits() as i64);
+                tmp
+            }
+            IrValue::Null => {
+                let tmp = self.emitter.alloc_temp_reg();
+                self.emitter.emit_li(tmp, 0);
+                tmp
+            }
+            IrValue::GlobalString(name) => {
+                let tmp = self.emitter.alloc_temp_reg();
+                self.emitter
+                    .emit_raw(&format!("\tla {}, {}", reg_name(tmp, false), name));
+                tmp
+            }
+        }
     }
 
     fn lower_instruction(&mut self, inst: &IrInstruction, ctx: &mut FunctionContext) {
@@ -1343,10 +1476,12 @@ impl CompilerRv64 {
         ctx: &mut FunctionContext,
         needs_sret: bool,
         _is_aggregate: bool,
+        edges: &PhiEdges<'_>,
     ) {
         match term {
             IrTerminator::Return(val) => self.lower_return(val.as_ref(), needs_sret, ctx),
             IrTerminator::Jump(label) => {
+                self.emit_phi_edge_copies(edges, label, ctx);
                 let lbl = ctx.get_label(label).unwrap();
                 self.emitter.emit_jal(ZERO, lbl);
             }
@@ -1356,10 +1491,39 @@ impl CompilerRv64 {
                 else_label,
             } => {
                 let cond_tmp = self.load_value_to_temp(cond, ctx);
-                let then_lbl = ctx.get_label(then_label).unwrap();
-                let else_lbl = ctx.get_label(else_label).unwrap();
-                self.emitter.emit_bne(cond_tmp, ZERO, then_lbl);
-                self.emitter.emit_jal(ZERO, else_lbl);
+                let then_lbl = ctx.get_label(then_label).unwrap().to_owned();
+                let else_lbl = ctx.get_label(else_label).unwrap().to_owned();
+                let then_has_phis = edges.phis.contains_key(then_label.0.as_str());
+                let else_has_phis = edges.phis.contains_key(else_label.0.as_str());
+                if !then_has_phis && !else_has_phis {
+                    self.emitter.emit_bne(cond_tmp, ZERO, &then_lbl);
+                    self.emitter.emit_jal(ZERO, &else_lbl);
+                    return;
+                }
+                // Copies belong to one edge only, so each phi-carrying target
+                // gets a trampoline that stages the copies before jumping on.
+                let then_edge = if then_has_phis {
+                    format!("{}__{}__phi__{}", edges.function, edges.pred, then_label)
+                } else {
+                    then_lbl.clone()
+                };
+                let else_edge = if else_has_phis {
+                    format!("{}__{}__phi__{}", edges.function, edges.pred, else_label)
+                } else {
+                    else_lbl.clone()
+                };
+                self.emitter.emit_bne(cond_tmp, ZERO, &then_edge);
+                self.emitter.emit_jal(ZERO, &else_edge);
+                if then_has_phis {
+                    self.emitter.emit_label(&then_edge);
+                    self.emit_phi_edge_copies(edges, then_label, ctx);
+                    self.emitter.emit_jal(ZERO, &then_lbl);
+                }
+                if else_has_phis {
+                    self.emitter.emit_label(&else_edge);
+                    self.emit_phi_edge_copies(edges, else_label, ctx);
+                    self.emitter.emit_jal(ZERO, &else_lbl);
+                }
             }
             IrTerminator::Trap { code } => {
                 // Exit with the diagnostic code in a0 (syscall 93). The firmware

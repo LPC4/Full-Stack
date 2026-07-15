@@ -248,16 +248,90 @@ main: () -> i32 {
 ```
 
 Name-only destructuring uses `:=` and introduces inferred bindings, while typed destructuring
-with `=` assigns existing places. Shorthand names select and bind the same field; `source = name`
-renames a binding:
+with `=` assigns existing places. Shorthand names select and bind the same field;
+`name = source` renames, with the new binding on the left like a declaration:
 
 ```hll
-{ quotient, remainder = rem } := divide(17, 5)
+{ quotient, rem = remainder } := divide(17, 5)
 ```
 
 The source must have a known struct type and is evaluated exactly once. The compiler validates
 all selected fields and same-scope name collisions before introducing any binding. Empty
 patterns, duplicate source fields, duplicate resulting names, and nested patterns are rejected.
+
+### 5.5 Buffer-based string interpolation
+
+Interpolation never allocates: the caller supplies a mutable byte buffer and receives the
+number of UTF-8 bytes written.
+
+```hll
+string := import("string")
+
+buf: u8[64] = []
+written := string.format_into(buf[..], "user={name} code={code}")
+match written {
+    Ok(n) -> console.print(buf[0..n])
+    Err(e) -> handle(e)
+}
+```
+
+`string.format_into(destination, "...")` is compiler-recognized syntax rather than an ordinary
+variadic function: a call of the shape `alias.format_into(expr, string-literal)` is parsed as an
+interpolation template whenever the second argument is a string literal, and `alias` must be an
+import of the `string` module (any other alias is a compile error). The member name
+`format_into` with a string-literal second argument is therefore reserved. The result is
+`Result<u64, FormatError>`:
+
+```hll
+enum FormatError {
+    FormatBufferTooSmall(u64),   ; payload = the complete required byte count
+    FormatSizeOverflow
+}
+```
+
+(The variant names carry a `Format` prefix because variant constructors share one flat
+namespace with every other enum in scope, 7.2.)
+
+Semantics:
+
+- The destination must be a writable `u8[]` and evaluates exactly once, first. String literals
+  and other known read-only storage are rejected as destinations. Interpolation expressions
+  then evaluate exactly once, left to right, before any destination write; aliasing the
+  destination from a hole expression is permitted because sizing precedes the first write.
+- The operation is transactional. The complete required length is computed first; an
+  undersized destination is left byte-for-byte unchanged and reports
+  `Err(FormatBufferTooSmall(required))`. A required length that exceeds `u64` reports
+  `Err(FormatSizeOverflow)` before writing (lengths accumulate through a saturating
+  all-ones sentinel, which is unreachable for real buffers).
+- `{{` and `}}` produce literal braces. An unmatched `{` or `}`, an empty `{}`, a nested `{`,
+  and a multi-line hole are compile-time syntax errors at the offending brace. Hole
+  expressions are re-lexed from their original source positions, so their diagnostics carry
+  real spans.
+- Formattable types: signed integers (base-ten `i64` formatting after widening), unsigned
+  integers (widened to `u64`), `f32`/`f64`, `bool` (`true`/`false`), `u8[]` byte strings
+  (copied verbatim), and struct types satisfying `Format`. Anything else is a compile-time
+  error. `u8` values and character literals format as numbers; HLL has no distinct char type.
+- Floating-point spelling is deterministic across native and WASM and round-trips the finite
+  value: exact decimal digits (base-1e9 bignum over the mantissa) rounded half-even to at
+  most 17 significant digits, plain decimal for exponents -4..16, otherwise `d.ddde<exp>`;
+  non-finite values spell `nan`, `inf`, and `-inf`, and negative zero spells `-0`. The
+  spelling is not guaranteed to be the shortest round-trip form.
+
+Custom types implement the `string` module's `Format` interface with `impl` methods (6.6):
+
+```hll
+interface Format {
+    formatted_len: (self: Self*) -> Result<u64, FormatError>
+    format_exact_into: (self: Self*, destination: u8[]) -> u64
+}
+```
+
+`formatted_len` must agree with `format_exact_into` and must not mutate observable state; the
+formatter receives exactly its declared sub-slice and a length mismatch traps with the stable
+bounds diagnostic. An `Err` from `formatted_len` propagates as the whole operation's result
+before any write. The `fmt_*` runtime helpers behind the lowering (`fmt_write_i64`,
+`fmt_len_f64`, `fmt_subslice`, ...) are ordinary `string` module exports and may be called
+directly (11.2).
 
 ## 6. Functions, generics, and modules
 
@@ -803,10 +877,12 @@ function_decl  = identifier ":" [ type_params ] "(" [ param_list ] ")" [ "->" ty
 param_list     = parameter { "," parameter };
 parameter      = identifier ":" type;
 block          = "{" { statement } "}";
-statement      = expression | binding_decl | assignment | destructure_assign
+statement      = expression | binding_decl | assignment | destructure_assign | destructure_bind
                | if_stmt | while_stmt | for_stmt | return_stmt | defer_stmt | asm_block;
 assignment     = place ( "=" | compound_op ) expression;
 destructure_assign = "{" field_decl { "," field_decl } [ "," ] "}" "=" expression;
+destructure_bind   = "{" bind_field { "," bind_field } [ "," ] "}" ":=" expression;
+bind_field     = identifier [ "=" identifier ];  (* binding [= source field] *)
 compound_op    = "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^=" | "<<=" | ">>=";
 if_stmt        = "if" expression block [ "else" ( if_stmt | block ) ];
 while_stmt     = "while" expression block;
@@ -815,7 +891,10 @@ range_expr     = [ expression ] ( ".." | "..=" ) [ expression ];
 return_stmt    = "return" [ expression ];
 defer_stmt     = "defer" expression;
 asm_block      = "asm" "{" { asm_line } "}";
-expression     = match_expr | binary_expr | cast_expr | unary_expr | postfix_expr;
+expression     = match_expr | binary_expr | cast_expr | unary_expr | postfix_expr
+               | format_into;
+format_into    = identifier "." "format_into" "(" expression "," string ")";
+               (* string = interpolation template; see 5.5 *)
 match_expr     = "match" expression "{" arm { arm } "}";
 arm            = pattern "->" ( block | expression );
 pattern        = "_" | identifier | identifier "(" pattern { "," pattern } ")"
@@ -916,6 +995,11 @@ range slicing all apply. The standard string utilities operate on `u8[]` through
 `Str` record (`{ data: u8*, length: u64 }`) is retained only as a legacy ABI declaration for
 linking against existing `Str`-typed entry points.
 
+The `string` module also carries the interpolation runtime (5.5): `FormatError`, the `Format`
+interface, and the `fmt_*` length/write helpers (`fmt_len_i64`, `fmt_write_u64`,
+`fmt_write_f64`, `fmt_write_bytes`, `fmt_subslice`, ...). They are plain exports and can be
+used directly for manual formatting without `format_into`.
+
 ### 11.3 Option and Result
 
 `Option<T>` and `Result<T, E>` (7.2) are the standard carriers for absence and failure. Prefer
@@ -985,9 +1069,6 @@ sections above are not mistaken for the full long-term design.
   plain-data type; `type` remains alias-only; opt-in runtime dispatch is provided by
   `dyn Interface` (6.6).
 - **Bounds beyond functions.** Interface bounds on `struct`/`enum`/`type` parameters.
-- **Name-only destructuring.** `{ quo, rem } := expr` binding by field name without repeating
-  types. The implemented form is the typed pattern in 5.4.
-- **String interpolation.** `"hi {name}"` lowering to a visible format over literal chunks.
 - **Richer runtime.** Escape-analysis stack promotion, SIMD lane generation, and
   debug-symbol generation. (The allocator ABI and arena/pool containers shipped; see 11.4
   and 11.5.)

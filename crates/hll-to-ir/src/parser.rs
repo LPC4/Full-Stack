@@ -1,8 +1,10 @@
 use super::ast::{
     AssignTarget, BinaryOp, BindingField, Block, DeclNode, Declaration, Expression, FieldDecl,
-    FieldInit, ForIter, InterfaceMethod, Literal, MatchArm, Parameter, Path, Pattern, PrimaryExpr,
-    Program, ReturnType, Statement, StructDestructureField, Type, UnaryOp, Variant,
+    FieldInit, ForIter, FormatSegment, InterfaceMethod, Literal, MatchArm, Parameter, Path,
+    Pattern, PrimaryExpr, Program, ReturnType, Statement, StructDestructureField, Type, UnaryOp,
+    Variant,
 };
+use crate::lexer::Lexer;
 
 use super::token::{CompoundOp, Span, Token};
 
@@ -1251,6 +1253,10 @@ impl<'a> Parser<'a> {
                                 self.error("type arguments are only valid on named function calls")
                             );
                         }
+                        if let Some(format_into) = self.try_parse_format_into(&callee)? {
+                            expr = format_into;
+                            continue;
+                        }
                         let arguments = self.parse_argument_list_after_open_paren()?;
                         expr = Expression::Primary(PrimaryExpr::CallExpr {
                             callee: Box::new(callee),
@@ -1723,11 +1729,13 @@ impl<'a> Parser<'a> {
         let mut sources = std::collections::HashSet::new();
         let mut bindings = std::collections::HashSet::new();
         loop {
-            let source = self.expect_ident()?;
-            let binding = if self.match_assign() {
-                self.expect_ident()?
+            // `binding = source` mirrors declaration order; bare `name` binds
+            // the field of the same name.
+            let first = self.expect_ident()?;
+            let (binding, source) = if self.match_assign() {
+                (first, self.expect_ident()?)
             } else {
-                source.clone()
+                (first.clone(), first)
             };
             if !sources.insert(source.clone()) {
                 return Err(self.error(&format!(
@@ -2272,6 +2280,186 @@ impl<'a> Parser<'a> {
             }
             None => return Err(self.error("unexpected end of input")),
         };
+        Ok(expr)
+    }
+
+    /// Parse `alias.format_into(dest, "a{x}b")` (spec 5.5), called after `(`.
+    /// None (state restored) when the shape does not match the string form.
+    fn try_parse_format_into(
+        &mut self,
+        callee: &Expression,
+    ) -> Result<Option<Expression>, ParserError> {
+        let Expression::Primary(PrimaryExpr::FieldAccess { expr: base, field }) = callee else {
+            return Ok(None);
+        };
+        if field != "format_into" {
+            return Ok(None);
+        }
+        let Expression::Primary(PrimaryExpr::Identifier(alias)) = base.as_ref() else {
+            return Ok(None);
+        };
+        let saved_pos = self.pos;
+        let saved_synth = self.synthesized_declarations.len();
+        let saved_lambda = self.next_lambda_id;
+        let restore = |parser: &mut Self| {
+            parser.pos = saved_pos;
+            parser.synthesized_declarations.truncate(saved_synth);
+            parser.next_lambda_id = saved_lambda;
+        };
+        self.consume_terminators();
+        let Ok(dest) = self.parse_expression() else {
+            restore(self);
+            return Ok(None);
+        };
+        if !self.match_comma() {
+            restore(self);
+            return Ok(None);
+        }
+        self.consume_terminators();
+        let Some(Token::String(raw)) = self.tokens.get(self.pos) else {
+            restore(self);
+            return Ok(None);
+        };
+        let raw: &'a str = raw;
+        if raw.len() < 2 || !raw.starts_with('"') || !raw.ends_with('"') {
+            return Err(self.error("invalid string token"));
+        }
+        // Committed: destination + comma + string literal is the interpolation
+        // form, so everything from here on is a hard error.
+        let template_span = self.spans[self.pos].clone();
+        self.advance();
+        self.match_comma();
+        self.consume_terminators();
+        self.expect_rparen()?;
+        let segments = self.parse_format_segments(raw, &template_span)?;
+        Ok(Some(Expression::Primary(PrimaryExpr::FormatInto {
+            alias: alias.clone(),
+            dest: Box::new(dest),
+            segments,
+        })))
+    }
+
+    /// Split a raw string-literal token (quotes included) into literal chunks
+    /// and interpolation holes; holes are lexed in place so spans stay real.
+    fn parse_format_segments(
+        &mut self,
+        raw: &'a str,
+        span: &Span,
+    ) -> Result<Vec<FormatSegment>, ParserError> {
+        let content = &raw[1..raw.len() - 1];
+        let error_at = |offset: usize, len: u32, message: &str| ParserError {
+            message: message.to_owned(),
+            span: Span {
+                line: span.line,
+                col: span.col + 1 + offset as u32,
+                len,
+                source_line: span.source_line.clone(),
+            },
+        };
+        let bytes = content.as_bytes();
+        let mut segments = Vec::new();
+        let mut literal = String::new();
+        let mut piece_start = 0usize;
+        let mut i = 0usize;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'\\' => i += 2,
+                b'{' if bytes.get(i + 1) == Some(&b'{') => {
+                    literal.push_str(&self.process_string_escapes(&content[piece_start..i]));
+                    literal.push('{');
+                    i += 2;
+                    piece_start = i;
+                }
+                b'}' if bytes.get(i + 1) == Some(&b'}') => {
+                    literal.push_str(&self.process_string_escapes(&content[piece_start..i]));
+                    literal.push('}');
+                    i += 2;
+                    piece_start = i;
+                }
+                b'}' => {
+                    return Err(error_at(
+                        i,
+                        1,
+                        "unmatched `}` in format string; use `}}` for a literal brace",
+                    ));
+                }
+                b'{' => {
+                    literal.push_str(&self.process_string_escapes(&content[piece_start..i]));
+                    if !literal.is_empty() {
+                        segments.push(FormatSegment::Literal(std::mem::take(&mut literal)));
+                    }
+                    let hole_start = i + 1;
+                    let mut j = hole_start;
+                    loop {
+                        match bytes.get(j) {
+                            None => {
+                                return Err(error_at(
+                                    i,
+                                    1,
+                                    "unterminated `{` in format string; use `{{` for a literal brace",
+                                ));
+                            }
+                            Some(b'{') => {
+                                return Err(error_at(
+                                    j,
+                                    1,
+                                    "nested `{` in a format string interpolation",
+                                ));
+                            }
+                            Some(b'\n') => {
+                                return Err(error_at(
+                                    j,
+                                    1,
+                                    "format string interpolations must be single-line",
+                                ));
+                            }
+                            Some(b'}') => break,
+                            Some(_) => j += 1,
+                        }
+                    }
+                    if j == hole_start {
+                        return Err(error_at(i, 2, "empty format string interpolation"));
+                    }
+                    let expr =
+                        self.parse_hole_expression(&content[hole_start..j], span, hole_start)?;
+                    segments.push(FormatSegment::Hole(expr));
+                    i = j + 1;
+                    piece_start = i;
+                }
+                _ => i += 1,
+            }
+        }
+        literal.push_str(&self.process_string_escapes(&content[piece_start.min(content.len())..]));
+        if !literal.is_empty() {
+            segments.push(FormatSegment::Literal(literal));
+        }
+        Ok(segments)
+    }
+
+    /// Lex and parse one interpolation hole from its original source slice,
+    /// shifting sub-token spans to the hole's true position in the line.
+    fn parse_hole_expression(
+        &mut self,
+        hole_src: &'a str,
+        span: &Span,
+        offset: usize,
+    ) -> Result<Expression, ParserError> {
+        let mut token_spans = Lexer::tokenize(hole_src);
+        for (_, s) in &mut token_spans {
+            s.line = span.line;
+            s.col = span.col + 1 + offset as u32 + s.col.saturating_sub(1);
+            s.source_line = span.source_line.clone();
+        }
+        let mut sub = Parser::new_with_spans(token_spans);
+        sub.type_names = self.type_names.clone();
+        sub.next_lambda_id = self.next_lambda_id;
+        let expr = sub.parse_expression()?;
+        if !matches!(sub.peek(), Some(Token::Eof) | None) {
+            return Err(sub.error("unexpected trailing tokens in format string interpolation"));
+        }
+        self.next_lambda_id = sub.next_lambda_id;
+        self.synthesized_declarations
+            .append(&mut sub.synthesized_declarations);
         Ok(expr)
     }
 
@@ -3198,7 +3386,7 @@ mod tests {
 
     #[test]
     fn parses_name_only_destructuring_binding() {
-        let mut parser = Parser::new(tokens_of("{ quo, remainder = rem } := pair"));
+        let mut parser = Parser::new(tokens_of("{ quo, rem = remainder } := pair"));
         let statement = parser
             .parse_statement()
             .expect("binding pattern should parse");
@@ -3222,7 +3410,7 @@ mod tests {
 
     #[test]
     fn rejects_duplicate_destructuring_bindings() {
-        let mut parser = Parser::new(tokens_of("{ left = value, right = value } := pair"));
+        let mut parser = Parser::new(tokens_of("{ value = left, value = right } := pair"));
         let error = parser
             .parse_statement()
             .expect_err("duplicate binding must fail");

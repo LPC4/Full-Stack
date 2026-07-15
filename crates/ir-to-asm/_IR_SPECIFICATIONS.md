@@ -91,6 +91,22 @@ define {i32, i32} divide(i32 $a, i32 $b) { ... }
 $ptr = stack_alloc {i32, i32}
 ```
 
+### 3.2 Extern function signatures
+
+A module may call functions defined in other modules. When such a callee's return type is
+non-scalar (aggregate, array, slice, or float), the backend cannot default it to an integer
+register, so the front end records the signature as a module-level `extern` line after the
+type aliases:
+
+```text
+extern u8[] fmt_subslice
+extern f64 some_float_producer
+```
+
+The backend uses these to pick the sret/aggregate or float return convention at call sites.
+Externs with scalar (integer/pointer/void) returns are not recorded; the default integer
+convention already matches them.
+
 ## 4. Instruction set
 
 ### 4.1 Memory and state
@@ -143,6 +159,19 @@ terminator.
 
 `jump`, `branch`, and `ret` are terminators; `phi`, `call`, and `indirect_call` are
 ordinary instructions.
+
+Phi nodes lower to explicit copies on each incoming edge. Every phi gets a dedicated
+staging slot: an edge first copies all of its incoming values into the staging slots, then
+writes every phi destination, giving multiple phis in one block parallel-assignment
+semantics (a swapping pair of loop phis is safe). A conditional branch whose target holds
+phis routes that edge through a generated `<fn>__<pred>__phi__<target>` trampoline label so
+copies execute only on the taken edge. Registers feeding or defined by a phi stay on the
+stack-slot path; the graph-coloring allocator does not claim them. The optimizer's
+`phi_simplify` pass (gated, with `const_fold` and `dce`) removes phis whose incoming values
+collapse to one value after ignoring self-references, and DCE drops phis whose result is
+never read. The HLL front end does not emit phi nodes yet -- locals stay in stack slots
+across merges -- so phi programs currently come from passes or hand-built IR
+(see `.ai/plan/PHI_PLAN.md` for the SSA-construction roadmap).
 
 Aggregate call arguments have value semantics. RV64 lowering passes one pointer to the caller's
 aggregate bytes in the next integer ABI argument slot; the callee copies the complete value into

@@ -270,6 +270,14 @@ fn collect_primary_binders(primary: &PrimaryExpr, binders: &mut HashSet<String>)
             }
         }
         PrimaryExpr::FieldAccess { expr, .. } => collect_expression_binders(expr, binders),
+        PrimaryExpr::FormatInto { dest, segments, .. } => {
+            collect_expression_binders(dest, binders);
+            for segment in segments {
+                if let crate::ast::FormatSegment::Hole(expr) = segment {
+                    collect_expression_binders(expr, binders);
+                }
+            }
+        }
         PrimaryExpr::ArrayIndex { expr, index } => {
             collect_expression_binders(expr, binders);
             collect_expression_binders(index, binders);

@@ -326,7 +326,9 @@ impl BuildExecutor {
         let plan = Self::plan(manifest);
         let mut units: Vec<BuiltUnit> = Vec::new();
 
+        let mut prunable = std::collections::HashSet::new();
         for (name, assembled) in Self::compile_stdlib(manifest)? {
+            prunable.insert(name.clone());
             units.push(BuiltUnit { name, assembled });
         }
 
@@ -361,6 +363,8 @@ impl BuildExecutor {
             }
         }
 
+        let units = Self::prune_unreferenced_stdlib(units, &prunable, manifest.entry.as_deref());
+
         let modules: Vec<(&str, &AssembledOutput)> = units
             .iter()
             .map(|unit| (unit.name.as_str(), &unit.assembled))
@@ -375,6 +379,60 @@ impl BuildExecutor {
             units,
             linked,
         })
+    }
+
+    /// Drop stdlib objects no kept object references (directly or transitively).
+    /// Program/extra objects and any object defining an entry symbol are roots.
+    fn prune_unreferenced_stdlib(
+        units: Vec<BuiltUnit>,
+        prunable: &std::collections::HashSet<String>,
+        entry: Option<&str>,
+    ) -> Vec<BuiltUnit> {
+        let entry_roots = ["_start", "_kernel_start"];
+        let is_root = |unit: &BuiltUnit| {
+            !prunable.contains(&unit.name)
+                || unit.assembled.global_symbol_names().any(|symbol| {
+                    entry_roots.contains(&symbol) || entry.is_some_and(|entry| entry == symbol)
+                })
+        };
+        let mut kept: Vec<bool> = units.iter().map(is_root).collect();
+        let mut needed: std::collections::HashSet<String> = units
+            .iter()
+            .zip(&kept)
+            .filter(|(_, keep)| **keep)
+            .flat_map(|(unit, _)| unit.assembled.undefined_symbol_names())
+            .map(str::to_owned)
+            .collect();
+        loop {
+            let mut changed = false;
+            for (index, unit) in units.iter().enumerate() {
+                if kept[index] {
+                    continue;
+                }
+                if unit
+                    .assembled
+                    .global_symbol_names()
+                    .any(|symbol| needed.contains(symbol))
+                {
+                    kept[index] = true;
+                    changed = true;
+                    needed.extend(
+                        unit.assembled
+                            .undefined_symbol_names()
+                            .into_iter()
+                            .map(str::to_owned),
+                    );
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        units
+            .into_iter()
+            .zip(kept)
+            .filter_map(|(unit, keep)| keep.then_some(unit))
+            .collect()
     }
 
     fn compile_stdlib(

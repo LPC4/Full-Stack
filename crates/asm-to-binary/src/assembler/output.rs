@@ -54,6 +54,16 @@ impl AssembledOutput {
         Self::default()
     }
 
+    /// Symbols this object references but does not define locally, i.e. the
+    /// names the linker must resolve from other objects.
+    pub fn undefined_symbol_names(&self) -> std::collections::HashSet<&str> {
+        self.relocations
+            .iter()
+            .map(|reloc| reloc.symbol.as_str())
+            .filter(|symbol| !self.symbol_table.contains_key(*symbol))
+            .collect()
+    }
+
     /// Look up a section by kind, returning its byte content (or an empty slice).
     pub fn section_bytes(&self, kind: &SectionKind) -> &[u8] {
         self.sections

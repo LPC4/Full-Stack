@@ -342,6 +342,15 @@ fn resolve_primary(primary: &mut PrimaryExpr, catalog: &AssociatedCatalog) -> Re
             Ok(())
         }
         PrimaryExpr::FieldAccess { expr, .. } => resolve_expression(expr, catalog),
+        PrimaryExpr::FormatInto { dest, segments, .. } => {
+            resolve_expression(dest, catalog)?;
+            for segment in segments {
+                if let crate::ast::FormatSegment::Hole(expr) = segment {
+                    resolve_expression(expr, catalog)?;
+                }
+            }
+            Ok(())
+        }
         PrimaryExpr::ArrayIndex { expr, index } => {
             resolve_expression(expr, catalog)?;
             resolve_expression(index, catalog)

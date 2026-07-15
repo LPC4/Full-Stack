@@ -6,8 +6,8 @@
 
 use asm_to_binary::AssembledOutput;
 use full_stack::compilation_pipeline::CompilationPipeline;
-use hll_to_ir::stdlib::{get_stdlib_modules_for_mode, get_stdlib_type_prelude};
 use hll_to_ir::TargetMode;
+use hll_to_ir::stdlib::{get_stdlib_modules_for_mode, get_stdlib_type_prelude};
 use std::sync::OnceLock;
 use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 
@@ -370,5 +370,44 @@ main: () -> i32 {
     assert_eq!(
         base_uart, run.uart_output,
         "combined flags changed UART output"
+    );
+}
+
+// Regression: with regalloc off and a frame over 2047 bytes, offset
+// legalization used to pick a scratch that clobbered the live array base
+// (t0), corrupting the spill area and never terminating.
+#[test]
+fn regalloc_off_large_frame_array_loop() {
+    assert_equivalent(
+        r#"
+console := import("console")
+
+main: () -> i32 {
+    buf: i64[512] = []
+    i: i64 = 0
+    while i < 512 {
+        buf[i] = i & 255
+        i = i + 1
+    }
+    p: i64 = 0
+    while p < 3 {
+        j: i64 = 0
+        while j < 512 {
+            buf[j] = buf[j] + (j & 7)
+            j = j + 1
+        }
+        p = p + 1
+    }
+    sum: i64 = 0
+    j2: i64 = 0
+    while j2 < 512 {
+        sum = sum + buf[j2]
+        j2 = j2 + 1
+    }
+    console.print_int(sum)
+    if sum != 70656 { return 1 }
+    return 0
+}
+"#,
     );
 }

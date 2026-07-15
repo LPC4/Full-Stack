@@ -191,6 +191,15 @@ impl HllCompiler {
         let prefix = self.config.string_prefix.as_deref().unwrap_or("str_");
         let mut compiler = HighLevelCompiler::with_string_prefix(prefix);
         compiler.set_type_prelude(self.config.type_prelude.clone());
+        // Aliases carrying the format runtime gate `alias.format_into(...)`.
+        compiler.set_format_aliases(
+            self.config
+                .module_aliases
+                .iter()
+                .filter(|(_, module)| module.exports.contains("fmt_result_ok"))
+                .map(|(alias, _)| alias.clone())
+                .collect(),
+        );
         compiler.set_source_file(self.config.source_file.as_deref().unwrap_or(""));
         compiler.set_source_line_offset(prelude_lines);
         compiler.set_source_lines(user_source);
@@ -1410,7 +1419,7 @@ make_pair: () -> Pair {
 }
 
 main: () -> i32 {
-    { quo, rem = remainder } := make_pair()
+    { quo, remainder = rem } := make_pair()
     return quo + remainder - 4
 }
 "#,

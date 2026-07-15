@@ -86,17 +86,6 @@ impl HighLevelCompiler {
         IrRegister::Temp(current)
     }
 
-    pub(super) fn infer_type_from_value(&self, value: &IrValue) -> IrType {
-        match value {
-            IrValue::Integer(_) => IrType::Integer(IntWidth::I32),
-            IrValue::Float(_) => IrType::Float(FloatWidth::F64),
-            IrValue::Bool(_) => IrType::Integer(IntWidth::I1),
-            IrValue::Register(_) => IrType::Void, // Default fallback
-            IrValue::Null => IrType::Pointer(Box::new(IrType::Named("unknown".to_owned()))),
-            IrValue::GlobalString(_) => IrType::Pointer(Box::new(IrType::Integer(IntWidth::I8))),
-        }
-    }
-
     pub(super) fn aggregate_field_offset_and_type(
         &self,
         fields: &[(String, IrType)],

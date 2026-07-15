@@ -2,11 +2,27 @@ use super::{
     AssignTarget, EvalMode, Expression, HighLevelCompiler, IrInstruction, IrType, IrValue, Literal,
     LoweredValue, UnaryOp,
 };
-use crate::ast::{PrimaryExpr, Type};
-use crate::ir::{FloatWidth, IntWidth, IrCastMode};
+use crate::ast::{FormatSegment, PrimaryExpr, Type};
+use crate::ir::{FloatWidth, IntWidth, IrCastMode, IrCmpOp, IrMathOp, IrRegister, IrTerminator};
 
 // Diagnostic exit code for a failed slice bounds check (SIGABRT convention).
 const SLICE_BOUNDS_TRAP_CODE: u32 = 134;
+
+// One evaluated `format_into` hole, classified for the sizing/write passes.
+enum FormatHole {
+    I64(IrValue),
+    U64(IrValue),
+    F64(IrValue),
+    Bool(IrValue),
+    Str(IrValue),
+    // A `Format` implementor: receiver pointer, its checked byte length, and
+    // the flat `Type_format_exact_into` symbol to call in the write pass.
+    Custom {
+        self_ptr: IrValue,
+        len: IrValue,
+        write_sym: String,
+    },
+}
 
 impl HighLevelCompiler {
     /// Evaluate expression in Value mode (rvalue context).
@@ -68,6 +84,11 @@ impl HighLevelCompiler {
             }
             PrimaryExpr::Literal(literal) => Some(self.lower_literal(literal)),
             PrimaryExpr::Grouped(expr) => self.lower_expr(expr, mode),
+            PrimaryExpr::FormatInto {
+                alias,
+                dest,
+                segments,
+            } => self.lower_format_into(alias, dest, segments, mode),
             PrimaryExpr::FieldAccess { expr, field } => {
                 self.lower_field_access_expr(expr, field, mode)
             }
@@ -711,6 +732,546 @@ impl HighLevelCompiler {
         Some(LoweredValue {
             value: dest.map(IrValue::Register).unwrap_or(IrValue::Null),
             ty: return_ty,
+            is_unsigned: false,
+        })
+    }
+
+    /// Emit a call to a string-module runtime helper by flat symbol name.
+    fn emit_format_runtime_call(
+        &mut self,
+        symbol: &str,
+        args: Vec<IrValue>,
+    ) -> Option<LoweredValue> {
+        let Some(return_ty) = self.function_return_types.get(symbol).cloned() else {
+            self.context.error(format!(
+                "string interpolation requires the string module runtime (missing `{symbol}`)"
+            ));
+            return None;
+        };
+        let dest = if return_ty == IrType::Void {
+            None
+        } else {
+            Some(self.new_temp())
+        };
+        self.push_instruction(IrInstruction::Call {
+            dest: dest.clone(),
+            function: symbol.to_owned(),
+            args,
+        });
+        Some(LoweredValue {
+            value: dest.map(IrValue::Register).unwrap_or(IrValue::Null),
+            ty: return_ty,
+            is_unsigned: true,
+        })
+    }
+
+    /// Widen an integer hole value to 64 bits for the format runtime.
+    fn format_widen_int(&mut self, value: &LoweredValue, unsigned: bool) -> IrValue {
+        if matches!(
+            self.resolve_named_type(&value.ty),
+            IrType::Integer(IntWidth::I64)
+        ) {
+            return value.value.clone();
+        }
+        let dest = self.new_temp();
+        self.push_instruction(IrInstruction::Cast {
+            dest: dest.clone(),
+            mode: if unsigned {
+                IrCastMode::Zext
+            } else {
+                IrCastMode::Sext
+            },
+            value: value.value.clone(),
+            ty: IrType::Integer(IntWidth::I64),
+        });
+        IrValue::Register(dest)
+    }
+
+    /// Evaluate one hole expression exactly once and classify it. `Format`
+    /// implementors are materialized so their impl methods get a receiver.
+    fn lower_format_hole(
+        &mut self,
+        expr: &Expression,
+        result_enum: &str,
+        result_ptr: &IrRegister,
+        done_label: &crate::ir::IrLabel,
+    ) -> Option<FormatHole> {
+        let value = self.lower_expr(expr, EvalMode::Value)?;
+        let resolved = self.resolve_named_type(&value.ty);
+        match &resolved {
+            IrType::Integer(IntWidth::I1) => Some(FormatHole::Bool(value.value)),
+            IrType::Integer(_) => {
+                let unsigned = value.is_unsigned;
+                let widened = self.format_widen_int(&value, unsigned);
+                Some(if unsigned {
+                    FormatHole::U64(widened)
+                } else {
+                    FormatHole::I64(widened)
+                })
+            }
+            IrType::Float(FloatWidth::F64) => Some(FormatHole::F64(value.value)),
+            IrType::Float(FloatWidth::F32) => {
+                let dest = self.new_temp();
+                self.push_instruction(IrInstruction::Cast {
+                    dest: dest.clone(),
+                    mode: IrCastMode::Bitcast,
+                    value: value.value,
+                    ty: IrType::Float(FloatWidth::F64),
+                });
+                Some(FormatHole::F64(IrValue::Register(dest)))
+            }
+            IrType::Slice(element)
+                if matches!(
+                    self.resolve_named_type(element),
+                    IrType::Integer(IntWidth::I8)
+                ) =>
+            {
+                Some(FormatHole::Str(value.value))
+            }
+            IrType::Aggregate(_) => {
+                let Some(type_name) = self.receiver_struct_name(&value.ty) else {
+                    self.context.error(format!(
+                        "cannot format a value of type `{}`; implement the `Format` interface",
+                        value.ty
+                    ));
+                    return None;
+                };
+                let len_sym = format!("{type_name}_formatted_len");
+                let write_sym = format!("{type_name}_format_exact_into");
+                if !self.function_param_types.contains_key(&len_sym)
+                    || !self.function_param_types.contains_key(&write_sym)
+                {
+                    self.context.error(format!(
+                        "type `{type_name}` does not implement `Format` \
+                         (needs `formatted_len` and `format_exact_into` impl methods)"
+                    ));
+                    return None;
+                }
+                // Materialize the receiver so the impl methods get a pointer.
+                let storage = self.new_temp();
+                self.push_instruction(IrInstruction::Alloc {
+                    dest: storage.clone(),
+                    ty: resolved.clone(),
+                    count: None,
+                });
+                self.push_instruction(IrInstruction::Store {
+                    ty: value.ty.clone(),
+                    value: value.value,
+                    ptr: storage.clone(),
+                    offset: None,
+                });
+                let self_ptr = IrValue::Register(storage);
+                let sized = self.emit_format_runtime_call(&len_sym, vec![self_ptr.clone()])?;
+                let IrType::Named(sized_enum) = &sized.ty else {
+                    self.context.error(format!(
+                        "`{len_sym}` must return `Result<u64, FormatError>`, found `{}`",
+                        sized.ty
+                    ));
+                    return None;
+                };
+                if sized_enum != result_enum {
+                    self.context.error(format!(
+                        "`{len_sym}` must return `Result<u64, FormatError>`, found `{}`",
+                        sized.ty
+                    ));
+                    return None;
+                }
+                let len = self.format_unwrap_len(&sized, result_enum, result_ptr, done_label)?;
+                Some(FormatHole::Custom {
+                    self_ptr,
+                    len,
+                    write_sym,
+                })
+            }
+            _ => {
+                self.context.error(format!(
+                    "cannot format a value of type `{}` in a format string",
+                    value.ty
+                ));
+                None
+            }
+        }
+    }
+
+    /// Unwrap a `Result<u64, FormatError>` value: on `Err`, forward the whole
+    /// enum into the result slot and jump to `done`; on `Ok`, yield the length.
+    fn format_unwrap_len(
+        &mut self,
+        result: &LoweredValue,
+        result_enum: &str,
+        result_ptr: &IrRegister,
+        done_label: &crate::ir::IrLabel,
+    ) -> Option<IrValue> {
+        let enum_ty = self.resolve_named_type(&result.ty);
+        let storage = self.new_temp();
+        self.push_instruction(IrInstruction::Alloc {
+            dest: storage.clone(),
+            ty: enum_ty.clone(),
+            count: None,
+        });
+        self.push_instruction(IrInstruction::Store {
+            ty: result.ty.clone(),
+            value: result.value.clone(),
+            ptr: storage.clone(),
+            offset: None,
+        });
+        let ok_variant = self.find_enum_variant(result_enum, "Ok")?;
+        let ok_layout = self.variant_payload_layout(&ok_variant.payload);
+        let [(ok_offset, ok_ty)] = ok_layout.as_slice() else {
+            self.context
+                .error(format!("invalid `Ok` payload layout for `{result_enum}`"));
+            return None;
+        };
+        let tag = self.new_temp();
+        self.push_instruction(IrInstruction::Load {
+            dest: tag.clone(),
+            ty: IrType::Integer(IntWidth::I64),
+            ptr: storage.clone(),
+            offset: Some(0),
+        });
+        let is_ok = self.new_temp();
+        self.push_instruction(IrInstruction::Cmp {
+            dest: is_ok.clone(),
+            op: IrCmpOp::Eq,
+            ty: IrType::Integer(IntWidth::I64),
+            lhs: IrValue::Register(tag),
+            rhs: IrValue::Integer(crate::conv::usize_to_i64(ok_variant.index)),
+        });
+        let ok_label = self.new_label();
+        let err_label = self.new_label();
+        self.set_terminator(IrTerminator::Branch {
+            cond: IrValue::Register(is_ok),
+            then_label: ok_label.clone(),
+            else_label: err_label.clone(),
+        });
+
+        // Err: the callee's Result is the same enum type; forward it whole.
+        self.start_new_block(err_label.0.clone());
+        let whole = self.new_temp();
+        self.push_instruction(IrInstruction::Load {
+            dest: whole.clone(),
+            ty: enum_ty.clone(),
+            ptr: storage.clone(),
+            offset: None,
+        });
+        self.push_instruction(IrInstruction::Store {
+            ty: enum_ty,
+            value: IrValue::Register(whole),
+            ptr: result_ptr.clone(),
+            offset: None,
+        });
+        self.set_terminator(IrTerminator::Jump(done_label.clone()));
+
+        self.start_new_block(ok_label.0.clone());
+        let len = self.new_temp();
+        self.push_instruction(IrInstruction::Load {
+            dest: len.clone(),
+            ty: ok_ty.clone(),
+            ptr: storage,
+            offset: Some(*ok_offset),
+        });
+        Some(IrValue::Register(len))
+    }
+
+    /// Lower `alias.format_into(dest, "...{x}...")` (spec 5.5): evaluate the
+    /// destination then each hole once, size transactionally, then write.
+    pub(super) fn lower_format_into(
+        &mut self,
+        alias: &str,
+        dest_expr: &Expression,
+        segments: &[FormatSegment],
+        mode: EvalMode,
+    ) -> Option<LoweredValue> {
+        if mode == EvalMode::Address {
+            self.context
+                .error("the value produced by `format_into` is not addressable".to_owned());
+            return None;
+        }
+        if !self.format_aliases.contains(alias) {
+            self.context.error(format!(
+                "`{alias}.format_into` requires `{alias} := import(\"string\")`; \
+                 only the string module carries the format runtime"
+            ));
+            return None;
+        }
+        let Some(IrType::Named(result_enum)) =
+            self.function_return_types.get("fmt_result_ok").cloned()
+        else {
+            self.context.error(
+                "string interpolation requires the string module's format runtime".to_owned(),
+            );
+            return None;
+        };
+        if matches!(
+            dest_expr,
+            Expression::Primary(PrimaryExpr::Literal(Literal::String(_)))
+        ) {
+            self.context.error(
+                "format_into destination must be a writable u8[] buffer, not a string literal"
+                    .to_owned(),
+            );
+            return None;
+        }
+
+        // Destination evaluates exactly once, before any interpolation expression.
+        let dest = self.lower_expr(dest_expr, EvalMode::Value)?;
+        let dest_resolved = self.resolve_named_type(&dest.ty);
+        let dest_is_bytes = matches!(
+            &dest_resolved,
+            IrType::Slice(element) if matches!(
+                self.resolve_named_type(element),
+                IrType::Integer(IntWidth::I8)
+            )
+        );
+        if !dest_is_bytes {
+            self.context.error(format!(
+                "format_into destination must be `u8[]`, found `{}`",
+                dest.ty
+            ));
+            return None;
+        }
+        // Materialize the slice so `.len` is loadable for the guard.
+        let dest_slot = self.new_temp();
+        self.push_instruction(IrInstruction::Alloc {
+            dest: dest_slot.clone(),
+            ty: dest_resolved.clone(),
+            count: None,
+        });
+        self.push_instruction(IrInstruction::Store {
+            ty: dest.ty.clone(),
+            value: dest.value.clone(),
+            ptr: dest_slot.clone(),
+            offset: None,
+        });
+
+        // Result storage shared by every early-out path.
+        let result_ty = self.resolve_named_type(&IrType::Named(result_enum.clone()));
+        if !matches!(result_ty, IrType::Aggregate(_)) {
+            self.context.error(format!(
+                "format runtime result type `{result_enum}` is not instantiated"
+            ));
+            return None;
+        }
+        let result_ptr = self.new_temp();
+        self.push_instruction(IrInstruction::Alloc {
+            dest: result_ptr.clone(),
+            ty: result_ty.clone(),
+            count: None,
+        });
+        let done_label = self.new_label();
+
+        // Evaluate every hole once, left to right.
+        let mut holes = Vec::new();
+        let mut chunk_len = 0u64;
+        for segment in segments {
+            match segment {
+                FormatSegment::Literal(text) => {
+                    chunk_len = chunk_len.saturating_add(text.len() as u64);
+                }
+                FormatSegment::Hole(expr) => {
+                    holes.push(self.lower_format_hole(
+                        expr,
+                        &result_enum,
+                        &result_ptr,
+                        &done_label,
+                    )?);
+                }
+            }
+        }
+
+        // Sizing pass: literal bytes plus each hole's formatted length.
+        let mut acc = IrValue::Integer(chunk_len as i64);
+        for hole in &holes {
+            let len = match hole {
+                FormatHole::I64(value) => {
+                    self.emit_format_runtime_call("fmt_len_i64", vec![value.clone()])?
+                        .value
+                }
+                FormatHole::U64(value) => {
+                    self.emit_format_runtime_call("fmt_len_u64", vec![value.clone()])?
+                        .value
+                }
+                FormatHole::F64(value) => {
+                    self.emit_format_runtime_call("fmt_len_f64", vec![value.clone()])?
+                        .value
+                }
+                FormatHole::Bool(value) => {
+                    self.emit_format_runtime_call("fmt_len_bool", vec![value.clone()])?
+                        .value
+                }
+                FormatHole::Str(value) => {
+                    self.emit_format_runtime_call("fmt_len_str", vec![value.clone()])?
+                        .value
+                }
+                FormatHole::Custom { len, .. } => len.clone(),
+            };
+            acc = self
+                .emit_format_runtime_call("fmt_len_add", vec![acc, len])?
+                .value;
+        }
+
+        // Guards: u64 overflow first, then capacity, before any byte is written.
+        let overflow = self.emit_format_runtime_call("fmt_is_len_overflow", vec![acc.clone()])?;
+        let overflow_label = self.new_label();
+        let size_ok_label = self.new_label();
+        self.set_terminator(IrTerminator::Branch {
+            cond: overflow.value,
+            then_label: overflow_label.clone(),
+            else_label: size_ok_label.clone(),
+        });
+        self.start_new_block(overflow_label.0.clone());
+        let overflow_result = self.emit_format_runtime_call("fmt_result_overflow", Vec::new())?;
+        self.push_instruction(IrInstruction::Store {
+            ty: overflow_result.ty.clone(),
+            value: overflow_result.value,
+            ptr: result_ptr.clone(),
+            offset: None,
+        });
+        self.set_terminator(IrTerminator::Jump(done_label.clone()));
+
+        self.start_new_block(size_ok_label.0.clone());
+        let dest_len = self.new_temp();
+        self.push_instruction(IrInstruction::Load {
+            dest: dest_len.clone(),
+            ty: IrType::Integer(IntWidth::I64),
+            ptr: dest_slot,
+            offset: Some(8),
+        });
+        let too_small = self.new_temp();
+        self.push_instruction(IrInstruction::Cmp {
+            dest: too_small.clone(),
+            op: IrCmpOp::Ugt,
+            ty: IrType::Integer(IntWidth::I64),
+            lhs: acc.clone(),
+            rhs: IrValue::Register(dest_len),
+        });
+        let too_small_label = self.new_label();
+        let write_label = self.new_label();
+        self.set_terminator(IrTerminator::Branch {
+            cond: IrValue::Register(too_small),
+            then_label: too_small_label.clone(),
+            else_label: write_label.clone(),
+        });
+        self.start_new_block(too_small_label.0.clone());
+        let too_small_result =
+            self.emit_format_runtime_call("fmt_result_too_small", vec![acc.clone()])?;
+        self.push_instruction(IrInstruction::Store {
+            ty: too_small_result.ty.clone(),
+            value: too_small_result.value,
+            ptr: result_ptr.clone(),
+            offset: None,
+        });
+        self.set_terminator(IrTerminator::Jump(done_label.clone()));
+
+        // Write pass: everything fits, so emit the bytes in template order.
+        self.start_new_block(write_label.0.clone());
+        let mut offset = IrValue::Integer(0);
+        let mut hole_iter = holes.into_iter();
+        for segment in segments {
+            match segment {
+                FormatSegment::Literal(text) => {
+                    let chunk = self.lower_literal(&Literal::String(text.clone()));
+                    offset = self
+                        .emit_format_runtime_call(
+                            "fmt_write_bytes",
+                            vec![dest.value.clone(), offset, chunk.value],
+                        )?
+                        .value;
+                }
+                FormatSegment::Hole(_) => {
+                    let hole = hole_iter.next()?;
+                    offset = match hole {
+                        FormatHole::I64(value) => {
+                            self.emit_format_runtime_call(
+                                "fmt_write_i64",
+                                vec![dest.value.clone(), offset, value],
+                            )?
+                            .value
+                        }
+                        FormatHole::U64(value) => {
+                            self.emit_format_runtime_call(
+                                "fmt_write_u64",
+                                vec![dest.value.clone(), offset, value],
+                            )?
+                            .value
+                        }
+                        FormatHole::F64(value) => {
+                            self.emit_format_runtime_call(
+                                "fmt_write_f64",
+                                vec![dest.value.clone(), offset, value],
+                            )?
+                            .value
+                        }
+                        FormatHole::Bool(value) => {
+                            self.emit_format_runtime_call(
+                                "fmt_write_bool",
+                                vec![dest.value.clone(), offset, value],
+                            )?
+                            .value
+                        }
+                        FormatHole::Str(value) => {
+                            self.emit_format_runtime_call(
+                                "fmt_write_bytes",
+                                vec![dest.value.clone(), offset, value],
+                            )?
+                            .value
+                        }
+                        FormatHole::Custom {
+                            self_ptr,
+                            len,
+                            write_sym,
+                        } => {
+                            let sub = self.emit_format_runtime_call(
+                                "fmt_subslice",
+                                vec![dest.value.clone(), offset.clone(), len.clone()],
+                            )?;
+                            let written = {
+                                let dest_reg = self.new_temp();
+                                self.push_instruction(IrInstruction::Call {
+                                    dest: Some(dest_reg.clone()),
+                                    function: write_sym,
+                                    args: vec![self_ptr, sub.value],
+                                });
+                                IrValue::Register(dest_reg)
+                            };
+                            self.emit_format_runtime_call(
+                                "fmt_exact_check",
+                                vec![len.clone(), written],
+                            )?;
+                            let advanced = self.new_temp();
+                            self.push_instruction(IrInstruction::Math {
+                                dest: advanced.clone(),
+                                op: IrMathOp::Add,
+                                ty: IrType::Integer(IntWidth::I64),
+                                lhs: offset,
+                                rhs: len,
+                            });
+                            IrValue::Register(advanced)
+                        }
+                    };
+                }
+            }
+        }
+        let ok_result = self.emit_format_runtime_call("fmt_result_ok", vec![acc])?;
+        self.push_instruction(IrInstruction::Store {
+            ty: ok_result.ty.clone(),
+            value: ok_result.value,
+            ptr: result_ptr.clone(),
+            offset: None,
+        });
+        self.set_terminator(IrTerminator::Jump(done_label.clone()));
+
+        self.start_new_block(done_label.0.clone());
+        let final_value = self.new_temp();
+        self.push_instruction(IrInstruction::Load {
+            dest: final_value.clone(),
+            ty: result_ty,
+            ptr: result_ptr,
+            offset: None,
+        });
+        Some(LoweredValue {
+            value: IrValue::Register(final_value),
+            ty: IrType::Named(result_enum),
             is_unsigned: false,
         })
     }

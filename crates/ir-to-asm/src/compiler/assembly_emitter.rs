@@ -181,11 +181,11 @@ impl AssemblyEmitter {
             return (addr_reg, offset);
         }
 
-        let scratch = [T0, T1, T2, T3, T4, T5, T6]
-            .into_iter()
-            .find(|reg| {
-                *reg != addr_reg && !forbidden.contains(reg) && !self.reserved_regs.contains(reg)
-            })
+        // Draw the scratch from the temp rotation (like emit_add_imm) so it
+        // cannot collide with live temps handed out earlier in this lowering.
+        let scratch = (0..14)
+            .map(|_| self.alloc_temp_reg())
+            .find(|reg| *reg != addr_reg && !forbidden.contains(reg))
             .expect("memory address legalization requires one scratch register");
         self.emit_li(scratch, offset as i64);
         self.emit_add(scratch, addr_reg, scratch);
@@ -205,12 +205,15 @@ impl AssemblyEmitter {
         self.emit_inst(RealInstruction::Ld(Ld::new(rd, base, offset)));
     }
     pub fn emit_lw(&mut self, rd: Reg, base: Reg, offset: i32) {
+        let (base, offset) = self.legalize_memory_offset(base, offset, &[]);
         self.emit_inst(RealInstruction::Lw(Lw::new(rd, base, offset)));
     }
     pub fn emit_lh(&mut self, rd: Reg, base: Reg, offset: i32) {
+        let (base, offset) = self.legalize_memory_offset(base, offset, &[]);
         self.emit_inst(RealInstruction::Lh(Lh::new(rd, base, offset)));
     }
     pub fn emit_lb(&mut self, rd: Reg, base: Reg, offset: i32) {
+        let (base, offset) = self.legalize_memory_offset(base, offset, &[]);
         self.emit_inst(RealInstruction::Lb(Lb::new(rd, base, offset)));
     }
     pub fn emit_add(&mut self, rd: Reg, rs1: Reg, rs2: Reg) {
@@ -451,16 +454,22 @@ impl AssemblyEmitter {
     pub fn emit_fdiv_s(&mut self, rd: Reg, rs1: Reg, rs2: Reg) {
         self.emit_inst(RealInstruction::Fdiv(Fdiv::new(rd, rs1, rs2)));
     }
+    // Float loads/stores legalize like their integer counterparts; the scratch
+    // pool is integer-only, so a float src can never collide with it.
     pub fn emit_fsw(&mut self, base: Reg, src: Reg, offset: i32) {
+        let (base, offset) = self.legalize_memory_offset(base, offset, &[]);
         self.emit_inst(RealInstruction::Fsw(Fsw::new(base, src, offset)));
     }
     pub fn emit_fsd(&mut self, base: Reg, src: Reg, offset: i32) {
+        let (base, offset) = self.legalize_memory_offset(base, offset, &[]);
         self.emit_inst(RealInstruction::Fsd(Fsd::new(base, src, offset)));
     }
     pub fn emit_flw(&mut self, rd: Reg, base: Reg, offset: i32) {
+        let (base, offset) = self.legalize_memory_offset(base, offset, &[]);
         self.emit_inst(RealInstruction::Flw(Flw::new(rd, base, offset)));
     }
     pub fn emit_fld(&mut self, rd: Reg, base: Reg, offset: i32) {
+        let (base, offset) = self.legalize_memory_offset(base, offset, &[]);
         self.emit_inst(RealInstruction::Fld(Fld::new(rd, base, offset)));
     }
     pub fn emit_fmv_s(&mut self, rd: Reg, rs: Reg) {
@@ -1184,5 +1193,21 @@ mod tests {
             "insn[4] should be OR (combine halves), got {:?}",
             insns[4]
         );
+    }
+    #[test]
+    fn legalize_scratch_skips_live_temp() {
+        // A lowering has t0 live (e.g. an array base); a big-offset load must
+        // not materialize its address through t0.
+        let mut emitter = AssemblyEmitter::new();
+        let live = emitter.alloc_temp_reg();
+        assert_eq!(live, super::T0, "first temp should be t0");
+        emitter.emit_ld(11, super::SP, 4000);
+        for inst in emitter.finish_tokens() {
+            if let RvInstruction::Real(r) = inst {
+                let asm = r.to_asm();
+                let dest = asm.split_whitespace().nth(1).unwrap_or("");
+                assert_ne!(dest, "t0,", "legalization clobbered live t0: {asm}");
+            }
+        }
     }
 }

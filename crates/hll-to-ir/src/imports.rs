@@ -5,8 +5,8 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ast::{
     AssignTarget, BinaryOp, BindingField, Block, DeclNode, Expression, FieldDecl, FieldInit,
-    ForIter, Literal, MatchArm, Parameter, Pattern, PrimaryExpr, Program, ReturnType, Statement,
-    StructDestructureField, Type, UnaryOp, Variant,
+    ForIter, FormatSegment, Literal, MatchArm, Parameter, Pattern, PrimaryExpr, Program,
+    ReturnType, Statement, StructDestructureField, Type, UnaryOp, Variant,
 };
 use crate::lexer::Lexer;
 use crate::parser::Parser;
@@ -308,6 +308,14 @@ fn collect_primary_refs(primary: &PrimaryExpr, refs: &mut HashSet<String>) {
         // The member of a qualified access is a field, not an identifier node, so only the
         // base (the import alias) is recursed into here.
         PrimaryExpr::FieldAccess { expr, .. } => collect_expr_refs(expr, refs),
+        PrimaryExpr::FormatInto { dest, segments, .. } => {
+            collect_expr_refs(dest, refs);
+            for segment in segments {
+                if let crate::ast::FormatSegment::Hole(expr) = segment {
+                    collect_expr_refs(expr, refs);
+                }
+            }
+        }
         PrimaryExpr::ArrayIndex { expr, index } => {
             collect_expr_refs(expr, refs);
             collect_expr_refs(index, refs);
@@ -687,6 +695,16 @@ fn rewrite_primary_children(
             }
         }
         PrimaryExpr::FieldAccess { expr, .. } => rewrite_expr(expr, aliases)?,
+        // The alias stays as written; lowering validates it against the module
+        // alias table, so only the destination and hole expressions rewrite.
+        PrimaryExpr::FormatInto { dest, segments, .. } => {
+            rewrite_expr(dest, aliases)?;
+            for segment in segments {
+                if let crate::ast::FormatSegment::Hole(expr) = segment {
+                    rewrite_expr(expr, aliases)?;
+                }
+            }
+        }
         PrimaryExpr::ArrayIndex { expr, index } => {
             rewrite_expr(expr, aliases)?;
             rewrite_expr(index, aliases)?;
@@ -1048,6 +1066,14 @@ impl Mangler<'_> {
                 }
             }
             PrimaryExpr::FieldAccess { expr, .. } => self.expr(expr),
+            PrimaryExpr::FormatInto { dest, segments, .. } => {
+                self.expr(dest);
+                for segment in segments {
+                    if let FormatSegment::Hole(expr) = segment {
+                        self.expr(expr);
+                    }
+                }
+            }
             PrimaryExpr::ArrayIndex { expr, index } => {
                 self.expr(expr);
                 self.expr(index);
@@ -1241,10 +1267,12 @@ fn render_export(decl: &DeclNode, prefix: &str) -> Result<Option<String>, String
                     ))
                 })
                 .collect::<Result<Vec<_>, String>>()?;
+            // Methods are newline-separated: the interface grammar has no comma
+            // separator, and a generic return type may itself contain commas.
             format!(
-                "interface {} {{ {} }}",
+                "interface {} {{\n{}\n}}",
                 mangled_name(prefix, name),
-                methods.join(", ")
+                methods.join("\n")
             )
         }
         // Associated items cannot be exported; the parser enforces it.
@@ -1428,7 +1456,7 @@ fn render_binding_fields(fields: &[BindingField]) -> String {
             if field.source == field.binding {
                 field.source.clone()
             } else {
-                format!("{} = {}", field.source, field.binding)
+                format!("{} = {}", field.binding, field.source)
             }
         })
         .collect::<Vec<_>>()
@@ -1541,6 +1569,42 @@ fn render_primary(primary: &PrimaryExpr) -> Result<String, String> {
         }
         PrimaryExpr::FieldAccess { expr, field } => {
             format!("{}.{}", render_expr(expr)?, field)
+        }
+        PrimaryExpr::FormatInto {
+            alias,
+            dest,
+            segments,
+        } => {
+            let mut template = String::new();
+            for segment in segments {
+                match segment {
+                    FormatSegment::Literal(text) => {
+                        for c in text.chars() {
+                            match c {
+                                '{' => template.push_str("{{"),
+                                '}' => template.push_str("}}"),
+                                '\\' => template.push_str("\\\\"),
+                                '"' => template.push_str("\\\""),
+                                '\n' => template.push_str("\\n"),
+                                '\t' => template.push_str("\\t"),
+                                '\r' => template.push_str("\\r"),
+                                other => template.push(other),
+                            }
+                        }
+                    }
+                    FormatSegment::Hole(expr) => {
+                        template.push('{');
+                        template.push_str(&render_expr(expr)?);
+                        template.push('}');
+                    }
+                }
+            }
+            format!(
+                "{}.format_into({}, \"{}\")",
+                alias,
+                render_expr(dest)?,
+                template
+            )
         }
         PrimaryExpr::ArrayIndex { expr, index } => {
             format!("{}[{}]", render_expr(expr)?, render_expr(index)?)

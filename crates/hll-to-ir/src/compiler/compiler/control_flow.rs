@@ -438,9 +438,6 @@ impl HighLevelCompiler {
         let else_label = self.new_label();
         let merge_label = self.new_label();
 
-        // Snapshot environment before branching
-        let merge_env = self.context.snapshot_env();
-
         let branch_else = if else_branch.is_some() {
             else_label.clone()
         } else {
@@ -453,61 +450,20 @@ impl HighLevelCompiler {
             else_label: branch_else.clone(),
         });
 
-        // Lower then branch
+        // Lower then branch. Locals live in stack slots, so the merge needs no
+        // phi nodes; SSA construction is future work (see PHI_PLAN.md).
         self.start_new_block(then_label.0.clone());
-        self.context.restore_env(merge_env.clone());
         self.lower_block(ir_program, then_block);
-        let then_exit_env = self.context.snapshot_env();
-        self.context.save_block_exit_values(then_label.clone());
         self.set_terminator(IrTerminator::Jump(merge_label.clone()));
 
         // Lower else branch
-        let else_exit_env = if let Some(else_stmt) = else_branch {
+        if let Some(else_stmt) = else_branch {
             self.start_new_block(else_label.0.clone());
-            self.context.restore_env(merge_env.clone());
             self.lower_statement(ir_program, else_stmt);
-            let env = self.context.snapshot_env();
-            self.context.save_block_exit_values(else_label.clone());
             self.set_terminator(IrTerminator::Jump(merge_label.clone()));
-            env
-        } else {
-            merge_env.clone()
-        };
-
-        // Start merge block and emit phi nodes for diverging variables
-        self.start_new_block(merge_label.0.clone());
-        self.context.restore_env(merge_env.clone());
-
-        let mut then_vars: Vec<_> = then_exit_env.iter().collect();
-        then_vars.sort_by_key(|(k, _)| *k);
-        for (var_name, then_value) in then_vars {
-            if let Some(else_value) = else_exit_env.get(var_name) {
-                if then_value != else_value {
-                    // Emit phi node to merge diverging values
-                    let phi_dest = self.new_temp();
-                    let ty = self.infer_type_from_value(then_value);
-                    self.push_instruction(IrInstruction::Phi {
-                        dest: phi_dest.clone(),
-                        ty,
-                        incoming: vec![
-                            (then_value.clone(), then_label.clone()),
-                            (else_value.clone(), else_label.clone()),
-                        ],
-                    });
-                    self.context
-                        .ssa_env
-                        .insert(var_name.clone(), IrValue::Register(phi_dest));
-                } else {
-                    self.context
-                        .ssa_env
-                        .insert(var_name.clone(), then_value.clone());
-                }
-            } else {
-                self.context
-                    .ssa_env
-                    .insert(var_name.clone(), then_value.clone());
-            }
         }
+
+        self.start_new_block(merge_label.0.clone());
     }
 
     pub(super) fn lower_while(
@@ -519,9 +475,6 @@ impl HighLevelCompiler {
         let cond_label = self.new_label();
         let body_label = self.new_label();
         let exit_label = self.new_label();
-
-        // Snapshot environment before loop
-        let pre_loop_env = self.context.snapshot_env();
 
         self.set_terminator(IrTerminator::Jump(cond_label.clone()));
 
@@ -543,48 +496,16 @@ impl HighLevelCompiler {
             else_label: exit_label.clone(),
         });
 
+        // Loop-carried locals live in stack slots, so the exit block needs no
+        // phi nodes; SSA construction is future work (see PHI_PLAN.md).
         self.start_new_block(body_label.0.clone());
-        self.context.restore_env(pre_loop_env.clone());
         self.loop_labels
             .push((cond_label.clone(), exit_label.clone()));
         self.lower_block(ir_program, body);
-        let loop_exit_env = self.context.snapshot_env();
-        self.context.save_block_exit_values(body_label.clone());
         self.loop_labels.pop();
         self.set_terminator(IrTerminator::Jump(cond_label.clone()));
 
         self.start_new_block(exit_label.0.clone());
-
-        // Emit phi nodes for variables that changed in the loop
-        let mut pre_loop_vars: Vec<_> = pre_loop_env.iter().collect();
-        pre_loop_vars.sort_by_key(|(k, _)| *k);
-        for (var_name, pre_loop_value) in pre_loop_vars {
-            if let Some(post_loop_value) = loop_exit_env.get(var_name) {
-                if pre_loop_value != post_loop_value {
-                    let phi_dest = self.new_temp();
-                    let ty = self.infer_type_from_value(pre_loop_value);
-                    self.push_instruction(IrInstruction::Phi {
-                        dest: phi_dest.clone(),
-                        ty,
-                        incoming: vec![
-                            (pre_loop_value.clone(), cond_label.clone()),
-                            (post_loop_value.clone(), body_label.clone()),
-                        ],
-                    });
-                    self.context
-                        .ssa_env
-                        .insert(var_name.clone(), IrValue::Register(phi_dest));
-                } else {
-                    self.context
-                        .ssa_env
-                        .insert(var_name.clone(), pre_loop_value.clone());
-                }
-            } else {
-                self.context
-                    .ssa_env
-                    .insert(var_name.clone(), pre_loop_value.clone());
-            }
-        }
     }
 
     // Desugar a `for` loop to a `while` loop, reusing the existing `while`

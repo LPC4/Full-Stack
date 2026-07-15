@@ -443,6 +443,21 @@ pub enum PrimaryExpr {
         owner_args: Vec<Type>,
         member: String,
     },
+    // `alias.format_into(dest, "a{x}b")`: compiler-recognized buffer
+    // formatting over the string module runtime (spec 5.5).
+    FormatInto {
+        alias: String,
+        dest: Box<Expression>,
+        segments: Vec<FormatSegment>,
+    },
+}
+
+// One piece of a `format_into` template: literal bytes (escapes resolved,
+// `{{`/`}}` folded) or one interpolated hole expression.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FormatSegment {
+    Literal(String),
+    Hole(Expression),
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -35,6 +35,20 @@ impl fmt::Display for IrGlobalString {
     }
 }
 
+/// The signature of a function defined in another module. Only carried when
+/// the backend cannot default it (non-scalar returns need the aggregate ABI).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IrExternFn {
+    pub name: String,
+    pub return_type: IrType,
+}
+
+impl fmt::Display for IrExternFn {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "extern {} {}", self.return_type, self.name)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IrParam {
     pub ty: IrType,
@@ -113,6 +127,7 @@ pub struct IrGlobalVar {
 pub struct IrProgram {
     pub module_name: String,
     pub type_aliases: Vec<IrTypeAlias>,
+    pub extern_fns: Vec<IrExternFn>,
     pub global_strings: Vec<IrGlobalString>,
     pub global_vars: Vec<IrGlobalVar>,
     pub functions: Vec<IrFunction>,
@@ -123,6 +138,7 @@ impl IrProgram {
         Self {
             module_name: module_name.into(),
             type_aliases: Vec::new(),
+            extern_fns: Vec::new(),
             global_strings: Vec::new(),
             global_vars: Vec::new(),
             functions: Vec::new(),
@@ -131,6 +147,12 @@ impl IrProgram {
 
     pub fn push_type_alias(&mut self, alias: IrTypeAlias) {
         self.type_aliases.push(alias);
+    }
+
+    pub fn push_extern_fn(&mut self, ext: IrExternFn) {
+        if !self.extern_fns.iter().any(|e| e.name == ext.name) {
+            self.extern_fns.push(ext);
+        }
     }
 
     pub fn push_global_string(&mut self, global_string: IrGlobalString) {
@@ -151,8 +173,11 @@ impl fmt::Display for IrProgram {
         for alias in &self.type_aliases {
             writeln!(f, "{alias}")?;
         }
+        for ext in &self.extern_fns {
+            writeln!(f, "{ext}")?;
+        }
 
-        if !self.type_aliases.is_empty()
+        if (!self.type_aliases.is_empty() || !self.extern_fns.is_empty())
             && (!self.global_strings.is_empty() || !self.functions.is_empty())
         {
             writeln!(f)?;

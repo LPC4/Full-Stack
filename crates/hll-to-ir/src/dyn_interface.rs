@@ -659,6 +659,14 @@ fn rewrite_expression(
             PrimaryExpr::FieldAccess { expr, .. } => {
                 rewrite_expression(expr, environment, context)?;
             }
+            PrimaryExpr::FormatInto { dest, segments, .. } => {
+                rewrite_expression(dest, environment, context)?;
+                for segment in segments {
+                    if let crate::ast::FormatSegment::Hole(expr) = segment {
+                        rewrite_expression(expr, environment, context)?;
+                    }
+                }
+            }
             PrimaryExpr::ArrayIndex { expr, index } => {
                 rewrite_expression(expr, environment, context)?;
                 rewrite_expression(index, environment, context)?;

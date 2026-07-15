@@ -157,7 +157,7 @@ impl HighLevelCompiler {
         })
     }
 
-    fn find_enum_variant(&self, enum_name: &str, prefix: &str) -> Option<VariantInfo> {
+    pub(super) fn find_enum_variant(&self, enum_name: &str, prefix: &str) -> Option<VariantInfo> {
         self.enum_variants
             .iter()
             .find(|(name, info)| {
@@ -236,7 +236,7 @@ impl HighLevelCompiler {
     }
 
     // Absolute byte offset + IR type of each payload slot, relative to the enum base.
-    fn variant_payload_layout(&mut self, payload: &[Type]) -> Vec<(i64, IrType)> {
+    pub(super) fn variant_payload_layout(&mut self, payload: &[Type]) -> Vec<(i64, IrType)> {
         let mut out = Vec::with_capacity(payload.len());
         let mut offset = 0i64;
         for ty in payload {
@@ -437,7 +437,6 @@ impl HighLevelCompiler {
         });
 
         let merge_label = self.new_label();
-        let pre_env = self.context.snapshot_env();
         let match_id = self.match_id;
         self.match_id += 1;
 
@@ -445,7 +444,6 @@ impl HighLevelCompiler {
         for arm in arms {
             match &arm.pattern {
                 Pattern::Wildcard | Pattern::Binding(_) => {
-                    self.context.restore_env(pre_env.clone());
                     self.context.symbols.enter_scope();
                     if let Pattern::Binding(name) = &arm.pattern {
                         // Bind the whole enum value (its address) under `name`.
@@ -497,7 +495,6 @@ impl HighLevelCompiler {
                     });
 
                     self.start_new_block(then_label.0.clone());
-                    self.context.restore_env(pre_env.clone());
                     self.context.symbols.enter_scope();
                     self.bind_variant_payload(&enum_ptr, &info, bindings, match_id);
                     self.lower_block(ir_program, &arm.body);
@@ -526,7 +523,6 @@ impl HighLevelCompiler {
         }
 
         self.start_new_block(merge_label.0.clone());
-        self.context.restore_env(pre_env);
         store_ty
     }
 
@@ -551,13 +547,11 @@ impl HighLevelCompiler {
         };
         let mut store_ty: Option<IrType> = None;
         let merge_label = self.new_label();
-        let pre_env = self.context.snapshot_env();
 
         let mut saw_catch_all = false;
         for arm in arms {
             match &arm.pattern {
                 Pattern::Wildcard | Pattern::Binding(_) => {
-                    self.context.restore_env(pre_env.clone());
                     self.context.symbols.enter_scope();
                     if let Pattern::Binding(name) = &arm.pattern {
                         self.bind_scalar_value(name, &value.value, &cmp_ty);
@@ -588,7 +582,6 @@ impl HighLevelCompiler {
                     });
 
                     self.start_new_block(then_label.0.clone());
-                    self.context.restore_env(pre_env.clone());
                     self.context.symbols.enter_scope();
                     self.lower_block(ir_program, &arm.body);
                     self.store_arm_value(&arm.value, &result_slot, &mut store_ty);
@@ -609,7 +602,6 @@ impl HighLevelCompiler {
         }
 
         self.start_new_block(merge_label.0.clone());
-        self.context.restore_env(pre_env);
         store_ty
     }
 

@@ -2,6 +2,7 @@
 
 mod const_fold;
 mod dce;
+mod phi;
 
 use crate::ir::{IrFunction, IrProgram};
 
@@ -10,6 +11,7 @@ use crate::ir::{IrFunction, IrProgram};
 pub struct OptOptions {
     pub const_fold: bool,
     pub dce: bool,
+    pub phi_simplify: bool,
 }
 
 impl OptOptions {
@@ -23,12 +25,13 @@ impl OptOptions {
         Self {
             const_fold: true,
             dce: true,
+            phi_simplify: true,
         }
     }
 
     /// True if any pass is enabled.
     pub fn any(&self) -> bool {
-        self.const_fold || self.dce
+        self.const_fold || self.dce || self.phi_simplify
     }
 }
 
@@ -47,6 +50,9 @@ fn optimize_function(func: &mut IrFunction, opts: OptOptions) {
     const MAX_ROUNDS: usize = 16;
     for _ in 0..MAX_ROUNDS {
         let mut changed = false;
+        if opts.phi_simplify {
+            changed |= phi::run(func);
+        }
         if opts.const_fold {
             changed |= const_fold::run(func);
         }

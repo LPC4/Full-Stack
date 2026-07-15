@@ -3,6 +3,7 @@
 
 console := import("console")
 memory_allocator := import("memory_allocator")
+string := import("string")
 
 mathlib := import("./modules/mathlib.hll")
 
@@ -280,8 +281,20 @@ main: () -> i32 {
 
     ; --- Destructuring and explicit manual vtables ---
     box: Shape = Shape.make(6, 7)
-    { width, height = h } := box
+    { width, h = height } := box
     if width * h != 42 { return 35 }
+
+    ; --- Buffer-based string interpolation (never allocates) ---
+    fmt_buf: u8[32] = []
+    formatted := string.format_into(fmt_buf[..], "w={width} h={h}")
+    match formatted {
+        Ok(n) -> {
+            if n != 7 { return 48 }
+        }
+        Err(_) -> {
+            return 49
+        }
+    }
 
     rect_vt: ShapeVTable = ShapeVTable { .area = rect_area, .perimeter = rect_perimeter }
     obj: ShapeObj = ShapeObj { .data = &box, .vtable = &rect_vt }

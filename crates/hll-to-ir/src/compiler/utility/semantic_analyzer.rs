@@ -630,6 +630,39 @@ impl SemanticAnalyzer {
                     Literal::String(_) => Ok("u8[]".to_owned()),
                 },
                 PrimaryExpr::Grouped(expr) => self.infer_expression_type(expr),
+                PrimaryExpr::FormatInto { dest, segments, .. } => {
+                    let dest_name = self.infer_expression_type(dest)?;
+                    let dest_ty = self.resolve_type_string(&dest_name);
+                    let dest_is_bytes = matches!(
+                        &dest_ty,
+                        IrType::Slice(element)
+                            if matches!(
+                                self.resolve_named_ir_type(element),
+                                IrType::Integer(crate::ir::IntWidth::I8)
+                            )
+                    );
+                    if !dest_is_bytes {
+                        self.error(format!(
+                            "format_into destination must be `u8[]`, found `{dest_name}`"
+                        ));
+                        return Err(());
+                    }
+                    for segment in segments {
+                        if let crate::ast::FormatSegment::Hole(expr) = segment {
+                            self.infer_expression_type(expr)?;
+                        }
+                    }
+                    // Hole formattability is checked precisely during lowering.
+                    if let Some(result_ty) = self.function_signatures.get("fmt_result_ok") {
+                        Ok(result_ty.clone())
+                    } else {
+                        self.error(
+                            "string interpolation requires `string := import(\"string\")`"
+                                .to_owned(),
+                        );
+                        Err(())
+                    }
+                }
                 PrimaryExpr::New { ty, .. } => {
                     let ir_ty = self.ast_type_to_ir_type(ty);
                     let inner_name = self.context.get_type_name(&ir_ty);

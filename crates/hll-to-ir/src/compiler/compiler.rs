@@ -100,6 +100,9 @@ pub struct HighLevelCompiler {
     enum_variants: std::collections::HashMap<String, VariantInfo>,
     // Monotonic id for naming `match` arm binding temporaries uniquely.
     match_id: usize,
+    // Import aliases bound to the string module (which carries the format
+    // runtime); only these may appear in `alias.format_into(...)`.
+    format_aliases: std::collections::HashSet<String>,
     // Source file name attributed to emitted line markers (pc-to-source table).
     source_file: String,
     // Lines added by the source prelude; subtracted so markers index the user file.
@@ -141,6 +144,7 @@ impl HighLevelCompiler {
             enum_layouts: std::collections::HashMap::new(),
             enum_variants: std::collections::HashMap::new(),
             match_id: 0,
+            format_aliases: std::collections::HashSet::new(),
             source_file: String::new(),
             source_line_offset: 0,
             last_source_line: None,
@@ -150,6 +154,11 @@ impl HighLevelCompiler {
 
     pub fn set_type_prelude(&mut self, types: Vec<(String, IrType)>) {
         self.prelude_types = types;
+    }
+
+    /// Import aliases that resolve to the string module's format runtime.
+    pub fn set_format_aliases(&mut self, aliases: std::collections::HashSet<String>) {
+        self.format_aliases = aliases;
     }
 
     /// Name attributed to pc-to-source line markers emitted while lowering.
