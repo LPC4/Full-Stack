@@ -71,9 +71,12 @@ pub fn apply(ctx: &egui::Context) {
     s.button_padding = egui::vec2(8.0, 4.0);
     style.interaction.resize_grab_radius_side = 8.0;
 
-    // Dev builds only: egui flashes red rects when a rect keeps its place but
-    // its widget id changes; tab/workspace/pc-follow swaps do that by design.
-    style.debug.warn_if_rect_changes_id = false;
+    // Tab/workspace/pc-follow swaps reuse rects with new ids by design; silence
+    // egui's red-rect warning. `Style::debug` exists only under debug_assertions.
+    #[cfg(debug_assertions)]
+    {
+        style.debug.warn_if_rect_changes_id = false;
+    }
 
     ctx.set_global_style(style);
 }
