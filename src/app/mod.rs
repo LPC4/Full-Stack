@@ -25,7 +25,7 @@ use crate::ui::{Layer, spine, theme};
 use asm_to_binary::AssembledOutput;
 use eframe::egui;
 use full_stack::build::{
-    BuildError, BuildExecutor, BuildManifest, BuildObject, BuildSource, StdlibPolicy,
+    BuildError, BuildExecutor, BuildManifest, BuildObject, BuildSource, StdlibPolicy, is_asm_path,
 };
 use full_stack::compilation_pipeline::{
     BinaryOutput, CompilationPipeline, PipelineResult, TargetMode,
@@ -45,6 +45,32 @@ const BUILD_GLOW_SECS: f64 = 0.85;
 /// Per-frame step budget when a run config does not specify one.
 #[cfg(not(target_arch = "wasm32"))]
 const DEMO_WORKSPACE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/programs/demo_workspace");
+#[cfg(not(target_arch = "wasm32"))]
+const TEACHING_WORKSPACE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/programs/teaching");
+
+/// The bundled folders the top bar can open on any target; the browser opens
+/// them as in-memory trees, native materializes them on disk.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum WorkspacePreset {
+    Demo,
+    Teaching,
+}
+
+impl WorkspacePreset {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Demo => "demo workspace",
+            Self::Teaching => "teaching",
+        }
+    }
+
+    fn memory_workspace(self) -> std::io::Result<IdeWorkspace> {
+        match self {
+            Self::Demo => IdeWorkspace::sample(),
+            Self::Teaching => IdeWorkspace::teaching(),
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Tool {
@@ -332,7 +358,6 @@ impl FullStackApp {
         }
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     fn block_open_folder_for_dirty_documents(&mut self) -> bool {
         if self.workspace.dirty_documents().next().is_none() {
             return false;
@@ -367,7 +392,26 @@ impl FullStackApp {
         }
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    /// Open one of the bundled folders: the on-disk copy natively, the identical
+    /// in-memory tree in the browser (which has no real filesystem).
+    pub(super) fn open_workspace_preset(&mut self, preset: WorkspacePreset) {
+        if self.block_open_folder_for_dirty_documents() {
+            return;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(workspace) = open_materialized_workspace(preset) {
+            self.settings.last_workspace = Some(preset_dir(preset).to_owned());
+            self.replace_workspace(workspace, preset.label());
+            return;
+        }
+        match preset.memory_workspace() {
+            Ok(workspace) => self.replace_workspace(workspace, preset.label()),
+            Err(err) => {
+                self.status_message = Some(format!("open {} failed: {err}", preset.label()));
+            }
+        }
+    }
+
     fn replace_workspace(&mut self, workspace: IdeWorkspace, label: &str) {
         self.workspace = workspace;
         self.live = None;
@@ -921,14 +965,28 @@ impl FullStackApp {
             return;
         }
 
-        // Display stages (tokens/AST/IR/ASM) from the root unit; the authoritative
-        // binary/link comes from the full manifest build below.
-        let mut pipeline = BuildExecutor::pipeline_for(&manifest);
-        pipeline.set_write_artifacts(false);
-        pipeline.set_current_source_path(Some(path.clone()));
-        let mut result = pipeline.run_full(&source, &[]);
-        result.binary = None;
-        result.assembler_error = None;
+        // HLL roots show display stages from run_full; raw asm roots skip the
+        // HLL front end and let the preview build below report their errors.
+        let mut result = if is_asm_path(&path) {
+            PipelineResult {
+                diagnostics: Vec::new(),
+                lex: None,
+                parse: None,
+                ir: None,
+                asm: None,
+                binary: None,
+                assembler_error: None,
+                exec: None,
+            }
+        } else {
+            let mut pipeline = BuildExecutor::pipeline_for(&manifest);
+            pipeline.set_write_artifacts(false);
+            pipeline.set_current_source_path(Some(path.clone()));
+            let mut result = pipeline.run_full(&source, &[]);
+            result.binary = None;
+            result.assembler_error = None;
+            result
+        };
 
         if !result.has_errors() {
             match self.build_preview_binary(&manifest, &path, &source) {
@@ -1189,7 +1247,9 @@ impl FullStackApp {
         let out_dir = self.workspace.fs().host_out_dir();
         let engine = SessionEngine::new(self.workspace.fs()).with_artifact_root(out_dir);
         match config.kind {
-            RunKind::Hosted => match engine.build_config(&config) {
+            // Hosted and freestanding share the launch path; the session
+            // constructor picks the bare-metal VM from the config kind.
+            RunKind::Hosted | RunKind::Freestanding => match engine.build_config(&config) {
                 Ok(build) => {
                     self.report_linked_build(&build);
                     self.start_hosted_live_session(&config, &build, now, debug);
@@ -1226,12 +1286,6 @@ impl FullStackApp {
                     self.terminal.push(ConsoleStream::Error, err.to_string());
                 }
             },
-            RunKind::Freestanding => {
-                let msg = "run kind Freestanding is not wired yet".to_owned();
-                self.status_message = Some(msg.clone());
-                self.vm_result = None;
-                self.terminal.push(ConsoleStream::Error, msg);
-            }
         }
     }
 
@@ -1307,7 +1361,12 @@ impl FullStackApp {
         debug: bool,
     ) {
         let tab_label = self.session_tab_label_for(config);
-        match LiveMachine::new_hosted(&build.artifacts) {
+        let live = if config.kind == RunKind::Freestanding {
+            LiveMachine::new_freestanding(&build.artifacts)
+        } else {
+            LiveMachine::new_hosted(&build.artifacts)
+        };
+        match live {
             Ok(mut live) => {
                 if let Some(config) = build.latency {
                     live.set_memory_latency_config(config);
@@ -1843,13 +1902,10 @@ impl eframe::App for FullStackApp {
     }
 }
 
-/// Shared foreground layer so chrome hairlines and column separators paint above
-/// panel fills without being clipped to a single panel.
+/// Background-layer painter: body paints last, so hairlines land above every
+/// panel fill yet stay under floating windows (framebuffer, overlays).
 fn separator_painter(ui: &egui::Ui) -> egui::Painter {
-    ui.ctx().layer_painter(egui::LayerId::new(
-        egui::Order::Foreground,
-        egui::Id::new("shell_separators"),
-    ))
+    ui.ctx().layer_painter(egui::LayerId::background())
 }
 
 fn draw_separator(ui: &egui::Ui, x: f32, top: f32, bottom: f32, active: bool) {
@@ -1868,9 +1924,11 @@ fn draw_separator(ui: &egui::Ui, x: f32, top: f32, bottom: f32, active: bool) {
 /// Native prefers the real on-disk demo workspace; the browser opens the same
 /// tree as an in-memory sample.
 fn open_default_workspace() -> IdeWorkspace {
-    open_native_demo_workspace()
-        .or_else(|| IdeWorkspace::sample().ok())
-        .unwrap_or_default()
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(workspace) = open_materialized_workspace(WorkspacePreset::Demo) {
+        return workspace;
+    }
+    IdeWorkspace::sample().ok().unwrap_or_default()
 }
 
 /// The workspace to open on startup: the last folder when reopen is enabled and
@@ -1896,20 +1954,28 @@ fn reopen_last_workspace(_settings: &settings::AppSettings) -> Option<IdeWorkspa
     None
 }
 
-/// Open `programs/demo_workspace` as a real folder, materializing any missing
-/// bundled sources and run configs first.
 #[cfg(not(target_arch = "wasm32"))]
-fn open_native_demo_workspace() -> Option<IdeWorkspace> {
-    let root = std::path::PathBuf::from(DEMO_WORKSPACE_DIR);
-    std::fs::create_dir_all(&root).ok()?;
-    let mut fs = NativeFs::open(root).ok()?;
-    full_stack::workspace::populate_demo_workspace(&mut fs).ok()?;
-    IdeWorkspace::new(Box::new(fs)).ok()
+fn preset_dir(preset: WorkspacePreset) -> &'static str {
+    match preset {
+        WorkspacePreset::Demo => DEMO_WORKSPACE_DIR,
+        WorkspacePreset::Teaching => TEACHING_WORKSPACE_DIR,
+    }
 }
 
-#[cfg(target_arch = "wasm32")]
-fn open_native_demo_workspace() -> Option<IdeWorkspace> {
-    None
+/// Open a preset folder from disk, materializing any missing bundled sources
+/// and run configs first.
+#[cfg(not(target_arch = "wasm32"))]
+fn open_materialized_workspace(preset: WorkspacePreset) -> Option<IdeWorkspace> {
+    let root = std::path::PathBuf::from(preset_dir(preset));
+    std::fs::create_dir_all(&root).ok()?;
+    let mut fs = NativeFs::open(root).ok()?;
+    match preset {
+        WorkspacePreset::Demo => full_stack::workspace::populate_demo_workspace(&mut fs).ok()?,
+        WorkspacePreset::Teaching => {
+            full_stack::workspace::populate_teaching_workspace(&mut fs).ok()?;
+        }
+    }
+    IdeWorkspace::new(Box::new(fs)).ok()
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -2545,6 +2611,35 @@ mod tests {
             }
         }
         panic!("session did not exit: {:?}", live.state);
+    }
+
+    #[test]
+    fn config_from_current_file_writes_manifest_and_selects_config() {
+        let mut fs = MemoryFs::new();
+        fs.write_text(
+            &VPath::parse("lesson/loop.s").expect("path"),
+            ".globl _start\n_start:\n  li a0, 0\n",
+        )
+        .expect("write source");
+        let mut app = test_app(IdeWorkspace::new(Box::new(fs)).expect("workspace"));
+        app.open_path(VPath::parse("lesson/loop.s").expect("path"));
+
+        app.add_config_for_active_file();
+
+        let manifest = app
+            .workspace
+            .fs()
+            .read_file(&VPath::parse("lesson/loop.build").expect("path"))
+            .expect("manifest written");
+        let manifest = String::from_utf8(manifest).expect("utf-8 manifest");
+        assert!(manifest.contains("target = \"freestanding\""));
+        assert!(manifest.contains("entry = \"_start\""));
+        let config = app.selected_config().expect("config selected");
+        assert_eq!(config.kind, RunKind::Freestanding);
+
+        // A second click reselects the existing config instead of duplicating it.
+        app.add_config_for_active_file();
+        assert_eq!(app.configs().len(), 1);
     }
 
     fn test_app(workspace: IdeWorkspace) -> FullStackApp {

@@ -17,7 +17,7 @@ c1febc37b1bf9842 crates/os-runtime/kernel/mm/pmm.hll
 fc576dacd4a430f8 crates/os-runtime/stdlib/core/heap_source.hll
 5a58bb86ed753207 crates/os-runtime/stdlib/core/mem.hll
 272501faf2abb792 crates/os-runtime/stdlib/core/memory_allocator.hll
-3c5e87a5b1014564 crates/os-runtime/stdlib/core/string_utils.hll
+6c2478142661a9c8 crates/os-runtime/stdlib/core/string_utils.hll
 a1ca7f99c61974fd crates/os-runtime/stdlib/core/text.hll
 bbd3db3e951eb712 crates/os-runtime/stdlib/core/types.hll
 67b9e38b1312fd93 crates/os-runtime/stdlib/free/console.hll
@@ -41,7 +41,7 @@ ba6a486caf9aeed0 programs/example/core_basics/core_basics.build
 3c07f09d89972632 programs/example/generics/generics.build
 089d094c609d1c28 programs/example/generics/generics.hll
 c50ee1cee8c37eee programs/example/hll2_completion_showcase/hll2_completion_showcase.build
-b7d92290d1f1a632 programs/example/hll2_completion_showcase/hll2_completion_showcase.hll
+53b471e654399554 programs/example/hll2_completion_showcase/hll2_completion_showcase.hll
 6513a44c9c7a4503 programs/example/hll2_completion_showcase/modules/mathlib.hll
 4173987eea1f3ed4 programs/example/operators/operators.build
 d7d5c1a6c68b9aed programs/example/operators/operators.hll

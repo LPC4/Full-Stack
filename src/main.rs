@@ -33,7 +33,9 @@ fn main() -> eframe::Result {
 fn main() {
     use eframe::wasm_bindgen::JsCast as _;
 
-    eframe::WebLogger::init(log::LevelFilter::Debug).ok();
+    // Info: debug-level compiler tracing floods the browser console (and jank)
+    // on every in-browser build.
+    eframe::WebLogger::init(log::LevelFilter::Info).ok();
 
     let web_options = eframe::WebOptions::default();
 

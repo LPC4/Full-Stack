@@ -1,4 +1,4 @@
-use super::{FullStackApp, metrics};
+use super::{FullStackApp, WorkspacePreset, metrics};
 use crate::ui::theme;
 use crate::ui::theme::icons;
 use eframe::egui;
@@ -9,17 +9,7 @@ const TOP_BAR_CONTROL_HEIGHT: f32 = 24.0;
 impl FullStackApp {
     pub(super) fn top_bar(&mut self, ui: &mut egui::Ui, now: f64) {
         ui.horizontal_centered(|ui| {
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                if action_button(ui, "open folder", theme::TEXT)
-                    .on_hover_text("Open a local workspace folder")
-                    .clicked()
-                    && !self.block_open_folder_for_dirty_documents()
-                    && let Some(folder) = rfd::FileDialog::new().pick_folder()
-                {
-                    self.open_native_workspace_folder(&folder);
-                }
-            }
+            self.open_folder_menu(ui);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.spacing_mut().interact_size.y = TOP_BAR_CONTROL_HEIGHT;
                 ui.add_space(metrics::SECTION_GAP);
@@ -36,6 +26,37 @@ impl FullStackApp {
                 self.config_selector(ui);
             });
         });
+    }
+
+    /// The workspace picker: the two bundled folders on every target, plus a
+    /// native file dialog for arbitrary local folders.
+    fn open_folder_menu(&mut self, ui: &mut egui::Ui) {
+        ui.menu_button(
+            theme::mono("open folder", metrics::STATUS_TEXT_SIZE, theme::TEXT),
+            |ui| {
+                if menu_item(ui, "demo workspace")
+                    .on_hover_text("Kernel, stdlib, user tools, and examples")
+                    .clicked()
+                {
+                    self.open_workspace_preset(WorkspacePreset::Demo);
+                }
+                if menu_item(ui, "teaching")
+                    .on_hover_text("The lessons from the written guide, one folder each")
+                    .clicked()
+                {
+                    self.open_workspace_preset(WorkspacePreset::Teaching);
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                if menu_item(ui, "browse...").clicked()
+                    && !self.block_open_folder_for_dirty_documents()
+                    && let Some(folder) = rfd::FileDialog::new().pick_folder()
+                {
+                    self.open_native_workspace_folder(&folder);
+                }
+            },
+        )
+        .response
+        .on_hover_text("Open a workspace folder");
     }
 
     /// Idle chrome: launch verbs for the selected config.
@@ -133,6 +154,10 @@ impl FullStackApp {
             self.select_config(idx);
         }
     }
+}
+
+fn menu_item(ui: &mut egui::Ui, label: &str) -> egui::Response {
+    ui.button(theme::mono(label, metrics::STATUS_TEXT_SIZE, theme::TEXT))
 }
 
 fn action_button(ui: &mut egui::Ui, text: &str, color: egui::Color32) -> egui::Response {

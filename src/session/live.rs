@@ -99,6 +99,33 @@ impl LiveMachine {
         })
     }
 
+    /// Boot a bare-metal VM: no hosted runtime, execution starts at the config's
+    /// entry symbol (falling back to `_start`).
+    pub fn new_freestanding(artifacts: &BuildArtifacts) -> Result<Self, String> {
+        let entry = artifacts.plan.entry.as_deref().unwrap_or("_start");
+        let elf = artifacts
+            .linked
+            .to_elf_with_entry(virtual_machine::bus::ELF_LOAD_BASE, entry);
+        let vm = VirtualMachine::from_elf(&elf).map_err(|err| format!("ELF load failed: {err}"))?;
+        Ok(Self {
+            vm,
+            state: MachineState::Running,
+            kind: RunKind::Freestanding,
+            steps: 0,
+            breakpoints: BTreeSet::new(),
+            uart_log: String::new(),
+            steps_per_sec: 0.0,
+            symbol_table: runtime_symbol_table(&artifacts.linked),
+            symbols: artifacts.linked.clone(),
+            os_sym: None,
+            fs_sym: None,
+            resumed_from: None,
+            temp_breakpoint: None,
+            prev_step_regs: None,
+            timeline: TimeMachine::new(50_000, 8, 64),
+        })
+    }
+
     /// Boot a kernel VM from the prepared kernel image and optional boot assets.
     pub fn new_kernel(
         kernel: &BuildArtifacts,
@@ -776,39 +803,25 @@ fn write_kernel_boot_assets(
     Ok(())
 }
 
-/// Wall-clock slice guard. WASM has no `Instant`; there the step budget alone
-/// bounds the slice, which is the pre-existing machine-window behavior.
+/// Wall-clock slice guard. `web_time::Instant` is `std::time::Instant` on
+/// native and `performance.now()` on wasm, so both targets honor the budget.
 struct SliceClock {
-    #[cfg(not(target_arch = "wasm32"))]
-    start: std::time::Instant,
+    start: web_time::Instant,
 }
 
 impl SliceClock {
     fn start() -> Self {
         Self {
-            #[cfg(not(target_arch = "wasm32"))]
-            start: std::time::Instant::now(),
+            start: web_time::Instant::now(),
         }
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     fn expired(&self, budget: Duration) -> bool {
         self.start.elapsed() >= budget
     }
 
-    #[cfg(target_arch = "wasm32")]
-    fn expired(&self, _budget: Duration) -> bool {
-        false
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
     fn elapsed_secs(&self) -> f64 {
         self.start.elapsed().as_secs_f64()
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    fn elapsed_secs(&self) -> f64 {
-        0.0
     }
 }
 
@@ -1371,6 +1384,19 @@ mod tests {
         let virt = live.read_virtual(USER_CODE_VA, 4);
         assert_ne!(virt, vec![0u8; 4], "instruction bytes visible via the MMU");
         assert_eq!(virt, live.read_physical(pa, 4), "walk matches physical");
+    }
+
+    // The teaching asm program boots bare-metal and exits through the ROM ecall
+    // handler; the session must reach Exited(0) without any hosted runtime.
+    #[test]
+    fn freestanding_asm_session_runs_to_exit() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("programs/teaching/01_sum/sum.build");
+        let manifest = crate::build::BuildManifest::from_file(path).expect("teaching manifest");
+        let artifacts = crate::build::BuildExecutor::build(&manifest).expect("asm build");
+        let mut live = LiveMachine::new_freestanding(&artifacts).expect("boot");
+        drive_to_completion(&mut live);
+        assert_eq!(live.state, MachineState::Exited(0));
     }
 
     #[test]

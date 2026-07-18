@@ -13,6 +13,13 @@ pub fn sample_workspace() -> io::Result<MemoryFs> {
     Ok(fs)
 }
 
+/// Build the in-memory teaching workspace: just the lessons and their run configs.
+pub fn teaching_workspace() -> io::Result<MemoryFs> {
+    let mut fs = MemoryFs::new();
+    populate_teaching_workspace(&mut fs)?;
+    Ok(fs)
+}
+
 /// Write the demo workspace tree into `fs`: canonical examples are refreshed,
 /// edits to the other materialized sources are preserved.
 pub fn populate_demo_workspace(fs: &mut dyn WorkspaceFs) -> io::Result<()> {
@@ -38,6 +45,36 @@ pub fn populate_demo_workspace(fs: &mut dyn WorkspaceFs) -> io::Result<()> {
     }
     write_bundle_state(fs, &current)?;
     Ok(())
+}
+
+/// Write the bundled teaching lessons into `fs` with the lesson folders at the
+/// workspace root, so each lesson shows only its source and `.build` file.
+pub fn populate_teaching_workspace(fs: &mut dyn WorkspaceFs) -> io::Result<()> {
+    write_missing(fs, "README.md", TEACHING_README)?;
+    write_missing(fs, ".fullstack/run.toml", &teaching_run_configs())?;
+    let previous = read_bundle_state(fs);
+    let mut current = Vec::new();
+    for (path, source) in crate::userspace::SOURCE_FILES {
+        let Some(local) = path.strip_prefix("programs/teaching/") else {
+            continue;
+        };
+        sync_bundled_file(fs, local, source, previous.get(local).copied(), false)?;
+        current.push((local.to_owned(), content_hash(source.as_bytes())));
+    }
+    write_bundle_state(fs, &current)?;
+    Ok(())
+}
+
+/// The teaching run.toml: one freestanding config per lesson, in lesson order.
+fn teaching_run_configs() -> String {
+    let mut store = RunConfigStore::default();
+    if let Ok(build) = VPath::parse("01_sum/sum.build") {
+        let mut config = RunConfig::hosted("01 sum: add 1..10 in assembly", build);
+        config.kind = RunKind::Freestanding;
+        config.run.present = PresentMode::Terminal;
+        store.configs.push(config);
+    }
+    store.to_toml()
 }
 
 /// The default run.toml: the kernel boot first, then one hosted config per
@@ -174,6 +211,14 @@ fn invalid_path(err: crate::workspace::PathError) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, err)
 }
 
+const TEACHING_README: &str = r#"# Teaching Lessons
+
+Small standalone programs for the written guide, one folder per lesson. Each
+lesson holds its source and its `.build` manifest, with a matching run
+configuration in `.fullstack/run.toml`. Natively this folder lives at
+`programs/teaching`; the browser opens the same tree in memory.
+"#;
+
 const SAMPLE_README: &str = r#"# Full-Stack Demo Workspace
 
 Real copies of the bundled kernel (and its linked modules), boot assembly, standard
@@ -222,6 +267,36 @@ mod tests {
         )
         .expect("utf-8 showcase");
         assert!(showcase.contains("dyn Measurable"));
+    }
+
+    #[test]
+    fn teaching_workspace_holds_lessons_and_a_ready_run_config() {
+        let fs = teaching_workspace().expect("teaching workspace");
+
+        for path in [
+            "README.md",
+            ".fullstack/run.toml",
+            "01_sum/sum.s",
+            "01_sum/sum.build",
+        ] {
+            assert!(
+                fs.read_file(&VPath::parse(path).expect("path")).is_ok(),
+                "missing {path}"
+            );
+        }
+        // Nothing from the demo tree leaks in; lessons stay easy to see.
+        assert!(
+            fs.read_file(&VPath::parse("crates/os-runtime/kernel/kernel.build").expect("path"))
+                .is_err()
+        );
+
+        let store = RunConfigStore::load(&fs).expect("run configs parse");
+        assert_eq!(store.configs.len(), 1);
+        assert_eq!(store.configs[0].kind, RunKind::Freestanding);
+        let crate::runconfig::BuildRef::Manifest(path) = &store.configs[0].build else {
+            panic!("teaching config must reference a manifest");
+        };
+        assert!(fs.read_file(path).is_ok(), "missing manifest {path}");
     }
 
     #[test]

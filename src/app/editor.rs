@@ -431,10 +431,12 @@ impl FullStackApp {
             SourceKind::Asm => Some(full_stack::highlight::highlight_assembly as Highlighter),
             SourceKind::Build | SourceKind::Elf | SourceKind::Other => None,
         };
+        // Stable salt: the pane keeps one scroll state while the pc hops files;
+        // the jump logic below repositions it on every followed move.
         let output = code_view(
             ui,
             CodeViewConfig {
-                id_salt: ("code_follow", file.clone()),
+                id_salt: "code_follow",
                 text: &text,
                 highlighter,
                 interactive: false,
@@ -513,6 +515,9 @@ impl FullStackApp {
             let mut open = true;
             egui::Window::new(title)
                 .id(egui::Id::new("machine_framebuffer_window"))
+                .order(egui::Order::Foreground)
+                .pivot(egui::Align2::CENTER_CENTER)
+                .default_pos(ctx.content_rect().center())
                 .default_size([FB_WIDTH as f32 * 1.5, FB_HEIGHT as f32 * 1.5])
                 .min_size([FB_WIDTH as f32, FB_HEIGHT as f32])
                 .open(&mut open)

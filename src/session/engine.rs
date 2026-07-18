@@ -188,6 +188,7 @@ impl<'a> SessionEngine<'a> {
                     .file_name()
                     .unwrap_or("program")
                     .trim_end_matches(".hll")
+                    .trim_end_matches(".s")
                     .to_owned();
                 let mut manifest = match target {
                     TargetMode::Kernel => BuildManifest::kernel(name.clone(), ""),
@@ -197,6 +198,9 @@ impl<'a> SessionEngine<'a> {
                 };
                 manifest.target = *target;
                 manifest.root = BuildSource::inline_with_path(name, source, root.as_str());
+                if crate::build::is_asm_path(root.as_str()) {
+                    manifest.apply_asm_root_defaults();
+                }
                 manifest
             }
         };

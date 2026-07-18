@@ -43,6 +43,38 @@ impl RvInstruction {
     }
 }
 
+/// Parse raw assembly text into labels/directives/instruction lines. With `file`
+/// set, instruction lines get `SourceLoc` markers for the pc-to-source table.
+pub fn parse_asm_source(file: Option<&str>, src: &str) -> Vec<RvInstruction> {
+    let mut out = Vec::new();
+    for (index, raw) in src.lines().enumerate() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
+            continue;
+        }
+        if let Some(name) = line.strip_suffix(':')
+            && !name.is_empty()
+            && !name.contains(|c: char| c.is_whitespace())
+        {
+            out.push(RvInstruction::Label(name.to_owned()));
+            continue;
+        }
+        if line.starts_with('.') {
+            out.push(RvInstruction::Directive(line.to_owned()));
+            continue;
+        }
+        if let Some(file) = file {
+            out.push(RvInstruction::SourceLoc {
+                file: file.to_owned(),
+                line: (index + 1) as u32,
+            });
+        }
+        // Leading tab marks an instruction line for the assembler's text parser.
+        out.push(RvInstruction::Directive(format!("\t{line}")));
+    }
+    out
+}
+
 impl fmt::Display for RvInstruction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

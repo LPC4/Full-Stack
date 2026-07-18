@@ -26,4 +26,5 @@ __pycache__/
 benches/
 src/bin/benchmark-runner.rs
 .github/workflows/benchmarks.yml
-teaching/
+/teaching/
+/programs/teaching/.fullstack/

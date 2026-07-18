@@ -102,7 +102,9 @@ fn collect_source_files(dir: &Path, manifest_dir: &Path, out: &mut Vec<SourceFil
         let embed = match ext {
             Some("hll") => true,
             Some("build" | "s") => {
-                key.starts_with("programs/user/") || key.starts_with("programs/example/")
+                key.starts_with("programs/user/")
+                    || key.starts_with("programs/example/")
+                    || key.starts_with("programs/teaching/")
             }
             _ => false,
         };

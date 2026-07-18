@@ -1,0 +1,20 @@
+# A .build file tells the IDE (and the fsc CLI) how to build and run a program.
+# Lines starting with `#` are comments.
+
+# Name used for the build artifacts (out/obj/sum.o, out/elf/sum.elf, ...).
+name = "sum"
+
+# Label shown in the run-configuration list.
+title = "01 sum: add 1..10 in assembly"
+
+# The source file to build, relative to this .build file. A `.s` root is raw
+# RISC-V assembly: it skips the compiler and goes straight to the assembler
+# and linker.
+root = "sum.s"
+
+# `freestanding` means no kernel and no standard library: just this file
+# running on the bare machine.
+target = "freestanding"
+
+# The symbol where execution starts.
+entry = "_start"

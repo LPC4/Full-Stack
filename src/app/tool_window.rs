@@ -2,11 +2,13 @@ use super::{FullStackApp, Tool, chrome, metrics};
 use crate::ui::theme;
 use eframe::egui;
 use egui::{Align2, FontId, Sense, pos2, vec2};
+use full_stack::build::is_asm_path;
 use full_stack::compilation_pipeline::TargetMode;
 use full_stack::runconfig::{
     BuildRef, FsMount, PresentMode, RunConfigSeverity, RunKind, name_conflicts,
     run_config_from_manifest, validate_config,
 };
+use full_stack::target_mode::infer_target_mode_for_source;
 use full_stack::workspace::VPath;
 
 impl FullStackApp {
@@ -50,6 +52,19 @@ impl FullStackApp {
 
         ui.add_space(metrics::SECTION_GAP);
         self.add_config_control(ui, &manifests);
+        chrome::indented(ui, |ui| {
+            if ui
+                .add(egui::Button::new(theme::mono(
+                    "+ config from current file",
+                    metrics::STATUS_TEXT_SIZE,
+                    theme::TEXT_DIM,
+                )))
+                .on_hover_text("Write a .build for the active file and add a run config for it")
+                .clicked()
+            {
+                self.add_config_for_active_file();
+            }
+        });
 
         if self.selected_config().is_some() {
             ui.add_space(metrics::SECTION_GAP);
@@ -91,6 +106,80 @@ impl FullStackApp {
                     self.status_message = Some(format!("add config failed: {err}"));
                 }
             }
+        }
+    }
+
+    /// One click from the active file to a runnable config: write a sibling
+    /// `.build` when the file has none, then add (or reselect) its run config.
+    pub(super) fn add_config_for_active_file(&mut self) {
+        let Some(path) = self.workspace.active_document().map(|d| d.path().clone()) else {
+            self.status_message = Some("open a source file to create a config".to_owned());
+            return;
+        };
+        let file = path.file_name().unwrap_or_default().to_owned();
+        let Some(stem) = file
+            .strip_suffix(".hll")
+            .or_else(|| file.strip_suffix(".s"))
+            .map(str::to_owned)
+        else {
+            self.status_message = Some("configs come from .hll or .s files".to_owned());
+            return;
+        };
+        let manifest_ref = format!("{stem}.build");
+        let manifest_path = match path.parent() {
+            Some(parent) => parent.join(&manifest_ref),
+            None => VPath::parse(&manifest_ref),
+        };
+        let Ok(manifest_path) = manifest_path else {
+            self.status_message = Some(format!("invalid manifest path {manifest_ref}"));
+            return;
+        };
+
+        if self.workspace.fs().metadata(&manifest_path).is_err() {
+            let target = if is_asm_path(&file) {
+                TargetMode::Freestanding
+            } else {
+                let source = self
+                    .workspace
+                    .document(&path)
+                    .map(|doc| doc.text().to_owned())
+                    .unwrap_or_default();
+                infer_target_mode_for_source(&source, false, TargetMode::Hosted)
+            };
+            let text = generated_manifest(&file, &stem, target);
+            if let Err(err) = self
+                .workspace
+                .fs_mut()
+                .write_file(&manifest_path, text.as_bytes())
+            {
+                self.status_message = Some(format!("writing {manifest_path} failed: {err}"));
+                return;
+            }
+            if let Err(err) = self.workspace.refresh_tree() {
+                self.status_message = Some(format!("refreshing the file tree failed: {err}"));
+            }
+            self.manifest_cache = None;
+        }
+
+        if let Some(idx) = self
+            .configs()
+            .iter()
+            .position(|c| matches!(&c.build, BuildRef::Manifest(p) if p == &manifest_path))
+        {
+            self.select_config(idx);
+            self.status_message = Some(format!("selected the existing config for {file}"));
+            return;
+        }
+        match run_config_from_manifest(self.workspace.fs(), manifest_path) {
+            Ok(config) => {
+                let name = config.name.clone();
+                self.workspace.run_configs_mut().configs.push(config);
+                let idx = self.configs().len() - 1;
+                self.persist_run_configs();
+                self.select_config(idx);
+                self.status_message = Some(format!("added run config {name}"));
+            }
+            Err(err) => self.status_message = Some(format!("add config failed: {err}")),
         }
     }
 
@@ -225,7 +314,7 @@ fn config_fields(
     });
     field_row(ui, "kind", |ui| {
         combo(ui, "cfg_kind", kind_tag(config.kind), |ui| {
-            for kind in [RunKind::Hosted, RunKind::KernelBoot] {
+            for kind in [RunKind::Hosted, RunKind::KernelBoot, RunKind::Freestanding] {
                 if combo_item(ui, kind_tag(kind), config.kind == kind) {
                     config.kind = kind;
                 }
@@ -431,6 +520,21 @@ pub(super) fn present_tag(mode: PresentMode) -> &'static str {
         PresentMode::Framebuffer => "framebuffer",
         PresentMode::Both => "both",
     }
+}
+
+/// A minimal `.build` for a bare source file; the teaching `sum.build`
+/// documents every field.
+fn generated_manifest(file: &str, stem: &str, target: TargetMode) -> String {
+    let target_tag = match target {
+        TargetMode::Hosted => "hosted",
+        TargetMode::Kernel => "kernel",
+        TargetMode::Freestanding => "freestanding",
+    };
+    let mut text = format!("name = \"{stem}\"\nroot = \"{file}\"\ntarget = \"{target_tag}\"\n");
+    if is_asm_path(file) {
+        text.push_str("entry = \"_start\"\n");
+    }
+    text
 }
 
 fn build_ref_label(config: &full_stack::runconfig::RunConfig) -> String {

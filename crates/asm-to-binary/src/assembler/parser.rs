@@ -293,6 +293,40 @@ fn parse_instruction_line(line: &str, out: &mut Vec<AsmToken>) {
             }
         }
 
+        // --- Swapped-operand branch pseudos: ble/bgt reuse bge/blt ---
+        "ble" | "bgt" => {
+            let kind = if mnemonic == "ble" {
+                BranchKind::Bge
+            } else {
+                BranchKind::Blt
+            };
+            if let Some(AsmToken::Branch {
+                kind,
+                rs1,
+                rs2,
+                target,
+            }) = parse_branch(kind, rest)
+            {
+                out.push(AsmToken::Branch {
+                    kind,
+                    rs1: rs2,
+                    rs2: rs1,
+                    target,
+                });
+            } else {
+                asm_warn!(out, "unrecognised {mnemonic}: {line}");
+            }
+        }
+
+        // --- Compare-with-zero branch pseudos ---
+        "blez" | "bgez" | "bltz" | "bgtz" => {
+            if let Some(tok) = parse_branch_vs_zero(mnemonic, rest) {
+                out.push(tok);
+            } else {
+                asm_warn!(out, "unrecognised {mnemonic}: {line}");
+            }
+        }
+
         // --- Zero-register branch pseudos ---
         "beqz" => {
             if let Some(tok) = parse_branch_zero(BranchKind::Beq, rest) {
@@ -549,6 +583,30 @@ fn parse_la(operands: &str) -> Option<AsmToken> {
     }
 }
 
+/// Parse `rs, label` for a compare-with-zero branch pseudo (`blez`/`bgez`/`bltz`/`bgtz`),
+/// expanding to the spec's `bge`/`blt` form against x0.
+fn parse_branch_vs_zero(mnemonic: &str, operands: &str) -> Option<AsmToken> {
+    let comma = operands.find(',')?;
+    let rs = parse_int_reg(operands[..comma].trim())?;
+    let target = operands[comma + 1..].trim().to_owned();
+    if target.is_empty() {
+        return None;
+    }
+    let (kind, rs1, rs2) = match mnemonic {
+        "blez" => (BranchKind::Bge, 0, rs), // rs <= 0  ==  0 >= rs
+        "bgez" => (BranchKind::Bge, rs, 0),
+        "bltz" => (BranchKind::Blt, rs, 0),
+        "bgtz" => (BranchKind::Blt, 0, rs), // rs > 0  ==  0 < rs
+        _ => return None,
+    };
+    Some(AsmToken::Branch {
+        kind,
+        rs1,
+        rs2,
+        target,
+    })
+}
+
 /// Parse `rs, label` for a zero-register branch (`beqz`/`bnez`).
 /// Expands to `beq/bne rs, x0, label`.
 fn parse_branch_zero(kind: BranchKind, operands: &str) -> Option<AsmToken> {
@@ -721,6 +779,41 @@ mod tests {
         assert_eq!((word >> 15) & 0x1f, 7, "rs1");
         assert_eq!((word >> 20) & 0x1f, 28, "rs2");
         assert_eq!((word >> 25) & 0x7f, 0x01, "funct7 (M extension)");
+    }
+
+    // `ble rs1, rs2, L` is the spec pseudo for `bge rs2, rs1, L` (operands swapped).
+    #[test]
+    fn ble_expands_to_bge_with_swapped_operands() {
+        let mut out = Vec::new();
+        parse_instruction_line("ble t1, t2, loop", &mut out);
+        match out.as_slice() {
+            [
+                AsmToken::Branch {
+                    kind: super::BranchKind::Bge,
+                    rs1: 7,
+                    rs2: 6,
+                    target,
+                },
+            ] => assert_eq!(target, "loop"),
+            other => panic!("expected swapped bge branch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn bgtz_expands_to_blt_against_zero() {
+        let mut out = Vec::new();
+        parse_instruction_line("bgtz a0, done", &mut out);
+        match out.as_slice() {
+            [
+                AsmToken::Branch {
+                    kind: super::BranchKind::Blt,
+                    rs1: 0,
+                    rs2: 10,
+                    target,
+                },
+            ] => assert_eq!(target, "done"),
+            other => panic!("expected blt-vs-zero branch, got {other:?}"),
+        }
     }
 
     #[test]

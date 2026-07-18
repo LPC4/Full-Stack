@@ -218,9 +218,12 @@ impl SystemBus {
             crate::memory::cache::CacheStats,
         )>,
     ) {
-        let cycles = if !self.memory_latency.enabled {
-            1
-        } else if addr < RAM_BASE {
+        // Disabled = historical one-cycle model: never accumulate, so multi-access
+        // windows (page walks, misaligned splits) add no stall cycles.
+        if !self.memory_latency.enabled {
+            return;
+        }
+        let cycles = if addr < RAM_BASE {
             self.memory_latency.uncached
         } else if let Some((l1_before, l2_before, l3_before)) = before {
             let (l1_after, l2_after, l3_after) = self.get_cache_stats();

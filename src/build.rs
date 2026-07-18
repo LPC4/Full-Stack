@@ -97,6 +97,14 @@ impl BuildManifest {
         manifest
     }
 
+    /// Defaults for a raw-assembly root: no stdlib (the hosted runtime glue would
+    /// collide on `_start`), no import closure, no HLL ABI exports.
+    pub fn apply_asm_root_defaults(&mut self) {
+        self.stdlib = StdlibPolicy::None;
+        self.import_closure = ImportClosurePolicy::Disabled;
+        self.abi_exports.clear();
+    }
+
     pub fn from_file(path: impl Into<PathBuf>) -> Result<Self, BuildError> {
         let path = path.into();
         let text = fs::read_to_string(&path).map_err(BuildError::Io)?;
@@ -126,13 +134,17 @@ impl BuildManifest {
         };
         manifest.target = target;
         manifest.name = name.clone();
+        let asm_root = is_asm_path(&root_path.to_string_lossy());
         manifest.root = BuildSource::path(name, root_path);
+        if asm_root {
+            manifest.apply_asm_root_defaults();
+        }
         manifest.entry = values.string("entry");
         manifest.stdlib = values
             .get("stdlib")
             .map(|value| parse_stdlib_policy(value, target))
             .transpose()?
-            .unwrap_or(StdlibPolicy::ForTarget);
+            .unwrap_or(manifest.stdlib);
 
         if let Some(enabled) = values.bool("import_closure").map_err(manifest_error)? {
             manifest.import_closure = if enabled {
@@ -343,23 +355,29 @@ impl BuildExecutor {
         let mut pipeline = Self::pipeline_for(manifest);
         pipeline.set_current_source_path(root.source_path.clone());
 
-        match manifest.import_closure {
-            ImportClosurePolicy::Enabled { mangle_symbols } => {
-                pipeline.set_module_mangling(mangle_symbols);
-                for (name, mut assembled) in pipeline
-                    .compile_program_closure(&root.name, &root.source)
-                    .map_err(BuildError::Compile)?
-                {
-                    if name == root.name {
-                        Self::mark_abi_exports(manifest, &mut assembled);
+        if root.is_asm() {
+            let mut unit = Self::assemble_asm_root(&mut pipeline, &root)?;
+            Self::mark_abi_exports(manifest, &mut unit.assembled);
+            units.push(unit);
+        } else {
+            match manifest.import_closure {
+                ImportClosurePolicy::Enabled { mangle_symbols } => {
+                    pipeline.set_module_mangling(mangle_symbols);
+                    for (name, mut assembled) in pipeline
+                        .compile_program_closure(&root.name, &root.source)
+                        .map_err(BuildError::Compile)?
+                    {
+                        if name == root.name {
+                            Self::mark_abi_exports(manifest, &mut assembled);
+                        }
+                        units.push(BuiltUnit { name, assembled });
                     }
-                    units.push(BuiltUnit { name, assembled });
                 }
-            }
-            ImportClosurePolicy::Disabled => {
-                let mut root_unit = Self::compile_one(&mut pipeline, &root)?;
-                Self::mark_abi_exports(manifest, &mut root_unit.assembled);
-                units.push(root_unit);
+                ImportClosurePolicy::Disabled => {
+                    let mut root_unit = Self::compile_one(&mut pipeline, &root)?;
+                    Self::mark_abi_exports(manifest, &mut root_unit.assembled);
+                    units.push(root_unit);
+                }
             }
         }
 
@@ -444,6 +462,27 @@ impl BuildExecutor {
             StdlibPolicy::Explicit(mode) => mode,
         };
         CompilationPipeline::compile_stdlib_objects(mode).map_err(BuildError::Compile)
+    }
+
+    /// Assemble a raw `.s` root directly, skipping the HLL pipeline. The source
+    /// path feeds the pc-to-source line table so the debugger maps back to it.
+    fn assemble_asm_root(
+        pipeline: &mut CompilationPipeline,
+        source: &LoadedSource,
+    ) -> Result<BuiltUnit, BuildError> {
+        let file = source
+            .source_path
+            .as_ref()
+            .map(|path| path.to_string_lossy().replace('\\', "/"));
+        let tokens = asm_to_binary::parse_asm_source(file.as_deref(), &source.source);
+        pipeline.set_artifact_stem(Some(source.name.clone()));
+        let assembled = pipeline
+            .assemble_named(&source.name, &tokens)
+            .map_err(|err| BuildError::Assemble(err.message))?;
+        Ok(BuiltUnit {
+            name: source.name.clone(),
+            assembled,
+        })
     }
 
     fn compile_one(
@@ -572,6 +611,11 @@ fn parse_stdlib_policy(value: &str, target: TargetMode) -> Result<StdlibPolicy, 
     }
 }
 
+/// True for root paths that are raw assembly rather than HLL.
+pub fn is_asm_path(path: &str) -> bool {
+    path.ends_with(".s")
+}
+
 fn resolve_manifest_path(base_dir: &std::path::Path, path: &str) -> PathBuf {
     let path = PathBuf::from(path);
     if path.is_absolute() {
@@ -586,6 +630,15 @@ struct LoadedSource {
     name: String,
     source: String,
     source_path: Option<PathBuf>,
+}
+
+impl LoadedSource {
+    fn is_asm(&self) -> bool {
+        self.source_path
+            .as_ref()
+            .is_some_and(|path| is_asm_path(&path.to_string_lossy()))
+            || is_asm_path(&self.name)
+    }
 }
 
 #[cfg(test)]
@@ -726,6 +779,37 @@ export value: () -> i32 {
                 out.push(path);
             }
         }
+    }
+
+    // The teaching manifest exercises the raw-asm root path end to end: parse,
+    // assemble, link, then run to the exit ecall on a bare VM.
+    #[test]
+    fn file_manifest_builds_and_runs_teaching_asm_sum() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("programs/teaching/01_sum/sum.build");
+        let manifest = BuildManifest::from_file(path).expect("parse teaching build file");
+        assert_eq!(manifest.target, TargetMode::Freestanding);
+        assert_eq!(manifest.stdlib, StdlibPolicy::None);
+        assert_eq!(manifest.import_closure, ImportClosurePolicy::Disabled);
+        assert_eq!(manifest.entry.as_deref(), Some("_start"));
+
+        let artifacts = BuildExecutor::build(&manifest).expect("assemble + link asm root");
+        assert!(artifacts.linked.has_symbol("_start"));
+        assert!(
+            artifacts.units.iter().all(|unit| unit.name == "sum"),
+            "asm root should link without stdlib objects"
+        );
+
+        let mut vm = virtual_machine::virtual_machine::VirtualMachine::new(&artifacts.linked);
+        let result = vm.run(10_000);
+        assert!(
+            matches!(
+                result.outcome,
+                virtual_machine::virtual_machine::StepOutcome::Halted(0)
+            ),
+            "sum.s should reach the exit ecall cleanly: {:?}",
+            result.outcome
+        );
     }
 
     #[test]

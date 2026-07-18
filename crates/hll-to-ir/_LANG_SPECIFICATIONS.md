@@ -13,8 +13,6 @@ predecessor dialect; that dialect and its compiler mode no longer exist.
 
 HLL enforces a consistent pointer and place model.
 
-### 1.1 The golden rules
-
 1. Pointers are always pointers. If a type contains `*`, it is a pointer type. There are no
    implicit conversions between `T` and `T*`.
 2. Indexing and fields produce places, not pointers. `seq[i]` is an assignable element place

@@ -41,4 +41,4 @@ pub use assembler::output::{
 pub use assembler::reg_parse::parse_int_reg;
 pub use assembler::{Assembler, AssemblerError};
 pub use object_linker::{LinkerError, ObjectLinker};
-pub use rv_instruction::RvInstruction;
+pub use rv_instruction::{RvInstruction, parse_asm_source};

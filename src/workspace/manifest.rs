@@ -26,6 +26,7 @@ pub fn load_build_manifest(
             .file_name()
             .unwrap_or("program")
             .trim_end_matches(".hll")
+            .trim_end_matches(".s")
             .to_owned()
     });
     let target = values
@@ -42,13 +43,16 @@ pub fn load_build_manifest(
     manifest.name = name.clone();
     manifest.target = target;
     manifest.root = BuildSource::inline_with_path(name, root_source, root_path.as_str());
+    if crate::build::is_asm_path(root_path.as_str()) {
+        manifest.apply_asm_root_defaults();
+    }
     manifest.entry = values.string("entry");
     manifest.stdlib = values
         .get("stdlib")
         .map(|value| parse_stdlib_policy(value, target))
         .transpose()
         .map_err(|err| vec![diagnostic(err)])?
-        .unwrap_or(StdlibPolicy::ForTarget);
+        .unwrap_or(manifest.stdlib);
 
     if let Some(enabled) = values
         .bool("import_closure")
@@ -190,6 +194,28 @@ mod tests {
             }
             BuildSource::Path { .. } => panic!("workspace roots should be inlined"),
         }
+    }
+
+    #[test]
+    fn asm_root_defaults_to_no_stdlib_and_no_closure() {
+        let mut fs = MemoryFs::new();
+        fs.write_text(
+            &VPath::parse("t/sum.build").expect("path"),
+            "root = \"sum.s\"\ntarget = \"freestanding\"\nentry = \"_start\"\n",
+        )
+        .expect("write manifest");
+        fs.write_text(
+            &VPath::parse("t/sum.s").expect("path"),
+            ".globl _start\n_start:\n  li a0, 0\n",
+        )
+        .expect("write source");
+
+        let manifest =
+            load_build_manifest(&fs, &VPath::parse("t/sum.build").expect("path")).expect("parse");
+        assert_eq!(manifest.name, "sum");
+        assert_eq!(manifest.stdlib, StdlibPolicy::None);
+        assert_eq!(manifest.import_closure, ImportClosurePolicy::Disabled);
+        assert!(manifest.abi_exports.is_empty());
     }
 
     #[test]

@@ -4,7 +4,7 @@
 //! and loads the resulting bytes into the ROM region.
 
 use asm_to_binary::assembler::Assembler;
-use asm_to_binary::rv_instruction::RvInstruction;
+use asm_to_binary::parse_asm_source;
 
 /// ROM base address. `_start` lives here.
 pub const ROM_BASE: u64 = 0x0000_0000;
@@ -24,28 +24,10 @@ pub mod syscall_numbers {
     pub const SYS_PRINTF: u64 = 1002;
 }
 
-fn parse_asm_text(src: &str) -> Vec<RvInstruction> {
-    src.lines()
-        .map(|l| l.trim())
-        .filter(|l| !l.is_empty() && !l.starts_with('#'))
-        .map(|l| {
-            if let Some(name) = l.strip_suffix(':') {
-                RvInstruction::Label(name.to_owned())
-            } else if l.starts_with('.') {
-                RvInstruction::Directive(l.to_owned())
-            } else {
-                RvInstruction::Directive(format!("\t{l}"))
-            }
-        })
-        .collect()
-}
-
-/// Assemble the ROM firmware and return the raw bytes.
-///
-/// # Panics
-/// Panics if the assembler rejects `os_runtime::ROM_SOURCE`.
+/// Assemble the ROM firmware and return the raw bytes; panics if the
+/// assembler rejects `os_runtime::ROM_SOURCE`.
 pub fn generate_rom_image() -> Vec<u8> {
-    let tokens = parse_asm_text(os_runtime::ROM_SOURCE);
+    let tokens = parse_asm_source(None, os_runtime::ROM_SOURCE);
     let output = Assembler::assemble(&tokens)
         .expect("ROM assembly failed - check crates/os-runtime/boot/rom.s");
     output.text_bytes().to_vec()
