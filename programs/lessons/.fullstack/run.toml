@@ -8,7 +8,7 @@ debug = false
 breakpoint = "loop"
 
 [[config]]
-name = "02 array sum: sum an array from memory"
+name = "02 array sum: sum array from memory"
 type = "freestanding"
 build = "02_array_sum/array_sum.build"
 present = "terminal"
@@ -24,7 +24,7 @@ max_steps_per_frame = 200000
 debug = false
 
 [[config]]
-name = "03 reverse array (solution): reverse an array in place"
+name = "03 reverse array (solution)"
 type = "freestanding"
 build = "03_reverse_array/reverse_array.build"
 present = "terminal"
@@ -41,7 +41,7 @@ debug = false
 breakpoint = "max"
 
 [[config]]
-name = "04 max3: stack frames for nested calls"
+name = "04 max3: stack frames"
 type = "freestanding"
 build = "04_functions/max3.build"
 present = "terminal"
@@ -49,7 +49,7 @@ max_steps_per_frame = 200000
 debug = false
 
 [[config]]
-name = "05 factorial (stack frames): recursive factorial with a frame pointer"
+name = "05 factorial (stack frames): factorial with fp"
 type = "freestanding"
 build = "05_stack_frames/factorial_stack.build"
 present = "terminal"
@@ -66,7 +66,7 @@ max_steps_per_frame = 200000
 debug = false
 
 [[config]]
-name = "05 sum of squares (solution): square(a) + square(b)"
+name = "05 sum of squares (solution)"
 type = "freestanding"
 build = "05_stack_frames/sum_of_squares.build"
 present = "terminal"
@@ -75,7 +75,7 @@ debug = true
 breakpoint = "sos"
 
 [[config]]
-name = "06 hello (raw): write bytes straight to the UART"
+name = "06 hello (raw): write to UART"
 type = "freestanding"
 build = "06_uart/hello_raw.build"
 present = "terminal"
@@ -83,7 +83,7 @@ max_steps_per_frame = 200000
 debug = false
 
 [[config]]
-name = "06 print_char: wrap the UART write in a function"
+name = "06 print_char: wrap the UART write"
 type = "freestanding"
 build = "06_uart/print_char.build"
 present = "terminal"
@@ -91,7 +91,7 @@ max_steps_per_frame = 200000
 debug = true
 
 [[config]]
-name = "06 print_string: printing a whole string"
+name = "06 print_string: hello world"
 type = "freestanding"
 build = "06_uart/print_string.build"
 present = "terminal"

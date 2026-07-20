@@ -68,52 +68,82 @@ pub fn populate_lessons_workspace(fs: &mut dyn WorkspaceFs) -> io::Result<()> {
 /// The lessons run.toml: one freestanding config per lesson, in lesson order.
 fn lesson_run_configs() -> String {
     let mut store = RunConfigStore::default();
+    // Titles mirror the `title` field of each lesson's .build manifest.
     let lessons = [
-        ("01 sum: add 1..10 in assembly", "01_sum/sum.build", "loop"),
         (
-            "02 array sum: sum an array from memory",
+            "01 sum: add 1..10 in assembly",
+            "01_sum/sum.build",
+            "loop",
+            false,
+        ),
+        (
+            "02 array sum: sum array from memory",
             "02_array_sum/array_sum.build",
             "",
+            false,
         ),
         (
             "03 reverse array (template): your turn",
             "03_reverse_array/reverse_array_template.build",
             "",
+            false,
         ),
         (
-            "03 reverse array (solution): reverse an array in place",
+            "03 reverse array (solution)",
             "03_reverse_array/reverse_array.build",
             "",
+            false,
         ),
         (
             "04 max: call a leaf function",
             "04_functions/max.build",
             "max",
+            false,
         ),
         (
-            "04 max3: stack frames for nested calls",
+            "04 max3: stack frames",
             "04_functions/max3.build",
             "",
+            false,
         ),
         (
-            "05 factorial (stack frames): recursive factorial with a frame pointer",
+            "05 factorial (stack frames): factorial with fp",
             "05_stack_frames/factorial_stack.build",
             "fact",
+            true,
         ),
         (
             "05 sum of squares (template): your turn",
             "05_stack_frames/sum_of_squares_template.build",
             "",
+            false,
         ),
         (
-            "05 sum of squares (solution): square(a) + square(b)",
+            "05 sum of squares (solution)",
             "05_stack_frames/sum_of_squares.build",
             "sos",
+            true,
+        ),
+        (
+            "06 hello (raw): write to UART",
+            "06_uart/hello_raw.build",
+            "",
+            false,
+        ),
+        (
+            "06 print_char: wrap the UART write",
+            "06_uart/print_char.build",
+            "",
+            true,
+        ),
+        (
+            "06 print_string: hello world",
+            "06_uart/print_string.build",
+            "",
+            true,
         ),
     ];
-    // The frame lessons open in the debugger; the earlier ones just run.
-    let opens_in_debugger = ["fact", "sos"];
-    for (title, build, breakpoint) in lessons {
+    for (title, build, breakpoint, debug) in lessons {
         let Ok(build) = VPath::parse(build) else {
             continue;
         };
@@ -122,8 +152,8 @@ fn lesson_run_configs() -> String {
         config.run.present = PresentMode::Terminal;
         if !breakpoint.is_empty() {
             config.debug.breakpoints.push(breakpoint.to_owned());
-            config.debug.enabled = opens_in_debugger.contains(&breakpoint);
         }
+        config.debug.enabled = debug;
         store.configs.push(config);
     }
     store.to_toml()
@@ -359,7 +389,7 @@ mod tests {
         );
 
         let store = RunConfigStore::load(&fs).expect("run configs parse");
-        assert_eq!(store.configs.len(), 9);
+        assert_eq!(store.configs.len(), 12);
         for config in &store.configs {
             assert_eq!(config.kind, RunKind::Freestanding);
             let crate::runconfig::BuildRef::Manifest(path) = &config.build else {
