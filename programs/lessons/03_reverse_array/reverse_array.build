@@ -1,0 +1,7 @@
+# See 01_sum/sum.build for what each field means.
+
+name = "reverse_array"
+title = "03 reverse array (solution)"
+root = "reverse_array.s"
+target = "freestanding"
+entry = "_start"

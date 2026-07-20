@@ -127,6 +127,22 @@ mod tests {
     }
 
     #[test]
+    fn directive_asciz_drops_trailing_comment() {
+        assert_eq!(
+            Directive::parse(r#".asciz "hi\n"   # a trailing "quoted" note"#),
+            Some(Directive::Asciz("hi\n".to_owned()))
+        );
+    }
+
+    #[test]
+    fn directive_string_keeps_comment_chars_inside_literal() {
+        assert_eq!(
+            Directive::parse(r#".string "a # b ; c""#),
+            Some(Directive::Asciz("a # b ; c".to_owned()))
+        );
+    }
+
+    #[test]
     fn directive_parse_numeric_data() {
         assert_eq!(Directive::parse(".byte 42"), Some(Directive::Byte(42)));
         assert_eq!(Directive::parse(".word 0"), Some(Directive::Word(0)));

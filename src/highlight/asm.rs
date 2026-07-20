@@ -225,36 +225,47 @@ pub fn highlight_assembly(theme: &egui::Style, code: &str) -> LayoutJob {
             (segment, false)
         };
 
-        // Whole-line comment (; ...)
-        if line.trim_start().starts_with(';') {
-            job.append(
-                line,
-                0.0,
-                egui::TextFormat {
-                    font_id: font_id.clone(),
-                    color: palette.comment,
-                    ..Default::default()
-                },
-            );
-            if has_newline {
-                job.append(
-                    "\n",
-                    0.0,
-                    egui::TextFormat {
-                        font_id: font_id.clone(),
-                        ..Default::default()
-                    },
-                );
-            }
-            continue;
-        }
-
         let mut start = 0;
         let bytes = line.as_bytes();
         let len = bytes.len();
 
         while start < len {
             let mut end = start;
+
+            // Comment (# or ;): everything to the end of the line, one color.
+            if bytes[start] == b'#' || bytes[start] == b';' {
+                job.append(
+                    &line[start..],
+                    0.0,
+                    egui::TextFormat {
+                        font_id: font_id.clone(),
+                        color: palette.comment,
+                        ..Default::default()
+                    },
+                );
+                break;
+            }
+
+            // String literal: consume through the closing quote so a # or ;
+            // inside it is not mistaken for a comment.
+            if bytes[start] == b'"' {
+                end += 1;
+                while end < len && bytes[end] != b'"' {
+                    end += if bytes[end] == b'\\' { 2 } else { 1 };
+                }
+                end = (end + 1).min(len);
+                job.append(
+                    &line[start..end],
+                    0.0,
+                    egui::TextFormat {
+                        font_id: font_id.clone(),
+                        color: palette.string,
+                        ..Default::default()
+                    },
+                );
+                start = end;
+                continue;
+            }
 
             // Skip leading whitespace
             if bytes[start].is_ascii_whitespace() {

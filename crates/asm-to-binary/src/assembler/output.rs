@@ -220,6 +220,18 @@ impl AssembledOutput {
             .map(|e| e.addr)
             .min()
     }
+
+    /// Lowest code address on the first line at or after `line` in `file`, so
+    /// label, blank, and comment lines resolve to the code that follows them.
+    pub fn addr_for_source_at_or_after(&self, file: &str, line: u32) -> Option<u64> {
+        let file_id = self.file_table.iter().position(|f| f == file)? as u32;
+        self.line_table
+            .iter()
+            .filter(|e| e.file_id == file_id && e.line >= line && e.line != 0)
+            .map(|e| (e.line, e.addr))
+            .min()
+            .map(|(_, addr)| addr)
+    }
 }
 
 // --- ELF-64 generation (RISC-V little-endian) ---
@@ -1114,5 +1126,45 @@ impl std::fmt::Display for AssembledOutput {
             writeln!(f, "  {addr:#010x}  {name}{marker}")?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn addr_for_source_at_or_after_slides_to_next_code_line() {
+        let mut out = AssembledOutput::new();
+        let file_id = out.intern_file("a.s");
+        out.line_table = vec![
+            LineEntry {
+                addr: 8,
+                file_id,
+                line: 3,
+            },
+            LineEntry {
+                addr: 12,
+                file_id,
+                line: 5,
+            },
+            LineEntry {
+                addr: 20,
+                file_id,
+                line: 5,
+            },
+            // Module-end sentinel: never a valid target.
+            LineEntry {
+                addr: 24,
+                file_id,
+                line: 0,
+            },
+        ];
+
+        assert_eq!(out.addr_for_source_at_or_after("a.s", 1), Some(8));
+        assert_eq!(out.addr_for_source_at_or_after("a.s", 3), Some(8));
+        assert_eq!(out.addr_for_source_at_or_after("a.s", 4), Some(12));
+        assert_eq!(out.addr_for_source_at_or_after("a.s", 6), None);
+        assert_eq!(out.addr_for_source_at_or_after("b.s", 1), None);
     }
 }

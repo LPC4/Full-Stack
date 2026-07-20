@@ -1,0 +1,7 @@
+# See 01_sum/sum.build for what each field means.
+
+name = "hello_raw"
+title = "06 hello (raw): write to UART"
+root = "hello_raw.s"
+target = "freestanding"
+entry = "_start"

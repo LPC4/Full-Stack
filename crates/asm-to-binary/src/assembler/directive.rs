@@ -57,17 +57,33 @@ impl Directive {
 }
 
 /// Strip the surrounding `"..."` from a quoted string directive argument.
+/// Anything after the closing quote is a trailing comment and is discarded.
 fn parse_quoted_string(s: &str) -> String {
     let s = s.trim();
-    if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
-        let inner = &s[1..s.len() - 1];
-        inner
-            .replace("\\n", "\n")
-            .replace("\\t", "\t")
-            .replace("\\r", "\r")
-            .replace("\\\"", "\"")
-            .replace("\\\\", "\\")
-    } else {
-        s.to_owned()
+    let Some(body) = s.strip_prefix('"') else {
+        return s.to_owned();
+    };
+    let Some(close) = find_closing_quote(body) else {
+        return s.to_owned();
+    };
+    body[..close]
+        .replace("\\n", "\n")
+        .replace("\\t", "\t")
+        .replace("\\r", "\r")
+        .replace("\\\"", "\"")
+        .replace("\\\\", "\\")
+}
+
+/// Byte index of the first unescaped `"` in an already-opened string literal.
+fn find_closing_quote(body: &str) -> Option<usize> {
+    let mut escaped = false;
+    for (i, c) in body.char_indices() {
+        match c {
+            _ if escaped => escaped = false,
+            '\\' => escaped = true,
+            '"' => return Some(i),
+            _ => {}
+        }
     }
+    None
 }

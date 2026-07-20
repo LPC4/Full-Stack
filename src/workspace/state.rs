@@ -1,7 +1,7 @@
 use crate::runconfig::RunConfigStore;
 use crate::workspace::{
     Document, EntryKind, MemoryFs, VPath, WorkspaceFs, WorkspaceManifestDiagnostic, WorkspaceTree,
-    load_build_manifest, sample_workspace, teaching_workspace,
+    lessons_workspace, load_build_manifest, sample_workspace,
 };
 use std::collections::BTreeMap;
 use std::io;
@@ -43,8 +43,8 @@ impl IdeWorkspace {
         Self::new(Box::new(sample_workspace()?))
     }
 
-    pub fn teaching() -> io::Result<Self> {
-        Self::new(Box::new(teaching_workspace()?))
+    pub fn lessons() -> io::Result<Self> {
+        Self::new(Box::new(lessons_workspace()?))
     }
 
     pub fn fs(&self) -> &dyn WorkspaceFs {

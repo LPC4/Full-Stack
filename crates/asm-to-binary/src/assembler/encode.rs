@@ -101,7 +101,19 @@ pub fn encode(tokens: &[AsmToken], layout: &Layout) -> Result<AssembledOutput, A
                 target,
             } => {
                 record_line(&mut out, current_addr, current_loc);
-                let word = encode_branch(kind, *rs1, *rs2, target, current_addr, &layout.symbols)?;
+                // Branch targets are same-section; compare section-local
+                // addresses so a section emitted earlier can't skew offsets.
+                let site_local =
+                    current_addr - section_bases.get(&current_kind).copied().unwrap_or(0);
+                let word = encode_branch(
+                    kind,
+                    *rs1,
+                    *rs2,
+                    target,
+                    site_local,
+                    current_kind.name(),
+                    &layout.symbols,
+                )?;
                 push_u32(
                     sections
                         .entry(current_kind.clone())
@@ -112,10 +124,18 @@ pub fn encode(tokens: &[AsmToken], layout: &Layout) -> Result<AssembledOutput, A
             }
             AsmToken::Jal { rd, target } => {
                 record_line(&mut out, current_addr, current_loc);
+                let site_local =
+                    current_addr - section_bases.get(&current_kind).copied().unwrap_or(0);
                 let sec = sections
                     .entry(current_kind.clone())
                     .or_insert_with(|| SectionData::new(current_kind.clone()));
-                if let Ok(word) = encode_jal(*rd, target, current_addr, &layout.symbols) {
+                if let Ok(word) = encode_jal(
+                    *rd,
+                    target,
+                    site_local,
+                    current_kind.name(),
+                    &layout.symbols,
+                ) {
                     push_u32(sec, word, &mut current_addr);
                 } else {
                     let reloc_offset = sec.current_offset();
@@ -265,19 +285,31 @@ pub fn encode(tokens: &[AsmToken], layout: &Layout) -> Result<AssembledOutput, A
 
 // --- Branch and jump encoding helpers ---
 
+/// Layout symbols are section-relative; prefer the section-qualified entry so
+/// same-named labels in other sections can't shadow the local one.
+fn resolve_section_local(
+    target: &str,
+    section_name: &str,
+    symbols: &super::symbol_table::SymbolTable,
+) -> Option<u64> {
+    symbols
+        .resolve(&format!("{target}@{section_name}"))
+        .or_else(|| symbols.resolve(target))
+}
+
 fn encode_branch(
     kind: &BranchKind,
     rs1: u8,
     rs2: u8,
     target: &str,
-    current_addr: u64,
+    site_local: u64,
+    section_name: &str,
     symbols: &super::symbol_table::SymbolTable,
 ) -> Result<u32, AssemblerError> {
-    let target_addr = symbols
-        .resolve(target)
+    let target_addr = resolve_section_local(target, section_name, symbols)
         .ok_or_else(|| AssemblerError::new(format!("undefined label `{target}`")))?;
 
-    let offset = (target_addr as i64) - (current_addr as i64);
+    let offset = (target_addr as i64) - (site_local as i64);
     if offset & 1 != 0 {
         return Err(AssemblerError::new(format!(
             "branch to `{target}` has odd offset {offset}"
@@ -304,14 +336,14 @@ fn encode_branch(
 fn encode_jal(
     rd: u8,
     target: &str,
-    current_addr: u64,
+    site_local: u64,
+    section_name: &str,
     symbols: &super::symbol_table::SymbolTable,
 ) -> Result<u32, AssemblerError> {
-    let target_addr = symbols
-        .resolve(target)
+    let target_addr = resolve_section_local(target, section_name, symbols)
         .ok_or_else(|| AssemblerError::new(format!("undefined label `{target}`")))?;
 
-    let offset = (target_addr as i64) - (current_addr as i64);
+    let offset = (target_addr as i64) - (site_local as i64);
     if offset & 1 != 0 {
         return Err(AssemblerError::new(format!(
             "jump to `{target}` has odd offset {offset}"

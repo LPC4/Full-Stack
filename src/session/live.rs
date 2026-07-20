@@ -569,6 +569,14 @@ impl LiveMachine {
             .map(Self::runtime_address)
     }
 
+    /// Like `pc_for_source`, but slides forward to the next line of `file`
+    /// that carries code, so labels and blank lines are valid targets.
+    pub fn pc_at_or_after_source(&self, file: &str, line: u32) -> Option<u64> {
+        self.symbols
+            .addr_for_source_at_or_after(file, line)
+            .map(Self::runtime_address)
+    }
+
     /// Best-effort call stack: the live pc, then return addresses found via ra
     /// and a bounded stack scan (there is no fp chain to walk).
     pub fn call_stack(&self, max_frames: usize) -> Vec<u64> {
@@ -1386,14 +1394,26 @@ mod tests {
         assert_eq!(virt, live.read_physical(pa, 4), "walk matches physical");
     }
 
-    // The teaching asm program boots bare-metal and exits through the ROM ecall
-    // handler; the session must reach Exited(0) without any hosted runtime.
+    // A raw-asm root boots bare-metal and exits through the ROM ecall handler;
+    // the session must reach Exited(0) without any hosted runtime.
     #[test]
     fn freestanding_asm_session_runs_to_exit() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("programs/teaching/01_sum/sum.build");
-        let manifest = crate::build::BuildManifest::from_file(path).expect("teaching manifest");
-        let artifacts = crate::build::BuildExecutor::build(&manifest).expect("asm build");
+        let mut fs = MemoryFs::new();
+        fs.write_text(
+            &VPath::parse("asm/exit.build").expect("path"),
+            "name = \"exit\"\ntarget = \"freestanding\"\nroot = \"exit.s\"\nentry = \"_start\"\n",
+        )
+        .expect("write manifest");
+        fs.write_text(
+            &VPath::parse("asm/exit.s").expect("path"),
+            ".globl _start\n_start:\n  li a0, 0\n  li a7, 93\n  ecall\n",
+        )
+        .expect("write source");
+        let config = RunConfig::hosted("Exit", VPath::parse("asm/exit.build").expect("path"));
+        let artifacts = SessionEngine::new(&fs)
+            .build_config(&config)
+            .expect("build config")
+            .artifacts;
         let mut live = LiveMachine::new_freestanding(&artifacts).expect("boot");
         drive_to_completion(&mut live);
         assert_eq!(live.state, MachineState::Exited(0));

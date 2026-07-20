@@ -1,5 +1,4 @@
-# Teaching 01: sum the numbers 1 to 10.
-# The result ends up in register t0; step through in the debugger to watch it grow.
+# 01: sum the numbers 1 to 10.
 
 .globl _start         # specifies to the virtual machine where to begin execution
 _start:
@@ -9,9 +8,7 @@ _start:
 loop:
   add  t0, t0, t1     # sum = sum + i
   addi t1, t1, 1      # i = i + 1
-  ble  t1, t2, loop   # if i <= 10, go around again
+  ble  t1, t2, loop   # if i <= 10, go around again   "branch if less than or equal"
 done:                 # we fall through here with t0 = 55 (the debugger
                       # shows registers in hex, so it reads 0x37)
-  li   a0, 0          # exit code 0
-  li   a7, 93         # the "exit" syscall number
-  ecall               # hand control back to the machine
+  j    done           # spin here forever so the registers stay inspectable

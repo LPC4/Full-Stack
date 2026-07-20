@@ -381,14 +381,15 @@ fn frame_row(ui: &mut egui::Ui, index: usize, symbol: &str, loc: Option<&(String
     resp.clicked() && clickable
 }
 
-/// One register row: ABI name (left) and 64-bit hex value (right). `live` picks a
-/// bright value color; `changed` marks registers the last step wrote.
+/// One register row: name, hex value, changed-bar. A click copies the value
+/// as bare hex, pasteable into the memory view's address field.
 fn register_row(ui: &mut egui::Ui, name: &str, value: u64, live: bool, changed: bool) {
     let width = ui.available_width();
-    let (rect, resp) = ui.allocate_exact_size(vec2(width, metrics::ROW_HEIGHT), Sense::hover());
+    let (rect, resp) = ui.allocate_exact_size(vec2(width, metrics::ROW_HEIGHT), Sense::click());
     let painter = ui.painter_at(rect);
     if resp.hovered() {
         painter.rect_filled(rect, 0.0, theme::SURFACE_ALT);
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
     if changed {
         let bar = egui::Rect::from_min_max(rect.left_top(), pos2(rect.left() + 2.0, rect.bottom()));
@@ -401,20 +402,46 @@ fn register_row(ui: &mut egui::Ui, name: &str, value: u64, live: bool, changed: 
         FontId::monospace(metrics::LABEL_TEXT_SIZE),
         theme::TEXT_DIM,
     );
-    let value_color = if changed {
-        theme::ELECTRIC
-    } else if live {
-        theme::TEXT
+    let copied_id = ui.id().with(("reg_copied", name));
+    let now = ui.input(|i| i.time);
+    if resp.clicked() {
+        ui.ctx().copy_text(format!("{value:x}"));
+        ui.data_mut(|d| d.insert_temp(copied_id, now));
+    }
+    let copied = ui
+        .data(|d| d.get_temp::<f64>(copied_id))
+        .is_some_and(|at| now - at < 1.0);
+    if copied {
+        // The value slot reads "copied" for a beat, then the hex returns.
+        ui.ctx().request_repaint();
+        painter.text(
+            pos2(rect.right() - metrics::PANEL_INSET_X, rect.center().y),
+            Align2::RIGHT_CENTER,
+            "copied",
+            FontId::monospace(metrics::LABEL_TEXT_SIZE),
+            theme::ELECTRIC,
+        );
     } else {
-        theme::TEXT_FAINT
-    };
-    painter.text(
-        pos2(rect.right() - metrics::PANEL_INSET_X, rect.center().y),
-        Align2::RIGHT_CENTER,
-        format!("{value:016x}"),
-        FontId::monospace(metrics::LABEL_TEXT_SIZE),
-        value_color,
-    );
+        let value_color = if changed {
+            theme::ELECTRIC
+        } else if live {
+            theme::TEXT
+        } else {
+            theme::TEXT_FAINT
+        };
+        painter.text(
+            pos2(rect.right() - metrics::PANEL_INSET_X, rect.center().y),
+            Align2::RIGHT_CENTER,
+            format!("{value:016x}"),
+            FontId::monospace(metrics::LABEL_TEXT_SIZE),
+            value_color,
+        );
+    }
+    resp.on_hover_text(theme::mono(
+        "click: copy hex",
+        metrics::STATUS_TEXT_SIZE,
+        theme::TEXT,
+    ));
 }
 
 /// One pipeline stage: name, then the in-flight instruction or a bubble marker.

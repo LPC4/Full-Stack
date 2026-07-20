@@ -1,0 +1,7 @@
+# See 01_sum/sum.build for what each field means.
+
+name = "max3"
+title = "04 max3: stack frames"
+root = "max3.s"
+target = "freestanding"
+entry = "_start"

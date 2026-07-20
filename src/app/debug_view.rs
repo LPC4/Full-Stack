@@ -15,6 +15,8 @@ const DISASM_AHEAD: u64 = 40;
 /// Bytes per memory-view row and rows per page.
 const MEM_ROW_BYTES: usize = 16;
 const MEM_ROWS: usize = 32;
+/// Bytes shown at once: the step the memory-view page arrows walk.
+const MEM_WINDOW: u64 = (MEM_ROW_BYTES * MEM_ROWS) as u64;
 /// Left gutter (breakpoint dot + pc arrow) width in the disassembly, in px.
 const DISASM_GUTTER: f32 = 24.0;
 const XREG_NAMES: [&str; 32] = [
@@ -30,6 +32,7 @@ pub(crate) enum DebugView {
     Code,
     Disasm,
     Memory,
+    Stack,
 }
 
 pub(crate) struct MemoryViewState {
@@ -282,6 +285,18 @@ impl FullStackApp {
             {
                 self.memory_view.set_addr(regs.x[2]);
             }
+            if small_toggle(ui, "\u{25C0}")
+                .on_hover_text("Scroll up one screen")
+                .clicked()
+            {
+                self.memory_view.page(false);
+            }
+            if small_toggle(ui, "\u{25B6}")
+                .on_hover_text("Scroll down one screen")
+                .clicked()
+            {
+                self.memory_view.page(true);
+            }
             if !self.memory_view.physical {
                 match live.translate(self.memory_view.addr) {
                     Some(pa) => ui.label(theme::mono(
@@ -327,6 +342,59 @@ impl FullStackApp {
                 }
             });
     }
+
+    /// Stack view: the live stack from its high-address top down to sp, with
+    /// frame boundaries walked through the saved-fp chain and fp/sp offsets.
+    pub(super) fn show_stack(&self, ui: &mut egui::Ui) {
+        let Some(live) = self.live.as_ref() else {
+            chrome::centered_hint(ui, "No machine session. Press Run to start one.");
+            return;
+        };
+        let Some(model) = stack_model(live) else {
+            chrome::centered_hint(ui, "Stack pointer is not in the RAM stack region.");
+            return;
+        };
+
+        ui.add_space(metrics::PANEL_HEADER_PAD_Y);
+        ui.horizontal(|ui| {
+            ui.add_space(metrics::PANEL_INSET_X);
+            ui.label(theme::label("stack"));
+            ui.label(theme::mono(
+                format!("sp {:#x}", model.sp),
+                metrics::STATUS_TEXT_SIZE,
+                theme::WARNING,
+            ));
+            ui.label(theme::mono(
+                format!("fp {:#x}", model.fp),
+                metrics::STATUS_TEXT_SIZE,
+                theme::ELECTRIC,
+            ));
+            ui.label(theme::mono(
+                format!("{} bytes used", model.top.saturating_sub(model.sp)),
+                metrics::STATUS_TEXT_SIZE,
+                theme::TEXT_FAINT,
+            ));
+        });
+        ui.add_space(metrics::PANEL_HEADER_PAD_Y);
+        chrome::hairline(ui);
+
+        let grid = Grid::new(ui);
+        let min_width = grid.x(0.0, STACK_COLS) + 2.0 * metrics::PANEL_INSET_X;
+        egui::ScrollArea::both()
+            .id_salt("stack_scroll")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                ui.set_min_width(min_width);
+                for row in &model.rows {
+                    match row {
+                        StackRow::Caption(text) => caption_row(ui, text),
+                        StackRow::Frame { name, bytes } => frame_row(ui, &grid, name, *bytes),
+                        StackRow::Slot(slot) => stack_row(ui, &grid, slot),
+                    }
+                }
+            });
+    }
 }
 
 impl MemoryViewState {
@@ -334,11 +402,292 @@ impl MemoryViewState {
         self.addr = addr;
         self.addr_text = format!("{addr:x}");
     }
+
+    /// Scroll one visible window toward higher (`forward`) or lower addresses,
+    /// keeping the row alignment the hex dump already uses.
+    fn page(&mut self, forward: bool) {
+        let cur = self.addr & !0xF;
+        let next = if forward {
+            cur.saturating_add(MEM_WINDOW)
+        } else {
+            cur.saturating_sub(MEM_WINDOW)
+        };
+        self.set_addr(next);
+    }
 }
 
-/// One disassembly row: gutter (breakpoint dot, pc arrow), then address, raw
-/// word, mnemonic, and operands on the shared character grid.
-/// Returns the row rect (for follow-pc scrolling) and any requested action.
+/// Initial sp the VM hands a fresh program: the high end of the RAM stack.
+const STACK_TOP: u64 =
+    virtual_machine::bus::RAM_BASE + virtual_machine::bus::RAM_SIZE_DEFAULT as u64 - 16;
+/// Cap on stack bytes rendered, measured from sp up toward the top.
+const STACK_MAX_BYTES: u64 = 1024;
+/// Character-grid columns each stack row spans (for the horizontal scroll min).
+const STACK_COLS: usize = 84;
+
+// Shared column layout for stack rows, in grid characters.
+const ST_FPOFF_END: usize = 9;
+const ST_ADDR_COL: usize = 11;
+const ST_VALUE_COL: usize = 21;
+const ST_SPOFF_COL: usize = 39;
+const ST_MARK_COL: usize = 50;
+
+/// One 8-byte stack slot with its frame annotations, ready to render.
+struct StackSlot {
+    addr: u64,
+    value: u64,
+    fp_off: Option<i64>,
+    sp_off: u64,
+    is_fp: bool,
+    is_sp: bool,
+    note: Option<(String, egui::Color32)>,
+}
+
+/// A rendered line in the stack view: a caption, a frame header, or a slot.
+enum StackRow {
+    Caption(String),
+    Frame { name: String, bytes: u64 },
+    Slot(StackSlot),
+}
+
+/// The stack region to draw, from `top` (high) down to `sp` (low).
+struct StackModel {
+    sp: u64,
+    fp: u64,
+    top: u64,
+    rows: Vec<StackRow>,
+}
+
+/// Read the live stack and walk the saved-fp chain into a render model.
+fn stack_model(live: &full_stack::session::LiveMachine) -> Option<StackModel> {
+    let regs = live.registers();
+    let sp = regs.x[2];
+    let fp = regs.x[8];
+    let pc = regs.pc;
+    let top = STACK_TOP;
+    if sp == 0 || sp >= top || top - sp > 1 << 30 {
+        return None;
+    }
+    let low = sp & !7;
+    let high = top.min(low + STACK_MAX_BYTES);
+    let bytes = live.read_virtual(low, (high - low) as usize);
+    let load = |addr: u64| -> u64 {
+        let off = addr.wrapping_sub(low) as usize;
+        bytes
+            .get(off..off + 8)
+            .map(|b| u64::from_le_bytes(b.try_into().expect("8-byte slot")))
+            .unwrap_or(0)
+    };
+    let sym_name = |addr: u64| -> String {
+        live.symbol_near(addr)
+            .map(|(name, _)| name.to_owned())
+            .unwrap_or_else(|| "?".to_owned())
+    };
+
+    // Walk fp chain: saved ra at fp-8, saved fp at fp-16, next fp = load(fp-16).
+    let in_range = |v: u64| v >= low && v <= high;
+    let mut fps = Vec::new();
+    let mut f = fp;
+    for _ in 0..64 {
+        if !in_range(f) {
+            break;
+        }
+        fps.push(f);
+        let next = load(f.wrapping_sub(16));
+        if next <= f {
+            break;
+        }
+        f = next;
+    }
+    let saved_ra: std::collections::BTreeSet<u64> = fps.iter().map(|f| f.wrapping_sub(8)).collect();
+    let saved_fp: std::collections::BTreeSet<u64> =
+        fps.iter().map(|f| f.wrapping_sub(16)).collect();
+    let frame_span = fps.last().copied().map(|outer| sp..outer);
+
+    // Frame k owns [prev, fps[k]); its header sits above its top slot fps[k]-8.
+    // The owner is the pc for the innermost frame, else the saved ra below it.
+    let mut frame_header: std::collections::BTreeMap<u64, (String, u64)> =
+        std::collections::BTreeMap::new();
+    for (k, &fpk) in fps.iter().enumerate() {
+        let prev = if k == 0 { sp } else { fps[k - 1] };
+        let name = if k == 0 {
+            sym_name(pc)
+        } else {
+            sym_name(load(fps[k - 1].wrapping_sub(8)))
+        };
+        frame_header.insert(fpk.wrapping_sub(8), (format!("{name}()"), fpk - prev));
+    }
+
+    let mut rows = vec![StackRow::Caption("high addresses".to_owned())];
+    if top > high {
+        rows.push(StackRow::Caption(format!(
+            "... {} bytes to top",
+            top - high
+        )));
+    }
+    let mut addr = (high - 8) & !7;
+    loop {
+        if let Some((name, bytes)) = frame_header.get(&addr) {
+            rows.push(StackRow::Frame {
+                name: name.clone(),
+                bytes: *bytes,
+            });
+        }
+        let value = load(addr);
+        // addr <= fp inside a frame, so the offset is non-positive and small.
+        let fp_off = (in_range(fp) && addr >= sp && addr <= fp).then(|| -(fp - addr).cast_signed());
+        let note = if saved_ra.contains(&addr) {
+            Some((
+                format!("saved ra -> {}", sym_off(live, value)),
+                theme::ELECTRIC,
+            ))
+        } else if saved_fp.contains(&addr) {
+            Some(("saved fp".to_owned(), theme::TEXT_DIM))
+        } else if frame_span.as_ref().is_some_and(|s| s.contains(&addr)) {
+            if value == 0 {
+                Some(("(unused)".to_owned(), theme::TEXT_FAINT))
+            } else {
+                Some(("local".to_owned(), theme::TEXT_DIM))
+            }
+        } else {
+            None
+        };
+        rows.push(StackRow::Slot(StackSlot {
+            addr,
+            value,
+            fp_off,
+            sp_off: addr - sp,
+            is_fp: addr == fp,
+            is_sp: addr == sp,
+            note,
+        }));
+        if addr < low + 8 {
+            break;
+        }
+        addr -= 8;
+    }
+    rows.push(StackRow::Caption("low addresses".to_owned()));
+
+    Some(StackModel { sp, fp, top, rows })
+}
+
+/// Symbol name plus hex offset for a code address, or the bare hex if unknown.
+fn sym_off(live: &full_stack::session::LiveMachine, addr: u64) -> String {
+    match live.symbol_near(addr) {
+        Some((name, 0)) => name.to_owned(),
+        Some((name, off)) => format!("{name}+{off:#x}"),
+        None => format!("{addr:#x}"),
+    }
+}
+
+/// A faint full-width caption row (the "high/low addresses" bookends).
+fn caption_row(ui: &mut egui::Ui, text: &str) {
+    let width = ui.available_width();
+    let (rect, _) = ui.allocate_exact_size(vec2(width, metrics::ROW_HEIGHT), Sense::hover());
+    ui.painter_at(rect).text(
+        pos2(rect.left() + metrics::PANEL_INSET_X, rect.center().y),
+        Align2::LEFT_CENTER,
+        text,
+        FontId::monospace(metrics::STATUS_TEXT_SIZE),
+        theme::TEXT_FAINT,
+    );
+}
+
+/// A frame header: a boundary hairline plus the owning function and frame size.
+fn frame_row(ui: &mut egui::Ui, grid: &Grid, name: &str, bytes: u64) {
+    ui.add_space(metrics::SECTION_GAP);
+    let width = ui.available_width();
+    let (rect, _) = ui.allocate_exact_size(vec2(width, metrics::ROW_HEIGHT), Sense::hover());
+    let painter = ui.painter_at(rect);
+    painter.line_segment(
+        [
+            pos2(rect.left() + metrics::PANEL_INSET_X, rect.top()),
+            pos2(rect.right() - metrics::PANEL_INSET_X, rect.top()),
+        ],
+        egui::Stroke::new(1.0, theme::HAIRLINE),
+    );
+    painter.text(
+        pos2(rect.left() + metrics::PANEL_INSET_X, rect.center().y),
+        Align2::LEFT_CENTER,
+        format!("{name}  {bytes} B frame"),
+        grid.font.clone(),
+        theme::ELECTRIC,
+    );
+}
+
+/// One stack slot row: fp offset, address, 8-byte value, sp offset, markers.
+fn stack_row(ui: &mut egui::Ui, grid: &Grid, slot: &StackSlot) {
+    let width = ui.available_width();
+    let (rect, _) = ui.allocate_exact_size(vec2(width, metrics::ROW_HEIGHT), Sense::hover());
+    let painter = ui.painter_at(rect);
+    if slot.is_sp || slot.is_fp {
+        painter.rect_filled(rect, 0.0, theme::SURFACE);
+    }
+
+    let left = rect.left() + metrics::PANEL_INSET_X;
+    let mid = rect.center().y;
+    if let Some(off) = slot.fp_off {
+        painter.text(
+            pos2(grid.x(left, ST_FPOFF_END), mid),
+            Align2::RIGHT_CENTER,
+            format!("{off}(fp)"),
+            grid.font.clone(),
+            theme::ELECTRIC,
+        );
+    }
+    painter.text(
+        pos2(grid.x(left, ST_ADDR_COL), mid),
+        Align2::LEFT_CENTER,
+        format_addr(slot.addr),
+        grid.font.clone(),
+        theme::TEXT_DIM,
+    );
+    painter.text(
+        pos2(grid.x(left, ST_VALUE_COL), mid),
+        Align2::LEFT_CENTER,
+        format!("{:016x}", slot.value),
+        grid.font.clone(),
+        if slot.value == 0 {
+            theme::TEXT_FAINT
+        } else {
+            theme::TEXT
+        },
+    );
+    painter.text(
+        pos2(grid.x(left, ST_SPOFF_COL), mid),
+        Align2::LEFT_CENTER,
+        format!("{}(sp)", slot.sp_off),
+        grid.font.clone(),
+        theme::TEXT_DIM,
+    );
+    if slot.is_sp {
+        painter.text(
+            pos2(grid.x(left, ST_MARK_COL), mid),
+            Align2::LEFT_CENTER,
+            "<- sp",
+            grid.font.clone(),
+            theme::WARNING,
+        );
+    } else if slot.is_fp {
+        painter.text(
+            pos2(grid.x(left, ST_MARK_COL), mid),
+            Align2::LEFT_CENTER,
+            "<- fp",
+            grid.font.clone(),
+            theme::ELECTRIC,
+        );
+    } else if let Some((text, color)) = &slot.note {
+        painter.text(
+            pos2(grid.x(left, ST_MARK_COL), mid),
+            Align2::LEFT_CENTER,
+            text,
+            grid.font.clone(),
+            *color,
+        );
+    }
+}
+
+/// One disassembly row on the shared character grid. Returns the row rect (for
+/// follow-pc scrolling) and any requested action.
 fn disasm_row(
     ui: &mut egui::Ui,
     grid: &Grid,

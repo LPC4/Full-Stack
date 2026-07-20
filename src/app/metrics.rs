@@ -3,7 +3,7 @@ pub(super) const STATUS_BAR_HEIGHT: f32 = 28.0;
 pub(super) const ACTIVITY_RAIL_WIDTH: f32 = 46.0;
 
 pub(super) const TOOL_WINDOW_DEFAULT: f32 = 280.0;
-pub(super) const TOOL_WINDOW_MIN: f32 = 160.0;
+pub(super) const TOOL_WINDOW_MIN: f32 = 270.0;
 pub(super) const TOOL_WINDOW_MAX: f32 = 460.0;
 pub(super) const RESIZE_HIT_RADIUS: f32 = 6.0;
 

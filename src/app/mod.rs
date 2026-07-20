@@ -46,28 +46,28 @@ const BUILD_GLOW_SECS: f64 = 0.85;
 #[cfg(not(target_arch = "wasm32"))]
 const DEMO_WORKSPACE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/programs/demo_workspace");
 #[cfg(not(target_arch = "wasm32"))]
-const TEACHING_WORKSPACE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/programs/teaching");
+const LESSONS_WORKSPACE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/programs/lessons");
 
 /// The bundled folders the top bar can open on any target; the browser opens
 /// them as in-memory trees, native materializes them on disk.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum WorkspacePreset {
     Demo,
-    Teaching,
+    Lessons,
 }
 
 impl WorkspacePreset {
     fn label(self) -> &'static str {
         match self {
             Self::Demo => "demo workspace",
-            Self::Teaching => "teaching",
+            Self::Lessons => "lessons",
         }
     }
 
     fn memory_workspace(self) -> std::io::Result<IdeWorkspace> {
         match self {
             Self::Demo => IdeWorkspace::sample(),
-            Self::Teaching => IdeWorkspace::teaching(),
+            Self::Lessons => IdeWorkspace::lessons(),
         }
     }
 }
@@ -1958,7 +1958,7 @@ fn reopen_last_workspace(_settings: &settings::AppSettings) -> Option<IdeWorkspa
 fn preset_dir(preset: WorkspacePreset) -> &'static str {
     match preset {
         WorkspacePreset::Demo => DEMO_WORKSPACE_DIR,
-        WorkspacePreset::Teaching => TEACHING_WORKSPACE_DIR,
+        WorkspacePreset::Lessons => LESSONS_WORKSPACE_DIR,
     }
 }
 
@@ -1971,8 +1971,8 @@ fn open_materialized_workspace(preset: WorkspacePreset) -> Option<IdeWorkspace> 
     let mut fs = NativeFs::open(root).ok()?;
     match preset {
         WorkspacePreset::Demo => full_stack::workspace::populate_demo_workspace(&mut fs).ok()?,
-        WorkspacePreset::Teaching => {
-            full_stack::workspace::populate_teaching_workspace(&mut fs).ok()?;
+        WorkspacePreset::Lessons => {
+            full_stack::workspace::populate_lessons_workspace(&mut fs).ok()?;
         }
     }
     IdeWorkspace::new(Box::new(fs)).ok()

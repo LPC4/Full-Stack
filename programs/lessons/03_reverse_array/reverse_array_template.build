@@ -1,0 +1,7 @@
+# See 01_sum/sum.build for what each field means.
+
+name = "reverse_array_template"
+title = "03 reverse array (template): your turn"
+root = "reverse_array_template.s"
+target = "freestanding"
+entry = "_start"

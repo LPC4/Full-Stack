@@ -40,11 +40,11 @@ impl FullStackApp {
                 {
                     self.open_workspace_preset(WorkspacePreset::Demo);
                 }
-                if menu_item(ui, "teaching")
+                if menu_item(ui, "lessons")
                     .on_hover_text("The lessons from the written guide, one folder each")
                     .clicked()
                 {
-                    self.open_workspace_preset(WorkspacePreset::Teaching);
+                    self.open_workspace_preset(WorkspacePreset::Lessons);
                 }
                 #[cfg(not(target_arch = "wasm32"))]
                 if menu_item(ui, "browse...").clicked()

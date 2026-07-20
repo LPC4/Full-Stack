@@ -1,0 +1,100 @@
+[[config]]
+name = "01 sum: add 1..10 in assembly"
+type = "freestanding"
+build = "01_sum/sum.build"
+present = "terminal"
+max_steps_per_frame = 200000
+debug = false
+breakpoint = "loop"
+
+[[config]]
+name = "02 array sum: sum an array from memory"
+type = "freestanding"
+build = "02_array_sum/array_sum.build"
+present = "terminal"
+max_steps_per_frame = 200000
+debug = false
+
+[[config]]
+name = "03 reverse array (template): your turn"
+type = "freestanding"
+build = "03_reverse_array/reverse_array_template.build"
+present = "terminal"
+max_steps_per_frame = 200000
+debug = false
+
+[[config]]
+name = "03 reverse array (solution): reverse an array in place"
+type = "freestanding"
+build = "03_reverse_array/reverse_array.build"
+present = "terminal"
+max_steps_per_frame = 200000
+debug = false
+
+[[config]]
+name = "04 max: call a leaf function"
+type = "freestanding"
+build = "04_functions/max.build"
+present = "terminal"
+max_steps_per_frame = 200000
+debug = false
+breakpoint = "max"
+
+[[config]]
+name = "04 max3: stack frames for nested calls"
+type = "freestanding"
+build = "04_functions/max3.build"
+present = "terminal"
+max_steps_per_frame = 200000
+debug = false
+
+[[config]]
+name = "05 factorial (stack frames): recursive factorial with a frame pointer"
+type = "freestanding"
+build = "05_stack_frames/factorial_stack.build"
+present = "terminal"
+max_steps_per_frame = 200000
+debug = true
+breakpoint = "fact"
+
+[[config]]
+name = "05 sum of squares (template): your turn"
+type = "freestanding"
+build = "05_stack_frames/sum_of_squares_template.build"
+present = "terminal"
+max_steps_per_frame = 200000
+debug = false
+
+[[config]]
+name = "05 sum of squares (solution): square(a) + square(b)"
+type = "freestanding"
+build = "05_stack_frames/sum_of_squares.build"
+present = "terminal"
+max_steps_per_frame = 200000
+debug = true
+breakpoint = "sos"
+
+[[config]]
+name = "06 hello (raw): write bytes straight to the UART"
+type = "freestanding"
+build = "06_uart/hello_raw.build"
+present = "terminal"
+max_steps_per_frame = 200000
+debug = false
+
+[[config]]
+name = "06 print_char: wrap the UART write in a function"
+type = "freestanding"
+build = "06_uart/print_char.build"
+present = "terminal"
+max_steps_per_frame = 200000
+debug = true
+
+[[config]]
+name = "06 print_string: printing a whole string"
+type = "freestanding"
+build = "06_uart/print_string.build"
+present = "terminal"
+max_steps_per_frame = 200000
+debug = true
+

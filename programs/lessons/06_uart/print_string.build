@@ -1,0 +1,7 @@
+# See 01_sum/sum.build for what each field means.
+
+name = "print_string"
+title = "06 print_string: hello world"
+root = "print_string.s"
+target = "freestanding"
+entry = "_start"

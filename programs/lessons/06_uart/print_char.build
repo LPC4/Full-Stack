@@ -1,0 +1,7 @@
+# See 01_sum/sum.build for what each field means.
+
+name = "print_char"
+title = "06 print_char: wrap the UART write"
+root = "print_char.s"
+target = "freestanding"
+entry = "_start"

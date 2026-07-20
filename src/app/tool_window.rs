@@ -1,7 +1,7 @@
 use super::{FullStackApp, Tool, chrome, metrics};
 use crate::ui::theme;
 use eframe::egui;
-use egui::{Align2, FontId, Sense, pos2, vec2};
+use egui::{FontId, Sense, pos2, vec2};
 use full_stack::build::is_asm_path;
 use full_stack::compilation_pipeline::TargetMode;
 use full_stack::runconfig::{
@@ -272,21 +272,44 @@ fn config_row(ui: &mut egui::Ui, name: &str, tag: &str, active: bool) -> egui::R
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
     let color = if active { theme::ELECTRIC } else { theme::TEXT };
-    painter.text(
-        pos2(rect.left() + metrics::PANEL_INSET_X, rect.center().y),
-        Align2::LEFT_CENTER,
-        name,
-        FontId::monospace(metrics::LABEL_TEXT_SIZE),
-        color,
-    );
-    painter.text(
-        pos2(rect.right() - metrics::PANEL_INSET_X, rect.center().y),
-        Align2::RIGHT_CENTER,
-        tag,
+    let tag_galley = painter.layout_no_wrap(
+        tag.to_owned(),
         FontId::monospace(metrics::STATUS_TEXT_SIZE),
         theme::TEXT_FAINT,
     );
-    resp
+    // Elide long names so they never run under the right-aligned kind tag.
+    let name_max =
+        (rect.width() - 2.0 * metrics::PANEL_INSET_X - tag_galley.size().x - metrics::SECTION_GAP)
+            .max(0.0);
+    let mut job = egui::text::LayoutJob::simple_singleline(
+        name.to_owned(),
+        FontId::monospace(metrics::LABEL_TEXT_SIZE),
+        color,
+    );
+    job.wrap = egui::text::TextWrapping::truncate_at_width(name_max);
+    let name_galley = painter.layout_job(job);
+    let elided = name_galley.elided;
+    painter.galley(
+        pos2(
+            rect.left() + metrics::PANEL_INSET_X,
+            rect.center().y - name_galley.size().y / 2.0,
+        ),
+        name_galley,
+        color,
+    );
+    painter.galley(
+        pos2(
+            rect.right() - metrics::PANEL_INSET_X - tag_galley.size().x,
+            rect.center().y - tag_galley.size().y / 2.0,
+        ),
+        tag_galley,
+        theme::TEXT_FAINT,
+    );
+    if elided {
+        resp.on_hover_text(theme::mono(name, metrics::STATUS_TEXT_SIZE, theme::TEXT))
+    } else {
+        resp
+    }
 }
 
 /// A labeled editor row: eyebrow label at the left, widget to its right.
@@ -413,10 +436,7 @@ fn breakpoints_editor(ui: &mut egui::Ui, config: &mut full_stack::runconfig::Run
     ui.horizontal(|ui| {
         ui.label(theme::label("breakpoints"));
         ui.label(theme::mono(
-            format!(
-                "{} \u{00B7} managed in the Debugger",
-                config.debug.breakpoints.len()
-            ),
+            config.debug.breakpoints.len().to_string(),
             metrics::STATUS_TEXT_SIZE,
             theme::TEXT_DIM,
         ));
@@ -522,7 +542,7 @@ pub(super) fn present_tag(mode: PresentMode) -> &'static str {
     }
 }
 
-/// A minimal `.build` for a bare source file; the teaching `sum.build`
+/// A minimal `.build` for a bare source file; the lesson `sum.build`
 /// documents every field.
 fn generated_manifest(file: &str, stem: &str, target: TargetMode) -> String {
     let target_tag = match target {

@@ -1,0 +1,7 @@
+# See 01_sum/sum.build for what each field means.
+
+name = "array_sum"
+title = "02 array sum: sum array from memory"
+root = "array_sum.s"
+target = "freestanding"
+entry = "_start"

@@ -135,37 +135,36 @@ impl ObjectLinker {
         // identically-named locals from different object files don't collide.
         let mut local_symbol_addrs: HashMap<(usize, String), u64> = HashMap::new();
 
+        // Read symbols per section: each section stores its labels with
+        // section-local offsets, so end-of-section labels stay unambiguous.
         for (mi, (module_name, module)) in modules.iter().enumerate() {
-            let mod_sec_map = build_module_section_map(module);
-
-            for (name, &module_addr) in &module.symbol_table {
-                let Some((sec_name, sec_start)) =
-                    find_symbol_section_name_via_map(&mod_sec_map, module_addr)
-                else {
+            for sec in ordered_sections(module) {
+                let Some(kind) = &sec.kind else {
                     continue;
                 };
-
-                let Some(&abs_base) = contrib_base.get(&(sec_name.to_owned(), mi)) else {
+                let Some(&abs_base) = contrib_base.get(&(kind.name().to_owned(), mi)) else {
                     continue;
                 };
-                let out_addr = abs_base + (module_addr.saturating_sub(sec_start));
+                for (name, sec_offset) in &sec.symbols {
+                    let out_addr = abs_base + sec_offset;
 
-                if module.global_symbols.contains(name) {
-                    all_symbols.entry(name.clone()).or_insert(out_addr);
+                    if module.global_symbols.contains(name) {
+                        all_symbols.entry(name.clone()).or_insert(out_addr);
 
-                    if let Some(prev) = defined_globals.get(name) {
-                        if *prev != out_addr {
-                            return Err(LinkerError::new(format!(
-                                "duplicate global symbol `{name}` while linking module `{module_name}`"
-                            )));
+                        if let Some(prev) = defined_globals.get(name) {
+                            if *prev != out_addr {
+                                return Err(LinkerError::new(format!(
+                                    "duplicate global symbol `{name}` while linking module `{module_name}`"
+                                )));
+                            }
+                        } else {
+                            defined_globals.insert(name.clone(), out_addr);
+                            global_names.push(name.clone());
                         }
                     } else {
-                        defined_globals.insert(name.clone(), out_addr);
-                        global_names.push(name.clone());
+                        // Local symbol: store per-module to avoid cross-module collisions.
+                        local_symbol_addrs.insert((mi, name.clone()), out_addr);
                     }
-                } else {
-                    // Local symbol: store per-module to avoid cross-module collisions.
-                    local_symbol_addrs.insert((mi, name.clone()), out_addr);
                 }
             }
         }
@@ -192,19 +191,9 @@ impl ObjectLinker {
 
         // Apply relocations
         for (mi, (module_name, module)) in modules.iter().enumerate() {
-            let mod_sec_map = build_module_section_map(module);
-
             for reloc in module.relocations_iter() {
-                // The relocation offset is module-relative. Find which section
-                // contains it in the module's address space.
-                let Some((sec_name, sec_start)) =
-                    find_symbol_section_name_via_map(&mod_sec_map, reloc.offset)
-                else {
-                    return Err(LinkerError::new(format!(
-                        "relocation at offset {} in module `{module_name}` is outside any known section",
-                        reloc.offset
-                    )));
-                };
+                // The record names its section; the offset is local to it.
+                let sec_name = reloc.section.as_str();
 
                 let Some(&abs_base) = contrib_base.get(&(sec_name.to_owned(), mi)) else {
                     return Err(LinkerError::new(format!(
@@ -224,7 +213,7 @@ impl ObjectLinker {
                         ))
                     })?;
 
-                let site_in_contribution = reloc.offset.saturating_sub(sec_start);
+                let site_in_contribution = reloc.offset;
                 let site_abs = abs_base + site_in_contribution;
 
                 let merged_sec = merged_secs

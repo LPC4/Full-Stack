@@ -45,3 +45,43 @@ fn highlight_assembly_multibyte_at_start_does_not_panic() {
     let asm = "\u{2014} comment-like junk\n    ret\n";
     let _ = highlight_assembly(&style(), asm);
 }
+
+// Everything after # or ; must be one comment-colored section, even when the
+// comment mentions registers or mnemonics like sp and ret.
+#[test]
+fn highlight_assembly_inline_comment_is_all_comment_color() {
+    let comment_color = full_stack::highlight::SyntaxPalette::dark().comment;
+    for asm in [
+        "  addi sp, sp, -16    # prologue: sp moves, ret comes later\n",
+        "  addi sp, sp, -16    ; prologue: sp moves, ret comes later\n",
+        "# a whole-line comment with a0 and mul in it\n",
+    ] {
+        let job = highlight_assembly(&style(), asm);
+        let comment_start = asm.find(['#', ';']).expect("comment marker");
+        for section in &job.sections {
+            let text = &asm[section.byte_range.clone()];
+            if section.byte_range.start >= comment_start && text != "\n" {
+                assert_eq!(
+                    section.format.color, comment_color,
+                    "non-comment color inside comment: {text:?} in {asm:?}"
+                );
+            }
+        }
+    }
+}
+
+// A # inside a string literal is not a comment; the directive after it on the
+// next line still highlights normally.
+#[test]
+fn highlight_assembly_hash_inside_string_is_not_a_comment() {
+    let asm = "    .asciz \"a # b\"\n";
+    let job = highlight_assembly(&style(), asm);
+    let string_color = full_stack::highlight::SyntaxPalette::dark().string;
+    let quoted = job
+        .sections
+        .iter()
+        .find(|s| asm[s.byte_range.clone()].starts_with('"'))
+        .expect("string section");
+    assert_eq!(quoted.format.color, string_color);
+    assert_eq!(&asm[quoted.byte_range.clone()], "\"a # b\"");
+}

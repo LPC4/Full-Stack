@@ -781,13 +781,13 @@ export value: () -> i32 {
         }
     }
 
-    // The teaching manifest exercises the raw-asm root path end to end: parse,
-    // assemble, link, then run to the exit ecall on a bare VM.
+    // The lesson manifests exercise the raw-asm root path end to end: parse,
+    // assemble, link, then run on a bare VM until the spin at `done`.
     #[test]
-    fn file_manifest_builds_and_runs_teaching_asm_sum() {
+    fn file_manifest_builds_and_runs_lesson_asm_sum() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("programs/teaching/01_sum/sum.build");
-        let manifest = BuildManifest::from_file(path).expect("parse teaching build file");
+            .join("programs/lessons/01_sum/sum.build");
+        let manifest = BuildManifest::from_file(path).expect("parse lesson build file");
         assert_eq!(manifest.target, TargetMode::Freestanding);
         assert_eq!(manifest.stdlib, StdlibPolicy::None);
         assert_eq!(manifest.import_closure, ImportClosurePolicy::Disabled);
@@ -805,9 +805,188 @@ export value: () -> i32 {
         assert!(
             matches!(
                 result.outcome,
-                virtual_machine::virtual_machine::StepOutcome::Halted(0)
+                virtual_machine::virtual_machine::StepOutcome::Continue
             ),
-            "sum.s should reach the exit ecall cleanly: {:?}",
+            "sum.s should still be spinning at done: {:?}",
+            result.outcome
+        );
+        assert_eq!(vm.peek_reg(5), 55, "t0 should hold the sum 1..10");
+    }
+
+    // Lesson 02 adds .data directives and `la`: the array must survive
+    // assembly and linking, and the loop must sum it from memory.
+    #[test]
+    fn file_manifest_builds_and_runs_lesson_asm_array_sum() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("programs/lessons/02_array_sum/array_sum.build");
+        let manifest = BuildManifest::from_file(path).expect("parse lesson build file");
+        assert_eq!(manifest.target, TargetMode::Freestanding);
+        assert_eq!(manifest.entry.as_deref(), Some("_start"));
+
+        let artifacts = BuildExecutor::build(&manifest).expect("assemble + link asm root");
+        let mut vm = virtual_machine::virtual_machine::VirtualMachine::new(&artifacts.linked);
+        let result = vm.run(10_000);
+        assert!(
+            matches!(
+                result.outcome,
+                virtual_machine::virtual_machine::StepOutcome::Continue
+            ),
+            "array_sum.s should still be spinning at done: {:?}",
+            result.outcome
+        );
+        assert_eq!(vm.peek_reg(5), 100, "t0 should hold the array sum");
+    }
+
+    // Lesson 03 adds stores: the solution must leave the array reversed in
+    // memory when it reaches the spin at `done`.
+    #[test]
+    fn file_manifest_builds_and_runs_lesson_asm_reverse_array() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("programs/lessons/03_reverse_array/reverse_array.build");
+        let manifest = BuildManifest::from_file(path).expect("parse lesson build file");
+        let artifacts = BuildExecutor::build(&manifest).expect("assemble + link asm root");
+        let array = artifacts
+            .linked
+            .symbol_address("array")
+            .expect("array symbol");
+        let mut vm = virtual_machine::virtual_machine::VirtualMachine::new(&artifacts.linked);
+        let result = vm.run(10_000);
+        assert!(
+            matches!(
+                result.outcome,
+                virtual_machine::virtual_machine::StepOutcome::Continue
+            ),
+            "reverse_array.s should still be spinning at done: {:?}",
+            result.outcome
+        );
+        let bytes = vm.peek_bytes_raw(virtual_machine::bus::RAM_BASE + array, 32);
+        let values: Vec<u64> = bytes
+            .chunks(8)
+            .map(|c| u64::from_le_bytes(c.try_into().expect("dword chunk")))
+            .collect();
+        assert_eq!(values, vec![40, 30, 20, 10], "array reversed in place");
+    }
+
+    // The lesson 03 exercise template ships blank; it must still assemble,
+    // link, and reach the spin at `done` before the reader fills it in.
+    #[test]
+    fn file_manifest_builds_and_runs_lesson_asm_template() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("programs/lessons/03_reverse_array/reverse_array_template.build");
+        let manifest = BuildManifest::from_file(path).expect("parse lesson build file");
+        let artifacts = BuildExecutor::build(&manifest).expect("assemble + link asm template");
+        let mut vm = virtual_machine::virtual_machine::VirtualMachine::new(&artifacts.linked);
+        let result = vm.run(1_000);
+        assert!(
+            matches!(
+                result.outcome,
+                virtual_machine::virtual_machine::StepOutcome::Continue
+            ),
+            "reverse_array_template.s should be spinning at done: {:?}",
+            result.outcome
+        );
+    }
+
+    // Lesson 04 part 1: jal/ret and the a-register argument convention, with
+    // a leaf function called twice.
+    #[test]
+    fn file_manifest_builds_and_runs_lesson_asm_max() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("programs/lessons/04_functions/max.build");
+        let manifest = BuildManifest::from_file(path).expect("parse lesson build file");
+        let artifacts = BuildExecutor::build(&manifest).expect("assemble + link asm root");
+        let mut vm = virtual_machine::virtual_machine::VirtualMachine::new(&artifacts.linked);
+        let result = vm.run(10_000);
+        assert!(
+            matches!(
+                result.outcome,
+                virtual_machine::virtual_machine::StepOutcome::Continue
+            ),
+            "max.s should still be spinning at done: {:?}",
+            result.outcome
+        );
+        assert_eq!(vm.peek_reg(10), 12, "a0 should hold max(max(7, 12), 3)");
+    }
+
+    // Lesson 04 part 2: a non-leaf function must save ra and s0 in its frame;
+    // the nested calls must come back with the right result.
+    #[test]
+    fn file_manifest_builds_and_runs_lesson_asm_max3() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("programs/lessons/04_functions/max3.build");
+        let manifest = BuildManifest::from_file(path).expect("parse lesson build file");
+        let artifacts = BuildExecutor::build(&manifest).expect("assemble + link asm root");
+        let mut vm = virtual_machine::virtual_machine::VirtualMachine::new(&artifacts.linked);
+        let result = vm.run(10_000);
+        assert!(
+            matches!(
+                result.outcome,
+                virtual_machine::virtual_machine::StepOutcome::Continue
+            ),
+            "max3.s should still be spinning at done: {:?}",
+            result.outcome
+        );
+        assert_eq!(vm.peek_reg(10), 9, "a0 should hold max3(4, 9, 6)");
+    }
+
+    // Lesson 05: recursion exercises one stack frame per call; 5! must land in
+    // a0 at the spin.
+    #[test]
+    fn file_manifest_builds_and_runs_lesson_asm_factorial() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("programs/lessons/05_stack_frames/factorial_stack.build");
+        let manifest = BuildManifest::from_file(path).expect("parse lesson build file");
+        let artifacts = BuildExecutor::build(&manifest).expect("assemble + link asm root");
+        let mut vm = virtual_machine::virtual_machine::VirtualMachine::new(&artifacts.linked);
+        let result = vm.run(10_000);
+        assert!(
+            matches!(
+                result.outcome,
+                virtual_machine::virtual_machine::StepOutcome::Continue
+            ),
+            "factorial_stack.s should still be spinning at done: {:?}",
+            result.outcome
+        );
+        assert_eq!(vm.peek_reg(10), 120, "a0 should hold 5!");
+    }
+
+    // Lesson 05 exercise solution: both operands have to survive a call, so
+    // sos(3, 4) only lands on 25 if the frame slots are right.
+    #[test]
+    fn file_manifest_builds_and_runs_lesson_asm_sum_of_squares() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("programs/lessons/05_stack_frames/sum_of_squares.build");
+        let manifest = BuildManifest::from_file(path).expect("parse lesson build file");
+        let artifacts = BuildExecutor::build(&manifest).expect("assemble + link asm root");
+        let mut vm = virtual_machine::virtual_machine::VirtualMachine::new(&artifacts.linked);
+        let result = vm.run(10_000);
+        assert!(
+            matches!(
+                result.outcome,
+                virtual_machine::virtual_machine::StepOutcome::Continue
+            ),
+            "sum_of_squares.s should still be spinning at done: {:?}",
+            result.outcome
+        );
+        assert_eq!(vm.peek_reg(10), 25, "a0 should hold sos(3, 4)");
+    }
+
+    // The lesson 05 template ships with a stub sos that just returns; it must
+    // assemble, link, and reach the spin before the reader fills it in.
+    #[test]
+    fn file_manifest_builds_and_runs_lesson_asm_sum_of_squares_template() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("programs/lessons/05_stack_frames/sum_of_squares_template.build");
+        let manifest = BuildManifest::from_file(path).expect("parse lesson build file");
+        let artifacts = BuildExecutor::build(&manifest).expect("assemble + link asm template");
+        let mut vm = virtual_machine::virtual_machine::VirtualMachine::new(&artifacts.linked);
+        let result = vm.run(1_000);
+        assert!(
+            matches!(
+                result.outcome,
+                virtual_machine::virtual_machine::StepOutcome::Continue
+            ),
+            "sum_of_squares_template.s should be spinning at done: {:?}",
             result.outcome
         );
     }

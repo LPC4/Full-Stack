@@ -81,12 +81,19 @@ pub fn parse(tokens: &[RvInstruction]) -> Vec<AsmToken> {
 
 // --- Parsing `Directive` variants ---
 
+/// Directives whose argument is a quoted string, so `;` and `#` inside it are
+/// data rather than the start of a comment.
+fn is_string_directive(raw: &str) -> bool {
+    let head = raw.trim_start();
+    [".asciz ", ".string ", ".asciz\t", ".string\t"]
+        .iter()
+        .any(|d| head.starts_with(d))
+}
+
 fn parse_directive_or_instruction(raw: &str, out: &mut Vec<AsmToken>) {
     // Strip trailing inline `;` or `#` comments before any classification.
-    // Exception: `.asciz` lines may contain these characters inside the
-    // string literal and are handled by the directive parser which already
-    // understands quoting.
-    let raw = if raw.trim_start().starts_with(".asciz") {
+    // String directives keep theirs: the directive parser stops at the quote.
+    let raw = if is_string_directive(raw) {
         raw
     } else {
         match raw.find([';', '#']) {

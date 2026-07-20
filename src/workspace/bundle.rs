@@ -13,10 +13,10 @@ pub fn sample_workspace() -> io::Result<MemoryFs> {
     Ok(fs)
 }
 
-/// Build the in-memory teaching workspace: just the lessons and their run configs.
-pub fn teaching_workspace() -> io::Result<MemoryFs> {
+/// Build the in-memory lessons workspace: just the lessons and their run configs.
+pub fn lessons_workspace() -> io::Result<MemoryFs> {
     let mut fs = MemoryFs::new();
-    populate_teaching_workspace(&mut fs)?;
+    populate_lessons_workspace(&mut fs)?;
     Ok(fs)
 }
 
@@ -47,15 +47,15 @@ pub fn populate_demo_workspace(fs: &mut dyn WorkspaceFs) -> io::Result<()> {
     Ok(())
 }
 
-/// Write the bundled teaching lessons into `fs` with the lesson folders at the
+/// Write the bundled lessons into `fs` with the lesson folders at the
 /// workspace root, so each lesson shows only its source and `.build` file.
-pub fn populate_teaching_workspace(fs: &mut dyn WorkspaceFs) -> io::Result<()> {
-    write_missing(fs, "README.md", TEACHING_README)?;
-    write_missing(fs, ".fullstack/run.toml", &teaching_run_configs())?;
+pub fn populate_lessons_workspace(fs: &mut dyn WorkspaceFs) -> io::Result<()> {
+    write_missing(fs, "README.md", LESSONS_README)?;
+    write_missing(fs, ".fullstack/run.toml", &lesson_run_configs())?;
     let previous = read_bundle_state(fs);
     let mut current = Vec::new();
     for (path, source) in crate::userspace::SOURCE_FILES {
-        let Some(local) = path.strip_prefix("programs/teaching/") else {
+        let Some(local) = path.strip_prefix("programs/lessons/") else {
             continue;
         };
         sync_bundled_file(fs, local, source, previous.get(local).copied(), false)?;
@@ -65,13 +65,65 @@ pub fn populate_teaching_workspace(fs: &mut dyn WorkspaceFs) -> io::Result<()> {
     Ok(())
 }
 
-/// The teaching run.toml: one freestanding config per lesson, in lesson order.
-fn teaching_run_configs() -> String {
+/// The lessons run.toml: one freestanding config per lesson, in lesson order.
+fn lesson_run_configs() -> String {
     let mut store = RunConfigStore::default();
-    if let Ok(build) = VPath::parse("01_sum/sum.build") {
-        let mut config = RunConfig::hosted("01 sum: add 1..10 in assembly", build);
+    let lessons = [
+        ("01 sum: add 1..10 in assembly", "01_sum/sum.build", "loop"),
+        (
+            "02 array sum: sum an array from memory",
+            "02_array_sum/array_sum.build",
+            "",
+        ),
+        (
+            "03 reverse array (template): your turn",
+            "03_reverse_array/reverse_array_template.build",
+            "",
+        ),
+        (
+            "03 reverse array (solution): reverse an array in place",
+            "03_reverse_array/reverse_array.build",
+            "",
+        ),
+        (
+            "04 max: call a leaf function",
+            "04_functions/max.build",
+            "max",
+        ),
+        (
+            "04 max3: stack frames for nested calls",
+            "04_functions/max3.build",
+            "",
+        ),
+        (
+            "05 factorial (stack frames): recursive factorial with a frame pointer",
+            "05_stack_frames/factorial_stack.build",
+            "fact",
+        ),
+        (
+            "05 sum of squares (template): your turn",
+            "05_stack_frames/sum_of_squares_template.build",
+            "",
+        ),
+        (
+            "05 sum of squares (solution): square(a) + square(b)",
+            "05_stack_frames/sum_of_squares.build",
+            "sos",
+        ),
+    ];
+    // The frame lessons open in the debugger; the earlier ones just run.
+    let opens_in_debugger = ["fact", "sos"];
+    for (title, build, breakpoint) in lessons {
+        let Ok(build) = VPath::parse(build) else {
+            continue;
+        };
+        let mut config = RunConfig::hosted(title, build);
         config.kind = RunKind::Freestanding;
         config.run.present = PresentMode::Terminal;
+        if !breakpoint.is_empty() {
+            config.debug.breakpoints.push(breakpoint.to_owned());
+            config.debug.enabled = opens_in_debugger.contains(&breakpoint);
+        }
         store.configs.push(config);
     }
     store.to_toml()
@@ -211,12 +263,12 @@ fn invalid_path(err: crate::workspace::PathError) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, err)
 }
 
-const TEACHING_README: &str = r#"# Teaching Lessons
+const LESSONS_README: &str = r#"# Lessons
 
 Small standalone programs for the written guide, one folder per lesson. Each
 lesson holds its source and its `.build` manifest, with a matching run
 configuration in `.fullstack/run.toml`. Natively this folder lives at
-`programs/teaching`; the browser opens the same tree in memory.
+`programs/lessons`; the browser opens the same tree in memory.
 "#;
 
 const SAMPLE_README: &str = r#"# Full-Stack Demo Workspace
@@ -270,14 +322,30 @@ mod tests {
     }
 
     #[test]
-    fn teaching_workspace_holds_lessons_and_a_ready_run_config() {
-        let fs = teaching_workspace().expect("teaching workspace");
+    fn lessons_workspace_holds_lessons_and_a_ready_run_config() {
+        let fs = lessons_workspace().expect("lessons workspace");
 
         for path in [
             "README.md",
             ".fullstack/run.toml",
             "01_sum/sum.s",
             "01_sum/sum.build",
+            "02_array_sum/array_sum.s",
+            "02_array_sum/array_sum.build",
+            "03_reverse_array/reverse_array.s",
+            "03_reverse_array/reverse_array.build",
+            "03_reverse_array/reverse_array_template.s",
+            "03_reverse_array/reverse_array_template.build",
+            "04_functions/max.s",
+            "04_functions/max.build",
+            "04_functions/max3.s",
+            "04_functions/max3.build",
+            "05_stack_frames/factorial_stack.s",
+            "05_stack_frames/factorial_stack.build",
+            "05_stack_frames/sum_of_squares.s",
+            "05_stack_frames/sum_of_squares.build",
+            "05_stack_frames/sum_of_squares_template.s",
+            "05_stack_frames/sum_of_squares_template.build",
         ] {
             assert!(
                 fs.read_file(&VPath::parse(path).expect("path")).is_ok(),
@@ -291,12 +359,14 @@ mod tests {
         );
 
         let store = RunConfigStore::load(&fs).expect("run configs parse");
-        assert_eq!(store.configs.len(), 1);
-        assert_eq!(store.configs[0].kind, RunKind::Freestanding);
-        let crate::runconfig::BuildRef::Manifest(path) = &store.configs[0].build else {
-            panic!("teaching config must reference a manifest");
-        };
-        assert!(fs.read_file(path).is_ok(), "missing manifest {path}");
+        assert_eq!(store.configs.len(), 9);
+        for config in &store.configs {
+            assert_eq!(config.kind, RunKind::Freestanding);
+            let crate::runconfig::BuildRef::Manifest(path) = &config.build else {
+                panic!("lesson config must reference a manifest");
+            };
+            assert!(fs.read_file(path).is_ok(), "missing manifest {path}");
+        }
     }
 
     #[test]

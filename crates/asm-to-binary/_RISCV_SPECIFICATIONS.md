@@ -544,6 +544,9 @@ directives behave as in GAS; several common aliases are accepted for the same op
 | `.equ sym, val` / `.set sym, val` | Define an assembler constant |
 | `.space n` / `.zero n` | Emit `n` zero bytes |
 
+Numeric directive arguments are decimal. `.string` / `.asciz` take a quoted literal and
+understand the escapes `\n`, `\t`, `\r`, `\"` and `\\`.
+
 ### 9.3 Relocations (ELF `R_RISCV_*`)
 
 This assembler resolves most symbol references internally at link time and emits only three

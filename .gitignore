@@ -16,6 +16,7 @@ target_wasm
 out/
 
 .run
+.idea
 plugin
 
 # Python benchmark tooling caches
@@ -27,4 +28,3 @@ benches/
 src/bin/benchmark-runner.rs
 .github/workflows/benchmarks.yml
 /teaching/
-/programs/teaching/.fullstack/

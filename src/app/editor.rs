@@ -46,20 +46,33 @@ impl FullStackApp {
         }
     }
 
-    /// Toggle a source breakpoint on `line` of `file`; the line must carry code
-    /// (map to a pc) or the click is reported as a no-op in the status bar.
+    /// Toggle a source breakpoint on `line` of `file`. Label, blank, and
+    /// comment lines slide forward to the next line that carries code.
     pub(super) fn toggle_source_breakpoint(&mut self, file: &str, line: usize) {
         let Some(live) = &mut self.live else {
             return;
         };
-        let Some(pc) = live.pc_for_source(file, line as u32) else {
-            self.status_message = Some(format!("no code on line {line} to break on"));
+        let Some(pc) = live.pc_at_or_after_source(file, line as u32) else {
+            self.status_message = Some(format!("no code at or after line {line} to break on"));
             return;
         };
         if !live.breakpoints.remove(&pc) {
             live.breakpoints.insert(pc);
         }
         self.persist_live_breakpoints();
+    }
+
+    /// Run to `line` of `file` (sliding forward like a breakpoint toggle)
+    /// without leaving a breakpoint behind.
+    pub(super) fn run_to_source_line(&mut self, file: &str, line: usize) {
+        let Some(live) = &mut self.live else {
+            return;
+        };
+        let Some(pc) = live.pc_at_or_after_source(file, line as u32) else {
+            self.status_message = Some(format!("no code at or after line {line} to run to"));
+            return;
+        };
+        live.run_to(pc);
     }
 
     /// The function whose definition encloses the editor caret, when the active
@@ -159,6 +172,9 @@ impl FullStackApp {
         }
         if let Some(line) = output.bp_toggle {
             self.toggle_source_breakpoint(&name, line);
+        }
+        if let Some(line) = output.run_to {
+            self.run_to_source_line(&name, line);
         }
         if jump.is_some() && output.jump_landed {
             self.pending_jump = None;
@@ -270,6 +286,7 @@ impl FullStackApp {
                 (DebugView::Code, "code"),
                 (DebugView::Disasm, "disasm"),
                 (DebugView::Memory, "memory"),
+                (DebugView::Stack, "stack"),
             ] {
                 if chrome::view_tab(ui, label, self.debug_view == view).clicked() {
                     self.debug_view = view;
@@ -281,6 +298,7 @@ impl FullStackApp {
             DebugView::Code => self.show_code_follow(ui),
             DebugView::Disasm => self.show_disasm(ui),
             DebugView::Memory => self.show_memory(ui),
+            DebugView::Stack => self.show_stack(ui),
         }
     }
 
@@ -406,7 +424,7 @@ impl FullStackApp {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(metrics::PANEL_INSET_X);
                 ui.label(theme::mono(
-                    "read-only \u{00B7} click gutter: breakpoint",
+                    "read-only \u{00B7} gutter click: breakpoint \u{00B7} ctrl+click: run to",
                     metrics::STATUS_TEXT_SIZE,
                     theme::TEXT_FAINT,
                 ));
@@ -449,6 +467,9 @@ impl FullStackApp {
         );
         if let Some(bp_line) = output.bp_toggle {
             self.toggle_source_breakpoint(&file, bp_line);
+        }
+        if let Some(line) = output.run_to {
+            self.run_to_source_line(&file, line);
         }
         if moved && output.jump_landed {
             self.code_follow_scrolled = Some((file, line));
@@ -944,6 +965,8 @@ struct CodeViewOutput {
     cursor: Option<(usize, usize)>,
     /// 1-based gutter line the user clicked to toggle a breakpoint, if any.
     bp_toggle: Option<usize>,
+    /// 1-based gutter line the user ctrl+clicked to run to, if any.
+    run_to: Option<usize>,
     /// True once a requested `jump_to` target sits inside the viewport, so
     /// callers can keep re-jumping until the scroll actually lands.
     jump_landed: bool,
@@ -990,8 +1013,11 @@ where
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
             ui.horizontal_top(|ui| {
-                out.bp_toggle =
-                    gutter(ui, line_count, &font, marks, row_height, &debug.breakpoints);
+                match gutter(ui, line_count, &font, marks, row_height, &debug.breakpoints) {
+                    Some((line, true)) => out.run_to = Some(line),
+                    Some((line, false)) => out.bp_toggle = Some(line),
+                    None => {}
+                }
                 // Paint last frame's bands first, so this frame's text lands on
                 // top of them (egui has no per-shape z within a layer).
                 let dbg_id = ui.make_persistent_id(("dbg_line", &id_salt));
@@ -1162,8 +1188,8 @@ fn line_col(text: &str, char_idx: usize) -> (usize, usize) {
     (line, col)
 }
 
-/// Right-aligned line numbers with diagnostic bars and breakpoint dots; a
-/// gutter click toggles a breakpoint on the line under the pointer.
+/// Right-aligned line numbers with diagnostic bars and breakpoint dots.
+/// A click returns `(line, ctrl-held)`; ctrl+click means run-to.
 fn gutter(
     ui: &mut egui::Ui,
     line_count: usize,
@@ -1171,7 +1197,7 @@ fn gutter(
     marks: &[DiagMark],
     row_height: f32,
     breakpoints: &[usize],
-) -> Option<usize> {
+) -> Option<(usize, bool)> {
     let digits = line_count.to_string().len().max(2);
     let mut nums = String::with_capacity(line_count * (digits + 1));
     for i in 1..=line_count {
@@ -1228,7 +1254,7 @@ fn gutter(
             }
         }
         if resp.clicked() {
-            toggled = Some(line);
+            toggled = Some((line, ui.input(|i| i.modifiers.command)));
         }
     }
 

@@ -77,6 +77,11 @@ const PANE_GROUPS: &[(&str, &[InspectorPane])] = &[
 pub(crate) struct InspectorState {
     pub(super) pane: InspectorPane,
     pub(super) symbol_filter: String,
+    /// Height cap for the pane selector; None shows the full list. Dragging
+    /// the divider below the list up trades selector rows for pane content.
+    pub(super) selector_height: Option<f32>,
+    pub(super) selector_natural: f32,
+    pub(super) selector_drag_start: Option<f32>,
     /// Throttled kernel-probe snapshot (processes, guest FS, syscall trace).
     pub(super) cache: Option<InspectCache>,
     pub(super) pid: Option<u64>,
@@ -91,6 +96,9 @@ impl Default for InspectorState {
         Self {
             pane: InspectorPane::Overview,
             symbol_filter: String::new(),
+            selector_height: None,
+            selector_natural: f32::INFINITY,
+            selector_drag_start: None,
             cache: None,
             pid: None,
             inode: None,
@@ -172,10 +180,20 @@ impl FullStackApp {
         chrome::panel_header(ui, "Inspect");
         self.ensure_inspector_pane_available();
         let caps = self.inspector_capabilities();
-        self.pane_selector(ui, caps);
-        ui.add_space(metrics::SECTION_GAP);
-        chrome::hairline(ui);
-        ui.add_space(metrics::SECTION_GAP);
+        // Height-capped so the divider below can reclaim space for content;
+        // when capped, the selector scrolls instead of pushing panes down.
+        let cap = self
+            .inspector
+            .selector_height
+            .unwrap_or(f32::INFINITY)
+            .max(metrics::ROW_HEIGHT);
+        let output = egui::ScrollArea::vertical()
+            .id_salt("inspect_selector")
+            .max_height(cap)
+            .auto_shrink([false, true])
+            .show(ui, |ui| self.pane_selector(ui, caps));
+        self.inspector.selector_natural = output.content_size.y;
+        self.selector_splitter(ui);
 
         match self.inspector.pane {
             InspectorPane::Overview => self.overview_pane(ui, caps),
@@ -209,6 +227,50 @@ impl FullStackApp {
                 }
             }
         }
+    }
+
+    /// The divider between the pane selector and pane content; dragging it up
+    /// caps the selector so register rows and other content get the space.
+    fn selector_splitter(&mut self, ui: &mut egui::Ui) {
+        ui.add_space(metrics::SECTION_GAP);
+        let (rect, _) = ui.allocate_exact_size(
+            vec2(ui.available_width(), metrics::HAIRLINE_SIZE),
+            Sense::hover(),
+        );
+        let hit = rect.expand2(vec2(0.0, metrics::RESIZE_HIT_RADIUS));
+        let resp = ui.interact(hit, ui.id().with("inspect_selector_resize"), Sense::drag());
+        if resp.hovered() || resp.dragged() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+        }
+        if resp.drag_started() {
+            self.inspector.selector_drag_start = Some(
+                self.inspector
+                    .selector_height
+                    .unwrap_or(self.inspector.selector_natural),
+            );
+        }
+        if resp.dragged() {
+            let start = self
+                .inspector
+                .selector_drag_start
+                .unwrap_or(self.inspector.selector_natural);
+            let delta = resp.total_drag_delta().unwrap_or_default().y;
+            let max = self.inspector.selector_natural;
+            let height = (start + delta).clamp(metrics::ROW_HEIGHT, max);
+            // Dragging back to the bottom releases the cap entirely.
+            self.inspector.selector_height = (height < max - 1.0).then_some(height);
+            ui.ctx().request_repaint();
+        }
+        if resp.drag_stopped() {
+            self.inspector.selector_drag_start = None;
+        }
+        let color = if resp.hovered() || resp.dragged() {
+            theme::ELECTRIC
+        } else {
+            theme::HAIRLINE
+        };
+        ui.painter().rect_filled(rect, 0.0, color);
+        ui.add_space(metrics::SECTION_GAP);
     }
 }
 
