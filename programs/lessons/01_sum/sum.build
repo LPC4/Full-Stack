@@ -5,7 +5,7 @@
 name = "sum"
 
 # Label shown in the run-configuration list.
-title = "01 sum: add 1..10 in assembly"
+title = "01: sum 1..10"
 
 # The source file to build, relative to this .build file. A `.s` root is raw
 # RISC-V assembly: it skips the compiler and goes straight to the assembler

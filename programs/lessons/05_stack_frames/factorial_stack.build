@@ -1,7 +1,7 @@
 # See 01_sum/sum.build for what each field means.
 
 name = "factorial_stack"
-title = "05 factorial (stack frames): factorial with fp"
+title = "05.1: factorial with a frame"
 root = "factorial_stack.s"
 target = "freestanding"
 entry = "_start"

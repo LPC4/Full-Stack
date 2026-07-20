@@ -14,6 +14,26 @@ pub fn discover_build_manifests(fs: &dyn WorkspaceFs) -> io::Result<Vec<VPath>> 
     Ok(manifests)
 }
 
+/// The display name a manifest gives its run config: `title`, else `name`, else
+/// the file stem. Run configs omit `name` in run.toml and inherit this instead.
+pub fn manifest_title(fs: &dyn WorkspaceFs, path: &VPath) -> Option<String> {
+    let text = String::from_utf8(fs.read_file(path).ok()?).ok()?;
+    let parsed = build_manifest::parse(&text).ok()?;
+    Some(
+        parsed
+            .string("title")
+            .or_else(|| parsed.string("name"))
+            .unwrap_or_else(|| manifest_stem(path)),
+    )
+}
+
+fn manifest_stem(path: &VPath) -> String {
+    path.file_name()
+        .unwrap_or("run")
+        .trim_end_matches(".build")
+        .to_owned()
+}
+
 pub fn run_config_from_manifest(fs: &dyn WorkspaceFs, path: VPath) -> Result<RunConfig, io::Error> {
     let text = String::from_utf8(fs.read_file(&path)?).map_err(|err| {
         io::Error::new(
@@ -26,12 +46,7 @@ pub fn run_config_from_manifest(fs: &dyn WorkspaceFs, path: VPath) -> Result<Run
     let name = parsed
         .string("title")
         .or_else(|| parsed.string("name"))
-        .unwrap_or_else(|| {
-            path.file_name()
-                .unwrap_or("run")
-                .trim_end_matches(".build")
-                .to_owned()
-        });
+        .unwrap_or_else(|| manifest_stem(&path));
     let kind = match parsed.get("target").unwrap_or("hosted") {
         "kernel" => RunKind::KernelBoot,
         "freestanding" => RunKind::Freestanding,

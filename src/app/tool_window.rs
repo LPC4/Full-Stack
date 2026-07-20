@@ -249,6 +249,7 @@ impl FullStackApp {
             return;
         };
         copy.name = format!("{} copy", copy.name);
+        copy.name_from_manifest = false;
         self.workspace
             .run_configs_mut()
             .configs
@@ -327,13 +328,17 @@ fn config_fields(
     manifests: &[VPath],
 ) {
     field_row(ui, "name", |ui| {
-        ui.add(
+        // Typing a name overrides the manifest title, so run.toml starts storing it.
+        let response = ui.add(
             egui::TextEdit::singleline(&mut config.name)
                 .id_salt("cfg_name")
                 .font(egui::TextStyle::Monospace)
                 .text_color(theme::TEXT)
                 .desired_width(150.0),
         );
+        if response.changed() {
+            config.name_from_manifest = false;
+        }
     });
     field_row(ui, "kind", |ui| {
         combo(ui, "cfg_kind", kind_tag(config.kind), |ui| {

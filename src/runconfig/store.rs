@@ -43,7 +43,25 @@ impl RunConfigStore {
                 format!("run.toml is not UTF-8: {err}"),
             )
         })?;
-        Self::parse(&text).map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
+        let mut store =
+            Self::parse(&text).map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+        store.resolve_manifest_names(fs);
+        Ok(store)
+    }
+
+    /// Fill in the names of configs that omitted `name`, from their manifest title.
+    fn resolve_manifest_names(&mut self, fs: &dyn WorkspaceFs) {
+        for config in &mut self.configs {
+            if !config.name_from_manifest {
+                continue;
+            }
+            let title = match &config.build {
+                BuildRef::Manifest(path) => crate::runconfig::discover::manifest_title(fs, path)
+                    .unwrap_or_else(|| stem(path)),
+                BuildRef::SourceWithDefaults { root, .. } => stem(root),
+            };
+            config.name = title;
+        }
     }
 
     /// Serialize back to `.fullstack/run.toml`, creating the directory on first save.
@@ -132,7 +150,9 @@ impl RunConfigStore {
         let mut out = String::new();
         for config in &self.configs {
             out.push_str("[[config]]\n");
-            out.push_str(&format!("name = \"{}\"\n", escape(&config.name)));
+            if !config.name_from_manifest {
+                out.push_str(&format!("name = \"{}\"\n", escape(&config.name)));
+            }
             out.push_str(&format!("type = \"{}\"\n", kind_label(config.kind)));
             match &config.build {
                 BuildRef::Manifest(path) => {
@@ -179,10 +199,10 @@ struct RawConfig {
 }
 
 impl RawConfig {
-    /// Type the raw strings. Only `name` and a `build`/`root` ref are required;
-    /// the rest default (type hosted, present both, 200k steps, debug off).
+    /// Type the raw strings. Only a `build`/`root` ref is required; the rest default
+    /// (hosted, both, 200k steps, debug off) and an omitted `name` resolves on load.
     fn into_config(self) -> Result<RunConfig, RunConfigParseError> {
-        let name = required(&self.values, "name", self.first_line)?;
+        let name = self.values.get("name").map(String::as_str);
         let kind = parse_kind(
             self.values
                 .get("type")
@@ -242,7 +262,8 @@ impl RawConfig {
         }
 
         Ok(RunConfig {
-            name: name.to_owned(),
+            name: name.unwrap_or_default().to_owned(),
+            name_from_manifest: name.is_none(),
             kind,
             build,
             fs: FsImageSpec { mounts },
@@ -345,6 +366,14 @@ fn present_label(present: PresentMode) -> &'static str {
         PresentMode::Framebuffer => "framebuffer",
         PresentMode::Both => "both",
     }
+}
+
+/// Last-resort display name when a manifest title cannot be read: the file stem.
+fn stem(path: &VPath) -> String {
+    let name = path.file_name().unwrap_or("run");
+    name.rsplit_once('.')
+        .map_or(name, |(base, _)| base)
+        .to_owned()
 }
 
 fn escape(value: &str) -> String {

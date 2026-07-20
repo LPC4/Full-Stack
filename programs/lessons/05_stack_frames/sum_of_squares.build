@@ -1,7 +1,7 @@
 # See 01_sum/sum.build for what each field means.
 
 name = "sum_of_squares"
-title = "05 sum of squares (solution)"
+title = "05.3 (solution): sum of squares"
 root = "sum_of_squares.s"
 target = "freestanding"
 entry = "_start"

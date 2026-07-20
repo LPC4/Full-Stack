@@ -1,7 +1,7 @@
 # See 01_sum/sum.build for what each field means.
 
 name = "max"
-title = "04 max: call a leaf function"
+title = "04.1: call a leaf function"
 root = "max.s"
 target = "freestanding"
 entry = "_start"

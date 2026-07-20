@@ -4,6 +4,9 @@ use crate::workspace::VPath;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RunConfig {
     pub name: String,
+    /// `name` was inherited from the build manifest's `title`, not written in
+    /// run.toml; it is resolved on load and left out again on save.
+    pub name_from_manifest: bool,
     pub kind: RunKind,
     pub build: BuildRef,
     pub fs: FsImageSpec,
@@ -69,6 +72,7 @@ impl RunConfig {
     pub fn hosted(name: impl Into<String>, build: VPath) -> Self {
         Self {
             name: name.into(),
+            name_from_manifest: false,
             kind: RunKind::Hosted,
             build: BuildRef::Manifest(build),
             fs: FsImageSpec::default(),

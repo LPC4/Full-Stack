@@ -65,89 +65,32 @@ pub fn populate_lessons_workspace(fs: &mut dyn WorkspaceFs) -> io::Result<()> {
     Ok(())
 }
 
+/// Every lesson run config, in lesson order: manifest, breakpoint, debug mode.
+/// Titles are not listed here; they come from each manifest's `title` field.
+const LESSONS: [(&str, &str, bool); 12] = [
+    ("01_sum/sum.build", "loop", false),
+    ("02_array_sum/array_sum.build", "", false),
+    ("03_reverse_array/reverse_array_template.build", "", false),
+    ("03_reverse_array/reverse_array.build", "", false),
+    ("04_functions/max.build", "max", false),
+    ("04_functions/max3.build", "", false),
+    ("05_stack_frames/factorial_stack.build", "fact", true),
+    ("05_stack_frames/sum_of_squares_template.build", "", false),
+    ("05_stack_frames/sum_of_squares.build", "sos", true),
+    ("06_uart/hello_raw.build", "", false),
+    ("06_uart/print_char.build", "", true),
+    ("06_uart/hello_world.build", "", true),
+];
+
 /// The lessons run.toml: one freestanding config per lesson, in lesson order.
 fn lesson_run_configs() -> String {
     let mut store = RunConfigStore::default();
-    // Titles mirror the `title` field of each lesson's .build manifest.
-    let lessons = [
-        (
-            "01 sum: add 1..10 in assembly",
-            "01_sum/sum.build",
-            "loop",
-            false,
-        ),
-        (
-            "02 array sum: sum array from memory",
-            "02_array_sum/array_sum.build",
-            "",
-            false,
-        ),
-        (
-            "03 reverse array (template): your turn",
-            "03_reverse_array/reverse_array_template.build",
-            "",
-            false,
-        ),
-        (
-            "03 reverse array (solution)",
-            "03_reverse_array/reverse_array.build",
-            "",
-            false,
-        ),
-        (
-            "04 max: call a leaf function",
-            "04_functions/max.build",
-            "max",
-            false,
-        ),
-        (
-            "04 max3: stack frames",
-            "04_functions/max3.build",
-            "",
-            false,
-        ),
-        (
-            "05 factorial (stack frames): factorial with fp",
-            "05_stack_frames/factorial_stack.build",
-            "fact",
-            true,
-        ),
-        (
-            "05 sum of squares (template): your turn",
-            "05_stack_frames/sum_of_squares_template.build",
-            "",
-            false,
-        ),
-        (
-            "05 sum of squares (solution)",
-            "05_stack_frames/sum_of_squares.build",
-            "sos",
-            true,
-        ),
-        (
-            "06 hello (raw): write to UART",
-            "06_uart/hello_raw.build",
-            "",
-            false,
-        ),
-        (
-            "06 print_char: wrap the UART write",
-            "06_uart/print_char.build",
-            "",
-            true,
-        ),
-        (
-            "06 print_string: hello world",
-            "06_uart/print_string.build",
-            "",
-            true,
-        ),
-    ];
-    for (title, build, breakpoint, debug) in lessons {
+    for (build, breakpoint, debug) in LESSONS {
         let Ok(build) = VPath::parse(build) else {
             continue;
         };
-        let mut config = RunConfig::hosted(title, build);
+        let mut config = RunConfig::hosted(String::new(), build);
+        config.name_from_manifest = true;
         config.kind = RunKind::Freestanding;
         config.run.present = PresentMode::Terminal;
         if !breakpoint.is_empty() {
@@ -397,6 +340,39 @@ mod tests {
             };
             assert!(fs.read_file(path).is_ok(), "missing manifest {path}");
         }
+    }
+
+    #[test]
+    fn lesson_titles_come_from_their_build_manifests() {
+        let fs = lessons_workspace().expect("lessons workspace");
+        let store = RunConfigStore::load(&fs).expect("run configs parse");
+        for (config, (build, _, _)) in store.configs.iter().zip(LESSONS) {
+            assert!(
+                config.name_from_manifest,
+                "{build} names itself in run.toml"
+            );
+            assert!(
+                config.name.starts_with(&build[..2]),
+                "title {:?} does not lead with the lesson number of {build}",
+                config.name
+            );
+        }
+    }
+
+    /// The checked-in lessons run.toml is materialized once and never refreshed,
+    /// so it can only be kept honest by failing here when it drifts.
+    #[test]
+    fn materialized_lessons_run_toml_matches_the_generated_one() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/programs/lessons/.fullstack/run.toml"
+        );
+        let on_disk = std::fs::read_to_string(path).expect("read materialized run.toml");
+        assert_eq!(
+            on_disk.replace("\r\n", "\n"),
+            lesson_run_configs().replace("\r\n", "\n"),
+            "programs/lessons/.fullstack/run.toml is stale; regenerate it from lesson_run_configs"
+        );
     }
 
     #[test]
