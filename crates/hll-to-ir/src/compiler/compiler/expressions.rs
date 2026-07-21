@@ -1292,69 +1292,18 @@ impl HighLevelCompiler {
         field: &str,
         mode: EvalMode,
     ) -> Option<LoweredValue> {
-        let resolved_ty = self.resolve_named_type(&base_addr.ty);
-
-        // Resolve the aggregate pointer and field list from the base type.
-        // Three shapes are valid:
-        //   Aggregate(fields)           -- base_addr.value is the pointer to the aggregate
-        //   Pointer(Aggregate(fields))  -- base_addr.value is the pointer to the aggregate
-        //   Pointer(Pointer(Aggregate)) -- load from base_addr.value first (heap-ptr in stack slot)
-        let (agg_ptr, fields) = match resolved_ty {
-            IrType::Aggregate(fields) => {
-                let reg = match &base_addr.value {
-                    IrValue::Register(r) => r.clone(),
-                    _ => return None,
-                };
-                (reg, fields)
+        // Valid base shapes: Aggregate/Slice, Pointer to either, or
+        // Pointer(Pointer(Aggregate)) via the shared storage unwrap.
+        let (agg_ptr, fields) = {
+            let (ptr, storage_ty) = self.resolve_aggregate_ptr_and_fields(base_addr, |t| {
+                matches!(t, IrType::Aggregate(_))
+            })?;
+            match storage_ty {
+                IrType::Aggregate(fields) => (ptr, fields),
+                // A slice exposes `ptr` and `len` over its { ptr, len } layout.
+                IrType::Slice(elem) => (ptr, Self::slice_fields(&elem)),
+                _ => return None,
             }
-            // A slice exposes `ptr` and `len` over its { ptr, len } layout.
-            IrType::Slice(elem) => {
-                let reg = match &base_addr.value {
-                    IrValue::Register(r) => r.clone(),
-                    _ => return None,
-                };
-                (reg, Self::slice_fields(&elem))
-            }
-            IrType::Pointer(inner) => {
-                let inner_resolved = self.resolve_named_type(&inner);
-                match inner_resolved {
-                    IrType::Aggregate(fields) => {
-                        let reg = match &base_addr.value {
-                            IrValue::Register(r) => r.clone(),
-                            _ => return None,
-                        };
-                        (reg, fields)
-                    }
-                    IrType::Slice(elem) => {
-                        let reg = match &base_addr.value {
-                            IrValue::Register(r) => r.clone(),
-                            _ => return None,
-                        };
-                        (reg, Self::slice_fields(&elem))
-                    }
-                    IrType::Pointer(inner_inner) => {
-                        let inner_inner_resolved = self.resolve_named_type(&inner_inner);
-                        if let IrType::Aggregate(fields) = inner_inner_resolved {
-                            let slot_reg = match &base_addr.value {
-                                IrValue::Register(r) => r.clone(),
-                                _ => return None,
-                            };
-                            let loaded = self.new_temp();
-                            self.push_instruction(IrInstruction::Load {
-                                dest: loaded.clone(),
-                                ty: *inner.clone(),
-                                ptr: slot_reg,
-                                offset: None,
-                            });
-                            (loaded, fields)
-                        } else {
-                            return None;
-                        }
-                    }
-                    _ => return None,
-                }
-            }
-            _ => return None,
         };
 
         let (offset, field_ty) = self.aggregate_field_offset_and_type(&fields, field)?;
@@ -1434,57 +1383,17 @@ impl HighLevelCompiler {
         }
 
         // Find the pointer that addresses the first element and the element type.
-        let (indexable_ptr, element_ty) = match resolved_ty {
-            // Direct array (pointer to array storage)
-            IrType::Array { element, .. } => {
-                let reg = match &base.value {
-                    IrValue::Register(r) => r.clone(),
-                    _ => return None,
-                };
-                (reg, *element)
+        let (indexable_ptr, element_ty) = {
+            if !matches!(&resolved_ty, IrType::Array { .. } | IrType::Pointer(_)) {
+                return None;
             }
-            IrType::Pointer(inner) => {
-                let inner_resolved = self.resolve_named_type(&inner);
-                match inner_resolved {
-                    // Pointer to Array: base.value points directly to the array data.
-                    IrType::Array { element, .. } => {
-                        let reg = match &base.value {
-                            IrValue::Register(r) => r.clone(),
-                            _ => return None,
-                        };
-                        (reg, *element)
-                    }
-                    // Pointer to Pointer: load the inner pointer first.
-                    IrType::Pointer(inner_inner) => {
-                        let inner_inner_resolved = self.resolve_named_type(&inner_inner);
-                        let element_ty = match inner_inner_resolved {
-                            IrType::Array { element, .. } => *element,
-                            other => other,
-                        };
-                        let slot_reg = match &base.value {
-                            IrValue::Register(r) => r.clone(),
-                            _ => return None,
-                        };
-                        let loaded = self.new_temp();
-                        self.push_instruction(IrInstruction::Load {
-                            dest: loaded.clone(),
-                            ty: *inner.clone(),
-                            ptr: slot_reg,
-                            offset: None,
-                        });
-                        (loaded, element_ty)
-                    }
-                    // Pointer to T: base.value is a pointer to elements of type T.
-                    other => {
-                        let reg = match &base.value {
-                            IrValue::Register(r) => r.clone(),
-                            _ => return None,
-                        };
-                        (reg, other)
-                    }
-                }
-            }
-            _ => return None,
+            let (ptr, storage_ty) = self.resolve_aggregate_ptr_and_fields(base, |_| true)?;
+            let element_ty = match storage_ty {
+                IrType::Array { element, .. } => *element,
+                // Pointer to T: base.value addresses elements of type T.
+                other => other,
+            };
+            (ptr, element_ty)
         };
 
         let elem_ptr = self.new_temp();
@@ -1519,6 +1428,39 @@ impl HighLevelCompiler {
                     is_unsigned: false,
                 })
             }
+        }
+    }
+
+    // Unwrap a base (T, Pointer(T), or Pointer(Pointer(T))) to its storage ptr and
+    // resolved type; a double pointer loads the slot first if `accept_double(T)`.
+    fn resolve_aggregate_ptr_and_fields(
+        &mut self,
+        base: &LoweredValue,
+        accept_double: impl Fn(&IrType) -> bool,
+    ) -> Option<(crate::ir::IrRegister, IrType)> {
+        let reg = match &base.value {
+            IrValue::Register(r) => r.clone(),
+            _ => return None,
+        };
+        match self.resolve_named_type(&base.ty) {
+            IrType::Pointer(inner) => match self.resolve_named_type(&inner) {
+                IrType::Pointer(inner_inner) => {
+                    let target = self.resolve_named_type(&inner_inner);
+                    if !accept_double(&target) {
+                        return None;
+                    }
+                    let loaded = self.new_temp();
+                    self.push_instruction(IrInstruction::Load {
+                        dest: loaded.clone(),
+                        ty: *inner.clone(),
+                        ptr: reg,
+                        offset: None,
+                    });
+                    Some((loaded, target))
+                }
+                inner_resolved => Some((reg, inner_resolved)),
+            },
+            other => Some((reg, other)),
         }
     }
 
@@ -1835,6 +1777,17 @@ impl HighLevelCompiler {
         }
     }
 
+    // Bit width of an integer type, for cast narrowing/widening decisions.
+    fn int_width_bits(width: IntWidth) -> u32 {
+        match width {
+            IntWidth::I1 => 1,
+            IntWidth::I8 => 8,
+            IntWidth::I16 => 16,
+            IntWidth::I32 => 32,
+            IntWidth::I64 => 64,
+        }
+    }
+
     fn lower_cast(&mut self, target_ty: &Type, expr: &Expression) -> Option<LoweredValue> {
         let source_value = self.lower_expr(expr, EvalMode::Value)?;
         let target_ir = self.lower_type(target_ty);
@@ -1844,20 +1797,8 @@ impl HighLevelCompiler {
 
         let cast_mode = match (&source_resolved, &target_resolved) {
             (IrType::Integer(src_width), IrType::Integer(tgt_width)) => {
-                let src_bits = match src_width {
-                    IntWidth::I1 => 1,
-                    IntWidth::I8 => 8,
-                    IntWidth::I16 => 16,
-                    IntWidth::I32 => 32,
-                    IntWidth::I64 => 64,
-                };
-                let tgt_bits = match tgt_width {
-                    IntWidth::I1 => 1,
-                    IntWidth::I8 => 8,
-                    IntWidth::I16 => 16,
-                    IntWidth::I32 => 32,
-                    IntWidth::I64 => 64,
-                };
+                let src_bits = Self::int_width_bits(*src_width);
+                let tgt_bits = Self::int_width_bits(*tgt_width);
                 if tgt_bits < src_bits {
                     IrCastMode::Trunc
                 } else if source_value.is_unsigned {

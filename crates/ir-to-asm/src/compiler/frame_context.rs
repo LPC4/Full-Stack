@@ -5,19 +5,16 @@ use hll_to_ir::IrType;
 use std::collections::HashMap;
 
 pub struct FrameContext {
-    /// Total frame size in bytes.
     frame_size: usize,
-    /// Whether the return address must be saved. Laid out in `finalize`.
+    // Save requests recorded up front; `finalize` assigns their offsets.
     needs_ra: bool,
-    /// Callee-saved registers to preserve. Laid out in `finalize`.
     pending_regs: Vec<u8>,
-    /// Offset where return address (ra) is stored, if any.
     ra_offset: Option<usize>,
-    /// List of (register index, offset) for saved callee-saved registers.
+    // (register index, offset) pairs for saved callee-saved registers.
     saved_regs: Vec<(u8, usize)>,
-    /// Next available offset from the frame base (negative from sp).
+    // Next free offset from the frame base (negative from sp).
     next_offset: usize,
-    /// Alignment requirement (16 bytes for RISC-V ABI).
+    // 16 bytes, per the RISC-V ABI.
     alignment: usize,
 }
 

@@ -389,7 +389,7 @@ impl PseudoInstruction {
     }
 }
 
-/// Expands `li rd, imm` into the minimal real instruction sequence.
+// Expands `li rd, imm` into the minimal real instruction sequence.
 fn expand_li(rd: Reg, imm: i64) -> Vec<RealInstruction> {
     // 12-bit sign-extended case: addi rd, x0, imm
     if (-2048..=2047).contains(&imm) {

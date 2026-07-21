@@ -27,7 +27,6 @@ impl Default for QuickOpenState {
 }
 
 impl FullStackApp {
-    /// Render the switcher when open; draws above every panel.
     pub(super) fn quick_open_overlay(&mut self, ctx: &egui::Context) {
         let Some(state) = self.quick_open.as_ref() else {
             return;
@@ -72,7 +71,6 @@ impl FullStackApp {
         }
     }
 
-    /// Workspace files matching the query, basename hits first, capped for display.
     fn quick_open_matches(&self, query: &str) -> Vec<VPath> {
         let mut matches: Vec<VPath> = Vec::new();
         for entry in &self.workspace.tree().root {
@@ -87,8 +85,6 @@ impl FullStackApp {
     }
 }
 
-/// Query field, keyboard navigation, and result rows. Returns the chosen path
-/// and whether the palette asked to close.
 fn palette_body(
     ui: &mut egui::Ui,
     state: &mut QuickOpenState,
@@ -186,7 +182,6 @@ fn basename(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
 }
 
-/// One result row: basename bright, the containing path dim after it.
 fn result_row(ui: &mut egui::Ui, path: &VPath, selected: bool) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(
         vec2(ui.available_width(), metrics::ROW_HEIGHT),
@@ -240,7 +235,6 @@ fn result_row(ui: &mut egui::Ui, path: &VPath, selected: bool) -> egui::Response
     resp
 }
 
-/// A full-width hairline inside the palette frame.
 fn chrome_hairline(ui: &mut egui::Ui) {
     let width = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(vec2(width, 1.0), Sense::hover());

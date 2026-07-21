@@ -2021,11 +2021,8 @@ mod tests {
         }
     }
 
-    // A zero-extending cast from a narrow unsigned integer must clear the high
-    // bits the sign-extending load (lb/lh/lw) left behind -- it cannot be a bare
-    // `mv`. Regression for the u8->u64 widening miscompile that read 0xA4 as
-    // 0xFFFF_FFFF_FFFF_FFA4. The lowering emits `slli`/`srli` to mask to the
-    // source width.
+    // Zext must mask the high bits a sign-extending load left behind (slli/srli,
+    // not a bare mv). Regression for u8->u64 reading 0xA4 as 0xFFFF_FFFF_FFFF_FFA4.
     #[test]
     fn zext_from_loaded_narrow_unsigned_masks_high_bits() {
         let mask_widths = [

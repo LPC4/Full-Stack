@@ -83,14 +83,12 @@ fn inode_pa(base: u64, idx: u64) -> u64 {
     base + BLOCK_SIZE + idx * INODE_SIZE
 }
 
-/// Read a fixed 32-byte inline name, trimmed at its terminator.
 fn read_name(vm: &VirtualMachine, pa: u64) -> String {
     let bytes = vm.peek_bytes_raw(pa, NAME_LEN);
     let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
     String::from_utf8_lossy(&bytes[..end]).into_owned()
 }
 
-/// Count valid open descriptors per inode by scanning the 16-slot fd table.
 fn open_fd_counts(vm: &VirtualMachine, sym: &FsSymbols) -> std::collections::HashMap<u64, u32> {
     let table = rd_u64(vm, sym.fs_fd_table_pa);
     let mut counts = std::collections::HashMap::new();
@@ -106,8 +104,7 @@ fn open_fd_counts(vm: &VirtualMachine, sym: &FsSymbols) -> std::collections::Has
     counts
 }
 
-/// Recursively decode the inode at `idx` into a node, descending into directories.
-/// `budget` caps the total node count so a cyclic image cannot spin the render.
+// `budget` caps the node count so a cyclic image cannot spin the render.
 fn read_node(
     vm: &VirtualMachine,
     base: u64,
@@ -172,7 +169,6 @@ pub fn capture(vm: &VirtualMachine, sym: &FsSymbols) -> Option<FsNode> {
     Some(read_node(vm, base, 0, "/".to_owned(), 0, &fds, &mut budget))
 }
 
-/// Read up to `MAX_PREVIEW` bytes of a file by walking its inode block pointers.
 fn read_file(vm: &VirtualMachine, base: u64, idx: u64, size: u64) -> Vec<u8> {
     let ipa = inode_pa(base, idx);
     let mut out = Vec::new();

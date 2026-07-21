@@ -10,8 +10,6 @@ use egui::{Align2, FontId, Sense, pos2, vec2};
 use full_stack::session::MachineState;
 
 impl FullStackApp {
-    /// The landing pane: selected config, last build, machine state, and what
-    /// the inspector can show right now. Useful before any run exists.
     pub(super) fn overview_pane(&mut self, ui: &mut egui::Ui, caps: Capabilities) {
         let mut open_problems = false;
         let mut stage_click = None;
@@ -55,8 +53,6 @@ impl FullStackApp {
         }
     }
 
-    /// The last build as a pipeline card: a clickable stage strip over the
-    /// target/entry facts. Returns the stage chip clicked, if any.
     fn overview_build_section(&self, ui: &mut egui::Ui) -> Option<crate::ui::Layer> {
         ui.add_space(metrics::SECTION_GAP);
         section_label(ui, "last build");
@@ -107,8 +103,6 @@ impl FullStackApp {
         }
     }
 
-    /// Current problem tallies for the active build target; the row is a click
-    /// target that opens the Problems tab (the single diagnostics list).
     fn overview_problems_section(&self, ui: &mut egui::Ui) -> bool {
         ui.add_space(metrics::SECTION_GAP);
         section_label(ui, "problems");
@@ -140,8 +134,7 @@ impl FullStackApp {
     }
 }
 
-/// What each pane group can show right now, so an empty-looking panel still
-/// explains what a run or build would unlock.
+// An empty-looking panel still explains what a run or build would unlock.
 fn overview_capability_section(ui: &mut egui::Ui, caps: Capabilities) {
     ui.add_space(metrics::SECTION_GAP);
     section_label(ui, "inspectable");
@@ -186,8 +179,6 @@ fn machine_state_tag(state: &MachineState) -> String {
     }
 }
 
-/// The built pipeline as a connected chip strip in the depth-spectrum colors;
-/// each chip opens that stage's view. Returns the clicked stage.
 fn stage_strip(ui: &mut egui::Ui) -> Option<crate::ui::Layer> {
     use crate::ui::Layer;
     const STAGES: [Layer; 4] = [Layer::Hll, Layer::Ir, Layer::Asm, Layer::Elf];
@@ -247,7 +238,6 @@ fn stage_strip(ui: &mut egui::Ui) -> Option<crate::ui::Layer> {
     clicked
 }
 
-/// A stat row that acts as a button: key left, colored value right. True on click.
 fn clickable_stat_row(
     ui: &mut egui::Ui,
     key: &str,

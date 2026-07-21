@@ -236,7 +236,7 @@ impl AssembledOutput {
 
 // --- ELF-64 generation (RISC-V little-endian) ---
 
-/// ELF-64 constants for RISC-V.
+// ELF-64 constants for RISC-V.
 mod elf64 {
     pub const ELFMAG: [u8; 4] = [0x7f, b'E', b'L', b'F'];
     pub const ELFCLASS64: u8 = 2;

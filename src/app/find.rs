@@ -9,18 +9,13 @@ use eframe::egui;
 pub(crate) struct FindState {
     pub(super) open: bool,
     pub(super) query: String,
-    /// Index of the current match within the last computed match set.
     pub(super) current: usize,
-    /// Grab keyboard focus on the next frame the bar is drawn.
     focus: bool,
 }
 
-/// Everything `code_view` needs to paint and scroll to matches this frame.
 pub(super) struct FindHighlight {
-    /// Byte ranges of every match in the buffer.
     pub(super) ranges: Vec<(usize, usize)>,
     pub(super) current: usize,
-    /// One-shot byte offset to scroll into view.
     pub(super) jump_to: Option<usize>,
 }
 
@@ -31,8 +26,7 @@ impl FindState {
     }
 }
 
-/// ASCII-case-insensitive byte ranges of `query` in `text`. Both haystack and
-/// needle are UTF-8, and ASCII folding never crosses char boundaries.
+// ASCII-case-insensitive; folding never crosses UTF-8 char boundaries.
 pub(super) fn match_ranges(text: &str, query: &str) -> Vec<(usize, usize)> {
     if query.is_empty() {
         return Vec::new();
@@ -53,8 +47,6 @@ pub(super) fn match_ranges(text: &str, query: &str) -> Vec<(usize, usize)> {
 }
 
 impl FullStackApp {
-    /// The find bar. Returns the highlight set for the code view, or None when
-    /// the bar is closed or nothing matches.
     pub(super) fn find_bar(&mut self, ui: &mut egui::Ui, text: &str) -> Option<FindHighlight> {
         if !self.find.open {
             return None;
@@ -159,7 +151,6 @@ impl FullStackApp {
     }
 }
 
-/// A small frameless navigation glyph (prev/next/close) for the find bar.
 fn nav_glyph(ui: &mut egui::Ui, glyph: &str) -> egui::Response {
     let resp = ui.add(
         egui::Button::new(theme::mono(

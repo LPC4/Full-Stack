@@ -42,14 +42,12 @@ use std::path::Path;
 use terminal::{ConsoleStream, TerminalKind, TerminalState};
 
 const BUILD_GLOW_SECS: f64 = 0.85;
-/// Per-frame step budget when a run config does not specify one.
 #[cfg(not(target_arch = "wasm32"))]
 const DEMO_WORKSPACE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/programs/demo_workspace");
 #[cfg(not(target_arch = "wasm32"))]
 const LESSONS_WORKSPACE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/programs/lessons");
 
-/// The bundled folders the top bar can open on any target; the browser opens
-/// them as in-memory trees, native materializes them on disk.
+// The browser opens these as in-memory trees; native materializes them on disk.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum WorkspacePreset {
     Demo,
@@ -129,8 +127,7 @@ pub(super) struct StageCache {
     result: PipelineResult,
 }
 
-/// Artifacts from the last successful launch; Restart boots them again when
-/// the config and its source fingerprint are unchanged.
+// Restart boots these again when the config and its source fingerprint are unchanged.
 struct LaunchCache {
     config: RunConfig,
     fingerprint: u64,
@@ -148,34 +145,25 @@ pub struct FullStackApp {
     pub(super) layer: Layer,
     layout: ShellLayout,
     pub(super) stage_cache: Option<StageCache>,
-    /// Per-target-mode stdlib object cache, so the live preview links against the
-    /// stdlib matching the active program's target instead of always hosted.
+    // Per-mode cache so the live preview links the stdlib matching the active target.
     stdlib_objects: Vec<(TargetMode, Vec<(String, AssembledOutput)>)>,
     pub(super) status_message: Option<String>,
     build_glow_start: Option<f64>,
     build_lit_until: Option<Layer>,
-    /// Which target `build_lit_until` belongs to, so the lit spine survives
-    /// switching tabs and only reads stale for a different program.
+    // Target of `build_lit_until`, so the lit spine only reads stale for a different program.
     built_target: Option<BuildTarget>,
     active_build_target: Option<BuildTarget>,
     pub(super) selected_config: usize,
-    /// Discovered `.build` manifests with the time they were scanned.
     manifest_cache: Option<(f64, Vec<VPath>)>,
-    /// Check-on-idle: dirty-buffer fingerprint last seen and when it changed.
     idle_seen: Option<(u64, f64)>,
-    /// The fingerprint the idle checker last compiled, so it runs once per edit.
     idle_checked: u64,
-    /// The resident VM session; present from Run until the next config change.
+    // Present from Run until the next config change.
     pub(super) live: Option<LiveMachine>,
     launch_cache: Option<LaunchCache>,
-    /// Dock input buffer for adding a `symbol+offset` breakpoint.
     pub(super) breakpoint_entry: String,
-    /// Run-panel input buffers for adding a host->guest mount to a config.
     pub(super) mount_host_entry: String,
     pub(super) mount_guest_entry: String,
-    /// A click-to-jump target (path, 1-based line) the editor scrolls to.
     pub(super) pending_jump: Option<(VPath, usize)>,
-    /// Function name the next IR/ASM stage view scrolls to (spine stage sync).
     pub(super) stage_locate: Option<String>,
     pub(super) vm_result: Option<VmExecutionResult>,
     pub(super) machine_texture: Option<egui::TextureHandle>,
@@ -186,40 +174,27 @@ pub struct FullStackApp {
     pub(super) quick_open: Option<quick_open::QuickOpenState>,
     pub(super) explorer: explorer::ExplorerState,
     pub(super) search: search::SearchState,
-    /// Dirty document waiting for close confirmation when that setting is on.
     pub(super) pending_close: Option<VPath>,
-    /// 1-based cursor line/column of the active editor, for the status bar.
     pub(super) cursor_pos: Option<(usize, usize)>,
     main_surface: MainSurface,
     pub(super) debug_view: debug_view::DebugView,
     debugger_open: bool,
-    /// Basename of the running config's root source, naming session tabs.
     pub(super) session_tab_label: Option<String>,
     pub(super) memory_view: debug_view::MemoryViewState,
-    /// Last known source location of the machine Code view (sticky across
-    /// stretches of pc with no line info, so a line stays highlighted).
+    // Sticky across stretches of pc with no line info, so a line stays highlighted.
     pub(super) code_follow: Option<(String, u32)>,
-    /// Location the Code view last auto-scrolled to, so it follows the pc but
-    /// does not fight a manual scroll every frame.
+    // Last auto-scroll target, so follow-pc does not fight a manual scroll every frame.
     pub(super) code_follow_scrolled: Option<(String, u32)>,
-    /// Whether the current/last live session was launched as a debug session.
     launch_mode: LaunchMode,
-    /// Instruction count for the dock's "step n" control.
     pub(super) step_count: u64,
     step_unit: machine_dock::StepUnit,
-    /// Dock time-travel scrubber position (frame index into the session history).
     pub(super) time_scrub: usize,
-    /// Keep the scrubber pinned to the newest frame as history grows, until the
-    /// user drags back; re-armed by reaching the end or clicking "now".
+    // Pinned to the newest frame until the user drags back; re-armed by "now" or the end.
     pub(super) time_follow_now: bool,
-    /// The Inspect tool window's pane selection and captured probe state.
     pub(super) inspector: inspector::InspectorState,
-    /// The last successful config build, retained so the inspector's Artifacts
-    /// and Symbols panes work without a session (cleared on config switch).
+    // Retained so Artifacts/Symbols work without a session; cleared on config switch.
     last_build: Option<full_stack::session::BuildOutcome>,
-    /// User-level settings, persisted through eframe storage.
     pub(super) settings: settings::AppSettings,
-    /// Whether the full-page settings view is showing over the editor.
     pub(super) settings_open: bool,
 }
 
@@ -309,20 +284,18 @@ impl FullStackApp {
             .map(|doc| doc.path().clone())
     }
 
-    /// Open (or focus) a document and resync the layer, stage cache, and spine.
     pub(super) fn open_path(&mut self, path: VPath) {
         if self.workspace.open_document(path).is_ok() {
             self.document_focus_changed();
         }
     }
 
-    /// Focus an already-open document (a tab click).
     pub(super) fn activate_path(&mut self, path: &VPath) {
         self.workspace.activate_document(path);
         self.document_focus_changed();
     }
 
-    /// Close a tab; unsaved edits are discarded (the tab's dot warns beforehand).
+    // Unsaved edits are discarded; the tab's dirty dot is the only warning.
     pub(super) fn close_path(&mut self, path: &VPath) {
         if self.settings.confirm_discard_on_close
             && self
@@ -392,8 +365,6 @@ impl FullStackApp {
         }
     }
 
-    /// Open one of the bundled folders: the on-disk copy natively, the identical
-    /// in-memory tree in the browser (which has no real filesystem).
     pub(super) fn open_workspace_preset(&mut self, preset: WorkspacePreset) {
         if self.block_open_folder_for_dirty_documents() {
             return;
@@ -738,8 +709,6 @@ impl FullStackApp {
         self.record_build_lit(produced_layer);
     }
 
-    /// Diagnostics land in Output as the rendered CLI block (location, source
-    /// line, caret, note); the message and location lines click-to-jump.
     fn push_build_diagnostics(&mut self, failed: bool) {
         use full_stack::compilation_pipeline::DiagnosticLevel;
         let Some(cache) = &self.stage_cache else {
@@ -788,7 +757,6 @@ impl FullStackApp {
         }
     }
 
-    /// Open `path` and scroll it to `line` (1-based); used by Output links.
     pub(super) fn jump_to_source(&mut self, path: &str, line: usize) {
         let Ok(vpath) = VPath::parse(path) else {
             return;
@@ -810,14 +778,12 @@ impl FullStackApp {
         self.build_glow_start = None;
     }
 
-    /// Light the spine through `layer` for the target currently in focus.
     fn record_build_lit(&mut self, layer: Option<Layer>) {
         self.build_lit_until = layer;
         self.built_target = self.active_build_target.clone();
     }
 
-    /// The lit layer, only while the active file still belongs to the program
-    /// that was built; a different program's spine must not read as built.
+    // A different program's spine must not read as built.
     fn lit_layer_for_active_target(&self) -> Option<Layer> {
         (self.built_target.is_some() && self.built_target == self.active_build_target)
             .then_some(self.build_lit_until)
@@ -846,8 +812,6 @@ impl FullStackApp {
         }
     }
 
-    /// Check-on-save: re-run the stage cache for the active build target so
-    /// editor markers and the status chip reflect the file that was just saved.
     fn check_after_save(&mut self, verb: &str) {
         self.stage_cache = None;
         if !self.settings.check_on_save {
@@ -876,8 +840,6 @@ impl FullStackApp {
         });
     }
 
-    /// Check-on-idle: once the active buffer has sat unchanged past the idle
-    /// delay, re-run the stage cache so markers track unsaved edits.
     fn poll_idle_check(&mut self, ctx: &egui::Context, now: f64) {
         const IDLE_CHECK_DELAY_SECS: f64 = 1.0;
         if !self.settings.check_on_idle {
@@ -1001,8 +963,8 @@ impl FullStackApp {
         });
     }
 
-    /// Link the active program as Build/Run would, reusing the cached per-mode stdlib
-    /// and the live root buffer so the preview link matches reality.
+    // Reuses the cached per-mode stdlib and the live root buffer so the preview
+    // link matches reality.
     fn build_preview_binary(
         &mut self,
         manifest: &BuildManifest,
@@ -1084,15 +1046,13 @@ impl FullStackApp {
         &self.workspace.run_configs().configs
     }
 
-    /// Write the run-config store back to `.fullstack/run.toml`.
     pub(super) fn persist_run_configs(&mut self) {
         if let Err(err) = self.workspace.save_run_configs() {
             self.status_message = Some(format!("saving run configs failed: {err}"));
         }
     }
 
-    /// Workspace `.build` manifests for the config editor, cached briefly so
-    /// the Run panel does not rescan the tree every frame.
+    // Cached briefly so the Run panel does not rescan the tree every frame.
     pub(super) fn discovered_manifests(&mut self, now: f64) -> Vec<VPath> {
         const MANIFEST_CACHE_SECS: f64 = 2.0;
         if let Some((at, manifests)) = &self.manifest_cache
@@ -1110,15 +1070,12 @@ impl FullStackApp {
         self.configs().get(self.selected_config)
     }
 
-    /// Session tab name: the config's root source basename, falling
-    /// back to the config name when the root cannot be resolved.
     fn session_tab_label_for(&self, config: &RunConfig) -> String {
         self.config_root(config)
             .and_then(|root| root.as_str().rsplit('/').next().map(str::to_owned))
             .unwrap_or_else(|| config.name.clone())
     }
 
-    /// Resolve the root source file a config compiles, if it can be located.
     fn config_root(&self, config: &RunConfig) -> Option<VPath> {
         match &config.build {
             BuildRef::Manifest(path) => self
@@ -1128,8 +1085,7 @@ impl FullStackApp {
         }
     }
 
-    /// Make `idx` the active config and open its root, so the spine and stage views
-    /// reflect what Build/Run will act on.
+    // Opens its root so the spine and stage views reflect what Build/Run act on.
     pub(super) fn select_config(&mut self, idx: usize) {
         let Some(config) = self.configs().get(idx).cloned() else {
             return;
@@ -1153,10 +1109,7 @@ impl FullStackApp {
         self.mark_build_stale();
     }
 
-    /// Open the selected config's root, then build it (lighting the spine to the
-    /// furthest stage produced).
-    /// Flush unsaved edits before a build/run when the setting is on, so the
-    /// compiled image matches what the editor shows.
+    // Flush unsaved edits before build/run so the compiled image matches the editor.
     fn save_dirty_before_run(&mut self) {
         if self.settings.save_all_before_run && self.workspace.dirty_documents().next().is_some() {
             self.workspace.save_all().ok();
@@ -1174,19 +1127,15 @@ impl FullStackApp {
         self.build_active_document(now);
     }
 
-    /// Build and run the selected config without debugger intervention.
     pub(super) fn run_selected_config(&mut self, now: f64) {
         self.launch_selected_config(now, false);
     }
 
-    /// Build the selected config and start it paused at the entry point with
-    /// the disassembly view focused, regardless of the config's debug flag.
+    // Starts paused at entry regardless of the config's debug flag.
     pub(super) fn debug_selected_config(&mut self, now: f64) {
         self.launch_selected_config(now, true);
     }
 
-    /// Restart the selected config using the current session's launch mode.
-    /// Reuses the last build when the sources are unchanged.
     pub(super) fn restart_selected_config(&mut self, now: f64) {
         let debug = if self.live.is_some() {
             self.launch_mode == LaunchMode::Debug
@@ -1196,7 +1145,6 @@ impl FullStackApp {
         self.launch_selected_config_inner(now, debug, true);
     }
 
-    /// Build the selected config, then boot its ELF as a live VM session.
     fn launch_selected_config(&mut self, now: f64, debug: bool) {
         self.launch_selected_config_inner(now, debug, false);
     }
@@ -1289,8 +1237,6 @@ impl FullStackApp {
         }
     }
 
-    /// Reboot from the last launch's artifacts when the config and its source
-    /// fingerprint are unchanged. True when the session started from the cache.
     fn try_relaunch_cached(&mut self, config: &RunConfig, now: f64, debug: bool) -> bool {
         let Some(cache) = self.launch_cache.take() else {
             return false;
@@ -1352,7 +1298,6 @@ impl FullStackApp {
         }
     }
 
-    /// Boot the built program as a resident session and focus the machine console.
     fn start_hosted_live_session(
         &mut self,
         config: &RunConfig,
@@ -1445,8 +1390,6 @@ impl FullStackApp {
         }
     }
 
-    /// Debug launch: hold the fresh session at its entry point and focus the
-    /// disassembly so the first step is visible.
     fn enter_debug_pause(&mut self) {
         if let Some(live) = &mut self.live {
             live.pause();
@@ -1471,8 +1414,7 @@ impl FullStackApp {
         }
     }
 
-    /// Per-frame drive of the resident session; on exit/fault/stop it produces
-    /// the post-mortem `vm_result` the dock, Inspect, and terminal already read.
+    // On exit/fault/stop this produces the post-mortem `vm_result` the panels read.
     fn drive_live_machine(&mut self, ctx: &egui::Context) {
         let budget_steps = self
             .selected_config()
@@ -1491,8 +1433,6 @@ impl FullStackApp {
         self.latch_live_result();
     }
 
-    /// Record the final result and terminal summary once the session stops
-    /// being alive; shared by the frame driver and explicit session controls.
     fn latch_live_result(&mut self) {
         let Some(live) = &self.live else {
             return;
@@ -1534,7 +1474,7 @@ impl FullStackApp {
         self.terminal.push(stream, summary);
     }
 
-    /// Dock transport: stop the session, keeping its final state inspectable.
+    // Keeps the final state inspectable.
     pub(super) fn stop_live_machine(&mut self) {
         if let Some(live) = &mut self.live {
             live.stop();
@@ -1583,8 +1523,7 @@ impl FullStackApp {
         self.reset_layer_for_active_file();
     }
 
-    /// F10: single-step the live machine using the dock's step unit. Instruction
-    /// stepping steps over calls; use F11 / Shift+F11 to step in / out.
+    // Instruction stepping steps over calls; F11 / Shift+F11 step in / out.
     pub(super) fn step_selected_live_machine(&mut self) {
         let Some(live) = &mut self.live else {
             return;
@@ -1643,8 +1582,7 @@ impl FullStackApp {
         }
     }
 
-    /// Diagnostic markers for the active editor, valid only while the buffer
-    /// matches the compiled source (edits clear the stage cache, so no drift).
+    // Valid only while the buffer matches the compiled source (edits clear the stage cache).
     pub(super) fn active_diagnostic_marks(&self, text: &str) -> Vec<diagnostics::DiagMark> {
         let (Some(cache), Some(target), Some(active)) = (
             &self.stage_cache,
@@ -1659,7 +1597,6 @@ impl FullStackApp {
         diagnostics::marks_for_source(&cache.result.diagnostics, &cache.source)
     }
 
-    /// Clear per-session debug/inspect state when the session goes away.
     fn reset_machine_views(&mut self) {
         self.debug_view = debug_view::DebugView::Disasm;
         self.dismiss_session_surfaces();
@@ -1668,7 +1605,6 @@ impl FullStackApp {
         self.code_follow_scrolled = None;
     }
 
-    /// True when the selected config presents a framebuffer screen.
     pub(super) fn config_has_screen(&self) -> bool {
         use full_stack::runconfig::PresentMode;
         self.selected_config().is_some_and(|config| {
@@ -1714,8 +1650,6 @@ impl FullStackApp {
 }
 
 impl FullStackApp {
-    /// Global keyboard shortcuts: save/build/run, debug transport, and the
-    /// find/search/quick-open surfaces. Runs once per frame before layout.
     fn handle_shortcuts(&mut self, ui: &egui::Ui, now: f64) {
         if self.guest_input_active() && ui.input(|i| i.modifiers.command || i.modifiers.ctrl) {
             return;
@@ -1902,8 +1836,7 @@ impl eframe::App for FullStackApp {
     }
 }
 
-/// Background-layer painter: body paints last, so hairlines land above every
-/// panel fill yet stay under floating windows (framebuffer, overlays).
+// Body paints last: hairlines land above panel fills yet under floating windows.
 fn separator_painter(ui: &egui::Ui) -> egui::Painter {
     ui.ctx().layer_painter(egui::LayerId::background())
 }
@@ -1921,8 +1854,6 @@ fn draw_separator(ui: &egui::Ui, x: f32, top: f32, bottom: f32, active: bool) {
     );
 }
 
-/// Native prefers the real on-disk demo workspace; the browser opens the same
-/// tree as an in-memory sample.
 fn open_default_workspace() -> IdeWorkspace {
     #[cfg(not(target_arch = "wasm32"))]
     if let Some(workspace) = open_materialized_workspace(WorkspacePreset::Demo) {
@@ -1931,8 +1862,6 @@ fn open_default_workspace() -> IdeWorkspace {
     IdeWorkspace::sample().ok().unwrap_or_default()
 }
 
-/// The workspace to open on startup: the last folder when reopen is enabled and
-/// it still exists (native only), otherwise the bundled sample workspace.
 fn open_startup_workspace(settings: &settings::AppSettings) -> IdeWorkspace {
     if let Some(workspace) = reopen_last_workspace(settings) {
         return workspace;
@@ -1962,8 +1891,6 @@ fn preset_dir(preset: WorkspacePreset) -> &'static str {
     }
 }
 
-/// Open a preset folder from disk, materializing any missing bundled sources
-/// and run configs first.
 #[cfg(not(target_arch = "wasm32"))]
 fn open_materialized_workspace(preset: WorkspacePreset) -> Option<IdeWorkspace> {
     let root = std::path::PathBuf::from(preset_dir(preset));

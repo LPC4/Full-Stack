@@ -231,7 +231,6 @@ fn section_flags(sh_flags: u64) -> String {
     out
 }
 
-/// The file bytes of section `index`, located via the raw header table.
 fn section_body(
     bytes: &[u8],
     shoff: usize,
@@ -350,7 +349,6 @@ fn reloc_type_name(r_type: u32) -> String {
     }
 }
 
-/// NUL-terminated string at `offset` in a string table; lossy on bad bytes.
 fn cstr_at(strtab: &[u8], offset: usize) -> String {
     let Some(tail) = strtab.get(offset..) else {
         return String::new();
@@ -389,7 +387,6 @@ mod tests {
     use asm_to_binary::riscv::rv64i::{Ecall, Jalr};
     use asm_to_binary::rv_instruction::RvInstruction;
 
-    /// A minimal assembled program: _start calls main, main returns 42.
     fn minimal_output() -> asm_to_binary::AssembledOutput {
         let tokens = vec![
             RvInstruction::Directive(".text".to_owned()),

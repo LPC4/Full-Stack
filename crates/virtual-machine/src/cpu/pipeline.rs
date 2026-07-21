@@ -804,10 +804,8 @@ impl Pipeline {
         Ok(TickOutcome::EcallSquash)
     }
 
-    /// Check whether a pending interrupt should be taken right now.
-    ///
-    /// Returns `Some((cause, tval, pc))` when an interrupt is ready to fire.
-    /// Priority order per spec: MEI(11) > MSI(3) > MTI(7), then SEI(9) > SSI(1) > STI(5).
+    // Returns Some((cause, tval, pc)) when an interrupt is ready to fire right now.
+    // Priority order per spec: MEI(11) > MSI(3) > MTI(7), then SEI(9) > SSI(1) > STI(5).
     fn check_pending_interrupt(&self) -> Option<(u64, u64, u64)> {
         let pending = self.csrs.mip & self.csrs.mie;
         if pending == 0 {

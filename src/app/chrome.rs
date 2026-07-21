@@ -13,8 +13,6 @@ pub(super) fn centered_hint(ui: &mut egui::Ui, text: &str) {
     });
 }
 
-/// A tool-window header band: eyebrow label over a full-width hairline. Shared by
-/// the explorer and machine dock so every column reads the same way.
 pub(super) fn panel_header(ui: &mut egui::Ui, title: &str) {
     ui.add_space(metrics::PANEL_HEADER_PAD_Y);
     ui.horizontal(|ui| {
@@ -26,8 +24,7 @@ pub(super) fn panel_header(ui: &mut egui::Ui, title: &str) {
     ui.add_space(metrics::SECTION_GAP);
 }
 
-/// Run `add_contents` in a left-inset column so body text aligns with the header
-/// label while row backgrounds can still span the full column width.
+// Left inset keeps body text aligned with the header while row fills span the column.
 pub(super) fn indented(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
     ui.horizontal(|ui| {
         ui.add_space(metrics::PANEL_INSET_X);
@@ -48,8 +45,7 @@ pub(super) fn hairline(ui: &mut egui::Ui) {
     ui.painter().rect_filled(rect, 0.0, theme::HAIRLINE);
 }
 
-/// An interior divider, one tier softer than `hairline`; separates sections
-/// inside a single panel rather than panels from each other.
+// One tier softer than `hairline`: separates sections inside a panel, not panels.
 pub(super) fn hairline_soft(ui: &mut egui::Ui) {
     let width = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(
@@ -59,7 +55,6 @@ pub(super) fn hairline_soft(ui: &mut egui::Ui) {
     ui.painter().rect_filled(rect, 0.0, theme::HAIRLINE_SOFT);
 }
 
-/// A section eyebrow inside a panel body: gap, tracked label, soft divider.
 pub(super) fn section_eyebrow(ui: &mut egui::Ui, title: &str) {
     ui.add_space(metrics::DOCK_SECTION_GAP);
     ui.label(theme::label(title));
@@ -68,8 +63,6 @@ pub(super) fn section_eyebrow(ui: &mut egui::Ui, title: &str) {
     ui.add_space(metrics::SECTION_GAP);
 }
 
-/// A conjoined segmented control (the `va|pa` idiom generalized): every option
-/// visible, the active one filled with ELECTRIC text. Returns a clicked index.
 pub(super) fn segmented(ui: &mut egui::Ui, options: &[&str], selected: usize) -> Option<usize> {
     let font = FontId::monospace(metrics::STATUS_TEXT_SIZE);
     let seg_w = options
@@ -129,15 +122,12 @@ pub(super) fn segmented(ui: &mut egui::Ui, options: &[&str], selected: usize) ->
     (clicked != selected).then_some(clicked)
 }
 
-/// The visual weight of an `action_row` button.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum ActionTone {
     Primary,
     Normal,
 }
 
-/// A row of equal-width framed buttons spanning the available width. Returns
-/// the clicked index. The shared transport/button idiom for narrow panels.
 pub(super) fn action_row(ui: &mut egui::Ui, actions: &[(&str, ActionTone)]) -> Option<usize> {
     let mut clicked = None;
     let avail = ui.available_width();
@@ -193,8 +183,6 @@ pub(super) fn action_row(ui: &mut egui::Ui, actions: &[(&str, ActionTone)]) -> O
     clicked
 }
 
-/// One tab in a view-switch strip (machine surfaces, terminal tabs): the active
-/// tab gets a fill and an electric underline, so what is selectable reads as tabs.
 pub(super) fn view_tab(ui: &mut egui::Ui, label: &str, active: bool) -> egui::Response {
     let font = FontId::monospace(metrics::STATUS_TEXT_SIZE);
     let galley = ui.fonts_mut(|f| f.layout_no_wrap(label.to_owned(), font.clone(), theme::TEXT));

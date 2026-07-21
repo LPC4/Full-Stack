@@ -1,3 +1,6 @@
+//! Compilation pipeline: HLL -> IR -> ASM -> OBJ -> ELF (out/ir, out/asm, out/obj, out/elf).
+//! Each HLL file compiles to its own object; objects link with full relocation support.
+
 use asm_to_binary::assembler::link_layout::LinkLayout;
 use asm_to_binary::assembler::{Assembler, AssemblerError};
 use asm_to_binary::rv_instruction::RvInstruction;
@@ -11,17 +14,6 @@ use std::fs;
 use std::hash::{Hash as _, Hasher as _};
 use std::panic::Location;
 use std::path::{Path, PathBuf};
-
-// Compilation pipeline: HLL source -> IR -> ASM -> OBJ -> ELF.
-//
-// Stages:
-//   1. HLL -> IR   (compile / compile_to_ir_only / run_full)   -> out/ir/*.ir
-//   2. IR  -> ASM  (compile_ir_to_assembly)                    -> out/asm/*.s
-//   3. ASM -> OBJ  (assemble / assemble_named)                 -> out/obj/*.o
-//   4. OBJ -> ELF  (link_assembled_objects)                    -> out/elf/total_*.elf
-//
-// Each HLL file compiles to its own .o, so no source concatenation happens before
-// assembly.  Object files are linked together with full relocation support.
 
 // --- Errors ---
 
@@ -153,8 +145,6 @@ impl Default for PipelineConfig {
 /// registry or filesystem. `None` means the name is unknown.
 pub type ModuleResolver = Box<dyn Fn(&str) -> Option<String>>;
 
-/// Outcome of resolving a unit's imports: the prelude to prepend and each qualified
-/// binding's exported names (alias -> exports), used by the qualified-access rewrite.
 struct ResolvedModules {
     prelude: Option<String>,
     aliases: std::collections::HashMap<String, hll_to_ir::imports::ModuleAlias>,
@@ -322,7 +312,6 @@ impl CompilationPipeline {
         self.current_source_path = path.map(Into::into);
     }
 
-    /// File name attributed to the pc-to-source line table for this unit.
     fn config_source_file(&self) -> Option<String> {
         self.current_source_path
             .as_ref()
@@ -341,14 +330,12 @@ impl CompilationPipeline {
         self.mangle_in_closure = enabled;
     }
 
-    /// Resolve a module path/name to a registry key: a leading `./` and a trailing `.hll`
-    /// are normalized away (`"./math.hll"` -> `"math"`), bare names pass through (`"http"`).
     fn module_key(path: &str) -> &str {
         path.trim_start_matches("./").trim_end_matches(".hll")
     }
 
-    /// The symbol prefix a module's own definitions are mangled with in a closure build: its
-    /// file stem (for path imports) or registry key, sanitized to an identifier.
+    // The mangling prefix: file stem for path imports, else the registry key,
+    // sanitized to an identifier.
     fn module_prefix(key: &str, source_path: Option<&Path>) -> String {
         let raw = source_path
             .and_then(Path::file_stem)
@@ -456,7 +443,6 @@ impl CompilationPipeline {
             }))
     }
 
-    /// Repo-relative source path for a registry module key, when known.
     fn registry_module_path(&self, key: &str) -> Option<&'static str> {
         if self.is_stdlib_module_for_target(key) {
             hll_to_ir::stdlib::stdlib_module_source_path(self.target_mode, key)
@@ -465,8 +451,6 @@ impl CompilationPipeline {
         }
     }
 
-    /// Resolve `source`'s module imports. Each `alias := import("path")` adds its exported
-    /// interface to the prelude and yields an export set for qualified access.
     fn resolve_modules(&self, source: &str) -> Result<ResolvedModules, Vec<Diagnostic>> {
         let mut prelude = String::new();
         let mut aliases: std::collections::HashMap<String, hll_to_ir::imports::ModuleAlias> =
@@ -1153,8 +1137,7 @@ impl CompilationPipeline {
             .collect())
     }
 
-    /// Post-order DFS of the qualified-import graph; each module's `(name, source)` is pushed
-    /// after its dependencies, and a revisit of an in-progress module is a cycle.
+    // Post-order DFS; a revisit of an in-progress module is a cycle.
     fn collect_import_closure(
         &self,
         name: &str,
@@ -1405,12 +1388,10 @@ fn is_legacy_export_symbol(name: &str) -> bool {
     !name.starts_with('.') && !name.contains("__")
 }
 
-/// Default module resolver over bundled `os-runtime` sources.
 fn programs_module_resolver(name: &str) -> Option<String> {
     bundled_module_source(name).map(str::to_owned)
 }
 
-/// Resolve `.` and `..` components lexically, without touching the filesystem.
 fn normalize_lexical(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
     for component in path.components() {
@@ -1427,8 +1408,7 @@ fn normalize_lexical(path: &Path) -> PathBuf {
     out
 }
 
-/// Map a normalized path onto its repo-relative `programs/...` key, if it traverses a
-/// `programs` directory, so a relative import can hit the embedded source table.
+// Lets a relative import hit the embedded source table via its programs/... key.
 fn programs_key(path: &Path) -> Option<String> {
     let mut parts: Vec<String> = Vec::new();
     let mut found = false;
@@ -2562,8 +2542,6 @@ main: () -> i32 { return add() }
     }
 }
 
-/// Split an absolute path into (`parent_path`, `last_component`).
-/// "/bin/init" -> ("/bin", "init"), "/hello.txt" -> ("/", "hello.txt").
 fn split_last_component(path: &str) -> (&str, &str) {
     if let Some(pos) = path.rfind('/') {
         let parent = if pos == 0 { "/" } else { &path[..pos] };

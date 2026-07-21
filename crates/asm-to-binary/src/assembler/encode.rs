@@ -1,5 +1,6 @@
-/// Pass 2: encode typed tokens to bytes, resolving label references via the symbol table.
-/// See `_RISCV_SPECIFICATIONS.md` for pseudo-instruction expansion rules.
+//! Pass 2: encode typed tokens to bytes, resolving label references via the symbol table.
+//! See `_RISCV_SPECIFICATIONS.md` for pseudo-instruction expansion rules.
+
 use super::AssemblerError;
 use super::layout::Layout;
 use super::output::{AssembledOutput, LineEntry, RelocationKind, RelocationRecord};
@@ -9,7 +10,7 @@ use crate::real::RealInstruction;
 use crate::riscv::rv64i::{Addi, Auipc, Beq, Bge, Bgeu, Blt, Bltu, Bne, Jal as JalInst, Jalr};
 use crate::traits::Instruction as _;
 
-/// Record a pc-to-source entry for the instruction about to be emitted at `addr`.
+// Record a pc-to-source entry for the instruction about to be emitted at `addr`.
 fn record_line(out: &mut AssembledOutput, addr: u64, loc: Option<(u32, u32)>) {
     if let Some((file_id, line)) = loc {
         out.line_table.push(LineEntry {
@@ -285,8 +286,8 @@ pub fn encode(tokens: &[AsmToken], layout: &Layout) -> Result<AssembledOutput, A
 
 // --- Branch and jump encoding helpers ---
 
-/// Layout symbols are section-relative; prefer the section-qualified entry so
-/// same-named labels in other sections can't shadow the local one.
+// Layout symbols are section-relative; prefer the section-qualified entry so
+// same-named labels in other sections can't shadow the local one.
 fn resolve_section_local(
     target: &str,
     section_name: &str,
@@ -365,7 +366,7 @@ fn push_u32(sec: &mut SectionData, word: u32, current_addr: &mut u64) {
 
 // --- Pseudo-instruction encoding with symbol relocation ---
 
-/// Split a PC-relative byte offset into (hi20, lo12) for AUIPC+lo pairs.
+// Split a PC-relative byte offset into (hi20, lo12) for AUIPC+lo pairs.
 fn pcrel_split(offset: i64) -> (i32, i32) {
     let lo12 = ((offset & 0xFFF) as i32).wrapping_sub(if offset & 0x800 != 0 { 0x1000 } else { 0 });
     let hi20 = ((offset - lo12 as i64) >> 12) as i32;
@@ -389,12 +390,12 @@ fn resolve_absolute_symbol(
     None
 }
 
-/// Compute PC-relative (hi20, lo12) for a target address relative to `current_addr`.
+// Compute PC-relative (hi20, lo12) for a target address relative to `current_addr`.
 fn pcrel_offsets(target_addr: u64, current_addr: u64) -> (i32, i32) {
     pcrel_split((target_addr as i64) - (current_addr as i64))
 }
 
-/// Encode `call symbol` -> `auipc ra, %pcrel_hi(symbol); jalr ra, ra, %pcrel_lo(symbol)`.
+// Encode `call symbol` -> `auipc ra, %pcrel_hi(symbol); jalr ra, ra, %pcrel_lo(symbol)`.
 fn encode_call(
     sec: &mut SectionData,
     symbol: &str,
@@ -423,7 +424,7 @@ fn encode_call(
     });
 }
 
-/// Encode `tail symbol` -> `auipc t1, %pcrel_hi(symbol); jalr x0, t1, %pcrel_lo(symbol)`.
+// Encode `tail symbol` -> `auipc t1, %pcrel_hi(symbol); jalr x0, t1, %pcrel_lo(symbol)`.
 fn encode_tail(
     sec: &mut SectionData,
     symbol: &str,
@@ -451,8 +452,8 @@ fn encode_tail(
     });
 }
 
-/// Encode `la rd, symbol` -> `auipc rd, %pcrel_hi(symbol); addi rd, rd, %pcrel_lo(symbol)`.
-/// Always emits a relocation since section merging may change cross-section distances.
+// Encode `la rd, symbol` -> `auipc rd, %pcrel_hi(symbol); addi rd, rd, %pcrel_lo(symbol)`.
+// Always emits a relocation since section merging may change cross-section distances.
 fn encode_la(
     sec: &mut SectionData,
     rd: u8,

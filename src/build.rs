@@ -399,8 +399,7 @@ impl BuildExecutor {
         })
     }
 
-    /// Drop stdlib objects no kept object references (directly or transitively).
-    /// Program/extra objects and any object defining an entry symbol are roots.
+    // Program/extra objects and any object defining an entry symbol are roots.
     fn prune_unreferenced_stdlib(
         units: Vec<BuiltUnit>,
         prunable: &std::collections::HashSet<String>,
@@ -464,8 +463,7 @@ impl BuildExecutor {
         CompilationPipeline::compile_stdlib_objects(mode).map_err(BuildError::Compile)
     }
 
-    /// Assemble a raw `.s` root directly, skipping the HLL pipeline. The source
-    /// path feeds the pc-to-source line table so the debugger maps back to it.
+    // The source path feeds the pc-to-source line table so the debugger maps back to it.
     fn assemble_asm_root(
         pipeline: &mut CompilationPipeline,
         source: &LoadedSource,

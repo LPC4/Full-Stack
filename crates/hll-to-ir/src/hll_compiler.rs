@@ -366,8 +366,8 @@ fn check_asm_lines(lines: &[String], diags: &mut Vec<Diagnostic>) {
                         format!("asm block invokes Linux userspace syscall {n} ({name}) via ecall"),
                     )
                     .with_note(
-                        "freestanding builds run without an OS; use MMIO or SBI ecalls \
-                             (extension IDs  0x10) instead of Linux userspace syscall numbers",
+                        "freestanding builds have no kernel servicing Linux syscalls; use MMIO \
+                             or SBI firmware ecalls (extension IDs >= 0x10) instead",
                     ),
                 );
             }

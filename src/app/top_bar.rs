@@ -28,8 +28,6 @@ impl FullStackApp {
         });
     }
 
-    /// The workspace picker: the two bundled folders on every target, plus a
-    /// native file dialog for arbitrary local folders.
     fn open_folder_menu(&mut self, ui: &mut egui::Ui) {
         ui.menu_button(
             theme::mono("open folder", metrics::STATUS_TEXT_SIZE, theme::TEXT),
@@ -59,7 +57,6 @@ impl FullStackApp {
         .on_hover_text("Open a workspace folder");
     }
 
-    /// Idle chrome: launch verbs for the selected config.
     fn launch_controls(&mut self, ui: &mut egui::Ui, now: f64) {
         if action_button(ui, &format!("{} run", icons::RUN), theme::TEXT)
             .on_hover_text("Run (Ctrl+R / F5)")
@@ -81,8 +78,7 @@ impl FullStackApp {
         }
     }
 
-    /// A session is alive: the launch verbs give way to the transport, so the
-    /// machine is always stoppable no matter which panel has focus.
+    // The machine stays stoppable no matter which panel has focus.
     fn session_transport(&mut self, ui: &mut egui::Ui, now: f64) {
         if action_button(ui, &format!("{} stop", icons::STOP), theme::DANGER)
             .on_hover_text("Stop the session (Shift+F5)")
@@ -118,7 +114,6 @@ impl FullStackApp {
         }
     }
 
-    /// The run-config dropdown: choose which program Build/Run act on.
     fn config_selector(&mut self, ui: &mut egui::Ui) {
         let names: Vec<String> = self.configs().iter().map(|c| c.name.clone()).collect();
         if names.is_empty() {

@@ -15,8 +15,6 @@ enum TabAction {
 }
 
 impl FullStackApp {
-    /// Draw the strip and apply any tab switch/close it produced. Returns false
-    /// when nothing is open (the editor shows its empty hint instead).
     pub(super) fn editor_tabs(&mut self, ui: &mut egui::Ui) -> bool {
         if self.workspace.open_paths().is_empty() && self.live.is_none() {
             return false;
@@ -102,8 +100,6 @@ impl FullStackApp {
         true
     }
 
-    /// Right edge of the strip: a read-only badge when the focused document
-    /// rejects edits. Returns the reserved width.
     fn tab_trailing(&self, ui: &egui::Ui, painter: &egui::Painter, rect: egui::Rect) -> f32 {
         let read_only = self.main_surface == super::MainSurface::Document
             && self
@@ -166,7 +162,7 @@ impl FullStackApp {
     }
 }
 
-/// A session surface tab. Closing hides the view; Stop owns session termination.
+// Closing hides the view; Stop owns session termination.
 fn session_tab(
     ui: &mut egui::Ui,
     kind: &str,
@@ -256,8 +252,6 @@ fn session_tab(
     }
 }
 
-/// One tab: basename, a dirty dot, and a close glyph when hovered or active.
-/// Middle click closes; the accent bar carries the file's source-layer color.
 fn tab(ui: &mut egui::Ui, path: &VPath, active: bool, dirty: bool) -> Option<TabAction> {
     let name = path
         .as_str()

@@ -24,8 +24,7 @@ impl Rom {
         addr >= self.base && addr < self.base + self.size
     }
 
-    /// Convert a physical address to an index into the data array.
-    /// Returns `None` if out of bounds.
+    // Physical address -> index into the data array; `None` if out of bounds.
     fn index(&self, addr: u64) -> Option<usize> {
         if self.contains(addr) {
             Some((addr - self.base) as usize)

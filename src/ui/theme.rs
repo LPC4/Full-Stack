@@ -98,8 +98,7 @@ pub fn vertical_gradient(painter: &egui::Painter, rect: Rect, top: Color32, bott
     painter.add(mesh);
 }
 
-/// Register Space Grotesk (chrome) + IBM Plex Mono (code); egui's built-ins stay
-/// as glyph fallback for symbols the design faces lack.
+// egui's built-ins stay as glyph fallback for symbols the design faces lack.
 fn install_fonts(ctx: &egui::Context) {
     use egui::{FontData, FontDefinitions, FontFamily};
     let mut fonts = FontDefinitions::default();

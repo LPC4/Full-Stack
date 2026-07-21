@@ -5,24 +5,21 @@ use virtual_machine::VmSnapshot;
 
 const PAGE: usize = 4096;
 
-/// The RAM contents of one frame, encoded as changed 4 KiB pages.
 enum RamStore {
-    /// Non-zero pages relative to a fully zeroed buffer of `len` bytes.
+    // Non-zero pages relative to a zeroed buffer of `len` bytes.
     Keyframe {
         len: usize,
         pages: Vec<(u32, Vec<u8>)>,
     },
-    /// Pages that differ from the immediately previous frame.
+    // Pages that differ from the immediately previous frame.
     Delta(Vec<(u32, Vec<u8>)>),
 }
 
-/// A delta-compressed log of RAM images. Independent of the VM so the encoding
-/// and replay can be unit-tested with plain byte buffers.
+// Independent of the VM so encoding and replay unit-test with plain byte buffers.
 struct RamLog {
     frames: Vec<RamStore>,
-    /// Full RAM of the most recently pushed frame; the delta base for the next.
+    // Full RAM of the newest frame; the delta base for the next push.
     prev: Vec<u8>,
-    /// Frames pushed since the last keyframe.
     since_keyframe: usize,
     keyframe_stride: usize,
 }
@@ -64,8 +61,6 @@ impl RamLog {
         self.frames.push(store);
     }
 
-    /// Materialize the full RAM buffer for frame `i` by replaying from the
-    /// nearest keyframe at or before it.
     fn reconstruct(&self, i: usize) -> Option<Vec<u8>> {
         if i >= self.frames.len() {
             return None;
@@ -87,8 +82,7 @@ impl RamLog {
         Some(buf)
     }
 
-    /// Drop every frame after `i` and rebase the delta chain on frame `i`, so
-    /// the next push diffs against the surviving newest frame, not a dropped one.
+    // Rebases the chain so the next push diffs against the surviving newest frame.
     fn truncate_after(&mut self, i: usize) {
         if i + 1 >= self.frames.len() {
             return;
@@ -102,8 +96,7 @@ impl RamLog {
         self.since_keyframe = self.frames.len() - 1 - key;
     }
 
-    /// Drop the oldest frame, first promoting the new front to a keyframe so no
-    /// surviving delta is orphaned from its base.
+    // Promotes the new front to a keyframe first so no surviving delta is orphaned.
     fn evict_front(&mut self) {
         if self.frames.len() < 2 {
             self.frames.clear();
@@ -121,7 +114,6 @@ impl RamLog {
     }
 }
 
-/// Ceiling on adaptive interval growth, as a multiple of the base interval.
 const MAX_INTERVAL_GROWTH: u64 = 64;
 
 /// A ring of captured architectural snapshots for scrubbing through execution;
@@ -131,17 +123,12 @@ pub struct TimeMachine {
     fb: RamLog,
     lights: Vec<VmSnapshot>,
     retired: Vec<u64>,
-    /// Retired-instruction count at the last capture (throttles cadence).
     last_retired: Option<u64>,
-    /// Minimum retired instructions between captures; grows as frames evict.
     interval: u64,
     base_interval: u64,
-    /// Evictions since the interval last grew.
     evicted_since_growth: usize,
-    /// Cap on retained frames; the oldest is evicted past this.
     max_frames: usize,
-    /// Frame the machine was last restored to; frames after it are stale
-    /// "future" history and are dropped by the next capture.
+    // Frames after the restore point are stale future history, dropped on next capture.
     pending_truncate: Option<usize>,
     enabled: bool,
 }
@@ -238,8 +225,8 @@ impl TimeMachine {
         }
     }
 
-    /// Once evictions have replaced half the ring, double the capture interval
-    /// (capped) so long runs keep a wider, sparser history window.
+    // Once evictions replace half the ring, double the interval (capped) so long
+    // runs keep a wider, sparser window.
     fn grow_interval_on_eviction(&mut self) {
         self.evicted_since_growth += 1;
         if self.evicted_since_growth >= self.max_frames / 2 {
@@ -256,8 +243,7 @@ impl TimeMachine {
     }
 }
 
-/// Pages of `cur` that differ from `base` (empty `base` means differ from zero).
-/// Each entry is `(page_index, page_bytes)` with the tail page possibly short.
+// Empty `base` means diff against zero; the tail page may be short.
 fn changed_pages(base: &[u8], cur: &[u8]) -> Vec<(u32, Vec<u8>)> {
     let mut out = Vec::new();
     let mut offset = 0usize;

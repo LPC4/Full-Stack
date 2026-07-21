@@ -13,8 +13,6 @@ const FB_HEIGHT: usize = 240;
 
 type Highlighter = fn(&egui::Style, &str) -> LayoutJob;
 
-/// Source-level debug overlay for the active editor file: the paused line and
-/// the file's breakpoint lines (both 1-based). Clicks toggle via the caller.
 #[derive(Default)]
 struct SourceDebug {
     current_line: Option<usize>,
@@ -22,8 +20,7 @@ struct SourceDebug {
 }
 
 impl FullStackApp {
-    /// Map the live session's breakpoints onto `file`'s gutter lines. The pc
-    /// is only surfaced by the machine Code view; editor tabs never mark it.
+    // The pc is only surfaced by the machine Code view; editor tabs never mark it.
     fn source_debug_for(&self, file: &str) -> SourceDebug {
         let Some(live) = &self.live else {
             return SourceDebug::default();
@@ -46,8 +43,7 @@ impl FullStackApp {
         }
     }
 
-    /// Toggle a source breakpoint on `line` of `file`. Label, blank, and
-    /// comment lines slide forward to the next line that carries code.
+    // Label, blank, and comment lines slide forward to the next line carrying code.
     pub(super) fn toggle_source_breakpoint(&mut self, file: &str, line: usize) {
         let Some(live) = &mut self.live else {
             return;
@@ -62,8 +58,7 @@ impl FullStackApp {
         self.persist_live_breakpoints();
     }
 
-    /// Run to `line` of `file` (sliding forward like a breakpoint toggle)
-    /// without leaving a breakpoint behind.
+    // Slides forward like a breakpoint toggle, without leaving a breakpoint behind.
     pub(super) fn run_to_source_line(&mut self, file: &str, line: usize) {
         let Some(live) = &mut self.live else {
             return;
@@ -75,8 +70,6 @@ impl FullStackApp {
         live.run_to(pc);
     }
 
-    /// The function whose definition encloses the editor caret, when the active
-    /// document is HLL source; drives the spine's IR/ASM stage sync.
     pub(super) fn caret_function_name(&self) -> Option<String> {
         if self.active_source_kind() != SourceKind::Hll {
             return None;
@@ -274,7 +267,7 @@ impl FullStackApp {
         }
     }
 
-    /// Debugger tooling. Runtime console and framebuffer deliberately live elsewhere.
+    // Runtime console and framebuffer deliberately live elsewhere.
     fn debugger_surface(&mut self, ui: &mut egui::Ui) {
         use super::debug_view::DebugView;
         self.debug_transport_bar(ui);
@@ -302,8 +295,7 @@ impl FullStackApp {
         }
     }
 
-    /// The debugger's own transport: a compact icon toolbar beside the code, so
-    /// the eyes stay on the source while stepping. Mirrors F5/F6/F10/F11 keys.
+    // Mirrors the F5/F6/F10/F11 shortcuts.
     fn debug_transport_bar(&mut self, ui: &mut egui::Ui) {
         use crate::ui::theme::icons;
         let Some(live) = self.live.as_ref() else {
@@ -376,8 +368,7 @@ impl FullStackApp {
         }
     }
 
-    /// The machine Code view: a read-only source pane that follows the pc
-    /// across files, holding the last known location over gaps in line info.
+    // Holds the last known location over gaps in the pc-to-line info.
     fn show_code_follow(&mut self, ui: &mut egui::Ui) {
         let Some(live) = self.live.as_ref() else {
             chrome::centered_hint(ui, "No machine session. Press Run to start one.");
@@ -476,8 +467,7 @@ impl FullStackApp {
         }
     }
 
-    /// Full text of a line-table `file`: the open buffer, then the workspace
-    /// copy, then bundled program and kernel/stdlib sources.
+    // Lookup order: open buffer, workspace copy, bundled program and kernel/stdlib sources.
     fn debug_source_text(&self, file: &str) -> Option<String> {
         if let Ok(path) = full_stack::workspace::VPath::parse(file) {
             match self.workspace.document(&path) {
@@ -500,8 +490,7 @@ impl FullStackApp {
             .map(|(_, source)| (*source).to_owned())
     }
 
-    /// A graphical session gets its own window; native opens a real OS window,
-    /// the browser draws a draggable in-app one. Closing ends the session.
+    // Native opens a real OS window; the browser draws an in-app one. Closing ends the session.
     pub(super) fn framebuffer_window(&mut self, ctx: &egui::Context) {
         let show = self.live.as_ref().is_some_and(|live| live.state.is_alive())
             && self.config_has_screen();
@@ -552,8 +541,6 @@ impl FullStackApp {
         }
     }
 
-    /// Fill the framebuffer window: the guest image scaled to fit, integer
-    /// nearest, with the window's keyboard routed straight to the guest.
     fn framebuffer_window_body(&mut self, ui: &mut egui::Ui) {
         let Some(live) = self.live.as_ref() else {
             return;
@@ -668,7 +655,6 @@ impl FullStackApp {
     }
 }
 
-/// A transport verb requested from the debugger's icon toolbar this frame.
 #[derive(Clone, Copy)]
 enum DebugAction {
     PauseResume,
@@ -679,8 +665,6 @@ enum DebugAction {
     Stop,
 }
 
-/// A square icon-glyph button for the debug transport. `primary` tints the glyph
-/// electric; `dim` renders it inert (a control that cannot act in this state).
 fn icon_button(
     ui: &mut egui::Ui,
     glyph: &str,
@@ -859,8 +843,6 @@ mod tests {
     }
 }
 
-/// Plain monospace console output (no gutter), filling the remaining height. Sticks
-/// to the bottom for live logs (the terminal); anchored at the top otherwise.
 pub(super) fn console_view(
     ui: &mut egui::Ui,
     id_salt: &'static str,
@@ -908,7 +890,6 @@ fn read_only_code(
     )
 }
 
-/// The nearest function definition at or above `line` (1-based) in HLL source.
 fn enclosing_function(text: &str, line: usize) -> Option<String> {
     text.lines()
         .take(line.max(1))
@@ -917,8 +898,7 @@ fn enclosing_function(text: &str, line: usize) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// The name in an HLL function header: an unindented `name: (` or
-/// `name<..>: (`, which excludes struct/const/impl declarations.
+// An unindented `name: (` or `name<..>: (`; excludes struct/const/impl declarations.
 fn fn_def_name(line: &str) -> Option<&str> {
     let name_end = line.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))?;
     if name_end == 0 || line.starts_with(|c: char| c.is_ascii_digit()) {
@@ -934,8 +914,7 @@ fn fn_def_name(line: &str) -> Option<&str> {
         .then_some(name)
 }
 
-/// Byte offset of `name`'s definition line in a stage view: the
-/// `define .. name(..)` header in IR, the `name:` label in assembly.
+// IR locates the `define .. name(..)` header; assembly the `name:` label.
 fn locate_in_stage(text: &str, layer: Layer, name: &str) -> Option<usize> {
     let mut offset = 0usize;
     for line in text.split_inclusive('\n') {
@@ -957,18 +936,13 @@ fn locate_in_stage(text: &str, layer: Layer, name: &str) -> Option<usize> {
     None
 }
 
-/// What one frame of the code surface produced: edits and the caret position.
 #[derive(Default)]
 struct CodeViewOutput {
     edited: Option<String>,
-    /// 1-based line/column of the primary cursor, when the view is interactive.
     cursor: Option<(usize, usize)>,
-    /// 1-based gutter line the user clicked to toggle a breakpoint, if any.
     bp_toggle: Option<usize>,
-    /// 1-based gutter line the user ctrl+clicked to run to, if any.
     run_to: Option<usize>,
-    /// True once a requested `jump_to` target sits inside the viewport, so
-    /// callers can keep re-jumping until the scroll actually lands.
+    // True once the jump target is inside the viewport, so callers re-jump until it lands.
     jump_landed: bool,
 }
 
@@ -984,8 +958,6 @@ struct CodeViewConfig<'a, Id> {
     debug: &'a SourceDebug,
 }
 
-/// The code surface: gutter + frameless editor filling the column. Finds wash
-/// behind the text, diagnostics mark gutter + underline, jumps scroll into view.
 fn code_view<Id>(ui: &mut egui::Ui, config: CodeViewConfig<'_, Id>) -> CodeViewOutput
 where
     Id: std::hash::Hash + Clone,
@@ -1115,7 +1087,6 @@ where
     out
 }
 
-/// Hover tooltips on the underlined spans themselves, not just the gutter bar.
 fn hover_diagnostic_spans(
     ui: &egui::Ui,
     output: &egui::text_edit::TextEditOutput,
@@ -1147,8 +1118,7 @@ fn hover_diagnostic_spans(
     }
 }
 
-/// Paint the paused source line as a filled band with an electric left bar,
-/// from the coords stashed last frame, so this frame's text lands on top.
+// Painted from coords stashed last frame, so this frame's text lands on top.
 fn paint_debug_band(ui: &egui::Ui, dbg_id: egui::Id) {
     let Some(band) = ui.data(|d| d.get_temp::<[f32; 4]>(dbg_id)) else {
         return;
@@ -1159,8 +1129,6 @@ fn paint_debug_band(ui: &egui::Ui, dbg_id: egui::Id) {
     ui.painter().rect_filled(bar, 0.0, theme::ELECTRIC);
 }
 
-/// The `[top, bottom, left, right]` band for a 1-based `line`, in the code
-/// view's screen space, so it can be stored and painted under next frame's text.
 fn line_band(output: &egui::text_edit::TextEditOutput, buf: &str, line: usize) -> [f32; 4] {
     let byte = super::diagnostics::byte_offset_of_line(buf, line);
     let chars = buf[..byte.min(buf.len())].chars().count();
@@ -1174,7 +1142,6 @@ fn line_band(output: &egui::text_edit::TextEditOutput, buf: &str, line: usize) -
     ]
 }
 
-/// 1-based line/column for a char offset into `text`.
 fn line_col(text: &str, char_idx: usize) -> (usize, usize) {
     let (mut line, mut col) = (1, 1);
     for c in text.chars().take(char_idx) {
@@ -1188,8 +1155,6 @@ fn line_col(text: &str, char_idx: usize) -> (usize, usize) {
     (line, col)
 }
 
-/// Right-aligned line numbers with diagnostic bars and breakpoint dots.
-/// A click returns `(line, ctrl-held)`; ctrl+click means run-to.
 fn gutter(
     ui: &mut egui::Ui,
     line_count: usize,
@@ -1296,7 +1261,6 @@ fn highlighted_layouter(
     }
 }
 
-/// Re-split the job's sections at match boundaries and wash the covered spans.
 fn apply_match_backgrounds(job: &mut LayoutJob, ranges: &[(usize, usize)], current: usize) {
     let ranges = valid_ranges(&job.text, ranges.iter().copied());
     restyle_ranges(job, &ranges, |idx, format| {
@@ -1308,8 +1272,6 @@ fn apply_match_backgrounds(job: &mut LayoutJob, ranges: &[(usize, usize)], curre
     });
 }
 
-/// Underline diagnostic spans in their level color (DANGER/WARNING) and wash
-/// their background so the offending text reads at a glance.
 fn apply_diagnostic_underlines(job: &mut LayoutJob, spans: &[(usize, usize, egui::Color32)]) {
     let ranges = valid_ranges(&job.text, spans.iter().map(|&(start, end, _)| (start, end)));
     let colors: Vec<egui::Color32> = spans.iter().map(|&(_, _, color)| color).collect();
@@ -1323,7 +1285,7 @@ fn apply_diagnostic_underlines(job: &mut LayoutJob, spans: &[(usize, usize, egui
     });
 }
 
-/// Ranges validated against the live buffer, which may be newer than them.
+// Ranges are validated against the live buffer, which may be newer than them.
 fn valid_ranges(text: &str, ranges: impl Iterator<Item = (usize, usize)>) -> Vec<(usize, usize)> {
     ranges
         .filter(|&(start, end)| {
@@ -1332,8 +1294,6 @@ fn valid_ranges(text: &str, ranges: impl Iterator<Item = (usize, usize)>) -> Vec
         .collect()
 }
 
-/// Re-split the job's sections at range boundaries; `restyle(idx, format)` runs
-/// on every window that falls inside `ranges[idx]`.
 fn restyle_ranges(
     job: &mut LayoutJob,
     ranges: &[(usize, usize)],

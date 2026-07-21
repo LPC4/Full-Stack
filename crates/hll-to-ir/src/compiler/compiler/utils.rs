@@ -1,6 +1,6 @@
 use super::{
     Expression, FloatWidth, HighLevelCompiler, IntWidth, IrBlock, IrInstruction, IrLabel,
-    IrRegister, IrTerminator, IrType, IrValue,
+    IrRegister, IrTerminator, IrType,
 };
 
 impl HighLevelCompiler {

@@ -10,12 +10,9 @@ use full_stack::build::{ImportClosurePolicy, StdlibPolicy};
 use full_stack::session::LiveMachine;
 use std::collections::BTreeSet;
 
-/// Symbol rows rendered before the list truncates; filtering narrows past it.
 const SYMBOL_ROW_CAP: usize = 400;
 
 impl FullStackApp {
-    /// What the source became: the build plan, the linked units, and where the
-    /// `.ir`/`.s`/`.elf` artifacts were written when that was enabled.
     pub(super) fn artifacts_pane(&self, ui: &mut egui::Ui) {
         let Some(build) = &self.last_build else {
             chrome::centered_hint(ui, "Build a config to inspect artifacts.");
@@ -63,8 +60,6 @@ impl FullStackApp {
             });
     }
 
-    /// The linked symbol table: filterable rows sorted by address, image
-    /// offsets when static, runtime addresses when a session exists.
     pub(super) fn symbols_pane(&mut self, ui: &mut egui::Ui) {
         let live = self.live.is_some();
         chrome::indented(ui, |ui| {

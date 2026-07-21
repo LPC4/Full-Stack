@@ -49,8 +49,7 @@ impl InspectorPane {
     }
 }
 
-/// Selector groups, rendered as separate sections; the top group carries no
-/// eyebrow. Memory/disasm live on the debug surface; Problems owns diagnostics.
+// Memory/disasm live on the debug surface; Problems owns diagnostics.
 const PANE_GROUPS: &[(&str, &[InspectorPane])] = &[
     ("", &[InspectorPane::Overview]),
     (
@@ -73,21 +72,17 @@ const PANE_GROUPS: &[(&str, &[InspectorPane])] = &[
     ("build", &[InspectorPane::Artifacts, InspectorPane::Symbols]),
 ];
 
-/// All inspector-owned app state, grouped so the shell only carries one field.
 pub(crate) struct InspectorState {
     pub(super) pane: InspectorPane,
     pub(super) symbol_filter: String,
-    /// Height cap for the pane selector; None shows the full list. Dragging
-    /// the divider below the list up trades selector rows for pane content.
+    // Height cap for the pane selector; None shows the full list.
     pub(super) selector_height: Option<f32>,
     pub(super) selector_natural: f32,
     pub(super) selector_drag_start: Option<f32>,
-    /// Throttled kernel-probe snapshot (processes, guest FS, syscall trace).
     pub(super) cache: Option<InspectCache>,
     pub(super) pid: Option<u64>,
     pub(super) inode: Option<u64>,
-    /// Throttled cache line-occupancy grid; recomputed only while the Caches
-    /// pane is visible, since `get_cache_snapshots` clones every line.
+    // Recomputed only while the Caches pane is visible; `get_cache_snapshots` clones every line.
     pub(super) cache_grid: Option<CacheGrid>,
 }
 
@@ -108,8 +103,7 @@ impl Default for InspectorState {
 }
 
 impl InspectorState {
-    /// Drop machine-session captures when the session goes away; the selected
-    /// pane and filter survive so the panel does not jump around.
+    // The selected pane and filter survive so the panel does not jump around.
     pub(super) fn clear_session(&mut self) {
         self.cache = None;
         self.pid = None;
@@ -118,18 +112,14 @@ impl InspectorState {
     }
 }
 
-/// What the inspector can show right now, derived from app state each frame.
 #[derive(Clone, Copy)]
 pub(super) struct Capabilities {
-    /// A resident VM session exists (live or finished but retained).
+    // A resident VM session exists (live, or finished but retained).
     pub(super) live: bool,
-    /// Register state exists: a session or a post-mortem snapshot.
+    // A session or a post-mortem snapshot.
     pub(super) registers: bool,
-    /// A successful build's artifacts are retained.
     pub(super) build: bool,
-    /// The session carries kernel scheduler/trace symbols.
     pub(super) kernel: bool,
-    /// The session carries guest-filesystem symbols.
     pub(super) guest_fs: bool,
 }
 
@@ -168,8 +158,7 @@ impl FullStackApp {
         }
     }
 
-    /// Fall back to Overview when the selected pane lost its backing state
-    /// (session ended, workspace changed); Overview is always renderable.
+    // Fall back when the pane lost its backing state; Overview is always renderable.
     pub(super) fn ensure_inspector_pane_available(&mut self) {
         if !self.inspector_capabilities().allows(self.inspector.pane) {
             self.inspector.pane = InspectorPane::Overview;
@@ -209,7 +198,6 @@ impl FullStackApp {
         }
     }
 
-    /// The grouped vertical pane list; only panes that can render now appear.
     fn pane_selector(&mut self, ui: &mut egui::Ui, caps: Capabilities) {
         for (group, panes) in PANE_GROUPS {
             let visible = panes.iter().copied().filter(|pane| caps.allows(*pane));
@@ -229,8 +217,6 @@ impl FullStackApp {
         }
     }
 
-    /// The divider between the pane selector and pane content; dragging it up
-    /// caps the selector so register rows and other content get the space.
     fn selector_splitter(&mut self, ui: &mut egui::Ui) {
         ui.add_space(metrics::SECTION_GAP);
         let (rect, _) = ui.allocate_exact_size(
@@ -274,7 +260,6 @@ impl FullStackApp {
     }
 }
 
-/// Human tag for a build target mode, shared by the overview/artifact panes.
 fn target_tag(target: TargetMode) -> &'static str {
     match target {
         TargetMode::Hosted => "hosted",
@@ -283,8 +268,6 @@ fn target_tag(target: TargetMode) -> &'static str {
     }
 }
 
-/// A full-width selectable pane row; the active pane carries the accent bar,
-/// matching the run-config and explorer selection idiom.
 fn pane_row(ui: &mut egui::Ui, label: &str, active: bool) -> egui::Response {
     let width = ui.available_width();
     let (rect, resp) = ui.allocate_exact_size(vec2(width, metrics::ROW_HEIGHT), Sense::click());

@@ -434,7 +434,7 @@ fmv_x_f!(FmvDX, 0b11110, FMT_D, false, "fmv.d.x");
 
 // --- FP Conversions - funct5 indicates direction, rs2 encodes integer type ---
 
-/// Integer type codes used in the `rs2` field of fcvt instructions.
+// Integer type codes used in the `rs2` field of fcvt instructions.
 mod int_type {
     pub const W: u8 = 0b00000;
     pub const WU: u8 = 0b00001;

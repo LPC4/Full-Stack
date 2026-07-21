@@ -74,7 +74,6 @@ impl FullStackApp {
         }
     }
 
-    /// Append a run config seeded from a workspace `.build` manifest.
     fn add_config_control(&mut self, ui: &mut egui::Ui, manifests: &[VPath]) {
         let mut added = None;
         chrome::indented(ui, |ui| {
@@ -109,8 +108,6 @@ impl FullStackApp {
         }
     }
 
-    /// One click from the active file to a runnable config: write a sibling
-    /// `.build` when the file has none, then add (or reselect) its run config.
     pub(super) fn add_config_for_active_file(&mut self) {
         let Some(path) = self.workspace.active_document().map(|d| d.path().clone()) else {
             self.status_message = Some("open a source file to create a config".to_owned());
@@ -183,7 +180,6 @@ impl FullStackApp {
         }
     }
 
-    /// Edit the selected config in place; changes persist to run.toml.
     fn config_editor(&mut self, ui: &mut egui::Ui, manifests: &[VPath]) {
         let idx = self.selected_config;
         let Some(original) = self.configs().get(idx).cloned() else {
@@ -243,7 +239,6 @@ impl FullStackApp {
         }
     }
 
-    /// Insert a copy of config `idx` right after it and select the copy.
     fn duplicate_config(&mut self, idx: usize) {
         let Some(mut copy) = self.configs().get(idx).cloned() else {
             return;
@@ -259,7 +254,6 @@ impl FullStackApp {
     }
 }
 
-/// A full-width selectable config row: name at the left, kind tag at the right.
 fn config_row(ui: &mut egui::Ui, name: &str, tag: &str, active: bool) -> egui::Response {
     let width = ui.available_width();
     let (rect, resp) = ui.allocate_exact_size(vec2(width, metrics::ROW_HEIGHT), Sense::click());
@@ -313,7 +307,6 @@ fn config_row(ui: &mut egui::Ui, name: &str, tag: &str, active: bool) -> egui::R
     }
 }
 
-/// A labeled editor row: eyebrow label at the left, widget to its right.
 fn field_row(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui)) {
     ui.horizontal(|ui| {
         ui.label(theme::label(label));
@@ -321,7 +314,6 @@ fn field_row(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui)) {
     });
 }
 
-/// The editable fields of a run config (name, kind, build, run behavior).
 fn config_fields(
     ui: &mut egui::Ui,
     config: &mut full_stack::runconfig::RunConfig,
@@ -390,7 +382,6 @@ fn config_fields(
     });
 }
 
-/// Editable host->guest mounts: a removable row each, plus an add row.
 fn mount_editor(
     ui: &mut egui::Ui,
     config: &mut full_stack::runconfig::RunConfig,
@@ -432,7 +423,7 @@ fn mount_editor(
     });
 }
 
-/// Persisted breakpoint count only; editing lives in the Debugger dock.
+// Persisted breakpoint count only; editing lives in the Debugger dock.
 fn breakpoints_editor(ui: &mut egui::Ui, config: &mut full_stack::runconfig::RunConfig) {
     if config.debug.breakpoints.is_empty() {
         return;
@@ -451,7 +442,6 @@ fn breakpoints_editor(ui: &mut egui::Ui, config: &mut full_stack::runconfig::Run
     });
 }
 
-/// The duplicate-name warning and live validation for the selected config.
 fn config_details(
     ui: &mut egui::Ui,
     config: &full_stack::runconfig::RunConfig,
@@ -475,7 +465,6 @@ fn config_details(
     }
 }
 
-/// A short mono text field for the mount add row.
 fn mount_field(ui: &mut egui::Ui, id: &str, buf: &mut String, hint: &str) {
     ui.add(
         egui::TextEdit::singleline(buf)
@@ -491,7 +480,6 @@ fn mount_field(ui: &mut egui::Ui, id: &str, buf: &mut String, hint: &str) {
     );
 }
 
-/// A small frameless `x` glyph button for removing a list row; true on click.
 fn remove_glyph(ui: &mut egui::Ui, kind: &str, i: usize) -> bool {
     ui.add(
         egui::Button::new(theme::mono(
@@ -505,7 +493,6 @@ fn remove_glyph(ui: &mut egui::Ui, kind: &str, i: usize) -> bool {
     .clicked()
 }
 
-/// A dim, mono text button used across the config editor; true on click.
 fn editor_button(ui: &mut egui::Ui, label: &str) -> bool {
     ui.add(egui::Button::new(theme::mono(
         label,
@@ -515,14 +502,12 @@ fn editor_button(ui: &mut egui::Ui, label: &str) -> bool {
     .clicked()
 }
 
-/// A mono-styled `ComboBox` shell shared by the config editor fields.
 fn combo(ui: &mut egui::Ui, id: &str, current: &str, add: impl FnOnce(&mut egui::Ui)) {
     egui::ComboBox::from_id_salt(id)
         .selected_text(theme::mono(current, metrics::STATUS_TEXT_SIZE, theme::TEXT))
         .show_ui(ui, add);
 }
 
-/// One mono-styled selectable option inside a `combo`; true when clicked.
 fn combo_item(ui: &mut egui::Ui, label: &str, active: bool) -> bool {
     ui.selectable_label(
         active,
@@ -547,8 +532,7 @@ pub(super) fn present_tag(mode: PresentMode) -> &'static str {
     }
 }
 
-/// A minimal `.build` for a bare source file; the lesson `sum.build`
-/// documents every field.
+// The lesson `sum.build` documents every field.
 fn generated_manifest(file: &str, stem: &str, target: TargetMode) -> String {
     let target_tag = match target {
         TargetMode::Hosted => "hosted",

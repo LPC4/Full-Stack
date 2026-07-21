@@ -49,7 +49,6 @@ impl RunConfigStore {
         Ok(store)
     }
 
-    /// Fill in the names of configs that omitted `name`, from their manifest title.
     fn resolve_manifest_names(&mut self, fs: &dyn WorkspaceFs) {
         for config in &mut self.configs {
             if !config.name_from_manifest {
@@ -189,7 +188,6 @@ impl RunConfigStore {
     }
 }
 
-/// One `[[config]]` section as raw strings; `first_line` anchors error reports.
 #[derive(Default)]
 struct RawConfig {
     values: BTreeMap<String, String>,
@@ -199,8 +197,6 @@ struct RawConfig {
 }
 
 impl RawConfig {
-    /// Type the raw strings. Only a `build`/`root` ref is required; the rest default
-    /// (hosted, both, 200k steps, debug off) and an omitted `name` resolves on load.
     fn into_config(self) -> Result<RunConfig, RunConfigParseError> {
         let name = self.values.get("name").map(String::as_str);
         let kind = parse_kind(
@@ -301,8 +297,6 @@ fn parse_key_value(line: &str, line_no: usize) -> Result<(String, String), RunCo
     Ok((key.trim().to_owned(), parse_value(value.trim(), line_no)?))
 }
 
-/// Values stay strings: quoted text is unescaped, bools/numbers pass through
-/// verbatim for `into_config` to interpret, anything else is rejected here.
 fn parse_value(value: &str, line_no: usize) -> Result<String, RunConfigParseError> {
     if let Some(stripped) = value.strip_prefix('"').and_then(|v| v.strip_suffix('"')) {
         Ok(stripped.replace("\\\"", "\"").replace("\\\\", "\\"))
@@ -368,7 +362,6 @@ fn present_label(present: PresentMode) -> &'static str {
     }
 }
 
-/// Last-resort display name when a manifest title cannot be read: the file stem.
 fn stem(path: &VPath) -> String {
     let name = path.file_name().unwrap_or("run");
     name.rsplit_once('.')

@@ -1,5 +1,6 @@
-/// Pass 1: walk typed tokens and compute every label's byte address (section-relative).
-/// No bytes are emitted; the symbol table is used by the encode pass.
+//! Pass 1: walk typed tokens and compute every label's byte address (section-relative).
+//! No bytes are emitted; the symbol table is used by the encode pass.
+
 use super::AssemblerError;
 use super::section::SectionKind;
 use super::symbol_table::SymbolTable;

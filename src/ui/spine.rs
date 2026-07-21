@@ -245,8 +245,7 @@ fn stage_enabled(
     always_enabled_until.is_some_and(reached) || build_lit_until.is_some_and(reached)
 }
 
-/// Strength for one rung/segment during and after a build. Built rungs hold a
-/// steady base; the pulse is an additive wave, so a rebuild never goes dark.
+// Built rungs hold a steady base; the pulse is additive, so a rebuild never goes dark.
 fn build_strength(
     layers: &[Layer],
     pulse_t: Option<f32>,
@@ -275,7 +274,6 @@ fn build_strength(
     BUILT + (1.0 - dist).clamp(0.0, 1.0) * BOOST
 }
 
-/// Mix a color toward the panel background by `amount` (0 = background, 1 = full).
 fn dim(c: Color32, amount: f32) -> Color32 {
     let bg = theme::CANVAS;
     let lerp = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * amount) as u8;

@@ -32,7 +32,6 @@ pub fn allocate_registers(
 
     // Phi lowers to nothing in this backend, so any register touching one must
     // stay on the slot path (where the same no-op behavior is preserved).
-    // TODO: phi
     let mut phi_regs: HashSet<IrRegister> = HashSet::new();
     for block in &func.blocks {
         for inst in &block.instructions {

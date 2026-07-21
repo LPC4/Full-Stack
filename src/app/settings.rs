@@ -6,10 +6,8 @@ use crate::ui::theme;
 use eframe::egui;
 use serde::{Deserialize, Serialize};
 
-/// Key under which settings persist in eframe storage.
 pub(crate) const APP_KEY: &str = "full_stack_settings";
 
-/// UI scale presets mapped to egui zoom factors.
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub(crate) enum ZoomLevel {
     Small,
@@ -22,7 +20,6 @@ pub(crate) enum ZoomLevel {
 impl ZoomLevel {
     pub(crate) const ALL: [Self; 4] = [Self::Small, Self::Medium, Self::Large, Self::ExtraLarge];
 
-    /// The egui `zoom_factor` this preset applies. Medium is 1.0 (no change).
     pub(crate) fn factor(self) -> f32 {
         match self {
             Self::Small => 0.9,
@@ -42,16 +39,13 @@ impl ZoomLevel {
     }
 }
 
-/// egui's default `TextStyle::Monospace` size; the editor-font default matches it
-/// so a fresh profile renders identically to no settings at all.
+// Matches egui's default Monospace size so a fresh profile renders identically.
 pub(crate) const DEFAULT_MONO_SIZE: f32 = 12.0;
 
-/// The settings reading column: capped so rows stay scannable in a wide editor.
 const SETTINGS_MAX_WIDTH: f32 = 620.0;
 const SETTINGS_INSET_X: f32 = 28.0;
 
-/// Every field is optional via `#[serde(default)]`, so older and newer profiles
-/// load forward-compatibly. Defaults mirror the previously hardcoded behavior.
+// Every field is #[serde(default)] so older and newer profiles load forward-compatibly.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 #[serde(default)]
 pub(crate) struct AppSettings {
@@ -100,8 +94,7 @@ impl Default for AppSettings {
 }
 
 impl AppSettings {
-    /// Apply appearance settings (zoom, mono font size) on top of `theme::apply`.
-    /// Idempotent; call only when settings change to avoid re-layout churn.
+    // Idempotent; call only when settings change to avoid re-layout churn.
     pub(crate) fn apply(&self, ctx: &egui::Context) {
         ctx.set_zoom_factor(self.ui_zoom.factor());
         let mut style = (*ctx.global_style()).clone();
@@ -113,7 +106,6 @@ impl AppSettings {
 }
 
 impl FullStackApp {
-    /// The full-page settings view, shown over the editor when `settings_open`.
     pub(super) fn settings_page(&mut self, ui: &mut egui::Ui) {
         chrome::panel_header(ui, "Settings");
         let mut s = self.settings.clone();
@@ -269,8 +261,7 @@ impl FullStackApp {
     }
 }
 
-/// Keyboard shortcuts, the single source for the read-only reference table.
-/// `command` maps to Ctrl on Windows/Linux and Cmd on macOS.
+// `command` maps to Ctrl on Windows/Linux and Cmd on macOS.
 const SHORTCUTS: &[(&str, &str)] = &[
     ("Ctrl+S", "Save the active file"),
     ("Ctrl+Shift+S", "Save all files"),
@@ -292,10 +283,8 @@ const SHORTCUTS: &[(&str, &str)] = &[
     ("Ctrl+,", "Open settings"),
 ];
 
-/// Vertical air above each section eyebrow so groups read as groups.
 const SECTION_TOP_GAP: f32 = 22.0;
 
-/// A plain section eyebrow with no reset control, for read-only reference lists.
 fn section_reference(ui: &mut egui::Ui, title: &str) {
     ui.add_space(SECTION_TOP_GAP);
     ui.label(theme::label(title));
@@ -303,7 +292,6 @@ fn section_reference(ui: &mut egui::Ui, title: &str) {
     chrome::hairline_soft(ui);
 }
 
-/// A read-only shortcut row: the key combo on the left, its action on the right.
 fn shortcut_row(ui: &mut egui::Ui, keys: &str, desc: &str) {
     ui.add_space(metrics::SECTION_GAP);
     ui.horizontal(|ui| {
@@ -318,7 +306,6 @@ fn shortcut_row(ui: &mut egui::Ui, keys: &str, desc: &str) {
     });
 }
 
-/// A section eyebrow with a right-aligned "reset" control; true when reset is clicked.
 fn section_title(ui: &mut egui::Ui, title: &str) -> bool {
     ui.add_space(SECTION_TOP_GAP);
     let mut reset = false;
@@ -346,7 +333,6 @@ fn section_title(ui: &mut egui::Ui, title: &str) -> bool {
     reset
 }
 
-/// A settings row: label over a dim hint on the left, a control on the right.
 fn setting_row(ui: &mut egui::Ui, label: &str, hint: &str, control: impl FnOnce(&mut egui::Ui)) {
     ui.add_space(metrics::DOCK_SECTION_GAP);
     ui.horizontal(|ui| {

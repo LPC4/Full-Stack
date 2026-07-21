@@ -16,15 +16,11 @@ use virtual_machine::cpu::{
 };
 use virtual_machine::virtual_machine::VirtualMachine;
 
-/// How often the drive loop consults the wall clock, in steps.
 const CLOCK_CHECK_INTERVAL: u64 = 1024;
-/// Console transcript cap; the oldest text is dropped past this.
 const UART_LOG_CAP: usize = 256 * 1024;
-/// Guard against a permanently stalled pipeline while stepping by retired
-/// instruction. Normal instructions retire within a few cycles.
+// Guards against a stalled pipeline; normal instructions retire within a few cycles.
 const INSTRUCTION_STEP_CYCLE_CAP: u64 = 10_000;
-/// Cycle ceiling for one source-line step, so a line with no distinct next
-/// entry (or a call that never returns to the line) cannot spin the UI.
+// A line with no distinct next entry (or a never-returning call) must not spin the UI.
 const SOURCE_LINE_STEP_CYCLE_CAP: u64 = 2_000_000;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -55,19 +51,16 @@ pub struct LiveMachine {
     pub uart_log: String,
     /// Steps per second measured over recent drive slices (0 until measured).
     pub steps_per_sec: f64,
-    /// Linked image for symbol-based inspection. Kernel sessions keep the kernel
-    /// image; hosted sessions keep the linked hosted program.
+    // Kernel sessions keep the kernel image; hosted sessions the linked hosted program.
     symbols: AssembledOutput,
-    /// Runtime-address symbol table sorted by address, for the debugger views.
     symbol_table: Vec<(u64, String)>,
     os_sym: Option<OsSymbols>,
     fs_sym: Option<FsSymbols>,
-    /// Pc the machine resumed from; breakpoints there stay quiet until it moves
-    /// (the pipelined CPU holds the architectural pc for a few ticks).
+    // Breakpoints at the resume pc stay quiet until it moves; the pipelined CPU
+    // holds the architectural pc for a few ticks.
     resumed_from: Option<u64>,
-    /// One-shot breakpoint for run-to-cursor; cleared whenever the machine pauses.
+    // One-shot run-to-cursor breakpoint; cleared whenever the machine pauses.
     temp_breakpoint: Option<u64>,
-    /// Register file before the most recent single-step, for delta highlighting.
     prev_step_regs: Option<RegisterSnapshot>,
     /// Time-travel history; off by default, enabled from the machine dock.
     pub timeline: TimeMachine,
@@ -201,8 +194,6 @@ impl LiveMachine {
         stepped
     }
 
-    /// Capture a time-travel frame now if history is enabled and due (throttled
-    /// by the retired-instruction interval). Cheap when disabled or not due.
     fn maybe_capture(&mut self) {
         let retired = self.vm.insns_retired();
         if self.timeline.should_capture(retired) {
@@ -211,8 +202,7 @@ impl LiveMachine {
         }
     }
 
-    /// Capture a time-travel frame unconditionally (used on pause/step so the
-    /// scrubber has a tick exactly where the user stopped).
+    // Unthrottled, so the scrubber has a tick exactly where the user stopped.
     fn capture_now(&mut self) {
         if self.timeline.enabled() {
             let retired = self.vm.insns_retired();
@@ -603,8 +593,7 @@ impl LiveMachine {
         frames
     }
 
-    /// True when `addr` plausibly returned from a call: aligned, near a known
-    /// symbol, and preceded by a jal/jalr that linked ra.
+    // Heuristic: aligned, near a known symbol, preceded by a jal/jalr that linked ra.
     fn is_return_address(&self, addr: u64) -> bool {
         const MAX_SYMBOL_OFFSET: u64 = 0x10_0000;
         if addr < 8 || !addr.is_multiple_of(4) {
@@ -645,8 +634,7 @@ impl LiveMachine {
         }
     }
 
-    /// One VM step with exit/fault bookkeeping. Returns false when the session
-    /// left the `Running`/`Paused` states and stepping must not continue.
+    // Returns false when the session left Running/Paused and stepping must stop.
     fn step_once(&mut self) -> bool {
         match self.vm.step() {
             Ok(StepOutcome::Continue) => {
@@ -718,8 +706,8 @@ fn is_ra_jalr(word: u32) -> bool {
     )
 }
 
-/// Append UART bytes to a transcript with minimal terminal discipline: `\b`
-/// erases the previous character (guests echo `\b \b`) and `\r` is dropped.
+// Minimal terminal discipline: `\b` erases the previous character (guests echo
+// "\b \b") and `\r` is dropped.
 fn append_terminal_bytes(log: &mut String, bytes: &[u8]) {
     if bytes.is_empty() {
         return;
@@ -737,7 +725,6 @@ fn append_terminal_bytes(log: &mut String, bytes: &[u8]) {
     }
 }
 
-/// Symbols mapped to their runtime addresses and sorted, for nearest lookups.
 fn runtime_symbol_table(linked: &AssembledOutput) -> Vec<(u64, String)> {
     let mut table: Vec<(u64, String)> = linked
         .symbols_iter()
@@ -811,8 +798,8 @@ fn write_kernel_boot_assets(
     Ok(())
 }
 
-/// Wall-clock slice guard. `web_time::Instant` is `std::time::Instant` on
-/// native and `performance.now()` on wasm, so both targets honor the budget.
+// `web_time::Instant` is std Instant on native and performance.now() on wasm,
+// so both targets honor the slice budget.
 struct SliceClock {
     start: web_time::Instant,
 }

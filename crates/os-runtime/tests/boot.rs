@@ -519,7 +519,7 @@ fn kernel_modules_reference_imports_only_through_aliases() {
     // Quality gate: a kernel module must reach another module's functions/globals through its
     // qualified import alias, never by bare flat name. Inline asm is the sole exempt path (6.3).
     let modules = [
-        ("entry", kernel::RUNTIME),
+        ("entry", kernel::ENTRY),
         ("trap_entry", kernel::TRAP_ENTRY),
         ("trap_handler", kernel::TRAP_HANDLER),
         ("utilities", kernel::UTILITIES),

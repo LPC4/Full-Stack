@@ -1,3 +1,6 @@
+//! Pass 0: parse `Vec<RvInstruction>` (which carries untyped raw strings, e.g. from
+//! `emit_raw`) into fully-typed `AsmToken`s so later passes never touch raw strings.
+
 macro_rules! asm_warn {
     ($out:expr, $($arg:tt)*) => {{
         let msg = format!($($arg)*);
@@ -6,7 +9,7 @@ macro_rules! asm_warn {
     }};
 }
 
-/// Try to parse `$expr`; on success push to `$out`, else warn with `$label`.
+// Try to parse `$expr`; on success push to `$out`, else warn with `$label`.
 macro_rules! try_parse_or_warn {
     ($out:expr, $line:expr, $label:literal, $expr:expr) => {
         if let Some(tok) = $expr {
@@ -17,11 +20,6 @@ macro_rules! try_parse_or_warn {
     };
 }
 
-/// Pass 0: parse `Vec<RvInstruction>` into `Vec<AsmToken>`.
-///
-/// `RvInstruction` carries some untyped raw strings (branches emitted via
-/// `emit_raw`, data-section directives, etc.).  This pass converts every token
-/// into a fully-typed `AsmToken` so subsequent passes never touch raw strings.
 use super::directive::Directive;
 use super::reg_parse::parse_int_reg;
 use super::section::SectionKind;
@@ -81,8 +79,8 @@ pub fn parse(tokens: &[RvInstruction]) -> Vec<AsmToken> {
 
 // --- Parsing `Directive` variants ---
 
-/// Directives whose argument is a quoted string, so `;` and `#` inside it are
-/// data rather than the start of a comment.
+// Directives whose argument is a quoted string, so `;` and `#` inside it are
+// data rather than the start of a comment.
 fn is_string_directive(raw: &str) -> bool {
     let head = raw.trim_start();
     [".asciz ", ".string ", ".asciz\t", ".string\t"]
@@ -156,10 +154,8 @@ fn push_directive(dir: Directive, out: &mut Vec<AsmToken>) {
 
 // --- Parsing raw instruction lines ---
 
-/// Parse a trimmed instruction line and push typed `AsmToken`s into `out`.
-///
-/// May push more than one token (e.g. `li` expands to up to two real instructions).
-/// Unrecognised mnemonics are emitted as `AsmToken::Comment` so nothing is silently lost.
+// May push more than one token (e.g. `li` expands to up to two real instructions).
+// Unrecognised mnemonics are emitted as `AsmToken::Comment` so nothing is silently lost.
 fn parse_instruction_line(line: &str, out: &mut Vec<AsmToken>) {
     // Strip inline `;` or `#` comments before any operand parsing.
     let line = match line.find([';', '#']) {
@@ -363,7 +359,6 @@ fn parse_instruction_line(line: &str, out: &mut Vec<AsmToken>) {
 
 // --- Instruction constructors (per-format dispatch helpers) ---
 
-/// Build a store `AsmToken` for the given mnemonic.
 fn store_inst(mnemonic: &str, rs1: u8, rs2: u8, imm: i32) -> AsmToken {
     use crate::riscv::rv64i::Sw;
     match mnemonic {
@@ -374,7 +369,6 @@ fn store_inst(mnemonic: &str, rs1: u8, rs2: u8, imm: i32) -> AsmToken {
     }
 }
 
-/// Build a load `AsmToken` for the given mnemonic.
 fn load_inst(mnemonic: &str, rd: u8, rs1: u8, imm: i32) -> AsmToken {
     use crate::riscv::rv64i::Lw;
     match mnemonic {
@@ -386,7 +380,7 @@ fn load_inst(mnemonic: &str, rd: u8, rs1: u8, imm: i32) -> AsmToken {
     }
 }
 
-/// Build an I-type ALU immediate `AsmToken` (addi, andi, ori).
+// Build an I-type ALU immediate `AsmToken` (addi, andi, ori).
 fn i_imm_inst(mnemonic: &str, rd: u8, rs1: u8, imm: i32) -> AsmToken {
     match mnemonic {
         "addi" => AsmToken::Real(RealInstruction::Addi(Addi::new(rd, rs1, imm))),
@@ -396,7 +390,7 @@ fn i_imm_inst(mnemonic: &str, rd: u8, rs1: u8, imm: i32) -> AsmToken {
     }
 }
 
-/// Build a shift-immediate `AsmToken` (slli, srli, srai).
+// Build a shift-immediate `AsmToken` (slli, srli, srai).
 fn shift_inst(mnemonic: &str, rd: u8, rs1: u8, shamt: u8) -> AsmToken {
     match mnemonic {
         "slli" => AsmToken::Real(RealInstruction::Slli(Slli::new(rd, rs1, shamt))),
@@ -408,7 +402,6 @@ fn shift_inst(mnemonic: &str, rd: u8, rs1: u8, shamt: u8) -> AsmToken {
 
 // --- `li` immediate expansion ---
 
-/// Try to parse `li rd, imm` and return the expanded instruction tokens.
 fn try_parse_li(rest: &str) -> Option<Vec<AsmToken>> {
     let (rd_str, imm_str) = parse_two_fields(rest)?;
     let rd = parse_int_reg(rd_str)?;
@@ -416,8 +409,8 @@ fn try_parse_li(rest: &str) -> Option<Vec<AsmToken>> {
     Some(expand_li(rd, imm))
 }
 
-/// Expand `li rd, imm` into the minimal real instruction sequence.
-/// Handles 12-bit, 32-bit signed, and full 64-bit immediates.
+// Expand `li rd, imm` into the minimal real instruction sequence.
+// Handles 12-bit, 32-bit signed, and full 64-bit immediates.
 fn expand_li(rd: u8, imm: i64) -> Vec<AsmToken> {
     let mut out = Vec::new();
 
@@ -473,7 +466,7 @@ fn expand_li(rd: u8, imm: i64) -> Vec<AsmToken> {
 
 // --- Operand parsers ---
 
-/// Parse an integer immediate: decimal, or `0x`/`0X` hex prefix.
+// Parse an integer immediate: decimal, or `0x`/`0X` hex prefix.
 fn parse_imm_i64(s: &str) -> Option<i64> {
     let s = s.trim();
     if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
@@ -483,19 +476,19 @@ fn parse_imm_i64(s: &str) -> Option<i64> {
     }
 }
 
-/// Split `"rd, rest"` into `(rd_str, rest_str)`.
+// Split `"rd, rest"` into `(rd_str, rest_str)`.
 fn parse_two_fields(operands: &str) -> Option<(&str, &str)> {
     let comma = operands.find(',')?;
     Some((operands[..comma].trim(), operands[comma + 1..].trim()))
 }
 
-/// Parse `"rd, rs"` -> `(rd_reg, rs_reg)`.  Used by `mv`.
+// Parse `"rd, rs"` -> `(rd_reg, rs_reg)`. Used by `mv`.
 fn parse_two_regs(operands: &str) -> Option<(u8, u8)> {
     let (rd_str, rs_str) = parse_two_fields(operands)?;
     Some((parse_int_reg(rd_str)?, parse_int_reg(rs_str)?))
 }
 
-/// Parse `"rd, rs1, imm"` -> (`rd_reg`, `rs1_reg`, `imm_i32`).
+// Parse `"rd, rs1, imm"` -> (rd_reg, rs1_reg, imm_i32).
 fn parse_r_i_imm(operands: &str) -> Option<(u8, u8, i32)> {
     let mut parts = operands.splitn(3, ',');
     let rd = parse_int_reg(parts.next()?.trim())?;
@@ -504,7 +497,7 @@ fn parse_r_i_imm(operands: &str) -> Option<(u8, u8, i32)> {
     Some((rd, rs1, imm))
 }
 
-/// Parse `"rs2, imm(rs1)"` -> (`rs2_reg`, `rs1_reg`, `imm_i32`).  Used by stores.
+// Parse `"rs2, imm(rs1)"` -> (rs2_reg, rs1_reg, imm_i32). Used by stores.
 fn parse_store_mem(operands: &str) -> Option<(u8, u8, i32)> {
     let comma = operands.find(',')?;
     let rs2 = parse_int_reg(operands[..comma].trim())?;
@@ -512,7 +505,7 @@ fn parse_store_mem(operands: &str) -> Option<(u8, u8, i32)> {
     Some((rs2, rs1, imm))
 }
 
-/// Parse `"rd, imm(rs1)"` -> (`rd_reg`, `rs1_reg`, `imm_i32`).  Used by loads.
+// Parse `"rd, imm(rs1)"` -> (rd_reg, rs1_reg, imm_i32). Used by loads.
 fn parse_load_mem(operands: &str) -> Option<(u8, u8, i32)> {
     let comma = operands.find(',')?;
     let rd = parse_int_reg(operands[..comma].trim())?;
@@ -520,7 +513,7 @@ fn parse_load_mem(operands: &str) -> Option<(u8, u8, i32)> {
     Some((rd, rs1, imm))
 }
 
-/// Parse `"imm(rs1)"` -> (`rs1_reg`, `imm_i32`).
+// Parse `"imm(rs1)"` -> (rs1_reg, imm_i32).
 fn parse_mem_ref(s: &str) -> Option<(u8, i32)> {
     let lparen = s.find('(')?;
     let rparen = s.find(')')?;
@@ -536,7 +529,7 @@ fn split_mnemonic(line: &str) -> (&str, &str) {
     }
 }
 
-/// Parse `rs1, rs2, label` for a branch instruction.
+// Parse `rs1, rs2, label` for a branch instruction.
 fn parse_branch(kind: BranchKind, operands: &str) -> Option<AsmToken> {
     let parts: Vec<&str> = operands.splitn(3, ',').collect();
     if parts.len() != 3 {
@@ -553,7 +546,7 @@ fn parse_branch(kind: BranchKind, operands: &str) -> Option<AsmToken> {
     })
 }
 
-/// Parse `rd, label` (or just `label` for the `j` form handled above).
+// Parse `rd, label` (or just `label` for the `j` form handled above).
 fn parse_jal(operands: &str) -> Option<AsmToken> {
     let parts: Vec<&str> = operands.splitn(2, ',').collect();
     match parts.len() {
@@ -575,7 +568,7 @@ fn parse_jal(operands: &str) -> Option<AsmToken> {
     }
 }
 
-/// Parse `rd, symbol` for the `la` pseudo-instruction.
+// Parse `rd, symbol` for the `la` pseudo-instruction.
 fn parse_la(operands: &str) -> Option<AsmToken> {
     let parts: Vec<&str> = operands.splitn(2, ',').collect();
     if parts.len() != 2 {
@@ -590,8 +583,8 @@ fn parse_la(operands: &str) -> Option<AsmToken> {
     }
 }
 
-/// Parse `rs, label` for a compare-with-zero branch pseudo (`blez`/`bgez`/`bltz`/`bgtz`),
-/// expanding to the spec's `bge`/`blt` form against x0.
+// Parse `rs, label` for a compare-with-zero branch pseudo (`blez`/`bgez`/`bltz`/`bgtz`),
+// expanding to the spec's `bge`/`blt` form against x0.
 fn parse_branch_vs_zero(mnemonic: &str, operands: &str) -> Option<AsmToken> {
     let comma = operands.find(',')?;
     let rs = parse_int_reg(operands[..comma].trim())?;
@@ -614,8 +607,8 @@ fn parse_branch_vs_zero(mnemonic: &str, operands: &str) -> Option<AsmToken> {
     })
 }
 
-/// Parse `rs, label` for a zero-register branch (`beqz`/`bnez`).
-/// Expands to `beq/bne rs, x0, label`.
+// Parse `rs, label` for a zero-register branch (`beqz`/`bnez`).
+// Expands to `beq/bne rs, x0, label`.
 fn parse_branch_zero(kind: BranchKind, operands: &str) -> Option<AsmToken> {
     let comma = operands.find(',')?;
     let rs1 = parse_int_reg(operands[..comma].trim())?;
@@ -631,7 +624,7 @@ fn parse_branch_zero(kind: BranchKind, operands: &str) -> Option<AsmToken> {
     })
 }
 
-/// Map a CSR name or numeric literal to its 12-bit address.
+// Map a CSR name or numeric literal to its 12-bit address.
 fn parse_csr_name(name: &str) -> Option<u16> {
     match name.trim() {
         // Machine-mode CSRs
@@ -664,7 +657,7 @@ fn parse_csr_name(name: &str) -> Option<u16> {
     }
 }
 
-/// Parse `rd, csr` for `csrr` (pseudo: csrrs rd, csr, x0).
+// Parse `rd, csr` for `csrr` (pseudo: csrrs rd, csr, x0).
 fn parse_csrr(operands: &str) -> Option<AsmToken> {
     let comma = operands.find(',')?;
     let rd = parse_int_reg(operands[..comma].trim())?;
@@ -674,7 +667,7 @@ fn parse_csrr(operands: &str) -> Option<AsmToken> {
     ))))
 }
 
-/// Parse `csr, rs` for `csrw` (pseudo: csrrw x0, csr, rs).
+// Parse `csr, rs` for `csrw` (pseudo: csrrw x0, csr, rs).
 fn parse_csrw(operands: &str) -> Option<AsmToken> {
     let comma = operands.find(',')?;
     let csr = parse_csr_name(operands[..comma].trim())?;
@@ -684,7 +677,7 @@ fn parse_csrw(operands: &str) -> Option<AsmToken> {
     ))))
 }
 
-/// Parse `rd, csr, rs1` for the full CSR read-modify-write instructions.
+// Parse `rd, csr, rs1` for the full CSR read-modify-write instructions.
 fn parse_csr_rmw(mnemonic: &str, operands: &str) -> Option<AsmToken> {
     let parts: Vec<&str> = operands.splitn(3, ',').collect();
     if parts.len() != 3 {
@@ -702,7 +695,7 @@ fn parse_csr_rmw(mnemonic: &str, operands: &str) -> Option<AsmToken> {
     Some(AsmToken::Real(inst))
 }
 
-/// Parse `rd, rs1, rs2` for R-type instructions.
+// Parse `rd, rs1, rs2` for R-type instructions.
 fn parse_r_type(mnemonic: &str, operands: &str) -> Option<AsmToken> {
     let parts: Vec<&str> = operands.splitn(3, ',').collect();
     if parts.len() != 3 {

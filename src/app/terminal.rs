@@ -11,14 +11,12 @@ pub(super) enum ConsoleStream {
     Stdout,
     Warning,
     Error,
-    /// Continuation lines of a multi-line block (diagnostic frames); no prefix.
     Detail,
 }
 
 pub(super) struct ConsoleLine {
     stream: ConsoleStream,
     text: String,
-    /// Click-to-jump target: workspace path + 1-based line (diagnostics).
     link: Option<(String, usize)>,
 }
 
@@ -26,9 +24,7 @@ pub(super) struct ConsoleLine {
 pub(super) enum TerminalKind {
     Output,
     Shell,
-    /// The live machine console: UART transcript plus an input line.
     Machine,
-    /// Current diagnostics for the active build target, click-to-jump.
     Problems,
 }
 
@@ -38,12 +34,11 @@ pub(super) struct TerminalState {
     output_lines: Vec<ConsoleLine>,
     shell_lines: Vec<ConsoleLine>,
     shell_input: String,
-    /// Submitted commands, newest last; drives Up/Down recall.
     shell_history: Vec<String>,
     history_cursor: Option<usize>,
-    /// Set for one frame after a command runs so the input keeps focus.
+    // Set for one frame after a command runs so the input keeps focus.
     refocus_shell: bool,
-    /// Set when a run starts so the machine terminal grabs keyboard focus.
+    // Set when a run starts so the machine terminal grabs keyboard focus.
     refocus_machine: bool,
 }
 
@@ -74,7 +69,6 @@ fn welcome_lines() -> Vec<ConsoleLine> {
 }
 
 impl TerminalState {
-    /// Reset the Output tab for a fresh build/run and switch to it.
     pub(super) fn start(&mut self, title: impl Into<String>, command: impl Into<String>) {
         self.active = TerminalKind::Output;
         self.output_title = title.into();
@@ -86,7 +80,6 @@ impl TerminalState {
         push_lines(&mut self.output_lines, stream, text);
     }
 
-    /// Push one Output line that jumps to `path`:`line` when clicked.
     pub(super) fn push_linked(
         &mut self,
         stream: ConsoleStream,
@@ -99,7 +92,6 @@ impl TerminalState {
         self.output_lines.push(console_line);
     }
 
-    /// Append to the interactive shell log (used by `FullStackApp::shell_execute`).
     pub(super) fn shell_echo(&mut self, stream: ConsoleStream, text: impl Into<String>) {
         push_lines(&mut self.shell_lines, stream, text);
     }
@@ -112,18 +104,16 @@ impl TerminalState {
         self.active = TerminalKind::Output;
     }
 
-    /// Focus the machine console (a run just started).
     pub(super) fn set_active_machine(&mut self) {
         self.active = TerminalKind::Machine;
         self.refocus_machine = true;
     }
 
-    /// Focus the Problems tab (the single diagnostics list).
     pub(super) fn set_active_problems(&mut self) {
         self.active = TerminalKind::Problems;
     }
 
-    /// Output-tab text joined for test assertions.
+    // Exists for test assertions.
     #[cfg(all(test, not(target_arch = "wasm32")))]
     pub(super) fn output_text(&self) -> String {
         self.output_lines
@@ -162,7 +152,6 @@ impl TerminalState {
         }
     }
 
-    /// Walk the command history; `back` steps toward older entries.
     fn recall_history(&mut self, back: bool) {
         if self.shell_history.is_empty() {
             return;
@@ -205,8 +194,6 @@ impl ConsoleLine {
 }
 
 impl FullStackApp {
-    /// The bottom terminal: run output surfaces here while the editor keeps the
-    /// code in view. Opens on Run, toggled by Cmd+J or the status-bar switch.
     pub(super) fn terminal_panel(&mut self, ui: &mut egui::Ui, now: f64) {
         self.terminal_header(ui);
         chrome::hairline(ui);
@@ -229,8 +216,7 @@ impl FullStackApp {
         }
     }
 
-    /// The live console (terminal Machine tab + runtime surface): the transcript is the
-    /// input surface; a focus ring shows when keystrokes go to the guest UART.
+    // The transcript itself is the input surface; a focus ring marks guest keyboard focus.
     pub(super) fn machine_terminal(
         &mut self,
         ui: &mut egui::Ui,
@@ -317,8 +303,7 @@ impl FullStackApp {
         }
     }
 
-    /// Forward this frame's keyboard input to the guest UART with terminal
-    /// semantics: Enter is newline, Backspace 0x08, Ctrl+letter a control byte.
+    // Enter is newline, Backspace 0x08, Ctrl+letter a control byte.
     fn route_terminal_keys(&mut self, ui: &egui::Ui) {
         let events = ui.input(|i| i.events.clone());
         let Some(live) = self.live.as_mut() else {
@@ -359,8 +344,7 @@ impl FullStackApp {
         }
     }
 
-    /// Header band: tab switches, a run-status chip, and a close control on the
-    /// trailing edge. The program name lives in the tab strip, nowhere else.
+    // The program name lives in the tab strip, nowhere else.
     fn terminal_header(&mut self, ui: &mut egui::Ui) {
         let status = if self.terminal.has_error() {
             Some(("failed".to_owned(), theme::DANGER))
@@ -456,8 +440,6 @@ impl FullStackApp {
         }
     }
 
-    /// The Problems tab: one row per current diagnostic for the active build
-    /// target, message and location on the line, click to jump.
     fn problems_body(&self, ui: &mut egui::Ui) -> Option<(String, usize)> {
         use full_stack::compilation_pipeline::DiagnosticLevel;
         let rect = ui.available_rect_before_wrap();
@@ -530,7 +512,6 @@ impl FullStackApp {
     }
 }
 
-/// Render the active tab. Returns (submitted shell command, clicked jump link).
 fn console_body(
     ui: &mut egui::Ui,
     terminal: &mut TerminalState,
@@ -573,7 +554,6 @@ fn console_body(
     (submitted, jump)
 }
 
-/// One console line; linked lines render as click targets and return the jump.
 pub(super) fn console_line(ui: &mut egui::Ui, line: &ConsoleLine) -> Option<(String, usize)> {
     let (prefix, color) = stream_style(line.stream);
     let mut jump = None;
@@ -622,7 +602,6 @@ pub(super) fn linked_test_line(text: &str, path: &str, line: usize) -> ConsoleLi
     console_line
 }
 
-/// A short colored run-state chip, matching the runtime view and machine dock.
 fn status_chip(vm: &VmExecutionResult) -> (String, egui::Color32) {
     match vm.exit_code {
         Some(0) => ("exit 0".to_owned(), theme::ELECTRIC),
@@ -644,7 +623,6 @@ fn stream_style(stream: ConsoleStream) -> (&'static str, egui::Color32) {
     }
 }
 
-/// The live prompt at the bottom of the Shell tab. Returns the command on Enter.
 fn shell_input_line(ui: &mut egui::Ui, terminal: &mut TerminalState) -> Option<String> {
     let mut submitted = None;
     ui.horizontal(|ui| {
@@ -701,7 +679,6 @@ fn terminal_mode_button(
     }
 }
 
-/// A small framed hint anchored to a surface's bottom-right corner.
 fn hint_pill(ui: &egui::Ui, area: egui::Rect, text: &str) {
     let font = egui::FontId::monospace(metrics::STATUS_TEXT_SIZE);
     let galley = ui.fonts_mut(|f| f.layout_no_wrap(text.to_owned(), font, theme::TEXT_DIM));
@@ -719,7 +696,6 @@ fn hint_pill(ui: &egui::Ui, area: egui::Rect, text: &str) {
     painter.galley(pill.min + pad, galley, theme::TEXT_DIM);
 }
 
-/// Terminal cursor blink phase; keeps frames coming while the cursor shows.
 fn cursor_blink_on(ui: &egui::Ui) -> bool {
     ui.ctx()
         .request_repaint_after(std::time::Duration::from_millis(250));
@@ -727,7 +703,6 @@ fn cursor_blink_on(ui: &egui::Ui) -> bool {
     (time * 2.0) as i64 % 2 == 0
 }
 
-/// A frameless glyph button for the header (close), dim until hovered.
 fn header_glyph(ui: &mut egui::Ui, glyph: &str) -> egui::Response {
     let resp = ui.add(
         egui::Button::new(theme::mono(
@@ -746,8 +721,6 @@ fn header_glyph(ui: &mut egui::Ui, glyph: &str) -> egui::Response {
 // --- Shell command dispatch ---
 
 impl FullStackApp {
-    /// Run one interactive shell command. Filesystem-style commands print into the
-    /// Shell log; `build`/`run` drive the real pipeline and switch to the Output tab.
     pub(super) fn shell_execute(&mut self, raw: &str, now: f64) {
         self.terminal.record_history(raw);
         self.terminal
@@ -851,8 +824,6 @@ clear             clear the shell";
         self.run_selected_config(now);
     }
 
-    /// Select a config named/indexed by the first arg (if any). Returns false and
-    /// reports when the argument names nothing.
     fn select_named_config(&mut self, args: &[&str]) -> bool {
         let Some(arg) = args.first() else {
             return true;
@@ -985,7 +956,6 @@ clear             clear the shell";
     }
 }
 
-/// Parse an optional workspace path argument, defaulting to the root.
 pub(super) fn parse_vpath(path: Option<&str>) -> Result<full_stack::workspace::VPath, String> {
     match path {
         None => Ok(full_stack::workspace::VPath::root()),

@@ -287,11 +287,8 @@ impl SystemBus {
         self.syscon_exit = state.syscon_exit;
     }
 
-    /// Route memory accesses through L1 cache for RAM, direct for MMIO.
-    ///
-    /// IMPORTANT: UART, CLINT, and PLIC must be checked BEFORE ROM because their
-    /// IMPORTANT: physical addresses fall within the ROM range (0x0000_0000-0x0FFF_FFFF).
-    /// IMPORTANT: SYSCON writes are intercepted in the `MemoryAccess` impl below, not here.
+    // UART, CLINT, and PLIC must be matched before ROM: their physical addresses
+    // fall inside the ROM range. SYSCON writes are intercepted in `MemoryAccess` below.
     #[inline]
     fn route(&mut self, addr: u64) -> Option<(&mut dyn MemoryAccess, u64)> {
         match addr {
@@ -308,10 +305,9 @@ impl SystemBus {
         }
     }
 
-    // Expose RAM size for bounds check (also needed by route)
+    /// RAM size in bytes, for bounds checks. Reports `RAM_SIZE_DEFAULT` instead of
+    /// asking the cache-wrapped `Ram`; `new` always sizes RAM with that constant.
     pub fn ram_size(&self) -> usize {
-        // Return the size of the underlying RAM in the data cache
-        // This is a simplification - in reality we'd need to expose this from Cache
         RAM_SIZE_DEFAULT
     }
 

@@ -184,11 +184,8 @@ pub fn capture(vm: &VirtualMachine, sym: &OsSymbols) -> Vec<ProcessInfo> {
     procs
 }
 
-/// Translate a user VA to a physical address by walking the Sv39 page table at
-/// `root_pa` in software (read-only, via `peek_bytes_raw`). The MMU's own
-/// translate is TLB-bound to the *current* satp, so it cannot resolve a
-/// non-running process's address space; this walk works for any root. Returns
-/// `None` for an unmapped or invalid VA. Layout knowledge stays out of the VM.
+// Software Sv39 walk at `root_pa`: the MMU's own translate is TLB-bound to the
+// current satp, so it cannot resolve a non-running process's address space.
 fn translate_sv39(vm: &VirtualMachine, root_pa: u64, va: u64) -> Option<u64> {
     let rd = |pa: u64| -> u64 {
         let bytes = vm.peek_bytes_raw(pa, 8);

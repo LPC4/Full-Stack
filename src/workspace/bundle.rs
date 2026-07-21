@@ -65,8 +65,7 @@ pub fn populate_lessons_workspace(fs: &mut dyn WorkspaceFs) -> io::Result<()> {
     Ok(())
 }
 
-/// Every lesson run config, in lesson order: manifest, breakpoint, debug mode.
-/// Titles are not listed here; they come from each manifest's `title` field.
+// Titles are not listed here; they come from each manifest's `title` field.
 const LESSONS: [(&str, &str, bool); 12] = [
     ("01_sum/sum.build", "loop", false),
     ("02_array_sum/array_sum.build", "", false),
@@ -82,7 +81,6 @@ const LESSONS: [(&str, &str, bool); 12] = [
     ("06_uart/hello_world.build", "", true),
 ];
 
-/// The lessons run.toml: one freestanding config per lesson, in lesson order.
 fn lesson_run_configs() -> String {
     let mut store = RunConfigStore::default();
     for (build, breakpoint, debug) in LESSONS {
@@ -102,8 +100,6 @@ fn lesson_run_configs() -> String {
     store.to_toml()
 }
 
-/// The default run.toml: the kernel boot first, then one hosted config per
-/// bundled example program, in catalog order.
 fn sample_run_configs(catalog: &ProgramCatalog) -> String {
     let mut store = RunConfigStore::default();
 
@@ -138,7 +134,6 @@ fn sample_run_configs(catalog: &ProgramCatalog) -> String {
     store.to_toml()
 }
 
-/// Write `text` at `path` unless the file already exists, creating parent dirs.
 fn write_missing(fs: &mut dyn WorkspaceFs, path: &str, text: &str) -> io::Result<()> {
     let path = VPath::parse(path).map_err(invalid_path)?;
     if fs.metadata(&path).is_ok() {
@@ -152,7 +147,7 @@ fn write_missing(fs: &mut dyn WorkspaceFs, path: &str, text: &str) -> io::Result
     fs.write_file(&path, text.as_bytes())
 }
 
-/// Refresh an untouched materialized source while preserving edits made in the workspace.
+// Only refreshes sources the user has not touched; workspace edits are preserved.
 fn sync_bundled_file(
     fs: &mut dyn WorkspaceFs,
     path: &str,
@@ -359,8 +354,7 @@ mod tests {
         }
     }
 
-    /// The checked-in lessons run.toml is materialized once and never refreshed,
-    /// so it can only be kept honest by failing here when it drifts.
+    // The materialized lessons run.toml is never refreshed; failing here keeps it honest.
     #[test]
     fn materialized_lessons_run_toml_matches_the_generated_one() {
         let path = concat!(

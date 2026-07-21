@@ -1,6 +1,6 @@
-/// Fully-typed token produced by the parser and consumed by layout/encode passes.
-/// Unlike `RvInstruction`, every variant has no raw strings — unresolved labels are
-/// preserved as `String` targets for symbol-table patching.
+//! Fully-typed token produced by the parser and consumed by layout/encode passes.
+//! Unresolved labels are preserved as `String` targets for symbol-table patching.
+
 use super::section::SectionKind;
 use crate::encode_decode::Reg;
 use crate::real::RealInstruction;

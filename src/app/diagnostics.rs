@@ -5,7 +5,6 @@ use crate::ui::theme;
 use eframe::egui;
 use full_stack::compilation_pipeline::{Diagnostic, DiagnosticLevel};
 
-/// One spanned diagnostic located in the compiled source.
 pub(crate) struct DiagMark {
     /// 1-based source line.
     pub line: usize,
@@ -26,8 +25,8 @@ impl DiagMark {
     }
 }
 
-/// Map spanned diagnostics onto `source`, the exact text that was compiled.
-/// Unspanned diagnostics are skipped; they only exist in the Output log.
+// `source` must be the exact text that was compiled. Unspanned diagnostics
+// are skipped; they only exist in the Output log.
 pub(crate) fn marks_for_source(diagnostics: &[Diagnostic], source: &str) -> Vec<DiagMark> {
     let line_starts = line_start_offsets(source);
     diagnostics
@@ -55,7 +54,6 @@ pub(crate) fn marks_for_source(diagnostics: &[Diagnostic], source: &str) -> Vec<
         .collect()
 }
 
-/// (errors, warnings) tallies for the status bar chip.
 pub(crate) fn count_levels(diagnostics: &[Diagnostic]) -> (usize, usize) {
     let errors = diagnostics
         .iter()
@@ -64,7 +62,6 @@ pub(crate) fn count_levels(diagnostics: &[Diagnostic]) -> (usize, usize) {
     (errors, diagnostics.len() - errors)
 }
 
-/// "1 error" / "3 errors": a count with its correctly pluralized noun.
 pub(crate) fn tally(count: u64, noun: &str) -> String {
     if count == 1 {
         format!("1 {noun}")
@@ -77,7 +74,6 @@ pub(crate) fn tally(count: u64, noun: &str) -> String {
     }
 }
 
-/// Byte offset of the start of 1-based `line`, clamped to the text end.
 pub(crate) fn byte_offset_of_line(text: &str, line: usize) -> usize {
     let starts = line_start_offsets(text);
     starts
@@ -103,8 +99,6 @@ fn line_start_offsets(text: &str) -> Vec<usize> {
     starts
 }
 
-/// The underline range: `len` bytes from `start` when the span has a width,
-/// else the identifier-like token at `start` as a fallback.
 fn span_range(source: &str, start: usize, line_end: usize, len: usize) -> Option<(usize, usize)> {
     if start >= line_end || !source.is_char_boundary(start) {
         return None;

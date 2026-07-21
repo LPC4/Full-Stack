@@ -14,7 +14,6 @@ target_wasm
 
 # Compiler artifact output directory
 out/
-
 .run
 .idea
 plugin

@@ -9,15 +9,11 @@ use full_stack::session::MachineState;
 use full_stack::workspace::VPath;
 use virtual_machine::cpu::decoder::{self, DecodedInsn};
 
-/// Instructions shown before and after the anchor pc.
 const DISASM_BACK: u64 = 24;
 const DISASM_AHEAD: u64 = 40;
-/// Bytes per memory-view row and rows per page.
 const MEM_ROW_BYTES: usize = 16;
 const MEM_ROWS: usize = 32;
-/// Bytes shown at once: the step the memory-view page arrows walk.
 const MEM_WINDOW: u64 = (MEM_ROW_BYTES * MEM_ROWS) as u64;
-/// Left gutter (breakpoint dot + pc arrow) width in the disassembly, in px.
 const DISASM_GUTTER: f32 = 24.0;
 const XREG_NAMES: [&str; 32] = [
     "zero", "ra", "sp", "gp", "tp", "t0", "t1", "t2", "s0", "s1", "a0", "a1", "a2", "a3", "a4",
@@ -25,10 +21,8 @@ const XREG_NAMES: [&str; 32] = [
     "t5", "t6",
 ];
 
-/// Debugger-only views exposed by a debug launch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DebugView {
-    /// Read-only source view that follows the pc across files.
     Code,
     Disasm,
     Memory,
@@ -52,13 +46,12 @@ impl Default for MemoryViewState {
     }
 }
 
-/// What a disassembly row asked the session to do this frame.
 enum DisasmAction {
     Toggle(u64),
     RunTo(u64),
 }
 
-/// Character-grid metrics all debug rows share, so columns line up exactly.
+// Shared character-grid metrics so all debug rows column-align exactly.
 struct Grid {
     font: FontId,
     char_w: f32,
@@ -71,13 +64,11 @@ impl Grid {
         Self { font, char_w }
     }
 
-    /// X position of character column `col` from `left`.
     fn x(&self, left: f32, col: usize) -> f32 {
         left + col as f32 * self.char_w
     }
 }
 
-/// Addresses in this VM fit 8 hex digits; wider ones fall back to 12.
 fn format_addr(addr: u64) -> String {
     if u32::try_from(addr).is_ok() {
         format!("{addr:08x}")
@@ -87,7 +78,6 @@ fn format_addr(addr: u64) -> String {
 }
 
 impl FullStackApp {
-    /// The disassembly window, anchored to the live pc each frame.
     pub(super) fn show_disasm(&mut self, ui: &mut egui::Ui) {
         let Some(live) = self.live.as_ref() else {
             chrome::centered_hint(ui, "No machine session. Press Run to start one.");
@@ -192,8 +182,6 @@ impl FullStackApp {
         }
     }
 
-    /// Per-instruction source markers for the disasm window: `Some((file, line,
-    /// text))` at each address where the source line changes, else `None`.
     fn disasm_source_markers(
         &self,
         start: u64,
@@ -228,8 +216,7 @@ impl FullStackApp {
             .collect()
     }
 
-    /// Trimmed text of 1-based `line` in workspace `file`, preferring the open
-    /// (possibly unsaved) buffer over the on-disk copy.
+    // Prefers the open (possibly unsaved) buffer over the on-disk copy.
     fn source_line_text(&self, file: &str, line: u32) -> Option<String> {
         let path = VPath::parse(file).ok()?;
         let text = match self.workspace.document(&path) {
@@ -241,7 +228,6 @@ impl FullStackApp {
         Some(text.lines().nth(idx)?.trim().to_owned())
     }
 
-    /// Hex dump at an address, read through the MMU or straight from RAM.
     pub(super) fn show_memory(&mut self, ui: &mut egui::Ui) {
         let Some(live) = &mut self.live else {
             chrome::centered_hint(ui, "No machine session. Press Run to start one.");
@@ -343,8 +329,6 @@ impl FullStackApp {
             });
     }
 
-    /// Stack view: the live stack from its high-address top down to sp, with
-    /// frame boundaries walked through the saved-fp chain and fp/sp offsets.
     pub(super) fn show_stack(&self, ui: &mut egui::Ui) {
         let Some(live) = self.live.as_ref() else {
             chrome::centered_hint(ui, "No machine session. Press Run to start one.");
@@ -403,8 +387,6 @@ impl MemoryViewState {
         self.addr_text = format!("{addr:x}");
     }
 
-    /// Scroll one visible window toward higher (`forward`) or lower addresses,
-    /// keeping the row alignment the hex dump already uses.
     fn page(&mut self, forward: bool) {
         let cur = self.addr & !0xF;
         let next = if forward {
@@ -416,12 +398,10 @@ impl MemoryViewState {
     }
 }
 
-/// Initial sp the VM hands a fresh program: the high end of the RAM stack.
+// Initial sp the VM hands a fresh program: the high end of the RAM stack.
 const STACK_TOP: u64 =
     virtual_machine::bus::RAM_BASE + virtual_machine::bus::RAM_SIZE_DEFAULT as u64 - 16;
-/// Cap on stack bytes rendered, measured from sp up toward the top.
 const STACK_MAX_BYTES: u64 = 1024;
-/// Character-grid columns each stack row spans (for the horizontal scroll min).
 const STACK_COLS: usize = 84;
 
 // Shared column layout for stack rows, in grid characters.
@@ -431,7 +411,6 @@ const ST_VALUE_COL: usize = 21;
 const ST_SPOFF_COL: usize = 39;
 const ST_MARK_COL: usize = 50;
 
-/// One 8-byte stack slot with its frame annotations, ready to render.
 struct StackSlot {
     addr: u64,
     value: u64,
@@ -442,14 +421,12 @@ struct StackSlot {
     note: Option<(String, egui::Color32)>,
 }
 
-/// A rendered line in the stack view: a caption, a frame header, or a slot.
 enum StackRow {
     Caption(String),
     Frame { name: String, bytes: u64 },
     Slot(StackSlot),
 }
 
-/// The stack region to draw, from `top` (high) down to `sp` (low).
 struct StackModel {
     sp: u64,
     fp: u64,
@@ -457,7 +434,6 @@ struct StackModel {
     rows: Vec<StackRow>,
 }
 
-/// Read the live stack and walk the saved-fp chain into a render model.
 fn stack_model(live: &full_stack::session::LiveMachine) -> Option<StackModel> {
     let regs = live.registers();
     let sp = regs.x[2];
@@ -570,7 +546,6 @@ fn stack_model(live: &full_stack::session::LiveMachine) -> Option<StackModel> {
     Some(StackModel { sp, fp, top, rows })
 }
 
-/// Symbol name plus hex offset for a code address, or the bare hex if unknown.
 fn sym_off(live: &full_stack::session::LiveMachine, addr: u64) -> String {
     match live.symbol_near(addr) {
         Some((name, 0)) => name.to_owned(),
@@ -579,7 +554,6 @@ fn sym_off(live: &full_stack::session::LiveMachine, addr: u64) -> String {
     }
 }
 
-/// A faint full-width caption row (the "high/low addresses" bookends).
 fn caption_row(ui: &mut egui::Ui, text: &str) {
     let width = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(vec2(width, metrics::ROW_HEIGHT), Sense::hover());
@@ -592,7 +566,6 @@ fn caption_row(ui: &mut egui::Ui, text: &str) {
     );
 }
 
-/// A frame header: a boundary hairline plus the owning function and frame size.
 fn frame_row(ui: &mut egui::Ui, grid: &Grid, name: &str, bytes: u64) {
     ui.add_space(metrics::SECTION_GAP);
     let width = ui.available_width();
@@ -614,7 +587,6 @@ fn frame_row(ui: &mut egui::Ui, grid: &Grid, name: &str, bytes: u64) {
     );
 }
 
-/// One stack slot row: fp offset, address, 8-byte value, sp offset, markers.
 fn stack_row(ui: &mut egui::Ui, grid: &Grid, slot: &StackSlot) {
     let width = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(vec2(width, metrics::ROW_HEIGHT), Sense::hover());
@@ -686,8 +658,6 @@ fn stack_row(ui: &mut egui::Ui, grid: &Grid, slot: &StackSlot) {
     }
 }
 
-/// One disassembly row on the shared character grid. Returns the row rect (for
-/// follow-pc scrolling) and any requested action.
 fn disasm_row(
     ui: &mut egui::Ui,
     grid: &Grid,
@@ -847,8 +817,6 @@ fn xreg_name(reg: usize) -> &'static str {
     XREG_NAMES.get(reg).copied().unwrap_or("??")
 }
 
-/// A faint source-line marker where the pc-to-source line changes. Shows the
-/// real source text when available, falling back to `; file:line`.
 fn source_loc_row(ui: &mut egui::Ui, file: &str, line: u32, text: Option<&str>) {
     let width = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(vec2(width, metrics::ROW_HEIGHT), Sense::hover());
@@ -891,13 +859,11 @@ fn symbol_label_row(ui: &mut egui::Ui, name: &str, gap_above: bool) {
     );
 }
 
-/// Character column where the ascii gutter starts (after 16 spaced hex bytes).
 fn ascii_col() -> usize {
     // addr(8) + gap(3) + 16 bytes at 3 chars + mid gap(1) + gap(2)
     8 + 3 + MEM_ROW_BYTES * 3 + 1 + 2
 }
 
-/// Byte-offset header over the hex grid.
 fn hex_header_row(ui: &mut egui::Ui, grid: &Grid) {
     let width = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(vec2(width, metrics::ROW_HEIGHT), Sense::hover());
@@ -921,12 +887,10 @@ fn hex_header_row(ui: &mut egui::Ui, grid: &Grid) {
     );
 }
 
-/// Character column of byte `i` in a hex row (extra gap after the 8th byte).
 fn byte_col(i: usize) -> usize {
     8 + 3 + i * 3 + usize::from(i >= 8)
 }
 
-/// One hex-dump row: address, 16 bytes (zeros dimmed), ascii gutter.
 fn hex_row(ui: &mut egui::Ui, grid: &Grid, addr: u64, bytes: &[u8], stripe: bool) {
     let width = ui.available_width();
     let (rect, resp) = ui.allocate_exact_size(vec2(width, metrics::ROW_HEIGHT), Sense::hover());
@@ -975,8 +939,6 @@ fn hex_row(ui: &mut egui::Ui, grid: &Grid, addr: u64, bytes: &[u8], stripe: bool
     );
 }
 
-/// Two-segment va|pa switch: the active address space reads as pressed.
-/// Returns the newly chosen space (physical?) when a segment is clicked.
 fn address_space_toggle(ui: &mut egui::Ui, physical: bool) -> Option<bool> {
     const SEG_W: f32 = 26.0;
     let (rect, resp) = ui.allocate_exact_size(vec2(SEG_W * 2.0, 18.0), Sense::click());
@@ -1025,7 +987,6 @@ fn address_space_toggle(ui: &mut egui::Ui, physical: bool) -> Option<bool> {
     clicked
 }
 
-/// A small framed toggle/action chip for the memory-view header.
 fn small_toggle(ui: &mut egui::Ui, label: &str) -> egui::Response {
     let resp = ui.add(egui::Button::new(theme::mono(
         label,

@@ -1,8 +1,8 @@
 use super::{
     AssignTarget, BinaryOp, Block, DeferredAction, EvalMode, Expression, HighLevelCompiler,
-    IrInstruction, IrProgram, IrRegister, IrTerminator, IrType, IrValue, Literal, Statement,
+    IrInstruction, IrProgram, IrRegister, IrTerminator, IrType, IrValue, Literal, Statement, Type,
 };
-use crate::ast::{MatchArm, PrimaryExpr};
+use crate::ast::{BindingField, MatchArm, PrimaryExpr};
 
 /// Rewrite each `continue` in `stmts` (but not inside nested loops) to run the
 /// loop `step` first, so a `for`-loop desugared to `while` still advances its
@@ -77,228 +77,16 @@ impl HighLevelCompiler {
     pub(super) fn lower_statement(&mut self, ir_program: &mut IrProgram, statement: &Statement) {
         log::trace!("Lowering statement: {statement:?}");
         match statement {
-            Statement::Expression(expr) => {
-                // `match` lowers here where `ir_program` is available: bare as a
-                // statement, or as the rvalue of `place = match ...`.
-                match expr {
-                    Expression::Match { scrutinee, arms } => {
-                        self.lower_match(ir_program, scrutinee, arms);
-                    }
-                    Expression::Assignment { target, rvalue }
-                        if matches!(rvalue.as_ref(), Expression::Match { .. }) =>
-                    {
-                        let Expression::Match { scrutinee, arms } = rvalue.as_ref() else {
-                            unreachable!()
-                        };
-                        self.lower_assignment_match(ir_program, target, scrutinee, arms);
-                    }
-                    _ => {
-                        let _ = self.lower_expression(expr);
-                    }
-                }
-            }
-            Statement::Return(expr) => {
-                // Check if we're in a function that returns an aggregate (has sret)
-                let has_sret = self.context.symbols.lookup("__sret_ptr").is_some();
-
-                // A scalar/pointer `return match ...` lowers the match into a result
-                // slot; aggregate (sret) returns fall through to the normal path.
-                if !has_sret && let Some(Expression::Match { scrutinee, arms }) = expr.as_ref() {
-                    let target = self.current_return_ty.clone();
-                    let value = self
-                        .lower_match_value(ir_program, scrutinee, arms, target)
-                        .map(|l| l.value);
-                    let defers = self.defers.clone();
-                    for action in defers.into_iter().rev() {
-                        self.emit_deferred_action(action);
-                    }
-                    self.set_terminator(IrTerminator::Return(value));
-                    return;
-                }
-
-                if has_sret {
-                    // For functions returning aggregates, we need to copy the value to sret
-                    if let Some(return_expr) = expr {
-                        if let Some(lowered) = self.lower_expression(return_expr) {
-                            // The lowered value is a register pointing to the local aggregate
-                            // We need to copy it to the sret location
-                            let sret_ptr_info = self.context.symbols.lookup("__sret_ptr").cloned();
-
-                            if let Some(sret_info) = sret_ptr_info {
-                                // Get the sret pointer value (used by backend in lower_terminator)
-                                let _sret_ptr_val = sret_info.value;
-
-                                // Get the source address (where the aggregate is currently stored)
-                                // Backend uses this to copy aggregate to sret location
-                                let _src_addr = if let IrValue::Register(reg) = &lowered.value {
-                                    reg.clone()
-                                } else {
-                                    self.context.error(
-                                        "Aggregate return value must be a register".to_owned(),
-                                    );
-                                    return;
-                                };
-
-                                // Emit code to copy the aggregate from src_addr to sret_ptr
-                                // We'll use a series of Load/Store instructions to copy field by field
-                                let agg_ty = lowered.ty.clone();
-
-                                self.push_instruction(IrInstruction::Comment(format!(
-                                    "copying aggregate return ({agg_ty}) to sret location"
-                                )));
-
-                                // The backend already handles copying from src to sret in lower_terminator
-                                self.set_terminator(IrTerminator::Return(Some(lowered.value)));
-                            } else {
-                                self.context.error(
-                                    "Internal error: __sret_ptr not found in symbol table"
-                                        .to_owned(),
-                                );
-                            }
-                        }
-                    } else {
-                        self.context.error(
-                            "Function returning aggregate must have a return value".to_owned(),
-                        );
-                    }
-                } else {
-                    // Normal return (non-aggregate); literals take the return width.
-                    let return_ty = self.current_return_ty.clone();
-                    let value = expr
-                        .as_ref()
-                        .and_then(|e| match &return_ty {
-                            Some(rt) => self.lower_value_for_type(e, rt),
-                            None => self.lower_expression(e),
-                        })
-                        .map(|l| l.value);
-
-                    // Emulate proper defer by emitting cleanup instructions at exit points
-                    let defers = self.defers.clone();
-                    if !defers.is_empty() {
-                        self.push_instruction(IrInstruction::Comment(
-                            "executing deferred cleanup before return".to_owned(),
-                        ));
-                    }
-                    for action in defers.into_iter().rev() {
-                        self.emit_deferred_action(action);
-                    }
-
-                    self.set_terminator(IrTerminator::Return(value));
-                }
-            }
+            Statement::Expression(expr) => self.lower_expression_statement(ir_program, expr),
+            Statement::Return(expr) => self.lower_return(ir_program, expr.as_ref()),
             Statement::VariableDecl { name, ty, init } => {
-                self.push_instruction(IrInstruction::Comment(format!("local var: {name}")));
-                let lowered_ty = match self.lower_type_with_program(ir_program, ty) {
-                    Ok(ty) => ty,
-                    Err(e) => {
-                        self.context
-                            .error(format!("failed to lower type for variable `{name}`: {e:?}"));
-                        return;
-                    }
-                };
-
-                // Track unsigned variables
-                if Self::is_unsigned_primitive_type(ty) {
-                    self.context.unsigned_vars.insert(name.clone());
-                }
-
-                let ptr_reg = IrRegister::Named(name.clone());
-
-                self.push_instruction(IrInstruction::Alloc {
-                    dest: ptr_reg.clone(),
-                    ty: lowered_ty.clone(),
-                    count: None,
-                });
-
-                if let Some(init_expr) = init {
-                    let lowered = if let Expression::Match { scrutinee, arms } = init_expr {
-                        self.lower_match_value(
-                            ir_program,
-                            scrutinee,
-                            arms,
-                            Some(lowered_ty.clone()),
-                        )
-                    } else {
-                        self.lower_value_for_type(init_expr, &lowered_ty)
-                    };
-                    if let Some(lowered) = lowered {
-                        self.push_instruction(IrInstruction::Store {
-                            ty: lowered_ty.clone(),
-                            value: lowered.value,
-                            ptr: ptr_reg.clone(),
-                            offset: None,
-                        });
-                    }
-                }
-
-                self.context.symbols.insert(
-                    name.clone(),
-                    IrType::Pointer(Box::new(lowered_ty)),
-                    IrValue::Register(ptr_reg),
-                );
+                self.lower_variable_decl(ir_program, name, ty, init.as_ref());
             }
             Statement::InferredVariableDecl { name, init } => {
-                if let Expression::Primary(crate::ast::PrimaryExpr::New { ty, .. }) = init
-                    && let Err(error) = self.lower_type_with_program(ir_program, ty)
-                {
-                    self.context.error(format!(
-                        "failed to resolve inferred type for `{name}`: {error:?}"
-                    ));
-                    return;
-                }
-                // Evaluate the initializer before introducing the symbol, which
-                // preserves the no-self-reference rule for inferred bindings.
-                let lowered = if let Expression::Match { scrutinee, arms } = init {
-                    self.lower_match_value(ir_program, scrutinee, arms, None)
-                } else {
-                    self.lower_expression(init)
-                };
-                let Some(lowered) = lowered else {
-                    self.context
-                        .error(format!("failed to infer initializer type for `{name}`"));
-                    return;
-                };
-                if lowered.ty == IrType::Void
-                    || matches!(&lowered.ty, IrType::Named(n) if n == "unknown")
-                {
-                    self.context.error(format!(
-                        "initializer for `{name}` has no concrete value type"
-                    ));
-                    return;
-                }
-
-                if lowered.is_unsigned {
-                    self.context.unsigned_vars.insert(name.clone());
-                }
-
-                let ptr_reg = IrRegister::Named(name.clone());
-                self.push_instruction(IrInstruction::Comment(format!(
-                    "inferred local var: {name}"
-                )));
-                self.push_instruction(IrInstruction::Alloc {
-                    dest: ptr_reg.clone(),
-                    ty: lowered.ty.clone(),
-                    count: None,
-                });
-                self.push_instruction(IrInstruction::Store {
-                    ty: lowered.ty.clone(),
-                    value: lowered.value,
-                    ptr: ptr_reg.clone(),
-                    offset: None,
-                });
-                self.context.symbols.insert(
-                    name.clone(),
-                    IrType::Pointer(Box::new(lowered.ty)),
-                    IrValue::Register(ptr_reg),
-                );
+                self.lower_inferred_variable_decl(ir_program, name, init);
             }
             Statement::DestructureBinding { fields, init } => {
-                let Some(lowered) = self.lower_expression(init) else {
-                    self.context
-                        .error("failed to lower destructuring source".to_owned());
-                    return;
-                };
-                self.lower_binding_pattern(fields, lowered);
+                self.lower_destructure_binding(fields, init);
             }
             Statement::Block(block) => {
                 self.lower_block(ir_program, block);
@@ -316,66 +104,284 @@ impl HighLevelCompiler {
             Statement::For { var, iter, body } => {
                 self.lower_for(ir_program, var, iter, body);
             }
-            Statement::Break => {
-                if let Some((_, break_label)) = self.loop_labels.last() {
-                    self.set_terminator(IrTerminator::Jump(break_label.clone()));
-                } else {
-                    self.context.error("break outside of loop".to_owned());
-                }
-            }
-            Statement::Continue => {
-                if let Some((continue_label, _)) = self.loop_labels.last() {
-                    self.set_terminator(IrTerminator::Jump(continue_label.clone()));
-                } else {
-                    self.context.error("continue outside of loop".to_owned());
-                }
-            }
+            Statement::Break => self.lower_break(),
+            Statement::Continue => self.lower_continue(),
             Statement::AsmBlock { lines } => {
                 self.push_instruction(IrInstruction::InlineAsm {
                     lines: lines.clone(),
                 });
             }
-            Statement::Defer(expr) => {
-                if let Expression::Primary(crate::ast::PrimaryExpr::FunctionCall {
-                    name,
-                    arguments,
-                    ..
-                }) = expr
-                {
-                    let mut captured_args = Vec::new();
-                    for arg in arguments {
-                        let lowered = if let Some(v) = self.lower_expression(arg) {
-                            v
-                        } else {
-                            self.context.error(format!(
-                                "failed to capture defer argument `{}` for call `{}`",
-                                self.format_expression(arg),
-                                name
-                            ));
-                            return;
-                        };
-                        captured_args.push(lowered.value);
-                    }
+            Statement::Defer(expr) => self.lower_defer(expr),
+        }
+    }
 
+    // `match` lowers here where `ir_program` is available: bare as a
+    // statement, or as the rvalue of `place = match ...`.
+    fn lower_expression_statement(&mut self, ir_program: &mut IrProgram, expr: &Expression) {
+        match expr {
+            Expression::Match { scrutinee, arms } => {
+                self.lower_match(ir_program, scrutinee, arms);
+            }
+            Expression::Assignment { target, rvalue }
+                if matches!(rvalue.as_ref(), Expression::Match { .. }) =>
+            {
+                let Expression::Match { scrutinee, arms } = rvalue.as_ref() else {
+                    unreachable!()
+                };
+                self.lower_assignment_match(ir_program, target, scrutinee, arms);
+            }
+            _ => {
+                let _ = self.lower_expression(expr);
+            }
+        }
+    }
+
+    fn lower_return(&mut self, ir_program: &mut IrProgram, expr: Option<&Expression>) {
+        // Aggregate-returning functions carry a hidden sret pointer.
+        let has_sret = self.context.symbols.lookup("__sret_ptr").is_some();
+
+        // A scalar/pointer `return match ...` lowers the match into a result
+        // slot; aggregate (sret) returns fall through to the normal path.
+        if !has_sret && let Some(Expression::Match { scrutinee, arms }) = expr {
+            let target = self.current_return_ty.clone();
+            let value = self
+                .lower_match_value(ir_program, scrutinee, arms, target)
+                .map(|l| l.value);
+            let defers = self.defers.clone();
+            for action in defers.into_iter().rev() {
+                self.emit_deferred_action(action);
+            }
+            self.set_terminator(IrTerminator::Return(value));
+            return;
+        }
+
+        if has_sret {
+            self.lower_return_sret(expr);
+        } else {
+            // Normal return (non-aggregate); literals take the return width.
+            let return_ty = self.current_return_ty.clone();
+            let value = expr
+                .and_then(|e| match &return_ty {
+                    Some(rt) => self.lower_value_for_type(e, rt),
+                    None => self.lower_expression(e),
+                })
+                .map(|l| l.value);
+
+            // Emulate proper defer by emitting cleanup instructions at exit points
+            let defers = self.defers.clone();
+            if !defers.is_empty() {
+                self.push_instruction(IrInstruction::Comment(
+                    "executing deferred cleanup before return".to_owned(),
+                ));
+            }
+            for action in defers.into_iter().rev() {
+                self.emit_deferred_action(action);
+            }
+
+            self.set_terminator(IrTerminator::Return(value));
+        }
+    }
+
+    // Return from an aggregate-returning function: the returned register points
+    // at the local aggregate; the backend copies it to sret in lower_terminator.
+    fn lower_return_sret(&mut self, expr: Option<&Expression>) {
+        if let Some(return_expr) = expr {
+            if let Some(lowered) = self.lower_expression(return_expr) {
+                if self.context.symbols.lookup("__sret_ptr").is_some() {
+                    if !matches!(&lowered.value, IrValue::Register(_)) {
+                        self.context
+                            .error("Aggregate return value must be a register".to_owned());
+                        return;
+                    }
                     self.push_instruction(IrInstruction::Comment(format!(
-                        "defer: captured call {} with {} args",
-                        name,
-                        captured_args.len()
+                        "copying aggregate return ({}) to sret location",
+                        lowered.ty
                     )));
-                    self.defers.push(DeferredAction::Call {
-                        function: name.clone(),
-                        args: captured_args,
-                    });
+                    self.set_terminator(IrTerminator::Return(Some(lowered.value)));
                 } else {
-                    self.push_instruction(IrInstruction::Comment(
-                        "defer: register cleanup logic".to_owned(),
-                    ));
-                    self.context.warn(
-                        "defer on non-call expression is not capture-safe yet; evaluating at exit",
-                    );
-                    self.defers.push(DeferredAction::Expr(expr.clone()));
+                    self.context
+                        .error("Internal error: __sret_ptr not found in symbol table".to_owned());
                 }
             }
+        } else {
+            self.context
+                .error("Function returning aggregate must have a return value".to_owned());
+        }
+    }
+
+    fn lower_variable_decl(
+        &mut self,
+        ir_program: &mut IrProgram,
+        name: &str,
+        ty: &Type,
+        init: Option<&Expression>,
+    ) {
+        self.push_instruction(IrInstruction::Comment(format!("local var: {name}")));
+        let lowered_ty = match self.lower_type_with_program(ir_program, ty) {
+            Ok(ty) => ty,
+            Err(e) => {
+                self.context
+                    .error(format!("failed to lower type for variable `{name}`: {e:?}"));
+                return;
+            }
+        };
+
+        // Track unsigned variables
+        if Self::is_unsigned_primitive_type(ty) {
+            self.context.unsigned_vars.insert(name.to_owned());
+        }
+
+        let ptr_reg = IrRegister::Named(name.to_owned());
+
+        self.push_instruction(IrInstruction::Alloc {
+            dest: ptr_reg.clone(),
+            ty: lowered_ty.clone(),
+            count: None,
+        });
+
+        if let Some(init_expr) = init {
+            let lowered = if let Expression::Match { scrutinee, arms } = init_expr {
+                self.lower_match_value(ir_program, scrutinee, arms, Some(lowered_ty.clone()))
+            } else {
+                self.lower_value_for_type(init_expr, &lowered_ty)
+            };
+            if let Some(lowered) = lowered {
+                self.push_instruction(IrInstruction::Store {
+                    ty: lowered_ty.clone(),
+                    value: lowered.value,
+                    ptr: ptr_reg.clone(),
+                    offset: None,
+                });
+            }
+        }
+
+        self.context.symbols.insert(
+            name.to_owned(),
+            IrType::Pointer(Box::new(lowered_ty)),
+            IrValue::Register(ptr_reg),
+        );
+    }
+
+    fn lower_inferred_variable_decl(
+        &mut self,
+        ir_program: &mut IrProgram,
+        name: &str,
+        init: &Expression,
+    ) {
+        if let Expression::Primary(crate::ast::PrimaryExpr::New { ty, .. }) = init
+            && let Err(error) = self.lower_type_with_program(ir_program, ty)
+        {
+            self.context.error(format!(
+                "failed to resolve inferred type for `{name}`: {error:?}"
+            ));
+            return;
+        }
+        // Evaluate the initializer before introducing the symbol, which
+        // preserves the no-self-reference rule for inferred bindings.
+        let lowered = if let Expression::Match { scrutinee, arms } = init {
+            self.lower_match_value(ir_program, scrutinee, arms, None)
+        } else {
+            self.lower_expression(init)
+        };
+        let Some(lowered) = lowered else {
+            self.context
+                .error(format!("failed to infer initializer type for `{name}`"));
+            return;
+        };
+        if lowered.ty == IrType::Void || matches!(&lowered.ty, IrType::Named(n) if n == "unknown") {
+            self.context.error(format!(
+                "initializer for `{name}` has no concrete value type"
+            ));
+            return;
+        }
+
+        if lowered.is_unsigned {
+            self.context.unsigned_vars.insert(name.to_owned());
+        }
+
+        let ptr_reg = IrRegister::Named(name.to_owned());
+        self.push_instruction(IrInstruction::Comment(format!(
+            "inferred local var: {name}"
+        )));
+        self.push_instruction(IrInstruction::Alloc {
+            dest: ptr_reg.clone(),
+            ty: lowered.ty.clone(),
+            count: None,
+        });
+        self.push_instruction(IrInstruction::Store {
+            ty: lowered.ty.clone(),
+            value: lowered.value,
+            ptr: ptr_reg.clone(),
+            offset: None,
+        });
+        self.context.symbols.insert(
+            name.to_owned(),
+            IrType::Pointer(Box::new(lowered.ty)),
+            IrValue::Register(ptr_reg),
+        );
+    }
+
+    fn lower_destructure_binding(&mut self, fields: &[BindingField], init: &Expression) {
+        let Some(lowered) = self.lower_expression(init) else {
+            self.context
+                .error("failed to lower destructuring source".to_owned());
+            return;
+        };
+        self.lower_binding_pattern(fields, lowered);
+    }
+
+    fn lower_break(&mut self) {
+        if let Some((_, break_label)) = self.loop_labels.last() {
+            self.set_terminator(IrTerminator::Jump(break_label.clone()));
+        } else {
+            self.context.error("break outside of loop".to_owned());
+        }
+    }
+
+    fn lower_continue(&mut self) {
+        if let Some((continue_label, _)) = self.loop_labels.last() {
+            self.set_terminator(IrTerminator::Jump(continue_label.clone()));
+        } else {
+            self.context.error("continue outside of loop".to_owned());
+        }
+    }
+
+    fn lower_defer(&mut self, expr: &Expression) {
+        if let Expression::Primary(crate::ast::PrimaryExpr::FunctionCall {
+            name, arguments, ..
+        }) = expr
+        {
+            let mut captured_args = Vec::new();
+            for arg in arguments {
+                let lowered = if let Some(v) = self.lower_expression(arg) {
+                    v
+                } else {
+                    self.context.error(format!(
+                        "failed to capture defer argument `{}` for call `{}`",
+                        self.format_expression(arg),
+                        name
+                    ));
+                    return;
+                };
+                captured_args.push(lowered.value);
+            }
+
+            self.push_instruction(IrInstruction::Comment(format!(
+                "defer: captured call {} with {} args",
+                name,
+                captured_args.len()
+            )));
+            self.defers.push(DeferredAction::Call {
+                function: name.clone(),
+                args: captured_args,
+            });
+        } else {
+            self.push_instruction(IrInstruction::Comment(
+                "defer: register cleanup logic".to_owned(),
+            ));
+            self.context
+                .warn("defer on non-call expression is not capture-safe yet; evaluating at exit");
+            self.defers.push(DeferredAction::Expr(expr.clone()));
         }
     }
 

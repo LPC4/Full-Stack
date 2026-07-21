@@ -4,23 +4,18 @@ use chrome::ActionTone;
 use eframe::egui;
 use full_stack::session::MachineState;
 
-/// A debugger-dock action requested this frame. Lifecycle and single-step verbs
-/// live on the debug surface's transport bar; the dock owns everything else.
+// Lifecycle and single-step verbs live on the debug surface; the dock owns the rest.
 #[derive(Clone)]
 enum Transport {
-    /// Bulk step by the selected unit.
     StepN(u64),
-    /// Jump the debugger to the disassembly view (fault triage).
     ShowDisasm,
-    /// Focus the debugger surface on a view.
     ShowView(super::debug_view::DebugView),
-    /// A `symbol` or `symbol+0x10` spec typed into the dock input.
+    // A `symbol` or `symbol+0x10` spec typed into the dock input.
     AddBreakpoint(String),
     RemoveBreakpoint(u64),
     ClearBreakpoints,
-    /// Turn the time-travel history on or off (clears it when turned off).
+    // Clears the history when turned off.
     ToggleTimeTravel,
-    /// Restore the machine to history frame `index`.
     ScrubTo(usize),
 }
 
@@ -32,8 +27,7 @@ pub(super) enum StepUnit {
 }
 
 impl FullStackApp {
-    /// The right dock: debugger controls only. Inspection data (call stack,
-    /// registers, machine probes) lives in the left Inspect tool.
+    // Inspection data (call stack, registers, probes) lives in the left Inspect tool.
     pub(super) fn machine_dock(&mut self, ui: &mut egui::Ui) {
         chrome::panel_header(ui, "Debugger");
         let mut action = None;
@@ -82,7 +76,7 @@ impl FullStackApp {
         }
     }
 
-    /// Apply a dock control to the session after the render borrow ends.
+    // Applied after the render borrow ends.
     fn apply_transport(&mut self, action: Transport) {
         let mut persist_breakpoints = false;
         match action {
@@ -160,7 +154,6 @@ impl FullStackApp {
     }
 }
 
-/// The state dot + label, and (on fault) the fault details.
 fn state_section(ui: &mut egui::Ui, live: &full_stack::session::LiveMachine) -> Option<Transport> {
     let mut action = None;
     let (label, color) = state_style(&live.state);
@@ -187,8 +180,6 @@ fn state_section(ui: &mut egui::Ui, live: &full_stack::session::LiveMachine) -> 
     action
 }
 
-/// The paused-state stepping group: a unit selector and a bulk step-N row.
-/// Single steps (over/in/out) live on the debug surface's transport bar.
 fn step_section(
     ui: &mut egui::Ui,
     step_unit: &mut StepUnit,
@@ -225,8 +216,6 @@ fn step_section(
     action
 }
 
-/// Address breakpoints on the session; each row clears itself via its trailing
-/// glyph and the entry field adds `symbol` or `symbol+0x10` specs.
 fn breakpoints_section(
     ui: &mut egui::Ui,
     live: &full_stack::session::LiveMachine,
@@ -278,7 +267,6 @@ fn breakpoints_section(
     action
 }
 
-/// One breakpoint: address + symbol, with a trailing remove glyph. True on remove.
 fn breakpoint_row(ui: &mut egui::Ui, addr: u64, label: &str) -> bool {
     let (rect, resp) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), metrics::ROW_HEIGHT),
@@ -319,8 +307,6 @@ fn breakpoint_row(ui: &mut egui::Ui, addr: u64, label: &str) -> bool {
     resp.on_hover_text("remove breakpoint").clicked()
 }
 
-/// Time-travel history: a toggle plus a scrubber over captured frames. Scrubbing
-/// restores the machine to that point (paused); the newest frame is "now".
 fn time_travel_section(
     ui: &mut egui::Ui,
     live: &full_stack::session::LiveMachine,
@@ -381,7 +367,6 @@ fn time_travel_section(
     action
 }
 
-/// A section eyebrow whose divider row carries a right-aligned control.
 fn section_with_control(ui: &mut egui::Ui, title: &str, control: impl FnOnce(&mut egui::Ui)) {
     ui.add_space(metrics::DOCK_SECTION_GAP);
     ui.horizontal(|ui| {
@@ -393,7 +378,6 @@ fn section_with_control(ui: &mut egui::Ui, title: &str, control: impl FnOnce(&mu
     ui.add_space(metrics::SECTION_GAP);
 }
 
-/// A small frameless mono verb (clear/now/step), dimmer than the action rows.
 fn dock_text_button(ui: &mut egui::Ui, label: &str, color: egui::Color32) -> egui::Response {
     let resp = ui.add(egui::Button::new(theme::mono(
         label,
@@ -406,7 +390,6 @@ fn dock_text_button(ui: &mut egui::Ui, label: &str, color: egui::Color32) -> egu
     resp
 }
 
-/// The machine state as a colored dot + word, the dock's loudest line.
 fn state_line(ui: &mut egui::Ui, label: &str, color: egui::Color32) {
     ui.horizontal(|ui| {
         let (rect, _) = ui.allocate_exact_size(
@@ -423,7 +406,6 @@ fn state_line(ui: &mut egui::Ui, label: &str, color: egui::Color32) {
     });
 }
 
-/// A label/value line: faint label left, mono value right-aligned.
 fn stat_row(
     ui: &mut egui::Ui,
     label: impl Into<String>,
@@ -446,7 +428,7 @@ fn stat_row(
     });
 }
 
-/// Shared with the terminal header so the machine state reads the same everywhere.
+// Shared with the terminal header so the machine state reads the same everywhere.
 pub(super) fn state_style(state: &MachineState) -> (String, egui::Color32) {
     match state {
         MachineState::Running => ("running".to_owned(), theme::ELECTRIC),

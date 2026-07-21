@@ -259,7 +259,7 @@ pub fn round_f64(val: f64, rm: u8) -> f64 {
 
 // --- f32 rounding helpers: next representable value up/down ---
 
-/// Next representable f32 strictly greater than `x`.
+// Next representable f32 strictly greater than `x`.
 #[inline]
 fn next_up_f32(x: f32) -> f32 {
     if x.is_nan() || x == f32::INFINITY {
@@ -279,7 +279,7 @@ fn next_up_f32(x: f32) -> f32 {
     }
 }
 
-/// Next representable f32 strictly less than `x`.
+// Next representable f32 strictly less than `x`.
 #[inline]
 fn next_down_f32(x: f32) -> f32 {
     if x.is_nan() || x == f32::NEG_INFINITY {

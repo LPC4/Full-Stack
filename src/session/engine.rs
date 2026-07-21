@@ -118,8 +118,7 @@ impl<'a> SessionEngine<'a> {
         })
     }
 
-    /// Route artifact writes to the engine's `out` directory unless the manifest
-    /// already pins its own. Returns the directory that will receive artifacts.
+    // A manifest that pins its own artifact root wins over the engine's out dir.
     fn apply_artifact_root(&self, manifest: &mut BuildManifest) -> Option<PathBuf> {
         if let Some(existing) = &manifest.artifact_root {
             return manifest.write_artifacts.then(|| existing.clone());
@@ -211,8 +210,8 @@ impl<'a> SessionEngine<'a> {
     }
 }
 
-/// Bare `import("name")` prefers the workspace copy of a kernel module, so demo
-/// workspace edits feed kernel builds; other names fall back to bundled sources.
+// Prefers the workspace copy of a kernel module so demo-workspace edits feed
+// kernel builds.
 fn workspace_module_resolver(fs: &dyn WorkspaceFs) -> Option<crate::build::BuildModuleResolver> {
     let root = VPath::parse("crates/os-runtime/kernel").ok()?;
     let mut modules = std::collections::HashMap::new();
@@ -228,7 +227,7 @@ fn workspace_module_resolver(fs: &dyn WorkspaceFs) -> Option<crate::build::Build
     }))
 }
 
-/// Collect workspace kernel `.hll` sources keyed by file stem (the bare import name).
+// Keyed by file stem, which is the bare import name.
 fn collect_workspace_modules(
     fs: &dyn WorkspaceFs,
     dir: &VPath,
@@ -279,8 +278,7 @@ pub fn config_source_fingerprint(fs: &dyn WorkspaceFs, config: &RunConfig) -> u6
     hasher.finish()
 }
 
-/// Hash paths and file contents under `path`, skipping dot entries and
-/// generated `out/` trees so artifact and run-config writes stay invisible.
+// Skips dot entries and out/ trees so artifact and run-config writes stay invisible.
 fn hash_tree(fs: &dyn WorkspaceFs, path: &VPath, hasher: &mut impl Hasher) {
     let Ok(meta) = fs.metadata(path) else {
         // A missing path still perturbs the hash so its appearance is a change.

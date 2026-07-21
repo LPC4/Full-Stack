@@ -1,5 +1,3 @@
-#![allow(unused_imports)]
-
 use crate::ast::{
     AssignTarget, BinaryOp, Block, DeclNode, Declaration, Expression, Literal, Program, ReturnType,
     Statement, Type, UnaryOp,

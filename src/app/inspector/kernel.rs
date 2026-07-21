@@ -10,10 +10,8 @@ use egui::{Align2, FontId, Sense, pos2, vec2};
 use full_stack::inspect::{fs_view, os_view};
 use full_stack::session::MachineState;
 
-/// Preview cap for guest FS files, in bytes.
 const FS_PREVIEW_CAP: usize = 4096;
 
-/// Throttled snapshot of the kernel probes, refreshed as the machine steps.
 pub(crate) struct InspectCache {
     steps: u64,
     time: f64,
@@ -23,8 +21,7 @@ pub(crate) struct InspectCache {
 }
 
 impl FullStackApp {
-    /// Re-run the kernel probes when the machine has stepped since the last
-    /// capture: immediately while paused, throttled while running.
+    // Recaptures immediately while paused, throttled while running.
     pub(in crate::app) fn refresh_inspect_cache(&mut self, now: f64) {
         let Some(live) = &self.live else {
             self.inspector.cache = None;
@@ -55,8 +52,6 @@ impl FullStackApp {
         });
     }
 
-    /// Scheduler snapshot: one row per live PCB; selecting one unfolds its
-    /// details and a stack walk through that process's own page table.
     pub(super) fn processes_pane(&mut self, ui: &mut egui::Ui) {
         let Some(cache) = &self.inspector.cache else {
             chrome::centered_hint(ui, "No capture yet.");
@@ -127,7 +122,6 @@ impl FullStackApp {
         ui.add_space(metrics::SECTION_GAP);
     }
 
-    /// The guest filesystem tree; selecting a file shows its head as text.
     pub(super) fn guest_fs_pane(&mut self, ui: &mut egui::Ui) {
         let Some(root) = self
             .inspector
@@ -201,7 +195,6 @@ impl FullStackApp {
         });
     }
 
-    /// The syscall trace ring, newest first.
     pub(super) fn trace_pane(&self, ui: &mut egui::Ui) {
         let Some(cache) = &self.inspector.cache else {
             chrome::centered_hint(ui, "No capture yet.");
@@ -368,7 +361,7 @@ fn trace_row(ui: &mut egui::Ui, entry: &os_view::TraceEntry) {
     ));
 }
 
-/// Names for the kernel's syscall numbers (core/syscall.hll); raw number otherwise.
+// Mirrors core/syscall.hll; unknown numbers print raw.
 fn syscall_name(num: u64) -> String {
     let name = match num {
         2 => "yield",

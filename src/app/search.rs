@@ -7,13 +7,10 @@ use eframe::egui;
 use egui::{Align2, FontId, Sense, pos2, vec2};
 use full_stack::workspace::{EntryKind, VPath};
 
-/// Files larger than this are skipped; the scan is a plain pass, not an index.
+// Larger files are skipped; the scan is a plain pass, not an index.
 const MAX_FILE_BYTES: u64 = 512 * 1024;
-/// Collection stops once this many hits have been gathered.
 const MAX_TOTAL_HITS: usize = 500;
-/// Longest preview text shown for one hit line.
 const PREVIEW_MAX: usize = 128;
-/// Preview context kept before the match on long lines.
 const CONTEXT_BEFORE: usize = 32;
 
 #[derive(Default)]
@@ -21,7 +18,6 @@ pub(crate) struct SearchState {
     query: String,
     focus: bool,
     results: Option<SearchResults>,
-    /// Query the current results were computed for; a mismatch triggers a rescan.
     computed_for: Option<String>,
 }
 
@@ -42,8 +38,6 @@ struct FileHits {
     hits: Vec<LineHit>,
 }
 
-/// One match: 1-based line number, trimmed preview text, and the match's byte
-/// range within the preview.
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct LineHit {
     pub(super) line: usize,
@@ -51,7 +45,6 @@ pub(super) struct LineHit {
     pub(super) range: (usize, usize),
 }
 
-/// Map every match of `query` in `text` onto its line, up to `budget` hits.
 pub(super) fn line_hits(text: &str, query: &str, budget: usize) -> Vec<LineHit> {
     let mut hits = Vec::new();
     let mut ranges = find::match_ranges(text, query).into_iter().peekable();
@@ -81,7 +74,6 @@ pub(super) fn line_hits(text: &str, query: &str, budget: usize) -> Vec<LineHit> 
     hits
 }
 
-/// Cut a bounded preview out of a long line, keeping the match visible.
 fn preview_window(line: &str, start: usize, end: usize) -> (String, (usize, usize)) {
     if line.len() <= PREVIEW_MAX {
         return (line.to_owned(), (start, end));
@@ -97,7 +89,6 @@ fn preview_window(line: &str, start: usize, end: usize) -> (String, (usize, usiz
     (line[from..to].to_owned(), (start - from, end - from))
 }
 
-/// Artifact extensions that never contain searchable text.
 fn is_binary_name(name: &str) -> bool {
     name.ends_with(".elf") || name.ends_with(".o")
 }
@@ -218,8 +209,7 @@ impl FullStackApp {
         });
     }
 
-    /// Scan the workspace tree for the current query. Open documents are
-    /// searched through their (possibly unsaved) buffers.
+    // Open documents are searched through their (possibly unsaved) buffers.
     fn recompute_search(&mut self) {
         let query = self.search.query.clone();
         if query.is_empty() {
@@ -272,7 +262,6 @@ impl FullStackApp {
     }
 }
 
-/// A result-group header: type chip, bright basename, faint directory, count.
 fn file_row(ui: &mut egui::Ui, path: &VPath, count: usize) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(
         vec2(ui.available_width(), metrics::ROW_HEIGHT),
@@ -318,8 +307,6 @@ fn file_row(ui: &mut egui::Ui, path: &VPath, count: usize) -> egui::Response {
     resp
 }
 
-/// One match line: faint line number gutter, then the preview with the match
-/// itself lit in the interaction accent.
 fn hit_row(ui: &mut egui::Ui, hit: &LineHit) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(
         vec2(ui.available_width(), metrics::ROW_HEIGHT),

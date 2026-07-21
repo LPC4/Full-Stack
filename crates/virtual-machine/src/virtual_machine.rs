@@ -415,8 +415,8 @@ impl VirtualMachine {
     }
 }
 
-/// Read-only Sv39 walk for the debugger: resolves `vaddr` under the table
-/// `satp` points at, ignoring R/W/X/U permissions. `None` when unmapped.
+// Read-only Sv39 walk for the debugger: resolves `vaddr` under the table
+// `satp` points at, ignoring R/W/X/U permissions. `None` when unmapped.
 fn debug_walk_sv39(bus: &SystemBus, satp: u64, vaddr: u64) -> Option<u64> {
     let upper = vaddr >> 39;
     if upper != 0 && upper != 0x1FF_FFFF {

@@ -64,6 +64,33 @@ treated as simultaneous defs at the entry block so they never collapse
 together. Registers that escape (`Alloc` destinations and stack addresses) or
 need more than 8 bytes (aggregates, arrays) keep a dedicated slot.
 
+## Peephole pass
+
+A conservative peephole (`peephole`, off by default; `set_peephole`) runs over
+the `RvInstruction` token stream after lowering, just before the assembler
+consumes it. All reasoning is local to a straight-line run of real
+instructions: any label, directive (which is also how branches, jumps, and
+calls are emitted), or pseudo-instruction ends the run and clears all tracking
+state, so control flow is never reasoned across. Comments emit no code, so they
+are transparent for matching and preserved in the output.
+
+The transforms target the load/store churn the per-vreg stack-slot lowering
+leaves behind:
+
+- Drop a no-op self-move `addi rd, rd, 0` (this is how `mv rd, rd` is emitted).
+- When a stack slot's current value is already known to live in a register
+  (from the store or load that last touched it), fold a later reload of that
+  slot: drop it if the value is already in the destination register, otherwise
+  rewrite it as a register move and skip the memory access.
+
+Slots are tracked by their `sp`-relative byte offset. A slot address is
+recognized either directly (`off(sp)`) or through a register materialized by
+`addi rd, sp, K` (the lowering rematerializes slot addresses into temps before
+every access). Only 64-bit `sd`/`ld` traffic is folded: sub-word reloads
+re-extend the value and so are never treated as carrying the full register
+value. Any write to `sp`, any store through an unresolved base, and any
+unmodeled instruction conservatively discards the relevant tracking state.
+
 ## Module layout
 
 ```

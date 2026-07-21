@@ -8,7 +8,6 @@ use egui::collapsing_header::CollapsingState;
 use egui::{Align2, FontId, Sense, Stroke, pos2, vec2};
 use full_stack::workspace::{EntryKind, TreeEntry, VPath};
 
-/// Per-workspace explorer UI state: the in-flight inline edit and delete confirm.
 #[derive(Default)]
 pub(crate) struct ExplorerState {
     edit: Option<EditState>,
@@ -39,14 +38,12 @@ impl EditAction {
     }
 }
 
-/// An inline naming row: creating inside `target` (a directory) or renaming
-/// `target` itself.
 struct EditState {
     action: EditAction,
     target: VPath,
     buffer: String,
     focus: bool,
-    /// Set by the edit row: Some(true) commits, Some(false) cancels.
+    // Some(true) commits, Some(false) cancels.
     done: Option<bool>,
 }
 
@@ -61,7 +58,6 @@ impl EditState {
         }
     }
 
-    /// True when this edit inserts a new entry inside directory `dir`.
     fn creates_in(&self, dir: &VPath) -> bool {
         self.action != EditAction::Rename && self.target == *dir
     }
@@ -71,7 +67,7 @@ impl EditState {
     }
 }
 
-/// A row interaction, applied after the tree walk releases its borrows.
+// Applied after the tree walk releases its borrows.
 enum ExplorerAction {
     Open(VPath),
     StartNewFile(VPath),
@@ -154,7 +150,6 @@ impl FullStackApp {
         }
     }
 
-    /// Resolve a finished inline edit into the matching workspace operation.
     fn finish_explorer_edit(&mut self) {
         if self.explorer.edit.as_ref().is_none_or(|e| e.done.is_none()) {
             return;
@@ -213,7 +208,6 @@ impl FullStackApp {
         }
     }
 
-    /// The delete confirmation, floating above the shell like quick open.
     pub(super) fn explorer_confirm_overlay(&mut self, ctx: &egui::Context) {
         let Some(path) = self.explorer.confirm_delete.clone() else {
             return;
@@ -384,7 +378,6 @@ fn tree_node(ui: &mut egui::Ui, entry: &TreeEntry, depth: usize, ctx: &mut TreeN
     }
 }
 
-/// The inline naming row. Enter commits; Escape or clicking away cancels.
 fn edit_row(ui: &mut egui::Ui, depth: usize, edit: &mut EditState) {
     let indent = metrics::PANEL_INSET_X + depth as f32 * metrics::TREE_INDENT;
     ui.horizontal(|ui| {
@@ -426,15 +419,13 @@ fn menu_item_danger(ui: &mut egui::Ui, label: &str) -> egui::Response {
 
 #[derive(Clone, Copy)]
 enum RowKind {
-    /// A directory row; `openness` in 0..1 drives the chevron rotation.
     Dir {
+        // `openness` in 0..1 drives the chevron rotation.
         openness: f32,
     },
     File,
 }
 
-/// The file-type chip color: source kinds pick up their depth-spectrum color, so
-/// the explorer quietly restates the identity the spine carries.
 pub(super) fn file_chip_color(name: &str) -> egui::Color32 {
     if name.ends_with(".hll") {
         crate::ui::Layer::Hll.color()
@@ -451,8 +442,6 @@ pub(super) fn file_chip_color(name: &str) -> egui::Color32 {
     }
 }
 
-/// One full-width tree row: hover/active fill, indent guides, chevron or type
-/// chip, label, and an unsaved dot for dirty open documents.
 fn row(
     ui: &mut egui::Ui,
     depth: usize,
@@ -512,7 +501,6 @@ fn row(
     resp
 }
 
-/// A disclosure chevron rotating from ">" (closed) to "v" (open) by `openness`.
 fn chevron(painter: &egui::Painter, c: egui::Pos2, openness: f32) {
     let ang = openness * std::f32::consts::FRAC_PI_2;
     let (s, co) = ang.sin_cos();

@@ -45,7 +45,7 @@ fn kernel_stdlib_full_bundle_compiles() {
 
 #[test]
 fn kernel_entry_compiles() {
-    assert_kernel_module_compiles("entry", kernel::RUNTIME);
+    assert_kernel_module_compiles("entry", kernel::ENTRY);
 }
 
 #[test]

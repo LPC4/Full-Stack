@@ -76,7 +76,6 @@ impl FullStackApp {
         });
     }
 
-    /// Diagnostic tallies for the active build target; click opens Problems.
     fn diagnostics_chip(&mut self, ui: &mut egui::Ui, errors: usize, warnings: usize) {
         if errors + warnings == 0 {
             return;

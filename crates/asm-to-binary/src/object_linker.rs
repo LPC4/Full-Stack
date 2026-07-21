@@ -341,7 +341,7 @@ impl ObjectLinker {
 
 // --- Helpers ---
 
-/// Id of the empty "no source" file name used by module-end line sentinels.
+// Id of the empty "no source" file name used by module-end line sentinels.
 fn sentinel_file_id(file_table: &mut Vec<String>) -> u32 {
     if let Some(pos) = file_table.iter().position(|f| f.is_empty()) {
         return pos as u32;
@@ -350,8 +350,8 @@ fn sentinel_file_id(file_table: &mut Vec<String>) -> u32 {
     (file_table.len() - 1) as u32
 }
 
-/// Collect all distinct section kinds present across all modules, in canonical
-/// ELF load order: Text, `RoData`, Data, Custom(k), Bss.
+// Collect all distinct section kinds present across all modules, in canonical
+// ELF load order: Text, RoData, Data, Custom(k), Bss.
 fn collect_ordered_kinds(modules: &[(&str, &AssembledOutput)]) -> Vec<SectionKind> {
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
@@ -393,7 +393,7 @@ fn collect_ordered_kinds(modules: &[(&str, &AssembledOutput)]) -> Vec<SectionKin
     out
 }
 
-/// Return the module's sections in ELF load order: non-BSS first, BSS last.
+// Return the module's sections in ELF load order: non-BSS first, BSS last.
 fn ordered_sections(module: &AssembledOutput) -> Vec<&SectionData> {
     let mut out = Vec::new();
     for pass_bss in [false, true] {
@@ -409,8 +409,8 @@ fn ordered_sections(module: &AssembledOutput) -> Vec<&SectionData> {
     out
 }
 
-/// Pre-compute a section map for a module: [(name, `start_addr`, `end_addr`)] in
-/// the same order as `ordered_sections`.
+// Pre-compute a section map for a module: [(name, start_addr, end_addr)] in
+// the same order as `ordered_sections`.
 fn build_module_section_map(module: &AssembledOutput) -> Vec<(&str, u64, u64)> {
     let mut map = Vec::new();
     let mut running = 0u64;
@@ -426,7 +426,7 @@ fn build_module_section_map(module: &AssembledOutput) -> Vec<(&str, u64, u64)> {
     map
 }
 
-/// Find which section (name, start) contains `addr` in the module's address space.
+// Find which section (name, start) contains `addr` in the module's address space.
 fn find_symbol_section_name_via_map<'a>(
     map: &'a [(&str, u64, u64)],
     addr: u64,

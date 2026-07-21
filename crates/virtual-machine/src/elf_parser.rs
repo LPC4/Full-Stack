@@ -95,7 +95,6 @@ impl ParsedElf {
     }
 }
 
-/// Read a 16-bit little-endian value from bytes at the given offset
 fn read_u16(bytes: &[u8], offset: usize) -> Result<u16, VmError> {
     let end = offset
         .checked_add(2)
@@ -106,7 +105,6 @@ fn read_u16(bytes: &[u8], offset: usize) -> Result<u16, VmError> {
     Ok(u16::from_le_bytes([slice[0], slice[1]]))
 }
 
-/// Read a 32-bit little-endian value from bytes at the given offset
 fn read_u32(bytes: &[u8], offset: usize) -> Result<u32, VmError> {
     let end = offset
         .checked_add(4)
@@ -117,7 +115,6 @@ fn read_u32(bytes: &[u8], offset: usize) -> Result<u32, VmError> {
     Ok(u32::from_le_bytes([slice[0], slice[1], slice[2], slice[3]]))
 }
 
-/// Read a 64-bit little-endian value from bytes at the given offset
 fn read_u64(bytes: &[u8], offset: usize) -> Result<u64, VmError> {
     let end = offset
         .checked_add(8)

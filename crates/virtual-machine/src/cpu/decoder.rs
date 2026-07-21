@@ -855,7 +855,7 @@ fn fmac(word: u32, op: FMacOp) -> DecodedInsn {
 
 // --- Field extraction helpers ---
 
-/// Extract bits [hi..lo] (inclusive) from `word`.
+// Extract bits [hi..lo] (inclusive) from `word`.
 fn field(word: u32, hi: u32, lo: u32) -> u32 {
     let width = hi - lo + 1;
     if width >= 32 {
@@ -886,31 +886,31 @@ fn funct7(word: u32) -> u8 {
     field(word, 31, 25) as u8
 }
 
-/// Sign-extend `val` (a value in the low `bits` bits) to `i64`.
+// Sign-extend `val` (a value in the low `bits` bits) to `i64`.
 fn sign_ext(val: u32, bits: u32) -> i64 {
     let shift = 32 - bits;
     ((val << shift) as i32 >> shift) as i64
 }
 
-/// I-type immediate: bits[31:20], sign-extended to 64 bits.
+// I-type immediate: bits[31:20], sign-extended to 64 bits.
 fn i_imm(word: u32) -> i64 {
     sign_ext(field(word, 31, 20), 12)
 }
 
-/// U-type immediate: upper 20 bits placed at [31:12], lower 12 bits zero.
-/// We sign-extend from the 32-bit word so that large addresses work correctly.
+// U-type immediate: upper 20 bits placed at [31:12], lower 12 bits zero.
+// We sign-extend from the 32-bit word so that large addresses work correctly.
 fn u_imm(word: u32) -> i64 {
     (word & 0xFFFF_F000) as i32 as i64
 }
 
-/// S-type immediate: bits[31:25] || bits[11:7], sign-extended to 12 bits.
+// S-type immediate: bits[31:25] || bits[11:7], sign-extended to 12 bits.
 fn s_imm(word: u32) -> i64 {
     let hi = field(word, 31, 25);
     let lo = field(word, 11, 7);
     sign_ext((hi << 5) | lo, 12)
 }
 
-/// B-type immediate: [31]<<12 | [7]<<11 | [30:25]<<5 | [11:8]<<1, sign-extended to 13 bits.
+// B-type immediate: [31]<<12 | [7]<<11 | [30:25]<<5 | [11:8]<<1, sign-extended to 13 bits.
 fn b_imm(word: u32) -> i64 {
     let bit12 = field(word, 31, 31) << 12;
     let bit11 = field(word, 7, 7) << 11;
@@ -919,7 +919,7 @@ fn b_imm(word: u32) -> i64 {
     sign_ext(bit12 | bit11 | bits10_5 | bits4_1, 13)
 }
 
-/// J-type immediate: [31]<<20 | [19:12]<<12 | [20]<<11 | [30:21]<<1, sign-extended to 21 bits.
+// J-type immediate: [31]<<20 | [19:12]<<12 | [20]<<11 | [30:21]<<1, sign-extended to 21 bits.
 fn j_imm(word: u32) -> i64 {
     let bit20 = field(word, 31, 31) << 20;
     let bits19_12 = field(word, 19, 12) << 12;

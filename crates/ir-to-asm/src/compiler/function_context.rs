@@ -34,22 +34,17 @@ pub trait Rv64Backend {
 pub struct FunctionContext {
     pub frame: FrameContext,
     type_aliases: HashMap<String, IrType>,
-    /// Maps virtual registers to stack offsets.
     reg_slots: HashMap<IrRegister, usize>,
-    /// Maps virtual registers to assigned physical registers (register
-    /// allocation); such registers have no stack slot.
+    // Vregs promoted by register allocation; these have no stack slot.
     phys_regs: HashMap<IrRegister, Reg>,
-    /// Maps virtual parameter registers to their ABI argument index.
     param_indices: HashMap<IrRegister, usize>,
-    /// Records the IR type associated with each virtual register.
     reg_types: HashMap<IrRegister, IrType>,
-    /// Registers whose value is the address of their own stack slot.
+    // Registers whose value is the address of their own stack slot.
     stack_address_regs: HashSet<IrRegister>,
-    /// Maps IR labels to emitted assembly labels.
     label_map: HashMap<IrLabel, String>,
-    /// When true, incoming parameters may be read directly from a0-a7 / fa0-fa7.
+    // When true, incoming parameters may be read directly from a0-a7 / fa0-fa7.
     preserve_param_registers: bool,
-    /// When true, skip the s0 frame pointer; locals are addressed via sp.
+    // When true, skip the s0 frame pointer; locals are addressed via sp.
     omit_frame_pointer: bool,
 }
 

@@ -81,7 +81,7 @@ pub mod kernel {
         "/kernel/core/layout.hll"
     ));
 
-    pub const RUNTIME: &str = include_str!(concat!(
+    pub const ENTRY: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/kernel/core/entry.hll"
     ));

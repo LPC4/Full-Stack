@@ -668,6 +668,37 @@ impl AssemblyEmitter {
     }
 
     // --- Block-level memory copy helpers ---
+
+    // Shared 8/4/1-byte chunk loop for the copies below. `emit_chunk` gets a
+    // fresh temp per word chunk but one shared temp for the whole byte tail.
+    fn copy_bytes_chunks(
+        &mut self,
+        size: usize,
+        mut emit_chunk: impl FnMut(&mut Self, Reg, usize, usize),
+    ) {
+        let mut pos = 0;
+        for width in [8usize, 4] {
+            while size - pos >= width {
+                let tmp = self.alloc_temp_reg();
+                emit_chunk(self, tmp, pos, width);
+                pos += width;
+            }
+        }
+        let byte_tmp = self.alloc_temp_reg();
+        while pos < size {
+            emit_chunk(self, byte_tmp, pos, 1);
+            pos += 1;
+        }
+    }
+
+    fn chunk_int_ty(width: usize) -> IrType {
+        match width {
+            8 => IrType::Integer(hll_to_ir::IntWidth::I64),
+            4 => IrType::Integer(hll_to_ir::IntWidth::I32),
+            _ => IrType::Integer(hll_to_ir::IntWidth::I8),
+        }
+    }
+
     pub fn copy_bytes_from_addr_to_slot(
         &mut self,
         slot: usize,
@@ -676,61 +707,11 @@ impl AssemblyEmitter {
         size: usize,
     ) {
         self.with_reserved(&[addr_reg], |s| {
-            let mut remaining = size;
-            let mut current_offset = offset;
-            let mut current_slot = slot;
-
-            while remaining >= 8 {
-                let tmp = s.alloc_temp_reg();
-                s.emit_load_typed(
-                    tmp,
-                    addr_reg,
-                    &IrType::Integer(hll_to_ir::IntWidth::I64),
-                    current_offset,
-                );
-                s.emit_store_from_tmp(
-                    SP,
-                    tmp,
-                    &IrType::Integer(hll_to_ir::IntWidth::I64),
-                    current_slot as i32,
-                );
-                remaining -= 8;
-                current_offset += 8;
-                current_slot += 8;
-            }
-            while remaining >= 4 {
-                let tmp = s.alloc_temp_reg();
-                s.emit_load_typed(
-                    tmp,
-                    addr_reg,
-                    &IrType::Integer(hll_to_ir::IntWidth::I32),
-                    current_offset,
-                );
-                s.emit_store_from_tmp(
-                    SP,
-                    tmp,
-                    &IrType::Integer(hll_to_ir::IntWidth::I32),
-                    current_slot as i32,
-                );
-                remaining -= 4;
-                current_offset += 4;
-                current_slot += 4;
-            }
-            let byte_tmp = s.alloc_temp_reg();
-            for i in 0..remaining {
-                s.emit_load_typed(
-                    byte_tmp,
-                    addr_reg,
-                    &IrType::Integer(hll_to_ir::IntWidth::I8),
-                    current_offset + i as i32,
-                );
-                s.emit_store_from_tmp(
-                    SP,
-                    byte_tmp,
-                    &IrType::Integer(hll_to_ir::IntWidth::I8),
-                    current_slot as i32 + i as i32,
-                );
-            }
+            s.copy_bytes_chunks(size, |s, tmp, pos, width| {
+                let ty = Self::chunk_int_ty(width);
+                s.emit_load_typed(tmp, addr_reg, &ty, offset + pos as i32);
+                s.emit_store_from_tmp(SP, tmp, &ty, (slot + pos) as i32);
+            });
         });
     }
 
@@ -742,58 +723,11 @@ impl AssemblyEmitter {
         size: usize,
     ) {
         self.with_reserved(&[addr_reg], |s| {
-            let mut remaining = size;
-            let mut current_offset = offset;
-            let mut current_slot = slot;
-
-            while remaining >= 8 {
-                let tmp = s.alloc_temp_reg();
-                s.emit_load_from_slot(
-                    tmp,
-                    current_slot,
-                    &IrType::Integer(hll_to_ir::IntWidth::I64),
-                );
-                s.emit_store_from_tmp(
-                    addr_reg,
-                    tmp,
-                    &IrType::Integer(hll_to_ir::IntWidth::I64),
-                    current_offset,
-                );
-                remaining -= 8;
-                current_offset += 8;
-                current_slot += 8;
-            }
-            while remaining >= 4 {
-                let tmp = s.alloc_temp_reg();
-                s.emit_load_from_slot(
-                    tmp,
-                    current_slot,
-                    &IrType::Integer(hll_to_ir::IntWidth::I32),
-                );
-                s.emit_store_from_tmp(
-                    addr_reg,
-                    tmp,
-                    &IrType::Integer(hll_to_ir::IntWidth::I32),
-                    current_offset,
-                );
-                remaining -= 4;
-                current_offset += 4;
-                current_slot += 4;
-            }
-            let byte_tmp = s.alloc_temp_reg();
-            for i in 0..remaining {
-                s.emit_load_from_slot(
-                    byte_tmp,
-                    current_slot + i,
-                    &IrType::Integer(hll_to_ir::IntWidth::I8),
-                );
-                s.emit_store_from_tmp(
-                    addr_reg,
-                    byte_tmp,
-                    &IrType::Integer(hll_to_ir::IntWidth::I8),
-                    current_offset + i as i32,
-                );
-            }
+            s.copy_bytes_chunks(size, |s, tmp, pos, width| {
+                let ty = Self::chunk_int_ty(width);
+                s.emit_load_from_slot(tmp, slot + pos, &ty);
+                s.emit_store_from_tmp(addr_reg, tmp, &ty, offset + pos as i32);
+            });
         });
     }
 
@@ -806,55 +740,24 @@ impl AssemblyEmitter {
         size: usize,
     ) {
         self.with_reserved(&[dst_addr, src_addr], |s| {
-            let mut remaining = size;
-            let mut current_dst_offset = dst_offset;
-            let mut current_src_offset = src_offset;
-
-            while remaining >= 8 {
-                let tmp = s.alloc_temp_reg();
-                s.emit_inst(RealInstruction::Ld(Ld::new(
-                    tmp,
-                    src_addr,
-                    current_src_offset,
-                )));
-                s.emit_inst(RealInstruction::Sd(Sd::new(
-                    dst_addr,
-                    tmp,
-                    current_dst_offset,
-                )));
-                remaining -= 8;
-                current_dst_offset += 8;
-                current_src_offset += 8;
-            }
-            while remaining >= 4 {
-                let tmp = s.alloc_temp_reg();
-                s.emit_inst(RealInstruction::Lw(Lw::new(
-                    tmp,
-                    src_addr,
-                    current_src_offset,
-                )));
-                s.emit_inst(RealInstruction::Sw(Sw::new(
-                    dst_addr,
-                    tmp,
-                    current_dst_offset,
-                )));
-                remaining -= 4;
-                current_dst_offset += 4;
-                current_src_offset += 4;
-            }
-            let byte_tmp = s.alloc_temp_reg();
-            for i in 0..remaining {
-                s.emit_inst(RealInstruction::Lb(Lb::new(
-                    byte_tmp,
-                    src_addr,
-                    current_src_offset + i as i32,
-                )));
-                s.emit_inst(RealInstruction::Sb(Sb::new(
-                    dst_addr,
-                    byte_tmp,
-                    current_dst_offset + i as i32,
-                )));
-            }
+            s.copy_bytes_chunks(size, |s, tmp, pos, width| {
+                let src = src_offset + pos as i32;
+                let dst = dst_offset + pos as i32;
+                match width {
+                    8 => {
+                        s.emit_inst(RealInstruction::Ld(Ld::new(tmp, src_addr, src)));
+                        s.emit_inst(RealInstruction::Sd(Sd::new(dst_addr, tmp, dst)));
+                    }
+                    4 => {
+                        s.emit_inst(RealInstruction::Lw(Lw::new(tmp, src_addr, src)));
+                        s.emit_inst(RealInstruction::Sw(Sw::new(dst_addr, tmp, dst)));
+                    }
+                    _ => {
+                        s.emit_inst(RealInstruction::Lb(Lb::new(tmp, src_addr, src)));
+                        s.emit_inst(RealInstruction::Sb(Sb::new(dst_addr, tmp, dst)));
+                    }
+                }
+            });
         });
     }
 

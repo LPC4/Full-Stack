@@ -47,7 +47,6 @@ fn decoded_view(ui: &mut egui::Ui, id_salt: &str, bytes: &[u8], info: &ElfInfo) 
     ui.ctx().data_mut(|d| d.insert_temp(sel_id, selected));
 }
 
-/// Unparseable file: state the reason, then dump the head of the file raw.
 fn fallback_view(ui: &mut egui::Ui, id_salt: &str, bytes: &[u8], err: &str) {
     egui::ScrollArea::vertical()
         .id_salt(("elf_scroll", id_salt))
@@ -71,7 +70,6 @@ fn default_selection(info: &ElfInfo) -> usize {
         .unwrap_or(0)
 }
 
-/// The depth-spectrum color a section carries through the map, table, and hex.
 fn section_color(name: &str) -> Color32 {
     if name == ".text" {
         theme::ELECTRIC
@@ -139,8 +137,6 @@ fn overview(ui: &mut egui::Ui, info: &ElfInfo) {
 
 // --- File map ---
 
-/// A proportional strip of the file's bytes: every section with file presence
-/// paints its span in its color. Click a span to select that section.
 fn file_map(ui: &mut egui::Ui, file_len: usize, info: &ElfInfo, sel: &mut usize) {
     if file_len == 0 {
         return;
@@ -219,7 +215,6 @@ fn file_map(ui: &mut egui::Ui, file_len: usize, info: &ElfInfo, sel: &mut usize)
     }
 }
 
-/// Sections that occupy file bytes, as (index, offset, size).
 fn mapped_sections(
     info: &ElfInfo,
     file_len: usize,
@@ -232,8 +227,7 @@ fn mapped_sections(
 
 // --- Tables ---
 
-/// One text cell: `x` is the fraction of the row width; right-aligned cells
-/// anchor their right edge there.
+// `x` is a fraction of the row width; right-aligned cells anchor their right edge there.
 struct Cell<'a> {
     text: &'a str,
     color: Color32,

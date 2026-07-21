@@ -5,10 +5,8 @@ pub trait RiscvFormat: Sized {
     fn decode(word: u32) -> Self;
 }
 
-/// =============================================================================
-/// R-Type: Register-Register
-/// [funct7:31-25][rs2:24-20][rs1:19-15][funct3:14-12][rd:11-7][opcode:6-0]
-/// =============================================================================
+// --- R-Type: Register-Register ---
+// [funct7:31-25][rs2:24-20][rs1:19-15][funct3:14-12][rd:11-7][opcode:6-0]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RType {
     pub opcode: u8,
@@ -43,10 +41,8 @@ impl RiscvFormat for RType {
     }
 }
 
-/// =============================================================================
-/// I-Type: Register-Immediate / Loads / JALR / CSRs
-/// [imm[11:0]:31-20][rs1:19-15][funct3:14-12][rd:11-7][opcode:6-0]
-/// =============================================================================
+// --- I-Type: Register-Immediate / Loads / JALR / CSRs ---
+// [imm[11:0]:31-20][rs1:19-15][funct3:14-12][rd:11-7][opcode:6-0]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IType {
     pub opcode: u8,
@@ -82,10 +78,8 @@ impl RiscvFormat for IType {
     }
 }
 
-/// =============================================================================
-/// S-Type: Stores
-/// [imm[11:5]:31-25][rs2:24-20][rs1:19-15][funct3:14-12][imm[4:0]:11-7][opcode:6-0]
-/// =============================================================================
+// --- S-Type: Stores ---
+// [imm[11:5]:31-25][rs2:24-20][rs1:19-15][funct3:14-12][imm[4:0]:11-7][opcode:6-0]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SType {
     pub opcode: u8,
@@ -125,10 +119,8 @@ impl RiscvFormat for SType {
     }
 }
 
-/// =============================================================================
-/// B-Type: Conditional Branches
-/// [imm[12|10:5]:31-25][rs2:24-20][rs1:19-15][funct3:14-12][imm[4:1|11]:11-7][opcode:6-0]
-/// =============================================================================
+// --- B-Type: Conditional Branches ---
+// [imm[12|10:5]:31-25][rs2:24-20][rs1:19-15][funct3:14-12][imm[4:1|11]:11-7][opcode:6-0]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BType {
     pub opcode: u8,
@@ -184,10 +176,8 @@ impl RiscvFormat for BType {
     }
 }
 
-/// =============================================================================
-/// U-Type: Upper Immediate (LUI, AUIPC)
-/// [imm[31:12]:31-12][rd:11-7][opcode:6-0]
-/// =============================================================================
+// --- U-Type: Upper Immediate (LUI, AUIPC) ---
+// [imm[31:12]:31-12][rd:11-7][opcode:6-0]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UType {
     pub opcode: u8,
@@ -212,10 +202,8 @@ impl RiscvFormat for UType {
     }
 }
 
-/// =============================================================================
-/// J-Type: Unconditional Jump (JAL)
-/// [imm[20|10:1|11|19:12]:31-12][rd:11-7][opcode:6-0]
-/// =============================================================================
+// --- J-Type: Unconditional Jump (JAL) ---
+// [imm[20|10:1|11|19:12]:31-12][rd:11-7][opcode:6-0]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct JType {
     pub opcode: u8,
@@ -263,10 +251,8 @@ impl RiscvFormat for JType {
     }
 }
 
-/// =============================================================================
-/// R4-Type: FP Multiply-Accumulate (FMADD, FMSUB, FNMSUB, FNMADD)
-/// [rs3:31-27][fmt:26-25][rs2:24-20][rs1:19-15][rm:14-12][rd:11-7][opcode:6-0]
-/// =============================================================================
+// --- R4-Type: FP Multiply-Accumulate (FMADD, FMSUB, FNMSUB, FNMADD) ---
+// [rs3:31-27][fmt:26-25][rs2:24-20][rs1:19-15][rm:14-12][rd:11-7][opcode:6-0]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct R4Type {
     pub opcode: u8,
@@ -304,10 +290,8 @@ impl RiscvFormat for R4Type {
     }
 }
 
-/// =============================================================================
-/// Atomic-Type: A-Extension (LR, SC, AMO*)
-/// [funct5:31-27][aq:26][rl:25][rs2:24-20][rs1:19-15][funct3:14-12][rd:11-7][opcode:6-0]
-/// =============================================================================
+// --- Atomic-Type: A-Extension (LR, SC, AMO*) ---
+// [funct5:31-27][aq:26][rl:25][rs2:24-20][rs1:19-15][funct3:14-12][rd:11-7][opcode:6-0]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AtomicType {
     pub opcode: u8,

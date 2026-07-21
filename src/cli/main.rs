@@ -1,4 +1,4 @@
-//! `fsc` -- Full Stack CLI
+//! `fsc`: Full Stack CLI
 //!
 //! Subcommands:
 //!   build      Compile an HLL source or `.build` manifest into artifacts.
@@ -521,7 +521,6 @@ fn print_build_summary(outcome: &BuildOutcome) {
     }
 }
 
-/// Parse a `.s` text file as assembly tokens, link with stdlib, and assemble.
 fn assemble_from_s_file(path: &str, mode: TargetMode) -> Result<AssembledOutput, CliError> {
     let asm_text = fs::read_to_string(path)?;
     let stdlib_objects = compile_stdlib_objects(mode)?;
@@ -544,8 +543,7 @@ fn assemble_from_s_file(path: &str, mode: TargetMode) -> Result<AssembledOutput,
         .map_err(|e| CliError::Assemble(e.to_string()))
 }
 
-/// Compile each stdlib module independently and return (name, object) pairs.
-/// No source concatenation: each HLL file becomes its own object.
+// No source concatenation: each HLL file becomes its own object.
 fn compile_stdlib_objects(mode: TargetMode) -> Result<Vec<(String, AssembledOutput)>, CliError> {
     let mut pipeline = make_pipeline(mode, "_s_");
     pipeline.set_run_semantic_analysis(false);
@@ -568,12 +566,8 @@ fn compile_stdlib_objects(mode: TargetMode) -> Result<Vec<(String, AssembledOutp
     Ok(named)
 }
 
-/// Wrap each line of assembly text in a `Directive` token.
-///
-/// The assembler's pass-0 parser recognises labels (`name:`), section
-/// directives (`.text`, `.asciz`, ...) and most instruction mnemonics from
-/// lines that begin with a tab or space.  Unrecognised mnemonics become
-/// no-op comments.
+// Pass-0 recognises labels, section directives, and known mnemonics on indented
+// lines; unrecognised mnemonics become no-op comments.
 fn asm_text_to_tokens(text: &str) -> Vec<RvInstruction> {
     text.lines()
         .map(|line| RvInstruction::Directive(line.to_owned()))
@@ -610,7 +604,6 @@ fn require_single_input(args: &Args) -> Result<&str, CliError> {
     require_any_input(args)
 }
 
-/// Require at least one input file (for commands that accept one or more).
 fn require_any_input(args: &Args) -> Result<&str, CliError> {
     args.first_input().ok_or_else(|| {
         CliError::Usage("an input file is required\n\nRun `fsc help` for usage.".to_owned())

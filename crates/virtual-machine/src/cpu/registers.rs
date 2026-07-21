@@ -1,9 +1,9 @@
 //! Integer and floating-point register file for the RV64 CPU.
 
-/// Canonical NaN-boxed NaN stored in every FP register at reset.
+// Canonical NaN-boxed NaN stored in every FP register at reset.
 const CANONICAL_NAN_BOXED: u64 = 0xFFFF_FFFF_7FC0_0000;
 
-/// The upper 32 bits that must all be 1 for a NaN-boxed f32 to be valid.
+// The upper 32 bits that must all be 1 for a NaN-boxed f32 to be valid.
 const NAN_BOX_UPPER: u64 = 0xFFFF_FFFF_0000_0000;
 
 /// RISC-V privilege modes

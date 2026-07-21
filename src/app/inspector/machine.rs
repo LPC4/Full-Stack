@@ -11,18 +11,15 @@ use full_stack::session::{MachineState, RegisterSnapshot};
 use virtual_machine::cpu::pipeline::StageEntry;
 use virtual_machine::memory::cache::CacheSnapshot;
 
-/// Pipeline stage names, in order (`pipeline_snapshot().stages[0..5]`).
 const STAGE_NAMES: [&str; 5] = ["IF", "ID", "EX", "MEM", "WB"];
 
-/// A throttled cache-occupancy snapshot for the Caches pane. L1 keeps its full
-/// per-line grid (small); L2/L3 keep aggregate counts only.
+// L1 keeps its full per-line grid (small); L2/L3 keep aggregate counts only.
 pub(crate) struct CacheGrid {
     steps: u64,
     time: f64,
     levels: [CacheLevelGrid; 3],
 }
 
-/// Occupancy and stats for one cache level, derived from a `CacheSnapshot`.
 struct CacheLevelGrid {
     name: &'static str,
     size: usize,
@@ -36,7 +33,6 @@ struct CacheLevelGrid {
     read_misses: u64,
     write_hits: u64,
     write_misses: u64,
-    /// One cell per line (set-major), kept only for the small L1.
     grid: Option<Vec<LineCell>>,
 }
 
@@ -98,8 +94,6 @@ impl CacheLevelGrid {
 }
 
 impl FullStackApp {
-    /// The register file: live values while a session exists (with changed-by-
-    /// last-step highlighting), else the post-mortem snapshot of the last run.
     pub(super) fn cpu_pane(&self, ui: &mut egui::Ui) {
         let (regs, prev) = match &self.live {
             Some(live) => (Some(live.registers()), live.prev_step_registers().cloned()),
@@ -149,8 +143,7 @@ impl FullStackApp {
             });
     }
 
-    /// The 5-stage pipeline feed plus cumulative performance counters. Reads the
-    /// resident VM directly each frame; both accessors are cheap and alloc-free.
+    // Reads the resident VM directly each frame; both accessors are cheap and alloc-free.
     pub(super) fn pipeline_pane(&self, ui: &mut egui::Ui) {
         let Some(live) = &self.live else {
             chrome::centered_hint(ui, "No machine session.");
@@ -227,8 +220,6 @@ impl FullStackApp {
             });
     }
 
-    /// Cache hierarchy occupancy and hit rates, from the throttled `cache_grid`
-    /// snapshot (`refresh_cache_grid`). L1 shows a per-line cell map.
     pub(super) fn caches_pane(&self, ui: &mut egui::Ui) {
         if self.live.is_none() {
             chrome::centered_hint(ui, "No machine session.");
@@ -252,8 +243,8 @@ impl FullStackApp {
             });
     }
 
-    /// Recompute the cache occupancy grid, only while the Caches pane is showing
-    /// (`get_cache_snapshots` clones every line). Throttled running, exact paused.
+    // Recomputed only while the Caches pane shows (`get_cache_snapshots` clones
+    // every line); throttled while running, exact while paused.
     pub(in crate::app) fn refresh_cache_grid(&mut self, now: f64) {
         if self.inspector.pane != InspectorPane::Caches {
             return;
@@ -286,8 +277,6 @@ impl FullStackApp {
         });
     }
 
-    /// Best-effort call stack while paused: one row per frame, newest first.
-    /// Rows with a known source location jump the editor there on click.
     pub(super) fn call_stack_pane(&mut self, ui: &mut egui::Ui) {
         let Some(live) = &self.live else {
             chrome::centered_hint(ui, "No machine session.");
@@ -326,17 +315,14 @@ impl FullStackApp {
     }
 }
 
-/// Frames shown in the call-stack pane.
 const STACK_FRAMES_MAX: usize = 12;
 
-/// Function name for a frame label: block labels (`__label_N`, `__entry`)
-/// collapse to the owning function.
+// Block labels (`__label_N`, `__entry`) collapse to the owning function.
 pub(crate) fn frame_symbol(name: &str) -> &str {
     let name = name.split("__label_").next().unwrap_or(name);
     name.strip_suffix("__entry").unwrap_or(name)
 }
 
-/// One stack frame: function left, `file:line` right. True on click.
 fn frame_row(ui: &mut egui::Ui, index: usize, symbol: &str, loc: Option<&(String, u32)>) -> bool {
     let (rect, resp) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), metrics::ROW_HEIGHT),
@@ -381,8 +367,7 @@ fn frame_row(ui: &mut egui::Ui, index: usize, symbol: &str, loc: Option<&(String
     resp.clicked() && clickable
 }
 
-/// One register row: name, hex value, changed-bar. A click copies the value
-/// as bare hex, pasteable into the memory view's address field.
+// A click copies bare hex, pasteable into the memory view's address field.
 fn register_row(ui: &mut egui::Ui, name: &str, value: u64, live: bool, changed: bool) {
     let width = ui.available_width();
     let (rect, resp) = ui.allocate_exact_size(vec2(width, metrics::ROW_HEIGHT), Sense::click());
@@ -444,7 +429,6 @@ fn register_row(ui: &mut egui::Ui, name: &str, value: u64, live: bool, changed: 
     ));
 }
 
-/// One pipeline stage: name, then the in-flight instruction or a bubble marker.
 fn stage_row(ui: &mut egui::Ui, name: &str, entry: StageEntry) {
     let width = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(vec2(width, metrics::ROW_HEIGHT), Sense::hover());
@@ -469,7 +453,6 @@ fn stage_row(ui: &mut egui::Ui, name: &str, entry: StageEntry) {
     );
 }
 
-/// One cache level: geometry, hit rate, read/write splits, then occupancy.
 fn cache_level_view(ui: &mut egui::Ui, level: &CacheLevelGrid) {
     chrome::indented(ui, |ui| {
         ui.horizontal(|ui| {
@@ -516,7 +499,6 @@ fn cache_level_view(ui: &mut egui::Ui, level: &CacheLevelGrid) {
     }
 }
 
-/// A thin bar: clean lines in electric, dirty in amber, over a hairline track.
 fn occupancy_bar(ui: &mut egui::Ui, level: &CacheLevelGrid) {
     const BAR_H: f32 = 8.0;
     let width = ui.available_width();
@@ -550,7 +532,6 @@ fn occupancy_bar(ui: &mut egui::Ui, level: &CacheLevelGrid) {
     );
 }
 
-/// A wrapped map of L1 lines: empty (track), clean (electric), dirty (amber).
 fn line_grid(ui: &mut egui::Ui, cells: &[LineCell]) {
     const CELL: f32 = 9.0;
     const GAP: f32 = 2.0;

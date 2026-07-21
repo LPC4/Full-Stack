@@ -209,13 +209,13 @@ fn built_in_programs() -> Vec<ProgramFile> {
             "Read-only standard library modules.",
             "; Select a standard library module below.\n",
         ),
-        // OS / kernel source files (read-only, for reference -- not individually compilable)
+        // OS / kernel source files (read-only, for reference; not individually compilable)
         {
             let mut p = ProgramFile::os(
                 "os-kernel-entry",
                 "Entry",
                 "Kernel entry point: _kernel_start -> kmain.",
-                os_runtime::kernel::RUNTIME,
+                os_runtime::kernel::ENTRY,
             );
             p.standalone = true;
             p.parent_id = Some("os-my-kernel".to_owned());

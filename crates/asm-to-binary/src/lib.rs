@@ -7,7 +7,6 @@
     clippy::match_wildcard_for_single_variants,
     clippy::missing_assert_message,
     clippy::missing_errors_doc,
-    clippy::too_long_first_doc_paragraph,
     clippy::too_many_arguments,
     clippy::too_many_lines,
     clippy::unnecessary_wraps,

@@ -5,11 +5,10 @@ use crate::ui::theme;
 use eframe::egui;
 use egui::{Align2, FontId, Sense, pos2, vec2};
 
-/// Minimum seconds between probe captures while the machine is running.
 pub(super) const RUNNING_CAPTURE_INTERVAL: f64 = 0.25;
 
-/// Shared throttle for the step-driven probes: recapture when there is no prior
-/// snapshot, or the step count advanced and we are paused or past the interval.
+// Recapture when there is no prior snapshot, or the step count advanced and
+// we are paused or past the interval.
 pub(super) fn capture_due(last: Option<(u64, f64)>, steps: u64, running: bool, now: f64) -> bool {
     match last {
         None => true,
@@ -19,15 +18,13 @@ pub(super) fn capture_due(last: Option<(u64, f64)>, steps: u64, running: bool, n
     }
 }
 
-/// A left-inset section eyebrow, matching the panel header style.
 pub(super) fn section_label(ui: &mut egui::Ui, text: &str) {
     chrome::indented(ui, |ui| {
         ui.label(theme::label(text));
     });
 }
 
-/// A two-column mono row: dim key on the left, value on the right. Values too
-/// wide for the row are left-elided (keeping the tail, which ends paths well).
+// Overwide values are left-elided; keeping the tail ends paths well.
 pub(super) fn stat_row(ui: &mut egui::Ui, key: &str, value: &str) {
     let width = ui.available_width();
     let font = FontId::monospace(metrics::LABEL_TEXT_SIZE);
@@ -58,7 +55,6 @@ pub(super) fn stat_row(ui: &mut egui::Ui, key: &str, value: &str) {
     }
 }
 
-/// Keep the trailing `fit` characters of `text`, marking the cut with `..`.
 fn elide_left(text: &str, fit: usize) -> String {
     let len = text.chars().count();
     if len <= fit {
@@ -102,7 +98,6 @@ pub(super) fn human_size(bytes: u64) -> String {
     }
 }
 
-/// Percentage of `num`/`den` as text, or a dash when there are no samples.
 pub(super) fn rate_str(num: u64, den: u64) -> String {
     if den == 0 {
         "--".to_owned()
@@ -111,7 +106,6 @@ pub(super) fn rate_str(num: u64, den: u64) -> String {
     }
 }
 
-/// A count with its share of `den` appended, e.g. `123 (4.5%)`.
 pub(super) fn percent(num: u64, den: u64, label: &str) -> String {
     if den == 0 {
         label.to_owned()
@@ -120,7 +114,6 @@ pub(super) fn percent(num: u64, den: u64, label: &str) -> String {
     }
 }
 
-/// Cache size in binary units: `4 KiB`, `256 KiB`, `8 MiB`.
 pub(super) fn cache_bytes(n: usize) -> String {
     if n >= 1 << 20 {
         format!("{} MiB", n >> 20)

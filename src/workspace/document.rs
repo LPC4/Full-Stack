@@ -24,7 +24,6 @@ pub struct Document {
     redo: VecDeque<String>,
     diagnostics: Vec<Diagnostic>,
     read_only: bool,
-    /// Raw content for binary documents (ELF images, objects); always read-only.
     bytes: Option<Vec<u8>>,
 }
 
@@ -68,7 +67,6 @@ impl Document {
         &self.path
     }
 
-    /// Follow a rename of this document's file; content and history are kept.
     pub(crate) fn set_path(&mut self, path: VPath) {
         self.path = path;
     }

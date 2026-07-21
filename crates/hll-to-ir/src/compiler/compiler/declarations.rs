@@ -1,8 +1,7 @@
 use super::{
     Block, CompilerError, DeclNode, Declaration, Expression, FunctionDecl, GenericTypeDef,
     HighLevelCompiler, IrFunction, IrGlobalVar, IrInstruction, IrParam, IrProgram, IrRegister,
-    IrTerminator, IrType, IrTypeAlias, IrValue, Literal, LoweringContext, Program,
-    SemanticAnalyzer, Statement, Type,
+    IrTerminator, IrType, IrTypeAlias, IrValue, Literal, Statement, Type,
 };
 
 #[derive(Debug, Clone)]

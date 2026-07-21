@@ -4,7 +4,6 @@ use crate::ui::theme::icons;
 use eframe::egui;
 use egui::{Align2, FontId, Sense, pos2, vec2};
 
-/// Rail glyph size; slightly larger than label text so icons read at a glance.
 const RAIL_ICON_SIZE: f32 = 17.0;
 
 impl FullStackApp {
@@ -34,8 +33,6 @@ impl FullStackApp {
     }
 }
 
-/// A full-width tool button. Selected buttons fill with the well tone they reveal
-/// and carry an accent bar on the edge facing the tool window.
 fn rail_button(ui: &mut egui::Ui, icon: &str, hint: &str, active: bool) -> egui::Response {
     let width = ui.available_width();
     let (rect, resp) =

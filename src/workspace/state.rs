@@ -10,7 +10,6 @@ pub struct IdeWorkspace {
     fs: Box<dyn WorkspaceFs>,
     tree: WorkspaceTree,
     documents: BTreeMap<VPath, Document>,
-    /// Paths in the order they were opened; drives the editor tab strip.
     open_order: Vec<VPath>,
     active_document: Option<VPath>,
     run_configs: RunConfigStore,
@@ -316,7 +315,6 @@ impl std::fmt::Display for WorkspaceError {
     }
 }
 
-/// True when `path` equals `ancestor` or lives inside it.
 fn is_at_or_under(path: &VPath, ancestor: &VPath) -> bool {
     path == ancestor
         || path
@@ -325,7 +323,6 @@ fn is_at_or_under(path: &VPath, ancestor: &VPath) -> bool {
             .is_some_and(|rest| rest.starts_with('/'))
 }
 
-/// Rewrite `path` from under `from` to the same position under `to`.
 fn rebase(path: &VPath, from: &VPath, to: &VPath) -> Option<VPath> {
     if path == from {
         return Some(to.clone());
@@ -334,7 +331,6 @@ fn rebase(path: &VPath, from: &VPath, to: &VPath) -> Option<VPath> {
     VPath::parse(&format!("{}{rest}", to.as_str())).ok()
 }
 
-/// Extensions the toolchain emits as binary artifacts.
 fn is_binary_path(path: &str) -> bool {
     path.ends_with(".elf") || path.ends_with(".o")
 }
