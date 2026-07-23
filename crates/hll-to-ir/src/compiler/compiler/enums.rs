@@ -160,11 +160,70 @@ impl HighLevelCompiler {
     pub(super) fn find_enum_variant(&self, enum_name: &str, prefix: &str) -> Option<VariantInfo> {
         self.enum_variants
             .iter()
-            .find(|(name, info)| {
-                info.enum_name == enum_name
-                    && (name.as_str() == prefix || name.starts_with(&format!("{prefix}__")))
+            .filter(|(name, _)| name.as_str() == prefix || name.starts_with(&format!("{prefix}__")))
+            .flat_map(|(_, infos)| infos)
+            .find(|info| info.enum_name == enum_name)
+            .cloned()
+    }
+
+    // Variants a constructor name can denote. `Enum.Variant` keeps only that
+    // enum's; `owner` narrows a bare name to the enum already known from context.
+    pub(super) fn variant_candidates(&self, ctor: &str, owner: Option<&str>) -> Vec<VariantInfo> {
+        let (qualifier, variant) = Self::split_variant_name(ctor);
+        let qualifier = qualifier.or(owner);
+        self.enum_variants
+            .get(variant)
+            .map(|infos| {
+                infos
+                    .iter()
+                    .filter(|info| qualifier.is_none_or(|owner| info.enum_name == owner))
+                    .cloned()
+                    .collect()
             })
-            .map(|(_, info)| info.clone())
+            .unwrap_or_default()
+    }
+
+    // True when a name denotes unit variants only, so it constructs by itself.
+    pub(super) fn is_unit_variant_name(&self, name: &str) -> bool {
+        let candidates = self.variant_candidates(name, None);
+        !candidates.is_empty() && candidates.iter().all(|info| info.payload.is_empty())
+    }
+
+    // Resolve a constructor name to one variant, reporting an unknown name or a
+    // bare name that several enums in scope declare.
+    pub(super) fn resolve_variant(
+        &mut self,
+        ctor: &str,
+        owner: Option<&str>,
+    ) -> Option<VariantInfo> {
+        let mut candidates = self.variant_candidates(ctor, owner);
+        match candidates.len() {
+            1 => candidates.pop(),
+            0 => {
+                self.context.error(format!("unknown enum variant `{ctor}`"));
+                None
+            }
+            _ => {
+                let owners: Vec<&str> = candidates
+                    .iter()
+                    .map(|info| info.enum_name.as_str())
+                    .collect();
+                self.context.error(format!(
+                    "enum variant `{ctor}` is ambiguous between {}; qualify it as `{}.{ctor}`",
+                    owners.join(", "),
+                    owners[0]
+                ));
+                None
+            }
+        }
+    }
+
+    // `Enum.Variant` splits into its qualifier and bare variant name.
+    pub(super) fn split_variant_name(ctor: &str) -> (Option<&str>, &str) {
+        match ctor.split_once('.') {
+            Some((owner, variant)) => (Some(owner), variant),
+            None => (None, ctor),
+        }
     }
 
     // Compute an enum's runtime layout and record its variant constructors.
@@ -185,20 +244,18 @@ impl HighLevelCompiler {
         });
 
         for (index, variant) in variants.iter().enumerate() {
-            if self.enum_variants.contains_key(&variant.name) {
+            let owners = self.enum_variants.entry(variant.name.clone()).or_default();
+            if owners.iter().any(|info| info.enum_name == name) {
                 self.context.error(format!(
                     "duplicate enum variant constructor `{}`",
                     variant.name
                 ));
             }
-            self.enum_variants.insert(
-                variant.name.clone(),
-                VariantInfo {
-                    enum_name: name.to_owned(),
-                    index,
-                    payload: variant.payload.clone(),
-                },
-            );
+            owners.push(VariantInfo {
+                enum_name: name.to_owned(),
+                index,
+                payload: variant.payload.clone(),
+            });
         }
         self.enum_layouts
             .insert(name.to_owned(), EnumLayout { payload_bytes });
@@ -255,7 +312,7 @@ impl HighLevelCompiler {
         ctor: &str,
         args: &[Expression],
     ) -> Option<LoweredValue> {
-        let info = self.enum_variants.get(ctor).cloned()?;
+        let info = self.resolve_variant(ctor, None)?;
         if args.len() != info.payload.len() {
             self.context.error(format!(
                 "enum variant `{ctor}` expects {} payload value(s), got {}",
@@ -298,15 +355,23 @@ impl HighLevelCompiler {
         })
     }
 
-    // Resolve the scrutinee to a pointer at the enum aggregate's bytes. An
-    // enum-by-value rvalue (a call result) is spilled to a slot to be addressable.
-    fn enum_scrutinee_ptr(&mut self, scrutinee: &Expression) -> Option<IrRegister> {
+    // Resolve the scrutinee to a pointer at the enum aggregate's bytes plus its
+    // enum name, spilling an enum-by-value rvalue to a slot to be addressable.
+    fn enum_scrutinee_ptr(
+        &mut self,
+        scrutinee: &Expression,
+    ) -> Option<(IrRegister, Option<String>)> {
         if let Some(base) = self.lower_expr(scrutinee, EvalMode::Address)
             && let IrValue::Register(reg) = base.value
         {
-            return Some(reg);
+            let owner = match &base.ty {
+                IrType::Pointer(inner) => Self::named_type_name(inner),
+                other => Self::named_type_name(other),
+            };
+            return Some((reg, owner));
         }
         let base = self.lower_expr(scrutinee, EvalMode::Value)?;
+        let owner = Self::named_type_name(&base.ty);
         let IrValue::Register(reg) = base.value else {
             return None;
         };
@@ -323,9 +388,16 @@ impl HighLevelCompiler {
                 ptr: slot.clone(),
                 offset: None,
             });
-            return Some(slot);
+            return Some((slot, owner));
         }
-        Some(reg)
+        Some((reg, owner))
+    }
+
+    fn named_type_name(ty: &IrType) -> Option<String> {
+        match ty {
+            IrType::Named(name) => Some(name.clone()),
+            _ => None,
+        }
     }
 
     // Lower a `match` in statement position: arms run for effect and any value
@@ -421,7 +493,7 @@ impl HighLevelCompiler {
         if arms.iter().any(|a| self.is_scalar_pattern(&a.pattern)) {
             return self.lower_match_scalar(ir_program, scrutinee, arms, result_slot);
         }
-        let Some(enum_ptr) = self.enum_scrutinee_ptr(scrutinee) else {
+        let Some((enum_ptr, scrutinee_enum)) = self.enum_scrutinee_ptr(scrutinee) else {
             self.context
                 .error("`match` scrutinee must be an enum value".to_owned());
             return None;
@@ -461,13 +533,12 @@ impl HighLevelCompiler {
                     break;
                 }
                 Pattern::Variant {
-                    variant, bindings, ..
+                    enum_name,
+                    variant,
+                    bindings,
                 } => {
-                    let Some(info) = self.enum_variants.get(variant).cloned() else {
-                        self.context
-                            .error(format!("unknown enum variant `{variant}` in match arm"));
-                        return None;
-                    };
+                    let owner = enum_name.as_deref().or(scrutinee_enum.as_deref());
+                    let info = self.resolve_variant(variant, owner)?;
                     if bindings.len() != info.payload.len() {
                         self.context.error(format!(
                             "variant `{variant}` binds {} value(s) but has {}",
@@ -633,9 +704,12 @@ impl HighLevelCompiler {
         match pattern {
             Pattern::Literal(_) => true,
             Pattern::Variant {
-                variant, bindings, ..
+                enum_name,
+                variant,
+                bindings,
             } => {
-                bindings.is_empty()
+                enum_name.is_none()
+                    && bindings.is_empty()
                     && !self.enum_variants.contains_key(variant)
                     && self.compile_time_consts.contains_key(variant)
             }

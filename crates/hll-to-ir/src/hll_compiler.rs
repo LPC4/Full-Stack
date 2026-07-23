@@ -1287,8 +1287,8 @@ main: () -> i32 {
 struct Point { x: i32, y: i32 }
 
 main: () -> i32 {
-    point: Point = { .x = 7 }
-    point = { .y = 9 }
+    point: Point = { .x = 7, .. }
+    point = { .y = 9, .. }
     return point.x + point.y
 }
 "#,
@@ -1326,7 +1326,7 @@ main: () -> i32 {
 struct Point { x: i32, y: i32 }
 
 make_point: () -> Point {
-    return { .x = 5 }
+    return { .x = 5, .. }
 }
 
 sum_point: (point: Point) -> i32 {
@@ -1334,7 +1334,7 @@ sum_point: (point: Point) -> i32 {
 }
 
 main: () -> i32 {
-    return sum_point({ .y = 7 }) + sum_point(make_point())
+    return sum_point({ .y = 7, .. }) + sum_point(make_point())
 }
 "#,
         )

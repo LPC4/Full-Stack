@@ -1,8 +1,8 @@
 use super::ast::{
-    AssignTarget, BinaryOp, BindingField, Block, DeclNode, Declaration, Expression, FieldDecl,
-    FieldInit, ForIter, FormatSegment, InterfaceMethod, Literal, MatchArm, Parameter, Path,
-    Pattern, PrimaryExpr, Program, ReturnType, Statement, StructDestructureField, Type, UnaryOp,
-    Variant,
+    ArrayLen, AssignTarget, BinaryOp, BindingField, Block, DeclNode, Declaration, Expression,
+    FieldDecl, FieldInit, ForIter, FormatSegment, InterfaceMethod, Literal, MatchArm, Parameter,
+    Path, Pattern, PrimaryExpr, Program, ReturnType, Statement, StructDestructureField, Type,
+    UnaryOp, Variant,
 };
 use crate::lexer::Lexer;
 
@@ -43,6 +43,15 @@ fn strip_separators(text: &str) -> String {
     text.replace('_', "")
 }
 
+// `Option` and `Result` are injected after parsing, so seed them as enum names to
+// let `Option.Some(x)` qualify; a user declaration of either re-inserts the name.
+fn prelude_enum_names() -> std::collections::HashSet<String> {
+    ["Option", "Result"]
+        .iter()
+        .map(|n| (*n).to_owned())
+        .collect()
+}
+
 #[derive(Debug, Clone)]
 pub struct Parser<'a> {
     pub tokens: Vec<Token<'a>>,
@@ -50,6 +59,7 @@ pub struct Parser<'a> {
     pub pos: usize,
     pub pending_gt_from_shr: bool, // Track if we have a virtual `>` waiting from a split `>>`
     type_names: std::collections::HashSet<String>,
+    enum_names: std::collections::HashSet<String>,
     synthesized_declarations: Vec<Declaration>,
     next_lambda_id: usize,
 }
@@ -66,6 +76,7 @@ impl<'a> Parser<'a> {
             pos: 0,
             pending_gt_from_shr: false,
             type_names: std::collections::HashSet::new(),
+            enum_names: prelude_enum_names(),
             synthesized_declarations: Vec::new(),
             next_lambda_id: 0,
         }
@@ -79,6 +90,7 @@ impl<'a> Parser<'a> {
             pos: 0,
             pending_gt_from_shr: false,
             type_names: std::collections::HashSet::new(),
+            enum_names: prelude_enum_names(),
             synthesized_declarations: Vec::new(),
             next_lambda_id: 0,
         }
@@ -229,6 +241,9 @@ impl<'a> Parser<'a> {
         {
             self.type_names.insert(name.clone());
         }
+        if let DeclNode::Enum { name, .. } = &decl {
+            self.enum_names.insert(name.clone());
+        }
         Ok(Declaration { decl, exported })
     }
 
@@ -337,7 +352,7 @@ impl<'a> Parser<'a> {
 
     pub fn parse_type(&mut self) -> Result<Type, ParserError> {
         if self.match_lbracket() {
-            let size = self.parse_usize_literal()?;
+            let size = self.parse_array_length()?;
             self.expect_rbracket()?;
             let ty = self.parse_type()?;
             return Ok(Type::Array(size, Box::new(ty)));
@@ -363,7 +378,7 @@ impl<'a> Parser<'a> {
                     ty = Type::Slice(Box::new(ty));
                     continue;
                 }
-                let size = self.parse_usize_literal()?;
+                let size = self.parse_array_length()?;
                 self.expect_rbracket()?;
                 ty = Type::Array(size, Box::new(ty));
                 continue;
@@ -1167,6 +1182,15 @@ impl<'a> Parser<'a> {
         loop {
             if self.match_dot() {
                 let field = self.expect_ident()?;
+                // `Enum.Variant` is a qualified variant constructor; a lowercase
+                // member on an enum name stays a field access or method call.
+                if let Expression::Primary(PrimaryExpr::Identifier(base)) = &expr
+                    && self.enum_names.contains(base)
+                    && field.chars().next().is_some_and(char::is_uppercase)
+                {
+                    expr = Expression::Primary(PrimaryExpr::Identifier(format!("{base}.{field}")));
+                    continue;
+                }
                 expr = Expression::Primary(PrimaryExpr::FieldAccess {
                     expr: Box::new(expr),
                     field,
@@ -1255,6 +1279,20 @@ impl<'a> Parser<'a> {
                             arguments,
                         });
                         continue;
+                    }
+                    // `alias.member<T>(...)`: a qualified generic call. The dotted name
+                    // resolves against the module alias table before monomorphization.
+                    Expression::Primary(PrimaryExpr::FieldAccess { expr: base, field })
+                        if type_arguments.is_some()
+                            && matches!(
+                                base.as_ref(),
+                                Expression::Primary(PrimaryExpr::Identifier(_))
+                            ) =>
+                    {
+                        let Expression::Primary(PrimaryExpr::Identifier(module)) = *base else {
+                            unreachable!();
+                        };
+                        format!("{module}.{field}")
                     }
                     callee => {
                         if type_arguments.is_some() {
@@ -1854,17 +1892,21 @@ impl<'a> Parser<'a> {
         result
     }
 
-    fn parse_usize_literal(&mut self) -> Result<usize, ParserError> {
+    // An array length in type position: a literal, or a compile-time constant
+    // expression (const decls and associated constants) folded before analysis.
+    fn parse_array_length(&mut self) -> Result<ArrayLen, ParserError> {
+        if let Some(Token::Integer(text)) = self.peek()
+            && matches!(self.peek_n(1), Some(Token::RBracket))
+        {
+            let value = strip_separators(text)
+                .parse::<usize>()
+                .map_err(|_| self.error("invalid array size"))?;
+            self.advance();
+            return Ok(ArrayLen::Fixed(value));
+        }
         match self.peek() {
-            Some(Token::Integer(text)) => {
-                let value = strip_separators(text)
-                    .parse::<usize>()
-                    .map_err(|_| self.error("invalid array size"))?;
-                self.advance();
-                Ok(value)
-            }
-            Some(tok) => Err(self.error_with_token("expected array size", tok)),
-            None => Err(self.error("unexpected end of input")),
+            Some(Token::RBracket) | None => Err(self.error("expected array size")),
+            _ => Ok(ArrayLen::Const(Box::new(self.parse_expression()?))),
         }
     }
 
@@ -2188,8 +2230,12 @@ impl<'a> Parser<'a> {
                 let id = name.to_string();
                 self.advance();
                 if self.type_names.contains(&id) && self.check_lbrace() {
-                    let fields = self.parse_struct_literal_fields()?;
-                    Expression::Primary(PrimaryExpr::NamedStructLiteral { name: id, fields })
+                    let (fields, rest) = self.parse_struct_literal_fields()?;
+                    Expression::Primary(PrimaryExpr::NamedStructLiteral {
+                        name: id,
+                        fields,
+                        rest,
+                    })
                 } else {
                     Expression::Primary(PrimaryExpr::Identifier(id))
                 }
@@ -2274,8 +2320,8 @@ impl<'a> Parser<'a> {
                 Expression::Primary(PrimaryExpr::ArrayLiteral(elements))
             }
             Some(Token::LBrace) => {
-                let fields = self.parse_struct_literal_fields()?;
-                Expression::Primary(PrimaryExpr::StructLiteral(fields))
+                let (fields, rest) = self.parse_struct_literal_fields()?;
+                Expression::Primary(PrimaryExpr::StructLiteral { fields, rest })
             }
             Some(Token::New) => {
                 self.advance();
@@ -2482,6 +2528,7 @@ impl<'a> Parser<'a> {
         }
         let mut sub = Parser::new_with_spans(token_spans);
         sub.type_names = self.type_names.clone();
+        sub.enum_names = self.enum_names.clone();
         sub.next_lambda_id = self.next_lambda_id;
         let expr = sub.parse_expression()?;
         if !matches!(sub.peek(), Some(Token::Eof) | None) {
@@ -2580,11 +2627,19 @@ impl<'a> Parser<'a> {
             return Ok(Pattern::Wildcard);
         }
 
+        // `Enum.Variant` qualifies the arm; a bare variant resolves against the
+        // scrutinee's enum instead.
+        let (enum_name, name) = if self.enum_names.contains(&name) && self.match_dot() {
+            (Some(name), self.expect_ident()?)
+        } else {
+            (None, name)
+        };
+
         let starts_upper = name.chars().next().is_some_and(char::is_uppercase);
         if !matches!(self.peek(), Some(Token::LParen)) {
-            return Ok(if starts_upper {
+            return Ok(if starts_upper || enum_name.is_some() {
                 Pattern::Variant {
-                    enum_name: None,
+                    enum_name,
                     variant: name,
                     bindings: Vec::new(),
                 }
@@ -2609,7 +2664,7 @@ impl<'a> Parser<'a> {
         }
         self.expect_rparen()?;
         Ok(Pattern::Variant {
-            enum_name: None,
+            enum_name,
             variant: name,
             bindings,
         })
@@ -2644,12 +2699,22 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_struct_literal_fields(&mut self) -> Result<Vec<FieldInit>, ParserError> {
-        // Canonical field init is `.name = expr` so `:` always introduces a type.
+    // Canonical field init is `.name = expr` so `:` always introduces a type. A
+    // trailing `..` zero-fills the fields the literal leaves unnamed.
+    fn parse_struct_literal_fields(&mut self) -> Result<(Vec<FieldInit>, bool), ParserError> {
         self.expect_lbrace()?;
         let mut fields = Vec::new();
+        let mut rest = false;
         self.consume_terminators();
         while !self.check_rbrace() {
+            if self.match_dot_dot() {
+                rest = true;
+                self.consume_terminators();
+                if !self.check_rbrace() {
+                    return Err(self.error("`..` must be the last entry in a struct literal"));
+                }
+                break;
+            }
             if !self.match_dot() {
                 return Err(self.error("struct literal fields use `.name = expr`"));
             }
@@ -2672,7 +2737,7 @@ impl<'a> Parser<'a> {
             }
         }
         self.expect_rbrace()?;
-        Ok(fields)
+        Ok((fields, rest))
     }
 
     fn match_rparen(&mut self) -> bool {
@@ -2909,7 +2974,7 @@ impl<'a> Parser<'a> {
 mod tests {
     use super::Parser;
     use crate::ast::{
-        AssignTarget, DeclNode, Expression, ForIter, Literal, Path, Pattern, PrimaryExpr,
+        ArrayLen, AssignTarget, DeclNode, Expression, ForIter, Literal, Path, Pattern, PrimaryExpr,
         ReturnType, Statement, Type,
     };
     use crate::lexer::Lexer;
@@ -3135,7 +3200,8 @@ mod tests {
                 init,
                 Expression::Primary(crate::ast::PrimaryExpr::NamedStructLiteral {
                     name,
-                    fields
+                    fields,
+                    ..
                 }) if name == "Point" && fields.len() == 1 && fields[0].ty.is_none()
             )),
             other => panic!("expected inferred named literal, got {other:?}"),
@@ -3693,7 +3759,24 @@ mod tests {
         ]);
         assert_eq!(
             array.parse_type().unwrap(),
-            Type::Array(3, Box::new(i32_ty()))
+            Type::Array(ArrayLen::Fixed(3), Box::new(i32_ty()))
+        );
+    }
+
+    #[test]
+    fn parses_constant_array_length_as_expression() {
+        let mut parser = Parser::new(vec![
+            Token::Ident("u8"),
+            Token::LBracket,
+            Token::Ident("CAP"),
+            Token::RBracket,
+        ]);
+        let Type::Array(ArrayLen::Const(len), _) = parser.parse_type().unwrap() else {
+            panic!("expected an unresolved constant length");
+        };
+        assert_eq!(
+            *len,
+            Expression::Primary(PrimaryExpr::Identifier("CAP".to_owned()))
         );
     }
 
@@ -3996,6 +4079,95 @@ type Callback<T: Second> = (T*) -> i32
             other => panic!("expected variant pattern, got {other:?}"),
         }
         assert!(matches!(arms[1].pattern, Pattern::Wildcard));
+    }
+
+    #[test]
+    fn parses_struct_literal_rest_marker() {
+        let mut parser = Parser::new(tokens_of("p = { .x = 1, .. }"));
+        let Statement::Expression(Expression::Assignment { rvalue, .. }) =
+            parser.parse_statement().unwrap()
+        else {
+            panic!("expected assignment");
+        };
+        let Expression::Primary(PrimaryExpr::StructLiteral { fields, rest }) = *rvalue else {
+            panic!("expected struct literal");
+        };
+        assert_eq!(fields.len(), 1);
+        assert!(rest);
+    }
+
+    #[test]
+    fn rejects_rest_marker_before_a_field() {
+        let mut parser = Parser::new(tokens_of("p = { .., .x = 1 }"));
+        let error = parser
+            .parse_statement()
+            .expect_err("`..` must come last in a struct literal");
+        assert!(
+            error.to_string().contains("must be the last entry"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn parses_qualified_enum_variant_construction() {
+        let src = "enum Shape {\nCircle(f64)\nEmpty\n}\nmain: () -> i32 {\ns := Shape.Circle(2.0)\ne := Shape.Empty\nreturn 0\n}";
+        let mut parser = Parser::new(tokens_of(src));
+        let program = parser.parse_program().unwrap();
+        let DeclNode::Function {
+            body: Some(body), ..
+        } = &program.declarations[1].decl
+        else {
+            panic!("expected function");
+        };
+        let Statement::InferredVariableDecl { init, .. } = &body.statements[0] else {
+            panic!("expected inferred binding");
+        };
+        let Expression::Primary(PrimaryExpr::FunctionCall { name, .. }) = init else {
+            panic!("expected call, got {init:?}");
+        };
+        assert_eq!(name, "Shape.Circle");
+        let Statement::InferredVariableDecl { init, .. } = &body.statements[1] else {
+            panic!("expected inferred binding");
+        };
+        assert!(matches!(
+            init,
+            Expression::Primary(PrimaryExpr::Identifier(name)) if name == "Shape.Empty"
+        ));
+    }
+
+    #[test]
+    fn parses_qualified_enum_variant_pattern() {
+        let src = "enum Shape {\nCircle(f64)\nEmpty\n}\nmain: () -> i32 {\nmatch s {\nShape.Circle(r) -> {\nreturn 1\n}\nShape.Empty -> {\nreturn 0\n}\n}\nreturn 0\n}";
+        let mut parser = Parser::new(tokens_of(src));
+        let program = parser.parse_program().unwrap();
+        let DeclNode::Function {
+            body: Some(body), ..
+        } = &program.declarations[1].decl
+        else {
+            panic!("expected function");
+        };
+        let Statement::Expression(Expression::Match { arms, .. }) = &body.statements[0] else {
+            panic!("expected match statement");
+        };
+        let Pattern::Variant {
+            enum_name,
+            variant,
+            bindings,
+        } = &arms[0].pattern
+        else {
+            panic!("expected variant pattern");
+        };
+        assert_eq!(enum_name.as_deref(), Some("Shape"));
+        assert_eq!(variant, "Circle");
+        assert_eq!(bindings, &vec!["r".to_owned()]);
+        let Pattern::Variant {
+            enum_name, variant, ..
+        } = &arms[1].pattern
+        else {
+            panic!("expected variant pattern");
+        };
+        assert_eq!(enum_name.as_deref(), Some("Shape"));
+        assert_eq!(variant, "Empty");
     }
 
     #[test]

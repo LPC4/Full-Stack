@@ -188,15 +188,19 @@ struct Point {
 ```
 
 A struct literal is `.field = expr` pairs in braces, optionally prefixed by the type name. A
-named literal must set every field; a contextual literal whose type is known from the
-destination may omit fields, which default to zero. Field order is free; `:` never appears in
-a literal because it only introduces a type.
+literal must set every field unless it ends with `..`, which zero-fills the fields it leaves
+unnamed. The rule is the same for both forms, so an omission is never silent. Field order is
+free; `:` never appears in a literal because it only introduces a type.
 
 ```hll
 p := Point { .x = 1.0, .y = 2.0 }   ; named -- type explicit
 q: Point = { .x = 1.0, .y = 2.0 }   ; contextual -- type from the annotation
 @ptr = { .x = 3.0, .y = 4.0 }       ; contextual -- type from the lvalue
+r: Point = { .x = 1.0, .. }         ; y is zero-filled
 ```
+
+`..` must be the last entry, and it needs a known struct type: a literal with no type from an
+annotation, destination, parameter, or return type is rejected.
 
 Field access uses `.` and auto-dereferences one pointer level:
 
@@ -286,13 +290,10 @@ import of the `string` module (any other alias is a compile error). The member n
 
 ```hll
 enum FormatError {
-    FormatBufferTooSmall(u64),   ; payload = the complete required byte count
-    FormatSizeOverflow
+    BufferTooSmall(u64),   ; payload = the complete required byte count
+    SizeOverflow
 }
 ```
-
-(The variant names carry a `Format` prefix because variant constructors share one flat
-namespace with every other enum in scope, 7.2.)
 
 Semantics:
 
@@ -302,8 +303,8 @@ Semantics:
   destination from a hole expression is permitted because sizing precedes the first write.
 - The operation is transactional. The complete required length is computed first; an
   undersized destination is left byte-for-byte unchanged and reports
-  `Err(FormatBufferTooSmall(required))`. A required length that exceeds `u64` reports
-  `Err(FormatSizeOverflow)` before writing (lengths accumulate through a saturating
+  `Err(FormatError.BufferTooSmall(required))`. A required length that exceeds `u64` reports
+  `Err(FormatError.SizeOverflow)` before writing (lengths accumulate through a saturating
   all-ones sentinel, which is unreachable for real buffers).
 - `{{` and `}}` produce literal braces. An unmatched `{` or `}`, an empty `{}`, a nested `{`,
   and a multi-line hole are compile-time syntax errors at the offending brace. Hole
@@ -440,8 +441,29 @@ impl Matrix<T> {
   are self-referential definitions.
 - Duplicate member names per owner (including a const/type collision) are rejected. Associated
   constants and type aliases cannot be exported and cannot appear in exported signatures; keep
-  the impl block private. Array lengths in type position remain integer literals, so a projection
-  cannot be used as an array size.
+  the impl block private.
+
+#### Constant array lengths
+
+An array length in type position is a compile-time constant expression, not only an integer
+literal. Integer literals, arithmetic and bitwise operators, primitive casts, top-level `const`
+declarations, and associated constants all qualify.
+
+```hll
+const SLOTS = 4
+struct Bucket { items: i32[SLOTS] }
+
+fill: <T>() -> i64 {
+    lane: i64[Matrix<T>.LANES] = [0, 0, 0]   ; projection folds at specialization
+    ...
+}
+```
+
+- Lengths fold before semantic analysis; a projection whose owner arguments are generic folds
+  when the enclosing generic is specialized. The folded value must be non-negative.
+- Calls, runtime values, and non-integer results are rejected with the length's own diagnostic.
+- A generic aggregate whose field length depends on its own type parameter is the one case the
+  early fold cannot close; it is evaluated when the specialization is lowered.
 
 ### 6.3 Generics
 
@@ -473,10 +495,38 @@ that uses an operation the concrete type does not support fails at the specializ
 an ordinary type error. A recursive specialization that does not converge is diagnosed
 rather than allowed to hang.
 
-Generics do not cross a module boundary yet. A module interface carries an exported function
-only as an `external` signature, not its body, so an importer cannot monomorphize an imported
-generic at the use site. Until interfaces carry generic bodies, a generic must live in the
-module that instantiates it.
+#### Generics across a module boundary
+
+Generics cross module boundaries. A module interface carries an exported non-generic function
+as an `external` signature but an exported generic function as its whole body: the importer
+re-parses that template and specializes it into its own object, so no link symbol exists for
+the unspecialized generic.
+
+```hll
+; mathlib.hll
+export scale: (x: i32) -> i32 { return x * 2 }
+export max: <T>(a: T, b: T) -> T {
+    if a > b { return a }
+    return b
+}
+
+; user.hll
+mathlib := import("mathlib")
+main: () -> i32 {
+    return mathlib.max<i32>(19, 23) + mathlib.max(1, 2)   ; explicit or inferred
+}
+```
+
+- A qualified call takes type arguments (`alias.name<T>(args)`) or infers them by the ordinary
+  rules. Exported generic aggregates (`alias.Box<i32>`) and interface bounds
+  (`<T: alias.Measurable>`) already crossed the boundary and are unchanged.
+- Bounds are checked in the importer, at the specialization, against the importer's types.
+- Each importer specializes its own copies. Two modules instantiating the same generic at the
+  same type get one private copy each; the copies never collide because they are local symbols.
+- A generic body may reference its own module's exports (which take the module prefix and link
+  back to the provider) and its own parameters and locals. Referencing a private symbol or a
+  module the provider itself imported is rejected at extraction: the importer cannot resolve
+  either. Export the helper, or move it into the generic.
 
 ### 6.4 Modules, `import`, and `export`
 
@@ -578,8 +628,9 @@ The mechanisms above are the target. Current status:
 - `import` interface resolution is implemented for the host pipeline. `CompilationPipeline`
   carries a module resolver (name -> source) and, for each direct `import`, prepends the
   target's extracted interface (`hll_to_ir::imports`): exported `type`/`const`/`struct`/`enum`
-  verbatim and exported `fn`/global as `external`. The in-VM `cc` toolchain and the raw
-  `HllCompiler` path do not resolve imports; the import decl is inert there.
+  verbatim, exported generic functions with their bodies, and other exported `fn`/globals as
+  `external`. The in-VM `cc` toolchain and the raw `HllCompiler` path do not resolve imports;
+  the import decl is inert there.
 - Qualified `alias := import(path)` is implemented for value, call, const, and type exports:
   the pipeline resolves each module binding, prepends its interface, and passes the alias's
   exported names to the compiler, which rewrites `alias.member`, `alias.member(args)`, and
@@ -711,10 +762,38 @@ result: i32 = m.area()                 ; indirect call, result is 42
 sum := 0
 for n in 0..10 { sum += n }     ; range; ..= is inclusive
 for v in view { sum += v }      ; iterate an array or slice
+for v in bag { sum += v }       ; iterate a user type through its contract
 ```
 
-`for var in iterable { ... }` iterates a range, a fixed array, or a slice, and desugars to a
-`while` loop. The end of a range is evaluated once; `continue` still advances the loop.
+`for var in iterable { ... }` iterates a range, a fixed array, a slice, or a value whose type
+provides the iterable contract, and desugars to a `while` loop. The end of a range is
+evaluated once; `continue` still advances the loop.
+
+#### The iterable contract
+
+A named struct is iterable when it provides both members below, by `impl` (6.2) or as
+hand-written free functions. Nothing else is required and no `interface` declaration is
+involved: the element type is whatever `at` returns, which an interface signature could not
+name without interface-associated types.
+
+```hll
+impl Bag {
+    len: (self: Bag*) -> i64 { return self.count }
+    at:  (self: Bag*, index: i64) -> i32 { return self.items[index] }
+}
+```
+
+- `for v in bag` becomes an index loop: `len` is called once before the loop, `at` once per
+  iteration, and `v` binds the returned element by value. Both are direct calls, resolved
+  statically like any other method; no vtable, allocation, or iterator object exists.
+- The contract is checked where the loop is compiled. Inside a generic, that is the
+  specialization: `for v in container` over `container: T*` fails at the specialized site if
+  the concrete `T` provides neither member, exactly like any other unbounded generic operation.
+- An imported type satisfies the contract through its exported `impl` (6.4).
+- The operand must be a name. A struct field, call result, or other expression is not accepted
+  in any `for ... in` form; bind it to a local first.
+- A type providing neither member, or only one of them, is not iterable and the loop is
+  rejected naming the contract.
 
 ### 7.2 Enums, `match`, and `?`
 
@@ -734,6 +813,12 @@ area: (s: Shape) -> f64 {
 ```
 
 A unit variant is constructed by naming it; a payload variant by calling it (`Circle(2.0)`).
+Either form may be qualified by its enum (`Shape.Circle(2.0)`, `Shape.Empty`), including the
+prelude enums (`Option.Some(1)`). Two enums in scope may declare the same variant name; a bare
+use that several of them could mean is an error naming the candidates, and qualification
+resolves it. Arm patterns may qualify the same way (`Shape.Circle(r)`); a bare arm pattern
+resolves against the scrutinee's enum, so arms never need a qualifier.
+
 `match` is exhaustive: every variant must be covered, or a catch-all (`_` or a lowercase
 binding) provided. A `match` may produce a value when every arm is a `-> expr` value arm whose
 types agree; it is usable as a binding initializer, assignment right-hand side, or return
@@ -915,8 +1000,9 @@ format_into    = identifier "." "format_into" "(" expression "," string ")";
                (* string = interpolation template; see 5.5 *)
 match_expr     = "match" expression "{" arm { arm } "}";
 arm            = pattern "->" ( block | expression );
-pattern        = "_" | identifier | identifier "(" pattern { "," pattern } ")"
+pattern        = "_" | variant_name [ "(" pattern { "," pattern } ")" ]
                | [ "-" ] ( integer | char );
+variant_name   = [ identifier "." ] identifier;  (* enum-qualified or bare *)
 cast_expr      = expression "as" type;
 unary_expr     = ( "@" | "&" | "-" | "!" | "~" ) expression;
 postfix_expr   = primary_expr { "." identifier | "[" index_or_range "]"
@@ -927,7 +1013,8 @@ primary_expr   = identifier [ type_args ] | literal | "(" expression ")"
 new_expr       = "new" "(" type [ "," expression ] ")";
 asm_reg_expr   = "asm_reg" "(" abi_reg ")";
 array_literal  = "[" [ expression { "," expression } ] "]";
-struct_literal = [ identifier ] "{" [ field_init { "," field_init } [ "," ] ] "}";
+struct_literal = [ identifier ] "{" [ literal_body ] "}";
+literal_body   = field_init { "," field_init } [ "," [ ".." ] ] | "..";
 field_init     = "." identifier "=" expression;
 ```
 

@@ -52,8 +52,8 @@ export string_concat: (left: u8[], right: u8[]) -> u8[] {
 ; these helpers; they are ordinary exported functions and may be called directly.
 
 export enum FormatError {
-    FormatBufferTooSmall(u64),
-    FormatSizeOverflow
+    BufferTooSmall(u64),
+    SizeOverflow
 }
 
 export interface Format {
@@ -66,11 +66,11 @@ export fmt_result_ok: (written: u64) -> Result<u64, FormatError> {
 }
 
 export fmt_result_too_small: (required: u64) -> Result<u64, FormatError> {
-    return Err(FormatBufferTooSmall(required))
+    return Err(FormatError.BufferTooSmall(required))
 }
 
 export fmt_result_overflow: () -> Result<u64, FormatError> {
-    return Err(FormatSizeOverflow)
+    return Err(FormatError.SizeOverflow)
 }
 
 ; Saturating length accumulator: all-ones marks u64 overflow and is sticky.

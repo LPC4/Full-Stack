@@ -117,6 +117,18 @@ enum MaybeMeasured<T: Measurable> {
     Missing,
 }
 
+; Two enums may declare the same variant name. A qualifier picks one; match arms
+; resolve bare names against the scrutinee's enum.
+enum Link {
+    Idle,
+    Busy(i32),
+}
+
+enum Spindle {
+    Busy(i32),
+    Spun,
+}
+
 type MeasuredPtr<T: Measurable> = T*
 
 struct Disc {
@@ -279,6 +291,27 @@ main: () -> i32 {
     bounded_offset: mathlib.BoundOffset<mathlib.Offset> = { .item = offset }
     if bounded_offset.item.value != 2 { return 31 }
 
+    ; --- Cross-module generics ---
+    ; The importer specializes an imported generic into its own object; the
+    ; template's own calls stay linked to the module that exported it.
+    if mathlib.bumped_max<i32>(19, 23) != 24 { return 52 }
+    if mathlib.bumped_max(1, 2) != 3 { return 53 }
+
+    ; --- Iterating a user type through its `len`/`at` contract ---
+    lane: mathlib.Lane = { .. }
+    lane.used = mathlib.LANES as i64
+    lane.slots[0] = 20
+    lane.slots[1] = 15
+    lane.slots[2] = 7
+    if mathlib.total_of<mathlib.Lane>(&lane) != 42 { return 54 }
+
+    ; A constant array length in type position: `const` and associated constants.
+    tally: i32[mathlib.LANES] = [0, 0, 0]
+    for value in lane {
+        tally[0] += value
+    }
+    if tally[0] != 42 { return 55 }
+
     ; --- Destructuring and explicit manual vtables ---
     box: Shape = Shape.make(6, 7)
     { width, h = height } := box
@@ -318,12 +351,29 @@ main: () -> i32 {
     measured_ptr: MeasuredPtr<Shape> = &box
     if measured_ptr.width * measured_ptr.height != 42 { return 33 }
 
-    maybe: MaybeMeasured<Shape> = Present(box)
+    maybe: MaybeMeasured<Shape> = MaybeMeasured.Present(box)
     maybe_area := match maybe {
-        Present(value) -> value.area()
-        Missing -> 0
+        MaybeMeasured.Present(value) -> value.area()
+        MaybeMeasured.Missing -> 0
     }
     if maybe_area != 42 { return 34 }
+
+    ; A literal must name every field unless `..` zero-fills the rest.
+    flat: Shape = { .width = 6, .. }
+    if flat.width != 6 or flat.height != 0 { return 51 }
+
+    ; --- Qualified enum variants ---
+    link: Link = Link.Busy(40)
+    spindle: Spindle = Spindle.Busy(2)
+    link_load := match link {
+        Busy(n) -> n
+        Idle -> 0
+    }
+    spindle_load := match spindle {
+        Busy(n) -> n
+        Spun -> 0
+    }
+    if link_load + spindle_load != 42 { return 50 }
 
     ; --- Associated constants and type aliases ---
     corners: Shape.Pair = [Shape.SIDES, Shape.SIDES * 10]

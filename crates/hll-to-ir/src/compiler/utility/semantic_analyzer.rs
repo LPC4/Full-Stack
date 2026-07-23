@@ -27,8 +27,9 @@ pub struct SemanticAnalyzer {
     function_signatures: HashMap<String, String>,
     function_parameters: HashMap<String, Vec<IrType>>,
     generic_type_defs: HashMap<String, (Vec<String>, Type)>,
-    // Variant constructor -> signature, and enum name -> its variant list.
-    enum_variants: HashMap<String, EnumVariantSig>,
+    // Variant constructor -> one signature per enum declaring it, and enum name ->
+    // its variant list.
+    enum_variants: HashMap<String, Vec<EnumVariantSig>>,
     enum_variant_names: HashMap<String, Vec<String>>,
     current_function: Option<String>,
     // Span of the statement being checked, attached to errors so they point at a
@@ -202,13 +203,13 @@ impl SemanticAnalyzer {
                             .iter()
                             .map(|ty| self.ast_type_to_ir_type(ty))
                             .collect();
-                        self.enum_variants.insert(
-                            variant.name.clone(),
-                            EnumVariantSig {
+                        self.enum_variants
+                            .entry(variant.name.clone())
+                            .or_default()
+                            .push(EnumVariantSig {
                                 enum_name: name.clone(),
                                 payloads,
-                            },
-                        );
+                            });
                     }
                     self.enum_variant_names.insert(name.clone(), variant_names);
                 }
@@ -333,14 +334,14 @@ impl SemanticAnalyzer {
                     return Err(());
                 }
 
-                if let Expression::Primary(PrimaryExpr::StructLiteral(fields)) = expr {
+                if let Expression::Primary(PrimaryExpr::StructLiteral { fields, rest }) = expr {
                     let expected = self
                         .current_function
                         .as_ref()
                         .and_then(|name| self.function_signatures.get(name))
                         .map(|name| self.resolve_type_string(name));
                     if let Some(expected) = expected {
-                        self.check_contextual_struct_literal(fields, &expected)?;
+                        self.check_contextual_struct_literal(fields, *rest, &expected)?;
                         return Ok(());
                     }
                 }
@@ -359,8 +360,10 @@ impl SemanticAnalyzer {
                 let ir_ty = self.ast_type_to_ir_type(ty);
 
                 if let Some(init_expr) = init {
-                    if let Expression::Primary(PrimaryExpr::StructLiteral(fields)) = init_expr {
-                        self.check_contextual_struct_literal(fields, &ir_ty)?;
+                    if let Expression::Primary(PrimaryExpr::StructLiteral { fields, rest }) =
+                        init_expr
+                    {
+                        self.check_contextual_struct_literal(fields, *rest, &ir_ty)?;
                         self.symbols
                             .insert(name.clone(), ir_ty, crate::ir::IrValue::Null);
                         return Ok(());
@@ -532,7 +535,12 @@ impl SemanticAnalyzer {
                     }
                     crate::ast::ForIter::Each(seq) => {
                         let seq_ty = self.infer_expression_type(seq)?;
-                        let elem_ty = self.infer_index_element_type(&seq_ty)?;
+                        // A user type iterates through its `len`/`at` contract (7.3);
+                        // everything else must be indexable.
+                        let elem_ty = match self.iterable_element_type(&seq_ty) {
+                            Some(elem_ty) => elem_ty,
+                            None => self.infer_index_element_type(&seq_ty)?,
+                        };
                         Self::parse_type_string(&elem_ty)
                     }
                 };
@@ -567,7 +575,7 @@ impl SemanticAnalyzer {
             ));
             return Err(());
         }
-        if matches!(init, Expression::Primary(PrimaryExpr::StructLiteral(_))) {
+        if matches!(init, Expression::Primary(PrimaryExpr::StructLiteral { .. })) {
             self.error(format!(
                 "cannot infer `{name}` from an anonymous struct literal; use `Type {{ ... }}` or add an explicit type"
             ));
@@ -605,16 +613,15 @@ impl SemanticAnalyzer {
                 PrimaryExpr::Identifier(name) => {
                     if let Some(info) = self.symbols.lookup(name) {
                         Ok(self.context.get_type_name(&info.ty))
-                    } else if let Some(sig) = self.enum_variants.get(name) {
-                        // A bare unit-variant constructor has its enum's type.
+                    } else if !self.variant_candidates(name, None).is_empty() {
+                        // A unit-variant constructor has its enum's type.
+                        let sig = self.resolve_variant(name, None)?;
                         if !sig.payloads.is_empty() {
-                            let enum_name = sig.enum_name.clone();
                             self.error(format!(
                                 "enum variant `{name}` needs payload value(s); call it like `{name}(...)`"
                             ));
-                            return Ok(enum_name);
                         }
-                        Ok(sig.enum_name.clone())
+                        Ok(sig.enum_name)
                     } else if let Some(ty_name) = self.type_mapping.get(name) {
                         Ok(ty_name.clone())
                     } else {
@@ -724,7 +731,8 @@ impl SemanticAnalyzer {
                         return Ok("void".to_owned());
                     }
                     // A call whose name is an enum variant constructs that variant.
-                    if let Some(sig) = self.enum_variants.get(name).cloned() {
+                    if !self.variant_candidates(name, None).is_empty() {
+                        let sig = self.resolve_variant(name, None)?;
                         if arguments.len() != sig.payloads.len() {
                             self.error(format!(
                                 "enum variant `{name}` expects {} payload value(s), got {}",
@@ -744,10 +752,10 @@ impl SemanticAnalyzer {
                     for (index, arg) in arguments.iter().enumerate() {
                         if let (
                             Some(expected),
-                            Expression::Primary(PrimaryExpr::StructLiteral(fields)),
+                            Expression::Primary(PrimaryExpr::StructLiteral { fields, rest }),
                         ) = (parameter_types.as_ref().and_then(|p| p.get(index)), arg)
                         {
-                            self.check_contextual_struct_literal(fields, expected)?;
+                            self.check_contextual_struct_literal(fields, *rest, expected)?;
                             continue;
                         }
                         self.infer_expression_type(arg)?;
@@ -858,16 +866,7 @@ impl SemanticAnalyzer {
                         let base = self
                             .method_receiver_name(&recv_ty)
                             .unwrap_or_else(|| recv_ty.trim_start_matches('*').to_owned());
-                        let local_method = format!("{base}_{field}");
-                        let imported_suffix = format!("__{local_method}");
-                        let method = if self.function_signatures.contains_key(&local_method) {
-                            Some(local_method)
-                        } else {
-                            self.function_signatures
-                                .keys()
-                                .find(|name| name.ends_with(&imported_suffix))
-                                .cloned()
-                        };
+                        let method = self.method_symbol(&base, field);
                         let has_field = self.type_has_field(&base, field);
                         if has_field && let Some(method) = method.as_ref() {
                             let field_ty = self.infer_field_access_type(&base, field)?;
@@ -996,7 +995,7 @@ impl SemanticAnalyzer {
                     let elem_ty = self.infer_index_element_type(&base_ty)?;
                     Ok(format!("{elem_ty}[]"))
                 }
-                PrimaryExpr::StructLiteral(fields) => {
+                PrimaryExpr::StructLiteral { fields, .. } => {
                     let mut field_types = Vec::new();
                     for field in fields {
                         let expr_ty = self.infer_expression_type(&field.expr)?;
@@ -1021,8 +1020,8 @@ impl SemanticAnalyzer {
                     }
                     Ok(self.context.get_type_name(&IrType::Aggregate(field_types)))
                 }
-                PrimaryExpr::NamedStructLiteral { name, fields } => {
-                    self.infer_named_struct_literal_type(name, fields)
+                PrimaryExpr::NamedStructLiteral { name, fields, rest } => {
+                    self.infer_named_struct_literal_type(name, fields, *rest)
                 }
             },
             Expression::Binary { op, left, right } => {
@@ -1198,12 +1197,12 @@ impl SemanticAnalyzer {
         let success = self
             .enum_variants
             .iter()
-            .find(|(name, sig)| {
-                sig.enum_name == operand_ty
-                    && (name.as_str() == success_prefix
-                        || name.starts_with(&format!("{success_prefix}__")))
+            .filter(|(name, _)| {
+                name.as_str() == success_prefix || name.starts_with(&format!("{success_prefix}__"))
             })
-            .map(|(_, sig)| sig.clone());
+            .flat_map(|(_, sigs)| sigs)
+            .find(|sig| sig.enum_name == operand_ty)
+            .cloned();
         let Some(success) = success else {
             self.error(format!("invalid `{family}` specialization `{operand_ty}`"));
             return Err(());
@@ -1217,11 +1216,10 @@ impl SemanticAnalyzer {
             let failure_payload = |enum_name: &str| {
                 self.enum_variants
                     .iter()
-                    .find(|(name, sig)| {
-                        sig.enum_name == enum_name
-                            && (name.as_str() == "Err" || name.starts_with("Err__"))
-                    })
-                    .and_then(|(_, sig)| sig.payloads.first())
+                    .filter(|(name, _)| name.as_str() == "Err" || name.starts_with("Err__"))
+                    .flat_map(|(_, sigs)| sigs)
+                    .find(|sig| sig.enum_name == enum_name)
+                    .and_then(|sig| sig.payloads.first())
                     .cloned()
             };
             if failure_payload(&operand_ty) != failure_payload(&return_ty) {
@@ -1281,8 +1279,16 @@ impl SemanticAnalyzer {
                     Ok(())
                 }
                 Pattern::Variant {
-                    variant, bindings, ..
-                } => self.check_variant_pattern(&enum_name, variant, bindings, &mut covered),
+                    enum_name: qualifier,
+                    variant,
+                    bindings,
+                } => self.check_variant_pattern(
+                    &enum_name,
+                    qualifier.as_deref(),
+                    variant,
+                    bindings,
+                    &mut covered,
+                ),
                 Pattern::Literal(_) => {
                     self.error("literal pattern in a `match` on an enum value".to_owned());
                     Err(())
@@ -1368,7 +1374,9 @@ impl SemanticAnalyzer {
                 }
                 Pattern::Literal(lit) => self.check_literal_pattern(lit),
                 Pattern::Variant {
-                    variant, bindings, ..
+                    enum_name: None,
+                    variant,
+                    bindings,
                 } if bindings.is_empty() => {
                     if self.is_integer_const(variant) {
                         Ok(())
@@ -1431,24 +1439,77 @@ impl SemanticAnalyzer {
         }
     }
 
+    // Signatures a constructor name can denote. `Enum.Variant` keeps only that
+    // enum's; `owner` narrows a bare name to the enum already known from context.
+    fn variant_candidates(&self, ctor: &str, owner: Option<&str>) -> Vec<EnumVariantSig> {
+        let (qualifier, variant) = match ctor.split_once('.') {
+            Some((qualifier, variant)) => (Some(qualifier), variant),
+            None => (None, ctor),
+        };
+        let qualifier = qualifier.or(owner);
+        self.enum_variants
+            .get(variant)
+            .map(|sigs| {
+                sigs.iter()
+                    .filter(|sig| qualifier.is_none_or(|owner| sig.enum_name == owner))
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    // Resolve a constructor name to one signature, reporting an unknown name or a
+    // bare name that several enums in scope declare.
+    fn resolve_variant(&mut self, ctor: &str, owner: Option<&str>) -> Result<EnumVariantSig, ()> {
+        let mut candidates = self.variant_candidates(ctor, owner);
+        match candidates.len() {
+            1 => Ok(candidates.remove(0)),
+            0 => {
+                self.error(format!("unknown enum variant `{ctor}`"));
+                Err(())
+            }
+            _ => {
+                let owners: Vec<&str> = candidates
+                    .iter()
+                    .map(|sig| sig.enum_name.as_str())
+                    .collect();
+                self.error(format!(
+                    "enum variant `{ctor}` is ambiguous between {}; qualify it as `{}.{ctor}`",
+                    owners.join(", "),
+                    owners[0]
+                ));
+                Err(())
+            }
+        }
+    }
+
     // Validate one `Variant(bindings)` arm and bind its payload slots as locals.
     fn check_variant_pattern(
         &mut self,
         enum_name: &str,
+        qualifier: Option<&str>,
         variant: &str,
         bindings: &[String],
         covered: &mut HashSet<String>,
     ) -> Result<(), ()> {
-        let Some(sig) = self.enum_variants.get(variant).cloned() else {
-            self.error(format!("unknown enum variant `{variant}` in match arm"));
-            return Err(());
-        };
-        if sig.enum_name != enum_name {
+        if let Some(qualifier) = qualifier
+            && qualifier != enum_name
+        {
             self.error(format!(
-                "variant `{variant}` is not a variant of `{enum_name}`"
+                "pattern `{qualifier}.{variant}` does not match scrutinee type `{enum_name}`"
             ));
             return Err(());
         }
+        let Some(sig) = self.variant_candidates(variant, Some(enum_name)).pop() else {
+            if self.variant_candidates(variant, None).is_empty() {
+                self.error(format!("unknown enum variant `{variant}` in match arm"));
+            } else {
+                self.error(format!(
+                    "variant `{variant}` is not a variant of `{enum_name}`"
+                ));
+            }
+            return Err(());
+        };
         if bindings.len() != sig.payloads.len() {
             self.error(format!(
                 "variant `{variant}` binds {} value(s) but has {}",
@@ -1525,6 +1586,7 @@ impl SemanticAnalyzer {
         &mut self,
         name: &str,
         fields: &[FieldInit],
+        rest: bool,
     ) -> Result<String, ()> {
         let declared = self.resolve_type_string(name);
         let IrType::Aggregate(declared_fields) = declared else {
@@ -1576,8 +1638,11 @@ impl SemanticAnalyzer {
         if let Some((missing, _)) = declared_fields
             .iter()
             .find(|(field_name, _)| !seen.contains(field_name))
+            && !rest
         {
-            self.error(format!("missing field `{missing}` in `{name}` literal"));
+            self.error(format!(
+                "missing field `{missing}` in `{name}` literal; add `..` to zero-fill"
+            ));
             return Err(());
         }
         Ok(name.to_owned())
@@ -1586,6 +1651,7 @@ impl SemanticAnalyzer {
     fn check_contextual_struct_literal(
         &mut self,
         fields: &[FieldInit],
+        rest: bool,
         expected: &IrType,
     ) -> Result<(), ()> {
         let resolved = self.resolve_named_ir_type(expected);
@@ -1618,10 +1684,13 @@ impl SemanticAnalyzer {
             };
             let expected_ty = self.resolve_named_ir_type(expected_ty);
             // A nested bare literal adopts the field's struct type contextually.
-            if let Expression::Primary(PrimaryExpr::StructLiteral(nested)) = &field.expr
+            if let Expression::Primary(PrimaryExpr::StructLiteral {
+                fields: nested,
+                rest,
+            }) = &field.expr
                 && matches!(expected_ty, IrType::Aggregate(_))
             {
-                self.check_contextual_struct_literal(nested, &expected_ty)?;
+                self.check_contextual_struct_literal(nested, *rest, &expected_ty)?;
                 continue;
             }
             let actual_name = self.infer_expression_type(&field.expr)?;
@@ -1649,6 +1718,17 @@ impl SemanticAnalyzer {
                 return Err(());
             }
         }
+
+        if !rest
+            && let Some((missing, _)) = declared_fields
+                .iter()
+                .find(|(field_name, _)| !seen.contains(field_name))
+        {
+            self.error(format!(
+                "missing field `{missing}` in struct literal; add `..` to zero-fill"
+            ));
+            return Err(());
+        }
         Ok(())
     }
 
@@ -1674,8 +1754,8 @@ impl SemanticAnalyzer {
         }
         let expected_ty = self.resolve_named_ir_type(element_ty);
         for element in elements {
-            if let Expression::Primary(PrimaryExpr::StructLiteral(fields)) = element {
-                self.check_contextual_struct_literal(fields, element_ty)?;
+            if let Expression::Primary(PrimaryExpr::StructLiteral { fields, rest }) = element {
+                self.check_contextual_struct_literal(fields, *rest, element_ty)?;
                 continue;
             }
             let actual_name = self.infer_expression_type(element)?;
@@ -1708,7 +1788,7 @@ impl SemanticAnalyzer {
                 IrType::Pointer(Box::new(self.ast_type_to_ir_type_inner(inner, active)))
             }
             Type::Array(len, inner) => IrType::Array {
-                len: *len,
+                len: len.fixed().unwrap_or(0),
                 element: Box::new(self.ast_type_to_ir_type_inner(inner, active)),
             },
             Type::Slice(inner) => {
@@ -1929,6 +2009,31 @@ impl SemanticAnalyzer {
             );
             Err(())
         }
+    }
+
+    // The link symbol for `Type.method`, accepting the `module__Type_method`
+    // spelling an imported `impl` carries.
+    fn method_symbol(&self, base: &str, method: &str) -> Option<String> {
+        let local = format!("{base}_{method}");
+        if self.function_signatures.contains_key(&local) {
+            return Some(local);
+        }
+        let imported_suffix = format!("__{local}");
+        self.function_signatures
+            .keys()
+            .find(|name| name.ends_with(&imported_suffix))
+            .cloned()
+    }
+
+    // The element type `for ... in` binds for a type providing the iterable
+    // contract (`len` and `at`), or `None` when the type does not provide it.
+    fn iterable_element_type(&self, seq_type: &str) -> Option<String> {
+        let base = self
+            .method_receiver_name(seq_type)
+            .unwrap_or_else(|| seq_type.trim_start_matches('*').to_owned());
+        self.method_symbol(&base, "len")?;
+        let at = self.method_symbol(&base, "at")?;
+        self.function_signatures.get(&at).cloned()
     }
 
     fn infer_index_element_type(&mut self, base_type: &str) -> Result<String, ()> {

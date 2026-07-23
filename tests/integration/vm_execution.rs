@@ -237,6 +237,219 @@ main: () -> i32 {
     );
 }
 
+// An exported generic crosses the module boundary as a body and specializes in the
+// importer, including at a type the provider never instantiates (spec 6.3).
+#[test]
+fn imported_generic_specializes_and_runs() {
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_write_artifacts(false);
+    pipeline.set_module_resolver(Some(Box::new(|name: &str| {
+        (name == "mathlib").then(|| {
+            "export const BIAS = 40
+             export bump: (x: i32) -> i32 { return x + 1 }
+             export max: <T>(a: T, b: T) -> T {
+                 if a > b { return a }
+                 return b
+             }
+             export biased_max: <T>(a: T, b: T) -> T {
+                 return max<T>(a, b)
+             }
+"
+                .to_owned()
+        })
+    })));
+
+    let primary = r#"
+mathlib := import("mathlib")
+main: () -> i32 {
+    wide: i64 = mathlib.max<i64>(2, 7)
+    narrow: i32 = mathlib.biased_max<i32>(mathlib.BIAS, 3)
+    return narrow + wide as i32 - 5
+}
+"#;
+    let closure = pipeline
+        .compile_program_closure("user", primary)
+        .expect("closure compile failed");
+
+    let mut modules: Vec<(&str, &AssembledOutput)> = cached_stdlib_objs()
+        .iter()
+        .map(|(n, o)| (n.as_str(), o))
+        .collect();
+    for (name, obj) in &closure {
+        modules.push((name.as_str(), obj));
+    }
+    let assembled = pipeline
+        .link_assembled_objects(&modules)
+        .expect("link failed");
+    let mut vm = VirtualMachine::new(&assembled);
+    let run = vm.run(5_000_000);
+    assert!(
+        matches!(run.outcome, StepOutcome::Halted(42)),
+        "expected Halted(42), got {:?}; uart: {}",
+        run.outcome,
+        run.uart_output
+    );
+}
+
+// A generic body may call its own module's exported functions: those keep the module
+// prefix and link back to the provider's object rather than being copied.
+#[test]
+fn imported_generic_calls_its_own_module_export() {
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_write_artifacts(false);
+    pipeline.set_module_resolver(Some(Box::new(|name: &str| match name {
+        "left" => Some(
+            "export scale: (x: i32) -> i32 { return x * 2 }
+             export apply: <T>(value: i32) -> i32 { return scale(value) }
+"
+                .to_owned(),
+        ),
+        // A second module exporting the same generic name proves the prefixes stay distinct.
+        "right" => Some(
+            "export scale: (x: i32) -> i32 { return x * 3 }
+             export apply: <T>(value: i32) -> i32 { return scale(value) }
+"
+                .to_owned(),
+        ),
+        _ => None,
+    })));
+
+    let primary = r#"
+left := import("left")
+right := import("right")
+main: () -> i32 {
+    return left.apply<i32>(6) + right.apply<i32>(10)
+}
+"#;
+    let closure = pipeline
+        .compile_program_closure("user", primary)
+        .expect("closure compile failed");
+
+    let mut modules: Vec<(&str, &AssembledOutput)> = cached_stdlib_objs()
+        .iter()
+        .map(|(n, o)| (n.as_str(), o))
+        .collect();
+    for (name, obj) in &closure {
+        modules.push((name.as_str(), obj));
+    }
+    let assembled = pipeline
+        .link_assembled_objects(&modules)
+        .expect("link failed");
+    let mut vm = VirtualMachine::new(&assembled);
+    let run = vm.run(5_000_000);
+    // left: 6*2 = 12, right: 10*3 = 30, total 42.
+    assert!(
+        matches!(run.outcome, StepOutcome::Halted(42)),
+        "expected Halted(42), got {:?}; uart: {}",
+        run.outcome,
+        run.uart_output
+    );
+}
+
+// An exported generic aggregate and a generic function over it specialize in the
+// importer at a type argument the provider never names.
+#[test]
+fn imported_generic_struct_specializes_in_the_importer() {
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_write_artifacts(false);
+    pipeline.set_module_resolver(Some(Box::new(|name: &str| {
+        (name == "boxlib").then(|| {
+            "export struct Box<T> { value: T }
+             export unwrap: <T>(holder: Box<T>*) -> T { return holder.value }
+"
+                .to_owned()
+        })
+    })));
+
+    let primary = r#"
+boxlib := import("boxlib")
+main: () -> i32 {
+    holder: boxlib.Box<i32> = { .value = 42 }
+    return boxlib.unwrap<i32>(&holder)
+}
+"#;
+    let closure = pipeline
+        .compile_program_closure("user", primary)
+        .expect("closure compile failed");
+
+    let mut modules: Vec<(&str, &AssembledOutput)> = cached_stdlib_objs()
+        .iter()
+        .map(|(n, o)| (n.as_str(), o))
+        .collect();
+    for (name, obj) in &closure {
+        modules.push((name.as_str(), obj));
+    }
+    let assembled = pipeline
+        .link_assembled_objects(&modules)
+        .expect("link failed");
+    let mut vm = VirtualMachine::new(&assembled);
+    let run = vm.run(5_000_000);
+    assert!(
+        matches!(run.outcome, StepOutcome::Halted(42)),
+        "expected Halted(42), got {:?}; uart: {}",
+        run.outcome,
+        run.uart_output
+    );
+}
+
+// An imported container iterates through its exported `len`/`at` contract, driven by a
+// generic that also crossed the module boundary (spec 6.3 and 7.3).
+#[test]
+fn imported_container_iterates_in_a_generic() {
+    let mut pipeline = CompilationPipeline::new();
+    pipeline.set_write_artifacts(false);
+    pipeline.set_module_resolver(Some(Box::new(|name: &str| {
+        (name == "bags").then(|| {
+            "export struct Bag { items: i32[3], count: i64 }
+             export impl Bag {
+                 len: (self: Bag*) -> i64 { return self.count }
+                 at: (self: Bag*, index: i64) -> i32 { return self.items[index] }
+             }
+             export total_of: <T>(container: T*) -> i32 {
+                 total: i32 = 0
+                 for value in container { total += value }
+                 return total
+             }
+"
+                .to_owned()
+        })
+    })));
+
+    let primary = r#"
+bags := import("bags")
+main: () -> i32 {
+    bag: bags.Bag = { .. }
+    bag.count = 3
+    bag.items[0] = 20
+    bag.items[1] = 15
+    bag.items[2] = 7
+    return bags.total_of<bags.Bag>(&bag)
+}
+"#;
+    let closure = pipeline
+        .compile_program_closure("user", primary)
+        .expect("closure compile failed");
+
+    let mut modules: Vec<(&str, &AssembledOutput)> = cached_stdlib_objs()
+        .iter()
+        .map(|(n, o)| (n.as_str(), o))
+        .collect();
+    for (name, obj) in &closure {
+        modules.push((name.as_str(), obj));
+    }
+    let assembled = pipeline
+        .link_assembled_objects(&modules)
+        .expect("link failed");
+    let mut vm = VirtualMachine::new(&assembled);
+    let run = vm.run(5_000_000);
+    assert!(
+        matches!(run.outcome, StepOutcome::Halted(42)),
+        "expected Halted(42), got {:?}; uart: {}",
+        run.outcome,
+        run.uart_output
+    );
+}
+
 /// Compile a user program with the peephole pass either on or off, returning the
 /// optimized-or-not token stream alongside the VM run (exit outcome + UART).
 fn run_hll_peephole(src: &str, peephole: bool) -> (StepOutcome, String, usize) {

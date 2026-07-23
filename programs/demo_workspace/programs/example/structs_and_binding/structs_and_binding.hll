@@ -41,8 +41,8 @@ main: () -> i32 {
     moved := translate(origin, 3, 4)
     if moved.x != 3 or moved.y != 4 { return 1 }
 
-    ; Contextual literal from the annotation; omitted fields default to zero.
-    partial: Vec3 = { .x = 7 }
+    ; Contextual literal from the annotation; `..` zero-fills the rest.
+    partial: Vec3 = { .x = 7, .. }
     if partial.x != 7 or partial.y != 0 or partial.z != 0 { return 2 }
 
     ; Contextual literal from the lvalue (the heap pointee).

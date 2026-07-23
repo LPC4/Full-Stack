@@ -500,6 +500,7 @@ impl CompilationPipeline {
                             format!("failed to read exports of \"{path}\": {msg}"),
                         )]
                     })?;
+                // Interfaces and generic templates: prefixed like exports, but not link symbols.
                 let namespaced = hll_to_ir::imports::collect_exported_interfaces(&resolved.source)
                     .map_err(|msg| {
                         vec![Diagnostic::new(
@@ -2025,6 +2026,153 @@ main: () -> i32 {
         let errors = pipeline
             .compile(importer)
             .expect_err("imported aggregate bound must reject a nonconforming type");
+        assert!(
+            errors.to_string().contains("does not implement interface"),
+            "unexpected diagnostics: {errors:?}"
+        );
+    }
+
+    // An exported generic travels as a body, not an `external` signature: the importer
+    // specializes it into its own object (spec 6.3).
+    #[test]
+    fn imported_generic_function_specializes_in_the_importer() {
+        let provider = r#"
+export max: <T>(a: T, b: T) -> T {
+    if a > b { return a }
+    return b
+}
+"#;
+        let mut pipeline = CompilationPipeline::new();
+        pipeline.set_write_artifacts(false);
+        pipeline.set_module_mangling(true);
+        pipeline.set_module_resolver(Some(Box::new(move |name: &str| {
+            (name == "util").then(|| provider.to_owned())
+        })));
+
+        let importer = r#"
+util := import("util")
+main: () -> i32 {
+    return util.max<i32>(19, 23) - 23
+}
+"#;
+        let result = pipeline
+            .compile(importer)
+            .expect("qualified generic call should compile");
+        let ir = result.ir_program.to_string();
+        assert!(
+            ir.contains("define i32 max__i32"),
+            "the template should specialize into the importer's own object: {ir}"
+        );
+    }
+
+    // Type arguments may still be inferred through the module alias.
+    #[test]
+    fn imported_generic_infers_its_type_arguments() {
+        let provider = r#"
+export first: <T>(values: T*) -> T { return values[0] }
+"#;
+        let mut pipeline = CompilationPipeline::new();
+        pipeline.set_write_artifacts(false);
+        pipeline.set_module_mangling(true);
+        pipeline.set_module_resolver(Some(Box::new(move |name: &str| {
+            (name == "util").then(|| provider.to_owned())
+        })));
+
+        let importer = r#"
+util := import("util")
+main: () -> i32 {
+    values: i32[2] = [42, 7]
+    return util.first(&values[0])
+}
+"#;
+        pipeline
+            .compile(importer)
+            .expect("inferred qualified generic call should compile");
+    }
+
+    // A generic body an importer specializes cannot reach the provider's private symbols:
+    // they are local object symbols with no link visibility.
+    #[test]
+    fn exported_generic_referencing_a_private_symbol_is_rejected() {
+        let provider = r#"
+secret: (x: i32) -> i32 { return x + 1 }
+export bump: <T>(value: i32) -> i32 { return secret(value) }
+"#;
+        let mut pipeline = CompilationPipeline::new();
+        pipeline.set_write_artifacts(false);
+        pipeline.set_module_resolver(Some(Box::new(move |name: &str| {
+            (name == "util").then(|| provider.to_owned())
+        })));
+
+        let importer = r#"
+util := import("util")
+main: () -> i32 { return util.bump<i32>(1) }
+"#;
+        let errors = pipeline
+            .compile(importer)
+            .expect_err("private reference in a generic body must be rejected");
+        assert!(
+            errors.to_string().contains("references `secret`"),
+            "unexpected diagnostics: {errors:?}"
+        );
+    }
+
+    // The same rule covers the provider's own imports: the importer has no such alias.
+    #[test]
+    fn exported_generic_referencing_another_module_is_rejected() {
+        let mut pipeline = CompilationPipeline::new();
+        pipeline.set_write_artifacts(false);
+        pipeline.set_module_resolver(Some(Box::new(move |name: &str| match name {
+            "util" => Some(
+                "inner := import(\"inner\")
+                 export bump: <T>(value: i32) -> i32 { return inner.step(value) }
+"
+                .to_owned(),
+            ),
+            "inner" => Some(
+                "export step: (x: i32) -> i32 { return x + 1 }
+"
+                .to_owned(),
+            ),
+            _ => None,
+        })));
+
+        let importer = r#"
+util := import("util")
+main: () -> i32 { return util.bump<i32>(1) }
+"#;
+        let errors = pipeline
+            .compile(importer)
+            .expect_err("a generic body may not reach through the provider's own imports");
+        assert!(
+            errors.to_string().contains("references `inner`"),
+            "unexpected diagnostics: {errors:?}"
+        );
+    }
+
+    // An exported generic keeps its bound: the importer checks it at specialization.
+    #[test]
+    fn imported_generic_bound_is_checked_at_the_importer() {
+        let provider = r#"
+export interface Measurable {
+    area: (self: Self*) -> i32
+}
+export double_area: <T: Measurable>(value: T*) -> i32 { return value.area() + value.area() }
+"#;
+        let mut pipeline = CompilationPipeline::new();
+        pipeline.set_write_artifacts(false);
+        pipeline.set_module_resolver(Some(Box::new(move |name: &str| {
+            (name == "geometry").then(|| provider.to_owned())
+        })));
+
+        let importer = r#"
+geometry := import("geometry")
+struct Point { x: i32 }
+main: () -> i32 { return geometry.double_area<Point>(&Point { .x = 1 }) }
+"#;
+        let errors = pipeline
+            .compile(importer)
+            .expect_err("a nonconforming type must fail the imported bound");
         assert!(
             errors.to_string().contains("does not implement interface"),
             "unexpected diagnostics: {errors:?}"

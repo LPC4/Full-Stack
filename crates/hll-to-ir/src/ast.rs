@@ -72,11 +72,44 @@ impl std::fmt::Display for Path {
     }
 }
 
+/// An array length in type position: a literal from the parser, or a compile-time
+/// constant expression folded to `Fixed` before semantic analysis.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ArrayLen {
+    Fixed(usize),
+    Const(Box<Expression>),
+}
+
+impl ArrayLen {
+    /// The resolved length, or `None` while the constant expression is still folded.
+    pub fn fixed(&self) -> Option<usize> {
+        match self {
+            Self::Fixed(len) => Some(*len),
+            Self::Const(_) => None,
+        }
+    }
+}
+
+impl From<usize> for ArrayLen {
+    fn from(value: usize) -> Self {
+        Self::Fixed(value)
+    }
+}
+
+impl std::fmt::Display for ArrayLen {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Fixed(len) => write!(formatter, "{len}"),
+            Self::Const(_) => formatter.write_str("<const>"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
     Primitive(String),
     Pointer(Box<Self>),
-    Array(usize, Box<Self>),
+    Array(ArrayLen, Box<Self>),
     // T[] slice: a {ptr, len} fat pointer, bounds-checked at use.
     Slice(Box<Self>),
     Function {
@@ -409,10 +442,16 @@ pub enum PrimaryExpr {
         arguments: Vec<Expression>,
     },
     ArrayLiteral(Vec<Expression>),
-    StructLiteral(Vec<FieldInit>),
+    // `rest` records a trailing `..`, which zero-fills every unnamed field.
+    // Without it a literal must set every field of its struct.
+    StructLiteral {
+        fields: Vec<FieldInit>,
+        rest: bool,
+    },
     NamedStructLiteral {
         name: String,
         fields: Vec<FieldInit>,
+        rest: bool,
     },
     FieldAccess {
         expr: Box<Expression>,

@@ -85,17 +85,18 @@ pub struct HighLevelCompiler {
     function_declarations: std::collections::HashMap<String, FunctionDecl>,
     pending_global_strings: Vec<IrGlobalString>,
     global_vars: std::collections::HashMap<String, IrType>,
-    /// Prefix for rodata string-literal labels (e.g. `str_` produces `str_0`, `str_1`, ...).
-    /// Set per compilation unit so that two units linked together never produce duplicate label names.
+    // Prefix for rodata string-literal labels (e.g. `str_` produces `str_0`, `str_1`, ...).
+    // Set per compilation unit so two linked units never produce duplicate label names.
     pub string_prefix: String,
     prelude_types: Vec<(String, IrType)>,
     // Return type of the function being lowered, so `return` literals get its width.
     current_return_ty: Option<IrType>,
     // Monotonic id for naming `for`-loop desugaring temporaries uniquely.
     for_loop_id: usize,
-    // Enums: name -> layout, and variant-constructor name -> variant info.
+    // Enums: name -> layout, and variant-constructor name -> the variants of that
+    // name (one per enum declaring it; a bare use must be unambiguous).
     enum_layouts: std::collections::HashMap<String, EnumLayout>,
-    enum_variants: std::collections::HashMap<String, VariantInfo>,
+    enum_variants: std::collections::HashMap<String, Vec<VariantInfo>>,
     // Monotonic id for naming `match` arm binding temporaries uniquely.
     match_id: usize,
     // Import aliases bound to the string module (which carries the format

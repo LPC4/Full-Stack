@@ -1,6 +1,6 @@
 use crate::ast::{
-    AssignTarget, Block, DeclNode, Declaration, Expression, FieldInit, ForIter, InterfaceMethod,
-    MatchArm, Pattern, PrimaryExpr, Program, ReturnType, Statement, Type, Variant,
+    ArrayLen, AssignTarget, Block, DeclNode, Declaration, Expression, FieldInit, ForIter,
+    InterfaceMethod, MatchArm, Pattern, PrimaryExpr, Program, ReturnType, Statement, Type, Variant,
 };
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -476,7 +476,7 @@ fn validate_declaration_bound_instantiations(
                         check_expr(value)?;
                     }
                 }
-                PrimaryExpr::StructLiteral(fields)
+                PrimaryExpr::StructLiteral { fields, .. }
                 | PrimaryExpr::NamedStructLiteral { fields, .. } => {
                     for field in fields {
                         if let Some(ty) = &field.ty {
@@ -1065,7 +1065,8 @@ fn infer_expression_calls(
                     )?;
                 }
             }
-            PrimaryExpr::StructLiteral(fields) | PrimaryExpr::NamedStructLiteral { fields, .. } => {
+            PrimaryExpr::StructLiteral { fields, .. }
+            | PrimaryExpr::NamedStructLiteral { fields, .. } => {
                 for field in fields {
                     infer_expression_calls(
                         &mut field.expr,
@@ -1237,7 +1238,7 @@ pub(crate) fn infer_expression_type(
             let element = elements.first().and_then(|element| {
                 infer_expression_type(element, environment, generic_signatures, function_returns)
             })?;
-            Some(Type::Array(elements.len(), Box::new(element)))
+            Some(Type::Array(elements.len().into(), Box::new(element)))
         }
         Expression::Primary(PrimaryExpr::NamedStructLiteral { name, .. }) => Some(Type::Named {
             name: name.clone().into(),
@@ -1272,7 +1273,7 @@ pub(crate) fn infer_expression_type(
         }
         Expression::Match { .. } | Expression::Try(_) => None,
         Expression::Primary(
-            PrimaryExpr::StructLiteral(_)
+            PrimaryExpr::StructLiteral { .. }
             | PrimaryExpr::FieldAccess { .. }
             | PrimaryExpr::Slice { .. }
             | PrimaryExpr::CallExpr { .. }
@@ -1582,7 +1583,8 @@ fn rewrite_expression_calls(
                     rewrite_expression_calls(element, substitutions, definitions, queue, queued)?;
                 }
             }
-            PrimaryExpr::StructLiteral(fields) | PrimaryExpr::NamedStructLiteral { fields, .. } => {
+            PrimaryExpr::StructLiteral { fields, .. }
+            | PrimaryExpr::NamedStructLiteral { fields, .. } => {
                 for FieldInit { expr, .. } in fields {
                     rewrite_expression_calls(expr, substitutions, definitions, queue, queued)?;
                 }
@@ -1763,7 +1765,8 @@ pub(crate) fn substitute_expression_types(
                     substitute_expression_types(element, substitutions);
                 }
             }
-            PrimaryExpr::StructLiteral(fields) | PrimaryExpr::NamedStructLiteral { fields, .. } => {
+            PrimaryExpr::StructLiteral { fields, .. }
+            | PrimaryExpr::NamedStructLiteral { fields, .. } => {
                 for field in fields {
                     if let Some(ty) = &mut field.ty {
                         *ty = substitute_type(ty, substitutions);
@@ -1840,6 +1843,19 @@ fn substitute_target_types(target: &mut AssignTarget, substitutions: &Substituti
     }
 }
 
+// Substitute inside an unresolved constant length so `T[Owner<T>.N]` becomes
+// concrete with the rest of the specialized clone.
+fn substitute_array_len(len: &ArrayLen, substitutions: &Substitutions) -> ArrayLen {
+    match len {
+        ArrayLen::Fixed(value) => ArrayLen::Fixed(*value),
+        ArrayLen::Const(expr) => {
+            let mut expr = expr.clone();
+            substitute_expression_types(&mut expr, substitutions);
+            ArrayLen::Const(expr)
+        }
+    }
+}
+
 pub(crate) fn substitute_type(ty: &Type, substitutions: &Substitutions) -> Type {
     match ty {
         Type::Named { name, args } if args.is_empty() => substitutions
@@ -1866,9 +1882,10 @@ pub(crate) fn substitute_type(ty: &Type, substitutions: &Substitutions) -> Type 
             member: member.clone(),
         },
         Type::Pointer(inner) => Type::Pointer(Box::new(substitute_type(inner, substitutions))),
-        Type::Array(len, inner) => {
-            Type::Array(*len, Box::new(substitute_type(inner, substitutions)))
-        }
+        Type::Array(len, inner) => Type::Array(
+            substitute_array_len(len, substitutions),
+            Box::new(substitute_type(inner, substitutions)),
+        ),
         Type::Slice(inner) => Type::Slice(Box::new(substitute_type(inner, substitutions))),
         Type::Function {
             params,
@@ -1910,7 +1927,10 @@ fn type_mangle(ty: &Type) -> String {
     match ty {
         Type::Primitive(name) => name.clone(),
         Type::Pointer(inner) => format!("ptr_{}", type_mangle(inner)),
-        Type::Array(len, inner) => format!("arr{len}_{}", type_mangle(inner)),
+        Type::Array(len, inner) => match len.fixed() {
+            Some(len) => format!("arr{len}_{}", type_mangle(inner)),
+            None => format!("arrN_{}", type_mangle(inner)),
+        },
         Type::Slice(inner) => format!("slice_{}", type_mangle(inner)),
         Type::Function {
             params,
@@ -2333,7 +2353,7 @@ impl EnumSpecializer {
                         self.rewrite_expr_types(element);
                     }
                 }
-                PrimaryExpr::StructLiteral(fields)
+                PrimaryExpr::StructLiteral { fields, .. }
                 | PrimaryExpr::NamedStructLiteral { fields, .. } => {
                     for field in fields {
                         if let Some(ty) = &mut field.ty {
@@ -2560,7 +2580,7 @@ impl EnumSpecializer {
                         self.rewrite_expr_uses(item, element.as_ref(), env);
                     }
                 }
-                PrimaryExpr::StructLiteral(fields)
+                PrimaryExpr::StructLiteral { fields, .. }
                 | PrimaryExpr::NamedStructLiteral { fields, .. } => {
                     for field in fields {
                         self.rewrite_expr_uses(&mut field.expr, None, env);
@@ -2605,11 +2625,15 @@ impl EnumSpecializer {
     // returning its mangled variant name.
     fn constructor_target(&self, name: &str, expected: Option<&Type>) -> Option<String> {
         let mangled_enum = expected_enum_name(expected)?;
-        let owner = self.variant_owner.get(name)?;
+        let (qualifier, variant) = split_variant_name(name);
+        let owner = self.variant_owner.get(variant)?;
         if self.base_of.get(&mangled_enum)? != owner {
             return None;
         }
-        self.variant_maps.get(&mangled_enum)?.get(name).cloned()
+        if qualifier.is_some_and(|qualifier| qualifier != owner) {
+            return None;
+        }
+        self.variant_maps.get(&mangled_enum)?.get(variant).cloned()
     }
 
     // A payload-variant constructor call (`Some(x)`). Returns the mangled variant
@@ -2622,7 +2646,7 @@ impl EnumSpecializer {
     ) -> Option<(String, Vec<Type>)> {
         let mangled = self.constructor_target(name, expected)?;
         let mangled_enum = expected_enum_name(expected)?;
-        let payloads = self.payload_types(&mangled_enum, name)?;
+        let payloads = self.payload_types(&mangled_enum, split_variant_name(name).1)?;
         if payloads.len() != arity {
             return None;
         }
@@ -2645,7 +2669,9 @@ impl EnumSpecializer {
             if let (
                 Some(mangled_enum),
                 Pattern::Variant {
-                    variant, bindings, ..
+                    enum_name,
+                    variant,
+                    bindings,
                 },
             ) = (&mangled_enum, &mut arm.pattern)
             {
@@ -2662,6 +2688,11 @@ impl EnumSpecializer {
                     .and_then(|map| map.get(variant))
                 {
                     *variant = mangled_variant.clone();
+                    // A qualifier names the generic base; the arm now matches one
+                    // instantiation, so it must name that instantiation.
+                    if enum_name.is_some() {
+                        *enum_name = Some(mangled_enum.clone());
+                    }
                 }
             }
             self.rewrite_block_uses(&mut arm.body, &mut scoped);
@@ -2780,6 +2811,14 @@ fn named(name: &str) -> Type {
     Type::Named {
         name: name.to_owned().into(),
         args: Vec::new(),
+    }
+}
+
+// `Enum.Variant` splits into its qualifier and bare variant name.
+fn split_variant_name(ctor: &str) -> (Option<&str>, &str) {
+    match ctor.split_once('.') {
+        Some((qualifier, variant)) => (Some(qualifier), variant),
+        None => (None, ctor),
     }
 }
 

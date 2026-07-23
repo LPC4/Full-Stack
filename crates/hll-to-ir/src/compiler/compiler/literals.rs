@@ -613,8 +613,8 @@ impl HighLevelCompiler {
         expr: &Expression,
         target_ty: &IrType,
     ) -> Option<LoweredValue> {
-        if let Expression::Primary(crate::ast::PrimaryExpr::StructLiteral(fields)) = expr {
-            return self.lower_contextual_struct_literal(fields, target_ty);
+        if let Expression::Primary(crate::ast::PrimaryExpr::StructLiteral { fields, rest }) = expr {
+            return self.lower_contextual_struct_literal(fields, *rest, target_ty);
         }
         // An array literal lowers each element against the declared element
         // type, so contextual struct literals (`Point[N] = [{..}, ..]`) and
@@ -711,6 +711,7 @@ impl HighLevelCompiler {
     fn lower_contextual_struct_literal(
         &mut self,
         fields: &[crate::ast::FieldInit],
+        rest: bool,
         target_ty: &IrType,
     ) -> Option<LoweredValue> {
         let resolved = self.resolve_named_type(target_ty);
@@ -754,6 +755,13 @@ impl HighLevelCompiler {
             let (offset, _) = self.aggregate_field_offset_and_type(&declared_fields, field_name)?;
             let value = match values.remove(field_name) {
                 Some(value) => value.value,
+                // Unnamed fields are an error unless the literal opted into zero-fill.
+                None if !rest => {
+                    self.context.error(format!(
+                        "missing field `{field_name}` in struct literal; add `..` to zero-fill"
+                    ));
+                    return None;
+                }
                 None => self.lower_zero_value(field_ty)?.value,
             };
             self.push_instruction(IrInstruction::Store {
@@ -771,7 +779,7 @@ impl HighLevelCompiler {
         })
     }
 
-    fn lower_zero_value(&mut self, ty: &IrType) -> Option<LoweredValue> {
+    pub(super) fn lower_zero_value(&mut self, ty: &IrType) -> Option<LoweredValue> {
         let resolved = self.resolve_named_type(ty);
         let value = match resolved {
             IrType::Integer(_) => IrValue::Integer(0),

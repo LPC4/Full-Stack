@@ -395,6 +395,11 @@ fn example_compile_time_math_runs_in_kernel_userspace() {
 }
 
 #[test]
+fn example_hll2_completion_showcase_runs_in_kernel_userspace() {
+    run_example_manifest_in_kernel("hll2_completion_showcase");
+}
+
+#[test]
 fn user_malloc_and_free_work_in_kernel_userspace() {
     run_example_in_kernel(
         r#"

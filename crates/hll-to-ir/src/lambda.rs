@@ -264,7 +264,8 @@ fn collect_primary_binders(primary: &PrimaryExpr, binders: &mut HashSet<String>)
                 collect_expression_binders(element, binders);
             }
         }
-        PrimaryExpr::StructLiteral(fields) | PrimaryExpr::NamedStructLiteral { fields, .. } => {
+        PrimaryExpr::StructLiteral { fields, .. }
+        | PrimaryExpr::NamedStructLiteral { fields, .. } => {
             for field in fields {
                 collect_expression_binders(&field.expr, binders);
             }

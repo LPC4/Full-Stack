@@ -197,12 +197,50 @@ struct Point {
 }
 
 main: () -> i32 {
-    point: Point = { .x = 7 }
+    point: Point = { .x = 7, .. }
     return point.x + point.y
 }
 "#,
         7,
     );
+}
+
+#[test]
+fn named_literal_rest_marker_zero_fills() {
+    // `..` works in a named literal too, so both forms share one rule.
+    assert_exit(
+        r#"
+struct Point {
+    x: i32
+    y: i32
+}
+
+main: () -> i32 {
+    point := Point { .x = 7, .. }
+    return point.x + point.y
+}
+"#,
+        7,
+    );
+}
+
+#[test]
+fn omitted_field_without_rest_marker_is_rejected() {
+    for literal in ["point: Point = { .x = 7 }", "point := Point { .x = 7 }"] {
+        assert_compile_fails(&format!(
+            r#"
+struct Point {{
+    x: i32
+    y: i32
+}}
+
+main: () -> i32 {{
+    {literal}
+    return point.x
+}}
+"#
+        ));
+    }
 }
 
 #[test]
@@ -767,7 +805,7 @@ struct Point {
 }
 
 main: () -> i32 {
-    pts: Point[2] = [{ .x = 1 }, { .x = 2, .y = 7 }]
+    pts: Point[2] = [{ .x = 1, .. }, { .x = 2, .y = 7 }]
     return pts[0].x + pts[0].y + pts[1].x + pts[1].y
 }
 "#,
@@ -1268,6 +1306,151 @@ main: () -> i32 {
             return r
         }
         Square -> {
+            return 0
+        }
+    }
+    return -1
+}
+"#,
+    );
+}
+
+#[test]
+fn qualified_variant_construction_and_patterns() {
+    // `Enum.Variant` both constructs and matches; unit variants qualify too.
+    assert_exit(
+        r#"
+enum Shape {
+    Circle(i32)
+    Rect(i32, i32)
+    Empty
+}
+
+main: () -> i32 {
+    s: Shape = Shape.Rect(6, 7)
+    e: Shape = Shape.Empty
+    match e {
+        Shape.Empty -> {}
+        _ -> { return -1 }
+    }
+    match s {
+        Shape.Circle(r) -> {
+            return r * r
+        }
+        Shape.Rect(w, h) -> {
+            return w * h
+        }
+        Shape.Empty -> {
+            return 0
+        }
+    }
+    return -1
+}
+"#,
+        42,
+    );
+}
+
+#[test]
+fn variant_names_may_repeat_across_enums() {
+    // Two enums declare `Busy`; the qualifier picks one and match arms resolve
+    // bare names against the scrutinee's enum.
+    assert_exit(
+        r#"
+enum Link {
+    Idle
+    Busy(i32)
+}
+
+enum Disk {
+    Busy(i32)
+    Spun
+}
+
+main: () -> i32 {
+    l: Link = Link.Busy(40)
+    d: Disk = Disk.Busy(2)
+    a: i32 = match l {
+        Busy(n) -> n
+        Idle -> 0
+    }
+    b: i32 = match d {
+        Busy(n) -> n
+        Spun -> 0
+    }
+    return a + b
+}
+"#,
+        42,
+    );
+}
+
+#[test]
+fn qualified_variants_work_on_generic_enums() {
+    // The qualifier names the generic base; specialization rewrites the arm to
+    // the instantiation it matches.
+    assert_exit(
+        r#"
+main: () -> i32 {
+    o: Option<i32> = Option.Some(42)
+    match o {
+        Option.Some(v) -> {
+            return v
+        }
+        Option.None -> {
+            return 0
+        }
+    }
+    return -1
+}
+"#,
+        42,
+    );
+}
+
+#[test]
+fn ambiguous_bare_variant_is_rejected() {
+    assert_compile_fails(
+        r#"
+enum Link {
+    Idle
+    Busy(i32)
+}
+
+enum Disk {
+    Busy(i32)
+    Spun
+}
+
+main: () -> i32 {
+    l: Link = Busy(1)
+    return 0
+}
+"#,
+    );
+}
+
+#[test]
+fn qualified_pattern_from_another_enum_is_rejected() {
+    assert_compile_fails(
+        r#"
+enum Link {
+    Idle
+    Busy(i32)
+}
+
+enum Disk {
+    Busy(i32)
+    Spun
+}
+
+main: () -> i32 {
+    l: Link = Link.Idle
+    match l {
+        Disk.Busy(n) -> {
+            return n
+        }
+        _ -> {
             return 0
         }
     }
@@ -2597,5 +2780,256 @@ main: () -> i32 {
 }
 "#,
         42,
+    );
+}
+
+// --- Constant array lengths in type position (spec 6.2) ---
+
+#[test]
+fn const_declaration_sizes_an_array() {
+    assert_exit(
+        r#"
+const CAP = 8
+main: () -> i32 {
+    buffer: i32[CAP] = [0, 0, 0, 0, 0, 0, 0, 0]
+    i: i32 = 0
+    while i < CAP {
+        buffer[i] = i * 2
+        i += 1
+    }
+    return buffer[CAP - 1] + 28
+}
+"#,
+        42,
+    );
+}
+
+#[test]
+fn constant_expression_sizes_an_array() {
+    assert_exit(
+        r#"
+const LANES = 4
+const ROWS = 2
+main: () -> i32 {
+    grid: i32[LANES * ROWS] = [1, 2, 3, 4, 5, 6, 7, 8]
+    total: i32 = 0
+    for value in grid {
+        total += value
+    }
+    return total + 6
+}
+"#,
+        42,
+    );
+}
+
+#[test]
+fn associated_constant_sizes_an_array() {
+    assert_exit(
+        r#"
+struct Matrix { rows: i32 }
+impl Matrix {
+    const LANES = 4
+}
+main: () -> i32 {
+    lane: i64[Matrix.LANES] = [10, 11, 12, 9]
+    total: i64 = 0
+    for value in lane {
+        total += value
+    }
+    return total as i32
+}
+"#,
+        42,
+    );
+}
+
+#[test]
+fn generic_associated_constant_sizes_an_array() {
+    assert_exit(
+        r#"
+struct Matrix<T> { value: T }
+impl Matrix<T> {
+    const LANES = 3
+}
+fill: <T>(seed: i64) -> i64 {
+    lane: i64[Matrix<T>.LANES] = [0, 0, 0]
+    i: i32 = 0
+    while i < Matrix<T>.LANES {
+        lane[i] = seed + i as i64
+        i += 1
+    }
+    return lane[0] + lane[1] + lane[2]
+}
+main: () -> i32 {
+    return fill<i32>(13) as i32
+}
+"#,
+        42,
+    );
+}
+
+#[test]
+fn constant_array_length_sizes_a_struct_field() {
+    assert_exit(
+        r#"
+const SLOTS = 3
+struct Bucket { items: i32[SLOTS] }
+main: () -> i32 {
+    bucket: Bucket = Bucket { .. }
+    bucket.items[0] = 40
+    bucket.items[1] = 1
+    bucket.items[2] = 1
+    total: i32 = 0
+    i: i32 = 0
+    while i < SLOTS {
+        total += bucket.items[i]
+        i += 1
+    }
+    return total
+}
+"#,
+        42,
+    );
+}
+
+#[test]
+fn non_constant_array_length_is_rejected() {
+    assert_compile_fails(
+        r#"
+size: () -> i32 { return 4 }
+main: () -> i32 {
+    buffer: i32[size()] = [0, 0, 0, 0]
+    return buffer[0]
+}
+"#,
+    );
+}
+
+// --- `for ... in` over user types (spec 7.3) ---
+
+#[test]
+fn for_in_iterates_a_user_type() {
+    assert_exit(
+        r#"
+struct Bag { items: i32[4], count: i64 }
+impl Bag {
+    len: (self: Bag*) -> i64 { return self.count }
+    at: (self: Bag*, index: i64) -> i32 { return self.items[index] }
+}
+main: () -> i32 {
+    bag: Bag = { .. }
+    bag.count = 3
+    bag.items[0] = 20
+    bag.items[1] = 15
+    bag.items[2] = 7
+    bag.items[3] = 99
+    total: i32 = 0
+    for value in bag {
+        total += value
+    }
+    return total
+}
+"#,
+        42,
+    );
+}
+
+#[test]
+fn for_in_over_a_user_type_honors_break_and_continue() {
+    assert_exit(
+        r#"
+struct Bag { items: i32[5], count: i64 }
+impl Bag {
+    len: (self: Bag*) -> i64 { return self.count }
+    at: (self: Bag*, index: i64) -> i32 { return self.items[index] }
+}
+main: () -> i32 {
+    bag: Bag = { .. }
+    bag.count = 5
+    bag.items[0] = 40
+    bag.items[1] = 0
+    bag.items[2] = 2
+    bag.items[3] = 100
+    bag.items[4] = 100
+    total: i32 = 0
+    for value in bag {
+        if value == 0 { continue }
+        if value == 100 { break }
+        total += value
+    }
+    return total
+}
+"#,
+        42,
+    );
+}
+
+#[test]
+fn for_in_over_a_type_without_the_contract_is_rejected() {
+    assert_compile_fails(
+        r#"
+struct Bag { count: i64 }
+impl Bag {
+    len: (self: Bag*) -> i64 { return self.count }
+}
+main: () -> i32 {
+    bag: Bag = { .count = 2 }
+    total: i32 = 0
+    for value in bag {
+        total += value
+    }
+    return total
+}
+"#,
+    );
+}
+
+#[test]
+fn generic_function_iterates_its_specialized_argument() {
+    assert_exit(
+        r#"
+struct Bag { items: i32[3], count: i64 }
+impl Bag {
+    len: (self: Bag*) -> i64 { return self.count }
+    at: (self: Bag*, index: i64) -> i32 { return self.items[index] }
+}
+total_of: <T>(container: T*) -> i32 {
+    total: i32 = 0
+    for value in container {
+        total += value
+    }
+    return total
+}
+main: () -> i32 {
+    bag: Bag = { .. }
+    bag.count = 3
+    bag.items[0] = 20
+    bag.items[1] = 15
+    bag.items[2] = 7
+    return total_of<Bag>(&bag)
+}
+"#,
+        42,
+    );
+}
+
+#[test]
+fn generic_iteration_over_a_type_without_the_contract_is_rejected() {
+    assert_compile_fails(
+        r#"
+struct Plain { value: i32 }
+total_of: <T>(container: T*) -> i32 {
+    total: i32 = 0
+    for value in container {
+        total += value
+    }
+    return total
+}
+main: () -> i32 {
+    plain: Plain = { .value = 1 }
+    return total_of<Plain>(&plain)
+}
+"#,
     );
 }

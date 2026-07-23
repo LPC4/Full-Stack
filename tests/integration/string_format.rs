@@ -185,11 +185,11 @@ main: () -> i32 {
         }
         Err(e) -> {
             match e {
-                FormatBufferTooSmall(required) -> {
+                BufferTooSmall(required) -> {
                     ; required must be the complete byte count: "value=12345"
                     if required != 11 { return 2 }
                 }
-                FormatSizeOverflow -> {
+                SizeOverflow -> {
                     return 3
                 }
             }

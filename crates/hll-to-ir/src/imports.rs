@@ -4,8 +4,8 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::{
-    AssignTarget, BinaryOp, BindingField, Block, DeclNode, Expression, FieldDecl, FieldInit,
-    ForIter, FormatSegment, Literal, MatchArm, Parameter, Pattern, PrimaryExpr, Program,
+    ArrayLen, AssignTarget, BinaryOp, BindingField, Block, DeclNode, Expression, FieldDecl,
+    FieldInit, ForIter, FormatSegment, Literal, MatchArm, Parameter, Pattern, PrimaryExpr, Program,
     ReturnType, Statement, StructDestructureField, Type, UnaryOp, Variant,
 };
 use crate::lexer::Lexer;
@@ -99,6 +99,8 @@ pub fn collect_exported_link_symbols(source: &str) -> Result<HashSet<String>, St
         .collect())
 }
 
+/// Exported names prefixed by a closure build without becoming link symbols:
+/// interfaces, and generic functions the importer specializes into its own object.
 pub fn collect_exported_interfaces(source: &str) -> Result<HashSet<String>, String> {
     let program = parse_module(source)?;
     Ok(program
@@ -107,6 +109,12 @@ pub fn collect_exported_interfaces(source: &str) -> Result<HashSet<String>, Stri
         .filter(|decl| decl.exported)
         .filter_map(|decl| match &decl.decl {
             DeclNode::Interface { name, .. } => Some(name.clone()),
+            DeclNode::Function {
+                name,
+                generics,
+                is_extern: false,
+                ..
+            } if !generics.is_empty() => Some(name.clone()),
             _ => None,
         })
         .collect())
@@ -295,7 +303,7 @@ fn collect_primary_refs(primary: &PrimaryExpr, refs: &mut HashSet<String>) {
                 collect_expr_refs(element, refs);
             }
         }
-        PrimaryExpr::StructLiteral(fields) => {
+        PrimaryExpr::StructLiteral { fields, .. } => {
             for field in fields {
                 collect_expr_refs(&field.expr, refs);
             }
@@ -448,7 +456,14 @@ fn rewrite_bounds(
 fn rewrite_type(ty: &mut Type, aliases: &HashMap<String, ModuleAlias>) -> Result<(), String> {
     match ty {
         Type::Primitive(_) => {}
-        Type::Pointer(inner) | Type::Array(_, inner) | Type::Slice(inner) => {
+        Type::Pointer(inner) | Type::Slice(inner) => {
+            rewrite_type(inner, aliases)?;
+        }
+        // An array length may name an imported constant.
+        Type::Array(len, inner) => {
+            if let ArrayLen::Const(expr) = len {
+                rewrite_expr(expr, aliases)?;
+            }
             rewrite_type(inner, aliases)?;
         }
         Type::Function {
@@ -643,11 +658,18 @@ fn rewrite_primary_children(
 ) -> Result<(), String> {
     match primary {
         PrimaryExpr::Grouped(inner) => rewrite_expr(inner, aliases)?,
+        // A qualified generic call parses as a dotted name (see the parser);
+        // resolve it here like any other member reference.
         PrimaryExpr::FunctionCall {
+            name,
             type_arguments,
             arguments,
-            ..
         } => {
+            if let Some((base, member)) = name.split_once('.')
+                && aliases.contains_key(base)
+            {
+                *name = resolve_member(aliases, base, member)?;
+            }
             for ty in type_arguments {
                 rewrite_type(ty, aliases)?;
             }
@@ -684,7 +706,7 @@ fn rewrite_primary_children(
                 rewrite_expr(element, aliases)?;
             }
         }
-        PrimaryExpr::StructLiteral(fields) => {
+        PrimaryExpr::StructLiteral { fields, .. } => {
             for field in fields {
                 rewrite_expr(&mut field.expr, aliases)?;
             }
@@ -853,12 +875,26 @@ pub fn mangle_module(program: &mut Program, prefix: &str, exempt: &HashSet<Strin
     if targets.is_empty() {
         return;
     }
-    Mangler {
+    mangle_with_targets(program, prefix, targets, &HashSet::new());
+}
+
+// Rename `targets` (definitions and unshadowed references) to `prefix__name`, returning
+// the `rejected` names the walk saw as live references.
+fn mangle_with_targets(
+    program: &mut Program,
+    prefix: &str,
+    targets: HashSet<String>,
+    rejected: &HashSet<String>,
+) -> Vec<String> {
+    let mut mangler = Mangler {
         prefix,
         targets,
+        rejected,
+        seen_rejected: Vec::new(),
         scopes: Vec::new(),
-    }
-    .run(program);
+    };
+    mangler.run(program);
+    mangler.seen_rejected
 }
 
 /// Walks an AST renaming references to a module's mangled top-level symbols, honoring local
@@ -866,6 +902,9 @@ pub fn mangle_module(program: &mut Program, prefix: &str, exempt: &HashSet<Strin
 struct Mangler<'a> {
     prefix: &'a str,
     targets: HashSet<String>,
+    // Names that must not be referenced at all; each live reference is recorded.
+    rejected: &'a HashSet<String>,
+    seen_rejected: Vec<String>,
     scopes: Vec<HashSet<String>>,
 }
 
@@ -915,13 +954,22 @@ impl Mangler<'_> {
     }
 
     fn rename_def(&self, name: &mut String) {
-        if self.targets.contains(name) {
+        if !self.prefix.is_empty() && self.targets.contains(name) {
             *name = format!("{}__{}", self.prefix, name);
         }
     }
 
-    fn mangle_ref(&self, name: &mut String) {
-        if self.targets.contains(name) && !self.scopes.iter().any(|s| s.contains(name)) {
+    fn mangle_ref(&mut self, name: &mut String) {
+        if self.scopes.iter().any(|s| s.contains(name)) {
+            return;
+        }
+        // A qualified generic call carries its module in a dotted name.
+        let base = name.split_once('.').map_or(name.as_str(), |(base, _)| base);
+        if self.rejected.contains(base) {
+            self.seen_rejected.push(base.to_owned());
+            return;
+        }
+        if !self.prefix.is_empty() && self.targets.contains(name) {
             *name = format!("{}__{}", self.prefix, name);
         }
     }
@@ -1055,7 +1103,7 @@ impl Mangler<'_> {
                     self.expr(element);
                 }
             }
-            PrimaryExpr::StructLiteral(fields) => {
+            PrimaryExpr::StructLiteral { fields, .. } => {
                 for field in fields {
                     self.expr(&mut field.expr);
                 }
@@ -1139,6 +1187,7 @@ pub fn extract_interface_prefixed(source: &str, prefix: &str) -> Result<String, 
             _ => None,
         })
         .collect::<HashSet<_>>();
+    let (exported_symbols, private_symbols) = module_symbol_sets(&program);
     let mut out = String::new();
     for decl in &program.declarations {
         if !decl.exported {
@@ -1152,12 +1201,91 @@ pub fn extract_interface_prefixed(source: &str, prefix: &str) -> Result<String, 
                 "exported declaration exposes private interface `{private}` in its bounds"
             ));
         }
-        if let Some(rendered) = render_export(&decl.decl, prefix)? {
+        let node = match &decl.decl {
+            DeclNode::Function { generics, .. } if !generics.is_empty() => {
+                prepare_generic_export(&decl.decl, prefix, &exported_symbols, &private_symbols)?
+            }
+            other => other.clone(),
+        };
+        if let Some(rendered) = render_export(&node, prefix)? {
             out.push_str(&rendered);
             out.push('\n');
         }
     }
     Ok(out)
+}
+
+// A module's exported fn/global names, and the names an importer could never resolve
+// (private fn/globals, own import aliases). `external` is already a link reference.
+fn module_symbol_sets(program: &Program) -> (HashSet<String>, HashSet<String>) {
+    let mut exported = HashSet::new();
+    let mut unreachable_names = HashSet::new();
+    for decl in &program.declarations {
+        let name = match &decl.decl {
+            DeclNode::ModuleImport { alias, .. } => {
+                unreachable_names.insert(alias.clone());
+                continue;
+            }
+            DeclNode::Function {
+                name,
+                is_extern: false,
+                ..
+            }
+            | DeclNode::Variable {
+                name,
+                is_extern: false,
+                ..
+            }
+            | DeclNode::InferredVariable { name, .. } => name,
+            _ => continue,
+        };
+        if decl.exported {
+            exported.insert(name.clone());
+        } else {
+            unreachable_names.insert(name.clone());
+        }
+    }
+    (exported, unreachable_names)
+}
+
+// An exported generic function whose body travels to the importer: its references to the
+// module's own exports take the module prefix, and unresolvable ones are rejected.
+fn prepare_generic_export(
+    decl: &DeclNode,
+    prefix: &str,
+    exported: &HashSet<String>,
+    unreachable_names: &HashSet<String>,
+) -> Result<DeclNode, String> {
+    let DeclNode::Function { name, body, .. } = decl else {
+        unreachable!("only functions reach the generic export path");
+    };
+    let name = name.clone();
+    if body.is_none() {
+        return Err(format!(
+            "exported generic function `{name}` must have a body"
+        ));
+    }
+    let mut carrier = Program {
+        declarations: vec![crate::ast::Declaration {
+            decl: decl.clone(),
+            exported: true,
+        }],
+        statements: Vec::new(),
+    };
+    let rejected = mangle_with_targets(&mut carrier, prefix, exported.clone(), unreachable_names);
+    if let Some(reference) = rejected.first() {
+        return Err(format!(
+            "exported generic function `{name}` references `{reference}`, which an importer \
+             cannot resolve; only this module's own exports may appear in a generic body"
+        ));
+    }
+    let mut node = carrier.declarations.remove(0).decl;
+    // The definition name is mangled along with the other exports; render_export
+    // applies the prefix itself, so restore it here.
+    if let DeclNode::Function { name: def, .. } = &mut node {
+        *def = name;
+    }
+    Ok(node)
 }
 
 /// Render one exported declaration as an interface line, or `None` if it contributes
@@ -1467,7 +1595,7 @@ fn render_type(ty: &Type) -> Result<String, String> {
     Ok(match ty {
         Type::Primitive(name) => name.clone(),
         Type::Pointer(inner) => format!("{}*", render_type(inner)?),
-        Type::Array(size, inner) => format!("{}[{}]", render_type(inner)?, size),
+        Type::Array(size, inner) => format!("{}[{}]", render_type(inner)?, render_array_len(size)?),
         Type::Slice(inner) => format!("{}[]", render_type(inner)?),
         Type::Function {
             params,
@@ -1503,6 +1631,15 @@ fn render_type(ty: &Type) -> Result<String, String> {
             return Err("associated type aliases cannot appear in exported signatures".to_owned());
         }
     })
+}
+
+// An exported array length: a literal, or the constant expression written for it.
+// An importer folds the expression against the interface's own exported constants.
+fn render_array_len(len: &ArrayLen) -> Result<String, String> {
+    match len {
+        ArrayLen::Fixed(value) => Ok(value.to_string()),
+        ArrayLen::Const(expr) => render_expr(expr),
+    }
 }
 
 /// Render expressions used by exported constants and generic function bodies.
@@ -1563,9 +1700,9 @@ fn render_primary(primary: &PrimaryExpr) -> Result<String, String> {
         PrimaryExpr::ArrayLiteral(values) => {
             format!("[{}]", render_arguments(values)?)
         }
-        PrimaryExpr::StructLiteral(fields) => render_struct_fields(None, fields)?,
-        PrimaryExpr::NamedStructLiteral { name, fields } => {
-            render_struct_fields(Some(name), fields)?
+        PrimaryExpr::StructLiteral { fields, rest } => render_struct_fields(None, fields, *rest)?,
+        PrimaryExpr::NamedStructLiteral { name, fields, rest } => {
+            render_struct_fields(Some(name), fields, *rest)?
         }
         PrimaryExpr::FieldAccess { expr, field } => {
             format!("{}.{}", render_expr(expr)?, field)
@@ -1668,8 +1805,12 @@ fn render_arguments(arguments: &[Expression]) -> Result<String, String> {
         .join(", "))
 }
 
-fn render_struct_fields(name: Option<&str>, fields: &[FieldInit]) -> Result<String, String> {
-    let fields = fields
+fn render_struct_fields(
+    name: Option<&str>,
+    fields: &[FieldInit],
+    rest: bool,
+) -> Result<String, String> {
+    let mut fields = fields
         .iter()
         .map(|field| {
             let annotation = field
@@ -1686,8 +1827,11 @@ fn render_struct_fields(name: Option<&str>, fields: &[FieldInit]) -> Result<Stri
                 render_expr(&field.expr)?
             ))
         })
-        .collect::<Result<Vec<_>, String>>()?
-        .join(", ");
+        .collect::<Result<Vec<_>, String>>()?;
+    if rest {
+        fields.push("..".to_owned());
+    }
+    let fields = fields.join(", ");
     Ok(match name {
         Some(name) => format!("{name} {{ {fields} }}"),
         None => format!("{{ {fields} }}"),
@@ -1750,7 +1894,7 @@ fn render_pattern(pattern: &Pattern) -> String {
         } => {
             let owner = enum_name
                 .as_ref()
-                .map(|name| format!("{name}::"))
+                .map(|name| format!("{name}."))
                 .unwrap_or_default();
             if bindings.is_empty() {
                 format!("{owner}{variant}")

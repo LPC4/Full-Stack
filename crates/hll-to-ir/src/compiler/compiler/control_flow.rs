@@ -614,8 +614,16 @@ impl HighLevelCompiler {
             return;
         }
         let Some(len) = self.for_each_array_len(seq) else {
-            self.context
-                .error("`for ... in <array>` requires a fixed-size array operand".to_owned());
+            if self.for_each_iterable_type(seq).is_some() {
+                self.lower_for_each_iterable(ir_program, var, seq, body);
+            } else {
+                self.context.error(
+                    "`for ... in` needs a fixed-size array, a slice, or a value whose type \
+                     provides the iterable contract `len: (self: T*) -> i64` and \
+                     `at: (self: T*, index: i64) -> Element`"
+                        .to_owned(),
+                );
+            }
             return;
         };
 
@@ -675,6 +683,87 @@ impl HighLevelCompiler {
 
         let desugared = Block {
             statements: vec![decl_ptr, decl_idx, while_stmt],
+            stmt_lines: Vec::new(),
+        };
+        self.lower_block(ir_program, &desugared);
+    }
+
+    // The struct type behind a `for ... in` operand that provides the iterable
+    // contract, i.e. both a `len` and an `at` method (see `_LANG_SPECIFICATIONS.md` 7.3).
+    fn for_each_iterable_type(&self, seq: &Expression) -> Option<String> {
+        let Expression::Primary(PrimaryExpr::Identifier(name)) = seq else {
+            return None;
+        };
+        let info = self.context.symbols.lookup(name)?;
+        let type_name = self.receiver_struct_name(&info.ty)?;
+        self.resolve_method_symbol(&type_name, "len")?;
+        self.resolve_method_symbol(&type_name, "at")?;
+        Some(type_name)
+    }
+
+    // `for var in container` becomes an index loop over `container.len()`, binding
+    // each `var := container.at(i)`. The length is read once (see 7.3).
+    fn lower_for_each_iterable(
+        &mut self,
+        ir_program: &mut IrProgram,
+        var: &str,
+        seq: &Expression,
+        body: &Block,
+    ) {
+        let id = self.for_loop_id;
+        self.for_loop_id += 1;
+        let len_name = format!("__for_len_{id}");
+        let idx_name = format!("__for_i_{id}");
+
+        let ident = |name: &str| Expression::Primary(PrimaryExpr::Identifier(name.to_owned()));
+        let int = |n: i64| Expression::Primary(PrimaryExpr::Literal(Literal::Integer(n)));
+        let method = |name: &str, args: Vec<Expression>| {
+            Expression::Primary(PrimaryExpr::CallExpr {
+                callee: Box::new(Expression::Primary(PrimaryExpr::FieldAccess {
+                    expr: Box::new(seq.clone()),
+                    field: name.to_owned(),
+                })),
+                arguments: args,
+            })
+        };
+
+        let decl_len = Statement::InferredVariableDecl {
+            name: len_name.clone(),
+            init: method("len", Vec::new()),
+        };
+        let decl_idx = Statement::VariableDecl {
+            name: idx_name.clone(),
+            ty: crate::ast::Type::Primitive("i64".to_owned()),
+            init: Some(int(0)),
+        };
+
+        let cond = Expression::Binary {
+            op: BinaryOp::Lt,
+            left: Box::new(ident(&idx_name)),
+            right: Box::new(ident(&len_name)),
+        };
+
+        let bind_elem = Statement::InferredVariableDecl {
+            name: var.to_owned(),
+            init: method("at", vec![ident(&idx_name)]),
+        };
+
+        let step = Self::increment_stmt(&idx_name);
+
+        let mut body_stmts = vec![bind_elem];
+        body_stmts.extend(rewrite_continue_with_step(&body.statements, &step));
+        body_stmts.push(step);
+
+        let while_stmt = Statement::While {
+            cond,
+            body: Block {
+                statements: body_stmts,
+                stmt_lines: loop_body_lines(1, body, 1),
+            },
+        };
+
+        let desugared = Block {
+            statements: vec![decl_len, decl_idx, while_stmt],
             stmt_lines: Vec::new(),
         };
         self.lower_block(ir_program, &desugared);

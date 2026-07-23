@@ -2,6 +2,7 @@ use super::{
     CompilerError, FloatWidth, HighLevelCompiler, IntWidth, IrProgram, IrType, IrTypeAlias,
     ReturnType, Type,
 };
+use crate::ast::{ArrayLen, Literal};
 
 impl HighLevelCompiler {
     pub(super) fn lower_return_type(&mut self, return_type: Option<&ReturnType>) -> IrType {
@@ -16,7 +17,7 @@ impl HighLevelCompiler {
             Type::Primitive(name) => self.lower_primitive_type(name),
             Type::Pointer(inner) => IrType::Pointer(Box::new(self.lower_type(inner))),
             Type::Array(len, inner) => IrType::Array {
-                len: *len,
+                len: self.resolved_array_len(len),
                 element: Box::new(self.lower_type(inner)),
             },
             Type::Slice(inner) => IrType::Slice(Box::new(self.lower_type(inner))),
@@ -80,7 +81,7 @@ impl HighLevelCompiler {
                 self.lower_type_with_program(ir_program, inner)?,
             ))),
             Type::Array(len, inner) => Ok(IrType::Array {
-                len: *len,
+                len: self.resolved_array_len(len),
                 element: Box::new(self.lower_type_with_program(ir_program, inner)?),
             }),
             Type::Slice(inner) => Ok(IrType::Slice(Box::new(
@@ -144,6 +145,33 @@ impl HighLevelCompiler {
         }
     }
 
+    // An array length as a count. Lengths fold before analysis; a generic
+    // aggregate can still arrive here unresolved, so evaluate as a last resort.
+    fn resolved_array_len(&mut self, len: &ArrayLen) -> usize {
+        if let Some(fixed) = len.fixed() {
+            return fixed;
+        }
+        let ArrayLen::Const(expr) = len else {
+            unreachable!();
+        };
+        match self.eval_const_expr(expr) {
+            Ok(
+                Literal::Integer(value) | Literal::HexInteger(value) | Literal::BinInteger(value),
+            ) if value >= 0 => value as usize,
+            Ok(_) => {
+                self.context
+                    .error("array length must be a non-negative compile-time integer".to_owned());
+                0
+            }
+            Err(err) => {
+                self.context.error(format!(
+                    "array length is not a compile-time constant: {err}"
+                ));
+                0
+            }
+        }
+    }
+
     pub(super) fn lower_primitive_type(&self, name: &str) -> IrType {
         match name {
             "i8" => IrType::Integer(IntWidth::I8),
@@ -204,7 +232,7 @@ impl HighLevelCompiler {
                 Type::Pointer(Box::new(self.substitute_generic_type(inner, params, args)))
             }
             Type::Array(len, inner) => Type::Array(
-                *len,
+                len.clone(),
                 Box::new(self.substitute_generic_type(inner, params, args)),
             ),
             Type::Slice(inner) => {
@@ -288,7 +316,7 @@ impl HighLevelCompiler {
             }
             IrType::Pointer(inner) => Type::Pointer(Box::new(self.ir_type_to_type(inner))),
             IrType::Array { len, element } => {
-                Type::Array(*len, Box::new(self.ir_type_to_type(element)))
+                Type::Array((*len).into(), Box::new(self.ir_type_to_type(element)))
             }
             IrType::Slice(element) => Type::Slice(Box::new(self.ir_type_to_type(element))),
             IrType::FunctionPointer {

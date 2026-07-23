@@ -651,7 +651,8 @@ fn rewrite_expression(
                     rewrite_expression(element, environment, context)?;
                 }
             }
-            PrimaryExpr::StructLiteral(fields) | PrimaryExpr::NamedStructLiteral { fields, .. } => {
+            PrimaryExpr::StructLiteral { fields, .. }
+            | PrimaryExpr::NamedStructLiteral { fields, .. } => {
                 for field in fields {
                     rewrite_expression(&mut field.expr, environment, context)?;
                 }
@@ -799,5 +800,6 @@ fn pack_conversion(
     Ok(Expression::Primary(PrimaryExpr::NamedStructLiteral {
         name: dyn_struct_name(interface),
         fields,
+        rest: false,
     }))
 }

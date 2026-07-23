@@ -18,14 +18,14 @@ export checked_mul: (a: u64, b: u64) -> Result<u64, AllocError> {
     if a == 0 or b == 0 { return Ok(0) }
     max: u64 = 0
     max -= 1
-    if a > max / b { return Err(SizeOverflow) }
+    if a > max / b { return Err(AllocError.SizeOverflow) }
     return Ok(a * b)
 }
 
 ; a + b, or SizeOverflow.
 export checked_add: (a: u64, b: u64) -> Result<u64, AllocError> {
     total: u64 = a + b
-    if total < a { return Err(SizeOverflow) }
+    if total < a { return Err(AllocError.SizeOverflow) }
     return Ok(total)
 }
 
@@ -95,7 +95,7 @@ export allocate: (size: u64, align: u64) -> Result<u8*, AllocError> {
         return Err(InvalidAlignment)
     }
     if size + align - 1 < size {
-        return Err(SizeOverflow)
+        return Err(AllocError.SizeOverflow)
     }
     ptr: u8* = heap_alloc_aligned(size, align)
     if ptr == null { return Err(OutOfMemory) }
@@ -107,7 +107,7 @@ export reallocate: (ptr: u8*, old_size: u64, new_size: u64, align: u64) -> Resul
         return Err(InvalidAlignment)
     }
     if new_size + align - 1 < new_size {
-        return Err(SizeOverflow)
+        return Err(AllocError.SizeOverflow)
     }
     if new_size == 0 {
         heap_release(ptr)
@@ -162,7 +162,7 @@ export impl Vec<T> {
         max -= 1
         element_size: u64 = size_of<T>()
         if element_size != 0 and required > max / element_size {
-            return Err(SizeOverflow)
+            return Err(AllocError.SizeOverflow)
         }
 
         new_capacity: u64 = required
@@ -426,7 +426,7 @@ export impl Arena {
 
         ; No chunk fits: add one sized for the request (at least 4 KiB).
         chunk_bytes: u64 = 4096
-        if size + align < size { return Err(SizeOverflow) }
+        if size + align < size { return Err(AllocError.SizeOverflow) }
         if size + align > chunk_bytes { chunk_bytes = size + align }
 
         node: ArenaChunk* = null

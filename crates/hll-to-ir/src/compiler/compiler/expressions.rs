@@ -72,13 +72,8 @@ impl HighLevelCompiler {
                 None
             }
             PrimaryExpr::Identifier(name) => {
-                // A bare name matching a unit enum variant constructs that variant.
-                if mode == EvalMode::Value
-                    && self
-                        .enum_variants
-                        .get(name)
-                        .is_some_and(|info| info.payload.is_empty())
-                {
+                // A name matching a unit enum variant constructs that variant.
+                if mode == EvalMode::Value && self.is_unit_variant_name(name) {
                     return self.lower_enum_construct(name, &[]);
                 }
                 self.lower_identifier(name, mode)
@@ -168,7 +163,7 @@ impl HighLevelCompiler {
                     return None;
                 }
                 // A call whose name is an enum variant constructs that variant.
-                if self.enum_variants.contains_key(name) {
+                if !self.variant_candidates(name, None).is_empty() {
                     return self.lower_enum_construct(name, arguments);
                 }
                 if matches!(name.as_str(), "size_of" | "align_of") {
@@ -278,7 +273,14 @@ impl HighLevelCompiler {
                 })
             }
             PrimaryExpr::ArrayLiteral(elements) => self.lower_array_literal(elements),
-            PrimaryExpr::StructLiteral(fields) => {
+            PrimaryExpr::StructLiteral { fields, rest } => {
+                if *rest {
+                    self.context.error(
+                        "`..` needs a known struct type; annotate the binding or name the type"
+                            .to_owned(),
+                    );
+                    return None;
+                }
                 let mut lowered_fields = Vec::new();
                 for field_init in fields {
                     let field_value = self.lower_expr(&field_init.expr, EvalMode::Value)?;
@@ -336,8 +338,8 @@ impl HighLevelCompiler {
                     is_unsigned: false,
                 })
             }
-            PrimaryExpr::NamedStructLiteral { name, fields } => {
-                self.lower_named_struct_literal(name, fields)
+            PrimaryExpr::NamedStructLiteral { name, fields, rest } => {
+                self.lower_named_struct_literal(name, fields, *rest)
             }
             PrimaryExpr::CallExpr { callee, arguments } => {
                 if mode == EvalMode::Address {
@@ -351,20 +353,9 @@ impl HighLevelCompiler {
                     let recv_addr = self.lower_expr(expr, EvalMode::Address)?;
                     if !self.receiver_has_field(&recv_addr.ty, field)
                         && let Some(type_name) = self.receiver_struct_name(&recv_addr.ty)
+                        && let Some(method) = self.resolve_method_symbol(&type_name, field)
                     {
-                        let method = format!("{type_name}_{field}");
-                        let imported_suffix = format!("__{method}");
-                        let resolved_method = if self.function_param_types.contains_key(&method) {
-                            Some(method)
-                        } else {
-                            self.function_param_types
-                                .keys()
-                                .find(|name| name.ends_with(&imported_suffix))
-                                .cloned()
-                        };
-                        if let Some(method) = resolved_method {
-                            return self.lower_method_call(&method, recv_addr, arguments);
-                        }
+                        return self.lower_method_call(&method, recv_addr, arguments);
                     }
                     let field_val =
                         self.lower_field_access_mode(&recv_addr, field, EvalMode::Value)?;
@@ -384,6 +375,7 @@ impl HighLevelCompiler {
         &mut self,
         name: &str,
         fields: &[crate::ast::FieldInit],
+        rest: bool,
     ) -> Option<LoweredValue> {
         let nominal_ty = IrType::Named(name.to_owned());
         let resolved = self.resolve_named_type(&nominal_ty);
@@ -427,13 +419,25 @@ impl HighLevelCompiler {
             });
         }
 
-        if let Some((missing, _)) = declared_fields
-            .iter()
-            .find(|(field_name, _)| !seen.contains(field_name))
-        {
-            self.context
-                .error(format!("missing field `{missing}` in `{name}` literal"));
-            return None;
+        // Unnamed fields are an error unless the literal opted into zero-fill.
+        for (field_name, field_ty) in &declared_fields {
+            if seen.contains(field_name) {
+                continue;
+            }
+            if !rest {
+                self.context.error(format!(
+                    "missing field `{field_name}` in `{name}` literal; add `..` to zero-fill"
+                ));
+                return None;
+            }
+            let (offset, _) = self.aggregate_field_offset_and_type(&declared_fields, field_name)?;
+            let zero = self.lower_zero_value(field_ty)?;
+            self.push_instruction(IrInstruction::Store {
+                ty: field_ty.clone(),
+                value: zero.value,
+                ptr: dest.clone(),
+                offset: Some(offset),
+            });
         }
 
         Some(LoweredValue {
@@ -636,9 +640,23 @@ impl HighLevelCompiler {
         matches!(resolved, IrType::Aggregate(fields) if fields.iter().any(|(n, _)| n == field))
     }
 
+    // The link symbol for `Type.method`, accepting the `module__Type_method` spelling
+    // an imported `impl` carries.
+    pub(super) fn resolve_method_symbol(&self, type_name: &str, method: &str) -> Option<String> {
+        let direct = format!("{type_name}_{method}");
+        if self.function_param_types.contains_key(&direct) {
+            return Some(direct);
+        }
+        let imported_suffix = format!("__{direct}");
+        self.function_param_types
+            .keys()
+            .find(|name| name.ends_with(&imported_suffix))
+            .cloned()
+    }
+
     /// The named struct type of a receiver address, peeling pointer levels. A
     /// receiver already resolved to its field list is matched back to its name.
-    fn receiver_struct_name(&self, ty: &IrType) -> Option<String> {
+    pub(super) fn receiver_struct_name(&self, ty: &IrType) -> Option<String> {
         match ty {
             IrType::Named(name) => Some(name.clone()),
             IrType::Pointer(inner) => self.receiver_struct_name(inner),

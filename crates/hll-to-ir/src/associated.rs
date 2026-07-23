@@ -1,9 +1,9 @@
-//! Associated constants and type aliases: collects impl `const`/`type` members
-//! and resolves `Owner<args>.Member` projections before semantic analysis.
+//! Associated constants and type aliases: collects impl `const`/`type` members and
+//! resolves `Owner<args>.Member` projections and constant array lengths (spec 6.2).
 
 use crate::ast::{
-    AssignTarget, Block, DeclNode, Expression, ForIter, Literal, PrimaryExpr, Program, Statement,
-    Type,
+    ArrayLen, AssignTarget, BinaryOp, Block, DeclNode, Expression, ForIter, Literal, PrimaryExpr,
+    Program, Statement, Type, UnaryOp,
 };
 use crate::monomorphize::{Substitutions, substitute_type};
 use std::collections::{HashMap, HashSet};
@@ -19,11 +19,12 @@ struct OwnerItems {
 #[derive(Default)]
 pub(crate) struct AssociatedCatalog {
     owners: HashMap<String, OwnerItems>,
+    module_consts: HashMap<String, Expression>,
 }
 
 impl AssociatedCatalog {
     pub(crate) fn is_empty(&self) -> bool {
-        self.owners.is_empty()
+        self.owners.is_empty() && self.module_consts.is_empty()
     }
 }
 
@@ -31,8 +32,12 @@ impl AssociatedCatalog {
 /// rejecting duplicate member names per owner.
 pub(crate) fn collect(program: &mut Program) -> Result<AssociatedCatalog, String> {
     let mut owners: HashMap<String, OwnerItems> = HashMap::new();
+    let mut module_consts: HashMap<String, Expression> = HashMap::new();
     let declarations = std::mem::take(&mut program.declarations);
     for declaration in declarations {
+        if let DeclNode::Const { name, init } = &declaration.decl {
+            module_consts.insert(name.clone(), init.clone());
+        }
         let DeclNode::AssociatedItems {
             owner,
             generics,
@@ -69,7 +74,10 @@ pub(crate) fn collect(program: &mut Program) -> Result<AssociatedCatalog, String
             }
         }
     }
-    Ok(AssociatedCatalog { owners })
+    Ok(AssociatedCatalog {
+        owners,
+        module_consts,
+    })
 }
 
 /// Resolve every projection; `skip_generics` leaves generic declarations for
@@ -81,6 +89,9 @@ pub(crate) fn resolve_program(
 ) -> Result<(), String> {
     for declaration in &mut program.declarations {
         if skip_generics && declaration_is_generic(&declaration.decl) {
+            // Projections wait for substitution, but a length that is already
+            // constant folds now: generic aggregates are specialized later.
+            fold_lengths_best_effort(&mut declaration.decl, catalog);
             continue;
         }
         resolve_decl_node(&mut declaration.decl, catalog)?;
@@ -332,7 +343,8 @@ fn resolve_primary(primary: &mut PrimaryExpr, catalog: &AssociatedCatalog) -> Re
             }
             Ok(())
         }
-        PrimaryExpr::StructLiteral(fields) | PrimaryExpr::NamedStructLiteral { fields, .. } => {
+        PrimaryExpr::StructLiteral { fields, .. }
+        | PrimaryExpr::NamedStructLiteral { fields, .. } => {
             for field in fields {
                 if let Some(ty) = &mut field.ty {
                     resolve_type(ty, catalog)?;
@@ -422,9 +434,11 @@ fn resolve_type_guarded(
             }
             Ok(())
         }
-        Type::Pointer(inner) | Type::Array(_, inner) | Type::Slice(inner) => {
-            resolve_type_guarded(inner, catalog, visiting)
+        Type::Array(len, inner) => {
+            resolve_type_guarded(inner, catalog, visiting)?;
+            fold_array_length(len, catalog)
         }
+        Type::Pointer(inner) | Type::Slice(inner) => resolve_type_guarded(inner, catalog, visiting),
         Type::Function {
             params,
             return_type,
@@ -482,6 +496,177 @@ fn type_names_unknown(ty: &Type, catalog: &AssociatedCatalog) -> bool {
             .iter()
             .any(|arg| type_names_unknown(arg, catalog)),
         Type::DynamicReference(_) | Type::Primitive(_) => false,
+    }
+}
+
+// --- Constant array lengths (spec 6.2) ---
+
+// Fold `T[expr]` to a fixed length. The expression may name module `const`
+// declarations and associated constants; anything else is rejected.
+fn fold_array_length(len: &mut ArrayLen, catalog: &AssociatedCatalog) -> Result<(), String> {
+    let ArrayLen::Const(expr) = len else {
+        return Ok(());
+    };
+    let mut expr = (**expr).clone();
+    resolve_expression(&mut expr, catalog)?;
+    let value = eval_length(&expr, catalog, &mut HashSet::new())?;
+    let value = usize::try_from(value)
+        .map_err(|_| format!("array length must not be negative, got {value}"))?;
+    *len = ArrayLen::Fixed(value);
+    Ok(())
+}
+
+// Fold the array lengths of a generic template, leaving anything that only
+// becomes constant after substitution for the specialized clone.
+fn fold_lengths_best_effort(decl: &mut DeclNode, catalog: &AssociatedCatalog) {
+    let mut lengths = Vec::new();
+    collect_decl_lengths(decl, &mut lengths);
+    for len in lengths {
+        fold_constant_array_length(len, catalog);
+    }
+}
+
+// Fold a length that is already constant, leaving anything else in place.
+fn fold_constant_array_length(len: &mut ArrayLen, catalog: &AssociatedCatalog) {
+    let ArrayLen::Const(expr) = len else {
+        return;
+    };
+    let mut expr = (**expr).clone();
+    if resolve_expression(&mut expr, catalog).is_ok()
+        && let Ok(value) = eval_length(&expr, catalog, &mut HashSet::new())
+        && let Ok(value) = usize::try_from(value)
+    {
+        *len = ArrayLen::Fixed(value);
+    }
+}
+
+// Every array length written directly in a declaration's own type positions.
+fn collect_decl_lengths<'a>(decl: &'a mut DeclNode, out: &mut Vec<&'a mut ArrayLen>) {
+    match decl {
+        DeclNode::Variable { ty, .. } | DeclNode::Type { ty, .. } => collect_type_lengths(ty, out),
+        DeclNode::Function {
+            params,
+            return_type,
+            ..
+        } => {
+            for param in params {
+                collect_type_lengths(&mut param.ty, out);
+            }
+            if let Some(crate::ast::ReturnType::Single(ty)) = return_type {
+                collect_type_lengths(ty, out);
+            }
+        }
+        DeclNode::Struct { fields, .. } => {
+            for field in fields {
+                collect_type_lengths(&mut field.ty, out);
+            }
+        }
+        DeclNode::Enum { variants, .. } => {
+            for variant in variants {
+                for payload in &mut variant.payload {
+                    collect_type_lengths(payload, out);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_type_lengths<'a>(ty: &'a mut Type, out: &mut Vec<&'a mut ArrayLen>) {
+    match ty {
+        Type::Array(len, inner) => {
+            out.push(len);
+            collect_type_lengths(inner, out);
+        }
+        Type::Pointer(inner) | Type::Slice(inner) => collect_type_lengths(inner, out),
+        Type::Named { args, .. } => {
+            for arg in args {
+                collect_type_lengths(arg, out);
+            }
+        }
+        Type::Function {
+            params,
+            return_type,
+        } => {
+            for param in params {
+                collect_type_lengths(param, out);
+            }
+            if let Some(return_type) = return_type {
+                collect_type_lengths(return_type, out);
+            }
+        }
+        Type::Struct(fields) => {
+            for field in fields {
+                collect_type_lengths(&mut field.ty, out);
+            }
+        }
+        Type::Associated { owner_args, .. } => {
+            for arg in owner_args {
+                collect_type_lengths(arg, out);
+            }
+        }
+        Type::DynamicReference(_) | Type::Primitive(_) => {}
+    }
+}
+
+fn eval_length(
+    expr: &Expression,
+    catalog: &AssociatedCatalog,
+    visiting: &mut HashSet<String>,
+) -> Result<i64, String> {
+    match expr {
+        Expression::Primary(PrimaryExpr::Literal(
+            Literal::Integer(value) | Literal::HexInteger(value) | Literal::BinInteger(value),
+        )) => Ok(*value),
+        Expression::Primary(PrimaryExpr::Grouped(inner)) => eval_length(inner, catalog, visiting),
+        Expression::Primary(PrimaryExpr::Identifier(name)) => {
+            let init = catalog.module_consts.get(name).ok_or_else(|| {
+                format!("array length `{name}` is not a compile-time constant declaration")
+            })?;
+            if !visiting.insert(name.clone()) {
+                return Err(format!("constant `{name}` is defined in terms of itself"));
+            }
+            let value = eval_length(init, catalog, visiting)?;
+            visiting.remove(name);
+            Ok(value)
+        }
+        Expression::Cast { target_ty, expr } => match target_ty {
+            Type::Primitive(_) => eval_length(expr, catalog, visiting),
+            _ => Err("array length casts must target a primitive type".to_owned()),
+        },
+        Expression::Unary { op, expr } => {
+            let value = eval_length(expr, catalog, visiting)?;
+            match op {
+                UnaryOp::Negate => Ok(-value),
+                UnaryOp::BitNot => Ok(!value),
+                _ => Err("array length supports only `-` and `~` as unary operators".to_owned()),
+            }
+        }
+        Expression::Binary { op, left, right } => {
+            let left = eval_length(left, catalog, visiting)?;
+            let right = eval_length(right, catalog, visiting)?;
+            match op {
+                BinaryOp::Add => Ok(left.wrapping_add(right)),
+                BinaryOp::Sub => Ok(left.wrapping_sub(right)),
+                BinaryOp::Mul => Ok(left.wrapping_mul(right)),
+                BinaryOp::Div | BinaryOp::Mod if right == 0 => {
+                    Err("array length divides by zero".to_owned())
+                }
+                BinaryOp::Div => Ok(left / right),
+                BinaryOp::Mod => Ok(left % right),
+                BinaryOp::Shl => Ok(left.wrapping_shl(right as u32)),
+                BinaryOp::Shr => Ok(left.wrapping_shr(right as u32)),
+                BinaryOp::BitwiseAnd => Ok(left & right),
+                BinaryOp::BitwiseOr => Ok(left | right),
+                BinaryOp::BitwiseXor => Ok(left ^ right),
+                _ => Err(format!("array length does not support operator `{op:?}`")),
+            }
+        }
+        _ => Err(
+            "array length must be a compile-time constant expression (integer literals, \
+             arithmetic, `const` declarations, and associated constants)"
+                .to_owned(),
+        ),
     }
 }
 
