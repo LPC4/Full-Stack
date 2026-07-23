@@ -13,31 +13,31 @@ fn test_relocation_with_call_tail_and_la_pseudos() {
     let tokens = vec![
         // .text section
         RvInstruction::Directive("\t.text".to_string()),
-        
+
         // Main entry point
         RvInstruction::Label("main".to_string()),
         RvInstruction::Directive("\t.globl main".to_string()),
-        
+
         // Load address of message using la pseudo
         RvInstruction::Pseudo(PseudoInstruction::La {
             rd: 10, // a0 - first argument register
             symbol: "message".to_string(),
         }),
-        
+
         // Call print function using call pseudo
         RvInstruction::Pseudo(PseudoInstruction::Call {
             symbol: "print_message".to_string(),
         }),
-        
+
         // Return 0
         RvInstruction::Real(RealInstruction::Addi(Addi::new(10, 0, 0))), // a0 = 0
         RvInstruction::Real(RealInstruction::Jalr(Jalr::new(0, 1, 0))), // ret (jalr x0, ra)
-        
+
         // Print message function
         RvInstruction::Label("print_message".to_string()),
         // Just return for this test (in real code would do I/O)
         RvInstruction::Real(RealInstruction::Jalr(Jalr::new(0, 1, 0))), // ret
-        
+
         // Data section with message
         RvInstruction::Directive("\t.data".to_string()),
         RvInstruction::Label("message".to_string()),
@@ -72,15 +72,15 @@ fn test_la_pseudo_expansion() {
         RvInstruction::Directive("\t.text".to_string()),
         RvInstruction::Label("main".to_string()),
         RvInstruction::Directive("\t.globl main".to_string()),
-        
+
         // Load address using la pseudo
         RvInstruction::Pseudo(PseudoInstruction::La {
             rd: 10, // a0
             symbol: "data_label".to_string(),
         }),
-        
+
         RvInstruction::Real(RealInstruction::Jalr(Jalr::new(0, 1, 0))), // ret
-        
+
         RvInstruction::Directive("\t.data".to_string()),
         RvInstruction::Label("data_label".to_string()),
         RvInstruction::Directive("\t.word 42".to_string()),
@@ -104,14 +104,14 @@ fn test_call_pseudo_expansion() {
         RvInstruction::Directive("\t.text".to_string()),
         RvInstruction::Label("main".to_string()),
         RvInstruction::Directive("\t.globl main".to_string()),
-        
+
         // Call another function using call pseudo
         RvInstruction::Pseudo(PseudoInstruction::Call {
             symbol: "target_func".to_string(),
         }),
-        
+
         RvInstruction::Real(RealInstruction::Jalr(Jalr::new(0, 1, 0))), // ret
-        
+
         RvInstruction::Label("target_func".to_string()),
         RvInstruction::Real(RealInstruction::Jalr(Jalr::new(0, 1, 0))), // ret
     ];

@@ -1,9 +1,8 @@
 # M-mode trap handler at ROM offset 0x100 (concatenated after startup.s).
 
 
-# _m_trap: M-mode trap handler at ROM offset 0x100.
-# Handles ecall from U/S/M-mode; all other traps -> mret.
-# mtvec loaded by _start (kernel) or Pipeline::new (hosted).
+# Handles ecall from U/S/M-mode; all other traps mret straight back.
+# mtvec is loaded by _start (kernel) or Pipeline::new (hosted).
 _m_trap:
     csrr t0, mcause
     li t1, 8
@@ -53,12 +52,8 @@ sys_exit:
     sd a0, 0(t0)
     j _advance_mepc_and_mret
 
-# sys_brk(addr=a0) -> resulting break. Flat model: the break pointer lives at
-# HEAP_PTR_ADDR (RAM_BASE + 32 MiB - 8 = 0x81FFFFF8), no paging. addr==0 queries.
-# Build the address as (1<<31) + 0x01FFFFF8 to avoid sign-extending a bit-31 li.
-# A request at or above HEAP_PTR_ADDR would grow into the break-pointer word and the
-# stack above it, so refuse it: fall through to _brk_query and return the unchanged
-# break (same failure contract as the kernel handler / hosted allocator).
+# sys_brk(addr=a0) -> break; addr==0 queries. See the OS specification, 7.8.
+# The address is built as (1<<31) + 0x01FFFFF8 so li never sign-extends bit 31.
 sys_brk:
     li t0, 1
     slli t0, t0, 31

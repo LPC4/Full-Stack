@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::ir::{IrType, IrValue};
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct SymbolInfo {
+pub(crate) struct SymbolInfo {
     pub name: String,
     pub ty: IrType,
     pub value: IrValue,

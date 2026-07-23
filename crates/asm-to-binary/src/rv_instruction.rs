@@ -27,16 +27,6 @@ pub enum RvInstruction {
 }
 
 impl RvInstruction {
-    pub fn encode_words(&self) -> Vec<u32> {
-        match self {
-            Self::Real(r) => vec![r.encode()],
-            Self::Pseudo(p) => p.expand().iter().map(|r| r.encode()).collect(),
-            Self::Label(_) | Self::Comment(_) | Self::Directive(_) | Self::SourceLoc { .. } => {
-                vec![]
-            }
-        }
-    }
-
     /// Returns `true` if this line contributes machine code bytes.
     pub fn is_code(&self) -> bool {
         matches!(self, Self::Real(_) | Self::Pseudo(_))

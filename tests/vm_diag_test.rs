@@ -70,16 +70,8 @@ fn kernel_asm_diag() {
 }
 
 // --- Linking helper ---
-// This is the canonical "link with stdlib" path used by the GUI and tests:
-// 1. Compile stdlib once -> Vec<RvInstruction> token stream
-// 2. Compile user source independently -> Vec<RvInstruction> token stream
-// 3. Assemble stdlib + user into relocatable objects
-// 4. Link the objects and inject the kernel layout symbols
-// 5. Load the resulting ELF into VM and run
-//
-// To link with a different runtime (custom allocator, bare-metal glue, or a
-// future C stdlib path) substitute step 1 with any Vec<RvInstruction> that
-// defines malloc/free and whatever other symbols user code calls as external.
+// The canonical link path the GUI also uses: stdlib and user compile separately,
+// then link as objects. Swap the stdlib objects to link a different runtime.
 fn link_stdlib_and_run(user_src: &str) -> (String, Option<i64>) {
     use virtual_machine::virtual_machine::StepOutcome;
 
@@ -257,9 +249,8 @@ main: () -> i32 {
     assert_eq!(exit, Some(0));
 }
 
-// Verify that an asm { } block with raw RISC-V instructions is emitted and executed.
-// The block stores 42 into a stack slot via sd, then reads it back with ld.
-// (We exercise the inline-asm path through the assembler's parse_instruction_line.)
+// Drives the inline-asm path through the assembler's parse_instruction_line:
+// the block stores 42 into a stack slot with sd and reads it back with ld.
 #[test]
 fn asm_block_round_trip() {
     let src = r#"

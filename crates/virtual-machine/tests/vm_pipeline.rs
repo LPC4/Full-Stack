@@ -13,8 +13,8 @@ use virtual_machine::rom::generate_rom_image;
 
 const STACK_TOP: u64 = RAM_BASE + 4 * 1024 * 1024; // 4 MiB stack
 
-/// Write a sequence of 32-bit little-endian instruction words into the bus
-/// starting at `base`, then return a Pipeline ready to run them.
+// Writes 32-bit little-endian instruction words into the bus at `base` and
+// returns a Pipeline ready to run them.
 fn load_program(bus: &mut SystemBus, base: u64, words: &[u32]) -> Pipeline {
     for (i, &w) in words.iter().enumerate() {
         let addr = base + (i as u64) * 4;
@@ -23,7 +23,7 @@ fn load_program(bus: &mut SystemBus, base: u64, words: &[u32]) -> Pipeline {
     Pipeline::new(base, STACK_TOP)
 }
 
-/// Run at most `max` cycles, returning the tick outcome.
+// Runs at most `max` cycles and returns the tick outcome.
 fn run_n(cpu: &mut Pipeline, bus: &mut SystemBus, max: u64) -> TickOutcome {
     for _ in 0..max {
         match cpu.tick(bus) {
@@ -260,10 +260,7 @@ fn blocked_younger_instruction_refreshes_wb_operand() {
 
 #[test]
 fn pipeline_branch_not_taken_no_flush() {
-    // x1 = 5, x2 = 6
-    // beq x1, x2, +8  ; NOT taken (5  6)
-    // addi x3, x0, 1  ; should execute
-    // halt
+    // beq with 5 != 6 falls through, so the next instruction must execute.
     let mut bus = SystemBus::new(generate_rom_image());
     let prog = [
         addi(1, 0, 5), // x1 = 5
@@ -284,20 +281,15 @@ fn pipeline_branch_not_taken_no_flush() {
         1,
         "instruction after not-taken branch must execute"
     );
-    // A not-taken branch with a predict-not-taken predictor has no flush
-    // (the predictor might predict taken on later iterations if seen multiple times,
-    // but on first encounter starts weakly-not-taken -> correct prediction)
+    // On first encounter the predictor is weakly-not-taken, so this branch is
+    // predicted correctly and costs no flush.
 }
 
 // --- Test 5: Branch taken - pipeline flush ---
 
 #[test]
 fn pipeline_branch_taken_causes_flush() {
-    // x1 = 5, x2 = 5
-    // beq x1, x2, +12  ; TAKEN (5 == 5), skip next instruction
-    // addi x3, x0, 99  ; should NOT execute (skipped)
-    // addi x3, x0, 1   ; should execute (branch target)
-    // halt
+    // beq with 5 == 5 is taken, so everything up to the target must be skipped.
     let mut bus = SystemBus::new(generate_rom_image());
     let prog = [
         addi(1, 0, 5),   // [0]  x1 = 5
@@ -333,10 +325,7 @@ fn pipeline_branch_taken_causes_flush() {
 
 #[test]
 fn pipeline_double_forwarding() {
-    // addi x1, x0, 3  ; x1 = 3
-    // addi x2, x0, 4  ; x2 = 4
-    // add  x3, x1, x2 ; x3 = 7  (needs x1 via MEM/WB, x2 via EX/MEM)
-    // halt
+    // x3 = x1 + x2 needs x1 forwarded from MEM/WB and x2 from EX/MEM.
     let mut bus = SystemBus::new(generate_rom_image());
     let prog = [
         addi(1, 0, 3), // x1 = 3
@@ -366,23 +355,14 @@ fn pipeline_double_forwarding() {
 
 #[test]
 fn pipeline_loop_sum_1_to_5() {
-    // Compute x1 = 1+2+3+4+5 = 15 using a loop
-    //   x1 = 0  (accumulator)
-    //   x2 = 5  (counter)
-    //   x3 = 1  (decrement step)
-    // loop:
-    //   add  x1, x1, x2    ; acc += counter
-    //   addi x2, x2, -1    ; counter--
-    //   bne  x2, x0, -8    ; if counter != 0, branch back
-    // halt
-
+    // Sum 1..5 in a loop: x1 accumulates, x2 counts down, bne jumps back.
     let mut bus = SystemBus::new(generate_rom_image());
     let prog = [
         addi(1, 0, 0), // [0]  x1 = 0
         addi(2, 0, 5), // [4]  x2 = 5
         // loop starts at [8]
         add(1, 1, 2),    // [8]  x1 += x2
-        addi(2, 2, -1),  // [12] x2--
+        addi(2, 2, -1),  // [12] x2 -= 1
         bne(2, 0, -8),   // [16] if x2 != 0, jump to [8]
         addi(17, 0, 93), // [20]
         addi(10, 0, 0),  // [24]

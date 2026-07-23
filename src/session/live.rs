@@ -230,8 +230,8 @@ impl LiveMachine {
         true
     }
 
-    /// Execute exactly one cycle and pause, regardless of current state.
-    pub fn step_one(&mut self) {
+    // Execute exactly one cycle and pause, regardless of current state.
+    fn step_one(&mut self) {
         self.step_cycles(1);
     }
 
@@ -273,11 +273,6 @@ impl LiveMachine {
 
     /// Execute up to `count` cycles and pause. Records the register file
     /// beforehand so the inspector can highlight what the step(s) changed.
-    pub fn step_many(&mut self, count: u64) {
-        self.step_cycles(count);
-    }
-
-    /// Execute up to `count` cycles and pause.
     pub fn step_cycles(&mut self, count: u64) {
         if !self.state.is_alive() || count == 0 {
             return;
@@ -295,8 +290,8 @@ impl LiveMachine {
         self.capture_now();
     }
 
-    /// Execute until one instruction retires, then pause.
-    pub fn step_instruction(&mut self) {
+    // Execute until one instruction retires, then pause.
+    fn step_instruction(&mut self) {
         self.step_instructions(1);
     }
 
@@ -497,7 +492,7 @@ impl LiveMachine {
         self.vm.debug_translate(vaddr)
     }
 
-    /// Registers before the last `step_one`/`step_many`, for delta highlighting.
+    /// Registers before the last step, for delta highlighting.
     pub fn prev_step_registers(&self) -> Option<&RegisterSnapshot> {
         self.prev_step_regs.as_ref()
     }
@@ -1013,11 +1008,11 @@ mod tests {
     }
 
     #[test]
-    fn step_many_advances_and_records_the_previous_registers() {
+    fn step_cycles_advances_and_records_the_previous_registers() {
         let artifacts = build_artifacts("main: () -> i32 { return 7 }");
         let mut live = LiveMachine::new_hosted(&artifacts).expect("boot");
         live.pause();
-        live.step_many(5);
+        live.step_cycles(5);
         assert_eq!(live.steps, 5);
         assert_eq!(live.state, MachineState::Paused);
         let prev = live.prev_step_registers().expect("prev registers");

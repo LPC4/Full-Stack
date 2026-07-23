@@ -49,7 +49,7 @@ pub fn assign_colored_slots(
     }
 }
 
-/// A scalar value type fits in one 8-byte slot.
+// A scalar value type fits in one 8-byte slot.
 fn is_colorable_type(ty: &IrType) -> bool {
     matches!(
         ty,
@@ -222,7 +222,7 @@ fn add_edge(graph: &mut HashMap<IrRegister, HashSet<IrRegister>>, a: &IrRegister
     graph.entry(b.clone()).or_default().insert(a.clone());
 }
 
-/// Greedy graph coloring in IR appearance order; each register gets the lowest unused color.
+// Greedy coloring in IR appearance order: each register takes the lowest unused color.
 fn greedy_color(
     order: &[IrRegister],
     graph: &HashMap<IrRegister, HashSet<IrRegister>>,

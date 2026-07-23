@@ -381,7 +381,7 @@ impl HighLevelCompiler {
             )));
         }
 
-        // Use canonical angle-bracket naming so generic instances cannot collide with user identifiers.
+        // Angle-bracket naming keeps generic instances from colliding with user identifiers.
         let specialized_name = self.create_specialized_name(name, type_args);
 
         log::debug!(

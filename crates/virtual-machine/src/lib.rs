@@ -11,7 +11,6 @@
     clippy::needless_pass_by_value,
     clippy::needless_range_loop,
     clippy::or_fun_call,
-    clippy::print_stderr,
     clippy::too_long_first_doc_paragraph,
     clippy::too_many_arguments,
     clippy::too_many_lines,

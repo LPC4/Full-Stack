@@ -55,10 +55,8 @@ impl Registers {
         self.f[reg] = val;
     }
 
-    /// Reads the register as an f32, applying NaN-boxing validation.
-    ///
-    /// If bits [63:32] are not all 1s the stored value is not a valid
-    /// NaN-boxed f32, so the canonical NaN is returned (RISC-V spec 11.3).
+    /// Reads the register as an f32. Bits [63:32] other than all 1s mean the value
+    /// is not validly NaN-boxed, so the canonical NaN is returned (RISC-V 11.3).
     pub fn read_f32(&self, reg: usize) -> f32 {
         let bits = self.f[reg];
         if bits & NAN_BOX_UPPER != NAN_BOX_UPPER {

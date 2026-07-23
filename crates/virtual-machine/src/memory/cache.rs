@@ -86,11 +86,6 @@ impl<Next: MemoryAccess> Cache<Next> {
         &mut self.next
     }
 
-    /// Zero all stats for this cache level only.
-    pub fn reset_stats(&mut self) {
-        self.stats = CacheStats::default();
-    }
-
     /// Flush all dirty lines to the next level, then invalidate everything.
     pub fn flush_and_invalidate(&mut self) {
         for set_idx in 0..self.sets.len() {
@@ -199,9 +194,8 @@ impl<Next: MemoryAccess> Cache<Next> {
     // --- Internal multi-byte helpers: count one stat per unique cache block touched ---
 
     fn read_n(&mut self, addr: u64, n: usize) -> Result<u64, VmError> {
-        // Fast path: an aligned 2/4/8-byte access lands wholly inside one line
-        // (a power-of-two access aligned to its size never crosses a power-of-two
-        // block), so resolve the line once and read the slice directly.
+        // A power-of-two access aligned to its size never crosses a block, so the
+        // aligned 2/4/8-byte case resolves the line once and reads the slice.
         if n > 1 && addr & (n as u64 - 1) == 0 {
             let (set_idx, way_idx, miss) = self.resolve_line(addr)?;
             if miss {
@@ -251,9 +245,8 @@ impl<Next: MemoryAccess> Cache<Next> {
             return Err(VmError::WriteToRom);
         }
 
-        // Fast path: an aligned 2/4/8-byte access lands wholly inside one line.
-        // Resolve once, splat the slice, and (write-through) issue a single sized
-        // store to the next level instead of one write_byte per byte.
+        // Aligned 2/4/8-byte writes stay inside one line: resolve once and, when
+        // write-through, issue one sized store instead of a write_byte per byte.
         if n > 1 && addr & (n as u64 - 1) == 0 {
             let (set_idx, way_idx, miss) = self.resolve_line(addr)?;
             if miss {

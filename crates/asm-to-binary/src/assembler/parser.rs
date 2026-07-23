@@ -35,10 +35,8 @@ use crate::riscv::rv64m::{Divu, Mul, Remu};
 use crate::riscv::rv64zicsr::{Csrrc, Csrrs, Csrrw};
 use crate::rv_instruction::RvInstruction;
 
-/// Convert a `RvInstruction` stream to a typed `AsmToken` stream.
-///
-/// Tokens that cannot be parsed are emitted as `AsmToken::Comment` with the raw
-/// text so nothing is silently lost -- the caller can choose to error on those.
+/// Convert an `RvInstruction` stream to typed `AsmToken`s. Unparsable tokens become
+/// `AsmToken::Comment` carrying the raw text, so callers can choose to error on them.
 pub fn parse(tokens: &[RvInstruction]) -> Vec<AsmToken> {
     let mut out = Vec::with_capacity(tokens.len());
     for tok in tokens {
@@ -556,7 +554,7 @@ fn parse_jal(operands: &str) -> Option<AsmToken> {
             Some(AsmToken::Jal { rd, target })
         }
         1 => {
-            // `jal label` -- treat as `jal ra, label`
+            // Bare `jal label` means `jal ra, label`.
             let target = parts[0].trim().to_owned();
             if target.is_empty() {
                 None

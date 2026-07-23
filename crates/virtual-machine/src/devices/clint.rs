@@ -34,10 +34,6 @@ impl Clint {
         self.msip != 0
     }
 
-    pub fn set_mtime(&mut self, value: u64) {
-        self.mtime = value;
-    }
-
     pub fn tick(&mut self) {
         self.mtime = self.mtime.wrapping_add(1);
     }

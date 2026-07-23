@@ -9,32 +9,32 @@ use std::collections::HashMap;
 
 const SP: Reg = 2;
 
-/// What a real instruction does, as far as the tracker cares.
+// What a real instruction does, as far as the tracker cares.
 enum Effect {
-    /// `addi rd, sp, k`: `rd` now equals `sp + k`.
+    // `addi rd, sp, k`: `rd` now equals `sp + k`.
     SpAddr { rd: Reg, k: i32 },
-    /// `addi rd, rs, imm`: a general add-immediate (covers `mv` when `imm == 0`).
+    // `addi rd, rs, imm`: a general add-immediate (covers `mv` when `imm == 0`).
     Addi { rd: Reg, rs: Reg, imm: i32 },
-    /// `ld rd, offset(base)`: a full 64-bit load.
+    // `ld rd, offset(base)`: a full 64-bit load.
     LoadFull { rd: Reg, base: Reg, offset: i32 },
-    /// A sub-word load (`lw`/`lh`/`lb`/...): writes `rd`, carries no full value.
+    // A sub-word load (`lw`/`lh`/`lb`/...): writes `rd`, carries no full value.
     LoadPart { rd: Reg },
-    /// `sd src, offset(base)`: a full 64-bit store.
+    // `sd src, offset(base)`: a full 64-bit store.
     StoreFull { src: Reg, base: Reg, offset: i32 },
-    /// A sub-word store (`sw`/`sh`/`sb`): writes part of `offset(base)`.
+    // A sub-word store (`sw`/`sh`/`sb`): writes part of `offset(base)`.
     StorePart { base: Reg, offset: i32 },
-    /// A plain integer-register write with no memory effect.
+    // A plain integer-register write with no memory effect.
     WriteReg { rd: Reg },
-    /// Anything not modeled: clears all tracking state.
+    // Anything not modeled: clears all tracking state.
     Opaque,
 }
 
-/// Straight-line tracking state, valid only within one run between barriers.
+// Straight-line tracking state, valid only within one run between barriers.
 #[derive(Default)]
 struct State {
-    /// Registers known to equal `sp + k`.
+    // Registers known to equal `sp + k`.
     sp_addr: HashMap<Reg, i32>,
-    /// `sp`-relative slot offset -> a register currently holding that slot's value.
+    // `sp`-relative slot offset -> a register currently holding that slot's value.
     slot_reg: HashMap<i32, Reg>,
 }
 
@@ -44,8 +44,8 @@ impl State {
         self.slot_reg.clear();
     }
 
-    /// Record that `rd` is being overwritten, invalidating stale knowledge.
-    /// Writing `sp` shifts every slot, so it clears everything.
+    // Overwriting `rd` invalidates stale knowledge. Writing `sp` shifts every
+    // slot, so it clears everything.
     fn write_reg(&mut self, rd: Reg) {
         if rd == SP {
             self.clear();
@@ -55,7 +55,7 @@ impl State {
         self.slot_reg.retain(|_, holder| *holder != rd);
     }
 
-    /// Resolve a `(base, offset)` memory operand to an `sp`-relative slot offset.
+    // Resolves a `(base, offset)` memory operand to an `sp`-relative slot offset.
     fn resolve_slot(&self, base: Reg, offset: i32) -> Option<i32> {
         if base == SP {
             Some(offset)
@@ -168,7 +168,7 @@ pub fn optimize(tokens: &[RvInstruction]) -> Vec<RvInstruction> {
     out
 }
 
-/// `sp + (k + imm)` if `rs` is known to equal `sp + k` (or is `sp` itself).
+// `sp + (k + imm)` if `rs` is known to equal `sp + k` (or is `sp` itself).
 fn self_sp_offset(state: &State, rs: Reg, imm: i32) -> Option<i32> {
     if rs == SP {
         Some(imm)
@@ -319,10 +319,8 @@ mod tests {
 
     #[test]
     fn folds_through_materialized_slot_address() {
-        // The lowering rematerializes a slot address into a temp before each
-        // access:
-        //   addi t0, sp, 8 ; sd t1, 0(t0) ; addi t0, sp, 8 ; ld t2, 0(t0)
-        // Both `0(t0)` resolve to slot sp+8, so the reload becomes `mv t2, t1`.
+        // The lowering rematerializes the slot address before each access, so
+        // both `0(t0)` resolve to slot sp+8 and the reload folds to `mv t2, t1`.
         let input = vec![
             real(RealInstruction::Addi(Addi::new(5, 2, 8))), // addi t0, sp, 8
             real(RealInstruction::Sd(Sd::new(5, 6, 0))),     // sd t1, 0(t0)

@@ -26,15 +26,15 @@ const NX: u8 = 0x01; // Inexact
 
 // --- Canonical NaN bit patterns ---
 
-/// Canonical quiet NaN for f32, NaN-boxed in a u64 FP register.
+// Canonical quiet NaN for f32, NaN-boxed in a u64 FP register.
 #[inline]
-pub fn canon_nan_s() -> u64 {
+fn canon_nan_s() -> u64 {
     0xFFFF_FFFF_7FC0_0000u64
 }
 
-/// Canonical quiet NaN for f64.
+// Canonical quiet NaN for f64.
 #[inline]
-pub fn canon_nan_d() -> u64 {
+fn canon_nan_d() -> u64 {
     0x7FF8_0000_0000_0000u64
 }
 
@@ -300,10 +300,8 @@ fn next_down_f32(x: f32) -> f32 {
 }
 
 // --- f64 -> f32 with explicit rounding mode ---
-// Strategy: compute with hardware default (RNE on x86/ARM), then if the
-// rounded result is on the wrong side of the exact value, nudge it by one ULP.
-// For f32 inputs (at most 24 significant bits), the f64 result is exact so the
-// "exact" value passed here is the true mathematical result.
+// Round with the host default (RNE), then nudge one ULP when the result lands on
+// the wrong side of the exact value. f32 inputs are exact in f64, so `val` is too.
 
 /// Round a finite-or-infinite f64 to f32 using the specified rounding mode.
 pub fn f64_to_f32_with_rm(val: f64, rm: u8) -> f32 {
@@ -348,10 +346,8 @@ pub fn f64_to_f32_with_rm(val: f64, rm: u8) -> f32 {
 
 // --- Flag detection from f64-exact result and f32 rounded result ---
 
-/// Derive fflags for an f32 operation given the exact result (`exact`, computed
-/// in f64) and the rounded f32 result.  Handles OF, UF, NX.
-///
-/// NV must be detected by the caller (the pattern depends on the operation).
+/// Derives OF, UF and NX from the f64-exact result and the rounded f32 result.
+/// NV depends on the operation, so the caller must detect it.
 pub fn fp_flags_from_exact_s(exact: f64, result: f32) -> u8 {
     let mut flags = 0u8;
     if result.is_infinite() && exact.is_finite() {
@@ -764,11 +760,8 @@ pub fn fp_fclass_d(a: f64) -> u64 {
 }
 
 // --- Fused multiply-add (F extension), exact via f64 promotion ---
-// All four FMA variants use f64 arithmetic internally.  For f32 operands
-// (<= 24 significant bits), both the intermediate product (<= 48 bits) and the
-// final sum (<= 49 bits) fit exactly in f64 (53-bit mantissa), so the f64
-// result is the correctly-rounded mathematical result before the final
-// rounding to f32.
+// f32 FMA runs in f64: the product (<= 48 bits) and sum (<= 49 bits) fit exactly
+// in a 53-bit mantissa, so only the final rounding back to f32 is inexact.
 
 pub fn fp_fmadd_s(rs1: f32, rs2: f32, rs3: f32, rm: u8) -> (u64, u8) {
     if rs1.is_nan() || rs2.is_nan() || rs3.is_nan() {

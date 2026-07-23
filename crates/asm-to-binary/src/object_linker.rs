@@ -23,20 +23,14 @@ impl std::fmt::Display for LinkerError {
 
 impl std::error::Error for LinkerError {}
 
-/// Links independently assembled objects into one fully linked `AssembledOutput`.
-///
-/// Sections of the same kind from different modules are merged into a single
-/// output section.  This keeps the ELF output lean (one `.text`, one `.data`,
-/// etc.) and ensures boundary symbols injected afterwards span the correct
-/// merged ranges.
+/// Links independently assembled objects into one `AssembledOutput`, merging same-kind
+/// sections so injected boundary symbols span the whole merged range.
 pub struct ObjectLinker;
 
 impl ObjectLinker {
     pub fn link(modules: &[(&str, &AssembledOutput)]) -> Result<AssembledOutput, LinkerError> {
-        // Collect contributions per section kind
-        //
-        // For each module we walk its sections in ELF load order (non-BSS
-        // first, BSS last)
+        // --- Collect contributions per section kind ---
+        // Each module is walked in ELF load order: non-BSS first, BSS last.
         struct Contrib<'a> {
             module_idx: usize,
             sec: &'a SectionData,
@@ -66,11 +60,8 @@ impl ObjectLinker {
             }
         }
 
-        // Merge bytes and compute output bases
-        //
-        // Within each kind, contributions are concatenated in module order.
-        // `mod_start_in_output[kind][mi]` gives the byte offset within the
-        // merged section where module `mi`'s contribution begins.
+        // --- Merge bytes and compute output bases ---
+        // Contributions concatenate in module order; `mod_starts[mi]` is module `mi`'s offset.
         struct MergedSec {
             kind: SectionKind,
             bytes: Vec<u8>,

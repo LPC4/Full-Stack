@@ -119,10 +119,6 @@ impl Document {
     pub fn diagnostics(&self) -> &[Diagnostic] {
         &self.diagnostics
     }
-
-    pub fn set_diagnostics(&mut self, diagnostics: Vec<Diagnostic>) {
-        self.diagnostics = diagnostics;
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

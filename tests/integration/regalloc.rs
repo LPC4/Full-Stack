@@ -36,8 +36,8 @@ fn cached_stdlib_objs(regalloc: bool) -> &'static [(String, AssembledOutput)] {
     })
 }
 
-/// Compile and run with register allocation on or off; returns the VM outcome,
-/// UART output, emitted user-code instruction count, and executed cycles.
+// Returns the VM outcome, UART output, emitted user-code instruction count,
+// and executed cycles.
 fn run_with_regalloc(src: &str, regalloc: bool) -> (StepOutcome, String, usize, u64) {
     let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
@@ -64,8 +64,8 @@ fn run_with_regalloc(src: &str, regalloc: bool) -> (StepOutcome, String, usize, 
     (run.outcome, run.uart_output.clone(), code_lines, cycles)
 }
 
-/// Assert the program behaves identically with allocation off and on, and
-/// return the (off, on) instruction counts and cycle counts for extra checks.
+// Asserts identical behaviour with allocation off and on, and returns the
+// (off, on) instruction and cycle counts for extra checks.
 fn assert_equivalent(src: &str) -> ((usize, u64), (usize, u64)) {
     let (base_outcome, base_uart, base_lines, base_cycles) = run_with_regalloc(src, false);
     let (alloc_outcome, alloc_uart, alloc_lines, alloc_cycles) = run_with_regalloc(src, true);
@@ -172,9 +172,8 @@ main: () -> i32 {
 
 #[test]
 fn regalloc_nine_variable_args_pass_on_stack() {
-    // Ninth-and-beyond arguments travel on the stack; passing live variables
-    // (not constants) exercises the slot loads around the sp adjustment, which
-    // previously read from stale offsets after sp had already moved.
+    // Live variables, not constants, so the stack-passed slot loads run around
+    // the sp adjustment. They once read stale offsets after sp had moved.
     let src = r#"
 sum_nine: (a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64, h: i64, ninth: i64) -> i64 {
     return a + b + c + d + e + f + g + h + ninth
@@ -373,9 +372,8 @@ main: () -> i32 {
     );
 }
 
-// Regression: with regalloc off and a frame over 2047 bytes, offset
-// legalization used to pick a scratch that clobbered the live array base
-// (t0), corrupting the spill area and never terminating.
+// Regression: regalloc off plus a frame over 2047 bytes made offset
+// legalization pick a scratch that clobbered the live array base in t0.
 #[test]
 fn regalloc_off_large_frame_array_loop() {
     assert_equivalent(

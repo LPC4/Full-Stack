@@ -48,11 +48,8 @@ const TRACE_F_RET: u64 = 7;
 // How many of the most recent ecalls the panel shows (newest first).
 const MAX_TRACE_ROWS: usize = 64;
 
-/// Guest-physical addresses of the kernel scheduler globals.
-///
-/// Resolved once at boot from the linked kernel symbol table. HLL globals keep
-/// their names through the pipeline, and kernel data is identity-mapped, so
-/// PA = `RAM_BASE + offset`.
+/// Guest-physical addresses of the kernel scheduler globals. Kernel data is
+/// identity-mapped, so PA = `RAM_BASE + symbol offset`.
 #[derive(Clone, Copy)]
 pub struct OsSymbols {
     current_process: u64,
@@ -65,7 +62,7 @@ pub struct OsSymbols {
 
 impl OsSymbols {
     /// Resolve the scheduler globals, or `None` if the image lacks them
-    /// (e.g. a non-kernel binary, so the panel simply hides itself).
+    /// (e.g. a non-kernel binary, where the panel hides itself).
     pub fn from_kernel(assembled: &AssembledOutput) -> Option<Self> {
         let pa = |n: &str| assembled.symbol_address(n).map(|off| RAM_BASE + off);
         Some(Self {

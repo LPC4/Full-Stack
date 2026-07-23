@@ -155,7 +155,7 @@ impl<'a> SessionEngine<'a> {
         })
     }
 
-    pub fn kernel_fs_entries(
+    fn kernel_fs_entries(
         &self,
         config: &RunConfig,
     ) -> Result<Vec<OwnedFsEntry>, SessionEngineError> {

@@ -1,6 +1,6 @@
 use crate::compilation_pipeline::TargetMode;
 
-pub fn source_declares_entry(source: &str, entry: &str) -> bool {
+fn source_declares_entry(source: &str, entry: &str) -> bool {
     source.lines().any(|line| {
         let trimmed = line.trim_start();
         !trimmed.starts_with(';') && trimmed.starts_with(&format!("{entry}:"))

@@ -40,9 +40,8 @@ struct LoweredValue {
     is_unsigned: bool,
 }
 
-// Lowering metadata for an `enum`. The runtime value is the aggregate
-// `{ tag: i64, payload: u8[payload_bytes] }` (payload omitted when all variants
-// are unit). `payload_bytes` is the largest variant's payload size, 8-aligned.
+// Enum runtime value is `{ tag: i64, payload: u8[payload_bytes] }`, payload omitted when
+// all variants are unit. `payload_bytes` is the largest variant's payload, 8-aligned.
 #[derive(Debug, Clone)]
 struct EnumLayout {
     payload_bytes: usize,
@@ -218,9 +217,8 @@ impl HighLevelCompiler {
             });
         }
 
-        // Register concrete named types before computing enum payload layouts.
-        // Enums are otherwise visited first, and a struct payload would still be
-        // unresolved here and incorrectly contribute zero bytes to the layout.
+        // Named types must register before enum payload layouts: enums are visited first,
+        // and an unresolved struct payload would contribute zero bytes to the layout.
         for declaration in &program.declarations {
             match &declaration.decl {
                 DeclNode::Type {

@@ -9,10 +9,8 @@ use virtual_machine::bus::MemoryLatencyConfig;
 
 pub type BuildModuleResolver = Rc<dyn Fn(&str) -> Option<String> + 'static>;
 
-/// Build description for one linkable HLL program.
-///
-/// This is intentionally data-only: callers describe what they want built, and
-/// `BuildExecutor` owns the object ordering and pipeline setup.
+/// Build description for one linkable HLL program. Data-only by design:
+/// `BuildExecutor` owns object ordering and pipeline setup.
 #[derive(Clone)]
 pub struct BuildManifest {
     pub name: String,

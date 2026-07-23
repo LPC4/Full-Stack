@@ -4,15 +4,14 @@ use super::{
 };
 use crate::ast::{BindingField, MatchArm, PrimaryExpr};
 
-/// Rewrite each `continue` in `stmts` (but not inside nested loops) to run the
-/// loop `step` first, so a `for`-loop desugared to `while` still advances its
-/// counter on `continue`.
+// A `for` desugared to `while` must still advance its counter on `continue`, so
+// every `continue` outside a nested loop runs `step` first.
 fn rewrite_continue_with_step(stmts: &[Statement], step: &Statement) -> Vec<Statement> {
     stmts.iter().map(|s| rewrite_stmt(s, step)).collect()
 }
 
-/// Parallel line table for a desugared loop body: `lead` synthetic statements
-/// (line 0, no marker), the body's carried lines, then `trail` synthetic ones.
+// Parallel line table for a desugared loop body: `lead` synthetic statements
+// (line 0, no marker), the body's carried lines, then `trail` synthetic ones.
 fn loop_body_lines(lead: usize, body: &Block, trail: usize) -> Vec<u32> {
     let mut lines = vec![0u32; lead];
     lines.extend_from_slice(&body.stmt_lines);
@@ -514,8 +513,8 @@ impl HighLevelCompiler {
         self.start_new_block(exit_label.0.clone());
     }
 
-    // Desugar a `for` loop to a `while` loop, reusing the existing `while`
-    // lowering (phi/break/continue) -- no new IR.
+    // A `for` loop desugars to a `while` loop, reusing the existing `while`
+    // lowering (phi/break/continue) so no new IR forms are needed.
     pub(super) fn lower_for(
         &mut self,
         ir_program: &mut IrProgram,
@@ -533,13 +532,8 @@ impl HighLevelCompiler {
         }
     }
 
-    // `for var in start..end { body }` becomes:
-    //   var := start
-    //   __for_end := end                 ; end evaluated once
-    //   while var < __for_end {          ; `<=` when inclusive
-    //       <body, continue -> step+continue>
-    //       var = var + 1                ; the step
-    //   }
+    // Desugars to a while loop: `end` is evaluated once into a temporary, the
+    // compare is `<` (`<=` when inclusive), and the step increments by one.
     fn lower_for_range(
         &mut self,
         ir_program: &mut IrProgram,
@@ -594,14 +588,8 @@ impl HighLevelCompiler {
         self.lower_block(ir_program, &desugared);
     }
 
-    // `for var in arr { body }` over a fixed array `T[N]` becomes:
-    //   __for_ptr := &arr[0]                 ; base element pointer, once
-    //   __for_i   := 0
-    //   while __for_i < N {
-    //       var := __for_ptr[__for_i]        ; element value, element-scaled
-    //       <body, continue -> step+continue>
-    //       __for_i = __for_i + 1
-    //   }
+    // Over a fixed array `T[N]` this becomes an index loop bounded by `N`. The base
+    // element pointer is taken once and `var` binds the element value by copy.
     fn lower_for_each(
         &mut self,
         ir_program: &mut IrProgram,
@@ -788,14 +776,8 @@ impl HighLevelCompiler {
         }
     }
 
-    // `for var in <slice> { body }` over a slice becomes:
-    //   __for_len := slice.len           ; length read once
-    //   __for_i := 0
-    //   while __for_i < __for_len {
-    //       var := slice[__for_i]        ; bounds-checked element read
-    //       <body, continue -> step+continue>
-    //       __for_i = __for_i + 1
-    //   }
+    // Over a slice this becomes an index loop: `slice.len` is read once and each
+    // element read stays bounds-checked.
     fn lower_for_each_slice(
         &mut self,
         ir_program: &mut IrProgram,

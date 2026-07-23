@@ -5,17 +5,18 @@
 
 Full-Stack is a self-contained compiler pipeline for a small systems language (HLL).
 It carries source all the way to machine code and runs the result on a built-in
-RISC-V CPU, with every stage inspectable in a graphical UI:
+RISC-V CPU, with every stage inspectable in a graphical IDE:
 
 ```
 HLL source -> IR -> RISC-V assembly -> ELF object -> virtual machine
 ```
 
-The whole toolchain is written in Rust and runs either natively (egui desktop app
-and a `fsc` CLI) or in the browser via WebAssembly. The kernel target boots a real
-S-mode operating system on the VM: paging, processes, a filesystem, an interactive
-shell, a line editor, and an assembler that runs *inside* the VM so you can write,
-assemble, and run a program without ever leaving the machine.
+The whole toolchain is written in Rust and runs either natively (egui desktop IDE
+and a `fsc` CLI) or fully client-side in the browser via WebAssembly, VM included.
+The kernel target boots a real S-mode operating system on the VM: paging, processes,
+a filesystem, an interactive shell, a line editor, and a compiler toolchain that runs
+inside the VM so you can write, compile, assemble, and run a program without ever
+leaving the machine.
 
 
 ## Highlights
@@ -27,7 +28,7 @@ assemble, and run a program without ever leaving the machine.
   this toolchain and executed as user processes.
 - **A real interactive OS.** An S-mode kernel with Sv39 paging, per-process address
   spaces, a round-robin preemptive scheduler, an inode read-write filesystem, and a
-  shell with `ls`/`cd`/`cat`/`edit`/`cc`/`as`/`ld`/`run`/file management. Foreground
+  shell with pipes, redirection, background jobs, and file management. Foreground
   programs return to the prompt on exit and can be interrupted with Ctrl-C.
 - **A complete front-to-back compiler.** Lexer, parser, semantic analysis, typed SSA
   IR, register allocation + slot coloring, RV64IMAFD code generation with an optional
@@ -35,20 +36,19 @@ assemble, and run a program without ever leaving the machine.
 - **A cycle-stepped VM with real I/O.** A 5-stage pipelined RV64IMAFD core driving a
   UART console, a keyboard event device, and a 320x240 framebuffer, enough to run a
   spinning cube you steer with WASD, a live Mandelbrot renderer, and Conway's Game of Life.
-- **Everything visualised.** Tokens, AST, IR, assembly, CFG, memory map, cache state,
-  disassembly, stack, registers, and a cycle-stepping debugger over the live pipeline,
-  plus OS-level panels: a process inspector with per-process stack view, a live syscall
-  trace, and a filesystem inspector with a tree view and file preview.
+- **An IDE around the whole thing.** Workspace explorer, editor with live diagnostics,
+  quick open and project search, a machine dock with console and framebuffer, a
+  stepping debugger, OS-level inspectors, and an opt-in time-travel scrubber.
 
 
 ## What you can do in the booted OS
 
-Boot the kernel target (the GUI's machine window, or `fsc run kernel.elf`) and you land
+Boot the kernel target (the IDE's machine dock, or `fsc run kernel.elf`) and you land
 at a shell prompt running as pid 1:
 
 ```
 $ ls
-/bin   
+/bin
 /home
 $ cd home/src
 $ edit hello.hll        ; line editor: append, insert, substitute, delete, write
@@ -74,36 +74,57 @@ installed into the filesystem image. Nothing about them is privileged, they reac
 kernel only through `ecall`.
 
 
-## Features
+## The IDE
 
-- **Complete front-to-back compiler**: lexer, parser, semantic analysis, typed SSA IR,
-  register allocation + slot coloring, RV64IMAFD code generation with peephole
-  optimization, assembler, and an object linker that emits ELF-64 with relocations.
-- **Per-file compilation**: each HLL source (stdlib modules and user code alike)
-  compiles to its own `.o` and is linked with full relocation, exactly like a real
-  toolchain. The stdlib uses a distinct string-literal prefix so its rodata labels
-  never collide with user code at link time.
-- **A cycle-stepped VM**: 5-stage in-order pipeline (IF/ID/EX/MEM/WB) with data
-  forwarding, load-use hazard detection, and 2-bit branch prediction over a
-  three-level write-back cache hierarchy, plus an Sv39 MMU, M/S/U privilege modes,
-  CLINT/PLIC interrupt controllers, an NS16550A UART, a keyboard event device, and a
-  linear framebuffer.
-- **A bundled OS runtime**: M-mode boot firmware (PMP, delegation, trap handlers),
-  an S-mode paging kernel with a round-robin scheduler, an inode-based read-write
-  filesystem, and a shell with an in-VM editor, compiler, assembler, and linker.
-- **Self-hosting in the guest**: a full toolchain runs as userspace programs inside the
-  VM. `/bin/cc` compiles an HLL subset to assembly, `/bin/as` assembles to objects or a
-  runnable ELF, and `/bin/ld` links objects into an ELF, closing the source-to-binary
-  loop without the host toolchain.
-- **Every stage visualised**: tokens, AST, IR, assembly, CFG, memory map, cache
-  state, disassembly, stack, registers, and a cycle-stepping debugger showing the
-  pipeline, registers, caches, and I/O. OS-level panels add a process inspector with
-  a per-process stack view, a live syscall trace, and a filesystem tree inspector.
-- **Three target modes**:
-  - **Hosted** - Linux RV64 syscall ABI (write, exit, brk, mmap, ...).
-  - **Freestanding** - bare-metal, no OS dependencies.
-  - **Kernel** - full kernel with paging, processes, filesystem, and shell.
-- **IR-level optimization**: optional local constant folding and dead-code elimination.
+`cargo run --release` (or the [hosted web build](https://lpc4.github.io/Full-Stack/))
+opens a small IDE built with egui:
+
+- **Workspaces.** The explorer shows a real folder on disk. Bundled presets open a
+  demo workspace of example programs or the guided assembly lessons; run
+  configurations are discovered from the workspace and shown in the run panel.
+- **Editor.** Syntax highlighting, editor tabs, quick open, project-wide search, and
+  live as-you-type diagnostics rendered inline with click-to-jump from a problems pane.
+- **Machine dock.** Boots the built program, shows the UART console and framebuffer
+  side by side, and forwards your keyboard to the guest (text to the UART, key events
+  to the keyboard device when the framebuffer tab is focused).
+- **Debugger.** A pinned debug tab steps the live machine by cycle, instruction, or
+  source line, with breakpoints, run-to-line, a call stack pane, and views of the
+  pipeline, registers, caches, and disassembly.
+- **Inspectors.** Tokens, AST, IR, assembly, CFG, memory map, and ELF layout for every
+  build, plus OS-level panels: a process inspector with per-process stack view, a live
+  syscall trace, and a filesystem tree with file preview.
+- **Time travel.** An opt-in scrubber snapshots the VM as it runs and lets you drag
+  execution back through history.
+
+
+## The language
+
+HLL is a small systems language built around explicit, predictable memory access:
+
+- `T*` is a pointer and is never implicitly dereferenced; use `@ptr` to read or write
+  through it, and `&var` to take an address.
+- Structs, enums, fixed arrays, slices and ranges, and inline aggregate returns via
+  multiple-return-value structs.
+- Struct literals use `.field = value` (a leading `:` introduces a type, never a value),
+  with omitted fields zero-filled and contextual inference of the struct type.
+- `enum`/`match` with exhaustiveness checking and literal patterns, and a `?` operator
+  for error propagation.
+- Generics with monomorphization, `interface` bounds on type parameters, and dynamic
+  interface values for runtime polymorphism.
+- Methods and associated constants/types via `impl` blocks, plus non-capturing lambdas
+  and function pointers.
+- Destructuring bindings and buffer-based string interpolation
+  (`string.format_into(buf[..], "user={name}")`), extensible through a `Format` interface.
+- `defer` for deterministic cleanup, and `new` / `free` for manual memory management.
+- Compile-time evaluation of pure functions, loops, and recursion, plus compile-time
+  layout reflection over types.
+- `asm { }` blocks for inline RISC-V assembly, and C interop through `external`
+  declarations.
+- `assert`, `panic`, and `print` built in, and a small standard library shared between
+  hosted and kernel targets: heap allocators, `Vec`, owned strings, arena and pool
+  allocators, and text formatting.
+
+The language (HLL v2) is considered feature-complete. The full grammar and semantics are in the [language specification](crates/hll-to-ir/_LANG_SPECIFICATIONS.md).
 
 
 ## Architecture
@@ -119,9 +140,21 @@ HLL Source
   -> Virtual Machine       5-stage pipelined CPU
 ```
 
-Each HLL file is compiled independently to its own object, then linked. No source
-concatenation happens before assembly. The VM loads the linked image (or a kernel
-built from the `os-runtime` sources) and steps it one CPU cycle at a time.
+- **Per-file compilation.** Each HLL source (stdlib modules and user code alike)
+  compiles to its own `.o` and is linked with full relocation, exactly like a real
+  toolchain. No source concatenation happens before assembly.
+- **The VM.** A 5-stage in-order pipeline (IF/ID/EX/MEM/WB) with data forwarding,
+  load-use hazard detection, and 2-bit branch prediction over a three-level write-back
+  cache hierarchy with configurable latencies, plus an Sv39 MMU, M/S/U privilege
+  modes, CLINT/PLIC interrupt controllers, an NS16550A UART, a keyboard event device,
+  and a linear framebuffer.
+- **The OS runtime.** M-mode boot firmware (PMP, delegation, trap handlers), an S-mode
+  paging kernel with a round-robin scheduler, an inode-based read-write filesystem,
+  and the userspace shell and toolchain.
+- **Three target modes.** *Hosted* (Linux RV64 syscall ABI), *freestanding*
+  (bare-metal, no OS dependencies), and *kernel* (the full OS above).
+- **Optional optimization.** IR-level constant folding and dead-code elimination, and
+  a peephole pass over the emitted assembly.
 
 See the [specifications](#documentation) for the full detail of each stage.
 
@@ -129,7 +162,7 @@ See the [specifications](#documentation) for the full detail of each stage.
 ## Getting started
 
 ```sh
-# Native desktop app (egui GUI)
+# Native desktop IDE (egui)
 cargo build --release
 cargo run --release
 
@@ -145,21 +178,13 @@ trunk serve            # dev server with hot-reload
 trunk build --release  # static bundle in dist/
 ```
 
-> The browser build runs the compiler and UI client-side, but does not execute the
-> VM. Use the native build to run programs. A live build is hosted at
+> The browser build runs the entire stack client-side, including the VM: you can
+> boot the kernel, use the shell, and run the framebuffer demos without installing
+> anything. A live build is hosted at
 > [lpc4.github.io/Full-Stack](https://lpc4.github.io/Full-Stack/).
 
 
-## Usage
-
-### GUI
-
-Launch the desktop app with `cargo run --release`. The machine window boots the kernel,
-shows the UART console and the framebuffer side by side, and forwards your keyboard to
-the guest (text to the UART, key events to the keyboard device when the framebuffer tab
-is focused). A read-only debugger panel exposes the live pipeline, caches, and registers.
-
-### CLI (`fsc`)
+## CLI (`fsc`)
 
 ```sh
 cargo build --release --bin fsc
@@ -173,42 +198,22 @@ fsc run        program.s                          # load raw assembly text
 fsc run        kernel.elf                         # load a pre-linked ELF
 ```
 
-## The language
-
-HLL is a small systems language built around explicit, predictable memory access:
-
-- `T*` is a pointer and is never implicitly dereferenced; use `@ptr` to read or write
-  through it, and `&var` to take an address.
-- Structs, enums, arrays, slices, generics, and inline aggregate returns via
-  multiple-return-value structs.
-- Struct literals use `.field = value` (a leading `:` introduces a type, never a value),
-  with omitted fields zero-filled and contextual inference of the struct type.
-- `enum`/`match` with exhaustiveness checking, and a `?` operator for error propagation.
-- `defer` for deterministic cleanup, and `new` / `free` for manual memory management.
-- Compile-time evaluation of pure functions, loops, and recursion.
-- `asm { }` blocks for inline RISC-V assembly.
-- C interop through `external` declarations.
-- `assert`, `panic`, and `print` built-in for hosted mode.
-
-The language (HLL v2) is intentionally minimal and considered feature-complete: it has
-`if`/`while`/`for`/`break`/`continue`/`defer`, functions, structs, enums, `match`, fixed
-arrays, slices and ranges, pointers, `as` casts, compound assignment, the `?` operator,
-`import`/`export`, and floats. The full grammar and semantics are in the
-[language specification](crates/hll-to-ir/_LANG_SPECIFICATIONS.md).
-
 
 ## Repository layout
 
 | Path | Contents |
 |------|----------|
-| `src/` | Application entry point, egui UI, compilation pipeline, machine-window runner |
+| `src/` | The IDE: editor, machine dock, debugger, inspectors, pipeline, sessions |
 | `crates/hll-to-ir/` | Lexer, parser, semantic analysis, IR compiler, stdlib bundles |
 | `crates/ir-to-asm/` | IR to RISC-V assembly: register allocation, slot coloring, peephole |
 | `crates/asm-to-binary/` | Assembler, linker, ELF output (executables and relocatable objects) |
 | `crates/virtual-machine/` | VM: 5-stage CPU pipeline, caches, MMU, devices, bus |
 | `crates/os-runtime/` | Boot firmware, kernel sources, and standard library |
+| `crates/build-manifest/` | Shared parser for the `.build` program manifests |
 | `programs/user/` | Boot-FS userspace tools, demos, samples, and fixtures |
 | `programs/example/` | Host-compiled example HLL programs, one folder per program |
+| `programs/lessons/` | Guided RISC-V assembly lessons, one folder per lesson |
+| `programs/demo_workspace/` | Demo workspace the IDE materializes for its default preset |
 | `programs/test/` | Golden compiler fixtures and integration HLL inputs |
 | `tests/` | Rust integration tests (VM execution, compiler suite, kernel boots) |
 
@@ -244,5 +249,3 @@ exit.
 
 Dual-licensed under either of [MIT](LICENSE-MIT) or [Apache 2.0](LICENSE-APACHE),
 at your option.
-</content>
-</invoke>

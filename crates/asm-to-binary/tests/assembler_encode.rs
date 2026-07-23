@@ -83,15 +83,11 @@ fn test_tail_pseudo_relocation() {
 /// have bits[31:12] == 17, i.e. the auipc immediate = 0x11000.
 #[test]
 fn auipc_hi20_is_shifted_for_la() {
-    // .text
-    // la t0, far_label          ; PC=0, offset=0x11000 -> hi20=17, lo12=0
-    // .space 0x10FF8            ; pad so that far_label lands at 0x11000
-    //                           ; (la expands to 8 bytes, so 0x11000 - 8 = 0x10FF8)
-    // far_label:
-    // addi zero, zero, 0
-    //
-    // Note: must use Directive "\tla ..." so the parser produces AsmToken::La
-    // (with deferred symbol resolution) rather than eagerly expanding the pseudo.
+    // `la` sits at PC=0 and expands to 8 bytes, so `.space 0x10FF8` puts far_label at
+    // 0x11000, giving hi20=17 and lo12=0.
+
+    // `la` arrives as a Directive string so the parser emits AsmToken::La with deferred
+    // symbol resolution instead of eagerly expanding the pseudo.
     let tokens = vec![
         RvInstruction::Directive("\t.text".to_string()),
         RvInstruction::Directive("\tla t0, far_label".to_string()),

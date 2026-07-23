@@ -1,11 +1,5 @@
-// Execution-level coverage for the canonical HLL front end.
-//
-// The conformance tests in `hll-to-ir` stop at compile/IR shape. This suite
-// closes the execution gate: every implemented surface (place/value access,
-// inferred bindings, canonical
-// struct literals, pointer arithmetic, slices, and explicit generics) must compile,
-// assemble, link against the hosted stdlib, and produce the right exit code
-// in the VM.
+// The `hll-to-ir` conformance tests stop at IR shape. This suite closes the
+// execution gate: each surface must also link and exit with the right code.
 
 use asm_to_binary::AssembledOutput;
 use full_stack::compilation_pipeline::CompilationPipeline;
@@ -23,7 +17,7 @@ fn cached_stdlib_objs() -> &'static [(String, AssembledOutput)] {
     })
 }
 
-/// Compile a user program, link it against the cached stdlib, and run it in the VM.
+// Compile a user program, link it against the cached stdlib, and run it in the VM.
 fn run_hll(src: &str) -> StepOutcome {
     let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
@@ -54,7 +48,7 @@ fn assert_exit(src: &str, code: i64) {
     );
 }
 
-/// Assert a program fails to compile (used for rejected diagnostics).
+// Assert a program fails to compile (used for rejected diagnostics).
 fn assert_compile_fails(src: &str) {
     let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
@@ -245,10 +239,8 @@ main: () -> i32 {{
 
 #[test]
 fn literal_context_through_return() {
-    // An anonymous literal contextualizes from the function's return type and
-    // the returned struct (by value, via sret) reads back correctly.
-    // Struct-by-value arguments are a separate ABI limitation,
-    // so this exercises only the return-context path.
+    // Only the return-context path: struct-by-value arguments are a separate
+    // ABI limitation and are not covered here.
     assert_exit(
         r#"
 struct Point {
@@ -670,7 +662,7 @@ main: () -> i32 {
 
 #[test]
 fn range_slice_inclusive() {
-    // arr[1..=3] includes index 3, so {20, 30, 40} -- same as arr[1..4].
+    // arr[1..=3] includes index 3, so {20, 30, 40}, same as arr[1..4].
     assert_exit(
         r#"
 main: () -> i32 {

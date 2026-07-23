@@ -51,7 +51,7 @@ fn i64_ty() -> IrType {
     IrType::Integer(IntWidth::I64)
 }
 
-/// `main` returning the phi-merged value of a two-way branch on `cond`.
+// `main` returning the phi-merged value of a two-way branch on `cond`.
 fn branch_merge_program(cond: bool) -> IrProgram {
     let mut program = IrProgram::new("phi_merge");
     let mut func = IrFunction::new("main", IrType::Integer(IntWidth::I32));
@@ -96,8 +96,8 @@ fn phi_selects_the_taken_edge_value() {
     assert_eq!(run_ir(&branch_merge_program(false), false), 22);
 }
 
-/// Three loop-header phis: a counter plus a swapping pair. The swap only
-/// survives if back-edge copies have parallel-assignment semantics.
+// Three loop-header phis: a counter plus a swapping pair. The swap only
+// survives if back-edge copies have parallel-assignment semantics.
 fn swap_loop_program(iterations: i64) -> IrProgram {
     let mut program = IrProgram::new("phi_swap");
     let mut func = IrFunction::new("main", IrType::Integer(IntWidth::I32));
@@ -188,7 +188,7 @@ fn loop_phis_swap_without_clobbering() {
     assert_eq!(run_ir(&swap_loop_program(3), false), 21);
 }
 
-/// A counter accumulated purely through loop-carried phis.
+// A counter accumulated purely through loop-carried phis.
 fn counter_loop_program(limit: i64) -> IrProgram {
     let mut program = IrProgram::new("phi_counter");
     let mut func = IrFunction::new("main", IrType::Integer(IntWidth::I32));

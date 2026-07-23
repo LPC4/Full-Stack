@@ -229,9 +229,8 @@ fmt_big_digits: (limbs: u64*, count: u64, digits: u8*) -> u64 {
     return n
 }
 
-; Render one f64 into out (needs >= 32 bytes); returns the byte length.
-; Spelling: exact digits rounded half-even to 17 significant digits, plain
-; decimal for exponents -4..16, otherwise d.ddd...eN; nan / inf / -inf / -0.
+; Render one f64 into out (needs >= 32 bytes). Returns the byte length.
+; 17 digits half-even, plain decimal for exponents -4..16, else d.ddd...eN, plus nan/inf/-0.
 export fmt_f64_render: (value: f64, out: u8[]) -> u64 {
     bits: u64 = fmt_f64_bits(value)
     sign: u64 = bits >> 63

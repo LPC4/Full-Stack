@@ -353,9 +353,8 @@ impl SystemBus {
         (l1, l2, l3)
     }
 
-    /// Read bytes from the address space for debug inspection.
-    /// ROM and MMIO are read directly. RAM is read via the cache hierarchy, which updates
-    /// cache stats as a side effect (use `peek_bytes_raw` when that matters).
+    /// Debug read. ROM and MMIO go direct, RAM goes through the caches and so
+    /// perturbs cache stats: use `peek_bytes_raw` when that matters.
     pub fn peek_bytes(&mut self, addr: u64, len: usize) -> Vec<u8> {
         (0..len as u64)
             .map(|i| match addr + i {
@@ -383,9 +382,8 @@ impl SystemBus {
             .collect()
     }
 
-    /// Read bytes for debug display without touching cache stats or LRU state.
-    /// Routes by address: ROM and MMIO are read directly (non-destructive).
-    /// RAM is read through the L1/L2/L3 cache hierarchy.
+    /// Debug read that leaves cache stats and LRU state untouched. ROM and MMIO
+    /// go direct, RAM is looked up through the L1/L2/L3 hierarchy.
     pub fn peek_bytes_raw(&self, addr: u64, len: usize) -> Vec<u8> {
         (0..len as u64)
             .map(|i| {

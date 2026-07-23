@@ -35,7 +35,7 @@ kmain: () {
     boot_traps()
     boot_timer()
 
-    ; TODO: parse device tree and enumerate devices
+    ; Devices are hard-coded from the memory map; no device tree is parsed.
     klog.warn("device tree: not implemented".ptr)
 
     boot_plic()

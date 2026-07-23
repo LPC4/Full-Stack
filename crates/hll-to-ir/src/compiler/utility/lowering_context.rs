@@ -49,7 +49,7 @@ impl LoweringContext {
         self.current_function = None;
     }
 
-    /// Message prefixed with the current function name when one is set.
+    // Message prefixed with the current function name when one is set.
     fn scoped(&self, message: impl Into<String>) -> String {
         let msg = message.into();
         match &self.current_function {

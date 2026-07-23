@@ -38,7 +38,7 @@ pub fn compute_layout(tokens: &[AsmToken]) -> Result<Layout, AssemblerError> {
                     section_order.push(current.clone());
                 }
                 if !symbols.define(format!("{}@{}", name, current.name()), offset) {
-                    // Section-qualified duplicate -- only error on the unqualified form below.
+                    // Section-qualified duplicates are tolerated; the unqualified form errors.
                 }
                 if !symbols.define(name.clone(), offset) {
                     return Err(AssemblerError::new(format!(

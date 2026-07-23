@@ -1,21 +1,8 @@
-/// Unit tests for HLL -> IR lowering.
-///
-/// Tests here verify:
-///   - Compilation pipeline smoke tests
-///   - IR instruction selection (signed/unsigned arithmetic and comparisons)
-///   - Type cast lowering
-///   - Heap allocation/free lowering
-///   - Control flow (if-else, while) -> Branch terminators
-///   - Function call lowering
-///   - Global string constants
-///   - Unary operations
-///   - Stack allocation and pointer load/store
-///
-/// Semantic acceptance/rejection rules live in tests/integration/spec_rules.rs.
-/// Struct destructuring tests live in tests/unit/struct_destructuring.rs.
+// HLL -> IR lowering. Semantic accept/reject rules live in spec_rules.rs and
+// destructuring in struct_destructuring.rs, both alongside this file.
+use full_stack::compilation_pipeline::{CompilationError, CompilationPipeline};
 use hll_to_ir::ir::instruction::IrTerminator;
 use hll_to_ir::{IrCmpOp, IrInstruction, IrMathOp};
-use full_stack::compilation_pipeline::{CompilationError, CompilationPipeline};
 
 fn compile_ok(source: &str) -> full_stack::compilation_pipeline::CompilationResult {
     let mut pipeline = CompilationPipeline::new();
@@ -81,7 +68,10 @@ fn compiles_minimal_valid_program() {
 #[test]
 fn rejects_invalid_tokens() {
     let result = CompilationPipeline::new().compile("@invalid_token!@#");
-    assert!(matches!(result.unwrap_err(), CompilationError::DiagnosticErrors(_)));
+    assert!(matches!(
+        result.unwrap_err(),
+        CompilationError::DiagnosticErrors(_)
+    ));
 }
 
 #[test]
@@ -152,11 +142,15 @@ fn mixed_signed_unsigned_ops_both_emitted() {
         .flat_map(|b| b.instructions.iter())
         .collect();
     assert!(
-        instrs.iter().any(|i| matches!(i, IrInstruction::Math { op, .. } if *op == IrMathOp::SDiv)),
+        instrs
+            .iter()
+            .any(|i| matches!(i, IrInstruction::Math { op, .. } if *op == IrMathOp::SDiv)),
         "expected SDiv"
     );
     assert!(
-        instrs.iter().any(|i| matches!(i, IrInstruction::Math { op, .. } if *op == IrMathOp::UDiv)),
+        instrs
+            .iter()
+            .any(|i| matches!(i, IrInstruction::Math { op, .. } if *op == IrMathOp::UDiv)),
         "expected UDiv (unsigned)"
     );
     assert!(
@@ -233,8 +227,14 @@ main: () -> i32 {
     free(ptr)
     return value
 }"#;
-    assert!(has_instruction(source, |i| matches!(i, IrInstruction::HeapAlloc { .. })));
-    assert!(has_instruction(source, |i| matches!(i, IrInstruction::HeapFree { .. })));
+    assert!(has_instruction(source, |i| matches!(
+        i,
+        IrInstruction::HeapAlloc { .. }
+    )));
+    assert!(has_instruction(source, |i| matches!(
+        i,
+        IrInstruction::HeapFree { .. }
+    )));
 }
 
 #[test]
@@ -269,16 +269,17 @@ main: () -> i32 {
     y: i32 = x as i32
     return y
 }"#;
-    assert!(has_instruction(source, |i| matches!(i, IrInstruction::Cast { .. })));
+    assert!(has_instruction(source, |i| matches!(
+        i,
+        IrInstruction::Cast { .. }
+    )));
 }
 
 #[test]
 fn new_with_array_type_is_rejected() {
     assert!(
         CompilationPipeline::new()
-            .compile(
-                r#"main: () -> i32 { arr: i32* = new([4]i32)  defer free(arr)  return 0 }"#
-            )
+            .compile(r#"main: () -> i32 { arr: i32* = new([4]i32)  defer free(arr)  return 0 }"#)
             .is_err()
     );
 }
@@ -311,7 +312,10 @@ fn if_else_emits_branch_terminator() {
         return 0
     }
 }"#;
-    assert!(has_terminator(source, |t| matches!(t, IrTerminator::Branch { .. })));
+    assert!(has_terminator(source, |t| matches!(
+        t,
+        IrTerminator::Branch { .. }
+    )));
 }
 
 #[test]
@@ -323,7 +327,10 @@ fn while_loop_emits_branch_terminator() {
     }
     return i
 }"#;
-    assert!(has_terminator(source, |t| matches!(t, IrTerminator::Branch { .. })));
+    assert!(has_terminator(source, |t| matches!(
+        t,
+        IrTerminator::Branch { .. }
+    )));
 }
 
 #[test]
@@ -335,7 +342,10 @@ fn while_loop_emits_jump_back_terminator() {
     }
     return i
 }"#;
-    assert!(has_terminator(source, |t| matches!(t, IrTerminator::Jump(..))));
+    assert!(has_terminator(source, |t| matches!(
+        t,
+        IrTerminator::Jump(..)
+    )));
 }
 
 #[test]
@@ -359,7 +369,10 @@ main: () -> i32 {
     result: i32 = double(21)
     return result
 }"#;
-    assert!(has_instruction(source, |i| matches!(i, IrInstruction::Call { function, .. } if function == "double")));
+    assert!(has_instruction(
+        source,
+        |i| matches!(i, IrInstruction::Call { function, .. } if function == "double")
+    ));
 }
 
 #[test]
@@ -370,7 +383,10 @@ main: () -> i32 {
     return 0
 }"#;
     // The call may or may not capture the return value; just verify it compiles and emits a Call.
-    assert!(has_instruction(source, |i| matches!(i, IrInstruction::Call { function, .. } if function == "log")));
+    assert!(has_instruction(
+        source,
+        |i| matches!(i, IrInstruction::Call { function, .. } if function == "log")
+    ));
 }
 
 #[test]
@@ -431,7 +447,10 @@ fn unary_negate_emits_unary_instruction() {
     y: i32 = -x
     return y
 }"#;
-    assert!(has_instruction(source, |i| matches!(i, IrInstruction::Unary { .. })));
+    assert!(has_instruction(source, |i| matches!(
+        i,
+        IrInstruction::Unary { .. }
+    )));
 }
 
 #[test]
@@ -445,7 +464,10 @@ fn unary_not_emits_unary_instruction() {
         return 0
     }
 }"#;
-    assert!(has_instruction(source, |i| matches!(i, IrInstruction::Unary { .. })));
+    assert!(has_instruction(source, |i| matches!(
+        i,
+        IrInstruction::Unary { .. }
+    )));
 }
 
 // -- Stack allocation and pointer load/store -----------------------------------
@@ -456,7 +478,10 @@ fn stack_variable_emits_alloc() {
     x: i32 = 10
     return x
 }"#;
-    assert!(has_instruction(source, |i| matches!(i, IrInstruction::Alloc { .. })));
+    assert!(has_instruction(source, |i| matches!(
+        i,
+        IrInstruction::Alloc { .. }
+    )));
 }
 
 #[test]
@@ -467,8 +492,14 @@ fn address_of_emits_alloc_and_load() {
     val: i32 = @ptr
     return val
 }"#;
-    assert!(has_instruction(source, |i| matches!(i, IrInstruction::Alloc { .. })));
-    assert!(has_instruction(source, |i| matches!(i, IrInstruction::Load { .. })));
+    assert!(has_instruction(source, |i| matches!(
+        i,
+        IrInstruction::Alloc { .. }
+    )));
+    assert!(has_instruction(source, |i| matches!(
+        i,
+        IrInstruction::Load { .. }
+    )));
 }
 
 #[test]
@@ -480,8 +511,14 @@ fn pointer_store_emits_store_instruction() {
     free(ptr)
     return val
 }"#;
-    assert!(has_instruction(source, |i| matches!(i, IrInstruction::Store { .. })));
-    assert!(has_instruction(source, |i| matches!(i, IrInstruction::Load { .. })));
+    assert!(has_instruction(source, |i| matches!(
+        i,
+        IrInstruction::Store { .. }
+    )));
+    assert!(has_instruction(source, |i| matches!(
+        i,
+        IrInstruction::Load { .. }
+    )));
 }
 
 // -- Multiple functions --------------------------------------------------------
@@ -496,7 +533,12 @@ main: () -> i32 {
     return x + x
 }"#;
     let result = compile_ok(source);
-    let names: Vec<_> = result.ir_program.functions.iter().map(|f| f.name.as_str()).collect();
+    let names: Vec<_> = result
+        .ir_program
+        .functions
+        .iter()
+        .map(|f| f.name.as_str())
+        .collect();
     assert!(names.contains(&"helper"), "helper not in IR: {names:?}");
     assert!(names.contains(&"main"), "main not in IR: {names:?}");
 }

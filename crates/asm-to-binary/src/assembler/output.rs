@@ -1,7 +1,6 @@
 use super::link_layout::LinkLayout;
 use super::section::{SectionData, SectionKind};
 use std::collections::HashMap;
-use std::path::Path;
 
 /// A lightweight view of one section, returned by [`AssembledOutput::sections_iter`].
 #[derive(Debug, Clone, Copy)]
@@ -148,11 +147,6 @@ impl AssembledOutput {
         self.global_symbols.iter().map(String::as_str)
     }
 
-    /// Number of globally-exported symbols.
-    pub fn global_symbol_count(&self) -> usize {
-        self.global_symbols.len()
-    }
-
     /// Returns `true` if `name` was exported with `.globl`.
     pub fn is_symbol_global(&self, name: &str) -> bool {
         self.global_symbols.iter().any(|g| g == name)
@@ -287,18 +281,8 @@ fn align_up_to(v: u64, align: u64) -> u64 {
 }
 
 impl AssembledOutput {
-    /// Produce a minimal ELF-64 executable for RV64IMAFD (little-endian).
-    ///
-    /// Layout: ELF header  1 program header  section data  section headers  strtab  symtab
-    ///
-    /// A single combined `PT_LOAD` segment covers all sections.  This avoids the
-    /// QEMU page-permission conflict that arises when .text (R X) and .bss (R W)
-    /// share the same 4 KB page: with one `PT_LOAD` there is no conflicting mapping.
-    /// Since all code uses PC-relative addressing, the single-segment layout is
-    /// identical to what the assembler compiled against.
-    ///
-    /// The entry point is resolved from the symbol table; `_start` is preferred
-    /// over `main`, which falls back to the load base address.
+    /// Minimal little-endian ELF-64 for RV64IMAFD; entry resolves `_start` then `main`.
+    /// Layout and the single-`PT_LOAD` rationale: `_RISCV_SPECIFICATIONS.md` section 9.5.
     pub fn to_elf(&self, load_base: u64) -> Vec<u8> {
         self.to_elf_with_candidates(load_base, &["_start", "main"])
     }
@@ -496,10 +480,8 @@ impl AssembledOutput {
         push_u16_le(&mut buf, (1 + n_prog_secs) as u16); // e_shstrndx
 
         // ---- Emit a single combined PT_LOAD ----
-        // R|W|X covers all sections.  The single segment avoids any page-level
-        // permission conflict between .text (R X) and .bss (R W) when they share
-        // a page.  QEMU user-mode accepts RWX and will zero-fill the BSS region
-        // (the [filesz, memsz) range of the segment).
+        // One RWX segment: split PT_LOADs conflict at page granularity when .text and .bss
+        // share a page. QEMU user mode accepts RWX and zero-fills the [filesz, memsz) tail.
         push_u32_le(&mut buf, PT_LOAD);
         push_u32_le(&mut buf, PF_R | PF_W | PF_X);
         push_u64_le(&mut buf, sec_data_start); // p_offset
@@ -971,17 +953,10 @@ impl AssembledOutput {
         buf
     }
 
-    /// Write an `ET_REL` object file to disk.
-    pub fn write_object_file(&self, path: &Path) -> std::io::Result<()> {
-        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("out.o");
-        std::fs::write(path, self.to_object(name))
-    }
-
     // --- Flat binary ---
 
-    /// Produce a raw flat binary: all sections packed in load order (non-BSS
-    /// first, then BSS as zeros).  No ELF headers are included.  Suitable for
-    /// bootloaders that copy the image directly into memory.
+    /// Raw image with no ELF headers: non-BSS sections in load order, then BSS as zeros.
+    /// For bootloaders that copy the image straight into memory.
     pub fn to_flat_binary(&self) -> Vec<u8> {
         let mut buf = Vec::new();
         for pass_bss in [false, true] {
@@ -999,16 +974,8 @@ impl AssembledOutput {
 
     // --- Layout symbol injection ---
 
-    /// Inject linker boundary symbols (`__text_start`, `__bss_end`, etc.) into
-    /// the symbol table so kernel startup code can zero BSS, set the stack
-    /// pointer, and initialise the heap without hard-coding addresses.
-    ///
-    /// Symbols are stored as section-relative offsets (`load_base` is added by
-    /// the ELF writer).  If `layout.stack_top > 0` the value stored is
-    /// `layout.stack_top - layout.load_base` so that after load-base adjustment
-    /// the ELF symbol value equals `layout.stack_top`.
-    ///
-    /// Only called when `layout.emit_layout_symbols` is true.
+    /// Inject boundary symbols as section-relative offsets; the ELF writer adds `load_base`.
+    /// Symbol contract: `_RISCV_SPECIFICATIONS.md` section 9.4.
     pub fn inject_layout_symbols(&mut self, layout: &LinkLayout) {
         if !layout.emit_layout_symbols {
             return;
@@ -1088,9 +1055,7 @@ impl AssembledOutput {
 
     // --- Entry-point marking ---
 
-    /// Mark `entry_symbol` as a global export if it is present in the symbol
-    /// table but not yet in `global_symbols`.  This ensures the ELF symtab
-    /// advertises the kernel entry so debuggers and QEMU can find it.
+    /// Export `entry_symbol` from the symtab so debuggers and QEMU can locate the entry.
     pub fn mark_entry_global(&mut self, entry_symbol: &str) {
         if self.symbol_table.contains_key(entry_symbol)
             && !self.global_symbols.contains(&entry_symbol.to_owned())

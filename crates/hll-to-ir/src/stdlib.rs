@@ -6,11 +6,8 @@ const STDLIB_BUILD: &str = include_str!(concat!(
     "/../os-runtime/stdlib/stdlib.build"
 ));
 
-/// Return the stdlib as a list of (`module_name`, source) tuples for the given mode.
-///
-/// This makes it possible to compile each HLL file independently so that
-/// `.ir`, `.s` and `.o` artifacts exist per original source file instead of
-/// concatenating everything into one big bundle.
+/// The stdlib as (`module_name`, source) tuples for `mode`. Modules stay separate so
+/// each one yields its own `.ir`, `.s` and `.o` instead of one concatenated bundle.
 pub fn get_stdlib_modules_for_mode(mode: TargetMode) -> Vec<(&'static str, &'static str)> {
     let manifest = build_manifest::parse(STDLIB_BUILD).expect("parse stdlib.build");
     let key = match mode {
@@ -63,10 +60,8 @@ fn leak(value: String) -> &'static str {
     Box::leak(value.into_boxed_str())
 }
 
-/// Shared named types required by independent stdlib modules.
-///
-/// These are registered directly in the compiler context so that modules like
-/// `memory_allocator.hll` can resolve `HeapBlock` without concatenating `types.hll`.
+/// Shared named types registered directly in the compiler context, so a module like
+/// `memory_allocator.hll` resolves `HeapBlock` without concatenating `types.hll`.
 pub fn get_stdlib_type_prelude() -> Vec<(String, IrType)> {
     let heap_block = IrType::Aggregate(vec![
         (

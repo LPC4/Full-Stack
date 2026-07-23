@@ -1,9 +1,5 @@
-/// Assembly code-generation fix tests.
-///
-/// Each test targets a specific property of the emitted RISC-V assembly
-/// (store widths, epilogue structure, float instructions, register allocation,
-/// struct return conventions).  Exact output correctness is covered by the
-/// golden-file suites (compiler_suite.rs, assembly_golden_suite.rs).
+// Properties of the emitted RISC-V assembly. Exact output is pinned by the
+// golden suites (compiler_suite.rs, assembly_golden_suite.rs).
 use full_stack::compilation_pipeline::CompilationPipeline;
 use std::fs;
 use std::path::PathBuf;
@@ -18,8 +14,6 @@ fn compile_fixture(subdir: &str, name: &str) -> String {
         .unwrap_or_else(|e| panic!("failed to read fixture {path:?}: {e}"));
     let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
-    
-    pipeline.set_write_artifacts(false);
     let result = pipeline
         .compile(&source)
         .unwrap_or_else(|e| panic!("compilation error in {subdir}/{name}: {e}"));
@@ -28,8 +22,6 @@ fn compile_fixture(subdir: &str, name: &str) -> String {
 
 fn compile_inline(source: &str) -> String {
     let mut pipeline = CompilationPipeline::new();
-    pipeline.set_write_artifacts(false);
-    
     pipeline.set_write_artifacts(false);
     let result = pipeline.compile(source).expect("compilation failed");
     pipeline.compile_ir_to_assembly(&result.ir_program)
@@ -45,12 +37,14 @@ fn i32_stores_use_sw_not_sd() {
 
 #[test]
 fn bool_stores_use_sb() {
-    let asm = compile_inline(r#"main: () -> i32 {
+    let asm = compile_inline(
+        r#"main: () -> i32 {
     a: i32 = 10
     b: i32 = 20
     c: bool = a < b
     if c { return 1 } else { return 0 }
-}"#);
+}"#,
+    );
     assert!(asm.contains("sb"), "expected 'sb' for bool/i1 storage");
 }
 
@@ -62,7 +56,10 @@ fn epilogue_restores_ra_without_frame_pointer() {
     // set up or saved.
     let asm = compile_fixture("functions", "11_constexpr_pure_functions");
     assert!(asm.contains("ld     ra,"), "expected epilogue 'ld ra'");
-    assert!(!asm.contains("s0, sp, 0"), "frame pointer should not be set up");
+    assert!(
+        !asm.contains("s0, sp, 0"),
+        "frame pointer should not be set up"
+    );
     assert!(!asm.contains("ld     s0,"), "s0 should not be restored");
 }
 
@@ -78,37 +75,47 @@ fn single_function_has_exactly_one_epilogue() {
 #[test]
 fn conditionals_emit_bne() {
     let asm = compile_fixture("control_flow", "02_conditional_and_loop");
-    assert!(asm.contains("bne"), "expected 'bne' for conditional branching");
+    assert!(
+        asm.contains("bne"),
+        "expected 'bne' for conditional branching"
+    );
 }
 
 #[test]
 fn loops_emit_multiple_labels_and_jumps() {
     let asm = compile_fixture("control_flow", "05_constants_and_loops");
-    assert!(asm.lines().count() > 10, "loop assembly should be substantial");
+    assert!(
+        asm.lines().count() > 10,
+        "loop assembly should be substantial"
+    );
 }
 
 // -- Floating-point instructions -----------------------------------------------
 
 #[test]
 fn f32_uses_flw_and_fsw() {
-    let asm = compile_inline(r#"struct Point { x: f32, y: f32 }
+    let asm = compile_inline(
+        r#"struct Point { x: f32, y: f32 }
 main: () -> f32 {
     p: Point = { .x = 1.5, .y = 2.5 }
     return p.x
-}"#);
+}"#,
+    );
     assert!(asm.contains("flw"), "expected 'flw' for f32 load");
     assert!(asm.contains("fsw"), "expected 'fsw' for f32 store");
 }
 
 #[test]
 fn f32_arithmetic_uses_float_instructions() {
-    let asm = compile_inline(r#"main: () -> f32 {
+    let asm = compile_inline(
+        r#"main: () -> f32 {
     a: f32 = 1.5
     b: f32 = 2.0
     c: f32 = a + b
     d: f32 = c * 2.0
     return d
-}"#);
+}"#,
+    );
     assert!(
         asm.contains("fadd.s") || asm.contains("fmul.s"),
         "expected float arithmetic instruction"
@@ -118,7 +125,10 @@ fn f32_arithmetic_uses_float_instructions() {
 #[test]
 fn f32_return_value_in_fa0() {
     let asm = compile_inline("main: () -> f32 { return 3.14 }");
-    assert!(asm.contains("fa0") || asm.contains("f10"), "expected float return in fa0");
+    assert!(
+        asm.contains("fa0") || asm.contains("f10"),
+        "expected float return in fa0"
+    );
 }
 
 // -- Register allocation -------------------------------------------------------
@@ -144,14 +154,16 @@ fn many_locals_use_multiple_temp_registers() {
         .filter(|r| asm.contains(*r))
         .cloned()
         .collect();
-    assert!(used.len() >= 3, "expected multiple temp registers, got {used:?}");
+    assert!(
+        used.len() >= 3,
+        "expected multiple temp registers, got {used:?}"
+    );
 }
 
 #[test]
 fn many_locals_get_callee_saved_registers_by_default() {
-    // With register allocation on (the default), values live in s2-s11. The
-    // left-leaning sum keeps at most two values live at once, so the allocator
-    // correctly reuses two registers rather than spreading across the file.
+    // Regalloc puts values in s2-s11. The left-leaning sum keeps at most two
+    // live at once, so two reused registers is the correct result, not a bug.
     let asm = compile_inline(MANY_LOCALS);
     let used: Vec<&str> = ["s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11"]
         .iter()
@@ -170,13 +182,15 @@ fn many_locals_get_callee_saved_registers_by_default() {
 fn two_field_i32_struct_return_packed_in_a0() {
     // Two i32 fields total 8 bytes, which fit in a single 64-bit register.
     // The callee packs both fields via `ld a0` and the caller unpacks via `sd a0`.
-    let asm = compile_inline(r#"divide: (a: i32, b: i32) -> { quotient: i32, remainder: i32 } {
+    let asm = compile_inline(
+        r#"divide: (a: i32, b: i32) -> { quotient: i32, remainder: i32 } {
     return { .quotient = a / b, .remainder = a % b }
 }
 main: () -> i32 {
     result: { quotient: i32, remainder: i32 } = divide(10, 3)
     return result.quotient
-}"#);
+}"#,
+    );
     assert!(
         asm.contains("ld     a0,"),
         "expected both i32 fields packed into a0 via ld"

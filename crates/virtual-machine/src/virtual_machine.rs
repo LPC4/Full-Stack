@@ -26,7 +26,7 @@ pub struct VirtualMachine {
 }
 
 /// A captured architectural state: CPU + MMIO devices (small) plus the RAM image
-/// (the bulk term, delta-compressed by the session via `without_ram`/`with_ram`).
+/// (the bulk term, delta-compressed by the session via `without_bulk`/`with_bulk`).
 #[derive(Clone)]
 pub struct VmSnapshot {
     cpu: Cpu,
@@ -38,24 +38,6 @@ impl VmSnapshot {
     /// The architectural RAM image at capture time.
     pub fn ram(&self) -> &[u8] {
         &self.ram
-    }
-
-    /// This snapshot with the RAM image dropped (CPU + devices only).
-    pub fn without_ram(&self) -> Self {
-        Self {
-            cpu: self.cpu.clone(),
-            devices: self.devices.clone(),
-            ram: Vec::new(),
-        }
-    }
-
-    /// This snapshot with `ram` as its RAM image, ready for [`VirtualMachine::restore`].
-    pub fn with_ram(&self, ram: Vec<u8>) -> Self {
-        Self {
-            cpu: self.cpu.clone(),
-            devices: self.devices.clone(),
-            ram,
-        }
     }
 
     /// Framebuffer pixel planes at capture time (bulk, delta-compressed by the session).
@@ -94,11 +76,8 @@ impl VirtualMachine {
         Self::from_elf(&elf).unwrap_or_else(|e| panic!("failed to load assembled ELF: {e}"))
     }
 
-    /// Create a VM from a kernel assembled output.
-    ///
-    /// Loads the kernel ELF into RAM at `RAM_BASE`, then resets the CPU to
-    /// `ROM_BASE` (0x0) so the ROM `_start` boot stub runs first.  `_start`
-    /// sets up PMP + delegation and `mret`s into S-mode at `RAM_BASE`.
+    /// Loads the kernel ELF at `RAM_BASE` but resets the CPU to `ROM_BASE`, so the
+    /// ROM stub sets up PMP and delegation before `mret`ing into S-mode.
     pub fn new_kernel(assembled: &AssembledOutput) -> Self {
         let elf = assembled.to_elf_with_entry(ELF_LOAD_BASE, "_kernel_start");
         let mut vm =
@@ -204,8 +183,9 @@ impl VirtualMachine {
                     outcome = StepOutcome::Halted(code);
                     break;
                 }
-                Err(e) => {
-                    eprintln!("[VM] step error at pc={:#x}: {e:?}", self.cpu.peek_pc());
+                // A trap that escapes the CPU ends the run as exit -1; callers that
+                // need the cause must drive `step` themselves.
+                Err(_) => {
                     steps += 1;
                     outcome = StepOutcome::Halted(-1);
                     break;
@@ -327,9 +307,8 @@ impl VirtualMachine {
         self.bus.peek_bytes(addr, len)
     }
 
-    /// Like `peek_bytes` but only needs `&self` (no cache stat side effects).
-    /// Reads ROM/MMIO directly and bypasses the cache hierarchy for RAM,
-    /// so the debug view always reflects physical memory. Safe to call every frame.
+    /// Like `peek_bytes` but takes `&self` and skips the caches, so the debug view
+    /// reflects physical memory without perturbing stats. Safe to call every frame.
     pub fn peek_bytes_raw(&self, addr: u64, len: usize) -> Vec<u8> {
         self.bus.peek_bytes_raw(addr, len)
     }
@@ -354,10 +333,8 @@ impl VirtualMachine {
         self.bus.keyboard_push(scancode, pressed);
     }
 
-    /// Write raw bytes into physical RAM at `addr`.  Used to inject
-    /// pre-compiled user binaries alongside a loaded kernel image.
-    /// Flushes the L1/L2/L3 cache hierarchy afterward so subsequent
-    /// CPU reads see the new data.
+    /// Injects pre-compiled user binaries alongside a loaded kernel image. Flushes
+    /// the L1/L2/L3 hierarchy afterward so subsequent CPU reads see the new data.
     pub fn write_ram(&mut self, addr: u64, data: &[u8]) -> Result<(), VmError> {
         for (i, &byte) in data.iter().enumerate() {
             self.bus.write_byte(addr + i as u64, byte)?;
@@ -567,23 +544,8 @@ mod tests {
         assert_eq!(vm.peek_bytes_raw(addr, 1), vec![0x11]);
     }
 
-    // The session delta path swaps RAM out (without_ram) and back (with_ram).
-    #[test]
-    fn without_ram_then_with_ram_restores_state() {
-        let addr = RAM_BASE + 0x100;
-        let mut vm = vm_with_ram_byte(addr, 0x11);
-        let snap = vm.snapshot();
-        let light = snap.without_ram();
-        assert!(light.ram().is_empty());
-
-        let rebuilt = light.with_ram(snap.ram().to_vec());
-        vm.write_ram(addr, &[0x22]).unwrap();
-        vm.restore(&rebuilt);
-        assert_eq!(vm.peek_bytes_raw(addr, 1), vec![0x11]);
-    }
-
-    // The session also strips the framebuffer planes (without_bulk) and
-    // reattaches them (with_bulk); a restore must revert pixel writes.
+    // The session delta path strips both bulk images (without_bulk) and reattaches
+    // them (with_bulk). A restore must revert RAM and pixel writes alike.
     #[test]
     fn without_bulk_then_with_bulk_restores_framebuffer() {
         let addr = RAM_BASE + 0x100;

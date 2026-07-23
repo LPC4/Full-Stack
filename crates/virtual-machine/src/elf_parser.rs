@@ -22,10 +22,7 @@ pub struct ElfLoadSegment {
 }
 
 impl ParsedElf {
-    /// Parse an ELF-64 image from raw bytes
-    ///
-    /// # Returns
-    /// Parsed ELF structure or error if the format is invalid
+    /// Parse an ELF-64 image from raw bytes, erroring on any format violation.
     pub fn parse(bytes: &[u8]) -> Result<Self, VmError> {
         const ELF_MAGIC: &[u8; 4] = b"\x7fELF";
         const ELFCLASS64: u8 = 2;

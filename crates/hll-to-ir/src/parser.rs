@@ -126,7 +126,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    pub fn parse_declaration(&mut self) -> Result<Declaration, ParserError> {
+    fn parse_declaration(&mut self) -> Result<Declaration, ParserError> {
         self.consume_terminators();
 
         // `export` marks the following declaration visible to importers. Record the
@@ -247,7 +247,7 @@ impl<'a> Parser<'a> {
         Ok(Declaration { decl, exported })
     }
 
-    pub fn parse_block(&mut self) -> Result<Block, ParserError> {
+    fn parse_block(&mut self) -> Result<Block, ParserError> {
         self.expect_lbrace()?;
         let mut statements = Vec::new();
         let mut stmt_lines = Vec::new();
@@ -267,12 +267,12 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// 1-based source line of the current token (0 if unavailable, e.g. tests).
+    // 1-based source line of the current token (0 if unavailable, e.g. tests).
     fn current_line(&self) -> u32 {
         self.spans.get(self.pos).map(|s| s.line).unwrap_or(0)
     }
 
-    pub fn parse_statement(&mut self) -> Result<Statement, ParserError> {
+    fn parse_statement(&mut self) -> Result<Statement, ParserError> {
         self.consume_terminators();
 
         match self.peek() {
@@ -346,11 +346,11 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn parse_expression(&mut self) -> Result<Expression, ParserError> {
+    fn parse_expression(&mut self) -> Result<Expression, ParserError> {
         self.parse_assignment()
     }
 
-    pub fn parse_type(&mut self) -> Result<Type, ParserError> {
+    fn parse_type(&mut self) -> Result<Type, ParserError> {
         if self.match_lbracket() {
             let size = self.parse_array_length()?;
             self.expect_rbracket()?;
@@ -416,8 +416,8 @@ impl<'a> Parser<'a> {
         Ok(DeclNode::InferredVariable { name, init })
     }
 
-    /// Consume `import ( string )` and return the path literal, with `import` next.
-    /// Used by the `alias := import(...)` and `const alias = import(...)` module forms.
+    // Consume `import ( string )` and return the path literal, with `import` next.
+    // Used by the `alias := import(...)` and `const alias = import(...)` module forms.
     fn parse_import_call(&mut self) -> Result<String, ParserError> {
         self.advance(); // `import`
         self.expect_lparen()?;
@@ -550,8 +550,8 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// Parse `interface Name { method: (self: Self*, ...) -> R ... }`: required
-    /// method signatures only, with `Self` standing for the implementing type.
+    // Parse `interface Name { method: (self: Self*, ...) -> R ... }`: required
+    // method signatures only, with `Self` standing for the implementing type.
     fn parse_interface_decl(&mut self) -> Result<DeclNode, ParserError> {
         let name = self.expect_ident()?;
         self.expect_lbrace()?;
@@ -592,8 +592,8 @@ impl<'a> Parser<'a> {
         Ok(DeclNode::Interface { name, methods })
     }
 
-    /// Parse an impl block; function members desugar to flat `Type_name`
-    /// functions, `const`/`type` members become one `AssociatedItems` node.
+    // Parse an impl block; function members desugar to flat `Type_name`
+    // functions, `const`/`type` members become one `AssociatedItems` node.
     fn parse_impl_block(&mut self, exported: bool) -> Result<Vec<Declaration>, ParserError> {
         self.advance(); // `impl`
         let type_name = self.expect_ident()?;
@@ -855,9 +855,8 @@ impl<'a> Parser<'a> {
                 rvalue: Box::new(rvalue),
             })
         } else if let Some(op) = self.match_compound_assign() {
-            // Desugar `lhs OP= rhs` into `lhs = lhs OP (rhs)`. The lhs expression
-            // is reused as the binary's left operand, so it is evaluated twice;
-            // HLL targets are simple lvalues, so this is benign.
+            // `lhs OP= rhs` desugars to `lhs = lhs OP (rhs)`, so lhs evaluates twice.
+            // HLL assignment targets are simple lvalues, so that is benign.
             let target = self.expression_to_target(left.clone())?;
             let rhs = self.parse_assignment()?;
             let rvalue = Expression::Binary {
@@ -2359,8 +2358,8 @@ impl<'a> Parser<'a> {
         Ok(expr)
     }
 
-    /// Parse `alias.format_into(dest, "a{x}b")` (spec 5.5), called after `(`.
-    /// None (state restored) when the shape does not match the string form.
+    // Parse `alias.format_into(dest, "a{x}b")` (spec 5.5), called after `(`.
+    // None (state restored) when the shape does not match the string form.
     fn try_parse_format_into(
         &mut self,
         callee: &Expression,
@@ -2415,8 +2414,8 @@ impl<'a> Parser<'a> {
         })))
     }
 
-    /// Split a raw string-literal token (quotes included) into literal chunks
-    /// and interpolation holes; holes are lexed in place so spans stay real.
+    // Split a raw string-literal token (quotes included) into literal chunks
+    // and interpolation holes; holes are lexed in place so spans stay real.
     fn parse_format_segments(
         &mut self,
         raw: &'a str,
@@ -2512,8 +2511,8 @@ impl<'a> Parser<'a> {
         Ok(segments)
     }
 
-    /// Lex and parse one interpolation hole from its original source slice,
-    /// shifting sub-token spans to the hole's true position in the line.
+    // Lex and parse one interpolation hole from its original source slice,
+    // shifting sub-token spans to the hole's true position in the line.
     fn parse_hole_expression(
         &mut self,
         hole_src: &'a str,

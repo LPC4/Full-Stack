@@ -70,8 +70,8 @@ impl SemanticAnalyzer {
         self.line_offset = prelude_lines;
     }
 
-    /// Point later `error` calls at 1-based `line` (in prepended coordinates),
-    /// spanning its non-whitespace text; a prelude or unknown line clears it.
+    // Point later `error` calls at 1-based `line` (in prepended coordinates),
+    // spanning its non-whitespace text; a prelude or unknown line clears it.
     fn set_pending_span(&mut self, line: u32) {
         let line = line.saturating_sub(self.line_offset);
         if line == 0 {
@@ -108,7 +108,7 @@ impl SemanticAnalyzer {
         }
     }
 
-    /// Error with the caret narrowed to `token` within the pending statement span.
+    // Error with the caret narrowed to `token` within the pending statement span.
     fn error_at_token(&mut self, token: &str, message: impl Into<String>) {
         let full = self.scoped(message);
         match self.pending_span.as_ref().map(|s| s.narrowed_to(token)) {
@@ -232,9 +232,8 @@ impl SemanticAnalyzer {
                 // Store the return type for function calls
                 let return_ty_str = match return_type {
                     Some(rt) => match rt {
-                        // Preserve named identity here. Resolving an enum to its
-                        // aggregate representation loses the key used to validate
-                        // constructors and match patterns at call sites.
+                        // Named identity must survive: resolving an enum to its aggregate
+                        // loses the key that validates constructors and match patterns.
                         ReturnType::Single(Type::Named { name, args }) if args.is_empty() => {
                             name.to_string()
                         }
@@ -388,10 +387,8 @@ impl SemanticAnalyzer {
                         "  resolved_decl_ty={resolved_decl_ty:?}, resolved_init_ty={resolved_init_ty:?}"
                     );
 
-                    // A constant integer expression adopts the declared integer
-                    // width; lowering folds it to the target type. Float literals
-                    // are width-flexible the same way: a bare float literal adopts
-                    // the declared f32/f64 (lowering materializes the right bits).
+                    // Constant int and bare float literals are width-flexible: they adopt
+                    // the declared width, and lowering folds them to the target type.
                     let is_literal_widening_allowed = (Self::is_integer_type(&resolved_decl_ty)
                         && Self::is_integer_type(&resolved_init_ty)
                         && Self::is_const_int_expr(init_expr))
@@ -555,7 +552,7 @@ impl SemanticAnalyzer {
             Statement::AsmBlock { lines } => {
                 for line in lines {
                     let instr = line.split_whitespace().next().unwrap_or("");
-                    // Allow local labels (.Lname:) but reject data directives (.section, .word, etc.)
+                    // Local labels (.Lname:) are fine; data directives (.section, .word) are not.
                     if instr.starts_with('.') && !instr.ends_with(':') {
                         self.error(format!(
                             "data directives are not allowed in asm blocks: `{instr}`"
@@ -1233,10 +1230,8 @@ impl SemanticAnalyzer {
         Ok(self.context.get_type_name(&success.payloads[0]))
     }
 
-    // Type-check a `match`: the scrutinee must be an enum, every arm pattern must
-    // be a valid variant of it (payload arity respected), and the arms must be
-    // exhaustive (cover all variants or include a catch-all). Returns "void" --
-    // value-producing match is deferred.
+    // Arms must name real variants with the right payload arity and be exhaustive.
+    // The result type is always "void"; value-producing `match` is not supported yet.
     fn check_match(&mut self, scrutinee: &Expression, arms: &[MatchArm]) -> Result<String, ()> {
         let enum_name = self.infer_expression_type(scrutinee)?;
         let Some(all_variants) = self.enum_variant_names.get(&enum_name).cloned() else {
@@ -1732,9 +1727,8 @@ impl SemanticAnalyzer {
         Ok(())
     }
 
-    // Check an array literal against a declared array type. Bare struct
-    // literal elements are checked contextually; other elements must match the
-    // element type (with the usual scalar-literal width flexibility).
+    // Bare struct literal elements are checked contextually. Others must match the
+    // element type, with the usual scalar-literal width flexibility.
     fn check_contextual_array_literal(
         &mut self,
         elements: &[Expression],
@@ -1886,7 +1880,7 @@ impl SemanticAnalyzer {
         }
     }
 
-    /// Parse an aggregate type string like `{ a: i32, b: i32 }` into field names and types.
+    // Parse an aggregate type string like `{ a: i32, b: i32 }` into field names and types.
     fn parse_aggregate_type(type_str: &str) -> Result<Vec<(Option<String>, String)>, ()> {
         let trimmed = type_str.trim();
         let (inner, named) = if trimmed.starts_with('{') && trimmed.ends_with('}') {
@@ -1936,8 +1930,8 @@ impl SemanticAnalyzer {
         Ok(fields)
     }
 
-    /// True when `base_type`, after peeling pointers, is a struct holding `field`.
-    /// Used to give data fields precedence over same-named methods.
+    // True when `base_type`, after peeling pointers, is a struct holding `field`.
+    // Used to give data fields precedence over same-named methods.
     fn type_has_field(&self, base_type: &str, field: &str) -> bool {
         let mut resolved = self.resolve_type_string(base_type);
         while let IrType::Pointer(inner) = resolved {
@@ -2091,7 +2085,7 @@ impl SemanticAnalyzer {
         }
     }
 
-    /// Register an assignment target (for struct destructuring)
+    // Register an assignment target (for struct destructuring)
     fn register_assign_target(&mut self, target: &AssignTarget, ty: &str) -> Result<(), ()> {
         match target {
             AssignTarget::Identifier(name) => {
@@ -2134,7 +2128,7 @@ impl SemanticAnalyzer {
         }
     }
 
-    /// Check that an assignment target is valid (exists and is assignable)
+    // Check that an assignment target is valid (exists and is assignable)
     fn check_assign_target(&mut self, target: &AssignTarget) -> Result<(), ()> {
         match target {
             AssignTarget::Identifier(name) => {
@@ -2160,7 +2154,7 @@ impl SemanticAnalyzer {
         }
     }
 
-    /// Parse a type string back into an `IrType`
+    // Parse a type string back into an `IrType`
     fn parse_type_string(ty_str: &str) -> IrType {
         let trimmed = ty_str.trim();
         if (trimmed.starts_with('(') || trimmed.starts_with("fn("))
@@ -2285,10 +2279,8 @@ impl SemanticAnalyzer {
                 .resolve(name)
                 .cloned()
                 .or_else(|| {
-                    // Generic instantiation `Base<...>`: the semantic context
-                    // registers only the base definition, so fall back to it.
-                    // Type arguments are not yet substituted here (permissive
-                    // generics); monomorphization happens during lowering.
+                    // Only the base of `Base<...>` is registered here. Generics stay
+                    // permissive until monomorphization substitutes during lowering.
                     let (base, _) = name.split_once('<')?;
                     self.context.resolve(base).cloned()
                 })
@@ -2338,8 +2330,8 @@ impl SemanticAnalyzer {
         self.resolve_named_ir_type(&Self::parse_type_string(ty_str))
     }
 
-    /// Structural equality that sees through `Named` references; plain `==`
-    /// miscompares self-referential structs resolved to different depths.
+    // Structural equality that sees through `Named` references; plain `==`
+    // miscompares self-referential structs resolved to different depths.
     fn types_equivalent(&self, a: &IrType, b: &IrType) -> bool {
         self.types_equivalent_inner(a, b, &mut HashSet::new())
     }
@@ -2403,8 +2395,8 @@ impl SemanticAnalyzer {
         }
     }
 
-    /// Resolve exactly one `Named` indirection (with the generic-base fallback
-    /// `resolve_named_ir_type` uses); non-named types come back unchanged.
+    // Resolve exactly one `Named` indirection (with the generic-base fallback
+    // `resolve_named_ir_type` uses); non-named types come back unchanged.
     fn resolve_named_one_step(&self, ty: &IrType) -> IrType {
         let IrType::Named(name) = ty else {
             return ty.clone();
@@ -2419,7 +2411,7 @@ impl SemanticAnalyzer {
             .unwrap_or_else(|| ty.clone())
     }
 
-    /// Check if a cast from source to target type is valid
+    // Check if a cast from source to target type is valid
     fn is_valid_cast(source: &IrType, target: &IrType) -> bool {
         // Allow casts between numeric types (integers and floats)
         let source_is_numeric = matches!(source, IrType::Integer(_) | IrType::Float(_));

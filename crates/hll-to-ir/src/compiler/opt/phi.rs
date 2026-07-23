@@ -17,8 +17,8 @@ pub fn run(func: &mut IrFunction) -> bool {
     changed
 }
 
-/// The first phi whose incoming values (minus self-references) collapse to one
-/// value. Registers used as raw pointers can only be replaced by registers.
+// The first phi whose incoming values (minus self-references) collapse to one
+// value. Registers used as raw pointers can only be replaced by registers.
 fn find_trivial_phi(func: &IrFunction) -> Option<(IrRegister, IrValue)> {
     for block in &func.blocks {
         for inst in &block.instructions {
@@ -63,8 +63,8 @@ fn remove_phi(func: &mut IrFunction, dest: &IrRegister) {
     }
 }
 
-/// True when `reg` appears in a raw `IrRegister` pointer operand, which cannot
-/// hold a constant replacement.
+// True when `reg` appears in a raw `IrRegister` pointer operand, which cannot
+// hold a constant replacement.
 fn used_as_pointer(func: &IrFunction, reg: &IrRegister) -> bool {
     func.blocks.iter().any(|block| {
         block.instructions.iter().any(|inst| match inst {

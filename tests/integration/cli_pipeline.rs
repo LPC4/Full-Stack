@@ -20,7 +20,7 @@ fn make_pipeline(mode: TargetMode, prefix: &str) -> CompilationPipeline {
     p
 }
 
-/// Compile HLL + hosted stdlib -> assembled output -> run -> (uart, exit_code).
+// Compile HLL + hosted stdlib -> assembled output -> run -> (uart, exit_code).
 fn run_hll(src: &str) -> (String, i64) {
     let stdlib_objs = CompilationPipeline::compile_stdlib_objects(TargetMode::Hosted)
         .expect("stdlib compile failed");
@@ -50,14 +50,14 @@ fn run_hll(src: &str) -> (String, i64) {
     (result.uart_output, code)
 }
 
-/// Compile HLL to IR text (mirrors `fsc hll-to-ir`).
+// Compile HLL to IR text (mirrors `fsc hll-to-ir`).
 fn hll_to_ir_text(src: &str) -> String {
     let pipeline = make_pipeline(TargetMode::Hosted, USER_PREFIX);
     let result = pipeline.compile(src).expect("compile failed");
     result.ir_program.to_string()
 }
 
-/// Compile HLL to assembly text (mirrors `fsc hll-to-asm`).
+// Compile HLL to assembly text (mirrors `fsc hll-to-asm`).
 fn hll_to_asm_text(src: &str) -> String {
     let pipeline = make_pipeline(TargetMode::Hosted, USER_PREFIX);
     let result = pipeline.compile(src).expect("compile failed");

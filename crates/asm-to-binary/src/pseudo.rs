@@ -159,8 +159,7 @@ pub enum PseudoInstruction {
     Ret,
 
     /// `call symbol` -> `auipc ra, %pcrel_hi(symbol); jalr ra, %pcrel_lo(symbol)(ra)`
-    /// The `hi` and `lo` offsets must be filled in by the linker/assembler
-    /// during symbol resolution; they are stored as `0` here.
+    /// Both offsets are stored as `0` until symbol resolution patches them.
     Call {
         symbol: String,
     },
@@ -208,11 +207,8 @@ const RA: Reg = 1;
 const T1: Reg = 6;
 
 impl PseudoInstruction {
-    /// Expand this pseudo-instruction into a sequence of real instructions.
-    ///
-    /// Symbol-relative offsets (`call`, `tail`, `la`) produce placeholder
-    /// encodings with zero offsets; the caller is responsible for patching
-    /// them after symbol resolution.
+    /// Expand into real instructions. `call`, `tail`, and `la` come back with zero
+    /// placeholder offsets that the caller must patch after symbol resolution.
     pub fn expand(&self) -> Vec<RealInstruction> {
         match self {
             Self::Nop => vec![RealInstruction::Addi(Addi::new(X0, X0, 0))],

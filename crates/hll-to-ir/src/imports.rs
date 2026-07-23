@@ -25,7 +25,7 @@ pub struct ModuleAlias {
     pub declared: HashSet<String>,
 }
 
-/// `prefix__name`, or `name` verbatim when `prefix` is empty (no mangling).
+// `prefix__name`, or `name` verbatim when `prefix` is empty (no mangling).
 fn mangled_name(prefix: &str, name: &str) -> String {
     if prefix.is_empty() {
         name.to_owned()
@@ -34,7 +34,7 @@ fn mangled_name(prefix: &str, name: &str) -> String {
     }
 }
 
-/// Parse `source` into an AST, surfacing lex/parse failures as a message.
+// Parse `source` into an AST, surfacing lex/parse failures as a message.
 fn parse_module(source: &str) -> Result<Program, String> {
     let token_spans = Lexer::tokenize(source);
     if let Some((crate::token::Token::Error(msg), _)) = token_spans
@@ -149,7 +149,7 @@ pub fn collect_declaration_names(source: &str) -> Result<HashSet<String>, String
         .collect())
 }
 
-/// The declared name of a declaration, if it has one.
+// The declared name of a declaration, if it has one.
 fn decl_name(decl: &DeclNode) -> Option<&str> {
     match decl {
         DeclNode::Variable { name, .. }
@@ -568,7 +568,7 @@ fn resolve_member(
     }
 }
 
-/// If `callee` is `alias.field` (a module-qualified path), return `(alias, field)`.
+// If `callee` is `alias.field` (a module-qualified path), return `(alias, field)`.
 fn qualified_path(callee: &Expression) -> Option<(String, String)> {
     if let Expression::Primary(PrimaryExpr::FieldAccess { expr, field }) = callee
         && let Expression::Primary(PrimaryExpr::Identifier(base)) = expr.as_ref()
@@ -747,8 +747,8 @@ fn rewrite_primary_children(
     Ok(())
 }
 
-/// Rewrite a write to an exported global (`alias.global = ...`) to the flat target; unknown
-/// members fall through to downstream resolution and nested index expressions are recursed.
+// Rewrite a write to an exported global (`alias.global = ...`) to the flat target; unknown
+// members fall through to downstream resolution and nested index expressions are recursed.
 fn rewrite_assign_target(
     target: &mut AssignTarget,
     aliases: &HashMap<String, ModuleAlias>,
@@ -897,8 +897,8 @@ fn mangle_with_targets(
     mangler.seen_rejected
 }
 
-/// Walks an AST renaming references to a module's mangled top-level symbols, honoring local
-/// bindings (params, locals, loop and match bindings) that shadow a top-level name.
+// Walks an AST renaming references to a module's mangled top-level symbols, honoring local
+// bindings (params, locals, loop and match bindings) that shadow a top-level name.
 struct Mangler<'a> {
     prefix: &'a str,
     targets: HashSet<String>,
@@ -1156,7 +1156,7 @@ impl Mangler<'_> {
     }
 }
 
-/// The names a match pattern binds in its arm (catch-all binding or variant payload slots).
+// The names a match pattern binds in its arm (catch-all binding or variant payload slots).
 fn pattern_bindings(pattern: &crate::ast::Pattern) -> HashSet<String> {
     use crate::ast::Pattern;
     match pattern {
@@ -1288,8 +1288,8 @@ fn prepare_generic_export(
     Ok(node)
 }
 
-/// Render one exported declaration as an interface line, or `None` if it contributes
-/// nothing an importer can use (e.g. a generic function, which cannot be `external`).
+// Render one exported declaration as an interface line, or `None` if it contributes
+// nothing an importer can use (e.g. a generic function, which cannot be `external`).
 fn render_export(decl: &DeclNode, prefix: &str) -> Result<Option<String>, String> {
     let rendered = match decl {
         DeclNode::Type {
@@ -1642,7 +1642,7 @@ fn render_array_len(len: &ArrayLen) -> Result<String, String> {
     }
 }
 
-/// Render expressions used by exported constants and generic function bodies.
+// Render expressions used by exported constants and generic function bodies.
 fn render_expr(expr: &Expression) -> Result<String, String> {
     Ok(match expr {
         Expression::Binary { op, left, right } => {

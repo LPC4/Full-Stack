@@ -123,7 +123,8 @@ export vmm_fork_copy: (parent_root: u64, child_root: u64) {
                         e0: u64 = l0[i0]
                         ; Valid leaf with the U bit set: a user page to copy.
                         if (e0 & 1) != 0 && (e0 & 16) != 0 {
-                            va: u64 = ((i2 as u64) << 30) | ((i1 as u64) << 21) | ((i0 as u64) << 12)
+                            va: u64 = ((i2 as u64) << 30) | ((i1 as u64) << 21) |
+                                ((i0 as u64) << 12)
                             src_pa: u64 = (e0 >> 10) << 12
                             ; Preserve permission bits but drop V; vmm_map re-adds it.
                             flags: u64 = e0 & 0x3FE

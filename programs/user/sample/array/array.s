@@ -1,9 +1,5 @@
-# Sum a five-element array built on the stack and exit with the total (42).
-# Showcases the expanded in-VM assembler subset: a stack frame,
-# sd/ld with offset(reg) addressing, slli index scaling, and a bge-controlled
-# loop. Assemble and run from the shell:
-#   as /home/src/array.s /home/array.elf
-#   run /home/array.elf          # exits with 42
+# Sum a five-element stack array and exit with the total (42).
+# From the shell: as /home/src/array.s /home/array.elf && run /home/array.elf
 
   addi sp, sp, -64        # reserve five i64 slots (16-byte aligned)
   li t0, 3

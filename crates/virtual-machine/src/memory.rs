@@ -6,11 +6,8 @@ pub mod rom;
 
 use crate::error::VmError;
 
-/// Read-only byte peeking that bypasses cache stats and mutation.
-///
-/// Used by the debug framebuffer/memory views so they do not pollute cache statistics.
-/// The implementation must return the most current value (checking dirty cache lines before
-/// falling back to lower levels), or None for unmapped addresses.
+/// Byte peeking for the debug views: no cache stats, no mutation. Implementations
+/// must check dirty lines before lower levels, and return None when unmapped.
 pub trait PeekByteRaw {
     fn peek_byte_raw(&self, addr: u64) -> Option<u8>;
 }

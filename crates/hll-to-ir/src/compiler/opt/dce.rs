@@ -35,7 +35,7 @@ pub fn run(func: &mut IrFunction) -> bool {
     changed
 }
 
-/// Keep an instruction if it has side effects or its result is still read.
+// Keep an instruction if it has side effects or its result is still read.
 fn keep_instruction(inst: &IrInstruction, used: &HashSet<IrRegister>) -> bool {
     match inst {
         IrInstruction::Math { dest, .. }

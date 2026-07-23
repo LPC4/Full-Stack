@@ -98,9 +98,8 @@ impl CompilerRv64 {
     ) -> (String, Vec<asm_to_binary::rv_instruction::RvInstruction>) {
         self.compile_inner(program);
         if self.peephole {
-            // The peephole runs on the token stream the assembler consumes; render
-            // the text from the optimized tokens so the `.s` view matches the
-            // bytes that will actually be assembled.
+            // Render the text from the optimized tokens so the `.s` view matches
+            // the bytes the assembler will actually consume.
             let tokens = peephole::optimize(&self.emitter.finish_tokens());
             let text = tokens
                 .iter()
@@ -300,8 +299,8 @@ impl CompilerRv64 {
         self.emitter.end_function();
     }
 
-    /// Emit the copies realizing `target`'s phis on the edge from `edges.pred`:
-    /// all sources stage to scratch slots before any destination is written.
+    // Realizes `target`'s phis on the edge from `edges.pred`: every source stages
+    // to a scratch slot before any destination is written.
     fn emit_phi_edge_copies(
         &mut self,
         edges: &PhiEdges<'_>,
@@ -341,8 +340,8 @@ impl CompilerRv64 {
         }
     }
 
-    /// Load a phi incoming value's raw 8-byte pattern into an integer temp.
-    /// Float sources stay bit-copies; sd/ld through a GP register is exact.
+    // Loads the raw 8-byte pattern into an integer temp. Float sources stay
+    // bit-copies because sd/ld through a GP register is exact.
     fn load_phi_value_bits(&mut self, value: &IrValue, ctx: &mut FunctionContext) -> Reg {
         match value {
             IrValue::Register(reg) => {
@@ -856,9 +855,8 @@ impl CompilerRv64 {
         }
         let src_ty = self.resolve_value_type(value, ctx);
 
-        // Casts that cross or stay within the FP register file need fcvt, not a
-        // plain integer move. The IR `Cast` carries only the target type, so the
-        // source width is recovered from the operand's type.
+        // Casts touching the FP register file need fcvt, not an integer move. The
+        // IR `Cast` carries only the target type, so recover the source width here.
         let src_is_float = matches!(src_ty, IrType::Float(_));
         let dst_is_float = matches!(resolved_ty, IrType::Float(_));
         match mode {
@@ -886,9 +884,8 @@ impl CompilerRv64 {
         self.commit_int_result(dest, result_tmp, &resolved_ty, ctx);
     }
 
-    /// Lower a float-to-integer cast via the appropriate `fcvt.{w,l}.{s,d}`.
-    /// Signedness is not tracked in the IR cast mode, so signed conversion is
-    /// used (the common case).
+    // Lowers to `fcvt.{w,l}.{s,d}`. The IR cast mode has no signedness, so the
+    // signed conversion is assumed.
     fn lower_cast_f2i(
         &mut self,
         dest: &hll_to_ir::IrRegister,
@@ -918,8 +915,8 @@ impl CompilerRv64 {
         self.commit_int_result(dest, result_tmp, target_ty, ctx);
     }
 
-    /// Lower an integer-to-float cast via `fcvt.{s,d}.{w,l}`. Signed source is
-    /// assumed (signedness is not carried in the IR cast mode).
+    // Lowers to `fcvt.{s,d}.{w,l}`. A signed source is assumed because the IR
+    // cast mode does not carry signedness.
     fn lower_cast_i2f(
         &mut self,
         dest_slot: usize,
@@ -953,8 +950,7 @@ impl CompilerRv64 {
         }
     }
 
-    /// Lower a float-to-float cast: f32<->f64 width conversion, or a plain move
-    /// when the widths match.
+    // f32/f64 width conversion, or a plain move when the widths match.
     fn lower_cast_f2f(
         &mut self,
         dest_slot: usize,
@@ -1035,9 +1031,8 @@ impl CompilerRv64 {
         self.emitter
             .emit_comment(&format!("Passing {} arguments", args.len()));
 
-        // Aggregates use one indirect integer ABI argument. This gives every
-        // aggregate value-copy semantics without splitting its fields across the
-        // scalar register paths; the callee copies from the pointer into its slot.
+        // Aggregates pass as one indirect integer ABI argument, so fields never
+        // split across scalar registers. The callee copies from the pointer.
         let total_abi_args = arg_index + args.len();
         let excess_count = total_abi_args.saturating_sub(8);
         let aligned_bytes = if excess_count == 0 {
@@ -1628,16 +1623,15 @@ impl CompilerRv64 {
 
     // --- Result-routing helpers (register allocation) ---
 
-    /// The register an instruction result is computed into: the dest's
-    /// assigned physical register, or a fresh scratch temp for slot-based dests.
+    // The dest's assigned physical register, or a fresh scratch temp when the
+    // dest lives in a stack slot.
     fn result_reg_for(&mut self, dest: &hll_to_ir::IrRegister, ctx: &FunctionContext) -> Reg {
         ctx.phys_reg_for(dest)
             .unwrap_or_else(|| self.emitter.alloc_temp_reg())
     }
 
-    /// Finish an integer-producing instruction whose result is in `result`
-    /// (obtained from `result_reg_for`): register-resident dests are
-    /// width-normalized in place, slot-based dests are stored to their slot.
+    // `result` comes from `result_reg_for`: register dests are width-normalized
+    // in place, slot dests are stored.
     fn commit_int_result(
         &mut self,
         dest: &hll_to_ir::IrRegister,
@@ -1654,9 +1648,8 @@ impl CompilerRv64 {
         }
     }
 
-    /// Like `commit_int_result`, but skips width normalization for results
-    /// already in canonical sign-extended form (e.g. comparison results,
-    /// always 0 or 1).
+    // Like `commit_int_result`, minus width normalization: the result is already
+    // canonical sign-extended (comparisons yield 0 or 1).
     fn commit_canonical_result(
         &mut self,
         dest: &hll_to_ir::IrRegister,
@@ -1671,8 +1664,8 @@ impl CompilerRv64 {
         }
     }
 
-    /// Store a value already sitting in `src` (e.g. a0 after a call) into the
-    /// dest register or slot.
+    // Stores a value already sitting in `src` (e.g. a0 after a call) into the
+    // dest register or slot.
     fn store_int_result_from(
         &mut self,
         dest: &hll_to_ir::IrRegister,
@@ -1775,9 +1768,8 @@ impl CompilerRv64 {
         temp
     }
 
-    /// Load a float value into an FP temp. `float_ty` is the operand's float
-    /// width, used to materialize constants with the correct bit pattern and
-    /// move instruction (`fmv.w.x` for f32, `fmv.d.x` for f64).
+    // `float_ty` is the operand width: it picks the constant bit pattern and the
+    // move (`fmv.w.x` for f32, `fmv.d.x` for f64).
     fn load_float_value_to_temp(
         &mut self,
         val: &IrValue,
@@ -1832,9 +1824,8 @@ impl CompilerRv64 {
                         self.emitter.emit_fmv_d_x(temp, int_tmp);
                     }
                     _ => {
-                        // f32: round the f64 literal to f32 and move its 32-bit
-                        // pattern. fmv.w.x only consumes the low 32 bits, so the
-                        // value must already be the f32 encoding.
+                        // fmv.w.x consumes only the low 32 bits, so the f64
+                        // literal must first be rounded to the f32 encoding.
                         let bits = (*f as f32).to_bits();
                         self.emitter.emit_li(int_tmp, i64::from(bits));
                         self.emitter.emit_fmv_w_x(temp, int_tmp);
@@ -1880,10 +1871,8 @@ impl CompilerRv64 {
             IrCastMode::Bitcast | IrCastMode::Trunc => {
                 self.emitter.emit_mv(rd, rs);
             }
-            // Zero-extend from the SOURCE width: the operand may have been
-            // produced by a sign-extending load (lb/lh/lw), so the high bits
-            // must be cleared, not merely copied. The IR cast carries only the
-            // target type, so the source width comes from `src_ty`.
+            // Zero-extend from `src_ty`, not the target: a sign-extending load
+            // (lb/lh/lw) may have set high bits that must be cleared.
             IrCastMode::Zext => match self.resolve_ir_type(src_ty) {
                 IrType::Integer(hll_to_ir::IntWidth::I1) => {
                     self.emitter.emit_slli(rd, rs, 63);
@@ -1944,8 +1933,8 @@ impl CompilerRv64 {
         }
     }
 
-    /// Move a float temp into a destination float register for the given width
-    /// (`fmv.s` for f32, `fmv.d` for f64). Used to place float call arguments.
+    // Width picks the move (`fmv.s` for f32, `fmv.d` for f64). Used to place
+    // float call arguments.
     fn emit_float_move(&mut self, dst: Reg, src: Reg, width: hll_to_ir::FloatWidth) {
         match width {
             hll_to_ir::FloatWidth::F32 => self.emitter.emit_fmv_s(dst, src),
@@ -1963,7 +1952,7 @@ impl CompilerRv64 {
     }
 }
 
-/// The first source marker in `func`, used to attribute the prologue.
+// The first source marker in `func`, used to attribute the prologue.
 fn first_source_line(func: &hll_to_ir::IrFunction) -> Option<(&str, u32)> {
     func.blocks
         .iter()

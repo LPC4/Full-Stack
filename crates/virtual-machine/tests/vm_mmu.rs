@@ -5,8 +5,7 @@ use virtual_machine::cpu::registers::PrivilegeMode;
 use virtual_machine::error::VmError;
 use virtual_machine::memory::MemoryAccess;
 
-/// Simple mock memory for testing.
-/// Supports writes so the MMU can update A/D bits in PTEs.
+// Mock memory. Writable so the MMU can update the A/D bits in PTEs.
 struct MockMemory {
     data: std::collections::HashMap<u64, u8>,
 }

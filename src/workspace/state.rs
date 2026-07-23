@@ -216,7 +216,7 @@ impl IdeWorkspace {
         self.documents.get(path)
     }
 
-    pub fn active_document_mut(&mut self) -> Option<&mut Document> {
+    fn active_document_mut(&mut self) -> Option<&mut Document> {
         let path = self.active_document.clone()?;
         self.documents.get_mut(&path)
     }
@@ -248,7 +248,7 @@ impl IdeWorkspace {
         self.save_document(&path)
     }
 
-    pub fn save_document(&mut self, path: &VPath) -> Result<(), WorkspaceError> {
+    fn save_document(&mut self, path: &VPath) -> Result<(), WorkspaceError> {
         let Some(document) = self.documents.get_mut(path) else {
             return Ok(());
         };
@@ -280,11 +280,6 @@ impl IdeWorkspace {
 
     pub fn run_configs_mut(&mut self) -> &mut RunConfigStore {
         &mut self.run_configs
-    }
-
-    pub fn reload_run_configs(&mut self) -> io::Result<()> {
-        self.run_configs = RunConfigStore::load(self.fs.as_ref()).unwrap_or_default();
-        Ok(())
     }
 
     pub fn save_run_configs(&mut self) -> io::Result<()> {

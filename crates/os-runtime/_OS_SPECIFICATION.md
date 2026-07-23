@@ -526,8 +526,11 @@ ceiling, returning null only when `brk` fails to grow. This replaces the old fix
 freestanding builds bump the bootstrap buffer plus any registered heap region
 (`stdlib/core/heap_source.hll`), since they have no syscalls. The bare-VM hosted
 path (no kernel) services the same `brk` in the M-mode firmware (`boot/trap.s`)
-against a flat break pointer at `RAM_BASE + 32 MiB - 8`; the real-`qemu` path uses
-Linux's own `brk`.
+against a flat break pointer at `RAM_BASE + 32 MiB - 8` (`HEAP_PTR_ADDR`,
+`0x81FF_FFF8`), with no paging. A request at or above that word would overwrite the
+break pointer itself and the stack above it, so the firmware refuses it and returns
+the unchanged break, matching the kernel handler and the hosted allocator. The
+real-`qemu` path uses Linux's own `brk`.
 
 
 ## 8. Filesystem (`fs.hll`)
@@ -700,11 +703,17 @@ them from the shell and view in the Machine window's FB tab.
 
 ### 10.6 Hello and examples
 
-`programs/user/demo/hello/user_hello.hll` prints a greeting via `console.writeln` then yields in a loop
-(a minimal pid-1). `programs/user/sample/array/array.s` (=42) is the sample assembly input for the
-in-VM assembler, installed at `/home/src/array.s`. `programs/user/sample/stdlib/stdlib.s` is the
+`programs/user/demo/hello/user_hello.hll` prints a greeting via `console.writeln` then
+yields in a loop (a minimal pid-1). `programs/user/sample/array/array.s` (=42) is the
+sample assembly input for the in-VM assembler, installed at `/home/src/array.s`.
+`programs/user/sample/stdlib/stdlib.s` is the
 asm stdlib (`putc`/`puts`/`exit`) that a cc-compiled client (`hello.hll`) links
-against via `ld`; both are installed under `/home/src`.
+against via `ld`; both are installed under `/home/src`. The link recipe is:
+
+```
+cc hello.hll hello.s && as hello.s hello.o && as stdlib.s stdlib.o
+ld stdlib.o hello.o hello && hello
+```
 
 
 ## Appendix: Memory map quick reference

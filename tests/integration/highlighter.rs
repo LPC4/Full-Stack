@@ -4,9 +4,8 @@ fn style() -> egui::Style {
     egui::Style::default()
 }
 
-// The core regression: multi-byte UTF-8 chars inside .asciz string literals
-// used to cause a byte-boundary panic in the fallthrough branch of the
-// character-by-character loop in highlight_assembly.
+// Multi-byte UTF-8 inside a .asciz literal once hit a byte-boundary panic in
+// the fallthrough branch of highlight_assembly.
 #[test]
 fn highlight_assembly_multibyte_in_asciz_does_not_panic() {
     let asm = "    .asciz \"single hart \u{2014} no SMP\"\n"; // em-dash U+2014

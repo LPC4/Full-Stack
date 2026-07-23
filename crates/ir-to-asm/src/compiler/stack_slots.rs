@@ -8,10 +8,8 @@ use super::function_context::FunctionContext;
 use hll_to_ir::{IrFunction, IrInstruction, IrTerminator, IrType, IrValue};
 use std::collections::HashMap;
 
-/// Reserve stack slots for every virtual register. See _IR_SPECIFICATIONS.md for layout details.
-///
-/// Alloc dests get dedicated full-size slots; hot scalar regs get phys regs first.
-/// Remaining regs are slot-colored; `needs_sret` marks functions with hidden sret param.
+/// Reserve stack slots for every virtual register. Alloc dests get dedicated
+/// full-size slots, the rest are slot-colored. Layout: see _IR_SPECIFICATIONS.md.
 pub fn assign_stack_slots(
     func: &IrFunction,
     ctx: &mut FunctionContext,

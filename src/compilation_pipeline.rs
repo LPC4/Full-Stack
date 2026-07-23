@@ -299,9 +299,8 @@ impl CompilationPipeline {
         self.type_prelude = types;
     }
 
-    /// Set HLL source prepended to every compiled unit (a shared definitions header,
-    /// e.g. the kernel `layout.hll`). Shares consts/structs across separately-compiled
-    /// TUs while keeping the single definition in HLL, not Rust.
+    /// Set HLL source prepended to every compiled unit (e.g. the kernel `layout.hll`),
+    /// so consts and structs stay defined once in HLL across separately-compiled TUs.
     pub fn set_source_prelude(&mut self, src: impl Into<String>) {
         self.source_prelude = src.into();
     }
@@ -455,8 +454,8 @@ impl CompilationPipeline {
         let mut prelude = String::new();
         let mut aliases: std::collections::HashMap<String, hll_to_ir::imports::ModuleAlias> =
             std::collections::HashMap::new();
-        // Module-import aliases are namespace handles, not symbol definitions, so they do not
-        // conflict with a same-named export (e.g. `klog := import("klog")` where klog exports klog).
+        // Import aliases are namespace handles, not symbol definitions, so they never
+        // conflict with a same-named export such as `klog := import("klog")`.
 
         // An unparseable root skips resolution; the compiler reports it with a span.
         let Ok(mut local_names) = hll_to_ir::imports::collect_declaration_names(source) else {
@@ -617,17 +616,14 @@ impl CompilationPipeline {
         self.write_artifacts = enabled;
     }
 
-    /// Enable the conservative assembly peephole pass. Off by default; when on,
-    /// the emitted token stream (and the `.s` text rendered from it) is optimized
-    /// before assembly.
+    /// Enable the conservative assembly peephole pass. Off by default, because it
+    /// rewrites the token stream and the `.s` text rendered from it.
     pub fn set_peephole(&mut self, enabled: bool) {
         self.peephole = enabled;
     }
 
-    /// Enable or disable physical register allocation in the RV64 backend: hot
-    /// scalar values are kept in callee-saved registers (s2-s11) instead of
-    /// stack slots. On by default; turn it off to get the pure stack-slot
-    /// lowering (e.g. for codegen-shape comparisons).
+    /// Keep hot scalars in callee-saved registers (s2-s11) instead of stack slots.
+    /// On by default; off gives the pure stack-slot lowering for shape comparisons.
     pub fn set_register_allocation(&mut self, enabled: bool) {
         self.register_allocation = enabled;
     }
@@ -637,9 +633,8 @@ impl CompilationPipeline {
         self.omit_frame_pointer = enabled;
     }
 
-    /// Enable IR-level optimization passes (constant folding, dead-code
-    /// elimination). Off by default so IR/assembly goldens stay stable; when on,
-    /// the passes run on the lowered IR before backend lowering.
+    /// Enable IR-level passes (constant folding, dead-code elimination). Off by
+    /// default so IR and assembly goldens stay stable.
     pub fn set_optimize(&mut self, opts: OptOptions) {
         self.optimize = opts;
     }
@@ -798,9 +793,8 @@ impl CompilationPipeline {
         })
     }
 
-    /// Run all pipeline stages, returning typed per-stage outputs.
-    ///
-    /// `stdlib_tokens`: Pass `None` when compiling stdlib or kernel sources standalone.
+    /// Run all pipeline stages, returning typed per-stage outputs. `stdlib_objects`
+    /// is empty when compiling stdlib or kernel sources standalone.
     #[track_caller]
     pub fn run_full(
         &self,
@@ -947,12 +941,6 @@ impl CompilationPipeline {
         }
     }
 
-    /// Compile and return only the IR program.
-    pub fn compile_to_ir_only(&self, source: &str) -> Result<IrProgram, CompilationError> {
-        let result = self.compile(source)?;
-        Ok(result.ir_program)
-    }
-
     /// Compile an IR program to RISC-V assembly text.
     #[track_caller]
     pub fn compile_ir_to_assembly(&self, ir: &IrProgram) -> String {
@@ -1060,9 +1048,8 @@ impl CompilationPipeline {
         Ok(out)
     }
 
-    /// Compile multiple named modules independently, producing one `.o` per module.
-    ///
-    /// Returns assembled objects in input order, or the diagnostics from the first failed module.
+    /// Compile named modules independently, one `.o` each, returned in input order.
+    /// Fails with the diagnostics of the first module that does not compile.
     #[track_caller]
     pub fn compile_modules(
         &mut self,
@@ -1213,57 +1200,6 @@ impl CompilationPipeline {
         Ok(())
     }
 
-    /// Link multiple compiled objects and apply layout post-processing.
-    ///
-    /// Returns the linked output ready to load into a VM.
-    #[track_caller]
-    pub fn link_modules(
-        &self,
-        module_names: &[&str],
-        objects: &[&AssembledOutput],
-    ) -> Result<AssembledOutput, LinkerError> {
-        let modules: Vec<(&str, &AssembledOutput)> = module_names
-            .iter()
-            .zip(objects.iter())
-            .map(|(n, o)| (*n, *o))
-            .collect();
-        let combined_stem = module_names.join("_");
-        self.link_assembled_objects_named(&combined_stem, &modules)
-    }
-
-    /// Compile kernel modules and link them with the provided stdlib object.
-    ///
-    /// Returns a fully linked kernel image ready to load into a VM.
-    #[track_caller]
-    pub fn compile_kernel_modules_with_stdlib(
-        &mut self,
-        kernel_modules: &[(&str, &str)],
-        stdlib_object: &AssembledOutput,
-    ) -> Result<AssembledOutput, CompilationError> {
-        let kernel_objects = self.compile_modules(kernel_modules)?;
-
-        let mut module_names = vec!["kernel_stdlib"];
-        let mut object_refs = vec![stdlib_object];
-        for (module_name, _) in kernel_modules {
-            module_names.push(*module_name);
-        }
-        let kernel_refs: Vec<&AssembledOutput> = kernel_objects.iter().collect();
-        object_refs.extend(kernel_refs);
-
-        let combined_stem = module_names.join("_");
-        self.link_assembled_objects_named(
-            &combined_stem,
-            &module_names
-                .iter()
-                .zip(object_refs.iter())
-                .map(|(n, o)| (*n, *o))
-                .collect::<Vec<_>>(),
-        )
-        .map_err(|e| {
-            CompilationError::FreestandingErrors(vec![format!("linker error: {}", e.message)])
-        })
-    }
-
     /// Compile the stdlib for `mode` as independent per-module objects (no source
     /// concatenation), to link alongside the user program. Kernel gets its prefix.
     pub fn compile_stdlib_objects(
@@ -1315,8 +1251,8 @@ pub fn bundled_module_source(name: &str) -> Option<&'static str> {
     os_runtime::module_source(name).or_else(|| crate::userspace::module_source(name))
 }
 
-/// Repo-relative source path of a bundled module, mirroring `bundled_module_source`.
-pub fn bundled_module_path(name: &str) -> Option<&'static str> {
+// Repo-relative source path of a bundled module, mirroring `bundled_module_source`.
+fn bundled_module_path(name: &str) -> Option<&'static str> {
     os_runtime::module_path(name).or_else(|| crate::userspace::module_path(name))
 }
 
@@ -1445,12 +1381,8 @@ fn sanitize_artifact_component(value: &str) -> String {
 
 // --- Filesystem layout ---
 
-/// Canonical on-disk filesystem layout constants.
-///
-/// Mirrors `FS_*` in `kernel/fs/fs.hll`. See _`OS_SPECIFICATION.md` for filesystem layout.
-///
-///
-///
+/// Canonical on-disk filesystem layout constants, mirroring `FS_*` in
+/// `kernel/fs/fs.hll`. Filesystem layout: see _`OS_SPECIFICATION.md`.
 pub mod fs_layout {
     /// Block size in bytes (`FS_BLOCK_SIZE`).
     pub const BLOCK_SIZE: usize = 4096;
@@ -1507,14 +1439,8 @@ pub enum FsEntry<'a> {
     File { path: &'a str, data: &'a [u8] },
 }
 
-/// Serialise `entries` into the on-disk filesystem image format and return the raw bytes.
-///
-/// See _`OS_SPECIFICATION.md` for block layout.
-///
-///
-///
-///
-/// Layout constants live in [`fs_layout`] and are checked against `fs.hll`.
+/// Serialise `entries` into the on-disk filesystem image format. Block layout is in
+/// _`OS_SPECIFICATION.md`, and the [`fs_layout`] constants are checked against `fs.hll`.
 pub fn build_fs_image(entries: &[FsEntry<'_>]) -> Vec<u8> {
     use fs_layout::{
         BITMAP_BLOCK, BLOCK_SIZE, DATA_BLOCK_START, DE_INODE, DE_NAME, DIRENT_SIZE, IN_BLOCKS,
@@ -1569,7 +1495,7 @@ pub fn build_fs_image(entries: &[FsEntry<'_>]) -> Vec<u8> {
 
     // next_inode and next_data_block are mutable state we thread through.
     let mut next_inode: usize = 1; // 0 = root
-    let mut next_data_block: usize = 0; // relative to DATA_BLOCK_START; absolute = + DATA_BLOCK_START
+    let mut next_data_block: usize = 0; // relative to DATA_BLOCK_START
 
     // Allocate a data block and return its absolute block index.
     let alloc_block = |next: &mut usize| -> usize {
@@ -1771,13 +1697,8 @@ pub fn build_fs_image(entries: &[FsEntry<'_>]) -> Vec<u8> {
 /// here. Matches `USER_CODE_BASE`/`USER_CODE_VA` in the kernel sources.
 pub const USER_CODE_BASE: u64 = 0x4000_0000;
 
-/// Build a static ELF64 executable from an assembled hosted program.
-///
-/// Linked at [`USER_CODE_BASE`] so its `e_entry`/`p_vaddr` land in the kernel's
-/// user code region. The entry point resolves from `_start`; the single `PT_LOAD`
-/// segment carries the flat image (zero-filled BSS included). Suitable for storing
-/// as a regular file via [`build_fs_image`] and loading through the kernel's
-/// `sys_exec`.
+/// Build a static ELF64 executable, linked at [`USER_CODE_BASE`] with one `PT_LOAD`
+/// segment carrying the flat image, so the kernel's `sys_exec` can load it.
 pub fn assembled_to_elf_file(assembled: &AssembledOutput) -> Vec<u8> {
     assembled.to_elf(USER_CODE_BASE)
 }

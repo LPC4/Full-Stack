@@ -29,7 +29,7 @@ pub struct Redirect {
 }
 
 impl ShellSession {
-    pub fn observe_input_byte(&mut self, byte: u8) {
+    fn observe_input_byte(&mut self, byte: u8) {
         match byte {
             b'\r' | b'\n' => self.commit_input(),
             0x08 => {
@@ -51,7 +51,7 @@ impl ShellSession {
         }
     }
 
-    pub fn record_command(&mut self, raw: &str) {
+    fn record_command(&mut self, raw: &str) {
         let raw = raw.trim();
         if raw.is_empty() {
             return;
@@ -68,10 +68,6 @@ impl ShellSession {
 
     pub fn commands(&self) -> &[ShellCommandRecord] {
         &self.commands
-    }
-
-    pub fn pending_input(&self) -> &str {
-        &self.input_buffer
     }
 
     pub fn clear(&mut self) {

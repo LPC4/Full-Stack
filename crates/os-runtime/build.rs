@@ -90,8 +90,8 @@ fn source_key(rel: &Path) -> String {
     }
 }
 
-/// Collect every source file (`.hll`, `.s`, `.build`) keyed by its crate-relative
-/// forward-slash path, for materializing real demo workspaces.
+// Keys every source (.hll, .s, .build) by crate-relative forward-slash path so
+// demo workspaces can be materialized on disk.
 fn collect_tree(dir: &Path, manifest_dir: &Path, out: &mut Vec<Source>) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;

@@ -452,7 +452,7 @@ impl HighLevelCompiler {
         if let Some(info) = info {
             match mode {
                 EvalMode::Address => {
-                    // Locals are stored as Pointer(T) stack slots; return the slot pointer directly.
+                    // Locals are Pointer(T) stack slots, so the slot pointer is the address.
                     Some(LoweredValue {
                         value: info.value,
                         ty: info.ty,
@@ -541,8 +541,8 @@ impl HighLevelCompiler {
         }
     }
 
-    /// True when `name` is a local or global binding of function-pointer type,
-    /// i.e. callable through an indirect call rather than a direct symbol call.
+    // True when `name` is a local or global binding of function-pointer type,
+    // i.e. callable through an indirect call rather than a direct symbol call.
     fn is_function_pointer_binding(&self, name: &str) -> bool {
         // Locals live in `Pointer(T)` stack slots, so the value type is the
         // pointee; globals store the value type directly.
@@ -571,8 +571,8 @@ impl HighLevelCompiler {
         self.lower_call_through_value(callee, arguments, &format!("`{name}`"))
     }
 
-    /// Lower a call whose callee is an already-lowered function-pointer value.
-    /// `desc` names the callee for diagnostics (e.g. a field path).
+    // Lower a call whose callee is an already-lowered function-pointer value.
+    // `desc` names the callee for diagnostics (e.g. a field path).
     fn lower_call_through_value(
         &mut self,
         callee: LoweredValue,
@@ -631,7 +631,7 @@ impl HighLevelCompiler {
         })
     }
 
-    /// True when the receiver type, after peeling pointers, is a struct holding `field`.
+    // True when the receiver type, after peeling pointers, is a struct holding `field`.
     fn receiver_has_field(&self, ty: &IrType, field: &str) -> bool {
         let mut resolved = self.resolve_named_type(ty);
         while let IrType::Pointer(inner) = resolved {
@@ -665,8 +665,8 @@ impl HighLevelCompiler {
         }
     }
 
-    /// Lower `recv.method(args)` as a direct call `method(self, args)`. `recv_addr`
-    /// is the receiver address, reduced to a single `Type*` for the `self` argument.
+    // Lower `recv.method(args)` as a direct call `method(self, args)`. `recv_addr`
+    // is the receiver address, reduced to a single `Type*` for the `self` argument.
     fn lower_method_call(
         &mut self,
         method: &str,
@@ -760,7 +760,7 @@ impl HighLevelCompiler {
         })
     }
 
-    /// Emit a call to a string-module runtime helper by flat symbol name.
+    // Emit a call to a string-module runtime helper by flat symbol name.
     fn emit_format_runtime_call(
         &mut self,
         symbol: &str,
@@ -789,7 +789,7 @@ impl HighLevelCompiler {
         })
     }
 
-    /// Widen an integer hole value to 64 bits for the format runtime.
+    // Widen an integer hole value to 64 bits for the format runtime.
     fn format_widen_int(&mut self, value: &LoweredValue, unsigned: bool) -> IrValue {
         if matches!(
             self.resolve_named_type(&value.ty),
@@ -811,8 +811,8 @@ impl HighLevelCompiler {
         IrValue::Register(dest)
     }
 
-    /// Evaluate one hole expression exactly once and classify it. `Format`
-    /// implementors are materialized so their impl methods get a receiver.
+    // Evaluate one hole expression exactly once and classify it. `Format`
+    // implementors are materialized so their impl methods get a receiver.
     fn lower_format_hole(
         &mut self,
         expr: &Expression,
@@ -917,8 +917,8 @@ impl HighLevelCompiler {
         }
     }
 
-    /// Unwrap a `Result<u64, FormatError>` value: on `Err`, forward the whole
-    /// enum into the result slot and jump to `done`; on `Ok`, yield the length.
+    // Unwrap a `Result<u64, FormatError>` value: on `Err`, forward the whole
+    // enum into the result slot and jump to `done`; on `Ok`, yield the length.
     fn format_unwrap_len(
         &mut self,
         result: &LoweredValue,
@@ -1659,9 +1659,8 @@ impl HighLevelCompiler {
         }
     }
 
-    // Lower `base[start..end]` to a new slice value `{ &base[start], end - start }`.
-    // Open endpoints default to 0 and the base length; `..=` adds one to `end`.
-    // Bounds-checked: traps if `end > len` or `start > end`.
+    // `base[start..end]` yields `{ &base[start], end - start }`. Open endpoints default to 0
+    // and the base length, `..=` adds one to `end`, and `end > len` or `start > end` traps.
     fn lower_slice_expr(
         &mut self,
         base_expr: &Expression,

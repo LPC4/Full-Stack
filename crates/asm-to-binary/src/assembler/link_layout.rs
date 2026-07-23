@@ -1,6 +1,5 @@
-/// Controls how the linker places the image in virtual memory and what
-/// auxiliary symbols to inject into the assembled output.
-/// See `_RISCV_SPECIFICATIONS.md` section 9.4 for the symbol contract.
+/// Controls image placement in virtual memory and which auxiliary symbols to inject.
+/// Symbol contract: `_RISCV_SPECIFICATIONS.md` section 9.4.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LinkLayout {
     /// Virtual base address where the image is loaded.

@@ -1,6 +1,5 @@
-/// Generates an R-type instruction struct.
-/// The generated struct has fields `rd`, `rs1`, `rs2` and implements
-/// [`Instruction`](super::traits::Instruction).
+/// Generates an R-type instruction struct with fields `rd`, `rs1`, `rs2`
+/// implementing [`Instruction`](super::traits::Instruction).
 macro_rules! r_inst {
     (
         $name:ident,
@@ -122,7 +121,7 @@ macro_rules! i_imm_inst {
 }
 
 /// Generates an I-type load instruction (opcode 0x03).
-/// Operand order in `to_asm`: `rd, imm(rs1)` -- standard RISC-V load syntax.
+/// Operand order in `to_asm` is `rd, imm(rs1)`, the standard RISC-V load syntax.
 macro_rules! i_load_inst {
     (
         $name:ident,
@@ -187,7 +186,7 @@ macro_rules! i_load_inst {
 }
 
 /// Generates an S-type store instruction (opcode 0x23).
-/// Operand order in `to_asm`: `rs2, offset(rs1)` -- standard RISC-V store syntax.
+/// Operand order in `to_asm` is `rs2, offset(rs1)`, the standard RISC-V store syntax.
 macro_rules! s_inst {
     (
         $name:ident,

@@ -96,17 +96,18 @@ wr_sym: (off: u64, name_off: u64, bind: u64, shndx: u64, value: u64) {
     as_state.wr_le(off + 16, 0, 8)
 }
 
-wr_shdr: (off: u64, name: u64, sht: u64, flags: u64, soff: u64, size: u64, link: u64, info: u64, entsize: u64) {
-    as_state.wr_le(off, name, 4)
+; Args are the Elf64_Shdr fields: name, type, flags, offset, size, link, info, entsize.
+wr_shdr: (off: u64, nm: u64, sht: u64, flg: u64, so: u64, sz: u64, lnk: u64, inf: u64, esz: u64) {
+    as_state.wr_le(off, nm, 4)
     as_state.wr_le(off + 4, sht, 4)
-    as_state.wr_le(off + 8, flags, 8)
+    as_state.wr_le(off + 8, flg, 8)
     as_state.wr_le(off + 16, 0, 8)
-    as_state.wr_le(off + 24, soff, 8)
-    as_state.wr_le(off + 32, size, 8)
-    as_state.wr_le(off + 40, link, 4)
-    as_state.wr_le(off + 44, info, 4)
+    as_state.wr_le(off + 24, so, 8)
+    as_state.wr_le(off + 32, sz, 8)
+    as_state.wr_le(off + 40, lnk, 4)
+    as_state.wr_le(off + 44, inf, 4)
     as_state.wr_le(off + 48, 4, 8)
-    as_state.wr_le(off + 56, entsize, 8)
+    as_state.wr_le(off + 56, esz, 8)
 }
 
 ; Layout: ehdr, .text, .data, .rela.text, .symtab, .strtab, .shstrtab, shdrs.

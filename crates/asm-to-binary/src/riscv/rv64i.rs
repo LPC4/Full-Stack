@@ -625,7 +625,7 @@ impl Wfi {
 
 impl Instruction for Wfi {
     fn encode(&self) -> u32 {
-        // Encoding for WFI (SYSTEM) -- instruction immediate 0x105, opcode 0x73
+        // WFI is SYSTEM with immediate 0x105 and opcode 0x73.
         0x10500073
     }
 
@@ -649,11 +649,6 @@ pub struct Fence {
 impl Fence {
     pub fn new(pred: u8, succ: u8) -> Self {
         Self { fm: 0, pred, succ }
-    }
-
-    pub fn with_fm(mut self, fm: u8) -> Self {
-        self.fm = fm;
-        self
     }
 }
 

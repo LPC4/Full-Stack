@@ -309,7 +309,7 @@ impl FunctionContext {
         );
     }
 
-    /// Save the sret pointer (in a0 on entry) into its stack slot.
+    // The sret pointer arrives in a0 on entry.
     fn emit_sret_save(&self, backend: &mut impl Rv64Backend, sret_slot: usize) {
         backend.emit_comment(&format!(
             "Save sret pointer from a0 to stack slot {sret_slot}"
@@ -322,10 +322,8 @@ impl FunctionContext {
         );
     }
 
-    /// Spill parameters from `start_index` onward into their stack slots.
-    ///
-    /// `start_header` is emitted before the spills when there is at least one;
-    /// `empty_header` is emitted instead when there are none.
+    // `start_header` precedes the spills when there is at least one, otherwise
+    // `empty_header` is emitted alone.
     fn emit_parameter_spills_from_index(
         &self,
         backend: &mut impl Rv64Backend,
@@ -417,7 +415,7 @@ impl FunctionContext {
     }
 }
 
-/// Return the argument register for the given index (a0-a7).
+// Argument register for the given index (a0-a7).
 fn arg_reg(i: usize) -> Reg {
     match i {
         0 => 10,

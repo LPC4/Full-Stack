@@ -1,7 +1,6 @@
-/// Unit tests for AssembledOutput::to_elf.
-///
-/// Checks ELF structural properties that are required for QEMU / Linux to
-/// accept and load the binary correctly.
+//! Structural checks on `AssembledOutput::to_elf`: the ELF properties QEMU and Linux
+//! require before they will load the image.
+
 use asm_to_binary::assembler::Assembler;
 use asm_to_binary::pseudo::PseudoInstruction;
 use asm_to_binary::real::RealInstruction;
@@ -33,13 +32,13 @@ fn u64_le(buf: &[u8], off: usize) -> u64 {
     u64::from_le_bytes(buf[off..off + 8].try_into().unwrap())
 }
 
-/// Build a minimal assembled program: _start calls main, main returns 42.
-fn minimal_output() -> asm_to_binary::AssembledOutput {
+// Build a minimal program: _start calls main, main returns 42.
+fn minimal_tokens() -> Vec<RvInstruction> {
     let a7: u8 = 17;
     let a0: u8 = 10;
     let ra: u8 = 1;
 
-    let tokens = vec![
+    vec![
         RvInstruction::Directive(".text".to_owned()),
         RvInstruction::Label("_start".to_owned()),
         RvInstruction::Pseudo(PseudoInstruction::Call {
@@ -52,9 +51,11 @@ fn minimal_output() -> asm_to_binary::AssembledOutput {
         RvInstruction::Real(RealInstruction::Jalr(
             asm_to_binary::riscv::rv64i::Jalr::new(0, ra, 0),
         )),
-    ];
+    ]
+}
 
-    Assembler::assemble(&tokens).expect("assembly failed")
+fn minimal_output() -> asm_to_binary::AssembledOutput {
+    Assembler::assemble(&minimal_tokens()).expect("assembly failed")
 }
 
 // ---- ELF magic and class ---------------------------------------------------
@@ -181,6 +182,20 @@ fn elf_vaddr_offset_congruence() {
 fn assembled_output_text_bytes_not_empty() {
     let out = minimal_output();
     assert!(!out.text_bytes().is_empty());
+}
+
+#[test]
+fn assembled_output_bss_bytes_reserve_space_without_contents() {
+    let mut tokens = vec![
+        RvInstruction::Directive(".bss".to_owned()),
+        RvInstruction::Label("scratch".to_owned()),
+        RvInstruction::Directive(".space 32".to_owned()),
+    ];
+    tokens.extend(minimal_tokens());
+
+    let out = Assembler::assemble(&tokens).expect("assembly failed");
+    assert_eq!(out.bss_bytes().len(), 32);
+    assert!(out.bss_bytes().iter().all(|b| *b == 0));
 }
 
 #[test]

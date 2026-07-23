@@ -311,7 +311,7 @@ pub enum ForIter {
         end: Expression,
         inclusive: bool,
     },
-    // `arr` -- iterate a fixed array's elements by value.
+    // `arr` iterates a fixed array's elements by value.
     Each(Expression),
 }
 
@@ -461,7 +461,7 @@ pub enum PrimaryExpr {
         expr: Box<Expression>,
         index: Box<Expression>,
     },
-    // `arr[a..b]` / `arr[a..=b]` -- a sub-slice. Open endpoints default to
+    // `arr[a..b]` / `arr[a..=b]` is a sub-slice. Open endpoints default to
     // 0 (start) and the source length (end).
     Slice {
         expr: Box<Expression>,

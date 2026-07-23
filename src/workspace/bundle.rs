@@ -50,7 +50,6 @@ pub fn populate_demo_workspace(fs: &mut dyn WorkspaceFs) -> io::Result<()> {
 /// Write the bundled lessons into `fs` with the lesson folders at the
 /// workspace root, so each lesson shows only its source and `.build` file.
 pub fn populate_lessons_workspace(fs: &mut dyn WorkspaceFs) -> io::Result<()> {
-    write_missing(fs, "README.md", LESSONS_README)?;
     write_missing(fs, ".fullstack/run.toml", &lesson_run_configs())?;
     let previous = read_bundle_state(fs);
     let mut current = Vec::new();
@@ -231,14 +230,6 @@ fn invalid_path(err: crate::workspace::PathError) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, err)
 }
 
-const LESSONS_README: &str = r#"# Lessons
-
-Small standalone programs for the written guide, one folder per lesson. Each
-lesson holds its source and its `.build` manifest, with a matching run
-configuration in `.fullstack/run.toml`. Natively this folder lives at
-`programs/lessons`; the browser opens the same tree in memory.
-"#;
-
 const SAMPLE_README: &str = r#"# Full-Stack Demo Workspace
 
 Real copies of the bundled kernel (and its linked modules), boot assembly, standard
@@ -294,7 +285,6 @@ mod tests {
         let fs = lessons_workspace().expect("lessons workspace");
 
         for path in [
-            "README.md",
             ".fullstack/run.toml",
             "01_sum/sum.s",
             "01_sum/sum.build",

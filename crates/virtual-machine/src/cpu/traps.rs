@@ -31,13 +31,8 @@ pub const CAUSE_M_EXTERNAL_IRQ: u64 = (1u64 << 63) | 11;
 
 // --- Trap entry ---
 
-/// Enter a trap: saves state, updates CSRs, jumps to the appropriate handler.
-///
-/// Delegation: if the current privilege is U or S and the corresponding bit in
-/// medeleg (exceptions) or mideleg (interrupts) is set, the trap is delivered
-/// to S-mode using sepc/scause/stval/sstatus/stvec.  Otherwise it goes to M-mode.
-///
-/// Returns the new PC (trap handler entry address).
+/// Save state, update CSRs and return the handler entry PC. From U or S mode a
+/// set medeleg/mideleg bit delivers to S-mode, otherwise the trap goes to M-mode.
 pub fn take_trap(regs: &mut Registers, csrs: &mut CsrFile, cause: u64, tval: u64, pc: u64) -> u64 {
     let current_priv = regs.priv_mode;
     let is_interrupt = (cause & (1u64 << 63)) != 0;
@@ -101,9 +96,8 @@ pub fn take_trap(regs: &mut Registers, csrs: &mut CsrFile, cause: u64, tval: u64
 
 // --- Trap dispatch (error to trap mapping) ---
 
-/// Map a `VmError` to a trap cause/tval pair.
-/// Returns `Some((cause, tval))` if the error should trigger a trap,
-/// or `None` if it is a fatal error that cannot be trapped.
+/// `Some((cause, tval))` when the error should trap, `None` when it is fatal and
+/// cannot be trapped.
 pub fn error_to_trap_cause(e: &VmError) -> Option<(u64, u64)> {
     match e {
         VmError::InstructionAccessFault(addr) => Some((CAUSE_INSN_ACCESS_FAULT, *addr)),

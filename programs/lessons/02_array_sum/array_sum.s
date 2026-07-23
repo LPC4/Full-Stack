@@ -12,7 +12,7 @@ array_end:            # a label just past the last element
 .globl _start         # specifies to the virtual machine where to begin execution
 _start:
   li   t0, 0          # t0 = sum, start at 0
-  la   t1, array      # t1 = pointer to the current element   "load address": put a label's address in a register
+  la   t1, array      # "load address": t1 = pointer to the current element
   la   t2, array_end  # t2 = the address just past the array
 loop:
   ld   t3, 0(t1)      # t3 = the element t1 points at

@@ -1,7 +1,7 @@
 bc61f7418c197bc5 01_sum/sum.build
 70161f951300e356 01_sum/sum.s
 be87614b753f4d7c 02_array_sum/array_sum.build
-8807fc7223069ec4 02_array_sum/array_sum.s
+55216ccb88df0ab3 02_array_sum/array_sum.s
 d9fd73055f26edb2 03_reverse_array/reverse_array.build
 3c5bbf316abc1d54 03_reverse_array/reverse_array.s
 68a91de344d4a74c 03_reverse_array/reverse_array_template.build
@@ -21,4 +21,5 @@ f6ed7eecb9c803d0 06_uart/hello_raw.s
 9519420a8022ff0e 06_uart/hello_world.build
 f4ccd48e0e320b5a 06_uart/hello_world.s
 5834dd06375e737e 06_uart/print_char.build
-1b6eab1df4999847 06_uart/print_char.s
+21b8647f0722a8a2 06_uart/print_char.s
+6e3bc289f3a325c1 07_qemu/hello_world.s

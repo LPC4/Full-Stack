@@ -1,8 +1,5 @@
-# Minimal user-space stdlib, assembled and linked separately.
-# Exports putc/puts/exit so a program need not inline its own I/O; a cc-compiled
-# client (hello.hll) calls putc here instead of cc emitting it inline:
-#   cc hello.hll hello.s && as hello.s hello.o && as stdlib.s stdlib.o
-#   ld stdlib.o hello.o hello && hello
+# Minimal user-space stdlib (putc/puts/exit) so a cc-compiled client need not inline I/O.
+# Build and link recipe: see the OS specification, 10.6.
 
 .globl putc
 .globl puts

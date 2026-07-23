@@ -616,7 +616,6 @@ mod tests {
         assert_eq!(lexer.next_token(), Token::Ident("c"));
         assert_eq!(lexer.next_token(), Token::Ampersand);
         assert_eq!(lexer.next_token(), Token::Ident("d"));
-        // Single | is now the bitwise OR operator (Token::Pipe)
         assert_eq!(lexer.next_token(), Token::Pipe);
         assert_eq!(lexer.next_token(), Token::Ident("e"));
     }
@@ -624,7 +623,6 @@ mod tests {
     #[test]
     fn test_single_pipe_is_bitwise_or() {
         let mut lexer = Lexer::new("|");
-        // Single | is now the bitwise OR operator (Token::Pipe)
         assert_eq!(lexer.next_token(), Token::Pipe);
     }
 

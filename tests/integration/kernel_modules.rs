@@ -1,18 +1,10 @@
-/// Verify every kernel HLL module compiles without errors.
-///
-/// Each test here is a fast, build-time check: compile one module and assert
-/// no diagnostics.  Any undefined identifier in a kernel file (like the
-/// `computed_binary_pa` bug in `my_kernel.hll`) is caught here before slower
-/// runtime tests run.
-///
-/// The module is compiled in isolation -- `external` declarations resolve at
-/// link time, so they don't cause errors. Only truly undefined identifiers
-/// (used but never declared) produce a compile-time error.
+// Each kernel module compiles in isolation, so `external` declarations resolve
+// at link time. Only a truly undefined identifier fails here.
 use full_stack::compilation_pipeline::{CompilationPipeline, TargetMode};
 use hll_to_ir::stdlib::{get_stdlib_modules_for_mode, get_stdlib_type_prelude};
 use os_runtime::kernel;
 
-/// Compile one kernel HLL source as a standalone module and assert it succeeds.
+// Compile one kernel HLL source as a standalone module and assert it succeeds.
 fn assert_kernel_module_compiles(name: &str, source: &str) {
     let mut p = CompilationPipeline::new();
     p.set_target_mode(TargetMode::Kernel);
@@ -99,10 +91,8 @@ fn kernel_fs_compiles() {
 }
 
 // --- Regression: my_kernel.hll must compile with all identifiers resolved ---
-// This test directly prevents the `computed_binary_pa` class of bug: a local
-// variable renamed during refactoring leaves a stale reference that the
-// compiler must catch.  If this test fails, inspect spawn_user_process (or
-// any function using undefined names) before running slower runtime tests.
+// Guards the `computed_binary_pa` class of bug: a rename leaves a stale local
+// reference. On failure, inspect spawn_user_process first.
 
 #[test]
 fn my_kernel_compiles() {
@@ -171,11 +161,8 @@ fn pcb_and_trap_frame_struct_layout_matches_offsets() {
 }
 
 // --- Frame-size guard ---
-// HLL gives every block-local its own stack slot, so a giant function can grow
-// a frame past the RV immediate range [-2048, 2047], at which point an `sd`/`ld`
-// offset panics the assembler at compile time (this bit syscall_dispatch twice).
-// Flag any kernel function whose frame exceeds a safe threshold here, so the
-// problem surfaces as a clear test failure rather than a deep compile panic.
+// Every block-local gets its own slot, so a big function can push a frame past
+// the RV immediate range and panic the assembler (syscall_dispatch hit this).
 
 // Safe ceiling: leaves headroom below the 2047-byte immediate limit for the
 // largest slot offset within a frame.

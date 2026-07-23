@@ -126,7 +126,7 @@ fn fold_instruction(
     changed
 }
 
-/// Substitute a known-constant condition or return value in a terminator.
+// Substitute a known-constant condition or return value in a terminator.
 fn substitute_terminator(
     term: &mut IrTerminator,
     consts: &HashMap<crate::ir::IrRegister, i64>,
@@ -145,7 +145,7 @@ fn substitute_terminator(
     false
 }
 
-/// Mutable references to value operands a register constant may flow into (Phi excluded).
+// Mutable references to value operands a register constant may flow into (Phi excluded).
 fn operand_uses_mut(inst: &mut IrInstruction) -> Vec<&mut IrValue> {
     match inst {
         IrInstruction::Math { lhs, rhs, .. } | IrInstruction::Cmp { lhs, rhs, .. } => {
@@ -169,7 +169,7 @@ fn operand_uses_mut(inst: &mut IrInstruction) -> Vec<&mut IrValue> {
     }
 }
 
-/// Read an operand as an integer constant. Bool and Null are integer-valued.
+// Read an operand as an integer constant. Bool and Null are integer-valued.
 fn as_const_int(value: &IrValue) -> Option<i64> {
     match value {
         IrValue::Integer(i) => Some(*i),
@@ -186,8 +186,8 @@ fn int_width(ty: &IrType) -> Option<IntWidth> {
     }
 }
 
-/// Sign-extend a 64-bit value from its result width, matching a backend store of
-/// the low bytes followed by a sign-extending load.
+// Sign-extend a 64-bit value from its result width, matching a backend store of
+// the low bytes followed by a sign-extending load.
 fn sext(value: i64, width: IntWidth) -> i64 {
     match width {
         IntWidth::I1 => value & 1,
@@ -198,8 +198,8 @@ fn sext(value: i64, width: IntWidth) -> i64 {
     }
 }
 
-/// Fold a binary integer op. Returns `None` for division/remainder by zero,
-/// which is left to run time so trap/result behavior is not assumed.
+// Fold a binary integer op. Returns `None` for division/remainder by zero,
+// which is left to run time so trap/result behavior is not assumed.
 fn fold_math(op: IrMathOp, lhs: i64, rhs: i64, width: IntWidth) -> Option<i64> {
     let raw = match op {
         IrMathOp::Add => lhs.wrapping_add(rhs),
@@ -249,8 +249,8 @@ fn fold_unary(op: IrUnaryOp, value: i64, width: IntWidth) -> i64 {
     sext(raw, width)
 }
 
-/// Fold an integer comparison to 0 or 1. Operands are the exact 64-bit values
-/// the backend would `li`, so unsigned ops compare the raw bit patterns.
+// Fold an integer comparison to 0 or 1. Operands are the exact 64-bit values
+// the backend would `li`, so unsigned ops compare the raw bit patterns.
 fn fold_cmp(op: IrCmpOp, lhs: i64, rhs: i64) -> i64 {
     let result = match op {
         IrCmpOp::Eq => lhs == rhs,

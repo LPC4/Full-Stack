@@ -246,10 +246,10 @@ impl AssemblyEmitter {
     pub fn emit_xor(&mut self, rd: Reg, rs1: Reg, rs2: Reg) {
         self.emit_inst(RealInstruction::Xor(Xor::new(rd, rs1, rs2)));
     }
-    pub fn emit_xori(&mut self, rd: Reg, rs1: Reg, imm: i32) {
+    fn emit_xori(&mut self, rd: Reg, rs1: Reg, imm: i32) {
         self.emit_inst(RealInstruction::Xori(Xori::new(rd, rs1, imm)));
     }
-    pub fn emit_sltiu(&mut self, rd: Reg, rs1: Reg, imm: i32) {
+    fn emit_sltiu(&mut self, rd: Reg, rs1: Reg, imm: i32) {
         self.emit_inst(RealInstruction::Sltiu(Sltiu::new(rd, rs1, imm)));
     }
     pub fn emit_sltu(&mut self, rd: Reg, rs1: Reg, rs2: Reg) {
@@ -305,9 +305,8 @@ impl AssemblyEmitter {
                 self.emit_srli(rd, rd, 32);
             }
         } else {
-            // True 64-bit value: build the upper half in rd, shift it up, then OR
-            // in the lower half built in a temp. Each half is a zero-extended
-            // LUI+ADDI, matching the 32-bit path above.
+            // Upper half in rd, shifted up, then OR in the lower half from a temp.
+            // Each half is a zero-extended LUI+ADDI like the 32-bit path above.
             let upper_32 = (imm >> 32) as u32;
             let lower_32 = (imm & 0xFFFF_FFFF) as u32;
 
@@ -328,9 +327,8 @@ impl AssemblyEmitter {
 
             self.emit_slli(rd, rd, 32);
 
-            // The scratch register must not alias rd, or building the lower half
-            // would clobber the already-shifted upper half. alloc_temp_reg cycles
-            // t0-t6 with no awareness of rd, so skip rd explicitly.
+            // alloc_temp_reg cycles t0-t6 unaware of rd, so skip rd explicitly:
+            // a scratch aliasing rd would clobber the already-shifted upper half.
             let mut tmp = self.alloc_temp_reg();
             if tmp == rd {
                 tmp = self.alloc_temp_reg();

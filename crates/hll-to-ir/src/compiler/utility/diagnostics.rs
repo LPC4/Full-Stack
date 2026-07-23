@@ -53,8 +53,8 @@ impl Diagnostic {
         }
     }
 
-    /// Render the canonical diagnostic block (message, location, source line,
-    /// caret, note). ASCII only, so every consumer shows identical text.
+    // Render the canonical diagnostic block (message, location, source line,
+    // caret, note). ASCII only, so every consumer shows identical text.
     fn render_block(&self, file: Option<&str>) -> String {
         let mut out = format!("{}: {}", self.level_word(), self.message);
         let gutter = if let Some(span) = &self.span {

@@ -7,4 +7,3 @@ export _kernel_start: () {
     kmain()
     runtime.panic("_kernel_start: kmain returned unexpectedly".ptr)
 }
-

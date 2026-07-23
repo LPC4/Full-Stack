@@ -1,12 +1,5 @@
-/// QEMU execution integration tests.
-///
-/// Each test compiles an HLL program all the way to RISC-V assembly or ELF,
-/// then runs it under qemu-riscv64 inside WSL and verifies the exit code and
-/// (where applicable) stdout output.
-///
-/// If the WSL toolchain is absent the tests print a diagnostic with the exact
-/// missing prerequisite and return without failing, so CI on machines without
-/// the cross-toolchain stays green.
+// Runs compiled HLL under qemu-riscv64 inside WSL. Without the cross-toolchain
+// these tests print the missing prerequisite and pass, so CI stays green.
 use asm_to_binary::AssembledOutput;
 use full_stack::compilation_pipeline::CompilationPipeline;
 use hll_to_ir::TargetMode;
@@ -25,10 +18,8 @@ fn read_program(filename: &str) -> String {
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("failed to read {path:?}: {e}"))
 }
 
-/// Compile HLL source -> assembly text, stripping inline comments so the
-/// assembly can be passed safely through a shell heredoc.
-/// Uses two-stage compilation: compile stdlib and user code independently,
-/// then assemble them into objects and link the objects before generating ELF.
+// Inline comments are stripped so the assembly survives a shell heredoc.
+// Stdlib and user code compile independently, then link as objects.
 fn compile_to_asm(source: &str) -> String {
     // Stage 1: compile each stdlib module independently (no source concatenation),
     // each with a distinct rodata prefix, and join their assembly text for `as`.
@@ -88,8 +79,8 @@ enum QemuSkipReason {
     MissingQemuRiscv64,
 }
 
-/// Bounded wait for WSL + qemu-riscv64; a broken or unstarted WSL can block
-/// `wsl.exe` indefinitely, so a timeout degrades to a skip rather than hanging.
+// A broken or unstarted WSL can block `wsl.exe` forever, so the wait is bounded
+// and a timeout degrades to a skip.
 const QEMU_WAIT_TIMEOUT_SECS: u64 = 60;
 
 impl fmt::Display for QemuSkipReason {
@@ -152,10 +143,8 @@ fn require_qemu_result(
     }
 }
 
-/// Compile HLL source to the final assembled output and export it as an ELF
-/// image ready for qemu-riscv64.
-/// Uses two-stage compilation: compile stdlib and user code independently,
-/// then assemble and link through the pipeline.
+// Exports an ELF image for qemu-riscv64. Stdlib and user code compile
+// independently, then assemble and link through the pipeline.
 fn compile_to_elf(source: &str) -> Vec<u8> {
     let pipeline = CompilationPipeline::new();
 
@@ -181,8 +170,7 @@ fn compile_to_elf(source: &str) -> Vec<u8> {
     assembled.to_elf(ELF_LOAD_BASE)
 }
 
-/// Convert a Windows absolute path to its WSL /mnt/... equivalent.
-/// e.g. `C:\Users\foo\bar.elf` -> `/mnt/c/Users/foo/bar.elf`
+// `C:\Users\foo\bar.elf` -> `/mnt/c/Users/foo/bar.elf`
 #[cfg(target_os = "windows")]
 fn win_path_to_wsl(path: &std::path::Path) -> String {
     let s = path.to_string_lossy();
@@ -198,7 +186,7 @@ fn win_path_to_wsl(path: &std::path::Path) -> String {
     format!("/mnt/{drive}{rest}")
 }
 
-/// Run a pre-compiled ELF image through WSL -> qemu-riscv64.
+// Run a pre-compiled ELF image through WSL -> qemu-riscv64.
 fn run_elf_via_qemu(elf: &[u8]) -> Result<QemuResult, QemuSkipReason> {
     #[cfg(not(target_os = "windows"))]
     {
@@ -318,20 +306,19 @@ echo "---EXIT:$?---"
     }
 }
 
-/// Compile HLL and run through QEMU in one step.
+// Compile HLL and run through QEMU in one step.
 fn run_hll_via_qemu(source: &str) -> Result<QemuResult, QemuSkipReason> {
     run_hll_elf_via_qemu(source)
 }
 
-/// Compile HLL to ELF and run through QEMU in one step.
+// Compile HLL to ELF and run through QEMU in one step.
 fn run_hll_elf_via_qemu(source: &str) -> Result<QemuResult, QemuSkipReason> {
     let elf = compile_to_elf(source);
     run_elf_via_qemu(&elf)
 }
 
-/// Verifies i32 mul/div/mod/sub, i64 cast roundtrip, u32 unsigned arithmetic,
-/// abs/clamp/gcd helpers, signed vs unsigned comparisons, and operator
-/// precedence.  The program returns 42 if every check passes.
+/// Integer arithmetic, casts, unsigned comparisons and operator precedence.
+/// The program returns 42 only when every check passes.
 #[test]
 fn qemu_01_arithmetic_and_types() {
     let source = read_program("01_arithmetic_and_types.hll");
@@ -349,9 +336,8 @@ fn qemu_01_arithmetic_and_types() {
     );
 }
 
-/// Verifies if/else chains (categorise helper), while accumulation, break,
-/// continue, nested loops, compile-time const, and boolean infix `and`.
-/// The five sub-results sum to exactly 100.
+/// Branches, loops, break/continue, consts and infix `and`. The five
+/// sub-results sum to exactly 100.
 #[test]
 fn qemu_02_control_flow() {
     let source = read_program("02_control_flow.hll");
@@ -366,11 +352,8 @@ fn qemu_02_control_flow() {
     );
 }
 
-/// Verifies inline struct literals, named type aliases, struct pass-by-value,
-/// dot product, scaling, the small-struct RISC-V ABI return path
-/// (destructuring from a function call result), local-variable destructuring,
-/// partial destructuring, order-independent field binding, nested struct
-/// field access, and anonymous inline struct literals.
+/// Struct literals, pass-by-value, the small-struct ABI return path, and every
+/// destructuring form. A non-zero exit names the failing check.
 #[test]
 fn qemu_03_structs_and_destructuring() {
     let source = read_program("03_structs_and_destructuring.hll");
@@ -390,13 +373,8 @@ fn qemu_03_structs_and_destructuring() {
     );
 }
 
-/// Verifies new/free, defer free (guaranteed cleanup), address-of stack
-/// variables, pointer mutation via function parameters, pointer swap,
-/// stack arrays (@arr[i] read/write), variable-index array element address,
-/// chained pointer dereference (@@), and passing array pointers to functions.
-///
-/// Every heap allocation is explicitly freed before the program exits;
-/// a clean exit-0 confirms no corruption or missing free.
+/// new/free, defer, address-of, chained deref and stack arrays. Every
+/// allocation is freed before exit, so exit 0 also means no leak.
 #[test]
 fn qemu_04_pointers_and_memory() {
     let source = read_program("04_pointers_and_memory.hll");
@@ -414,11 +392,8 @@ fn qemu_04_pointers_and_memory() {
     );
 }
 
-/// Verifies iterative factorial and Fibonacci (with boundary values),
-/// is_prime (including edge cases 1, 2, even numbers), prime counting,
-/// power function, function composition (fibcount_primes), and external
-/// putchar I/O.  On success the program writes "PASS\n" to stdout and
-/// returns 0.
+/// Numeric helpers, function composition and external putchar I/O. On success
+/// the program writes "PASS\n" to stdout and returns 0.
 #[test]
 fn qemu_05_functions_and_io() {
     let source = read_program("05_functions_and_io.hll");
@@ -442,10 +417,8 @@ fn qemu_05_functions_and_io() {
     );
 }
 
-/// Verifies that the assembled output can be exported as an ELF image and run
-/// directly under qemu-riscv64 without going through the GCC linker path.
-/// The arithmetic-and-types program is pure compute, so it avoids any libc or
-/// UART assumptions and gives a stable exit code.
+/// The exported ELF must run under qemu-riscv64 without the GCC linker path.
+/// Pure compute, so no libc or UART assumptions leak into the exit code.
 #[test]
 fn qemu_06_elf_export_and_execution() {
     let source = read_program("01_arithmetic_and_types.hll");
@@ -461,9 +434,8 @@ fn qemu_06_elf_export_and_execution() {
     );
 }
 
-// These run on every platform (no WSL needed) and confirm the full
-// HLL -> IR -> assembly pipeline doesn't panic or error on any of the five
-// programs.  They are cheap and always active.
+// Cheap and always active: no WSL needed, so the compile path stays covered on
+// machines without the cross-toolchain.
 
 #[test]
 fn qemu_programs_compile_to_asm_without_error() {

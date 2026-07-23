@@ -1,12 +1,5 @@
-// Tests for the ROM boot stub and kernel-mode boot sequence.
-//
-// Covers:
-//   - ROM assembles without error and is correctly padded.
-//   - M_TRAP_ADDR is at the expected offset (0x100).
-//   - A freshly-created pipeline initialises mtvec to M_TRAP_ADDR.
-//   - new_kernel redirects the CPU to ROM_BASE so _start runs.
-//   - Full kernel boot: ROM _start does PMP + delegation + mret into S-mode;
-//     minimal kernel calls sys_exit and the VM halts correctly.
+// ROM boot stub and kernel-mode boot sequence: ROM layout and mtvec setup, plus
+// the full PMP + delegation + mret path into an S-mode kernel that exits.
 
 use asm_to_binary::assembler::Assembler;
 use asm_to_binary::rv_instruction::RvInstruction;
@@ -18,8 +11,8 @@ use virtual_machine::rom::{M_TRAP_ADDR, ROM_BASE, generate_rom_image};
 
 // --- Helpers ---
 
-/// Assemble a minimal kernel and run it via `VirtualMachine::new_kernel`.
-/// Returns (uart_output, exit_code).
+// Assembles a minimal kernel, runs it via `VirtualMachine::new_kernel` and
+// returns (uart_output, exit_code).
 fn run_kernel(src: &str, max_steps: u64) -> (String, i64) {
     let tokens: Vec<RvInstruction> = src
         .lines()
@@ -103,7 +96,7 @@ fn pipeline_mtvec_initialised_to_m_trap() {
 
 #[test]
 fn new_kernel_starts_cpu_at_rom_base() {
-    // Minimal kernel: just enough to assemble; the test only checks that the CPU starts at ROM_BASE.
+    // Just enough kernel to assemble; only the starting PC is under test.
     let src = "
         .section .text
         .globl _kernel_start
@@ -140,10 +133,8 @@ fn new_kernel_starts_cpu_at_rom_base() {
 
 #[test]
 fn kernel_boot_pmp_delegation_mret_smode_exit() {
-    // Minimal kernel: receives control in S-mode at RAM_BASE after ROM _start mrets, then calls
-    // sys_exit(42) via ecall (cause=9, supervisor ecall).  Bit 9 is not in medeleg so it reaches
-    // _m_trap in M-mode, which dispatches to sys_exit and writes code 42 to SYSCON.
-    // If PMP or mret are broken the kernel never fetches from RAM and the test hangs or faults.
+    // Supervisor ecall (cause 9) is not delegated, so it reaches _m_trap in M-mode.
+    // Broken PMP or mret means the kernel never fetches from RAM and this hangs.
     let src = "
         .section .text
         .globl _kernel_start
@@ -158,9 +149,8 @@ fn kernel_boot_pmp_delegation_mret_smode_exit() {
 
 #[test]
 fn hosted_program_mtvec_still_works_after_rom_change() {
-    // Non-kernel hosted programs must still reach the M-mode trap handler.
-    // Here mtvec is 0x100 (_m_trap), not 0x000 (_start).  Assemble a tiny program
-    // that calls sys_exit(7) and verify it halts with code 7.
+    // Hosted (non-kernel) programs must still reach the M-mode trap handler, so
+    // mtvec has to be 0x100 (_m_trap) rather than 0x000 (_start).
     let src = "
         .section .text
         .globl _start

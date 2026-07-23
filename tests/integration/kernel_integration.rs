@@ -1,12 +1,5 @@
-// Consolidated kernel integration suite.
-//
-// Every test here needs a booted VM, which is the slowest thing in the project.
-// To keep the suite fast the kernel is compiled at most twice for the whole run
-// (single-concat stdlib + the multi-module "GUI" link path) via OnceLock caches,
-// and a single boot drives each scenario. This file replaces the former
-// kernel_boot_device_tree, kernel_user_injection, kernel_example_injection,
-// kernel_shell, kernel_editor, kernel_fork, kernel_isolation, and kernel_fs
-// files, which each recompiled the kernel independently.
+// Booting a VM is the slowest thing in the project, so the whole suite lives
+// here and shares at most two OnceLock-cached kernel builds.
 
 use asm_to_binary::AssembledOutput;
 use full_stack::build::{BuildExecutor, BuildManifest};
@@ -40,9 +33,8 @@ fn cached_kernel() -> &'static AssembledOutput {
     })
 }
 
-// Kernel built the way the GUI does it: each stdlib module compiled separately
-// and linked together. This covers the separate-object link path (e.g. the
-// "9 enable" page-fault regression) which the single-concat path does not.
+// Built the way the GUI does it, per stdlib module. Covers the separate-object
+// link path (the "9 enable" page fault) that the single-concat path misses.
 fn cached_kernel_multi_module() -> &'static AssembledOutput {
     static KERNEL: OnceLock<AssembledOutput> = OnceLock::new();
     KERNEL.get_or_init(|| {
@@ -76,12 +68,8 @@ fn compile_hosted_program(name: &str) -> AssembledOutput {
         .linked
 }
 
-// Boot the kernel, optionally injecting an FS image and a pid-1 user binary, and
-// optionally pre-loading a UART session. Returns the VM (for post-run peeks),
-// the final outcome, and the captured UART output.
-// Set up a booted kernel VM (RAM layout + optional FS image + pid-1 user binary
-// + front-loaded UART input) without running it, so callers can either run it in
-// one shot (boot_kernel) or step it manually and inject input mid-run.
+// Builds the VM without running it, so a caller can either run it in one shot
+// (boot_kernel) or step it manually and inject input mid-run.
 fn setup_kernel_vm(
     kernel: &AssembledOutput,
     user: Option<&AssembledOutput>,
@@ -175,11 +163,8 @@ fn run_example_manifest_in_kernel(name: &str) {
     assert_user_exit_ok(&uart, &outcome, name);
 }
 
-// Boot the shell with a set of `tools` installed (each named by its catalog key;
-// source, aux modules, and install path come from the user catalog) plus extra
-// `files`, drive `session` over UART, and return (outcome, uart). Collapses the
-// compile-shell + elf-ify-tools + build-image + boot boilerplate every toolchain
-// test repeats; tests keep their own assertions.
+// Collapses the compile-shell, elf-ify-tools, build-image and boot boilerplate
+// every toolchain test repeats. Tests keep their own assertions.
 fn run_tool_session(
     tools: &[&str],
     files: &[(&str, &[u8])],
@@ -452,11 +437,8 @@ main: () -> i32 {
     );
 }
 
-// The growable heap (sbrk syscall) lets a user program allocate well past the old
-// fixed 64 KB limit. Five 50 KB blocks (~244 KB + headers) force several sbrk page
-// grows; writing/reading the far end of each block proves the new pages are mapped
-// and backed by real memory. A null return (OOM) or an unmapped far end faults or
-// returns non-zero; a clean exit 0 proves the heap grew correctly.
+// Five 50 KB blocks force several sbrk page grows past the old 64 KB limit.
+// Touching the far end of each block proves the new pages are really mapped.
 #[test]
 fn user_heap_grows_past_64k() {
     run_example_in_kernel(
@@ -483,9 +465,8 @@ main: () -> i32 {
     );
 }
 
-// brk must refuse a request that would grow the heap into the arg page / stack
-// (above USER_ARG_BASE = 0x7FF00000): it returns the unchanged break so the caller
-// sees the failure, and a later in-bounds grow still succeeds.
+// A grow above USER_ARG_BASE (0x7FF00000) would eat the arg page and stack, so
+// brk returns the unchanged break and a later in-bounds grow still succeeds.
 #[test]
 fn user_brk_refuses_growth_into_arg_page() {
     run_example_in_kernel(
@@ -513,11 +494,8 @@ main: () -> i32 {
 
 // --- Framebuffer device (map_fb syscall + fbdemo program) ---
 
-// Reference Mandelbrot membership using the exact Q16.16 integer math from
-// fbdemo.hll. Returns true when the point is inside the set (black pixel).
-// Kept identical to the HLL so the VM render can be compared pixel-for-pixel;
-// any codegen distortion (e.g. a mixed-width truncation that shears the set)
-// shows up as a large disagreement here.
+// Mirrors the Q16.16 integer math in fbdemo.hll exactly, so the VM render can be
+// compared pixel for pixel and any codegen distortion shows up as disagreement.
 fn fbdemo_ref_in_set(cx: i64, cy: i64) -> bool {
     const ONE: i64 = 65536;
     const FOUR: i64 = 262144;
@@ -537,10 +515,8 @@ fn fbdemo_ref_in_set(cx: i64, cy: i64) -> bool {
     it >= MAXIT
 }
 
-// Boot fbdemo as pid 1, read the framebuffer back, and check the rendered image
-// against the reference fractal. Covers the whole path: map_fb -> MMU
-// translation -> bus routing -> device store, plus the compiler's integer
-// codegen (the set is sheared if a wide multiply is truncated to 32 bits).
+// Covers map_fb -> MMU translation -> bus routing -> device store, plus integer
+// codegen: a wide multiply truncated to 32 bits shears the rendered set.
 #[test]
 fn fbdemo_renders_mandelbrot_set() {
     const FB_W: usize = 320;
@@ -564,9 +540,8 @@ fn fbdemo_renders_mandelbrot_set() {
         assert_eq!(p[3], 255, "pixel {i} not opaque: {p:?}");
     }
 
-    // Compare the rendered set membership (black vs coloured) to the reference
-    // for every pixel. With correct codegen these agree exactly; a sheared or
-    // truncated render disagrees on thousands of pixels.
+    // Correct codegen agrees with the reference exactly. A sheared or truncated
+    // render disagrees on thousands of pixels.
     let mut in_set = 0usize;
     let mut mismatches = 0usize;
     for y in 0..FB_H {
@@ -598,11 +573,8 @@ fn fbdemo_renders_mandelbrot_set() {
     );
 }
 
-// Boot the spinning-cube demo as pid 1 for a bounded number of cycles (it loops
-// forever) and confirm it compiled, mapped the framebuffer, and drove the
-// per-pixel store path. A timeout almost always lands inside the full-screen
-// clear, so we assert on the clear (opaque black) rather than the edge pixels,
-// which would be timing-dependent.
+// The demo loops forever, so the bounded run almost always stops inside the
+// full-screen clear. Assert on the clear, not on timing-dependent edge pixels.
 #[test]
 fn cube_demo_drives_framebuffer() {
     let user = compile_hosted(user::CUBE);
@@ -644,11 +616,8 @@ fn cube_demo_drives_framebuffer() {
     );
 }
 
-// Boot the Game of Life demo as pid 1 for a bounded number of cycles (it loops
-// forever) and confirm it compiled, mapped the framebuffer, seeded a grid, and
-// drove both the device FILL clear and the per-pixel store path. Like the cube
-// test, a timeout almost always lands inside the clear, so we assert on the clear
-// plus at least one live cell drawn (a non-black pixel) rather than exact cells.
+// Bounded like the cube run, so assert on the device FILL clear plus at least
+// one live cell rather than on exact cell positions.
 #[test]
 fn life_demo_drives_framebuffer() {
     let user = compile_hosted(user::LIFE);
@@ -691,8 +660,8 @@ fn life_demo_drives_framebuffer() {
     assert!(live, "life rendered no live cells onto the framebuffer");
 }
 
-// Headless framebuffer throughput bench (a measurement, not a pass/fail). Run with:
-//   cargo test --release --test all -- --ignored cube_framebuffer_bench --nocapture
+// Headless framebuffer throughput bench: a measurement, not a pass/fail, so it
+// carries no assertion and stays #[ignore]d for manual release runs.
 #[test]
 #[ignore = "manual framebuffer throughput benchmark"]
 fn cube_framebuffer_bench() {
@@ -826,13 +795,8 @@ main: () -> i32 {
     );
 }
 
-// In-VM assembler: `as <src> <out>` assembles a small RV64I program from a source
-// file into a runnable ELF, then `run` executes it. The test program exercises
-// li/add/addi/bne/label/ecall (sum 1..=7 = 28, then exit(28)). The shell reaps the
-// child via wait and prints "[exit 28]", proving every encoding -- the branch
-// offset, arithmetic, and immediates -- is correct end to end (a wrong branch
-// offset would fault or loop forever instead). The shell then survives to run the
-// trailing `exit`, so the VM halts cleanly with 0.
+// Sums 1..=7 and exits 28 through the in-VM `as`. A wrong branch offset or
+// immediate faults or loops forever instead of printing "[exit 28]".
 #[test]
 fn kernel_shell_assembles_and_runs_program() {
     // Sum 1..=7 into a0 (= 28), then exit(a0). Pure subset: li/add/addi/bne/ecall.
@@ -947,11 +911,8 @@ fn kernel_shell_and_stops_on_failure() {
     );
 }
 
-// `as` emits a relocatable ET_REL object when the output ends in
-// ".o". This program has a `.globl` export, an external `call` (undefined locally
-// -> CALL_PLT relocation), and a `la` to a local `.data` symbol (always relocated).
-// The smoke test proves the object writer runs in-VM without faulting and reports
-// success; full correctness is covered once ld.hll links it (Phase C).
+// A ".o" output makes `as` emit ET_REL. This only proves the object writer runs
+// without faulting; correctness is covered where ld.hll links the result.
 #[test]
 fn kernel_as_emits_object() {
     let source = b"\
@@ -989,12 +950,8 @@ msg:
     );
 }
 
-// Exercises the expanded assembler subset: loads/stores with the
-// `offset(reg)` syntax, the full branch set, shifts, register-immediate ALU ops,
-// `slt`/`sltu`, and `lui`. The program computes 42 through every new instruction,
-// self-checks each result with a branch to `fail`, and exits with a0. A single
-// wrong encoding either faults or jumps to `fail` (exit 1), so `[exit 42]` proves
-// the whole batch encodes correctly end to end.
+// The program self-checks each result and branches to `fail`, so one wrong
+// encoding gives exit 1 or a fault. Only `[exit 42]` means the batch is right.
 #[test]
 fn kernel_shell_assembles_expanded_subset() {
     let source = b"\
@@ -1092,11 +1049,8 @@ fail:
     );
 }
 
-// Exercises the M-extension + addiw: the last mnemonics the
-// HLL backend emits that the in-VM assembler was missing. Computes 42 through
-// mul/div/divu/rem/remu and addiw, self-checking each with a branch to `fail`.
-// A wrong encoding jumps to `fail` (exit 1) or faults, so `[exit 42]` proves the
-// whole M-extension batch encodes byte-correctly end to end.
+// M-extension plus addiw were the last backend mnemonics the in-VM assembler
+// lacked. Self-checked like the subset test, so only `[exit 42]` passes.
 #[test]
 fn kernel_shell_assembles_m_extension() {
     let source = b"\
@@ -1156,9 +1110,8 @@ fail:
     );
 }
 
-// A non-ELF file or a missing name must be reported as an unknown command
-// rather than failing opaquely inside sys_exec. Bare-name execution
-// folds `run` into a single PATH-resolving path, so both report the same way.
+// A non-ELF or missing name must be an unknown command, not an opaque failure
+// inside sys_exec. `run` and bare names share one PATH-resolving path.
 #[test]
 fn kernel_shell_run_rejects_non_executable() {
     let shell = compile_hosted_program("shell");
@@ -1191,9 +1144,8 @@ fn kernel_shell_run_rejects_non_executable() {
     );
 }
 
-// Bare-name execution: /utyping a program name (no `run`) resolves it
-// through the PATH search (cwd, /bin, /home/demo) and runs it. Also covers a
-// relative `./child.elf` path and `&` backgrounding via the shared launch path.
+// A bare program name resolves through the PATH search (cwd, /bin, /home/demo).
+// Also covers a relative `./child.elf` and `&` on the shared launch path.
 #[test]
 fn kernel_shell_bare_name_runs_program() {
     let shell = compile_hosted_program("shell");
@@ -1255,9 +1207,8 @@ const EDITOR_OLD_CONTENTS: &[u8] = b"ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ
 const EDITOR_NEW_LINE_1: &str = "hello world";
 const EDITOR_NEW_LINE_2: &str = "second line";
 
-// Locate the inode for the named file in a built FS image and return its size
-// field. Inode table starts at block 1 (offset 4096); each inode is 128 bytes
-// with type at +0 (u16), size at +4 (u32), and name at +8.
+// Inode table starts at block 1 (offset 4096). Each inode is 128 bytes: type at
+// +0 (u16), size at +4 (u32), name at +8.
 fn inode_size_of(image: &[u8], name: &str) -> Option<u32> {
     const BLOCK_SIZE: usize = 4096;
     const INODE_SIZE: usize = 128;
@@ -1349,19 +1300,14 @@ fn editor_loads_clears_appends_writes_and_truncates() {
     );
 }
 
-// The ed-style line editor: insert/goto/substitute/delete on individual lines,
-// then write. Builds a three-line file, edits the middle line by substitution,
-// inserts a line before it, deletes the first, and writes; the on-disk contents
-// must reflect every operation.
+// The ed-style editor: goto, substitute, insert, delete, write. The on-disk
+// contents must reflect every operation, not just the last.
 #[test]
 fn editor_line_operations_insert_substitute_delete() {
-    // edit: go to line 2, substitute bravo->BRAVO, insert "inserted" before it,
-    // go to line 1 (alpha) and delete it, then write and quit.
-    //   start:  alpha / bravo / charlie
-    //   2       -> current = bravo
-    //   s/bravo/BRAVO/
-    //   i ... inserted .   -> alpha / inserted / BRAVO / charlie
-    //   1 d    -> inserted / BRAVO / charlie
+    // alpha / bravo / charlie
+    //   2, s/bravo/BRAVO/   -> alpha / BRAVO / charlie
+    //   i inserted          -> alpha / inserted / BRAVO / charlie
+    //   1 d                 -> inserted / BRAVO / charlie
     let (_outcome, uart) = run_tool_session(
         &["edit"],
         &[("/doc.txt", b"alpha\nbravo\ncharlie\n")],
@@ -1396,15 +1342,8 @@ cat /doc.txt\nexit\n",
     );
 }
 
-// A foreground interactive child that blocks waiting for input must not be
-// declared dead by its parent's `waitpid`. When the editor sleeps on `sc_readchar`
-// it becomes the scheduler's input_waiter and leaves the ready queue; `waitpid`
-// must treat that as alive (scheduler_pid_alive, not just pid_in_queue) or it
-// returns -1 and the shell abandons the still-running child. The normal harness
-// front-loads all UART input so the child never blocks and never hit this; here we
-// launch the editor, run with NO command available so it blocks (and gets timer-
-// preempted), then inject the command -- mirroring the GUI, where `edit` printed
-// `[exit -1]` at the first prompt before the user typed anything.
+// A child asleep in sc_readchar leaves the ready queue, so `waitpid` must use
+// scheduler_pid_alive or it returns -1 and abandons a live child.
 #[test]
 fn editor_waits_while_idle_for_input() {
     let shell = compile_hosted_program("shell");
@@ -1459,10 +1398,8 @@ fn editor_waits_while_idle_for_input() {
     );
 }
 
-// The bundled `array.s` example assembles and runs: it builds a five-element
-// array on the stack with `sd`, sums it via `slli`-scaled `ld offset(reg)` in a
-// `bge`-controlled loop, and exits with the total (42). Guards both the shipped
-// example and the expanded assembler subset through the in-VM `as`.
+// Guards the shipped `array.s` example and the expanded assembler subset at
+// once: the stack array sums to 42 through the in-VM `as`.
 #[test]
 fn example_array_assembles_and_runs() {
     let (outcome, uart) = run_tool_session(
@@ -1487,11 +1424,8 @@ fn example_array_assembles_and_runs() {
     );
 }
 
-// The expanded assembler handles a data section, `la`, and `call`/`ret`: a
-// hand-written program loads a `.asciz` string with `la`, prints it via the write
-// syscall, then computes its exit code through a called function. Proves the
-// text/pad/data layout, PC-relative `la`/`call` encoding, and `jalr`-based return
-// all round-trip through the in-VM `as`.
+// Text/pad/data layout, PC-relative `la` and `call` encoding, and the `jalr`
+// return must all round-trip through the in-VM `as`.
 #[test]
 fn kernel_shell_assembles_data_and_calls() {
     let source = b"\
@@ -1545,11 +1479,8 @@ msg:
     );
 }
 
-// A static ELF executable produced by the host toolchain loads and runs in the
-// kernel. sys_exec validates the ELF magic, then parses the ELF64 header + PT_LOAD
-// program headers, maps each segment at its p_vaddr, zeroes BSS, and jumps
-// e_entry. The shell's executable check requires ELF magic, so `run /prog.elf`
-// reaches the loader. Proves host-built ELF binaries run in our kernel unmodified.
+// Host-built static ELFs must run unmodified: sys_exec maps each PT_LOAD at its
+// p_vaddr, zeroes BSS, and jumps e_entry.
 #[test]
 fn kernel_loads_and_runs_elf() {
     let shell = compile_hosted_program("shell");
@@ -1597,9 +1528,8 @@ fn kernel_loads_and_runs_elf() {
     );
 }
 
-// Pin the HLL-0 codegen target. Run the host-compiled hello.hll
-// and the /bin/as-assembled hand-written hello.s side by side; both must print
-// "HLL0" and exit 36, so source and frozen target agree.
+// Pins the HLL-0 codegen target: host-compiled hello.hll and the hand-written
+// hello.s must agree, both printing "HLL0" and exiting 36.
 #[test]
 fn kernel_cc_target_roundtrips() {
     let host_elf = assembled_to_elf_file(&compile_hosted(user::CC_HELLO_HLL));
@@ -1625,7 +1555,7 @@ fn kernel_cc_target_roundtrips() {
         "assembler did not report success; uart={uart:?}"
     );
     // Both the host-compiled source and the hand-written target must print the
-    // marker and exit 36 -- so each appears twice.
+    // marker and exit 36, so each appears twice.
     assert!(
         uart.matches("HLL0").count() >= 2,
         "source and target did not both print the marker; uart={uart:?}"
@@ -1640,9 +1570,8 @@ fn kernel_cc_target_roundtrips() {
     );
 }
 
-// The in-VM compiler `cc.hll` must itself host-compile (it is
-// built into /bin/cc.elf). Fast guard that catches HLL syntax/semantic errors
-// without booting the kernel.
+// `cc.hll` is built into /bin/cc.elf, so it must host-compile. Fast guard for
+// HLL errors without booting the kernel.
 #[test]
 fn cc_host_compiles() {
     let out = compile_hosted_program("cc");
@@ -1652,12 +1581,8 @@ fn cc_host_compiles() {
     );
 }
 
-// The separate-compilation headline. Two hand-written .s files are
-// assembled to ET_REL objects, linked into one ELF, and run -- all in-VM:
-//   as a.s a.o && as b.s b.o && ld a.o b.o prog && prog
-// a.s calls an external `get_val` (CALL_PLT relocation across modules); b.s defines
-// it global and loads its own `.data` via `la` (PCREL_HI20 relocation + data merge).
-// get_val returns 42, so a clean `[exit 42]` proves linking + every relocation kind.
+// Separate compilation entirely in-VM: a.s calls an external `get_val` (CALL_PLT)
+// and b.s loads its own `.data` via `la` (PCREL_HI20), so `[exit 42]` covers both.
 #[test]
 fn kernel_ld_links_objects_and_runs() {
     let a_s = b"\
@@ -1710,12 +1635,8 @@ val:
     );
 }
 
-// The separate-compilation payoff with a real stdlib: a client
-// program inlines no I/O -- it calls puts/putc/exit, all resolved at link time
-// against a separately assembled `stdlib.s`. Exercises cross-module CALL_PLT
-// relocations (the externals), an intra-module local call (puts -> putc, no
-// relocation), and a PCREL_HI20 `la` into the client's own merged `.data`.
-// Prints "hello from stdlib!" and exits 42.
+// The client inlines no I/O, so puts/putc/exit resolve at link time against a
+// separately assembled stdlib.s. Covers CALL_PLT, a local call, and PCREL_HI20.
 #[test]
 fn kernel_ld_links_stdlib_and_runs() {
     let client_s = b"\
@@ -1773,13 +1694,8 @@ ld /stdlib.o /client.o /hello\nrun /hello\nexit\n",
     );
 }
 
-// The self-hosting headline. Inject a pure HLL-0 program, then compile, assemble,
-// and link it against the asm stdlib (for putc) -- all inside the VM:
-//   cc prog.hll prog.s; as prog.s prog.o; as stdlib.s stdlib.o
-//   ld stdlib.o prog.o prog; run prog
-// The program prints "HLL0\nY" and exits sum_to(8)=36, exercising the whole in-VM
-// toolchain (compiler -> assembler -> linker -> loader). putc is no longer a cc
-// intrinsic: it is an external resolved at link time against stdlib.s.
+// The whole in-VM toolchain in one run: cc, as, ld, then the loader. putc is no
+// longer a cc intrinsic, so it resolves at link time against stdlib.s.
 #[test]
 fn kernel_cc_compiles_and_runs() {
     let (outcome, uart) = run_tool_session(
@@ -1854,10 +1770,8 @@ ld stdlib.o hello.o hello\nhello\nexit\n",
     );
 }
 
-// Regression: a stray trailing space on a `cc`/`as` output operand must not become
-// part of the output filename (it did, so `as hello.s` could not find the file cc
-// wrote as "hello.s "). The output is also named without an extension and run by
-// bare name, exercising cwd resolution of an extensionless ELF.
+// Regression: a trailing space on a `cc`/`as` output operand once became part of
+// the filename. The extensionless output also covers cwd resolution.
 #[test]
 fn kernel_cc_tool_arg_trailing_space() {
     // Trailing spaces after the output operand on the cc/as/ld invocations.
@@ -1891,9 +1805,8 @@ ld stdlib.o hello.o hello \nhello\nexit\n",
     );
 }
 
-// Running a program must return to the prompt (not halt the VM) so the shell can
-// run further commands. Runs the same child twice and then exits: the marker must
-// appear twice and the VM halts only on the shell's own `exit`.
+// A finished program must return to the prompt, not halt the VM. The marker
+// appears twice and the VM halts only on the shell's own `exit`.
 #[test]
 fn kernel_shell_survives_run_and_continues() {
     let shell = compile_hosted_program("shell");
@@ -1941,11 +1854,8 @@ main: () -> i32 {
     );
 }
 
-// Ctrl-C (UART byte 0x03) while a foreground program runs must tear it down and
-// return to the prompt. The child loops forever, so without an interrupt the shell
-// would block in wait and never reach the trailing `exit`. The 0x03 between the
-// `run` line and `exit` makes the kernel kill the child; the shell prints "^C",
-// reads `exit`, and the VM halts cleanly -- which only happens if Ctrl-C worked.
+// The child loops forever, so the VM can only reach the trailing `exit` if the
+// 0x03 byte tore the foreground child down and returned to the prompt.
 #[test]
 fn kernel_shell_ctrl_c_interrupts_foreground() {
     let shell = compile_hosted_program("shell");
@@ -2028,7 +1938,7 @@ main: () -> i32 {
 
     assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
     // No slot was corrupted: no job is ever reaped with a bogus/garbage pid, and
-    // neither real pid (2, 3) is ever reported "done" -- both spin forever.
+    // neither real pid (2, 3) is ever reported "done": both spin forever.
     assert!(
         !uart.contains("] done   pid "),
         "a live job was wrongly reaped; uart={uart:?}"
@@ -2046,10 +1956,8 @@ main: () -> i32 {
     );
 }
 
-// Signals + `kill`: background a forever-spinner, `kill <pid>` it
-// by pid, and confirm the shell survives, the job leaves the table, and a later
-// `jobs` reports nothing. The spinner never exits on its own, so its disappearance
-// proves the SIGKILL teardown (scheduler_kill_pid via syscall 129) actually ran.
+// The spinner never exits on its own, so a later empty `jobs` is the only proof
+// that the SIGKILL teardown (scheduler_kill_pid, syscall 129) really ran.
 #[test]
 fn kernel_kill_background_job() {
     let shell = compile_hosted_program("shell");
@@ -2101,9 +2009,8 @@ main: () -> i32 {
     );
 }
 
-// `kill %<job>` maps a job id through the shell's job table to the same SIGKILL
-// path as `kill <pid>`. Same scenario as kernel_kill_background_job, addressed by
-// job id instead of pid.
+// `kill %<job>` maps a job id through the shell's job table onto the same SIGKILL
+// path as `kill <pid>`.
 #[test]
 fn kernel_kill_by_jobid() {
     let shell = compile_hosted_program("shell");
@@ -2152,11 +2059,8 @@ main: () -> i32 {
     );
 }
 
-// I/O redirection: `prog > file` binds the child's
-// stdout (fd 1) to an FS file via the per-PCB fd table, so its console output is
-// captured instead of hitting the UART. We prove the capture by ordering: the
-// marker must appear only AFTER `cat` reads the file back -- if redirection had
-// failed, the program would have printed it straight to the UART before `cat`.
+// `prog > file` binds the child's fd 1 to an FS file. Ordering is the proof: a
+// failed redirect would print the marker to the UART before `cat` reads it back.
 #[test]
 fn kernel_redirect_stdout_to_file() {
     let shell = compile_hosted_program("shell");
@@ -2202,7 +2106,7 @@ main: () -> i32 {
 }
 
 // Append redirection (`>>`): two runs appending to the same file, then `cat`
-// shows both lines -- proving `>>` seeks to end instead of truncating.
+// shows both lines, proving `>>` seeks to end instead of truncating.
 #[test]
 fn kernel_redirect_append() {
     let shell = compile_hosted_program("shell");
@@ -2248,9 +2152,8 @@ main: () -> i32 {
     );
 }
 
-// Input redirection (`prog < file`): the child's stdin (fd 0 / sc_readchar) reads
-// from an FS file and sees EOF (-1) at its end. The echo program copies stdin to
-// stdout (the UART here), so the file's contents appear on the console.
+// The child's fd 0 reads from an FS file and must see EOF (-1) at its end. echo
+// copies stdin to stdout, so the file contents surface on the console.
 #[test]
 fn kernel_redirect_stdin_from_file() {
     let shell = compile_hosted_program("shell");
@@ -2304,9 +2207,8 @@ main: () -> i32 {
     );
 }
 
-// Command polish: `ls <dir>` lists a directory other than cwd.
-// Previously only a bare `ls` (current directory) was recognised; `ls /sub` fell
-// through to bare-name execution and failed with "unknown command".
+// `ls <dir>` must list a directory other than cwd. It once fell through to
+// bare-name execution and failed with "unknown command".
 #[test]
 fn kernel_ls_dir_lists_target() {
     let shell = compile_hosted_program("shell");
@@ -2342,10 +2244,8 @@ fn kernel_ls_dir_lists_target() {
     );
 }
 
-// Command polish: builtin output redirection. `echo` is a builtin
-// running inside the shell (not an exec'd child), so its `>` redirect is served by
-// the shell-side output sink, not the kernel per-PCB fd table. We prove the text
-// landed in the file (and not the console) by reading it back with `cat`.
+// `echo` runs inside the shell, so its `>` redirect goes through the shell-side
+// sink rather than the kernel fd table. `cat` reads the result back.
 #[test]
 fn kernel_echo_redirect_to_file() {
     let shell = compile_hosted_program("shell");
@@ -2374,9 +2274,8 @@ fn kernel_echo_redirect_to_file() {
     );
 }
 
-// Command polish: a builtin `cat <file> >> <dst>` appends through the
-// shell sink (seeking to end via sc_lseek). Two appends of the same source file
-// then a read-back must show its contents twice.
+// A builtin `cat <file> >> <dst>` appends through the shell sink via sc_lseek,
+// so two appends of one source must read back twice.
 #[test]
 fn kernel_cat_append_builtin() {
     let shell = compile_hosted_program("shell");
@@ -2410,11 +2309,8 @@ fn kernel_cat_append_builtin() {
     );
 }
 
-// Pipes: `producer | filter`. The producer writes to stdout, which
-// the shell binds to a temp file; the filter's stdin reads that file back. The
-// producer's payload therefore never hits the UART directly -- only the filter,
-// the pipeline's last stage, prints it -- so seeing the payload on the console
-// proves it travelled through the pipe.
+// The shell binds the producer's stdout to a temp file the filter reads back, so
+// the payload only reaches the console if it travelled through the pipe.
 #[test]
 fn kernel_pipe_two_stage() {
     let shell = compile_hosted_program("shell");
@@ -2485,9 +2381,8 @@ main: () -> i32 {
     );
 }
 
-// Pipes combined with a trailing redirect: `producer | filter > out.txt`. The
-// filter's stdout is captured to a file instead of the console, proven by reading
-// it back with `cat` -- the payload appears only after the `cat`, never before.
+// With `producer | filter > out.txt` the filter's stdout is captured to a file,
+// so the payload may appear only after the read-back `cat`, never before.
 #[test]
 fn kernel_pipe_to_file() {
     let shell = compile_hosted_program("shell");
@@ -2560,10 +2455,8 @@ main: () -> i32 {
     );
 }
 
-// Pipes with a builtin source: `cat /src.txt | filter`. The builtin `cat` runs in
-// the shell with its output bound to the pipe temp file (the sink), and the
-// external filter reads it back -- exercising the builtin-producer branch of
-// sh_run_stage.
+// A builtin producer: `cat` runs in the shell with its output bound to the pipe
+// temp file, exercising the builtin branch of sh_run_stage.
 #[test]
 fn kernel_pipe_builtin_source() {
     let shell = compile_hosted_program("shell");
@@ -2619,9 +2512,8 @@ main: () -> i32 {
     );
 }
 
-// `cat` with no file argument is a stdin consumer: it copies its input source to
-// the sink. As a pipe consumer, `echo TEXT | cat` must print TEXT (the builtin
-// `cat` reads the pipe temp file the shell wired to its stdin).
+// `cat` with no file argument copies its input source to the sink, so as a pipe
+// consumer it must print what the shell wired to its stdin.
 #[test]
 fn kernel_pipe_echo_into_cat() {
     let shell = compile_hosted_program("shell");
@@ -2650,9 +2542,8 @@ fn kernel_pipe_echo_into_cat() {
     );
 }
 
-// `ls | cat` must list the real directory contents only. The pipe temp file the
-// shell creates is named with a leading dot, and `ls` hides dotfiles, so it never
-// appears in the listing (regression for a leaked `.pipe0` entry).
+// The shell's pipe temp file starts with a dot and `ls` hides dotfiles, so it
+// must not appear in the listing (regression for a leaked `.pipe0` entry).
 #[test]
 fn kernel_pipe_ls_hides_temp_file() {
     let shell = compile_hosted_program("shell");
@@ -2722,15 +2613,8 @@ fn kernel_cat_stdin_redirect() {
     );
 }
 
-// Console interrupt takeover + `jobs` while a background job runs.
-// Unlike kernel_shell_background_job_runs_and_fg_reaps_it (which front-loads the
-// whole session into the UART, so the shell never actually blocks), this drives
-// input the way the GUI does: input is injected MID-RUN, only after the shell has
-// reached its blocking read. That exercises the path that was previously untested
-// -- the shell sleeping in readchar (UART RX interrupt armed), a background job
-// running on the CPU in the meantime, and an incoming byte raising the RX
-// interrupt to wake the shell ("the console takes over") so it can list the job.
-// Regression guard for "jobs shows nothing while a background job is running".
+// Input is injected mid-run, the way the GUI does it, so the shell really sleeps
+// in readchar and an incoming byte must raise the RX interrupt to wake it.
 #[test]
 fn kernel_shell_interrupt_wake_lists_running_background_job() {
     let shell = compile_hosted_program("shell");
@@ -2797,9 +2681,8 @@ main: () -> i32 {
         "background job was not announced; out={out:?}"
     );
 
-    // While the spinner runs, type `jobs`. The byte must raise the RX interrupt,
-    // wake the blocked shell, and list the job as running -- not "no background
-    // jobs" (which would mean the live job had been wrongly reaped from the table).
+    // The byte must wake the blocked shell and list the job as running. "no
+    // background jobs" would mean the live job was wrongly reaped from the table.
     assert!(
         feed(&mut vm, &mut out, b"jobs\n", "running"),
         "interactive `jobs` did not list the running background job; out={out:?}"
@@ -2810,12 +2693,8 @@ main: () -> i32 {
     );
 }
 
-// Background jobs: `run <file> &` execs without waiting and returns to
-// the prompt; `jobs` lists the job; `fg <n>` waits on it and reaps the exact exit
-// code via the pid-targeted waitpid syscall (261). The background child spins
-// before printing, so its announcement "[1] pid N" (printed the instant exec
-// returns) must appear before the child's "SLOW_DONE" -- proof the shell returned
-// to the prompt and kept running concurrently with the child rather than blocking.
+// The child spins before printing, so "[1] pid N" must precede its "SLOW_DONE".
+// `fg <n>` then reaps the exact exit code through waitpid (syscall 261).
 #[test]
 fn kernel_shell_background_job_runs_and_fg_reaps_it() {
     let shell = compile_hosted_program("shell");
@@ -2958,13 +2837,8 @@ main: () -> i32 {
     );
 }
 
-// Preemptive scheduling: the timer interrupt must time-slice two compute-bound
-// processes, not just switch on voluntary syscalls. pid 1 forks; both parent and
-// child emit a marker char after a tight compute-only spin (no syscalls between
-// marks), so ONLY the timer interrupt can switch from one to the other mid-loop.
-// Interleaved A/B output proves preemption; a fully sequential AAAA...BBBB run
-// would mean the timer never preempts (each process runs to completion, then
-// yields at wait). This is the foundation for background jobs.
+// No syscalls run between marks, so only the timer interrupt can switch parent
+// and child. Interleaved A/B proves preemption, sequential AAAA...BBBB does not.
 #[test]
 fn scheduler_timer_preempts_compute_bound_processes() {
     let parent = compile_hosted(
@@ -3243,10 +3117,8 @@ fn kernel_fs_full_lifecycle() {
     );
 }
 
-// Scan the inode table for an entry of the given type (1=file, 2=dir) and name.
-// Returns true if present. Used by the file-management test to assert on-disk
-// state directly, since the shell echoes typed commands and UART substring
-// checks for path names would match the echo rather than real FS effects.
+// Type is 1=file, 2=dir. On-disk state is checked directly because the shell
+// echoes typed commands, so a UART substring would match the echo instead.
 fn inode_present(image: &[u8], name: &str, ty: u16) -> bool {
     const BLOCK_SIZE: usize = 4096;
     const INODE_SIZE: usize = 128;
@@ -3278,9 +3150,8 @@ fn kernel_shell_file_management() {
     // session creates.
     let image = build_fs_image(&[]);
 
-    // mkdir a directory, touch two files in it, rm one, mv (rename) the other,
-    // then exit. Final state: /work exists, /work/renamed.txt exists,
-    // keep.txt and temp.txt are gone.
+    // Final state: /work and /work/renamed.txt exist, keep.txt and temp.txt are
+    // gone.
     let session = "mkdir /work\n\
                    touch /work/keep.txt\n\
                    touch /work/temp.txt\n\
@@ -3394,9 +3265,8 @@ main: () -> i32 {
     );
 }
 
-// The OS process inspector reads scheduler/PCB state straight from guest
-// memory. This guards the PCB field offsets and symbol resolution end to end: after
-// boot the shell is pid 1, the running process, parented by the kernel (0).
+// The inspector reads scheduler and PCB state straight from guest memory, so this
+// guards the PCB field offsets and symbol resolution end to end.
 #[test]
 fn os_inspector_sees_shell_as_pid1() {
     use full_stack::inspect::os_view::{self, OsSymbols, Role};
@@ -3428,10 +3298,8 @@ fn os_inspector_sees_shell_as_pid1() {
     );
 }
 
-// The per-process stack view walks the selected process's user stack by software
-// Sv39 translation against its page-table root. After the shell has run and made
-// syscalls, its saved trap-frame sp is a real, mapped user-stack address below
-// the canonical base, so the walk must yield at least one mapped word.
+// The stack view walks a process's user stack by software Sv39 translation, so a
+// shell that has already made syscalls must yield at least one mapped word.
 #[test]
 fn os_inspector_walks_pid1_stack() {
     use full_stack::inspect::os_view::{self, OsSymbols, Role};

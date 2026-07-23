@@ -42,7 +42,7 @@ impl Plic {
         }
     }
 
-    pub fn clear_irq(&mut self, source: u32) {
+    fn clear_irq(&mut self, source: u32) {
         if source > 0 && source <= MAX_SOURCES as u32 {
             let idx = (source as usize - 1) / 32;
             let bit = (source - 1) % 32;

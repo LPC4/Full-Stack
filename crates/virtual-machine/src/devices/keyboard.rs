@@ -5,9 +5,8 @@
 use crate::error::VmError;
 use crate::memory::MemoryAccess;
 
-// Register offsets (word accesses).
-// STATUS reads back the number of queued events (0 = empty).
-// DATA reads pop the oldest event; on an empty queue it reads back KBD_EMPTY.
+// Word-access register offsets. STATUS reads the queue depth, DATA pops the
+// oldest event and reads back KBD_EMPTY when the queue is empty.
 pub const KBD_STATUS_REG: usize = 0;
 pub const KBD_DATA_REG: usize = 4;
 
@@ -43,9 +42,8 @@ impl Keyboard {
         }
     }
 
-    /// Push a key event from the host. `scancode` is truncated to 16 bits;
-    /// `pressed` distinguishes a key-down from a key-up. Drops the event when the
-    /// queue is full so a stalled guest cannot make the host leak memory.
+    /// Push a key event from the host, truncating `scancode` to 16 bits. Events
+    /// drop when the queue is full so a stalled guest cannot leak host memory.
     pub fn push_event(&mut self, scancode: u16, pressed: bool) {
         if self.queue.len() >= KBD_QUEUE_CAP {
             return;

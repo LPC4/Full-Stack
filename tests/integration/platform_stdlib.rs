@@ -146,15 +146,12 @@ fn rom_image_assembles() {
     assert_eq!(rom.len() % 4, 0, "ROM size must be word-aligned");
 }
 
-// Every userspace catalog program must compile, assemble, and link against the
-// hosted stdlib (which now provides importable sys/cstr helpers). Guards the
-// "Userspace Programs" catalog section so a broken program is caught at test time
-// rather than when the user selects it in the GUI.
+// Catches a broken catalog program at test time rather than when the user picks
+// it in the GUI.
 #[test]
 fn userspace_catalog_programs_compile_hosted() {
-    // Iterate the single user-program catalog so a newly added tool/demo is
-    // covered automatically. Only compiled programs (tools + demos) are HLL;
-    // example sources and fixtures are not host-HLL and are excluded.
+    // Driven off the catalog so a new tool or demo is covered automatically.
+    // Example sources and fixtures are not host-HLL, so is_compiled skips them.
     for prog in full_stack::userspace::PROGRAMS
         .iter()
         .filter(|p| p.is_compiled())
@@ -982,9 +979,8 @@ kmain: () {
 
 // --- Kernel boot ---
 
-// Compile user code linked against the kernel stdlib.
-// The kernel stdlib uses the "__kern_str_" string-label prefix so rodata labels
-// never clash with user-code labels (which use "str_").
+// The kernel stdlib prefixes rodata labels with "__kern_str_" so they never
+// clash with user-code "str_" labels.
 fn run_kernel_hll(user_src: &str) -> (String, Option<i64>) {
     let snippet_manifest = BuildManifest::from_file(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -1428,9 +1424,8 @@ fn cross_module_chain_three_works() {
     assert_eq!(exit, Some(42), "3-module chain should return 42");
 }
 
-/// A global defined in one module and declared `external` in another must resolve
-/// to the SAME storage: module B writes `shared` directly and via module A's
-/// `bump`, and both writes must land in one cell (21 + 21 = 42).
+/// A global declared `external` elsewhere must resolve to the same storage:
+/// B's direct write plus A's `bump` land in one cell (21 + 21 = 42).
 #[test]
 fn cross_module_external_global_shared_storage() {
     let mut pipeline = CompilationPipeline::new();
@@ -1489,9 +1484,8 @@ fn cross_module_external_global_shared_storage() {
 }
 
 // --- Kernel subsystem runtime tests ---
-//
-// Each test exercises one subsystem in isolation.  Failures here pinpoint which
-// subsystem is broken without running the full boot + user-process pipeline.
+// Each test drives one subsystem alone, so a failure names the broken subsystem
+// without running the full boot and user-process pipeline.
 
 // --- PMM (Physical Memory Manager) ---
 
@@ -1824,12 +1818,8 @@ kmain: () {
 
 // --- Syscall dispatch ---
 
-/// Ecall 64 (sys_write) emitted from a kernel-mode inline asm block is handled
-/// by the kernel's own trap vector and writes characters via console_putchar.
-///
-/// In this test the kernel acts as its own "user": we arm the trap handler,
-/// emit an ecall from S-mode (cause 9 = S-mode ecall), confirm it reaches
-/// syscall_dispatch, and verify the output appears on UART.
+/// The kernel acts as its own user: an S-mode ecall (cause 9) from inline asm
+/// must reach syscall_dispatch through the kernel's own trap vector.
 #[test]
 fn syscall_dispatch_unknown_returns_error_sentinel() {
     // Dispatch an unknown syscall number and verify the kernel logs it rather
@@ -1993,15 +1983,10 @@ kmain: () {
 }
 
 // --- Regression: heap integrity after VM setup + process_create ---
-//
-// These tests ensure the heap stays usable after operations that allocate page-table pages
-// and PCBs.  A past bug caused kmalloc to return a pointer into .rodata after the spawn loop
-// when certain klog calls were removed, producing a load page-fault in memset with stval that
-// decoded to "9 enable" (from the string "mmu: sv39 enabled").
+// kmalloc once returned a .rodata pointer after the spawn loop, faulting inside
+// memset. The heap must stay usable after page-table and PCB allocations.
 
-/// After process_create (which allocates a PCB via kmalloc + a user-stack page
-/// via pmm_alloc + calls vmm_map), a follow-up kmalloc must return a distinct,
-/// writable pointer.
+/// A kmalloc after process_create must still return a distinct writable pointer.
 #[test]
 fn heap_survives_process_create() {
     let (uart, exit) = run_kernel_hll(

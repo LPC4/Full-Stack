@@ -42,14 +42,13 @@ impl Default for CompileConfig {
     }
 }
 
-/// Names never mangled by the closure build: program/runtime entry points called by name
-/// from outside the module graph (the runtime `_start`, the C-style `main`).
+// Never mangled: entry points called by name from outside the module graph.
 fn mangle_exempt() -> std::collections::HashSet<String> {
     ["_start", "main"].into_iter().map(str::to_owned).collect()
 }
 
-/// A parse error as a spanned diagnostic, with the span shifted back past the
-/// prelude so it points into the user's file. Prelude-internal errors stay text.
+// The span shifts back past the prelude so it points into the user's file.
+// Prelude-internal errors have no user span, so they stay plain text.
 fn parser_diagnostic(err: crate::parser::ParserError, prelude_lines: u32) -> Diagnostic {
     if err.span.line > prelude_lines {
         let mut span = err.span;
@@ -78,8 +77,8 @@ impl HllCompiler {
         Self { config }
     }
 
-    /// `source` with the effective prelude prepended (explicit, else kernel layout),
-    /// plus the line count the prelude added so spans can be corrected back.
+    // Returns `source` with the effective prelude prepended, plus the line count the
+    // prelude added so spans can be corrected back.
     fn with_source_prelude(&self, source: &str) -> (String, u32) {
         let prelude: &str = match &self.config.source_prelude {
             Some(p) => p.as_str(),
@@ -94,10 +93,8 @@ impl HllCompiler {
         }
     }
 
-    /// Lex, parse, (optionally) analyse, and lower `source` to IR.
-    ///
-    /// Returns `Err` only on hard failures (lex errors, parse errors, IR
-    /// lowering errors).  Warnings are surfaced via `HllOutput::diagnostics`.
+    /// Lex, parse, optionally analyse, and lower `source` to IR. `Err` covers only hard
+    /// failures; warnings are surfaced through `HllOutput::diagnostics`.
     pub fn compile(&self, source: &str) -> Result<HllOutput, Vec<Diagnostic>> {
         // Prepend the shared definitions header (kernel layout, or an explicit prelude)
         // so separately-compiled TUs share one HLL definition of their common consts.
@@ -248,9 +245,9 @@ impl HllCompiler {
     }
 }
 
-// --- Freestanding asm-block validator (moved from root compilation_pipeline.rs) ---
+// --- Freestanding asm-block validator ---
 
-/// Linux RV64 userspace syscall numbers that are invalid in freestanding mode.
+// Linux RV64 userspace syscall numbers that are invalid in freestanding mode.
 const LINUX_USERSPACE_SYSCALLS: &[(u64, &str)] = &[
     (17, "sys_getcwd"),
     (23, "sys_dup"),

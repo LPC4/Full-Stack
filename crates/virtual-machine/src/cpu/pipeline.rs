@@ -127,11 +127,8 @@ impl Pipeline {
         self.regs.write_x(1, ra);
     }
 
-    /// Reset the program counter and flush the pipeline.
-    ///
-    /// Used by `VirtualMachine::new_kernel` to redirect the CPU to `ROM_BASE`
-    /// after the ELF has been loaded into RAM, so that the ROM's `_start`
-    /// boot stub runs first.
+    /// Reset the program counter and flush the pipeline. `new_kernel` uses this to
+    /// redirect to `ROM_BASE` after loading the ELF, so the boot stub runs first.
     pub fn reset_pc(&mut self, pc: u64) {
         self.regs.pc = pc;
         self.fetch_pc = pc;
@@ -197,10 +194,8 @@ impl Pipeline {
 
     // --- Main tick, advance the pipeline by one clock cycle ---
 
-    /// Advance every pipeline stage by one cycle.
-    ///
-    /// Stages execute in reverse order (WB -> MEM -> EX -> ID -> IF) so each
-    /// stage can pass its results forward within the same cycle.
+    /// Advance every pipeline stage by one cycle. Stages run in reverse order
+    /// (WB -> MEM -> EX -> ID -> IF) so results pass forward within the cycle.
     pub fn tick(&mut self, bus: &mut SystemBus) -> Result<TickOutcome, VmError> {
         self.stats.cycles += 1;
         self.csrs.increment_cycle();
@@ -210,9 +205,8 @@ impl Pipeline {
             let clint = bus.clint_mut();
             clint.tick();
             if clint.timer_irq_pending() {
-                // When the supervisor timer interrupt is delegated to S-mode (mideleg[5]=1),
-                // deliver the CLINT timer directly as STIP (bit 5) without routing through
-                // M-mode. Otherwise use the standard MTIP (bit 7) path.
+                // With mideleg[5]=1 the CLINT timer is delivered straight as STIP
+                // (bit 5), bypassing M-mode. Otherwise it takes the MTIP (bit 7) path.
                 if (self.csrs.mideleg >> 5) & 1 == 1 {
                     self.csrs.mip |= 1u64 << 5; // STIP - S-mode timer pending
                     self.csrs.mip &= !(1u64 << 7); // no MTIP when using delegation
@@ -656,11 +650,8 @@ impl Pipeline {
             None => return Ok(TickOutcome::Continue),
         };
 
-        // SFENCE.VMA signals an address-space change. The branch predictor (BTB +
-        // PHT) is virtually indexed with no ASID, so entries from another process
-        // at the same virtual PCs would otherwise mispredict (and, for a PC that
-        // is not a branch in the resumed process, redirect fetch uncorrected).
-        // Flush it so each address space starts with clean prediction state.
+        // SFENCE.VMA means the address space changed. BTB and PHT are virtually
+        // indexed with no ASID, so stale entries must be flushed or they mispredict.
         if matches!(mem_wb.mem_result, MemResult::SfenceVma) {
             self.predictor.clear();
             // Drop cached translations: the guest just changed a mapping.
@@ -867,8 +858,9 @@ impl Pipeline {
                     outcome = TickOutcome::Halted(code);
                     break;
                 }
-                Err(e) => {
-                    eprintln!("[pipeline] tick error: {e:?}");
+                // A tick error ends the run as exit -1; callers that need the cause
+                // must drive `tick` themselves.
+                Err(_) => {
                     outcome = TickOutcome::Halted(-1);
                     break;
                 }

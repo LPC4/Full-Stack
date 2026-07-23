@@ -5,7 +5,7 @@ use super::{
 };
 
 #[derive(Debug, Clone)]
-pub struct ConstEvalContext {
+pub(crate) struct ConstEvalContext {
     pub max_depth: usize,
     pub current_depth: usize,
 }
@@ -230,9 +230,8 @@ impl HighLevelCompiler {
                 let return_ty = self.lower_return_type(return_type.as_ref());
                 self.current_return_ty = Some(return_ty.clone());
 
-                // For functions returning aggregates, determine return strategy:
-                // - Small structs (<=16 bytes): returned in registers a0/a1
-                // - Large structs (>16 bytes): use sret pattern with hidden pointer
+                // Aggregate returns of 16 bytes or less come back in a0/a1; larger ones
+                // use the sret hidden-pointer pattern.
                 let is_aggregate = matches!(return_ty, IrType::Aggregate(_) | IrType::Array { .. });
                 let needs_sret = if is_aggregate {
                     let size = self.type_size_in_bytes(&return_ty);
@@ -250,7 +249,7 @@ impl HighLevelCompiler {
                 let mut function = IrFunction::new(final_name.clone(), ir_return_ty);
                 function.set_exported(declaration.exported);
 
-                // Store the function's ACTUAL return type (before sret transformation) for call-site lookup
+                // Call sites need the pre-sret return type, not the rewritten void.
                 self.function_return_types
                     .insert(final_name.clone(), return_ty.clone());
                 if final_name != *name {
@@ -260,8 +259,6 @@ impl HighLevelCompiler {
 
                 self.start_new_block("entry");
 
-                // If this function returns an aggregate, inject a hidden sret parameter ONLY for large structs
-                // Small structs (<=16 bytes) are returned directly in registers a0/a1
                 if needs_sret {
                     let sret_reg = IrRegister::Named("__sret".to_owned());
                     function.push_param(IrParam {
@@ -749,11 +746,10 @@ impl HighLevelCompiler {
                                         break;
                                     }
                                     _ => {
-                                        // Evaluate other statements recursively
                                         if let Some(_return_value) =
                                             self.eval_const_statement(stmt, mutable_env, context)?
                                         {
-                                            // If a statement returns a value (like Return), exit the loop
+                                            // A nested `return` ends the const loop.
                                             should_break = true;
                                             break;
                                         }

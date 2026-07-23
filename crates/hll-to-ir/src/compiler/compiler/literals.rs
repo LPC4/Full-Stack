@@ -6,8 +6,8 @@ use super::{
 use crate::ast::{BindingField, StructDestructureField};
 use log::warn;
 
-/// Widening rank for integer widths, used to promote mixed-width binary
-/// operands to the wider type (i64 outranks i32, etc.).
+// Widening rank for integer widths, used to promote mixed-width binary
+// operands to the wider type (i64 outranks i32, etc.).
 fn int_width_rank(width: &IntWidth) -> u8 {
     match width {
         IntWidth::I1 => 0,
@@ -141,9 +141,8 @@ impl HighLevelCompiler {
         })
     }
 
-    // Lower an array literal against a known element type. Each element is
-    // lowered with the declared element type as its context, so bare struct
-    // literals and width-flexible scalar literals are accepted inside `[...]`.
+    // Elements lower with the declared element type as context, so bare struct literals
+    // and width-flexible scalar literals are accepted inside `[...]`.
     fn lower_array_literal_for_type(
         &mut self,
         elements: &[Expression],
@@ -193,11 +192,8 @@ impl HighLevelCompiler {
         })
     }
 
-    /// Lower element-scaled pointer arithmetic, or return `None` when neither
-    /// operand is a pointer (so the caller falls back to ordinary arithmetic).
-    /// Semantic analysis has already rejected illegal forms (pointer-minus-pointer,
-    /// integer-minus-pointer, arithmetic on unsized pointees), so here we only
-    /// classify `T* + n` / `n + T*` / `T* - n`.
+    // Only `T* + n`, `n + T*` and `T* - n` reach here; semantic analysis rejects the other
+    // pointer forms. `None` means neither operand is a pointer.
     fn lower_pointer_arith(
         &mut self,
         op: &BinaryOp,
@@ -259,9 +255,8 @@ impl HighLevelCompiler {
         lhs: LoweredValue,
         rhs: LoweredValue,
     ) -> Option<LoweredValue> {
-        // Typed pointer arithmetic is element-scaled. `T* +/- n` advances by
-        // `n * sizeof(T)`, lowered through the `Index` instruction. Raw byte
-        // arithmetic stays available through `u8*` (sizeof(u8) == 1).
+        // Pointer arithmetic is element-scaled: `T* +/- n` advances by `n * sizeof(T)`.
+        // Raw byte arithmetic stays available through `u8*`.
         if matches!(op, BinaryOp::Add | BinaryOp::Sub)
             && let Some(result) = self.lower_pointer_arith(op, &lhs, &rhs)
         {
@@ -282,10 +277,8 @@ impl HighLevelCompiler {
             | BinaryOp::BitwiseAnd
             | BinaryOp::BitwiseXor
             | BinaryOp::BitwiseOr => {
-                // Mixed-width integer operands promote to the wider type so an
-                // untyped literal (default i32) does not truncate an i64 operand,
-                // e.g. `2 * zx` must compute in i64. Shifts keep the left type:
-                // the shift amount must not widen the value being shifted.
+                // Mixed-width integer operands promote to the wider type so an untyped
+                // literal cannot truncate. Shifts keep the left type instead.
                 let is_shift = matches!(op, BinaryOp::Shl | BinaryOp::Shr);
                 let (op_ty, op_unsigned) = match (&lhs.ty, &rhs.ty) {
                     (IrType::Integer(lw), IrType::Integer(rw)) if !is_shift => {
@@ -616,9 +609,8 @@ impl HighLevelCompiler {
         if let Expression::Primary(crate::ast::PrimaryExpr::StructLiteral { fields, rest }) = expr {
             return self.lower_contextual_struct_literal(fields, *rest, target_ty);
         }
-        // An array literal lowers each element against the declared element
-        // type, so contextual struct literals (`Point[N] = [{..}, ..]`) and
-        // width-flexible scalar literals get their context from the target.
+        // Each element lowers against the declared element type, so contextual struct
+        // literals and width-flexible scalars take their context from the target.
         if let IrType::Array { element, len } = self.resolve_named_type(target_ty)
             && let Expression::Primary(crate::ast::PrimaryExpr::ArrayLiteral(elems)) = expr
         {
@@ -644,9 +636,8 @@ impl HighLevelCompiler {
         self.lower_expression(expr)
     }
 
-    // Build a slice value from a fixed array. The array's address is &arr[0] and
-    // its length comes from the static array type. A slice-typed source is passed
-    // through unchanged (copy of the fat pointer).
+    // A fixed array becomes { &arr[0], N } with N from the static array type. A
+    // slice-typed source passes through as a copy of the fat pointer.
     fn lower_array_to_slice(
         &mut self,
         expr: &Expression,

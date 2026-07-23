@@ -3,7 +3,7 @@ use crate::ir::IrType;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TypeCheckError {
+pub(crate) enum TypeCheckError {
     TypeMismatch {
         expected: String,
         found: String,
@@ -128,10 +128,8 @@ impl TypeContext {
         let lhs_placeholder = self.is_placeholder_like(lhs_type);
         let rhs_placeholder = self.is_placeholder_like(rhs_type);
 
-        // Both operands must be the same type, with two exceptions: integer types
-        // of different widths are compatible (e.g. i64 op i32 literal is valid),
-        // and float types of different widths are compatible (e.g. an f64 var op a
-        // bare float literal, which infers as f32, promotes to f64).
+        // Operands must share a type, except that two integers or two floats of
+        // differing widths are compatible and promote to the wider one.
         if lhs_type != rhs_type
             && !lhs_unknown
             && !rhs_unknown
@@ -318,8 +316,8 @@ impl TypeContext {
         matches!(ty, "f32" | "f64")
     }
 
-    /// Promote two integer types to the wider/higher-priority type for mixed-width operations.
-    /// Priority (highest to lowest): u64, i64, u32, i32, u16, i16, u8, i8
+    // Promote two integer types to the wider/higher-priority type for mixed-width operations.
+    // Priority (highest to lowest): u64, i64, u32, i32, u16, i16, u8, i8
     fn promote_integer_types<'a>(lhs: &'a str, rhs: &'a str) -> &'a str {
         if lhs == rhs {
             return lhs;
@@ -343,7 +341,7 @@ impl TypeContext {
         if lhs_pri >= rhs_pri { lhs } else { rhs }
     }
 
-    /// Promote two float types to the wider one (f64 outranks f32).
+    // Promote two float types to the wider one (f64 outranks f32).
     fn promote_float_types<'a>(lhs: &'a str, rhs: &'a str) -> &'a str {
         if lhs == "f64" || rhs == "f64" {
             "f64"

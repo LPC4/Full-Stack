@@ -42,9 +42,8 @@ pub fn parse_int_reg(name: &str) -> Option<Reg> {
     }
 }
 
-/// Parse an ABI float register name (e.g. `"fa0"`, `"ft0"`, `"f10"`) to a
-/// hardware float register number in `0..=31`. Currently only exercised by tests
-/// (the float sibling of `parse_int_reg`).
+/// Parse an ABI float register name (`"fa0"`, `"ft0"`, `"f10"`) to a number in `0..=31`.
+/// Float sibling of `parse_int_reg`, currently only exercised by tests.
 #[cfg(test)]
 pub fn parse_float_reg(name: &str) -> Option<Reg> {
     match name.trim() {

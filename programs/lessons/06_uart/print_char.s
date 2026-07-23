@@ -1,4 +1,5 @@
-# 06.2: The UART write is wrapped in a function. print_char is a leaf, so like square in 05 it needs no frame.
+# 06.2: The UART write is wrapped in a function. print_char is a leaf, so like
+# square in 05 it needs no frame.
 
 .globl _start
 _start:

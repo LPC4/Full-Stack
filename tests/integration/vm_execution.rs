@@ -16,9 +16,8 @@ use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 
 // --- Full HLL pipeline helpers ---
 
-// The hosted stdlib is identical for every VM-execution test, so compile and
-// assemble it exactly once for the whole suite and link each user program
-// against the cached object. This avoids ~40 redundant stdlib compiles.
+// The hosted stdlib is identical for every test here, so it is compiled once
+// for the suite. This avoids about 40 redundant stdlib compiles.
 fn cached_stdlib_objs() -> &'static [(String, AssembledOutput)] {
     static STDLIB: OnceLock<Vec<(String, AssembledOutput)>> = OnceLock::new();
     STDLIB.get_or_init(|| {
@@ -27,7 +26,7 @@ fn cached_stdlib_objs() -> &'static [(String, AssembledOutput)] {
     })
 }
 
-/// The cached stdlib objects plus the user object, as a link module list.
+// The cached stdlib objects plus the user object, as a link module list.
 fn link_with_stdlib<'a>(user: &'a AssembledOutput) -> Vec<(&'a str, &'a AssembledOutput)> {
     let mut modules: Vec<(&str, &AssembledOutput)> = cached_stdlib_objs()
         .iter()
@@ -37,7 +36,7 @@ fn link_with_stdlib<'a>(user: &'a AssembledOutput) -> Vec<(&'a str, &'a Assemble
     modules
 }
 
-/// Compile user HLL, link it against the cached stdlib object, and run in the VM.
+// Compile user HLL, link it against the cached stdlib object, and run in the VM.
 fn run_hll_with_limit(src: &str, max_steps: u64) -> (VirtualMachine, StepOutcome, String) {
     let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
@@ -57,8 +56,7 @@ fn run_hll_with_limit(src: &str, max_steps: u64) -> (VirtualMachine, StepOutcome
     (vm, run.outcome, uart)
 }
 
-/// Compile a directly-constructed IR program (for ops the HLL surface lacks),
-/// link against the cached stdlib, and run it.
+// Runs a directly-constructed IR program, for ops the HLL surface cannot spell.
 fn run_ir(program: &IrProgram) -> (VirtualMachine, StepOutcome, String) {
     let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
@@ -77,9 +75,8 @@ fn run_ir(program: &IrProgram) -> (VirtualMachine, StepOutcome, String) {
     (vm, run.outcome, uart)
 }
 
-/// Build a minimal pass/fail IR program around an entry block. `entry` must not
-/// yet have a terminator; this adds the branch, a pass block (return 0), and a
-/// fail block (return 1).
+// Wraps an entry block, which must not yet have a terminator, in a branch to a
+// pass block (return 0) and a fail block (return 1).
 fn pass_fail_ir(module: &str, mut entry: IrBlock, cond: IrValue) -> IrProgram {
     let i32_ty = IrType::Integer(IntWidth::I32);
     let mut program = IrProgram::new(module);
@@ -116,8 +113,8 @@ fn run_hll(src: &str) -> (VirtualMachine, StepOutcome, String) {
     run_hll_with_limit(src, 5_000_000)
 }
 
-/// Compile a program's import closure (primary plus every qualified `import("...")` module),
-/// link it against the cached stdlib, and run. Backward-compatible with single-TU programs.
+// Compiles the whole import closure, primary plus every qualified import, so
+// single-TU programs still work unchanged.
 fn run_hll_closure_with_path(
     src: &str,
     source_path: Option<&str>,
@@ -255,7 +252,7 @@ fn imported_generic_specializes_and_runs() {
                  return max<T>(a, b)
              }
 "
-                .to_owned()
+            .to_owned()
         })
     })));
 
@@ -302,14 +299,14 @@ fn imported_generic_calls_its_own_module_export() {
             "export scale: (x: i32) -> i32 { return x * 2 }
              export apply: <T>(value: i32) -> i32 { return scale(value) }
 "
-                .to_owned(),
+            .to_owned(),
         ),
         // A second module exporting the same generic name proves the prefixes stay distinct.
         "right" => Some(
             "export scale: (x: i32) -> i32 { return x * 3 }
              export apply: <T>(value: i32) -> i32 { return scale(value) }
 "
-                .to_owned(),
+            .to_owned(),
         ),
         _ => None,
     })));
@@ -357,7 +354,7 @@ fn imported_generic_struct_specializes_in_the_importer() {
             "export struct Box<T> { value: T }
              export unwrap: <T>(holder: Box<T>*) -> T { return holder.value }
 "
-                .to_owned()
+            .to_owned()
         })
     })));
 
@@ -411,7 +408,7 @@ fn imported_container_iterates_in_a_generic() {
                  return total
              }
 "
-                .to_owned()
+            .to_owned()
         })
     })));
 
@@ -450,8 +447,8 @@ main: () -> i32 {
     );
 }
 
-/// Compile a user program with the peephole pass either on or off, returning the
-/// optimized-or-not token stream alongside the VM run (exit outcome + UART).
+// Returns the VM run plus the emitted instruction count, so a caller can
+// compare peephole on against off.
 fn run_hll_peephole(src: &str, peephole: bool) -> (StepOutcome, String, usize) {
     let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
@@ -516,8 +513,8 @@ fn peephole_preserves_behavior_and_shrinks_code() {
     );
 }
 
-/// Compile and run a user program with the frame pointer omitted or kept,
-/// returning the VM run (exit outcome + UART) and the emitted instruction count.
+// Returns the VM run plus the emitted instruction count, so a caller can
+// compare an omitted frame pointer against a kept one.
 fn run_hll_omit_fp(src: &str, omit_fp: bool) -> (StepOutcome, String, usize) {
     let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
@@ -571,8 +568,8 @@ fn omit_frame_pointer_preserves_behavior() {
     );
 }
 
-/// Compile a user program with IR optimization on or off, returning the VM run
-/// (exit outcome + UART) and the emitted instruction count.
+// Returns the VM run plus the emitted instruction count, so a caller can
+// compare IR optimization on against off.
 fn run_hll_optimize(src: &str, opts: hll_to_ir::OptOptions) -> (StepOutcome, String, usize) {
     let mut pipeline = CompilationPipeline::new();
     pipeline.set_write_artifacts(false);
@@ -934,7 +931,7 @@ fn ri(i: RealInstruction) -> RvInstruction {
     RvInstruction::Real(i)
 }
 
-/// Assemble instructions, run in VM, return the VM (for peeking) and the outcome.
+// Returns the VM itself so a caller can peek at registers after the run.
 fn assemble_and_run(insns: Vec<RvInstruction>) -> (VirtualMachine, StepOutcome) {
     let assembled = Assembler::assemble(&insns).expect("assembly failed");
     let mut vm = VirtualMachine::new(&assembled);
@@ -1022,18 +1019,11 @@ fn test_memory_store_load() {
 
 #[test]
 fn test_branch_loop() {
-    // Count down from 5 to 0, then exit with 0.
-    // t0=x5
-    // addi t0, x0, 5
-    // loop:
-    //   addi t0, t0, -1
-    //   bne  t0, x0, -4   (branch back to the addi, offset = -4 bytes)
-    // add a0, t0, x0
-    // addi a7, x0, 93
-    // ecall
+    // Count down from 5 to 0, then exit with 0. The bne offset is in bytes, so
+    // -4 branches back one instruction.
     let (_, outcome) = assemble_and_run(vec![
         ri(RealInstruction::Addi(Addi::new(5, 0, 5))), // t0 = 5
-        ri(RealInstruction::Addi(Addi::new(5, 5, -1))), // t0-- (loop body)
+        ri(RealInstruction::Addi(Addi::new(5, 5, -1))), // t0 -= 1 (loop body)
         ri(RealInstruction::Bne(Bne::new(5, 0, -4))),  // if t0 != 0, branch to loop body
         ri(RealInstruction::Add(Add::new(10, 5, 0))),  // a0 = t0 (= 0)
         ri(RealInstruction::Addi(Addi::new(17, 0, 93))), // a7 = 93
@@ -1079,9 +1069,8 @@ fn test_divide() {
 
 #[test]
 fn test_ecall_write_uart() {
-    // Write "hi\n" to stdout (fd=1) using ecall 64 (write), then exit.
-    // t0=x5 (buffer pointer), t1=x6 (byte value), sp=x2
-    // a0=x10, a1=x11, a2=x12, a7=x17
+    // Write "hi\n" to stdout via ecall 64, then exit. Registers are named by
+    // number here: t0=x5, t1=x6, sp=x2, a0=x10, a1=x11, a2=x12, a7=x17.
     let assembled = Assembler::assemble(&[
         ri(RealInstruction::Addi(Addi::new(5, 2, -4))), // t0 = sp - 4 (buffer ptr)
         ri(RealInstruction::Addi(Addi::new(6, 0, 0x68))), // t1 = 'h' (104)
@@ -1115,10 +1104,8 @@ fn test_ecall_write_uart() {
 
 #[test]
 fn test_div_by_zero() {
-    // divu a0, a1, x0 - divide by zero should yield u64::MAX in a0.
-    // Save into s0 (x8, callee-saved) before overwriting a0 for exit.
-    // The ROM handler for sys_exit uses t0-t6 as scratch, so t0 (x5) would
-    // be clobbered; s0 (x8) is safe.
+    // Unsigned divide by zero must yield u64::MAX. The result is parked in s0
+    // because the ROM sys_exit handler uses t0-t6 as scratch.
     let (vm, _outcome) = assemble_and_run(vec![
         ri(RealInstruction::Addi(Addi::new(11, 0, 42))), // a1 = 42
         ri(RealInstruction::Divu(Divu::new(10, 11, 0))), // a0 = divu(42, 0) = u64::MAX
@@ -2399,11 +2386,8 @@ fn ir_cmp_slt_negative() {
 }
 
 // --- Floating-point lowering ---
-//
-// These guard the three float-lowering correctness fixes: f32 and f64 constant
-// materialization, f64 arithmetic going through the FPU (not the integer ALU),
-// int<->float casts using fcvt, and FP comparisons. Each program computes a
-// float result and truncates it to an i32 exit code via an `as` cast.
+// Each program truncates a float result to an i32 exit code with `as`, so a
+// wrong constant, a non-FPU op, or a bad fcvt shows up as a wrong exit code.
 
 #[test]
 fn float_f32_constant_and_add() {
@@ -2548,9 +2532,8 @@ main: () -> i32 {
 
 #[test]
 fn float_f64_var_plus_bare_literal() {
-    // A bare float literal infers as f32, but mixing it with an f64 var
-    // used to be rejected as a type mismatch. It now promotes to f64. Both operand
-    // orders must work: 4.0 + 1.5 = 5.5, then 1.5 + 5.5 = 7.0 -> 7.
+    // A bare float literal infers as f32 and must promote to f64 next to an f64
+    // var, in either operand order: 4.0 + 1.5 = 5.5, then 1.5 + 5.5 = 7.0 -> 7.
     let (_, outcome, _) = run_hll(
         r#"
 main: () -> i32 {
@@ -2633,9 +2616,8 @@ main: () -> i32 {
 
 #[test]
 fn float_f64_arguments_passed_in_fp_registers() {
-    // f64 call arguments must arrive in the float register file (fa0/fa1), not the
-    // integer one. Regression for the Mandelbrot demo rendering all black because
-    // mandel_pixel's f64 args came through as garbage.
+    // f64 call arguments must arrive in fa0/fa1, not the integer file. Garbage
+    // args here once rendered the whole Mandelbrot demo black.
     let (_, outcome, _) = run_hll(
         r#"
 sum3: (a: f64, b: f64, c: f64) -> f64 {
@@ -2689,10 +2671,8 @@ main: () -> i32 {
 }
 
 // --- Unsigned widening casts must zero-extend (not sign-extend) ---
-// A narrow unsigned value is loaded with a sign-extending lb/lh/lw; the widening
-// `as u64` (an IR Zext) must clear the high bits. Before the fix, Zext lowered to
-// a bare `mv`, so any byte/half/word with its high bit set widened to garbage
-// (e.g. 0xA4 -> 0xFFFF_FFFF_FFFF_FFA4).
+// lb/lh/lw sign-extend, so the widening `as u64` (IR Zext) has to clear the high
+// bits. Zext once lowered to a bare `mv`, turning 0xA4 into 0xFFFF_FFFF_FFFF_FFA4.
 
 /// u8 with its high bit set must widen to its 0..255 value, not a negative.
 #[test]

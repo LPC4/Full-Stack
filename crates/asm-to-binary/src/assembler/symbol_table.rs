@@ -5,7 +5,7 @@ use std::collections::HashMap;
 pub struct SymbolTable {
     /// label -> absolute byte address (section-base + section-offset).
     symbols: HashMap<String, u64>,
-    /// Labels marked `.globl` -- exported for the linker.
+    /// Labels marked `.globl`, exported for the linker.
     globals: Vec<String>,
 }
 

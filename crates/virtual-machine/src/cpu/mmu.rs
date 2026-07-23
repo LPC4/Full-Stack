@@ -80,9 +80,8 @@ struct TlbEntry {
     level: usize,
 }
 
-/// Direct-mapped cache of Sv39 leaf mappings. Caches only the mapping, not the
-/// permission decision (re-checked per access); keyed by satp, flushed on
-/// sfence.vma. See the VM spec section 2.1.7.
+/// Direct-mapped cache of Sv39 leaf mappings, keyed by satp and flushed on
+/// sfence.vma. Permissions are not cached: they are re-checked per access.
 #[derive(Clone)]
 pub struct Tlb {
     satp: u64,
@@ -227,9 +226,8 @@ pub(crate) fn finalize_leaf(
     Ok(phys_addr)
 }
 
-/// Translate a virtual address to a physical address using Sv39 page tables.
-///
-/// `mstatus` is needed for the SUM (bit 18) and MXR (bit 19) bits.
+/// Translate a virtual address through the Sv39 page tables. `ctx` carries
+/// `mstatus` for the SUM (bit 18) and MXR (bit 19) bits.
 pub fn translate_with_pmp(
     vaddr: u64,
     bus: &mut impl MemoryAccess,

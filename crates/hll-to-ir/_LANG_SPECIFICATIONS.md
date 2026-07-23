@@ -354,10 +354,10 @@ log_line: (s: u8[]) { println(s) }              ; void -- omit -> entirely
 
 Function pointer values use `(T, U) -> R` for a value-returning callable address and
 `(T, U)` for a void callable address. Named parameters are reserved for function declarations.
-The legacy `fn(T, U) -> R` type spelling is rejected. A bare function name in value position coerces to a
-matching function pointer type, and calling a binding of function pointer type uses the same
-`callee(args)` syntax as a direct call. Function pointers are raw code addresses; they do not
-carry closure environments.
+The legacy `fn(T, U) -> R` type spelling is rejected. A bare function name in value position
+coerces to a matching function pointer type, and calling a binding of function pointer type
+uses the same `callee(args)` syntax as a direct call. Function pointers are raw code
+addresses; they do not carry closure environments.
 
 A function pointer is plain pointer-sized data, so a struct field, array element, or any
 other place may hold one. The callee in a call may therefore be an arbitrary expression, not
@@ -1230,8 +1230,8 @@ additive above comparison; parenthesize anything ambiguous.
 
 `putc(ch: i32)` writes the low byte of `ch` to file descriptor 1. It is the only intrinsic;
 `cc` lowers a `putc` call to a plain `call putc`, left undefined and resolved at link time
-against the asm stdlib (`programs/user/sample/stdlib/stdlib.s`). Process exit is `main`'s return value,
-lowered to an exit ecall. All other output is built from `putc`.
+against the asm stdlib (`programs/user/sample/stdlib/stdlib.s`). Process exit is `main`'s
+return value, lowered to an exit ecall. All other output is built from `putc`.
 
 ### A.6 Codegen target
 

@@ -1,8 +1,5 @@
-/// Tests that the compiler rejects programs referencing undefined identifiers.
-///
-/// This is a regression suite for the class of bug that caused 8 test failures:
-/// a variable was renamed but not all uses were updated, leaving a dangling
-/// reference that the compiler must catch before any binary is produced.
+// A dangling identifier (renamed variable, missed use site) must be rejected
+// before any binary is produced, not silently lowered.
 use full_stack::compilation_pipeline::{CompilationError, CompilationPipeline};
 
 fn reject(src: &str, fragment: &str) {

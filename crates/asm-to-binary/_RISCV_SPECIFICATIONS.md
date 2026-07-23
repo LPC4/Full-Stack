@@ -7,13 +7,18 @@ validation rules the assembler enforces. Section 9 also records exactly which di
 and relocations this implementation emits.
 
 ## 1. Architecture overview
-- **Base:** RV64I (64-bit integer registers, PC-relative branches/jumps, two's complement arithmetic)
+- **Base:** RV64I (64-bit integer registers, PC-relative branches/jumps, two's complement
+  arithmetic)
 - **Extensions:** M (hardware mul/div), A (atomic memory ops), F (32-bit FP), D (64-bit FP)
-- **Zicsr / Zifencei:** CSR instructions belong to the `Zicsr` extension; `fence.i` belongs to `Zifencei`. Assemblers targeting general-purpose RV64GC code should support both unconditionally.
+- **Zicsr / Zifencei:** CSR instructions belong to the `Zicsr` extension; `fence.i` belongs to
+  `Zifencei`. Assemblers targeting general-purpose RV64GC code should support both
+  unconditionally.
 - **Instruction Width:** 32-bit, 4-byte aligned (no C-extension compression)
 - **Endianness:** Little-endian
-- **Memory Model:** RVWMO (Weak Memory Ordering). A-extension provides acquire/release ordering via `aq`/`rl` bits.
-- **Privilege:** Machine (M), Supervisor (S), User (U). Assembler targets U/S mode conventions by default.
+- **Memory Model:** RVWMO (Weak Memory Ordering). A-extension provides acquire/release ordering
+  via `aq`/`rl` bits.
+- **Privilege:** Machine (M), Supervisor (S), User (U). Assembler targets U/S mode conventions
+  by default.
 
 
 ## 2. Register File
@@ -46,7 +51,9 @@ and relocations this implementation emits.
 | `f18`-`f27` | `fs2`-`fs11` | FP Saved | **Yes** |
 | `f28`-`f31` | `ft8`-`ft11` | FP Temporaries | No |
 
-**Note:** With the D extension, each `f` register is 64 bits wide. Single-precision values are stored NaN-boxed in the lower 32 bits. There is **no** even/odd register restriction; any `f0`-`f31` is valid in any FP instruction.
+**Note:** With the D extension, each `f` register is 64 bits wide. Single-precision values are
+stored NaN-boxed in the lower 32 bits. There is **no** even/odd register restriction; any
+`f0`-`f31` is valid in any FP instruction.
 
 
 ## 3. Instruction Formats (Bit 31 -> 0)
@@ -63,7 +70,12 @@ R4-type: [rs3:31-27][fmt:26-25][rs2:24-20][rs1:19-15][rm:14-12][rd:11-7][opcode:
 ```
 
 ### RV64 Shift Encoding Note
-In RV64I, non-`*W` shift instructions (SLLI/SRLI/SRAI) use a **6-bit shift amount** (`shamt[5:0]`) in bits 25-20. Bits 31-26 form a **funct6** field (`0x00` for SLLI/SRLI, `0x10` for SRAI). The official ISA manual also refers to this as `funct7` with bit 25 being part of the immediate (making `srai` have `funct7=0x20`). Either framing encodes identically; the critical thing is that bit 30 = 1 for SRAI, bits 31 and 29-26 = 0. `*W` shifts use only `shamt[4:0]` (bits 24-20); bit 25 must be 0.
+In RV64I, non-`*W` shift instructions (SLLI/SRLI/SRAI) use a **6-bit shift amount**
+(`shamt[5:0]`) in bits 25-20. Bits 31-26 form a **funct6** field (`0x00` for SLLI/SRLI, `0x10`
+for SRAI). The official ISA manual also refers to this as `funct7` with bit 25 being part of the
+immediate (making `srai` have `funct7=0x20`). Either framing encodes identically; the critical
+thing is that bit 30 = 1 for SRAI, bits 31 and 29-26 = 0. `*W` shifts use only `shamt[4:0]`
+(bits 24-20); bit 25 must be 0.
 
 ### FP Format Field (`fmt`) - 2-bit, bits [26:25]
 ```
@@ -94,7 +106,8 @@ For RV64IMAFD, only `00` (S) and `01` (D) are used.
 ```
 target_pc = current_pc + sext(imm << 1)
 ```
-- `imm[0]` is always implicitly `0` (targets must be 2-byte aligned; 4-byte aligned without C extension)
+- `imm[0]` is always implicitly `0` (targets must be 2-byte aligned; 4-byte aligned without C
+  extension)
 - `imm[12]` is the sign bit
 - Valid byte offset range: `[-4096, +4094]`, even values only.
 - The assembler must error if the offset is outside this range or is odd.
@@ -108,7 +121,8 @@ target_pc = current_pc + sext(imm << 1)
 
 ### `lui` / `auipc` Upper Immediate (U-type)
 - The 20-bit `imm[31:12]` is placed in bits 31-12 of the result; bits 11-0 are zero.
-- If the 12-bit low part of a symbol's address has bit 11 set (value >= 0x800), the upper immediate must be incremented by 1 to compensate for sign extension.
+- If the 12-bit low part of a symbol's address has bit 11 set (value >= 0x800), the upper
+  immediate must be incremented by 1 to compensate for sign extension.
 
 
 ## 5. Complete Instruction Reference
@@ -205,7 +219,8 @@ target_pc = current_pc + sext(imm << 1)
 
 ### 5.2 RV64M - Multiply/Divide Extension
 
-All R-type. Non-W instructions: opcode `0x33`, `funct7=0x01`. W instructions: opcode `0x3B`, `funct7=0x01`.
+All R-type. Non-W instructions: opcode `0x33`, `funct7=0x01`. W instructions: opcode `0x3B`,
+`funct7=0x01`.
 
 #### 64-bit Operations (opcode `0x33`)
 | Mnemonic | funct3 | Semantics | Notes |
@@ -233,7 +248,9 @@ All R-type. Non-W instructions: opcode `0x33`, `funct7=0x01`. W instructions: op
 
 ### 5.3 RV64A - Atomics Extension
 
-**Encoding:** R-type variant, opcode `0x2F`. `funct3` selects width: `2`=word (`.w`), `3`=doubleword (`.d`). **`funct5`** (bits 31-27) selects the operation. **`aq`** (bit 26) and **`rl`** (bit 25) control acquire/release ordering.
+**Encoding:** R-type variant, opcode `0x2F`. `funct3` selects width: `2`=word (`.w`),
+`3`=doubleword (`.d`). **`funct5`** (bits 31-27) selects the operation. **`aq`** (bit 26) and
+**`rl`** (bit 25) control acquire/release ordering.
 
 ```
 [funct5:31-27][aq:26][rl:25][rs2:24-20][rs1:19-15][funct3:14-12][rd:11-7][0101111]
@@ -255,7 +272,9 @@ All R-type. Non-W instructions: opcode `0x33`, `funct7=0x01`. W instructions: op
 | `amomaxu.w/d` | `11100` | `0x1C` | `t=M[rs1]; rd=t; M[rs1]=max(t, rs2)` (unsigned) |
 
 Critical notes:
-- AMO semantics: `rs1` holds the address. The loaded value is captured into a temp, returned in `rd`, and the result of the operation is stored back. `rs1` itself is never used as an arithmetic operand.
+- AMO semantics: `rs1` holds the address. The loaded value is captured into a temp, returned in
+  `rd`, and the result of the operation is stored back. `rs1` itself is never used as an
+  arithmetic operand.
 - `sc` with `rd=x0` is valid; success/failure status is discarded.
 - `aq`/`rl` default to `0`. Assembler syntax supports `.aq`, `.rl`, `.aqrl` suffixes.
 - `lr`/`sc` addresses must be naturally aligned: 4 bytes for `.w`, 8 bytes for `.d`.
@@ -269,9 +288,11 @@ Critical notes:
 - ALU / Convert / Compare / Classify: `0x53` (OP-FP)
 - FMAC: `0x43` (FMADD), `0x47` (FMSUB), `0x4B` (FNMSUB), `0x4F` (FNMADD)
 
-**`fmt` field (bits 26:25):** `00`=Single (`.s`), `01`=Double (`.d`). This is a **2-bit field**, not 1 bit.
+**`fmt` field (bits 26:25):** `00`=Single (`.s`), `01`=Double (`.d`). This is a **2-bit field**,
+not 1 bit.
 
-Rounding mode (`rm`, bits 14-12): `000`=RNE, `001`=RTZ, `010`=RDN, `011`=RUP, `100`=RMM, `111`=DYN (from `fcsr.frm`).
+Rounding mode (`rm`, bits 14-12): `000`=RNE, `001`=RTZ, `010`=RDN, `011`=RUP, `100`=RMM,
+`111`=DYN (from `fcsr.frm`).
 
 #### FP Loads/Stores (I-type / S-type)
 | Mnemonic | Opcode | funct3 | Semantics |
@@ -298,7 +319,8 @@ All FP ALU ops: `funct5` selects operation, `fmt` selects precision.
 | `fmin.s/d` | `00101` | `000` | `fd = min(fs1, fs2)` | -0 < +0; NaN handling per IEEE |
 | `fmax.s/d` | `00101` | `001` | `fd = max(fs1, fs2)` | |
 
-**Note:** `fsgnj`, `fsgnjn`, `fsgnjx` share **the same `funct5=00100`**, distinguished by `rm`. Likewise `fmin`/`fmax` share `funct5=00101`, distinguished by `rm=000`/`001`.
+**Note:** `fsgnj`, `fsgnjn`, `fsgnjx` share **the same `funct5=00100`**, distinguished by `rm`.
+Likewise `fmin`/`fmax` share `funct5=00101`, distinguished by `rm=000`/`001`.
 
 #### FP Move Between FP and Integer Registers (R-type, opcode `0x53`)
 These instructions transfer bit patterns without conversion. `rs2` must be `00000`.
@@ -373,7 +395,8 @@ The `fmt` field encodes the **destination** format; `rs2` encodes the **source**
 | `fcvt.s.d` | `01000` | `00` (S dest) | `00001` (D src) | `fd = (float)fs1` (double->single, may round) |
 | `fcvt.d.s` | `01001` | `01` (D dest) | `00000` (S src) | `fd = (double)fs1` (single->double, exact) |
 
-**Validation:** Assembler must reject `fcvt.<T>.<T>` where source and destination types are identical (e.g., `fcvt.s.s`, `fcvt.w.w`).
+**Validation:** Assembler must reject `fcvt.<T>.<T>` where source and destination types are
+identical (e.g., `fcvt.s.s`, `fcvt.w.w`).
 
 #### FMAC Instructions (R4-type)
 A fused multiply-add of the form `fd = +/-(fs1 x fs2) +/- fs3`.
@@ -388,7 +411,9 @@ Format: `[rs3:31-27][fmt:26-25][rs2:24-20][rs1:19-15][rm:14-12][rd:11-7][opcode:
 
 
 ## 6. CSR Instructions (Zicsr Extension)
-I-type, opcode `0x73`. `csr` is the 12-bit CSR address (bits 31-20). For immediate variants (`csrrwi`, `csrrsi`, `csrrci`), the 5-bit zero-extended unsigned immediate (`uimm`) is in the `rs1` field (bits 19-15).
+I-type, opcode `0x73`. `csr` is the 12-bit CSR address (bits 31-20). For immediate variants
+(`csrrwi`, `csrrsi`, `csrrci`), the 5-bit zero-extended unsigned immediate (`uimm`) is in the
+`rs1` field (bits 19-15).
 
 | Mnemonic | funct3 | Semantics |
 |----------|--------|-----------|
@@ -459,7 +484,9 @@ I-type, opcode `0x73`. `csr` is the 12-bit CSR address (bits 31-20). For immedia
 | `fabs.s fd, fs` | `fsgnjx.s fd, fs, fs` | Absolute value single |
 | `fabs.d fd, fs` | `fsgnjx.d fd, fs, fs` | Absolute value double |
 
-**Removed pseudo:** `fmvp.s/d` - this is **not** a standard RISC-V pseudo-instruction and must not be used. Use `fmv.w.x` / `fmv.d.x` to move from integer to FP, or `fmv.s` / `fmv.d` to copy between FP registers.
+**Removed pseudo:** `fmvp.s/d` - this is **not** a standard RISC-V pseudo-instruction and must
+not be used. Use `fmv.w.x` / `fmv.d.x` to move from integer to FP, or `fmv.s` / `fmv.d` to copy
+between FP registers.
 
 
 ## 8. RV64IMAFD ABI & Calling Convention
@@ -467,13 +494,17 @@ I-type, opcode `0x73`. `csr` is the 12-bit CSR address (bits 31-20). For immedia
 ### Argument Passing
 - **Integer / Pointer:** `a0`-`a7` (`x10`-`x17`)
 - **Floating Point:** `fa0`-`fa7` (`f10`-`f17`)
-- **Small structs/aggregates (<= 16 bytes):** May be passed in up to two registers (integer or FP as applicable)
+- **Small structs/aggregates (<= 16 bytes):** May be passed in up to two registers (integer or
+  FP as applicable)
 - **Large structs (> 16 bytes):** Passed by reference (pointer in integer register)
 - **Compiler-internal aggregate convention:** HLL/IR calls pass every by-value aggregate indirectly
   through one integer argument slot, regardless of size. The callee immediately copies the bytes
   into its own parameter slot, preserving value semantics. This is an internal convention, not the
   external C ABI.
-- **Variadic / `va_list` arguments:** Per the RISC-V C ABI, all floating-point arguments that fall within the variable portion of a variadic argument list must be passed in **integer registers** (or on the stack), not FP registers. This applies regardless of available FP register slots.
+- **Variadic / `va_list` arguments:** Per the RISC-V C ABI, all floating-point arguments that
+  fall within the variable portion of a variadic argument list must be passed in **integer
+  registers** (or on the stack), not FP registers. This applies regardless of available FP
+  register slots.
 
 ### Return Values
 - **Integer / Pointer:** `a0`, `a1` (`x10`, `x11`)
@@ -482,7 +513,8 @@ I-type, opcode `0x73`. `csr` is the 12-bit CSR address (bits 31-20). For immedia
 ### Stack Frame
 - **Alignment:** 16-byte aligned at all call boundaries (sp must be 0 mod 16 on function entry)
 - **Direction:** Grows downward
-- **Layout (high -> low):** saved registers -> local variables -> outgoing argument overflow area (if >8 int args or >8 FP args)
+- **Layout (high -> low):** saved registers -> local variables -> outgoing argument overflow
+  area (if >8 int args or >8 FP args)
 
 ### Callee-Saved Registers
 - Integer: `sp`, `gp`, `tp`, `s0`-`s11` (`x2`-`x4`, `x8`-`x9`, `x18`-`x27`)
@@ -494,11 +526,14 @@ I-type, opcode `0x73`. `csr` is the 12-bit CSR address (bits 31-20). For immedia
 
 ### 9.1 Parsing & Encoding
 
-1. **Register Names:** Accept both `xN` (0-31) and ABI names (`ra`, `sp`, `a0`, `ft0`, `fa0`, etc.). Reject register numbers > 31. ABI names for FP registers use the same `f0`-`f31` namespace.
+1. **Register Names:** Accept both `xN` (0-31) and ABI names (`ra`, `sp`, `a0`, `ft0`, `fa0`,
+   etc.). Reject register numbers > 31. ABI names for FP registers use the same `f0`-`f31`
+   namespace.
 
 2. **Two-Pass Assembly:**
     - **Pass 1:** Scan all labels; record symbol -> address mapping. Record section sizes.
-    - **Pass 2:** Resolve label references, compute PC-relative offsets, emit machine code and relocations.
+    - **Pass 2:** Resolve label references, compute PC-relative offsets, emit machine code and
+      relocations.
 
 3. **Immediate Validation:**
     - I-type / S-type: signed 12-bit: `[-2048, +2047]`
@@ -508,19 +543,28 @@ I-type, opcode `0x73`. `csr` is the 12-bit CSR address (bits 31-20). For immedia
     - J-type: signed 21-bit even: `[-1048576, +1048574]` <- *(note: upper bound is +1048574)*
     - U-type: any value where bits 31-12 fit (upper 20 bits)
     - Non-`*W` shift amounts (`slli`, `srli`, `srai`): `[0, 63]` (6-bit); error on values > 63
-    - `*W` shift amounts (`slliw`, `srliw`, `sraiw`, `sllw`, `srlw`, `sraw`): `[0, 31]` (5-bit); error if bit 5 is set; **do not silently mask**
+    - `*W` shift amounts (`slliw`, `srliw`, `sraiw`, `sllw`, `srlw`, `sraw`): `[0, 31]` (5-bit);
+      error if bit 5 is set; **do not silently mask**
     - CSR addresses: `[0x000, 0xFFF]`
-    - `sltiu`: The 12-bit immediate is sign-extended to 64 bits before unsigned comparison; document this explicitly in error messages.
+    - `sltiu`: The 12-bit immediate is sign-extended to 64 bits before unsigned comparison;
+      document this explicitly in error messages.
 
-4. **FP `fmt` Field:** `fmt` is a **2-bit field** at bits [26:25]: `00`=S, `01`=D. Assembler must set both bits; masking against bit 25 only is incorrect.
+4. **FP `fmt` Field:** `fmt` is a **2-bit field** at bits [26:25]: `00`=S, `01`=D. Assembler
+   must set both bits; masking against bit 25 only is incorrect.
 
-5. **FP Conversion `rs2` field:** For `fcvt.*` instructions, the assembler must explicitly encode the integer type into the `rs2` field (bits 24-20) as: `w=00000`, `wu=00001`, `l=00010`, `lu=00011`. The mnemonic suffix determines this value; `rs2` is **not** a register operand in syntax.
+5. **FP Conversion `rs2` field:** For `fcvt.*` instructions, the assembler must explicitly
+   encode the integer type into the `rs2` field (bits 24-20) as: `w=00000`, `wu=00001`,
+   `l=00010`, `lu=00011`. The mnemonic suffix determines this value; `rs2` is **not** a register
+   operand in syntax.
 
-6. **Atomic `aq`/`rl`:** Default both to `0`. Accept `.aq`, `.rl`, `.aqrl` suffixes on AMO/LR/SC mnemonics to set bits 26/25.
+6. **Atomic `aq`/`rl`:** Default both to `0`. Accept `.aq`, `.rl`, `.aqrl` suffixes on AMO/LR/SC
+   mnemonics to set bits 26/25.
 
-7. **`fclass` enforcement:** The `rs2` field of `fclass.s/d` must be `00000`. If the assembler syntax accepts a second operand, it must hard-error if a non-zero value is provided.
+7. **`fclass` enforcement:** The `rs2` field of `fclass.s/d` must be `00000`. If the assembler
+   syntax accepts a second operand, it must hard-error if a non-zero value is provided.
 
-8. **`lr.w/d` rs2 field:** `lr` has no second source; the `rs2` field must be `00000`. Assembler should reject any attempt to supply rs2.
+8. **`lr.w/d` rs2 field:** `lr` has no second source; the `rs2` field must be `00000`. Assembler
+   should reject any attempt to supply rs2.
 
 ### 9.2 Directives
 
@@ -576,7 +620,8 @@ relocation set, listed for reference and for interoperability with external link
 | `R_RISCV_TPREL_LO12_I` | I-type | Thread-pointer-relative, lower, load |
 | `R_RISCV_TPREL_LO12_S` | S-type | Thread-pointer-relative, lower, store |
 
-**`%pcrel_lo` note:** The relocation for `%pcrel_lo` references the **label** of the paired `auipc`, not the register. E.g.:
+**`%pcrel_lo` note:** The relocation for `%pcrel_lo` references the **label** of the paired
+`auipc`, not the register. E.g.:
 ```asm
 .Lpcrel_hi0:
     auipc  a0, %pcrel_hi(target)
@@ -609,21 +654,55 @@ When `emit_layout_symbols` is enabled, the linker injects these absolute symbols
 Kernel startup code uses these symbols to zero BSS, set the stack pointer, and initialise the heap
 allocator without hard-coding section addresses.
 
+Layout symbols are injected as section-relative offsets; the ELF writer adds `load_base` when it
+writes symbol values. `__stack_top` is therefore stored as `stack_top - load_base` so the written
+value equals the intended virtual address.
+
+### 9.5 Executable, Object, and Flat Output
+
+`AssembledOutput` emits three shapes.
+
+**ELF-64 executable (`to_elf`).** Little-endian RV64IMAFD, laid out as ELF header, one program
+header, section data, section headers, section-name string table, symbol table. A single combined
+`PT_LOAD` segment with `R|W|X` covers every section. One segment is deliberate: separate
+`PT_LOAD`s for `.text` (R X) and `.bss` (R W) conflict at page granularity when both land in the
+same 4 KiB page, which QEMU rejects. QEMU user mode accepts `RWX` and zero-fills the
+`[p_filesz, p_memsz)` tail, which is the BSS. All generated code is PC-relative, so the
+single-segment image matches what the assembler compiled against. The entry point is resolved from
+the symbol table: `to_elf` tries `_start` then `main`, `to_elf_with_entry` tries the caller's
+symbol first, and the load base is used when no candidate resolves.
+
+**`ET_REL` object (`to_object`).** Section contents plus symbol table and relocation records
+(section 9.3), consumed by the object linker.
+
+**Flat binary (`to_flat_binary`).** Sections packed in load order, non-BSS first then BSS as zeros,
+with no ELF headers. Suitable for bootloaders that copy the image straight into memory.
+
 
 ## 10. Validation & Alignment Rules
 
-- **Instruction alignment:** Without the C extension, all instruction addresses and all branch/jump targets must be **4-byte aligned**. A target at a 2-byte-but-not-4-byte boundary raises `Instruction Address Misaligned`.
-- **Branch offset bounds:** B-type byte offsets must be in `[-4096, +4094]` and even. Error on odd or out-of-range values.
+- **Instruction alignment:** Without the C extension, all instruction addresses and all
+  branch/jump targets must be **4-byte aligned**. A target at a 2-byte-but-not-4-byte boundary
+  raises `Instruction Address Misaligned`.
+- **Branch offset bounds:** B-type byte offsets must be in `[-4096, +4094]` and even. Error on
+  odd or out-of-range values.
 - **Jump offset bounds:** J-type byte offsets must be in `[-1048576, +1048574]` and even.
-- **Shift amounts:** Non-`*W` shifts accept `[0, 63]`; `*W` shifts accept `[0, 31]`. Assembler must **error**, not silently mask, on oversized values.
+- **Shift amounts:** Non-`*W` shifts accept `[0, 63]`; `*W` shifts accept `[0, 31]`. Assembler
+  must **error**, not silently mask, on oversized values.
 - **`sc` with `rd=x0`:** Valid. Hardware attempts the store; success/failure status is discarded.
 - **`lr` `rs2` field:** Must be `00000`. Error if assembler source supplies a second register.
 - **`fclass` `rs2` field:** Must be `00000`. Error if a second argument is supplied.
-- **`fcvt` type validity:** `fcvt.<dst>.<src>` where source and destination FP types are identical is illegal (e.g., `fcvt.s.s`). The assembler must reject this.
-- **FP instructions:** Require `mstatus.fs != 0` (FP enabled) at runtime. The assembler does not enforce this but may warn.
+- **`fcvt` type validity:** `fcvt.<dst>.<src>` where source and destination FP types are
+  identical is illegal (e.g., `fcvt.s.s`). The assembler must reject this.
+- **FP instructions:** Require `mstatus.fs != 0` (FP enabled) at runtime. The assembler does not
+  enforce this but may warn.
 - **CSR addresses:** Must be in `[0x000, 0xFFF]`.
-- **`sltiu` sign extension:** The assembler must sign-extend the 12-bit immediate to 64 bits for validation purposes (not zero-extend), because the hardware does so before the unsigned comparison.
-- **Atomic alignment:** `lr.w`/`sc.w` require 4-byte-aligned address; `lr.d`/`sc.d` require 8-byte-aligned address. Assembler cannot enforce this statically in general but may warn on obvious violations.
+- **`sltiu` sign extension:** The assembler must sign-extend the 12-bit immediate to 64 bits for
+  validation purposes (not zero-extend), because the hardware does so before the unsigned
+  comparison.
+- **Atomic alignment:** `lr.w`/`sc.w` require 4-byte-aligned address; `lr.d`/`sc.d` require
+  8-byte-aligned address. Assembler cannot enforce this statically in general but may warn on
+  obvious violations.
 - **`fence.i` encoding:** All other fields must be zero: `rs1=0`, `rd=0`, `imm=0`.
 
 
@@ -660,16 +739,25 @@ Varargs FP: passed in integer regs / stack
 
 ## Appendix B: Instruction Encoding Gotchas
 
-1. **`lr` / `sc` are NOT `amoor`:** `lr.w` funct5=`00010`, `sc.w` funct5=`00011`. The previous revision had `lr`=`01000` (same as `amoor`) - a critical bug.
+1. **`lr` / `sc` are NOT `amoor`:** `lr.w` funct5=`00010`, `sc.w` funct5=`00011`. The previous
+   revision had `lr`=`01000` (same as `amoor`) - a critical bug.
 
-2. **`fmt` is 2 bits:** Setting only bit 25 and leaving bit 26 unset produces incorrect encoding for double-precision. Always set bits [26:25] together: `00` for S, `01` for D.
+2. **`fmt` is 2 bits:** Setting only bit 25 and leaving bit 26 unset produces incorrect encoding
+   for double-precision. Always set bits [26:25] together: `00` for S, `01` for D.
 
-3. **`fcvt` `rs2` is not an architectural register operand:** The mnemonic suffix determines `rs2`; no register is named in syntax for this field.
+3. **`fcvt` `rs2` is not an architectural register operand:** The mnemonic suffix determines
+   `rs2`; no register is named in syntax for this field.
 
-4. **`fsgnjn`/`fsgnjx` vs `fsgnj`:** These three share `funct5=00100`. They are distinguished by `rm`: `000`/`001`/`010`. Incorrect encoding of a separate funct5 would produce garbage instructions.
+4. **`fsgnjn`/`fsgnjx` vs `fsgnj`:** These three share `funct5=00100`. They are distinguished by
+   `rm`: `000`/`001`/`010`. Incorrect encoding of a separate funct5 would produce garbage
+   instructions.
 
-5. **B-type maximum offset is +4094, not +4096:** The encoding cannot represent +4096 (bit 12 would be 1, but that is the sign bit giving -4096). The effective range is -4096 to +4094.
+5. **B-type maximum offset is +4094, not +4096:** The encoding cannot represent +4096 (bit 12
+   would be 1, but that is the sign bit giving -4096). The effective range is -4096 to +4094.
 
-6. **`%pcrel_lo` references the `auipc` label, not the register:** Assembler must emit `R_RISCV_PCREL_LO12_I` pointing to the symbol of the paired `auipc` instruction label.
+6. **`%pcrel_lo` references the `auipc` label, not the register:** Assembler must emit
+   `R_RISCV_PCREL_LO12_I` pointing to the symbol of the paired `auipc` instruction label.
 
-7. **`sltiu` sign-extends before unsigned compare:** `sltiu rd, rs1, -1` tests `rs1 < 0xFFFFFFFFFFFFFFFF` (always true for non-maximal values), because `-1` sign-extends to all-ones.
+7. **`sltiu` sign-extends before unsigned compare:** `sltiu rd, rs1, -1` tests
+   `rs1 < 0xFFFFFFFFFFFFFFFF` (always true for non-maximal values), because `-1` sign-extends
+   to all-ones.

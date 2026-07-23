@@ -9,21 +9,35 @@ the VM's observable behavior.
 ## 1. Architecture overview
 
 ### 1.1 VM Components
-- **CPU Core:** In-order, single-issue 5-stage pipeline (Fetch -> Decode -> Execute -> Memory -> Writeback) with data forwarding, load-use hazard detection, and branch prediction
-- **Branch Predictor:** 2-bit bimodal predictor backed by a Branch Target Buffer (BTB)
-- **Cache Hierarchy:** Three levels (L1/L2/L3) of set-associative write-back caches in front of RAM; MMIO bypasses the caches
-- **Memory System:** Byte-addressable, little-endian, flat physical address space with optional Sv39 virtual memory translation
-- **MMU:** Sv39 page-based virtual memory (3-level page table, 39-bit virtual addresses)
-- **CSR File:** Machine-mode and Supervisor-mode Control & Status Registers (Zicsr extension), plus single-entry PMP storage
-- **Devices:** UART (serial I/O), CLINT (timer/software interrupts), PLIC (external interrupts), SYSCON (halt/exit), Framebuffer (linear RGBA8888 display), Keyboard (key-event FIFO)
+- **CPU Core:** In-order, single-issue 5-stage pipeline (Fetch -> Decode -> Execute
+  -> Memory -> Writeback) with data forwarding, load-use hazard detection, and
+  branch prediction
+- **Branch Predictor:** 2-bit bimodal predictor backed by a Branch Target Buffer
+  (BTB)
+- **Cache Hierarchy:** Three levels (L1/L2/L3) of set-associative write-back caches
+  in front of RAM; MMIO bypasses the caches
+- **Memory System:** Byte-addressable, little-endian, flat physical address space
+  with optional Sv39 virtual memory translation
+- **MMU:** Sv39 page-based virtual memory (3-level page table, 39-bit virtual
+  addresses)
+- **CSR File:** Machine-mode and Supervisor-mode Control & Status Registers (Zicsr
+  extension), plus single-entry PMP storage
+- **Devices:** UART (serial I/O), CLINT (timer/software interrupts), PLIC (external
+  interrupts), SYSCON (halt/exit), Framebuffer (linear RGBA8888 display), Keyboard
+  (key-event FIFO)
 - **Bus:** Memory-mapped I/O with address decoding
 
 ### 1.2 Execution Model
-- **Privilege Modes:** Machine (M), Supervisor (S), and User (U) modes, with real privilege switching. The ROM boots in M-mode, delegates traps, and `mret`s into the S-mode kernel; the kernel `sret`s into U-mode processes.
-- **Virtual Memory:** Sv39 paging (optional, controlled by SATP CSR; bypassed in M-mode)
-- **Interrupts:** Synchronous traps (exceptions) and asynchronous interrupts (timer, software, external), delegatable to S-mode via `medeleg`/`mideleg`
+- **Privilege Modes:** Machine (M), Supervisor (S), and User (U) modes, with real
+  privilege switching. The ROM boots in M-mode, delegates traps, and `mret`s into
+  the S-mode kernel; the kernel `sret`s into U-mode processes.
+- **Virtual Memory:** Sv39 paging (optional, controlled by SATP CSR; bypassed in
+  M-mode)
+- **Interrupts:** Synchronous traps (exceptions) and asynchronous interrupts
+  (timer, software, external), delegatable to S-mode via `medeleg`/`mideleg`
 - **Memory Ordering:** Sequential consistency (no weak ordering in this VM)
-- **Atomic Operations:** Load-reserved/store-conditional (LR/SC) via reservation set, plus AMO read-modify-write
+- **Atomic Operations:** Load-reserved/store-conditional (LR/SC) via reservation
+  set, plus AMO read-modify-write
 
 
 ## 2. Memory Map
@@ -56,8 +70,8 @@ The VM implements the RISC-V Sv39 virtual memory scheme:
 - **Translation:** Automatic in Fetch and Memory pipeline stages
 
 ### 2.1.2 SATP CSR (Supervisor Address Translation and Protection)
-**Address:** `0x180`  
-**Width:** 64 bits  
+**Address:** `0x180`. **Width:** 64 bits.
+
 **Fields:**
 - `[63:60]` **MODE**: Addressing mode
   - `0` = Bare (no translation, identity mapping)
@@ -265,7 +279,8 @@ target = (rs1 + sext(imm)) & !1
 
 
 ### 3.4 Memory Stage
-**Responsibility:** Execute load/store operations against system bus with virtual address translation.
+**Responsibility:** Execute load/store operations against the system bus, with
+virtual address translation.
 
 **Inputs:**
 - `exec_result`: From execute stage
@@ -420,7 +435,8 @@ csrs.write(addr::SATP, satp);
 csrs.write(addr::SATP, 0); // MODE=0 (Bare)
 ```
 
-**Note:** When SATP.MODE != 0 and privilege mode is not Machine, all memory accesses go through the MMU for address translation.
+**Note:** When SATP.MODE != 0 and the privilege mode is not Machine, all memory
+accesses go through the MMU for address translation.
 
 #### `mstatus` Fields (bit positions)
 - `[3]` **MPIE**: Previous M-mode interrupt enable (set on trap, restored on return)
@@ -548,7 +564,7 @@ When an exception or interrupt occurs:
    ```rust
    let base = csrs.mtvec & !0x3;
    let mode = csrs.mtvec & 0x3;
-   
+
    let handler_pc = if mode == 1 && interrupt {
        base + (cause_code << 2) // Vectored mode
    } else {
@@ -610,8 +626,8 @@ receives timer interrupts and U-mode ecalls directly.
 ## 6. Device Emulation
 
 ### 6.1 UART (Universal Asynchronous Receiver/Transmitter)
-**Base Address:** `0x1000_0000`  
-**Model:** NS16550A subset (8 single-byte registers at offsets `0x00`-`0x07`)
+**Base Address:** `0x1000_0000`. **Model:** NS16550A subset (8 single-byte
+registers at offsets `0x00`-`0x07`).
 
 | Offset | Register | Access | Description |
 |--------|----------|--------|-------------|
@@ -637,8 +653,8 @@ receives timer interrupts and U-mode ecalls directly.
 
 
 ### 6.2 CLINT (Core Local Interruptor)
-**Base Address:** `0x0200_0000`  
-**Purpose:** Machine-mode timer and interprocessor interrupts
+**Base Address:** `0x0200_0000`. **Purpose:** Machine-mode timer and
+interprocessor interrupts.
 
 | Offset | Register | Access | Description |
 |--------|----------|--------|-------------|
@@ -662,8 +678,8 @@ receives timer interrupts and U-mode ecalls directly.
 
 
 ### 6.3 PLIC (Platform-Level Interrupt Controller)
-**Base Address:** `0x0C00_0000`  
-**Purpose:** Route external interrupts to harts with priority arbitration
+**Base Address:** `0x0C00_0000`. **Purpose:** Route external interrupts to harts
+with priority arbitration.
 
 **Memory Layout:**
 - `0x0000-0x007C`: Priority registers (32 sources x 4 bytes)
@@ -691,17 +707,18 @@ receives timer interrupts and U-mode ecalls directly.
 
 
 ### 6.4 SYSCON (Halt / Exit)
-**Base Address:** `0x1001_0000`  
-**Purpose:** Stop the machine and report an exit code.
+**Base Address:** `0x1001_0000`. **Purpose:** Stop the machine and report an exit
+code.
 
-Writing an 8-byte value to SYSCON latches an exit code and signals the run loop to halt. The kernel's
-`kshutdown` and the freestanding/hosted exit paths use this to terminate the VM; the integration
-harness reads the exit code from the final `RunResult`.
+Writing an 8-byte value to SYSCON latches an exit code and signals the run loop to
+halt. The kernel's `kshutdown` and the freestanding/hosted exit paths use this to
+terminate the VM; the integration harness reads the exit code from the final
+`RunResult`.
 
 
 ### 6.5 Framebuffer (Linear Display)
-**Base Address:** `0x1002_0000`  
-**Purpose:** A flat pixel buffer the guest draws into and the GUI displays as an image.
+**Base Address:** `0x1002_0000`. **Purpose:** A flat pixel buffer the guest draws
+into and the GUI displays as an image.
 
 The framebuffer is `320 x 240` pixels in RGBA8888 format: byte `n` is pixel `n / 4`, channel
 `n % 4` (0 = R, 1 = G, 2 = B, 3 = A), for a total of `320 * 240 * 4 = 307200` bytes. Like the other
@@ -721,15 +738,18 @@ bus `peek_framebuffer` accessor (which does not perturb device or cache state).
 Writing `FILL` clears the whole screen in one MMIO access instead of a 76_800-store sweep (each of
 which would also pay an MMU walk), which is the dominant per-frame cost for an animated guest.
 
-**Double buffering.** By default the device is single-buffered: pixel writes land directly in the
-visible buffer, so progressive renderers (e.g. `mandelbrot`) paint as they go. Writing a non-zero value
-to `DBMODE` switches drawing to an off-screen back buffer; the GUI keeps showing the front buffer
-until a `PRESENT` copies the back buffer over. This lets an animated guest draw a full frame and
-publish it atomically, so the asynchronously-sampling GUI never shows a half-drawn or just-cleared
-frame (no flicker). `DBMODE` is sticky device state with no notion of process lifecycle, so it
-survives a guest exit; the kernel reference-counts framebuffer users and resets it to single-buffered
-when the last one exits (see OS spec 7.5) so a single-buffered program never inherits a dead
-program's double-buffer mode. The total device span is `307200 + 4096 = 311296` bytes; accesses past
+**Double buffering.** By default the device is single-buffered: pixel writes land
+directly in the visible buffer, so progressive renderers (e.g. `mandelbrot`) paint
+as they go. Writing a non-zero value to `DBMODE` switches drawing to an off-screen
+back buffer; the GUI keeps showing the front buffer until a `PRESENT` copies the
+back buffer over. This lets an animated guest draw a full frame and publish it
+atomically, so the asynchronously-sampling GUI never shows a half-drawn or
+just-cleared frame (no flicker). `DBMODE` is sticky device state with no notion of
+process lifecycle, so it survives a guest exit; the kernel reference-counts
+framebuffer users and resets it to single-buffered when the last one exits (see OS
+spec 7.5) so a single-buffered program never inherits a dead program's
+double-buffer mode. The total device span is `307200 + 4096 = 311296` bytes;
+accesses past
 the end
 raise a bus error.
 
@@ -739,7 +759,7 @@ and returns the base virtual address. See the OS specification for the syscall a
 program.
 
 ### 6.6 Keyboard (Input)
-**Base Address:** `0x1007_0000` (one page, above the framebuffer span)  
+**Base Address:** `0x1007_0000` (one page, above the framebuffer span).
 **Purpose:** Deliver host key events to the guest as a small FIFO of packed events.
 
 The host GUI pushes key press/release events into a bounded ring buffer (capacity 256; events are
@@ -750,11 +770,12 @@ dropped if the guest never drains them). The guest reads two word registers:
 | `+0`   | `STATUS` | Word read | Number of events currently queued (0 = empty) |
 | `+4`   | `DATA`   | Word read | Pop and return the oldest event; `0xFFFF_FFFF` when empty |
 
-A popped event packs the key in bits `15..0` (the scancode) and the press/release state in bit 16
-(`1` = pressed, `0` = released). Printable keys report their ASCII code; the arrow keys use a private
-range (`0x80`-`0x83` for up/down/left/right). Registers are read-only to the guest; writes are
-ignored. Reading `DATA` has a side effect (it pops), so the debug peek path never touches this
-device. The kernel exposes it through the `poll_key` syscall (number 108).
+A popped event packs the key in bits `15..0` (the scancode) and the press/release
+state in bit 16 (`1` = pressed, `0` = released). Printable keys report their ASCII
+code; the arrow keys use a private range (`0x80`-`0x83` for up/down/left/right).
+Registers are read-only to the guest; writes are ignored. Reading `DATA` has a side
+effect (it pops), so the debug peek path never touches this device. The kernel
+exposes it through the `poll_key` syscall (number 108).
 
 ### 6.7 Cache Hierarchy
 
@@ -810,7 +831,7 @@ trait MemoryAccess {
     fn read_halfword(&mut self, addr: u64) -> Result<u16, VmError>;
     fn read_word(&mut self, addr: u64) -> Result<u32, VmError>;
     fn read_doubleword(&mut self, addr: u64) -> Result<u64, VmError>;
-    
+
     fn write_byte(&mut self, addr: u64, data: u8) -> Result<(), VmError>;
     fn write_halfword(&mut self, addr: u64, data: u16) -> Result<(), VmError>;
     fn write_word(&mut self, addr: u64, data: u32) -> Result<(), VmError>;
@@ -850,17 +871,17 @@ enum VmError {
     LoadAccessFault(u64),
     StoreAccessFault(u64),
     BusError(u64),
-    
+
     // Instruction errors
     IllegalInstruction(u32),
-    
+
     // Trap instructions
     Ecall,
     Ebreak,
-    
+
     // Device errors
     WriteToRom,
-    
+
     // CSR errors
     IllegalCsr(u16),
 }

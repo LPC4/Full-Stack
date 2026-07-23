@@ -81,8 +81,8 @@ fn generate_userspace(manifest_dir: &Path, out_dir: &Path) {
     fs::write(out_dir.join("userspace.rs"), code).expect("failed to write userspace.rs");
 }
 
-/// Walk `programs/` and record embeddable sources keyed by repo-relative path: every `.hll`,
-/// plus `.build`/`.s` under user+example for demo-workspace materialization; skips the copy.
+// Walk `programs/` for embeddable sources keyed by repo-relative path: every `.hll`,
+// plus `.build`/`.s` under user+example for demo-workspace materialization.
 fn collect_source_files(dir: &Path, manifest_dir: &Path, out: &mut Vec<SourceFile>) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
@@ -333,7 +333,7 @@ fn render_userspace(programs: &[Program]) -> String {
     out
 }
 
-/// Strip an absolute source path down to its repo-relative `programs/...` tail.
+// Strip an absolute source path down to its repo-relative `programs/...` tail.
 fn repo_relative(source: &str) -> Option<String> {
     source
         .rfind("programs/")

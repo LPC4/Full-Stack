@@ -9,7 +9,6 @@ fn suite_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("programs/test/compiler_suite")
 }
 
-/// Recursively collect all .hll files from a directory tree
 fn collect_hll_files(dir: &PathBuf, files: &mut Vec<PathBuf>) {
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.filter_map(Result::ok) {

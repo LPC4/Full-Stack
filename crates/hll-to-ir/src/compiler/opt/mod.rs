@@ -45,7 +45,7 @@ pub fn optimize(program: &mut IrProgram, opts: OptOptions) {
     }
 }
 
-/// Run enabled passes over one function to a fixpoint (folding + DCE alternate).
+// Run enabled passes over one function to a fixpoint (folding + DCE alternate).
 fn optimize_function(func: &mut IrFunction, opts: OptOptions) {
     const MAX_ROUNDS: usize = 16;
     for _ in 0..MAX_ROUNDS {
