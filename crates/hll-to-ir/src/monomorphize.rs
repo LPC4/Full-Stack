@@ -1199,9 +1199,9 @@ pub(crate) fn infer_expression_type(
     match expression {
         Expression::Primary(PrimaryExpr::Identifier(name)) => environment.get(name).cloned(),
         Expression::Primary(PrimaryExpr::Literal(literal)) => match literal {
-            crate::ast::Literal::Integer(_) | crate::ast::Literal::HexInteger(_) => {
-                Some(Type::Primitive("i32".to_owned()))
-            }
+            crate::ast::Literal::Integer(_)
+            | crate::ast::Literal::HexInteger(_)
+            | crate::ast::Literal::BinInteger(_) => Some(Type::Primitive("i32".to_owned())),
             crate::ast::Literal::Float(_) => Some(Type::Primitive("f32".to_owned())),
             crate::ast::Literal::Boolean(_) => Some(Type::Primitive("bool".to_owned())),
             crate::ast::Literal::String(_) | crate::ast::Literal::Null => None,

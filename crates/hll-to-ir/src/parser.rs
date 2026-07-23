@@ -38,6 +38,11 @@ impl std::fmt::Display for ParserError {
     }
 }
 
+// Digit separators are insignificant; the lexer already rejected misplaced ones.
+fn strip_separators(text: &str) -> String {
+    text.replace('_', "")
+}
+
 #[derive(Debug, Clone)]
 pub struct Parser<'a> {
     pub tokens: Vec<Token<'a>>,
@@ -869,10 +874,10 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_and(&mut self) -> Result<Expression, ParserError> {
-        let mut expr = self.parse_bitwise_or()?;
+        let mut expr = self.parse_equality()?;
         while self.match_and() {
             self.consume_terminators();
-            let right = self.parse_bitwise_or()?;
+            let right = self.parse_equality()?;
             expr = Expression::Binary {
                 op: BinaryOp::And,
                 left: Box::new(expr),
@@ -882,6 +887,8 @@ impl<'a> Parser<'a> {
         Ok(expr)
     }
 
+    // Bitwise operators bind tighter than the comparisons (as in Rust, unlike C),
+    // so `flags & MASK == 0` is `(flags & MASK) == 0`.
     fn parse_bitwise_or(&mut self) -> Result<Expression, ParserError> {
         let mut expr = self.parse_bitwise_xor()?;
         while self.match_bitwise_or() {
@@ -911,10 +918,10 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_bitwise_and(&mut self) -> Result<Expression, ParserError> {
-        let mut expr = self.parse_equality()?;
+        let mut expr = self.parse_shift()?;
         while self.match_bitwise_and() {
             self.consume_terminators();
-            let right = self.parse_equality()?;
+            let right = self.parse_shift()?;
             expr = Expression::Binary {
                 op: BinaryOp::BitwiseAnd,
                 left: Box::new(expr),
@@ -949,7 +956,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_comparison(&mut self) -> Result<Expression, ParserError> {
-        let mut expr = self.parse_shift()?;
+        let mut expr = self.parse_bitwise_or()?;
         loop {
             self.consume_terminators();
             let op = if self.match_lt() {
@@ -966,7 +973,7 @@ impl<'a> Parser<'a> {
 
             let Some(op) = op else { break };
             self.consume_terminators();
-            let right = self.parse_additive()?;
+            let right = self.parse_bitwise_or()?;
             expr = Expression::Binary {
                 op,
                 left: Box::new(expr),
@@ -1085,6 +1092,8 @@ impl<'a> Parser<'a> {
                 Some(UnaryOp::Negate)
             } else if self.match_not() {
                 Some(UnaryOp::Not)
+            } else if self.match_tilde() {
+                Some(UnaryOp::BitNot)
             } else if self.match_ampersand() {
                 Some(UnaryOp::AddressOf)
             } else if self.match_at() {
@@ -1848,7 +1857,7 @@ impl<'a> Parser<'a> {
     fn parse_usize_literal(&mut self) -> Result<usize, ParserError> {
         match self.peek() {
             Some(Token::Integer(text)) => {
-                let value = text
+                let value = strip_separators(text)
                     .parse::<usize>()
                     .map_err(|_| self.error("invalid array size"))?;
                 self.advance();
@@ -1874,7 +1883,7 @@ impl<'a> Parser<'a> {
     fn expect_integer(&mut self) -> Result<i64, ParserError> {
         match self.peek() {
             Some(Token::Integer(text)) => {
-                let value = text
+                let value = strip_separators(text)
                     .parse::<i64>()
                     .map_err(|_| self.error("invalid integer literal"))?;
                 self.advance();
@@ -1888,7 +1897,8 @@ impl<'a> Parser<'a> {
     fn expect_hex_integer(&mut self) -> Result<i64, ParserError> {
         match self.peek() {
             Some(Token::HexInteger(text)) => {
-                let trimmed = text.trim_start_matches("0x").trim_start_matches("0X");
+                let digits = strip_separators(text);
+                let trimmed = digits.trim_start_matches("0x").trim_start_matches("0X");
                 // Parse as u64 first to handle large addresses, then cast to i64
                 let value_u64 = u64::from_str_radix(trimmed, 16)
                     .map_err(|_| self.error("invalid hex literal"))?;
@@ -1901,10 +1911,27 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn expect_bin_integer(&mut self) -> Result<i64, ParserError> {
+        match self.peek() {
+            Some(Token::BinInteger(text)) => {
+                let digits = strip_separators(text);
+                let trimmed = digits.trim_start_matches("0b").trim_start_matches("0B");
+                // Parse as u64 first so a full-width mask keeps its bit pattern.
+                let value_u64 = u64::from_str_radix(trimmed, 2)
+                    .map_err(|_| self.error("invalid binary literal"))?;
+                let value = crate::conv::u64_bits_to_i64(value_u64);
+                self.advance();
+                Ok(value)
+            }
+            Some(tok) => Err(self.error_with_token("expected binary integer literal", tok)),
+            None => Err(self.error("unexpected end of input")),
+        }
+    }
+
     fn expect_float(&mut self) -> Result<f64, ParserError> {
         match self.peek() {
             Some(Token::Float(text)) => {
-                let value = text
+                let value = strip_separators(text)
                     .parse::<f64>()
                     .map_err(|_| self.error("invalid float literal"))?;
                 self.advance();
@@ -2129,6 +2156,9 @@ impl<'a> Parser<'a> {
             }
             Some(Token::HexInteger(_)) => Expression::Primary(PrimaryExpr::Literal(
                 Literal::HexInteger(self.expect_hex_integer()?),
+            )),
+            Some(Token::BinInteger(_)) => Expression::Primary(PrimaryExpr::Literal(
+                Literal::BinInteger(self.expect_bin_integer()?),
             )),
             Some(Token::Float(_)) => {
                 Expression::Primary(PrimaryExpr::Literal(Literal::Float(self.expect_float()?)))
@@ -2591,6 +2621,7 @@ impl<'a> Parser<'a> {
         match self.peek() {
             Some(Token::Integer(_)) => Ok(Some(Literal::Integer(self.expect_integer()?))),
             Some(Token::HexInteger(_)) => Ok(Some(Literal::HexInteger(self.expect_hex_integer()?))),
+            Some(Token::BinInteger(_)) => Ok(Some(Literal::BinInteger(self.expect_bin_integer()?))),
             Some(Token::Char(value)) => {
                 let v = *value as i64;
                 self.advance();
@@ -2602,6 +2633,9 @@ impl<'a> Parser<'a> {
                     Some(Token::Integer(_)) => Ok(Some(Literal::Integer(-self.expect_integer()?))),
                     Some(Token::HexInteger(_)) => {
                         Ok(Some(Literal::HexInteger(-self.expect_hex_integer()?)))
+                    }
+                    Some(Token::BinInteger(_)) => {
+                        Ok(Some(Literal::BinInteger(-self.expect_bin_integer()?)))
                     }
                     _ => Err(self.error("expected integer literal after `-` in match pattern")),
                 }
@@ -2739,6 +2773,10 @@ impl<'a> Parser<'a> {
 
     fn match_ampersand(&mut self) -> bool {
         self.match_variant(|t| matches!(t, Token::Ampersand))
+    }
+
+    fn match_tilde(&mut self) -> bool {
+        self.match_variant(|t| matches!(t, Token::Tilde))
     }
 
     fn match_bitwise_and(&mut self) -> bool {
@@ -3434,6 +3472,82 @@ mod tests {
             }
             other => panic!("expected Cast, got: {other:?}"),
         }
+    }
+
+    // Parse `source` as a single expression through the real lexer.
+    fn expression_of(source: &str) -> Expression {
+        let mut parser = Parser::new_with_spans(Lexer::tokenize(source));
+        parser
+            .parse_expression()
+            .unwrap_or_else(|e| panic!("failed to parse `{source}`: {e}"))
+    }
+
+    #[test]
+    fn bitwise_operators_bind_tighter_than_comparisons() {
+        use crate::ast::BinaryOp;
+        // `flags & MASK == 0` is `(flags & MASK) == 0`, not C's `flags & (MASK == 0)`.
+        let Expression::Binary { op, left, .. } = expression_of("flags & MASK == 0") else {
+            panic!("expected a binary expression")
+        };
+        assert_eq!(op, BinaryOp::Eq);
+        assert!(matches!(
+            left.as_ref(),
+            Expression::Binary {
+                op: BinaryOp::BitwiseAnd,
+                ..
+            }
+        ));
+
+        // `|` stays looser than `^`, which stays looser than `&`.
+        let Expression::Binary { op, right, .. } = expression_of("a | b ^ c & d") else {
+            panic!("expected a binary expression")
+        };
+        assert_eq!(op, BinaryOp::BitwiseOr);
+        let Expression::Binary { op, right, .. } = right.as_ref() else {
+            panic!("expected `^` under `|`")
+        };
+        assert_eq!(*op, BinaryOp::BitwiseXor);
+        assert!(matches!(
+            right.as_ref(),
+            Expression::Binary {
+                op: BinaryOp::BitwiseAnd,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn shifts_bind_tighter_than_bitwise_and_comparisons() {
+        use crate::ast::BinaryOp;
+        let Expression::Binary { op, left, .. } = expression_of("a < b << 2") else {
+            panic!("expected a binary expression")
+        };
+        assert_eq!(op, BinaryOp::Lt);
+        assert!(matches!(
+            left.as_ref(),
+            Expression::Primary(PrimaryExpr::Identifier(_))
+        ));
+    }
+
+    #[test]
+    fn parses_radix_literals_and_bitwise_not() {
+        use crate::ast::UnaryOp;
+        assert_eq!(
+            expression_of("0b1010_1010"),
+            Expression::Primary(PrimaryExpr::Literal(Literal::BinInteger(0xAA)))
+        );
+        assert_eq!(
+            expression_of("0x8000_0000"),
+            Expression::Primary(PrimaryExpr::Literal(Literal::HexInteger(0x8000_0000)))
+        );
+        assert_eq!(
+            expression_of("1_000_000"),
+            Expression::Primary(PrimaryExpr::Literal(Literal::Integer(1_000_000)))
+        );
+        let Expression::Unary { op, .. } = expression_of("~mask") else {
+            panic!("expected a unary expression")
+        };
+        assert_eq!(op, UnaryOp::BitNot);
     }
 
     #[test]

@@ -623,7 +623,9 @@ impl SemanticAnalyzer {
                     }
                 }
                 PrimaryExpr::Literal(lit) => match lit {
-                    Literal::Integer(_) | Literal::HexInteger(_) => Ok("i32".to_owned()),
+                    Literal::Integer(_) | Literal::HexInteger(_) | Literal::BinInteger(_) => {
+                        Ok("i32".to_owned())
+                    }
                     Literal::Float(_) => Ok("f32".to_owned()),
                     Literal::Boolean(_) => Ok("i1".to_owned()),
                     Literal::Null => Ok("*unknown".to_owned()),
@@ -701,6 +703,25 @@ impl SemanticAnalyzer {
                             return Err(());
                         }
                         return Ok("u64".to_owned());
+                    }
+                    // `assert(cond)` is the checked-failure builtin unless the unit
+                    // declares its own `assert`.
+                    if name == "assert" && !self.function_signatures.contains_key(name) {
+                        let [condition] = arguments.as_slice() else {
+                            self.error(format!(
+                                "assert(cond) expects exactly one argument, got {}",
+                                arguments.len()
+                            ));
+                            return Err(());
+                        };
+                        let condition_ty = self.infer_expression_type(condition)?;
+                        if !matches!(condition_ty.as_str(), "i1" | "bool" | "unknown") {
+                            self.error(format!(
+                                "assert(cond) expects a bool condition, found `{condition_ty}`"
+                            ));
+                            return Err(());
+                        }
+                        return Ok("void".to_owned());
                     }
                     // A call whose name is an enum variant constructs that variant.
                     if let Some(sig) = self.enum_variants.get(name).cloned() {

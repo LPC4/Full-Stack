@@ -2072,6 +2072,115 @@ main: () -> i32 { return 0 }
 }
 
 #[cfg(test)]
+mod systems_literals_and_assert {
+    use crate::{CompileConfig, Diagnostic, HllCompiler, HllOutput, TargetMode};
+
+    fn compile(source: &str) -> Result<HllOutput, Vec<Diagnostic>> {
+        HllCompiler::new(CompileConfig {
+            target: TargetMode::Hosted,
+            strict: true,
+            ..CompileConfig::default()
+        })
+        .compile(source)
+    }
+
+    fn expect_error_containing(source: &str, needle: &str) {
+        let errors = match compile(source) {
+            Ok(_) => panic!("expected a compile error mentioning {needle:?}"),
+            Err(errors) => errors,
+        };
+        assert!(
+            errors.iter().any(|e| e.message.contains(needle)),
+            "no error mentions {needle:?}: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn binary_literals_and_separators_fold_to_their_value() {
+        let output = compile(
+            r#"
+const MASK = 0b0000_1111
+main: () -> i32 {
+    return (0b1010_1010 & MASK) + 1_000
+}
+"#,
+        )
+        .expect("radix literals should compile");
+        let ir = output.ir.to_string();
+        assert!(ir.contains("15"), "folded mask missing: {ir}");
+        assert!(ir.contains("1000"), "separated literal missing: {ir}");
+    }
+
+    #[test]
+    fn bitwise_not_lowers_to_the_complement() {
+        let output = compile(
+            r#"
+main: () -> i32 {
+    flags: i32 = 0b0000_1111
+    return flags & ~0b0000_0011
+}
+"#,
+        )
+        .expect("`~` should compile");
+        assert!(
+            output.ir.to_string().contains("bitnot"),
+            "expected a bitnot instruction: {}",
+            output.ir
+        );
+    }
+
+    #[test]
+    fn assert_traps_with_its_own_diagnostic_code() {
+        let output = compile(
+            r#"
+main: () -> i32 {
+    x: i32 = 2
+    assert(x == 2)
+    return 0
+}
+"#,
+        )
+        .expect("assert should compile");
+        let ir = output.ir.to_string();
+        assert!(ir.contains("trap 101"), "expected an assert trap: {ir}");
+        assert!(
+            !ir.contains("call assert"),
+            "assert must not be a call: {ir}"
+        );
+    }
+
+    #[test]
+    fn assert_rejects_bad_arity_and_non_bool_conditions() {
+        expect_error_containing(
+            "main: () -> i32 { assert() \n return 0 }",
+            "expects exactly one argument",
+        );
+        expect_error_containing(
+            "main: () -> i32 { assert(7) \n return 0 }",
+            "expects a bool condition",
+        );
+    }
+
+    #[test]
+    fn a_declared_assert_function_keeps_its_own_meaning() {
+        let output = compile(
+            r#"
+assert: (ok: bool) -> i32 { return 0 }
+main: () -> i32 {
+    return assert(true)
+}
+"#,
+        )
+        .expect("a user-declared assert should still compile");
+        assert!(
+            output.ir.to_string().contains("call assert"),
+            "user assert should be called: {}",
+            output.ir
+        );
+    }
+}
+
+#[cfg(test)]
 mod dyn_interfaces {
     use crate::{CompileConfig, Diagnostic, HllCompiler, HllOutput, TargetMode};
 

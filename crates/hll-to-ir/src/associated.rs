@@ -610,6 +610,7 @@ fn expand_const_expression(
         Expression::Primary(PrimaryExpr::Literal(
             literal @ (Literal::Integer(_)
             | Literal::HexInteger(_)
+            | Literal::BinInteger(_)
             | Literal::Float(_)
             | Literal::Boolean(_)),
         )) => Ok(Expression::Primary(PrimaryExpr::Literal(literal.clone()))),
@@ -642,7 +643,10 @@ fn expand_const_expression(
             ))))
         }
         Expression::Unary {
-            op: op @ (crate::ast::UnaryOp::Negate | crate::ast::UnaryOp::Not),
+            op:
+                op @ (crate::ast::UnaryOp::Negate
+                | crate::ast::UnaryOp::Not
+                | crate::ast::UnaryOp::BitNot),
             expr,
         } => Ok(Expression::Unary {
             op: op.clone(),

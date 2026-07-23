@@ -538,6 +538,66 @@ main: () -> i32 {
 }
 
 #[test]
+fn failed_assert_traps_with_its_own_code() {
+    // `assert(cond)` aborts through the checked-failure path with code 101.
+    assert_exit(
+        r#"
+main: () -> i32 {
+    x: i32 = 3
+    assert(x == 4)
+    return 0
+}
+"#,
+        101,
+    );
+}
+
+#[test]
+fn passing_assert_falls_through() {
+    assert_exit(
+        r#"
+main: () -> i32 {
+    x: i32 = 4
+    assert(x == 4)
+    return 7
+}
+"#,
+        7,
+    );
+}
+
+#[test]
+fn radix_literals_and_bitwise_not_evaluate() {
+    // 0b1111_0000 & ~0b0011_0000 == 0b1100_0000 == 192.
+    assert_exit(
+        r#"
+main: () -> i32 {
+    bits: i32 = 0b1111_0000
+    return bits & ~0b0011_0000
+}
+"#,
+        192,
+    );
+}
+
+#[test]
+fn bitwise_operators_bind_tighter_than_comparisons() {
+    // `flags & MASK == MASK` is `(flags & MASK) == MASK`, so the mask test holds.
+    assert_exit(
+        r#"
+main: () -> i32 {
+    flags: i32 = 0b0110
+    if flags & 0b0010 == 0b0010 {
+        return 5
+    }
+    return 0
+}
+"#,
+        5,
+    );
+}
+
+#[test]
 fn slice_in_bounds_does_not_trap() {
     // A runtime index that is in bounds passes the check and reads the element.
     assert_exit(

@@ -737,7 +737,7 @@ impl CompilerRv64 {
                         result_fp, val_fp, val_fp,
                     )));
                 }
-                IrUnaryOp::Not => panic!("Bitwise not not supported for floats"),
+                IrUnaryOp::Not | IrUnaryOp::BitNot => panic!("`!`/`~` are not defined for floats"),
             }
             if is_f64 {
                 self.emitter.emit_fsd(SP, result_fp, dest_slot as i32);
@@ -749,9 +749,10 @@ impl CompilerRv64 {
             let result_tmp = self.result_reg_for(dest, ctx);
             match op {
                 IrUnaryOp::Neg => self.emitter.emit_neg(result_tmp, val_tmp),
-                // HLL `!`/`not` is logical negation (no bitwise-not operator exists),
-                // so `!x` is `x == 0`, not a bitwise complement.
+                // HLL `!`/`not` is logical negation, so `!x` is `x == 0`; the
+                // bitwise complement is the separate `~` operator.
                 IrUnaryOp::Not => self.emitter.emit_seqz(result_tmp, val_tmp),
+                IrUnaryOp::BitNot => self.emitter.emit_not(result_tmp, val_tmp),
             }
             self.commit_int_result(dest, result_tmp, &resolved_ty, ctx);
         }

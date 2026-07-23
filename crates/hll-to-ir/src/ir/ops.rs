@@ -41,7 +41,10 @@ impl fmt::Display for IrMathOp {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IrUnaryOp {
     Neg,
+    /// Logical negation: `x == 0`.
     Not,
+    /// Bitwise complement.
+    BitNot,
 }
 
 impl fmt::Display for IrUnaryOp {
@@ -49,6 +52,7 @@ impl fmt::Display for IrUnaryOp {
         let text = match self {
             Self::Neg => "neg",
             Self::Not => "not",
+            Self::BitNot => "bitnot",
         };
         write!(f, "{text}")
     }

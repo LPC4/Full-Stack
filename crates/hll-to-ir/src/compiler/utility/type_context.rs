@@ -282,6 +282,15 @@ impl TypeContext {
                 }
                 Ok("i1".to_owned())
             }
+            UnaryOp::BitNot => {
+                if !Self::is_integer_typename(operand_type) && !self.is_unknown_like(operand_type) {
+                    return Err(TypeCheckError::InvalidUnaryOp {
+                        op: "bitwise not".to_owned(),
+                        ty: operand_type.to_owned(),
+                    });
+                }
+                Ok(operand_type.to_owned())
+            }
             UnaryOp::Dereference => {
                 if let Some(inner) = operand_type.strip_prefix('*') {
                     Ok(inner.to_owned())

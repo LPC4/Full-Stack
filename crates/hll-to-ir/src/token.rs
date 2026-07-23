@@ -79,9 +79,9 @@ pub enum Token<'a> {
     Ident(&'a str),
     Integer(&'a str),
     HexInteger(&'a str),
+    BinInteger(&'a str),
     Float(&'a str),
     String(&'a str),
-    // A `'c'` literal, lexed to its ascii byte value.
     Char(u8),
 
     // Keywords
@@ -154,6 +154,7 @@ pub enum Token<'a> {
     Ampersand,
     Caret,
     Pipe,
+    Tilde,
     At,
     LParen,
     RParen,

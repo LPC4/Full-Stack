@@ -21,11 +21,13 @@ fn int_width_rank(width: &IntWidth) -> u8 {
 impl HighLevelCompiler {
     pub(super) fn lower_literal(&mut self, literal: &Literal) -> LoweredValue {
         match literal {
-            Literal::Integer(value) | Literal::HexInteger(value) => LoweredValue {
-                value: IrValue::Integer(*value),
-                ty: IrType::Integer(IntWidth::I32),
-                is_unsigned: false,
-            },
+            Literal::Integer(value) | Literal::HexInteger(value) | Literal::BinInteger(value) => {
+                LoweredValue {
+                    value: IrValue::Integer(*value),
+                    ty: IrType::Integer(IntWidth::I32),
+                    is_unsigned: false,
+                }
+            }
             Literal::Float(value) => LoweredValue {
                 value: IrValue::Float(*value),
                 ty: IrType::Float(FloatWidth::F64),
@@ -401,7 +403,8 @@ impl HighLevelCompiler {
         let ir_op = match op {
             UnaryOp::Negate => IrUnaryOp::Neg,
             UnaryOp::Not => IrUnaryOp::Not,
-            _ => unreachable!("lower_unary only handles Negate/Not"),
+            UnaryOp::BitNot => IrUnaryOp::BitNot,
+            _ => unreachable!("lower_unary only handles Negate/Not/BitNot"),
         };
         self.push_instruction(IrInstruction::Unary {
             dest: dest.clone(),

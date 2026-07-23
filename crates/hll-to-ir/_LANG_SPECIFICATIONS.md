@@ -36,6 +36,8 @@ invalid). Returning the address of a local (`return &x`) is a compile-time error
 | Continuation | A statement continues onto the next line when the current line cannot yet form a complete statement: it ends with a binary operator, a comma, or an open `(`/`[`/`{`. |
 | Type annotations | `name: Type` (`:` always introduces a type, never a value). |
 | Type casting | Postfix `expr as Type` only. There is no prefix `Type(value)` cast form. |
+| Integer literals | Decimal, hexadecimal `0x1F`, or binary `0b1010`. |
+| Digit separators | `_` may separate digits in any base (`0x8000_0000`, `1_000_000`). It is insignificant; a leading, trailing, or doubled `_` is rejected. |
 
 ### 2.1 Syntax examples
 
@@ -43,6 +45,8 @@ invalid). Returning the address of a local (`return &x`) is a compile-time error
 x: i32 = 42                ; explicitly typed declaration
 y := 3.1415               ; inferred declaration (f64 from the literal)
 z: i32 = 42               ; trailing comment
+mask: u32 = 0b0000_1111   ; binary literal with digit separators
+clear: u32 = ~mask        ; bitwise complement
 
 ; multi-line continuation: the first line ends on a binary operator
 w: i32 = 1 + 2
@@ -788,6 +792,21 @@ A failed slice/array bounds check, and any other checked runtime failure, transf
 non-returning trap with a stable diagnostic code. In the VM and kernel this is observable as a
 clean halt carrying that code; raw-pointer access is documented as unchecked.
 
+| Check | Code |
+|-------|------|
+| Slice or array bounds | 134 |
+| `assert(cond)` | 101 |
+
+`assert(cond)` takes one `bool` and traps through that path when it is false; it produces no
+value and emits no call. There is no message argument: the diagnostic code is the whole
+report. A unit that declares its own `assert` function keeps that meaning instead.
+
+```hll
+consume: (buf: u8[], count: u64) {
+    assert(count <= buf.len)
+}
+```
+
 ## 8. Inline assembly
 
 Two forms emit raw RISC-V or read hardware registers. They exist only for low-level system
@@ -823,8 +842,9 @@ _start: () {
 
 ```ebnf
 ident       = letter { letter | digit | "_" };
-integer     = digit { digit };
-hex_integer = "0x" hex_digit { hex_digit };
+integer     = digit { digit | "_" };
+hex_integer = "0x" hex_digit { hex_digit | "_" };
+bin_integer = "0b" bin_digit { bin_digit | "_" };
 float       = digit { digit } "." digit { digit } [ exponent ];
 char        = "'" ( any_char - "'" | escape ) "'";
 string      = '"' { any_char - '"' } '"';
@@ -898,7 +918,7 @@ arm            = pattern "->" ( block | expression );
 pattern        = "_" | identifier | identifier "(" pattern { "," pattern } ")"
                | [ "-" ] ( integer | char );
 cast_expr      = expression "as" type;
-unary_expr     = ( "@" | "&" | "-" | "!" ) expression;
+unary_expr     = ( "@" | "&" | "-" | "!" | "~" ) expression;
 postfix_expr   = primary_expr { "." identifier | "[" index_or_range "]"
                  | "(" [ arg_list ] ")" | "?" };
 index_or_range = expression | range_expr;
@@ -916,18 +936,21 @@ field_init     = "." identifier "=" expression;
 | Level | Operators | Associativity |
 |-------|-----------|---------------|
 | 1 | `() [] . ? as` (postfix) | Left |
-| 2 | `@ & - !` (unary) | Right |
+| 2 | `@ & - ! ~` (unary) | Right |
 | 3 | `* / %` | Left |
 | 4 | `+ -` | Left |
 | 5 | `<< >>` | Left |
-| 6 | `< <= > >=` | Left |
-| 7 | `== !=` | Left |
-| 8 | `&` (bitwise) | Left |
-| 9 | `^` (bitwise) | Left |
-| 10 | `\|` (bitwise) | Left |
+| 6 | `&` (bitwise) | Left |
+| 7 | `^` (bitwise) | Left |
+| 8 | `\|` (bitwise) | Left |
+| 9 | `< <= > >=` | Left |
+| 10 | `== !=` | Left |
 | 11 | `and` | Left |
 | 12 | `or` | Left |
 | 13 | `=` and compound assignment | Right |
+
+The bitwise operators bind tighter than the comparisons, unlike C: `flags & MASK == 0` is
+`(flags & MASK) == 0`, the reading mask tests need.
 
 `as` is a high-precedence postfix operator and applies to the single operand on its left.
 `a + b as u32` is `a + (b as u32)`, `ptr + 3 as u8*` is `ptr + (3 as u8*)`, and

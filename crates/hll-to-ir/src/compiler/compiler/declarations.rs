@@ -413,7 +413,12 @@ impl HighLevelCompiler {
         context: &mut ConstEvalContext,
     ) -> Result<Literal, String> {
         match expr {
-            Expression::Primary(crate::ast::PrimaryExpr::Literal(lit)) => Ok(lit.clone()),
+            // Radix is presentation only, so fold `0xFF`/`0b1010` as plain integers
+            // and let const arithmetic see one integer literal shape.
+            Expression::Primary(crate::ast::PrimaryExpr::Literal(lit)) => Ok(match lit {
+                Literal::HexInteger(value) | Literal::BinInteger(value) => Literal::Integer(*value),
+                other => other.clone(),
+            }),
             Expression::Primary(crate::ast::PrimaryExpr::Identifier(ident)) => {
                 // First check env, then compile_time_consts
                 if let Some(lit) = env.get(ident) {
@@ -432,6 +437,7 @@ impl HighLevelCompiler {
                     (crate::ast::UnaryOp::Negate, Literal::Integer(i)) => Ok(Literal::Integer(-i)),
                     (crate::ast::UnaryOp::Negate, Literal::Float(f)) => Ok(Literal::Float(-f)),
                     (crate::ast::UnaryOp::Not, Literal::Boolean(b)) => Ok(Literal::Boolean(!b)),
+                    (crate::ast::UnaryOp::BitNot, Literal::Integer(i)) => Ok(Literal::Integer(!i)),
                     _ => Err("Unsupported compile-time unary operation".to_owned()),
                 }
             }

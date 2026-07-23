@@ -242,7 +242,9 @@ fn fold_math(op: IrMathOp, lhs: i64, rhs: i64, width: IntWidth) -> Option<i64> {
 fn fold_unary(op: IrUnaryOp, value: i64, width: IntWidth) -> i64 {
     let raw = match op {
         IrUnaryOp::Neg => 0i64.wrapping_sub(value),
-        IrUnaryOp::Not => !value,
+        // `Not` is logical (the backend emits `seqz`); `BitNot` is the complement.
+        IrUnaryOp::Not => i64::from(value == 0),
+        IrUnaryOp::BitNot => !value,
     };
     sext(raw, width)
 }

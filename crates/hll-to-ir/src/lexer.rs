@@ -140,6 +140,7 @@ impl<'a> Lexer<'a> {
                 }
             }
             '^' => self.op_or_compound(CompoundOp::BitXor, Token::Caret),
+            '~' => Token::Tilde,
             '(' => Token::LParen,
             ')' => Token::RParen,
             '{' => Token::LBrace,
@@ -257,45 +258,66 @@ impl<'a> Lexer<'a> {
     }
 
     fn read_number(&mut self, start: usize) -> Token<'a> {
-        let mut is_hex = false;
         let mut is_float = false;
 
-        // Check for Hex prefix
-        if self.input[start..].starts_with('0') && self.peek_is('x') {
-            self.advance(); // consume 'x'
-            is_hex = true;
+        // `0x`/`0b` prefixed literal: scan digits of that radix only.
+        if self.input[start..].starts_with('0')
+            && let Some(radix) = self.chars.peek().and_then(|c| match c {
+                'x' | 'X' => Some(16),
+                'b' | 'B' => Some(2),
+                _ => None,
+            })
+        {
+            self.advance(); // consume the radix letter
+            let digits_start = self.pos;
             while let Some(&c) = self.chars.peek() {
-                if c.is_ascii_hexdigit() {
+                if c == '_' || c.is_digit(radix) {
                     self.advance();
                 } else {
                     break;
                 }
             }
-        } else {
-            // Standard integer or float
-            while let Some(&c) = self.chars.peek() {
-                if c.is_ascii_digit() {
-                    self.advance();
-                } else if c == '.' && !is_float {
-                    // A `.` followed by another `.` is the range operator, not a
-                    // decimal point: leave it for `0..5` to tokenize as `0 .. 5`.
-                    let mut ahead = self.chars.clone();
-                    ahead.next();
-                    if ahead.peek() == Some(&'.') {
-                        break;
-                    }
-                    is_float = true;
-                    self.advance();
-                } else {
+            let digits = &self.input[digits_start..self.pos];
+            let text = &self.input[start..self.pos];
+            if digits.is_empty() {
+                return Token::Error(format!("numeric literal `{text}` has no digits"));
+            }
+            if let Err(message) = check_digit_separators(digits, text) {
+                return Token::Error(message);
+            }
+            return if radix == 16 {
+                Token::HexInteger(text)
+            } else {
+                Token::BinInteger(text)
+            };
+        }
+
+        // Standard integer or float
+        while let Some(&c) = self.chars.peek() {
+            if c.is_ascii_digit() || c == '_' {
+                self.advance();
+            } else if c == '.' && !is_float {
+                // A `.` followed by another `.` is the range operator, not a
+                // decimal point: leave it for `0..5` to tokenize as `0 .. 5`.
+                let mut ahead = self.chars.clone();
+                ahead.next();
+                if ahead.peek() == Some(&'.') {
                     break;
                 }
+                is_float = true;
+                self.advance();
+            } else {
+                break;
             }
         }
 
         let text = &self.input[start..self.pos];
-        if is_hex {
-            Token::HexInteger(text)
-        } else if is_float {
+        for run in text.split('.') {
+            if let Err(message) = check_digit_separators(run, text) {
+                return Token::Error(message);
+            }
+        }
+        if is_float {
             Token::Float(text)
         } else {
             Token::Integer(text)
@@ -414,6 +436,17 @@ impl<'a> Lexer<'a> {
             plain
         }
     }
+}
+
+// Digit separators are insignificant but must sit between digits: a leading,
+// trailing, or doubled `_` is rejected. An empty run is the caller's concern.
+fn check_digit_separators(digits: &str, literal: &str) -> Result<(), String> {
+    if digits.starts_with('_') || digits.ends_with('_') || digits.contains("__") {
+        return Err(format!(
+            "digit separator `_` in `{literal}` must sit between digits"
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -605,6 +638,35 @@ mod tests {
         assert_eq!(lexer.next_token(), Token::Char(39));
         assert_eq!(lexer.next_token(), Token::Char(92));
         assert_eq!(lexer.next_token(), Token::Eof);
+    }
+
+    #[test]
+    fn test_binary_literals_and_digit_separators() {
+        let mut lexer = Lexer::new("0b1010 0B11 1_000_000 0x8000_0000 3.141_59");
+        assert_eq!(lexer.next_token(), Token::BinInteger("0b1010"));
+        assert_eq!(lexer.next_token(), Token::BinInteger("0B11"));
+        assert_eq!(lexer.next_token(), Token::Integer("1_000_000"));
+        assert_eq!(lexer.next_token(), Token::HexInteger("0x8000_0000"));
+        assert_eq!(lexer.next_token(), Token::Float("3.141_59"));
+        assert_eq!(lexer.next_token(), Token::Eof);
+    }
+
+    #[test]
+    fn test_misplaced_digit_separators_are_errors() {
+        for input in ["1_", "1__0", "0x_FF", "0b", "1_.5"] {
+            let mut lexer = Lexer::new(input);
+            assert!(
+                matches!(lexer.next_token(), Token::Error(_)),
+                "expected `{input}` to be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn test_tilde_is_bitwise_not() {
+        let mut lexer = Lexer::new("~mask");
+        assert_eq!(lexer.next_token(), Token::Tilde);
+        assert_eq!(lexer.next_token(), Token::Ident("mask"));
     }
 
     #[test]

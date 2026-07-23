@@ -1766,6 +1766,7 @@ fn render_literal(lit: &Literal) -> String {
     match lit {
         Literal::Integer(value) => value.to_string(),
         Literal::HexInteger(value) => format!("0x{value:x}"),
+        Literal::BinInteger(value) => format!("0b{value:b}"),
         Literal::Float(value) => format!("{value:?}"),
         Literal::Boolean(value) => value.to_string(),
         Literal::Null => "null".to_owned(),
@@ -1800,6 +1801,7 @@ fn unary_op(op: &UnaryOp) -> &'static str {
     match op {
         UnaryOp::Negate => "-",
         UnaryOp::Not => "!",
+        UnaryOp::BitNot => "~",
         UnaryOp::AddressOf => "&",
         UnaryOp::Dereference => "@",
     }

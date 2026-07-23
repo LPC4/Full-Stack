@@ -8,6 +8,9 @@ use crate::ir::{FloatWidth, IntWidth, IrCastMode, IrCmpOp, IrMathOp, IrRegister,
 // Diagnostic exit code for a failed slice bounds check (SIGABRT convention).
 const SLICE_BOUNDS_TRAP_CODE: u32 = 134;
 
+// Diagnostic exit code for a failed `assert(cond)`.
+const ASSERT_TRAP_CODE: u32 = 101;
+
 // One evaluated `format_into` hole, classified for the sizing/write passes.
 enum FormatHole {
     I64(IrValue),
@@ -30,10 +33,8 @@ impl HighLevelCompiler {
         self.lower_expr(expression, EvalMode::Value)
     }
 
-    /// Unified expression lowering.
-    ///
-    /// `EvalMode::Value` produces the loaded/computed value.
-    /// `EvalMode::Address` produces a pointer (`Pointer(T)`) to the storage location.
+    /// Unified expression lowering: `EvalMode::Value` produces the loaded value,
+    /// `EvalMode::Address` a `Pointer(T)` to the storage location.
     pub(super) fn lower_expr(
         &mut self,
         expression: &Expression,
@@ -197,6 +198,11 @@ impl HighLevelCompiler {
                         ty: IrType::Integer(IntWidth::I64),
                         is_unsigned: true,
                     });
+                }
+                // A user-declared `assert` keeps its own meaning; otherwise this is
+                // the checked-failure builtin.
+                if name == "assert" && !self.function_return_types.contains_key(name) {
+                    return self.lower_assert(arguments);
                 }
                 // A function-pointer binding calls indirectly; any other bare
                 // name stays a direct call so extern functions link as before.
@@ -1528,6 +1534,31 @@ impl HighLevelCompiler {
         }
     }
 
+    // `assert(cond)`: trap with a stable diagnostic code when `cond` is false.
+    fn lower_assert(&mut self, arguments: &[Expression]) -> Option<LoweredValue> {
+        let [condition] = arguments else {
+            self.context.error(format!(
+                "assert(cond) expects exactly one argument, got {}",
+                arguments.len()
+            ));
+            return None;
+        };
+        let condition = self.lower_expr(condition, EvalMode::Value)?;
+        let failed = self.new_temp();
+        self.push_instruction(IrInstruction::Unary {
+            dest: failed.clone(),
+            op: crate::ir::IrUnaryOp::Not,
+            ty: condition.ty,
+            value: condition.value,
+        });
+        self.emit_trap_if(IrValue::Register(failed), ASSERT_TRAP_CODE);
+        Some(LoweredValue {
+            value: IrValue::Null,
+            ty: IrType::Void,
+            is_unsigned: false,
+        })
+    }
+
     // Trap when `idx >= len` (unsigned, so a negative index is out of bounds too).
     fn emit_bounds_check(&mut self, idx: &IrValue, len: &IrValue) {
         let oob = self.new_temp();
@@ -1538,14 +1569,12 @@ impl HighLevelCompiler {
             lhs: idx.clone(),
             rhs: len.clone(),
         });
-        self.emit_trap_if(IrValue::Register(oob));
+        self.emit_trap_if(IrValue::Register(oob), SLICE_BOUNDS_TRAP_CODE);
     }
 
-    // Trap (SIGABRT-coded exit) when `cond` is true. Splits the current block:
-    // branch to a Trap block on failure, otherwise fall through to a fresh block.
-    // Phi correctness is unaffected because the backend ignores phi incoming
-    // labels and reconciles values by shared storage.
-    fn emit_trap_if(&mut self, cond: IrValue) {
+    // Trap (coded exit) when `cond` is true, splitting the current block. Phi
+    // correctness holds: the backend reconciles values by shared storage.
+    fn emit_trap_if(&mut self, cond: IrValue, code: u32) {
         let trap_label = self.new_label();
         let ok_label = self.new_label();
         self.set_terminator(crate::ir::IrTerminator::Branch {
@@ -1555,9 +1584,7 @@ impl HighLevelCompiler {
         });
 
         self.start_new_block(trap_label.0.clone());
-        self.set_terminator(crate::ir::IrTerminator::Trap {
-            code: SLICE_BOUNDS_TRAP_CODE,
-        });
+        self.set_terminator(crate::ir::IrTerminator::Trap { code });
 
         self.start_new_block(ok_label.0.clone());
     }
@@ -1660,7 +1687,7 @@ impl HighLevelCompiler {
             lhs: end_val.clone(),
             rhs: len_val,
         });
-        self.emit_trap_if(IrValue::Register(end_oob));
+        self.emit_trap_if(IrValue::Register(end_oob), SLICE_BOUNDS_TRAP_CODE);
         // start > end  ->  trap
         let start_oob = self.new_temp();
         self.push_instruction(IrInstruction::Cmp {
@@ -1670,7 +1697,7 @@ impl HighLevelCompiler {
             lhs: start_val.clone(),
             rhs: end_val.clone(),
         });
-        self.emit_trap_if(IrValue::Register(start_oob));
+        self.emit_trap_if(IrValue::Register(start_oob), SLICE_BOUNDS_TRAP_CODE);
 
         // new length = end - start
         let new_len = self.new_temp();

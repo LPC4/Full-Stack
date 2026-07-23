@@ -387,6 +387,7 @@ pub enum BinaryOp {
 pub enum UnaryOp {
     Negate,
     Not,
+    BitNot,
     AddressOf,
     Dereference,
 }
@@ -463,7 +464,9 @@ pub enum FormatSegment {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
     Integer(i64),
+    // Radix is kept only so a literal prints back in the base it was written in.
     HexInteger(i64),
+    BinInteger(i64),
     Float(f64),
     Boolean(bool),
     Null,

@@ -26,6 +26,7 @@ const HLL_KEYWORDS: &[&str] = &[
     "defer",
     "new",
     "free",
+    "assert",
     "asm",
     "and",
     "or",
@@ -157,30 +158,32 @@ fn append_hll_code_part(
                 match bytes[end] {
                     b'x' | b'X' => {
                         end += 1;
-                        while end < len && bytes[end].is_ascii_hexdigit() {
+                        while end < len && (bytes[end].is_ascii_hexdigit() || bytes[end] == b'_') {
                             end += 1;
                         }
                     }
                     b'b' | b'B' => {
                         end += 1;
-                        while end < len && (bytes[end] == b'0' || bytes[end] == b'1') {
+                        while end < len && matches!(bytes[end], b'0' | b'1' | b'_') {
                             end += 1;
                         }
                     }
                     b'o' | b'O' => {
                         end += 1;
-                        while end < len && (b'0'..=b'7').contains(&bytes[end]) {
+                        while end < len
+                            && ((b'0'..=b'7').contains(&bytes[end]) || bytes[end] == b'_')
+                        {
                             end += 1;
                         }
                     }
                     _ => {
-                        while end < len && bytes[end].is_ascii_digit() {
+                        while end < len && (bytes[end].is_ascii_digit() || bytes[end] == b'_') {
                             end += 1;
                         }
                     }
                 }
             } else {
-                while end < len && bytes[end].is_ascii_digit() {
+                while end < len && (bytes[end].is_ascii_digit() || bytes[end] == b'_') {
                     end += 1;
                 }
             }
