@@ -451,7 +451,7 @@ impl FullStackApp {
         // spine, so modules keep the complete compilation pipeline in reach.
         self.active_build_target.as_ref()?;
         match Self::source_kind_for_path(active.as_str()) {
-            SourceKind::Hll | SourceKind::Build => Some(HLL_LAYERS),
+            SourceKind::Hll => Some(HLL_LAYERS),
             _ => None,
         }
     }
