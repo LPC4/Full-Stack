@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Full-Stack test report</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7; --surface: #fcfcfb;
+    --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+    --grid: #e1e0d9; --border: rgba(11,11,11,0.10);
+    --good: #0ca30c; --good-text: #006300; --critical: #d03b3b;
+    --bar: #2a78d6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --page: #0d0d0d; --surface: #1a1a19;
+      --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+      --grid: #2c2c2a; --border: rgba(255,255,255,0.10);
+      --good-text: #0ca30c;
+      --bar: #3987e5;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px; background: var(--page); color: var(--ink);
+    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 1000px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--ink-2); margin-bottom: 20px; }
+  h2 { font-size: 15px; margin: 28px 0 10px; }
+
+  .tiles { display: flex; flex-wrap: wrap; gap: 12px; }
+  .tile {
+    flex: 1 1 140px; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 12px 16px;
+  }
+  .tile .label { color: var(--ink-2); font-size: 12px; }
+  .tile .value { font-size: 26px; font-weight: 600; }
+  .tile .value .icon { font-size: 18px; vertical-align: 2px; }
+  .tile.good .value { color: var(--good-text); }
+  .tile.bad .value { color: var(--critical); }
+
+  input[type="search"] {
+    width: 100%; padding: 8px 12px; margin: 20px 0 4px;
+    background: var(--surface); color: var(--ink);
+    border: 1px solid var(--border); border-radius: 8px; font: inherit;
+  }
+
+  .suite, .fail-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; margin-bottom: 8px;
+  }
+  .suite > summary, .fail-card > summary {
+    padding: 8px 14px; cursor: pointer; display: flex; gap: 10px; align-items: baseline;
+  }
+  .suite > summary::-webkit-details-marker { display: none; }
+  .suite-name { font-weight: 600; }
+  .counts { color: var(--ink-2); font-size: 12px; margin-left: auto;
+            font-variant-numeric: tabular-nums; }
+  .row {
+    display: flex; gap: 10px; align-items: baseline;
+    padding: 4px 14px 4px 28px; border-top: 1px solid var(--grid);
+  }
+  .row:hover { background: color-mix(in srgb, var(--ink) 4%, transparent); }
+  .row .t { margin-left: auto; color: var(--muted); font-size: 12px;
+            font-variant-numeric: tabular-nums; }
+  .st { font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .st.passed { color: var(--good-text); }
+  .st.failed { color: var(--critical); }
+  .st.skipped { color: var(--muted); }
+  .badge-new {
+    font-size: 11px; font-weight: 600; color: var(--critical);
+    border: 1px solid var(--critical); border-radius: 6px; padding: 0 6px;
+  }
+  .fail-card pre {
+    margin: 0; padding: 10px 14px; border-top: 1px solid var(--grid);
+    overflow-x: auto; font-size: 12px; white-space: pre-wrap;
+  }
+
+  .slow { background: var(--surface); border: 1px solid var(--border);
+          border-radius: 8px; padding: 14px; }
+  .slow .brow { display: grid; grid-template-columns: minmax(180px, 42%) 1fr 64px;
+                gap: 10px; align-items: center; padding: 3px 0; }
+  .slow .brow:hover { background: color-mix(in srgb, var(--ink) 4%, transparent); }
+  .slow .bname { font-size: 12px; color: var(--ink-2); overflow: hidden;
+                 text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+  .slow .btrack { height: 12px; }
+  .slow .bfill { height: 100%; background: var(--bar); border-radius: 0 4px 4px 0;
+                 min-width: 2px; }
+  .slow .bval { font-size: 12px; color: var(--ink-2); text-align: right;
+                font-variant-numeric: tabular-nums; }
+  .empty { color: var(--ink-2); padding: 10px 14px; background: var(--surface);
+           border: 1px solid var(--border); border-radius: 8px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Full-Stack test report</h1>
+  <div class="sub" id="sub"></div>
+  <div class="tiles" id="tiles"></div>
+  <section id="failSection"><h2>Failures</h2><div id="fails"></div></section>
+  <h2>Slowest tests</h2>
+  <div class="slow" id="slow"></div>
+  <h2>All suites</h2>
+  <input type="search" id="filter" placeholder="Filter tests by name...">
+  <div id="suites"></div>
+</main>
+<script>
+const DATA = "__DATA__";
+const { meta, tests } = DATA;
+const esc = s => s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fmt = t => t >= 1 ? t.toFixed(2) + ' s' : (t * 1000).toFixed(0) + ' ms';
+
+const passed = tests.filter(t => t.status === 'passed');
+const failed = tests.filter(t => t.status === 'failed');
+const skipped = tests.filter(t => t.status === 'skipped');
+
+document.getElementById('sub').textContent =
+  `${meta.generated} - wall time ${fmt(meta.wallTime)}` +
+  (meta.filter ? ` - filter: ${meta.filter}` : '');
+
+// Stat tiles: icon + label + count, never color alone.
+const tile = (label, value, cls, icon) =>
+  `<div class="tile ${cls}"><div class="label">${label}</div>
+   <div class="value">${icon ? `<span class="icon">${icon}</span> ` : ''}${value}</div></div>`;
+document.getElementById('tiles').innerHTML =
+  tile('Total', tests.length, '', '') +
+  tile('Passed', passed.length, 'good', '&#10003;') +
+  tile('Failed', failed.length, failed.length ? 'bad' : '', failed.length ? '&#10007;' : '') +
+  tile('Skipped', skipped.length, '', '');
+
+// Failures, newly-broken first.
+const failHtml = failed
+  .sort((a, b) => (b.newlyFailed - a.newlyFailed) || a.name.localeCompare(b.name))
+  .map(t => `<details class="fail-card" open>
+    <summary><span class="st failed">&#10007; FAIL</span> ${esc(t.suite)} :: ${esc(t.name)}
+      ${t.newlyFailed ? '<span class="badge-new">NEW</span>' : ''}
+      <span class="counts">${fmt(t.time)}</span></summary>
+    <pre>${esc(t.detail || '(no output captured)')}</pre></details>`).join('');
+document.getElementById('fails').innerHTML =
+  failHtml || '<div class="empty">&#10003; No failures.</div>';
+
+// Slowest tests: single-series bar list, direct-labeled, no legend needed.
+const slow = [...tests].sort((a, b) => b.time - a.time).slice(0, 15);
+const maxT = slow[0]?.time || 1;
+document.getElementById('slow').innerHTML = slow.map(t =>
+  `<div class="brow" title="${esc(t.suite)} :: ${esc(t.name)} - ${fmt(t.time)}">
+     <div class="bname">&#x200e;${esc(t.name)}</div>
+     <div class="btrack"><div class="bfill" style="width:${(t.time / maxT * 100).toFixed(1)}%"></div></div>
+     <div class="bval">${fmt(t.time)}</div></div>`).join('');
+
+// Suite tree with counts; suites with failures start open.
+const bySuite = new Map();
+for (const t of tests) {
+  if (!bySuite.has(t.suite)) bySuite.set(t.suite, []);
+  bySuite.get(t.suite).push(t);
+}
+const stIcon = { passed: '&#10003; pass', failed: '&#10007; FAIL', skipped: '&#8722; skip' };
+document.getElementById('suites').innerHTML =
+  [...bySuite.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([suite, list]) => {
+    const nf = list.filter(t => t.status === 'failed').length;
+    const time = list.reduce((s, t) => s + t.time, 0);
+    const rows = list.sort((a, b) => a.name.localeCompare(b.name)).map(t =>
+      `<div class="row" data-name="${esc((suite + '::' + t.name).toLowerCase())}">
+         <span class="st ${t.status}">${stIcon[t.status]}</span> ${esc(t.name)}
+         <span class="t">${fmt(t.time)}</span></div>`).join('');
+    return `<details class="suite" ${nf ? 'open' : ''}>
+      <summary><span class="suite-name">${esc(suite)}</span>
+        <span class="counts">${nf ? nf + ' failed / ' : ''}${list.length} tests - ${fmt(time)}</span>
+      </summary>${rows}</details>`;
+  }).join('');
+
+// Substring filter over test rows; hides suites with no visible rows.
+document.getElementById('filter').addEventListener('input', e => {
+  const q = e.target.value.toLowerCase();
+  for (const suite of document.querySelectorAll('.suite')) {
+    let any = false;
+    for (const row of suite.querySelectorAll('.row')) {
+      const show = !q || row.dataset.name.includes(q);
+      row.style.display = show ? '' : 'none';
+      any = any || show;
+    }
+    suite.style.display = any ? '' : 'none';
+    if (q && any) suite.open = true;
+  }
+});
+</script>
+</body>
+</html>

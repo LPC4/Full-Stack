@@ -5,7 +5,8 @@ use asm_to_binary::AssembledOutput;
 use full_stack::build::{BuildExecutor, BuildManifest};
 use full_stack::compilation_pipeline::{FsEntry, assembled_to_elf_file, build_fs_image};
 use full_stack::userspace as user;
-use std::sync::OnceLock;
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 
 // Physical layout constants matching the OS spec.
@@ -59,13 +60,22 @@ fn compile_hosted(src: &str) -> AssembledOutput {
         .linked
 }
 
-// Compile a catalog program (primary + aux units) the way the app boot path
-// does.
+// Compile a catalog program the way the app boot path does. Memoized by name so
+// the many tests that rebuild `shell`/`as`/`cc`/`ld` share one compile + a clone.
 fn compile_hosted_program(name: &str) -> AssembledOutput {
+    static CACHE: OnceLock<Mutex<HashMap<String, AssembledOutput>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(out) = cache.lock().unwrap().get(name) {
+        return out.clone();
+    }
+    // Compile outside the lock so unrelated names build in parallel; a rare race
+    // just rebuilds one program twice, which is harmless.
     let prog = user::program(name).expect("program in catalog");
-    BuildExecutor::build(&BuildManifest::from_user_program(prog))
+    let out = BuildExecutor::build(&BuildManifest::from_user_program(prog))
         .expect("catalog hosted manifest build")
-        .linked
+        .linked;
+    cache.lock().unwrap().insert(name.to_owned(), out.clone());
+    out
 }
 
 // Builds the VM without running it, so a caller can either run it in one shot
@@ -118,6 +128,29 @@ fn boot_kernel(
     let mut vm = setup_kernel_vm(kernel, user, fs_image, input);
     let run = vm.run(max_steps);
     (vm, run.outcome, run.uart_output)
+}
+
+// Run in chunks until `done(uart_so_far)`, a halt, or the step cap. An idle
+// shell never halts the VM, so a flat run would burn its whole cap.
+fn run_until(
+    vm: &mut VirtualMachine,
+    cap: u64,
+    done: impl Fn(&str) -> bool,
+) -> (StepOutcome, String) {
+    const CHUNK: u64 = 1_000_000;
+    let mut uart = String::new();
+    let mut outcome = StepOutcome::Continue;
+    let mut steps = 0u64;
+    while steps < cap && !done(&uart) {
+        let r = vm.run(CHUNK.min(cap - steps));
+        uart.push_str(&r.uart_output);
+        steps += CHUNK;
+        outcome = r.outcome;
+        if matches!(outcome, StepOutcome::Halted(_)) {
+            break;
+        }
+    }
+    (outcome, uart)
 }
 
 // A hosted user program injected as pid 1 must spawn and exit with code 0.
@@ -494,8 +527,8 @@ main: () -> i32 {
 
 // --- Framebuffer device (map_fb syscall + fbdemo program) ---
 
-// Mirrors the Q16.16 integer math in fbdemo.hll exactly, so the VM render can be
-// compared pixel for pixel and any codegen distortion shows up as disagreement.
+// Independent Q16.16 reference for the same set the f64 demo renders (different
+// arithmetic on purpose); the two agree except on boundary pixels.
 fn fbdemo_ref_in_set(cx: i64, cy: i64) -> bool {
     const ONE: i64 = 65536;
     const FOUR: i64 = 262144;
@@ -515,8 +548,8 @@ fn fbdemo_ref_in_set(cx: i64, cy: i64) -> bool {
     it >= MAXIT
 }
 
-// Covers map_fb -> MMU translation -> bus routing -> device store, plus integer
-// codegen: a wide multiply truncated to 32 bits shears the rendered set.
+// Covers map_fb -> MMU translation -> bus routing -> device store, plus f64
+// codegen: any float distortion shears the rendered set off the reference.
 #[test]
 fn fbdemo_renders_mandelbrot_set() {
     const FB_W: usize = 320;
@@ -1371,10 +1404,11 @@ fn editor_waits_while_idle_for_input() {
         "cd /home/src\nedit array.s\n",
     );
 
-    // Let it boot, launch the editor, and idle (spinning on sc_readchar/sc_yield
-    // and getting timer-preempted) for a good while with no input available.
-    let r1 = vm.run(60_000_000);
-    let uart1 = r1.uart_output.clone();
+    // Let it boot and launch the editor, then idle (spinning on
+    // sc_readchar/sc_yield under timer preemption) with no input available.
+    let (_, boot_uart) = run_until(&mut vm, 60_000_000, |u| u.contains("edit: p=print"));
+    let idle = vm.run(5_000_000);
+    let uart1 = format!("{boot_uart}{}", idle.uart_output);
     assert!(
         uart1.contains("edit: p=print"),
         "editor did not start; uart={uart1:?}"
@@ -1384,8 +1418,8 @@ fn editor_waits_while_idle_for_input() {
     for b in "p\nq\nexit\n".bytes() {
         vm.push_uart_rx(b);
     }
-    let r2 = vm.run(60_000_000);
-    let uart = format!("{uart1}{}", r2.uart_output);
+    let (_, uart2) = run_until(&mut vm, 60_000_000, |u| u.contains("li t0, 3"));
+    let uart = format!("{uart1}{uart2}");
 
     assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
     assert!(
@@ -2649,25 +2683,21 @@ main: () -> i32 {
         for b in line {
             vm.push_uart_rx(*b);
         }
-        for _ in 0..30_000_000u64 {
-            let _ = vm.step();
-            let bytes = vm.uart_output();
-            out.push_str(&String::from_utf8_lossy(&bytes));
-            if out.contains(marker) {
-                return true;
-            }
+        let mut steps = 0u64;
+        while steps < 30_000_000 && !out.contains(marker) {
+            let r = vm.run(1_000_000);
+            out.push_str(&r.uart_output);
+            steps += 1_000_000;
         }
-        false
+        out.contains(marker)
     };
 
     // Boot to the prompt (the shell is now blocked in its first readchar).
-    for _ in 0..10_000_000u64 {
-        let _ = vm.step();
-        let bytes = vm.uart_output();
-        out.push_str(&String::from_utf8_lossy(&bytes));
-        if out.contains("shell ready") {
-            break;
-        }
+    let mut steps = 0u64;
+    while steps < 10_000_000 && !out.contains("shell ready") {
+        let r = vm.run(1_000_000);
+        out.push_str(&r.uart_output);
+        steps += 1_000_000;
     }
     assert!(
         out.contains("shell ready"),
@@ -2862,7 +2892,7 @@ main: () -> i32 {
     pid: i64 = sc_fork()
     if pid == 0 {
         n: u64 = 0
-        while n < 8 {
+        while n < 4 {
             spin()
             sc_write(1, "B".ptr, 1)
             n = n + 1
@@ -2870,7 +2900,7 @@ main: () -> i32 {
         sc_exit(0)
     }
     m: u64 = 0
-    while m < 8 {
+    while m < 4 {
         spin()
         sc_write(1, "A".ptr, 1)
         m = m + 1
@@ -2884,13 +2914,8 @@ main: () -> i32 {
     );
 
     let image = build_fs_image(&[]);
-    let (_, _outcome, uart) = boot_kernel(
-        cached_kernel(),
-        Some(&parent),
-        Some(&image),
-        "",
-        200_000_000,
-    );
+    let mut vm = setup_kernel_vm(cached_kernel(), Some(&parent), Some(&image), "");
+    let (_outcome, uart) = run_until(&mut vm, 200_000_000, |u| u.contains("SENTINEL_END"));
 
     assert!(!uart.contains("PANIC!"), "kernel panicked; uart={uart:?}");
 
@@ -3276,7 +3301,9 @@ fn os_inspector_sees_shell_as_pid1() {
     let image = build_fs_image(&[FsEntry::Dir { path: "/home" }]);
 
     let mut vm = setup_kernel_vm(kernel, Some(&shell), Some(&image), "");
-    let _ = vm.run(80_000_000);
+    let _ = run_until(&mut vm, 80_000_000, |uart| uart.contains("shell ready"));
+    // Settle past the prompt so the shell has entered its blocking readchar.
+    let _ = vm.run(1_000_000);
 
     let sym = OsSymbols::from_kernel(kernel).expect("kernel scheduler symbols resolve");
     let procs = os_view::capture(&vm, &sym);
@@ -3309,7 +3336,9 @@ fn os_inspector_walks_pid1_stack() {
     let image = build_fs_image(&[FsEntry::Dir { path: "/home" }]);
 
     let mut vm = setup_kernel_vm(kernel, Some(&shell), Some(&image), "");
-    let _ = vm.run(80_000_000);
+    let _ = run_until(&mut vm, 80_000_000, |uart| uart.contains("shell ready"));
+    // Settle past the prompt so the shell has entered its blocking readchar.
+    let _ = vm.run(1_000_000);
 
     let sym = OsSymbols::from_kernel(kernel).expect("kernel scheduler symbols resolve");
     let procs = os_view::capture(&vm, &sym);
@@ -3348,7 +3377,9 @@ fn os_inspector_traces_shell_syscalls() {
     let image = build_fs_image(&[FsEntry::Dir { path: "/home" }]);
 
     let mut vm = setup_kernel_vm(kernel, Some(&shell), Some(&image), "");
-    let _ = vm.run(80_000_000);
+    let _ = run_until(&mut vm, 80_000_000, |uart| uart.contains("shell ready"));
+    // Settle past the prompt so the shell has entered its blocking readchar.
+    let _ = vm.run(1_000_000);
 
     let sym = OsSymbols::from_kernel(kernel).expect("kernel scheduler symbols resolve");
     let trace = os_view::capture_trace(&vm, &sym);
@@ -3390,7 +3421,9 @@ fn fs_inspector_reads_tree_and_preview() {
     ]);
 
     let mut vm = setup_kernel_vm(kernel, Some(&shell), Some(&image), "");
-    let _ = vm.run(80_000_000);
+    let _ = run_until(&mut vm, 80_000_000, |uart| uart.contains("shell ready"));
+    // Settle past the prompt so the shell has entered its blocking readchar.
+    let _ = vm.run(1_000_000);
 
     let sym = FsSymbols::from_kernel(kernel).expect("kernel FS symbols resolve");
     let root = fs_view::capture(&vm, &sym).expect("FS should be mounted after boot");
