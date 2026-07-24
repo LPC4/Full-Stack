@@ -597,6 +597,21 @@ impl HighLevelCompiler {
         seq: &Expression,
         body: &Block,
     ) {
+        // The classifiers below only accept a bare identifier; bind any other
+        // operand to a hidden local once and iterate that.
+        let rebound;
+        let seq = match seq {
+            Expression::Primary(PrimaryExpr::Identifier(_)) => seq,
+            other => {
+                let id = self.for_loop_id;
+                self.for_loop_id += 1;
+                let src_name = format!("__for_src_{id}");
+                self.lower_inferred_variable_decl(ir_program, &src_name, other);
+                rebound = Expression::Primary(PrimaryExpr::Identifier(src_name));
+                &rebound
+            }
+        };
+
         if self.seq_is_slice(seq) {
             self.lower_for_each_slice(ir_program, var, seq, body);
             return;

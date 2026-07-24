@@ -1295,6 +1295,45 @@ main: () -> i32 {
         assert!(ir.contains("write i32 0"), "missing zero fill in IR: {ir}");
     }
 
+    // A struct literal may initialize a fixed-array field; the inferred and
+    // declared element types must match instead of diverging (bug 22).
+    #[test]
+    fn struct_literal_initializes_array_field() {
+        let output = compile_hll(
+            r#"
+struct Bucket { items: i32[3] }
+
+main: () -> i32 {
+    bucket: Bucket = { .items = [40, 1, 1] }
+    return bucket.items[0]
+}
+"#,
+        )
+        .expect("array-typed field initialization should compile");
+        let _ = output.ir.to_string();
+    }
+
+    // `for ... in` accepts a non-identifier operand (a field of array type) by
+    // binding it once, not only a bare name (bug 23).
+    #[test]
+    fn for_each_over_field_of_array_type() {
+        compile_hll(
+            r#"
+struct Bucket { items: i32[3] }
+
+main: () -> i32 {
+    bucket: Bucket = { .items = [40, 1, 1] }
+    total: i32 = 0
+    for value in bucket.items {
+        total = total + value
+    }
+    return total
+}
+"#,
+        )
+        .expect("for-in over an array-typed field should compile");
+    }
+
     #[test]
     fn contextual_struct_literal_validates_fields() {
         for (literal, expected) in [
@@ -1619,6 +1658,31 @@ main: () -> i32 {
     if r.area() != 42 { return 1 }
     if r.scale(2) != 84 { return 2 }
     return 0
+}
+"#;
+        let r = HllCompiler::new(CompileConfig {
+            target: TargetMode::Hosted,
+            strict: true,
+            ..CompileConfig::default()
+        })
+        .compile(src);
+        if let Err(e) = r {
+            panic!("compile failed: {e:?}");
+        }
+    }
+
+    // A method call on a generic aggregate specializes the desugared `Box_get`
+    // from the receiver type instead of failing to resolve (bug 21).
+    #[test]
+    fn generic_impl_method_call_compiles() {
+        let src = r#"
+struct Box<T> { value: T }
+impl Box<T> {
+    get: (self: Box<T>*) -> T { return self.value }
+}
+main: () -> i32 {
+    holder: Box<i32> = { .value = 42 }
+    return holder.get()
 }
 "#;
         let r = HllCompiler::new(CompileConfig {

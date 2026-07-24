@@ -5,6 +5,9 @@ use crate::ast::{
 use std::collections::{HashMap, HashSet, VecDeque};
 
 pub(crate) type Substitutions = HashMap<String, Type>;
+// Struct name -> (generic params, field name/type pairs). Lets type inference
+// resolve field-chain receivers like `a.b.get()` (see infer_expression_type).
+type StructTable = HashMap<String, (Vec<String>, Vec<(String, Type)>)>;
 struct DeclarationBoundTemplate {
     kind: &'static str,
     generics: Vec<String>,
@@ -811,6 +814,23 @@ fn infer_implicit_type_arguments(program: &mut Program) -> Result<(), String> {
         }
     }
 
+    let mut structs: StructTable = HashMap::new();
+    for declaration in &program.declarations {
+        if let DeclNode::Struct {
+            name,
+            generics,
+            fields,
+            ..
+        } = &declaration.decl
+        {
+            let fields = fields
+                .iter()
+                .map(|field| (field.name.clone(), field.ty.clone()))
+                .collect();
+            structs.insert(name.clone(), (generics.clone(), fields));
+        }
+    }
+
     for declaration in &mut program.declarations {
         match &mut declaration.decl {
             DeclNode::Function {
@@ -829,6 +849,7 @@ fn infer_implicit_type_arguments(program: &mut Program) -> Result<(), String> {
                     &mut environment,
                     &generic_signatures,
                     &function_returns,
+                    &structs,
                 )?;
             }
             DeclNode::Variable {
@@ -836,7 +857,13 @@ fn infer_implicit_type_arguments(program: &mut Program) -> Result<(), String> {
             }
             | DeclNode::InferredVariable { init, .. }
             | DeclNode::Const { init, .. } => {
-                infer_expression_calls(init, &globals, &generic_signatures, &function_returns)?;
+                infer_expression_calls(
+                    init,
+                    &globals,
+                    &generic_signatures,
+                    &function_returns,
+                    &structs,
+                )?;
             }
             _ => {}
         }
@@ -849,6 +876,7 @@ fn infer_implicit_type_arguments(program: &mut Program) -> Result<(), String> {
             &mut environment,
             &generic_signatures,
             &function_returns,
+            &structs,
         )?;
     }
     Ok(())
@@ -859,9 +887,16 @@ fn infer_block_calls(
     environment: &mut HashMap<String, Type>,
     generic_signatures: &HashMap<String, GenericSignature>,
     function_returns: &HashMap<String, Option<Type>>,
+    structs: &StructTable,
 ) -> Result<(), String> {
     for statement in &mut block.statements {
-        infer_statement_calls(statement, environment, generic_signatures, function_returns)?;
+        infer_statement_calls(
+            statement,
+            environment,
+            generic_signatures,
+            function_returns,
+            structs,
+        )?;
     }
     Ok(())
 }
@@ -871,27 +906,47 @@ fn infer_statement_calls(
     environment: &mut HashMap<String, Type>,
     generic_signatures: &HashMap<String, GenericSignature>,
     function_returns: &HashMap<String, Option<Type>>,
+    structs: &StructTable,
 ) -> Result<(), String> {
     match statement {
         Statement::Expression(expr) | Statement::Defer(expr) => {
-            infer_expression_calls(expr, environment, generic_signatures, function_returns)?;
+            infer_expression_calls(
+                expr,
+                environment,
+                generic_signatures,
+                function_returns,
+                structs,
+            )?;
         }
         Statement::Block(block) => {
             let mut nested = environment.clone();
-            infer_block_calls(block, &mut nested, generic_signatures, function_returns)?;
+            infer_block_calls(
+                block,
+                &mut nested,
+                generic_signatures,
+                function_returns,
+                structs,
+            )?;
         }
         Statement::If {
             cond,
             then_block,
             else_branch,
         } => {
-            infer_expression_calls(cond, environment, generic_signatures, function_returns)?;
+            infer_expression_calls(
+                cond,
+                environment,
+                generic_signatures,
+                function_returns,
+                structs,
+            )?;
             let mut then_environment = environment.clone();
             infer_block_calls(
                 then_block,
                 &mut then_environment,
                 generic_signatures,
                 function_returns,
+                structs,
             )?;
             if let Some(branch) = else_branch {
                 let mut else_environment = environment.clone();
@@ -900,26 +955,44 @@ fn infer_statement_calls(
                     &mut else_environment,
                     generic_signatures,
                     function_returns,
+                    structs,
                 )?;
             }
         }
         Statement::While { cond, body } => {
-            infer_expression_calls(cond, environment, generic_signatures, function_returns)?;
+            infer_expression_calls(
+                cond,
+                environment,
+                generic_signatures,
+                function_returns,
+                structs,
+            )?;
             let mut nested = environment.clone();
-            infer_block_calls(body, &mut nested, generic_signatures, function_returns)?;
+            infer_block_calls(
+                body,
+                &mut nested,
+                generic_signatures,
+                function_returns,
+                structs,
+            )?;
         }
         Statement::For {
             var, iter, body, ..
         } => {
             let iteration_type = match &*iter {
-                ForIter::Range { start, .. } => {
-                    infer_expression_type(start, environment, generic_signatures, function_returns)
-                }
+                ForIter::Range { start, .. } => infer_expression_type(
+                    start,
+                    environment,
+                    generic_signatures,
+                    function_returns,
+                    structs,
+                ),
                 ForIter::Each(expr) => match infer_expression_type(
                     expr,
                     environment,
                     generic_signatures,
                     function_returns,
+                    structs,
                 ) {
                     Some(Type::Array(_, inner) | Type::Slice(inner)) => Some(*inner),
                     _ => None,
@@ -932,8 +1005,15 @@ fn infer_statement_calls(
                         environment,
                         generic_signatures,
                         function_returns,
+                        structs,
                     )?;
-                    infer_expression_calls(end, environment, generic_signatures, function_returns)?;
+                    infer_expression_calls(
+                        end,
+                        environment,
+                        generic_signatures,
+                        function_returns,
+                        structs,
+                    )?;
                 }
                 ForIter::Each(expr) => {
                     infer_expression_calls(
@@ -941,6 +1021,7 @@ fn infer_statement_calls(
                         environment,
                         generic_signatures,
                         function_returns,
+                        structs,
                     )?;
                 }
             }
@@ -948,27 +1029,61 @@ fn infer_statement_calls(
             if let Some(iteration_type) = iteration_type {
                 nested.insert(var.clone(), iteration_type);
             }
-            infer_block_calls(body, &mut nested, generic_signatures, function_returns)?;
+            infer_block_calls(
+                body,
+                &mut nested,
+                generic_signatures,
+                function_returns,
+                structs,
+            )?;
         }
         Statement::Return(Some(expr)) => {
-            infer_expression_calls(expr, environment, generic_signatures, function_returns)?;
+            infer_expression_calls(
+                expr,
+                environment,
+                generic_signatures,
+                function_returns,
+                structs,
+            )?;
         }
         Statement::VariableDecl { name, ty, init } => {
             if let Some(init) = init {
-                infer_expression_calls(init, environment, generic_signatures, function_returns)?;
+                infer_expression_calls(
+                    init,
+                    environment,
+                    generic_signatures,
+                    function_returns,
+                    structs,
+                )?;
             }
             environment.insert(name.clone(), ty.clone());
         }
         Statement::InferredVariableDecl { name, init } => {
-            infer_expression_calls(init, environment, generic_signatures, function_returns)?;
-            if let Some(ty) =
-                infer_expression_type(init, environment, generic_signatures, function_returns)
-            {
+            infer_expression_calls(
+                init,
+                environment,
+                generic_signatures,
+                function_returns,
+                structs,
+            )?;
+            if let Some(ty) = infer_expression_type(
+                init,
+                environment,
+                generic_signatures,
+                function_returns,
+                structs,
+            ) {
                 environment.insert(name.clone(), ty);
             }
         }
         Statement::DestructureBinding { init, .. } => {
-            infer_expression_calls(init, environment, generic_signatures, function_returns)?;
+            infer_expression_calls(
+                init,
+                environment,
+                generic_signatures,
+                function_returns,
+                structs,
+            )?;
         }
         Statement::Return(None)
         | Statement::AsmBlock { .. }
@@ -983,23 +1098,54 @@ fn infer_expression_calls(
     environment: &HashMap<String, Type>,
     generic_signatures: &HashMap<String, GenericSignature>,
     function_returns: &HashMap<String, Option<Type>>,
+    structs: &StructTable,
 ) -> Result<(), String> {
     match expression {
         Expression::Assignment { rvalue, .. } => {
-            infer_expression_calls(rvalue, environment, generic_signatures, function_returns)?;
+            infer_expression_calls(
+                rvalue,
+                environment,
+                generic_signatures,
+                function_returns,
+                structs,
+            )?;
         }
         Expression::Binary { left, right, .. } => {
-            infer_expression_calls(left, environment, generic_signatures, function_returns)?;
-            infer_expression_calls(right, environment, generic_signatures, function_returns)?;
+            infer_expression_calls(
+                left,
+                environment,
+                generic_signatures,
+                function_returns,
+                structs,
+            )?;
+            infer_expression_calls(
+                right,
+                environment,
+                generic_signatures,
+                function_returns,
+                structs,
+            )?;
         }
         Expression::Unary { expr, .. }
         | Expression::Cast { expr, .. }
         | Expression::Try(expr)
         | Expression::Primary(PrimaryExpr::Grouped(expr)) => {
-            infer_expression_calls(expr, environment, generic_signatures, function_returns)?;
+            infer_expression_calls(
+                expr,
+                environment,
+                generic_signatures,
+                function_returns,
+                structs,
+            )?;
         }
         Expression::Match { scrutinee, arms } => {
-            infer_expression_calls(scrutinee, environment, generic_signatures, function_returns)?;
+            infer_expression_calls(
+                scrutinee,
+                environment,
+                generic_signatures,
+                function_returns,
+                structs,
+            )?;
             for arm in arms {
                 let mut nested = environment.clone();
                 infer_block_calls(
@@ -1007,9 +1153,16 @@ fn infer_expression_calls(
                     &mut nested,
                     generic_signatures,
                     function_returns,
+                    structs,
                 )?;
                 if let Some(value) = &mut arm.value {
-                    infer_expression_calls(value, &nested, generic_signatures, function_returns)?;
+                    infer_expression_calls(
+                        value,
+                        &nested,
+                        generic_signatures,
+                        function_returns,
+                        structs,
+                    )?;
                 }
             }
         }
@@ -1025,6 +1178,7 @@ fn infer_expression_calls(
                         environment,
                         generic_signatures,
                         function_returns,
+                        structs,
                     )?;
                 }
                 if type_arguments.is_empty()
@@ -1037,6 +1191,7 @@ fn infer_expression_calls(
                             environment,
                             generic_signatures,
                             function_returns,
+                            structs,
                         ) else {
                             continue;
                         };
@@ -1062,6 +1217,7 @@ fn infer_expression_calls(
                         environment,
                         generic_signatures,
                         function_returns,
+                        structs,
                     )?;
                 }
             }
@@ -1073,25 +1229,130 @@ fn infer_expression_calls(
                         environment,
                         generic_signatures,
                         function_returns,
+                        structs,
                     )?;
                 }
             }
             PrimaryExpr::CallExpr { callee, arguments } => {
-                infer_expression_calls(callee, environment, generic_signatures, function_returns)?;
+                infer_expression_calls(
+                    callee,
+                    environment,
+                    generic_signatures,
+                    function_returns,
+                    structs,
+                )?;
                 for argument in arguments.iter_mut() {
                     infer_expression_calls(
                         argument,
                         environment,
                         generic_signatures,
                         function_returns,
+                        structs,
                     )?;
+                }
+                // A generic receiver has no struct name for later method resolution;
+                // rewrite `recv.method(..)` to a direct generic call so it specializes.
+                let mut rewritten = None;
+                if let Expression::Primary(PrimaryExpr::FieldAccess { expr, field }) = &**callee
+                    && let Some(receiver_ty) = infer_expression_type(
+                        expr,
+                        environment,
+                        generic_signatures,
+                        function_returns,
+                        structs,
+                    )
+                {
+                    let owner = match &receiver_ty {
+                        Type::Named { name, .. } => Some(name.to_string()),
+                        Type::Pointer(inner) => match inner.as_ref() {
+                            Type::Named { name, .. } => Some(name.to_string()),
+                            _ => None,
+                        },
+                        _ => None,
+                    };
+                    if let Some(owner) = owner {
+                        let fn_name = format!("{owner}_{field}");
+                        if let Some(signature) = generic_signatures.get(&fn_name) {
+                            let self_is_ptr =
+                                matches!(signature.arguments.first(), Some(Type::Pointer(_)));
+                            let recv_is_ptr = matches!(receiver_ty, Type::Pointer(_));
+                            let self_arg = if self_is_ptr && !recv_is_ptr {
+                                Expression::Unary {
+                                    op: crate::ast::UnaryOp::AddressOf,
+                                    expr: Box::new((**expr).clone()),
+                                }
+                            } else if !self_is_ptr && recv_is_ptr {
+                                Expression::Unary {
+                                    op: crate::ast::UnaryOp::Dereference,
+                                    expr: Box::new((**expr).clone()),
+                                }
+                            } else {
+                                (**expr).clone()
+                            };
+                            let mut full_args = Vec::with_capacity(arguments.len() + 1);
+                            full_args.push(self_arg);
+                            full_args.append(arguments);
+                            let mut inferred = HashMap::new();
+                            for (parameter, argument) in
+                                signature.arguments.iter().zip(full_args.iter())
+                            {
+                                if let Some(actual) = infer_expression_type(
+                                    argument,
+                                    environment,
+                                    generic_signatures,
+                                    function_returns,
+                                    structs,
+                                ) {
+                                    unify_generic_type(
+                                        parameter,
+                                        &actual,
+                                        &signature.params,
+                                        &mut inferred,
+                                    )?;
+                                }
+                            }
+                            let type_arguments = if signature
+                                .params
+                                .iter()
+                                .all(|param| inferred.contains_key(param))
+                            {
+                                signature
+                                    .params
+                                    .iter()
+                                    .map(|param| inferred[param].clone())
+                                    .collect()
+                            } else {
+                                Vec::new()
+                            };
+                            rewritten = Some(PrimaryExpr::FunctionCall {
+                                name: fn_name,
+                                type_arguments,
+                                arguments: full_args,
+                            });
+                        }
+                    }
+                }
+                if let Some(new_primary) = rewritten {
+                    *primary = new_primary;
                 }
             }
             PrimaryExpr::FieldAccess { expr, .. } => {
-                infer_expression_calls(expr, environment, generic_signatures, function_returns)?;
+                infer_expression_calls(
+                    expr,
+                    environment,
+                    generic_signatures,
+                    function_returns,
+                    structs,
+                )?;
             }
             PrimaryExpr::FormatInto { dest, segments, .. } => {
-                infer_expression_calls(dest, environment, generic_signatures, function_returns)?;
+                infer_expression_calls(
+                    dest,
+                    environment,
+                    generic_signatures,
+                    function_returns,
+                    structs,
+                )?;
                 for segment in segments {
                     if let crate::ast::FormatSegment::Hole(expr) = segment {
                         infer_expression_calls(
@@ -1099,33 +1360,65 @@ fn infer_expression_calls(
                             environment,
                             generic_signatures,
                             function_returns,
+                            structs,
                         )?;
                     }
                 }
             }
             PrimaryExpr::ArrayIndex { expr, index } => {
-                infer_expression_calls(expr, environment, generic_signatures, function_returns)?;
-                infer_expression_calls(index, environment, generic_signatures, function_returns)?;
+                infer_expression_calls(
+                    expr,
+                    environment,
+                    generic_signatures,
+                    function_returns,
+                    structs,
+                )?;
+                infer_expression_calls(
+                    index,
+                    environment,
+                    generic_signatures,
+                    function_returns,
+                    structs,
+                )?;
             }
             PrimaryExpr::Slice {
                 expr, start, end, ..
             } => {
-                infer_expression_calls(expr, environment, generic_signatures, function_returns)?;
+                infer_expression_calls(
+                    expr,
+                    environment,
+                    generic_signatures,
+                    function_returns,
+                    structs,
+                )?;
                 if let Some(start) = start {
                     infer_expression_calls(
                         start,
                         environment,
                         generic_signatures,
                         function_returns,
+                        structs,
                     )?;
                 }
                 if let Some(end) = end {
-                    infer_expression_calls(end, environment, generic_signatures, function_returns)?;
+                    infer_expression_calls(
+                        end,
+                        environment,
+                        generic_signatures,
+                        function_returns,
+                        structs,
+                    )?;
                 }
             }
             PrimaryExpr::New { args, .. } => {
                 for arg in args {
-                    infer_expression_calls(arg, environment, generic_signatures, function_returns)?;
+                    infer_expression_calls(
+                        arg,
+                        environment,
+                        generic_signatures,
+                        function_returns,
+                        structs,
+                    )?;
                 }
             }
             PrimaryExpr::Identifier(_)
@@ -1196,6 +1489,7 @@ pub(crate) fn infer_expression_type(
     environment: &HashMap<String, Type>,
     generic_signatures: &HashMap<String, GenericSignature>,
     function_returns: &HashMap<String, Option<Type>>,
+    structs: &StructTable,
 ) -> Option<Type> {
     match expression {
         Expression::Primary(PrimaryExpr::Identifier(name)) => environment.get(name).cloned(),
@@ -1207,9 +1501,13 @@ pub(crate) fn infer_expression_type(
             crate::ast::Literal::Boolean(_) => Some(Type::Primitive("bool".to_owned())),
             crate::ast::Literal::String(_) | crate::ast::Literal::Null => None,
         },
-        Expression::Primary(PrimaryExpr::Grouped(expr)) => {
-            infer_expression_type(expr, environment, generic_signatures, function_returns)
-        }
+        Expression::Primary(PrimaryExpr::Grouped(expr)) => infer_expression_type(
+            expr,
+            environment,
+            generic_signatures,
+            function_returns,
+            structs,
+        ),
         Expression::Primary(PrimaryExpr::New { ty, .. }) => {
             Some(Type::Pointer(Box::new(ty.clone())))
         }
@@ -1236,7 +1534,13 @@ pub(crate) fn infer_expression_type(
         }
         Expression::Primary(PrimaryExpr::ArrayLiteral(elements)) => {
             let element = elements.first().and_then(|element| {
-                infer_expression_type(element, environment, generic_signatures, function_returns)
+                infer_expression_type(
+                    element,
+                    environment,
+                    generic_signatures,
+                    function_returns,
+                    structs,
+                )
             })?;
             Some(Type::Array(elements.len().into(), Box::new(element)))
         }
@@ -1245,7 +1549,13 @@ pub(crate) fn infer_expression_type(
             args: Vec::new(),
         }),
         Expression::Primary(PrimaryExpr::ArrayIndex { expr, .. }) => {
-            match infer_expression_type(expr, environment, generic_signatures, function_returns)? {
+            match infer_expression_type(
+                expr,
+                environment,
+                generic_signatures,
+                function_returns,
+                structs,
+            )? {
                 Type::Array(_, inner) | Type::Slice(inner) | Type::Pointer(inner) => Some(*inner),
                 _ => None,
             }
@@ -1253,28 +1563,74 @@ pub(crate) fn infer_expression_type(
         Expression::Unary {
             op: crate::ast::UnaryOp::AddressOf,
             expr,
-        } => infer_expression_type(expr, environment, generic_signatures, function_returns)
-            .map(|ty| Type::Pointer(Box::new(ty))),
+        } => infer_expression_type(
+            expr,
+            environment,
+            generic_signatures,
+            function_returns,
+            structs,
+        )
+        .map(|ty| Type::Pointer(Box::new(ty))),
         Expression::Unary {
             op: crate::ast::UnaryOp::Dereference,
             expr,
         } => {
-            match infer_expression_type(expr, environment, generic_signatures, function_returns)? {
+            match infer_expression_type(
+                expr,
+                environment,
+                generic_signatures,
+                function_returns,
+                structs,
+            )? {
                 Type::Pointer(inner) => Some(*inner),
                 _ => None,
             }
         }
         Expression::Unary { expr, .. } | Expression::Binary { left: expr, .. } => {
-            infer_expression_type(expr, environment, generic_signatures, function_returns)
+            infer_expression_type(
+                expr,
+                environment,
+                generic_signatures,
+                function_returns,
+                structs,
+            )
         }
         Expression::Cast { target_ty, .. } => Some(target_ty.clone()),
-        Expression::Assignment { rvalue, .. } => {
-            infer_expression_type(rvalue, environment, generic_signatures, function_returns)
-        }
+        Expression::Assignment { rvalue, .. } => infer_expression_type(
+            rvalue,
+            environment,
+            generic_signatures,
+            function_returns,
+            structs,
+        ),
         Expression::Match { .. } | Expression::Try(_) => None,
+        Expression::Primary(PrimaryExpr::FieldAccess { expr, field }) => {
+            let receiver = infer_expression_type(
+                expr,
+                environment,
+                generic_signatures,
+                function_returns,
+                structs,
+            )?;
+            let (name, args) = match &receiver {
+                Type::Named { name, args } => (name.to_string(), args),
+                Type::Pointer(inner) => match inner.as_ref() {
+                    Type::Named { name, args } => (name.to_string(), args),
+                    _ => return None,
+                },
+                _ => return None,
+            };
+            let (generics, fields) = structs.get(&name)?;
+            let field_ty = fields
+                .iter()
+                .find(|(field_name, _)| field_name == field)
+                .map(|(_, ty)| ty)?;
+            let substitutions: Substitutions =
+                generics.iter().cloned().zip(args.iter().cloned()).collect();
+            Some(substitute_type(field_ty, &substitutions))
+        }
         Expression::Primary(
             PrimaryExpr::StructLiteral { .. }
-            | PrimaryExpr::FieldAccess { .. }
             | PrimaryExpr::Slice { .. }
             | PrimaryExpr::CallExpr { .. }
             | PrimaryExpr::AsmReg { .. }
@@ -2866,6 +3222,50 @@ main: () -> i32 {
             err.contains("did not terminate"),
             "expected a non-termination diagnostic, got: {err}"
         );
+    }
+
+    #[test]
+    fn infers_type_argument_from_field_chain_receiver() {
+        // `p.first` has type `T` = `i64` once `Pair<i64>` is substituted, so the
+        // implicit `id<T>` call must fill in `<i64>` from the field type.
+        let src = "\
+struct Pair<T> {
+    first: T,
+    second: i32
+}
+
+id: <T>(x: T) -> T {
+    return x
+}
+
+use_it: (p: Pair<i64>*) -> i64 {
+    return id(p.first)
+}
+";
+        let mut program = program_of(src);
+        infer_implicit_type_arguments(&mut program).expect("inference should succeed");
+
+        let body = program
+            .declarations
+            .iter()
+            .find_map(|decl| match &decl.decl {
+                DeclNode::Function {
+                    name,
+                    body: Some(body),
+                    ..
+                } if name == "use_it" => Some(body),
+                _ => None,
+            })
+            .expect("use_it should exist");
+        let Statement::Return(Some(Expression::Primary(PrimaryExpr::FunctionCall {
+            type_arguments,
+            ..
+        }))) = &body.statements[0]
+        else {
+            panic!("expected `return id(..)`");
+        };
+        assert_eq!(type_arguments.len(), 1, "one implicit type argument");
+        assert_eq!(type_mangle(&type_arguments[0]), "i64");
     }
 
     #[test]

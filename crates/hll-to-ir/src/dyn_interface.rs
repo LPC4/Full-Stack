@@ -721,11 +721,13 @@ fn infer_type(
     context: &DynContext<'_>,
 ) -> Option<Type> {
     let no_generics: HashMap<String, GenericSignature> = HashMap::new();
+    let no_structs = HashMap::new();
     infer_expression_type(
         expression,
         environment,
         &no_generics,
         &context.function_returns,
+        &no_structs,
     )
 }
 

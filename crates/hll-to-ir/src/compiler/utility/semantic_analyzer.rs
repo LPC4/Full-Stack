@@ -2183,6 +2183,21 @@ impl SemanticAnalyzer {
             return IrType::Slice(Box::new(Self::parse_type_string(elem)));
         }
 
+        // Fixed array T[N]: split on the last '[' and parse the length.
+        if let Some(open) = trimmed.rfind('[')
+            && let Some(rest) = trimmed.strip_suffix(']')
+            && open > 0
+        {
+            let elem = &trimmed[..open];
+            let len_str = &rest[open + 1..];
+            if let Ok(len) = len_str.trim().parse::<usize>() {
+                return IrType::Array {
+                    len,
+                    element: Box::new(Self::parse_type_string(elem)),
+                };
+            }
+        }
+
         if let Some(inner) = trimmed.strip_suffix('*')
             && !inner.is_empty()
         {
