@@ -1544,9 +1544,11 @@ pub(crate) fn infer_expression_type(
             })?;
             Some(Type::Array(elements.len().into(), Box::new(element)))
         }
-        Expression::Primary(PrimaryExpr::NamedStructLiteral { name, .. }) => Some(Type::Named {
+        Expression::Primary(PrimaryExpr::NamedStructLiteral {
+            name, type_args, ..
+        }) => Some(Type::Named {
             name: name.clone().into(),
-            args: Vec::new(),
+            args: type_args.clone(),
         }),
         Expression::Primary(PrimaryExpr::ArrayIndex { expr, .. }) => {
             match infer_expression_type(
@@ -2121,8 +2123,20 @@ pub(crate) fn substitute_expression_types(
                     substitute_expression_types(element, substitutions);
                 }
             }
-            PrimaryExpr::StructLiteral { fields, .. }
-            | PrimaryExpr::NamedStructLiteral { fields, .. } => {
+            PrimaryExpr::NamedStructLiteral {
+                type_args, fields, ..
+            } => {
+                for ty in type_args {
+                    *ty = substitute_type(ty, substitutions);
+                }
+                for field in fields {
+                    if let Some(ty) = &mut field.ty {
+                        *ty = substitute_type(ty, substitutions);
+                    }
+                    substitute_expression_types(&mut field.expr, substitutions);
+                }
+            }
+            PrimaryExpr::StructLiteral { fields, .. } => {
                 for field in fields {
                     if let Some(ty) = &mut field.ty {
                         *ty = substitute_type(ty, substitutions);

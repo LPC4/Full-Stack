@@ -1701,8 +1701,23 @@ fn render_primary(primary: &PrimaryExpr) -> Result<String, String> {
             format!("[{}]", render_arguments(values)?)
         }
         PrimaryExpr::StructLiteral { fields, rest } => render_struct_fields(None, fields, *rest)?,
-        PrimaryExpr::NamedStructLiteral { name, fields, rest } => {
-            render_struct_fields(Some(name), fields, *rest)?
+        PrimaryExpr::NamedStructLiteral {
+            name,
+            type_args,
+            fields,
+            rest,
+        } => {
+            let rendered_name = if type_args.is_empty() {
+                name.clone()
+            } else {
+                let args = type_args
+                    .iter()
+                    .map(render_type)
+                    .collect::<Result<Vec<_>, String>>()?
+                    .join(", ");
+                format!("{name}<{args}>")
+            };
+            render_struct_fields(Some(&rendered_name), fields, *rest)?
         }
         PrimaryExpr::FieldAccess { expr, field } => {
             format!("{}.{}", render_expr(expr)?, field)

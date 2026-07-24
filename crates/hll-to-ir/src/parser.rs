@@ -1254,6 +1254,25 @@ impl<'a> Parser<'a> {
                 continue;
             }
 
+            // `Box<i32> { .. }`: a generic named struct literal. The non-generic
+            // `Point { .. }` form is handled in `parse_primary`.
+            if let Expression::Primary(PrimaryExpr::Identifier(name)) = &expr
+                && self.type_names.contains(name)
+                && let Some(type_args) = self.try_parse_struct_type_arguments()
+            {
+                let Expression::Primary(PrimaryExpr::Identifier(name)) = expr else {
+                    unreachable!();
+                };
+                let (fields, rest) = self.parse_struct_literal_fields()?;
+                expr = Expression::Primary(PrimaryExpr::NamedStructLiteral {
+                    name,
+                    type_args,
+                    fields,
+                    rest,
+                });
+                continue;
+            }
+
             let type_arguments = self.try_parse_call_type_arguments();
 
             if type_arguments.is_some() || self.match_lparen() {
@@ -1369,6 +1388,41 @@ impl<'a> Parser<'a> {
             }
             self.expect_generic_close()?;
             self.expect_lparen()?;
+            Ok(args)
+        })();
+
+        if let Ok(args) = parsed {
+            Some(args)
+        } else {
+            self.pos = saved_pos;
+            self.pending_gt_from_shr = saved_pending_gt;
+            None
+        }
+    }
+
+    // `Box<i32> {`: the `<...>` of a generic named struct literal, closed by `{`
+    // rather than `(`. Backtracks when the shape does not match.
+    fn try_parse_struct_type_arguments(&mut self) -> Option<Vec<Type>> {
+        if self.peek() != Some(&Token::Lt) {
+            return None;
+        }
+
+        let saved_pos = self.pos;
+        let saved_pending_gt = self.pending_gt_from_shr;
+        self.advance();
+        let parsed = (|| -> Result<Vec<Type>, ParserError> {
+            let mut args = Vec::new();
+            loop {
+                args.push(self.parse_type()?);
+                if self.match_comma() {
+                    continue;
+                }
+                break;
+            }
+            self.expect_generic_close()?;
+            if !self.check_lbrace() {
+                return Err(self.error("expected `{` after struct type arguments"));
+            }
             Ok(args)
         })();
 
@@ -2232,6 +2286,7 @@ impl<'a> Parser<'a> {
                     let (fields, rest) = self.parse_struct_literal_fields()?;
                     Expression::Primary(PrimaryExpr::NamedStructLiteral {
                         name: id,
+                        type_args: Vec::new(),
                         fields,
                         rest,
                     })
@@ -3204,6 +3259,30 @@ mod tests {
                 }) if name == "Point" && fields.len() == 1 && fields[0].ty.is_none()
             )),
             other => panic!("expected inferred named literal, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_generic_named_struct_literal() {
+        let source = "struct Box<T> { value: T }\nb := Box<i32> { .value = 1 }";
+        let mut parser = Parser::new_with_spans(Lexer::tokenize(source));
+        let program = parser.parse_program().unwrap();
+        match &program.declarations[1].decl {
+            DeclNode::InferredVariable { init, .. } => match init {
+                Expression::Primary(crate::ast::PrimaryExpr::NamedStructLiteral {
+                    name,
+                    type_args,
+                    fields,
+                    ..
+                }) => {
+                    assert_eq!(name, "Box");
+                    assert_eq!(type_args.len(), 1);
+                    assert_eq!(type_args[0], Type::Primitive("i32".to_owned()));
+                    assert_eq!(fields.len(), 1);
+                }
+                other => panic!("expected generic named literal, got {other:?}"),
+            },
+            other => panic!("expected inferred binding, got {other:?}"),
         }
     }
 

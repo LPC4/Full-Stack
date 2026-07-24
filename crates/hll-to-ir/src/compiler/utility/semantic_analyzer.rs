@@ -1017,9 +1017,12 @@ impl SemanticAnalyzer {
                     }
                     Ok(self.context.get_type_name(&IrType::Aggregate(field_types)))
                 }
-                PrimaryExpr::NamedStructLiteral { name, fields, rest } => {
-                    self.infer_named_struct_literal_type(name, fields, *rest)
-                }
+                PrimaryExpr::NamedStructLiteral {
+                    name,
+                    type_args,
+                    fields,
+                    rest,
+                } => self.infer_named_struct_literal_type(name, type_args, fields, *rest),
             },
             Expression::Binary { op, left, right } => {
                 let lhs_type = self.infer_expression_type(left)?;
@@ -1580,10 +1583,24 @@ impl SemanticAnalyzer {
     fn infer_named_struct_literal_type(
         &mut self,
         name: &str,
+        type_args: &[Type],
         fields: &[FieldInit],
         rest: bool,
     ) -> Result<String, ()> {
-        let declared = self.resolve_type_string(name);
+        // `Box<i32> { .. }`: substitute the generic struct so the literal is
+        // validated against, and typed as, its concrete instantiation.
+        let (declared, type_name) = if type_args.is_empty() {
+            (self.resolve_type_string(name), name.to_owned())
+        } else {
+            let ty = Type::Named {
+                name: name.into(),
+                args: type_args.to_vec(),
+            };
+            let ir = self.ast_type_to_ir_type(&ty);
+            let type_name = self.context.get_type_name(&ir);
+            (self.resolve_named_ir_type(&ir), type_name)
+        };
+        let name = type_name.as_str();
         let IrType::Aggregate(declared_fields) = declared else {
             self.error(format!(
                 "named struct literal references non-struct type `{name}`"

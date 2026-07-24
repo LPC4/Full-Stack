@@ -464,6 +464,23 @@ mod tests {
     }
 
     #[test]
+    fn compiles_generic_named_struct_literal() {
+        // `Box<i32> { .. }` must parse the `<i32>` as generic args (not `<`/`>`
+        // comparisons) and specialize the struct end to end.
+        let src = "\
+struct Box<T> {
+    value: T
+}
+
+main: () -> i32 {
+    b: Box<i32> = Box<i32> { .value = 42 }
+    return b.value
+}
+";
+        compile_hll(src).expect("generic named struct literal should compile");
+    }
+
+    #[test]
     fn all_high_level_language_fixtures_lex_to_eof() {
         let fixtures = collect_hll_fixtures(&fixture_root());
         assert!(!fixtures.is_empty(), "expected at least one .hll fixture");

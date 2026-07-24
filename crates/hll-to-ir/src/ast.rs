@@ -448,8 +448,11 @@ pub enum PrimaryExpr {
         fields: Vec<FieldInit>,
         rest: bool,
     },
+    // `type_args` carries the `<...>` of a generic literal like `Box<i32> { .. }`;
+    // empty for a plain `Point { .. }`.
     NamedStructLiteral {
         name: String,
+        type_args: Vec<Type>,
         fields: Vec<FieldInit>,
         rest: bool,
     },

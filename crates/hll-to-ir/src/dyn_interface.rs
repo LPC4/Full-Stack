@@ -801,6 +801,7 @@ fn pack_conversion(
     }
     Ok(Expression::Primary(PrimaryExpr::NamedStructLiteral {
         name: dyn_struct_name(interface),
+        type_args: Vec::new(),
         fields,
         rest: false,
     }))

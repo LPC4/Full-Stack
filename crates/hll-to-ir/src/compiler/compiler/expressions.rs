@@ -338,9 +338,12 @@ impl HighLevelCompiler {
                     is_unsigned: false,
                 })
             }
-            PrimaryExpr::NamedStructLiteral { name, fields, rest } => {
-                self.lower_named_struct_literal(name, fields, *rest)
-            }
+            PrimaryExpr::NamedStructLiteral {
+                name,
+                type_args,
+                fields,
+                rest,
+            } => self.lower_named_struct_literal(name, type_args, fields, *rest),
             PrimaryExpr::CallExpr { callee, arguments } => {
                 if mode == EvalMode::Address {
                     return None;
@@ -374,10 +377,20 @@ impl HighLevelCompiler {
     fn lower_named_struct_literal(
         &mut self,
         name: &str,
+        type_args: &[crate::ast::Type],
         fields: &[crate::ast::FieldInit],
         rest: bool,
     ) -> Option<LoweredValue> {
-        let nominal_ty = IrType::Named(name.to_owned());
+        // A generic literal lowers its `<...>`, which specializes and registers
+        // the concrete struct before we look it up.
+        let nominal_ty = if type_args.is_empty() {
+            IrType::Named(name.to_owned())
+        } else {
+            self.lower_type(&crate::ast::Type::Named {
+                name: name.into(),
+                args: type_args.to_vec(),
+            })
+        };
         let resolved = self.resolve_named_type(&nominal_ty);
         let IrType::Aggregate(declared_fields) = resolved else {
             self.context
