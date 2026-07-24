@@ -16,10 +16,10 @@ const USER_BINARY_PA: u64 = 0x87F00000;
 const USER_META_PA: u64 = 0x87EFF000;
 const USER_CODE_VA: u64 = 0x4000_0000;
 
-// --- Cached kernel binaries ---
+// --- Cached kernel binary ---
 
-// Kernel built from the per-module stdlib objects plus my_kernel (no source
-// concatenation). This is what most tests boot.
+// The kernel every test boots, built from kernel.build the way the app does:
+// per-module stdlib objects linked with my_kernel (the separate-object path).
 fn cached_kernel() -> &'static AssembledOutput {
     static KERNEL: OnceLock<AssembledOutput> = OnceLock::new();
     KERNEL.get_or_init(|| {
@@ -30,22 +30,6 @@ fn cached_kernel() -> &'static AssembledOutput {
         .expect("kernel build file parse");
         BuildExecutor::build(&manifest)
             .expect("kernel manifest build")
-            .linked
-    })
-}
-
-// Built the way the GUI does it, per stdlib module. Covers the separate-object
-// link path (the "9 enable" page fault) that the single-concat path misses.
-fn cached_kernel_multi_module() -> &'static AssembledOutput {
-    static KERNEL: OnceLock<AssembledOutput> = OnceLock::new();
-    KERNEL.get_or_init(|| {
-        let manifest = BuildManifest::from_file(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("crates/os-runtime/kernel/kernel.build"),
-        )
-        .expect("kernel build file parse");
-        BuildExecutor::build(&manifest)
-            .expect("kernel build file build")
             .linked
     })
 }
@@ -319,37 +303,10 @@ fn kernel_boot_full_sequence() {
     );
 }
 
+// Booting with no user binary: the kernel spawns nothing and shuts down cleanly.
 #[test]
-fn kernel_boot_multi_module_with_user() {
-    let user = compile_hosted(user::USER_HELLO);
-    let (_, outcome, uart) = boot_kernel(
-        cached_kernel_multi_module(),
-        Some(&user),
-        None,
-        "",
-        10_000_000,
-    );
-    match outcome {
-        StepOutcome::Continue => {}
-        StepOutcome::Halted(c) => panic!("unexpected halt with code {c}; uart={uart:?}"),
-    }
-    assert!(
-        uart.contains("[  OK  ] boot complete\n"),
-        "expected boot complete; uart={uart:?}"
-    );
-    assert!(
-        uart.contains("[ PROC ] pid 1 ready"),
-        "expected user process spawn; uart={uart:?}"
-    );
-    assert!(
-        uart.contains("hello from user mode!\n"),
-        "expected user-mode greeting; uart={uart:?}"
-    );
-}
-
-#[test]
-fn kernel_boot_multi_module_no_user_binary() {
-    let (_, outcome, uart) = boot_kernel(cached_kernel_multi_module(), None, None, "", 10_000_000);
+fn kernel_boot_no_user_binary() {
+    let (_, outcome, uart) = boot_kernel(cached_kernel(), None, None, "", 10_000_000);
     // Without a user binary the kernel calls kshutdown(0) after spawn returns.
     match outcome {
         StepOutcome::Halted(0) => {}
