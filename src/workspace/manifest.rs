@@ -12,7 +12,7 @@ pub fn load_build_manifest(
     path: &VPath,
 ) -> Result<BuildManifest, Vec<WorkspaceManifestDiagnostic>> {
     let manifest_text = read_text(fs, path)?;
-    let values = build_manifest::parse(&manifest_text)
+    let values = fs_utils::build_manifest::parse(&manifest_text)
         .map_err(|err| vec![diagnostic(format!("manifest parse error: {}", err.0))])?;
 
     let root_ref = values

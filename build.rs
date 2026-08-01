@@ -248,7 +248,7 @@ impl Program {
     fn load(build_path: &Path) -> Self {
         println!("cargo:rerun-if-changed={}", build_path.display());
         let text = fs::read_to_string(build_path).expect("read .build");
-        let manifest = build_manifest::parse(&text)
+        let manifest = fs_utils::build_manifest::parse(&text)
             .unwrap_or_else(|err| panic!("{}: {err}", build_path.display()));
         let dir = build_path.parent().expect("manifest parent");
         let field = |key: &str| {

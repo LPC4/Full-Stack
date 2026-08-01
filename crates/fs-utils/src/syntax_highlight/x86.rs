@@ -1,6 +1,6 @@
 // x86-64, Intel syntax. Only enough of it to set a contrast piece next to RISC-V.
 
-use crate::{Class, Out};
+use super::{Class, Out};
 
 const INSTRUCTIONS: &[&str] = &[
     "mov", "movzx", "movsx", "movsxd", "lea", "push", "pop", "xchg", "add", "adc", "sub", "sbb",
@@ -110,8 +110,8 @@ pub(crate) fn highlight(code: &str, out: &mut Out) {
 
 #[cfg(test)]
 mod tests {
+    use super::super::{Lang, highlight};
     use super::*;
-    use crate::{Lang, highlight};
 
     fn classes(src: &str) -> Vec<(&str, Class)> {
         highlight(Lang::X86, src)

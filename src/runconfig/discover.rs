@@ -18,7 +18,7 @@ pub fn discover_build_manifests(fs: &dyn WorkspaceFs) -> io::Result<Vec<VPath>> 
 /// the file stem. Run configs omit `name` in run.toml and inherit this instead.
 pub fn manifest_title(fs: &dyn WorkspaceFs, path: &VPath) -> Option<String> {
     let text = String::from_utf8(fs.read_file(path).ok()?).ok()?;
-    let parsed = build_manifest::parse(&text).ok()?;
+    let parsed = fs_utils::build_manifest::parse(&text).ok()?;
     Some(
         parsed
             .string("title")
@@ -41,7 +41,7 @@ pub fn run_config_from_manifest(fs: &dyn WorkspaceFs, path: VPath) -> Result<Run
             format!("{} is not UTF-8: {err}", path.as_str()),
         )
     })?;
-    let parsed = build_manifest::parse(&text)
+    let parsed = fs_utils::build_manifest::parse(&text)
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
     let name = parsed
         .string("title")

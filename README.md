@@ -209,7 +209,7 @@ fsc run        kernel.elf                         # load a pre-linked ELF
 | `crates/asm-to-binary/` | Assembler, linker, ELF output (executables and relocatable objects) |
 | `crates/virtual-machine/` | VM: 5-stage CPU pipeline, caches, MMU, devices, bus |
 | `crates/os-runtime/` | Boot firmware, kernel sources, and standard library |
-| `crates/build-manifest/` | Shared parser for the `.build` program manifests |
+| `crates/fs-utils/` | Shared `.build` manifest parser and syntax highlighting |
 | `programs/user/` | Boot-FS userspace tools, demos, samples, and fixtures |
 | `programs/example/` | Host-compiled example HLL programs, one folder per program |
 | `programs/lessons/` | Guided RISC-V assembly lessons, one folder per lesson |

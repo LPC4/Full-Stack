@@ -1,6 +1,6 @@
 // HTML rendering of spans, shared by the book generator and the wasm sandbox.
 
-use crate::{Class, Lang};
+use super::{Class, Lang};
 
 /// CSS class for a token, or `None` for text that takes the default color.
 pub fn class_name(class: Class) -> Option<&'static str> {
@@ -50,7 +50,7 @@ pub fn lang_for(tag: &str) -> Option<Lang> {
 // Classified byte ranges of `source`; one unclassified range for an unknown tag.
 fn classify(tag: &str, source: &str) -> Vec<(usize, usize, Option<&'static str>)> {
     match lang_for(tag) {
-        Some(lang) => crate::highlight(lang, source)
+        Some(lang) => super::highlight(lang, source)
             .into_iter()
             .map(|span| (span.start, span.end, class_name(span.class)))
             .collect(),

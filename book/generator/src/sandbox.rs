@@ -27,7 +27,7 @@ fn sources(root: &Path) -> Vec<PathBuf> {
     let wasm = root.join("wasm");
     let mut paths = vec![wasm.join("src"), wasm.join("Cargo.toml")];
     if let Some(repo) = root.parent() {
-        paths.push(repo.join("crates/syntax-highlight/src"));
+        paths.push(repo.join("crates/fs-utils/src/syntax_highlight"));
     }
     paths
 }
@@ -92,7 +92,7 @@ mod tests {
         assert!(
             paths
                 .iter()
-                .any(|p| p.ends_with("crates/syntax-highlight/src"))
+                .any(|p| p.ends_with("crates/fs-utils/src/syntax_highlight"))
         );
     }
 }

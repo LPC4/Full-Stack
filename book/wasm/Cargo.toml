@@ -15,7 +15,7 @@ path = "src/lib.rs"
 [dependencies]
 asm_to_binary = { path = "../../crates/asm-to-binary" }
 virtual_machine = { path = "../../crates/virtual-machine" }
-syntax_highlight = { path = "../../crates/syntax-highlight" }
+fs_utils = { path = "../../crates/fs-utils" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2.100"

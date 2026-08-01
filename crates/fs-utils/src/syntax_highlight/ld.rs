@@ -1,6 +1,6 @@
 // GNU linker scripts: the commands, the section names and the location counter.
 
-use crate::{Class, Out};
+use super::{Class, Out};
 
 const COMMANDS: &[&str] = &[
     "ENTRY",
@@ -147,8 +147,8 @@ pub(crate) fn highlight(code: &str, out: &mut Out) {
 
 #[cfg(test)]
 mod tests {
+    use super::super::{Lang, highlight};
     use super::*;
-    use crate::{Lang, highlight};
 
     fn classes(src: &str) -> Vec<(&str, Class)> {
         highlight(Lang::Ld, src)

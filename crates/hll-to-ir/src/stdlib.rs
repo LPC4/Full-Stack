@@ -9,7 +9,7 @@ const STDLIB_BUILD: &str = include_str!(concat!(
 /// The stdlib as (`module_name`, source) tuples for `mode`. Modules stay separate so
 /// each one yields its own `.ir`, `.s` and `.o` instead of one concatenated bundle.
 pub fn get_stdlib_modules_for_mode(mode: TargetMode) -> Vec<(&'static str, &'static str)> {
-    let manifest = build_manifest::parse(STDLIB_BUILD).expect("parse stdlib.build");
+    let manifest = fs_utils::build_manifest::parse(STDLIB_BUILD).expect("parse stdlib.build");
     let key = match mode {
         TargetMode::Hosted => "hosted",
         TargetMode::Freestanding => "freestanding",
@@ -34,7 +34,7 @@ pub fn get_stdlib_modules_for_mode(mode: TargetMode) -> Vec<(&'static str, &'sta
 /// Repo-relative source path of stdlib module `name` in `mode`, for the
 /// pc-to-source line table. `None` when the module or its path is unknown.
 pub fn stdlib_module_source_path(mode: TargetMode, name: &str) -> Option<&'static str> {
-    let manifest = build_manifest::parse(STDLIB_BUILD).ok()?;
+    let manifest = fs_utils::build_manifest::parse(STDLIB_BUILD).ok()?;
     let key = match mode {
         TargetMode::Hosted => "hosted",
         TargetMode::Freestanding => "freestanding",

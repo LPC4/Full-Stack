@@ -1,6 +1,6 @@
 // HLL source, including the inline `asm { ... }` sub-dialect.
 
-use crate::{Class, Out};
+use super::{Class, Out};
 use std::collections::HashSet;
 
 // Keep in sync with the lexer's keyword table (crates/hll-to-ir/src/lexer.rs).

@@ -1,6 +1,6 @@
 // AST and token dumps.
 
-use crate::{Class, Out};
+use super::{Class, Out};
 
 pub(crate) fn highlight(code: &str, out: &mut Out) {
     let mut start = 0;

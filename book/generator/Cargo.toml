@@ -9,7 +9,7 @@ name = "fsbook"
 path = "src/main.rs"
 
 [dependencies]
-syntax_highlight = { path = "../../crates/syntax-highlight" }
+fs_utils = { path = "../../crates/fs-utils" }
 pulldown-cmark = { version = "0.13.4", default-features = false, features = ["html"] }
 serde = { version = "1.0.219", features = ["derive"] }
 toml = "1.1"

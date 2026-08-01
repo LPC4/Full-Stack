@@ -1011,6 +1011,13 @@ reaches this through `kshutdown`, and hosted/freestanding programs through their
 negative codes indicate errors. The host run loop also stops if a step returns an unrecoverable
 `VmError` or the `max_steps` budget is exhausted.
 
+### 11.3 Debugger Source Stepping
+
+Source-line stepping runs until the retired instruction maps to a different source location. A
+direct jump to its own address retires once and pauses at that address. Other loops, missing line
+entries, and never-returning calls are bounded by both an 8 ms wall-clock budget and a 2,000,000
+cycle cap so a synchronous step cannot monopolize the UI thread.
+
 
 ## 12. Testing & Verification
 

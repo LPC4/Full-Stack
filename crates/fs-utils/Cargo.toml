@@ -1,11 +1,11 @@
 [package]
-name = "syntax_highlight"
+name = "fs_utils"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.92"
 
 [lib]
-name = "syntax_highlight"
+name = "fs_utils"
 path = "src/lib.rs"
 
 [lints]

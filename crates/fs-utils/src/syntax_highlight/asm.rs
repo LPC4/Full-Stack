@@ -1,6 +1,6 @@
 // RISC-V assembly (RV64IMAFD): mnemonics, registers, directives, labels.
 
-use crate::{Class, Out};
+use super::{Class, Out};
 
 // RISC-V integer / FP instruction mnemonics (full set for RV64IMAFD)
 const INSTRUCTIONS: &[&str] = &[

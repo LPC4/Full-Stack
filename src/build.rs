@@ -107,7 +107,8 @@ impl BuildManifest {
         let path = path.into();
         let text = fs::read_to_string(&path).map_err(BuildError::Io)?;
         let base_dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));
-        let values = build_manifest::parse(&text).map_err(|err| BuildError::Manifest(err.0))?;
+        let values =
+            fs_utils::build_manifest::parse(&text).map_err(|err| BuildError::Manifest(err.0))?;
 
         let root_path = values
             .get("root")
@@ -530,12 +531,12 @@ impl BuildExecutor {
     }
 }
 
-fn manifest_error(err: build_manifest::ManifestError) -> BuildError {
+fn manifest_error(err: fs_utils::build_manifest::ManifestError) -> BuildError {
     BuildError::Manifest(err.0)
 }
 
 pub(crate) fn parse_memory_latency_config(
-    values: &build_manifest::Manifest,
+    values: &fs_utils::build_manifest::Manifest,
 ) -> Result<Option<MemoryLatencyConfig>, String> {
     const OVERRIDES: [&str; 5] = [
         "latency_l1",
@@ -647,7 +648,7 @@ mod tests {
 
     #[test]
     fn manifest_latency_defaults_to_none() {
-        let values = build_manifest::parse("root = \"main.hll\"\n").expect("manifest");
+        let values = fs_utils::build_manifest::parse("root = \"main.hll\"\n").expect("manifest");
         assert_eq!(parse_memory_latency_config(&values).expect("latency"), None);
     }
 

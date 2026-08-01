@@ -531,10 +531,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "build_manifest"
-version = "0.1.0"
-
-[[package]]
 name = "bumpalo"
 version = "3.20.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1292,12 +1288,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "fs_utils"
+version = "0.1.0"
+
+[[package]]
 name = "fsbook"
 version = "0.1.0"
 dependencies = [
+ "fs_utils",
  "pulldown-cmark",
  "serde",
- "syntax_highlight",
  "toml",
 ]
 
@@ -1306,9 +1306,9 @@ name = "fsbook_wasm"
 version = "0.1.0"
 dependencies = [
  "asm_to_binary",
+ "fs_utils",
  "serde",
  "serde-wasm-bindgen",
- "syntax_highlight",
  "virtual_machine",
  "wasm-bindgen",
 ]
@@ -1318,13 +1318,13 @@ name = "full_stack"
 version = "1.1.0"
 dependencies = [
  "asm_to_binary",
- "build_manifest",
  "eframe",
  "egui",
  "egui-phosphor",
  "egui_dock",
  "egui_kittest",
  "env_logger",
+ "fs_utils",
  "hll_to_ir",
  "ir_to_asm",
  "log",
@@ -1332,7 +1332,6 @@ dependencies = [
  "rfd",
  "serde",
  "serde_json",
- "syntax_highlight",
  "virtual_machine",
  "wasm-bindgen-futures",
  "web-sys",
@@ -1612,7 +1611,7 @@ checksum = "dfa686283ad6dd069f105e5ab091b04c62850d3e4cf5d67debad1933f55023df"
 name = "hll_to_ir"
 version = "0.1.0"
 dependencies = [
- "build_manifest",
+ "fs_utils",
  "log",
  "os_runtime",
 ]
@@ -3347,10 +3346,6 @@ dependencies = [
  "quote",
  "syn",
 ]
-
-[[package]]
-name = "syntax_highlight"
-version = "0.1.0"
 
 [[package]]
 name = "tempfile"

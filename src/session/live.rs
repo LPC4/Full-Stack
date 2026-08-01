@@ -20,8 +20,9 @@ const CLOCK_CHECK_INTERVAL: u64 = 1024;
 const UART_LOG_CAP: usize = 256 * 1024;
 // Guards against a stalled pipeline; normal instructions retire within a few cycles.
 const INSTRUCTION_STEP_CYCLE_CAP: u64 = 10_000;
-// A line with no distinct next entry (or a never-returning call) must not spin the UI.
+// Source stepping is synchronous, so loops and missing line entries need both limits.
 const SOURCE_LINE_STEP_CYCLE_CAP: u64 = 2_000_000;
+const SOURCE_LINE_STEP_TIME_CAP: Duration = Duration::from_millis(8);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MachineState {
@@ -308,10 +309,18 @@ impl LiveMachine {
     }
 
     fn step_line_impl(&mut self, over_calls: bool) {
+        self.step_line_impl_with_budget(over_calls, SOURCE_LINE_STEP_TIME_CAP);
+    }
+
+    fn step_line_impl_with_budget(&mut self, over_calls: bool, budget: Duration) {
         if !self.state.is_alive() {
             return;
         }
         if !self.has_line_table() {
+            self.step_instruction();
+            return;
+        }
+        if self.current_instruction_is_self_jump() {
             self.step_instruction();
             return;
         }
@@ -320,6 +329,7 @@ impl LiveMachine {
             .filter(|(file, _)| !file.is_empty())
             .map(|(file, line)| (file.to_owned(), line));
         self.prev_step_regs = Some(self.registers());
+        let clock = SliceClock::start();
         let mut cycles = 0;
         let mut retired = self.vm.insns_retired();
         // While set, we are inside a call: run until the pc returns here so
@@ -330,6 +340,9 @@ impl LiveMachine {
                 break;
             }
             cycles += 1;
+            if cycles.is_multiple_of(CLOCK_CHECK_INTERVAL) && clock.expired(budget) {
+                break;
+            }
             // Re-check the source line only on an instruction boundary.
             let now_retired = self.vm.insns_retired();
             if now_retired == retired {
@@ -678,6 +691,12 @@ impl LiveMachine {
         let next = read_word(&bytes, 4);
         step_over_target_for_words(pc, current, next)
     }
+
+    fn current_instruction_is_self_jump(&self) -> bool {
+        let pc = self.vm.peek_pc();
+        let bytes = self.vm.peek_bytes_virtual(pc, 4);
+        read_word(&bytes, 0).is_some_and(is_self_jump)
+    }
 }
 
 fn read_word(bytes: &[u8], offset: usize) -> Option<u32> {
@@ -699,6 +718,10 @@ fn is_ra_jalr(word: u32) -> bool {
         decoder::decode(word),
         Ok(DecodedInsn::Jalr { rd: 1, rs1: 1, .. })
     )
+}
+
+fn is_self_jump(word: u32) -> bool {
+    matches!(decoder::decode(word), Ok(DecodedInsn::Jal { imm: 0, .. }))
 }
 
 // Minimal terminal discipline: `\b` erases the previous character (guests echo
@@ -834,6 +857,22 @@ mod tests {
         )
         .expect("write manifest");
         fs.write_text(&VPath::parse("demo/demo.hll").expect("path"), source)
+            .expect("write source");
+        let config = RunConfig::hosted("Demo", VPath::parse("demo/demo.build").expect("path"));
+        SessionEngine::new(&fs)
+            .build_config(&config)
+            .expect("build config")
+            .artifacts
+    }
+
+    fn build_asm_artifacts(source: &str) -> BuildArtifacts {
+        let mut fs = MemoryFs::new();
+        fs.write_text(
+            &VPath::parse("demo/demo.build").expect("path"),
+            "name = \"demo\"\ntarget = \"freestanding\"\nentry = \"_start\"\nroot = \"demo.s\"\n",
+        )
+        .expect("write manifest");
+        fs.write_text(&VPath::parse("demo/demo.s").expect("path"), source)
             .expect("write source");
         let config = RunConfig::hosted("Demo", VPath::parse("demo/demo.build").expect("path"));
         SessionEngine::new(&fs)
@@ -1080,6 +1119,51 @@ mod tests {
             step_over_target_for_words(pc, auipc_ra, Some(jalr_other)),
             None
         );
+    }
+
+    #[test]
+    fn line_step_retires_a_self_jump_once() {
+        let artifacts = build_asm_artifacts(".globl _start\n_start:\ndone:\n    j done\n");
+        let done_pc = LiveMachine::runtime_address(
+            artifacts
+                .linked
+                .symbol_address("done")
+                .expect("done symbol"),
+        );
+        let mut live = LiveMachine::new_freestanding(&artifacts).expect("boot");
+        live.pause();
+        assert!(live.has_line_table(), "assembly build carries a line table");
+        assert_eq!(live.registers().pc, done_pc);
+
+        let retired = live.vm.insns_retired();
+        live.step_line_in();
+
+        assert_eq!(live.state, MachineState::Paused);
+        assert_eq!(live.registers().pc, done_pc);
+        assert_eq!(live.vm.insns_retired(), retired + 1);
+    }
+
+    #[test]
+    fn line_step_wall_budget_stops_an_indirect_same_line_loop() {
+        let artifacts =
+            build_asm_artifacts(".globl _start\n_start:\n    la ra, spin\nspin:\n    ret\n");
+        let spin_pc = LiveMachine::runtime_address(
+            artifacts
+                .linked
+                .symbol_address("spin")
+                .expect("spin symbol"),
+        );
+        let mut live = LiveMachine::new_freestanding(&artifacts).expect("boot");
+        live.run_to(spin_pc);
+        drive_to_completion(&mut live);
+        assert_eq!(live.state, MachineState::Paused);
+
+        let steps = live.steps;
+        live.step_line_impl_with_budget(false, Duration::ZERO);
+
+        assert_eq!(live.state, MachineState::Paused);
+        assert_eq!(live.registers().pc, spin_pc);
+        assert_eq!(live.steps - steps, CLOCK_CHECK_INTERVAL);
     }
 
     #[test]

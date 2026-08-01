@@ -150,7 +150,7 @@ pub fn run_asm(source: &str, max_steps: u32, bare: bool) -> JsValue {
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub fn highlight_html(lang: &str, source: &str) -> String {
-    syntax_highlight::html::highlight_html(lang, source)
+    fs_utils::syntax_highlight::html::highlight_html(lang, source)
 }
 
 #[cfg(test)]

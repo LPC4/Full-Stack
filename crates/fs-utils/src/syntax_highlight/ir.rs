@@ -1,6 +1,6 @@
 // IR (Intermediate Representation) dumps.
 
-use crate::{Class, Out};
+use super::{Class, Out};
 
 const IR_KEYWORDS: &[&str] = &[
     "type",

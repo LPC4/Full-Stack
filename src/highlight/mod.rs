@@ -1,9 +1,9 @@
-// egui adapter over the shared `syntax_highlight` scanners.
+// egui adapter over the shared syntax highlighters.
 
 pub mod theme;
 
 use egui::text::LayoutJob;
-use syntax_highlight::{Class, Lang};
+use fs_utils::syntax_highlight::{self, Class, Lang};
 
 pub use theme::SyntaxPalette;
 

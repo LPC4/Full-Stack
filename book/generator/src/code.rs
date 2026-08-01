@@ -1,6 +1,6 @@
 // Fenced code blocks: highlighted through the same scanners the IDE uses.
 
-pub use syntax_highlight::html::{escape, highlight_html, highlight_lines_html};
+pub use fs_utils::syntax_highlight::html::{escape, highlight_html, highlight_lines_html};
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Fence<'a> {

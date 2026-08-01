@@ -1,6 +1,6 @@
 // Shell command lines: the command word, its options, quoting and expansions.
 
-use crate::{Class, Out};
+use super::{Class, Out};
 
 // Words that start a new command, so the word after them is a command too.
 const CONTROL: &[&str] = &[
@@ -128,8 +128,8 @@ pub(crate) fn highlight(code: &str, out: &mut Out) {
 
 #[cfg(test)]
 mod tests {
+    use super::super::{Lang, highlight};
     use super::*;
-    use crate::{Lang, highlight};
 
     fn classes(src: &str) -> Vec<(&str, Class)> {
         highlight(Lang::Sh, src)
