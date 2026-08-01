@@ -1,0 +1,4 @@
+# Keep repository text deterministic across Windows and CI.
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf

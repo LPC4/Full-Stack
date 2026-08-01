@@ -10,6 +10,8 @@ use full_stack::session::MachineState;
 
 const FB_WIDTH: usize = 320;
 const FB_HEIGHT: usize = 240;
+const FB_DEFAULT_SCALE: f32 = 1.5;
+const FB_MIN_SCALE: f32 = 0.75;
 
 type Highlighter = fn(&egui::Style, &str) -> LayoutJob;
 
@@ -490,7 +492,7 @@ impl FullStackApp {
             .map(|(_, source)| (*source).to_owned())
     }
 
-    // Native opens a real OS window; the browser draws an in-app one. Closing ends the session.
+    // The display stays inside the IDE so the terminal and framebuffer remain visible together.
     pub(super) fn framebuffer_window(&mut self, ctx: &egui::Context) {
         let show = self.live.as_ref().is_some_and(|live| live.state.is_alive())
             && self.config_has_screen();
@@ -501,37 +503,34 @@ impl FullStackApp {
             "{} \u{00B7} screen",
             self.session_tab_label.as_deref().unwrap_or("machine")
         );
-
-        #[cfg(not(target_arch = "wasm32"))]
-        let close_requested = {
-            let mut closed = false;
-            let viewport_id = egui::ViewportId::from_hash_of("machine_framebuffer_window");
-            let builder = egui::ViewportBuilder::default()
-                .with_title(&title)
-                .with_inner_size([FB_WIDTH as f32 * 2.0, FB_HEIGHT as f32 * 2.0])
-                .with_min_inner_size([FB_WIDTH as f32, FB_HEIGHT as f32]);
-            ctx.show_viewport_immediate(viewport_id, builder, |ui, _class| {
-                self.framebuffer_window_body(ui);
-                if ui.ctx().input(|i| i.viewport().close_requested()) {
-                    closed = true;
-                }
-            });
-            closed
-        };
-        // The browser has no OS windows: draw a draggable in-app one instead. Its
-        // title-bar close (open -> false) ends the session, like the real window.
-        #[cfg(target_arch = "wasm32")]
         let close_requested = {
             let mut open = true;
+            let min_size = vec2(
+                FB_WIDTH as f32 * FB_MIN_SCALE,
+                FB_HEIGHT as f32 * FB_MIN_SCALE,
+            );
+            let max_size = (ctx.content_rect().size() - vec2(32.0, 64.0)).max(min_size);
             egui::Window::new(title)
                 .id(egui::Id::new("machine_framebuffer_window"))
                 .order(egui::Order::Foreground)
                 .pivot(egui::Align2::CENTER_CENTER)
                 .default_pos(ctx.content_rect().center())
-                .default_size([FB_WIDTH as f32 * 1.5, FB_HEIGHT as f32 * 1.5])
-                .min_size([FB_WIDTH as f32, FB_HEIGHT as f32])
+                .default_size([
+                    FB_WIDTH as f32 * FB_DEFAULT_SCALE,
+                    FB_HEIGHT as f32 * FB_DEFAULT_SCALE,
+                ])
+                .min_size(min_size)
+                .max_size(max_size)
+                .resizable(true)
+                .collapsible(false)
+                .constrain_to(ctx.content_rect())
                 .open(&mut open)
-                .frame(egui::Frame::new().fill(theme::TERMINAL))
+                .frame(
+                    egui::Frame::new()
+                        .fill(theme::CHROME)
+                        .stroke(egui::Stroke::new(1.0, theme::HAIRLINE))
+                        .inner_margin(egui::Margin::ZERO),
+                )
                 .show(ctx, |ui| self.framebuffer_window_body(ui));
             !open
         };
@@ -553,19 +552,36 @@ impl FullStackApp {
         let Some(texture) = self.machine_texture.as_ref() else {
             return;
         };
-        let rect = ui.available_rect_before_wrap();
+        let available = ui.available_size_before_wrap().max(vec2(0.0, 0.0)).floor();
+        let (rect, response) = ui.allocate_exact_size(available, Sense::click());
         if !rect.is_positive() {
             return;
         }
-        let aspect = FB_WIDTH as f32 / FB_HEIGHT as f32;
-        let mut size = rect.size();
-        if size.x / size.y > aspect {
-            size.x = size.y * aspect;
-        } else {
-            size.y = size.x / aspect;
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::Image, true, "machine framebuffer")
+        });
+        if response.clicked() {
+            response.request_focus();
         }
+        let focused = response.has_focus() || response.clicked();
+        if focused {
+            ui.memory_mut(|memory| {
+                memory.set_focus_lock_filter(
+                    response.id,
+                    egui::EventFilter {
+                        tab: true,
+                        horizontal_arrows: true,
+                        vertical_arrows: true,
+                        escape: false,
+                    },
+                );
+            });
+        }
+
+        let size = fit_framebuffer_size(rect.size());
         let image_rect = egui::Rect::from_center_size(rect.center(), size.floor());
-        ui.painter().rect_filled(rect, 0.0, theme::TERMINAL);
+        ui.painter().rect_filled(rect, 0.0, theme::BEZEL);
+        ui.painter().rect_filled(image_rect, 0.0, theme::BEZEL);
         ui.put(
             image_rect,
             egui::Image::new((texture.id(), image_rect.size()))
@@ -575,15 +591,20 @@ impl FullStackApp {
             ui.painter().text(
                 image_rect.center(),
                 egui::Align2::CENTER_CENTER,
-                "the guest has not drawn to the framebuffer yet",
+                "waiting for framebuffer",
                 egui::FontId::monospace(metrics::STATUS_TEXT_SIZE),
                 theme::TEXT_FAINT,
             );
         }
-        self.route_framebuffer_keys(ui);
-        // The VM is driven from the root viewport; keep it repainting even while
-        // this window holds OS focus, or the guest would freeze here.
-        ui.ctx().request_repaint_of(egui::ViewportId::ROOT);
+        if focused {
+            ui.painter().rect_stroke(
+                image_rect,
+                egui::CornerRadius::ZERO,
+                egui::Stroke::new(1.0, theme::ELECTRIC),
+                egui::StrokeKind::Inside,
+            );
+            self.route_framebuffer_keys(ui);
+        }
         ui.ctx().request_repaint();
     }
 
@@ -652,6 +673,18 @@ impl FullStackApp {
                 _ => {}
             }
         }
+    }
+}
+
+fn fit_framebuffer_size(available: egui::Vec2) -> egui::Vec2 {
+    if available.x <= 0.0 || available.y <= 0.0 {
+        return egui::Vec2::ZERO;
+    }
+    let aspect = FB_WIDTH as f32 / FB_HEIGHT as f32;
+    if available.x / available.y > aspect {
+        vec2(available.y * aspect, available.y)
+    } else {
+        vec2(available.x, available.x / aspect)
     }
 }
 
@@ -835,11 +868,66 @@ mod tests {
     }
 
     #[test]
+    fn framebuffer_fit_preserves_aspect_inside_any_window() {
+        for available in [vec2(1000.0, 600.0), vec2(800.0, 1000.0), vec2(240.0, 180.0)] {
+            let fitted = fit_framebuffer_size(available);
+            assert!(fitted.x <= available.x);
+            assert!(fitted.y <= available.y);
+            assert!((fitted.x / fitted.y - 4.0 / 3.0).abs() < f32::EPSILON);
+        }
+        assert_eq!(fit_framebuffer_size(vec2(0.0, 180.0)), egui::Vec2::ZERO);
+    }
+
+    #[test]
     fn ctrl_key_mapping_mirrors_uart_control_bytes() {
         assert_eq!(ctrl_scancode(egui::Key::A), Some(0x01));
         assert_eq!(ctrl_scancode(egui::Key::C), Some(0x03));
         assert_eq!(ctrl_scancode(egui::Key::Z), Some(0x1A));
         assert_eq!(ctrl_scancode(egui::Key::ArrowUp), None);
+    }
+
+    // Key alone, no Text event: that is what the web backend sends for Tab, and
+    // what a TextEdit without lock_focus filters away before it can indent.
+    #[test]
+    fn tab_indents_the_code_editor_rather_than_moving_focus() {
+        use egui_kittest::{Harness, kittest::Queryable as _};
+
+        let mut harness = Harness::new_ui_state(
+            |ui, state: &mut String| {
+                let text = state.clone();
+                let out = code_view(
+                    ui,
+                    CodeViewConfig {
+                        id_salt: "tab_indent",
+                        text: &text,
+                        highlighter: None,
+                        interactive: true,
+                        show_current_line: false,
+                        find: None,
+                        marks: &[],
+                        jump_to: None,
+                        debug: &SourceDebug::default(),
+                    },
+                );
+                if let Some(edited) = out.edited {
+                    *state = edited;
+                }
+            },
+            "ret\n".to_owned(),
+        );
+
+        harness
+            .get_by_role(egui::accesskit::Role::MultilineTextInput)
+            .focus();
+        harness.run();
+        harness.key_press(egui::Key::Tab);
+        harness.run();
+
+        assert!(
+            harness.state().contains('\t'),
+            "Tab should indent, not move focus: {:?}",
+            harness.state()
+        );
     }
 }
 
@@ -1015,6 +1103,9 @@ where
                 let output = egui::TextEdit::multiline(&mut buf)
                     .id_salt(("code_edit", id_salt.clone()))
                     .font(font.clone())
+                    // A TextEdit drops Key::Tab by default (it is egui's focus key), so
+                    // without this Tab never reaches the branch that indents.
+                    .lock_focus(true)
                     .frame(egui::Frame::NONE)
                     .margin(vec2(metrics::CODE_PAD_X, 0.0))
                     .interactive(interactive)

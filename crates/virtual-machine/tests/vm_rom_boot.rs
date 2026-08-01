@@ -20,9 +20,9 @@ fn run_kernel(src: &str, max_steps: u64) -> (String, i64) {
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
         .map(|l| {
             if let Some(name) = l.strip_suffix(':') {
-                RvInstruction::Label(name.to_string())
+                RvInstruction::Label(name.to_owned())
             } else if l.starts_with('.') {
-                RvInstruction::Directive(l.to_string())
+                RvInstruction::Directive(l.to_owned())
             } else {
                 RvInstruction::Directive(format!("\t{l}"))
             }
@@ -81,9 +81,8 @@ fn m_trap_addr_is_4_byte_aligned() {
 fn pipeline_mtvec_initialised_to_m_trap() {
     // A freshly constructed Pipeline (for hosted programs) must point mtvec at _m_trap, not _start.
     let rom = generate_rom_image();
-    let mut bus = SystemBus::new(rom);
+    let _bus = SystemBus::new(rom);
     let pipeline = Pipeline::new(RAM_BASE, RAM_BASE + 4 * 1024 * 1024);
-    let _ = &mut bus; // bus not used after construction; suppress warning
 
     assert_eq!(
         pipeline.peek_csr_mtvec(),
@@ -111,9 +110,9 @@ fn new_kernel_starts_cpu_at_rom_base() {
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
         .map(|l| {
             if let Some(name) = l.strip_suffix(':') {
-                RvInstruction::Label(name.to_string())
+                RvInstruction::Label(name.to_owned())
             } else if l.starts_with('.') {
-                RvInstruction::Directive(l.to_string())
+                RvInstruction::Directive(l.to_owned())
             } else {
                 RvInstruction::Directive(format!("\t{l}"))
             }
@@ -165,9 +164,9 @@ fn hosted_program_mtvec_still_works_after_rom_change() {
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
         .map(|l| {
             if let Some(name) = l.strip_suffix(':') {
-                RvInstruction::Label(name.to_string())
+                RvInstruction::Label(name.to_owned())
             } else if l.starts_with('.') {
-                RvInstruction::Directive(l.to_string())
+                RvInstruction::Directive(l.to_owned())
             } else {
                 RvInstruction::Directive(format!("\t{l}"))
             }
@@ -192,10 +191,10 @@ fn start_is_not_trap_handler() {
     // Before the ROM refactor both pointed at the same handler; now they are distinct.
     let bytes = generate_rom_image();
     if bytes.len() >= M_TRAP_ADDR as usize + 4 {
-        let at_start: [u8; 4] = bytes[..4].try_into().unwrap();
+        let at_start: [u8; 4] = bytes[..4].try_into().expect("ROM setup should succeed");
         let at_trap: [u8; 4] = bytes[M_TRAP_ADDR as usize..M_TRAP_ADDR as usize + 4]
             .try_into()
-            .unwrap();
+            .expect("ROM setup should succeed");
         assert_ne!(
             at_start, at_trap,
             "_start and _m_trap should have different first instructions"

@@ -117,7 +117,7 @@ impl RamLog {
 const MAX_INTERVAL_GROWTH: u64 = 64;
 
 /// A ring of captured architectural snapshots for scrubbing through execution;
-/// RAM and framebuffer planes each in a delta-compressed [`RamLog`].
+/// RAM and framebuffer planes each in a delta-compressed `RamLog`.
 pub struct TimeMachine {
     ram: RamLog,
     fb: RamLog,

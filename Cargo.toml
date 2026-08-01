@@ -6,6 +6,9 @@ members = [
     "crates/virtual-machine",
     "crates/hll-to-ir",
     "crates/ir-to-asm",
+    "crates/syntax-highlight",
+    "book/generator",
+    "book/wasm",
 ]
 resolver = "2"
 
@@ -31,6 +34,7 @@ hll_to_ir       = { path = "crates/hll-to-ir" }
 ir_to_asm       = { path = "crates/ir-to-asm" }
 asm_to_binary   = { path = "crates/asm-to-binary" }
 virtual_machine = { path = "crates/virtual-machine" }
+syntax_highlight = { path = "crates/syntax-highlight" }
 egui            = "0.34.1"
 eframe          = { version = "0.34.1", features = ["persistence"] }
 egui_dock       = "0.19.1"

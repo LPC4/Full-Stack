@@ -69,19 +69,19 @@ mod tests {
     fn test_error_to_trap_cause() {
         // Test instruction access fault
         let err = VmError::InstructionAccessFault(0x1234);
-        let (cause, tval) = traps::error_to_trap_cause(&err).unwrap();
+        let (cause, tval) = traps::error_to_trap_cause(&err).expect("error should map to a trap");
         assert_eq!(cause, traps::CAUSE_INSN_ACCESS_FAULT);
         assert_eq!(tval, 0x1234);
 
         // Test illegal instruction
         let err = VmError::IllegalInstruction(0xDEAD);
-        let (cause, tval) = traps::error_to_trap_cause(&err).unwrap();
+        let (cause, tval) = traps::error_to_trap_cause(&err).expect("error should map to a trap");
         assert_eq!(cause, traps::CAUSE_ILLEGAL_INSN);
         assert_eq!(tval, 0xDEAD);
 
         // Test load access fault
         let err = VmError::LoadAccessFault(0x5678);
-        let (cause, tval) = traps::error_to_trap_cause(&err).unwrap();
+        let (cause, tval) = traps::error_to_trap_cause(&err).expect("error should map to a trap");
         assert_eq!(cause, traps::CAUSE_LOAD_ACCESS_FAULT);
         assert_eq!(tval, 0x5678);
 

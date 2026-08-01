@@ -457,7 +457,7 @@ impl CompilationPipeline {
         // Import aliases are namespace handles, not symbol definitions, so they never
         // conflict with a same-named export such as `klog := import("klog")`.
 
-        // An unparseable root skips resolution; the compiler reports it with a span.
+        // An unparsable root skips resolution; the compiler reports it with a span.
         let Ok(mut local_names) = hll_to_ir::imports::collect_declaration_names(source) else {
             return Ok(ResolvedModules {
                 prelude: None,

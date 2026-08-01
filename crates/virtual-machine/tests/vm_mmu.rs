@@ -99,7 +99,7 @@ fn test_identity_mapping_in_m_mode() {
         false,
         false,
     );
-    assert_eq!(result.unwrap(), 0x12345);
+    assert_eq!(result.expect("address translation should succeed"), 0x12345);
 }
 
 #[test]
@@ -117,7 +117,7 @@ fn test_identity_mapping_in_bare_mode() {
         false,
         false,
     );
-    assert_eq!(result.unwrap(), 0x12345);
+    assert_eq!(result.expect("address translation should succeed"), 0x12345);
 }
 
 #[test]
@@ -150,14 +150,14 @@ fn test_sv39_translation() {
     // Level 1 table at physical 0x2000
     // Level 0 table at physical 0x3000
 
-    let l2_pte = (0x2000 >> 12) << 10 | 0x1; // PPN=0x2, V=1
+    let l2_pte = ((0x2000 >> 12) << 10) | 0x1; // PPN=0x2, V=1
     mem.write_doubleword(0x1000, l2_pte);
 
-    let l1_pte = (0x3000 >> 12) << 10 | 0x1; // PPN=0x3, V=1
+    let l1_pte = ((0x3000 >> 12) << 10) | 0x1; // PPN=0x3, V=1
     mem.write_doubleword(0x2000, l1_pte);
 
     // Leaf PTE: PPN=0, V|R|W|X|U|A|D=1 (A and D pre-set so no write-back needed)
-    let l0_pte = (0x0 >> 12) << 10 | 0xEF;
+    let l0_pte = 0xEF;
     mem.write_doubleword(0x3000, l0_pte);
 
     let satp = (8u64 << 60) | (0x1000 >> 12); // MODE=8 (Sv39), PPN=1
@@ -171,7 +171,7 @@ fn test_sv39_translation() {
         false,
         false,
     );
-    assert_eq!(result.unwrap(), 0x0);
+    assert_eq!(result.expect("address translation should succeed"), 0x0);
 
     let result = mmu::translate(
         0x100,
@@ -182,18 +182,18 @@ fn test_sv39_translation() {
         false,
         false,
     );
-    assert_eq!(result.unwrap(), 0x100);
+    assert_eq!(result.expect("address translation should succeed"), 0x100);
 }
 
 #[test]
 fn test_sv39_permission_check_execute() {
     let mut mem = MockMemory::new();
 
-    let l2_pte = (0x2000 >> 12) << 10 | 0x1;
+    let l2_pte = ((0x2000 >> 12) << 10) | 0x1;
     mem.write_doubleword(0x1000, l2_pte);
-    let l1_pte = (0x3000 >> 12) << 10 | 0x1;
+    let l1_pte = ((0x3000 >> 12) << 10) | 0x1;
     mem.write_doubleword(0x2000, l1_pte);
-    let l0_pte = (0x0 >> 12) << 10 | 0xEF; // X=1
+    let l0_pte = 0xEF; // X=1
     mem.write_doubleword(0x3000, l0_pte);
 
     let satp = (8u64 << 60) | (0x1000 >> 12);
@@ -214,12 +214,12 @@ fn test_sv39_permission_check_execute() {
 fn test_sv39_permission_check_no_execute() {
     let mut mem = MockMemory::new();
 
-    let l2_pte = (0x2000 >> 12) << 10 | 0x1;
+    let l2_pte = ((0x2000 >> 12) << 10) | 0x1;
     mem.write_doubleword(0x1000, l2_pte);
-    let l1_pte = (0x3000 >> 12) << 10 | 0x1;
+    let l1_pte = ((0x3000 >> 12) << 10) | 0x1;
     mem.write_doubleword(0x2000, l1_pte);
     // R|U|A|D=1, X=0
-    let l0_pte = (0x0 >> 12) << 10 | 0x73;
+    let l0_pte = 0x73;
     mem.write_doubleword(0x3000, l0_pte);
 
     let satp = (8u64 << 60) | (0x1000 >> 12);
@@ -240,11 +240,11 @@ fn test_sv39_permission_check_no_execute() {
 fn test_sv39_permission_check_write() {
     let mut mem = MockMemory::new();
 
-    let l2_pte = (0x2000 >> 12) << 10 | 0x1;
+    let l2_pte = ((0x2000 >> 12) << 10) | 0x1;
     mem.write_doubleword(0x1000, l2_pte);
-    let l1_pte = (0x3000 >> 12) << 10 | 0x1;
+    let l1_pte = ((0x3000 >> 12) << 10) | 0x1;
     mem.write_doubleword(0x2000, l1_pte);
-    let l0_pte = (0x0 >> 12) << 10 | 0xEF; // W=1
+    let l0_pte = 0xEF; // W=1
     mem.write_doubleword(0x3000, l0_pte);
 
     let satp = (8u64 << 60) | (0x1000 >> 12);
@@ -265,12 +265,12 @@ fn test_sv39_permission_check_write() {
 fn test_sv39_permission_check_no_write() {
     let mut mem = MockMemory::new();
 
-    let l2_pte = (0x2000 >> 12) << 10 | 0x1;
+    let l2_pte = ((0x2000 >> 12) << 10) | 0x1;
     mem.write_doubleword(0x1000, l2_pte);
-    let l1_pte = (0x3000 >> 12) << 10 | 0x1;
+    let l1_pte = ((0x3000 >> 12) << 10) | 0x1;
     mem.write_doubleword(0x2000, l1_pte);
     // R|U|A|D=1, W=0, X=0
-    let l0_pte = (0x0 >> 12) << 10 | 0x73;
+    let l0_pte = 0x73;
     mem.write_doubleword(0x3000, l0_pte);
 
     let satp = (8u64 << 60) | (0x1000 >> 12);
@@ -291,9 +291,9 @@ fn test_sv39_permission_check_no_write() {
 fn test_sv39_invalid_pte() {
     let mut mem = MockMemory::new();
 
-    let l2_pte = (0x2000 >> 12) << 10 | 0x1;
+    let l2_pte = ((0x2000 >> 12) << 10) | 0x1;
     mem.write_doubleword(0x1000, l2_pte);
-    let l1_pte = (0x3000 >> 12) << 10 | 0x1;
+    let l1_pte = ((0x3000 >> 12) << 10) | 0x1;
     mem.write_doubleword(0x2000, l1_pte);
     let l0_pte = 0x0; // V=0
     mem.write_doubleword(0x3000, l0_pte);

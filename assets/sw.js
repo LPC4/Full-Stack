@@ -32,6 +32,12 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
+  // The book is a separate static site under /book/. Leave it to the network so
+  // its pages never fall back to the IDE's app shell.
+  if (new URL(event.request.url).pathname.includes("/book/")) {
+    return;
+  }
+
   event.respondWith(
     fetch(event.request)
       .then((response) => {

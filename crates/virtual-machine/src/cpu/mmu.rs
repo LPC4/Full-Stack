@@ -1,7 +1,7 @@
 //! Sv39 MMU implementation for RV64 virtual memory.
 //!
 //! Hardware-accurate page-table walk:
-//!   - Canonical address check (bits [63:39] must sign-extend bit 38)
+//!   - Canonical address check (bits `63:39` must sign-extend bit 38)
 //!   - U-bit and SUM-bit permission enforcement
 //!   - MXR: executable pages become readable when MXR=1
 //!   - Superpage support (1 GB / 2 MB) with alignment check

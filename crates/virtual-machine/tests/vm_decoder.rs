@@ -1,6 +1,6 @@
 use asm_to_binary::riscv::rv64i::*;
 use asm_to_binary::riscv::rv64m::*;
-use asm_to_binary::traits::Instruction;
+use asm_to_binary::traits::Instruction as _;
 use virtual_machine::cpu::decoder::{DecodedInsn, decode};
 use virtual_machine::error::VmError;
 
@@ -10,13 +10,13 @@ fn decode_lui() {
     // Lui::new(5, 0x12345 << 12) would put 0x12345 in upper bits.
     // But the u_inst! macro takes imm as i32 and masks lower 12 bits during encode.
     // Pass the already-shifted value so upper 20 bits = 0x12345.
-    let encoded = Lui::new(5, 0x12345_000u32 as i32).encode();
+    let encoded = Lui::new(5, 0x1234_5000_i32).encode();
     let decoded = decode(encoded).expect("should decode LUI");
     if let DecodedInsn::Lui { rd, imm } = decoded {
         assert_eq!(rd, 5);
         // The decoded imm is the full sign-extended 32-bit upper-immediate.
         // 0x12345000 as i32 = 0x12345000 (positive, fits in i32).
-        let expected_imm = 0x12345_000i32 as i64;
+        let expected_imm = i64::from(0x1234_5000_i32);
         assert_eq!(
             imm, expected_imm,
             "LUI immediate mismatch: got {imm:#x}, expected {expected_imm:#x}"

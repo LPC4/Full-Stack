@@ -16,12 +16,12 @@
     <link data-trunk rel="copy-file" href="assets/manifest.json"/>
 
     <link data-trunk rel="copy-dir" href="assets/icon/"/>
+    <link data-trunk rel="css" href="theme/github-dark.css">
 
     <link rel="manifest" href="assets/manifest.json">
     <link rel="apple-touch-icon" href="assets/icon/icon.png">
 
-    <meta name="theme-color" media="(prefers-color-scheme: light)" content="white">
-    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#13141C">
+    <meta name="theme-color" content="#0d1117">
 
     <style>
         html {
@@ -29,20 +29,13 @@
         }
 
         body {
-            /* Using a slightly cleaner, modern light-mode gray */
-            background: #F0F2F5;
+            background: var(--fs-canvas, #0d1117);
             margin: 0;
             padding: 0;
             overflow: hidden;
             height: 100vh;
             width: 100vw;
             font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-        }
-
-        @media (prefers-color-scheme: dark) {
-            body {
-                background: #1c1c1c;
-            }
         }
 
         canvas {
@@ -63,11 +56,10 @@
             flex-direction: column;
             align-items: center;
             gap: 16px;
-            color: #8B949E; /* Subtle GitHub-style gray */
+            color: var(--fs-text-muted, #8b949e);
             text-align: center;
         }
 
-        /* Modern, minimal spinner */
         .lds-dual-ring {
             display: inline-block;
             width: 32px;
@@ -79,8 +71,8 @@
             width: 32px;
             height: 32px;
             border-radius: 50%;
-            border: 3px solid #8B949E;
-            border-color: #8B949E transparent #8B949E transparent;
+            border: 3px solid var(--fs-text-muted, #8b949e);
+            border-color: var(--fs-text-muted, #8b949e) transparent;
             animation: lds-dual-ring 1s linear infinite;
         }
 
@@ -105,9 +97,7 @@
 <script>
     if ('serviceWorker' in navigator && window.location.hash !== "#dev") {
         window.addEventListener('load', function () {
-            navigator.serviceWorker.register('sw.js').then(function (registration) {
-                registration.update();
-            });
+            navigator.serviceWorker.register('sw.js');
         });
     }
 </script>

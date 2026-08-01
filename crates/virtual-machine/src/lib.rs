@@ -1,3 +1,5 @@
+//! Cycle-stepped RV64 virtual machine with caches, privileged modes, and devices.
+
 #![expect(
     clippy::absurd_extreme_comparisons,
     clippy::cast_possible_wrap,

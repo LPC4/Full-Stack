@@ -402,7 +402,7 @@ fn qemu_05_functions_and_io() {
         return;
     };
 
-    // Verify the I/O first so a mis-printed output gets its own message.
+    // Verify the I/O first so misprinted output gets its own message.
     assert_eq!(
         result.stdout, "PASS",
         "05_functions_and_io: expected stdout \"PASS\" (putchar wrote wrong bytes or \

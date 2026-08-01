@@ -37,7 +37,12 @@ fn main() {
     // on every in-browser build.
     eframe::WebLogger::init(log::LevelFilter::Info).ok();
 
-    let web_options = eframe::WebOptions::default();
+    let mut web_options = eframe::WebOptions::default();
+    // Chromium on Windows ignores explicit GPU preferences and logs a warning.
+    if let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut web_options.wgpu_options.wgpu_setup
+    {
+        setup.power_preference = eframe::wgpu::PowerPreference::None;
+    }
 
     wasm_bindgen_futures::spawn_local(async {
         let document = web_sys::window()

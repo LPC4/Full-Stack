@@ -17,11 +17,11 @@ fn x_roundtrip() {
 #[test]
 fn fp_nan_box_write_read_f32() {
     let mut regs = Registers::new();
-    regs.write_f32(0, 3.14f32);
+    regs.write_f32(0, std::f32::consts::PI);
     let read_back = regs.read_f32(0);
     assert!(
-        (read_back - 3.14f32).abs() < 1e-6,
-        "read_f32 should return approximately 3.14, got {read_back}"
+        (read_back - std::f32::consts::PI).abs() < 1e-6,
+        "read_f32 should return pi, got {read_back}"
     );
     // Upper 32 bits must be 0xFFFF_FFFF (NaN-boxing)
     let bits = regs.read_f_bits(0);
@@ -47,7 +47,7 @@ fn fp_nan_box_invalid_upper() {
 #[test]
 fn fp_f64_roundtrip() {
     let mut regs = Registers::new();
-    let e = 2.718_281_828_f64;
+    let e = std::f64::consts::E;
     regs.write_f64(0, e);
     let read_back = regs.read_f64(0);
     assert_eq!(

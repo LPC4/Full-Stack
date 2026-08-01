@@ -11,8 +11,8 @@ use crate::cpu::pipeline::memory::MemResult;
 pub struct IFIDReg {
     pub pc: u64,
     pub raw: u32,
-    /// Coarse rs1/rs2 for load-use hazard detection, taken from bits[19:15] and
-    /// bits[24:20]. Those positions hold for every standard format.
+    /// Coarse rs1/rs2 for load-use hazard detection, taken from bits `19:15` and
+    /// `24:20`. Those positions hold for every standard format.
     pub rs1: usize,
     pub rs2: usize,
     pub predicted_taken: bool,

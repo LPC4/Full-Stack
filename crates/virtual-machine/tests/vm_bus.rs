@@ -1,6 +1,6 @@
 use virtual_machine::bus::{PLIC_BASE, RAM_BASE, ROM_BASE, SystemBus};
 use virtual_machine::error::VmError;
-use virtual_machine::memory::MemoryAccess;
+use virtual_machine::memory::MemoryAccess as _;
 
 // --- System Bus, routing to different devices ---
 
@@ -9,8 +9,9 @@ fn bus_route_to_ram() {
     let mut bus = SystemBus::new(Vec::new());
 
     // Write to RAM
-    let _ = bus.write_byte(RAM_BASE, 0x42);
-    let byte = bus.read_byte(RAM_BASE).unwrap();
+    bus.write_byte(RAM_BASE, 0x42)
+        .expect("bus write should succeed");
+    let byte = bus.read_byte(RAM_BASE).expect("bus access should succeed");
     assert_eq!(byte, 0x42);
 }
 
@@ -20,7 +21,7 @@ fn bus_route_to_rom() {
     let mut bus = SystemBus::new(rom_data);
 
     // Read from ROM
-    let byte = bus.read_byte(ROM_BASE).unwrap();
+    let byte = bus.read_byte(ROM_BASE).expect("bus access should succeed");
     assert_eq!(byte, 0x13);
 }
 
@@ -39,12 +40,16 @@ fn bus_read_word_little_endian() {
     let mut bus = SystemBus::new(Vec::new());
 
     // Write bytes in little-endian order: 0x04030201
-    let _ = bus.write_byte(RAM_BASE, 0x01);
-    let _ = bus.write_byte(RAM_BASE + 1, 0x02);
-    let _ = bus.write_byte(RAM_BASE + 2, 0x03);
-    let _ = bus.write_byte(RAM_BASE + 3, 0x04);
+    bus.write_byte(RAM_BASE, 0x01)
+        .expect("bus write should succeed");
+    bus.write_byte(RAM_BASE + 1, 0x02)
+        .expect("bus write should succeed");
+    bus.write_byte(RAM_BASE + 2, 0x03)
+        .expect("bus write should succeed");
+    bus.write_byte(RAM_BASE + 3, 0x04)
+        .expect("bus write should succeed");
 
-    let word = bus.read_word(RAM_BASE).unwrap();
+    let word = bus.read_word(RAM_BASE).expect("bus access should succeed");
     assert_eq!(word, 0x04030201);
 }
 
@@ -54,9 +59,12 @@ fn bus_read_doubleword_little_endian() {
 
     // Write 64-bit value in little-endian
     let value = 0x0807_0605_0403_0201u64;
-    let _ = bus.write_doubleword(RAM_BASE, value).unwrap();
+    bus.write_doubleword(RAM_BASE, value)
+        .expect("bus access should succeed");
 
-    let dw = bus.read_doubleword(RAM_BASE).unwrap();
+    let dw = bus
+        .read_doubleword(RAM_BASE)
+        .expect("bus access should succeed");
     assert_eq!(dw, value);
 }
 
@@ -83,8 +91,9 @@ fn bus_unmapped_address_write() {
 fn bus_ram_first_byte() {
     let mut bus = SystemBus::new(Vec::new());
 
-    let _ = bus.write_byte(RAM_BASE, 0xAA);
-    let byte = bus.read_byte(RAM_BASE).unwrap();
+    bus.write_byte(RAM_BASE, 0xAA)
+        .expect("bus write should succeed");
+    let byte = bus.read_byte(RAM_BASE).expect("bus access should succeed");
     assert_eq!(byte, 0xAA);
 }
 
@@ -95,8 +104,9 @@ fn bus_ram_last_byte() {
     // RAM_SIZE_DEFAULT is 128 MB
     let last_addr = RAM_BASE + (128 * 1024 * 1024) as u64 - 1;
 
-    let _ = bus.write_byte(last_addr, 0xBB);
-    let byte = bus.read_byte(last_addr).unwrap();
+    bus.write_byte(last_addr, 0xBB)
+        .expect("bus write should succeed");
+    let byte = bus.read_byte(last_addr).expect("bus access should succeed");
     assert_eq!(byte, 0xBB);
 }
 
@@ -117,8 +127,11 @@ fn bus_ram_beyond_end() {
 fn bus_read_halfword_aligned() {
     let mut bus = SystemBus::new(Vec::new());
 
-    let _ = bus.write_halfword(RAM_BASE, 0xBEEF).unwrap();
-    let hw = bus.read_halfword(RAM_BASE).unwrap();
+    bus.write_halfword(RAM_BASE, 0xBEEF)
+        .expect("bus access should succeed");
+    let hw = bus
+        .read_halfword(RAM_BASE)
+        .expect("bus access should succeed");
     assert_eq!(hw, 0xBEEF);
 }
 
@@ -126,8 +139,9 @@ fn bus_read_halfword_aligned() {
 fn bus_read_word_aligned() {
     let mut bus = SystemBus::new(Vec::new());
 
-    let _ = bus.write_word(RAM_BASE, 0xDEAD_BEEF).unwrap();
-    let word = bus.read_word(RAM_BASE).unwrap();
+    bus.write_word(RAM_BASE, 0xDEAD_BEEF)
+        .expect("bus access should succeed");
+    let word = bus.read_word(RAM_BASE).expect("bus access should succeed");
     assert_eq!(word, 0xDEAD_BEEF);
 }
 
@@ -136,8 +150,11 @@ fn bus_read_doubleword_aligned() {
     let mut bus = SystemBus::new(Vec::new());
 
     let value = 0xDEAD_BEEF_CAFE_BABEu64;
-    let _ = bus.write_doubleword(RAM_BASE, value).unwrap();
-    let dw = bus.read_doubleword(RAM_BASE).unwrap();
+    bus.write_doubleword(RAM_BASE, value)
+        .expect("bus access should succeed");
+    let dw = bus
+        .read_doubleword(RAM_BASE)
+        .expect("bus access should succeed");
     assert_eq!(dw, value);
 }
 

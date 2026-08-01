@@ -1,3 +1,5 @@
+//! Compiler, runtime, workspace, debugger, and application core for Full-Stack.
+
 #![expect(
     clippy::missing_errors_doc,
     clippy::string_add,

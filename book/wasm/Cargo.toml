@@ -1,0 +1,29 @@
+[package]
+name = "fsbook_wasm"
+version = "0.1.0"
+description = "In-page RISC-V assembly sandbox for the Full-Stack book"
+repository = "https://github.com/LPC4/Full-Stack"
+license = "MIT OR Apache-2.0"
+edition = "2024"
+rust-version = "1.92"
+
+[lib]
+name = "fsbook_wasm"
+crate-type = ["cdylib", "rlib"]
+path = "src/lib.rs"
+
+[dependencies]
+asm_to_binary = { path = "../../crates/asm-to-binary" }
+virtual_machine = { path = "../../crates/virtual-machine" }
+syntax_highlight = { path = "../../crates/syntax-highlight" }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2.100"
+serde-wasm-bindgen = "0.6"
+serde = { version = "1.0.219", features = ["derive"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+serde = { version = "1.0.219", features = ["derive"] }
+
+[lints]
+workspace = true

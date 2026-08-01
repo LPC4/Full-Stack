@@ -1,7 +1,6 @@
-// HLL source code highlighting with inline asm block detection
+// HLL source, including the inline `asm { ... }` sub-dialect.
 
-use crate::highlight::theme::SyntaxPalette;
-use egui::text::LayoutJob;
+use crate::{Class, Out};
 use std::collections::HashSet;
 
 // Keep in sync with the lexer's keyword table (crates/hll-to-ir/src/lexer.rs).
@@ -82,14 +81,8 @@ fn find_comment_start_outside_string(line: &str) -> Option<usize> {
     comment_start
 }
 
-fn append_hll_code_part(
-    job: &mut LayoutJob,
-    theme: &egui::Style,
-    code_part: &str,
-    type_names: &HashSet<String>,
-) {
-    let palette = SyntaxPalette::dark();
-    let font_id = egui::TextStyle::Monospace.resolve(theme);
+// `base` is where `code_part` starts in the whole source, so spans stay absolute.
+fn push_hll_code_part(out: &mut Out, base: usize, code_part: &str, type_names: &HashSet<String>) {
     let mut start = 0;
     let bytes = code_part.as_bytes();
     let len = bytes.len();
@@ -111,15 +104,7 @@ fn append_hll_code_part(
                     end += 1;
                 }
             }
-            job.append(
-                &code_part[start..end],
-                0.0,
-                egui::TextFormat {
-                    font_id: font_id.clone(),
-                    color: palette.string,
-                    ..Default::default()
-                },
-            );
+            out.push(base + start, base + end, Class::String);
             start = end;
             continue;
         }
@@ -130,22 +115,14 @@ fn append_hll_code_part(
                 end += 1;
             }
             let word = &code_part[start..end];
-            let color = if HLL_KEYWORDS.contains(&word) {
-                palette.keyword
+            let class = if HLL_KEYWORDS.contains(&word) {
+                Class::Keyword
             } else if type_names.contains(word) {
-                palette.identifier
+                Class::Identifier
             } else {
-                theme.visuals.text_color()
+                Class::Text
             };
-            job.append(
-                word,
-                0.0,
-                egui::TextFormat {
-                    font_id: font_id.clone(),
-                    color,
-                    ..Default::default()
-                },
-            );
+            out.push(base + start, base + end, class);
             start = end;
             continue;
         }
@@ -153,7 +130,6 @@ fn append_hll_code_part(
         // number (decimal, hex 0x..., binary 0b..., octal 0o...)
         if bytes[start].is_ascii_digit() {
             end = start + 1;
-            // detect hex, binary, or octal prefix
             if bytes[start] == b'0' && end < len {
                 match bytes[end] {
                     b'x' | b'X' => {
@@ -187,15 +163,7 @@ fn append_hll_code_part(
                     end += 1;
                 }
             }
-            job.append(
-                &code_part[start..end],
-                0.0,
-                egui::TextFormat {
-                    font_id: font_id.clone(),
-                    color: palette.number,
-                    ..Default::default()
-                },
-            );
+            out.push(base + start, base + end, Class::Number);
             start = end;
             continue;
         }
@@ -209,15 +177,7 @@ fn append_hll_code_part(
         {
             end += 1;
         }
-        job.append(
-            &code_part[start..end],
-            0.0,
-            egui::TextFormat {
-                font_id: font_id.clone(),
-                color: theme.visuals.text_color(),
-                ..Default::default()
-            },
-        );
+        out.push(base + start, base + end, Class::Text);
         start = end;
     }
 }
@@ -325,9 +285,7 @@ fn is_register_word(word: &str) -> bool {
         || (word.starts_with('f') && word[1..].chars().all(|c| c.is_ascii_digit()))
 }
 
-fn append_inline_asm_code_part(job: &mut LayoutJob, theme: &egui::Style, code_part: &str) {
-    let palette = SyntaxPalette::dark();
-    let font_id = egui::TextStyle::Monospace.resolve(theme);
+fn push_inline_asm_code_part(out: &mut Out, base: usize, code_part: &str) {
     let mut start = 0;
     let bytes = code_part.as_bytes();
     let len = bytes.len();
@@ -341,15 +299,7 @@ fn append_inline_asm_code_part(job: &mut LayoutJob, theme: &egui::Style, code_pa
             while end < len && bytes[end].is_ascii_whitespace() {
                 end += 1;
             }
-            job.append(
-                &code_part[start..end],
-                0.0,
-                egui::TextFormat {
-                    font_id: font_id.clone(),
-                    color: theme.visuals.text_color(),
-                    ..Default::default()
-                },
-            );
+            out.push(base + start, base + end, Class::Text);
             start = end;
             continue;
         }
@@ -362,29 +312,21 @@ fn append_inline_asm_code_part(job: &mut LayoutJob, theme: &egui::Style, code_pa
             }
             let word = &code_part[start..end];
             let is_label = end < len && bytes[end] == b':';
-            let color = if is_label {
-                palette.label
+            let class = if is_label {
+                Class::Label
             } else if is_register_word(word) {
-                palette.register
+                Class::Register
             } else if word.starts_with('.') {
-                palette.directive
+                Class::Directive
             } else if !seen_mnemonic {
-                palette.keyword
+                Class::Keyword
             } else {
-                theme.visuals.text_color()
+                Class::Text
             };
             if !is_label && !is_register_word(word) && !word.starts_with('.') {
                 seen_mnemonic = true;
             }
-            job.append(
-                word,
-                0.0,
-                egui::TextFormat {
-                    font_id: font_id.clone(),
-                    color,
-                    ..Default::default()
-                },
-            );
+            out.push(base + start, base + end, class);
             start = end;
             continue;
         }
@@ -395,33 +337,17 @@ fn append_inline_asm_code_part(job: &mut LayoutJob, theme: &egui::Style, code_pa
             while end < len && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'x') {
                 end += 1;
             }
-            job.append(
-                &code_part[start..end],
-                0.0,
-                egui::TextFormat {
-                    font_id: font_id.clone(),
-                    color: palette.number,
-                    ..Default::default()
-                },
-            );
+            out.push(base + start, base + end, Class::Number);
             start = end;
             continue;
         }
 
-        let color = if b == b'{' || b == b'}' {
-            palette.bracket
+        let class = if b == b'{' || b == b'}' {
+            Class::Bracket
         } else {
-            theme.visuals.text_color()
+            Class::Text
         };
-        job.append(
-            &code_part[start..start + 1],
-            0.0,
-            egui::TextFormat {
-                font_id: font_id.clone(),
-                color,
-                ..Default::default()
-            },
-        );
+        out.push(base + start, base + start + 1, class);
         start += 1;
     }
 }
@@ -460,7 +386,7 @@ fn find_inline_asm_open(code_part: &str) -> Option<(usize, usize)> {
             continue;
         }
 
-        if i + 3 <= bytes.len() && &bytes[i..i + 3] == b"asm" {
+        if &bytes[i..i + 3] == b"asm" {
             let left_ok = i == 0 || !(bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_');
             let right_ok = i + 3 == bytes.len()
                 || !(bytes[i + 3].is_ascii_alphanumeric() || bytes[i + 3] == b'_');
@@ -480,204 +406,82 @@ fn find_inline_asm_open(code_part: &str) -> Option<(usize, usize)> {
     None
 }
 
-/// Highlights source code with basic syntax highlighting for the HLL.
-pub fn highlight_code(theme: &egui::Style, code: &str) -> LayoutJob {
-    let palette = SyntaxPalette::dark();
-    let mut job = LayoutJob::default();
-    let font_id = egui::TextStyle::Monospace.resolve(theme);
+pub(crate) fn highlight(code: &str, out: &mut Out) {
     let type_names = collect_type_names(code);
     let mut in_inline_asm_block = false;
+    let mut base = 0;
 
     for segment in code.split_inclusive('\n') {
-        let (line, has_newline) = if let Some(without_newline) = segment.strip_suffix('\n') {
-            (without_newline, true)
-        } else {
-            (segment, false)
+        let (line, has_newline) = match segment.strip_suffix('\n') {
+            Some(stripped) => (stripped, true),
+            None => (segment, false),
         };
 
         let comment_start = find_comment_start_outside_string(line);
 
         // split into code part and optional comment part
-        let (code_part, comment_part) = if let Some(idx) = comment_start {
-            (&line[..idx], Some(&line[idx..]))
-        } else {
-            (line, None)
+        let (code_part, comment_part) = match comment_start {
+            Some(idx) => (&line[..idx], Some(idx)),
+            None => (line, None),
         };
 
         if in_inline_asm_block {
             if let Some(close_idx) = code_part.find('}') {
-                let asm_part = &code_part[..close_idx];
-                append_inline_asm_code_part(&mut job, theme, asm_part);
-                job.append(
-                    "}",
-                    0.0,
-                    egui::TextFormat {
-                        font_id: font_id.clone(),
-                        color: palette.bracket,
-                        ..Default::default()
-                    },
+                push_inline_asm_code_part(out, base, &code_part[..close_idx]);
+                out.push(base + close_idx, base + close_idx + 1, Class::Bracket);
+                push_hll_code_part(
+                    out,
+                    base + close_idx + 1,
+                    &code_part[close_idx + 1..],
+                    &type_names,
                 );
-                append_hll_code_part(&mut job, theme, &code_part[close_idx + 1..], &type_names);
                 in_inline_asm_block = false;
             } else {
-                append_inline_asm_code_part(&mut job, theme, code_part);
+                push_inline_asm_code_part(out, base, code_part);
             }
         } else if let Some((asm_idx, open_idx)) = find_inline_asm_open(code_part) {
-            append_hll_code_part(&mut job, theme, &code_part[..asm_idx], &type_names);
-            job.append(
-                "asm",
-                0.0,
-                egui::TextFormat {
-                    font_id: font_id.clone(),
-                    color: palette.keyword,
-                    ..Default::default()
-                },
-            );
+            push_hll_code_part(out, base, &code_part[..asm_idx], &type_names);
+            out.push(base + asm_idx, base + asm_idx + 3, Class::Keyword);
             if open_idx > asm_idx + 3 {
-                append_hll_code_part(
-                    &mut job,
-                    theme,
+                push_hll_code_part(
+                    out,
+                    base + asm_idx + 3,
                     &code_part[asm_idx + 3..open_idx],
                     &type_names,
                 );
             }
-            job.append(
-                "{",
-                0.0,
-                egui::TextFormat {
-                    font_id: font_id.clone(),
-                    color: palette.bracket,
-                    ..Default::default()
-                },
-            );
+            out.push(base + open_idx, base + open_idx + 1, Class::Bracket);
 
+            let after_base = base + open_idx + 1;
             let after_open = &code_part[open_idx + 1..];
             if let Some(close_rel) = after_open.find('}') {
-                append_inline_asm_code_part(&mut job, theme, &after_open[..close_rel]);
-                job.append(
-                    "}",
-                    0.0,
-                    egui::TextFormat {
-                        font_id: font_id.clone(),
-                        color: palette.bracket,
-                        ..Default::default()
-                    },
+                push_inline_asm_code_part(out, after_base, &after_open[..close_rel]);
+                out.push(
+                    after_base + close_rel,
+                    after_base + close_rel + 1,
+                    Class::Bracket,
                 );
-                append_hll_code_part(&mut job, theme, &after_open[close_rel + 1..], &type_names);
+                push_hll_code_part(
+                    out,
+                    after_base + close_rel + 1,
+                    &after_open[close_rel + 1..],
+                    &type_names,
+                );
             } else {
-                append_inline_asm_code_part(&mut job, theme, after_open);
+                push_inline_asm_code_part(out, after_base, after_open);
                 in_inline_asm_block = true;
             }
         } else {
-            append_hll_code_part(&mut job, theme, code_part, &type_names);
+            push_hll_code_part(out, base, code_part, &type_names);
         }
 
-        // ---------- append the comment part (if any) ----------
-        if let Some(comment) = comment_part {
-            job.append(
-                comment,
-                0.0,
-                egui::TextFormat {
-                    font_id: font_id.clone(),
-                    color: palette.comment,
-                    ..Default::default()
-                },
-            );
+        if let Some(idx) = comment_part {
+            out.push(base + idx, base + line.len(), Class::Comment);
         }
 
-        // append newline
         if has_newline {
-            job.append(
-                "\n",
-                0.0,
-                egui::TextFormat {
-                    font_id: font_id.clone(),
-                    ..Default::default()
-                },
-            );
+            out.push(base + line.len(), base + line.len() + 1, Class::Plain);
         }
-    }
-    job
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // Guards the keyword list against going stale as the language grows.
-    #[test]
-    fn hll2_era_keywords_are_highlighted() {
-        let style = egui::Style::default();
-        let palette = SyntaxPalette::dark();
-        let hll2 = [
-            "interface",
-            "dyn",
-            "impl",
-            "struct",
-            "enum",
-            "match",
-            "for",
-            "in",
-            "fn",
-            "as",
-            "import",
-            "export",
-            "break",
-            "continue",
-            "not",
-            "Self",
-        ];
-        for keyword in hll2 {
-            let job = highlight_code(&style, keyword);
-            assert!(
-                job.sections
-                    .iter()
-                    .any(|s| s.format.color == palette.keyword),
-                "keyword `{keyword}` not highlighted"
-            );
-        }
-    }
-
-    #[test]
-    fn plain_identifiers_are_not_highlighted() {
-        let style = egui::Style::default();
-        let palette = SyntaxPalette::dark();
-        for word in ["interfaces", "formatter", "matcher", "implement"] {
-            let job = highlight_code(&style, word);
-            assert!(
-                job.sections
-                    .iter()
-                    .all(|s| s.format.color != palette.keyword),
-                "identifier `{word}` wrongly highlighted as a keyword"
-            );
-        }
-    }
-
-    fn word_color(job: &LayoutJob, word: &str) -> Option<egui::Color32> {
-        job.sections.iter().find_map(|section| {
-            (&job.text[section.byte_range.clone()] == word).then_some(section.format.color)
-        })
-    }
-
-    #[test]
-    fn declared_and_generic_types_use_the_identifier_color() {
-        let style = egui::Style::default();
-        let palette = SyntaxPalette::dark();
-        let source = r#"
-interface Measured { measure: (self: Self*) -> i32 }
-struct Box<T> { value: T }
-read: <U: Measured>(value: Box<U>*, erased: dyn Measured) -> U { return value.value }
-const OP_ADD = 1
-"#;
-        let job = highlight_code(&style, source);
-
-        for ty in ["Measured", "Box", "T", "U"] {
-            assert_eq!(
-                word_color(&job, ty),
-                Some(palette.identifier),
-                "type `{ty}`"
-            );
-        }
-        assert_ne!(word_color(&job, "OP_ADD"), Some(palette.identifier));
+        base += segment.len();
     }
 }

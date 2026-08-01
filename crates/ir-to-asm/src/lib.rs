@@ -1,3 +1,5 @@
+//! Lowers typed Full-Stack IR programs to RISC-V assembly.
+
 #![expect(
     clippy::cast_possible_wrap,
     clippy::collapsible_match,

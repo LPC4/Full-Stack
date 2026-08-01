@@ -1,12 +1,12 @@
 //! Unit tests for the 5-stage pipeline.
 //!
-//! Each test loads a minimal RISC-V binary into a SystemBus, runs it through
+//! Each test loads a minimal RISC-V binary into a `SystemBus`, runs it through
 //! the Pipeline, and asserts on both the computed results and the pipeline
 //! performance counters (stall cycles, flush cycles, retired instructions).
 
 use virtual_machine::bus::{MemoryLatencyConfig, RAM_BASE, SystemBus};
 use virtual_machine::cpu::pipeline::{Pipeline, TickOutcome};
-use virtual_machine::memory::MemoryAccess;
+use virtual_machine::memory::MemoryAccess as _;
 use virtual_machine::rom::generate_rom_image;
 
 // --- Helpers ---
@@ -18,7 +18,7 @@ const STACK_TOP: u64 = RAM_BASE + 4 * 1024 * 1024; // 4 MiB stack
 fn load_program(bus: &mut SystemBus, base: u64, words: &[u32]) -> Pipeline {
     for (i, &w) in words.iter().enumerate() {
         let addr = base + (i as u64) * 4;
-        let _ = bus.write_word(addr, w);
+        bus.write_word(addr, w).expect("bus write should succeed");
     }
     Pipeline::new(base, STACK_TOP)
 }
@@ -73,11 +73,10 @@ fn beq(rs1: u32, rs2: u32, imm: i32) -> u32 {
     let imm_11 = (imm13 >> 11) & 1;
     let imm_10_5 = (imm13 >> 5) & 0x3f;
     let imm_4_1 = (imm13 >> 1) & 0xf;
-    (imm_12 << 31)
+    ((imm_12 << 31)
         | (imm_10_5 << 25)
         | (rs2 << 20)
-        | (rs1 << 15)
-        | (0 << 12) // funct3=0 = BEQ
+        | (rs1 << 15)) // funct3=0 = BEQ
         | (imm_4_1 << 8)
         | (imm_11 << 7)
         | 0x63
@@ -189,7 +188,8 @@ fn pipeline_load_use_stall() {
     let data_addr = RAM_BASE + 0x100;
 
     // Pre-store 42 at data_addr
-    let _ = bus.write_word(data_addr, 42u32);
+    bus.write_word(data_addr, 42u32)
+        .expect("bus write should succeed");
 
     let prog = [
         addi(1, 0, 99), // x1 = 99
@@ -398,7 +398,7 @@ fn pipeline_cycle_count_geq_retired() {
         ecall(),
     ];
     let mut cpu = load_program(&mut bus, RAM_BASE, &prog);
-    let _ = run_n(&mut cpu, &mut bus, 100);
+    run_n(&mut cpu, &mut bus, 100);
 
     assert!(
         cpu.stats.cycles >= cpu.stats.insns_retired,
@@ -453,7 +453,7 @@ fn predictor_stats_tracked() {
     ];
     let mut cpu = load_program(&mut bus, RAM_BASE, &prog);
 
-    let _ = run_n(&mut cpu, &mut bus, 60);
+    run_n(&mut cpu, &mut bus, 60);
 
     let ps = cpu.predictor_stats();
     assert!(ps.total >= 1, "predictor must track at least one branch");

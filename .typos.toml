@@ -3,4 +3,14 @@
 # run:      typos
 
 [default.extend-words]
-egui = "egui" # Example for how to ignore a false positive
+caf = "caf"
+egui = "egui"
+fle = "fle"
+nd = "nd"
+ot = "ot"
+pn = "pn"
+rela = "rela"
+sie = "sie"
+spoff = "spoff"
+stip = "stip"
+thr = "thr"

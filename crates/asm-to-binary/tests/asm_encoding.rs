@@ -8,7 +8,7 @@ use asm_to_binary::riscv::rv64fd::*;
 use asm_to_binary::riscv::rv64i::*;
 use asm_to_binary::riscv::rv64m::*;
 use asm_to_binary::riscv::rv64zicsr::*;
-use asm_to_binary::traits::Instruction;
+use asm_to_binary::traits::Instruction as _;
 use asm_to_binary::utils::reg_name;
 
 macro_rules! assert_enc {
@@ -141,7 +141,10 @@ fn rv64i_jump() {
 #[test]
 fn rv64i_upper() {
     assert_enc!(Lui::new(5, 0x12345000), 0x123452b7u32);
-    assert_enc!(Auipc::new(5, 0xABCDE000u32 as i32), 0xabcde297u32);
+    assert_enc!(
+        Auipc::new(5, 0xABCD_E000_u32.cast_signed()),
+        0xABCD_E297_u32
+    );
 }
 
 // --- RV64I - System / fence ---

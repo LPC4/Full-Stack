@@ -7,21 +7,18 @@ use asm_to_binary::rv_instruction::RvInstruction;
 fn test_call_pseudo_relocation() {
     // Test that `call target` expands to correct auipc + jalr
     let tokens = vec![
-        RvInstruction::Label("start".to_string()),
-        RvInstruction::Directive("\t.text".to_string()),
+        RvInstruction::Label("start".to_owned()),
+        RvInstruction::Directive("\t.text".to_owned()),
         RvInstruction::Pseudo(PseudoInstruction::Call {
-            symbol: "target_func".to_string(),
+            symbol: "target_func".to_owned(),
         }),
-        RvInstruction::Label("target_func".to_string()),
+        RvInstruction::Label("target_func".to_owned()),
         RvInstruction::Real(asm_to_binary::real::RealInstruction::Addi(
             asm_to_binary::riscv::rv64i::Addi::new(0, 0, 0),
         )),
     ];
 
-    let result = Assembler::assemble(&tokens);
-    assert!(result.is_ok(), "Assembly failed: {:?}", result.err());
-
-    let output = result.unwrap();
+    let output = Assembler::assemble(&tokens).expect("call relocation should assemble");
     // Check that we have symbols
     assert!(output.has_symbol("start"));
     assert!(output.has_symbol("target_func"));
@@ -31,21 +28,18 @@ fn test_call_pseudo_relocation() {
 fn test_la_pseudo_relocation() {
     // Test that `la a0, label` expands to correct auipc + addi
     let tokens = vec![
-        RvInstruction::Directive("\t.text".to_string()),
+        RvInstruction::Directive("\t.text".to_owned()),
         RvInstruction::Pseudo(PseudoInstruction::La {
             rd: 10, // a0
-            symbol: "my_label".to_string(),
+            symbol: "my_label".to_owned(),
         }),
-        RvInstruction::Label("my_label".to_string()),
+        RvInstruction::Label("my_label".to_owned()),
         RvInstruction::Real(asm_to_binary::real::RealInstruction::Addi(
             asm_to_binary::riscv::rv64i::Addi::new(0, 0, 0),
         )),
     ];
 
-    let result = Assembler::assemble(&tokens);
-    assert!(result.is_ok(), "Assembly failed: {:?}", result.err());
-
-    let output = result.unwrap();
+    let output = Assembler::assemble(&tokens).expect("la relocation should assemble");
     assert!(output.has_symbol("my_label"));
 }
 
@@ -53,20 +47,17 @@ fn test_la_pseudo_relocation() {
 fn test_tail_pseudo_relocation() {
     // Test that `tail target` expands to correct auipc + jalr
     let tokens = vec![
-        RvInstruction::Directive("\t.text".to_string()),
+        RvInstruction::Directive("\t.text".to_owned()),
         RvInstruction::Pseudo(PseudoInstruction::Tail {
-            symbol: "end_func".to_string(),
+            symbol: "end_func".to_owned(),
         }),
-        RvInstruction::Label("end_func".to_string()),
+        RvInstruction::Label("end_func".to_owned()),
         RvInstruction::Real(asm_to_binary::real::RealInstruction::Addi(
             asm_to_binary::riscv::rv64i::Addi::new(0, 0, 0),
         )),
     ];
 
-    let result = Assembler::assemble(&tokens);
-    assert!(result.is_ok(), "Assembly failed: {:?}", result.err());
-
-    let output = result.unwrap();
+    let output = Assembler::assemble(&tokens).expect("tail relocation should assemble");
     assert!(output.has_symbol("end_func"));
 }
 
@@ -89,10 +80,10 @@ fn auipc_hi20_is_shifted_for_la() {
     // `la` arrives as a Directive string so the parser emits AsmToken::La with deferred
     // symbol resolution instead of eagerly expanding the pseudo.
     let tokens = vec![
-        RvInstruction::Directive("\t.text".to_string()),
-        RvInstruction::Directive("\tla t0, far_label".to_string()),
+        RvInstruction::Directive("\t.text".to_owned()),
+        RvInstruction::Directive("\tla t0, far_label".to_owned()),
         RvInstruction::Directive(format!("\t.space {}", 0x11000_usize - 8)),
-        RvInstruction::Label("far_label".to_string()),
+        RvInstruction::Label("far_label".to_owned()),
         RvInstruction::Real(asm_to_binary::real::RealInstruction::Addi(
             asm_to_binary::riscv::rv64i::Addi::new(0, 0, 0),
         )),
@@ -103,7 +94,11 @@ fn auipc_hi20_is_shifted_for_la() {
     assert!(!text.is_empty(), ".text section should not be empty");
 
     // Decode the first word (the AUIPC).
-    let word = u32::from_le_bytes(text[0..4].try_into().unwrap());
+    let word = u32::from_le_bytes(
+        text[0..4]
+            .try_into()
+            .expect("first instruction should be four bytes"),
+    );
     // AUIPC opcode = 0x17; rd=5 -> bits[11:7]=0b00101; imm[31:12] should be 17.
     let opcode = word & 0x7F;
     let rd = (word >> 7) & 0x1F;
@@ -122,10 +117,10 @@ fn auipc_hi20_is_shifted_for_la() {
 #[test]
 fn auipc_hi20_is_shifted_for_call() {
     let tokens = vec![
-        RvInstruction::Directive("\t.text".to_string()),
-        RvInstruction::Directive("\tcall far_func".to_string()),
+        RvInstruction::Directive("\t.text".to_owned()),
+        RvInstruction::Directive("\tcall far_func".to_owned()),
         RvInstruction::Directive(format!("\t.space {}", 0x11000_usize - 8)),
-        RvInstruction::Label("far_func".to_string()),
+        RvInstruction::Label("far_func".to_owned()),
         RvInstruction::Real(asm_to_binary::real::RealInstruction::Jalr(
             asm_to_binary::riscv::rv64i::Jalr::new(0, 1, 0),
         )),
@@ -135,7 +130,11 @@ fn auipc_hi20_is_shifted_for_call() {
     let text = output.text_bytes();
     assert!(!text.is_empty(), ".text section should not be empty");
 
-    let word = u32::from_le_bytes(text[0..4].try_into().unwrap());
+    let word = u32::from_le_bytes(
+        text[0..4]
+            .try_into()
+            .expect("first instruction should be four bytes"),
+    );
     let opcode = word & 0x7F;
     let imm_upper = word & 0xFFFFF000;
 
@@ -150,10 +149,10 @@ fn auipc_hi20_is_shifted_for_call() {
 #[test]
 fn auipc_hi20_is_shifted_for_tail() {
     let tokens = vec![
-        RvInstruction::Directive("\t.text".to_string()),
-        RvInstruction::Directive("\ttail far_tail".to_string()),
+        RvInstruction::Directive("\t.text".to_owned()),
+        RvInstruction::Directive("\ttail far_tail".to_owned()),
         RvInstruction::Directive(format!("\t.space {}", 0x11000_usize - 8)),
-        RvInstruction::Label("far_tail".to_string()),
+        RvInstruction::Label("far_tail".to_owned()),
         RvInstruction::Real(asm_to_binary::real::RealInstruction::Jalr(
             asm_to_binary::riscv::rv64i::Jalr::new(0, 1, 0),
         )),
@@ -163,7 +162,11 @@ fn auipc_hi20_is_shifted_for_tail() {
     let text = output.text_bytes();
     assert!(!text.is_empty(), ".text section should not be empty");
 
-    let word = u32::from_le_bytes(text[0..4].try_into().unwrap());
+    let word = u32::from_le_bytes(
+        text[0..4]
+            .try_into()
+            .expect("first instruction should be four bytes"),
+    );
     let opcode = word & 0x7F;
     let imm_upper = word & 0xFFFFF000;
 

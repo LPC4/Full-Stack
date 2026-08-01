@@ -1,3 +1,5 @@
+//! Compiles Full-Stack HLL source into typed SSA-form intermediate representation.
+
 #![expect(
     clippy::branches_sharing_code,
     clippy::cast_possible_wrap,

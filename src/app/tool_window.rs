@@ -13,9 +13,9 @@ use full_stack::workspace::VPath;
 
 impl FullStackApp {
     pub(super) fn tool_window(&mut self, ui: &mut egui::Ui) {
-        // Wash the well a step below the editor so the columns read as distinct.
+        // Flat, not washed: the chrome above and beside it carries the separation now.
         let rect = ui.max_rect();
-        theme::vertical_gradient(&ui.painter_at(rect), rect, theme::WELL, theme::WELL_FLOOR);
+        ui.painter_at(rect).rect_filled(rect, 0.0, theme::WELL);
         match self.tool {
             Tool::Files => self.explorer_panel(ui),
             Tool::Search => self.search_panel(ui),

@@ -352,6 +352,11 @@ impl FullStackApp {
             self.vm_result.as_ref().map(status_chip)
         };
 
+        // Reserved now, sized once the row's height is known: this strip belongs to
+        // the chrome tier like the editor's tab strip, not to the console below it.
+        let band = ui.painter().add(egui::Shape::Noop);
+        let band_top = ui.cursor().top();
+
         ui.add_space(metrics::PANEL_HEADER_PAD_Y);
         let mut close = false;
         ui.horizontal(|ui| {
@@ -435,6 +440,12 @@ impl FullStackApp {
                 }
             });
         });
+        let strip = egui::Rect::from_min_max(
+            egui::pos2(ui.max_rect().left(), band_top),
+            egui::pos2(ui.max_rect().right(), ui.cursor().top()),
+        );
+        ui.painter()
+            .set(band, egui::Shape::rect_filled(strip, 0.0, theme::CHROME));
         if close {
             self.terminal_open = false;
         }

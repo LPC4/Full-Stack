@@ -27,3 +27,6 @@ benches/
 src/bin/benchmark-runner.rs
 .github/workflows/benchmarks.yml
 /teaching/
+
+# Book generator output
+/book/out/

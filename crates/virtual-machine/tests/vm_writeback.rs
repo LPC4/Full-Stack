@@ -17,7 +17,7 @@ fn writeback_write_int() {
         next_pc: 0x8000_0004,
     };
 
-    let next_pc = writeback(mem_result, &mut regs, &mut csrs).unwrap();
+    let next_pc = writeback(mem_result, &mut regs, &mut csrs).expect("writeback should succeed");
 
     assert_eq!(regs.read_x(5), 0xDEAD_BEEF);
     assert_eq!(next_pc, 0x8000_0004);
@@ -34,7 +34,7 @@ fn writeback_write_int_to_x0() {
         next_pc: 0x8000_0004,
     };
 
-    let next_pc = writeback(mem_result, &mut regs, &mut csrs).unwrap();
+    let next_pc = writeback(mem_result, &mut regs, &mut csrs).expect("writeback should succeed");
 
     // x0 must always be zero
     assert_eq!(regs.read_x(0), 0);
@@ -56,7 +56,7 @@ fn writeback_write_fp() {
         next_pc: 0x8000_0004,
     };
 
-    let next_pc = writeback(mem_result, &mut regs, &mut csrs).unwrap();
+    let next_pc = writeback(mem_result, &mut regs, &mut csrs).expect("writeback should succeed");
 
     assert_eq!(regs.read_f_bits(10), bits);
     assert_eq!(next_pc, 0x8000_0004);
@@ -76,7 +76,7 @@ fn writeback_write_int_with_flags() {
         next_pc: 0x8000_0004,
     };
 
-    let next_pc = writeback(mem_result, &mut regs, &mut csrs).unwrap();
+    let next_pc = writeback(mem_result, &mut regs, &mut csrs).expect("writeback should succeed");
 
     assert_eq!(regs.read_x(5), 42);
     assert_eq!(csrs.fflags, 0x11);
@@ -95,7 +95,7 @@ fn writeback_accumulate_fp_flags() {
         fflags: 0x01,
         next_pc: 0x8000_0004,
     };
-    writeback(mem_result1, &mut regs, &mut csrs).unwrap();
+    writeback(mem_result1, &mut regs, &mut csrs).expect("writeback should succeed");
     assert_eq!(csrs.fflags, 0x01);
 
     // Second operation adds NV
@@ -105,7 +105,7 @@ fn writeback_accumulate_fp_flags() {
         fflags: 0x10,
         next_pc: 0x8000_0008,
     };
-    writeback(mem_result2, &mut regs, &mut csrs).unwrap();
+    writeback(mem_result2, &mut regs, &mut csrs).expect("writeback should succeed");
     assert_eq!(csrs.fflags, 0x11); // NX | NV
 }
 
@@ -117,7 +117,8 @@ fn writeback_csrrw() {
     let mut csrs = CsrFile::new();
 
     // Set initial MSTATUS: 0x0234 has MPP[12:11]=0 (User, valid) - no WARL change
-    csrs.write(addr::MSTATUS, 0x0234).unwrap();
+    csrs.write(addr::MSTATUS, 0x0234)
+        .expect("writeback should succeed");
 
     let mem_result = MemResult::Csr {
         funct3: 1, // CSRRW
@@ -129,12 +130,15 @@ fn writeback_csrrw() {
         next_pc: 0x8000_0004,
     };
 
-    let next_pc = writeback(mem_result, &mut regs, &mut csrs).unwrap();
+    let next_pc = writeback(mem_result, &mut regs, &mut csrs).expect("writeback should succeed");
 
     // Old value written to rd
     assert_eq!(regs.read_x(5), 0x0234);
     // New value written to CSR
-    assert_eq!(csrs.read(addr::MSTATUS).unwrap(), 0x4678);
+    assert_eq!(
+        csrs.read(addr::MSTATUS).expect("writeback should succeed"),
+        0x4678
+    );
     assert_eq!(next_pc, 0x8000_0004);
 }
 
@@ -144,7 +148,8 @@ fn writeback_csrrs_set_bits() {
     let mut csrs = CsrFile::new();
 
     // Initial MIE = 0x100
-    csrs.write(addr::MIE, 0x100).unwrap();
+    csrs.write(addr::MIE, 0x100)
+        .expect("writeback should succeed");
 
     let mem_result = MemResult::Csr {
         funct3: 2, // CSRRS
@@ -156,12 +161,15 @@ fn writeback_csrrs_set_bits() {
         next_pc: 0x8000_0004,
     };
 
-    let next_pc = writeback(mem_result, &mut regs, &mut csrs).unwrap();
+    let next_pc = writeback(mem_result, &mut regs, &mut csrs).expect("writeback should succeed");
 
     // Old value returned
     assert_eq!(regs.read_x(5), 0x100);
     // Bits set: 0x100 | 0x800 = 0x900
-    assert_eq!(csrs.read(addr::MIE).unwrap(), 0x900);
+    assert_eq!(
+        csrs.read(addr::MIE).expect("writeback should succeed"),
+        0x900
+    );
     assert_eq!(next_pc, 0x8000_0004);
 }
 
@@ -171,7 +179,8 @@ fn writeback_csrrc_clear_bits() {
     let mut csrs = CsrFile::new();
 
     // Use MIE instead of MIP: MIE has no WARL restrictions so all bits round-trip
-    csrs.write(addr::MIE, 0xF00).unwrap();
+    csrs.write(addr::MIE, 0xF00)
+        .expect("writeback should succeed");
 
     let mem_result = MemResult::Csr {
         funct3: 3, // CSRRC
@@ -183,12 +192,15 @@ fn writeback_csrrc_clear_bits() {
         next_pc: 0x8000_0004,
     };
 
-    let next_pc = writeback(mem_result, &mut regs, &mut csrs).unwrap();
+    let next_pc = writeback(mem_result, &mut regs, &mut csrs).expect("writeback should succeed");
 
     // Old value returned
     assert_eq!(regs.read_x(5), 0xF00);
     // Bits cleared: 0xF00 & !0x800 = 0x700
-    assert_eq!(csrs.read(addr::MIE).unwrap(), 0x700);
+    assert_eq!(
+        csrs.read(addr::MIE).expect("writeback should succeed"),
+        0x700
+    );
     assert_eq!(next_pc, 0x8000_0004);
 }
 
@@ -207,12 +219,12 @@ fn writeback_csrrwi_immediate() {
         next_pc: 0x8000_0004,
     };
 
-    let next_pc = writeback(mem_result, &mut regs, &mut csrs).unwrap();
+    let next_pc = writeback(mem_result, &mut regs, &mut csrs).expect("writeback should succeed");
 
     // Old value (0) returned
     assert_eq!(regs.read_x(5), 0);
     // New value written
-    assert_eq!(csrs.read(addr::FRM).unwrap(), 7);
+    assert_eq!(csrs.read(addr::FRM).expect("writeback should succeed"), 7);
     assert_eq!(next_pc, 0x8000_0004);
 }
 
@@ -221,7 +233,7 @@ fn writeback_csrrsi_no_write_when_zero() {
     let mut regs = Registers::new();
     let mut csrs = CsrFile::new();
 
-    let initial_mie = csrs.read(addr::MIE).unwrap();
+    let initial_mie = csrs.read(addr::MIE).expect("writeback should succeed");
 
     // rs1_uimm = 0 means don't write
     let mem_result = MemResult::Csr {
@@ -234,10 +246,13 @@ fn writeback_csrrsi_no_write_when_zero() {
         next_pc: 0x8000_0004,
     };
 
-    let next_pc = writeback(mem_result, &mut regs, &mut csrs).unwrap();
+    let next_pc = writeback(mem_result, &mut regs, &mut csrs).expect("writeback should succeed");
 
     // CSR should be unchanged
-    assert_eq!(csrs.read(addr::MIE).unwrap(), initial_mie);
+    assert_eq!(
+        csrs.read(addr::MIE).expect("writeback should succeed"),
+        initial_mie
+    );
     assert_eq!(next_pc, 0x8000_0004);
 }
 
@@ -256,12 +271,15 @@ fn writeback_csr_read_only() {
         next_pc: 0x8000_0004,
     };
 
-    let next_pc = writeback(mem_result, &mut regs, &mut csrs).unwrap();
+    let next_pc = writeback(mem_result, &mut regs, &mut csrs).expect("writeback should succeed");
 
     // Old value (0) returned
     assert_eq!(regs.read_x(5), 0);
     // MHARTID is still 0 (writes ignored)
-    assert_eq!(csrs.read(addr::MHARTID).unwrap(), 0);
+    assert_eq!(
+        csrs.read(addr::MHARTID).expect("writeback should succeed"),
+        0
+    );
     assert_eq!(next_pc, 0x8000_0004);
 }
 
@@ -276,7 +294,7 @@ fn writeback_jump() {
         next_pc: 0x8000_0100,
     };
 
-    let next_pc = writeback(mem_result, &mut regs, &mut csrs).unwrap();
+    let next_pc = writeback(mem_result, &mut regs, &mut csrs).expect("writeback should succeed");
     assert_eq!(next_pc, 0x8000_0100);
 }
 
@@ -289,7 +307,7 @@ fn writeback_fence() {
         next_pc: 0x8000_0004,
     };
 
-    let next_pc = writeback(mem_result, &mut regs, &mut csrs).unwrap();
+    let next_pc = writeback(mem_result, &mut regs, &mut csrs).expect("writeback should succeed");
     assert_eq!(next_pc, 0x8000_0004);
 }
 
@@ -302,7 +320,7 @@ fn writeback_fencei() {
         next_pc: 0x8000_0004,
     };
 
-    let next_pc = writeback(mem_result, &mut regs, &mut csrs).unwrap();
+    let next_pc = writeback(mem_result, &mut regs, &mut csrs).expect("writeback should succeed");
     assert_eq!(next_pc, 0x8000_0004);
 }
 

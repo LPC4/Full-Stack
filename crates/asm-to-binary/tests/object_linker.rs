@@ -7,7 +7,7 @@ fn word_at(bytes: &[u8], off: usize) -> u32 {
 }
 
 fn sign_extend_12(v: u32) -> i64 {
-    let raw = (v & 0x0FFF) as i32;
+    let raw = (v & 0x0FFF).cast_signed();
     if raw & 0x800 != 0 {
         (raw - 0x1000) as i64
     } else {
@@ -69,11 +69,12 @@ fn links_two_objects_and_resolves_call_relocation() {
     let auipc = word_at_linked_address(&linked, main);
     let jalr = word_at_linked_address(&linked, main + 4);
 
-    let hi = (auipc & 0xFFFF_F000) as i32 as i64;
+    let hi = i64::from((auipc & 0xFFFF_F000).cast_signed());
     let lo = sign_extend_12(jalr >> 20);
-    let resolved_target = (main as i64) + hi + lo;
+    let resolved_target = main.cast_signed() + hi + lo;
     assert_eq!(
-        resolved_target, puts as i64,
+        resolved_target,
+        puts.cast_signed(),
         "linked call pair should resolve to `puts`"
     );
 }
@@ -118,17 +119,20 @@ fn links_unresolved_jal_between_objects() {
         ObjectLinker::link(&[("lib", &lib_obj), ("user", &user_obj)]).expect("link objects");
 
     let main = linked.symbol_address("main").expect("main symbol") as usize;
-    let target = linked.symbol_address("target_ext").expect("target symbol") as i64;
+    let target = linked
+        .symbol_address("target_ext")
+        .expect("target symbol")
+        .cast_signed();
     let jal = word_at_linked_address(&linked, main as u64);
-    let imm20 = (((jal >> 31) & 0x1) << 20) as i32;
-    let imm19_12 = (((jal >> 12) & 0xFF) << 12) as i32;
-    let imm11 = (((jal >> 20) & 0x1) << 11) as i32;
-    let imm10_1 = (((jal >> 21) & 0x3FF) << 1) as i32;
+    let imm20 = (((jal >> 31) & 0x1) << 20).cast_signed();
+    let imm19_12 = (((jal >> 12) & 0xFF) << 12).cast_signed();
+    let imm11 = (((jal >> 20) & 0x1) << 11).cast_signed();
+    let imm10_1 = (((jal >> 21) & 0x3FF) << 1).cast_signed();
     let mut offset = imm20 | imm19_12 | imm11 | imm10_1;
     if (offset & (1 << 20)) != 0 {
         offset -= 1 << 21;
     }
-    let resolved = (main as i64) + (offset as i64);
+    let resolved = i64::try_from(main).expect("main address should fit in i64") + i64::from(offset);
     assert_eq!(
         resolved, target,
         "JAL relocation should resolve to external target"

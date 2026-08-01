@@ -55,7 +55,7 @@ impl Registers {
         self.f[reg] = val;
     }
 
-    /// Reads the register as an f32. Bits [63:32] other than all 1s mean the value
+    /// Reads the register as an f32. Bits `63:32` other than all 1s mean the value
     /// is not validly NaN-boxed, so the canonical NaN is returned (RISC-V 11.3).
     pub fn read_f32(&self, reg: usize) -> f32 {
         let bits = self.f[reg];
@@ -65,7 +65,7 @@ impl Registers {
         f32::from_bits(bits as u32)
     }
 
-    /// Writes an f32, NaN-boxing it by setting bits [63:32] to all 1s.
+    /// Writes an f32, NaN-boxing it by setting bits `63:32` to all 1s.
     pub fn write_f32(&mut self, reg: usize, val: f32) {
         self.f[reg] = NAN_BOX_UPPER | u64::from(val.to_bits());
     }

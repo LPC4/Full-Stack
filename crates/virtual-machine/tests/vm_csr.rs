@@ -5,15 +5,23 @@ use virtual_machine::cpu::csr::{CsrFile, addr};
 #[test]
 fn csr_mstatus_read_write() {
     let mut csrs = CsrFile::new();
-    assert_eq!(csrs.read(addr::MSTATUS).unwrap(), 0);
+    assert_eq!(
+        csrs.read(addr::MSTATUS).expect("CSR access should succeed"),
+        0
+    );
 
     // 0x1234_4678: MPP[12:11]=0 (User, valid) - round-trips unchanged
-    csrs.write(addr::MSTATUS, 0x1234_4678).unwrap();
-    assert_eq!(csrs.read(addr::MSTATUS).unwrap(), 0x1234_4678);
+    csrs.write(addr::MSTATUS, 0x1234_4678)
+        .expect("CSR access should succeed");
+    assert_eq!(
+        csrs.read(addr::MSTATUS).expect("CSR access should succeed"),
+        0x1234_4678
+    );
 
     // WARL: MPP=2 (reserved) must be mapped to 3 (Machine)
-    csrs.write(addr::MSTATUS, 0x1234_5678).unwrap(); // MPP=2 in bits[12:11]
-    let stored = csrs.read(addr::MSTATUS).unwrap();
+    csrs.write(addr::MSTATUS, 0x1234_5678)
+        .expect("CSR access should succeed"); // MPP=2 in bits[12:11]
+    let stored = csrs.read(addr::MSTATUS).expect("CSR access should succeed");
     assert_eq!(
         (stored >> 11) & 3,
         3,
@@ -24,19 +32,27 @@ fn csr_mstatus_read_write() {
 #[test]
 fn csr_misa_readonly() {
     let mut csrs = CsrFile::new();
-    let original = csrs.read(addr::MISA).unwrap();
+    let original = csrs.read(addr::MISA).expect("CSR access should succeed");
 
     // Writes to MISA should be ignored (WARL)
-    csrs.write(addr::MISA, 0).unwrap();
-    assert_eq!(csrs.read(addr::MISA).unwrap(), original);
+    csrs.write(addr::MISA, 0)
+        .expect("CSR access should succeed");
+    assert_eq!(
+        csrs.read(addr::MISA).expect("CSR access should succeed"),
+        original
+    );
 }
 
 #[test]
 fn csr_mtvec_read_write() {
     let mut csrs = CsrFile::new();
 
-    csrs.write(addr::MTVEC, 0x8000_0000 | 1).unwrap(); // vectored mode
-    assert_eq!(csrs.read(addr::MTVEC).unwrap(), 0x8000_0001);
+    csrs.write(addr::MTVEC, 0x8000_0000 | 1)
+        .expect("CSR access should succeed"); // vectored mode
+    assert_eq!(
+        csrs.read(addr::MTVEC).expect("CSR access should succeed"),
+        0x8000_0001
+    );
 }
 
 #[test]
@@ -44,19 +60,31 @@ fn csr_mepc_alignment() {
     let mut csrs = CsrFile::new();
 
     // MEPC must be aligned to 4 bytes; lowest 2 bits are cleared
-    csrs.write(addr::MEPC, 0x8000_0003).unwrap();
-    assert_eq!(csrs.read(addr::MEPC).unwrap(), 0x8000_0000);
+    csrs.write(addr::MEPC, 0x8000_0003)
+        .expect("CSR access should succeed");
+    assert_eq!(
+        csrs.read(addr::MEPC).expect("CSR access should succeed"),
+        0x8000_0000
+    );
 
-    csrs.write(addr::MEPC, 0x8000_0002).unwrap();
-    assert_eq!(csrs.read(addr::MEPC).unwrap(), 0x8000_0000);
+    csrs.write(addr::MEPC, 0x8000_0002)
+        .expect("CSR access should succeed");
+    assert_eq!(
+        csrs.read(addr::MEPC).expect("CSR access should succeed"),
+        0x8000_0000
+    );
 }
 
 #[test]
 fn csr_mie_read_write() {
     let mut csrs = CsrFile::new();
 
-    csrs.write(addr::MIE, 0x888).unwrap(); // Enable timer, software, external interrupts
-    assert_eq!(csrs.read(addr::MIE).unwrap(), 0x888);
+    csrs.write(addr::MIE, 0x888)
+        .expect("CSR access should succeed"); // Enable timer, software, external interrupts
+    assert_eq!(
+        csrs.read(addr::MIE).expect("CSR access should succeed"),
+        0x888
+    );
 }
 
 #[test]
@@ -64,13 +92,18 @@ fn csr_mip_read_write() {
     let mut csrs = CsrFile::new();
 
     // SSIP (bit 1) is software-writable; MTIP/MEIP are hardware-driven read-only
-    csrs.write(addr::MIP, 0x2).unwrap(); // Set SSIP
-    assert_eq!(csrs.read(addr::MIP).unwrap(), 0x2);
+    csrs.write(addr::MIP, 0x2)
+        .expect("CSR access should succeed"); // Set SSIP
+    assert_eq!(
+        csrs.read(addr::MIP).expect("CSR access should succeed"),
+        0x2
+    );
 
     // Writing a hardware-only bit (MTIP=bit7) must be silently ignored
-    csrs.write(addr::MIP, 0x80).unwrap();
+    csrs.write(addr::MIP, 0x80)
+        .expect("CSR access should succeed");
     assert_eq!(
-        csrs.read(addr::MIP).unwrap(),
+        csrs.read(addr::MIP).expect("CSR access should succeed"),
         0,
         "MTIP is read-only via software writes"
     );
@@ -82,24 +115,40 @@ fn csr_mip_read_write() {
 fn csr_fflags_read_write() {
     let mut csrs = CsrFile::new();
 
-    csrs.write(addr::FFLAGS, 0x1F).unwrap(); // All exception flags
-    assert_eq!(csrs.read(addr::FFLAGS).unwrap(), 0x1F);
+    csrs.write(addr::FFLAGS, 0x1F)
+        .expect("CSR access should succeed"); // All exception flags
+    assert_eq!(
+        csrs.read(addr::FFLAGS).expect("CSR access should succeed"),
+        0x1F
+    );
 
     // Only lower 5 bits are valid
-    csrs.write(addr::FFLAGS, 0xFF).unwrap();
-    assert_eq!(csrs.read(addr::FFLAGS).unwrap(), 0x1F);
+    csrs.write(addr::FFLAGS, 0xFF)
+        .expect("CSR access should succeed");
+    assert_eq!(
+        csrs.read(addr::FFLAGS).expect("CSR access should succeed"),
+        0x1F
+    );
 }
 
 #[test]
 fn csr_frm_read_write() {
     let mut csrs = CsrFile::new();
 
-    csrs.write(addr::FRM, 0x7).unwrap(); // RMM
-    assert_eq!(csrs.read(addr::FRM).unwrap(), 0x7);
+    csrs.write(addr::FRM, 0x7)
+        .expect("CSR access should succeed"); // RMM
+    assert_eq!(
+        csrs.read(addr::FRM).expect("CSR access should succeed"),
+        0x7
+    );
 
     // Only lower 3 bits are valid
-    csrs.write(addr::FRM, 0xFF).unwrap();
-    assert_eq!(csrs.read(addr::FRM).unwrap(), 0x7);
+    csrs.write(addr::FRM, 0xFF)
+        .expect("CSR access should succeed");
+    assert_eq!(
+        csrs.read(addr::FRM).expect("CSR access should succeed"),
+        0x7
+    );
 }
 
 #[test]
@@ -108,11 +157,18 @@ fn csr_fcsr_composite() {
 
     // Write FCSR: frm=2 (RDN), fflags=0x11 (NV + NX)
     let fcsr_val = (2u64 << 5) | 0x11;
-    csrs.write(addr::FCSR, fcsr_val).unwrap();
+    csrs.write(addr::FCSR, fcsr_val)
+        .expect("CSR access should succeed");
 
-    assert_eq!(csrs.read(addr::FRM).unwrap(), 2);
-    assert_eq!(csrs.read(addr::FFLAGS).unwrap(), 0x11);
-    assert_eq!(csrs.read(addr::FCSR).unwrap(), fcsr_val);
+    assert_eq!(csrs.read(addr::FRM).expect("CSR access should succeed"), 2);
+    assert_eq!(
+        csrs.read(addr::FFLAGS).expect("CSR access should succeed"),
+        0x11
+    );
+    assert_eq!(
+        csrs.read(addr::FCSR).expect("CSR access should succeed"),
+        fcsr_val
+    );
 }
 
 #[test]
@@ -136,20 +192,35 @@ fn csr_accumulate_fflags() {
 fn csr_cycle_increment() {
     let mut csrs = CsrFile::new();
 
-    assert_eq!(csrs.read(addr::CYCLE).unwrap(), 0);
+    assert_eq!(
+        csrs.read(addr::CYCLE).expect("CSR access should succeed"),
+        0
+    );
     csrs.increment_cycle();
-    assert_eq!(csrs.read(addr::CYCLE).unwrap(), 1);
+    assert_eq!(
+        csrs.read(addr::CYCLE).expect("CSR access should succeed"),
+        1
+    );
     csrs.increment_cycle();
-    assert_eq!(csrs.read(addr::CYCLE).unwrap(), 2);
+    assert_eq!(
+        csrs.read(addr::CYCLE).expect("CSR access should succeed"),
+        2
+    );
 }
 
 #[test]
 fn csr_instret_increment() {
     let mut csrs = CsrFile::new();
 
-    assert_eq!(csrs.read(addr::INSTRET).unwrap(), 0);
+    assert_eq!(
+        csrs.read(addr::INSTRET).expect("CSR access should succeed"),
+        0
+    );
     csrs.increment_instret();
-    assert_eq!(csrs.read(addr::INSTRET).unwrap(), 1);
+    assert_eq!(
+        csrs.read(addr::INSTRET).expect("CSR access should succeed"),
+        1
+    );
 }
 
 #[test]
@@ -161,8 +232,8 @@ fn csr_time_alias() {
 
     // TIME is aliased to CYCLE
     assert_eq!(
-        csrs.read(addr::TIME).unwrap(),
-        csrs.read(addr::CYCLE).unwrap()
+        csrs.read(addr::TIME).expect("CSR access should succeed"),
+        csrs.read(addr::CYCLE).expect("CSR access should succeed")
     );
 }
 
@@ -175,7 +246,10 @@ fn csr_counters_wrap() {
     csrs.increment_cycle();
 
     // Should wrap to 0
-    assert_eq!(csrs.read(addr::CYCLE).unwrap(), 0);
+    assert_eq!(
+        csrs.read(addr::CYCLE).expect("CSR access should succeed"),
+        0
+    );
 }
 
 // --- CSR File, special registers ---
@@ -184,8 +258,13 @@ fn csr_counters_wrap() {
 fn csr_mscratch_read_write() {
     let mut csrs = CsrFile::new();
 
-    csrs.write(addr::MSCRATCH, 0xDEAD_BEEF).unwrap();
-    assert_eq!(csrs.read(addr::MSCRATCH).unwrap(), 0xDEAD_BEEF);
+    csrs.write(addr::MSCRATCH, 0xDEAD_BEEF)
+        .expect("CSR access should succeed");
+    assert_eq!(
+        csrs.read(addr::MSCRATCH)
+            .expect("CSR access should succeed"),
+        0xDEAD_BEEF
+    );
 }
 
 #[test]
@@ -193,12 +272,19 @@ fn csr_mhartid_readonly() {
     let csrs = CsrFile::new();
 
     // MHARTID is always 0 in single-hart implementation
-    assert_eq!(csrs.read(addr::MHARTID).unwrap(), 0);
+    assert_eq!(
+        csrs.read(addr::MHARTID).expect("CSR access should succeed"),
+        0
+    );
 
     // Write should be ignored
     let mut csrs = csrs;
-    csrs.write(addr::MHARTID, 42).unwrap();
-    assert_eq!(csrs.read(addr::MHARTID).unwrap(), 0);
+    csrs.write(addr::MHARTID, 42)
+        .expect("CSR access should succeed");
+    assert_eq!(
+        csrs.read(addr::MHARTID).expect("CSR access should succeed"),
+        0
+    );
 }
 
 #[test]
@@ -206,20 +292,32 @@ fn csr_mcause_read_write() {
     let mut csrs = CsrFile::new();
 
     // Exception cause
-    csrs.write(addr::MCAUSE, 2).unwrap(); // Illegal instruction
-    assert_eq!(csrs.read(addr::MCAUSE).unwrap(), 2);
+    csrs.write(addr::MCAUSE, 2)
+        .expect("CSR access should succeed"); // Illegal instruction
+    assert_eq!(
+        csrs.read(addr::MCAUSE).expect("CSR access should succeed"),
+        2
+    );
 
     // Interrupt cause (bit 63 set)
-    csrs.write(addr::MCAUSE, (1u64 << 63) | 7).unwrap(); // Machine timer interrupt
-    assert_eq!(csrs.read(addr::MCAUSE).unwrap(), (1u64 << 63) | 7);
+    csrs.write(addr::MCAUSE, (1u64 << 63) | 7)
+        .expect("CSR access should succeed"); // Machine timer interrupt
+    assert_eq!(
+        csrs.read(addr::MCAUSE).expect("CSR access should succeed"),
+        (1u64 << 63) | 7
+    );
 }
 
 #[test]
 fn csr_mtval_read_write() {
     let mut csrs = CsrFile::new();
 
-    csrs.write(addr::MTVAL, 0xBAD_ADD).unwrap();
-    assert_eq!(csrs.read(addr::MTVAL).unwrap(), 0xBAD_ADD);
+    csrs.write(addr::MTVAL, 0xBAD_ADD)
+        .expect("CSR access should succeed");
+    assert_eq!(
+        csrs.read(addr::MTVAL).expect("CSR access should succeed"),
+        0xBAD_ADD
+    );
 }
 
 // --- CSR File, illegal CSR addresses ---
@@ -248,6 +346,6 @@ fn csr_rounding_mode() {
 
     assert_eq!(csrs.rounding_mode(), 0); // Default RNE
 
-    csrs.write(addr::FRM, 3).unwrap(); // RTZ
+    csrs.write(addr::FRM, 3).expect("CSR access should succeed"); // RTZ
     assert_eq!(csrs.rounding_mode(), 3);
 }

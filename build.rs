@@ -32,7 +32,46 @@ fn main() {
 
     fs::write(&generated, output).expect("failed to write generated test harness");
 
+    generate_theme_palette(&manifest_dir, &out_dir);
     generate_userspace(&manifest_dir, &out_dir);
+}
+
+fn generate_theme_palette(manifest_dir: &Path, out_dir: &Path) {
+    let palette = manifest_dir.join("theme/github-dark.css");
+    println!("cargo:rerun-if-changed={}", palette.display());
+    let css = fs::read_to_string(&palette).expect("read shared theme palette");
+    let mut code = String::from("// @generated from theme/github-dark.css; do not edit.\n");
+    let mut colors = 0;
+
+    for line in css.lines() {
+        let Some((name, value)) = line
+            .trim()
+            .strip_prefix("--fs-")
+            .and_then(|line| line.split_once(':'))
+        else {
+            continue;
+        };
+        let value = value.trim().trim_end_matches(';');
+        assert!(
+            value.len() == 7 && value.starts_with('#'),
+            "shared theme color `{name}` must be #rrggbb"
+        );
+        let rgb = u32::from_str_radix(&value[1..], 16)
+            .unwrap_or_else(|_| panic!("shared theme color `{name}` is not hexadecimal"));
+        let constant = name.replace('-', "_").to_ascii_uppercase();
+        writeln!(
+            code,
+            "pub const {constant}: Color32 = Color32::from_rgb(0x{:02X}, 0x{:02X}, 0x{:02X});",
+            (rgb >> 16) & 0xFF,
+            (rgb >> 8) & 0xFF,
+            rgb & 0xFF
+        )
+        .expect("write theme constant");
+        colors += 1;
+    }
+
+    assert!(colors >= 20, "shared theme palette is unexpectedly small");
+    fs::write(out_dir.join("theme_palette.rs"), code).expect("write generated theme palette");
 }
 
 fn collect_rs_files(dir: &Path, files: &mut Vec<PathBuf>) {

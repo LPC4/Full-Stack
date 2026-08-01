@@ -14,12 +14,24 @@ pub(super) fn centered_hint(ui: &mut egui::Ui, text: &str) {
 }
 
 pub(super) fn panel_header(ui: &mut egui::Ui, title: &str) {
+    // Reserved now, sized once the row's height is known. The strip is chrome tier so
+    // it lines up with the editor and terminal tab strips across the top of the app.
+    let band = ui.painter().add(egui::Shape::Noop);
+    let band_top = ui.cursor().top();
+
     ui.add_space(metrics::PANEL_HEADER_PAD_Y);
     ui.horizontal(|ui| {
         ui.add_space(metrics::PANEL_INSET_X);
         ui.label(theme::label(title));
     });
     ui.add_space(metrics::PANEL_HEADER_PAD_Y);
+
+    let strip = egui::Rect::from_min_max(
+        pos2(ui.max_rect().left(), band_top),
+        pos2(ui.max_rect().right(), ui.cursor().top()),
+    );
+    ui.painter()
+        .set(band, egui::Shape::rect_filled(strip, 0.0, theme::CHROME));
     hairline(ui);
     ui.add_space(metrics::SECTION_GAP);
 }

@@ -1,3 +1,5 @@
+//! Assembles and links RISC-V source and emits flat binaries, objects, and ELF files.
+
 #![expect(
     clippy::cast_possible_wrap,
     clippy::iter_over_hash_type,

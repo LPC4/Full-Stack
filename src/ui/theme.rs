@@ -1,48 +1,61 @@
-//! Instrument-panel theme: a quiet desaturated iron-blue base so the depth
-//! spectrum (see [`crate::ui::Layer`]) is the only loud thing on screen.
+//! Instrument-panel theme: a quiet GitHub Dark base so the depth spectrum
+//! (see [`crate::ui::Layer`]) is the only loud thing on screen.
 
-use egui::{Color32, FontId, Mesh, Rect, RichText, Stroke, epaint::Vertex};
+use egui::{Color32, FontId, RichText, Stroke};
 
-pub const BEZEL: Color32 = Color32::from_rgb(0x09, 0x0B, 0x0F);
-pub const WELL: Color32 = Color32::from_rgb(0x0D, 0x10, 0x15);
-pub const WELL_FLOOR: Color32 = Color32::from_rgb(0x0A, 0x0D, 0x12);
-pub const CANVAS: Color32 = Color32::from_rgb(0x12, 0x16, 0x1C);
-pub const TERMINAL: Color32 = Color32::from_rgb(0x07, 0x0A, 0x0E);
-pub const CHROME: Color32 = Color32::from_rgb(0x17, 0x1B, 0x24);
-pub const SURFACE: Color32 = Color32::from_rgb(0x1E, 0x24, 0x30);
-pub const SURFACE_ALT: Color32 = Color32::from_rgb(0x26, 0x2D, 0x3B);
-pub const HAIRLINE: Color32 = Color32::from_rgb(0x2C, 0x33, 0x40);
-pub const HAIRLINE_SOFT: Color32 = Color32::from_rgb(0x1B, 0x20, 0x29);
+#[expect(
+    dead_code,
+    reason = "the shared palette also contains book syntax tokens"
+)]
+mod palette {
+    use egui::Color32;
 
-pub const TEXT: Color32 = Color32::from_rgb(0xD7, 0xDC, 0xE4);
-pub const TEXT_DIM: Color32 = Color32::from_rgb(0x79, 0x82, 0x8F);
-pub const TEXT_FAINT: Color32 = Color32::from_rgb(0x4C, 0x55, 0x63);
-pub const ELECTRIC: Color32 = Color32::from_rgb(0x3F, 0xB6, 0xE6);
-pub const DANGER: Color32 = Color32::from_rgb(0xD9, 0x6A, 0x5A);
-pub const WARNING: Color32 = Color32::from_rgb(0xD9, 0xAA, 0x5A);
-pub const CURRENT_LINE: Color32 = Color32::from_rgba_premultiplied(0x14, 0x18, 0x22, 0x7A);
-pub const FIND_MATCH: Color32 = Color32::from_rgba_premultiplied(0x0E, 0x28, 0x33, 0x38);
-pub const FIND_MATCH_CURRENT: Color32 = Color32::from_rgba_premultiplied(0x57, 0x3C, 0x20, 0x5C);
-pub const DANGER_WASH: Color32 = Color32::from_rgba_premultiplied(0x29, 0x14, 0x11, 0x30);
-pub const WARNING_WASH: Color32 = Color32::from_rgba_premultiplied(0x29, 0x20, 0x11, 0x30);
+    include!(concat!(env!("OUT_DIR"), "/theme_palette.rs"));
+}
+
+pub use palette::{
+    ACCENT, BEZEL, BORDER, BORDER_MUTED, CANVAS, CHROME, DANGER, SCROLL_HOVER, SELECTION, SURFACE,
+    SURFACE_HOVER, TEXT, TEXT_FAINT, TEXT_MUTED, TEXT_STRONG, WARNING,
+};
+
+pub const WELL: Color32 = CHROME;
+pub const TERMINAL: Color32 = CANVAS;
+pub const SURFACE_ALT: Color32 = SURFACE_HOVER;
+pub const HAIRLINE: Color32 = BORDER;
+pub const HAIRLINE_SOFT: Color32 = BORDER_MUTED;
+pub const TEXT_DIM: Color32 = TEXT_MUTED;
+pub const ELECTRIC: Color32 = ACCENT;
+pub const CURRENT_LINE: Color32 = Color32::from_rgba_premultiplied(0x0B, 0x0D, 0x10, 0x7A);
+pub const FIND_MATCH: Color32 = Color32::from_rgba_premultiplied(0x13, 0x24, 0x38, 0x38);
+pub const FIND_MATCH_CURRENT: Color32 = Color32::from_rgba_premultiplied(0x4C, 0x37, 0x0C, 0x5C);
+pub const DANGER_WASH: Color32 = Color32::from_rgba_premultiplied(0x2F, 0x0F, 0x0E, 0x30);
+pub const WARNING_WASH: Color32 = Color32::from_rgba_premultiplied(0x28, 0x1D, 0x06, 0x30);
 
 /// Apply the instrument theme: fonts, dark base, hairline strokes, sharp corners,
 /// tight spacing. Call once after the egui context exists.
 pub fn apply(ctx: &egui::Context) {
     install_fonts(ctx);
+    ctx.set_theme(egui::Theme::Dark);
     let mut style = (*ctx.global_style()).clone();
     let v = &mut style.visuals;
     v.dark_mode = true;
     v.override_text_color = Some(TEXT);
+    v.weak_text_color = Some(TEXT_DIM);
     v.window_fill = CHROME;
     v.panel_fill = CANVAS;
     v.extreme_bg_color = BEZEL;
+    v.text_edit_bg_color = Some(CANVAS);
     v.faint_bg_color = SURFACE;
     v.code_bg_color = CANVAS;
+    v.warn_fg_color = WARNING;
+    v.error_fg_color = DANGER;
     v.window_stroke = Stroke::new(1.0, HAIRLINE);
-    v.selection.bg_fill = Color32::from_rgb(0x24, 0x3A, 0x55);
+    v.selection.bg_fill = SELECTION;
     v.selection.stroke = Stroke::new(1.0, ELECTRIC);
     v.hyperlink_color = ELECTRIC;
+    v.text_cursor.stroke = Stroke::new(1.5, ELECTRIC);
+    v.interact_cursor = Some(egui::CursorIcon::PointingHand);
+    v.disabled_alpha = 0.55;
 
     for w in [
         &mut v.widgets.noninteractive,
@@ -60,11 +73,17 @@ pub fn apply(ctx: &egui::Context) {
     v.widgets.noninteractive.fg_stroke = Stroke::new(1.0, TEXT_DIM);
     v.widgets.inactive.bg_fill = SURFACE;
     v.widgets.inactive.weak_bg_fill = SURFACE;
+    v.widgets.inactive.fg_stroke = Stroke::new(1.0, TEXT);
     v.widgets.hovered.bg_fill = SURFACE_ALT;
     v.widgets.hovered.weak_bg_fill = SURFACE_ALT;
-    v.widgets.hovered.bg_stroke = Stroke::new(1.0, TEXT_FAINT);
+    v.widgets.hovered.bg_stroke = Stroke::new(1.0, SCROLL_HOVER);
+    v.widgets.hovered.fg_stroke = Stroke::new(1.0, TEXT_STRONG);
     v.widgets.active.bg_fill = SURFACE_ALT;
     v.widgets.active.weak_bg_fill = SURFACE_ALT;
+    v.widgets.active.fg_stroke = Stroke::new(1.0, TEXT_STRONG);
+    v.widgets.open.bg_fill = SURFACE_ALT;
+    v.widgets.open.weak_bg_fill = SURFACE_ALT;
+    v.widgets.open.fg_stroke = Stroke::new(1.0, TEXT_STRONG);
 
     let s = &mut style.spacing;
     s.item_spacing = egui::vec2(6.0, 6.0);
@@ -79,23 +98,6 @@ pub fn apply(ctx: &egui::Context) {
     }
 
     ctx.set_global_style(style);
-}
-
-/// Fill `rect` with a top-to-bottom gradient from `top` to `bottom`. egui has no
-/// gradient primitive, so paint a two-color quad.
-pub fn vertical_gradient(painter: &egui::Painter, rect: Rect, top: Color32, bottom: Color32) {
-    let mut mesh = Mesh::default();
-    let vertex = |pos, color| Vertex {
-        pos,
-        uv: egui::epaint::WHITE_UV,
-        color,
-    };
-    mesh.vertices.push(vertex(rect.left_top(), top));
-    mesh.vertices.push(vertex(rect.right_top(), top));
-    mesh.vertices.push(vertex(rect.right_bottom(), bottom));
-    mesh.vertices.push(vertex(rect.left_bottom(), bottom));
-    mesh.indices.extend([0, 1, 2, 0, 2, 3]);
-    painter.add(mesh);
 }
 
 // egui's built-ins stay as glyph fallback for symbols the design faces lack.
@@ -158,4 +160,22 @@ pub fn mono(text: impl Into<String>, size: f32, color: Color32) -> RichText {
     RichText::new(text.into())
         .font(FontId::monospace(size))
         .color(color)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn apply_selects_the_dark_palette() {
+        let ctx = egui::Context::default();
+        apply(&ctx);
+        let style = ctx.global_style();
+
+        assert_eq!(ctx.theme(), egui::Theme::Dark);
+        assert_eq!(style.visuals.panel_fill, CANVAS);
+        assert_eq!(style.visuals.widgets.inactive.bg_fill, SURFACE);
+        assert_eq!(style.visuals.widgets.inactive.weak_bg_fill, SURFACE);
+        assert_eq!(style.visuals.text_color(), TEXT);
+    }
 }

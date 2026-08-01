@@ -2,14 +2,15 @@ use virtual_machine::bus::SystemBus;
 use virtual_machine::cpu::PrivilegeMode;
 use virtual_machine::cpu::pipeline::execute::ExecResult;
 use virtual_machine::cpu::pipeline::memory::{MemResult, memory_stage};
-use virtual_machine::memory::MemoryAccess;
+use virtual_machine::memory::MemoryAccess as _;
 
 // --- Memory stage, integer loads ---
 
 #[test]
 fn memory_load_byte_sign_extend() {
     let mut bus = SystemBus::new(Vec::new());
-    let _ = bus.write_byte(0x8000_0000, 0xFF); // -1 as i8
+    bus.write_byte(0x8000_0000, 0xFF)
+        .expect("bus write should succeed"); // -1 as i8
 
     let exec_result = ExecResult::Load {
         rd: 1,
@@ -27,20 +28,21 @@ fn memory_load_byte_sign_extend() {
         PrivilegeMode::Machine,
         0,
     )
-    .unwrap();
+    .expect("memory operation should succeed");
 
     if let MemResult::WriteInt { val, .. } = result {
         // Should be sign-extended: 0xFF -> 0xFFFF_FFFF_FFFF_FFFF
         assert_eq!(val, 0xFFFF_FFFF_FFFF_FFFFu64);
     } else {
-        panic!("expected WriteInt, got {:?}", result);
+        panic!("expected WriteInt, got {result:?}");
     }
 }
 
 #[test]
 fn memory_load_byte_zero_extend() {
     let mut bus = SystemBus::new(Vec::new());
-    let _ = bus.write_byte(0x8000_0000, 0xFF);
+    bus.write_byte(0x8000_0000, 0xFF)
+        .expect("bus write should succeed");
 
     let exec_result = ExecResult::Load {
         rd: 1,
@@ -58,20 +60,21 @@ fn memory_load_byte_zero_extend() {
         PrivilegeMode::Machine,
         0,
     )
-    .unwrap();
+    .expect("memory operation should succeed");
 
     if let MemResult::WriteInt { val, .. } = result {
         // Should be zero-extended: 0xFF -> 0x0000_0000_0000_00FF
         assert_eq!(val, 0xFF);
     } else {
-        panic!("expected WriteInt, got {:?}", result);
+        panic!("expected WriteInt, got {result:?}");
     }
 }
 
 #[test]
 fn memory_load_halfword_sign_extend() {
     let mut bus = SystemBus::new(Vec::new());
-    let _ = bus.write_halfword(0x8000_0000, 0xFFFF).unwrap(); // -1 as i16
+    bus.write_halfword(0x8000_0000, 0xFFFF)
+        .expect("memory operation should succeed"); // -1 as i16
 
     let exec_result = ExecResult::Load {
         rd: 1,
@@ -89,19 +92,20 @@ fn memory_load_halfword_sign_extend() {
         PrivilegeMode::Machine,
         0,
     )
-    .unwrap();
+    .expect("memory operation should succeed");
 
     if let MemResult::WriteInt { val, .. } = result {
         assert_eq!(val, 0xFFFF_FFFF_FFFF_FFFFu64);
     } else {
-        panic!("expected WriteInt, got {:?}", result);
+        panic!("expected WriteInt, got {result:?}");
     }
 }
 
 #[test]
 fn memory_load_word_sign_extend() {
     let mut bus = SystemBus::new(Vec::new());
-    let _ = bus.write_word(0x8000_0000, 0xFFFF_FFFF).unwrap(); // -1 as i32
+    bus.write_word(0x8000_0000, 0xFFFF_FFFF)
+        .expect("memory operation should succeed"); // -1 as i32
 
     let exec_result = ExecResult::Load {
         rd: 1,
@@ -119,12 +123,12 @@ fn memory_load_word_sign_extend() {
         PrivilegeMode::Machine,
         0,
     )
-    .unwrap();
+    .expect("memory operation should succeed");
 
     if let MemResult::WriteInt { val, .. } = result {
         assert_eq!(val, 0xFFFF_FFFF_FFFF_FFFFu64);
     } else {
-        panic!("expected WriteInt, got {:?}", result);
+        panic!("expected WriteInt, got {result:?}");
     }
 }
 
@@ -132,7 +136,8 @@ fn memory_load_word_sign_extend() {
 fn memory_load_doubleword() {
     let mut bus = SystemBus::new(Vec::new());
     let value = 0xDEAD_BEEF_CAFE_BABEu64;
-    let _ = bus.write_doubleword(0x8000_0000, value).unwrap();
+    bus.write_doubleword(0x8000_0000, value)
+        .expect("memory operation should succeed");
 
     let exec_result = ExecResult::Load {
         rd: 1,
@@ -150,12 +155,12 @@ fn memory_load_doubleword() {
         PrivilegeMode::Machine,
         0,
     )
-    .unwrap();
+    .expect("memory operation should succeed");
 
     if let MemResult::WriteInt { val, .. } = result {
         assert_eq!(val, value);
     } else {
-        panic!("expected WriteInt, got {:?}", result);
+        panic!("expected WriteInt, got {result:?}");
     }
 }
 
@@ -181,11 +186,13 @@ fn memory_store_byte() {
         PrivilegeMode::Machine,
         0,
     )
-    .unwrap();
+    .expect("memory operation should succeed");
 
     assert!(matches!(result, MemResult::Jump { .. }));
 
-    let byte = bus.read_byte(0x8000_0000).unwrap();
+    let byte = bus
+        .read_byte(0x8000_0000)
+        .expect("memory operation should succeed");
     assert_eq!(byte, 0xFF);
 }
 
@@ -209,11 +216,13 @@ fn memory_store_halfword() {
         PrivilegeMode::Machine,
         0,
     )
-    .unwrap();
+    .expect("memory operation should succeed");
 
     assert!(matches!(result, MemResult::Jump { .. }));
 
-    let hw = bus.read_halfword(0x8000_0000).unwrap();
+    let hw = bus
+        .read_halfword(0x8000_0000)
+        .expect("memory operation should succeed");
     assert_eq!(hw, 0xBEEF);
 }
 
@@ -237,11 +246,13 @@ fn memory_store_word() {
         PrivilegeMode::Machine,
         0,
     )
-    .unwrap();
+    .expect("memory operation should succeed");
 
     assert!(matches!(result, MemResult::Jump { .. }));
 
-    let word = bus.read_word(0x8000_0000).unwrap();
+    let word = bus
+        .read_word(0x8000_0000)
+        .expect("memory operation should succeed");
     assert_eq!(word, 0xDEAD_BEEF);
 }
 
@@ -266,11 +277,13 @@ fn memory_store_doubleword() {
         PrivilegeMode::Machine,
         0,
     )
-    .unwrap();
+    .expect("memory operation should succeed");
 
     assert!(matches!(result, MemResult::Jump { .. }));
 
-    let dw = bus.read_doubleword(0x8000_0000).unwrap();
+    let dw = bus
+        .read_doubleword(0x8000_0000)
+        .expect("memory operation should succeed");
     assert_eq!(dw, value);
 }
 
@@ -295,14 +308,14 @@ fn memory_pass_through_write_int() {
         PrivilegeMode::Machine,
         0,
     )
-    .unwrap();
+    .expect("memory operation should succeed");
 
     if let MemResult::WriteInt { rd, val, next_pc } = result {
         assert_eq!(rd, 1);
         assert_eq!(val, 42);
         assert_eq!(next_pc, 0x8000_0004);
     } else {
-        panic!("expected WriteInt, got {:?}", result);
+        panic!("expected WriteInt, got {result:?}");
     }
 }
 
@@ -323,12 +336,12 @@ fn memory_pass_through_jump() {
         PrivilegeMode::Machine,
         0,
     )
-    .unwrap();
+    .expect("memory operation should succeed");
 
     if let MemResult::Jump { next_pc } = result {
         assert_eq!(next_pc, 0x8000_0100);
     } else {
-        panic!("expected Jump, got {:?}", result);
+        panic!("expected Jump, got {result:?}");
     }
 }
 
@@ -349,7 +362,7 @@ fn memory_pass_through_fence() {
         PrivilegeMode::Machine,
         0,
     )
-    .unwrap();
+    .expect("memory operation should succeed");
 
     assert!(matches!(result, MemResult::Fence { .. }));
 }
@@ -369,7 +382,7 @@ fn memory_pass_through_ecall() {
         PrivilegeMode::Machine,
         0,
     )
-    .unwrap();
+    .expect("memory operation should succeed");
 
     assert!(matches!(result, MemResult::Ecall));
 }
@@ -389,7 +402,7 @@ fn memory_pass_through_ebreak() {
         PrivilegeMode::Machine,
         0,
     )
-    .unwrap();
+    .expect("memory operation should succeed");
 
     assert!(matches!(result, MemResult::Ebreak));
 }

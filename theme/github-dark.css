@@ -1,0 +1,29 @@
+:root,
+:root[data-theme="navy"] {
+  --fs-bezel: #010409;
+  --fs-canvas: #0d1117;
+  --fs-chrome: #161b22;
+  --fs-surface: #21262d;
+  --fs-surface-hover: #30363d;
+  --fs-border: #30363d;
+  --fs-border-muted: #21262d;
+  --fs-text: #c9d1d9;
+  --fs-text-strong: #e6edf3;
+  --fs-text-muted: #8b949e;
+  --fs-text-faint: #6e7681;
+  --fs-accent: #58a6ff;
+  --fs-danger: #f85149;
+  --fs-warning: #d29922;
+  --fs-selection: #1e4273;
+  --fs-scroll-hover: #484f58;
+
+  --fs-syntax-keyword: #c86ef0;
+  --fs-syntax-string: #68aa6e;
+  --fs-syntax-number: #6eaaf0;
+  --fs-syntax-comment: #6a7182;
+  --fs-syntax-label: #e0ba64;
+  --fs-syntax-register: #70beff;
+  --fs-syntax-bracket: #e8d278;
+  --fs-syntax-directive: #ffa06e;
+  --fs-syntax-identifier: #b4dcb4;
+}

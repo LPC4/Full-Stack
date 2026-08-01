@@ -23,13 +23,25 @@ const P_VADDR_OFF: usize = 16;
 const P_ALIGN_OFF: usize = 48;
 
 fn u16_le(buf: &[u8], off: usize) -> u16 {
-    u16::from_le_bytes(buf[off..off + 2].try_into().unwrap())
+    u16::from_le_bytes(
+        buf[off..off + 2]
+            .try_into()
+            .expect("ELF field should have the expected width"),
+    )
 }
 fn u32_le(buf: &[u8], off: usize) -> u32 {
-    u32::from_le_bytes(buf[off..off + 4].try_into().unwrap())
+    u32::from_le_bytes(
+        buf[off..off + 4]
+            .try_into()
+            .expect("ELF field should have the expected width"),
+    )
 }
 fn u64_le(buf: &[u8], off: usize) -> u64 {
-    u64::from_le_bytes(buf[off..off + 8].try_into().unwrap())
+    u64::from_le_bytes(
+        buf[off..off + 8]
+            .try_into()
+            .expect("ELF field should have the expected width"),
+    )
 }
 
 // Build a minimal program: _start calls main, main returns 42.

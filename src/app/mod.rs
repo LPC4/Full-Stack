@@ -1784,7 +1784,8 @@ impl eframe::App for FullStackApp {
         let chrome_band = egui::Frame::new()
             .fill(theme::CHROME)
             .inner_margin(egui::Margin::symmetric(metrics::PANEL_INSET_X as i8, 0));
-        let bezel_band = egui::Frame::new().fill(theme::BEZEL);
+        // The rail carries its own icons to the edge, so it takes CHROME without the inset.
+        let rail_band = egui::Frame::new().fill(theme::CHROME);
         let well_band = egui::Frame::new().fill(theme::WELL);
         let canvas_band = egui::Frame::new().fill(theme::CANVAS);
         let terminal_band = egui::Frame::new().fill(theme::TERMINAL);
@@ -1804,7 +1805,7 @@ impl eframe::App for FullStackApp {
         egui::Panel::left("activity_rail")
             .resizable(false)
             .exact_size(metrics::ACTIVITY_RAIL_WIDTH)
-            .frame(bezel_band)
+            .frame(rail_band)
             .show_inside(ui, |ui| self.activity_rail(ui));
 
         if self.launch_mode == LaunchMode::Debug && self.live.is_some() {
@@ -2195,7 +2196,7 @@ mod tests {
     }
 
     #[test]
-    fn framebuffer_run_keeps_console_in_app_and_graphics_in_its_window() {
+    fn framebuffer_run_keeps_console_and_graphics_in_the_ide() {
         use full_stack::runconfig::PresentMode;
 
         let root = temp_root("framebuffer_run_surface");
@@ -2206,8 +2207,7 @@ mod tests {
 
         app.run_selected_config(1.0);
 
-        // Graphics present in the framebuffer window; the in-app canvas stays on
-        // the document and the console lands in the terminal.
+        // The document stays behind the embedded screen while the terminal remains usable.
         assert_eq!(app.main_surface, MainSurface::Document);
         assert!(app.config_has_screen());
         assert!(matches!(app.terminal.active, TerminalKind::Machine));

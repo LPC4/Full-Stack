@@ -1,0 +1,12 @@
+[package]
+name = "syntax_highlight"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.92"
+
+[lib]
+name = "syntax_highlight"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
