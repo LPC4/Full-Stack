@@ -591,6 +591,10 @@ directives behave as in GAS; several common aliases are accepted for the same op
 Numeric directive arguments are decimal. `.string` / `.asciz` take a quoted literal and
 understand the escapes `\n`, `\t`, `\r`, `\"` and `\\`.
 
+Output uses the canonical load order `.text`, `.rodata`, `.data`, custom sections, then `.bss`,
+regardless of the order in which section directives first appear. Custom sections retain their
+first-appearance order.
+
 ### 9.3 Relocations (ELF `R_RISCV_*`)
 
 This assembler resolves most symbol references internally at link time and emits only three

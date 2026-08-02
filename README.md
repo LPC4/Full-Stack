@@ -39,6 +39,8 @@ leaving the machine.
 - **An IDE around the whole thing.** Workspace explorer, editor with live diagnostics,
   quick open and project search, a machine dock with console and framebuffer, a
   stepping debugger, OS-level inspectors, and an opt-in time-travel scrubber.
+- **A Guide beside the IDE.** Clean lesson routes teach the system from
+  assembly upward, with runnable examples and source links.
 
 
 ## What you can do in the booted OS
@@ -216,6 +218,7 @@ fsc run        kernel.elf                         # load a pre-linked ELF
 | `programs/demo_workspace/` | Demo workspace the IDE materializes for its default preset |
 | `programs/test/` | Golden compiler fixtures and integration HLL inputs |
 | `tests/` | Rust integration tests (VM execution, compiler suite, kernel boots) |
+| `guide/` | Full-Stack Guide generator, authored lesson, figures, theme, and WASM sandbox |
 
 
 ## Documentation

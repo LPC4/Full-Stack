@@ -168,10 +168,6 @@ impl WorkspaceFs for NativeFs {
     fn read_only(&self) -> bool {
         self.read_only
     }
-
-    fn host_out_dir(&self) -> Option<PathBuf> {
-        Some(self.root.join("out"))
-    }
 }
 
 #[cfg(test)]

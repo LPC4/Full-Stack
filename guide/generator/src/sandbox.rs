@@ -33,7 +33,7 @@ fn sources(root: &Path) -> Vec<PathBuf> {
 }
 
 fn is_stale(root: &Path) -> bool {
-    let bundle = root.join("wasm/pkg/fsbook_wasm_bg.wasm");
+    let bundle = root.join("wasm/pkg/full_stack_guide_wasm_bg.wasm");
     let Some(built) = newest(&bundle) else {
         return true;
     };
@@ -63,7 +63,7 @@ pub fn ensure(root: &Path, force: bool) -> Result<Outcome, String> {
             "--out-dir",
             "pkg",
             "--out-name",
-            "fsbook_wasm",
+            "full_stack_guide_wasm",
         ])
         .status();
 
@@ -87,7 +87,7 @@ mod tests {
 
     #[test]
     fn sources_cover_the_shared_highlighter() {
-        let paths = sources(Path::new("book"));
+        let paths = sources(Path::new("guide"));
         assert!(paths.iter().any(|p| p.ends_with("wasm/src")));
         assert!(
             paths

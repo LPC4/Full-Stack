@@ -15,7 +15,9 @@ fn content_type(path: &Path) -> &'static str {
         // Anything else makes instantiateStreaming reject the module.
         Some("wasm") => "application/wasm",
         Some("png") => "image/png",
-        Some("toml" | "txt") => "text/plain; charset=utf-8",
+        Some("toml" | "txt" | "md" | "rs" | "hll" | "s" | "ld" | "yml" | "yaml") => {
+            "text/plain; charset=utf-8"
+        }
         _ => "application/octet-stream",
     }
 }
@@ -106,7 +108,10 @@ pub fn serve(root: &Path, port: u16) -> Result<(), String> {
     let listener = TcpListener::bind(("127.0.0.1", port))
         .map_err(|e| format!("cannot listen on port {port}: {e}"))?;
     let actual = listener.local_addr().map(|a| a.port()).unwrap_or(port);
-    println!("serving {} at http://localhost:{actual}/", root.display());
+    println!(
+        "serving {} at http://localhost:{actual}/guide/",
+        root.display()
+    );
     println!("press Ctrl+C to stop");
 
     for incoming in listener.incoming() {
@@ -135,14 +140,29 @@ mod tests {
     fn paths_resolve_under_the_root() {
         let root = Path::new("out");
         assert_eq!(
-            resolve(root, "/theme/book.css?v=2"),
-            Some(root.join("theme").join("book.css"))
+            resolve(root, "/guide/theme/guide.css?v=2"),
+            Some(root.join("guide").join("theme").join("guide.css"))
         );
+    }
+
+    #[test]
+    fn query_strings_do_not_change_directory_routes() {
+        let base =
+            std::env::temp_dir().join(format!("full-stack-guide-serve-{}", std::process::id()));
+        let page = base.join("guide/chapter/page");
+        std::fs::create_dir_all(&page).expect("create route");
+        std::fs::write(page.join("index.html"), "page").expect("write route");
+        assert_eq!(
+            resolve(&base, "/guide/chapter/page/?from=test"),
+            Some(page.join("index.html"))
+        );
+        std::fs::remove_dir_all(base).expect("remove fixture");
     }
 
     #[test]
     fn wasm_gets_its_own_type() {
         assert_eq!(content_type(Path::new("a/b.wasm")), "application/wasm");
         assert_eq!(content_type(Path::new("a/b.svg")), "image/svg+xml");
+        assert_eq!(content_type(Path::new("a/b.json")), "application/json");
     }
 }

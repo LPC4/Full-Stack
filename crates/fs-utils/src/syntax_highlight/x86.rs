@@ -36,7 +36,7 @@ pub(crate) fn highlight(code: &str, out: &mut Out) {
         while start < len {
             let mut end = start;
 
-            // `#` and `;` both open a comment; the book's listings use `#`.
+            // `#` and `;` both open a comment; the Guide's listings use `#`.
             if bytes[start] == b'#' || bytes[start] == b';' {
                 out.push(base + start, base + len, Class::Comment);
                 break;
@@ -130,7 +130,7 @@ mod tests {
         assert_eq!(spans[4], ("# 10 bytes", Class::Comment));
     }
 
-    // `push rax` and `add eax, ebx` are the contrast the book draws with RISC-V.
+    // `push rax` and `add eax, ebx` are the contrast the Guide draws with RISC-V.
     #[test]
     fn the_narrow_and_wide_register_names_both_count() {
         let spans = classes("push rax\nadd  eax, ebx\n");

@@ -178,6 +178,22 @@ impl IdeWorkspace {
         Ok(())
     }
 
+    pub fn inject_read_only_document(&mut self, path: VPath, bytes: Vec<u8>, binary: bool) {
+        let document = if binary {
+            Document::new_binary(path.clone(), bytes)
+        } else {
+            match String::from_utf8(bytes) {
+                Ok(text) => Document::new(path.clone(), text, true),
+                Err(error) => Document::new_binary(path.clone(), error.into_bytes()),
+            }
+        };
+        self.documents.insert(path.clone(), document);
+        if !self.open_order.contains(&path) {
+            self.open_order.push(path.clone());
+        }
+        self.active_document = Some(path);
+    }
+
     /// Close an open document, discarding unsaved edits. When it was active, the
     /// nearest remaining tab (same slot, else previous) becomes active.
     pub fn close_document(&mut self, path: &VPath) {
@@ -414,6 +430,23 @@ mod tests {
         // Unknown extensions with invalid UTF-8 fall back to binary too.
         workspace.open_document(noisy).expect("open blob");
         assert!(workspace.active_document().expect("active").is_binary());
+    }
+
+    #[test]
+    fn injected_reference_documents_are_read_only_and_keep_the_workspace() {
+        let mut fs = MemoryFs::new();
+        let demo = VPath::parse("demo.hll").expect("path");
+        fs.write_text(&demo, "main: () -> i32 { return 0 }")
+            .expect("write");
+        let mut workspace = IdeWorkspace::new(Box::new(fs)).expect("workspace");
+        let reference = VPath::parse("src/main.rs").expect("path");
+        workspace.inject_read_only_document(reference.clone(), b"fn main() {}\n".to_vec(), false);
+
+        let document = workspace.active_document().expect("active reference");
+        assert_eq!(document.path(), &reference);
+        assert!(document.is_read_only());
+        assert!(workspace.set_active_text("changed").is_err());
+        assert!(workspace.fs().metadata(&demo).is_ok());
     }
 
     #[test]

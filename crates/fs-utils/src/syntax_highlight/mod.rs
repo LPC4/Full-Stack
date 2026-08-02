@@ -1,5 +1,5 @@
 //! Syntax highlighting for the languages this project reads, as plain span data.
-//! No UI dependency: the IDE, the book, and the sandbox share one tokenizer.
+//! No UI dependency: the IDE, the Guide, and the sandbox share one tokenizer.
 
 mod asm;
 mod ast;
@@ -21,11 +21,11 @@ pub enum Lang {
     Ir,
     /// AST and token dumps.
     Ast,
-    /// Shell command lines, as the book shows build commands in.
+    /// Shell command lines, as the Guide shows build commands in.
     Sh,
     /// GNU linker scripts (`.ld`).
     Ld,
-    /// x86-64 in Intel syntax, which the book shows only to contrast with RISC-V.
+    /// x86-64 in Intel syntax, which the Guide shows only to contrast with RISC-V.
     X86,
 }
 

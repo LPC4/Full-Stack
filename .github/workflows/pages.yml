@@ -62,10 +62,9 @@ jobs:
       - name: Install wasm-pack
         run: cargo install --locked wasm-pack
 
-      # Drives wasm-pack itself. Writes into dist/, so the book ships inside the
-      # single Pages artifact.
-      - name: Build book
-        run: cargo run --release -p fsbook -- build --root book --out dist/book --rebuild-sandbox
+      # Adds only the Guide-owned trees to Trunk's existing dist directory.
+      - name: Build Guide
+        run: cargo run --release -p full_stack_guide -- build --root guide --out dist --rebuild-sandbox
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

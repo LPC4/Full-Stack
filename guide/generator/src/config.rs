@@ -1,4 +1,4 @@
-// book.toml: what the book is made of, and where it links back to.
+// guide.toml: what the Guide is made of, and where it links back to.
 
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
@@ -10,7 +10,6 @@ pub struct Config {
     pub author: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
-    // Used to rewrite repo-relative links, which only resolve on GitHub.
     #[serde(default)]
     pub repo_url: Option<String>,
     #[serde(default)]

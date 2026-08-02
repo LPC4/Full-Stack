@@ -11,10 +11,10 @@ const MAP_HEIGHT: f32 = 22.0;
 const HEX_MAX_BYTES: usize = 1024;
 const HEX_COLS: usize = 16;
 
-pub(super) fn show(ui: &mut egui::Ui, id_salt: &str, bytes: &[u8]) {
+pub(super) fn show(ui: &mut egui::Ui, id_salt: &str, bytes: &[u8], raw_url: Option<&str>) {
     match parse_elf(bytes) {
         Ok(info) => decoded_view(ui, id_salt, bytes, &info),
-        Err(err) => fallback_view(ui, id_salt, bytes, &err),
+        Err(err) => fallback_view(ui, id_salt, bytes, &err, raw_url),
     }
 }
 
@@ -47,7 +47,7 @@ fn decoded_view(ui: &mut egui::Ui, id_salt: &str, bytes: &[u8], info: &ElfInfo) 
     ui.ctx().data_mut(|d| d.insert_temp(sel_id, selected));
 }
 
-fn fallback_view(ui: &mut egui::Ui, id_salt: &str, bytes: &[u8], err: &str) {
+fn fallback_view(ui: &mut egui::Ui, id_salt: &str, bytes: &[u8], err: &str, raw_url: Option<&str>) {
     egui::ScrollArea::vertical()
         .id_salt(("elf_scroll", id_salt))
         .show(ui, |ui| {
@@ -58,6 +58,15 @@ fn fallback_view(ui: &mut egui::Ui, id_salt: &str, bytes: &[u8], err: &str) {
                 theme::WARNING,
             );
             inset_line(ui, &format!("{} bytes", bytes.len()), theme::TEXT_DIM);
+            if let Some(url) = raw_url {
+                ui.horizontal(|ui| {
+                    ui.add_space(metrics::PANEL_INSET_X);
+                    ui.add(
+                        egui::Hyperlink::from_label_and_url("Open raw file", url)
+                            .open_in_new_tab(true),
+                    );
+                });
+            }
             eyebrow(ui, "hex");
             hex_dump(ui, bytes, 0, HEX_MAX_BYTES);
         });

@@ -405,6 +405,27 @@ mod tests {
     }
 
     #[test]
+    fn layout_uses_canonical_order_when_data_appears_first() {
+        let tokens = vec![
+            AsmToken::Section(SectionKind::Data),
+            AsmToken::Label("message".to_owned()),
+            AsmToken::DataAsciz("hello".to_owned()),
+            AsmToken::Section(SectionKind::Text),
+            AsmToken::Label("_start".to_owned()),
+            nop_token(),
+        ];
+        let layout = compute_layout(&tokens).unwrap();
+
+        assert_eq!(
+            layout.section_order,
+            vec![SectionKind::Text, SectionKind::Data]
+        );
+        let output = encode(&tokens, &layout).unwrap();
+        assert_eq!(output.symbol_address("_start"), Some(0));
+        assert_eq!(output.symbol_address("message"), Some(4));
+    }
+
+    #[test]
     fn layout_duplicate_label_is_error() {
         let tokens = vec![
             AsmToken::Section(SectionKind::Text),

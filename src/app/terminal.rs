@@ -767,14 +767,14 @@ impl FullStackApp {
     fn shell_help(&mut self) {
         const HELP: &str = "\
 help              show this list
-build [config]    compile the config; writes artifacts to out/
+build [config]    compile the config
 run [config]      build then execute in the VM
 configs           list run configurations
 use <index>       select a run configuration
 ls [path]         list a workspace directory
 cat <path>        print a workspace file
 open <path>       open a file in the editor
-out               show the build output directory
+out               explain artifact output
 clear             clear the shell";
         self.terminal.shell_echo(ConsoleStream::Info, HELP);
     }
@@ -954,16 +954,10 @@ clear             clear the shell";
     }
 
     fn shell_out(&mut self) {
-        match self.workspace.fs().host_out_dir() {
-            Some(dir) => self.terminal.shell_echo(
-                ConsoleStream::Stdout,
-                format!("artifacts write to {}", dir.display()),
-            ),
-            None => self.terminal.shell_echo(
-                ConsoleStream::Info,
-                "this workspace is virtual; artifacts are kept in memory only",
-            ),
-        }
+        self.terminal.shell_echo(
+            ConsoleStream::Info,
+            "artifacts stay in memory unless the build manifest sets `out`",
+        );
     }
 }
 

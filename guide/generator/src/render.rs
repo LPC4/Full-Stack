@@ -1,6 +1,7 @@
-// Markdown to HTML, with our own code fences, figures and link rewriting.
+// Markdown to HTML, with our own code fences, figures, and repository links.
 
 use crate::code;
+use crate::repository::{Catalog, is_rust_source, validate_path};
 use crate::split::slugify;
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd, html};
 use std::collections::HashSet;
@@ -8,9 +9,11 @@ use std::fs;
 use std::path::Path;
 
 pub struct Context<'a> {
-    pub path_to_root: &'a str,
-    pub repo_url: Option<&'a str>,
+    pub path_to_guide_root: &'a str,
+    pub path_to_site_root: &'a str,
     pub figures: &'a Path,
+    pub repository: &'a Catalog,
+    pub repository_url: Option<&'a str>,
 }
 
 #[derive(Debug)]
@@ -33,26 +36,70 @@ fn options() -> Options {
         | Options::ENABLE_TASKLISTS
 }
 
-// Repo-relative links only resolve on GitHub, so point them there.
-fn rewrite_link(dest: &str, repo_url: Option<&str>) -> String {
-    let external = dest.starts_with("http://")
-        || dest.starts_with("https://")
-        || dest.starts_with('#')
-        || dest.starts_with("mailto:");
-    if external {
-        return dest.to_owned();
+fn percent_encode(text: &str) -> String {
+    let mut out = String::new();
+    for byte in text.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            out.push(char::from(byte));
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
     }
-    let Some(repo) = repo_url else {
-        return dest.to_owned();
+    out
+}
+
+fn repository_link(dest: &str, ctx: &Context<'_>) -> Result<Option<String>, String> {
+    let Some(reference) = dest.strip_prefix("repo:") else {
+        return Ok(None);
     };
-    // The path was authored relative to a file that has since moved; treat
-    // whatever remains after the `../` hops as relative to the repo root.
-    let mut rest = dest;
-    while let Some(stripped) = rest.strip_prefix("../") {
-        rest = stripped;
+    let (path, fragment) = reference
+        .split_once('#')
+        .map_or((reference, None), |(path, fragment)| (path, Some(fragment)));
+    validate_path(path)?;
+    if !ctx.repository.contains(path) {
+        return Err(format!("repository link names missing file `{path}`"));
     }
-    let rest = rest.strip_prefix("./").unwrap_or(rest);
-    format!("{}/blob/main/{rest}", repo.trim_end_matches('/'))
+    let line = fragment
+        .map(|fragment| {
+            if fragment.contains('#') {
+                return Err(format!("invalid repository line fragment `#{fragment}`"));
+            }
+            let number = fragment
+                .strip_prefix('L')
+                .ok_or_else(|| format!("invalid repository line fragment `#{fragment}`"))?;
+            let line = number
+                .parse::<usize>()
+                .map_err(|_error| format!("invalid repository line fragment `#{fragment}`"))?;
+            if line == 0 {
+                return Err("repository line numbers are one-based".to_owned());
+            }
+            Ok(line)
+        })
+        .transpose()?;
+    let mut href = if is_rust_source(path) {
+        let repository_url = ctx
+            .repository_url
+            .ok_or_else(|| format!("Rust repository link `{path}` requires `repo_url`"))?
+            .trim_end_matches('/');
+        let encoded_path = path
+            .split('/')
+            .map(percent_encode)
+            .collect::<Vec<_>>()
+            .join("/");
+        format!("{repository_url}/blob/main/{encoded_path}")
+    } else {
+        format!("{}?file={}", ctx.path_to_site_root, percent_encode(path))
+    };
+    if let Some(line) = line {
+        if is_rust_source(path) {
+            href.push_str(&format!("#L{line}"));
+        } else {
+            href.push_str(&format!("&amp;line={line}"));
+        }
+    }
+    Ok(Some(format!(
+        "<a class=\"source-link\" href=\"{href}\" target=\"_blank\" rel=\"noopener\">"
+    )))
 }
 
 /// LaTeX points to CSS pixels. One factor for every figure, so a diagram's
@@ -76,7 +123,7 @@ fn figure_size(path: &Path) -> Option<(u32, u32)> {
 }
 
 fn figure_html(dest: &str, alt: &str, ctx: &Context<'_>) -> String {
-    let root = ctx.path_to_root;
+    let root = ctx.path_to_guide_root;
     let name = dest.rsplit('/').next().unwrap_or(dest);
     let stem = name.strip_suffix(".svg").unwrap_or(name);
     let has_dark = ctx.figures.join(format!("{stem}.dark.svg")).is_file();
@@ -143,7 +190,11 @@ fn heading_html(
     )
 }
 
-pub fn render(markdown: &str, ctx: &Context<'_>) -> Rendered {
+#[expect(
+    clippy::too_many_lines,
+    reason = "Markdown events are rewritten in one stateful pass"
+)]
+pub fn render(markdown: &str, ctx: &Context<'_>) -> Result<Rendered, String> {
     let mut out = Vec::new();
     let mut outline = Vec::new();
     let mut used_ids = HashSet::new();
@@ -154,6 +205,7 @@ pub fn render(markdown: &str, ctx: &Context<'_>) -> Rendered {
     // A <figure> cannot live inside <p>, so a paragraph that opens with one loses its tags.
     let mut paragraph_open = false;
     let mut figure_paragraph = false;
+    let mut repository_link_open = false;
 
     for event in Parser::new_ext(markdown, options()) {
         if paragraph_open {
@@ -235,12 +287,21 @@ pub fn render(markdown: &str, ctx: &Context<'_>) -> Rendered {
                 title,
                 id,
             }) => {
-                out.push(Event::Start(Tag::Link {
-                    link_type,
-                    dest_url: rewrite_link(&dest_url, ctx.repo_url).into(),
-                    title,
-                    id,
-                }));
+                if let Some(open) = repository_link(&dest_url, ctx)? {
+                    repository_link_open = true;
+                    out.push(Event::Html(open.into()));
+                } else {
+                    out.push(Event::Start(Tag::Link {
+                        link_type,
+                        dest_url,
+                        title,
+                        id,
+                    }));
+                }
+            }
+            Event::End(TagEnd::Link) if repository_link_open => {
+                repository_link_open = false;
+                out.push(Event::Html("</a>".into()));
             }
             other => out.push(other),
         }
@@ -248,27 +309,37 @@ pub fn render(markdown: &str, ctx: &Context<'_>) -> Rendered {
 
     let mut html_out = String::new();
     html::push_html(&mut html_out, out.into_iter());
-    Rendered {
+    Ok(Rendered {
         html: html_out,
         outline,
-    }
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::LazyLock;
 
     fn ctx() -> Context<'static> {
+        static CATALOG: LazyLock<Catalog> = LazyLock::new(|| {
+            Catalog::testing(&[
+                "crates/asm-to-binary/_RISCV_SPECIFICATIONS.md",
+                "crates/virtual-machine/src/bus.rs",
+                "directory/file with spaces.rs",
+            ])
+        });
         Context {
-            path_to_root: "../",
-            repo_url: Some("https://github.com/LPC4/Full-Stack"),
+            path_to_guide_root: "../../",
+            path_to_site_root: "../../../",
             figures: Path::new("does-not-exist"),
+            repository: &CATALOG,
+            repository_url: Some("https://github.com/LPC4/Full-Stack"),
         }
     }
 
     #[test]
     fn code_fences_use_our_highlighter() {
-        let out = render("```asm\nli t0, 5\n```\n", &ctx());
+        let out = render("```asm\nli t0, 5\n```\n", &ctx()).expect("render");
         assert!(out.html.contains("class=\"code wrapped\""));
         assert!(out.html.contains("tk-kw"));
         // cmark's own escaping path would emit language-asm instead.
@@ -277,43 +348,73 @@ mod tests {
 
     #[test]
     fn plain_fences_stay_unhighlighted() {
-        let out = render("```text\n+---+\n| a |\n+---+\n```\n", &ctx());
+        let out = render("```text\n+---+\n| a |\n+---+\n```\n", &ctx()).expect("render");
         assert!(out.html.contains("data-lang=\"text\""));
         assert!(!out.html.contains("<span class=\"tk"));
     }
 
     #[test]
     fn runnable_fences_get_sandbox_controls() {
-        let out = render("```asm,runnable\nli t0, 5\n```\n", &ctx());
+        let out = render("```asm,runnable\nli t0, 5\n```\n", &ctx()).expect("render");
         assert!(out.html.contains("class=\"sandbox\""));
         assert!(out.html.contains("sandbox-run"));
     }
 
     #[test]
-    fn repo_relative_links_point_at_github() {
+    fn non_rust_repository_links_open_the_ide_in_a_new_tab() {
         let out = render(
-            "[spec](../crates/asm-to-binary/_RISCV_SPECIFICATIONS.md)\n",
+            "[spec](repo:crates/asm-to-binary/_RISCV_SPECIFICATIONS.md#L42)\n",
             &ctx(),
-        );
+        )
+        .expect("render");
         assert!(
             out.html.contains(
-                "https://github.com/LPC4/Full-Stack/blob/main/crates/asm-to-binary/_RISCV_SPECIFICATIONS.md"
+                "../../../?file=crates%2Fasm-to-binary%2F_RISCV_SPECIFICATIONS.md&amp;line=42"
             ),
             "{}",
             out.html
         );
+        assert!(out.html.contains("class=\"source-link\""));
+        assert!(out.html.contains("target=\"_blank\" rel=\"noopener\""));
+    }
+
+    #[test]
+    fn rust_repository_links_open_github_in_a_new_tab() {
+        let out = render(
+            "[bus](repo:crates/virtual-machine/src/bus.rs#L42)\n",
+            &ctx(),
+        )
+        .expect("render");
+        assert!(out.html.contains(
+            "href=\"https://github.com/LPC4/Full-Stack/blob/main/crates/virtual-machine/src/bus.rs#L42\""
+        ));
+        assert!(!out.html.contains("?file="));
+        assert!(out.html.contains("target=\"_blank\" rel=\"noopener\""));
     }
 
     #[test]
     fn external_links_are_untouched() {
-        let out = render("[qemu](https://www.qemu.org/docs/master/)\n", &ctx());
+        let out = render("[qemu](https://www.qemu.org/docs/master/)\n", &ctx()).expect("render");
         assert!(out.html.contains("https://www.qemu.org/docs/master/"));
-        assert!(!out.html.contains("blob/main"));
+    }
+
+    #[test]
+    fn local_links_and_images_are_untouched() {
+        let out = render("[nearby](other-page/) [part](#part)\n", &ctx()).expect("render");
+        assert!(out.html.contains("href=\"other-page/\""));
+        assert!(out.html.contains("href=\"#part\""));
+    }
+
+    #[test]
+    fn invalid_repository_links_fail_rendering() {
+        assert!(render("[missing](repo:no/such.rs)\n", &ctx()).is_err());
+        assert!(render("[bad](repo:../secret#L0)\n", &ctx()).is_err());
+        assert!(render("[bad](repo:crates/virtual-machine/src/bus.rs#42)\n", &ctx()).is_err());
     }
 
     #[test]
     fn images_become_figures_with_captions() {
-        let out = render("![The stack grows down](figures/stack.svg)\n", &ctx());
+        let out = render("![The stack grows down](figures/stack.svg)\n", &ctx()).expect("render");
         assert!(out.html.contains("<figure class=\"figure\">"));
         assert!(out.html.contains("../figures/stack.svg"));
         assert!(
@@ -336,7 +437,7 @@ mod tests {
 
     #[test]
     fn a_lone_figure_is_not_wrapped_in_a_paragraph() {
-        let out = render("before\n\n![](figures/stack.svg)\n\nafter\n", &ctx());
+        let out = render("before\n\n![](figures/stack.svg)\n\nafter\n", &ctx()).expect("render");
         assert!(!out.html.contains("<p><figure"), "{}", out.html);
         // Text paragraphs around it keep their tags.
         assert!(out.html.contains("<p>before</p>"), "{}", out.html);
@@ -345,14 +446,14 @@ mod tests {
 
     #[test]
     fn text_sharing_a_paragraph_with_an_image_survives() {
-        let out = render("see ![](figures/stack.svg) here\n", &ctx());
+        let out = render("see ![](figures/stack.svg) here\n", &ctx()).expect("render");
         assert!(out.html.contains("see "), "{}", out.html);
         assert!(out.html.contains(" here"), "{}", out.html);
     }
 
     #[test]
     fn tables_get_a_box_to_scroll_in() {
-        let out = render("| a | b |\n| --- | --- |\n| 1 | 2 |\n", &ctx());
+        let out = render("| a | b |\n| --- | --- |\n| 1 | 2 |\n", &ctx()).expect("render");
         assert!(
             out.html.contains("<div class=\"table-wrap\"><table>"),
             "{}",
@@ -363,7 +464,8 @@ mod tests {
 
     #[test]
     fn headings_get_stable_ids_and_an_outline() {
-        let out = render("#### First Part\ntext\n\n#### First Part\nmore\n", &ctx());
+        let out =
+            render("#### First Part\ntext\n\n#### First Part\nmore\n", &ctx()).expect("render");
         assert_eq!(out.outline.len(), 2);
         assert_eq!(out.outline[0].id, "first-part");
         assert_eq!(out.outline[1].id, "first-part-");

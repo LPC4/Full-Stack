@@ -7,6 +7,7 @@
 
 mod app;
 mod ui;
+mod web_reference;
 
 // When compiling natively:
 #[cfg(not(target_arch = "wasm32"))]
@@ -45,6 +46,7 @@ fn main() {
     }
 
     wasm_bindgen_futures::spawn_local(async {
+        let startup_reference = web_reference::load().await;
         let document = web_sys::window()
             .expect("No window")
             .document()
@@ -60,7 +62,12 @@ fn main() {
             .start(
                 canvas,
                 web_options,
-                Box::new(|cc| Ok(Box::new(app::FullStackApp::new(cc)))),
+                Box::new(move |cc| {
+                    Ok(Box::new(app::FullStackApp::new_with_reference(
+                        cc,
+                        startup_reference,
+                    )))
+                }),
             )
             .await;
 

@@ -8,9 +8,10 @@ pub struct Fence<'a> {
     pub runnable: bool,
     // A runnable snippet that is already a whole program, needing no wrapper.
     pub bare: bool,
+    pub expected: Option<&'a str>,
 }
 
-// Info strings look like "asm", "asm,runnable" or "asm,runnable=bare".
+// Info strings look like "asm", "asm,runnable" or "asm,runnable expect=t0:5|t1:8".
 pub fn parse_fence(info: &str) -> Fence<'_> {
     let mut parts = info.split(&[',', ' '][..]).filter(|p| !p.is_empty());
     let tag = parts.next().unwrap_or("");
@@ -24,6 +25,9 @@ pub fn parse_fence(info: &str) -> Fence<'_> {
             "runnable=bare" => {
                 fence.runnable = true;
                 fence.bare = true;
+            }
+            value if value.starts_with("expect=") => {
+                fence.expected = value.strip_prefix("expect=");
             }
             _ => {}
         }
@@ -42,19 +46,21 @@ pub fn render(fence: &Fence<'_>, source: &str) -> String {
         );
     }
 
-    // The editable pane is repainted from `highlight_html` as you type, and it
-    // scrolls rather than wraps, so it stays one flat run of spans.
+    // The textarea sits over this highlighted copy, keeping native editing and undo.
     let inner = highlight_html(fence.tag, source);
     let wrap = if fence.bare { "bare" } else { "snippet" };
+    let expected = escape(fence.expected.unwrap_or(""));
     let raw = escape(source);
     format!(
-        "<div class=\"sandbox\" data-lang=\"{tag}\" data-wrap=\"{wrap}\">\
+        "<div class=\"sandbox\" data-lang=\"{tag}\" data-wrap=\"{wrap}\" data-expect=\"{expected}\">\
 <div class=\"sandbox-bar\"><span class=\"sandbox-title\">{tag}</span>\
 <button class=\"sandbox-run\" type=\"button\">Run</button>\
 <button class=\"sandbox-reset\" type=\"button\">Reset</button></div>\
-<pre class=\"code sandbox-code\" contenteditable=\"true\" spellcheck=\"false\"><code>{inner}</code></pre>\
-<textarea class=\"sandbox-source\" hidden>{raw}</textarea>\
-<div class=\"sandbox-output\" hidden></div></div>\n"
+<div class=\"sandbox-editor\">\
+<pre class=\"code sandbox-highlight\" aria-hidden=\"true\"><code>{inner}</code></pre>\
+<textarea class=\"sandbox-code\" aria-label=\"Editable assembly example\" spellcheck=\"false\" wrap=\"off\">{raw}</textarea>\
+</div>\
+<div class=\"sandbox-output\" aria-live=\"polite\" hidden></div></div>\n"
     )
 }
 
@@ -73,6 +79,9 @@ mod tests {
         let bare = parse_fence("asm,runnable=bare");
         assert!(bare.runnable && bare.bare);
         assert_eq!(bare.tag, "asm");
+
+        let expected = parse_fence("asm,runnable expect=t0:5|a0:12");
+        assert_eq!(expected.expected, Some("t0:5|a0:12"));
     }
 
     // Lines share one box in the sandbox and get their own in a listing, so the
@@ -90,9 +99,21 @@ mod tests {
     fn runnable_blocks_carry_the_original_source() {
         let fence = parse_fence("asm,runnable");
         let html = render(&fence, "li t0, 5\n");
-        assert!(html.contains("sandbox-source"));
+        assert!(html.contains("sandbox-editor"));
+        assert!(html.contains("sandbox-highlight"));
+        assert!(html.contains("textarea class=\"sandbox-code\""));
+        assert!(!html.contains("contenteditable"));
         assert!(html.contains("data-wrap=\"snippet\""));
+        assert!(html.contains("data-expect=\"\""));
+        assert!(html.contains("aria-live=\"polite\""));
         assert!(html.contains("tk-kw"), "still highlighted");
+    }
+
+    #[test]
+    fn expected_registers_are_attached_to_the_sandbox() {
+        let fence = parse_fence("asm,runnable expect=t0:5|a0:12");
+        let html = render(&fence, "li t0, 5\n");
+        assert!(html.contains("data-expect=\"t0:5|a0:12\""));
     }
 
     #[test]

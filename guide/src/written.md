@@ -1,6 +1,6 @@
 I started off creating Minecraft mods for fun, and ever since, I've wanted to understand what a computer
-*actually* does. Not just how to use a programming language, but how an application really gets run on a
-computer. I realized I had no idea how Java itself worked underneath.
+*actually* does. Not just how to use a programming language, but how an application really gets ran. At some point
+I realized I had no idea how Java itself worked underneath.
 
 That question is why I started working on multiple projects in my free time: different virtual machines, custom assembly and
 programming languages. Eventually, after much trial and error, I arrived at [this project](https://github.com/LPC4/Full-Stack).
@@ -10,8 +10,9 @@ It includes a virtual machine (VM), a compiler, assembler, and linker for a cust
 
 In these documents we'll be going over all the things you'd need to know to build a similar project from scratch.
 
-Throughout these documents there will be multiple code snippets. You can run and modify these yourself,
-online and without any downloads, in [the project's own IDE](https://lpc4.github.io/Full-Stack/).
+Throughout these documents there will be multiple code snippets. Complete examples have a Run button, so
+you can modify and execute them directly on the page. You can also open the larger lesson programs in
+[the project's own IDE](https://lpc4.github.io/Full-Stack/) to use the debugger and machine inspectors.
 
 This is written for anyone interested in systems programming. I assume you already know how to code and understand
 concepts like pointers, but not what lives below that level. After this you'll be able to understand the full stack
@@ -36,7 +37,7 @@ I chose RISC-V because it's way simpler to emulate (fewer instructions) and beca
 keeping the assembly simple. (x86 actually also gets broken down into a RISC-like microcode, inside the CPU itself.)
 
 You can find the RISC-V specifications as used in this project
-[here](../crates/asm-to-binary/_RISCV_SPECIFICATIONS.md). It's not necessary to start memorizing them: most of it
+[here](repo:crates/asm-to-binary/_RISCV_SPECIFICATIONS.md). It's not necessary to start memorizing them: most of it
 is pretty logical, and it'll come with time. I'm only putting it here in case you don't understand an instruction.
 
 For now, we'll treat the CPU as the simplest machine possible. Real CPUs do all kinds of clever optimisations to run faster,
@@ -56,7 +57,7 @@ add x1, x2, x3    # x1 = x2 + x3    "add": sum two registers into a third
 Most instructions follow the same pattern: the instruction name, then the destination register, followed by the inputs.
 Here are the basic ones:
 
-```asm
+```asm,runnable expect=t0:5|t1:3|t2:8|t3:2|t4:15|t5:1|t6:15
 li   t0, 5          # t0 = 5             "load immediate": put a constant in a register
 li   t1, 3          # t1 = 3
 add  t2, t0, t1     # t2 = t0 + t1 = 8
@@ -128,7 +129,7 @@ overwriting each other. That is an overflow. This is exactly the *stack overflow
 Let's use the stack in a small example. We reserve some stack space, store two numbers in it, load them
 back, and add them:
 
-```asm
+```asm,runnable expect=a0:12
   addi sp, sp, -16    # move sp down: reserve 16 bytes of stack space
   li   t0, 5          # t0 = 5
   sd   t0, 0(sp)      # store the 5 at sp + 0
@@ -234,7 +235,7 @@ And that's all the control flow there is: everything else can be made out of the
 So let's first write a simple assembly program. No printing "hello world" just yet, we'll start by making a program that
 sums the numbers from 1 to 10 and then stops.
 
-```asm
+```asm,runnable expect=t0:55
   li   t0, 0          # t0 = sum, start at 0
   li   t1, 1          # t1 = i, start at 1
   li   t2, 10         # t2 = the limit
@@ -259,7 +260,8 @@ So now t0 contains 55, and since we don't have any way to see a returned value o
 the registers. This can be done through the IDE:
 
 1. Boot up [the IDE](https://lpc4.github.io/Full-Stack/). At the top left, click `open folder` and pick `lessons`.
-2. In the file tree, open lesson one: `01_sum/sum.s`. It's this exact program, plus a couple of
+2. In the file tree, open lesson one:
+   [`01_sum/sum.s`](repo:programs/lessons/01_sum/sum.s). It's this exact program, plus a couple of
    extra lines that we'll get to in a moment.
 3. In the top right, select the run configuration `01: sum 1..10`.
 4. Click `debug`: the machine starts paused on the very first instruction.
@@ -293,7 +295,7 @@ following lines are: everything after `.text` is code, and everything after `.da
 into memory before the program starts. Along with that we get a new instruction, `la` ("load address"), which
 puts the address of a label into a register:
 
-```asm
+```asm,runnable expect=t1:4|t2:8
 .data                 # what follows is data placed in memory, not code
 array:                # a label for the first byte of the array
   .dword 4            # "emit a doubleword": place a 64-bit value in memory here
@@ -324,7 +326,8 @@ combined executable, with all the code and data sections placed properly.
 ### Breakpoints and the memory view
 
 This is a good moment to meet the rest of the debugger, because registers alone won't show you an array. Load
-`02_array_sum/array_sum.s`, run configuration `02: sum an array`, and click `debug` again: it's the
+[`02_array_sum/array_sum.s`](repo:programs/lessons/02_array_sum/array_sum.s), run configuration
+`02: sum an array`, and click `debug` again: it's the
 same idea as the snippet above, extended to four elements (10, 20, 30 and 40) and a summing loop.
 
 Stepping one instruction at a time gets old fast, so let's set a *breakpoint*: a marked instruction where the
@@ -355,9 +358,9 @@ Now, I'd like for you to try to make your own assembly program: one that creates
 approach uses two pointers: one at the first element and one at the last. Swap the elements they point at,
 move the pointers towards each other, and stop once they meet or cross. You'll need `sd` from the stack
 section to write elements back into the array. You can use the built-in debugger to debug and test your
-code, and you can find a blank template under `03_reverse_array/reverse_array_template.s`, with a matching
-run configuration `03.1 (template): reverse an array`. There is nothing to install for any of this: the
-[IDE runs in your browser](https://lpc4.github.io/Full-Stack/), lessons and all.
+code, and you can find a blank template under
+[`03_reverse_array/reverse_array_template.s`](repo:programs/lessons/03_reverse_array/reverse_array_template.s),
+with a matching run configuration `03.1 (template): reverse an array`.
 
 ![Two pointers move inward as the array is reversed in place.](figures/reverse_array_two_pointer_swap.svg)
 
@@ -368,7 +371,8 @@ the registers and memory after your program is finished. Write your array in `.d
 `_start` and `done`. If everything works, the memory view at your array's address reads 28 where 0a used to
 be: the elements in reverse order, shown in hex.
 
-If you get stuck, a finished version sits right next to the template: `03_reverse_array/reverse_array.s`,
+If you get stuck, a finished version sits right next to the template:
+[`03_reverse_array/reverse_array.s`](repo:programs/lessons/03_reverse_array/reverse_array.s),
 with a matching run configuration `03.2 (solution): reverse an array`.
 
 ### Functions
@@ -393,7 +397,7 @@ using is just `jal` with `zero`, throwing the address away). So when we're insid
 we can return by jumping to the address in `ra`, which is exactly what `ret` does. A simple function that
 takes its arguments in registers and needs no stack looks like this:
 
-```asm
+```asm,runnable=bare expect=a0:12
 _start:
   li   a0, 7          # first argument
   li   a1, 12         # second argument
@@ -412,7 +416,9 @@ max_a:
 
 ![`jal` transfers control to the function; `ret` returns to the saved address.](figures/function_call_and_return.svg)
 
-You'll find this one under `04_functions/max.s`, run configuration `04.1: call a leaf function`. Notice
+You'll find this one under
+[`04_functions/max.s`](repo:programs/lessons/04_functions/max.s), run configuration
+`04.1: call a leaf function`. Notice
 how the second call reuses the result of the first: the answer is already sitting in `a0`, exactly where the
 first argument goes.
 
@@ -444,7 +450,8 @@ max3:                 # max3(a, b, c): the largest of three, via two calls to ma
   ret
 ```
 
-That's `04_functions/max3.s`, run configuration `04.2: nested calls`. Its frame looks
+That's [`04_functions/max3.s`](repo:programs/lessons/04_functions/max3.s), run configuration
+`04.2: nested calls`. Its frame looks
 like this on the stack:
 
 ![](figures/functions_2.svg)
@@ -499,10 +506,11 @@ Now let's tie the whole thing together with one last example: factorial. It's a 
 `fact(n) = n * fact(n - 1)` makes a call, and it has to carry something across it: the original `n`, so it can
 multiply by it once the call comes back. It can't be trusted to a register, because the `jal` into `fact` is
 allowed to clobber it. So each call keeps its own `n` in its frame, addressed off `fp`. Here's the whole thing,
-we'll be going over it piece by piece. It's `05_stack_frames/factorial_stack.s`, run configuration
+we'll be going over it piece by piece. It's
+[`05_stack_frames/factorial_stack.s`](repo:programs/lessons/05_stack_frames/factorial_stack.s), run configuration
 `05.1: factorial with a frame`:
 
-```asm
+```asm,runnable=bare expect=a0:120
 _start:
   li   a0, 5           # n
   jal  ra, fact        # a0 = fact(5) = 120
@@ -609,7 +617,9 @@ opposite: it calls `square` twice, and every call is free to clobber `a0` and `a
 need after a call has to live in the frame. Both `b` and the result of the first `square` have to survive a
 call, so both get a slot.
 
-The template is `05_stack_frames/sum_of_squares_template.s`, run configuration
+The template is
+[`05_stack_frames/sum_of_squares_template.s`](repo:programs/lessons/05_stack_frames/sum_of_squares_template.s),
+run configuration
 `05.2 (template): sum of squares`, again in the [browser IDE](https://lpc4.github.io/Full-Stack/). It gives
 you `_start`, `square`, and a `sos` split into four commented steps to fill in, with the frame plan written
 out in the comments above it:
@@ -621,7 +631,8 @@ with their saves and reloads in between, and the epilogue. If it works, `a0` hol
 reaches `done`: `sos(3, 4) = 9 + 16`. Use the `stack` view while you're in there, it will show you your own
 frame being built slot by slot, and a wrong offset is a lot easier to see there than in the registers.
 
-The solution sits next to it as `05_stack_frames/sum_of_squares.s`, run configuration
+The solution sits next to it as
+[`05_stack_frames/sum_of_squares.s`](repo:programs/lessons/05_stack_frames/sum_of_squares.s), run configuration
 `05.3 (solution): sum of squares`, which opens with a breakpoint on `sos`.
 
 And that's the whole assembly chapter. You can now read and write RISC-V by hand: registers, memory, the
@@ -670,7 +681,8 @@ small part of the addresses we're able to name.
 So the addresses are essentially free, and that changes how you use them. Instead of packing everything
 together at the bottom, a machine spreads things out and gives each one its own region, with massive empty
 gaps in between. That's called a *memory map*, and it's decided by whoever builds the machine. Here's mine,
-straight out of `crates/virtual-machine/src/bus.rs`, where every one of these bases is a constant the bus
+straight out of the
+[`bus.rs`](repo:crates/virtual-machine/src/bus.rs#L45) memory map, where every one of these bases is a constant the bus
 uses to decide which device an address belongs to:
 
 ![](figures/an_address_is_also_just_a_number.svg)
@@ -693,18 +705,19 @@ NS16550A. You hand it a byte, and it shifts that byte out one bit at a time over
 in reverse for anything coming back in. You talk to it through a small bank of registers at a fixed address. The first
 byte of that bank is the transmit register, and writing to it is what sends a character.
 
-We're emulating that chip in `crates/virtual-machine/src/devices/uart.rs`, a subset of the NS16550A. There's no
+We're emulating that chip in
+[`uart.rs`](repo:crates/virtual-machine/src/devices/uart.rs), a subset of the NS16550A. There's no
 wire and no bits being shifted, obviously: writing a byte to the transmit register appends it to a buffer, and the
 IDE drains that buffer into the console window. From the program's side nothing about that is visible. It stores a
 byte to an address, and a character appears.
 
 So how do we actually use this in our code? The UART sits at `0x1000_0000`, and its transmit register is the first
 byte there, so the whole thing is two instructions: put the address in a register, store a byte to it. That's
-`06_uart/hello_raw.s`:
+[`06_uart/hello_raw.s`](repo:programs/lessons/06_uart/hello_raw.s):
 
 ![`sb` writes a byte to the UART transmit address, which appears in the console.](figures/uart_mmio_output.svg)
 
-```asm
+```asm,runnable=bare
 .globl _start
 _start:
   li   t0, 0x10000000  # UART transmit register, fixed by the machine
@@ -730,10 +743,11 @@ Hi
 ```
 
 Alright, let's now put this behind some abstraction, so we don't always need to load these magic numbers everywhere.
-This is `06_uart/print_char.s`, and it's nothing new: the UART store moved into a function. `print_char` calls
+This is [`06_uart/print_char.s`](repo:programs/lessons/06_uart/print_char.s), and it's nothing new: the UART
+store moved into a function. `print_char` calls
 nothing else, so it's a leaf, and just like `square` back in lesson 05 it needs no frame at all:
 
-```asm
+```asm,runnable=bare
 .globl _start
 _start:
   li   a0, 72          # 'H'
@@ -758,7 +772,7 @@ our new IO. `print_string` takes a pointer and prints bytes until it hits a zero
 not a leaf: the call clobbers `ra`, and it clobbers `a0`, which is also where our pointer lives. Both have to
 survive, so both get a slot in a frame:
 
-```asm
+```asm,runnable=bare
 .data
 msg:
   .asciz "Hello, world!\n"   # "asciz": the bytes in ASCII + a trailing zero (c-string)
@@ -832,7 +846,8 @@ _start:
   jal  ra, exit
 ```
 
-The finished program, with `print_char`, `print_string` and `exit` all together, is `06_uart/hello_world.s`.
+The finished program, with `print_char`, `print_string` and `exit` all together, is
+[`06_uart/hello_world.s`](repo:programs/lessons/06_uart/hello_world.s).
 
 And finally, after six lessons and a fair amount of hard work, we've printed hello world. Who would have thought
 printing hello world could be this complicated.
@@ -854,7 +869,8 @@ but the CPU is a real RV64 implementation and the devices are real device design
 against the same rules as code for silicon. It's basically a real machine that just hasn't been manufactured, but if you
 really wanted to you could.
 
-The port is `07_qemu/hello_world.s`. Two things change from our previous hello world program.
+The port is [`07_qemu/hello_world.s`](repo:programs/lessons/07_qemu/hello_world.s). Two things change
+from our previous hello world program.
 
 ### Setting the stack pointer
 
@@ -913,8 +929,9 @@ instruction, so the constant has to be built in a register first (with the li ps
 
 ### The linker script
 
-There's one more file next to the assembly: `link.ld`. Up until now the IDE has been deciding where our code and data
-end up in memory. With QEMU, we need to do this ourselves.
+There's one more file next to the assembly:
+[`link.ld`](repo:programs/lessons/07_qemu/link.ld). Up until now the IDE has been deciding where our code and
+data end up in memory. With QEMU, we need to do this ourselves.
 
 ```ld
 ENTRY(_start)

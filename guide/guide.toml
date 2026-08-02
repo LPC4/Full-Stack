@@ -1,12 +1,12 @@
-# Book manifest. `parts` is a list so the specifications can join later
+# Guide manifest. `parts` is a list so the specifications can join later
 # without touching the generator.
 
-title = "Full-Stack"
+title = "Full-Stack Guide"
 author = "Liam"
 description = "Building a computer from binary instructions up to a running operating system."
 repo_url = "https://github.com/LPC4/Full-Stack"
 
-# "left" matches mdBook. Set to "right" to move the chapter tree across.
+# Set to "right" to move the chapter tree across.
 sidebar = "left"
 
 # A part's title names its landing page: the prose above the first `##`.

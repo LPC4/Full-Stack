@@ -1,9 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <!-- An SVG favicon can follow the tab strip's theme, which a PNG cannot. -->
-  <style>
-    .page { fill: #1f6feb; }
-    @media (prefers-color-scheme: dark) { .page { fill: #58a6ff; } }
-  </style>
-  <path class="page" d="M14.6 10.5C11.6 8.2 7.7 7 3.2 7 2.4 7 1.7 7.7 1.7 8.5v15c0 .8.7 1.5 1.5 1.5 4.5 0 8.4 1.2 11.4 3.5z"/>
-  <path class="page" d="M17.4 10.5C20.4 8.2 24.3 7 28.8 7c.8 0 1.5.7 1.5 1.5v15c0 .8-.7 1.5-1.5 1.5-4.5 0-8.4 1.2-11.4 3.5z"/>
-</svg>

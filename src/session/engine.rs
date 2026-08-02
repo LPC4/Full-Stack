@@ -118,7 +118,7 @@ impl<'a> SessionEngine<'a> {
         })
     }
 
-    // A manifest that pins its own artifact root wins over the engine's out dir.
+    // A manifest that pins its own artifact root wins over an engine override.
     fn apply_artifact_root(&self, manifest: &mut BuildManifest) -> Option<PathBuf> {
         if let Some(existing) = &manifest.artifact_root {
             return manifest.write_artifacts.then(|| existing.clone());
@@ -499,6 +499,7 @@ mod tests {
             .expect("build config");
         assert_eq!(outcome.config_name, "Demo");
         assert_eq!(outcome.manifest_name, "demo");
+        assert_eq!(outcome.artifact_dir, None);
         assert!(outcome.artifacts.linked.has_symbol("main"));
     }
 

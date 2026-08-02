@@ -68,12 +68,32 @@ pub fn compute_layout(tokens: &[AsmToken]) -> Result<Layout, AssemblerError> {
     }
 
     *section_sizes.entry(current).or_insert(0) = offset;
+    section_order = canonical_section_order(&section_order);
 
     Ok(Layout {
         symbols,
         section_order,
         section_sizes,
     })
+}
+
+fn canonical_section_order(encountered: &[SectionKind]) -> Vec<SectionKind> {
+    let mut ordered = Vec::with_capacity(encountered.len());
+    for preferred in [SectionKind::Text, SectionKind::RoData, SectionKind::Data] {
+        if encountered.contains(&preferred) {
+            ordered.push(preferred);
+        }
+    }
+    ordered.extend(
+        encountered
+            .iter()
+            .filter(|kind| matches!(kind, SectionKind::Custom(_)))
+            .cloned(),
+    );
+    if encountered.contains(&SectionKind::Bss) {
+        ordered.push(SectionKind::Bss);
+    }
+    ordered
 }
 
 pub fn align_up(offset: u64, alignment: u64) -> u64 {

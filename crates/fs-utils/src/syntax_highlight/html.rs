@@ -1,4 +1,4 @@
-// HTML rendering of spans, shared by the book generator and the wasm sandbox.
+// HTML rendering of spans, shared by the Guide generator and the WASM sandbox.
 
 use super::{Class, Lang};
 

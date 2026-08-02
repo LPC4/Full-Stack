@@ -1,15 +1,16 @@
-//! Runs book assembly snippets on the real VM, and re-highlights edited source.
+//! Runs Guide assembly snippets on the real VM, and re-highlights edited source.
 
 use asm_to_binary::{AssembledOutput, Assembler, parse_asm_source};
-
-// File name the snippet is registered under, so the line table can be read back.
-const SNIPPET: &str = "snippet";
 use serde::Serialize;
 use virtual_machine::RunResult;
 use virtual_machine::virtual_machine::{StepOutcome, VirtualMachine};
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
+
+// File name the snippet is registered under, so the line table can be read back.
+const SNIPPET: &str = "snippet";
+const SNIPPET_DONE: &str = "__full_stack_guide_snippet_done";
 
 const ABI_NAMES: [&str; 32] = [
     "zero", "ra", "sp", "gp", "tp", "t0", "t1", "t2", "s0", "s1", "a0", "a1", "a2", "a3", "a4",
@@ -43,18 +44,59 @@ impl Outcome {
     }
 }
 
-/// Gives a fragment an entry point and a SYSCON halt so the VM can run it.
-/// The halt needs a scratch register, so `t6` is clobbered.
+/// Gives a fragment an entry point and a register-neutral completion marker.
 pub fn wrap_snippet(source: &str) -> String {
     format!(
         ".globl _start\n_start:\n{source}\n\
-                 li   t6, 0x10010000\n\
-                 sd   zero, 0(t6)\n"
+         {SNIPPET_DONE}:\n\
+                 nop\n\
+         __full_stack_guide_snippet_park:\n\
+                 j __full_stack_guide_snippet_park\n"
     )
 }
 
+fn run_to_marker(vm: &mut VirtualMachine, marker_pc: u64, max_steps: u64) -> RunResult {
+    let mut steps = 0;
+    let mut outcome = StepOutcome::Continue;
+
+    for _ in 0..max_steps {
+        steps += 1;
+        match vm.step() {
+            Ok(StepOutcome::Continue) => {
+                let marker_retired =
+                    vm.pipeline_snapshot().stages[4].is_some_and(|(pc, _)| pc == marker_pc);
+                if marker_retired {
+                    outcome = StepOutcome::Halted(0);
+                    break;
+                }
+            }
+            Ok(StepOutcome::Halted(code)) => {
+                outcome = StepOutcome::Halted(code);
+                break;
+            }
+            Err(_) => {
+                outcome = StepOutcome::Halted(-1);
+                break;
+            }
+        }
+    }
+
+    let uart_output = String::from_utf8_lossy(&vm.uart_output()).into_owned();
+    RunResult {
+        steps,
+        uart_output,
+        outcome,
+    }
+}
+
 fn needs_wrapping(source: &str) -> bool {
-    !source.contains("_start")
+    !source.lines().any(|line| {
+        line.split(['#', ';'])
+            .next()
+            .unwrap_or("")
+            .trim_start()
+            .starts_with("_start:")
+    })
 }
 
 // True if the line should have produced machine code.
@@ -85,10 +127,11 @@ fn unrecognised_lines(program: &str, assembled: &AssembledOutput) -> Vec<usize> 
 
 /// Assembles and runs `source`, returning what the reader should see.
 pub fn run(source: &str, max_steps: u64, bare: bool) -> Outcome {
-    let program = if bare || !needs_wrapping(source) {
-        source.to_owned()
-    } else {
+    let wrapped = !bare && needs_wrapping(source);
+    let program = if wrapped {
         wrap_snippet(source)
+    } else {
+        source.to_owned()
     };
 
     let tokens = parse_asm_source(Some(SNIPPET), &program);
@@ -110,11 +153,25 @@ pub fn run(source: &str, max_steps: u64, bare: bool) -> Outcome {
     }
 
     let mut vm = VirtualMachine::new(&assembled);
+    let result = if wrapped {
+        let marker = assembled.symbol_address(SNIPPET_DONE);
+        let start = assembled.symbol_address("_start");
+        let marker_pc = marker
+            .zip(start)
+            .and_then(|(marker, start)| marker.checked_sub(start))
+            .and_then(|offset| vm.peek_pc().checked_add(offset));
+        let Some(marker_pc) = marker_pc else {
+            return Outcome::failed("sandbox completion marker is missing");
+        };
+        run_to_marker(&mut vm, marker_pc, max_steps)
+    } else {
+        vm.run(max_steps)
+    };
     let RunResult {
         steps,
         uart_output,
         outcome,
-    } = vm.run(max_steps);
+    } = result;
 
     let registers = vm.peek_all_xregs();
     Outcome {
@@ -176,6 +233,20 @@ mod tests {
         assert_eq!(outcome.exit_code, Some(0));
     }
 
+    #[test]
+    fn wrapper_preserves_the_last_temporary_register() {
+        let outcome = run("  li t6, 15\n", STEPS, false);
+
+        assert!(outcome.error.is_none(), "{:?}", outcome.error);
+        let t6 = outcome
+            .registers
+            .iter()
+            .find(|register| register.name == "t6")
+            .expect("t6 is always reported");
+        assert_eq!(t6.value, "0xf");
+        assert_eq!(outcome.exit_code, Some(0));
+    }
+
     // The real lesson file already has an entry point, so it must not be wrapped.
     #[test]
     fn runs_a_whole_lesson_program_unwrapped() {
@@ -202,6 +273,17 @@ mod tests {
     }
 
     #[test]
+    fn mentioning_start_does_not_suppress_the_wrapper() {
+        let outcome = run(
+            "# _start is supplied by the sandbox\n  li t0, 7\n",
+            STEPS,
+            false,
+        );
+        assert!(outcome.error.is_none(), "{:?}", outcome.error);
+        assert_eq!(outcome.exit_code, Some(0));
+    }
+
+    #[test]
     fn assembler_errors_come_back_as_data() {
         let outcome = run("  li t0, \n  nonsense q1, q2\n", STEPS, false);
         assert!(outcome.error.is_some(), "expected an assembler error");
@@ -223,5 +305,85 @@ mod tests {
         assert!(outcome.error.is_none());
         assert!(outcome.max_steps_reached);
         assert_eq!(outcome.steps, 50_000);
+    }
+
+    #[test]
+    fn every_runnable_guide_example_executes_and_matches_expectations() {
+        let markdown = include_str!("../../src/written.md");
+        let mut runnable = false;
+        let mut bare = false;
+        let mut expected = Vec::new();
+        let mut source = String::new();
+        let mut count = 0;
+        let mut expectation_count = 0;
+
+        for line in markdown.lines() {
+            if !runnable && line.starts_with("```asm,runnable") {
+                runnable = true;
+                bare = line.starts_with("```asm,runnable=bare");
+                expected = line
+                    .split_whitespace()
+                    .find_map(|part| part.strip_prefix("expect="))
+                    .into_iter()
+                    .flat_map(|values| values.split('|'))
+                    .map(|value| value.split_once(':').expect("name:value expectation"))
+                    .map(|(name, value)| {
+                        (
+                            name.to_owned(),
+                            value
+                                .parse::<u64>()
+                                .expect("decimal expected register value"),
+                        )
+                    })
+                    .collect();
+                source.clear();
+            } else if runnable && line == "```" {
+                let outcome = run(&source, 100_000, bare);
+                assert!(
+                    outcome.error.is_none(),
+                    "example {count}: {:?}",
+                    outcome.error
+                );
+                assert_ne!(outcome.exit_code, Some(-1), "example {count} trapped");
+                if source.contains(".asciz \"Hello, world!") {
+                    assert_eq!(
+                        outcome.uart, "Hello, world!\n",
+                        "pc={}, steps={}, exit={:?}, limited={}",
+                        outcome.pc, outcome.steps, outcome.exit_code, outcome.max_steps_reached
+                    );
+                } else if source.contains("# 'H'") {
+                    assert_eq!(outcome.uart, "Hi\n");
+                }
+                for (name, expected_value) in &expected {
+                    let register = outcome
+                        .registers
+                        .iter()
+                        .find(|register| register.name == name)
+                        .unwrap_or_else(|| panic!("example {count}: missing register {name}"));
+                    let actual = u64::from_str_radix(
+                        register
+                            .value
+                            .strip_prefix("0x")
+                            .expect("hex register prefix"),
+                        16,
+                    )
+                    .expect("hex register value");
+                    assert_eq!(actual, *expected_value, "example {count}: register {name}");
+                    expectation_count += 1;
+                }
+                count += 1;
+                runnable = false;
+            } else if runnable {
+                source.push_str(line);
+                source.push('\n');
+            }
+        }
+
+        assert!(!runnable, "unterminated runnable assembly fence");
+        assert!(count > 0, "the Guide should contain runnable examples");
+        assert!(
+            expectation_count > 0,
+            "the Guide should declare expected values"
+        );
     }
 }

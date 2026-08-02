@@ -1,4 +1,4 @@
-//! Compilation pipeline: HLL -> IR -> ASM -> OBJ -> ELF (out/ir, out/asm, out/obj, out/elf).
+//! Compilation pipeline: HLL -> IR -> ASM -> OBJ -> ELF, with opt-in artifact writes.
 //! Each HLL file compiles to its own object; objects link with full relocation support.
 
 use asm_to_binary::assembler::link_layout::LinkLayout;
@@ -208,7 +208,7 @@ impl CompilationPipeline {
             artifact_root: PathBuf::from("out"),
             artifact_stem: RefCell::new(None),
             last_artifact_stem: RefCell::new(None),
-            write_artifacts: true,
+            write_artifacts: false,
             peephole: true,
             register_allocation: true,
             omit_frame_pointer: true,
@@ -233,7 +233,7 @@ impl CompilationPipeline {
             artifact_root: PathBuf::from("out"),
             artifact_stem: RefCell::new(None),
             last_artifact_stem: RefCell::new(None),
-            write_artifacts: true,
+            write_artifacts: false,
             peephole: true,
             register_allocation: true,
             omit_frame_pointer: true,
@@ -1701,6 +1701,17 @@ pub const USER_CODE_BASE: u64 = 0x4000_0000;
 /// segment carrying the flat image, so the kernel's `sys_exec` can load it.
 pub fn assembled_to_elf_file(assembled: &AssembledOutput) -> Vec<u8> {
     assembled.to_elf(USER_CODE_BASE)
+}
+
+#[cfg(test)]
+mod pipeline_tests {
+    use super::*;
+
+    #[test]
+    fn artifact_writes_are_opt_in() {
+        assert!(!CompilationPipeline::new().write_artifacts);
+        assert!(!CompilationPipeline::from_config(PipelineConfig::default()).write_artifacts);
+    }
 }
 
 #[cfg(test)]

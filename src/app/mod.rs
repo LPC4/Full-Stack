@@ -37,6 +37,7 @@ use full_stack::session::{
 #[cfg(not(target_arch = "wasm32"))]
 use full_stack::workspace::NativeFs;
 use full_stack::workspace::{IdeWorkspace, VPath};
+use std::collections::HashMap;
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
 use terminal::{ConsoleStream, TerminalKind, TerminalState};
@@ -68,6 +69,32 @@ impl WorkspacePreset {
             Self::Lessons => IdeWorkspace::lessons(),
         }
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ReferenceLocation {
+    preset: WorkspacePreset,
+    workspace_path: VPath,
+}
+
+fn reference_location(repository_path: &VPath) -> Option<ReferenceLocation> {
+    let path = repository_path.as_str();
+    if let Some(local) = path.strip_prefix("programs/lessons/") {
+        return Some(ReferenceLocation {
+            preset: WorkspacePreset::Lessons,
+            workspace_path: VPath::parse(local).ok()?,
+        });
+    }
+    if path.starts_with("programs/example/")
+        || path.starts_with("programs/user/")
+        || path.starts_with("crates/os-runtime/")
+    {
+        return Some(ReferenceLocation {
+            preset: WorkspacePreset::Demo,
+            workspace_path: repository_path.clone(),
+        });
+    }
+    None
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -196,17 +223,39 @@ pub struct FullStackApp {
     last_build: Option<full_stack::session::BuildOutcome>,
     pub(super) settings: settings::AppSettings,
     pub(super) settings_open: bool,
+    pub(super) repository_paths: HashMap<VPath, VPath>,
+    reference_jump: Option<(VPath, usize)>,
 }
 
 impl FullStackApp {
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        Self::new_with_reference(cc, crate::web_reference::StartupReference::default())
+    }
+
+    pub fn new_with_reference(
+        cc: &eframe::CreationContext<'_>,
+        startup: crate::web_reference::StartupReference,
+    ) -> Self {
         theme::apply(&cc.egui_ctx);
         let settings: settings::AppSettings = cc
             .storage
             .and_then(|storage| eframe::get_value(storage, settings::APP_KEY))
             .unwrap_or_default();
         settings.apply(&cc.egui_ctx);
-        Self::with_workspace(open_startup_workspace(&settings), settings)
+        let workspace = startup
+            .document
+            .as_ref()
+            .and_then(|reference| reference_location(&reference.path))
+            .and_then(|location| location.preset.memory_workspace().ok())
+            .unwrap_or_else(|| open_startup_workspace(&settings));
+        let mut app = Self::with_workspace(workspace, settings);
+        if let Some(reference) = startup.document {
+            app.open_repository_reference(reference, startup.status);
+        } else if startup.status.is_some() {
+            app.status_message = startup.status;
+        }
+        app
     }
 
     fn with_workspace(workspace: IdeWorkspace, settings: settings::AppSettings) -> Self {
@@ -260,11 +309,64 @@ impl FullStackApp {
             last_build: None,
             settings,
             settings_open: false,
+            repository_paths: HashMap::new(),
+            reference_jump: None,
         };
         if !app.workspace.run_configs().configs.is_empty() {
             app.select_config(0);
         }
         app
+    }
+
+    fn open_repository_reference(
+        &mut self,
+        reference: crate::web_reference::ReferenceDocument,
+        status: Option<String>,
+    ) {
+        if crate::web_reference::is_rust_source(&reference.path) {
+            self.status_message = Some(format!(
+                "Rust source `{}` is available on GitHub",
+                reference.path
+            ));
+            return;
+        }
+        let crate::web_reference::ReferenceDocument {
+            path: repository_path,
+            bytes,
+            binary,
+            line,
+        } = reference;
+        let location = reference_location(&repository_path);
+        let workspace_path = location.as_ref().map_or_else(
+            || repository_path.clone(),
+            |location| location.workspace_path.clone(),
+        );
+        let opened_workspace_document =
+            location.is_some() && self.workspace.open_document(workspace_path.clone()).is_ok();
+        if !opened_workspace_document {
+            self.workspace
+                .inject_read_only_document(workspace_path.clone(), bytes, binary);
+        }
+        self.repository_paths
+            .insert(workspace_path.clone(), repository_path.clone());
+
+        if let Some(index) = self.config_index_for_path(&workspace_path) {
+            self.select_config(index);
+        } else {
+            self.selected_config = self.configs().len();
+        }
+        if let Some(line) = line {
+            self.pending_jump = Some((workspace_path.clone(), line));
+            self.reference_jump = Some((workspace_path.clone(), line));
+        }
+        self.activate_path(&workspace_path);
+        self.status_message = Some(status.unwrap_or_else(|| {
+            if opened_workspace_document {
+                format!("opened editable workspace file `{repository_path}`")
+            } else {
+                format!("opened read-only repository file `{repository_path}`")
+            }
+        }));
     }
 
     fn build_glow_t(&mut self, now: f64) -> Option<f32> {
@@ -316,6 +418,14 @@ impl FullStackApp {
             .document(path)
             .is_some_and(|doc| doc.is_dirty());
         self.workspace.close_document(path);
+        self.repository_paths.remove(path);
+        if self
+            .reference_jump
+            .as_ref()
+            .is_some_and(|(reference, _)| reference == path)
+        {
+            self.reference_jump = None;
+        }
         if self.pending_close.as_ref() == Some(path) {
             self.pending_close = None;
         }
@@ -405,6 +515,8 @@ impl FullStackApp {
         self.memory_view = debug_view::MemoryViewState::default();
         self.inspector = inspector::InspectorState::default();
         self.last_build = None;
+        self.repository_paths.clear();
+        self.reference_jump = None;
         self.reset_machine_views();
         self.mark_build_stale();
         self.selected_config = 0;
@@ -413,6 +525,7 @@ impl FullStackApp {
             self.select_config(0);
         }
         self.status_message = Some(format!("opened {label}"));
+        self.sync_reference_address();
     }
 
     pub(super) fn document_focus_changed(&mut self) {
@@ -421,6 +534,36 @@ impl FullStackApp {
         // Switching tabs must not dim the lit spine; only edits and builds may.
         self.stage_cache = None;
         self.stage_locate = None;
+        self.sync_reference_address();
+    }
+
+    fn reference_address_state(&mut self) -> (Option<VPath>, Option<usize>) {
+        let active = self.active_path();
+        let file = active
+            .as_ref()
+            .and_then(|path| self.repository_paths.get(path))
+            .cloned();
+        if self
+            .reference_jump
+            .as_ref()
+            .is_some_and(|(path, _)| active.as_ref() != Some(path))
+        {
+            self.reference_jump = None;
+        }
+        let line = self
+            .reference_jump
+            .as_ref()
+            .filter(|(path, _)| active.as_ref() == Some(path))
+            .map(|(_, line)| *line);
+        (file, line)
+    }
+
+    fn sync_reference_address(&mut self) {
+        let (file, line) = self.reference_address_state();
+        #[cfg(target_arch = "wasm32")]
+        crate::web_reference::replace_address_bar(file.as_ref(), line);
+        #[cfg(not(target_arch = "wasm32"))]
+        let _unused = (file, line);
     }
 
     pub(super) fn active_source_kind(&self) -> SourceKind {
@@ -665,11 +808,7 @@ impl FullStackApp {
 
         let mut failed = preview_failed;
         if let Some(config) = config {
-            let out_dir = self.workspace.fs().host_out_dir();
-            match SessionEngine::new(self.workspace.fs())
-                .with_artifact_root(out_dir)
-                .build_config(&config)
-            {
+            match SessionEngine::new(self.workspace.fs()).build_config(&config) {
                 Ok(outcome) => {
                     failed = false;
                     self.status_message = Some("built".to_owned());
@@ -1019,9 +1158,29 @@ impl FullStackApp {
         let manifest_path = if path.as_str().ends_with(".build") {
             path.clone()
         } else {
-            self.find_nearest_build_manifest(path)?
+            self.find_build_manifest_for_source(path)?
         };
         self.build_target_from_manifest(manifest_path)
+    }
+
+    fn find_build_manifest_for_source(&self, path: &VPath) -> Option<VPath> {
+        let parent = path.parent()?;
+        let file_name = path.file_name()?;
+        let stem = file_name
+            .rsplit_once('.')
+            .map_or(file_name, |(stem, _extension)| stem);
+        let sibling = parent.join(&format!("{stem}.build")).ok()?;
+        if self.workspace.fs().metadata(&sibling).is_ok() {
+            return Some(sibling);
+        }
+        self.find_nearest_build_manifest(path)
+    }
+
+    fn config_index_for_path(&self, path: &VPath) -> Option<usize> {
+        let manifest = self.find_build_target_for(path)?.manifest_path;
+        self.configs().iter().position(
+            |config| matches!(&config.build, BuildRef::Manifest(path) if path == &manifest),
+        )
     }
 
     fn build_target_from_manifest(&self, manifest_path: VPath) -> Option<BuildTarget> {
@@ -1192,8 +1351,7 @@ impl FullStackApp {
         }
         self.terminal
             .push(ConsoleStream::Info, "Building run target.");
-        let out_dir = self.workspace.fs().host_out_dir();
-        let engine = SessionEngine::new(self.workspace.fs()).with_artifact_root(out_dir);
+        let engine = SessionEngine::new(self.workspace.fs());
         match config.kind {
             // Hosted and freestanding share the launch path; the session
             // constructor picks the bare-metal VM from the config kind.
@@ -1474,15 +1632,22 @@ impl FullStackApp {
         self.terminal.push(stream, summary);
     }
 
-    // Keeps the final state inspectable.
+    // Keeps the final machine state available to the Inspector after hiding the debugger.
     pub(super) fn stop_live_machine(&mut self) {
-        if let Some(live) = &mut self.live {
-            live.stop();
-        }
+        let Some(live) = &mut self.live else {
+            return;
+        };
+        live.stop();
+        self.dismiss_session_surfaces();
     }
 
     pub(super) fn debugger_focused(&self) -> bool {
         self.live.is_some() && self.main_surface == MainSurface::Debugger
+    }
+
+    fn debugger_dock_visible(&self) -> bool {
+        self.launch_mode == LaunchMode::Debug
+            && self.live.as_ref().is_some_and(|live| live.state.is_alive())
     }
 
     pub(super) fn focus_debugger(&mut self) {
@@ -1808,7 +1973,7 @@ impl eframe::App for FullStackApp {
             .frame(rail_band)
             .show_inside(ui, |ui| self.activity_rail(ui));
 
-        if self.launch_mode == LaunchMode::Debug && self.live.is_some() {
+        if self.debugger_dock_visible() {
             egui::Panel::right("machine_dock")
                 .resizable(true)
                 .default_size(metrics::MACHINE_DOCK_DEFAULT)
@@ -2176,6 +2341,30 @@ mod tests {
             "the document takes the canvas back"
         );
         assert!(!app.debugger_open);
+
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn stopping_a_debug_session_hides_its_surface() {
+        let root = temp_root("debug_stop_surface");
+        write_native_workspace(&root);
+        let mut app = test_app(IdeWorkspace::new(Box::new(MemoryFs::new())).expect("workspace"));
+        app.open_native_workspace_folder(&root);
+
+        app.debug_selected_config(1.0);
+        assert!(app.debugger_focused());
+        assert!(app.debugger_dock_visible());
+
+        app.stop_live_machine();
+
+        assert_eq!(
+            app.live.as_ref().expect("retained session").state,
+            MachineState::Stopped
+        );
+        assert!(!app.debugger_open);
+        assert!(!app.debugger_dock_visible());
+        assert_eq!(app.main_surface, MainSurface::Document);
 
         fs::remove_dir_all(root).expect("cleanup");
     }
@@ -2582,6 +2771,192 @@ mod tests {
             ..Default::default()
         };
         app
+    }
+
+    #[test]
+    fn repository_address_state_drops_stale_lines_and_non_repository_files() {
+        let mut fs = MemoryFs::new();
+        let demo = VPath::parse("demo.hll").expect("path");
+        fs.write_text(&demo, "main: () -> i32 { return 0 }")
+            .expect("write");
+        let mut workspace = IdeWorkspace::new(Box::new(fs)).expect("workspace");
+        workspace.open_document(demo.clone()).expect("open demo");
+        let reference = VPath::parse("README.md").expect("path");
+        workspace.inject_read_only_document(reference.clone(), b"# Read me\n".to_vec(), false);
+        let mut app = test_app(workspace);
+        let repository_path = VPath::parse("repository/README.md").expect("repository path");
+        app.repository_paths
+            .insert(reference.clone(), repository_path.clone());
+        app.reference_jump = Some((reference.clone(), 42));
+
+        assert_eq!(
+            app.reference_address_state(),
+            (Some(repository_path.clone()), Some(42))
+        );
+        app.activate_path(&demo);
+        assert_eq!(app.reference_address_state(), (None, None));
+        app.activate_path(&reference);
+        assert_eq!(app.reference_address_state(), (Some(repository_path), None));
+    }
+
+    #[test]
+    fn repository_locations_choose_the_bundled_workspace_path() {
+        let lesson = reference_location(
+            &VPath::parse("programs/lessons/04_functions/max3.s").expect("lesson path"),
+        )
+        .expect("lesson location");
+        assert_eq!(lesson.preset, WorkspacePreset::Lessons);
+        assert_eq!(lesson.workspace_path.as_str(), "04_functions/max3.s");
+
+        let demo = reference_location(
+            &VPath::parse("programs/example/core_basics/core_basics.hll").expect("demo path"),
+        )
+        .expect("demo location");
+        assert_eq!(demo.preset, WorkspacePreset::Demo);
+        assert_eq!(
+            demo.workspace_path.as_str(),
+            "programs/example/core_basics/core_basics.hll"
+        );
+
+        assert!(reference_location(&VPath::parse("README.md").expect("other path")).is_none());
+    }
+
+    #[test]
+    fn lesson_reference_selects_its_matching_build_configuration() {
+        let workspace = IdeWorkspace::lessons().expect("lessons workspace");
+        let mut app = test_app(workspace);
+        let repository_path =
+            VPath::parse("programs/lessons/04_functions/max3.s").expect("repository path");
+        app.open_repository_reference(
+            crate::web_reference::ReferenceDocument {
+                path: repository_path.clone(),
+                bytes: b".globl _start\n_start:\n".to_vec(),
+                binary: false,
+                line: Some(2),
+            },
+            None,
+        );
+
+        assert_eq!(
+            app.active_path().expect("active source").as_str(),
+            "04_functions/max3.s"
+        );
+        assert!(
+            !app.workspace
+                .active_document()
+                .expect("active document")
+                .is_read_only()
+        );
+        assert_eq!(
+            app.selected_config().expect("selected config").build,
+            BuildRef::Manifest(VPath::parse("04_functions/max3.build").expect("manifest"))
+        );
+        assert_eq!(
+            app.reference_address_state(),
+            (Some(repository_path), Some(2))
+        );
+    }
+
+    #[test]
+    fn example_reference_selects_its_demo_build_configuration() {
+        let workspace = IdeWorkspace::sample().expect("demo workspace");
+        let mut app = test_app(workspace);
+        let repository_path =
+            VPath::parse("programs/example/core_basics/core_basics.hll").expect("repository path");
+        app.open_repository_reference(
+            crate::web_reference::ReferenceDocument {
+                path: repository_path.clone(),
+                bytes: b"main: () -> i32 { return 0 }\n".to_vec(),
+                binary: false,
+                line: None,
+            },
+            None,
+        );
+
+        assert_eq!(app.active_path().expect("active source"), repository_path);
+        assert!(
+            !app.workspace
+                .active_document()
+                .expect("active document")
+                .is_read_only()
+        );
+        assert_eq!(
+            app.selected_config().expect("selected config").build,
+            BuildRef::Manifest(
+                VPath::parse("programs/example/core_basics/core_basics.build").expect("manifest")
+            )
+        );
+    }
+
+    #[test]
+    fn lesson_reference_without_a_build_leaves_run_configuration_unselected() {
+        let workspace = IdeWorkspace::lessons().expect("lessons workspace");
+        let mut app = test_app(workspace);
+        app.open_repository_reference(
+            crate::web_reference::ReferenceDocument {
+                path: VPath::parse("programs/lessons/07_qemu/hello_world.s")
+                    .expect("repository path"),
+                bytes: b".globl _start\n_start:\n".to_vec(),
+                binary: false,
+                line: None,
+            },
+            None,
+        );
+
+        assert_eq!(
+            app.active_path().expect("active source").as_str(),
+            "07_qemu/hello_world.s"
+        );
+        assert!(app.selected_config().is_none());
+    }
+
+    #[test]
+    fn unbundled_repository_reference_remains_read_only() {
+        let workspace = IdeWorkspace::sample().expect("demo workspace");
+        let mut app = test_app(workspace);
+        let repository_path = VPath::parse("README.md").expect("repository path");
+        app.open_repository_reference(
+            crate::web_reference::ReferenceDocument {
+                path: repository_path.clone(),
+                bytes: b"# Full-Stack\n".to_vec(),
+                binary: false,
+                line: None,
+            },
+            None,
+        );
+
+        assert_eq!(app.active_path().expect("active source"), repository_path);
+        assert!(
+            app.workspace
+                .active_document()
+                .expect("active document")
+                .is_read_only()
+        );
+    }
+
+    #[test]
+    fn rust_repository_references_never_open_in_the_ide() {
+        let workspace = IdeWorkspace::sample().expect("demo workspace");
+        let mut app = test_app(workspace);
+        let original = app.active_path();
+        let repository_path = VPath::parse("src/main.rs").expect("repository path");
+
+        app.open_repository_reference(
+            crate::web_reference::ReferenceDocument {
+                path: repository_path.clone(),
+                bytes: b"fn main() {}\n".to_vec(),
+                binary: false,
+                line: Some(1),
+            },
+            None,
+        );
+
+        assert_eq!(app.active_path(), original);
+        assert!(app.workspace.document(&repository_path).is_none());
+        assert_eq!(
+            app.status_message.as_deref(),
+            Some("Rust source `src/main.rs` is available on GitHub")
+        );
     }
 
     fn write_native_workspace(root: &Path) {

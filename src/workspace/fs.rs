@@ -30,10 +30,4 @@ pub trait WorkspaceFs {
     fn remove(&mut self, path: &VPath) -> io::Result<()>;
     fn metadata(&self, path: &VPath) -> io::Result<Meta>;
     fn read_only(&self) -> bool;
-
-    /// Host directory where build artifacts (`.ir`/`.s`/`.elf`) should be written,
-    /// if this filesystem is backed by real files. Virtual filesystems return `None`.
-    fn host_out_dir(&self) -> Option<std::path::PathBuf> {
-        None
-    }
 }

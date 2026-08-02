@@ -5,7 +5,7 @@ use egui::{Color32, FontId, RichText, Stroke};
 
 #[expect(
     dead_code,
-    reason = "the shared palette also contains book syntax tokens"
+    reason = "the shared palette also contains Guide syntax tokens"
 )]
 mod palette {
     use egui::Color32;

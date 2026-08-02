@@ -1292,30 +1292,8 @@ name = "fs_utils"
 version = "0.1.0"
 
 [[package]]
-name = "fsbook"
-version = "0.1.0"
-dependencies = [
- "fs_utils",
- "pulldown-cmark",
- "serde",
- "toml",
-]
-
-[[package]]
-name = "fsbook_wasm"
-version = "0.1.0"
-dependencies = [
- "asm_to_binary",
- "fs_utils",
- "serde",
- "serde-wasm-bindgen",
- "virtual_machine",
- "wasm-bindgen",
-]
-
-[[package]]
 name = "full_stack"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "asm_to_binary",
  "eframe",
@@ -1325,6 +1303,7 @@ dependencies = [
  "egui_kittest",
  "env_logger",
  "fs_utils",
+ "gloo-net",
  "hll_to_ir",
  "ir_to_asm",
  "log",
@@ -1336,6 +1315,38 @@ dependencies = [
  "wasm-bindgen-futures",
  "web-sys",
  "web-time",
+]
+
+[[package]]
+name = "full_stack_guide"
+version = "0.1.0"
+dependencies = [
+ "fs_utils",
+ "pulldown-cmark",
+ "serde",
+ "serde_json",
+ "toml",
+]
+
+[[package]]
+name = "full_stack_guide_wasm"
+version = "0.1.0"
+dependencies = [
+ "asm_to_binary",
+ "fs_utils",
+ "serde",
+ "serde-wasm-bindgen",
+ "virtual_machine",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "futures-channel"
+version = "0.3.32"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "07bbe89c50d7a535e539b8c17bc0b49bdb77747034daa8087407d655f3f7cc1d"
+dependencies = [
+ "futures-core",
 ]
 
 [[package]]
@@ -1373,6 +1384,12 @@ dependencies = [
  "quote",
  "syn",
 ]
+
+[[package]]
+name = "futures-sink"
+version = "0.3.33"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e34418ac499d6305c2fb5ad0ed2f6ac998c5f8ca209b4510f7f94242c647e307"
 
 [[package]]
 name = "futures-task"
@@ -1437,6 +1454,40 @@ dependencies = [
  "khronos_api",
  "log",
  "xml-rs",
+]
+
+[[package]]
+name = "gloo-net"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c06f627b1a58ca3d42b45d6104bf1e1a03799df472df00988b6ba21accc10580"
+dependencies = [
+ "futures-channel",
+ "futures-core",
+ "futures-sink",
+ "gloo-utils",
+ "http",
+ "js-sys",
+ "pin-project",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
+name = "gloo-utils"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b5555354113b18c547c1d3a98fbf7fb32a9ff4f6fa112ce823a21641a0ba3aa"
+dependencies = [
+ "js-sys",
+ "serde",
+ "serde_json",
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]
@@ -1623,6 +1674,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cc627f471c528ff0c4a49e1d5e60450c8f6461dd6d10ba9dcd3a61d3dff7728d"
 dependencies = [
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "http"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "918d3568bebf352712bc2ef3d46a8bcf1a75b373be6539de198e9105cbbf9ce0"
+dependencies = [
+ "bytes",
+ "itoa",
 ]
 
 [[package]]

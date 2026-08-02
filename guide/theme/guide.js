@@ -1,4 +1,4 @@
-// Book chrome, progressive navigation, and code sandboxes.
+// Guide chrome, progressive navigation, and code sandboxes.
 
 (function () {
   "use strict";
@@ -48,7 +48,7 @@
       var next = root.dataset.theme === "light" ? "navy" : "light";
       root.dataset.theme = next;
       try {
-        localStorage.setItem("fsbook-theme", next);
+        localStorage.setItem("full-stack-guide-theme", next);
       } catch (e) {
         /* Private mode can discard this preference. */
       }
@@ -123,7 +123,7 @@
       var scripts = document.getElementsByTagName("script");
       base = scripts[scripts.length - 1].src;
     }
-    var url = new URL("../sandbox/fsbook_wasm.js", base);
+    var url = new URL("../sandbox/full_stack_guide_wasm.js", base);
     runtime = import(url.href).then(function (module) {
       return module.default().then(function () {
         return module;
@@ -133,10 +133,90 @@
   }
 
   function sourceText(node) {
-    return node.innerText.replace(/\r\n?/g, "\n").replace(/ /g, " ");
+    var value = "value" in node ? node.value : node.textContent;
+    return value.replace(/\r\n?/g, "\n").replace(/ /g, " ");
   }
 
-  function showResult(output, result) {
+  function lineStarts(source, start, end) {
+    var first = source.lastIndexOf("\n", start - 1) + 1;
+    var limit = end > start && source.charAt(end - 1) === "\n" ? end - 1 : end;
+    var starts = [first];
+    var newline = source.indexOf("\n", first);
+    while (newline >= 0 && newline < limit) {
+      starts.push(newline + 1);
+      newline = source.indexOf("\n", newline + 1);
+    }
+    return starts;
+  }
+
+  function remapOffset(offset, edits) {
+    var delta = 0;
+    for (var i = 0; i < edits.length; i += 1) {
+      var edit = edits[i];
+      if (offset < edit.at) break;
+      if (edit.remove && offset <= edit.at + edit.remove) {
+        return edit.at + delta + edit.insert.length;
+      }
+      delta += edit.insert.length - edit.remove;
+    }
+    return offset + delta;
+  }
+
+  function applyTabEdit(editor, outdent) {
+    var source = sourceText(editor);
+    var start = editor.selectionStart;
+    var end = editor.selectionEnd;
+
+    if (!outdent && start === end) {
+      var lineStart = source.lastIndexOf("\n", start - 1) + 1;
+      var spaces = 2 - ((start - lineStart) % 2);
+      editor.setRangeText(" ".repeat(spaces), start, end, "end");
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+      return;
+    }
+
+    var edits = lineStarts(source, start, end).map(function (at) {
+      if (!outdent) return { at: at, remove: 0, insert: "  " };
+      if (source.charAt(at) === "\t") return { at: at, remove: 1, insert: "" };
+      var spaces = source.slice(at, at + 2).match(/^ +/);
+      return { at: at, remove: spaces ? spaces[0].length : 0, insert: "" };
+    }).filter(function (edit) {
+      return edit.insert || edit.remove;
+    });
+    if (!edits.length) return;
+
+    var updated = source;
+    edits.slice().reverse().forEach(function (edit) {
+      updated = updated.slice(0, edit.at) + edit.insert + updated.slice(edit.at + edit.remove);
+    });
+    editor.value = updated;
+    editor.setSelectionRange(remapOffset(start, edits), remapOffset(end, edits));
+    editor.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+  function expectedRegisters(raw) {
+    var expected = {};
+    (raw || "").split("|").forEach(function (item) {
+      var separator = item.indexOf(":");
+      if (separator < 1) return;
+      var name = item.slice(0, separator);
+      try {
+        expected[name] = BigInt(item.slice(separator + 1));
+      } catch (e) {
+        return;
+      }
+    });
+    return expected;
+  }
+
+  function resultElement(tag, className, text) {
+    var node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+
+  function showResult(output, result, sandbox) {
     output.hidden = false;
     output.textContent = "";
 
@@ -148,55 +228,182 @@
       return;
     }
 
+    var expected = expectedRegisters(sandbox.dataset.expect);
+    var expectedNames = Object.keys(expected);
+    var registers = (result.registers || [])
+      .map(function (entry) {
+        try {
+          return { name: entry.name, value: BigInt(entry.value) };
+        } catch (e) {
+          return null;
+        }
+      })
+      .filter(function (entry) {
+        return (
+          entry &&
+          (entry.value !== BigInt(0) ||
+            Object.prototype.hasOwnProperty.call(expected, entry.name))
+        );
+      });
+
+    var heading = resultElement("div", "sandbox-result-heading");
+    var title = resultElement("span", "sandbox-result-title", "Run result");
+    var status = "Finished";
+    if (result.exit_code !== null && result.exit_code !== undefined) {
+      status = "Exited " + result.exit_code;
+    } else if (result.max_steps_reached) {
+      status = "Stopped at step limit";
+    }
+    title.appendChild(resultElement("span", "sandbox-result-status", status));
+    heading.appendChild(title);
+
+    var radix = resultElement("div", "sandbox-radix");
+    radix.setAttribute("role", "group");
+    radix.setAttribute("aria-label", "Register number format");
+    var decimalButton = resultElement("button", "active", "Decimal");
+    var hexButton = resultElement("button", "", "Hex");
+    decimalButton.type = "button";
+    hexButton.type = "button";
+    decimalButton.setAttribute("aria-pressed", "true");
+    hexButton.setAttribute("aria-pressed", "false");
+    radix.appendChild(decimalButton);
+    radix.appendChild(hexButton);
+    heading.appendChild(radix);
+    output.appendChild(heading);
+
     if (result.uart) {
-      var uart = document.createElement("div");
-      uart.textContent = result.uart;
-      output.appendChild(uart);
+      var uartSection = resultElement("section", "sandbox-result-section");
+      uartSection.appendChild(resultElement("div", "sandbox-output-label", "Program output"));
+      uartSection.appendChild(resultElement("pre", "sandbox-uart", result.uart));
+      output.appendChild(uartSection);
     }
 
-    var meta = document.createElement("div");
-    meta.className = "meta";
-    var parts = [];
-    if (result.registers) {
-      var interesting = result.registers.filter(function (entry) {
-        return entry.value !== "0x0";
+    var registerSection = resultElement("section", "sandbox-result-section");
+    registerSection.appendChild(
+      resultElement("div", "sandbox-output-label", "Nonzero registers")
+    );
+    var valueCells = [];
+    var expectedCells = [];
+    if (registers.length) {
+      var table = resultElement("table", "sandbox-registers");
+      var head = document.createElement("thead");
+      var headerRow = document.createElement("tr");
+      ["Register", "Value"].concat(expectedNames.length ? ["Expected"] : []).forEach(function (label) {
+        headerRow.appendChild(resultElement("th", "", label));
       });
-      if (interesting.length) {
-        parts.push(
-          interesting
-            .map(function (entry) {
-              return entry.name + "=" + entry.value;
-            })
-            .join("  ")
-        );
-      }
+      head.appendChild(headerRow);
+      table.appendChild(head);
+      var body = document.createElement("tbody");
+
+      registers.forEach(function (entry) {
+        var row = document.createElement("tr");
+        row.appendChild(resultElement("th", "sandbox-register-name", entry.name));
+        var valueCell = resultElement("td", "sandbox-register-value");
+        row.appendChild(valueCell);
+        valueCells.push({ node: valueCell, value: entry.value });
+
+        if (expectedNames.length) {
+          var expectedCell = document.createElement("td");
+          if (Object.prototype.hasOwnProperty.call(expected, entry.name)) {
+            var matches = entry.value === expected[entry.name];
+            expectedCell.className = matches ? "expected-match" : "expected-mismatch";
+            expectedCells.push({
+              node: expectedCell,
+              value: expected[entry.name],
+              suffix: matches ? " match" : " expected",
+            });
+          } else {
+            expectedCell.textContent = "-";
+          }
+          row.appendChild(expectedCell);
+        }
+        body.appendChild(row);
+      });
+      table.appendChild(body);
+      registerSection.appendChild(table);
+    } else {
+      registerSection.appendChild(
+        resultElement("div", "sandbox-empty-registers", "No nonzero registers.")
+      );
     }
-    parts.push(result.steps + " steps");
-    if (result.exit_code !== null && result.exit_code !== undefined) {
-      parts.push("exit " + result.exit_code);
+    output.appendChild(registerSection);
+
+    function display(value, format) {
+      return format === "hex" ? "0x" + value.toString(16) : value.toString(10);
     }
-    if (result.max_steps_reached) parts.push("step limit reached");
-    meta.textContent = parts.join("  |  ");
-    output.appendChild(meta);
+
+    function setRadix(format) {
+      var decimal = format === "decimal";
+      decimalButton.classList.toggle("active", decimal);
+      hexButton.classList.toggle("active", !decimal);
+      decimalButton.setAttribute("aria-pressed", decimal ? "true" : "false");
+      hexButton.setAttribute("aria-pressed", decimal ? "false" : "true");
+      valueCells.forEach(function (cell) {
+        cell.node.textContent = display(cell.value, format);
+      });
+      expectedCells.forEach(function (cell) {
+        cell.node.textContent = display(cell.value, format) + cell.suffix;
+      });
+    }
+
+    decimalButton.addEventListener("click", function () { setRadix("decimal"); });
+    hexButton.addEventListener("click", function () { setRadix("hex"); });
+    setRadix("decimal");
+
+    output.appendChild(
+      resultElement("div", "sandbox-result-meta", result.steps + " steps | pc " + result.pc)
+    );
   }
 
   function initSandboxes() {
     var sandboxes = Array.prototype.slice.call(document.querySelectorAll(".sandbox"));
     sandboxes.forEach(function (sandbox) {
       var code = sandbox.querySelector(".sandbox-code");
-      var original = sandbox.querySelector(".sandbox-source");
+      var highlight = sandbox.querySelector(".sandbox-highlight");
       var output = sandbox.querySelector(".sandbox-output");
       var runButton = sandbox.querySelector(".sandbox-run");
       var resetButton = sandbox.querySelector(".sandbox-reset");
-      var pristine = code.innerHTML;
+      var pristine = code.value;
+      var highlighter = null;
 
       function repaint(module, source) {
         try {
-          code.innerHTML = module.highlight_html(sandbox.dataset.lang || "asm", source);
+          highlight.innerHTML = module.highlight_html(sandbox.dataset.lang || "asm", source);
         } catch (e) {
-          /* Keep the text as typed if highlighting fails. */
+          highlight.textContent = source;
         }
       }
+
+      function syncScroll() {
+        highlight.scrollLeft = code.scrollLeft;
+        highlight.scrollTop = code.scrollTop;
+      }
+
+      loadSandbox()
+        .then(function (module) {
+          highlighter = module;
+          repaint(module, sourceText(code));
+        })
+        .catch(function () {});
+
+      code.addEventListener("pointerdown", function () {
+        if (document.activeElement !== code) code.focus({ preventScroll: true });
+      });
+
+      code.addEventListener("input", function () {
+        var source = sourceText(code);
+        if (highlighter) repaint(highlighter, source);
+        else highlight.textContent = source;
+        syncScroll();
+      });
+
+      code.addEventListener("scroll", syncScroll, { passive: true });
+
+      code.addEventListener("keydown", function (event) {
+        if (event.key !== "Tab" || event.altKey || event.ctrlKey || event.metaKey) return;
+        event.preventDefault();
+        applyTabEdit(code, event.shiftKey);
+      });
 
       runButton.addEventListener("click", function () {
         runButton.disabled = true;
@@ -207,8 +414,8 @@
           .then(function (module) {
             var source = sourceText(code);
             var bare = sandbox.dataset.wrap === "bare";
-            var result = module.run_asm(source, 2000000, bare);
-            showResult(output, result);
+            var result = module.run_asm(source, 100000, bare);
+            showResult(output, result, sandbox);
             repaint(module, source);
           })
           .catch(function (error) {
@@ -224,19 +431,15 @@
       });
 
       resetButton.addEventListener("click", function () {
-        code.innerHTML = pristine;
+        code.value = pristine;
+        if (highlighter) repaint(highlighter, pristine);
+        else highlight.textContent = pristine;
+        code.scrollTop = 0;
+        code.scrollLeft = 0;
+        syncScroll();
         output.hidden = true;
         output.textContent = "";
       });
-
-      code.addEventListener("blur", function () {
-        if (!runtime) return;
-        runtime.then(function (module) {
-          repaint(module, sourceText(code));
-        });
-      });
-
-      if (original) original.value = original.value || "";
     });
   }
 
@@ -319,7 +522,7 @@
     queueNearbyPages();
   }
 
-  function isBookLink(link) {
+  function isGuideLink(link) {
     if (!link || !link.matches(".chapter-list a, .pagenav a, a.brand")) return false;
     if (link.hasAttribute("download") || (link.target && link.target !== "_self")) return false;
     var url = new URL(link.href, window.location.href);
@@ -341,7 +544,7 @@
   }
 
   function saveScroll() {
-    var state = Object.assign({}, history.state || {}, { fsbook: true, scrollY: window.scrollY });
+    var state = Object.assign({}, history.state || {}, { fullStackGuide: true, scrollY: window.scrollY });
     history.replaceState(state, "", window.location.href);
   }
 
@@ -366,12 +569,15 @@
 
     resolveUrls(nextBody, url);
     resolveUrls(nextPagenav, url);
-    if (options.push) history.pushState({ fsbook: true, scrollY: 0 }, "", url);
+    if (options.push) history.pushState({ fullStackGuide: true, scrollY: 0 }, "", url);
 
     document.title = parsed.title;
     var description = document.querySelector('meta[name="description"]');
     var nextDescription = parsed.querySelector('meta[name="description"]');
     if (description && nextDescription) description.content = nextDescription.content;
+    var canonical = document.querySelector('link[rel="canonical"]');
+    var nextCanonical = parsed.querySelector('link[rel="canonical"]');
+    if (canonical && nextCanonical) canonical.href = new URL(nextCanonical.getAttribute("href"), url).href;
     document.body.className = parsed.body.className;
     body.replaceWith(document.adoptNode(nextBody));
     pagenav.replaceWith(document.adoptNode(nextPagenav));
@@ -425,7 +631,7 @@
       event.ctrlKey ||
       event.metaKey ||
       event.shiftKey ||
-      !isBookLink(link)
+      !isGuideLink(link)
     ) {
       return;
     }
@@ -438,7 +644,7 @@
   ["pointerover", "focusin"].forEach(function (eventName) {
     document.addEventListener(eventName, function (event) {
       var link = event.target.closest && event.target.closest("a");
-      if (isBookLink(link)) fetchPage(link.href).catch(function () {});
+      if (isGuideLink(link)) fetchPage(link.href).catch(function () {});
     });
   });
 
@@ -461,7 +667,7 @@
     navigate(window.location.href, {
       push: false,
       focus: false,
-      savedScroll: event.state && event.state.fsbook ? event.state.scrollY : 0,
+      savedScroll: event.state && event.state.fullStackGuide ? event.state.scrollY : 0,
     });
   });
   window.addEventListener("scroll", rememberScroll, { passive: true });
@@ -469,7 +675,7 @@
 
   if ("scrollRestoration" in history) history.scrollRestoration = "manual";
   history.replaceState(
-    Object.assign({}, history.state || {}, { fsbook: true, scrollY: window.scrollY }),
+    Object.assign({}, history.state || {}, { fullStackGuide: true, scrollY: window.scrollY }),
     "",
     window.location.href
   );

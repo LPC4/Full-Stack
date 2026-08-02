@@ -1,7 +1,7 @@
 //! `fsc`: Full Stack CLI
 //!
 //! Subcommands:
-//!   build      Compile an HLL source or `.build` manifest into artifacts.
+//!   build      Compile an HLL source or `.build` manifest.
 //!   link       Compile and link multiple HLL source files into an ELF.
 //!   hll-to-ir  Compile an HLL source file and print the IR.
 //!   hll-to-asm Compile an HLL source file and print the RISC-V assembly.
@@ -28,7 +28,7 @@ use full_stack::build::{BuildExecutor, BuildManifest, BuildSource, ImportClosure
 use full_stack::compilation_pipeline::{CompilationPipeline, TargetMode};
 use full_stack::runconfig::{BuildRef, RunConfig, RunKind, run_config_from_manifest};
 use full_stack::session::{BuildOutcome, LiveMachine, MachineState, SessionEngine};
-use full_stack::workspace::{NativeFs, VPath, WorkspaceFs as _};
+use full_stack::workspace::{NativeFs, VPath};
 use hll_to_ir::stdlib::{get_stdlib_modules_for_mode, get_stdlib_type_prelude};
 use std::fmt;
 use std::fs;
@@ -208,7 +208,7 @@ fn parse_mode(s: &str) -> Result<TargetMode, CliError> {
 fn cmd_build(args: &Args) -> Result<ExitCode, CliError> {
     let input = require_single_input(args)?;
     let (fs, config) = config_for_cli_input(input, args.mode)?;
-    let engine = SessionEngine::new(&fs).with_artifact_root(fs.host_out_dir());
+    let engine = SessionEngine::new(&fs);
     let outcome = engine.build_config(&config).map_err(map_session_error)?;
 
     if let Some(output_path) = args.output.as_deref() {
@@ -230,7 +230,7 @@ fn cmd_link(args: &Args) -> Result<ExitCode, CliError> {
 
     if args.inputs.len() == 1 && has_extension(&args.inputs[0], "build") {
         let (fs, config) = config_for_cli_input(&args.inputs[0], args.mode)?;
-        let engine = SessionEngine::new(&fs).with_artifact_root(fs.host_out_dir());
+        let engine = SessionEngine::new(&fs);
         let outcome = engine.build_config(&config).map_err(map_session_error)?;
         let elf_bytes = linked_elf_bytes(&outcome);
         let output_path = args.output.as_deref().unwrap_or("out.elf");
@@ -244,7 +244,6 @@ fn cmd_link(args: &Args) -> Result<ExitCode, CliError> {
     let mut manifest = BuildManifest::hosted(stem.clone(), "");
     manifest.target = args.mode;
     manifest.root = BuildSource::path(stem.clone(), first);
-    manifest.write_artifacts = true;
     if args.mode == TargetMode::Kernel {
         manifest.import_closure = ImportClosurePolicy::Enabled {
             mangle_symbols: false,
@@ -372,7 +371,7 @@ fn cmd_run(args: &Args) -> Result<ExitCode, CliError> {
 
 fn run_cli_config(input: &str, mode: TargetMode, max_steps: u64) -> Result<ExitCode, CliError> {
     let (fs, config) = config_for_cli_input(input, mode)?;
-    let engine = SessionEngine::new(&fs).with_artifact_root(fs.host_out_dir());
+    let engine = SessionEngine::new(&fs);
     match config.kind {
         RunKind::Hosted => {
             let outcome = engine

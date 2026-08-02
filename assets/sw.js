@@ -1,4 +1,4 @@
-const CACHE_NAME = "full-stack-pwa-v3";
+const CACHE_NAME = "full-stack-pwa-v4";
 
 const APP_SHELL = [
     "./",
@@ -32,9 +32,9 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // The book is a separate static site under /book/. Leave it to the network so
-  // its pages never fall back to the IDE's app shell.
-  if (new URL(event.request.url).pathname.includes("/book/")) {
+  // Guide and repository assets must never fall back to the IDE app shell.
+  const pathname = new URL(event.request.url).pathname;
+  if (pathname.includes("/guide/") || pathname.includes("/_source/")) {
     return;
   }
 

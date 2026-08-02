@@ -1,6 +1,6 @@
 @import url("./github-dark.css");
 
-/* Full-Stack book theme. Navy by default, matching mdBook's proportions. */
+/* Full-Stack Guide theme. Navy by default, matching the original proportions. */
 
 :root {
   --topbar-h: 50px;
@@ -183,6 +183,7 @@ a:hover { text-decoration: underline; }
   gap: 8px;
 }
 
+.ide,
 .repo { color: var(--muted); font-size: 14px; }
 
 .menu-toggle,
@@ -346,7 +347,7 @@ body.sidebar-right .sidebar { border-right: none; border-left: 1px solid var(--b
 .chapter th { background: var(--quote-bg); color: var(--heading); font-weight: 600; }
 
 /* --- Code --- */
-code, pre, .sandbox-source { font-family: var(--mono); }
+code, pre, .sandbox-code { font-family: var(--mono); }
 
 .chapter :not(pre) > code {
   background: var(--inline-code-bg);
@@ -356,6 +357,7 @@ code, pre, .sandbox-source { font-family: var(--mono); }
   font-size: 0.88em;
   white-space: nowrap;
 }
+.chapter .source-link > code { color: inherit; }
 
 pre.code {
   margin: 1.3em 0;
@@ -463,26 +465,132 @@ pre.code.wrapped .ln {
 .sandbox-bar button:hover { color: var(--heading); border-color: var(--link); }
 .sandbox-bar button[disabled] { opacity: 0.5; cursor: default; }
 
-/* The editable pane keeps hard lines, so typing never reflows what you read. */
-.sandbox pre.code {
+/* Native textarea editing sits over a matching highlighted copy. */
+.sandbox-editor { position: relative; overflow: hidden; }
+.sandbox pre.sandbox-highlight {
   margin: 0;
   border: none;
   border-radius: 0;
   white-space: pre;
-  overflow-x: auto;
+  overflow: hidden;
+  pointer-events: none;
+  tab-size: 2;
 }
-.sandbox pre.code:focus { outline: 2px solid var(--link); outline-offset: -2px; }
+.sandbox-code {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 14px 18px;
+  resize: none;
+  overflow: auto;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  caret-color: var(--heading);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  cursor: text;
+  font-size: 14px;
+  line-height: 1.55;
+  tab-size: 2;
+  white-space: pre;
+}
+.sandbox-code::selection {
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  background: var(--selection);
+}
+.sandbox-code:focus {
+  color: var(--tk-plain);
+  -webkit-text-fill-color: currentColor;
+  background: var(--code-bg);
+  outline: 2px solid var(--link);
+  outline-offset: -2px;
+}
+.sandbox-code:focus::selection {
+  color: var(--selection-fg);
+  -webkit-text-fill-color: var(--selection-fg);
+}
 
 .sandbox-output {
-  padding: 10px 16px;
   border-top: 1px solid var(--code-border);
   font-family: var(--mono);
   font-size: 13.5px;
-  white-space: pre-wrap;
   overflow-x: auto;
 }
-.sandbox-output .err { color: var(--err); }
-.sandbox-output .meta { color: var(--muted); }
+.sandbox-output .err { padding: 12px 16px; color: var(--err); white-space: pre-wrap; }
+.sandbox-result-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  background: var(--quote-bg);
+  border-bottom: 1px solid var(--code-border);
+}
+.sandbox-result-title { color: var(--heading); font-family: var(--sans); font-weight: 600; }
+.sandbox-result-status { margin-left: 9px; color: var(--muted); font-size: 12px; font-weight: 400; }
+.sandbox-radix { display: inline-flex; }
+.sandbox-radix button {
+  padding: 3px 9px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.sandbox-radix button + button { border-left: 0; }
+.sandbox-radix button:first-child { border-radius: 4px 0 0 4px; }
+.sandbox-radix button:last-child { border-radius: 0 4px 4px 0; }
+.sandbox-radix button.active { color: var(--heading); background: var(--inline-code-bg); }
+.sandbox-result-section { padding: 11px 14px 13px; }
+.sandbox-result-section + .sandbox-result-section { border-top: 1px solid var(--code-border); }
+.sandbox-output-label {
+  margin-bottom: 7px;
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.sandbox-uart {
+  margin: 0;
+  padding: 9px 11px;
+  color: var(--heading);
+  background: var(--bg);
+  border: 1px solid var(--code-border);
+  border-radius: 4px;
+  font: inherit;
+  white-space: pre-wrap;
+}
+.sandbox-registers { width: 100%; border-collapse: collapse; }
+.sandbox-registers th,
+.sandbox-registers td { padding: 5px 8px; border-bottom: 1px solid var(--code-border); text-align: left; }
+.sandbox-registers thead th {
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+}
+.sandbox-registers tbody tr:last-child > * { border-bottom: 0; }
+.sandbox-register-name { width: 24%; color: var(--tk-reg); font-weight: 500; }
+.sandbox-register-value { width: 38%; color: var(--heading); font-variant-numeric: tabular-nums; }
+.sandbox-registers .expected-match { color: var(--tk-str); }
+.sandbox-registers .expected-mismatch { color: var(--err); }
+.sandbox-empty-registers { color: var(--muted); }
+.sandbox-result-meta {
+  padding: 7px 14px;
+  color: var(--muted);
+  background: var(--quote-bg);
+  border-top: 1px solid var(--code-border);
+  font-size: 12px;
+}
 
 /* --- Page navigation ---
    A lane down each side of the text, the full gutter wide and the full page
@@ -620,6 +728,12 @@ pre.code.wrapped .ln {
   .nav-arrow { width: 34px; height: 34px; }
   .nav-arrow svg { width: 21px; height: 21px; }
   .figure { padding: 14px 10px 12px; }
+}
+
+@media (max-width: 600px) {
+  .sandbox-result-heading { align-items: stretch; flex-direction: column; gap: 7px; }
+  .sandbox-result-status { display: block; margin: 1px 0 0; }
+  .sandbox-radix button { flex: 1; }
 }
 
 @media (min-width: 901px) {

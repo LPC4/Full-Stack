@@ -104,7 +104,16 @@ impl FullStackApp {
             && doc.is_binary()
         {
             let name = doc.path().to_string();
-            super::elf_view::show(ui, &name, doc.bytes().unwrap_or_default());
+            let raw_url = self
+                .repository_paths
+                .get(doc.path())
+                .map(crate::web_reference::raw_file_url);
+            super::elf_view::show(
+                ui,
+                &name,
+                doc.bytes().unwrap_or_default(),
+                raw_url.as_deref(),
+            );
             return;
         }
         let active = self.workspace.active_document().map(|doc| {
@@ -245,7 +254,7 @@ impl FullStackApp {
             Layer::Elf => {
                 if let Some(binary) = &cache.result.binary {
                     let elf = assembled_to_elf_file(&binary.assembled);
-                    super::elf_view::show(ui, "stage_elf", &elf);
+                    super::elf_view::show(ui, "stage_elf", &elf, None);
                 } else {
                     let text = cache
                         .result

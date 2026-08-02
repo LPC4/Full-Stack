@@ -31,7 +31,9 @@ use crate::riscv::rv64i::{
     Add, Addi, And, Andi, Ecall, Jalr, Lb, Lbu, Ld, Lui, Mret, Or, Ori, Sb, Sd, SfenceVma, Slli,
     Sret, Srl, Srli, Sub, Wfi,
 };
-use crate::riscv::rv64m::{Divu, Mul, Remu};
+use crate::riscv::rv64m::{
+    Div, Divu, Divuw, Divw, Mul, Mulh, Mulhsu, Mulhu, Mulw, Rem, Remu, Remuw, Remw,
+};
 use crate::riscv::rv64zicsr::{Csrrc, Csrrs, Csrrw};
 use crate::rv_instruction::RvInstruction;
 
@@ -344,7 +346,7 @@ fn parse_instruction_line(line: &str, out: &mut Vec<AsmToken>) {
             }
         }
 
-        // --- R-type fallback (add, sub, and, srl, or, divu, remu, mul) ---
+        // --- R-type fallback ---
         _ => {
             if let Some(tok) = parse_r_type(mnemonic, rest) {
                 out.push(tok);
@@ -708,9 +710,19 @@ fn parse_r_type(mnemonic: &str, operands: &str) -> Option<AsmToken> {
         "and" => RealInstruction::And(And::new(rd, rs1, rs2)),
         "srl" => RealInstruction::Srl(Srl::new(rd, rs1, rs2)),
         "or" => RealInstruction::Or(Or::new(rd, rs1, rs2)),
+        "mulh" => RealInstruction::Mulh(Mulh::new(rd, rs1, rs2)),
+        "mulhsu" => RealInstruction::Mulhsu(Mulhsu::new(rd, rs1, rs2)),
+        "mulhu" => RealInstruction::Mulhu(Mulhu::new(rd, rs1, rs2)),
+        "div" => RealInstruction::Div(Div::new(rd, rs1, rs2)),
         "divu" => RealInstruction::Divu(Divu::new(rd, rs1, rs2)),
+        "rem" => RealInstruction::Rem(Rem::new(rd, rs1, rs2)),
         "remu" => RealInstruction::Remu(Remu::new(rd, rs1, rs2)),
         "mul" => RealInstruction::Mul(Mul::new(rd, rs1, rs2)),
+        "mulw" => RealInstruction::Mulw(Mulw::new(rd, rs1, rs2)),
+        "divw" => RealInstruction::Divw(Divw::new(rd, rs1, rs2)),
+        "divuw" => RealInstruction::Divuw(Divuw::new(rd, rs1, rs2)),
+        "remw" => RealInstruction::Remw(Remw::new(rd, rs1, rs2)),
+        "remuw" => RealInstruction::Remuw(Remuw::new(rd, rs1, rs2)),
         _ => return None,
     };
     Some(AsmToken::Real(real))
@@ -768,15 +780,29 @@ mod tests {
     }
 
     #[test]
-    fn mul_encodes_as_rv64m_r_type() {
-        // mul t5, t2, t3 -> rd=x30, rs1=x7, rs2=x28; OP opcode 0x33, funct3=0, funct7=0x01.
-        let word = encode_line("mul t5, t2, t3");
-        assert_eq!(word & 0x7f, 0x33, "opcode");
-        assert_eq!((word >> 7) & 0x1f, 30, "rd");
-        assert_eq!((word >> 12) & 0x7, 0, "funct3");
-        assert_eq!((word >> 15) & 0x1f, 7, "rs1");
-        assert_eq!((word >> 20) & 0x1f, 28, "rs2");
-        assert_eq!((word >> 25) & 0x7f, 0x01, "funct7 (M extension)");
+    fn rv64m_instructions_encode_from_source_text() {
+        let cases = [
+            ("mul", 0x33, 0),
+            ("mulh", 0x33, 1),
+            ("mulhsu", 0x33, 2),
+            ("mulhu", 0x33, 3),
+            ("div", 0x33, 4),
+            ("divu", 0x33, 5),
+            ("rem", 0x33, 6),
+            ("remu", 0x33, 7),
+            ("mulw", 0x3b, 0),
+            ("divw", 0x3b, 4),
+            ("divuw", 0x3b, 5),
+            ("remw", 0x3b, 6),
+            ("remuw", 0x3b, 7),
+        ];
+
+        for (mnemonic, opcode, funct3) in cases {
+            let word = encode_line(&format!("{mnemonic} t0, t1, t2"));
+            let expected =
+                (0x01 << 25) | (7 << 20) | (6 << 15) | (funct3 << 12) | (5 << 7) | opcode;
+            assert_eq!(word, expected, "{mnemonic}");
+        }
     }
 
     // `ble rs1, rs2, L` is the spec pseudo for `bge rs2, rs1, L` (operands swapped).

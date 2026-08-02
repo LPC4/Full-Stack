@@ -1,6 +1,7 @@
-// Splits one authored markdown file into book pages, one per `###` section.
+// Splits one authored Markdown file into Guide pages, one per `###` section.
 
 use std::collections::HashSet;
+use std::path::PathBuf;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Level {
@@ -13,19 +14,63 @@ pub enum Level {
 pub struct Page {
     pub level: Level,
     pub title: String,
-    // Output path without extension, e.g. "cpus-and-assembly/registers".
-    pub slug: String,
+    pub route: Route,
     pub body: String,
 }
 
-impl Page {
-    // How far to climb to reach the output root, for depth-independent asset links.
-    pub fn path_to_root(&self) -> String {
-        "../".repeat(self.slug.matches('/').count())
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Route {
+    segments: Vec<String>,
+}
+
+impl Route {
+    pub fn root() -> Self {
+        Self {
+            segments: Vec::new(),
+        }
     }
 
-    pub fn href(&self) -> String {
-        format!("{}.html", self.slug)
+    pub fn parse(slug: &str) -> Self {
+        Self {
+            segments: slug
+                .split('/')
+                .filter(|segment| !segment.is_empty())
+                .map(str::to_owned)
+                .collect(),
+        }
+    }
+
+    pub fn slug(&self) -> String {
+        self.segments.join("/")
+    }
+
+    pub fn canonical_url(&self) -> String {
+        if self.segments.is_empty() {
+            "./".to_owned()
+        } else {
+            format!("{}/", self.slug())
+        }
+    }
+
+    pub fn output_path(&self) -> PathBuf {
+        let mut path = PathBuf::new();
+        for segment in &self.segments {
+            path.push(segment);
+        }
+        path.push("index.html");
+        path
+    }
+
+    pub fn path_to_guide_root(&self) -> String {
+        "../".repeat(self.segments.len())
+    }
+
+    pub fn path_to_site_root(&self) -> String {
+        "../".repeat(self.segments.len() + 1)
+    }
+
+    pub fn href_from(&self, current: &Self) -> String {
+        format!("{}{}", current.path_to_guide_root(), self.canonical_url())
     }
 }
 
@@ -103,12 +148,12 @@ pub fn split(index_title: &str, markdown: &str) -> Vec<Page> {
     let mut used = HashSet::new();
     let mut used_dirs = HashSet::new();
 
-    // Everything above the first chapter is the book's landing page.
+    // Everything above the first chapter is the Guide's landing page.
     let first = headings.first().map_or(lines.len(), |h| h.line);
     pages.push(Page {
         level: Level::Index,
         title: index_title.to_owned(),
-        slug: unique(&mut used, "index".to_owned()),
+        route: Route::root(),
         body: lines[..first].join("\n").trim().to_owned(),
     });
 
@@ -119,12 +164,11 @@ pub fn split(index_title: &str, markdown: &str) -> Vec<Page> {
             .map_or(lines.len(), |next| next.line);
         let body = lines[heading.line + 1..end].join("\n").trim().to_owned();
 
-        let slug = match heading.level {
+        let route = match heading.level {
             Level::Chapter => {
                 chapter_dir = unique(&mut used_dirs, slugify(&heading.title));
-                let slug = format!("{chapter_dir}/index");
-                used.insert(slug.clone());
-                slug
+                used.insert(chapter_dir.clone());
+                Route::parse(&chapter_dir)
             }
             Level::Section => {
                 let base = if chapter_dir.is_empty() {
@@ -132,7 +176,7 @@ pub fn split(index_title: &str, markdown: &str) -> Vec<Page> {
                 } else {
                     format!("{chapter_dir}/{}", slugify(&heading.title))
                 };
-                unique(&mut used, base)
+                Route::parse(&unique(&mut used, base))
             }
             Level::Index => unreachable!("headings never produce an index page"),
         };
@@ -140,7 +184,7 @@ pub fn split(index_title: &str, markdown: &str) -> Vec<Page> {
         pages.push(Page {
             level: heading.level,
             title: heading.title.clone(),
-            slug,
+            route,
             body,
         });
     }
@@ -156,16 +200,16 @@ mod tests {
     #[test]
     fn splits_into_index_chapters_and_sections() {
         let pages = split("Introduction", SAMPLE);
-        let slugs: Vec<&str> = pages.iter().map(|p| p.slug.as_str()).collect();
+        let slugs: Vec<String> = pages.iter().map(|p| p.route.slug()).collect();
         assert_eq!(
             slugs,
             [
-                "index",
-                "first-chapter/index",
+                "",
+                "first-chapter",
                 "first-chapter/alpha",
                 "first-chapter/exercise",
                 "first-chapter/exercise-2",
-                "second-chapter/index",
+                "second-chapter",
                 "second-chapter/beta",
             ]
         );
@@ -195,9 +239,22 @@ mod tests {
     }
 
     #[test]
-    fn path_to_root_matches_nesting() {
+    fn routes_own_clean_urls_and_output_paths() {
         let pages = split("Introduction", SAMPLE);
-        assert_eq!(pages[0].path_to_root(), "");
-        assert_eq!(pages[2].path_to_root(), "../");
+        assert_eq!(pages[0].route.canonical_url(), "./");
+        assert_eq!(pages[1].route.canonical_url(), "first-chapter/");
+        assert_eq!(
+            pages[2].route.output_path(),
+            PathBuf::from("first-chapter/alpha/index.html")
+        );
+        assert_eq!(pages[0].route.path_to_guide_root(), "");
+        assert_eq!(pages[2].route.path_to_guide_root(), "../../");
+        assert_eq!(pages[2].route.path_to_site_root(), "../../../");
+        assert_eq!(
+            pages[1].route.href_from(&pages[2].route),
+            "../../first-chapter/"
+        );
+        assert!(!pages[2].route.canonical_url().contains(".html"));
+        assert!(!pages[2].route.canonical_url().contains("index"));
     }
 }

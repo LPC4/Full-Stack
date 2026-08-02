@@ -1,14 +1,14 @@
 [package]
-name = "fsbook_wasm"
+name = "full_stack_guide_wasm"
 version = "0.1.0"
-description = "In-page RISC-V assembly sandbox for the Full-Stack book"
+description = "In-page RISC-V assembly sandbox for the Full-Stack Guide"
 repository = "https://github.com/LPC4/Full-Stack"
 license = "MIT OR Apache-2.0"
 edition = "2024"
 rust-version = "1.92"
 
 [lib]
-name = "fsbook_wasm"
+name = "full_stack_guide_wasm"
 crate-type = ["cdylib", "rlib"]
 path = "src/lib.rs"
 

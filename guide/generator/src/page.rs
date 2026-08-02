@@ -10,8 +10,7 @@ const CHEVRON_PREV: &str = "M15.5 4.5 7.5 12l8 7.5";
 const CHEVRON_NEXT: &str = "M8.5 4.5 16.5 12l-8 7.5";
 
 fn nav_link(page: &Page, current: &Page, label: &str) -> String {
-    let root = current.path_to_root();
-    let href = format!("{root}{}", page.href());
+    let href = page.route.href_from(&current.route);
     let title = escape(&page.title);
     let (path, kicker) = if label == "prev" {
         (CHEVRON_PREV, "Previous")
@@ -29,19 +28,18 @@ aria-label=\"{kicker} page: {title}\">\
 }
 
 fn sidebar(pages: &[Page], current: &Page) -> String {
-    let root = current.path_to_root();
     let mut out = String::from("<nav class=\"chapters\"><ol class=\"chapter-list\">");
     let mut in_section_list = false;
 
     for page in pages {
-        let is_current = page.slug == current.slug;
+        let is_current = page.route == current.route;
         let aria = if is_current {
             " aria-current=\"page\""
         } else {
             ""
         };
         let active = if is_current { " class=\"active\"" } else { "" };
-        let href = format!("{root}{}", page.href());
+        let href = page.route.href_from(&current.route);
         let title = escape(&page.title);
 
         match page.level {
@@ -98,14 +96,16 @@ fn outline(rendered: &Rendered) -> String {
 
 pub fn build(config: &Config, pages: &[Page], index: usize, rendered: &Rendered) -> String {
     let current = &pages[index];
-    let root = current.path_to_root();
+    let guide_root = current.route.path_to_guide_root();
+    let site_root = current.route.path_to_site_root();
+    let canonical = current.route.href_from(&current.route);
     let title = escape(&current.title);
-    let book_title = escape(&config.title);
+    let guide_title = escape(&config.title);
 
     let head_title = if current.level == Level::Index {
-        book_title.clone()
+        guide_title.clone()
     } else {
-        format!("{title} - {book_title}")
+        format!("{title} - {guide_title}")
     };
     let description = config
         .description
@@ -143,11 +143,19 @@ pub fn build(config: &Config, pages: &[Page], index: usize, rendered: &Rendered)
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{head_title}</title>
 <meta name="description" content="{description}">{author}
-<link rel="icon" href="{root}theme/favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="{root}theme/book.css">
+<link rel="canonical" href="{canonical}">
+<link rel="icon" href="{guide_root}theme/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="{guide_root}theme/guide.css">
 <script>
   // Applied before paint so a stored theme never flashes the wrong colors.
-  try {{ var t = localStorage.getItem('fsbook-theme'); if (t) document.documentElement.dataset.theme = t; }} catch (e) {{}}
+  try {{
+    var t = localStorage.getItem('full-stack-guide-theme');
+    if (!t) {{
+      t = localStorage.getItem('fsbook-theme');
+      if (t) localStorage.setItem('full-stack-guide-theme', t);
+    }}
+    if (t) document.documentElement.dataset.theme = t;
+  }} catch (e) {{}}
 </script>
 </head>
 <body class="{sidebar_class}{outline_class}">
@@ -155,12 +163,13 @@ pub fn build(config: &Config, pages: &[Page], index: usize, rendered: &Rendered)
 <div class="page">
 <header class="topbar">
 <button class="menu-toggle" type="button" aria-label="Toggle chapters" aria-expanded="false"><span></span></button>
-<a class="brand" href="{root}index.html">{book_title}</a>
+<a class="brand" href="{guide_root}">{guide_title}</a>
 <div class="topbar-right">
 <button class="theme-toggle" type="button" aria-label="Toggle theme" title="Toggle theme">
 <svg class="icon-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.1"/><path d="M12 2.6v2.1M12 19.3v2.1M4.7 4.7l1.5 1.5M17.8 17.8l1.5 1.5M2.6 12h2.1M19.3 12h2.1M4.7 19.3l1.5-1.5M17.8 6.2l1.5-1.5"/></svg>
 <svg class="icon-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.4 14.7A8.7 8.7 0 0 1 9.3 3.6 8.7 8.7 0 1 0 20.4 14.7z"/></svg>
 </button>
+<a class="ide" href="{site_root}" title="Open the browser IDE">Open IDE</a>
 {repo_link}
 </div>
 </header>
@@ -176,7 +185,7 @@ pub fn build(config: &Config, pages: &[Page], index: usize, rendered: &Rendered)
 </div>
 <nav class="pagenav">{prev}{next}</nav>
 </div>
-<script src="{root}theme/book.js"></script>
+<script src="{guide_root}theme/guide.js"></script>
 </body>
 </html>
 "##,
@@ -191,4 +200,39 @@ pub fn build(config: &Config, pages: &[Page], index: usize, rendered: &Rendered)
         content = rendered.html,
         outline = outline(rendered),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{Part, Sidebar};
+    use crate::split;
+    use std::path::PathBuf;
+
+    fn config() -> Config {
+        Config {
+            title: "Full-Stack Guide".to_owned(),
+            author: None,
+            description: None,
+            repo_url: None,
+            sidebar: Sidebar::Left,
+            parts: vec![Part {
+                title: "Intro".to_owned(),
+                source: PathBuf::from("src/written.md"),
+            }],
+        }
+    }
+
+    #[test]
+    fn generated_navigation_uses_clean_urls() {
+        let pages = split::split("Intro", "intro\n\n## CPU\nchapter\n\n### Registers\npage\n");
+        let html = build(&config(), &pages, 2, &Rendered::default());
+        assert!(html.contains("href=\"../../cpu/\""));
+        assert!(html.contains("href=\"../../\""));
+        assert!(html.contains("href=\"../../../\" title=\"Open the browser IDE\""));
+        assert!(html.contains("rel=\"canonical\" href=\"../../cpu/registers/\""));
+        assert!(!html.contains("href=\"index.html\""));
+        assert!(!html.contains("href=\"../../cpu/registers/index\""));
+        assert!(!html.contains(".html\" rel=\"next\""));
+    }
 }

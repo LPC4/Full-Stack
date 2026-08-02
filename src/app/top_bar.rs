@@ -10,6 +10,15 @@ impl FullStackApp {
     pub(super) fn top_bar(&mut self, ui: &mut egui::Ui, now: f64) {
         ui.horizontal_centered(|ui| {
             self.open_folder_menu(ui);
+            #[cfg(target_arch = "wasm32")]
+            ui.add(
+                egui::Hyperlink::from_label_and_url(
+                    theme::mono("Guide", metrics::STATUS_TEXT_SIZE, theme::TEXT),
+                    "guide/",
+                )
+                .open_in_new_tab(false),
+            )
+            .on_hover_text("Open the Full-Stack Guide");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.spacing_mut().interact_size.y = TOP_BAR_CONTROL_HEIGHT;
                 ui.add_space(metrics::SECTION_GAP);
