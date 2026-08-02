@@ -40,6 +40,7 @@
   --scroll-thumb-hover: var(--fs-scroll-hover);
   --err: var(--fs-danger);
   --selection: var(--fs-selection);
+  --editor-selection: rgba(30, 66, 115, 0.72);
   --selection-fg: var(--fs-text-strong);
 
   --tk-kw: var(--fs-syntax-keyword);
@@ -78,6 +79,7 @@
   --scroll-thumb-hover: #a8aeb8;
   --err: #cf222e;
   --selection: #b6d7ff;
+  --editor-selection: rgba(182, 215, 255, 0.72);
   --selection-fg: #24292f;
 
   --tk-kw: #8250df;
@@ -501,18 +503,11 @@ pre.code.wrapped .ln {
 .sandbox-code::selection {
   color: transparent;
   -webkit-text-fill-color: transparent;
-  background: var(--selection);
+  background: var(--editor-selection);
 }
 .sandbox-code:focus {
-  color: var(--tk-plain);
-  -webkit-text-fill-color: currentColor;
-  background: var(--code-bg);
   outline: 2px solid var(--link);
   outline-offset: -2px;
-}
-.sandbox-code:focus::selection {
-  color: var(--selection-fg);
-  -webkit-text-fill-color: var(--selection-fg);
 }
 
 .sandbox-output {
